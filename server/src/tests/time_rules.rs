@@ -679,10 +679,7 @@ async fn invalid_lifts_are_rejected() {
         .find("<section id=\"quick\"")
         .expect("the quick actions")..];
     let quick = &quick[..quick.find("</section>").unwrap()];
-    assert!(
-        quick.contains("That rule no longer applies to this phone. Nothing was paused."),
-        "{quick}"
-    );
+    assert!(quick.contains("The rule no longer applies"), "{quick}");
     assert!(quick.contains("flash-error"), "{quick}");
     // Without a refusal and without rules, there is no Pause group.
     let html = app
@@ -891,7 +888,7 @@ async fn location_policy_form_round_trip() {
     let page = app
         .get_page(&format!("/devices/locate?device={id}"), &cookie)
         .await;
-    assert!(page.text().contains("Location is off for this phone"));
+    assert!(page.text().contains("Location is off<"));
 }
 
 #[tokio::test]
@@ -1146,48 +1143,61 @@ async fn new_admin_routes_refuse_without_a_session_and_write_nothing() {
     assert!(res.location() == Some("/login") || res.status == StatusCode::UNAUTHORIZED);
 }
 
+/// 2026-11-18: calls not managed is the parent's choice, so a calls-off rule on such a phone is no warning and no
+/// Attention row: the rule's calls switch says behind its ⓘ that only outgoing calls stop, while calls aren't managed.
 #[tokio::test]
-async fn a_calls_off_rule_on_a_device_with_unmanaged_calls_warns() {
+async fn a_calls_off_rule_with_unmanaged_calls_is_a_quiet_note() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
-    let (id, _) = app.enrolled_device("phone").await;
-    // Device › Time's warning, and the device page's Attention row (it links to Calls & Contacts).
-    const WARNING: &str = "Incoming calls aren&#39;t blocked";
-    const ROW: &str = "data-attention=\"incoming-calls\"";
-    let time = device_page(id, Section::Time);
-    let summary = device_page(id, Section::Summary);
-    assert!(
-        !app.get_page(&time, &cookie).await.text().contains(WARNING),
-        "no rule yet"
-    );
-    assert!(!app.get_page(&summary, &cookie).await.text().contains(ROW));
-
+    let (id, _) = app.enrolled_device("Emma").await;
+    const NOTE: &str = "data-info=\"calls-unmanaged\"";
     app.request_form(Method::POST, "/schedules/rules", Some(&cookie), SCHOOL_FORM)
         .await;
-    let page = app.get_page(&time, &cookie).await.text();
-    assert!(page.contains(WARNING), "{page}");
-    assert!(app.get_page(&summary, &cookie).await.text().contains(ROW));
+    let everyone = app.get_page("/schedules/rules/new", &cookie).await.text();
+    assert!(everyone.contains(NOTE), "{everyone}");
+    assert!(
+        everyone.contains("Where calls aren&#39;t managed, only outgoing calls stop."),
+        "{everyone}"
+    );
+    let own = app
+        .get_page(&format!("/schedules/rules/new?device={id}"), &cookie)
+        .await
+        .text();
+    assert!(
+        own.contains("Calls aren&#39;t managed on the phone, so only outgoing calls stop."),
+        "{own}"
+    );
+    // Bedtime with calls off shows it; with calls on nothing stops, so no note.
+    let bedtime = format!("/devices/{id}/bedtime");
+    let night = [
+        ("n0_start", "21:00"),
+        ("n0_end", "07:00"),
+        ("n1_start", "22:30"),
+        ("n1_end", "09:00"),
+    ];
+    app.request_form(Method::POST, &bedtime, Some(&cookie), &night)
+        .await;
+    assert!(app.get_page(&bedtime, &cookie).await.text().contains(NOTE));
+    let mut calls_on = night.to_vec();
+    calls_on.push(("calls_allowed", "on"));
+    app.request_form(Method::POST, &bedtime, Some(&cookie), &calls_on)
+        .await;
+    assert!(!app.get_page(&bedtime, &cookie).await.text().contains(NOTE));
 
+    // Calls managed: no note anywhere.
     sqlx::query("UPDATE device_policy SET calls_mode = 'managed', sms_mode = 'unmanaged' WHERE device_id = ?")
         .bind(id)
         .execute(&app.db)
         .await
         .unwrap();
-    assert!(!app.get_page(&time, &cookie).await.text().contains(WARNING));
-    assert!(!app.get_page(&summary, &cookie).await.text().contains(ROW));
-
-    // Calls unmanaged but every rule allows calls: no warning.
-    sqlx::query("UPDATE device_policy SET calls_mode = 'unmanaged', sms_mode = 'unmanaged' WHERE device_id = ?")
-        .bind(id)
-        .execute(&app.db)
-        .await
-        .unwrap();
-    sqlx::query("UPDATE time_rules SET calls_allowed = 1")
-        .execute(&app.db)
-        .await
-        .unwrap();
-    assert!(!app.get_page(&time, &cookie).await.text().contains(WARNING));
-    assert!(!app.get_page(&summary, &cookie).await.text().contains(ROW));
+    for page in [
+        "/schedules/rules/new".to_string(),
+        format!("/schedules/rules/new?device={id}"),
+        bedtime,
+    ] {
+        let text = app.get_page(&page, &cookie).await.text();
+        assert!(!text.contains(NOTE), "{page}: {text}");
+    }
 }
 
 async fn report_time_state(app: &TestApp, token: &str, state: serde_json::Value) {

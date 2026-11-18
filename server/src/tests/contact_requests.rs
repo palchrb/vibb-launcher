@@ -373,7 +373,11 @@ async fn add_from_a_request() {
         assert_eq!(input_checked(&add, switch, "on"), Some(on), "{switch}");
     }
     assert!(add.contains("Use the Matrix ID"));
-    assert!(add.contains("Anna suggested @ola:example.org"));
+    // Design 113: the suggestion and the impersonation caution, short.
+    assert!(
+        add.contains("Anna suggested @ola:example.org - check it&#39;s the right person."),
+        "{add}"
+    );
     assert!(add.contains(&format!(
         r#"<input type="hidden" name="request" value="{:032x}">"#,
         1
@@ -918,7 +922,7 @@ async fn the_prefill_and_retry_rules() {
         .get_page(&format!("/devices/{id}/calls?request={:032x}", 2), &cookie)
         .await
         .text();
-    // The user (2026-11-09, design 80): the parent chooses - calls and texts both start off, and the line says so.
+    // The user (2026-11-09, design 80): the parent chooses - calls and texts both start off.
     for (switch, on) in [
         ("calls", false),
         ("texts", false),
@@ -933,8 +937,11 @@ async fn the_prefill_and_retry_rules() {
         assert_eq!(input_checked(&short, switch, "on"), Some(on), "{switch}");
     }
     assert!(short.contains("data-request-short"));
-    // Code QA N5: the kid by name, as the rest of the page.
-    assert!(short.contains("Choose whether Anna may call and text it."));
+    // Design 113: the cost warning alone (the switches start off and show it).
+    assert!(
+        short.contains(r#"data-request-short>Short number - may cost money.</p>"#),
+        "{short}"
+    );
     // A refused save from the request keeps it and the tick.
     let request = format!("{:032x}", 1);
     let refused = app

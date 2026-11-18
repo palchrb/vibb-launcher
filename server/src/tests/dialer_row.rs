@@ -114,17 +114,9 @@ async fn the_managed_row_links_to_calls() {
     .execute(&app.db)
     .await
     .unwrap();
-    for (lang, label, sub) in [
-        (
-            "en",
-            "Phone → Vibb&#39;s phone book",
-            "Hidden on the phone - the kid calls from Phone book on Home",
-        ),
-        (
-            "nb",
-            "Phone → Vibbs telefonbok",
-            "Skjult på telefonen - barnet ringer fra Telefonbok på Hjem",
-        ),
+    for (lang, label) in [
+        ("en", "Phone → Vibb&#39;s phone book"),
+        ("nb", "Phone → Vibbs telefonbok"),
     ] {
         let html = page(&app, &cookie, id, lang, "").await;
         let row = cell(&html, DIALER);
@@ -136,8 +128,8 @@ async fn the_managed_row_links_to_calls() {
             row.contains(label) || row.contains(&label.replace("&#39;", "'")),
             "{lang}: {row}"
         );
-        assert!(row.contains(sub), "{lang}: {row}");
-        // The title and the sub-line say it: no value on the right, only the chevron.
+        // The title says it (design 113): no sub-line, no value on the right, only the chevron.
+        assert!(!row.contains("row-sub"), "{lang}: {row}");
         assert!(!row.contains("row-value"), "{lang}: {row}");
         assert!(row.contains("class=\"chev\""), "{lang}: {row}");
         assert!(!row.contains("name=\"selected\""), "no switch");
@@ -166,12 +158,12 @@ async fn the_managed_row_links_to_calls() {
     let html = page(&app, &cookie, id, "en", "").await;
     let row = cell(&html, DIALER);
     assert!(
-        row.contains("Hidden on the phone - only emergency numbers can be called"),
+        row.contains("<span class=\"row-sub\">Emergency numbers only</span>"),
         "{row}"
     );
     assert!(!row.contains("name=\"selected\""));
     let html = page(&app, &cookie, id, "nb", "").await;
-    assert!(cell(&html, DIALER).contains("Skjult på telefonen - bare nødnumre kan ringes"));
+    assert!(cell(&html, DIALER).contains("<span class=\"row-sub\">Bare nødnumre</span>"));
 }
 
 #[tokio::test]
@@ -318,12 +310,9 @@ async fn a_managed_dialer_is_never_changed() {
     for (lang, text) in [
         (
             "en",
-            "Calls are managed by Vibb: the Phone app follows Vibb&#39;s phone book. Change that under Calls &amp; Contacts.",
+            "Managed by Vibb&#39;s phone book - see Calls &amp; Contacts",
         ),
-        (
-            "nb",
-            "Samtaler er styrt av Vibb: Telefon-appen følger Vibbs telefonbok. Endre det under Anrop og kontakter.",
-        ),
+        ("nb", "Styrt av Vibbs telefonbok - se Anrop og kontakter"),
     ] {
         let html = page(
             &app,

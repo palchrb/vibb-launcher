@@ -1,5 +1,6 @@
-{#- Design 74 D1.3b, §6.2: under the password change and Reset Two-Factor Login - neither ends a passkey, so the
-    parent sees which still work, each a link to its row. -#}
+{#- Design 74 D1.3b, §6.2: neither a new password nor Reset Two-Factor Login ends a passkey, so the parent sees which
+    still work, each a link to its row. Design 113 (ASK 5): in the password group's footer ⓘ (`still_in_panel`, a
+    panel `<p>`), and under Reset Two-Factor Login's confirm as before. -#}
 {%- if !passkeys.is_empty() %}
-<p class="field-hint passkeys-still">{{ self.t("passkeys.still_work.lead") }} {% for k in passkeys %}<a href="#passkey-{{ k.id }}">{{ k.name }}</a>{% if !loop.last %}, {% endif %}{% endfor %} – {{ self.t("passkeys.still_work.tail") }}</p>
+<p{% if !still_in_panel %} class="field-hint passkeys-still"{% endif %}>{{ self.t("passkeys.still_work.lead") }} {% for k in passkeys %}<a href="#passkey-{{ k.id }}">{{ k.name }}</a>{% if !loop.last %}, {% endif %}{% endfor %} – {{ self.t("passkeys.still_work.tail") }}</p>
 {%- endif %}

@@ -484,8 +484,10 @@ pub struct Line {
     /// "checking", "works", "older" or "refused".
     pub state: &'static str,
     pub text: String,
-    /// What to do, under the row.
+    /// The short visible line under a warning: "A phone would refuse it. No QR code until it's fixed." (design 113).
     pub sub: Option<String>,
+    /// What to do, behind the warning's ⓘ.
+    pub fix: Option<String>,
     /// The oldest Android a new phone may run ("A new phone needs Android 14 or newer..."), from
     /// the APK's minSdkVersion, for a launcher a phone would take.
     pub needs: Option<String>,
@@ -512,11 +514,12 @@ pub fn line(
     auto_reload: bool,
 ) -> Option<Line> {
     let mut seen_min_sdk = None;
-    let (state_word, text, sub) = match seen(state) {
+    let (state_word, text, sub, fix) = match seen(state) {
         Seen::Off => return None,
         Seen::Checking => (
             "checking",
             t(lang, "settings.provisioning.launcher.checking").to_string(),
+            None,
             None,
         ),
         Seen::Done(checked) => {
@@ -532,6 +535,7 @@ pub fn line(
         state: state_word,
         text,
         sub,
+        fix,
         needs,
         device_id,
         auto_reload,
@@ -574,13 +578,22 @@ fn needs_android(lang: Lang, api: u32) -> String {
     }
 }
 
-/// A result's state, row and what to do, in `lang`.
+/// A result's state, row, short visible line and what to do (behind the ⓘ), in `lang` (design 113: a refused launcher
+/// says in view that no QR code is made; the env variables to check are the ⓘ's).
 fn words(
     lang: Lang,
     zone: &Zone,
     checked: &Checked,
     url: &str,
-) -> (&'static str, String, Option<String>) {
+) -> (&'static str, String, Option<String>, Option<String>) {
+    let refused = || Some(t(lang, "settings.provisioning.launcher.refused_short").to_string());
+    let address = || {
+        Some(t_params(
+            lang,
+            "settings.provisioning.launcher.address_sub",
+            &[("url", url)],
+        ))
+    };
     let version = checked.version.as_deref().unwrap_or("?");
     let date = checked.published.map(|at| {
         let now = Utc::now();
@@ -600,7 +613,7 @@ fn words(
                     &[("version", version)],
                 ),
             };
-            ("works", text, None)
+            ("works", text, None, None)
         }
         Verdict::Older { newest } => {
             let text = match &date {
@@ -615,16 +628,18 @@ fn words(
                     &[("version", version), ("newest", newest)],
                 ),
             };
-            let sub = t_params(
+            let fix = t_params(
                 lang,
                 "settings.provisioning.launcher.older_sub",
                 &[("newest", newest)],
             );
-            ("older", text, Some(sub))
+            let sub = t(lang, "settings.provisioning.launcher.older_short").to_string();
+            ("older", text, Some(sub), Some(fix))
         }
         Verdict::WrongSigner => (
             "refused",
             t(lang, "settings.provisioning.launcher.wrong_signer").to_string(),
+            refused(),
             Some(t(lang, "settings.provisioning.launcher.wrong_signer_sub").to_string()),
         ),
         Verdict::WrongPackage { package } => (
@@ -634,34 +649,27 @@ fn words(
                 "settings.provisioning.launcher.wrong_package",
                 &[("package", package)],
             ),
+            refused(),
             Some(t(lang, "settings.provisioning.launcher.wrong_package_sub").to_string()),
         ),
+        // Not an APK: the short line alone (design 113).
         Verdict::NotAnApk => (
             "refused",
             t(lang, "settings.provisioning.launcher.not_an_apk").to_string(),
-            Some(t_params(
-                lang,
-                "settings.provisioning.launcher.address_sub",
-                &[("url", url)],
-            )),
+            refused(),
+            None,
         ),
         Verdict::TimedOut => (
             "refused",
             t(lang, "settings.provisioning.launcher.timed_out").to_string(),
-            Some(t_params(
-                lang,
-                "settings.provisioning.launcher.address_sub",
-                &[("url", url)],
-            )),
+            refused(),
+            address(),
         ),
         Verdict::Unreachable => (
             "refused",
             t(lang, "settings.provisioning.launcher.unreachable").to_string(),
-            Some(t_params(
-                lang,
-                "settings.provisioning.launcher.address_sub",
-                &[("url", url)],
-            )),
+            refused(),
+            address(),
         ),
     }
 }

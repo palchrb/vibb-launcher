@@ -71,10 +71,11 @@
             <p class="row row-note">{{ self.t("settings.backups.none") }}</p>
             {% endfor %}
         </div>
-        <div class="group-footer">{{ self.t("settings.backups.footer") }}
+        <div class="group-footer">
             <details class="info">
                 <summary aria-label="{{ self.t("settings.backups.info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
+                    <p>{{ self.t("settings.backups.footer") }}</p>
                     <p>{{ self.t("settings.backups.info_holds") }}</p>
                     <p>{{ self.t("settings.backups.info_keeps") }}</p>
                 </div>
@@ -94,7 +95,6 @@
             </details>
             {% call group_flash::show(flash, "upload") %}{% endcall %}
         </div>
-        <p class="group-footer">{{ self.t("settings.backups.upload_footer") }}</p>
     </section>
 
     <section id="schedule" aria-labelledby="schedule-title">
@@ -127,15 +127,15 @@
             </div>
             <div class="field">
                 <label class="field-label" for="retention_count">{{ self.t("settings.backups.keep") }}</label>
+                <details class="info field-info"><summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("settings.backups.keep_hint") }}</p></div></details>
                 <input type="number" id="retention_count" name="retention_count" min="0" max="3650" value="{{ schedule.retention_count }}">
-                <p class="field-hint">{{ self.t("settings.backups.keep_hint") }}</p>
             </div>
             <button type="submit" class="button-wide">{{ self.t("common.save") }}</button>
         </form>
         {% if docker %}
-        <p class="group-footer">{{ self.t("settings.backups.schedule_footer_docker") }}</p>
+        <div class="group-footer"><details class="info"><summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("settings.backups.schedule_footer_docker") }}</p></div></details></div>
         {% else %}
-        <p class="group-footer">{{ self.t("settings.backups.schedule_footer") }}</p>
+        <div class="group-footer"><details class="info"><summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("settings.backups.schedule_footer") }}</p></div></details></div>
         {% endif %}
     </section>
     </div>

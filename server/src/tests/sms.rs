@@ -539,7 +539,7 @@ async fn held_rows_go_after_30_days() {
 }
 
 /// The Calls page's two rows (design 77 D2, the minimum until step 4): each channel's three
-/// choices and the chosen sub-line, a save writes both modes (and the derived old columns for a
+/// choices, the chosen modes' sentences in the calls ⓘ (design 113), a save writes both modes (and the derived old columns for a
 /// rollback) and stamps `roles_changed_at` only on a change; an unknown choice is refused.
 #[tokio::test]
 async fn the_calls_page_saves_both_channels() {
@@ -551,8 +551,12 @@ async fn the_calls_page_saves_both_channels() {
         .get_page(&format!("/devices/{id}/calls"), &cookie)
         .await
         .text();
-    assert!(page.contains("Anyone can text, and every messaging app works."));
-    assert!(page.contains("Anyone can call, and the phone can call anyone."));
+    // Design 113: no sub-line under a channel; the chosen modes' sentences lead the calls ⓘ.
+    assert!(page.contains(
+        "<p>Anyone can call, and the phone can call anyone. A rule then stops only outgoing calls. Anyone can text, and every messaging app works. \
+         Vibb doesn&#39;t filter.</p>"
+    ), "{page}");
+    assert!(!page.contains("segmented-sub\">Anyone"));
     assert!(super::autosaves(&page, "calls_mode") && super::autosaves(&page, "sms_mode"));
 
     let save = |calls: &'static str, sms: &'static str| {
@@ -636,8 +640,8 @@ async fn stored_modes(app: &TestApp, id: i64) -> (String, String) {
         .unwrap()
 }
 
-/// Design 77 D2: every pair is offered and taken, on a phone that hasn't reported and on one that has, and SMS's
-/// "Managed by Vibb" is the recommended one.
+/// Design 77 D2: every pair is offered and taken, on a phone that hasn't reported and on one that has (design 113: no
+/// "recommended" note under a choice).
 #[tokio::test]
 async fn the_calls_page_offers_every_pair() {
     let app = TestApp::new().await;
@@ -651,7 +655,8 @@ async fn the_calls_page_offers_every_pair() {
             .get_page(&format!("/devices/{id}/calls"), &cookie)
             .await
             .text();
-        assert!(page.contains(r#"Managed by Vibb<span class="segment-note">recommended</span>"#));
+        assert!(page.contains(r#"Managed by Vibb</span>"#), "{page}");
+        assert!(!page.contains("segment-note"));
         assert!(!page.contains("Update Vibb One"), "{page}");
         assert!(
             super::tags(&page, "input")

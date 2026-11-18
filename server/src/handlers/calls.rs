@@ -375,7 +375,7 @@ impl DeviceCallsTemplate {
 }
 
 /// One channel's row (design 77 D2): its form name (`calls_mode`/`sms_mode`), label, the segmented control's three
-/// choices and the chosen state's sub-line.
+/// choices and the chosen state's sentence (design 113: read only by the calls ⓘ, no sub-line under the row).
 struct ChannelRow {
     name: &'static str,
     label: &'static str,
@@ -390,7 +390,7 @@ struct ChannelRow {
 }
 
 /// One choice of a segmented control (design 77 D2, the look of the phone switcher's segments): a radio, its short
-/// label and a quiet note under it ("anbefalt").
+/// label and a quiet note under it (none since design 113 dropped "anbefalt"; the template keeps the slot).
 struct Segment {
     value: &'static str,
     label: &'static str,
@@ -398,8 +398,7 @@ struct Segment {
     selected: bool,
 }
 
-/// D2's three choices and the sub-line of `mode` for the calls channel (`sms` false) or SMS; `other` is the other
-/// channel's state (SMS's "Styrt av Vibb" says "anbefalt").
+/// D2's three choices and the sentence of `mode` for the calls channel (`sms` false) or SMS.
 fn channel_row(lang: Lang, sms: bool, mode: &str, rcs_recent: bool) -> ChannelRow {
     let options = CHANNEL_MODES
         .iter()
@@ -412,8 +411,7 @@ fn channel_row(lang: Lang, sms: bool, mode: &str, rcs_recent: bool) -> ChannelRo
             Segment {
                 value,
                 label: t(lang, key),
-                note: (sms && *value == "managed")
-                    .then(|| t(lang, "device.calls.mode.recommended")),
+                note: None,
                 selected: *value == mode,
             }
         })
@@ -487,8 +485,8 @@ struct EmergencyRow {
     number: String,
     /// The parent's name; for an emergency number without one, "Emergency number".
     name: String,
-    /// The sub-line's word key, and whether it is orange (a number that follows the call rules).
-    sub: &'static str,
+    /// The sub-line's word key, only on a number that isn't an emergency number (orange, design 113); `warn` the same.
+    sub: Option<&'static str>,
     warn: bool,
     /// A second line: on a managed phone, a non-emergency number that isn't an outbound phone-book contact (the
     /// phone dims it).
@@ -514,7 +512,6 @@ fn emergency_rows(
     cc: &str,
     phone_book: Option<&[String]>,
 ) -> Vec<EmergencyRow> {
-    let big = emergency::big_row(menu, cc);
     menu.iter()
         .enumerate()
         .map(|(i, e)| {
@@ -524,19 +521,12 @@ fn emergency_rows(
             } else {
                 e.name.clone()
             };
-            let (sub, warn) = if !real {
-                ("device.emergency.not_emergency", true)
-            } else if big == Some(i) {
-                ("device.emergency.big", false)
-            } else {
-                ("device.emergency.always", false)
-            };
             EmergencyRow {
                 id: e.id,
                 number: e.number.clone(),
                 name,
-                sub,
-                warn,
+                sub: (!real).then_some("device.emergency.not_emergency"),
+                warn: !real,
                 extra: phone_book
                     .filter(|book| !real && !book.contains(&e.number))
                     .map(|_| "device.emergency.not_in_phone_book"),
@@ -1111,6 +1101,7 @@ fn screening_note(lang: Lang) -> Note {
         warning: false,
         title: t(lang, "device.calls.screening").to_string(),
         value: Some(t(lang, "device.calls.not_granted").to_string()),
+        sub: None,
         detail: Some(t_params(
             lang,
             "device.calls.screening_sub",
@@ -1261,7 +1252,8 @@ impl Finding {
 
     /// The calls page's words (§4.2): the problem's short title and one or two sentences, local
     /// times, an expert detail (an adb command, a package name, the phone's own error) behind the
-    /// ⓘ only. Everything but [Finding::Waiting] is a warning.
+    /// ⓘ only; the sentence sits behind the ⓘ too, except where it is the news (design 113 D1 P1:
+    /// it shows as the note's `sub`). Everything but [Finding::Waiting] is a warning.
     pub fn note(&self, zone: &Zone, now: DateTime<Utc>) -> Note {
         let lang = zone.lang();
         let say = |key: &str| t(lang, key).to_string();
@@ -1402,11 +1394,26 @@ impl Finding {
             ),
             Finding::SmsRoleKept => (say("device.calls.finding.sms_role_kept"), None),
         };
+        // Where the sentence is the news, it shows under the title (a KEEP: the emergency call,
+        // the call-back window, a call that couldn't show) and only the fix stays behind the ⓘ
+        // (design 113 D1 P1, QA M5).
+        let visible = matches!(
+            self,
+            Finding::EmergencyCall { .. }
+                | Finding::CallbackWindow { .. }
+                | Finding::CallScreenFailed { .. }
+        );
+        let (sub, detail) = if visible {
+            (Some(detail), None)
+        } else {
+            (None, Some(detail))
+        };
         Note {
             warning: self.problem().needs_attention(),
             title: self.problem().title(lang).to_string(),
             value: None,
-            detail: Some(detail),
+            sub,
+            detail,
             fix,
         }
     }
@@ -1805,6 +1812,9 @@ impl CallProblem {
                 | CallProblem::MmsUnchecked
                 | CallProblem::MmsNoData
                 | CallProblem::SmsRoleKept
+                // SMS off and the Messages app ticked are both the parent's choices, and the phone hides the app
+                // anyway: a quiet row, never a warning (2026-11-18).
+                | CallProblem::SmsAppAllowed
         )
     }
 
@@ -3283,9 +3293,20 @@ mod tests {
                         | Finding::MmsUnchecked { .. }
                         | Finding::MmsNoData
                         | Finding::SmsRoleKept
+                        | Finding::SmsAppAllowed { .. }
                 )
             );
-            let detail = note.detail.unwrap();
+            // Design 113 D1 P1: the KEEPs show their sentence under the title (`sub`, at most six
+            // words beside the times); every other sentence is behind the ⓘ.
+            let visible = matches!(
+                finding,
+                Finding::EmergencyCall { .. }
+                    | Finding::CallbackWindow { .. }
+                    | Finding::CallScreenFailed { .. }
+            );
+            assert_eq!(note.sub.is_some(), visible, "{finding:?}");
+            assert_eq!(note.detail.is_some(), !visible, "{finding:?}");
+            let detail = note.sub.or(note.detail).unwrap();
             assert!(detail.split_whitespace().count() <= 40, "{detail}");
             for raw in [
                 package,
@@ -3300,7 +3321,10 @@ mod tests {
                 assert!(!detail.contains(raw), "{raw} in {detail}");
             }
         }
-        let detail = |f: &Finding| f.note(&zone, now).detail.unwrap();
+        let detail = |f: &Finding| {
+            let note = f.note(&zone, now);
+            note.sub.or(note.detail).unwrap()
+        };
         assert!(detail(&all[0]).contains("(10:58)"), "{}", detail(&all[0]));
         assert!(detail(&all[1]).contains("until 14:55"));
         assert!(

@@ -292,6 +292,11 @@ async fn a_refused_add_renders_the_form_as_typed() {
     .await
     .text();
     assert!(page.contains("data-sources=\"off\"") && !page.contains("data-sources=\"add\""));
+    // Design 113: the state alone in orange, the why behind its (i).
+    assert!(
+        page.contains("<span class=\"row-label tone-orange\">Off: the server has no key</span>")
+    );
+    assert!(page.contains("Check the server log (MUSIC_SECRET_KEY)."));
 }
 
 #[tokio::test]
@@ -1001,7 +1006,7 @@ async fn add_calendar_picks_its_kind_and_a_gone_source_goes_back() {
     for words in [
         "Legg til kalender",
         "Kilde",
-        "Lenke (https eller webcal)",
+        ">Lenke<",
         "CalDAV-konto",
         "Test og logg inn",
         // The examples are the catalog's too (slice 3e).

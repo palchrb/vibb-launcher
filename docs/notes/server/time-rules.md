@@ -67,8 +67,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   the page shows the record or Vibb-too-old warning or a rule or the own limit in force doesn't read, "Couldn't read"
   on a failed read). The user's tidy (2026-11-01: "recent ... kan vi bare kutte ut, det er allerede i hoved loggen",
   "ta bort mulighet til å pause rules og gi extra time her, for det er bare duplicat", a switch per rule) and its
-  approved mockup: warnings (the screen-time record unreadable, incoming calls not
-  blocked), **Now** (the Time lock as §3.10's badge - `time_state::lock_badge`, so the end shows only when provably
+  approved mockup: warnings (the screen-time record unreadable; a calls-off rule on a phone
+  with calls not managed is no warning, only a note behind the rule's calls switch while that switch is off), **Now** (the Time lock as §3.10's badge - `time_state::lock_badge`, so the end shows only when provably
   right, which needs the phone's `time_state.zone` - sent since design 34 P13 -, today's screen time with the extra
   minutes, the report's age with the exact local time in `title`), **Bedtime** (design 66, below), **Everyone's Rules**
   (`#everyone`: one row per rule, its days and calls under the name, a switch for this phone - `partials/rule_switch.html`,
@@ -105,8 +105,9 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   unreadable stored rule's warning names the parts that will be saved empty; a refused pause (the rule no longer
   applies) lands on the summary's Quick actions with its reason; an unknown kind or another phone's rule stays a plain
   400 / 404 (no page sends one). Times must be `HH:MM` (what `<input type="time">` sends).
-- **Attention**: the screen-time record → `/devices/{id}/time` (the warnings at its
-  top); incoming calls not blocked → Calls & Contacts. `TimeReport` now also reads `extra_minutes` and
+- **Attention**: the screen-time record → `/devices/{id}/time` (the warning at its
+  top). A calls-off rule on a phone whose calls aren't managed is no row and no warning (2026-11-18: the parent's
+  choice): the rule's and Bedtime's calls switch say behind their ⓘ that only outgoing calls stop. `TimeReport` now also reads `extra_minutes` and
   `ledger_unreadable`; `time_state::rule_days` gives the badge its rules (the Devices list's too).
 - Tests: `src/tests/time_pages.rs` (the four pages, `device_time_rules_has_the_rules_alone`, the redirect table, the
   section test, refusals, local times and the zone-less badge, failed reads, the device page's row), repointed

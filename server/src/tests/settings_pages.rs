@@ -596,7 +596,8 @@ async fn the_web_filter_page_reads_as_rows() {
     );
     assert!(page.contains("&#60;b&#62;Anna&#60;/b&#62;") && !page.contains("<b>Anna"));
     // Nothing loaded in a test: every seeded list says so in a few words.
-    assert!(page.contains("<span class=\"row-sub text-alarm\">Not loaded yet</span>"));
+    // Design 113: the problem is an orange row after the list's switch, the story behind its ⓘ.
+    assert!(page.contains("<span class=\"row-label tone-orange\">Not loaded yet</span>"));
     let lists = page.find("id=\"lists\"").unwrap();
     let server = page.find("id=\"server\"").unwrap();
     assert!(page.find("id=\"blocked\"").unwrap() > lists);
@@ -732,7 +733,7 @@ async fn the_settings_pages_speak_norwegian() {
     has(
         &page("/schedules/screen-time?lang=nb".to_string()).await,
         &[
-            "Alle · Skjermtid",
+            "Alle telefoner",
             ">Mandag<",
             ">Søndag<",
             "Om den daglige grensen",
@@ -794,7 +795,7 @@ async fn the_settings_pages_speak_norwegian() {
         &[
             "Legg til et bilde",
             "Også på låseskjermen",
-            "Alle bakgrunnsbilder",
+            "id=\"all-title\">Bilder</h2>",
             "Innebygd · på",
         ],
     );
@@ -1238,6 +1239,9 @@ async fn the_security_log_reads_as_labelled_rows() {
         ),
     )
     .await;
+    // No blocked address: no Blocked Addresses group (design 113).
+    let page = app.get_page("/security", &cookie).await.text();
+    assert!(!page.contains("id=\"banned\""), "{page}");
     sqlx::query(
         "INSERT INTO banned_ips (ip_address, banned_until, reason) \
          VALUES ('192.0.2.7', datetime('now', '+1 hours'), '20 failed login attempts')",
@@ -1249,7 +1253,8 @@ async fn the_security_log_reads_as_labelled_rows() {
     check_forms("/security", &page);
     let rows: Vec<&str> = page.split("data-event>").skip(1).collect();
     assert_eq!(rows.len(), 4);
-    // One plain row: who, the detail and the exact time shown under the label, no ⓘ and no id.
+    // One plain row: who and the detail under the label, the exact time the time's `title` (design
+    // 113), no ⓘ and no id.
     let row = &rows[3][..rows[3].find("</div>").unwrap()];
     assert!(row.contains("Command sent to phone"), "{row}");
     assert!(
@@ -1258,7 +1263,13 @@ async fn the_security_log_reads_as_labelled_rows() {
     );
     assert!(row.contains("&#60;img src=x") && !page.contains("<img src=x"));
     assert!(!page.contains("device_command_queued") && !page.contains("Logged as"));
-    assert!(!page.contains("info-icon"), "{page}");
+    assert!(
+        rows.iter()
+            .all(|r| !r[..r.find("</div>").unwrap()].contains("info-icon")),
+        "{page}"
+    );
+    assert!(row.contains("row-value-keep\" title=\""), "{row}");
+    assert_eq!(row.matches("class=\"row-sub\"").count(), 1, "{row}");
     assert!(rows[2].contains("Music moved"));
     assert!(
         rows[1].contains("Password change refused") && rows[1].contains("wrong current password"),
@@ -1370,7 +1381,9 @@ async fn the_security_log_reads_as_labelled_rows() {
             &[("ip", "192.0.2.8")],
         )
         .await;
-    assert_redirect(&res, "/security", Some("banned"));
+    assert_redirect(&res, "/security", Some("activity"));
+    // #activity renders with and without a ban, so the stale Unban lands on it.
+    assert!(page.contains("id=\"activity\""));
 
     sqlx::query("ALTER TABLE security_events RENAME TO broken")
         .execute(&app.db)

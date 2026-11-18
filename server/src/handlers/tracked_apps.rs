@@ -3311,7 +3311,7 @@ struct TrackedAppDetailTemplate {
     sync_running: Option<When>,
     /// How the last sync (hourly or "Check now") failed, if it did.
     sync_failure: Option<FailureView>,
-    /// "Show on phones as" (design 14): the default for every phone with the app
+    /// Name and icon (design 14): the default for every phone with the app
     /// (`partials/app_display_form.html` reads `form`).
     form: crate::app_display::AppDisplayForm,
     /// For an app without a package: what the parent may confirm as its package ([package_candidates]).
@@ -3329,7 +3329,7 @@ struct TrackedAppDetailTemplate {
     /// Source & Signing's value: "GitHub", "F-Droid" (or another repo's host), "Uploaded" (worded).
     source_label: String,
     /// An F-Droid app's source row: "F-Droid · ws.xsoh.etar", the package's page on f-droid.org,
-    /// and the one-source line under it.
+    /// and the one-source line behind its (i).
     fdroid_source: Option<String>,
     fdroid_page: Option<String>,
     fdroid_note: &'static str,
@@ -3444,7 +3444,7 @@ struct DetailsForm {
     error_field: &'static str,
 }
 
-/// `?open=display|source`: a save returns with its `<details>` open ("Show on phones as", Source
+/// `?open=display|source`: a save returns with its `<details>` open (Name and icon, Source
 /// & Signing), so the form it came from is where the parent left it.
 pub async fn view_tracked_app(
     State(state): State<AppState>,
@@ -3521,7 +3521,7 @@ struct Extras {
     wait_refused: Option<(String, String)>,
 }
 
-/// The app's page (design 31 §3.3); `display` = a refused "Show on phones as" save (design 14),
+/// The app's page (design 31 §3.3); `display` = a refused Name and icon save (design 14),
 /// `open` = the `<details>` a save returns to ("display", "source"), `install` = Install Now's
 /// answer (design 37: the word and the phone it names).
 #[allow(clippy::too_many_arguments)]
@@ -3951,8 +3951,8 @@ fn update_group(
                 .as_deref()
                 .and_then(crate::display_time::parse_db_utc);
             let (key, at) = match published {
-                Some(published) => ("apps.update.published", published),
-                None => ("apps.update.found", since),
+                Some(published) => ("apps.update.published_at", published),
+                None => ("apps.update.found_at", since),
             };
             Some(WaitingView {
                 release: ReleaseView {
@@ -3967,7 +3967,7 @@ fn update_group(
                         ],
                     ),
                 },
-                sub: t_count(lang, key, wait, &[("when", &zone.since(at, now))]),
+                sub: t_params(lang, key, &[("when", &zone.since(at, now))]),
             })
         }
         _ => None,
@@ -4665,13 +4665,12 @@ pub async fn ensure_launcher_row(state: &AppState) {
         Ok(LauncherSeed::Exists) => {}
         Ok(LauncherSeed::HandMade(id, name)) => tracing::warn!(
             "no catalog app is marked as the launcher; if '{name}' (id {id}) is the launcher, \
-             turn on \"This is the launcher app\" on its page under Apps (no second row is \
+             turn on \"Launcher\" on its page under Apps (no second row is \
              created)"
         ),
         Ok(LauncherSeed::NotGithub) => tracing::warn!(
             "LAUNCHER_APK_URL ({}) isn't a github.com/<owner>/<repo>/releases URL - no catalog \
-             row for the launcher was created: add it under Apps and turn on \"This is the \
-             launcher app\"",
+             row for the launcher was created: add it under Apps and turn on \"Launcher\"",
             state.config.launcher_apk_url
         ),
         Ok(LauncherSeed::Created { repo, package, .. }) => tracing::info!(

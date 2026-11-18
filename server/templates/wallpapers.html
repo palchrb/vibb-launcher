@@ -19,11 +19,11 @@
         <form method="post" action="/wallpapers#add" enctype="multipart/form-data" class="group form-group">
             <div class="field">
                 <label class="field-label" for="wallpaper_label">{{ self.t("settings.wallpapers.name") }}</label>
+                <details class="info field-info"><summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("settings.wallpapers.name_hint") }}</p></div></details>
                 <input id="wallpaper_label" type="text" name="label" maxlength="40" placeholder="{{ self.t("settings.wallpapers.photo") }}">
-                <p class="field-hint">{{ self.t("settings.wallpapers.name_hint") }}</p>
             </div>
             <label class="row field-switch">
-                <span class="row-label">{{ self.t("settings.wallpapers.lock_screen") }}<span class="row-sub">{{ self.t("settings.wallpapers.lock_screen_sub") }}</span></span>
+                <span class="row-label">{{ self.t("settings.wallpapers.lock_screen") }}</span>
                 <input type="checkbox" role="switch" class="sw" name="lock_screen" value="on"><span class="knob" aria-hidden="true"></span>
             </label>
             <div class="field">
@@ -33,11 +33,13 @@
             </div>
             <button type="submit" class="button-wide">{{ self.t("settings.wallpapers.upload") }}</button>
         </form>
-        <div class="group-footer">{{ self.t("settings.wallpapers.add_footer") }}
+        <div class="group-footer">
             <details class="info">
                 <summary aria-label="{{ self.t("settings.wallpapers.info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
                     <p>{{ self.t("settings.wallpapers.info") }}</p>
+                    <p>{{ self.t("settings.wallpapers.add_footer") }}</p>
+                    <p>{{ self.t("settings.wallpapers.lock_screen_sub") }}</p>
                 </div>
             </details>
         </div>
@@ -76,7 +78,6 @@
             </div>
             {% endfor %}
         </div>
-        <p class="group-footer">{{ self.t("settings.wallpapers.all_footer") }}</p>
     </section>
     </div>
 </main>

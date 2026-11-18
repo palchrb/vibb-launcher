@@ -31,7 +31,10 @@
         {% include "partials/music_card.html" %}
         {% endfor %}
     </div>
-    <p class="group-footer">{% if edit %}{{ self.t("music.tab.edit_footer") }}{% else %}{% let max = max_entries.to_string() %}{{ self.tc("music.tab.footer", entry_count, [("max", max.as_str())]) }}{% endif %}</p>
+    {#- Design 113: the count only near the cap (90 % or more). -#}
+    {% if !edit && entry_count * 10 >= max_entries * 9 %}
+    <p class="group-footer">{% let max = max_entries.to_string() %}{{ self.tc("music.tab.footer", entry_count, [("max", max.as_str())]) }}</p>
+    {% endif %}
     {% endif %}
     <script src="/static/music-cards.js?v=5" defer data-swap-ready></script>
 

@@ -36,7 +36,14 @@
             <p class="flash flash-error" role="status" data-flash="music-app">{{ text }}</p>
             {% endif %}
         </form>
-        <p class="group-footer">{{ self.t("device.music.app_footer") }}</p>
+        <div class="group-footer">
+            <details class="info">
+                <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    <p>{{ self.t("device.music.app_footer") }}</p>
+                </div>
+            </details>
+        </div>
         {% else %}
         <div class="group">
             <a class="row" href="/music/settings#app" data-row="music-app">
@@ -45,7 +52,6 @@
                 <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </a>
         </div>
-        <p class="group-footer">{{ self.t("device.music.add_to_catalog") }}</p>
         {% endif %}
     </section>
 
@@ -69,7 +75,6 @@
             <p class="row row-note" data-row="no-entries">{{ self.t("device.music.no_entries") }}</p>
             {% endfor %}
         </div>
-        <p class="group-footer">{{ self.t("device.music.library_footer.before") }} <a href="/music">{{ self.t("nav.music") }}</a>{{ self.t("device.music.library_footer.after") }}</p>
     </section>
 
     {#- One form, one save (design 31 §5.6, design 30 `v=2`): the handler writes all five values,
@@ -87,10 +92,11 @@
                 <input type="checkbox" role="switch" class="sw" name="download_mobile_data" value="on"{% if music.download_mobile_data %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
             </label>
         </div>
-        <div class="group-footer">{{ self.t("device.music.mobile_footer") }}
+        <div class="group-footer">
             <details class="info">
                 <summary aria-label="{{ self.t("device.music.mobile_info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
+                    <p>{{ self.t("device.music.mobile_footer") }}</p>
                     <p>{{ self.t("device.music.mobile_info") }}</p>
                 </div>
             </details>
@@ -120,10 +126,11 @@
                 </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </label>
         </div>
-        <div class="group-footer">{{ self.t("device.music.storage_footer") }}
+        <div class="group-footer">
             <details class="info">
                 <summary aria-label="{{ self.t("device.music.storage_info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
+                    <p>{{ self.t("device.music.storage_footer") }}</p>
                     <p>{{ self.t("device.music.storage_info") }}</p>
                 </div>
             </details>
@@ -135,18 +142,29 @@
         {% endif %}
         <div class="group" role="group" aria-labelledby="storytel-title">
             <label class="row">
-                <span class="row-label">{{ self.t("device.music.storytel_on") }}{% if let Some(unsent) = music.storytel_unsent %}<span class="row-sub" data-storytel-unsent>{{ unsent }}</span>{% endif %}</span>
+                <span class="row-label">{{ self.t("device.music.storytel_on") }}{% if let Some(unsent) = music.storytel_unsent %}<span class="row-sub tone-orange" data-storytel-unsent>{{ unsent }}</span>{% endif %}</span>
                 <input type="checkbox" role="switch" class="sw" name="storytel" value="on"{% if music.storytel %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
             </label>
         </div>
-        <p class="group-footer">{% if music.storytel_stored %}{{ self.t("device.music.storytel_footer") }}{% else %}{{ self.t("device.music.storytel_none.before") }} <a href="/music/settings#storytel">{{ self.t("device.music.music_settings") }}</a>{{ self.t("device.music.storytel_none.after") }}{% endif %}</p>
+        {% if music.storytel_stored %}
+        <div class="group-footer">
+            <details class="info">
+                <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    <p>{{ self.t("device.music.storytel_footer") }}</p>
+                </div>
+            </details>
+        </div>
+        {% else %}
+        <p class="group-footer">{{ self.t("device.music.storytel_none.before") }} <a href="/music/settings#storytel">{{ self.t("device.music.music_settings") }}</a>{{ self.t("device.music.storytel_none.after") }}</p>
+        {% endif %}
         <noscript><div class="group"><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></div></noscript>
     </form>
 
     {#- Spotify (design 26c §2.5, §3.6): which account this phone plays as - one per phone, the
         child's own - as an inline picker in its group, back to #music-spotify (below the library:
         without JS a save must not land at the top); what needs the parent as notes above it, the
-        login's date and the unsent entries as the row's sub-line, a refused save's reason in the
+        unsent entries as the row's orange sub-line, a refused save's reason in the
         group. Shown once a Spotify app is set up, or while accounts or a binding remain. -#}
     {% if let Some(spotify) = music.spotify %}
     <section id="music-spotify" aria-labelledby="music-spotify-title">
@@ -156,7 +174,7 @@
         {% endfor %}
         <form method="post" action="/devices/{{ device.id }}/music/spotify#music-spotify" class="group">
             <label class="row" for="music_spotify_account">
-                <span class="row-label">{{ self.t("device.music.plays_as") }}{% if let Some(login) = spotify.login %}<span class="row-sub" data-row="spotify-login">{{ login }}</span>{% endif %}{% if let Some(note) = spotify.note %}<span class="row-sub" data-row="spotify-off">{{ note }}</span>{% endif %}</span>
+                <span class="row-label">{{ self.t("device.music.plays_as") }}{% if let Some(note) = spotify.note %}<span class="row-sub tone-orange" data-row="spotify-off">{{ note }}</span>{% endif %}</span>
                 <select class="pick" id="music_spotify_account" name="account" data-autosave{% if spotify.notice.is_some() %} autofocus{% endif %}>
                     <option value="off"{% if spotify.bound.is_none() %} selected{% endif %}>{{ self.t("common.off") }}</option>
                     {% for (id, name) in spotify.accounts %}
@@ -173,7 +191,14 @@
                 <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </a>
         </form>
-        <p class="group-footer">{{ self.t("device.music.spotify_footer") }}</p>
+        <div class="group-footer">
+            <details class="info">
+                <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    <p>{{ self.t("device.music.spotify_footer") }}</p>
+                </div>
+            </details>
+        </div>
     </section>
     {% endif %}
 
@@ -181,7 +206,14 @@
         <h2 class="group-header" id="music-sonos-title">{{ self.t("device.music.sonos") }}</h2>
         {% if music.sonos.all && music.sonos.rows.is_empty() %}
         <div class="group"><p class="row row-note" data-row="no-speakers">{{ self.t("device.music.no_speakers") }}</p></div>
-        <p class="group-footer">{{ self.t("device.music.no_speakers_footer") }}</p>
+        <div class="group-footer">
+            <details class="info">
+                <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    <p>{{ self.t("device.music.no_speakers_footer") }}</p>
+                </div>
+            </details>
+        </div>
         {% else %}
         <form method="post" action="/devices/{{ device.id }}/music/sonos-rooms#music-sonos" class="group">
             <label class="row">
@@ -200,15 +232,17 @@
             </label>
             {% endfor %}
             {% endif %}
+            {% if music.sonos.none_allowed() %}<p class="row row-note" data-row="sonos-none">{{ self.t("device.music.sonos_none") }}</p>{% endif %}
             <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
             {% if let Some(text) = music.sonos.notice %}
             <p class="flash flash-error" role="status" data-flash="music-sonos">{{ text }}</p>
             {% endif %}
         </form>
-        <div class="group-footer">{% if music.sonos.none_allowed() %}{{ self.t("device.music.sonos_none") }}{% else if music.sonos.all %}{{ self.t("device.music.sonos_all") }}{% else %}{{ self.t("device.music.sonos_some") }}{% endif %}
+        <div class="group-footer">
             <details class="info">
                 <summary aria-label="{{ self.t("device.music.sonos_info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
+                    {% if music.sonos.all %}<p>{{ self.t("device.music.sonos_all") }}</p>{% endif %}
                     <p>{{ self.t("device.music.sonos_info") }}</p>
                 </div>
             </details>

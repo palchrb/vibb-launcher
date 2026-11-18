@@ -1367,7 +1367,7 @@ async fn the_page_shows_two_switches_and_the_limit_and_saves_back_to_music_setti
     assert!(form.contains("<input type=\"hidden\" name=\"v\" value=\"2\">"));
     assert!(form.contains("Stream on mobile data"));
     assert!(form.contains("Download on mobile data"));
-    assert!(form.contains("Never while roaming. On Wi-Fi both always work"));
+    assert!(form.contains("<p>Never while roaming. On Wi-Fi both always work.</p>"));
     assert!(form.contains("Storage limit"));
     assert!(form.contains("The offline episodes always stay"));
     for name in ["stream_mobile_data", "download_mobile_data", "storytel"] {
@@ -3329,9 +3329,10 @@ async fn the_music_page_scopes_sonos_rooms() {
     let page = music_page(&app, &cookie, device).await;
     let sonos = sonos_group(&page);
     assert!(sonos.contains("No speakers seen yet."));
+    // Behind the footer's (i) alone (design 113).
     assert!(sonos.contains(
         // Askama escapes the word's apostrophe.
-        "Until then the phone may play on any Sonos speaker it finds, a friend&#39;s too."
+        "<p>Until then the phone may play on any Sonos speaker it finds, a friend&#39;s too.</p>"
     ));
     assert!(!sonos.contains("/music/sonos-rooms"));
     let all = library().await;
@@ -3409,7 +3410,10 @@ async fn the_music_page_scopes_sonos_rooms() {
     assert_eq!(stored_rooms(&app, device).await.as_deref(), Some("[]"));
     assert_eq!(library().await["sonos_rooms"], json!([]));
     let page = music_page(&app, &cookie, device).await;
-    assert!(sonos_group(&page).contains("No room on: music plays only on the phone"));
+    // Design 113: a quiet row in the group; the footer is its (i) alone.
+    let sonos = sonos_group(&page);
+    assert!(sonos.contains("<p class=\"row row-note\" data-row=\"sonos-none\">No room on</p>"));
+    assert!(!sonos.contains("Only the rooms switched on."));
 
     // All rooms again: NULL, and the library as it was.
     save_rooms(&app, &cookie, device, &[("all", "on"), ("room", KJOKKEN)]).await;
@@ -5846,7 +5850,7 @@ async fn the_music_tab_speaks_norwegian() {
     let files = page(format!("/music/entries/{own}?lang=nb")).await;
     has(
         &files,
-        &["Filer (0 av ", "Lydfiler", "Ingen telefon har det ennå."],
+        &["Filer (0 av ", "Lydfiler", "Ingen telefoner ennå"],
     );
 
     let settings = page("/music/settings?lang=nb".to_string()).await;
@@ -5864,7 +5868,7 @@ async fn the_music_tab_speaks_norwegian() {
     has(
         &categories,
         &[
-            "Legg til en kategori",
+            "Ny kategori",
             "<legend>Farge</legend>",
             "title=\"note\"",
             " Blå</label>",

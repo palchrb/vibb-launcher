@@ -180,6 +180,8 @@ pub struct SweepCard {
     pub episodes: Option<String>,
     /// "first 100 episodes (the series has more)", "list cut to the newest 812 (size limit)".
     pub notes: Vec<String>,
+    /// A Spotify show listed as an audiobook's chapters: the entry page's orange line (design 113).
+    pub audiobook: bool,
     pub status: StatusBlock,
     /// Check now isn't allowed before this ("14:20").
     pub check_after: Option<String>,
@@ -271,7 +273,7 @@ pub struct OwnForm {
     pub error: Option<String>,
 }
 
-/// "Add a category".
+/// "New category".
 pub struct NewCategoryForm {
     pub name: String,
     pub icon: String,
@@ -303,8 +305,10 @@ pub struct StorytelCard {
     pub error: Option<String>,
     /// How the last save went (a session flash): "Saved - Storytel shows 4 series and books".
     pub notice: Option<String>,
-    /// What Storytel last said about the login (design 26b §2.3), and whether it is bad news.
+    /// What went wrong with the login (design 26b §2.3; nothing while it is fine, design 113),
+    /// the retry rule behind its ⓘ, and whether it is bad news.
     pub status: Option<String>,
+    pub status_detail: Option<String>,
     pub status_error: bool,
     /// The last login's facts under the ⓘ while a login is stored (design 58 §2.7): from the
     /// account's memory, never a column.
@@ -800,20 +804,21 @@ async fn settings_page(
             .unwrap_or_else(|| crate::i18n::t(lang, "music.settings.earlier").to_string())
     });
     let stale = stored.0.is_some() && !login_opens(state, stored.1.as_deref());
-    let (status, status_error) = if stored.0.is_some() && !stale {
+    let (status, status_detail, status_error) = if stored.0.is_some() && !stale {
         storytel_status(
             &zone,
             stored.3,
             stored.4.as_deref(),
             stored.5,
-            stored.6.as_deref(),
             stored.7.as_deref(),
             stored.8.as_deref(),
             state.music_sweep.now(),
         )
-        .map_or((None, false), |(text, bad)| (Some(text), bad))
+        .map_or((None, None, false), |(text, detail, bad)| {
+            (Some(text), detail, bad)
+        })
     } else {
-        (None, false)
+        (None, None, false)
     };
     let storytel = StorytelCard {
         key_available: state.music_key.is_some(),
@@ -823,6 +828,7 @@ async fn settings_page(
         error: storytel_error,
         notice: storytel_notice,
         status,
+        status_detail,
         status_error,
         session: stored
             .0
@@ -1688,18 +1694,17 @@ async fn storytel_phones(db: &sqlx::SqlitePool) -> Vec<i64> {
 }
 
 /// The card's line about the stored login (design 26b §2.3) from `music_storytel`'s stamps and
-/// `login_error` (a code): `(text, bad news)`, `None` while Storytel hasn't been asked.
-#[allow(clippy::too_many_arguments)]
+/// `login_error` (a code): `(text, the retry rule for its ⓘ, bad news)`, `None` while all is well or
+/// Storytel hasn't been asked (design 113: an accepted login says nothing).
 fn storytel_status(
     zone: &crate::display_time::Zone,
     generation: i64,
     refused_at: Option<&str>,
     refused_generation: Option<i64>,
-    ok_at: Option<&str>,
     error: Option<&str>,
     error_at: Option<&str>,
     now: DateTime<Utc>,
-) -> Option<(String, bool)> {
+) -> Option<(String, Option<String>, bool)> {
     use crate::i18n::{t, t_params};
     let lang = zone.lang();
     // "10:02" from `login_error_at`, else "at the last try".
@@ -1714,41 +1719,41 @@ fn storytel_status(
         }
         None => t_params(lang, key, params),
     };
-    let Some(code) = error else {
-        let at = crate::music_sweep::parse_stamp(ok_at?)?;
-        return Some((
-            t_params(
-                lang,
-                "music.settings.storytel_accepted",
-                &[("when", &zone.when(at, now))],
-            ),
-            false,
-        ));
-    };
+    let code = error?;
     let text = match code {
         "login_refused" => {
             let at = refused_at
                 .and_then(crate::music_sweep::parse_stamp)
                 .filter(|_| refused_generation == Some(generation));
-            match (
-                at,
-                crate::storytel::cooldown_until(refused_at, refused_generation, generation, now),
+            let Some(at) = at else {
+                return Some((
+                    t(lang, "music.settings.storytel_refused").to_string(),
+                    None,
+                    true,
+                ));
+            };
+            let retry = match crate::storytel::cooldown_until(
+                refused_at,
+                refused_generation,
+                generation,
+                now,
             ) {
-                (Some(at), Some(until)) => t_params(
+                Some(until) => t_params(
                     lang,
-                    "music.settings.storytel_refused_until",
-                    &[
-                        ("when", &zone.when(at, now)),
-                        ("until", &zone.until(until, now)),
-                    ],
+                    "music.settings.storytel_retry_until",
+                    &[("until", &zone.until(until, now))],
                 ),
-                (Some(at), None) => t_params(
+                None => t(lang, "music.settings.storytel_retry_next").to_string(),
+            };
+            return Some((
+                t_params(
                     lang,
-                    "music.settings.storytel_refused_retry",
+                    "music.settings.storytel_refused_at",
                     &[("when", &zone.when(at, now))],
                 ),
-                _ => t(lang, "music.settings.storytel_refused").to_string(),
-            }
+                Some(retry),
+                true,
+            ));
         }
         "storytel_key" => t(lang, "music.settings.storytel_other_key").to_string(),
         "no_jwt" => timed(
@@ -1776,7 +1781,7 @@ fn storytel_status(
             ),
         },
     };
-    Some((text, true))
+    Some((text, None, true))
 }
 
 /// `POST /music/storytel` (`email`, `password`): before anything is stored, one probe with the
@@ -3953,6 +3958,7 @@ impl SweepView {
             count,
             episodes,
             notes,
+            audiobook: false,
             status: self.status(entry),
             check_after: self.check_after(entry),
             offline: true,
@@ -3978,8 +3984,8 @@ impl SweepView {
     }
 
     /// A Spotify card's sweep part (design 26c §3.6): "42 tracks · read as Forelder", what was left
-    /// out, a cap, context mode's notice; no offline select (it streams); the link back to
-    /// Spotify.
+    /// out, a cap, a refused artist's albums, whether it is an audiobook; no offline select (it
+    /// streams); the link back to Spotify.
     fn spotify_card(&self, entry: &MusicEntry) -> SweepCard {
         use crate::i18n::{t, t_count, t_params};
         use crate::spotify::LinkKind;
@@ -4019,27 +4025,18 @@ impl SweepView {
             }
             format!("{}{reader}", counted(l.item_count))
         });
+        // A show listed as an audiobook's chapters (2026-11-09): Spotify plays it only with listening time on the
+        // child's own account - the entry page's orange line, the one place the parent reads about the entry.
+        let audiobook = listing
+            .is_some_and(|l| l.spotify_mode.as_deref() != Some("context") && l.spotify_audiobook);
         if let Some(listing) = listing {
             if listing.spotify_mode.as_deref() == Some("context") {
-                notes.push(
-                    t(
-                        lang,
-                        match kind {
-                            Some(LinkKind::Artist) if self.spotify_artist_albums => {
-                                "music.card.artist_refused"
-                            }
-                            Some(LinkKind::Artist) => "music.card.artist_context",
-                            _ => "music.spotify.context",
-                        },
-                    )
-                    .to_string(),
-                );
-            } else {
-                // A show listed as an audiobook's chapters (2026-11-09): Spotify plays it only with listening time on
-                // the child's own account - said here, the one place the parent reads about the entry.
-                if listing.spotify_audiobook {
-                    notes.push(t(lang, "music.card.audiobook").to_string());
+                // Context mode's why is the order line's ⓘ in the entry's form (design 113); a refused artist's
+                // albums stay a note.
+                if kind == Some(LinkKind::Artist) && self.spotify_artist_albums {
+                    notes.push(t(lang, "music.card.artist_refused").to_string());
                 }
+            } else {
                 if listing.spotify_skipped > 0 {
                     notes.push(t_params(
                         lang,
@@ -4086,6 +4083,7 @@ impl SweepView {
             count,
             episodes,
             notes,
+            audiobook,
             status: self.status(entry),
             check_after: self.check_after(entry),
             offline: false,
@@ -4561,11 +4559,9 @@ pub struct SpotifyBindingCard {
     pub accounts: Vec<(i64, String)>,
     /// The account this phone plays as.
     pub bound: Option<i64>,
-    /// The bound account's login: "Log in again before 14 Apr 2027" (the "Plays as" row's sub-line).
-    pub login: Option<String>,
     /// What needs the parent (§4.2's sub-page warnings: a short title, one sentence).
     pub warnings: Vec<Note>,
-    /// Why this phone's ticked Spotify entries aren't sent (not bound): the row's sub-line.
+    /// Why this phone's ticked Spotify entries aren't sent (not bound): the row's orange sub-line.
     pub note: Option<String>,
     /// One-shot message after a refused save (`?music_notice=spotify_...`).
     pub notice: Option<&'static str>,
@@ -4627,6 +4623,7 @@ fn warning(title: &str, detail: String) -> Note {
         warning: true,
         title: title.to_string(),
         value: None,
+        sub: None,
         detail: Some(detail),
         fix: None,
     }
@@ -5094,8 +5091,8 @@ pub(crate) async fn device_card(
 }
 
 /// Device › Music's "Plays as" (design 26c §2.5, §3.6; design 31 §4.2's shapes since the second
-/// merge of main): the picker's accounts, the bound account's login line, and what needs the
-/// parent as notes - no app, the login (renewing, another key, ending), one account on two
+/// merge of main): the picker's accounts and what needs the parent as notes - no app, the login
+/// (renewing, another key, ending; design 113: nothing while it isn't ending), one account on two
 /// phones, the phone's own refusals (`music_state.spotify`) - plus the ticked Spotify entries an
 /// unbound phone isn't sent. Dates in the Phone Setup zone. `None` while nothing about Spotify
 /// exists here (no app, no account, no binding). The phone's passing words (`ok`, `unreachable`,
@@ -5119,14 +5116,6 @@ async fn spotify_binding_card(
     let now = state.music_sweep.now();
     use crate::i18n::{t, t_params};
     let zone = crate::display_time::Zone::load(&state.db, lang).await;
-    let day = |at: chrono::DateTime<chrono::Utc>, year: bool| {
-        if year {
-            date_with_year(&zone, at)
-        } else {
-            day_text(&zone, at)
-        }
-    };
-    let mut login = None;
     let mut warnings = Vec::new();
     if !configured {
         warnings.push(warning(
@@ -5149,13 +5138,15 @@ async fn spotify_binding_card(
                 named("device.music.spotify.other_key_sub"),
             ));
         } else if let Some(ends) = row.login_ends() {
+            // Design 113 P4: a login that isn't ending says nothing; within 14 days the orange
+            // warning comes.
             if row.login_ending(now) {
                 warnings.push(if now < ends {
                     warning(
                         &t_params(
                             lang,
                             "device.music.spotify.ends",
-                            &[("date", &day(ends, false))],
+                            &[("date", &day_text(&zone, ends))],
                         ),
                         named("device.music.spotify.log_in_before"),
                     )
@@ -5165,12 +5156,6 @@ async fn spotify_binding_card(
                         named("device.music.spotify.log_in_again"),
                     )
                 });
-            } else {
-                login = Some(t_params(
-                    lang,
-                    "device.music.spotify.login_line",
-                    &[("date", &day(ends, true))],
-                ));
             }
         }
         // One account plays on one phone at a time (§2.5).
@@ -5247,7 +5232,6 @@ async fn spotify_binding_card(
             .map(|row| (row.id, row.display_name.clone()))
             .collect(),
         bound,
-        login,
         warnings,
         note,
         notice,

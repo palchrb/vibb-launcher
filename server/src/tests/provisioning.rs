@@ -63,10 +63,6 @@ async fn provision_page_with_checksum_shows_qr() {
     assert!(page.contains("data-row=\"qr\""), "no QR code rendered");
     assert!(!page.contains("data-missing=\"checksum\""));
     // The launcher's name (design 34 P11, qa-34-s12-code L1).
-    assert!(
-        page.contains("You type it in Vibb One&#39;s settings on the phone."),
-        "{page}"
-    );
     assert!(page.contains("make Vibb One the device owner"), "{page}");
     assert!(
         !page.contains("Vibb&#39;s") && !page.contains("Vibb's"),
@@ -424,14 +420,17 @@ async fn every_form_in_the_add_flow_lands_where_it_should() {
     assert!(!html.contains("data-warning=\"replaces\""));
     let qr_action = format!("/devices/{id}/provision#qr");
     let code_action = format!("/devices/{id}/regenerate-code");
-    let mut actions: Vec<String> = settings_pages::forms(&html)
+    let actions: Vec<String> = settings_pages::forms(&html)
         .into_iter()
         .map(|(action, _)| action)
         .collect();
-    // Design 86: the launcher check's Check Again comes first (tested on its own below).
-    assert_eq!(
-        actions.remove(0),
-        "/settings/provisioning/launcher-check#launcher"
+    // Design 113: a launcher that works shows no launcher group (and no Check Again) here;
+    // Settings › Phone Setup keeps it.
+    assert!(!html.contains("/settings/provisioning/launcher-check#launcher"));
+    // Check Again's answer still lands: an empty #launcher stays, drawing nothing (a save never jumps to the top).
+    assert!(
+        html.contains("<section id=\"launcher\"></section>"),
+        "{html}"
     );
     assert_eq!(actions, [qr_action.clone(), code_action.clone()]);
     let form_at = html.find(&format!("action=\"{qr_action}\"")).unwrap();
@@ -881,11 +880,12 @@ async fn the_env_server_url_loses_to_the_saved_one() {
             .into_response();
         read_response(response).await.text()
     };
-    // Nothing saved: the env value, said so.
+    // Nothing saved: the env value, said so - a word in view, the address behind the field's ⓘ (design 113).
     let html = phone_setup(state.clone()).await;
     let hint = settings_pages::part(&html, "data-source=", "</p>");
+    assert_eq!(hint, "data-source=\"env\">From .env</p>", "{html}");
     assert!(
-        hint.starts_with("data-source=\"env\"") && hint.contains(env),
+        html.contains(&format!("From .env (PHONE_SERVER_URL): {env}.")),
         "{html}"
     );
     assert!(!connect(state.clone()).await.contains("Server setup needed"));
@@ -927,7 +927,8 @@ fn with_check(state: &AppState, verdict: crate::launcher_check::Verdict) -> AppS
 }
 
 /// Design 86: a launcher a phone would refuse shows the warning in place of the QR, and makes no
-/// code; an older one shows the QR with the warning; a good one says what new phones get.
+/// code; an older one shows the QR with the warning; a good one shows no launcher group on the QR page (design 113:
+/// the Android a new phone needs is in the QR footer's ⓘ; Phone Setup says what new phones get).
 #[tokio::test]
 async fn the_launcher_check_decides_the_qr() {
     use crate::launcher_check::Verdict;
@@ -935,8 +936,13 @@ async fn the_launcher_check_decides_the_qr() {
     let (id, _) = app.create_device("Emma").await;
 
     let page = provision_page(app.state.clone(), id).await;
-    assert!(page.contains("data-launcher=\"works\""), "{page}");
-    assert!(page.contains("New phones get Vibb One 0.39.0"), "{page}");
+    assert!(!page.contains("data-launcher="), "{page}");
+    assert!(!page.contains("New phones get Vibb One"), "{page}");
+    assert!(
+        settings_pages::part(&page, "<section id=\"qr\"", "</section>")
+            .contains("<p data-row=\"launcher-needs\">A new phone needs Android 14 or newer"),
+        "{page}"
+    );
     assert!(page.contains("data-row=\"qr\""));
 
     let older = with_check(
@@ -947,6 +953,7 @@ async fn the_launcher_check_decides_the_qr() {
     );
     let page = provision_page(older, id).await;
     assert!(page.contains("data-launcher=\"older\""), "{page}");
+    assert!(page.contains("New phones get the older one."), "{page}");
     assert!(
         page.contains("installs Vibb One 0.34.0 - older than 0.39.0-rc.6"),
         "{page}"
@@ -1009,6 +1016,7 @@ async fn check_again_comes_back_to_the_row() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let page = app.get_page("/settings/provisioning", &cookie).await.text();
+    assert!(page.contains("data-launcher=\"works\""), "{page}");
     assert!(page.contains("New phones get Vibb One 0.39.0"), "{page}");
     // The APK's minSdkVersion 34.
     assert!(

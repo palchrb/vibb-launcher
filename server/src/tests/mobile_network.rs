@@ -156,7 +156,9 @@ async fn a_bad_save_writes_nothing() {
 }
 
 /// The page: no update line and no disabled control, before a report and after one; the phone's state under its group
-/// once it reports; the summary's row value, its lines and the header's roaming part.
+/// once it reports; the summary's row value, its lines and the header's roaming part. Design 113: no "only Vibb" line
+/// restating the chosen radio, and mobile data off is orange on the page and the summary's Attention row, not a
+/// Mobilnett line or a part of its value.
 #[tokio::test]
 async fn the_page_and_the_summary_say_what_the_phone_reports() {
     let app = TestApp::new().await;
@@ -192,12 +194,14 @@ async fn the_page_and_the_summary_say_what_the_phone_reports() {
     )
     .await;
     let html = app.get_page(&page, &cookie).await.text();
-    for line in ["switch", "only-vibb", "roaming", "lingering"] {
+    // Bare Vibb (the default) with Android's roaming switch off: the orange switch line (design 113).
+    for line in ["switch", "roaming", "lingering"] {
         assert!(
             html.contains(&format!("data-mobile-line=\"{line}\"")),
             "{line}"
         );
     }
+    assert!(!html.contains("data-mobile-line=\"only-vibb\""), "{html}");
     let summary = app
         .get_page(&format!("/devices/{id}"), &cookie)
         .await
@@ -205,12 +209,13 @@ async fn the_page_and_the_summary_say_what_the_phone_reports() {
     assert!(summary.contains(&format!(
         "href=\"/devices/{id}/mobile\" data-row=\"mobile\""
     )));
-    assert!(summary.contains("data-mobile-line=\"only-vibb\""));
+    assert!(!summary.contains("data-mobile-line=\"only-vibb\""));
     assert!(summary.contains("data-mobile-line=\"lingering\""));
     // Design 94 §6.2: the header's last part.
     assert!(summary.contains(" data-roaming>"), "{summary}");
 
-    // Mobile data off on the phone: the summary says so, and the row's value too.
+    // Mobile data off on the phone: the summary's Attention row says so, once - no Mobilnett line, no part of the row's
+    // value (QA L6); the page's line is orange.
     report(
         &app,
         &token,
@@ -222,8 +227,23 @@ async fn the_page_and_the_summary_say_what_the_phone_reports() {
         .get_page(&format!("/devices/{id}"), &cookie)
         .await
         .text();
-    assert!(summary.contains("data-mobile-line=\"data-off\""));
+    assert!(
+        summary.contains(&format!(
+            "href=\"/devices/{id}/mobile#mobile-data\" data-attention=\"mobile-data-off\""
+        )),
+        "{summary}"
+    );
+    assert!(!summary.contains("data-mobile-line=\"data-off\""));
     assert!(!summary.contains("data-mobile-line=\"only-vibb\""));
+    let row = summary.split("data-row=\"mobile\"").nth(1).unwrap();
+    let row = row.split("</a>").next().unwrap();
+    assert!(row.contains("Only Vibb"), "{row}");
+    assert!(!row.contains("Mobile data off"), "{row}");
+    let html = app.get_page(&page, &cookie).await.text();
+    assert!(
+        html.contains("<div class=\"attention attention-action\" data-mobile-line=\"data-off\">"),
+        "{html}"
+    );
 }
 
 /// Migration 0145 (design 97 §7, D1/D2): every existing row is set explicitly - `phone` becomes `home` only where the
@@ -383,8 +403,8 @@ async fn the_page_saves_on_its_anchors_and_the_home_form_keeps_bit_32() {
         !html.contains("id=\"data-roaming\""),
         "the old group is gone"
     );
-    // Android's switch on under Som hjemme, the settings lock on: "on - locked, Emma can't change it".
-    assert!(html.contains("on – locked, Emma can"), "{html}");
+    // Android's switch on under På: as it should be, so nothing is said about it (design 113).
+    assert!(!html.contains("data-mobile-line=\"switch\""), "{html}");
     // The kid's Off and the abroad sink are worded in Norwegian too.
     report(
         &app,
@@ -407,8 +427,9 @@ async fn the_page_saves_on_its_anchors_and_the_home_form_keeps_bit_32() {
     for words in [
         "Emma har slått mobildata av",
         "Roamer i Sverige – Androids roamingbryter er av",
+        // Behind the line's ⓘ, still in the page.
         "har ingen mobildata nå, heller ikke Vibb",
-        "I utlandet",
+        "Roaming",
     ] {
         assert!(html.contains(words), "{words}");
     }
@@ -421,12 +442,12 @@ async fn the_page_saves_on_its_anchors_and_the_home_form_keeps_bit_32() {
         "{summary}"
     );
     assert!(
-        summary.contains("Utlandet: som hjemme · Mobildata av (Emma)"),
+        summary.contains("Roaming på · Mobildata av (Emma)"),
         "{summary}"
     );
 }
 
-/// Design 97 §6: a report abroad raises one notice per crossing (its key the place and the instant, to "I utlandet"), a
+/// Design 97 §6: a report abroad raises one notice per crossing (its key the place and the instant, to "Roaming"), a
 /// repeat of the same place none, and a report without `where` none.
 #[tokio::test]
 async fn a_crossing_raises_the_roaming_notice_once() {

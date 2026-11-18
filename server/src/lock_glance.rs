@@ -168,9 +168,11 @@ impl Note {
             ),
         };
         crate::handlers::device_pages::Note {
-            warning: true,
+            // No Child PIN is the parent's choice: a quiet note, never a warning (2026-11-18).
+            warning: self != Note::NoChildPin,
             title: crate::i18n::t(lang, title).to_string(),
             value: None,
+            sub: None,
             detail: Some(crate::i18n::t(lang, detail).to_string()),
             fix: None,
         }
@@ -498,7 +500,8 @@ mod tests {
         all.push(Note::NoNotificationAccessButMessages);
         for note in all {
             let words = note.note(crate::i18n::Lang::En);
-            assert!(words.warning);
+            // No Child PIN is the parent's choice: a quiet note (2026-11-18).
+            assert_eq!(words.warning, note != Note::NoChildPin, "{note:?}");
             // §4.2: a title of up to 6 words and one sentence.
             assert!(words.title.split_whitespace().count() <= 6, "{note:?}");
             let detail = words.detail.unwrap();

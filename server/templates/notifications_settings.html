@@ -19,7 +19,11 @@
     {% if clock_warning %}
     <div class="attention attention-alarm" id="clock-warning">
         <svg class="attention-icon" viewBox="0 0 22 22" aria-hidden="true" focusable="false"><path d="M11 2.5l9.5 17h-19z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M11 9v4.5M11 16.2v.3" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
-        <div class="attention-text">{{ self.t("settings.notifications.clock_warning") }}<div class="attention-sub">{{ self.t("settings.notifications.clock_warning_sub") }}</div></div>
+        <div class="attention-text">{{ self.t("settings.notifications.clock_warning") }}<div class="attention-sub">
+            <details class="info">
+                <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel"><p>{{ self.t("settings.notifications.clock_warning_sub") }}</p></div>
+            </details></div></div>
     </div>
     {% endif %}
 
@@ -39,8 +43,16 @@
                 <span class="row-label">{{ self.t("settings.notifications.title") }}</span>
                 <span class="row-value" id="push-state">{{ self.t("settings.notifications.needs_js") }}</span>
             </div>
-            <p class="row row-note" id="push-home-screen" hidden>{{ self.t("settings.notifications.home_screen") }}</p>
-            <p class="row row-note" id="push-blocked" hidden>{{ self.t("settings.notifications.blocked") }}</p>
+            {#- Design 113 (QA L3): the state word is #push-state's value; these say how to fix it, behind their ⓘ.
+                notifications.js shows one by its id. -#}
+            <details class="info cell" id="push-home-screen" hidden>
+                <summary class="row"><span class="row-label tone-orange">{{ self.t("common.how_to_fix") }}</span><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel"><p>{{ self.t("settings.notifications.home_screen") }}</p></div>
+            </details>
+            <details class="info cell" id="push-blocked" hidden>
+                <summary class="row"><span class="row-label tone-orange">{{ self.t("common.how_to_fix") }}</span><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel"><p>{{ self.t("settings.notifications.blocked") }}</p></div>
+            </details>
             <button type="button" class="row row-button" id="push-on" hidden disabled>{{ self.t("settings.notifications.turn_on") }}</button>
             <button type="button" class="row row-button" id="push-off" hidden>{{ self.t("settings.notifications.turn_off") }}</button>
             {% if let Some((text, error)) = this_notice %}
@@ -52,10 +64,13 @@
             {% if let Some(id) = device %}<input type="hidden" name="device" value="{{ id }}">{% endif %}
             <input type="hidden" name="endpoint" value="">
         </form>
-        <p class="group-footer">{{ self.t("settings.notifications.this_device_footer") }}<noscript> {{ self.t("settings.notifications.needs_js_footer") }}</noscript></p>
         {% else %}
-        <div class="group">
-            <p class="row row-note">{{ self.t("settings.notifications.no_key") }}</p>
+        <div class="attention attention-action">
+            <div class="attention-text">{{ self.t("settings.notifications.no_key") }}<div class="attention-sub">
+                <details class="info">
+                    <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                    <div class="info-panel"><p>{{ self.t("settings.notifications.no_key_why") }}</p></div>
+                </details></div></div>
         </div>
         {% endif %}
     </section>
@@ -98,8 +113,14 @@
         </div>
         {% endfor %}
         {#- 2026-10-25: a new Home Screen copy is a new web app without the permission, while the old
-            copy's subscription lives on at Apple (accepted, never shown: the health rule marks it). -#}
-        <div class="group-footer">{{ self.t("settings.notifications.shown_footer") }}{% if !devices.is_empty() %} <span data-note="added-again">{{ self.t("settings.notifications.added_again") }}</span>{% endif %}</div>
+            copy's subscription lives on at Apple (accepted, never shown: the health rule marks it). Design 113: the
+            line only while a device may not be showing them or has stopped. -#}
+        <div class="group-footer">{% if devices_unhealthy %}<span data-note="added-again">{{ self.t("settings.notifications.added_again") }}</span> {% endif %}
+            <details class="info">
+                <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel"><p>{{ self.t("settings.notifications.shown_footer") }}</p></div>
+            </details>
+        </div>
     </section>
 
     {#- One form, the handler writes every switch (a missing one is off). The switches govern the
@@ -121,7 +142,12 @@
             {% endfor %}
             <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
         </form>
-        <p class="group-footer">{{ self.t("settings.notifications.events_footer") }}</p>
+        <div class="group-footer">
+            <details class="info">
+                <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel"><p>{{ self.t("settings.notifications.events_footer") }}</p></div>
+            </details>
+        </div>
     </section>
     </div>
 </main>

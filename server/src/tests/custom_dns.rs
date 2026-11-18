@@ -53,8 +53,38 @@ async fn pick(app: &TestApp, cookie: &str, upstream: &str) -> TestResponse {
 }
 
 /// A field of the Custom Server form, from its label to the end of its `.field`.
+/// A field from its label to the `</div>` that closes it (a field ⓘ's panel, design 113, has
+/// its own `<div>` inside).
 fn field<'a>(html: &'a str, id: &str) -> &'a str {
-    part(html, &format!("for=\"{id}\""), "</div>")
+    let start = html
+        .find(&format!("for=\"{id}\""))
+        .unwrap_or_else(|| panic!("no {id}"));
+    let rest = &html[start..];
+    let mut depth = 0usize;
+    let mut at = 0usize;
+    loop {
+        let open = rest[at..].find("<div").map(|i| at + i);
+        let close = rest[at..]
+            .find("</div>")
+            .map(|i| at + i)
+            .expect("an open field");
+        match open {
+            Some(o) if o < close => {
+                depth += 1;
+                at = o + 4;
+            }
+            _ if depth == 0 => return &rest[..close + 6],
+            _ => {
+                depth -= 1;
+                at = close + 6;
+            }
+        }
+    }
+}
+
+/// The Custom Server row's state line (design 113: said once, on the row, not under the field).
+fn custom_sub(html: &str) -> &str {
+    part(html, "id=\"custom-server\"", "</summary>")
 }
 
 async fn events(app: &TestApp) -> Vec<String> {
@@ -73,7 +103,7 @@ async fn a_custom_server_is_saved_write_only_and_lands_on_its_group() {
     let page = app.get_page("/dns", &cookie).await.text();
     check_forms("/dns", &page);
     assert!(field(&page, "custom_server").contains("value=\"\""));
-    assert!(field(&page, "custom_server").contains("Not set."));
+    assert!(custom_sub(&page).contains("Not set<"));
     assert!(field(&page, "custom_backup").contains("value=\"https://1.1.1.3/dns-query\""));
     assert!(!page.contains("forget_custom"));
     assert!(page.contains("<details class=\"disclosure cell\" id=\"custom-server\">"));
@@ -105,7 +135,7 @@ async fn a_custom_server_is_saved_write_only_and_lands_on_its_group() {
         )
     );
     let page = app.get_page("/dns", &cookie).await.text();
-    assert!(field(&page, "custom_server").contains("Set (dns.example · DNS-over-HTTPS)."));
+    assert!(custom_sub(&page).contains("dns.example · DNS-over-HTTPS"));
     assert!(field(&page, "custom_backup").contains("Set (1.1.1.3 · DNS-over-TLS)."));
     assert!(
         // The stored path never shows (the prefill's own `/dns-query` is ours, not the parent's).
@@ -322,7 +352,7 @@ async fn a_refused_save_never_shows_the_stored_values() {
         assert!(!html.contains(secret), "{secret} in the page");
     }
     assert!(field(&html, "custom_server").contains("value=\"\""));
-    assert!(field(&html, "custom_server").contains("Set (…dns.example · DNS-over-HTTPS)."));
+    assert!(custom_sub(&html).contains("…dns.example · DNS-over-HTTPS"));
     assert_eq!(stored(&app).await.1, pair.0);
 }
 
@@ -334,7 +364,7 @@ async fn an_equal_stored_pair_keeps_its_hints_and_backup() {
     let cookie = app.admin_cookie().await;
     store(&app, "quad9", "tls://9.9.9.9", "tls://9.9.9.9", 1).await;
     let page = app.get_page("/dns", &cookie).await.text();
-    assert!(field(&page, "custom_server").contains("Set (9.9.9.9 · DNS-over-TLS)."));
+    assert!(custom_sub(&page).contains("9.9.9.9 · DNS-over-TLS"));
     assert!(field(&page, "custom_backup").contains("Set (9.9.9.9 · DNS-over-TLS)."));
     assert!(field(&page, "custom_backup").contains("value=\"\""));
 
@@ -652,7 +682,18 @@ async fn the_footer_says_per_phone_which_server_is_in_use() {
     };
     let zone = Zone::load(&app.db, crate::i18n::Lang::En).await;
     let page = app.get_page("/dns", &cookie).await.text();
-    assert_eq!(line(&page, anna), "Anna · Your server in use");
+    // Design 113 P4: a phone using your server as it should has no line; every other line is orange but the wait.
+    assert!(
+        !page.contains(&format!("data-dns-phone=\"{anna}\"")),
+        "{page}"
+    );
+    assert!(page.contains(&format!(
+        "<li class=\"tone-orange\" data-dns-phone=\"{ola}\">"
+    )));
+    assert!(page.contains(&format!(
+        "<li class=\"tone-orange\" data-dns-phone=\"{liv}\">"
+    )));
+    assert!(page.contains(&format!("<li data-dns-phone=\"{kari}\">")));
     assert_eq!(
         line(&page, ola),
         format!(
@@ -814,10 +855,12 @@ async fn the_lines_say_when_dns_cant_be_reached() {
         )
     );
     let ended = format!("couldn't be reached {}-{}", when(50), when(30));
-    assert_eq!(
-        line(&page, ola),
-        format!("Ola · Your server in use · {ended}")
-    );
+    // Your server in use says nothing; the ended outage alone is grey (design 113 QA L4).
+    assert_eq!(line(&page, ola), format!("Ola · DNS {ended}"));
+    assert!(page.contains(&format!("<li data-dns-phone=\"{ola}\">")));
+    assert!(page.contains(&format!(
+        "<li class=\"tone-orange\" data-dns-phone=\"{anna}\">"
+    )));
     assert_eq!(
         line(&page, kari),
         format!("Kari · Waiting for the phone · {ended}")
@@ -835,7 +878,7 @@ async fn the_lines_say_when_dns_cant_be_reached() {
         )
         .await;
         let page = app.get_page("/dns", &cookie).await.text();
-        assert_eq!(line(&page, ola), "Ola · Your server in use", "{since}");
+        assert_eq!(line(&page, ola), "", "{since}");
     }
 
     // An ongoing outage from a phone gone Offline is what it last said (qa-67-code L4).
@@ -936,26 +979,34 @@ async fn the_secure_dns_bypass_on_the_page() {
 
     let page = app.get_page("/dns", &cookie).await.text();
     let lines = |id: i64| lines_of(&page, "data-bypass-phone", id);
-    assert_eq!(
-        lines(anna),
-        ["Anna · Firefox: its own secure DNS can get around the filter"]
-    );
+    assert_eq!(lines(anna), ["Anna · Firefox can get around the filter"]);
     assert_eq!(
         lines(ola),
         [
-            "Ola · Cromite: set its Secure DNS to Off on the phone, or it won't load pages",
-            "Ola · IronFox: its own secure DNS can get around the filter",
+            "Ola · Cromite: its Secure DNS must be off",
+            "Ola · IronFox can get around the filter",
         ]
     );
     // Nothing owed, the filter off, or no report yet: no line.
     for id in [per, liv, mia] {
         assert!(lines(id).is_empty(), "{id}");
     }
+    // Design 113: every bypass line is orange.
+    assert!(page.contains(&format!(
+        "<li class=\"tone-orange\" data-bypass-phone=\"{ola}\">"
+    )));
     let page = page.replace("&#39;", "'");
     let lists = part(&page, "<section id=\"lists\"", "</section>");
-    assert!(lists.contains(
-        "Secure DNS servers<span class=\"row-sub\">Built into Vibb One, on with the filter</span>"
-    ));
+    // The built-in servers: a value, what it means behind the row's ⓘ.
+    let doh = part(lists, "data-list=\"builtin-doh\"", "</details>");
+    assert!(
+        doh.contains("<span class=\"row-label\">Secure DNS servers</span>")
+            && doh.contains("<span class=\"row-value\">Blocked</span>")
+            && doh.contains(
+                "<div class=\"info-panel\"><p>Built into Vibb One, on with the filter</p></div>"
+            ),
+        "{doh}"
+    );
     assert!(lists.contains(
         "Chrome's own secure DNS is turned off, and the best-known public secure-DNS servers are \
          blocked. Firefox and Cromite can still be set to another secure-DNS server by hand."

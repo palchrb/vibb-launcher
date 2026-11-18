@@ -84,7 +84,14 @@
             </details>
             {% endif %}
         </div>
-        <p class="group-footer">{{ self.t("device.sms.held.footer") }}</p>
+        <div class="group-footer">
+            <details class="info">
+                <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    <p>{{ self.t("device.sms.held.footer") }}</p>
+                </div>
+            </details>
+        </div>
         {% endif %}
         {% endif %}
         {#- Design 77 §7: the blocked senders of the last 30 days, folded - nothing to allow. Design 80 D7 (M5): a group
@@ -99,7 +106,14 @@
                 </div>
                 {% endfor %}
             </div>
-            <p class="group-footer">{{ self.t("device.sms.blocked.footer") }}</p>
+            <div class="group-footer">
+                <details class="info">
+                    <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                    <div class="info-panel">
+                        <p>{{ self.t("device.sms.blocked.footer") }}</p>
+                    </div>
+                </details>
+            </div>
         </details>
         {% endif %}
     </section>
@@ -110,7 +124,7 @@
         addresses for the SIM: `full` in place of "Tillat". Always there (an empty #mmsc to land on), its words only
         with rows. Since 2026-11-11 a question is short (the user: fewer words): what is asked, the picture it is
         about, and the warning only for an address Android's list doesn't have for the SIM; what the list says and
-        how long an allow lasts are folded under "Mer", after the buttons. -#}
+        how long an allow lasts are folded under an ⓘ ("Mer" its label, design 113), after the buttons. -#}
     <section id="mmsc"{% if !mmsc.open.is_empty() || (mmsc_notice.is_some() && !mmsc_open) %} aria-labelledby="mmsc-title"{% endif %}>
         {% if !mmsc.open.is_empty() || (mmsc_notice.is_some() && !mmsc_open) %}
         <h2 class="group-header" id="mmsc-title">{{ self.t("device.calls.mmsc.title") }}</h2>
@@ -136,7 +150,7 @@
                         <button type="submit" class="row row-button row-danger" data-mmsc-action="decline">{{ self.t("device.calls.mmsc.decline") }}</button>
                     </form>
                     <details class="info cell" data-mmsc-more>
-                        <summary class="row"><span class="row-label row-label-quiet">{{ self.t("device.calls.mmsc.more") }}</span><svg class="chev section-chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></summary>
+                        <summary aria-label="{{ self.t("device.calls.mmsc.more") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                         <div class="info-panel"><p>{{ row.list }}</p><p>{{ self.t("device.calls.mmsc.lasts") }}</p></div>
                     </details>
                 </div>
@@ -178,7 +192,14 @@
             </div>
             {% endfor %}
         </div>
-        <p class="group-footer">{{ self.tp("device.requests.footer", [("name", device.name.as_str())]) }}</p>
+        <div class="group-footer">
+            <details class="info">
+                <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    <p>{{ self.tp("device.requests.footer", [("name", device.name.as_str())]) }}</p>
+                </div>
+            </details>
+        </div>
         {% endif %}
         {% endif %}
     </section>
@@ -189,7 +210,8 @@
         <form method="post" action="/devices/{{ device.id }}/calls/settings#settings" class="group">
             <input type="hidden" name="section" value="channels">
             {#- Design 77 D2: one three-way choice per channel (off / managed by Vibb / not managed) as a segmented
-                control - three radios that save on change -, the chosen state's sub-line under it. -#}
+                control - three radios that save on change; the chosen states' sentences are in the ⓘ below (design
+                113), no sub-line. -#}
             {% for channel in channels %}
             <div class="row row-stacked" data-channel="{{ channel.name }}">
                 <span class="row-label" id="channel-{{ channel.name }}">{{ channel.label }}</span>
@@ -198,7 +220,6 @@
                     <label class="segment"><input type="radio" name="{{ channel.name }}" value="{{ option.value }}"{% if option.selected %} checked{% endif %} data-autosave><span class="segment-face">{{ option.label }}{% if let Some(note) = option.note %}<span class="segment-note">{{ note }}</span>{% endif %}</span></label>
                     {% endfor %}
                 </div>
-                <span class="row-sub segmented-sub">{{ channel.sub }}</span>
                 {#- Design 77 §8.5 (code QA M1), design 80 D7 (M4): the RCS step before "Styrt av Vibb" is chosen
                     (Messages is visible then) and under it for 14 days after the change; the ⓘ has Google's form for a
                     phone already locked down. -#}
@@ -221,10 +242,12 @@
             {% endfor %}
             <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
         </form>
-        <div class="group-footer">{{ self.t("device.calls.footer") }}
+        <div class="group-footer">
             <details class="info">
                 <summary aria-label="{{ self.t("device.calls.info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
+                    <p>{% for channel in channels %}{% if !loop.first %} {% endif %}{{ channel.sub }}{% endfor %}</p>
+                    <p>{{ self.t("device.calls.footer") }}</p>
                     <p>{{ self.t("device.calls.info") }}</p>
                 </div>
             </details>
@@ -308,7 +331,7 @@
                                     </label>
                                     <p class="adv-mini">{{ self.t("device.sms.messages") }}</p>
                                     <label class="row">
-                                        <span class="row-label">{{ contact.one_way[2] }}{% if contact.texts_in_refused %}<span class="row-sub">{{ self.t("device.sms.emergency_reason") }}</span>{% endif %}</span>
+                                        <span class="row-label">{{ contact.one_way[2] }}</span>
                                         <input type="checkbox" role="switch" class="sw" name="sms_in" value="on"{% if contact.sms_in %} checked{% endif %}{% if contact.texts_in_refused %} disabled{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                                     </label>
                                     {% if !contact.texts_in_refused %}
@@ -389,9 +412,9 @@
                     <label class="field-label" for="contact_number">{{ self.t("device.calls.number") }}</label>
                     <input type="tel" id="contact_number" name="number" value="{{ add_number }}" required{% if let Some((field, _)) = add_error %}{% if *field == "number" %} aria-invalid="true" aria-describedby="contact_number-error" autofocus{% endif %}{% endif %}>
                     {% if let Some((field, why)) = add_error %}{% if *field == "number" %}<p class="field-error" id="contact_number-error">{{ why }}</p>{% endif %}{% else %}<p class="field-hint">{{ self.tp("device.calls.number_hint", [("code", default_country_code.as_str())]) }}</p>{% endif %}
-                    {#- QA L3 (the user, 2026-11-09): a kid's request for a short number says it may cost money and that the parent
-                        chooses - calls and texts start off. Follows the number in the field, as the save judges it. -#}
-                    {% if add_short %}<p class="field-hint tone-orange" data-request-short>{{ self.tp("device.requests.short_choose", [("name", device.name.as_str())]) }}</p>{% endif %}
+                    {#- QA L3 (the user, 2026-11-09): a kid's request for a short number says it may cost money (calls and
+                        texts start off). Follows the number in the field, as the save judges it. -#}
+                    {% if add_short %}<p class="field-hint tone-orange" data-request-short>{{ self.t("device.requests.short_choose") }}</p>{% endif %}
                     {#- Design 80 D5: the same four choices as a contact, its Avansert with the one-way switches -
                         "Kontakten" in the words until it has a name. `switches` says the form has them; `*_shown`
                         what each main row shows (static/contact-form.js keeps them equal to the pair's class, and
@@ -471,13 +494,20 @@
                         <option value="{{ contact_id }}">{{ label }}</option>
                         {% endfor %}
                     </select>
-                    <p class="field-hint">{{ self.t("device.calls.family_hint") }}</p>
                     <button type="submit" class="button-wide">{{ self.t("device.calls.add") }}</button>
                 </form>
             </details>
             {% endif %}
         </div>
-        <p class="group-footer">{{ self.t("device.calls.contacts_footer") }} {{ self.t("device.calls.photo_privacy") }}</p>
+        <div class="group-footer">
+            <details class="info">
+                <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    <p>{{ self.t("device.calls.contacts_footer") }}</p>
+                    <p>{{ self.t("device.calls.photo_privacy") }}</p>
+                </div>
+            </details>
+        </div>
     </section>
 
     {#- Design 80 D8: one Avansert at the foot for the rest - the emergency menu, the default Message button, the
@@ -502,7 +532,7 @@
             <div class="group">
                 {% for row in emergency %}
                 <div class="row emergency-row" id="{{ row.anchor() }}" data-emergency="{{ row.number }}">
-                    <span class="row-label"><span class="emergency-number">{{ row.number }}</span> {{ row.name }}<span class="row-sub{% if row.warn %} tone-orange{% endif %}">{{ self.t(row.sub) }}</span>{% if let Some(extra) = row.extra %}<span class="row-sub">{{ self.t(extra) }}</span>{% endif %}</span>
+                    <span class="row-label"><span class="emergency-number">{{ row.number }}</span> {{ row.name }}{% if let Some(sub) = row.sub %}<span class="row-sub tone-orange">{{ self.t(sub) }}</span>{% endif %}{% if let Some(extra) = row.extra %}<span class="row-sub">{{ self.t(extra) }}</span>{% endif %}</span>
                     {% if let Some(entry) = row.id %}
                     {% if !(row.first && row.last) %}
                     <form method="post" action="/devices/{{ device.id }}/calls/emergency/{{ entry }}/move#emergency-{{ entry }}" class="emergency-move">
@@ -533,13 +563,20 @@
                 </details>
                 {% endif %}
             </div>
-            <p class="group-footer">{{ self.t("device.emergency.footer") }}</p>
+            <div class="group-footer">
+                <details class="info">
+                    <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                    <div class="info-panel">
+                        <p>{{ self.t("device.emergency.footer") }}</p>
+                    </div>
+                </details>
+            </div>
             {% if !emergency_suggestions.is_empty() %}
             <h3 class="group-header" id="emergency-suggestions">{{ self.t("device.emergency.suggestions") }}</h3>
             <div class="group">
                 {% for (number, name) in emergency_suggestions %}
                 <div class="row emergency-row" data-suggestion="{{ number }}">
-                    <span class="row-label"><span class="emergency-number">{{ number }}</span> {{ name }}<span class="row-sub">{{ self.t("device.emergency.always") }}</span></span>
+                    <span class="row-label"><span class="emergency-number">{{ number }}</span> {{ name }}</span>
                     <form method="post" action="/devices/{{ device.id }}/calls/emergency#emergency" class="row-end">
                         <input type="hidden" name="number" value="{{ number }}">
                         <input type="hidden" name="name" value="{{ name }}">
@@ -591,7 +628,7 @@
                         leaves the stored value). -#}
                     <input type="hidden" name="groups_shown" value="1">
                     <label class="row" data-groups>
-                        <span class="row-label">{{ self.t("device.sms.settings.groups") }}<span class="row-sub">{{ self.t("device.sms.settings.groups_sub") }}</span></span>
+                        <span class="row-label">{{ self.t("device.sms.settings.groups") }}</span>
                         <input type="checkbox" role="switch" class="sw" name="sms_groups" value="on"{% if sms.groups %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                     </label>
                     {% for own in sms.own_rows %}
@@ -638,14 +675,22 @@
                 {% if rcs_in_advanced %}
                 <details class="info cell" data-rcs-row>
                     <summary class="row" aria-label="{{ self.t("device.calls.channel.sms_rcs_info_label") }}">
-                        <span class="row-label">{{ self.t("device.calls.rcs_title") }}<span class="row-sub">{{ self.t("device.calls.channel.sms_rcs") }}</span></span>
+                        <span class="row-label">{{ self.t("device.calls.rcs_title") }}</span>
                         <svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>
                     </summary>
                     <div class="info-panel"><p>{{ self.t("device.calls.channel.sms_rcs_info_managed") }} <a href="{{ rcs_form_url }}" rel="noopener noreferrer" target="_blank">{{ rcs_form_label }}</a>{{ self.t("device.calls.channel.sms_rcs_info_after") }}</p></div>
                 </details>
                 {% endif %}
             </div>
-            <p class="group-footer">{{ self.t("device.sms.settings.footer") }}</p>
+            <div class="group-footer">
+                <details class="info">
+                    <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                    <div class="info-panel">
+                        <p>{{ self.t("device.sms.settings.groups_sub") }}</p>
+                        <p>{{ self.t("device.sms.settings.footer") }}</p>
+                    </div>
+                </details>
+            </div>
         </section>
 
         {#- Design 77 D17: the sender names let through, Add Name (a refusal renders here, 400, with what was typed) and

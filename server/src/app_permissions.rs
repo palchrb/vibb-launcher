@@ -1,7 +1,7 @@
 //! Per-app permissions (design 68, `docs/design/68-app-permissions.md` at the monorepo root): the parent's "camera
 //! off" per phone and app (`device_app_permissions`, migration 0102), sent as the policy's `app_permissions`, and
 //! what the phone reports about each app's camera and special accesses (`installed_apps[].access`). Since 2026-11-04
-//! also "Show as a media player on the lock screen" per phone and app (`device_lock_media_apps`, migration 0127), sent
+//! also "Media player on the lock screen" per phone and app (`device_lock_media_apps`, migration 0127), sent
 //! as the policy's `lock_media_apps`.
 //!
 //! The phone works out which special accesses an app wants from its own manifest; the server sends none of them and
@@ -106,7 +106,7 @@ pub async fn lock_media_apps(db: &SqlitePool, device_id: i64) -> Result<Vec<Stri
     .await
 }
 
-/// Switches one app's "Show as a media player on the lock screen" on (a row) or off (none). Turning on first prunes
+/// Switches one app's "Media player on the lock screen" on (a row) or off (none). Turning on first prunes
 /// the phone's rows outside [offered] (the apps the switch is offered for now: an app uninstalled or no longer
 /// allowed since keeps no row, so stale rows never fill the cap). `Ok(false)`: the phone still has
 /// [MAX_ROWS_PER_DEVICE] rows (nothing written). Off always deletes, whatever the app is now.
@@ -286,7 +286,7 @@ pub struct PermsView {
     pub camera: Option<(bool, String)>,
     /// One line per declared access: `(text, how to approve it while it isn't)`.
     pub accesses: Vec<(String, Option<String>)>,
-    /// "Show as a media player on the lock screen" (2026-11-04), only where [lock_media_offered]: on or off.
+    /// "Media player on the lock screen" (2026-11-04), only where [lock_media_offered]: on or off.
     pub lock_media: Option<bool>,
     pub lock_media_action: String,
     pub title: &'static str,
@@ -431,9 +431,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            paused
-                .line
-                .starts_with("Camera off · back on while restrictions are paused"),
+            paused.line.starts_with("Camera off · paused"),
             "{}",
             paused.line
         );

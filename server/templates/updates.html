@@ -14,26 +14,15 @@
 
     {#- Versions only (the user, 2026-11-04): the server never acts on its host, so the page has no
         buttons - it says what is installed, what is out, and how the owner updates it. The
-        commands are behind the row's ⓘ, never in its visible text (design 31 §4.2). -#}
+        commands are behind the Version row's ⓘ, never in its visible text (design 31 §4.2, design 113); the latest
+        version shows only while it checks, when the check failed or when a newer one is out. -#}
     <section id="app" aria-labelledby="app-title">
         <h2 class="group-header" id="app-title">{{ self.t("settings.updates.app") }}</h2>
         <div class="group">
-            <div class="row" data-row="version">
-                <span class="row-label">{{ self.t("settings.updates.version") }}</span>
-                <span class="row-value">{{ app.current_version.trim_start_matches('v') }}{% if docker %} {{ self.t("settings.updates.docker_image") }}{% endif %}</span>
-            </div>
-            {% if app.checking %}
-            <p class="row row-note" data-row="latest">{{ self.t("settings.updates.checking") }}</p>
-            {% else if app.check_failed %}
-            <p class="row row-note" data-row="latest">{{ self.t("settings.updates.check_failed") }}</p>
-            {% else if let Some(version) = newer_version %}
-            <div class="row" data-row="latest"><span class="row-label tone-green">{{ self.tp("settings.updates.version_out", [("version", version.as_str())]) }}</span></div>
-            {% else %}
-            <div class="row" data-row="latest"><span class="row-label">{{ self.t("settings.updates.up_to_date") }}</span></div>
-            {% endif %}
-            <details class="info cell" data-row="how">
+            <details class="info cell" data-row="version">
                 <summary class="row">
-                    <span class="row-label">{{ self.t("settings.updates.how") }}</span>
+                    <span class="row-label">{{ self.t("settings.updates.version") }}</span>
+                    <span class="row-value">{{ app.current_version.trim_start_matches('v') }}{% if docker %} {{ self.t("settings.updates.docker_image") }}{% endif %}</span>
                     <svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("settings.updates.how_label") }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>
                 </summary>
                 <div class="info-panel">
@@ -47,10 +36,17 @@
                     <pre><code>{{ self.t("settings.updates.update_command") }}</code></pre>
                     {% if let Some(repo) = other_repo %}<p data-repo="other">{{ self.tp("settings.updates.other_repo", [("repo", repo.as_str())]) }}</p>{% endif %}
                     {% endif %}
+                    <p>{{ self.t("settings.updates.footer") }}</p>
                 </div>
             </details>
+            {% if app.checking %}
+            <p class="row row-note" data-row="latest">{{ self.t("settings.updates.checking") }}</p>
+            {% else if app.check_failed %}
+            <p class="row row-note" data-row="latest">{{ self.t("settings.updates.check_failed") }}</p>
+            {% else if let Some(version) = newer_version %}
+            <div class="row" data-row="latest"><span class="row-label tone-green">{{ self.tp("settings.updates.version_out", [("version", version.as_str())]) }}</span></div>
+            {% endif %}
         </div>
-        <p class="group-footer">{{ self.t("settings.updates.footer") }}</p>
     </section>
 
     {#- The tab-switch timing's switch for this browser (Q28; code QA M2: the installed iPhone app has
@@ -64,7 +60,7 @@
                 <span class="row-value" data-timing-state>{{ self.t("common.off") }}</span>
             </a>
         </div>
-        <p class="group-footer">{{ self.t("settings.updates.timing_footer") }}</p>
+        <div class="group-footer"><details class="info"><summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("settings.updates.timing_footer") }}</p></div></details></div>
     </section>
     </div>
 </main>

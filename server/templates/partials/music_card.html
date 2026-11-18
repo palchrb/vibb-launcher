@@ -1,9 +1,10 @@
 {#- One library row on /music (design 31 §3.4): cover, name, "NRK series · 98 episodes · 2 phones",
     the live status (swapped by static/music-cards.js, which finds .music-status[data-entry] and
     keeps a .music-card that holds the focus untouched), then Check now and the Offline select - or,
-    in Edit mode, ↑ ↓. `entry` is a handlers::music::EntryRow, `edit` the page's mode. -#}
+    in Edit mode, ↑ ↓. `entry` is a handlers::music::EntryRow, `edit` the page's mode. A fine status ("Checked 2
+    hours ago") stays in the DOM for the swap but is hidden here (`.music-card-tile .music-status-ok`, design 113). -#}
 {% import "partials/music_status.html" as music_status %}
-<div class="cell music-card" id="entry-{{ entry.id }}">
+<div class="cell music-card music-card-tile" id="entry-{{ entry.id }}">
     <a class="row music-row" href="/music/entries/{{ entry.id }}">
         {% if let Some(cover) = entry.cover %}
         <img class="music-cover" src="/music-covers/{{ cover }}" alt="" width="44" height="44" loading="lazy" decoding="async">

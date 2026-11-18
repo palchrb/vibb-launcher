@@ -768,6 +768,7 @@ async fn the_zones_page_says_what_the_location_setting_means_for_zones() {
     // Regularly: the footer's timing, no warning.
     let html = page().await;
     assert!(!html.contains("data-warning=\"zones-need-regularly\""));
+    assert!(!html.contains("data-warning=\"zones-cant-watch\""));
     assert!(
         html.contains("within about two intervals (here 1 hour)"),
         "{html}"
@@ -789,7 +790,14 @@ async fn the_zones_page_says_what_the_location_setting_means_for_zones() {
             .await
             .contains("Zones can&#39;t see where the phone is.")
     );
-    assert!(!page().await.contains("data-note=\"location-unlocked\""));
+    // Design 113: the Zones page says it once, as an orange line.
+    let html = page().await;
+    assert!(!html.contains("data-note=\"location-unlocked\""));
+    assert!(html.contains("data-warning=\"zones-cant-watch\""), "{html}");
+    assert!(
+        html.contains("<p>Location is off for this phone.</p>"),
+        "{html}"
+    );
 }
 
 #[tokio::test]

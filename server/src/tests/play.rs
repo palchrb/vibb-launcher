@@ -237,7 +237,9 @@ async fn status_stores_install_mode_installer_and_logs() {
     assert!(page.contains("Play Store open until"), "{page}");
     assert!(page.contains("Install mode is on"), "{page}");
     let page = apps_page(&app, id, &[]).await;
-    assert!(page.contains("Installed from Play"), "{page}");
+    // Design 113: an installed app says nothing, from Play or not - the row is its name alone.
+    assert!(!page.contains("Installed from Play"), "{page}");
+    assert!(page.contains(r#"row-label">Game</span>"#), "{page}");
 
     // The same window again isn't logged twice.
     app.post_status(&token, json!({ "install_mode": { "until_ms": until } }))

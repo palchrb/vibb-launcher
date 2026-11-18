@@ -641,7 +641,7 @@ async fn clock_format_form_refuses_a_bad_value() {
     let action = format!("{launcher}#layout");
     assert_eq!(form_action_of(&page, "clock_format"), Some(action.as_str()));
     assert!(page.contains("<option value=\"12\" selected>12 h</option>"));
-    assert!(page.contains("<option value=\"system\">Follow the phone</option>"));
+    assert!(page.contains("<option value=\"system\">Same as the phone</option>"));
 
     // An unknown or missing value is a 400, and nothing is written.
     for bad in [Some(""), Some("24h"), Some("follow"), Some("SYSTEM"), None] {
@@ -692,8 +692,8 @@ async fn the_clock_format_column_takes_only_its_three_values() {
 }
 
 /// Design 34 P12: the phone reports `clock_format_applied`; false while the policy asks for 24 h
-/// or 12 h is a warning on Home Screen (the sentence visible, the adb grant only behind its ⓘ).
-/// True, null, an older launcher (no field) and "Follow the phone" show nothing.
+/// or 12 h is a warning on Home Screen (its title alone, the adb grant behind its ⓘ - design 113).
+/// True, null, an older launcher (no field) and "Same as the phone" show nothing.
 #[tokio::test]
 async fn clock_format_not_applied_is_a_warning() {
     let app = TestApp::new().await;
@@ -757,7 +757,7 @@ async fn clock_format_not_applied_is_a_warning() {
             let at = html.find(warning).unwrap();
             assert!(html[..at].contains("<section id=\"layout\""));
             assert!(!html[..at].contains("<form"));
-            assert!(html[at..].contains("change its clock format yet."));
+            assert!(!html.contains("change its clock format yet."));
             let command = html.find("WRITE_SETTINGS allow").expect("the fix");
             let panel = html[..command].rfind("<details class=\"info\">").unwrap();
             assert!(at < panel && !html[panel..command].contains("</details>"));
@@ -771,7 +771,7 @@ async fn clock_format_not_applied_is_a_warning() {
             );
         }
     }
-    // The last report still says false, but "Follow the phone" asks for nothing.
+    // The last report still says false, but "Same as the phone" asks for nothing.
     set_format("system").await;
     assert!(!page().await.contains(warning));
     set_format("12").await;

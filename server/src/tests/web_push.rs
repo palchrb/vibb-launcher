@@ -491,8 +491,9 @@ async fn the_page_carries_no_secret_and_every_form_lands() {
     assert!(!inbox.contains("notifications.js"));
     check_forms("/notifications/settings", &html);
     check_forms("/notifications", &inbox);
-    // Apple's service shows a declarative push itself: accepted is delivered (0.29.6).
-    assert!(inbox.contains("Delivered to iPhone · Safari"));
+    // Apple's service shows a declarative push itself: accepted is delivered (0.29.6), and a push that got there has
+    // no line (design 113).
+    assert!(!inbox.contains("inbox-delivery"), "{inbox}");
 }
 
 /// §4.3, §5.3: the headers, the JWT, and the payload the browser decrypts - no `detail`.
@@ -839,8 +840,9 @@ async fn switches_the_emergency_call_and_a_burst() {
     )
     .await;
     assert_eq!(sent, 1);
+    // Folded into a summary that went out, or delivered: no line (design 113 - only a push that went wrong has one).
     let page = pages(&app, &cookie).await;
-    assert!(page.contains("In a summary"));
+    assert!(!page.contains("inbox-delivery"), "{page}");
 }
 
 /// §7: the receipt needs no session, only the delivery's token; a repeat is harmless; clicked
@@ -916,8 +918,9 @@ async fn the_receipt() {
         .await,
         1
     );
+    // Opened: no line (design 113).
     let page = pages(&app, &cookie).await;
-    assert!(page.contains("Opened on iPhone · Safari"));
+    assert!(!page.contains("inbox-delivery"), "{page}");
 
     // Misses count: after 30 the client is refused, even with a good token.
     for _ in 0..29 {
@@ -954,7 +957,8 @@ async fn an_apple_acceptance_is_the_delivery() {
     );
     let inbox = pages(&app, &cookie).await;
     assert!(!inbox.contains("May not be showing"), "{inbox}");
-    assert!(inbox.contains("Delivered to iPhone · Safari"));
+    // Delivered: no line in the inbox (design 113).
+    assert!(!inbox.contains("inbox-delivery"), "{inbox}");
     assert!(inbox.contains("Last delivered"));
     let devices = app.get_page("/devices", &cookie).await.text();
     assert!(!devices.contains("id=\"push-warning\""));
@@ -965,7 +969,7 @@ async fn an_apple_acceptance_is_the_delivery() {
         StatusCode::NO_CONTENT
     );
     let inbox = pages(&app, &cookie).await;
-    assert!(inbox.contains("Shown on iPhone · Safari"));
+    assert!(!inbox.contains("inbox-delivery"), "{inbox}");
     assert!(inbox.contains("Last shown"));
 }
 
@@ -1229,7 +1233,8 @@ async fn the_worker_has_the_same_bytes_for_every_reader() {
 }
 
 /// 2026-10-25 (the user's false alarm after adding the app to the Home Screen again): under the
-/// device list, one line says what to do - only once a device is listed.
+/// device list, one line says what to do - only while a device may not be showing them or has stopped
+/// (design 113: a healthy list says nothing).
 #[tokio::test]
 async fn the_device_list_says_what_to_do_after_adding_the_app_again() {
     let app = TestApp::new().await;
@@ -1249,11 +1254,23 @@ async fn the_device_list_says_what_to_do_after_adding_the_app_again() {
         .text();
     assert!(!devices(&none).contains("data-note=\"added-again\""));
     subscribe(&app, &cookie, ENDPOINT).await;
-    let one = app
+    let healthy = app
         .get_page("/notifications/settings", &cookie)
         .await
         .text();
-    let list = devices(&one);
+    let list = devices(&healthy);
+    assert!(list.contains("data-subscription="), "{list}");
+    assert!(!list.contains("data-note=\"added-again\""), "{list}");
+    // The push service said it is gone: the line shows.
+    sqlx::query("UPDATE push_subscriptions SET state = 'gone', gone_at = datetime('now')")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let gone = app
+        .get_page("/notifications/settings", &cookie)
+        .await
+        .text();
+    let list = devices(&gone);
     assert!(list.contains(NOTE), "{list}");
     // Under the list: after the last device's group.
     assert!(list.find(NOTE) > list.rfind("data-subscription="));
@@ -1310,7 +1327,7 @@ async fn the_first_opening_offers_notifications_on_devices() {
         Some("/devices?notice=push_on#push-offer-done")
     );
     let back = app.get_page(res.location().unwrap(), &cookie).await.text();
-    assert!(back.contains("Notifications are on for this phone."));
+    assert!(back.contains("Notifications on."));
     // The browser's subscription is known now: the script keeps the card hidden.
     assert!(back.contains(&format!(
         "data-subscribed=\"{}\"",
@@ -1962,8 +1979,9 @@ async fn a_receipt_before_the_retry_ends_it() {
     send_at(&app, now + chrono::Duration::seconds(61)).await;
     assert!(app.pushes.take().is_empty(), "never sent again");
     assert_eq!(delivery_of(&app, event).await.0, "accepted");
+    // Shown: no line (design 113).
     let page = pages(&app, &cookie).await;
-    assert!(page.contains("Shown on iPhone · Safari"));
+    assert!(!page.contains("inbox-delivery"), "{page}");
 
     // The receipt arrives only after the retry went out with a new token.
     app.pushes.fail();
@@ -2117,9 +2135,9 @@ async fn a_tap_on_a_notification_marks_it_opened() {
     assert_eq!(res.location(), Some(path.split('?').next().unwrap()));
     assert_eq!(opened_state(&app, delivery).await, (true, true, Some(true)));
     let inbox = app.get_page("/notifications", &cookie).await.text();
-    // The line is this parent's devices only: the other parent's delivery of the same event isn't
-    // one of them (design 62 §5, qa-62-step345-code P62b-1).
-    assert!(inbox.contains("Opened on "), "{inbox}");
+    // Opened: no line (design 113). That the line is this parent's devices only (design 62 §5,
+    // qa-62-step345-code P62b-1) is [inbox_delivery_line_is_each_parents].
+    assert!(!inbox.contains("inbox-delivery"), "{inbox}");
     assert!(!inbox.contains("Pushed to 2 devices"), "{inbox}");
     // A POST is never redirected by it.
     let res = app
@@ -2415,11 +2433,14 @@ async fn inbox_delivery_line_is_each_parents() {
     send(&app).await;
     let to: Vec<String> = app.pushes.take().into_iter().map(|r| r.endpoint).collect();
     assert_eq!(to, [ENDPOINT], "only Mamma's went");
+    // A line only when the push went wrong (design 113): Mamma's left unconfirmed (not Apple's own showing).
+    sqlx::query("UPDATE push_deliveries SET reason = NULL WHERE reason = 'declarative'")
+        .execute(&app.db)
+        .await
+        .unwrap();
     let lines = |html: String| -> Vec<String> {
         html.lines()
-            .filter(|l| {
-                l.contains("Pushed to") || l.contains("Delivered to") || l.contains("Shown on")
-            })
+            .filter(|l| l.contains("inbox-delivery"))
             .map(str::to_string)
             .collect()
     };
@@ -2427,6 +2448,10 @@ async fn inbox_delivery_line_is_each_parents() {
     assert!(pappas.is_empty(), "{pappas:?}");
     let mammas = lines(app.get_page("/notifications", &mamma).await.text());
     assert_eq!(mammas.len(), 1, "{mammas:?}");
+    assert!(
+        mammas[0].contains("Pushed to iPhone · Safari, not confirmed"),
+        "{mammas:?}"
+    );
 }
 
 /// Push never lost silently (2026-11-04): the sync route's answers. Nothing sent: the server's key and the banner's

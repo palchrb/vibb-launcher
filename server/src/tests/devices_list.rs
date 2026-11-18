@@ -473,8 +473,9 @@ async fn no_phones_yet() {
     assert!(html.contains(">Add Phone</span>"));
     // The setup explanation moved into the add flow.
     assert!(!html.contains("provision it by QR code or adb"));
+    // Design 113: the add page names no next step (the QR page says it).
     let add = app.get_page("/devices/new", &cookie).await.text();
-    assert!(add.contains("a QR code or a setup code"), "{add}");
+    assert!(!add.contains("a QR code or a setup code"), "{add}");
 }
 
 /// The launcher's status body (design 34 P13, the shared contract: the launcher's

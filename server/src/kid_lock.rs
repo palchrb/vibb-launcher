@@ -414,8 +414,6 @@ impl Inactive {
 /// What the Child PIN group says about the lock: warnings above the group, states as rows in it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LockNote {
-    /// Safe mode is allowed while a Child PIN is set: safe mode skips the lock (QA 10 #7).
-    SafeModeAllowed,
     /// The reporting launcher doesn't have the lock.
     NeedsUpdate,
     /// The lock is off on the phone, and why.
@@ -620,6 +618,7 @@ impl LockNote {
             warning: true,
             title: t(lang, title).to_string(),
             value: None,
+            sub: None,
             detail: Some(detail),
             fix,
         };
@@ -627,22 +626,22 @@ impl LockNote {
             warning: false,
             title,
             value: Some(value),
+            sub: None,
             detail: detail.map(|key| t(lang, key).to_string()),
             fix: None,
         };
         let w = |key: &str| t(lang, key).to_string();
         let times = |n: i64| t_count(lang, "device.lock.note.times", n, &[]);
         match self {
-            LockNote::SafeModeAllowed => warning(
-                "device.lock.note.safe_mode",
-                w("device.lock.note.safe_mode_sub"),
-                None,
-            ),
-            LockNote::NeedsUpdate => warning(
-                "device.lock.note.needs_update",
-                w("device.lock.note.needs_update_sub"),
-                None,
-            ),
+            // The title alone doesn't carry the news: a short visible line (design 113, QA M5).
+            LockNote::NeedsUpdate => Note {
+                sub: Some(w("device.lock.note.needs_update_short")),
+                ..warning(
+                    "device.lock.note.needs_update",
+                    w("device.lock.note.needs_update_sub"),
+                    None,
+                )
+            },
             LockNote::Off(Inactive::Unmanaged) => warning(
                 "device.lock.note.unmanaged",
                 w("device.lock.note.unmanaged_sub"),
@@ -671,11 +670,15 @@ impl LockNote {
                 w("device.lock.note.crash_guard_sub"),
                 None,
             ),
-            LockNote::Off(Inactive::BadHash) => warning(
-                "device.lock.note.bad_hash",
-                w("device.lock.note.bad_hash_sub"),
-                None,
-            ),
+            // The title alone doesn't carry the news: a short visible line (design 113, QA M5).
+            LockNote::Off(Inactive::BadHash) => Note {
+                sub: Some(w("device.lock.note.bad_hash_short")),
+                ..warning(
+                    "device.lock.note.bad_hash",
+                    w("device.lock.note.bad_hash_sub"),
+                    None,
+                )
+            },
             LockNote::Off(Inactive::Other(code)) => warning(
                 "device.attention.child_lock_off",
                 w("device.lock.note.other_sub"),
@@ -828,6 +831,7 @@ impl LockNote {
                             warning: false,
                             title: w("device.lock.note.pin_to_phone"),
                             value: Some(at("device.lock.note.answered_at", when)),
+                            sub: None,
                             detail: Some(t_params(
                                 lang,
                                 "device.lock.note.phone_said",
@@ -919,9 +923,8 @@ pub fn lock_card(policy: &DevicePolicy, phone: &PhoneLock, now_ms: i64) -> LockC
     if kid_lock.is_none() {
         return card;
     }
-    if !policy.hardening.disallow_safe_boot {
-        card.notes.push(LockNote::SafeModeAllowed);
-    }
+    // Safe mode allowed (Block safe mode off) is the parent's choice, never a warning here (2026-11-18): the switch's
+    // own ⓘ on Advanced says safe mode skips the lock.
     if phone.reported && !phone.capable {
         card.notes.push(LockNote::NeedsUpdate);
         return card;
@@ -1272,13 +1275,10 @@ mod tests {
     }
 
     #[test]
-    fn card_warns_about_safe_boot_capability_and_inactive_states() {
+    fn card_warns_about_capability_and_inactive_states() {
         let mut p = policy_with_pins(Some("1234"), Some("999999"));
         let card = lock_card(&p, &phone(None, false, true), 0);
-        assert_eq!(
-            card.notes,
-            [LockNote::SafeModeAllowed, LockNote::NeedsUpdate]
-        );
+        assert_eq!(card.notes, [LockNote::NeedsUpdate]);
 
         p.hardening.disallow_safe_boot = true;
         for (inactive, typed) in [
@@ -1356,7 +1356,6 @@ mod tests {
     #[test]
     fn warnings_are_short_and_keep_commands_behind_the_info() {
         let notes = [
-            LockNote::SafeModeAllowed,
             LockNote::NeedsUpdate,
             LockNote::Off(Inactive::Unmanaged),
             LockNote::Off(Inactive::AndroidCredential),
@@ -1371,6 +1370,19 @@ mod tests {
             assert!(words.warning, "{note:?}");
             // §4.2: a bold title of up to 6 words + 1 sentence; commands and packages in the ⓘ.
             assert!(words.title.split_whitespace().count() <= 6, "{note:?}");
+            // Design 113 (QA M5): a short visible line only where the title alone doesn't carry
+            // the news; the sentence stays behind the ⓘ.
+            assert_eq!(
+                words.sub.is_some(),
+                matches!(
+                    note,
+                    LockNote::NeedsUpdate | LockNote::Off(Inactive::BadHash)
+                ),
+                "{note:?}"
+            );
+            if let Some(sub) = &words.sub {
+                assert!(sub.split_whitespace().count() <= 6, "{note:?}: {sub}");
+            }
             let detail = words.detail.unwrap();
             for hidden in [
                 "adb ",

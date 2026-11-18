@@ -761,7 +761,7 @@ async fn an_empty_inbox_and_older_pages() {
     let cookie = app.admin_cookie().await;
     let html = app.get_page("/notifications", &cookie).await.text();
     assert!(
-        html.contains("Nothing yet - what the phones report shows up here"),
+        html.contains("<p class=\"row row-note\">Nothing yet</p>"),
         "{html}"
     );
     assert!(html.contains("<a class=\"nav-back\" href=\"/devices\">"));

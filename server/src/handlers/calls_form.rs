@@ -170,8 +170,9 @@ pub(crate) fn contact_row(
     (calls_part.to_string(), Some(second.join(" · ")))
 }
 
-/// D1: the sub-lines of a contact's four rows in the phone's channel modes - what a switch doesn't do now. Values are
-/// always kept and sent as they are.
+/// D1, design 113: the sub-lines of a contact's four rows in the phone's channel modes - one quiet word where a
+/// switch doesn't do anything now («Ikke styrt», «Samtaler av», «SMS av», «Meldinger av»), nothing where it does.
+/// Values are always kept and sent as they are.
 #[derive(Default, Debug, PartialEq, Eq)]
 pub(crate) struct Subs {
     pub calls: Option<String>,
@@ -180,9 +181,9 @@ pub(crate) struct Subs {
     pub home: Option<String>,
 }
 
-/// The modes are `device_policy.calls_mode`/`sms_mode`; `kid` and `contact` the names in the words (Add Contact's
-/// "Kontakten" at a sentence's start, "kontakten" inside one - L7); `outbound`, `texts_any` (a text goes either way)
-/// the contact's switches.
+/// The modes are `device_policy.calls_mode`/`sms_mode`; `kid` and `contact` the names in the home row's words (Add
+/// Contact's "Kontakten" at a sentence's start, "kontakten" inside one - L7; the home row uses the inner one);
+/// `outbound`, `texts_any` (a text goes either way) the contact's switches.
 pub(crate) fn subs(
     lang: Lang,
     calls_mode: &str,
@@ -192,30 +193,19 @@ pub(crate) fn subs(
     outbound: bool,
     texts_any: bool,
 ) -> Subs {
-    let start = [("kid", kid), ("contact", contact.0)];
     let names = [("kid", kid), ("contact", contact.1)];
-    let calls = match (calls_mode, sms_mode) {
-        ("managed", _) => None,
-        ("unmanaged", "unmanaged") => Some(t(lang, "device.calls.sub.calls_applies").to_string()),
-        ("unmanaged", _) => Some(t_params(
-            lang,
-            if outbound {
-                "device.calls.sub.calls_unmanaged_in_book"
-            } else {
-                "device.calls.sub.calls_unmanaged_not_in_book"
-            },
-            &start,
-        )),
-        _ => Some(t(lang, "device.calls.sub.calls_off").to_string()),
+    let mode_word = |mode: &str, off: &str| match mode {
+        "managed" => None,
+        "unmanaged" => Some(t(lang, "device.calls.sub.not_managed").to_string()),
+        _ => Some(t(lang, off).to_string()),
     };
-    let sms_applies =
-        (sms_mode != "managed").then(|| t(lang, "device.calls.sub.sms_applies").to_string());
-    let pictures = sms_applies.clone().or_else(|| {
-        (!texts_any).then(|| t_params(lang, "device.calls.sub.pictures_no_texts", &names))
-    });
+    // Pictures say nothing while SMS isn't managed (Meldinger's row says it once); under it, «Meldinger av» while no
+    // text goes either way.
+    let pictures = (sms_mode == "managed" && !texts_any)
+        .then(|| t(lang, "device.calls.sub.pictures_no_texts").to_string());
     Subs {
-        calls,
-        texts: sms_applies,
+        calls: mode_word(calls_mode, "device.calls.sub.calls_off"),
+        texts: mode_word(sms_mode, "device.calls.sub.sms_off"),
         pictures,
         home: (!outbound).then(|| t_params(lang, "device.calls.sub.home_needs_out", &names)),
     }
@@ -351,87 +341,39 @@ mod tests {
         assert_eq!(resolve(&sent, None, false), None);
     }
 
-    /// D1's sub-lines for each mode pair (M2).
+    /// D1's sub-lines for each mode pair (M2; design 113: one quiet word, and `texts` under SMS Off is «SMS av»).
     #[test]
     fn the_sub_lines_follow_the_modes() {
         let en = Lang::En;
-        let managed = subs(
-            en,
-            "managed",
-            "managed",
-            "Anna",
-            ("Mamma", "Mamma"),
-            true,
-            true,
-        );
+        let mamma = ("Mamma", "Mamma");
+        let managed = subs(en, "managed", "managed", "Anna", mamma, true, true);
         assert_eq!(managed, Subs::default());
-        let off = subs(en, "off", "managed", "Anna", ("Mamma", "Mamma"), true, true);
+        let off = subs(en, "off", "managed", "Anna", mamma, true, true);
+        assert_eq!(off.calls.as_deref(), Some("Calls off"));
+        assert_eq!(off.texts, None);
+        let unmanaged_calls = subs(en, "unmanaged", "managed", "Anna", mamma, false, true);
+        assert_eq!(unmanaged_calls.calls.as_deref(), Some("Not managed"));
+        assert_eq!(unmanaged_calls.texts, None);
+        assert_eq!(unmanaged_calls.pictures, None);
         assert_eq!(
-            off.calls.as_deref(),
-            Some("Calls are off - only emergency numbers can be called")
-        );
-        let book = subs(
-            en,
-            "unmanaged",
-            "managed",
-            "Anna",
-            ("Mamma", "Mamma"),
-            true,
-            true,
-        );
-        assert_eq!(
-            book.calls.as_deref(),
-            Some("Calls aren't managed - anyone can call. Mamma is in the phone book")
-        );
-        let not_book = subs(
-            en,
-            "unmanaged",
-            "off",
-            "Anna",
-            ("Mamma", "Mamma"),
-            false,
-            true,
-        );
-        assert_eq!(
-            not_book.calls.as_deref(),
-            Some("Calls aren't managed - anyone can call. Mamma isn't in the phone book")
-        );
-        assert_eq!(
-            not_book.texts.as_deref(),
-            Some("Applies while SMS is managed by Vibb")
-        );
-        assert_eq!(not_book.pictures, not_book.texts);
-        assert_eq!(
-            not_book.home.as_deref(),
+            unmanaged_calls.home.as_deref(),
             Some("Shows when Anna can call Mamma")
         );
-        let neither = subs(
-            en,
-            "unmanaged",
-            "unmanaged",
-            "Anna",
-            ("Mamma", "Mamma"),
-            true,
-            true,
-        );
-        assert_eq!(
-            neither.calls.as_deref(),
-            Some("Applies while calls or SMS are managed by Vibb")
-        );
-        // SMS managed, no text either way: pictures say when they apply (N5).
-        let quiet = subs(
-            en,
-            "managed",
-            "managed",
-            "Anna",
-            ("Mamma", "Mamma"),
-            true,
-            false,
-        );
-        assert_eq!(
-            quiet.pictures.as_deref(),
-            Some("Applies when Anna and Mamma text")
-        );
+        // QA M2: under SMS Off the texts row says SMS is off, not that it isn't managed; pictures say nothing.
+        let sms_off = subs(en, "managed", "off", "Anna", mamma, true, false);
+        assert_eq!(sms_off.calls, None);
+        assert_eq!(sms_off.texts.as_deref(), Some("SMS off"));
+        assert_eq!(sms_off.pictures, None);
+        let neither = subs(en, "unmanaged", "unmanaged", "Anna", mamma, true, true);
+        assert_eq!(neither.calls.as_deref(), Some("Not managed"));
+        assert_eq!(neither.texts.as_deref(), Some("Not managed"));
+        assert_eq!(neither.pictures, None);
+        // SMS managed, no text either way: pictures say texts are off (N5).
+        let quiet = subs(en, "managed", "managed", "Anna", mamma, true, false);
+        assert_eq!(quiet.pictures.as_deref(), Some("Texts off"));
         assert_eq!(quiet.texts, None);
+        let nb = subs(Lang::Nb, "off", "off", "Anna", mamma, true, true);
+        assert_eq!(nb.calls.as_deref(), Some("Samtaler av"));
+        assert_eq!(nb.texts.as_deref(), Some("SMS av"));
     }
 }

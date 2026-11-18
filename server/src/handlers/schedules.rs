@@ -805,6 +805,9 @@ struct RuleScope {
     /// The rule applies to the phone: not switched off for it (always true for everyone's and a
     /// new rule).
     in_force: bool,
+    /// Calls aren't managed on the phone (for everyone's rules: on some phone), so a rule without calls stops only
+    /// outgoing calls: a quiet line behind the calls switch's ⓘ - the parent's choice, never a warning (2026-11-18).
+    calls_unmanaged: bool,
 }
 
 impl RuleScope {
@@ -861,6 +864,8 @@ struct RuleTemplate {
     kinds: Vec<(&'static str, &'static str)>,
     /// The page's own `?lang=`, kept on its form's action and the save's redirect (design 70 §3).
     asked: Option<Lang>,
+    /// [RuleScope::calls_unmanaged]: the calls switch's ⓘ says only outgoing calls stop.
+    calls_unmanaged: bool,
 }
 crate::i18n::words!(RuleTemplate);
 
@@ -938,6 +943,7 @@ fn render_rule(
             },
             rule,
             asked,
+            calls_unmanaged: scope.calls_unmanaged,
         },
         status,
     )
@@ -949,23 +955,35 @@ async fn scope_of(
     device: Option<i64>,
     lang: Lang,
 ) -> Result<RuleScope, Box<Response>> {
+    // `calls_mode = 'unmanaged'` is `DevicePolicy::calls_managed`'s "no".
     let Some(id) = device else {
-        return Ok(RuleScope {
-            device: None,
-            in_force: true,
-        });
+        return match sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS (SELECT 1 FROM device_policy WHERE calls_mode = 'unmanaged')",
+        )
+        .fetch_one(&state.db)
+        .await
+        {
+            Ok(calls_unmanaged) => Ok(RuleScope {
+                device: None,
+                in_force: true,
+                calls_unmanaged,
+            }),
+            Err(err) => Err(Box::new(read_failed_in(lang, err, "the phones' calls"))),
+        };
     };
-    match sqlx::query_scalar::<_, String>(
-        "SELECT d.name FROM devices d JOIN device_policy p ON p.device_id = d.id WHERE d.id = ?",
+    match sqlx::query_as::<_, (String, bool)>(
+        "SELECT d.name, p.calls_mode = 'unmanaged' FROM devices d JOIN device_policy p ON p.device_id = d.id \
+         WHERE d.id = ?",
     )
     .bind(id)
     .fetch_optional(&state.db)
     .await
     {
         // A phone's own rules apply unless switched off ([show_rule] reads its switch).
-        Ok(Some(name)) => Ok(RuleScope {
+        Ok(Some((name, calls_unmanaged))) => Ok(RuleScope {
             device: Some((id, name)),
             in_force: true,
+            calls_unmanaged,
         }),
         Ok(None) => Err(Box::new(crate::i18n::error(
             lang,
@@ -1804,7 +1822,8 @@ struct DeviceTimeTemplate {
     locking: bool,
     /// "42 of 90 min today" and "Includes 30 min extra".
     screen: Option<(String, Option<String>)>,
-    /// The last report's age and exact time, for the Now group's footer.
+    /// The last report's age and exact time, for the Now group's footer - only once it is older than
+    /// [crate::handlers::window_relock::REPORT_AGE_NOTE_MS].
     reported: Option<(String, String)>,
     /// The phone's bedtime (design 66), its row to the Bedtime page.
     bedtime: Bedtime,
@@ -1933,8 +1952,13 @@ async fn render_device_time(
             s.time_state_json.as_deref(),
         )
     });
+    // The Now group's footer says when the report came only once it is old (design 113): the threshold Quick
+    // actions uses, past a healthy phone's backstop sync.
     let reported = report
         .as_ref()
+        .filter(|(t, _)| {
+            (now - *t).num_milliseconds() >= crate::handlers::window_relock::REPORT_AGE_NOTE_MS
+        })
         .map(|(t, _)| (zone.relative(*t, now), zone.exact(*t)));
     let connection = crate::handlers::devices::connection_of(state, &device, now);
     let calls_enforced = crate::attention::calls_enforced(&policy, &call_problems);
@@ -1952,8 +1976,8 @@ async fn render_device_time(
                 now,
             );
             let lock = match &badge {
-                // The footer says when the report came, so the badge needn't repeat it.
-                Some(badge) => badge.words(lang, Some(&zone.relative(*reported_at, now))),
+                // When the footer says when the report came, the badge needn't repeat it.
+                Some(badge) => badge.words(lang, reported.as_ref().map(|(age, _)| age.as_str())),
                 None => t(lang, "device.about.none").to_string(),
             };
             let screen = screen.map(|st| {
@@ -1979,16 +2003,9 @@ async fn render_device_time(
             warning: true,
             title: t(lang, "device.time.ledger_unreadable").to_string(),
             value: None,
-            detail: Some(t(lang, "device.time.ledger_unreadable_sub").to_string()),
-            fix: None,
-        });
-    }
-    if !policy.calls_managed() && effective.iter().any(|r| !r.calls_allowed) {
-        warnings.push(Note {
-            warning: true,
-            title: t(lang, "device.time.incoming_not_blocked").to_string(),
-            value: None,
-            detail: Some(t(lang, "device.time.incoming_not_blocked_sub").to_string()),
+            // The consequence is the news: under the title, not behind an ⓘ (design 113, QA M5).
+            sub: Some(t(lang, "device.time.ledger_unreadable_sub").to_string()),
+            detail: None,
             fix: None,
         });
     }

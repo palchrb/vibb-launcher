@@ -218,13 +218,13 @@ async fn the_home_form_keeps_bit_128_without_its_row() {
     );
     assert_eq!(
         sub_line(&html),
-        Some("Emma chose: Flashlight, Sound, Airplane mode, Wi-Fi")
+        Some("Flashlight, Sound, Airplane mode, Wi-Fi")
     );
     assert!(html.contains("data-shortcuts-info"));
     assert!(html.contains(
         "Shortcuts is a fixed notification at the top of the notifications with up to four buttons. Emma picks them \
-         from the switches here and the flashlight. It never shows on the lock screen. When Emma has screen time \
-         today, it also shows the time left."
+         from the switches here and the flashlight, and can hide and show them again under Settings › Shortcuts. It \
+         never shows on the lock screen. When Emma has screen time today, it also shows the time left."
     ));
     assert!(html.contains("The switches apply to both Settings and Shortcuts."));
     assert!(!html.contains("title-bell"), "a phone sub-page has no bell");
@@ -233,14 +233,11 @@ async fn the_home_form_keeps_bit_128_without_its_row() {
         .await
         .text();
     assert!(nb.contains("Snarveier i varsellisten"), "{nb}");
-    assert_eq!(
-        sub_line(&nb),
-        Some("Emma har valgt: Lommelykt, Lyd, Flymodus, Wi-Fi")
-    );
+    assert_eq!(sub_line(&nb), Some("Lommelykt, Lyd, Flymodus, Wi-Fi"));
     assert!(nb.contains(
         "Snarveier er et fast varsel øverst i varsellisten med inntil fire knapper. Emma velger dem blant bryterne \
-         her og lommelykten. Det vises aldri på låseskjermen. Når Emma har skjermtid i dag, viser den også tiden \
-         som er igjen."
+         her og lommelykten, og kan skjule dem og vise dem igjen under Innstillinger › Snarveier. Det vises aldri på \
+         låseskjermen. Når Emma har skjermtid i dag, viser den også tiden som er igjen."
     ));
     assert!(nb.contains("Bryterne gjelder både Innstillinger og Snarveier."));
 
@@ -302,10 +299,8 @@ async fn the_home_row_says_what_the_kid_did() {
     set_mask(&app, id, 1 | 128).await;
 
     report(&app, &token, contract()["report_hidden"].clone()).await;
-    let hidden_en = "Emma has hidden the shortcuts in the notifications. Emma can show them again under Settings \
-                     › Shortcuts.";
-    let hidden_nb = "Emma har skjult Snarveier i varsellisten. Emma kan vise dem igjen under Innstillinger › \
-                     Snarveier.";
+    let hidden_en = "Hidden by Emma";
+    let hidden_nb = "Skjult av Emma";
     assert_eq!(sub_line(&page("en").await), Some(hidden_en));
     assert_eq!(sub_line(&page("nb").await), Some(hidden_nb));
     set_mask(&app, id, 1).await;
@@ -332,22 +327,13 @@ async fn the_home_row_says_what_the_kid_did() {
         json!({"shown": false, "hidden": false, "items": []}),
     )
     .await;
-    assert_eq!(
-        sub_line(&page("en").await),
-        Some("No shortcuts are shown now.")
-    );
-    assert_eq!(
-        sub_line(&page("nb").await),
-        Some("Ingen snarveier vises nå.")
-    );
+    assert_eq!(sub_line(&page("en").await), Some("None"));
+    assert_eq!(sub_line(&page("nb").await), Some("Ingen"));
 
     // A launcher with the capability that sent no `shortcuts` reads as nothing offered.
     app.post_status(&token, json!({"capabilities": [CAPABILITY]}))
         .await;
-    assert_eq!(
-        sub_line(&page("en").await),
-        Some("No shortcuts are shown now.")
-    );
+    assert_eq!(sub_line(&page("en").await), Some("None"));
 }
 
 /// The value of About This Phone's Snarveier row.

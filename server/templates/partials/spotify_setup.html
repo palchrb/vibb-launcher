@@ -26,15 +26,21 @@
             <span class="row-value">{{ self.tp("music.setup.ending_in", [("last", spotify.last_four.as_str())]) }}</span>
         </div>
         {% if spotify.app_refused %}
-        <p class="row text-alarm" data-row="app-refused">{{ self.t("music.setup.refused") }}<span class="row-sub">{{ self.t("music.setup.refused_sub") }}</span></p>
+        <details class="info cell" data-row="app-refused">
+            <summary class="row"><span class="row-label text-alarm">{{ self.t("music.setup.refused") }}</span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("common.more_info") }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+            <div class="info-panel"><p>{{ self.t("music.setup.refused_sub") }}</p></div>
+        </details>
         {% endif %}
         {% if let Some(uri) = spotify.redirect_uri %}
         <div class="cell" data-row="redirect-uri">
-            <div class="row"><span class="row-label">{{ self.t("music.setup.redirect_uri") }}<span class="row-sub">{% if spotify.redirect_from_env %}{{ self.t("music.setup.paste_this_env") }}{% else %}{{ self.t("music.setup.paste_this") }}{% endif %}</span></span></div>
+            <details class="info cell">
+                <summary class="row"><span class="row-label">{{ self.t("music.setup.redirect_uri") }}</span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("common.more_info") }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel"><p>{% if spotify.redirect_from_env %}{{ self.t("music.setup.paste_this_env") }}{% else %}{{ self.t("music.setup.paste_this") }}{% endif %}</p></div>
+            </details>
             <p class="row row-note"><code class="key" id="spotify-redirect-uri" style="user-select: all;">{{ uri }}</code></p>
         </div>
         {% else %}
-        <p class="row text-alarm" data-row="no-redirect">{{ self.t("music.setup.no_redirect") }}<span class="row-sub">{{ self.t("music.setup.no_redirect_sub") }}</span></p>
+        <p class="row text-alarm" data-row="no-redirect">{{ self.t("music.setup.no_redirect") }}</p>
         {% endif %}
         {% else %}
         <p class="row row-note" data-row="not-configured">{{ self.t("music.setup.not_configured") }}</p>
@@ -90,7 +96,7 @@
         </details>
         {% endif %}
     </div>
-    <div class="group-footer">{{ self.t("music.setup.app_footer") }} <details class="info"><summary aria-label="{{ self.t("music.setup.app_info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{% let users = spotify.dev_mode_users.to_string() %}{{ self.tp("music.setup.app_info", [("count", users.as_str())]) }}</p></div></details></div>
+    <div class="group-footer"><details class="info"><summary aria-label="{{ self.t("music.setup.app_info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("music.setup.app_footer") }}</p><p>{% let users = spotify.dev_mode_users.to_string() %}{{ self.tp("music.setup.app_info", [("count", users.as_str())]) }}</p></div></details></div>
 
     {% if spotify.configured %}
     <h2 class="group-header">{{ self.t("music.setup.accounts") }}</h2>
@@ -101,7 +107,7 @@
         {% for account in spotify.accounts %}
         <div class="cell" id="spotify-account-{{ account.id }}">
             <div class="row" data-row="account">
-                <span class="row-label">{{ account.name }}<span class="row-sub">{{ account.line }}</span><span class="row-sub" data-plays-on>{{ account.plays_on }}</span>{% if let Some(warning) = account.warning %}<span class="row-sub text-alarm" data-account-warning>{{ warning }}</span>{% endif %}</span>
+                <span class="row-label">{{ account.name }}{% if spotify.phones.is_empty() || account.several %}<span class="row-sub" data-plays-on>{{ account.plays_on }}</span>{% endif %}{% if let Some(warning) = account.warning %}<span class="row-sub text-alarm" data-account-warning>{{ warning }}</span>{% endif %}</span>
             </div>
             {#- One phone per account (design 47 §1.6): picking a phone moves it here and unbinds the
                 account's other phones; "No phone" unbinds them all. -#}
@@ -159,6 +165,6 @@
         </form>
         {% endif %}
     </div>
-    <div class="group-footer">{{ self.t("music.setup.accounts_footer") }} <details class="info"><summary aria-label="{{ self.t("music.setup.login_info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("music.setup.login_info") }}</p></div></details></div>
+    <div class="group-footer"><details class="info"><summary aria-label="{{ self.t("music.setup.login_info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("music.setup.accounts_footer") }}</p><p>{{ self.t("music.setup.login_info") }}</p></div></details></div>
     {% endif %}
 </section>

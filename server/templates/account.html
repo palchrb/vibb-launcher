@@ -38,6 +38,7 @@
             <form method="post" action="/account/name#name" class="cell form-group">
                 <div class="field">
                     <label class="field-label" for="display_name">{{ self.t("account.name.label") }}</label>
+                    <details class="info field-info"><summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("account.name.info") }}</p></div></details>
                     <input type="text" id="display_name" name="display_name" value="{{ name_value }}" placeholder="{{ username }}" maxlength="64" autocomplete="nickname"{% if self.error_for("display_name").is_some() %} aria-invalid="true" aria-describedby="display_name-error" autofocus{% else %} aria-describedby="display_name-hint"{% endif %}>
                     {% if let Some(why) = self.error_for("display_name") %}<p class="field-error" id="display_name-error">{{ why }}</p>{% else %}<p class="field-hint" id="display_name-hint">{{ self.tp("account.name.hint", [("username", username.as_str())]) }}</p>{% endif %}
                 </div>
@@ -60,7 +61,6 @@
             </label>
             <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
         </form>
-        <p class="group-footer">{{ self.t("account.language.footer") }}</p>
     </section>
 
     {%- if passkey_only %}
@@ -83,7 +83,7 @@
                 <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </a>
         </div>
-        <div class="group-footer">{{ self.t("account.password.off_footer") }}
+        <div class="group-footer">
             <details class="info">
                 <summary aria-label="{{ self.t("account.totp.server_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
@@ -120,11 +120,21 @@
                     {% if password_field == "confirm_password" %}{% if let Some(f) = flash %}<p class="field-error" id="password-error">{{ f.title }}</p>{% endif %}{% endif %}
                 </div>
                 <button type="submit" class="button-wide">{{ self.t("account.password.change") }}</button>
-                {% include "partials/passkeys_still_work.html" %}
             </form>
             {% if password_field.is_empty() %}{% call group_flash::show(flash, "password") %}{% endcall %}{% endif %}
         </div>
-        <p class="group-footer">{{ self.t("account.password.footer") }}</p>
+        {#- Design 113 (ASK 5): the passkeys that still work after a new password, behind the footer's ⓘ. -#}
+        <div class="group-footer">{{ self.t("account.password.footer") }}
+            {% if !passkeys.is_empty() %}
+            <details class="info">
+                <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    {% let still_in_panel = true %}
+                    {%- include "partials/passkeys_still_work.html" %}
+                </div>
+            </details>
+            {%- endif %}
+        </div>
     </section>
 
     <section id="two-factor" aria-labelledby="two-factor-title">
@@ -144,16 +154,18 @@
                     <input type="password" id="reset_current_password" name="current_password" autocomplete="current-password" required{% if reset_error.is_some() %} aria-invalid="true" aria-describedby="reset-error" autofocus{% endif %}>
                     {% if let Some(why) = reset_error %}<p class="field-error" id="reset-error">{{ why }}</p>{% endif %}
                     <button type="submit" class="button-destructive">{{ self.t("account.totp.reset") }}</button>
-                    {% include "partials/passkeys_still_work.html" %}
+                    {% let still_in_panel = false %}
+                    {%- include "partials/passkeys_still_work.html" %}
                     {% include "partials/confirm_cancel.html" %}
                 </form>
             </details>
             {% endif %}
         </div>
-        <div class="group-footer">{{ self.t("account.totp.footer") }}
+        <div class="group-footer">
             <details class="info">
                 <summary aria-label="{{ self.t("account.totp.server_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
+                    <p>{{ self.t("account.totp.footer") }}</p>
                     <p>{{ self.t("account.totp.server_run") }}</p>
                     <pre><code>{{ self.tp("account.totp.command_reset_2fa", [("username", username.as_str())]) }}</code></pre>
                     <p>{{ self.tp("account.totp.server_password", [("id", admin_id.to_string().as_str())]) }}</p>
@@ -229,7 +241,7 @@
                 asking a passkey that works here; disabled with its reason without one. -#}
             {%- if passkey_only %}
             <a class="row passkey-only-row" id="passkey-only" href="/account/password-sign-in">
-                <span class="row-label">{{ self.t("passkeys.only.row") }}<span class="row-sub">{{ self.t("passkeys.only.sub") }}</span><span class="visually-hidden">{{ self.t("passkeys.only.on_hint") }}</span></span>
+                <span class="row-label">{{ self.t("passkeys.only.row") }}<span class="visually-hidden">{{ self.t("passkeys.only.on_hint") }}</span></span>
                 <span class="sw on" aria-hidden="true"></span><span class="knob" aria-hidden="true"></span>
             </a>
             {%- else if passkey_host.is_some() %}
@@ -241,7 +253,7 @@
             {%- else %}
             <details class="confirm cell" id="passkey-only" data-passkey-ui hidden{% if self.error_for("passkey-only").is_some() %} open{% endif %}>
                 <summary class="row passkey-only-row">
-                    <span class="row-label">{{ self.t("passkeys.only.row") }}<span class="row-sub">{{ self.t("passkeys.only.sub") }}</span></span>
+                    <span class="row-label">{{ self.t("passkeys.only.row") }}</span>
                     <span class="sw" aria-hidden="true"></span><span class="knob" aria-hidden="true"></span>
                 </summary>
                 <form method="post" action="/account/passkey-only#passkey-only" class="confirm-body">
@@ -252,7 +264,6 @@
                     <p>{{ self.t("passkeys.only.way_back") }}</p>
                     {%- endif %}
                     <p>{{ self.tp("passkeys.only.hosts", [("hosts", passkey_rp_ids.as_str())]) }}</p>
-                    <p>{{ self.t("passkeys.only.any_time") }}</p>
                     {% let confirm_label = "passkeys.confirm" %}
                     {% include "partials/passkey_confirm.html" %}
                     {% if let Some(why) = self.error_for("passkey-only") %}<p class="field-error" role="alert">{{ why }}</p>{% endif %}
@@ -266,7 +277,17 @@
             {%- endif %}
             {% call group_flash::show(flash, "passkeys") %}{% endcall %}
         </div>
-        <p class="group-footer">{% if passkey_only && passkeys.len() == 1 %}{{ self.t("passkeys.only.footer_last") }} {% endif %}{{ self.t("passkeys.footer") }}{% if let Some(host) = passkey_host %} {{ self.tp("passkeys.footer_host", [("host", host.as_str())]) }}{% endif %}</p>
+        <div class="group-footer">
+            <details class="info">
+                <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    <p>{{ self.t("passkeys.footer") }}</p>
+                    {%- if let Some(host) = passkey_host %}
+                    <p>{{ self.tp("passkeys.footer_host", [("host", host.as_str())]) }}</p>
+                    {%- endif %}
+                </div>
+            </details>
+        </div>
     </section>
 
     <section id="app-lock" aria-labelledby="app-lock-title">
@@ -281,17 +302,22 @@
             <form method="post" action="/account/lock#app-lock" class="cell" data-app-lock data-saved="{{ lock_minutes }}" data-passkey-ui hidden>
                 {%- if lock_minutes == 0 %}
                 <label class="row">
-                    <span class="row-label">{{ self.t("lock.row") }}<span class="row-sub">{{ self.t("lock.sub") }}</span></span>
+                    <span class="row-label">{{ self.t("lock.row") }}</span>
                     <input type="checkbox" role="switch" class="sw" name="minutes" value="{{ lock_first }}" data-app-lock-pick><span class="knob" aria-hidden="true"></span>
                 </label>
                 {%- else %}
                 <label class="row">
-                    <span class="row-label">{{ self.t("lock.row") }}<span class="row-sub">{{ self.t("lock.sub") }}</span></span>
+                    <span class="row-label">{{ self.t("lock.row") }}</span>
                     <select class="pick" name="minutes" data-app-lock-pick>
                         {% for c in lock_choices %}<option value="{{ c.minutes }}"{% if c.selected %} selected{% endif %}>{{ self.t(c.label) }}</option>{% endfor %}
                     </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 </label>
                 {%- endif %}
+                {#- Design 113 (QA M8): what the lock does behind its own ⓘ row, never inside the switch's label. -#}
+                <details class="info cell">
+                    <summary class="row" aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                    <div class="info-panel"><p>{{ self.t("lock.sub") }}</p></div>
+                </details>
                 <input type="hidden" name="assertion" value="">
                 <p class="field-error lock-field-error" data-passkey-error role="alert" hidden data-w-failed="{{ self.t("passkeys.browser_failed") }}"></p>
                 {%- if let Some(why) = self.error_for("app-lock") %}
@@ -311,7 +337,6 @@
             {%- endif %}
             {% call group_flash::show(flash, "app-lock") %}{% endcall %}
         </div>
-        <p class="group-footer">{{ self.t("lock.footer") }}</p>
     </section>
 
     <section id="sessions" aria-labelledby="sessions-title">
@@ -326,7 +351,12 @@
                 </form>
             </details>
         </div>
-        <p class="group-footer">{{ self.t("account.sessions.footer") }}</p>
+        <div class="group-footer">
+            <details class="info">
+                <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel"><p>{{ self.t("account.sessions.footer") }}</p></div>
+            </details>
+        </div>
     </section>
 
     <section id="parents" aria-labelledby="parents-title">
@@ -405,7 +435,12 @@
             </details>
             {% call group_flash::show(flash, "parents") %}{% endcall %}
         </div>
-        <p class="group-footer">{{ self.t("account.parents.footer") }}</p>
+        <div class="group-footer">
+            <details class="info">
+                <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel"><p>{{ self.t("account.parents.footer") }}</p></div>
+            </details>
+        </div>
     </section>
     </div>
 </main>

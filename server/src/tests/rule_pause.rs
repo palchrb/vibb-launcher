@@ -320,6 +320,8 @@ async fn the_pwa_words_the_phones_pause() {
         .await
         .text();
     assert!(time.contains("data-rule-pause-info"), "{time}");
+    // Design 113: the ⓘ alone, its label only the aria-label.
+    assert!(!time.contains(">About the parent code"), "{time}");
     assert!(time.contains(
         "The parent code on the phone can pause the rule in force for 15 minutes to 2 hours."
     ));

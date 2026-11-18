@@ -1221,7 +1221,7 @@ fn row_of<'a>(html: &'a str, marker: &str) -> &'a str {
 
 /// The Apps tab (§3.3): a row per phone with how many apps it allows - the same count as the
 /// ticks on its page -, then the catalog with the name phones show, the version, how many phones
-/// have it and the badges, the launcher first, the footer and Add App.
+/// have it and the badges, the launcher first, and Add App.
 #[tokio::test]
 async fn the_apps_tab_lists_the_phones_and_the_catalog() {
     let app = TestApp::new().await;
@@ -1373,11 +1373,10 @@ async fn the_apps_tab_lists_the_phones_and_the_catalog() {
         row.contains("data-badge>Off<") && !row.contains("2.0"),
         "{row}"
     );
-    assert!(html.contains("Apps here are kept up to date on every phone that has them."));
     assert!(html.contains(r#"href="/apps/tracked/new""#) && html.contains("Add App"));
 }
 
-/// The app page (§3.3): its own header (no brand bar), Check Now, Show on phones as, the phones
+/// The app page (§3.3): its own header (no brand bar), Check Now, Name and icon, the phones
 /// that have it (to their row on the phone's page), Source & Signing with the switches, the
 /// Forget… and Remove App… confirms.
 #[tokio::test]
@@ -1529,7 +1528,7 @@ async fn add_app_keeps_the_extras_under_more_options() {
 
 /// §5.1's redirect table for the Apps pages: every form the app pages render posts back to its
 /// own group on its page - the fragment its action carries too - and a form in a `<details>`
-/// (Show on phones as, Source & Signing) comes back with it open (`?open=`), so a save never
+/// (Name and icon, Source & Signing) comes back with it open (`?open=`), so a save never
 /// jumps or folds up (§5.1.4, the browser pass of 2026-10-14, 6f); Remove goes to the catalog, Add
 /// to the new app's page. Built from the rendered actions: a new form without a row here fails.
 #[tokio::test]

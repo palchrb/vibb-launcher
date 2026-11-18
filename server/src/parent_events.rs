@@ -494,7 +494,7 @@ impl Phone {
 
     /// Design 97 §6: the phone crossed into `place` abroad (a country code, `ship`, or `plain` for none readable) at
     /// `at`. The place is stored as a code and worded when read, in the reader's language; the target is the Mobilnett
-    /// page's "I utlandet".
+    /// page's "Roaming" (`#abroad`).
     pub fn roaming_started(&self, place: &str, at: DateTime<Utc>) -> NewEvent {
         let params = RoamingParams {
             phone: self.name.clone(),
@@ -4010,7 +4010,7 @@ mod tests {
                 "The phone wants to fetch it from an address you need to approve.",
                 "/devices/3/calls#mmsc",
             ),
-            // Design 97 §6: told from its parameters, to the Mobilnett page's "I utlandet".
+            // Design 97 §6: told from its parameters, to the Mobilnett page's "Roaming".
             (
                 phone.roaming_started("se", two),
                 "Anna is roaming in Sweden",

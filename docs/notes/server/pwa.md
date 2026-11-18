@@ -2378,6 +2378,17 @@ bare Vibb" and "Mobildata er slått av på telefonen". On the summary only the l
 (`mobile_network::summary_lines`, `#mobile-state`, each leading to the page), and "Roamer i Sverige" ends the header's
 second line while the phone is in touch (`phone_status::with_roaming`). Pinned by `tests::mobile_network`.
 
+Design 113 (2026-11-17, the copy round): "Mobildata" (På / Bare Vibb), "Roaming" (was "I utlandet"; På / Av / Bare
+Vibb, the stored `home`/`off`/`vibb`) and "Lås innstillingene", no sub-line under a choice or switch; each group's
+explanation is its footer ⓘ. A wrong state is one orange line above its group, its fix behind the line's ⓘ: «Mobildata
+er av på telefonen» (Android's own switch), «Androids roamingbryter er av» (only when off under På or Bare Vibb; abroad
+«Roamer i Sverige – Androids roamingbryter er av»), «Ingen mobildata her (nasjonal roaming)», the lingering and
+still-on lines. Android's switch on, and Av with the lock in place, say nothing; the pause has no switch line of its
+own. No "Mobildata: bare Vibb" line restates the radio; the kid's Off stays a grey line (the summary's «Mobildata: bare
+Vibb – {name} har slått av»). Mobile data off is the Attention row `mobile-data-off` (`attention::Kind::MobileDataOff`,
+orange, to `#mobile-data`; it counts in the Devices list's badge) - not a summary line and not a part of the row's
+value. The summary's `#mobile-state` lines are link cards: their title alone.
+
 ## A save leaves the history as it was (2026-11-14, branch `pwa-back`; code QA `docs/review/qa-pwa-back-code.md`)
 
 The user: Apps -> Vibb One -> "Sjekk nå", wait, swipe back -> the same app page again, not the Apps list. Every form

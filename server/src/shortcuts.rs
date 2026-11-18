@@ -167,10 +167,10 @@ fn names(lang: Lang, report: &Report) -> String {
         .join(", ")
 }
 
-/// The Home Screen row's sub-line (§5.2), only when it says something; `name` is the phone's (the kid is named, never
-/// given a pronoun): the kid hid the panel; else, with bit 128 on, what the kid chose, or that no shortcut is shown now
-/// (no items: the kid chose none, or none of the chosen is offered - the report can't tell the two apart, C99-L3).
-/// Nothing while the bit is off and the panel isn't hidden.
+/// The Home Screen row's sub-line (§5.2; design 113: quiet values), only when it says something; `name` is the phone's
+/// (the kid is named, never given a pronoun): "Skjult av Emma" when the kid hid the panel; else, with bit 128 on, the
+/// items the kid chose, or "Ingen" (no items: the kid chose none, or none of the chosen is offered - the report can't
+/// tell the two apart, C99-L3). Nothing while the bit is off and the panel isn't hidden.
 pub fn home_sub(lang: Lang, name: &str, policy: &DevicePolicy, report: &Report) -> Option<String> {
     if report.hidden {
         return Some(t_params(
@@ -186,11 +186,7 @@ pub fn home_sub(lang: Lang, name: &str, policy: &DevicePolicy, report: &Report) 
     Some(if chosen.is_empty() {
         t(lang, "device.home.shortcuts_none").to_string()
     } else {
-        t_params(
-            lang,
-            "device.home.shortcuts_chose",
-            &[("name", name), ("items", &chosen)],
-        )
+        chosen
     })
 }
 

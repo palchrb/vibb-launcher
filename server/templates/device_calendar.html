@@ -21,7 +21,7 @@
         <h2 class="group-header" id="dagen-title">{{ self.t("calendar.dagen.title") }}</h2>
         <form method="post" action="/devices/{{ device_id }}/calendar/dagen#dagen" class="group">
             <label class="row">
-                <span class="row-label">{{ self.t("calendar.dagen.on_home") }}<span class="row-sub">{{ self.t("calendar.dagen.on_home_sub") }}</span></span>
+                <span class="row-label">{{ self.t("calendar.dagen.on_home") }}</span>
                 <input type="checkbox" role="switch" class="sw" name="on_home" value="on"{% if on_home %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
             </label>
             <label class="row row-stacked">
@@ -41,10 +41,12 @@
             {% if kid_restore %}<button type="submit" class="row row-button" formaction="/devices/{{ device_id }}/calendar/dagen/restore#dagen" data-kid-restore>{{ self.t("calendar.kid_caldav.restore") }}</button>{% endif %}
             <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
         </form>
-        <div class="group-footer" data-footer="dagen">{{ self.t("calendar.dagen.footer") }}
+        <div class="group-footer" data-footer="dagen">
             <details class="info">
                 <summary aria-label="{{ self.t("calendar.dagen.info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
+                    <p>{{ self.t("calendar.dagen.footer") }}</p>
+                    <p>{{ self.t("calendar.dagen.on_home_sub") }}</p>
                     <p>{{ self.t("calendar.dagen.info") }}</p>
                     <p data-info="kid-caldav">{{ self.kid_info() }}</p>
                     <p>{{ self.t("calendar.kid_caldav.info_tag") }}</p>
@@ -57,11 +59,11 @@
         <h2 class="group-header" id="lock-title">{{ self.t("calendar.lock.title") }}</h2>
         <form method="post" action="/devices/{{ device_id }}/calendar/lock#lock" class="group">
             <label class="row">
-                <span class="row-label">{{ self.t("calendar.lock.next") }}<span class="row-sub">{{ self.t("calendar.lock.next_sub") }}</span></span>
+                <span class="row-label">{{ self.t("calendar.lock.next") }}</span>
                 <input type="checkbox" role="switch" class="sw" name="glance_next" value="on"{% if glance_next %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
             </label>
             <label class="row">
-                <span class="row-label">{{ self.t("calendar.lock.reminders") }}<span class="row-sub">{{ self.t("calendar.lock.reminders_sub") }}</span></span>
+                <span class="row-label">{{ self.t("calendar.lock.reminders") }}</span>
                 <select class="pick" name="reminders" data-autosave>
                     <option value="off"{% if reminders == "off" %} selected{% endif %}>{{ self.t("calendar.lock.reminders.off") }}</option>
                     <option value="row"{% if reminders == "row" %} selected{% endif %}>{{ self.t("calendar.lock.reminders.row") }}</option>
@@ -70,10 +72,12 @@
             </label>
             <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
         </form>
-        <div class="group-footer" data-footer="lock">{{ self.t("calendar.lock.footer") }}
+        <div class="group-footer" data-footer="lock">
             <details class="info">
                 <summary aria-label="{{ self.t("calendar.lock.info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
+                    <p>{{ self.t("calendar.lock.next_sub") }}</p>
+                    <p>{{ self.t("calendar.lock.reminders_sub") }}</p>
                     <p>{{ self.t("calendar.lock.info") }}</p>
                     <p>{{ self.t("calendar.lock.info_sound") }}</p>
                     <p>{{ self.t("calendar.lock.example_caption") }}</p>
@@ -105,7 +109,13 @@
         {#- E6's L3: the server made a new music key at its start (the file was gone), so the links sealed with the old one
             can't be fetched; each such row says it too. Pasting the same link again re-seals it onto its calendar. -#}
         {% if links_key_new %}
-        <div class="attention attention-alarm" data-warning="links-key-new"><div class="attention-text">{{ self.t("calendar.links.key_new") }}<div class="attention-sub">{{ self.t("calendar.links.key_new_sub") }}</div></div></div>
+        <div class="attention attention-alarm" data-warning="links-key-new">
+            <div class="attention-text">{{ self.t("calendar.links.key_new") }}<div class="attention-sub">
+                <details class="info">
+                    <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                    <div class="info-panel"><p>{{ self.t("calendar.links.key_new_sub") }}</p></div>
+                </details></div></div>
+        </div>
         {% endif %}
         <div class="group group-icons">
             {% for s in sources %}
@@ -124,14 +134,20 @@
             {% endif %}
             {% endfor %}
             {% if sources_off %}
-            <p class="row row-sub" data-sources="off">{{ self.t("calendar.sources.no_key") }}</p>
+            <details class="info cell" data-sources="off">
+                <summary class="row">
+                    <span class="row-label tone-orange">{{ self.t("calendar.sources.no_key") }}</span>
+                    <svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("common.more_info") }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>
+                </summary>
+                <div class="info-panel"><p>{{ self.t("calendar.sources.no_key_info") }}</p></div>
+            </details>
             {% else if can_add_source %}
             <a class="row row-button" href="/devices/{{ device_id }}/calendar/add" data-sources="add">{{ self.t("calendar.sources.add") }}&hellip;</a>
             {% else %}
             <p class="row row-sub" data-sources="full">{{ self.t("calendar.caldav.error.too_many_calendars") }}</p>
             {% endif %}
         </div>
-        <div class="group-footer" data-footer="sources">{{ self.t("calendar.sources.footer") }}
+        <div class="group-footer" data-footer="sources">
             <details class="info">
                 <summary aria-label="{{ self.t("calendar.sources.info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
@@ -146,15 +162,24 @@
         <h2 class="group-header" id="calendars-title">{{ self.t("calendar.calendars.title") }}</h2>
         {% match state %}
         {% when ReportState::NoReport %}
-        <p class="group-footer" data-calendars="no-report">{{ self.t("calendar.calendars.no_report") }}</p>
+        <div class="group"><p class="row row-note" data-calendars="no-report">{{ self.t("calendar.calendars.no_report") }}</p></div>
         {% when ReportState::Unreadable %}
-        <p class="group-footer" data-calendars="unreadable">{{ self.t("calendar.calendars.unreadable") }}</p>
+        <div class="group">
+            <details class="info cell" data-calendars="unreadable">
+                <summary class="row">
+                    <span class="row-label tone-orange">{{ self.t("calendar.calendars.unreadable") }}</span>
+                    <svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("common.more_info") }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>
+                </summary>
+                <div class="info-panel"><p>{{ self.t("calendar.calendars.unreadable_info") }}</p></div>
+            </details>
+        </div>
         {% when ReportState::NoCalendars %}
         <p class="group-footer" data-calendars="none">{{ self.t("calendar.calendars.none") }}</p>
         {% when ReportState::Listed %}
         {% endmatch %}
         {% if !calendars.is_empty() %}
         <form method="post" action="/devices/{{ device_id }}/calendar/calendars#calendars" class="group">
+            {% if reminders == "off" %}<p class="row row-note" data-reminders-off>{{ self.t("calendar.calendars.reminders_off") }}</p>{% endif %}
             {% for c in calendars %}
             <input type="hidden" name="key" value="{{ c.key }}">
             <div class="cell{% if !c.on_phone %} row-dim{% endif %}" data-calendar="{{ c.key }}">
@@ -163,7 +188,7 @@
                     <input type="checkbox" role="switch" class="sw" name="shown_{{ c.key }}" value="on" aria-label="{{ self.t("calendar.calendars.shown") }}"{% if c.shown %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                 </label>
                 <label class="row">
-                    <span class="row-label">{{ self.t("calendar.calendars.reminder") }}{% if reminders == "off" %}<span class="row-sub" data-reminders-off>{{ self.t("calendar.calendars.reminders_off") }}</span>{% endif %}</span>
+                    <span class="row-label">{{ self.t("calendar.calendars.reminder") }}</span>
                     <select class="pick" name="remind_{{ c.key }}" data-autosave>
                         {% for r in c.reminds %}<option value="{{ r.value }}"{% if r.selected %} selected{% endif %}>{{ r.label }}</option>{% endfor %}
                     </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -188,10 +213,11 @@
             {% endfor %}
             <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
         </form>
-        <div class="group-footer" data-footer="calendars">{{ self.t("calendar.calendars.footer") }}
+        <div class="group-footer" data-footer="calendars">
             <details class="info">
                 <summary aria-label="{{ self.t("calendar.calendars.info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
+                    <p>{{ self.t("calendar.calendars.footer") }}</p>
                     <p>{{ self.t("calendar.calendars.info") }}</p>
                     <p>{{ self.t("calendar.calendars.colors_info") }}</p>
                 </div>
@@ -199,7 +225,12 @@
         </div>
         {% endif %}
         {% if state != ReportState::Listed %}
-        <p class="group-footer">{{ self.t("calendar.calendars.setup") }}</p>
+        <div class="group-footer">
+            <details class="info">
+                <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel"><p>{{ self.t("calendar.calendars.setup") }}</p></div>
+            </details>
+        </div>
         {% endif %}
     </section>
 

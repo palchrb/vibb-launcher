@@ -311,6 +311,8 @@ Both kinds of phone work, and nothing changes in how a phone reaches its server.
 
 ### 3.1 The public origin
 
+(Words changed by design 113, with design 112 folded in: the nb name is now "App-push"; see 113's "App push" section.)
+
 There is one server-wide setting: **the phones' public address for app push**, for example
 `https://phones.example.com`.
 
@@ -576,6 +578,9 @@ Pinned by `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTe
   Before the first unlock nothing of UP may run on the phone (§5.3).
 
 ### 3.10 The PWA (nb and en, i18n keys `push.*`)
+
+(Words changed by design 113, with design 112 folded in: the page's text, its groups and Device › Apps' lines are as
+113's "App push" section has them; the facts below stand.)
 
 **Settings hub › "Push for apper" / "App push"** (`/settings/push`):
 

@@ -8,7 +8,6 @@
 {% include "partials/js_words.html" %}
 <main class="auth-card">
     <h1 class="auth-title">Vibb Phone</h1>
-    <p class="auth-sub">{{ self.t("auth.login.sub") }}</p>
 
     {% if let Some(e) = error %}
     <p class="flash flash-error auth-error" role="alert">{{ e }}</p>

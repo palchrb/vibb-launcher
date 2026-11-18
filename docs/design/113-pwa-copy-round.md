@@ -1,6 +1,7 @@
 # 113 - PWA copy round
 
-Status: design, 2026-11-17. Server only (`server/templates/`, `server/src/i18n/{nb,en}.json`, the handlers named below);
+Status: design, 2026-11-17; design QA applied (`qa-113-114.md`, the 113 part: H1, M1-M9, L1-L9) and the user's
+answers to the five ASKs folded into the tables. Server only (`server/templates/`, `server/src/i18n/{nb,en}.json`, the handlers named below);
 no launcher or music change, so nothing here depends on the Android version.
 
 Inputs: CLAUDE.md "Words in the UI" (the rules, the user's words); design 112 (Settings › App push, approved - folded in,
@@ -21,9 +22,20 @@ optional "Telefoner" group is not built), the launcher's and the music app's own
   panel holds `detail` and `fix` as two `<p>`s. Today
   the partial shows `detail` in the open and hides `fix` inside it (and never shows `fix` without a `detail`).
   `device_pages::Note` gains `pub sub: Option<String>` - a visible consequence of at most six words, set only where a
-  KEEP needs one (Anrop's `emergency_call`, `callback`, `screen_failed`, where the time is the news); every other caller
-  passes `None`. `Note` is built in `device_pages.rs`, `calls.rs`, `music.rs`, `schedules.rs`, `tracked_apps.rs`,
-  `kiosk_escapes.rs`, `kid_lock.rs`, `lock_glance.rs` (35 literals): each gets `sub: None` or its short line. Every page
+  KEEP needs one (Anrop's `emergency_call`, `callback`, `screen_failed`, where the time is the news) or where the title
+  alone doesn't carry the news (QA M5, the four below); every other caller passes `None`. The four:
+
+  | Note (title key) | Visible `sub` | nb | en | Kind |
+  |---|---|---|---|---|
+  | `device.calls.problem.needs_update` | the finding's own sentence, `device.calls.finding.needs_update` / `_sms` / `_calls` (already short), moved from the ⓘ to `sub`; the fix stays in the ⓘ | SMS går tapt til da. | SMS is lost until then. | unchanged keys |
+  | `device.time.ledger_unreadable` | `device.time.ledger_unreadable_sub` (already short), visible as `sub` | Telefonen regner dagens skjermtid som brukt opp. | The phone counts today's screen time as used up. | unchanged |
+  | `device.lock.note.needs_update` | new `device.lock.note.needs_update_short`; `needs_update_sub` stays in the ⓘ | Ingen lås til da | No lock until then | added |
+  | `device.lock.note.bad_hash` | new `device.lock.note.bad_hash_short`; `bad_hash_sub` stays in the ⓘ | Bare foreldre-PIN-en åpner den nå | Only the Parent PIN opens it | added |
+
+  `Note` is built in
+  `device_pages.rs`, `calls.rs`, `music.rs`, `schedules.rs`, `kiosk_escapes.rs`, `kid_lock.rs`, `lock_glance.rs` (about
+  26 struct literals plus the `kid_lock`/`music` helper closures; `tracked_apps.rs` has its own `enum Note`, untouched):
+  each gets `sub: None` or its short line. Every page
   whose orange line carries a fix uses the same shape (`attention attention-action`, title, `attention-sub` with the
   ⓘ): Mobilnett's lines, App push's missing/no-listener lines, the phone page's alarms. Titles that leaned on their
   detail get their own wording in the page tables.
@@ -34,6 +46,10 @@ optional "Telefoner" group is not built), the launcher's and the music app's own
   explanation is a field ⓘ (`details.info.field-info` after the `<label>`, as `tracked_app_add.html`); a row's is a row
   ⓘ (`details.info.cell` with `summary.row`, as `partials/note_row.html`). A sentence moved unchanged keeps its key (the
   panel renders it). No new CSS, no JS.
+  Two places never hold an ⓘ (QA M7, M8): a link card or link row (`<a>`: interactive content inside `<a>` is invalid,
+  and a tap on the ⓘ would navigate) renders its title alone (and the chevron) - the ⓘ lives on the page it links to;
+  and a `<label>` switch row (a `<details>` isn't phrasing content, and a tap on it can toggle the switch, which
+  autosaves) - its ⓘ is a `details.info.cell` row right after the label row, or the group's footer ⓘ.
 - **P3 - no sub-line under a choice or a switch.** The `row-sub` goes; its text joins the group's ⓘ (P2). A sub-line
   that is a state (an update hint, a refusal) stays and is orange.
 - **P4 - a fine state shows nothing, or a quiet value.** The handler stops building the line; each is listed under
@@ -84,8 +100,8 @@ hooks `static/swap.js` swaps by (`data-flash`, `data-warning`, `data-mobile-line
 
 One branch, one commit per step, each with its tests: (1) P1 - the partial, `Note.sub` and every caller; (2) Mobilnett
 and the Attention row; (3) App push (112 + this note); (4) Telefonens side; (5)-(n) the remaining pages, a commit per
-area (device sub-pages, Finn, catalog, music, Settings, account/sign-in/setup). Rows marked ASK are skipped until the
-user answers.
+area (device sub-pages, Finn, catalog, music, Settings, account/sign-in/setup). The five ASKs are answered (end of the
+note) and folded into the tables: ASK 1 not built, ASK 2 and ASK 4 kept as today, ASK 3 and ASK 5 built.
 
 ## Phones: the list and a phone
 
@@ -118,10 +134,10 @@ Tests:
 | `device.summary.blocked.more.other` | (as `.one`) | {count} til som telefonen ikke viser | {count} more the phone doesn't show | 5 | words |
 | `device.summary.blocked.more_info` | - | Se etter dem under Innstillinger › Apper på telefonen, og avinstaller det du ikke kjenner. | Look for them in the phone's Settings › Apps and uninstall what you don't know. | 3 (behind the row's ⓘ) | added |
 | `device.summary.setup.background_sub` | Endringer kan komme sent mens telefonen sover. | (moved, unchanged: the step row's ⓘ) | (moved) | 1 | moved |
+| `device.summary.setup.default_apps_sub` | Endret under oppsettet: {apps}. | (moved, unchanged: the step row's ⓘ, before `default_apps_sms`) | (moved) | 3 (QA L8: words only, the card is 114's) | moved |
 | `device.about.write_settings_sub` | Bryterne for berøringslyder og klokkeformatet trenger den. | (moved, unchanged: the step row's ⓘ; About keeps its own use) | (moved) | 1 | moved |
 | `device.summary.setup.assistant_sub` | Velg Vibb One - trengs for Flymodus | (moved, unchanged) | (moved) | 1 | moved |
 | `device.summary.setup.wifi_sub` | Ikke satt opp. Uten det er telefonen helt uten nett i flymodus. | Uten den er telefonen helt uten nett i flymodus. | Without it the phone is fully offline in airplane mode. | 4 (the step itself says "not set up") | words (behind ⓘ) |
-| `device.summary.setup.default_apps_sub` | Endret under oppsettet: {apps}. | - | - | 3 (the role names become the row's value) | deleted |
 | `device.summary.setup.default_apps_sms` | Meldinger som kom mens en annen app hadde SMS-rollen, ligger i den appen. | (moved, unchanged: the step row's ⓘ) | (moved) | 3 | moved |
 | `device.summary.setup.call_filter_sub` | Vibb One trenger anropsfilter og viderekobling for å styre samtalene. | (moved, unchanged) | (moved) | 1 | moved |
 | `device.summary.setup.footer` | Fullfør oppsettet på telefonen: åpne den for oppsett, og trykk på varselet «Fullfør oppsettet av Vibb One». | (moved, unchanged: a footer ⓘ alone) | (moved) | 2 | moved |
@@ -155,7 +171,7 @@ Tests:
 | `device.summary.foreign.which` | Hvilke apper | (aria-label of the merged ⓘ: replaced by `common.how_to_fix`) | - | 2 | deleted |
 | `device.summary.access.footer` | Skriv inn koden under Innstillinger i Vibb One på telefonen, eller skann QR-koden under oppsettet. En ny kode erstatter den forrige. | (moved, unchanged: a footer ⓘ alone) | (moved) | 2 | moved |
 | `device.summary.access.paused_sub.*`, `device.summary.access.qr_works` | (see Telefon › Avansert, which shares the split) | - | - | 5 | see Avansert |
-| `device.summary.no_parent_pin_sub` | Uten den kan ingenting åpnes eller oppheves på selve telefonen. | (moved, unchanged: behind the alarm's ⓘ; the title stays visible) | (moved) | 5 | moved |
+| `device.summary.no_parent_pin_sub` | Uten den kan ingenting åpnes eller oppheves på selve telefonen. | - (the summary's card is a link: title and chevron only, QA M7; the Lock page's own `device.lock.no_parent_pin_sub` stays visible there, KEEP) | - | 5 | deleted |
 | `device.summary.relock.footer` | Det telefonen fant da den ble låst igjen. Vises i en uke. | (moved, unchanged: a footer ⓘ alone) | (moved) | 2 | moved |
 | `device.summary.relock.turned_off_sub` | {names}. Slå dem på i telefonens innstillinger under en pause. | {names} | {names} | 3 | words |
 | `device.summary.relock.turned_off_info` | - | Slå dem på i telefonens innstillinger under en pause. | Turn them on in the phone's Settings during a pause. | 3 (behind the row's ⓘ) | added |
@@ -165,17 +181,20 @@ Tests:
 | `device.summary.report_age` | Ifølge telefonens siste rapport, {age}. | Siste rapport {age} | Last report {age} | 3 | words |
 
 Template (`device_detail.html`):
-- Oppsett card: each step is `details.info.cell` with `summary.row` (label, the value when the step has one, the ⓘ icon)
-  and the detail in the panel - the `note_row.html` shape; `default_apps:*` shows the role names as the value and
-  `default_apps_sms` (only when SMS changed) as its detail; a step without a detail is a plain row. The footer becomes
-  a footer ⓘ alone. `SetupStep { id, label, sub }` → `{ id, label, value: Option<String>, detail: Option<String> }`
-  (`airplane_mode::setup_steps`); `data-setup-step` stays.
+- Oppsett card (QA L8: words only - design 114 replaces this card, so no struct change here): `SetupStep { id, label,
+  sub }` stays; a step with a `sub` is `details.info.cell` with `summary.row` (label, the ⓘ icon) and the `sub` in the
+  panel - the `note_row.html` shape (for `default_apps:*` the panel holds `default_apps_sub`, then `default_apps_sms`
+  when SMS changed, as the sub carries them today); a step without a sub is a plain row. The footer becomes a footer ⓘ
+  alone. `data-setup-step` stays.
+- Link cards (QA M7): the no-Parent-PIN card (`<a … data-warning="no-parent-pin">`) shows its title and chevron only;
+  the `#mobile-state` lines (`<a … data-mobile-line>`) render `line.title` only - the template drops `line.sub` there
+  (their ⓘ text is on Mobilnett).
 - Blocked apps: no footer sentence; when `relock.blocks.more` is set, one `details.info.cell` row in the group,
   `summary.row` with the orange label (`text-alarm`) `blocked.more` and the ⓘ, panel `blocked.more_info`.
 - Foreign access: the red title stays; `attention-sub` holds `sub_one/_many` and one `details.info` (aria
   `common.how_to_fix`) whose panel holds `foreign.refuses`, the packages (`packages_*`), then the `<ol>` of steps -
   the `<ol class="attention-steps">` moves into the panel.
-- Access: `no_parent_pin` alarm: title only, `no_parent_pin_sub` behind an ⓘ in the attention-sub (P1 markup); paused:
+- Access: `no_parent_pin` card: title and chevron only (a link, M7); paused:
   title + `attention-sub` `device.summary.access.qr_works` + ⓘ with `paused_sub` (as Avansert); footer ⓘ alone.
 - Quick actions: the setup-open row without `row-sub` when `lock_again`, with `pause_ends_old` as the `row-sub` when
   not; both «Til» rows without `row-sub`; `pause_note` `<p>` goes; the `extra_note` `<p>` only when it is `Some`.
@@ -189,7 +208,9 @@ State logic:
 - `quick_actions.rs` (`QuickActions.extra_note` → `Option<String>`): `Some(extra_used)` when the screen-time state has a
   budget, else `None` (the line is gone).
 - `quick_actions.rs` setup row: `sub` → `Option<String>`: `None` when `lock_again`, `Some(pause_ends_old)` otherwise.
-- `airplane_mode::setup_steps`: values/details as above (no step added or removed; `setup_key` unchanged).
+- `airplane_mode::setup_steps`: unchanged (L8); only `wifi_sub`'s words change.
+- `quick_actions.rs`: the dropped parameters - `mode_line`/`mode_line_none` and `warn_setup`/`warn_setup_plain` lose
+  `{rule}` - leave the call sites' argument lists too (`quick_actions.rs:151-155, 465-471`, QA M9).
 
 Tests:
 - `tests/window_relock.rs`: line 286 "Apps and Play Store are open" → assert absent; 331 `pause_ends_old` text → "Can&#39;t
@@ -197,14 +218,15 @@ Tests:
   doesn&#39;t list" → "17 more the phone doesn&#39;t show"; 899 "Spy &#60;i&#62;Kit can control the phone or read its
   screen" still matches (the sentence now ends there).
 - `tests/play.rs` 523/532 "Changes may arrive late": still in the HTML (now in the step's ⓘ panel) - no change needed.
-- `tests/airplane_mode.rs` 335 "Changed during setup: Call screening, Browser." → the value "Call screening, Browser".
 - `tests/lock_now.rs` 406 "The phone locks as in Skole: org.fossify.clock work." → "org.fossify.clock and emergency
   calls work."
 - `tests/time_request.rs` 799/840: the two ask sentences unchanged (now in the ⓘ panel) - still match.
 - `tests/time_rules.rs` 683 "That rule no longer applies to this phone. Nothing was paused." → "The rule no longer
   applies".
-- grep `report_age` / "As of the phone" in `tests/window_relock.rs` and `tests/devices_list.rs` before the build (the
-  pause-end-report tests read `data-report-age`).
+- `report_age`'s text is pinned in `tests/window_relock.rs` (QA M9): "As of the phone's last report, …" → "Last report
+  …" (the `data-report-age` hook stays).
+- `tests/airplane_mode.rs` 335 above: with L8 the "Changed during setup: …" sentence stays (now in the step's ⓘ panel) -
+  `contains` holds.
 
 ## A phone's pages
 
@@ -239,10 +261,10 @@ Template:
 | `device.home.shortcuts_chose` | {name} har valgt: {items} | - | - | 3 (quiet value: the items alone) | deleted; state: `shortcuts::home_sub` returns the `names` string itself |
 | `device.home.shortcuts_none` | Ingen snarveier vises nå. | Ingen | None | 3 | words |
 | `device.home.shortcuts_info` | Snarveier er et fast varsel øverst i varsellisten med inntil fire knapper. … viser den også tiden som er igjen. | Snarveier er et fast varsel øverst i varsellisten med inntil fire knapper. {name} velger dem blant bryterne her og lommelykten, og kan skjule dem og vise dem igjen under Innstillinger › Snarveier. Det vises aldri på låseskjermen. Når {name} har skjermtid i dag, viser den også tiden som er igjen. | Shortcuts is a fixed notification at the top of the notifications with up to four buttons. {name} picks them from the switches here and the flashlight, and can hide and show them again under Settings › Shortcuts. It never shows on the lock screen. When {name} has screen time today, it also shows the time left. | 3 (the how-to of `shortcuts_hidden`) | words |
-| `device.home.airplane_no_role` | Vises for {name} når Vibb One er valgt som digital assistent. Se Oppsett på telefonsiden. | Vibb One er ikke digital assistent | Vibb One isn't the digital assistant | 3, 5 | words; state: `airplane_mode::home_sub` (orange) |
+| `device.home.airplane_no_role` | Vises for {name} når Vibb One er valgt som digital assistent. Se Oppsett på telefonsiden. | Vibb One er ikke digital assistent | Vibb One isn't the digital assistant | 3, 5 | words (both catalogs drop `{name}`); state: `airplane_mode::home_sub` (orange, only with bit 64 on) |
 | `device.home.airplane_blocked` | Flymodus er blokkert under Avansert › Begrensninger. | Blokkert under Begrensninger | Blocked under Restrictions | 3 | words |
 | `device.home.airplane_offline` | Uten Wi-Fi i flymodus er telefonen helt uten nett når flymodus er på. | Helt uten nett i flymodus | Fully offline in airplane mode | 3 (KEEP: short, visible) | words |
-| `device.home.airplane_info` | Flymodus slår av mobilnettet. Nødsamtaler virker fortsatt, og etter en nødsamtale kan barnet ikke slå på flymodus igjen med en gang. | Flymodus slår av mobilnettet. Nødsamtaler virker fortsatt, og etter en nødsamtale kan barnet ikke slå på flymodus igjen med en gang. Bryteren vises for barnet når Vibb One er valgt som digital assistent (Oppsett på telefonsiden). Uten Wi-Fi i flymodus er telefonen helt uten nett mens flymodus er på. | Airplane mode turns off the mobile network. Emergency calls still work, and right after one the child can't turn airplane mode back on. The switch shows for the child once Vibb One is chosen as the digital assistant (Setup on the phone's page). Without Wi-Fi in airplane mode the phone is fully offline while airplane mode is on. | 3 (the how-to and the why of the sub-lines) | words |
+| `device.home.airplane_info` | Flymodus slår av mobilnettet. Nødsamtaler virker fortsatt, og etter en nødsamtale kan barnet ikke slå på flymodus igjen med en gang. | Flymodus slår av mobilnettet. Nødsamtaler virker fortsatt, og etter en nødsamtale kan barnet ikke slå på flymodus igjen med en gang. Bryteren vises for barnet når Vibb One er valgt som digital assistent (under Oppsett). Uten Wi-Fi i flymodus er telefonen helt uten nett mens flymodus er på. | Airplane mode turns off the mobile network. Emergency calls still work, and right after one the child can't turn airplane mode back on. The switch shows for the child once Vibb One is chosen as the digital assistant (under Setup). Without Wi-Fi in airplane mode the phone is fully offline while airplane mode is on. | 3 (the how-to and the why of the sub-lines; QA L8: «under Oppsett», not a card 114 removes) | words |
 | `device.home.layout_footer` | Språket i Vibb Ones egne skjermer på telefonen. Klokkeformatet gjelder hele telefonen: … | (moved, unchanged) | (moved, unchanged) | 2 | moved: P2 (i) alone under Språk/klokke, aria `common.more_info` |
 | `device.home.no_notification_access_sub` | Antall uleste og musikkortet er av, og låseskjermen viser bare tapte anrop. | (moved, unchanged) | (moved, unchanged) | 5 | moved: P1 (i), before `_fix` |
 | `device.home.clock_not_applied_sub` | Telefonen kan ikke endre klokkeformatet ennå. | - | - | 4 (restates the title) | deleted; `device_pages::clock_format_note` gives `detail: None`, `_fix` alone in the (i) |
@@ -260,11 +282,14 @@ Template:
 
 State logic:
 - `shortcuts::home_sub`: hidden -> «Skjult av {name}»; bit off -> `None` (unchanged); chosen -> the item names joined (no key); none -> «Ingen».
-- `airplane_mode::home_sub` returns `Option<(String, bool)>`: the bool (orange) is true exactly when `!report.assistant` (no_role is among the parts); blocked and offline alone are grey. The parts still join with " · " (was " ").
+- `airplane_mode::home_sub` returns `Option<(String, bool)>` (QA M6): `no_role` is a part only when bit 64 is on and
+  `!report.assistant` - with bit 64 off nothing is said about the role (the (i)'s sentence says when the switch shows);
+  the bool (orange) is true exactly when `no_role` is among the parts; blocked and offline alone are grey. The parts
+  still join with " · " (was " ").
 
 Tests:
 - `tests/shortcuts.rs::the_home_row_says_what_the_kid_did` (hidden en/nb, none en/nb, chose nb «har valgt:»), `::the_home_form_keeps_bit_128_without_its_row` («har valgt:», `quick_footer_shortcuts` now inside the (i) - an `contains` still holds, a position check doesn't).
-- `tests/airplane_mode.rs::the_home_form_keeps_bit_64_without_its_row` (no_role en/nb, blocked, offline texts; add a check for `tone-orange` on no_role).
+- `tests/airplane_mode.rs::the_home_form_keeps_bit_64_without_its_row` (no_role en/nb, blocked, offline texts; add a check for `tone-orange` on no_role; add the row: bit 64 off, no assistant -> no `no_role` text and no `tone-orange`).
 - `tests/launcher_ui.rs::clock_format_form_keeps_a_missing_field` and the other `clock_format_*` tests: "Follow the phone" -> "Same as the phone"; `::clock_format_not_applied_is_a_warning`: no `_sub` text.
 - `models::command_label` mentions "Follow the phone" (check: if it is a test string, update).
 
@@ -333,7 +358,7 @@ Tests:
 
 ### Anrop og kontakter (`device_calls.html`)
 
-P1 does the warnings: every `Finding::note` warning shows its orange title (`device.calls.problem.*`, all already short and readable alone) and its `device.calls.finding.*` sentence moves behind the (i) with the fix - those keys are `moved`, not listed one by one. KEEP visible: `emergency_call`, `callback`, `screen_failed` put their sentence in `Note.sub` (state: `calls::Finding::note`).
+P1 does the warnings: every `Finding::note` warning shows its orange title (`device.calls.problem.*`, all already short and readable alone) and its `device.calls.finding.*` sentence moves behind the (i) with the fix - those keys are `moved`, not listed one by one. KEEP visible: `emergency_call`, `callback`, `screen_failed` put their sentence in `Note.sub` (state: `calls::Finding::note`); so does the needs-update finding (QA M5, D1).
 
 | Key | Today nb | New nb | New en | Rule | Kind |
 |---|---|---|---|---|---|
@@ -358,6 +383,7 @@ P1 does the warnings: every `Finding::note` warning shows its orange title (`dev
 | `device.calls.sub.calls_applies` | Gjelder når samtaler eller SMS er styrt av Vibb | - | - | 1 | deleted; state: `calls_form::subs` |
 | `device.calls.sub.sms_applies` | Gjelder når SMS er styrt av Vibb | - | - | 1 | deleted; state: `calls_form::subs` |
 | `device.calls.sub.not_managed` | - | Ikke styrt | Not managed | 1 | added |
+| `device.calls.sub.sms_off` | - | SMS av | SMS off | 1 (QA M2: under Off SMS is off, not unmanaged) | added |
 | `device.calls.sub.pictures_no_texts` | Gjelder når {kid} og {contact} sender meldinger | Meldinger av | Texts off | 1 | words (both catalogs drop `{kid}`/`{contact}`) |
 | `device.requests.footer` | {name} har bedt om disse fra telefonboken. Ingenting legges til før du lagrer kontakten selv. … | (moved, unchanged) | (moved, unchanged) | 2 | moved: Forespørsler' footer (i) alone |
 | `device.sms.blocked.footer` | De siste 30 dagene. Disse avsenderne kan ikke tillates: … | (moved, unchanged) | (moved, unchanged) | 2 | moved: Blokkerte meldinger' footer (i) alone |
@@ -389,16 +415,21 @@ Template:
 - Add Contact family form: the `family_hint` `<p>` goes.
 
 State logic:
-- `device_pages::Note` gains `sub: Option<String>`; `calls::Finding::note` puts `emergency_call`, `callback`, `screen_failed` in `sub` (visible under the orange title), every other finding's sentence in `detail` (in the (i)).
+- `device_pages::Note` gains `sub: Option<String>`; `calls::Finding::note` puts `emergency_call`, `callback`, `screen_failed` and the needs-update finding in `sub` (visible under the orange title), every other finding's sentence in `detail` (in the (i)).
 - `calls::channel_row`: `Segment.note` is always `None`; `ChannelRow.sub` stays (now read only by the (i)).
 - `calls::emergency_rows`: `EmergencyRow.sub` becomes `Option<&'static str>`, `Some("device.emergency.not_emergency")` only when `!real` (orange); `extra` (`not_in_phone_book`) unchanged.
-- `calls_form::subs`: `calls`: managed -> `None`; unmanaged (any sms mode) -> «Ikke styrt»; off -> «Samtaler av». `texts`: «Ikke styrt» when `sms_mode != "managed"`, else `None`. `pictures`: `None` when `sms_mode != "managed"` (said once, on Meldinger); else «Meldinger av» when `!texts_any`. `home` unchanged.
+- `calls_form::subs`: `calls`: managed -> `None`; unmanaged (any sms mode) -> «Ikke styrt»; off -> «Samtaler av». `texts` (QA M2): `unmanaged` -> «Ikke styrt», `off` -> «SMS av» (`device.calls.sub.sms_off`), `managed` -> `None`. `pictures`: `None` when `sms_mode != "managed"` (said once, on Meldinger); else «Meldinger av» when `!texts_any`. `home` unchanged.
 
 Tests:
 - `tests/calls.rs::calls_page_shows_role_problems_and_fail_closed`, `::allowlisted_messages_app_with_sms_off_is_flagged`, `tests/catalog_pins.rs::a_new_phone_keeps_its_phone_and_sms_apps`, `tests/sms.rs::a_stored_pair_an_older_launcher_cant_do_is_explained`, `tests/sms_page.rs::the_pools_and_the_findings`: finding texts now inside `<div class="info-panel">` - `contains` holds; any check of `attention-sub">…` text fails: update to the panel.
 - `tests/sms.rs::the_calls_page_saves_both_channels` (channel sub texts now in the (i)); `::the_calls_page_gates_what_an_older_launcher_cant_do` (l.742 `segment-note">recommended` -> no note; l.698 already asserts none).
 - `tests/emergency_menu.rs::adding_keeps_112_first_and_normalises_the_number` (big/always gone; not_emergency new text), `::a_number_outside_the_phone_book_says_it_is_dimmed` (-> "Not in the phone book").
-- `calls_form::tests::the_sub_lines_follow_the_modes`, `tests/calls_simpler.rs::the_sub_lines_follow_the_channel_modes`: every row of the new `subs`.
+- `calls_form::tests::the_sub_lines_follow_the_modes`, `tests/calls_simpler.rs::the_sub_lines_follow_the_channel_modes`: every row of the new `subs`, with the M2 row (`sms_mode` off -> `texts` «SMS av» / "SMS off").
+- Dropped parameters (QA M9): `device.calls.sub.pictures_no_texts` loses `{kid}`/`{contact}` and
+  `device.requests.short_choose` loses `{name}` - the call sites' argument lists go too (`calls_form.rs:211`, the
+  contact-request prefill).
+- QA M5: `calls::Finding::note` for the needs-update finding puts its sentence (`device.calls.finding.needs_update` /
+  `_sms` / `_calls`) in `Note.sub` (visible); a test asserts it outside the `info-panel`.
 - `tests/calls_simpler.rs::the_page_keeps_on_view_what_needs_a_decision`, `tests/sms_page.rs::the_rcs_step_shows_before_and_under_managed`: `sms_rcs` gone from the Avansert row (still on the channel for 14 days).
 - `tests/launcher_ui.rs::photo_is_reencoded_and_reaches_the_device` (names `device.calls.photo_privacy`: still rendered, in the panel).
 - `tests/contact_requests.rs::the_prefill_and_retry_rules` ("may call and text it." -> gone; `data-request-short` hook stays), `::add_from_a_request` (matrix hint).
@@ -407,7 +438,7 @@ Tests:
 
 ### Låseskjerm og PIN-koder (`device_lock.html`)
 
-P1 does the lock notes (`kid_lock.rs`, `device.lock.note.*_sub` -> the (i)) and the lock-glance notes (`lock_glance.rs`, `device.lock.glance.*_sub` -> the (i)); their titles read alone. Those `_sub` keys are `moved`.
+P1 does the lock notes (`kid_lock.rs`, `device.lock.note.*_sub` -> the (i)) and the lock-glance notes (`lock_glance.rs`, `device.lock.glance.*_sub` -> the (i)); their titles read alone, except `needs_update` and `bad_hash`, which get the short visible `sub` of D1 (QA M5: `device.lock.note.needs_update_short`, `bad_hash_short`). Those `_sub` keys are `moved`.
 
 | Key | Today nb | New nb | New en | Rule | Kind |
 |---|---|---|---|---|---|
@@ -447,18 +478,16 @@ Template:
 Tests:
 - `tests/lock_glance.rs::the_page_lists_the_allowed_apps_with_their_ticks` (notifications_footer, now in the panel - `contains` holds), `::the_wake_switch_saves_logs_nudges_and_reaches_the_policy`, `::the_buzz_switch_saves_logs_nudges_and_reaches_the_policy` (wake_sub/buzz_sub gone), `::the_home_screen_warning_and_the_lock_page_name_the_lock_screen` (lock_screen_footer's new first sentence; the old text still follows).
 - `tests/step10.rs::lock_page_warns_about_the_lock_state` (child_info_own now starts with the phase-out sentence; the old text still follows).
-- `tests/android_lock_page.rs::a_new_phone_gets_androids_lock_once_the_child_pin_is_set`, `::the_child_pin_stays_while_androids_lock_is_chosen` ("Vibb One's lock (being phased out)"/«Vibb Ones lås (fases ut)» -> without the bracket; `data-privacy` hook unchanged).
+- `tests/android_lock_page.rs::a_new_phone_gets_androids_lock_once_the_child_pin_is_set`, `::the_child_pin_stays_while_androids_lock_is_chosen` ("Vibb One's lock (being phased out)"/«Vibb Ones lås (fases ut)» -> without the bracket; `data-privacy` hook unchanged; QA M9: l.662 pins `remove_needs_pin`'s full sentence on `data-row="remove-needs-pin"` -> "Android&#39;s lock needs a Child PIN").
+- QA M5: a lock-page test asserts `needs_update_short` / `bad_hash_short` visible (outside the `info-panel`).
 - The weather tests (grep `device.weather` / "When the position isn't fresh" in `tests/launcher_ui.rs`, `weather_page`): none found by text; check `tests/*weather*` for "about 2 km".
 
-ASK:
-- Låseskjerm › Varsler: a new orange line `device.lock.full_text_warn` «Hele teksten viser også innloggingskoder» /
-  "Full text shows login codes too" while any app is on «Hele teksten» (state: a flag from the lock-screen app rows'
-  `show_text`), so the SMS-code warning shows when it applies and not only in the (i) (KEEP holds either way: the warning
-  stays in the (i)). Added key only if taken.
+ASK 1 (an orange «Hele teksten viser også innloggingskoder» line under Varsler): dropped by the user - not built; the
+SMS-code warning stays in Varsler' (i) (KEEP).
 
 ### Tidsregler, a phone's (`device_time.html`)
 
-P1 does the warnings (`device.time.incoming_not_blocked_sub`, `too_old_sub`, `ledger_unreadable_sub` -> the (i), `moved`).
+P1 does the warnings (`device.time.incoming_not_blocked_sub`, `too_old_sub` -> the (i), `moved`; `ledger_unreadable_sub` stays visible as the note's `sub`, QA M5).
 
 | Key | Today nb | New nb | New en | Rule | Kind |
 |---|---|---|---|---|---|
@@ -571,6 +600,7 @@ Under a wrong state one orange line above its group, its fix behind the line's o
 | `mobile.abroad.switch.paused_off` | Androids roamingbryter: av – åpnet for oppsett nå | - | - | 5, 4 | deleted |
 | `mobile.value.abroad_off` | Utlandet: ingen data | Roaming av | Roaming off | 1 (follows the rename) | words |
 | `mobile.value.abroad_home` | Utlandet: som hjemme | Roaming på | Roaming on | 1 | words |
+| `mobile.value.data_off` | Mobildata av | - | - | 5 (QA L6: the Attention row says it on the summary, once) | deleted; state: `mobile_network::row_value` |
 | `mobile.data.on_sub` | Alle tillatte apper kan bruke mobildata. | - | - | P3 | deleted |
 | `mobile.data.vibb_sub` | Apper og nettleser stopper. Du styrer telefonen, ser posisjon og får varsler som før. | - | - | P3 (into `mobile.data.info`) | deleted |
 | `mobile.data.info_label` | Hva Bare Vibb stopper (a visible label row) | Om mobildata (aria-label only) | About mobile data (aria-label only) | 2 | words |
@@ -597,7 +627,7 @@ Under a wrong state one orange line above its group, its fix behind the line's o
 
 Unchanged and still shown: `mobile.data.header`, `mobile.data.on`, `mobile.data.vibb`, `mobile.state.needs_update`,
 `mobile.state.lingering`, `mobile.state.lingering_vibb`, `mobile.state.still_on`, `mobile.value.vibb`,
-`mobile.value.data_off`, `mobile.value.kid_off`, every `data_roaming.*`.
+`mobile.value.kid_off`, every `data_roaming.*`.
 
 Template (`device_mobile.html`):
 - Orange lines (`card.*_lines` with `warn`): `<div class="attention attention-action" data-mobile-line=…><div
@@ -626,7 +656,11 @@ State logic (exact):
 - `mobile_network::card`, data lines: `data-off` (`enabled == false`) is `warn: true`; the `only_vibb_line` lines are
   not pushed on the page at all (the parent's `only-vibb` restates the radio, `only-vibb-abroad` the Bare Vibb choice;
   `only-vibb-kid` was already filtered); `kid-off` stays grey; `lifted` and `needs-update` stay grey.
-- `mobile_network::card`, roaming lines: the `national` line gets `sub: national_sub`; the rest unchanged.
+- `mobile_network::card`, roaming lines: the `national` line gets `sub: national_sub`; the rest unchanged. QA M1:
+  `place_in_switch` (which drops the grey `roaming` place/national line) is true only when the switch line is the
+  `off_abroad` variant (`report.where_is == Some("abroad")`, the line that names the place) - the plain orange `off`
+  line at home or with `where` unknown keeps the place/national line below it.
+- `mobile_network::row_value` (the Sections row's value on the summary): no «Mobildata av» part (QA L6).
 - `mobile_network::only_vibb_line`: only the `"kid"` arm stays (summary), without its sub-line; the `"parent"` and
   `"abroad"` arms return `None`.
 - `mobile_network::summary_lines`: the `data-off` line goes (the Attention row says it, once); the `only-vibb` and
@@ -637,7 +671,8 @@ State logic (exact):
   `mobile_data_off: bool`, set in `attention::facts_of` from `s.latest.and_then(mobile_network::mobile_report)` with
   `enabled == Some(false)` (a launcher with `mobile_data_v1`; `None`/unknown raises nothing). Raised in `items` after
   `NotificationsOff`. The kid's own switch (`kid == "off"`, Android's switch still on) never raises it. It counts in the
-  Devices list's badge like every Action row (`devices.rs` `facts`).
+  Devices list's badge like every Action row (`devices.rs` `facts`). Temporary (QA L2): design 114 folds it into its
+  `Setup(n)` row and removes the kind, its key, its title and `facts.mobile_data_off` when 114 is built.
 
 Tests (`server/src/tests/mobile_network.rs`):
 - `the_page_and_the_summary_say_what_the_phone_reports`: the page under Bare Vibb no longer shows `only-vibb` (drop it
@@ -651,6 +686,9 @@ Tests (`server/src/tests/mobile_network.rs`):
   slått av" stays.
 - `src/attention.rs` tests (the alarm-before-action order test) and `src/tests/attention.rs`: add a row for
   `MobileDataOff` where they enumerate kinds.
+- QA M1, a new row: På, at home, national roaming, Android's switch off -> the orange `switch` line and the grey
+  `roaming` national line both show.
+- QA L6: the summary's Mobilnett row value has no «Mobildata av» / "Mobile data off" (assert where a test reads it).
 - `i18n::tests::every_key_is_used` covers the deleted keys.
 
 ### Telefon › Avansert (`device_advanced.html`)
@@ -737,12 +775,15 @@ Tests:
 | `device.filter.footer_spotify` | Blokkerer listene og domenene nedenfor, unntatt Spotifys mens denne telefonen spiller Spotify. | - | - | P5 (the (i)'s `spotify_hosts` says the exception) | deleted |
 | `device.filter.lists_footer` | Som for alle følger bryteren under Innstillinger › Nettfilter. | - | - | P5 (the option «Som for alle (på)» says it) | deleted |
 | `device.filter.allowed_footer` | Slippes gjennom selv om en liste blokkerer det - men ikke de sikre DNS-serverne … | (moved, unchanged) - footer (i) alone under Tillatte domener (aria `common.more_info`) | (moved, unchanged) | P2 | moved |
-| `device.filter.log_footer.one` / `.other` | Lagres i {count} dag(er). Slår du den av, slettes loggen til denne telefonen. | (moved, unchanged) - footer (i) alone under Logg (KEEP: the deletion, moved behind the (i)) | (moved, unchanged) | P2 | moved |
+| `device.filter.log_footer.one` / `.other` | Lagres i {count} dag(er). Slår du den av, slettes loggen til denne telefonen. | Lagres i {count} dag. / Lagres i {count} dager. - in the footer's (i) | Kept {count} day. / Kept {count} days. | P2 (the deletion moves to the visible line below) | words |
+| `device.filter.log_off_erases` | - | Av sletter loggen. | Off deletes the log. | KEEP (QA H1: irreversible, the switch autosaves with no confirm - one visible line) | added |
 | `device.filter.spotify_override` | Brukes ikke mens denne telefonen spiller Spotify | Av mens Spotify spiller | Off while Spotify plays | 1 | words |
 
 Template:
 - `#filter`'s footer: `<div class="group-footer" data-note="filter">` keeps only its `<details class="info">` (no `spotify_on` branch).
-- `#lists`: the footer `<p>` goes. `#allowed`, `#log`: footer becomes the (i) alone with the old key as the panel text (`self.tc` for the log's).
+- `#lists`: the footer `<p>` goes. `#allowed`: footer becomes the (i) alone with the old key as the panel text. `#log`
+  (QA H1, the KEEP exception shape of Posisjonsinnstillinger): `<div class="group-footer">{{ device.filter.log_off_erases }}
+  <details class="info">` with `log_footer` (`self.tc`, the retention) in the panel.
 
 Tests:
 - `src/tests/music_spotify.rs::the_web_filter_page_says_what_spotify_overrides` (`footer_spotify`, `spotify_override` "Not applied while this phone plays Spotify"): drop the footer assert; "Off while Spotify plays".
@@ -1106,7 +1147,7 @@ LEVERING
 | `app_push.settings.origin_hint` | Adressen appenes servere sender til, … uten noe etter navnet. | - | - | 1, 2 (ⓘ1 says it; the placeholder shows the form) | deleted |
 | `app_push.settings.prefilled` | Fylt inn fra Telefonoppsett - ikke lagret ennå. | Fra Telefonoppsett - ikke lagret ennå. | From Phone Setup - not saved yet. | 112 | words |
 | `app_push.settings.previous` | {origin} virker også til {when}, mens appene flytter til den nye adressen. | {origin} virker også til {when}, mens appene flytter over. | {origin} also works until {when}, while the apps move over. | 112 | words |
-| `app_push.settings.save_note` | Når du lagrer, får alle telefonene push for apper (du kan slå det av per telefon) | Når du lagrer, slås app-push på for alle telefonene. | Saving turns app push on for every phone. | KEEP; shown only while no address is saved | words + state |
+| `app_push.settings.save_note` | Når du lagrer, får alle telefonene push for apper (du kan slå det av per telefon) | Når du lagrer, slås app-push på for alle telefonene med bryteren på. | Saving turns app push on for every phone with its switch on. | KEEP (QA L7: as accurate as the handler); shown only while no address is saved | words + state |
 | `app_push.settings.clear_note` | Tøm feltet og lagre for å slå av push for apper på alle telefonene. | - | - | 3 (into `app_push.settings.info`) | deleted |
 | `app_push.settings.footer` | Med push for apper får apper på en telefons liste (Element X først) … får ikke push for apper. | - | - | 2 (112's visible footer goes; its sentence opens ⓘ2) | deleted |
 | `app_push.settings.no_listener` | Denne serveren har ingen egen lytter for telefonene (DEVICE_BIND_ADDR), så push for apper blir ikke servert. Se DEPLOY.md, «App push». | App-push virker ikke: serveren har ingen lytter for telefonene | App push doesn't work: the server has no phone listener | 5 | words |
@@ -1280,6 +1321,7 @@ State logic:
   at the top of `#status`.
 
 Tests:
+- `tests/shell.rs:1107` asserts `data-hint="spotify-streams"` (QA M9) -> `data-hint="spotify-order"`.
 - `tests/music_spotify.rs::an_artist_entry_page_has_the_artist_hint_not_the_playlist_one`: asserts
   "Spotify picks the order: an ar…" - now the artist text in the (i) (`music.card.artist_context`) and
   `data-hint="spotify-order"` with "Order: as in Spotify".
@@ -1363,7 +1405,9 @@ Tests:
 - `tests/music_spotify.rs::the_six_month_line` ("- log in again before") - the line is gone; assert the 14-day
   `account_ends` warning instead (the test also reads `refused_sub` "The app was deleted, or Spotif…": still in the
   page, inside the (i)).
-- `tests/music_storytel.rs::save_probes_then_seals` ("Storytel accepted the login (") - assert no status row.
+- `tests/music_storytel.rs::save_probes_then_seals` ("Storytel accepted the login (") - assert no status row; QA M9: it
+  also pins `storytel_refused_until`'s old sentence (l.329) -> the visible `storytel_refused_at` and the panel's
+  `storytel_retry_until`.
 - `tests/music_spotify.rs::the_environment_wins` ("Set by the server's configurat…") → "From .env".
 - `tests/music_spotify.rs::not_configured_shows_the_steps`, `::remove_clear_and_a_new_client_id` → "No Spotify app yet".
 
@@ -1414,15 +1458,14 @@ Tests:
 Template: the top `group-footer` keeps only its `<details class="info">` (the intro sentence goes, `add_footer` joins
 its panel); the bottom `add_footer` footer goes. The empty row becomes `details.info.cell` with `empty_info`.
 
-Tests: `tests/music_storytel.rs::add_takes_only_shelf_targets` ("- turn them on for a phone on") → "Added 2".
+Tests: `tests/music_storytel.rs::add_takes_only_shelf_targets` ("- turn them on for a phone on") → "Added 2";
+`::picker_lists_groups` (l.504, QA M9) pins "Nothing on the Storytel shelf yet." → "The shelf is empty".
 
 ### Varselinnstillinger (`notifications_settings.html`)
 
 | Key | Today nb | New nb | New en | Rule | Kind |
 |---|---|---|---|---|---|
 | `settings.notifications.events_footer` | Bare for deg - hver forelder velger selv. Av: fortsatt i innboksen, men uten varsel. … | (moved, unchanged) into a P2 footer (i) under «Varsle meg om», aria `common.more_info` | | 2 | moved |
-| `settings.notifications.row.since_opened` | {line} · {n} siden sist et ble åpnet | - | - | 5 | **ASK** deleted; state: `notifications.rs::device_row` |
-| `settings.notifications.row.not_opened` | {line} · {n} ikke åpnet ennå | - | - | 5 | **ASK** deleted; state: `device_row` |
 | `settings.notifications.shown_footer` | Vist: enheten bekreftet at den viste varselet. | (moved, unchanged) into a P2 footer (i) under «Får varsler» | | 2 | moved |
 | `settings.notifications.added_again` | Lagt appen på Hjem-skjermen på nytt? Slå på varsler i den nye kopien, og fjern den gamle enheten her. | (unchanged) | | 5 | state: `notifications.rs::settings_page` |
 | `settings.notifications.home_screen` | Trykk Del i Safari og så Legg til på Hjem-skjerm. … | (moved, unchanged) into a row (i) | | 3 | moved |
@@ -1436,8 +1479,9 @@ Tests: `tests/music_storytel.rs::add_takes_only_shelf_targets` ("- turn them on 
 
 Template:
 - `#push-home-screen` and `#push-blocked` (JS-toggled `hidden`, keep both ids): each becomes
-  `<details class="info cell" id="…" hidden>` with summary row label = the existing JS state word and the panel the
-  moved sentence; `static/notifications.js` keeps toggling `hidden` on the same ids.
+  `<details class="info cell" id="…" hidden>` whose summary row label is the fixed `common.how_to_fix` («Slik løser du
+  det») - not the state word, which `#push-state`'s value already shows (QA L3) - and the panel the moved sentence;
+  `static/notifications.js` keeps toggling `hidden` on the same ids.
 - The clock warning: `attention-sub` holds only the (i) with `clock_warning_sub`.
 - `#this-device`'s footer goes (with its `<noscript>`). The no-key row: `attention attention-action` with `no_key`,
   `no_key_why` behind its (i).
@@ -1447,15 +1491,11 @@ Template:
 State logic:
 - `handlers/notifications.rs::settings_page`: a new `devices_unhealthy: bool` = any subscription whose `health` is
   `MayNotShow` or `Gone`; the template shows `added_again` only then (today: whenever there is a device).
-- **ASK** `handlers/notifications.rs::device_row`: `Health::Ok`/`MayNotShow` show `last` alone ("Sist vist 14:02"),
-  without the opened count (`since_opened`/`not_opened` go). The count was server round 5 §2's "quiet count"; the user
-  may want to keep it. `subscriptions_json` uses the same fn, so the JS re-render follows.
+- `handlers/notifications.rs::device_row` is unchanged: the user kept the opened count (ASK 2).
 
 Tests:
 - `tests/parents.rs::notify_me_about_is_each_parents` ("Just for you - each parent cho…") - still in the page (in the
   (i)); passes if it reads the HTML text.
-- `tests/web_push.rs::the_device_row_counts_pushes_since_one_was_opened` - only if the ASK is taken: rewrite to assert
-  no count.
 - `tests/web_push.rs::the_device_list_says_what_to_do_after_adding_the_app_again` ("Added the app to the Home Scre…") -
   seed a `MayNotShow` or `Gone` device; add the negative case for a healthy list.
 
@@ -1475,14 +1515,16 @@ still in the page, inside the (i); check they don't pin the `group-footer` marku
 | Key | Today nb | New nb | New en | Rule | Kind |
 |---|---|---|---|---|---|
 | `settings.time_rules.when_footer` | Etter telefonens klokke, fra start til slutt samme dag; … (45 words) | (moved, unchanged) into a P2 footer (i) under «Når» | | 2 | moved |
-| `time_rules.silent_sub` | Ingen lyder, varsler, musikk eller alarmer mens regelen er på. Anrop som regelen tillater, ringer fortsatt. | (moved, unchanged) into a row (i) on «Stille» (KEEP: alarms don't ring) | | P3 | moved |
+| `time_rules.silent_sub` | Ingen lyder, varsler, musikk eller alarmer mens regelen er på. Anrop som regelen tillater, ringer fortsatt. | (moved, unchanged) into a `details.info.cell` row after «Stille» (KEEP: alarms don't ring; M8) | | P3 | moved |
 | `device.bedtime.silent_sub` | Ingen lyder eller varsler ved leggetid. Alarmer ringer fortsatt, … | (moved, unchanged) the same row (i) for a bedtime rule (Leggetid moves it the same way) | | P3 | moved |
 | `settings.time_rules.rule_footer` | Telefonen er låst mens regelen gjelder. Nødanrop virker alltid. | (moved, unchanged) into a P2 footer (i) of that group | | 4 | moved |
 | `settings.time_rules.corrupt_sub` | Telefonene får en feil i stedet for reglene sine. {parts}, så de vises tomme her og lagres slik du ser dem: … | {parts}. | {parts}. | 5 | words |
 | `settings.time_rules.corrupt_fix` | - | Telefonene får en feil i stedet for reglene sine. Det som mangler, vises tomt her og lagres slik du ser det: fyll det inn igjen og trykk Lagre - eller slett regelen. | The phones get an error instead of their rules. What is missing shows empty here and is saved as you see it: set it again, then Save - or delete the rule. | 5 | added (behind the alarm's (i)) |
 
-Template: the Stille switch's `row-sub` goes; the switch label row gets an inline (i) (a `details.info` after the
-label, as in `device_time.html`'s rule-pause (i)) whose panel is the kind's `silent_sub`. The corrupt alarm
+Template: the Stille switch's `row-sub` goes; its (i) is a `details.info.cell` row right after the switch's
+`<label class="row" data-row="silent">` (QA M8: never inside the label): its summary is the ⓘ icon alone (aria
+`common.more_info`), its panel the kind's `silent_sub`. The label row and its
+`data-row` stay as they are. The corrupt alarm
 (`data-warning="rule-corrupt"`, red, kept): `attention-sub` = `corrupt_sub` + the (i) with `corrupt_fix`.
 
 Tests: `tests/time_pages.rs::the_silent_switch_saves_serves_and_shows` ("No sounds, notifications, musi…") - still in
@@ -1538,7 +1580,8 @@ State logic:
   (`on_except`, `off_but`) stay.
 - `handlers/dns_filter.rs::phone_line` returns `None` for `custom` in use with no outage (today `custom_in_use`); its
   result becomes `(String, bool)` - warn for every line but `line.waiting` (the backup, the outages, `update_for_custom`,
-  `filter_off`) - and `phone_lines` passes the flag to the template.
+  `filter_off`) - and `phone_lines` passes the flag to the template. QA L4: an ended outage alone (custom in use, the
+  outage over: `"{name} · DNS {ended}"`) is grey - it is over.
 
 Tests:
 - `tests/device_pages.rs::web_filter_holds_the_phones_parts` ("On for every phone", "På for alle telefoner", "Off for
@@ -1557,8 +1600,7 @@ Tests:
 | `settings.dns_log.footer.one` | Loggen er av til du slår den på for en telefon. Lagres i {count} dag. | Lagres i {count} dag. | Kept {count} day. | 4 | words; into a P2 footer (i) |
 | `settings.dns_log.footer.other` | … Lagres i {count} dager. | Lagres i {count} dager. | Kept {count} days. | 4 | words; into a P2 footer (i) |
 
-ASK: drop the Settings hub's «Blokkert aktivitet» row (the same phones are listed under Nettfilter › Hver telefon) -
-a structural change (audit item 2), not words.
+ASK 4 (drop the Settings hub's «Blokkert aktivitet» row): the user KEEPS the row - unchanged.
 
 ### Bakgrunnsbilder (`wallpapers.html`)
 
@@ -1653,12 +1695,13 @@ the docker commands still in the page (the (i)); check it looks for `data-row="h
 
 | Key | Today nb | New nb | New en | Rule | Kind |
 |---|---|---|---|---|---|
-| `settings.notifications.delivery.opened` | Åpnet på {label} | - | - | P4 | **ASK** deleted; state: `notifications.rs::delivery_line` |
-| `settings.notifications.delivery.shown` | Vist på {label} | - | - | P4 | **ASK** deleted |
-| `settings.notifications.delivery.delivered` | Levert til {label} | - | - | P4 | **ASK** deleted |
-| `settings.notifications.delivery.summary` | I en oppsummering | - | - | P4 | **ASK** deleted |
-| `settings.notifications.delivery.many_opened` | Sendt til {devices} enheter · åpnet på {opened} | - | - | P4 | **ASK** deleted |
-| `settings.notifications.delivery.many_shown` | Sendt til {devices} enheter · vist på {shown} | - | - | P4 | **ASK** deleted |
+| `settings.notifications.delivery.opened` | Åpnet på {label} | - | - | P4 (ASK 3, taken) | deleted; state: `notifications.rs::delivery_line` |
+| `settings.notifications.delivery.shown` | Vist på {label} | - | - | P4 (ASK 3) | deleted |
+| `settings.notifications.delivery.delivered` | Levert til {label} | - | - | P4 (ASK 3) | deleted |
+| `settings.notifications.delivery.summary` | I en oppsummering | - | - | P4 (ASK 3) | deleted |
+| `settings.notifications.delivery.many_opened` | Sendt til {devices} enheter · åpnet på {opened} | - | - | P4 (ASK 3) | deleted |
+| `settings.notifications.delivery.many_shown` | Sendt til {devices} enheter · vist på {shown} | - | - | P4 (ASK 3) | deleted |
+| `settings.notifications.delivery.many_pushed` | - | Sendt til {devices} enheter, ikke bekreftet | Pushed to {devices} devices, not confirmed | 5 (QA M3: the several-devices form of `pushed`) | added |
 | `settings.notifications.footer` | Nyeste først, tas vare på i 90 dager. | - | - | P5 | deleted |
 | `settings.notifications.empty` | Ingenting ennå - det telefonene melder, kommer her | Ingenting ennå | Nothing yet | 4 | words |
 | `devices.warning.push_gone_sub` | Slå dem på igjen på den enheten, eller fjern den under Varsler | - | - | 5 (the row links to the fix) | deleted; state: `notifications.rs::warning_of` |
@@ -1667,12 +1710,14 @@ State logic:
 - `handlers/notifications.rs::warning_of` returns `(String, Option<String>)`: `None` sub for `Gone`; the
   `MayNotShow` (`push_unconfirmed`) and `NotGettingThrough` (the failure) subs stay. The template drops an empty
   `attention-sub`.
-- **ASK** `handlers/notifications.rs::delivery_line`: only the wrong states return a line - `not_sent`, `pushed`
-  (sent, not confirmed), `sending`; opened/shown/delivered/summary/many_* return `None`. A parent loses the per-event
-  receipt; the user may want to keep it.
+- `handlers/notifications.rs::delivery_line` (ASK 3, taken): only the wrong states return a line - `not_sent`,
+  `pushed` (one device, sent, not confirmed), `sending`, and (QA M3) `many_pushed` when several devices got it and none
+  showed or opened it (the case `many_shown` with `shown == 0` covers today); opened/shown/delivered/summary and several
+  devices with one shown or opened return `None`.
 
 Tests: `tests/notifications.rs::an_empty_inbox_and_older_pages` ("Nothing yet - what the phones…") → "Nothing yet".
-If the ASK is taken: `handlers/notifications.rs::tests::the_delivery_line`, `tests/web_push.rs::an_apple_acceptance_is_the_delivery`,
+ASK 3 (taken; add the M3 row: several devices, none shown -> "Pushed to 2 devices, not confirmed"):
+`handlers/notifications.rs::tests::the_delivery_line`, `tests/web_push.rs::an_apple_acceptance_is_the_delivery`,
 `::inbox_delivery_line_is_each_parents`, `::the_page_carries_no_secret_and_every_form_lands`,
 `::switches_the_emergency_call_and_a_burst`, `tests/power.rs::a_newer_shutdown_supersedes_an_older_held_push` all pin
 "Delivered to"/"In a summary".
@@ -1693,7 +1738,7 @@ If the ASK is taken: `handlers/notifications.rs::tests::the_delivery_line`, `tes
 | `account.name.hint` | Det de andre foreldrene ser, for eksempel «Mamma». Tomt: {username}. Navnet vises også på telefonen … | For eksempel «Mamma». Tomt: {username}. | For example "Mamma". Empty: {username}. | 2 | words |
 | `account.name.info` | - | Det de andre foreldrene ser. Navnet vises også på telefonen når du svarer på en forespørsel om mer tid eller gir mer tid; uten navn står det ikke noe navn der. | What the other parents see. It also shows on the phone when you answer a request for more time or give time; without a name, the phone names nobody. | 2 | added (field (i)) |
 | `passkeys.only.sub` | Ingen passord eller kode – bare passkey | - | - | P3 (the confirm says it) | deleted |
-| `lock.sub` | Gjelder denne enheten. Lås opp med Face ID, fingeravtrykk eller telefonens kode. | (moved, unchanged) into a row (i) on «Lås med Face ID» | | P3 | moved |
+| `lock.sub` | Gjelder denne enheten. Lås opp med Face ID, fingeravtrykk eller telefonens kode. | (moved, unchanged) into a `details.info.cell` row after «Lås med Face ID» (M8) | | P3 | moved |
 | `account.add.username_hint` | For innlogging, for eksempel «pappa»: små bokstaver, tall, . _ eller -. | Små bokstaver, tall, . _ - | Lowercase letters, digits, . _ - | 2 | words |
 | `account.add.name_hint` | Det dere alle ser, for eksempel «Pappa». Den nye forelderen kan endre det selv. | For eksempel «Pappa» | For example "Pappa" | 2 | words |
 | `account.add.password_hint` | Det du logger inn her med. Du får et engangspassord å gi dem; tre feil passord logger deg ut. | Ditt eget passord. Tre feil logger deg ut. | Your own password. Three wrong ones sign you out. | 2 (KEEP «tre feil … logger deg ut») | words |
@@ -1708,9 +1753,13 @@ with `account.name.info`. `passkeys.only.sub` leaves both "Kun passkey" rows. KE
 `account.otp.hint`, `account.password.new_hint`, every reset/remove/withdraw/sign-out confirm (incl.
 `account.totp.reset_confirm`, `passkeys.only.what`, `warn_one*`, `way_back`, `hosts`).
 
-ASK: `partials/passkeys_still_work.html` under the open password form: move it into the password footer's (i) (it
-stays in Reset 2FA's confirm). Design 74 D1.3b put it in view on purpose ("the parent sees which still work"); the
-audit's other option (show it in the flash after a change) needs the handler to carry the list into the flash.
+ASK 5 (taken): `partials/passkeys_still_work.html` leaves its place under the open password form and moves into the
+password group's footer ⓘ (the passkeys-that-still-work list as a `<p>` of that panel); Reset 2FA's confirm keeps it as
+today.
+
+QA M8: «Lås med Face ID» (and any other switch on this page that gets an ⓘ) is a `<label class="row">`: its ⓘ is a
+`details.info.cell` row right after the label row (ⓘ icon alone, aria `common.more_info`, panel `lock.sub`), never
+inside the label.
 
 Tests:
 - `account.totp.row` → "Status": `tests/admin_auth.rs::a_2fa_reset_signs_out_every_other_session`,
@@ -1789,22 +1838,27 @@ hold the exact condition; this is the index.
 Cross-cutting
 - `partials/note_warning.html` + `device_pages::Note.sub` (D1 P1): every `Note` warning shows its title alone; `detail`
   and `fix` behind one ⓘ; `sub` visible only for `calls::Finding::note`'s `EmergencyCall`, `CallbackWindow`,
-  `CallScreenFailed` (KEEP).
+  `CallScreenFailed` (KEEP) and its needs-update finding, `device.time.ledger_unreadable`, and the lock notes
+  `needs_update` and `bad_hash` (QA M5).
+- Link cards and `<label>` switch rows hold no ⓘ (QA M7, M8): the summary's no-Parent-PIN card and `#mobile-state` lines
+  render their title only.
 - `attention.rs`: new `Kind::MobileDataOff` (orange, `/devices/{id}/mobile#mobile-data`), fact `mobile_data_off` from
-  the latest `mobile_data.enabled == false`; counts in the Devices list badge.
+  the latest `mobile_data.enabled == false`; counts in the Devices list badge (temporary: 114's `Setup(n)` replaces it).
 
 A phone
 - `mobile_network::switch_line`: Android's roaming switch shown only when off under På/Bare Vibb (orange; abroad with
   the place); nothing when on or unknown; under Av nothing when locked, the grey pending line when not; the pause's own
   lines go.
-- `mobile_network::card`: `data-off` orange; no `only-vibb`/`only-vibb-abroad` lines on the page; `national` gets its ⓘ.
+- `mobile_network::card`: `data-off` orange; no `only-vibb`/`only-vibb-abroad` lines on the page; `national` gets its ⓘ;
+  `place_in_switch` only for the `off_abroad` switch line (QA M1).
+- `mobile_network::row_value`: no «Mobildata av» part (QA L6).
 - `mobile_network::summary_lines` / `only_vibb_line`: the summary drops `data-off` (Attention says it), `only-vibb` and
   `only-vibb-abroad`; `only-vibb-kid` stays grey (the user's call).
 - `quick_actions.rs`: `extra_note` only with a budget («Brukt i dag: …»); the setup-open row's sub only for an old
   launcher (`pause_ends_old`).
-- `airplane_mode::setup_steps`: steps carry `value`/`detail` (behind a row ⓘ) instead of a visible `sub`; same steps,
-  same `setup_key`.
-- `airplane_mode::home_sub`: «Vibb One er ikke digital assistent» orange (`!report.assistant`); blocked/offline grey.
+- `airplane_mode::setup_steps`: unchanged (QA L8); the template puts a step's `sub` behind its row ⓘ.
+- `airplane_mode::home_sub`: «Vibb One er ikke digital assistent» orange, only with bit 64 on and `!report.assistant`
+  (QA M6); blocked/offline grey.
 - `shortcuts::home_sub`: quiet values («Skjult av {name}», the items, «Ingen»).
 - `auth::WarningRow.sub` → `Option`; `notifications::push_warning` gives `None` on the Devices list.
 - `devices::app_rows` / `status_label`: no line for installed, preinstalled and Play-installed apps; busy, failed,
@@ -1813,7 +1867,8 @@ A phone
   managed; Kalender no sub; `catalog_default` only when `can_reset()`.
 - `calls::channel_row`: no sub under the segments and no «anbefalt» (the mode sentences go into the calls ⓘ).
 - `calls::emergency_rows`: a sub only on a number that isn't an emergency number (orange); suggestions none.
-- `calls_form::subs`: one quiet word per switch («Ikke styrt», «Samtaler av», «Meldinger av») only when it applies.
+- `calls_form::subs`: one quiet word per switch («Ikke styrt», «Samtaler av», «SMS av», «Meldinger av») only when it
+  applies (QA M2: `texts` under SMS Off is «SMS av»).
 - `schedules::render_device_time`: «Fra telefonens siste melding …» only when the report is older than 35 min
   (`window_relock::REPORT_AGE_NOTE_MS`).
 - `kiosk_escapes::boot_cover_notes` / `escapes_card`: nothing for an armed or shown boot cover, or a good install.
@@ -1847,12 +1902,15 @@ Music, Settings, account
 - `notifications.rs::settings_page`: `added_again` only while a device is `MayNotShow`/`Gone`.
 - `notifications.rs::warning_of`: no second line for `Gone`.
 - `dns_filter::list_scope` → `Option`: only exceptions; `dns_filter::phone_line`: nothing when the custom server is in
-  use; the problems and the browser bypass lines orange.
+  use; the problems and the browser bypass lines orange; an ended outage alone grey (QA L4).
+- `device_filter.html`: the log's «Av sletter loggen.» stays visible beside its ⓘ (QA H1, KEEP).
 - `launcher_check::words`: `Line.fix` behind the ⓘ; `provision_qr.html` shows the launcher group only when its state
   isn't "works".
 - `updates.html`: no «Du har nyeste versjon» row; the how-to from the Version row.
 - `security.html`: «Sperret» only when an address is banned or its flash shows.
-- ASK only: `notifications.rs::device_row` (the opened count) and `notifications.rs::delivery_line` (good receipts).
+- `notifications.rs::delivery_line` (ASK 3): only not sent, pushed and not confirmed (one device or several -
+  `many_pushed`, QA M3), and sending; `notifications.rs::device_row` unchanged (ASK 2).
+- `account.html` (ASK 5): `passkeys_still_work` in the password group's ⓘ, not under the open form.
 
 ## Tests
 
@@ -1866,8 +1924,17 @@ Each page's "Tests" bullets name the tests that pin its strings or rows. Across 
 - Tests that read `data-*` hooks keep working where the hook moved with its element (D6); the per-page bullets say
   where a hook goes (`data-row="signed"`, `data-mobile-line="only-vibb"`, `data-mobile-line="data-off"` on the summary,
   `delivery-p95`, the boot-cover and Play rows).
+- Dropped parameters (QA M9) also leave the call sites: `device.summary.qa.mode_line`/`_none` and
+  `warn_setup`/`_plain` lose `{rule}` (`quick_actions.rs:151-155, 465-471`); `device.calls.sub.pictures_no_texts` loses
+  `{kid}`/`{contact}` (`calls_form.rs:211`); `device.requests.short_choose` loses `{name}`;
+  `device.home.airplane_no_role` loses `{name}`.
+- QA L5: `every_key_is_used` counts any quoted occurrence in `src/`, in-file test modules included, so after the build
+  grep `src/` for each deleted key; a deleted key still quoted in a `#[cfg(test)]` module is removed there too.
+- QA L9: doc comments that quote old words follow the strings: `handlers/mobile_page.rs:9`, `handlers/logins.rs:8, 72`,
+  `handlers/device_pages.rs:896`, `handlers/calls_mmsc.rs:32`, `handlers/app_push.rs:4, 299`,
+  `handlers/contact_requests.rs:326`.
 
-## ASK (the build skips these until the user answers)
+## ASK (answered - see below)
 
 1. Låseskjerm › Varsler: an orange «Hele teksten viser også innloggingskoder» while an app shows full text
    (`device.lock.full_text_warn`, added only if taken).
@@ -1890,6 +1957,9 @@ Each page's "Tests" bullets name the tests that pin its strings or rows. Across 
 
 ## Counts
 
-Keys in the tables (a key shared by two pages counted once): 224 with new text, 159 deleted, 53 added - 436 changed
-keys in all, 428 without the ASK rows (8 deletions under ASK 2-3; ASK 1's added key is not in a table). A further 193
-keys keep their text and only move behind an ⓘ.
+After the design QA and the user's answers, counted from the tables (a key shared by two pages counted once, a
+`.one`/`.other` pair as written): about 228 keys with new text, 162 deleted (ASK 3's six and `mobile.value.data_off`,
+`device.summary.no_parent_pin_sub` among them; ASK 2's two kept), 58 added (`device.calls.sub.sms_off`,
+`settings.notifications.delivery.many_pushed`, `device.filter.log_off_erases` and D1's `needs_update_short` /
+`bad_hash_short` among them; ASK 1's key not built) - about 448 changed keys in all. A further ~194 keys keep their text
+and only move behind an ⓘ.

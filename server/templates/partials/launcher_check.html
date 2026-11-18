@@ -1,19 +1,35 @@
 {#- The setup QR's launcher check (design 86, `launcher_check::Line`, as `launcher`): the Vibb One a new
-    phone gets, Checking, or - above the group - what a phone would refuse (red) or that it is older
-    (orange), with what to do. Check again comes back here (#launcher); the page reloads itself while
-    it checks (only one a GET drew). -#}
+    phone gets (the Android it needs behind its ⓘ), Checking, or - above the group - what a phone would refuse (red) or
+    that it is older (orange), its short line in view and what to do behind the ⓘ (design 113). Check again comes back
+    here (#launcher); the page reloads itself while it checks (only one a GET drew). -#}
 <section id="launcher" aria-labelledby="launcher-title">
     <h2 class="group-header" id="launcher-title">{{ self.t("settings.provisioning.launcher.title") }}</h2>
     {% if launcher.state == "refused" || launcher.state == "older" %}
     <div class="attention {% if launcher.state == "refused" %}attention-alarm{% else %}attention-action{% endif %}" data-launcher="{{ launcher.state }}" role="status">
-        <span class="attention-text">{{ launcher.text }}{% if let Some(sub) = launcher.sub %}<span class="attention-sub">{{ sub }}</span>{% endif %}</span>
+        <div class="attention-text">{{ launcher.text }}{% if launcher.sub.is_some() || launcher.fix.is_some() || launcher.needs.is_some() %}<div class="attention-sub">
+            {%- if let Some(sub) = launcher.sub %}{{ sub }}{% endif %}
+            {%- if launcher.fix.is_some() || launcher.needs.is_some() %}
+            <details class="info">
+                <summary aria-label="{% if launcher.needs.is_some() %}{{ self.t("common.more_info") }}{% else %}{{ self.t("common.how_to_fix") }}{% endif %}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    {%- if let Some(fix) = launcher.fix %}<p>{{ fix }}</p>{% endif %}
+                    {%- if let Some(needs) = launcher.needs %}<p data-row="launcher-needs">{{ needs }}</p>{% endif -%}
+                </div>
+            </details>
+            {%- endif %}</div>{% endif %}</div>
     </div>
     {% endif %}
     <div class="group">
         {% if launcher.state == "works" || launcher.state == "checking" %}
+        {% if let Some(needs) = launcher.needs %}
+        <details class="info cell" data-launcher="{{ launcher.state }}">
+            <summary class="row"><span class="row-label">{{ launcher.text }}</span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("common.more_info") }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+            <div class="info-panel"><p data-row="launcher-needs">{{ needs }}</p></div>
+        </details>
+        {% else %}
         <p class="row" data-launcher="{{ launcher.state }}" role="status"><span class="row-label">{{ launcher.text }}</span></p>
         {% endif %}
-        {% if let Some(needs) = launcher.needs %}<p class="row row-note" data-row="launcher-needs">{{ needs }}</p>{% endif %}
+        {% endif %}
         {#- While it checks, a page a GET drew reloads itself; one a POST drew (that can't) keeps
             Check Again as its way on. -#}
         {% if launcher.state != "checking" || !launcher.auto_reload %}

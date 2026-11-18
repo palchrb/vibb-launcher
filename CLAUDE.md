@@ -85,6 +85,9 @@ launcher and the music app, in nb and en alike:
   what needs the parent - a switch that stops the page's controls working, a step left to do - is one short orange
   line, how to fix it behind the (i) (the user, 2026-11-17, of Android's roaming switch: "si ifra om denne IKKE er
   skrudd på", and "dette er et likt prinsipp som burde være over alt").
+- A choice the parent made is never a warning (the user, 2026-11-18: "foreldre pin som ikke er satt - det er galt. men
+  å velge å ikke bruke funksjon x eller y - som vi gir valg om, det er ikke galt"): what follows from a choice the PWA
+  offers is at most a quiet note at that choice, behind its (i); Attention and orange lines are for what is wrong or undone.
 - On the kid's phone fewer words still. A design note's copy table is checked against this before the build.
 
 ## Build and test

@@ -118,8 +118,8 @@ pub struct DevicePolicy {
     /// Design 95 rev. 3 (migration 0143): "Mobildata for apper", "on" or "vibb" (Bare Vibb).
     #[sqlx(default)]
     pub apps_mobile: String,
-    /// Design 97 (migration 0145): "I utlandet" - "off" (Ingen data), "vibb" (Bare Vibb, a new phone's default) or
-    /// "home" (Som hjemme). Read through [crate::mobile_network::abroad_choice]; design 94's `data_roaming` column
+    /// Design 97 (migration 0145): "Roaming" (design 113's name) - "off" (Av), "vibb" (Bare Vibb, a new phone's default)
+    /// or "home" (På). Read through [crate::mobile_network::abroad_choice]; design 94's `data_roaming` column
     /// (migration 0143) is no longer read or written.
     #[sqlx(default)]
     pub abroad: String,
@@ -487,7 +487,7 @@ pub struct DeviceStatus {
     pub time_state_json: Option<String>,
     /// Play install mode end (wall-clock ms) while active (migrations/0026).
     pub install_mode_until_ms: Option<i64>,
-    pub play_window_active: bool,
+    // `play_window_active` stays stored (the report's column) but no page reads it since design 113 (P4).
     /// See `StatusReportRequest.play_store_suspendable` (migrations/0029).
     pub play_store_suspendable: Option<bool>,
     /// The launcher's `lock_state` (handy step 10, migrations/0030), see `kid_lock::LockState`.
@@ -541,7 +541,7 @@ pub struct DeviceStatus {
     pub relock_blocks_total: Option<i64>,
     /// The phone's clock format is the policy's (design 34 P12, migrations/0075): `false` = it
     /// should be but can't be (no "Modify system settings" access, or the write was refused).
-    /// `None` = "Follow the phone", or an older launcher.
+    /// `None` = "Same as the phone", or an older launcher.
     pub clock_format_applied: Option<bool>,
     // dns_upstream_json (migrations/0079, design 36 §4.2) is read directly by
     // handlers::dns_filter::phone_lines.
@@ -1346,12 +1346,12 @@ pub struct PolicyResponse {
     /// switched away from the default on this phone. A failing query is a 500 for the whole policy (fail closed): a
     /// lost list would hand the camera back. An older launcher ignores it.
     pub app_permissions: Vec<crate::app_permissions::AppPermission>,
-    /// "Show as a media player on the lock screen" (2026-11-04), always a list of package names, sorted: the apps the
+    /// "Media player on the lock screen" (2026-11-04), always a list of package names, sorted: the apps the
     /// parent switched on on this phone, which the lock's media tile then shows as it does a music, video or browser
     /// app (`app_permissions::lock_media_apps`). A failing query sends `[]` (it only hides a tile). An older launcher
     /// ignores it.
     pub lock_media_apps: Vec<String>,
-    /// Design 97: "I utlandet", `"off"`, `"vibb"` or `"home"`, always sent. An older launcher ignores it.
+    /// Design 97: "Roaming" (Mobilnett), `"off"`, `"vibb"` or `"home"`, always sent. An older launcher ignores it.
     pub abroad: String,
     /// Design 95 rev. 3: "Mobildata for apper", `"on"` or `"vibb"` (Bare Vibb), always sent.
     pub apps_mobile: String,
@@ -1602,7 +1602,7 @@ pub struct StatusReportRequest {
     #[serde(default)]
     pub relock_blocks_total: Option<i64>,
     /// Design 34 P12: the phone's clock format is the policy's `launcher_ui.clock_format` (true),
-    /// it should be but can't be (false), or nothing to apply - "Follow the phone" - (null).
+    /// it should be but can't be (false), or nothing to apply - "Same as the phone" - (null).
     /// Absent from older launchers.
     #[serde(default)]
     pub clock_format_applied: Option<bool>,

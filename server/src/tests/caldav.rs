@@ -962,6 +962,11 @@ async fn a_refused_test_renders_the_form_as_typed_and_never_the_password() {
     .await
     .text();
     assert!(page.contains("data-sources=\"off\"") && !page.contains("data-sources=\"add\""));
+    // Design 113: the state alone in orange, the why behind its (i).
+    assert!(
+        page.contains("<span class=\"row-label tone-orange\">Off: the server has no key</span>")
+    );
+    assert!(page.contains("Check the server log (MUSIC_SECRET_KEY)."));
 }
 
 /// Nextcloud: the address typed with its path, the principal and the home set on the same host, a calendar named

@@ -602,7 +602,7 @@ async fn a_new_phone_gets_androids_lock_once_the_child_pin_is_set() {
     report(&app, &token, &CAPS, json!({ "active": false })).await;
     let html = page(&app, &cookie, id).await;
     assert!(html.contains("<option value=\"android\" selected>Android's lock</option>"));
-    assert!(html.contains("<option value=\"own\">Vibb One's lock (being phased out)</option>"));
+    assert!(html.contains("<option value=\"own\">Vibb One's lock</option>"));
     assert!(html.contains("name=\"keyguard\" data-autosave>"), "enabled");
     assert!(html.contains("Starts when the Child PIN is set"));
     assert!(!html.contains("Test phase"));
@@ -658,10 +658,8 @@ async fn the_child_pin_stays_while_androids_lock_is_chosen() {
     switch(&app, &cookie, id, "android").await;
     let html = page(&app, &cookie, id).await;
     assert!(!html.contains("name=\"clear_kid_pin\""), "{html}");
-    assert!(html.contains(
-        "data-row=\"remove-needs-pin\">Android's lock needs a Child PIN. \
-         To change it, save a new one above; to remove it, choose Vibb One's lock first."
-    ));
+    // Design 113: the row says the rule alone; the field above changes the PIN.
+    assert!(html.contains("data-row=\"remove-needs-pin\">Android's lock needs a Child PIN</p>"));
 
     let clear = |id: i64| format!("/devices/{id}/kid-lock");
     let res = app
@@ -694,7 +692,7 @@ async fn the_child_pin_stays_while_androids_lock_is_chosen() {
             .await
             .text(),
     );
-    assert!(nb.contains("<option value=\"own\">Vibb Ones lås (fases ut)</option>"));
+    assert!(nb.contains("<option value=\"own\">Vibb Ones lås</option>"));
     assert!(nb.contains("Androids lås trenger en barne-PIN"));
     assert!(!nb.contains("Testfase"));
 
