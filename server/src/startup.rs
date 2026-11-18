@@ -93,7 +93,7 @@ pub async fn record_restore(db: &sqlx::SqlitePool, restore: &AppliedRestore) {
         )),
     )
     .await;
-    let event = crate::parent_events::backup_restored(
+    let told = crate::parent_events::backup_restored(
         restore.by.as_ref().map_or("", |(_, name)| name.as_str()),
         &restore.filename,
         chrono::Utc::now(),
@@ -101,7 +101,7 @@ pub async fn record_restore(db: &sqlx::SqlitePool, restore: &AppliedRestore) {
     );
     let raised = async {
         let mut tx = db.begin().await?;
-        crate::parent_events::raise(&mut tx, &event).await?;
+        crate::parent_events::raise(&mut tx, &told).await?;
         tx.commit().await
     };
     if let Err(err) = raised.await {

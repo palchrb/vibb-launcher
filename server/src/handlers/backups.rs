@@ -736,12 +736,12 @@ pub async fn download_backup(
                 Some(security::Detail::facts(&filename)),
             )
             .await;
-            let event = crate::parent_events::backup_downloaded(
+            let told = crate::parent_events::backup_downloaded(
                 who.admin.name(),
                 &filename,
                 chrono::Utc::now(),
             );
-            crate::parent_events::raise_logged(&state, &event).await;
+            crate::parent_events::raise_logged(&state, &told).await;
             let headers = [
                 (header::CONTENT_TYPE, "application/zip".to_string()),
                 (
@@ -1035,7 +1035,7 @@ async fn restore_in_container(state: &AppState, who: &Who, filename: &str, lang:
         Some(security::Detail::facts(filename)),
     )
     .await;
-    let event = crate::parent_events::backup_restored(
+    let told = crate::parent_events::backup_restored(
         admin.name(),
         filename,
         chrono::Utc::now(),
@@ -1043,7 +1043,7 @@ async fn restore_in_container(state: &AppState, who: &Who, filename: &str, lang:
     );
     let raised = async {
         let mut tx = state.db.begin().await?;
-        let id = crate::parent_events::raise(&mut tx, &event).await?;
+        let id = crate::parent_events::raise(&mut tx, &told).await?;
         tx.commit().await.map(|()| id)
     }
     .await

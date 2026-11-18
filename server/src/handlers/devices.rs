@@ -2939,9 +2939,9 @@ async fn app_added_event(
         Some(tid) if package_name.is_empty() => format!("catalog-{tid}"),
         _ => package_name.to_string(),
     };
-    let event =
+    let told =
         crate::parent_events::app_added(id, &phone, admin.name(), &key, &app, chrono::Utc::now());
-    crate::parent_events::raise_logged(state, &event).await;
+    crate::parent_events::raise_logged(state, &told).await;
 }
 
 fn allowlist_error_response(

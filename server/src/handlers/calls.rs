@@ -2260,7 +2260,7 @@ async fn contact_added_event(
     let Ok(Some((phone, contact))) = names else {
         return;
     };
-    let event = crate::parent_events::contact_added(
+    let told = crate::parent_events::contact_added(
         id,
         &phone,
         admin.name(),
@@ -2268,7 +2268,7 @@ async fn contact_added_event(
         &contact,
         chrono::Utc::now(),
     );
-    crate::parent_events::raise_logged(state, &event).await;
+    crate::parent_events::raise_logged(state, &told).await;
 }
 
 /// "Add from the family" (the user, 2026-11-03): puts a contact of the family's address book that another phone has

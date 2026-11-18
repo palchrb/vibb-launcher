@@ -2892,13 +2892,13 @@ pub async fn update_location_policy(
                         .ok()
                         .flatten();
                 if let Some(phone) = phone {
-                    let event = crate::parent_events::location_regular(
+                    let told = crate::parent_events::location_regular(
                         id,
                         &phone,
                         admin.name(),
                         chrono::Utc::now(),
                     );
-                    crate::parent_events::raise_logged(&state, &event).await;
+                    crate::parent_events::raise_logged(&state, &told).await;
                 }
             }
             if mode == "off" {
