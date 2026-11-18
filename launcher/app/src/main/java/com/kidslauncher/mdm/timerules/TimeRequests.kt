@@ -22,14 +22,12 @@ import java.security.SecureRandom
  * i dag." says three (`lock_ask_capped`, pinned in `TimeRequestsTest`). */
 const val TIME_REQUESTS_A_DAY = 3
 
-/** The request's own record. [day] is the ledger's day it was asked on, [liftIdAtAsk] the largest lift id in the
- * policy then (lift ids only grow on the server: on an older server any newer lift is the answer, §14.7). */
+/** The request's own record. [day] is the ledger's day it was asked on. */
 @Serializable
 data class TimeRequestRecord(
     val id: String,
     val askedAtMs: Long,
     val day: String,
-    val liftIdAtAsk: Long,
     val state: TimeRequestPhase,
 )
 
@@ -61,8 +59,7 @@ sealed interface RequestState {
 
 /**
  * The request's state on the ledger's [day] with [policy] (its answer and lifts; design 100 §14.1). A record of today
- * is open - Pending or Waiting - until the policy carries a parent's answer to its id (this server, `request_answers`)
- * or, on an older server, a lift newer than the one at the ask closes it (r13's rule, §14.7); then it is Answered. With
+ * is open - Pending or Waiting - until the policy carries a parent's answer to its id; then it is Answered. With
  * no record of today: Capped when today's accepted count is [TIME_REQUESTS_A_DAY], else Idle. No time limit: the
  * day's end closes it (another day's record is no record).
  */
@@ -71,19 +68,7 @@ fun requestState(record: TimeRequestRecord?, count: TimeRequestCount?, day: Stri
     val accepted = count?.takeIf { it.day == day }?.accepted ?: 0
     val canAskAgain = accepted < TIME_REQUESTS_A_DAY
     if (record != null && record.day == day) {
-        val answered = if (policy?.requestAnswers == true) {
-            policy.answer?.takeIf { it.requestId == record.id }?.let { answerState(it, policy, canAskAgain) }
-        } else {
-            // Code QA L4: any newer lift closes it (§14.7), but only screen time a parent gave is "Du fikk N min mer" - a
-            // rule pause or the parent code's pause closes it with no words of time.
-            val newer = policy?.lifts.orEmpty().filter { it.id > record.liftIdAtAsk }
-            newer.maxByOrNull { it.id }?.let { lift ->
-                val given = newer.filter { it.target == TARGET_BUDGET && it.phoneKey == null }.maxByOrNull { it.id }
-                RequestState.Answered(
-                    no = false, by = cleanBy((given ?: lift).by), atMs = (given ?: lift).atMs, minutes = given?.minutes, canAskAgain = canAskAgain,
-                )
-            }
-        }
+        val answered = policy?.answer?.takeIf { it.requestId == record.id }?.let { answerState(it, policy, canAskAgain) }
         if (answered != null) return answered
         return when (record.state) {
             TimeRequestPhase.PENDING -> RequestState.Pending(record.askedAtMs)
@@ -163,8 +148,7 @@ enum class UploadStep {
     /** A PENDING record of today, still open: post it (offline all afternoon, it goes when the phone is back). */
     SEND,
 
-    /** A PENDING record no longer to send - another day's, or answered by a lift on an older server meanwhile (a lift
-     * while offline, §14.7): dropped unsent, so no stale push and no open request after the answer. */
+    /** A PENDING record no longer to send - another day's: dropped unsent, so no stale push. */
     DROP,
 
     /** Nothing to send (no record, or one already taken). */
@@ -181,7 +165,7 @@ fun uploadStep(record: TimeRequestRecord?, count: TimeRequestCount?, day: String
     if (record == null || record.state != TimeRequestPhase.PENDING) return UploadStep.NONE
     return when (requestState(record, count, day, policy)) {
         is RequestState.Pending -> UploadStep.SEND
-        is RequestState.Answered -> if (policy?.requestAnswers == true) UploadStep.COUNT else UploadStep.DROP
+        is RequestState.Answered -> UploadStep.COUNT
         else -> UploadStep.DROP
     }
 }
@@ -218,7 +202,6 @@ fun newTimeRequestId(random: SecureRandom = SecureRandom()): String {
 }
 
 /** The largest lift id in [policy] (0 without one). */
-fun maxLiftId(policy: TimePolicy?): Long = policy?.lifts?.maxOfOrNull { it.id } ?: 0L
 
 private const val LOG_TAG = "TimeRequests"
 
@@ -286,7 +269,7 @@ object TimeRequests {
         val now = snap.clocks.wallMs
         val day = snap.ledger?.day ?: return false
         val record = TimeRequestRecord(
-            id = newTimeRequestId(), askedAtMs = now, day = day, liftIdAtAsk = maxLiftId(snap.policy), state = TimeRequestPhase.PENDING,
+            id = newTimeRequestId(), askedAtMs = now, day = day, state = TimeRequestPhase.PENDING,
         )
         write(context, record, count(context))
         return true
@@ -294,19 +277,18 @@ object TimeRequests {
 
     /**
      * With the sync, after the status report (`performMdmSync`, behind the sync mutex): a PENDING record of today still
-     * open is posted, and [timeRequestAnswer] decides; another day's, or one an older server's lift answered, goes
-     * unsent. The notice is refreshed after any change.
+     * open is posted, and [timeRequestAnswer] decides; another day's goes unsent. The notice is refreshed after any change.
      */
     suspend fun upload(context: Context, api: MdmApi) {
         val record = record(context) ?: return
         if (record.state != TimeRequestPhase.PENDING) return
-        // Q-3: the policy this sync just fetched - an answer (or, on an older server, a lift) that came while it waited.
+        // Q-3: the policy this sync just fetched - an answer that came while it waited.
         val policy = com.kidslauncher.mdm.server.KidModeEnforcer.timePolicyOf(com.kidslauncher.mdm.server.currentPolicyDecision().policy)
         val day = policy?.let { TimeRulesRuntime.ledger(context, it).day }
         when (uploadStep(record, count(context), day, policy)) {
             UploadStep.NONE -> return
             UploadStep.DROP -> {
-                // Another day's, or answered meanwhile by an older server's lift: nothing sent.
+                // Another day's: nothing sent.
                 synchronized(this) {
                     if (record(context)?.id == record.id) write(context, null, count(context))
                 }

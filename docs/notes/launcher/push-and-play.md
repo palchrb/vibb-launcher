@@ -73,13 +73,11 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   then `checkpointDelayMs(remaining)` - the next minute flip + 200 ms; else `CHECKPOINT_MS`), the tap, the server's
   answer and the pause/override start (`AnchorRefresh.request`). **The request** (`timerules/TimeRequests.kt`,
   `TimeRequestsTest`; design 100 step 2, `docs/design/100-one-vibb-notification.md` §14): DE prefs `time_request`
-  (`record_v1`: `TimeRequestRecord(id 32 hex, askedAtMs, day = the ledger's, liftIdAtAsk, PENDING|ASKED)`, `count_v1`:
+  (`record_v1`: `TimeRequestRecord(id 32 hex, askedAtMs, day = the ledger's, PENDING|ASKED)`, `count_v1`:
   `TimeRequestCount(day, accepted)` - the phone's own three a day, D5), one `commit()` under its lock. **One request
   open at a time**, until a parent answers it or the phone's day ends (r13's 30 minutes are gone): pure `requestState(
   record, count, day, policy)` - a record of today is `Pending(at)`/`Waiting(at)` until the policy's
-  `time_policy.answer` names its id (`Answered(no, by, at, minutes, canAskAgain)`; on an older server without
-  `time_policy.request_answers`, a lift newer than the one at the ask closes it as r13 did, §14.7 - only a PWA's
-  screen-time lift among them is "Du fikk N min mer", a rule pause closes it with no words of time, code QA L4), else
+  `time_policy.answer` names its id (`Answered(no, by, at, minutes, canAskAgain)`), else
   `Capped` at
   three, else `Idle`; `askStep` (enrolled, a budget today, outside the pause, Idle or Answered under three),
   `timeRequestAnswer` (§2.4's table: accepted, capped - the count set to three -, stale/other 4xx/unparsable dropped, 404

@@ -540,17 +540,12 @@ fn assert_served(contract: &Value, row: &str, served: &Value) {
 
 /// Design 100 §14.5: the contract's `policy_*` rows are what this server serves (with the instants of the run):
 /// Pappa's "Nei", Mamma's "+30 min", "+30 min" from a parent with no display name (no `by`: never the login, D11),
-/// and Mamma's Quick actions lift with no request (no `answer`). `older_server` is the launcher's row (no flag). The
+/// and Mamma's Quick actions lift with no request (no `answer`). The
 /// rows pin `answer`'s and a lift's keys (`policy_json_keys_snapshot` pins `time_policy`'s own).
 #[tokio::test]
 async fn the_contract_policies() {
     let contract = contract();
     assert_eq!(contract["capability"], crate::time_answers::CAPABILITY);
-    assert!(
-        contract["older_server"]["time_policy"]
-            .get("request_answers")
-            .is_none()
-    );
     assert_eq!(contract["request"]["id"], RID);
     for (row, parent, value) in [
         ("policy_no", Some(("pappa", "Pappa")), "no"),

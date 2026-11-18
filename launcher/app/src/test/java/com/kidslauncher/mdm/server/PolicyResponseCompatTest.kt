@@ -1220,10 +1220,9 @@ class PolicyResponseCompatTest {
         assertNull(time.lifts[0].phoneKey)
         assertNull(time.rules[0].copyOf)
         assertEquals(false, policy.rulePause)
-        // Design 100 §14.2: an older server's lifts name no parent and no instant, and it answers no request.
+        // Design 100 §14.2: lifts without `by`/`at_ms` read as none, and no answer.
         assertNull(time.lifts[1].by)
         assertEquals(0L, time.lifts[1].atMs)
-        assertEquals(false, time.requestAnswers)
         assertNull(time.answer)
         val answered = (decodeCached(
             withTime.replace(
@@ -1235,7 +1234,6 @@ class PolicyResponseCompatTest {
         ) as CachedPolicy.Ok).policy.timePolicy!!
         assertEquals("Mamma", answered.lifts[1].by)
         assertEquals(1759646400000L, answered.lifts[1].atMs)
-        assertEquals(true, answered.requestAnswers)
         assertEquals(
             com.kidslauncher.mdm.timerules.TimeAnswer("0123456789abcdef0123456789abcdef", "yes", "Mamma", 1759646400000L, 10L, 15),
             answered.answer,

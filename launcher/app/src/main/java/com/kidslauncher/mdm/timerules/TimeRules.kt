@@ -86,10 +86,6 @@ data class TimePolicy(
     val rules: List<TimeRule> = emptyList(),
     val dailyBudgetMinutes: List<Int?> = emptyList(),
     val lifts: List<Lift> = emptyList(),
-    /** Design 100 §14.2 (QA R2-L4: inside `time_policy`, so it caches and copies with [answer]): this server answers
-     * requests for more time and closes them only by an answer. Missing - an older server - is false: a newer lift
-     * closes the open request (r13's rule, §14.7). */
-    val requestAnswers: Boolean = false,
     /** Design 100 §14.2: the newest answered request asked on the phone's day, or `null`. */
     val answer: TimeAnswer? = null,
 )

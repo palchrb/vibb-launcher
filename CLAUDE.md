@@ -161,7 +161,7 @@ as the policy carries it (design 100 §14.5), are `server/testdata/time_request.
 name; the server reads it only for the "Nei" flash), `policy_no`/`policy_yes`/`policy_unnamed`/`policy_lift_only`/
 `policy_ended` (the `time_policy` fragment the server serves: `request_answers: true`, `answer {request_id, answer, by?,
 at_ms, lift_id?, minutes?}`, lifts with `by?`/`at_ms`; `policy_ended` a yes whose pause was ended early - no `lift_id`,
-no `minutes`), `older_server` (a policy without the flag: a newer lift closes the request) and `states` (the launcher's
+no `minutes`) and `states` (the launcher's
 rows `{name, record, count, policy, day, now_ms} -> {state, shade_note, screen_note, can_ask}`). The launcher's
 `TimeRequestsTest` encodes exactly its `request`, decodes each answer and every policy row, and runs every `states` row;
 the server's `time_request::the_contract_answers` posts the request (its instant moved to a minute ago) and produces every
