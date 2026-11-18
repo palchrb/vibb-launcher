@@ -1,5 +1,6 @@
 package com.kidslauncher.mdm.server
 
+import com.kidslauncher.mdm.calls.anyChannelManaged
 import com.kidslauncher.mdm.server.dto.HardeningPolicy
 import com.kidslauncher.mdm.server.dto.PolicyResponse
 import com.kidslauncher.mdm.timerules.TimePolicy
@@ -87,16 +88,16 @@ val com.kidslauncher.mdm.server.dto.CallPolicy.hasChannelModes: Boolean
  *   unusable (corrupt, or missing although a policy was applied before) - in those cases we can't
  *   prove the phone was unmanaged, so we don't open it up.
  * - no `call_policy` at all on a phone whose calls were managed ([callsManagedLast], written with
- *   the cache, or a cached managed `call_policy`): our server always sends it with an explicit
- *   `managed`, so a missing key is a rolled-back, buggy or forged response (QA blocker 3). The
- *   cached policy, with the last managed call rules, stays in force.
+ *   the cache, or a cached `call_policy` with either channel managed): our server always sends it,
+ *   so a missing key is a rolled-back, buggy or forged response (QA blocker 3). The cached policy,
+ *   with the last managed call rules, stays in force.
  * - no `time_policy` on a phone that has had one ([timePolicySeen], written with the cache, or a
  *   cached policy with one): our server always sends it (handy step 6), so the rules, budget and
  *   lifts the phone has stay in force.
  * - a `call_policy` without `calls_mode`/`sms_mode` on a phone that has had them ([channelModesSeen], written with the
  *   cache, or a cached policy with them; design 77 D2): a rolled-back server can't loosen a channel silently. A mode
  *   that isn't one of the three is rejected always - we can't tell what it would allow.
- * A legitimate `[]`, removing the PIN, or `call_policy.managed = false` is accepted.
+ * A legitimate `[]`, removing the PIN, or both channels `unmanaged` is accepted.
  */
 fun judgeFresh(
     fresh: PolicyResponse,
@@ -112,7 +113,7 @@ fun judgeFresh(
     }
     if (fresh.callPolicy == null) {
         val callsWereManaged = callsManagedLast ||
-            (cached is CachedPolicy.Ok && cached.policy.callPolicy?.managed == true)
+            (cached is CachedPolicy.Ok && cached.policy.callPolicy?.anyChannelManaged == true)
         if (callsWereManaged) return FreshVerdict.REJECT_SUSPECT
     }
     fresh.callPolicy?.let { callPolicy ->

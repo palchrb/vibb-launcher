@@ -489,7 +489,6 @@ async fn the_sms_settings_save_in_place() {
     );
     app.assert_lands(&res, &cookie).await;
     let policy = app.policy(&token).await["call_policy"].clone();
-    assert_eq!(policy["sms_lock_text"], json!(false), "the stale switch");
     assert_eq!(app.policy(&token).await["lock_glance"]["sms"], "name");
     assert_eq!(
         policy["own_numbers"],

@@ -444,7 +444,8 @@ pub(crate) fn badge_and_screen(
 /// A managed phone (an app list or managed calls) without a Parent PIN: its Settings can't be
 /// opened on the phone (the device page's red card, an Attention alarm).
 pub(crate) fn managed_without_pin(policy: &DevicePolicy) -> bool {
-    (policy.allowlist_json.is_some() || policy.managed()) && policy.override_pin_hash.is_none()
+    (policy.allowlist_json.is_some() || policy.any_channel_managed())
+        && policy.override_pin_hash.is_none()
 }
 
 /// A phone's name is at most this many characters (it fills a row and a page title).
@@ -2193,7 +2194,7 @@ async fn render_device(
     // The Calls & Contacts row: "8 contacts" while calls are managed; a failed read says so,
     // never "0 contacts". The call report's findings feed Attention; a report that can't be read
     // says so on the row, so an empty Attention never reads as "all good" (qa-31-s8-code N4).
-    let contact_count: Option<i64> = if policy.managed() {
+    let contact_count: Option<i64> = if policy.any_channel_managed() {
         sqlx::query_scalar("SELECT COUNT(*) FROM device_contacts WHERE device_id = ?")
             .bind(id)
             .fetch_one(&state.db)
@@ -2208,7 +2209,7 @@ async fn render_device(
         .map(|report| report.problems())
         .map_err(|err| tracing::error!(device_id = id, %err, "failed to read the call report"))
         .ok();
-    let calls_value = match (policy.managed(), contact_count) {
+    let calls_value = match (policy.any_channel_managed(), contact_count) {
         _ if call_problems.is_none() => unreadable(),
         (false, _) => t(lang, "device.summary.value.not_managed").to_string(),
         (true, None) => unreadable(),

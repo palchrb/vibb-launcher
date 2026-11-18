@@ -292,14 +292,14 @@ class PolicyGateTest {
     private val withModes = managed.copy(
         callPolicy = com.kidslauncher.mdm.server.dto.CallPolicy(callsMode = "managed", smsMode = "managed"),
     )
-    private val oldShape = managed.copy(callPolicy = com.kidslauncher.mdm.server.dto.CallPolicy(managed = true, callsEnabled = true))
+    private val noModes = managed.copy(callPolicy = com.kidslauncher.mdm.server.dto.CallPolicy())
 
     @Test
     fun `channel modes - missing after they were seen, or unknown, is rejected`() {
-        assertEquals(FreshVerdict.ACCEPT, judgeFresh(oldShape, CachedPolicy.Ok(managed), true))
-        assertEquals(FreshVerdict.ACCEPT, judgeFresh(withModes, CachedPolicy.Ok(oldShape), true))
-        assertEquals(FreshVerdict.REJECT_SUSPECT, judgeFresh(oldShape, CachedPolicy.Ok(withModes), true))
-        assertEquals(FreshVerdict.REJECT_SUSPECT, judgeFresh(oldShape, CachedPolicy.Corrupt("x"), true, channelModesSeen = true))
+        assertEquals(FreshVerdict.ACCEPT, judgeFresh(noModes, CachedPolicy.Ok(managed), true))
+        assertEquals(FreshVerdict.ACCEPT, judgeFresh(withModes, CachedPolicy.Ok(noModes), true))
+        assertEquals(FreshVerdict.REJECT_SUSPECT, judgeFresh(noModes, CachedPolicy.Ok(withModes), true))
+        assertEquals(FreshVerdict.REJECT_SUSPECT, judgeFresh(noModes, CachedPolicy.Corrupt("x"), true, channelModesSeen = true))
         val half = managed.copy(callPolicy = com.kidslauncher.mdm.server.dto.CallPolicy(callsMode = "managed"))
         assertEquals(FreshVerdict.REJECT_SUSPECT, judgeFresh(half, CachedPolicy.Ok(managed), true))
         val unknown = managed.copy(callPolicy = com.kidslauncher.mdm.server.dto.CallPolicy(callsMode = "managed", smsMode = "filtered"))

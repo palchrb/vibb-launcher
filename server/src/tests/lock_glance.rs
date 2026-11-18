@@ -385,7 +385,6 @@ async fn an_unreadable_table_sends_no_apps_and_the_rest_of_the_policy() {
     );
     let before = app.policy(&token).await;
     assert_eq!(before["lock_glance"]["sms"], "text");
-    assert_eq!(before["call_policy"]["sms_lock_text"], true);
     // The trigger names the table, so it goes first.
     sqlx::query("DROP TRIGGER devices_get_lock_glance_default")
         .execute(&app.db)
@@ -396,16 +395,10 @@ async fn an_unreadable_table_sends_no_apps_and_the_rest_of_the_policy() {
         .await
         .unwrap();
     let after = app.policy(&token).await;
-    // Fail closed for Meldinger too: `sms` is "off", never absent (a new launcher would read an absent one as an
-    // older server's rule), and the derived old key is false.
+    // Fail closed for Meldinger too: `sms` is "off", never absent.
     assert_eq!(after["lock_glance"], json!({ "apps": [], "sms": "off" }));
-    assert_eq!(after["call_policy"]["sms_lock_text"], false);
     let strip = |mut v: Value| {
         v.as_object_mut().unwrap().remove("lock_glance");
-        v["call_policy"]
-            .as_object_mut()
-            .unwrap()
-            .remove("sms_lock_text");
         v
     };
     assert_eq!(strip(before), strip(after));
@@ -966,8 +959,7 @@ async fn the_page_shows_each_note() {
 }
 
 /// Design 82 D7: Meldinger's row is the group's first and only while SMS is managed; every save returns to its own
-/// cell (Off too - it stays listed), reaches the policy as `lock_glance.sms` with the derived `sms_lock_text`, and
-/// is logged without the key.
+/// cell (Off too - it stays listed), reaches the policy as `lock_glance.sms`, and is logged without the key.
 #[tokio::test]
 async fn meldingers_row_is_first_only_while_sms_is_managed_and_saves_in_place() {
     let app = TestApp::new().await;
@@ -977,7 +969,7 @@ async fn meldingers_row_is_first_only_while_sms_is_managed_and_saves_in_place() 
         || async { subsection(&app.get_page(&lock_page(id), &cookie).await.text()).to_string() };
     let anchor = format!("lock-screen-app-{MESSAGES}");
 
-    // SMS not managed: no row, and a stored Full text goes out as the name - the old key false with it.
+    // SMS not managed: no row, and a stored Full text goes out as the name.
     let stored_text = |text: bool| {
         sqlx::query(
             "UPDATE device_lock_glance_apps SET show_text = ? WHERE device_id = ? AND package_name = ?",
@@ -991,7 +983,6 @@ async fn meldingers_row_is_first_only_while_sms_is_managed_and_saves_in_place() 
     assert_eq!(form_of(&page().await, MESSAGES), None);
     let policy = app.policy(&token).await;
     assert_eq!(policy["lock_glance"]["sms"], "name");
-    assert_eq!(policy["call_policy"]["sms_lock_text"], false);
     // Back to the seed, Name only.
     stored_text(false).await.unwrap();
 
@@ -1012,17 +1003,12 @@ async fn meldingers_row_is_first_only_while_sms_is_managed_and_saves_in_place() 
         "{html}"
     );
 
-    for (value, sms, text) in [
-        ("off", "off", false),
-        ("text", "text", true),
-        ("name", "name", false),
-    ] {
+    for (value, sms) in [("off", "off"), ("text", "text"), ("name", "name")] {
         let res = show(&app, Some(&cookie), id, MESSAGES, value).await;
         super::assert_redirect(&res, &lock_page(id), Some(&anchor));
         app.assert_lands(&res, &cookie).await;
         let policy = app.policy(&token).await;
         assert_eq!(policy["lock_glance"]["sms"], sms);
-        assert_eq!(policy["call_policy"]["sms_lock_text"], text);
         assert_eq!(
             policy["lock_glance"]["apps"],
             json!([{ "package": ELEMENT_X, "show_text": false }])

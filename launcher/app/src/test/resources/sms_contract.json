@@ -1,30 +1,19 @@
 {
   "capability": "sms_engine_v1",
   "groups_capability": "sms_groups_v1",
-  "migration": [
-    {"calls_managed": false, "calls_enabled": false, "sms_enabled": false, "calls_mode": "unmanaged", "sms_mode": "unmanaged"},
-    {"calls_managed": false, "calls_enabled": true, "sms_enabled": true, "calls_mode": "unmanaged", "sms_mode": "unmanaged"},
-    {"calls_managed": true, "calls_enabled": false, "sms_enabled": false, "calls_mode": "off", "sms_mode": "off"},
-    {"calls_managed": true, "calls_enabled": false, "sms_enabled": true, "calls_mode": "off", "sms_mode": "unmanaged"},
-    {"calls_managed": true, "calls_enabled": true, "sms_enabled": false, "calls_mode": "managed", "sms_mode": "off"},
-    {"calls_managed": true, "calls_enabled": true, "sms_enabled": true, "calls_mode": "managed", "sms_mode": "unmanaged"}
-  ],
   "modes": [
-    {"calls_mode": "off", "sms_mode": "off", "managed": true, "calls_enabled": false, "sms_enabled": false},
-    {"calls_mode": "off", "sms_mode": "managed", "managed": true, "calls_enabled": false, "sms_enabled": false},
-    {"calls_mode": "off", "sms_mode": "unmanaged", "managed": true, "calls_enabled": false, "sms_enabled": true},
-    {"calls_mode": "managed", "sms_mode": "off", "managed": true, "calls_enabled": true, "sms_enabled": false},
-    {"calls_mode": "managed", "sms_mode": "managed", "managed": true, "calls_enabled": true, "sms_enabled": false},
-    {"calls_mode": "managed", "sms_mode": "unmanaged", "managed": true, "calls_enabled": true, "sms_enabled": true},
-    {"calls_mode": "unmanaged", "sms_mode": "off", "managed": true, "calls_enabled": true, "sms_enabled": false},
-    {"calls_mode": "unmanaged", "sms_mode": "managed", "managed": true, "calls_enabled": true, "sms_enabled": false},
-    {"calls_mode": "unmanaged", "sms_mode": "unmanaged", "managed": false, "calls_enabled": true, "sms_enabled": true}
+    {"calls_mode": "off", "sms_mode": "off"},
+    {"calls_mode": "off", "sms_mode": "managed"},
+    {"calls_mode": "off", "sms_mode": "unmanaged"},
+    {"calls_mode": "managed", "sms_mode": "off"},
+    {"calls_mode": "managed", "sms_mode": "managed"},
+    {"calls_mode": "managed", "sms_mode": "unmanaged"},
+    {"calls_mode": "unmanaged", "sms_mode": "off"},
+    {"calls_mode": "unmanaged", "sms_mode": "managed"},
+    {"calls_mode": "unmanaged", "sms_mode": "unmanaged"}
   ],
   "policy": {
     "call_policy": {
-      "managed": true,
-      "calls_enabled": true,
-      "sms_enabled": false,
       "default_country_code": "47",
       "contacts": [
         {"id": 1, "name": "Mamma", "number": "+4791234567", "inbound": true, "outbound": true, "show_on_home": true, "message_app": "sms", "message_address": null, "photo": null, "sms_in": true, "sms_out": true, "mms": true},
@@ -34,7 +23,6 @@
       "emergency_menu": [{"number": "112", "name": ""}],
       "calls_mode": "managed",
       "sms_mode": "managed",
-      "sms_lock_text": false,
       "sms_names": ["DNB", "Posten"],
       "own_numbers": [{"slot": 1, "number": "+4790000001"}],
       "mmsc_hosts": [],
@@ -173,28 +161,23 @@
     "capability": "messages_app_v1",
     "display": {"package_name": "me.vibb.builtin.messages", "label": "Tekst", "icon": "mail", "color": "plum", "on_home": false},
     "lock": [
-      {"stored": null, "sms_mode": "managed", "sms": "off", "sms_lock_text": false},
-      {"stored": false, "sms_mode": "managed", "sms": "name", "sms_lock_text": false},
-      {"stored": true, "sms_mode": "managed", "sms": "text", "sms_lock_text": true},
-      {"stored": null, "sms_mode": "unmanaged", "sms": "off", "sms_lock_text": false},
-      {"stored": false, "sms_mode": "unmanaged", "sms": "name", "sms_lock_text": false},
-      {"stored": true, "sms_mode": "unmanaged", "sms": "name", "sms_lock_text": false},
-      {"stored": true, "sms_mode": "off", "sms": "name", "sms_lock_text": false}
+      {"stored": null, "sms_mode": "managed", "sms": "off"},
+      {"stored": false, "sms_mode": "managed", "sms": "name"},
+      {"stored": true, "sms_mode": "managed", "sms": "text"},
+      {"stored": null, "sms_mode": "unmanaged", "sms": "off"},
+      {"stored": false, "sms_mode": "unmanaged", "sms": "name"},
+      {"stored": true, "sms_mode": "unmanaged", "sms": "name"},
+      {"stored": true, "sms_mode": "off", "sms": "name"}
     ],
     "lock_read": [
-      {"lock_glance": {"apps": [], "sms": "off"}, "fresh": true, "sms_lock_text": true, "sms": "off", "level": "off"},
-      {"lock_glance": {"apps": [], "sms": "name"}, "fresh": true, "sms_lock_text": true, "sms": "name", "level": "name"},
-      {"lock_glance": {"apps": [], "sms": "text"}, "fresh": true, "sms_lock_text": false, "sms": "text", "level": "text"},
-      {"lock_glance": {"apps": [], "sms": "text"}, "fresh": false, "sms_lock_text": null, "sms": "text", "level": "text"},
-      {"lock_glance": {"apps": [], "sms": "full"}, "fresh": true, "sms_lock_text": true, "sms": "off", "level": "off"},
-      {"lock_glance": {"apps": [], "sms": true}, "fresh": true, "sms_lock_text": true, "sms": "off", "level": "off"},
-      {"lock_glance": ["text"], "fresh": true, "sms_lock_text": true, "sms": "off", "level": "off"},
-      {"lock_glance": {"apps": []}, "fresh": true, "sms_lock_text": true, "sms": "legacy", "level": "text"},
-      {"lock_glance": {"apps": []}, "fresh": true, "sms_lock_text": false, "sms": "legacy", "level": "name"},
-      {"lock_glance": {"apps": []}, "fresh": false, "sms_lock_text": null, "sms": "legacy", "level": "name"},
-      {"fresh": true, "sms_lock_text": true, "sms": "legacy", "level": "text"},
-      {"fresh": true, "sms_lock_text": null, "sms": "legacy", "level": "name"},
-      {"fresh": false, "sms_lock_text": true, "sms": "off", "level": "off"}
+      {"lock_glance": {"apps": [], "sms": "off"}, "sms": "off", "level": "off"},
+      {"lock_glance": {"apps": [], "sms": "name"}, "sms": "name", "level": "name"},
+      {"lock_glance": {"apps": [], "sms": "text"}, "sms": "text", "level": "text"},
+      {"lock_glance": {"apps": [], "sms": "full"}, "sms": "off", "level": "off"},
+      {"lock_glance": {"apps": [], "sms": true}, "sms": "off", "level": "off"},
+      {"lock_glance": ["text"], "sms": "off", "level": "off"},
+      {"lock_glance": {"apps": []}, "sms": "off", "level": "off"},
+      {"sms": "off", "level": "off"}
     ]
   }
 }

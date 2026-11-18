@@ -56,7 +56,7 @@ async fn attach(
 }
 
 #[tokio::test]
-async fn unmanaged_policy_has_explicit_managed_false() {
+async fn unmanaged_policy_has_explicit_modes() {
     let app = TestApp::new().await;
     let (id, token) = app.enrolled_device("phone").await;
     set_unmanaged(&app, id).await;
@@ -64,7 +64,8 @@ async fn unmanaged_policy_has_explicit_managed_false() {
     attach(&app, id, "Mamma", "+4791234567", [true, true, true], 0).await;
 
     let call_policy = &app.policy(&token).await["call_policy"];
-    assert_eq!(call_policy["managed"], json!(false));
+    assert_eq!(call_policy["calls_mode"], json!("unmanaged"));
+    assert_eq!(call_policy["sms_mode"], json!("unmanaged"));
     assert_eq!(call_policy["contacts"], json!([]));
     assert_eq!(call_policy["default_country_code"], json!("47"));
 }
@@ -86,9 +87,8 @@ async fn managed_policy_lists_contacts_with_flags_in_order() {
     .unwrap();
 
     let call_policy = app.policy(&token).await["call_policy"].clone();
-    assert_eq!(call_policy["managed"], json!(true));
-    assert_eq!(call_policy["calls_enabled"], json!(true));
-    assert_eq!(call_policy["sms_enabled"], json!(false));
+    assert_eq!(call_policy["calls_mode"], json!("managed"));
+    assert_eq!(call_policy["sms_mode"], json!("off"));
     assert_eq!(
         call_policy["contacts"],
         json!([
@@ -467,7 +467,7 @@ async fn contact_flags_are_scoped_to_the_device() {
     assert_eq!(address.as_deref(), Some("@mormor:matrix.org"));
 }
 
-/// Design 77 D2: the form posts both channels' states (and the message button); the policy's old keys follow them.
+/// Design 77 D2: the form posts both channels' states (and the message button); the policy's modes follow them.
 #[tokio::test]
 async fn settings_form_writes_both_channels() {
     let app = TestApp::new().await;
@@ -498,9 +498,8 @@ async fn settings_form_writes_both_channels() {
         .await;
     assert!(res.status.is_redirection());
     let call_policy = app.policy(&token).await["call_policy"].clone();
-    assert_eq!(call_policy["managed"], json!(true));
-    assert_eq!(call_policy["calls_enabled"], json!(true));
-    assert_eq!(call_policy["sms_enabled"], json!(false));
+    assert_eq!(call_policy["calls_mode"], json!("managed"));
+    assert_eq!(call_policy["sms_mode"], json!("off"));
     let default_app: String =
         sqlx::query_scalar("SELECT default_message_app FROM device_policy WHERE device_id = ?")
             .bind(id)
@@ -522,7 +521,9 @@ async fn settings_form_writes_both_channels() {
     )
     .await;
     let call_policy = app.policy(&token).await["call_policy"].clone();
-    assert_eq!(call_policy["managed"], json!(false));
+    assert_eq!(call_policy["calls_mode"], json!("unmanaged"));
+    assert_eq!(call_policy["sms_mode"], json!("unmanaged"));
+    assert_eq!(call_policy["contacts"], json!([]));
 
     let res = app
         .request_form(

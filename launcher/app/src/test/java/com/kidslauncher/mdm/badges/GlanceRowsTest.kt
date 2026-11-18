@@ -27,20 +27,18 @@ class GlanceRowsTest {
     // ---- the policy -----------------------------------------------------------------------------
 
     @Test
-    fun `the policy - an object field by field, missing means default fresh and unknown cached`() {
-        // Design 51: each app an object with its own text. Without `sms` (a server before design 82) Meldinger's
-        // level is the old switch's (LEGACY; the words themselves are `sms_contract.json`'s `app.lock_read`).
+    fun `the policy - an object field by field, missing means unknown`() {
+        // Design 51: each app an object with its own text. Without `sms` Meldinger is Off (the words themselves are
+        // `sms_contract.json`'s `app.lock_read`).
         assertEquals(
-            GlancePolicy(mapOf(school to true, element to false), GlanceSms.LEGACY),
-            lockGlancePolicy(json("""{"apps": [{"package": "$school", "show_text": true}, {"package": "$element", "show_text": false}]}"""), fresh = false),
+            GlancePolicy(mapOf(school to true, element to false), GlanceSms.OFF),
+            lockGlancePolicy(json("""{"apps": [{"package": "$school", "show_text": true}, {"package": "$element", "show_text": false}]}""")),
         )
-        // The shape before 51 (an older server): strings, sender only - its global switch is ignored.
-        assertEquals(GlancePolicy(mapOf(element to false, school to false), GlanceSms.LEGACY), lockGlancePolicy(json("""{"apps": ["$school", "$element", "$element"], "show_text": true}"""), fresh = true))
-        // Mixed; only valid package names, show_text only for JSON true (missing = false); an
-        // object without a usable package is dropped - and a name under Vibb One's reserved prefix
+        // Mixed; only objects with a valid package name, show_text only for JSON true (missing = false); a string,
+        // an object without a usable package is dropped - and a name under Vibb One's reserved prefix
         // (design 82 D1), Meldinger's key included: its level is `sms`, never an app's row.
         assertEquals(
-            GlancePolicy(mapOf(element to true, school to false, "org.a.chat" to false, "org.b.chat" to false), GlanceSms.NAME),
+            GlancePolicy(mapOf(element to true, "org.a.chat" to false, "org.b.chat" to false), GlanceSms.NAME),
             lockGlancePolicy(
                 json(
                     """{"apps": [{"package": "$element", "show_text": true}, "$school", {"package": "org.a.chat"},
@@ -48,19 +46,14 @@ class GlanceRowsTest {
                     {"package": 7}, {"package": null}, "bad", ".x", "a..b", 7, null, ["x.y"],
                     {"package": "me.vibb.builtin.messages", "show_text": true}, "me.vibb.builtin.other"], "sms": "name"}""",
                 ),
-                fresh = true,
             ),
         )
-        assertEquals(GlancePolicy(emptyMap(), GlanceSms.LEGACY), lockGlancePolicy(json("""{"show_text": 1}"""), fresh = true))
-        assertEquals(GlancePolicy(emptyMap(), GlanceSms.LEGACY), lockGlancePolicy(json("""{"apps": {}}"""), fresh = true))
-        // Missing or null: an older server's default when fresh; a pre-25 cache when cached (QA Low 11).
-        assertEquals(GlancePolicy(mapOf(element to false), GlanceSms.LEGACY), lockGlancePolicy(null, fresh = true))
-        assertEquals(GlancePolicy.SERVER_DEFAULT, lockGlancePolicy(json("null"), fresh = true))
-        assertEquals(GlancePolicy.UNKNOWN, lockGlancePolicy(null, fresh = false))
-        assertEquals(GlancePolicy.UNKNOWN, lockGlancePolicy(json("null"), fresh = false))
-        // Anything else: unknown - missed calls only.
-        for (odd in listOf("[]", "[\"$element\"]", "5", "\"x\"", "true")) {
-            assertEquals(odd, GlancePolicy.UNKNOWN, lockGlancePolicy(json(odd), fresh = true))
+        assertEquals(GlancePolicy.UNKNOWN, lockGlancePolicy(json("""{"show_text": 1}""")))
+        assertEquals(GlancePolicy.UNKNOWN, lockGlancePolicy(json("""{"apps": {}}""")))
+        // Missing, null or anything else: unknown - missed calls only.
+        assertEquals(GlancePolicy.UNKNOWN, lockGlancePolicy(null))
+        for (odd in listOf("null", "[]", "[\"$element\"]", "5", "\"x\"", "true")) {
+            assertEquals(odd, GlancePolicy.UNKNOWN, lockGlancePolicy(json(odd)))
         }
         assertTrue(GlancePolicy.UNKNOWN.apps.isEmpty())
         assertFalse(GlancePolicy.UNKNOWN.showsText(element))

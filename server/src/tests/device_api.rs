@@ -442,19 +442,15 @@ async fn policy_json_keys_snapshot() {
     assert_eq!(
         call_keys,
         [
-            "calls_enabled",
             "calls_mode",
             "contact_requests",
             "contacts",
             "default_country_code",
             "emergency_menu",
-            "managed",
             "mmsc_hosts",
             "own_numbers",
-            "sms_enabled",
             "sms_groups",
             "sms_held_drop",
-            "sms_lock_text",
             "sms_mode",
             "sms_names",
         ]

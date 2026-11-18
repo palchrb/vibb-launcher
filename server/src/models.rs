@@ -156,9 +156,8 @@ pub struct DevicePolicy {
     /// `handlers::schedules`.
     pub custom_schedule_enabled: bool,
     /// Design 77 D2 (migrations/0130_sms.sql): each channel's own state, "off", "managed" or "unmanaged"
-    /// ([CHANNEL_MODES]). The old `calls_managed`/`calls_enabled`/`sms_enabled` columns are derived from these
-    /// ([DevicePolicy::managed], [DevicePolicy::calls_enabled], [DevicePolicy::sms_enabled]) and only written for a
-    /// rollback; nothing reads them.
+    /// ([CHANNEL_MODES]). The `calls_managed`/`calls_enabled`/`sms_enabled` columns from before them are no longer
+    /// written or read.
     pub calls_mode: String,
     pub sms_mode: String,
     /// Design 80 D13 (migrations/0134_sms_groups.sql): group texts allowed at all, `call_policy.sms_groups`.
@@ -422,38 +421,21 @@ pub const MESSAGE_APPS: [&str; 4] = ["none", "sms", "element", "signal"];
 /// Design 77 D2: the values `device_policy.calls_mode` and `.sms_mode` may take.
 pub const CHANNEL_MODES: [&str; 3] = ["off", "managed", "unmanaged"];
 
-/// D2's wire for launchers from before design 77, derived from the two modes so they fail closed: `managed` while
-/// either channel isn't `unmanaged` (an older launcher with `managed = false` leaves SMS fully open), calls on unless
-/// calls are `off` (calls `unmanaged` with SMS restricted reads as contacts-only calls: stricter, never looser), SMS on
-/// only while SMS is `unmanaged` (an older launcher turns `managed` into `DISALLOW_SMS`).
-pub fn derived_old_keys(calls_mode: &str, sms_mode: &str) -> (bool, bool, bool) {
-    (
-        calls_mode != "unmanaged" || sms_mode != "unmanaged",
-        calls_mode != "off",
-        sms_mode == "unmanaged",
-    )
-}
-
 impl DevicePolicy {
-    /// `call_policy.managed` ([derived_old_keys]): either channel is restricted.
-    pub fn managed(&self) -> bool {
-        derived_old_keys(&self.calls_mode, &self.sms_mode).0
-    }
-
-    /// `call_policy.calls_enabled` ([derived_old_keys]).
-    pub fn calls_enabled(&self) -> bool {
-        derived_old_keys(&self.calls_mode, &self.sms_mode).1
-    }
-
-    /// `call_policy.sms_enabled` ([derived_old_keys]).
-    pub fn sms_enabled(&self) -> bool {
-        derived_old_keys(&self.calls_mode, &self.sms_mode).2
+    /// Either channel is filtered or off: the contacts go to the phone, and a phone without a PIN is managed.
+    pub fn any_channel_managed(&self) -> bool {
+        self.calls_managed() || self.sms_managed()
     }
 
     /// The calls channel is filtered or off: the dialer role, the screening and the call log are the launcher's then.
-    /// With only SMS managed, calls behave as unmanaged on a launcher with the engine.
+    /// With only SMS managed, calls behave as unmanaged.
     pub fn calls_managed(&self) -> bool {
         self.calls_mode != "unmanaged"
+    }
+
+    /// The SMS channel is filtered or off.
+    pub fn sms_managed(&self) -> bool {
+        self.sms_mode != "unmanaged"
     }
 }
 
@@ -1418,26 +1400,19 @@ pub struct KidLock {
     pub pin_rev: i64,
 }
 
-/// `PolicyResponse.call_policy`. With `managed = false` the launcher leaves calls alone (and
-/// hands the dialer role back); the other fields are then defaults and `contacts` is empty.
+/// `PolicyResponse.call_policy`. With both modes `unmanaged` the launcher leaves calls and SMS alone (and hands the
+/// dialer role back); `contacts` is then empty.
 #[derive(Serialize)]
 pub struct CallPolicy {
-    /// The three keys of launchers from before design 77, derived from the modes ([derived_old_keys]).
-    pub managed: bool,
-    pub calls_enabled: bool,
-    pub sms_enabled: bool,
     pub default_country_code: String,
     pub contacts: Vec<PolicyContact>,
     /// Design 73: the emergency menu in the parent's order, always at least one number (default 112 alone), also
     /// while calls are unmanaged. Normalised numbers; an empty name reads "Emergency number" on the phone.
     pub emergency_menu: Vec<crate::emergency::PolicyEntry>,
-    /// Design 77 D2: each channel's state, always sent. A launcher with the engine reads these and, once it has seen
-    /// them, rejects a policy without them.
+    /// Design 77 D2: each channel's state, always sent. The launcher, once it has seen them, rejects a policy without
+    /// them.
     pub calls_mode: String,
     pub sms_mode: String,
-    /// §6.8: the message text on the lock glance's row - since design 82 derived from `lock_glance.sms` (true only
-    /// at `text`), for a launcher from before that key.
-    pub sms_lock_text: bool,
     /// D17: the sender names let through, sorted by their fold.
     pub sms_names: Vec<String>,
     /// D12: the phone's own numbers the parent typed, by SIM slot.

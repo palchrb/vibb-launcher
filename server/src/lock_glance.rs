@@ -51,11 +51,6 @@ impl LockGlancePolicy {
             sms: SMS_OFF,
         }
     }
-
-    /// `call_policy.sms_lock_text` for a launcher from before `lock_glance.sms`: true only at Full text.
-    pub fn sms_lock_text(&self) -> bool {
-        self.sms == SMS_TEXT
-    }
 }
 
 /// One ticked app of [LockGlancePolicy].

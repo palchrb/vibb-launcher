@@ -1404,7 +1404,7 @@ private suspend fun fetchPolicy(
 /** Caches an accepted policy, its [LastEnforcedPlan], the "a policy has been applied" flag, the
  * "this phone has had time rules" flag ([judgeFresh]), the DNS upstream prefs (the provider and
  * `dns_upstream_custom`, design 36 §5.1) and the
- * call prefs ([callPrefsUpdate]: `calls_managed_last` only from an explicit `managed`, and the last
+ * call prefs ([callPrefsUpdate]: `calls_managed_last` only from a sent `call_policy`, and the last
  * managed call rules) in one synchronous `commit()` - they must never disagree, and the generated
  * preference setters only `apply()` asynchronously (see CLAUDE.md on writes racing a process death). */
 private fun storeAcceptedPolicy(context: Context, policy: PolicyResponse): Unit = synchronized(POLICY_CACHE_LOCK) {

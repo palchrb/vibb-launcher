@@ -216,8 +216,8 @@ data class RefreshPlan(
 /**
  * [ceReadable] false (before the first unlock): only DE counts, nothing is written. Otherwise CE
  * decides, with the DE copy as a second witness that calls were managed: a CE that lost
- * `calls_managed_last` (a reset/wiped cache) fails closed instead of reading as unmanaged - only an
- * explicit `managed: false` unmanages. [lastCommitted] is the DE string this process last really
+ * `calls_managed_last` (a reset/wiped cache) fails closed instead of reading as unmanaged - only a
+ * policy with both channels `unmanaged` unmanages. [lastCommitted] is the DE string this process last really
  * committed (or what's on disk at start); DE is rewritten whenever it differs from what CE says.
  */
 fun refreshPlan(ceReadable: Boolean, ce: CeRead?, deJson: String?, lastCommitted: String?): RefreshPlan {

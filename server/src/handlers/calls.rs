@@ -27,7 +27,7 @@ use crate::handlers::calls_form::{self, Subs, Way};
 use crate::handlers::device_api::device_contacts;
 use crate::handlers::device_pages::Note;
 use crate::i18n::{Lang, Words, t, t_params};
-use crate::models::{CHANNEL_MODES, Device, DevicePolicy, MESSAGE_APPS, derived_old_keys};
+use crate::models::{CHANNEL_MODES, Device, DevicePolicy, MESSAGE_APPS};
 use crate::phone;
 use crate::photos;
 use crate::sms;
@@ -1638,7 +1638,7 @@ pub(crate) async fn call_report(
         }
     }
     // Design 77 D2 (code QA M2): a stored pair the phone's launcher can't do yet (a phone set up again with an older
-    // build) - the policy sends the fail-closed derived keys; say what that costs until the update.
+    // build); say what that costs until the update.
     if !capabilities.iter().any(|c| c == sms::SMS_ENGINE_CAPABILITY)
         && let Some((sms_lost, calls_contacts_only)) =
             sms::older_launcher_loses(&policy.calls_mode, &policy.sms_mode)
@@ -1719,7 +1719,7 @@ pub(crate) async fn call_report(
     if let Some(error) = text("last_error") {
         findings.push(Finding::Reported { error });
     }
-    if !policy.sms_enabled()
+    if policy.sms_managed()
         && let Some(sms_app) = text("default_sms_package")
         && allowlist
             .as_ref()
@@ -2098,8 +2098,6 @@ pub async fn save_settings(
             Err(err) => return db_error(lang, id, err),
         }
     }
-    // The old columns get D2's derived keys, so a rolled-back server sends the fail-closed view.
-    let (managed, calls_enabled, sms_enabled) = derived_old_keys(calls_mode, sms_mode);
     let result = async {
         // BEGIN IMMEDIATE: it reads the stored mode before it writes (design 109).
         let mut tx = state.db.begin_with("BEGIN IMMEDIATE").await?;
@@ -2114,14 +2112,10 @@ pub async fn save_settings(
             "UPDATE device_policy SET \
              roles_changed_at = CASE WHEN calls_mode != ?1 OR sms_mode != ?2 THEN datetime('now') \
                                      ELSE roles_changed_at END, \
-             calls_mode = ?1, sms_mode = ?2, calls_managed = ?3, calls_enabled = ?4, sms_enabled = ?5, \
-             updated_at = datetime('now') WHERE device_id = ?6",
+             calls_mode = ?1, sms_mode = ?2, updated_at = datetime('now') WHERE device_id = ?3",
         )
         .bind(calls_mode)
         .bind(sms_mode)
-        .bind(managed)
-        .bind(calls_enabled)
-        .bind(sms_enabled)
         .bind(id)
         .execute(&mut *tx)
         .await?

@@ -3,32 +3,25 @@ package com.kidslauncher.mdm.server.dto
 import kotlinx.serialization.Serializable
 
 /**
- * `PolicyResponse.callPolicy` (JSON `call_policy`) - see kid-phone-server's `build_call_policy`.
- * Our server always sends it with an explicit [managed]; a missing object (an upstream or older
- * server) means "calls not managed" only on a phone whose calls were never managed - otherwise
- * the whole response is rejected ([com.kidslauncher.mdm.server.judgeFresh]).
+ * `PolicyResponse.callPolicy` (JSON `call_policy`) - see the server's `build_call_policy`. The server always sends it
+ * with explicit [callsMode]/[smsMode]; a missing object means "calls not managed" only on a phone whose calls were
+ * never managed - otherwise the whole response is rejected ([com.kidslauncher.mdm.server.judgeFresh]).
  *
- * Defaults inside a present object deny, [managed] included: `{}` is "managed, calls and SMS off,
- * no contacts" - unmanaging needs an explicit `managed: false` (QA blocker 3).
+ * Defaults inside a present object deny: `{}` is "calls and SMS off, no contacts" - unmanaging needs both modes
+ * `unmanaged` (QA blocker 3).
  */
 @Serializable
 data class CallPolicy(
-    val managed: Boolean = true,
-    val callsEnabled: Boolean = false,
-    val smsEnabled: Boolean = false,
     val defaultCountryCode: String = "47",
     val contacts: List<PolicyContact> = emptyList(),
     /** Design 73: the emergency menu in the parent's order (normalised numbers, at least one); `null` from a server
      * before it - the phone then offers 112 alone ([com.kidslauncher.mdm.calls.emergencyMenu]). Sent managed or not. */
     val emergencyMenu: List<PolicyEmergencyEntry>? = null,
-    /** Design 77 D2: each channel's own state, `"off" | "managed" | "unmanaged"` - always sent by a server with the
-     * SMS engine; `null` from an older one, which the phone then reads from [managed]/[callsEnabled]/[smsEnabled] by
-     * D2's migration table ([com.kidslauncher.mdm.calls.channelModes]). Once seen, a policy without them is rejected
-     * whole ([com.kidslauncher.mdm.server.judgeFresh]); an unknown value is too. */
+    /** Design 77 D2: each channel's own state, `"off" | "managed" | "unmanaged"` - always sent; a missing one reads as
+     * `"off"` ([com.kidslauncher.mdm.calls.channelModes]). Once seen, a policy without them is rejected whole
+     * ([com.kidslauncher.mdm.server.judgeFresh]); an unknown value is too. */
     val callsMode: String? = null,
     val smsMode: String? = null,
-    /** Design 77 §6.8: the lock glance's message row shows the text (step 5). */
-    val smsLockText: Boolean = false,
     /** Design 77 D17: the parent's sender names let through (exact, by the shared fold). */
     val smsNames: List<String> = emptyList(),
     /** Design 77 D12: the phone's own numbers the parent typed, per SIM slot (used by the group rule, step 3b). */

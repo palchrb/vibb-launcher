@@ -971,7 +971,7 @@ object AppEnforcer {
      * `DevicePolicyManager.setDefaultDialerApplication` (device owner, no prompt). If that throws,
      * the error is reported to the server and HomeActivity falls back to the system's role
      * prompt once a day ([com.kidslauncher.mdm.calls.shouldPromptForRole]). When calls are not
-     * managed (an explicit `managed: false`, or an old server on a phone whose calls never were),
+     * managed (calls `unmanaged`, or no `call_policy` on a phone whose calls never were),
      * a role we took is handed back to the system dialer, so the phone is never left with our
      * dialer and no rules.
      */

@@ -89,8 +89,6 @@ data class CallRules(
     val smsMode: ChannelMode = if (smsEnabled) ChannelMode.UNMANAGED else ChannelMode.OFF,
     /** Design 77 D17: the parent's sender names, as typed ([com.kidslauncher.mdm.sms.engine.SmsNames] folds them). */
     val smsNames: List<String> = emptyList(),
-    /** Design 77 §6.8: the lock glance's message row may show the text (step 5). */
-    val smsLockText: Boolean = false,
     /** Design 77 D12: the phone's own numbers the parent typed, per SIM slot (normalised) - the group rule's. */
     val ownNumbers: List<OwnNumberRule> = emptyList(),
     /** Design 77 D10: the carriers' MMS servers by the SIM's MCC/MNC; empty until step 0 fills the server's table, and

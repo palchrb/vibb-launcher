@@ -5,7 +5,6 @@ import com.kidslauncher.mdm.badges.GLANCE_TEXT_MAX
 import com.kidslauncher.mdm.badges.GlanceSms
 import com.kidslauncher.mdm.badges.GlanceSmsRow
 import com.kidslauncher.mdm.badges.cleanGlanceText
-import com.kidslauncher.mdm.calls.CallPolicyState
 import com.kidslauncher.mdm.sms.engine.Conversation
 import com.kidslauncher.mdm.sms.engine.Direction
 import com.kidslauncher.mdm.sms.engine.Message
@@ -25,15 +24,12 @@ enum class SmsLockLevel { OFF, NAME, TEXT }
 
 /**
  * Meldinger's level on the lock (design 82 D4), for the glance rows and the wake alike. The policy's word
- * (`lock_glance.sms`) is the level, whatever the call rules say - the server owns the rule. [GlanceSms.LEGACY], a
- * server without the word, is the rule before design 82: the text only with managed rules whose `sms_lock_text` says
- * so, otherwise the name - unknown or unmanaged rules show no text.
+ * (`lock_glance.sms`) is the level, whatever the call rules say - the server owns the rule.
  */
-fun smsLockLevel(sms: GlanceSms, state: CallPolicyState): SmsLockLevel = when (sms) {
+fun smsLockLevel(sms: GlanceSms): SmsLockLevel = when (sms) {
     GlanceSms.OFF -> SmsLockLevel.OFF
     GlanceSms.NAME -> SmsLockLevel.NAME
     GlanceSms.TEXT -> SmsLockLevel.TEXT
-    GlanceSms.LEGACY -> if ((state as? CallPolicyState.Managed)?.rules?.smsLockText == true) SmsLockLevel.TEXT else SmsLockLevel.NAME
 }
 
 /**

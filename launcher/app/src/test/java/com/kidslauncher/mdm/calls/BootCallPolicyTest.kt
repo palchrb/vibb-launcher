@@ -152,7 +152,7 @@ class BootCallPolicyTest {
     @Test
     fun `DE mirrors what callPolicyState derives from the CE cache`() {
         val policy = CallPolicy(
-            managed = true, callsEnabled = true, smsEnabled = false,
+            callsMode = "managed", smsMode = "off",
             contacts = listOf(PolicyContact(7, "Mamma", "+4791234567", inbound = true, outbound = true)),
         )
         val ce = callPolicyState(CachedPolicy.Ok(PolicyResponse(allowlist = listOf("a"), callPolicy = policy)), true, null)

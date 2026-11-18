@@ -20,9 +20,9 @@ use crate::security::{self, AuthedDevice, Detail, PhoneLine};
 /// The launcher's capability: it has the engine and reads `calls_mode`/`sms_mode` (design 77 §7).
 pub const SMS_ENGINE_CAPABILITY: &str = "sms_engine_v1";
 
-/// D2, R2-L7: whether a launcher without the engine does a channel pair exactly as asked from the derived old keys -
-/// calls managed or off with SMS off or not managed, or both not managed. Anything else it does stricter (SMS lost,
-/// calls contacts-only), so the Calls page offers it only once the phone reports [SMS_ENGINE_CAPABILITY] (code QA M2).
+/// D2, R2-L7: whether a launcher without the engine does a channel pair exactly as asked - calls managed or off with
+/// SMS off or not managed, or both not managed. Anything else it does stricter (SMS lost, calls contacts-only), so the
+/// Calls page offers it only once the phone reports [SMS_ENGINE_CAPABILITY] (code QA M2).
 pub fn older_launcher_expresses(calls_mode: &str, sms_mode: &str) -> bool {
     matches!(
         (calls_mode, sms_mode),
@@ -658,31 +658,11 @@ mod tests {
         );
     }
 
-    /// Code QA M2: a launcher without the engine does a pair exactly when the derived old keys say it - every
-    /// `modes` row of the contract: what the old keys read back as (D2's table) equals the pair asked.
+    /// Code QA M2: what a launcher without the engine loses of each stored pair it can't express.
     #[test]
-    fn the_older_launcher_expresses_what_the_old_keys_say() {
+    fn the_older_launcher_loses() {
         assert_eq!(contract()["capability"], SMS_ENGINE_CAPABILITY);
         assert_eq!(contract()["groups_capability"], SMS_GROUPS_CAPABILITY);
-        for row in contract()["modes"].as_array().unwrap() {
-            let (calls, sms) = (
-                row["calls_mode"].as_str().unwrap(),
-                row["sms_mode"].as_str().unwrap(),
-            );
-            let (managed, calls_on, sms_on) = crate::models::derived_old_keys(calls, sms);
-            let read_back = match (managed, calls_on, sms_on) {
-                (false, _, _) => ("unmanaged", "unmanaged"),
-                (true, c, s) => (
-                    if c { "managed" } else { "off" },
-                    if s { "unmanaged" } else { "off" },
-                ),
-            };
-            assert_eq!(
-                older_launcher_expresses(calls, sms),
-                read_back == (calls, sms),
-                "{calls} {sms}"
-            );
-        }
         assert_eq!(older_launcher_loses("managed", "off"), None);
         assert_eq!(
             older_launcher_loses("unmanaged", "managed"),
@@ -700,11 +680,11 @@ mod tests {
     }
 
     /// Design 82 D3: Meldinger's lock level. Every `app.lock` row - the stored choice and `sms_mode` - gives its
-    /// `lock_glance.sms` and the derived `call_policy.sms_lock_text`; and in `app.lock_read` (the launcher's reading,
-    /// D4) each word this server sends is read as itself, whatever the call policy says.
+    /// `lock_glance.sms`; and in `app.lock_read` (the launcher's reading, D4) each word this server sends is read as
+    /// itself.
     #[test]
     fn the_app_lock_rows() {
-        use crate::lock_glance::{LockGlancePolicy, SMS_NAME, SMS_OFF, SMS_TEXT, sms_level};
+        use crate::lock_glance::{SMS_NAME, SMS_OFF, SMS_TEXT, sms_level};
         let app = &contract()["app"];
         assert_eq!(app["key"], crate::builtin::MESSAGES);
         assert_eq!(
@@ -714,11 +694,6 @@ mod tests {
         for row in app["lock"].as_array().unwrap() {
             let sms = sms_level(row["stored"].as_bool(), row["sms_mode"].as_str().unwrap());
             assert_eq!(row["sms"], sms, "{row}");
-            let policy = LockGlancePolicy {
-                apps: Vec::new(),
-                sms,
-            };
-            assert_eq!(row["sms_lock_text"], policy.sms_lock_text(), "{row}");
         }
         let mut sent = std::collections::BTreeSet::new();
         for row in app["lock_read"].as_array().unwrap() {

@@ -71,7 +71,7 @@ object SmsHome {
             pending.set(false)
             val conversations = engine.conversations()
             // Design 82 D4: the parent's level for Meldinger on the lock - no rows at Off, the text only at Full text.
-            val level = smsLockLevel(GlanceStore.policy.sms, CallPolicyStore.state)
+            val level = smsLockLevel(GlanceStore.policy.sms)
             // Design 82 D9: each row carries Meldinger's look, so a changed icon makes the rows differ and the lock renders.
             val look = AppDisplay.messagesLook()
             val glance = smsGlanceRows(level, conversations) { engine.messages(it.id, null, SMS_GLANCE_LOOKBACK) }.map { it.copy(look = look) }

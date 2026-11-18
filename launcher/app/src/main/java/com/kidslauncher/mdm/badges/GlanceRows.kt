@@ -3,13 +3,11 @@ package com.kidslauncher.mdm.badges
 import com.kidslauncher.mdm.appdisplay.isBuiltinName
 import com.kidslauncher.mdm.appdisplay.isValidPackageName
 import com.kidslauncher.mdm.calls.CallPolicyState
-import com.kidslauncher.mdm.calls.MessagePackages
 import com.kidslauncher.mdm.calls.MissedCallNotice
 import com.kidslauncher.mdm.calls.PhoneNumbers
 import com.kidslauncher.mdm.calls.RuleContact
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -37,10 +35,6 @@ data class GlancePolicy(val apps: Map<String, Boolean>, val sms: GlanceSms = Gla
          * server sent that isn't an object): missed calls only - the parent may have unticked
          * something. */
         val UNKNOWN = GlancePolicy(emptyMap())
-
-        /** What an older server without the key means (its own default for every phone; Meldinger by
-         * its old switch). */
-        val SERVER_DEFAULT = GlancePolicy(mapOf(MessagePackages.ELEMENT_X to false), GlanceSms.LEGACY)
     }
 }
 
@@ -48,50 +42,38 @@ data class GlancePolicy(val apps: Map<String, Boolean>, val sms: GlanceSms = Gla
  * `PolicyResponse.lockGlance` read field by field: nothing in it can fail the policy (design 25
  * §2.1, like `app_display` and `music`).
  * - an object: `apps` = its usable entries ([glanceApp]; anything else in the list is dropped, so
- *   is a non-list); a top-level `show_text` (before design 51) is ignored - sender only; `sms` by
- *   [glanceSms];
- * - missing or JSON `null`: from a fresh response ([fresh]) an older server - its own default,
- *   Element X with the sender only, Meldinger by its old switch; from the cache it is a cache an
- *   older build wrote (it never kept the key), so unknown (QA Low 11);
- * - anything else: unknown.
+ *   is a non-list); `sms` by [glanceSms];
+ * - anything else, missing or JSON `null` included: unknown (fail closed - missed calls only).
  */
-fun lockGlancePolicy(element: JsonElement?, fresh: Boolean): GlancePolicy = when (element) {
-    null, JsonNull -> if (fresh) GlancePolicy.SERVER_DEFAULT else GlancePolicy.UNKNOWN
+fun lockGlancePolicy(element: JsonElement?): GlancePolicy = when (element) {
     is JsonObject -> GlancePolicy((element["apps"] as? JsonArray).orEmpty().mapNotNull(::glanceApp).toMap(), glanceSms(element["sms"]))
     else -> GlancePolicy.UNKNOWN
 }
 
 /**
- * Meldinger's level on the lock as the policy says it (`lock_glance.sms`, design 82 D4): the server's word, or
- * [LEGACY] from a server without the key - then the old switch decides (`call_policy.sms_lock_text`,
- * `smsLockLevel`). The policy's word is never widened: anything unreadable is [OFF].
+ * Meldinger's level on the lock as the policy says it (`lock_glance.sms`, design 82 D4). The policy's word is never
+ * widened: anything unreadable is [OFF].
  */
-enum class GlanceSms(val wire: String?) {
+enum class GlanceSms(val wire: String) {
     OFF("off"),
     NAME("name"),
     TEXT("text"),
-    LEGACY(null),
 }
 
-/** `lock_glance.sms` of an object: one of the three words is that level; a missing key is an older server
- * ([GlanceSms.LEGACY]); any other value - another word, a JSON `null`, a number - is Off. */
+/** `lock_glance.sms` of an object: one of the three words is that level; anything else - a missing key, another
+ * word, a JSON `null`, a number - is Off. */
 private fun glanceSms(value: JsonElement?): GlanceSms {
-    if (value == null) return GlanceSms.LEGACY
     val word = (value as? JsonPrimitive)?.takeIf { it.isString }?.content ?: return GlanceSms.OFF
     return GlanceSms.entries.firstOrNull { it.wire == word } ?: GlanceSms.OFF
 }
 
-/** One entry of `lock_glance.apps`: a string is that package, sender only (the shape before design
- * 51, from an older server); an object is its `package` with its own `show_text` (true only for
- * JSON `true`); anything else, a package name that isn't one, or a name under Vibb One's reserved
- * prefix (design 82 D1: never an installed app) is dropped. */
+/** One entry of `lock_glance.apps`: an object is its `package` with its own `show_text` (true only
+ * for JSON `true`); anything else, a package name that isn't one, or a name under Vibb One's
+ * reserved prefix (design 82 D1: never an installed app) is dropped. */
 private fun glanceApp(entry: JsonElement): Pair<String, Boolean>? {
-    val (packageName, showText) = when (entry) {
-        is JsonObject -> (entry["package"] as? JsonPrimitive)?.takeIf { it.isString }?.content to
-            ((entry["show_text"] as? JsonPrimitive)?.let { !it.isString && it.content == "true" } == true)
-        is JsonPrimitive -> entry.takeIf { it.isString }?.content to false
-        else -> null to false
-    }
+    if (entry !is JsonObject) return null
+    val packageName = (entry["package"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+    val showText = (entry["show_text"] as? JsonPrimitive)?.let { !it.isString && it.content == "true" } == true
     return packageName?.takeIf { isValidPackageName(it) && !isBuiltinName(it) }?.let { it to showText }
 }
 

@@ -167,14 +167,14 @@ object GlanceStore {
 
     /**
      * The parent's choice from `PolicyResponse.lockGlance` ([lockGlancePolicy]; [fresh]: a sync's
-     * accepted policy, else the `Ok` cache). Any thread: posted to the main thread (QA Low 12). A
+     * accepted policy, else the `Ok` cache, which never overwrites a fresh one - [nextGlancePolicy]). Any thread: posted to the main thread (QA Low 12). A
      * change of the apps re-sweeps the active notifications; a change of Meldinger's level alone only
      * reads its rows again ([smsLevelChanged], design 82 D5), so the other rows never blank for it. The
      * cache read at process start never overwrites a fresh policy that arrived first.
      */
     fun refreshPolicy(element: JsonElement?, fresh: Boolean) {
         val next = try {
-            lockGlancePolicy(element, fresh)
+            lockGlancePolicy(element)
         } catch (e: Throwable) {
             Log.w(LOG_TAG, "Couldn't read the lock glance policy: ${e.javaClass.simpleName}")
             GlancePolicy.UNKNOWN

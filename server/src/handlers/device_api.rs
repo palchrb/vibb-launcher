@@ -369,8 +369,7 @@ pub(crate) async fn build_policy(
 
     // The lock's glance page (design 25): cosmetic like the wallpapers - a failing query sends no
     // apps (missed calls only on the phone's lock), never a 500 that would cost the phone its rules. Design 82 D3:
-    // it fails closed for Meldinger too - `sms: "off"`, never an absent key - and the one read's level is what
-    // `call_policy.sms_lock_text` is derived from.
+    // it fails closed for Meldinger too - `sms: "off"`, never an absent key.
     let lock_glance =
         crate::lock_glance::policy_lock_glance(&state.db, device_id, &policy.sms_mode)
             .await
@@ -382,7 +381,7 @@ pub(crate) async fn build_policy(
                 );
                 crate::lock_glance::LockGlancePolicy::unreadable()
             });
-    let call_policy = build_call_policy(state, &policy, lock_glance.sms_lock_text()).await?;
+    let call_policy = build_call_policy(state, &policy).await?;
     // Design 68: fail closed - a failing query is a 500, never `[]`, which would hand every camera back.
     let app_permissions =
         crate::app_permissions::policy_app_permissions(&state.db, device_id).await?;
@@ -680,15 +679,12 @@ async fn build_time_policy(
     })
 }
 
-/// Always explicit (QA blocker 3): an unmanaged device gets `managed: false` with defaults and no
-/// contacts, never a missing key - the launcher treats a missing `call_policy` after managed
-/// calls as a suspect response and keeps its last rules. Read errors are 500s like the rest of
-/// `build_policy`. [sms_lock_text] is the old key derived from `lock_glance.sms` (design 82 D3), for a launcher from
-/// before it: true only at Full text.
+/// Always explicit (QA blocker 3): an unmanaged device gets both modes `unmanaged` and no contacts, never a missing
+/// key - the launcher treats a missing `call_policy` after managed calls as a suspect response and keeps its last
+/// rules. Read errors are 500s like the rest of `build_policy`.
 async fn build_call_policy(
     state: &AppState,
     policy: &DevicePolicy,
-    sms_lock_text: bool,
 ) -> Result<CallPolicy, PolicyError> {
     let default_country_code: String =
         sqlx::query_scalar("SELECT default_country_code FROM call_settings WHERE id = 1")
@@ -700,9 +696,7 @@ async fn build_call_policy(
     // Design 77: every SMS key is always sent, also while both channels are unmanaged (QA R2-I1).
     let (sms_names, own_numbers, sms_held_drop) =
         crate::sms::policy_parts(&state.db, policy.device_id).await?;
-    // D2: the old keys derived from the modes, failing closed for a launcher from before them.
-    let managed = policy.managed();
-    let contacts = if managed {
+    let contacts = if policy.any_channel_managed() {
         device_contacts(state, policy.device_id)
             .await?
             .into_iter()
@@ -730,15 +724,11 @@ async fn build_call_policy(
     };
 
     Ok(CallPolicy {
-        managed,
-        calls_enabled: policy.calls_enabled(),
-        sms_enabled: policy.sms_enabled(),
         default_country_code,
         contacts,
         emergency_menu,
         calls_mode: policy.calls_mode.clone(),
         sms_mode: policy.sms_mode.clone(),
-        sms_lock_text,
         sms_groups: policy.sms_groups,
         sms_names,
         own_numbers,

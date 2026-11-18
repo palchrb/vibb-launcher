@@ -164,7 +164,7 @@ class HardeningTest {
     @Test
     fun `the server's hardening object decodes`() {
         val json = """
-            {"allowlist": [], "call_policy": {"managed": false}, "hardening": {
+            {"allowlist": [], "call_policy": {"calls_mode": "unmanaged", "sms_mode": "unmanaged"}, "hardening": {
               "disallow_factory_reset": true, "disallow_add_user": true, "disallow_modify_accounts": true,
               "disallow_config_vpn": true, "disallow_usb_file_transfer": true,
               "disallow_debugging_features": false, "disallow_safe_boot": false, "lock_location": true,

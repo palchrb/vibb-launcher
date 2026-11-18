@@ -92,10 +92,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   reads or writes after it; no policy row: Name only) and recreates the trigger, so a new device has Meldinger at Name
   only beside Element X. **On the wire** it is never an app: `lock_glance.sms` = `off` / `name` / `text`
   (`lock_glance::sms_level`), always sent, and `text` only while `sms_mode` is `managed` - else `name`; `policy_apps`
-  drops every reserved name. `call_policy.sms_lock_text` is still sent for older launchers, derived
-  (`LockGlancePolicy::sms_lock_text`: true only at `text`); `build_call_policy` is handed the one read's level. The
-  failed read's fallback is `LockGlancePolicy::unreadable()`: `{"apps": [], "sms": "off"}` and `sms_lock_text` false -
-  never an absent `sms`, which a new launcher would read as the older rule. **The page**: `lock_screen_card` lists the
+  drops every reserved name. The failed read's fallback is `LockGlancePolicy::unreadable()`: `{"apps": [], "sms":
+  "off"}` - never an absent `sms`. **The page**: `lock_screen_card` lists the
   row first in the group, with or without an allowlist, **only while `sms_mode` is `managed`** (`messages_row`; the
   same select, the same route and anchor `#lock-screen-app-me.vibb.builtin.messages`, so it saves in place; labelled with the parent's
   name for Meldinger when one is set - design 82 W1, `app_display::device_label`, a failed read is the page's word).

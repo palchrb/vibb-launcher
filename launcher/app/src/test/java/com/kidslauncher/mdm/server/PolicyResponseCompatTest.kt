@@ -1,5 +1,6 @@
 package com.kidslauncher.mdm.server
 
+import com.kidslauncher.mdm.calls.anyChannelManaged
 import com.kidslauncher.mdm.calls.toRules
 import com.kidslauncher.mdm.server.dto.CallPolicy
 import com.kidslauncher.mdm.server.dto.CallState
@@ -604,24 +605,22 @@ class PolicyResponseCompatTest {
 
     /** Design 25: `lock_glance` - the server's literal (per app since design 51), a missing key,
      * `null`, an array, a bad `apps` entry: the policy always decodes and the cache round trip keeps it. A missing key (or `null`)
-     * means the server's own default in a fresh response, and unknown (missed calls only) in the
-     * cache - a cache an older build wrote never has the key (QA Low 11). */
+     * is unknown (missed calls only, Meldinger Off). */
     @Test
-    fun `lock_glance never fails the policy, and missing means default fresh, unknown cached (25)`() {
+    fun `lock_glance never fails the policy, and missing means unknown (25)`() {
         fun withGlance(glance: String) = serverResponse.replaceFirst("{", "{\"lock_glance\": $glance,")
         // The server's literal for a fresh device (policy_json_keys_snapshot); `sms` is Meldinger's level (design 82 D3).
         val today = withGlance("""{"apps": [{"package": "io.element.android.x", "show_text": false}], "sms": "name"}""")
         val policy = (decodeCached(today) as CachedPolicy.Ok).policy
         assertEquals(setOf("apps", "sms"), policy.lockGlance!!.jsonObject.keys)
         val expected = com.kidslauncher.mdm.badges.GlancePolicy(mapOf("io.element.android.x" to false), com.kidslauncher.mdm.badges.GlanceSms.NAME)
-        assertEquals(expected, com.kidslauncher.mdm.badges.lockGlancePolicy(policy.lockGlance, fresh = false))
-        assertEquals(expected, com.kidslauncher.mdm.badges.lockGlancePolicy(policy.lockGlance, fresh = true))
+        assertEquals(expected, com.kidslauncher.mdm.badges.lockGlancePolicy(policy.lockGlance))
         assertEquals(FreshDecode.Ok(policy), decodeFresh(today))
         assertEquals(CachedPolicy.Ok(policy), decodeCached(ServerJson.encodeToString(PolicyResponse.serializer(), policy)))
         val withText = (decodeCached(withGlance("""{"apps": [{"package": "org.example.chat", "show_text": true}, {"package": "io.element.android.x", "show_text": false}], "sms": "text"}""")) as CachedPolicy.Ok).policy
         assertEquals(
             com.kidslauncher.mdm.badges.GlancePolicy(mapOf("io.element.android.x" to false, "org.example.chat" to true), com.kidslauncher.mdm.badges.GlanceSms.TEXT),
-            com.kidslauncher.mdm.badges.lockGlancePolicy(withText.lockGlance, fresh = true),
+            com.kidslauncher.mdm.badges.lockGlancePolicy(withText.lockGlance),
         )
         // Nothing in it fails the policy; what can't be used is dropped.
         for (odd in listOf(
@@ -632,24 +631,21 @@ class PolicyResponseCompatTest {
             assertTrue(odd, decodeFresh(withGlance(odd)) is FreshDecode.Ok)
         }
         val bad = (decodeFresh(withGlance("""{"apps": [5, null, "not a package", "io.element.android.x"], "show_text": "true"}""")) as FreshDecode.Ok).policy
-        // (No `sms`: a server before design 82 - Meldinger by its old switch.)
-        assertEquals(expected.copy(sms = com.kidslauncher.mdm.badges.GlanceSms.LEGACY), com.kidslauncher.mdm.badges.lockGlancePolicy(bad.lockGlance, fresh = true))
+        // A string entry is no app; no `sms` is Meldinger Off.
+        assertEquals(com.kidslauncher.mdm.badges.GlancePolicy.UNKNOWN, com.kidslauncher.mdm.badges.lockGlancePolicy(bad.lockGlance))
         // Not an object: the apps unknown, and Meldinger Off (design 82 D4).
         val array = (decodeFresh(withGlance("""["io.element.android.x"]""")) as FreshDecode.Ok).policy
-        assertEquals(com.kidslauncher.mdm.badges.GlancePolicy.UNKNOWN, com.kidslauncher.mdm.badges.lockGlancePolicy(array.lockGlance, fresh = true))
+        assertEquals(com.kidslauncher.mdm.badges.GlancePolicy.UNKNOWN, com.kidslauncher.mdm.badges.lockGlancePolicy(array.lockGlance))
         assertEquals(com.kidslauncher.mdm.badges.GlanceSms.OFF, com.kidslauncher.mdm.badges.GlancePolicy.UNKNOWN.sms)
-        // An older server: no key. Fresh = its default (Element X, sender only); cached = unknown.
+        // No key: unknown.
         // The status report's capability the server's notes look for.
         assertEquals("lock_glance_v1", com.kidslauncher.mdm.lock.LOCK_GLANCE_CAPABILITY)
         assertTrue(com.kidslauncher.mdm.lock.LOCK_GLANCE_CAPABILITY in STATUS_CAPABILITIES)
         val older = (decodeFresh(serverResponse) as FreshDecode.Ok).policy
         assertNull(older.lockGlance)
-        assertEquals(com.kidslauncher.mdm.badges.GlancePolicy.SERVER_DEFAULT, com.kidslauncher.mdm.badges.lockGlancePolicy(older.lockGlance, fresh = true))
-        assertEquals(mapOf("io.element.android.x" to false), com.kidslauncher.mdm.badges.GlancePolicy.SERVER_DEFAULT.apps)
-        assertEquals(com.kidslauncher.mdm.badges.GlanceSms.LEGACY, com.kidslauncher.mdm.badges.GlancePolicy.SERVER_DEFAULT.sms)
-        assertEquals(com.kidslauncher.mdm.badges.GlancePolicy.UNKNOWN, com.kidslauncher.mdm.badges.lockGlancePolicy(older.lockGlance, fresh = false))
+        assertEquals(com.kidslauncher.mdm.badges.GlancePolicy.UNKNOWN, com.kidslauncher.mdm.badges.lockGlancePolicy(older.lockGlance))
         val explicitNull = (decodeFresh(withGlance("null")) as FreshDecode.Ok).policy
-        assertEquals(com.kidslauncher.mdm.badges.GlancePolicy.SERVER_DEFAULT, com.kidslauncher.mdm.badges.lockGlancePolicy(explicitNull.lockGlance, fresh = true))
+        assertEquals(com.kidslauncher.mdm.badges.GlancePolicy.UNKNOWN, com.kidslauncher.mdm.badges.lockGlancePolicy(explicitNull.lockGlance))
         assertTrue(com.kidslauncher.mdm.badges.GlancePolicy.UNKNOWN.apps.isEmpty())
         // The rest of the policy is the same either way, and the fallback never carries it.
         assertEquals(older, policy.copy(lockGlance = null))
@@ -902,7 +898,7 @@ class PolicyResponseCompatTest {
     fun `a call_policy object from a newer server decodes`() {
         val withCalls = serverResponse.replace(
             "\"packages_to_uninstall\"",
-            "\"call_policy\": {\"managed\": true, \"calls_enabled\": true, \"contacts\": []}, \"packages_to_uninstall\""
+            "\"call_policy\": {\"calls_mode\": \"managed\", \"sms_mode\": \"off\", \"contacts\": []}, \"packages_to_uninstall\""
         )
         assertTrue(decodeCached(withCalls) is CachedPolicy.Ok)
     }
@@ -916,13 +912,13 @@ class PolicyResponseCompatTest {
         ).jsonObject["policy"]!!.jsonObject["contact_requests"].toString()
         val withRows = serverResponse.replace(
             "\"packages_to_uninstall\"",
-            "\"call_policy\": {\"managed\": true, \"contacts\": [], \"contact_requests\": $rows}, \"packages_to_uninstall\"",
+            "\"call_policy\": {\"contacts\": [], \"contact_requests\": $rows}, \"packages_to_uninstall\"",
         )
         val callPolicy = (decodeCached(withRows) as CachedPolicy.Ok).policy.callPolicy!!
         assertEquals(listOf("open", "declined", "added"), callPolicy.contactRequests.map { it.state })
         val older = serverResponse.replace(
             "\"packages_to_uninstall\"",
-            "\"call_policy\": {\"managed\": true, \"contacts\": []}, \"packages_to_uninstall\"",
+            "\"call_policy\": {\"contacts\": []}, \"packages_to_uninstall\"",
         )
         assertTrue((decodeCached(older) as CachedPolicy.Ok).policy.callPolicy!!.contactRequests.isEmpty())
     }
@@ -941,10 +937,9 @@ class PolicyResponseCompatTest {
         assertEquals(1, callPolicy.ownNumbers.size)
         assertTrue(callPolicy.mmscHosts.isEmpty())
         assertEquals(1, callPolicy.smsHeldDrop.size)
-        assertFalse(callPolicy.smsLockText)
         // Design 80 D13: `sms_groups` always sent; absent is off.
         assertTrue(callPolicy.smsGroups)
-        val withoutGroups = serverResponse.replace("\"packages_to_uninstall\"", "\"call_policy\": {\"managed\": true, \"contacts\": []}, \"packages_to_uninstall\"")
+        val withoutGroups = serverResponse.replace("\"packages_to_uninstall\"", "\"call_policy\": {\"contacts\": []}, \"packages_to_uninstall\"")
         assertFalse((decodeCached(withoutGroups) as CachedPolicy.Ok).policy.callPolicy!!.smsGroups)
         val old = ServerJson.decodeFromString(PolicyContact.serializer(), """{"id": 1, "name": "A", "number": "+4790000001", "inbound": true, "outbound": true}""")
         assertEquals(listOf(false, false, false), listOf(old.smsIn, old.smsOut, old.mms))
@@ -959,12 +954,16 @@ class PolicyResponseCompatTest {
     }
 
     @Test
-    fun `an empty call_policy object is a deny-default managed policy`() {
+    fun `an empty call_policy object is a deny-default policy, both channels off`() {
         val withEmpty = serverResponse.replace(
             "\"packages_to_uninstall\"", "\"call_policy\": {}, \"packages_to_uninstall\""
         )
         val callPolicy = (decodeCached(withEmpty) as CachedPolicy.Ok).policy.callPolicy!!
-        assertEquals(CallPolicy(managed = true, callsEnabled = false, smsEnabled = false), callPolicy)
+        assertEquals(CallPolicy(), callPolicy)
+        assertEquals(
+            com.kidslauncher.mdm.calls.ChannelMode.OFF to com.kidslauncher.mdm.calls.ChannelMode.OFF,
+            com.kidslauncher.mdm.calls.channelModes(callPolicy),
+        )
         assertEquals("an older server's: no menu (112 alone)", null, callPolicy.emergencyMenu)
         assertTrue(callPolicy.contacts.isEmpty())
     }
@@ -976,7 +975,7 @@ class PolicyResponseCompatTest {
             "\"packages_to_uninstall\"",
             """
             "call_policy": {
-              "managed": true, "calls_enabled": true, "sms_enabled": false, "default_country_code": "47",
+              "calls_mode": "managed", "sms_mode": "off", "default_country_code": "47",
               "contacts": [
                 {"id": 3, "name": "Mamma", "number": "+4790000001", "inbound": true, "outbound": true,
                  "show_on_home": true, "message_app": "element", "message_address": "@mamma:example.org"},
@@ -990,8 +989,7 @@ class PolicyResponseCompatTest {
         )
         val policy = (decodeCached(withCalls) as CachedPolicy.Ok).policy
         val callPolicy = policy.callPolicy!!
-        assertTrue(callPolicy.managed)
-        assertEquals(false, callPolicy.smsEnabled)
+        assertEquals("managed" to "off", callPolicy.callsMode to callPolicy.smsMode)
         assertEquals(
             PolicyContact(3, "Mamma", "+4790000001", true, true, true, "element", "@mamma:example.org"),
             callPolicy.contacts[0],
@@ -1008,15 +1006,15 @@ class PolicyResponseCompatTest {
     }
 
     @Test
-    fun `explicit managed false decodes and round trips`() {
+    fun `both channels unmanaged decode and round trip`() {
         val withCalls = serverResponse.replace(
             "\"packages_to_uninstall\"",
-            "\"call_policy\": {\"managed\": false, \"calls_enabled\": true, \"sms_enabled\": true, \"default_country_code\": \"47\", \"contacts\": []}, \"packages_to_uninstall\""
+            "\"call_policy\": {\"calls_mode\": \"unmanaged\", \"sms_mode\": \"unmanaged\", \"default_country_code\": \"47\", \"contacts\": []}, \"packages_to_uninstall\""
         )
         val policy = (decodeCached(withCalls) as CachedPolicy.Ok).policy
-        assertEquals(false, policy.callPolicy!!.managed)
+        assertFalse(policy.callPolicy!!.anyChannelManaged)
         val reencoded = ServerJson.encodeToString(PolicyResponse.serializer(), policy)
-        assertEquals(false, (decodeCached(reencoded) as CachedPolicy.Ok).policy.callPolicy!!.managed)
+        assertFalse((decodeCached(reencoded) as CachedPolicy.Ok).policy.callPolicy!!.anyChannelManaged)
     }
 
     /** kid-phone-server stores `capabilities` and `call_state` from these keys. */
@@ -1051,7 +1049,7 @@ class PolicyResponseCompatTest {
         val withUi = serverResponse.replace(
             "\"packages_to_uninstall\"",
             """
-            "call_policy": {"managed": true, "calls_enabled": true, "sms_enabled": true, "default_country_code": "47",
+            "call_policy": {"calls_mode": "managed", "sms_mode": "unmanaged", "default_country_code": "47",
               "contacts": [{"id": 3, "name": "Mamma", "number": "+4790000001", "inbound": true, "outbound": true,
                 "show_on_home": true, "message_app": "sms", "message_address": null, "photo": "$photo"}]},
             "launcher_ui": {"language": "nb", "home_columns": 4},
