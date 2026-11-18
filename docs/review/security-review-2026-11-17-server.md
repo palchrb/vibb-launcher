@@ -63,6 +63,9 @@ The user's setup is option (c): Caddy on another box sends the phone name to the
 
 ### M2. A phone token alone lifts the time rules, with no cap and no word to the parent
 
+**Fixed 2026-11-18** (branch `sec-round-2`): bounded by telling the parent, by the user's choice - no cap. Each pause
+the phone posts is the inbox's parent-PIN line, pushed under "Parent PIN used".
+
 - **Evidence:**
   - `handlers/rule_pause.rs:63-79`: `check` validates only the shape: a 32-hex key, 15/30/60/120 minutes, times
     near now, 1-8 rules.

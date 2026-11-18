@@ -15,6 +15,11 @@
 //! unique index `(device_id, phone_key, rule_id)` holds it anyway) and answers the same ids, never reviving a row the
 //! parent ended. A pause already over is stored as an over row and answered `"over": true`. The first post writes the
 //! phone line `time_lift_phone` and nudges the phone.
+//!
+//! Security review 2026-11-17 M2: the parent code is checked on the phone only, so a token alone could lift a rule.
+//! By the user's choice (2026-11-18) there is no cap: every new pause is told instead - it raises the time-rule
+//! screen's parent-PIN event (`parent_events::Phone::rule_pause`, pushed under the "Parent PIN used" switch), keyed by
+//! its end like the phone's own PIN event for it, so the inbox has one line per pause whichever comes first.
 
 use axum::Extension;
 use axum::Json;
@@ -84,6 +89,14 @@ struct Paused {
     until_ms: i64,
 }
 
+/// What the post came to.
+enum Outcome {
+    /// No rule the phone has.
+    UnknownRule,
+    /// Stored (or a retry's rows found): the ids, the rules this post inserted, and every rule of the pause.
+    Stored(Vec<i64>, Vec<Paused>, Vec<Paused>),
+}
+
 /// `POST /api/devices/rule-pause` (bearer): see the module doc. A DB error is a `500` (the phone retries).
 pub async fn intake(
     State(state): State<AppState>,
@@ -132,11 +145,11 @@ pub async fn intake(
             }
         }
         if paused.is_empty() {
-            return Ok::<_, sqlx::Error>(None);
+            return Ok::<_, sqlx::Error>(Outcome::UnknownRule);
         }
-        let created_at = crate::lock_now::db_time(
-            chrono::DateTime::from_timestamp_millis(body.started_at_ms.min(now_ms)).unwrap_or(now),
-        );
+        let started =
+            chrono::DateTime::from_timestamp_millis(body.started_at_ms.min(now_ms)).unwrap_or(now);
+        let created_at = crate::lock_now::db_time(started);
         let mut tx = state.db.begin_with("BEGIN IMMEDIATE").await?;
         let existing: Vec<i64> = sqlx::query_scalar(
             "SELECT rule_id FROM time_lifts WHERE device_id = ? AND phone_key = ? AND rule_id IS NOT NULL",
@@ -187,12 +200,12 @@ pub async fn intake(
         ids.sort_unstable();
         ids.dedup();
         let inserted: Vec<Paused> = inserted.into_iter().cloned().collect();
-        Ok(Some((ids, inserted, paused)))
+        Ok(Outcome::Stored(ids, inserted, paused))
     }
     .await;
     let (ids, inserted, paused) = match result {
-        Ok(Some(done)) => done,
-        Ok(None) => {
+        Ok(Outcome::Stored(ids, inserted, paused)) => (ids, inserted, paused),
+        Ok(Outcome::UnknownRule) => {
             return Json(json!({"accepted": false, "reason": "unknown_rule"})).into_response();
         }
         Err(err) => {
@@ -227,6 +240,13 @@ pub async fn intake(
                 line,
             )
             .await;
+        }
+        // M2: the inbox's line (and the push, under "Parent PIN used"), one with the phone's own PIN event.
+        let until_ms = body.rules.iter().map(|r| r.until_ms).max().unwrap_or(0);
+        if let Some(phone) = crate::parent_events::Phone::load(&state.db, device.id).await {
+            let started = chrono::DateTime::from_timestamp_millis(body.started_at_ms.min(now_ms))
+                .unwrap_or(now);
+            crate::parent_events::raise_logged(&state, &phone.rule_pause(started, until_ms)).await;
         }
         if !over {
             let _ = state.command_notify.send(device.id);

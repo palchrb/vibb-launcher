@@ -905,6 +905,7 @@ async fn toggle(app: &TestApp, id: i64, package: &str, selected: bool) -> axum::
         axum::extract::State(app.state.clone()),
         crate::i18n::Lang::En,
         axum::extract::Path(id),
+        axum::Extension(crate::security::CurrentAdmin(app.an_admin().await)),
         axum::Form(form),
     )
     .await

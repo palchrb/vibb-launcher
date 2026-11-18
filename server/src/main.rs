@@ -353,20 +353,7 @@ async fn main() {
     };
     if let Some(restore) = &restored {
         tracing::info!("restored the backup {}", restore.filename);
-        security::record_security_event(
-            &db,
-            "backup_restored",
-            None,
-            None,
-            Some(security::Detail::words(
-                "security.detail.backup_restored_prev",
-                &[
-                    ("file", &restore.filename),
-                    ("dir", &restore.prerestore_dir.display().to_string()),
-                ],
-            )),
-        )
-        .await;
+        startup::record_restore(&db, restore).await;
     }
 
     security::bootstrap_admin(&db, std::path::Path::new("data")).await;
@@ -1759,9 +1746,10 @@ pub fn build_admin_router(
             "/backups/upload",
             post(handlers::backups::upload_backup).layer(DefaultBodyLimit::max(200 * 1024 * 1024)),
         )
+        // Privacy review 2026-11-17 M1: a POST with the password again.
         .route(
             "/backups/{filename}/download",
-            get(handlers::backups::download_backup),
+            post(handlers::backups::download_backup),
         )
         .route(
             "/backups/{filename}/delete",

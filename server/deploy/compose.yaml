@@ -7,11 +7,13 @@
 #
 # The host's network: the host's Tailscale and Caddy (Caddyfile.example) put HTTPS in front, and the server sees the
 # real client address, which its admin gate needs. It listens on 127.0.0.1 only (BIND_ADDR, DEVICE_BIND_ADDR).
-# Updating: pull a new image - Watchtower does it by itself for a tag that moves (HANDY_VERSION=latest), or set
-# HANDY_VERSION in .env, then `docker compose pull && docker compose up -d`. The server never updates itself.
+# Updating, either way (DEPLOY.md "Updating"; the server never updates itself):
+# - Watchtower, with HANDY_VERSION=latest: automatic; nothing checks who built the image - the operator's own risk.
+# - ./update-image.sh X.Y.Z (next to this file): checks the release's build attestation first, then pins the version
+#   and the digest (HANDY_DIGEST=@sha256:...) in .env and runs `docker compose up -d`.
 services:
   handy:
-    image: ghcr.io/palchrb/handy-server:${HANDY_VERSION}
+    image: ghcr.io/palchrb/handy-server:${HANDY_VERSION}${HANDY_DIGEST:-}
     restart: unless-stopped
     network_mode: host
     env_file: .env

@@ -53,6 +53,11 @@ pub const RESTORE_REQUEST: &str = "restore_request";
 pub struct AppliedRestore {
     pub filename: String,
     pub prerestore_dir: PathBuf,
+    /// Who asked, from the PWA's marker (privacy review 2026-11-17 M1, `backups::restore_marker`): the username and
+    /// the display name, for the line the restored database gets. `None` for the owner's one-line marker over SSH.
+    pub by: Option<(String, String)>,
+    /// When it was asked (the PWA's marker's fourth line, code QA L5); `None` over SSH or when it doesn't read.
+    pub asked_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 const DB_SUFFIXES: [&str; 3] = ["", "-wal", "-shm"];
@@ -70,6 +75,40 @@ fn with_suffix(db: &Path, suffix: &str) -> PathBuf {
 /// `Ok(None)`: no marker. `Err`: refused or failed - nothing was swapped.
 pub fn apply_restore_request(data_dir: &Path, db: &Path) -> Result<Option<AppliedRestore>, String> {
     apply_restore_request_capped(data_dir, db, RESTORE_MAX_BYTES)
+}
+
+/// After a restore, in the restored database (privacy review 2026-11-17 M1): the security log's `backup_restored` line
+/// with who asked (the PWA's marker; none over SSH), and the inbox's line - not pushed again: the database it replaced
+/// pushed it to every parent before the restart (`backups::restore_in_container`).
+pub async fn record_restore(db: &sqlx::SqlitePool, restore: &AppliedRestore) {
+    crate::security::record_security_event(
+        db,
+        "backup_restored",
+        restore.by.as_ref().map(|(username, _)| username.as_str()),
+        None,
+        Some(crate::security::Detail::words(
+            "security.detail.backup_restored_prev",
+            &[
+                ("file", &restore.filename),
+                ("dir", &restore.prerestore_dir.display().to_string()),
+            ],
+        )),
+    )
+    .await;
+    let told = crate::parent_events::backup_restored(
+        restore.by.as_ref().map_or("", |(_, name)| name.as_str()),
+        &restore.filename,
+        restore.asked_at.unwrap_or_else(chrono::Utc::now),
+        crate::parent_events::Push::No,
+    );
+    let raised = async {
+        let mut tx = db.begin().await?;
+        crate::parent_events::raise(&mut tx, &told).await?;
+        tx.commit().await
+    };
+    if let Err(err) = raised.await {
+        tracing::error!(%err, "couldn't store the restore's event");
+    }
 }
 
 /// After a restore: a backup made before 0.24.0 holds the sessions of its time, and none of them
@@ -96,7 +135,25 @@ pub(crate) fn apply_restore_request_capped(
     };
     std::fs::remove_file(&marker)
         .map_err(|err| format!("couldn't remove {}: {err}", marker.display()))?;
-    let filename = filename.trim().to_string();
+    // The backup's name, then (the PWA's marker) who asked: a username and a display name, each on its own line.
+    let mut lines = filename.lines().map(str::trim);
+    let filename = lines.next().unwrap_or_default().to_string();
+    let who = |text: Option<&str>| {
+        text.filter(|t| !t.is_empty()).map(|t| {
+            t.chars()
+                .filter(|c| !c.is_control())
+                .take(100)
+                .collect::<String>()
+        })
+    };
+    let by = match (who(lines.next()), who(lines.next())) {
+        (Some(username), name) => Some((username.clone(), name.unwrap_or(username))),
+        (None, _) => None,
+    };
+    let asked_at = lines
+        .next()
+        .and_then(|ms| ms.parse::<i64>().ok())
+        .and_then(chrono::DateTime::from_timestamp_millis);
     if !(filename.starts_with("backup-")
         && filename.ends_with(".zip")
         && !filename.contains('/')
@@ -186,6 +243,8 @@ pub(crate) fn apply_restore_request_capped(
     Ok(Some(AppliedRestore {
         filename,
         prerestore_dir,
+        by,
+        asked_at,
     }))
 }
 

@@ -472,6 +472,10 @@ pub fn reauth_route(route: &str) -> bool {
     ) || matches!(parts.as_slice(), ["account", "parents", n, "reset" | "remove"] if number(n))
         || matches!(parts.as_slice(), ["account", "passkeys", n, "remove"] if number(n))
         || matches!(parts.as_slice(), ["devices", n, "lock"] if number(n))
+        // Privacy review 2026-11-17 M1: a backup's Download and Restore, and Upload.
+        || matches!(parts.as_slice(), ["backups", "upload"])
+        || matches!(parts.as_slice(), ["backups", file, "download" | "restore"]
+            if crate::handlers::backups::is_safe_backup_filename(file))
 }
 
 /// The session's id as a challenge binds it.
@@ -1455,6 +1459,9 @@ mod tests {
             "/account/passkeys/options",
             "/account/passkeys/12/remove",
             "/devices/4/lock",
+            "/backups/upload",
+            "/backups/backup-20261118-020000.zip/download",
+            "/backups/backup-20261118-020000.zip/restore",
         ] {
             assert!(reauth_route(ok), "{ok}");
         }
@@ -1466,6 +1473,9 @@ mod tests {
             "/devices/4/lock/extra",
             "/devices//lock",
             "/logout",
+            "/backups/backup-x.zip/delete",
+            "/backups/notes.txt/download",
+            "/backups/create",
         ] {
             assert!(!reauth_route(bad), "{bad}");
         }

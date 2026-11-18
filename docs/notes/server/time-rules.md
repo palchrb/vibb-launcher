@@ -214,3 +214,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   as any lift; Activity words it by its window ("Leggetid på pause 21:10–21:40 (foreldrekoden)"); the parent-PIN
   event's entry `rule_pause` is "Regelskjermen", with its end in the inbox and its place in the push; the Time page's
   Now group has its ⓘ. Tests: `tests::rule_pause`.
+- Told, not capped (security review 2026-11-17 M2; the user, 2026-11-18: "no cap, only the notice"). The parent code is
+  checked on the phone only, so a token alone could lift a rule: every stored pause raises the time-rule screen's
+  `pin_used` event (`Phone::rule_pause`, pushed under "Parent PIN used"), keyed `rule_pause:<end>` like the phone's own
+  PIN event for it (`Phone::pin_event`), so the inbox has one line per pause whichever arrives first; a retry adds
+  none. Tests: `tests::rule_pause::every_phone_pause_is_told_once`.

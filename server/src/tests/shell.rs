@@ -2043,7 +2043,8 @@ fn every_page_script_is_swap_ready_or_listed() {
 /// 2026-10-21, a tap after being away never "does nothing": every page carries
 /// `static/reconnect.js` (deferred, from the head partial), and its ping `GET /ping` is an empty
 /// 204 that is never cached with a session and the login's redirect without one. The backup
-/// download is marked `download`, so the script never waits for a page that won't come.
+/// download is a form with the password since privacy review 2026-11-17 M1 (a submit ends the script's wait), never
+/// a link it would wait on for a page that won't come.
 #[tokio::test]
 async fn every_page_carries_the_connecting_script_and_its_ping() {
     let head = std::fs::read_to_string("templates/partials/head.html").unwrap();
@@ -2115,7 +2116,12 @@ async fn every_page_carries_the_connecting_script_and_its_ping() {
     assert_eq!(on_the_phones.status, StatusCode::NOT_FOUND);
 
     let backups = std::fs::read_to_string("templates/backups.html").unwrap();
-    assert!(backups.contains("/download\" class=\"button-small\" download>"));
+    assert!(
+        backups.contains(
+            "<form method=\"post\" action=\"/backups/{{ b.filename }}/download#backups\""
+        )
+    );
+    assert!(!backups.contains("href=\"/backups/{{ b.filename }}/download"));
 }
 
 /// qa-srv-sweep-resume-code M1: a page that is a POST's own answer carries

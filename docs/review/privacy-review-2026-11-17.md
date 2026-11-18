@@ -90,6 +90,11 @@ SMS, calls, zones, DNS, portal, calendar and push code found counts, verdicts an
 
 #### H1. The GitHub account is a key to the kid's phone, with no human step after it
 
+**Server half resolved 2026-11-18 by the user's choice** (branch `sec-round-2`): Watchtower stays supported, its risk
+the operator's; a verified update script (`server/deploy/update-image.sh`, `gh attestation verify` pinned to the
+release workflow and tag, then the image pinned by digest) is offered beside it (DEPLOY.md "Updating"). The systemd
+path keeps its minisign check (the tarballs carry no attestation). The launcher and music half is still open.
+
 - **What:** two automatic paths turn control of the GitHub account (or a token with `packages: write`) into control of
   the phone.
   1. **Server image.** Watchtower pulls whatever `ghcr.io/palchrb/handy-server:latest` is and restarts the server
@@ -120,6 +125,9 @@ SMS, calls, zones, DNS, portal, calendar and push code found counts, verdicts an
 
 #### M1. A parent session can take the whole database without a trace, and replace the log
 
+**Fixed 2026-11-18** (branch `sec-round-2`): Download, Upload and Restore ask for the password again; downloads and
+uploads are logged; a download or restore is pushed to every parent; the restored database gets the line with who asked.
+
 - **What:** `GET /backups/{file}/download` (`handlers/backups.rs:586-606`) needs no re-auth, writes no security event
   and pushes nothing. The zip holds every location, the inbox, contacts with photo originals, and every parent's
   Argon2 hash and **unsealed TOTP secret** (I14). `upload_backup` (`:872`) is also unlogged (prior I9, still open).
@@ -134,6 +142,9 @@ SMS, calls, zones, DNS, portal, calendar and push code found counts, verdicts an
   startup (`startup::apply_restore_request`). Visible (a password prompt). Size S-M.
 
 #### M2. The changes that matter most to a kid's safety are told to no one
+
+**Fixed 2026-11-18** (branch `sec-round-2`): each of the four is pushed to every parent (no switch), once per real
+change.
 
 - **What:** a parent session can, without re-auth and without a push to the other parents:
   - add a catalog app and tick it for the phone. The first release is never held, and the pin is taken from it

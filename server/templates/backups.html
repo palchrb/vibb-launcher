@@ -24,23 +24,43 @@
             </form>
             {% call group_flash::show(flash, "backups") %}{% endcall %}
             {% for b in backups %}
-            {% let refused = self.restore_error(b.filename) %}
-            <details class="edit cell" data-backup="{{ b.filename }}"{% if refused.is_some() %} open{% endif %}>
+            {% let restoring = self.refused_here("restore", b.filename) %}
+            {% let downloading = self.refused_here("download", b.filename) %}
+            <details class="edit cell" data-backup="{{ b.filename }}"{% if restoring || downloading %} open{% endif %}>
                 <summary class="row">
                     <span class="row-label"><span{% if !b.exact.is_empty() %} title="{{ b.exact }}"{% endif %}>{{ b.when }}</span><span class="row-sub">{{ b.size_display }}</span></span>
                     <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 </summary>
                 <div class="edit-body">
-                    <a href="/backups/{{ b.filename }}/download" class="button-small" download>{{ self.t("settings.backups.download") }}</a>
+                    {#- Privacy review 2026-11-17 M1: Download, Restore and Upload ask for the password again (or a
+                        passkey); a refusal renders the page with that form open and the reason under its field. -#}
+                    <details class="confirm"{% if downloading %} open{% endif %}>
+                        <summary class="row">{{ self.t("settings.backups.download") }}…</summary>
+                        <form method="post" action="/backups/{{ b.filename }}/download#backups" class="confirm-body" data-download>
+                            {% include "partials/reauth_passkey.html" %}
+                            {% let why = self.why("download", b.filename, "password") %}
+                            <label class="field-label" for="download_{{ b.filename }}"{% if passkey_only %} hidden{% endif %}>{{ self.t("device.lock.your_password") }}</label>
+                            <input type="password" id="download_{{ b.filename }}" name="password" autocomplete="current-password"{% if passkey_only %} hidden{% else %} required{% endif %}{% if why.is_some() %} aria-invalid="true" autofocus{% endif %}>
+                            {% if let Some(why) = why %}<p class="field-error" role="alert">{{ why }}</p>{% endif %}
+                            <button type="submit" class="button-wide"{% if passkey_only %} hidden{% endif %}>{{ self.t("settings.backups.download") }}</button>
+                            {% include "partials/confirm_cancel.html" %}
+                        </form>
+                    </details>
                     {% if docker %}
-                    <details class="confirm"{% if refused.is_some() %} open{% endif %}>
+                    <details class="confirm"{% if restoring %} open{% endif %}>
                         <summary class="row">{{ self.t("settings.backups.restore") }}…</summary>
                         <form method="post" action="/backups/{{ b.filename }}/restore#backups" class="confirm-body">
                             <p>{{ self.t("settings.backups.restore_confirm") }} {{ self.t("backups.restore.accounts") }}</p>
+                            {% let name_why = self.why("restore", b.filename, "name") %}
                             <label class="field-label" for="confirm_{{ b.filename }}">{{ self.tp("settings.backups.type_name", [("name", b.filename.as_str())]) }}</label>
-                            <input type="text" id="confirm_{{ b.filename }}" name="confirm_filename" autocomplete="off" autocapitalize="none" spellcheck="false"{% if refused.is_some() %} aria-invalid="true" aria-describedby="restore-error" autofocus{% endif %}>
-                            {% if let Some(why) = refused %}<p class="field-error" id="restore-error">{{ self.t(why) }}</p>{% endif %}
-                            <button type="submit" class="button-destructive">{{ self.t("settings.backups.restore_button") }}</button>
+                            <input type="text" id="confirm_{{ b.filename }}" name="confirm_filename" autocomplete="off" autocapitalize="none" spellcheck="false" required{% if name_why.is_some() %} aria-invalid="true" aria-describedby="restore-error" autofocus{% endif %}>
+                            {% if let Some(why) = name_why %}<p class="field-error" id="restore-error">{{ why }}</p>{% endif %}
+                            {% include "partials/reauth_passkey.html" %}
+                            {% let password_why = self.why("restore", b.filename, "password") %}
+                            <label class="field-label" for="restore_password_{{ b.filename }}"{% if passkey_only %} hidden{% endif %}>{{ self.t("device.lock.your_password") }}</label>
+                            <input type="password" id="restore_password_{{ b.filename }}" name="password" autocomplete="current-password"{% if passkey_only %} hidden{% else %} required{% endif %}{% if password_why.is_some() %} aria-invalid="true" autofocus{% endif %}>
+                            {% if let Some(why) = password_why %}<p class="field-error" role="alert">{{ why }}</p>{% endif %}
+                            <button type="submit" class="button-destructive"{% if passkey_only %} hidden{% endif %}>{{ self.t("settings.backups.restore_button") }}</button>
                             {% include "partials/confirm_cancel.html" %}
                         </form>
                     </details>
@@ -85,12 +105,17 @@
 
     <section id="upload" aria-labelledby="upload-title">
         <div class="group">
-            <details class="disclosure cell"{% if let Some(f) = flash %}{% if f.at == "upload" && !f.ok %} open{% endif %}{% endif %}>
+            {% let upload_why = self.why("upload", "", "password") %}
+            <details class="disclosure cell"{% if upload_why.is_some() %} open{% else if let Some(f) = flash %}{% if f.at == "upload" && !f.ok %} open{% endif %}{% endif %}>
                 <summary class="row row-button" id="upload-title">{{ self.t("settings.backups.upload") }}…</summary>
                 <form method="post" action="/backups/upload#upload" enctype="multipart/form-data" class="form-group">
                     <label class="field-label" for="backup_file">{{ self.t("settings.backups.file") }}</label>
                     <input type="file" id="backup_file" name="file" accept=".zip" required>
-                    <button type="submit" class="button-wide">{{ self.t("settings.wallpapers.upload") }}</button>
+                    {% include "partials/reauth_passkey.html" %}
+                    <label class="field-label" for="upload_password"{% if passkey_only %} hidden{% endif %}>{{ self.t("device.lock.your_password") }}</label>
+                    <input type="password" id="upload_password" name="password" autocomplete="current-password"{% if passkey_only %} hidden{% else %} required{% endif %}{% if upload_why.is_some() %} aria-invalid="true" autofocus{% endif %}>
+                    {% if let Some(why) = upload_why %}<p class="field-error" role="alert">{{ why }}</p>{% endif %}
+                    <button type="submit" class="button-wide"{% if passkey_only %} hidden{% endif %}>{{ self.t("settings.wallpapers.upload") }}</button>
                 </form>
             </details>
             {% call group_flash::show(flash, "upload") %}{% endcall %}
@@ -140,5 +165,7 @@
     </section>
     </div>
 </main>
+<script src="/static/backups.js?v=1" defer data-swap-ready></script>
+{% if passkey_reauth %}<script src="/static/passkey.js?v=9" defer data-swap-ready></script>{% endif %}
 </body>
 </html>

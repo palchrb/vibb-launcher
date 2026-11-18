@@ -386,6 +386,25 @@ pub async fn seed(app: &TestApp, lang: crate::i18n::Lang) -> Family {
             parent_events::Push::Now,
         ),
         phone.wifi_signin_budget("2026-11-01", parent_events::Push::Now),
+        // Privacy review 2026-11-17 M1/M2: a parent's changes, and a backup taken and restored.
+        parent_events::app_added(
+            anna,
+            &phone.name,
+            "Mamma",
+            "com.example.game",
+            "Minecraft",
+            ago(125),
+        ),
+        parent_events::contact_added(anna, &phone.name, "Mamma", 1, "Mormor", ago(126)),
+        parent_events::custom_dns_set("Mamma", ago(127)),
+        parent_events::location_regular(anna, &phone.name, "Mamma", ago(128)),
+        parent_events::backup_downloaded("Mamma", "backup-20261101-020000.zip", ago(129)),
+        parent_events::backup_restored(
+            "Mamma",
+            "backup-20261101-020000.zip",
+            ago(130),
+            parent_events::Push::Now,
+        ),
     ];
     let kinds: std::collections::BTreeSet<&str> = events.iter().map(|e| e.kind.wire()).collect();
     assert_eq!(kinds.len(), parent_events::Kind::ALL.len(), "every kind");

@@ -246,15 +246,29 @@ async fn the_restore_marker_swaps_in_a_good_backup_and_refuses_bad_ones() {
         assert_eq!(admin_names(&url).await, ["live"], "{name}");
     }
 
-    // A good one: swapped in, the old database kept aside.
+    // A good one, the PWA's marker naming who asked (privacy review 2026-11-17 M1): swapped in, the old database kept
+    // aside.
     std::fs::write(
         data.join(startup::RESTORE_REQUEST),
-        "backup-20261009-020000.zip\n",
+        crate::handlers::backups::restore_marker(
+            "backup-20261009-020000.zip",
+            "parent",
+            "Mamma",
+            chrono::DateTime::from_timestamp_millis(1_794_826_200_000).unwrap(),
+        ),
     )
     .unwrap();
     let restored = startup::apply_restore_request(&data, &live)
         .unwrap()
         .expect("applied");
+    assert_eq!(
+        restored.by,
+        Some(("parent".to_string(), "Mamma".to_string()))
+    );
+    assert_eq!(
+        restored.asked_at.map(|at| at.timestamp_millis()),
+        Some(1_794_826_200_000)
+    );
     assert!(!data.join(startup::RESTORE_REQUEST).exists());
     assert_eq!(admin_names(&url).await, ["from-backup"]);
     let aside = restored.prerestore_dir.join("kidphone.db");
@@ -302,6 +316,8 @@ async fn a_restored_database_that_wont_open_is_put_back() {
     let restored = startup::apply_restore_request(&data, &live)
         .unwrap()
         .expect("applied");
+    // The owner's one-line marker over SSH names no one.
+    assert_eq!((restored.by.as_ref(), restored.asked_at), (None, None));
     assert!(crate::try_connect_db(&url).await.is_err(), "junk opened");
     startup::undo_restore(&live, &restored).unwrap();
     let listing = |dir: &Path| -> Vec<String> {
@@ -448,7 +464,7 @@ fn app_data(latest: Option<&str>, update_available: bool) -> system_update::AppU
 
 /// Software Updates shows versions only (the user, 2026-11-04): no form, no host state; how to
 /// update is behind the Version row's ⓘ, never in its visible text (design 31 §4.2, design 113) - in Docker the image
-/// pull (Watchtower, or by hand, with the version for a pinned HANDY_VERSION), on a systemd
+/// host's `./update-image.sh` with the newer version (privacy review 2026-11-17 H1), on a systemd
 /// install the update.sh command for the configured repo.
 #[test]
 fn the_updates_page_says_how_to_update() {
@@ -471,14 +487,18 @@ fn the_updates_page_says_how_to_update() {
     assert!(docker.contains("Version 0.24.0 is out"), "{docker}");
     let (summary, panel) = how(&docker);
     assert!(!summary.contains("docker compose"), "{summary}");
-    assert!(panel.contains("Watchtower"));
-    assert!(panel.contains("docker compose pull &#38;&#38; docker compose up -d"));
-    assert!(panel.contains("HANDY_VERSION pinned in .env, set it to 0.24.0"));
+    // Privacy review 2026-11-17 H1, the user's choice (2026-11-18): Watchtower, and the host script that checks the
+    // attestation.
+    assert!(panel.contains("Watchtower"), "{panel}");
+    assert!(
+        panel.contains("<code>./update-image.sh 0.24.0</code>"),
+        "{panel}"
+    );
     assert!(!panel.contains("update.sh"));
     let current = page(true, "v0.23.0", false);
     // Design 113: up to date shows no latest row.
     assert!(!current.contains("data-row=\"latest\""), "{current}");
-    assert!(!current.contains("HANDY_VERSION"));
+    assert!(current.contains("./update-image.sh X.Y.Z"), "{current}");
 
     let pi = page(false, "v0.24.0", true);
     assert!(pi.contains("Version 0.24.0 is out"));

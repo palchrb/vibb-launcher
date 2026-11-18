@@ -902,7 +902,7 @@ pub(crate) async fn allow_installed_catalog_apps(
         .filter(|package| by_launcher.contains(package.as_str()) && !allowlist.contains(package))
     {
         match crate::handlers::devices::add_to_allowlist(state, device_id, package).await {
-            Ok(()) => changed = true,
+            Ok(added) => changed |= added,
             Err(err) => tracing::error!(device_id, %err, "can't allow an installed catalog app"),
         }
     }

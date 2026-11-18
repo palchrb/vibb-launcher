@@ -9,7 +9,6 @@
 //! install the owner runs it over SSH, and the page shows the command.
 
 use askama::Template;
-use axum::Extension;
 use axum::extract::{Path, Query, State};
 use axum::http::{StatusCode, header};
 use axum::response::{Html, IntoResponse, Redirect, Response};
@@ -354,23 +353,44 @@ struct BackupsTemplate {
     backups: Vec<BackupRow>,
     /// The last form's result, in its group ("backups", "upload", "schedule").
     flash: Option<Flash>,
-    /// A refused restore: the file whose confirm renders open, and the key of why.
-    restore_refused: Option<(String, &'static str)>,
+    /// A refused Download, Restore or Upload: its form renders open, the reason under its field.
+    refused: Option<Refused>,
     schedule: BackupScheduleConfig,
     weekdays: &'static [(&'static str, &'static str)],
     /// `DEPLOY_KIND=docker` (design 22 §6): Restore… restarts the container. On a systemd install
     /// it shows the command the owner runs over SSH ([BackupsTemplate::restore_command]).
     docker: bool,
+    /// Privacy review 2026-11-17 M1: Download, Restore and Upload ask for the password again
+    /// (`partials/reauth_passkey.html`): "Confirm with passkey" where this parent has one here, and a passkey-only
+    /// parent has no password field.
+    passkey_reauth: bool,
+    passkey_only: bool,
 }
 crate::i18n::words!(BackupsTemplate);
 
+/// A refused backup form (privacy review M1): which (`download`, `restore`, `upload`), the backup's file (empty for an
+/// upload), the field the reason goes under (`name`, `password`) and the reason, worded.
+struct Refused {
+    form: &'static str,
+    file: String,
+    field: &'static str,
+    why: String,
+}
+
 impl BackupsTemplate {
-    /// Why a restore of `file` was refused, if it was (its confirm then renders open).
-    fn restore_error(&self, file: &str) -> Option<&'static str> {
-        self.restore_refused
+    /// The reason under `field` of `form` for `file`, if that form was refused there.
+    fn why(&self, form: &str, file: &str, field: &str) -> Option<&str> {
+        self.refused
             .as_ref()
-            .filter(|(refused, _)| refused == file)
-            .map(|(_, why)| *why)
+            .filter(|r| r.form == form && r.file == file && r.field == field)
+            .map(|r| r.why.as_str())
+    }
+
+    /// Whether `form` for `file` was refused (it then renders open).
+    fn refused_here(&self, form: &str, file: &str) -> bool {
+        self.refused
+            .as_ref()
+            .is_some_and(|r| r.form == form && r.file == file)
     }
 
     /// On a systemd install: the command that restores `file` (the same restore as the
@@ -414,7 +434,7 @@ pub(crate) fn shell_quote(value: &str) -> String {
 #[derive(Default)]
 struct Answer {
     flash: Option<Flash>,
-    restore_refused: Option<(String, &'static str)>,
+    refused: Option<Refused>,
 }
 
 /// What a form that worked did (qa-31-s14-code M1): the POST redirects to
@@ -492,12 +512,88 @@ impl Answer {
     }
 }
 
+/// The signed-in parent on Backups (privacy review 2026-11-17 M1): for the page's passkey button and the re-auth of
+/// Download, Restore and Upload.
+pub struct Who {
+    admin: crate::models::AdminUser,
+    ceremony: crate::passkeys::Ceremony,
+    session: tower_sessions::Session,
+}
+
+impl axum::extract::FromRequestParts<AppState> for Who {
+    type Rejection = Response;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let Some(CurrentAdmin(admin)) = parts.extensions.get::<CurrentAdmin>().cloned() else {
+            return Err(StatusCode::UNAUTHORIZED.into_response());
+        };
+        let session = <tower_sessions::Session as axum::extract::FromRequestParts<AppState>>::from_request_parts(
+            parts, state,
+        )
+        .await
+        .map_err(IntoResponse::into_response)?;
+        Ok(Who {
+            admin,
+            ceremony: crate::passkeys::Ceremony::of(parts, state),
+            session,
+        })
+    }
+}
+
+/// A backup form's re-auth (privacy review M1, as Show Child PIN's): the password or a passkey's assertion, through
+/// `admin_auth::reauth`.
+enum Confirmed {
+    Yes,
+    /// Busy (429) or signed out: answered as is.
+    Answer(Response),
+    /// Wrong, or a passkey-only parent's password: the reason, worded.
+    No(String),
+}
+
+async fn confirm(
+    state: &AppState,
+    who: &Who,
+    password: &str,
+    assertion: &str,
+    lang: Lang,
+) -> Confirmed {
+    let proof = crate::admin_auth::Proof::of(password, assertion, &who.ceremony);
+    match crate::admin_auth::reauth(state, &who.session, &who.admin, proof).await {
+        crate::admin_auth::Reauth::Right => Confirmed::Yes,
+        crate::admin_auth::Reauth::Busy => {
+            Confirmed::Answer(crate::admin_auth::busy_response(lang))
+        }
+        crate::admin_auth::Reauth::SignedOut => {
+            Confirmed::Answer(crate::admin_auth::signed_out_response())
+        }
+        crate::admin_auth::Reauth::NeedsPasskey => {
+            Confirmed::No(t(lang, "passkeys.only.needs_passkey").to_string())
+        }
+        crate::admin_auth::Reauth::Wrong { left } => Confirmed::No(
+            t(
+                lang,
+                match (left, proof.is_passkey()) {
+                    (1, true) => "passkeys.reauth.failed_last",
+                    (_, true) => "passkeys.reauth.failed",
+                    (1, false) => "device.lock.wrong_last",
+                    _ => "device.lock.wrong",
+                },
+            )
+            .to_string(),
+        ),
+    }
+}
+
 /// The page. Every form renders its answer here, in the POST's response (as before design 31), and
 /// posts to its group's fragment, so the answer lands where the parent was.
 async fn render_backups(
     state: &AppState,
     status: StatusCode,
     answer: Answer,
+    who: &Who,
     lang: Lang,
 ) -> Response {
     let docker = state.net.deploy_kind == crate::net::DeployKind::Docker;
@@ -536,10 +632,12 @@ async fn render_backups(
         title: t(lang, "settings.backups.title").to_string(),
         backups,
         flash: answer.flash,
-        restore_refused: answer.restore_refused,
+        refused: answer.refused,
         schedule: BackupScheduleConfig::load(&state.data_dir).await,
         weekdays: &WEEKDAYS,
         docker,
+        passkey_reauth: crate::passkeys::has_here(&state.db, who.admin.id, &who.ceremony).await,
+        passkey_only: who.admin.passkey_only,
     };
     (status, Html(page.render().unwrap())).into_response()
 }
@@ -548,6 +646,7 @@ async fn render_backups(
 pub async fn list_backups(
     State(state): State<AppState>,
     lang: Lang,
+    who: Who,
     Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> Response {
     let answer = Answer {
@@ -557,10 +656,10 @@ pub async fn list_backups(
             .map(|done| done.flash(lang)),
         ..Answer::default()
     };
-    render_backups(&state, StatusCode::OK, answer, lang).await
+    render_backups(&state, StatusCode::OK, answer, &who, lang).await
 }
 
-pub async fn create_backup(lang: Lang, State(state): State<AppState>) -> Response {
+pub async fn create_backup(lang: Lang, State(state): State<AppState>, who: Who) -> Response {
     match perform_backup(&state).await {
         Ok(_) => {
             let schedule = BackupScheduleConfig::load(&state.data_dir).await;
@@ -578,21 +677,71 @@ pub async fn create_backup(lang: Lang, State(state): State<AppState>) -> Respons
                 ),
                 ..Answer::default()
             };
-            render_backups(&state, StatusCode::INTERNAL_SERVER_ERROR, answer, lang).await
+            render_backups(
+                &state,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                answer,
+                &who,
+                lang,
+            )
+            .await
         }
     }
 }
 
+/// Download (privacy review 2026-11-17 M1): the whole database - every place, the inbox, the contacts, every parent's
+/// sign-in secrets - so it asks for the password (or a passkey) again, as Show Child PIN does. Confirmed: the zip as an
+/// attachment (the page stays where it was), `backup_downloaded` logged and every parent told at once
+/// ([crate::parent_events::backup_downloaded]). Refused: the page (400) with this backup's Download open and the
+/// reason under the password; busy is a 429, the last wrong try signs out. A file that isn't there is a 404, before
+/// any password is checked.
 pub async fn download_backup(
     State(state): State<AppState>,
     lang: Lang,
+    who: Who,
     Path(filename): Path<String>,
-) -> impl IntoResponse {
+    axum::Form(form): axum::Form<std::collections::HashMap<String, String>>,
+) -> Response {
     if !is_safe_backup_filename(&filename) {
         return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.backup_not_found");
     }
-    match tokio::fs::read(state.data_dir.join(BACKUP_DIR).join(&filename)).await {
+    let path = state.data_dir.join(BACKUP_DIR).join(&filename);
+    if !tokio::fs::try_exists(&path).await.unwrap_or(false) {
+        return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.backup_not_found");
+    }
+    let field = |name: &str| form.get(name).map(String::as_str).unwrap_or_default();
+    match confirm(&state, &who, field("password"), field("assertion"), lang).await {
+        Confirmed::Yes => {}
+        Confirmed::Answer(answer) => return answer,
+        Confirmed::No(why) => {
+            let answer = Answer {
+                refused: Some(Refused {
+                    form: "download",
+                    file: filename,
+                    field: "password",
+                    why,
+                }),
+                ..Answer::default()
+            };
+            return render_backups(&state, StatusCode::BAD_REQUEST, answer, &who, lang).await;
+        }
+    }
+    match tokio::fs::read(&path).await {
         Ok(bytes) => {
+            security::record_security_event(
+                &state.db,
+                "backup_downloaded",
+                Some(&who.admin.username),
+                None,
+                Some(security::Detail::facts(&filename)),
+            )
+            .await;
+            let told = crate::parent_events::backup_downloaded(
+                who.admin.name(),
+                &filename,
+                chrono::Utc::now(),
+            );
+            crate::parent_events::raise_logged(&state, &told).await;
             let headers = [
                 (header::CONTENT_TYPE, "application/zip".to_string()),
                 (
@@ -610,6 +759,7 @@ pub async fn download_backup(
 pub async fn delete_backup(
     State(state): State<AppState>,
     lang: Lang,
+    who: Who,
     Path(filename): Path<String>,
 ) -> Response {
     if !is_safe_backup_filename(&filename) {
@@ -621,7 +771,14 @@ pub async fn delete_backup(
         Err(err) => {
             tracing::error!(%err, "couldn't delete a backup");
             let answer = Answer::refused("backups", t(lang, "settings.backups.delete_failed"));
-            render_backups(&state, StatusCode::INTERNAL_SERVER_ERROR, answer, lang).await
+            render_backups(
+                &state,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                answer,
+                &who,
+                lang,
+            )
+            .await
         }
     }
 }
@@ -642,12 +799,13 @@ const VALID_FREQUENCIES: [&str; 3] = ["daily", "weekly", "monthly"];
 pub async fn save_backup_schedule(
     State(state): State<AppState>,
     lang: Lang,
-    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
+    who: Who,
     axum::Form(form): axum::Form<BackupScheduleForm>,
 ) -> Response {
+    let admin = &who.admin;
     if !VALID_FREQUENCIES.contains(&form.frequency.as_str()) {
         let answer = Answer::refused("schedule", t(lang, "settings.schedule.bad_frequency"));
-        return render_backups(&state, StatusCode::BAD_REQUEST, answer, lang).await;
+        return render_backups(&state, StatusCode::BAD_REQUEST, answer, &who, lang).await;
     }
     let day_of_week: i32 = form.day_of_week.trim().parse().unwrap_or(0).clamp(0, 6);
     let day_of_month: i32 = form.day_of_month.trim().parse().unwrap_or(1).clamp(1, 28);
@@ -661,7 +819,7 @@ pub async fn save_backup_schedule(
             "schedule",
             crate::i18n::t_params(lang, "settings.schedule.bad_time", &[("example", "02:00")]),
         );
-        return render_backups(&state, StatusCode::BAD_REQUEST, answer, lang).await;
+        return render_backups(&state, StatusCode::BAD_REQUEST, answer, &who, lang).await;
     };
     let retention_count: i64 = form
         .retention_count
@@ -697,7 +855,14 @@ pub async fn save_backup_schedule(
     } else {
         Answer::refused("schedule", t(lang, "settings.schedule.save_failed"))
     };
-    render_backups(&state, StatusCode::INTERNAL_SERVER_ERROR, answer, lang).await
+    render_backups(
+        &state,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        answer,
+        &who,
+        lang,
+    )
+    .await
 }
 
 /// Background task (spawned once at startup, see main.rs) that creates a
@@ -782,19 +947,24 @@ async fn is_due(data: &std::path::Path, schedule: &BackupScheduleConfig) -> bool
 #[derive(Deserialize)]
 pub struct RestoreBackupForm {
     confirm_filename: String,
+    #[serde(default)]
+    password: String,
+    #[serde(default)]
+    assertion: String,
 }
 
 /// Restores a named backup in the container: the backup must still be in the *freshly
 /// re-listed* set of files on disk (never trust a stale page load), and the admin must type the
 /// exact filename to confirm - this discards whatever's in the live database right now, so a
-/// plain confirm() dialog (bypassable via a direct POST) isn't enough. A wrong name renders the
-/// page with that backup's confirm open and the reason under the field. On a systemd install the
+/// plain confirm() dialog (bypassable via a direct POST) isn't enough - and, since privacy review 2026-11-17 M1, the
+/// password again (or a passkey). A wrong name or password renders the page with that backup's confirm open and the
+/// reason under its field. On a systemd install the
 /// server has no way to restart itself and asks nothing of its host (the user, 2026-11-04): the
 /// page shows the command, and a POST here restores nothing.
 pub async fn restore_backup(
     State(state): State<AppState>,
     lang: Lang,
-    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
+    who: Who,
     Path(filename): Path<String>,
     axum::Form(form): axum::Form<RestoreBackupForm>,
 ) -> Response {
@@ -803,39 +973,72 @@ pub async fn restore_backup(
     }
     if state.net.deploy_kind != crate::net::DeployKind::Docker {
         let answer = Answer::refused("backups", t(lang, "settings.backups.restore_over_ssh"));
-        return render_backups(&state, StatusCode::BAD_REQUEST, answer, lang).await;
+        return render_backups(&state, StatusCode::BAD_REQUEST, answer, &who, lang).await;
     }
     let names = list_backup_filenames(&state.data_dir.join(BACKUP_DIR)).await;
     if !names.contains(&filename) {
         let answer = Answer::refused("backups", t(lang, "settings.backups.restore_gone"));
-        return render_backups(&state, StatusCode::BAD_REQUEST, answer, lang).await;
+        return render_backups(&state, StatusCode::BAD_REQUEST, answer, &who, lang).await;
     }
+    let refused = |field: &'static str, why: String| Answer {
+        refused: Some(Refused {
+            form: "restore",
+            file: filename.clone(),
+            field,
+            why,
+        }),
+        ..Answer::default()
+    };
     if form.confirm_filename.trim() != filename {
-        let answer = Answer {
-            restore_refused: Some((filename, "settings.backups.wrong_name")),
-            ..Answer::default()
-        };
-        return render_backups(&state, StatusCode::BAD_REQUEST, answer, lang).await;
+        let answer = refused("name", t(lang, "settings.backups.wrong_name").to_string());
+        return render_backups(&state, StatusCode::BAD_REQUEST, answer, &who, lang).await;
     }
-    restore_in_container(&state, &admin, &filename, lang).await
+    match confirm(&state, &who, &form.password, &form.assertion, lang).await {
+        Confirmed::Yes => {}
+        Confirmed::Answer(answer) => return answer,
+        Confirmed::No(why) => {
+            let answer = refused("password", why);
+            return render_backups(&state, StatusCode::BAD_REQUEST, answer, &who, lang).await;
+        }
+    }
+    restore_in_container(&state, &who, &filename, lang).await
+}
+
+/// The restore marker's text (privacy review M1): the backup's name, then who asked (the username and the display
+/// name) and when (epoch ms), so the next start writes the restore's line, with them, into the restored database
+/// (`startup::apply_restore_request`), its event keyed and timed as the one pushed before the restart (code QA L5).
+/// The owner's one-line marker over SSH names no one.
+pub fn restore_marker(
+    filename: &str,
+    username: &str,
+    name: &str,
+    at: chrono::DateTime<chrono::Utc>,
+) -> String {
+    let line = |text: &str| text.replace(['\n', '\r'], " ");
+    format!(
+        "{}\n{}\n{}\n{}\n",
+        line(filename),
+        line(username),
+        line(name),
+        at.timestamp_millis()
+    )
 }
 
 /// The restore in the container (design 22 §6): the marker `data/restore_request` names the
-/// backup and the process exits non-zero; the restart policy
+/// backup (and who asked, [restore_marker]) and the process exits non-zero; the restart policy
 /// brings it back, and startup applies the restore before opening the database
 /// (`startup::apply_restore_request`, which also puts the old database back if the restored one
-/// won't open).
-async fn restore_in_container(
-    state: &AppState,
-    admin: &crate::models::AdminUser,
-    filename: &str,
-    lang: Lang,
-) -> Response {
+/// won't open). Every parent is told before the exit, from this database - its parents' subscriptions
+/// ([crate::parent_events::backup_restored]); the restored one gets the inbox line at its start.
+async fn restore_in_container(state: &AppState, who: &Who, filename: &str, lang: Lang) -> Response {
+    let admin = &who.admin;
     let marker = state.data_dir.join(crate::startup::RESTORE_REQUEST);
-    if let Err(err) = tokio::fs::write(&marker, filename).await {
+    let asked_at = chrono::Utc::now();
+    let text = restore_marker(filename, &admin.username, admin.name(), asked_at);
+    if let Err(err) = tokio::fs::write(&marker, text).await {
         tracing::error!(%err, "couldn't write the restore request");
         let answer = Answer::refused("backups", t(lang, "settings.backups.restore_failed"));
-        return render_backups(state, StatusCode::INTERNAL_SERVER_ERROR, answer, lang).await;
+        return render_backups(state, StatusCode::INTERNAL_SERVER_ERROR, answer, who, lang).await;
     }
     security::record_security_event(
         &state.db,
@@ -845,16 +1048,56 @@ async fn restore_in_container(
         Some(security::Detail::facts(filename)),
     )
     .await;
+    let told = crate::parent_events::backup_restored(
+        admin.name(),
+        filename,
+        asked_at,
+        crate::parent_events::Push::Now,
+    );
+    let raised = async {
+        let mut tx = state.db.begin().await?;
+        let id = crate::parent_events::raise(&mut tx, &told).await?;
+        tx.commit().await.map(|()| id)
+    }
+    .await
+    .unwrap_or_else(|err| {
+        tracing::error!(%err, "can't store the restore's event");
+        None
+    });
+    if raised.is_some() {
+        state.push.wake();
+    }
     // The 303's GET comes back at once, well inside the second before the exit.
-    restart_soon(state.clone());
+    restart_soon(state.clone(), raised);
     Done::Restore.redirect()
 }
 
-/// Exits non-zero a moment after the response went out, with the database closed (its WAL
-/// checkpointed), so the restart policy starts the container again. Not in tests.
-fn restart_soon(state: AppState) {
+/// Exits non-zero a moment after the response went out - once the restore's push (`event`) has left, for at most 10
+/// seconds more - with the database closed (its WAL checkpointed), so the restart policy starts the container again.
+/// Not in tests.
+fn restart_soon(state: AppState, event: Option<i64>) {
+    // A test goes on with its database: nothing restarts.
+    if cfg!(test) {
+        return;
+    }
     tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        if let Some(event) = event {
+            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+            while tokio::time::Instant::now() < deadline {
+                let waiting: i64 = sqlx::query_scalar(
+                    "SELECT COUNT(*) FROM push_deliveries WHERE event_id = ? AND status = 'queued'",
+                )
+                .bind(event)
+                .fetch_one(&state.db)
+                .await
+                .unwrap_or(0);
+                if waiting == 0 {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            }
+        }
         state.command_streams.close_all();
         let _ = tokio::time::timeout(std::time::Duration::from_secs(3), state.db.close()).await;
         tracing::info!("restarting for the restore");
@@ -867,35 +1110,87 @@ fn restart_soon(state: AppState) {
 /// elsewhere after this server's own copy was lost - and adds it to the list above so it can be restored like any
 /// other backup. Never trusts the browser-supplied filename or the .zip
 /// extension alone: the archive is actually opened and checked for a
-/// `kidphone.db` entry before being accepted. A refusal says why in the
+/// `kidphone.db` entry before being accepted. Since privacy review 2026-11-17 M1 it asks for the password again (or a
+/// passkey), checked once the form is read, and logs `backup_uploaded`. A refusal says why in the
 /// Upload group (its form open).
 pub async fn upload_backup(
     State(state): State<AppState>,
     lang: Lang,
+    who: Who,
     mut multipart: axum::extract::Multipart,
 ) -> Response {
     let refused = |key: &'static str| Answer::refused("upload", t(lang, key));
-    let Ok(Some(field)) = multipart.next_field().await else {
+    // The fields by name: the password and the passkey's assertion (small), and the file.
+    let (mut password, mut assertion, mut file) = (String::new(), String::new(), None);
+    loop {
+        let field = match multipart.next_field().await {
+            Ok(Some(field)) => field,
+            Ok(None) => break,
+            Err(_) => {
+                let answer = refused("settings.backups.upload_unreadable");
+                return render_backups(&state, StatusCode::BAD_REQUEST, answer, &who, lang).await;
+            }
+        };
+        match field.name() {
+            Some("password") | Some("assertion") => {
+                let name = field.name().unwrap_or_default().to_string();
+                let Ok(text) = field.text().await else {
+                    let answer = refused("settings.backups.upload_unreadable");
+                    return render_backups(&state, StatusCode::BAD_REQUEST, answer, &who, lang)
+                        .await;
+                };
+                if name == "password" {
+                    password = text;
+                } else {
+                    assertion = text;
+                }
+            }
+            _ if file.is_none() => match field.bytes().await {
+                Ok(bytes) => file = Some(bytes),
+                Err(_) => {
+                    let answer = refused("settings.backups.upload_unreadable");
+                    return render_backups(&state, StatusCode::BAD_REQUEST, answer, &who, lang)
+                        .await;
+                }
+            },
+            _ => {}
+        }
+    }
+    let Some(bytes) = file else {
         return render_backups(
             &state,
             StatusCode::BAD_REQUEST,
             refused("settings.backups.upload_none"),
+            &who,
             lang,
         )
         .await;
-    };
-    let Ok(bytes) = field.bytes().await else {
-        let answer = refused("settings.backups.upload_unreadable");
-        return render_backups(&state, StatusCode::BAD_REQUEST, answer, lang).await;
     };
     if bytes.is_empty() {
         return render_backups(
             &state,
             StatusCode::BAD_REQUEST,
             refused("settings.backups.upload_empty"),
+            &who,
             lang,
         )
         .await;
+    }
+    match confirm(&state, &who, &password, &assertion, lang).await {
+        Confirmed::Yes => {}
+        Confirmed::Answer(answer) => return answer,
+        Confirmed::No(why) => {
+            let answer = Answer {
+                refused: Some(Refused {
+                    form: "upload",
+                    file: String::new(),
+                    field: "password",
+                    why,
+                }),
+                ..Answer::default()
+            };
+            return render_backups(&state, StatusCode::BAD_REQUEST, answer, &who, lang).await;
+        }
     }
 
     let bytes_for_check = bytes.clone();
@@ -916,7 +1211,7 @@ pub async fn upload_backup(
             ),
             ..Answer::default()
         };
-        return render_backups(&state, StatusCode::BAD_REQUEST, answer, lang).await;
+        return render_backups(&state, StatusCode::BAD_REQUEST, answer, &who, lang).await;
     }
 
     let nanos = std::time::SystemTime::now()
@@ -934,11 +1229,28 @@ pub async fn upload_backup(
     }
     .await;
     match saved {
-        Ok(()) => Done::Upload.redirect(),
+        Ok(()) => {
+            security::record_security_event(
+                &state.db,
+                "backup_uploaded",
+                Some(&who.admin.username),
+                None,
+                Some(security::Detail::facts(&filename)),
+            )
+            .await;
+            Done::Upload.redirect()
+        }
         Err(err) => {
             tracing::error!(%err, "couldn't save an uploaded backup");
             let answer = refused("settings.backups.upload_failed");
-            render_backups(&state, StatusCode::INTERNAL_SERVER_ERROR, answer, lang).await
+            render_backups(
+                &state,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                answer,
+                &who,
+                lang,
+            )
+            .await
         }
     }
 }
@@ -964,10 +1276,12 @@ mod tests {
                     exact: String::new(),
                 }],
                 flash,
-                restore_refused: None,
+                refused: None,
                 schedule: BackupScheduleConfig::defaults(),
                 weekdays: &WEEKDAYS,
                 docker,
+                passkey_reauth: false,
+                passkey_only: false,
             }
             .render()
             .unwrap()
@@ -1062,10 +1376,12 @@ mod tests {
                 })
                 .collect(),
             flash: None,
-            restore_refused: None,
+            refused: None,
             schedule: BackupScheduleConfig::defaults(),
             weekdays: &WEEKDAYS,
             docker: false,
+            passkey_reauth: false,
+            passkey_only: false,
         }
         .render()
         .unwrap();

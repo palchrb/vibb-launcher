@@ -803,6 +803,9 @@ pub async fn set_upstream(
                 &settings.custom_backup,
             );
             server_changed(&state, &admin.username, &detail).await;
+            if upstream == "custom" {
+                custom_dns_event(&state, &admin).await;
+            }
         }
         Ok(_) => {}
         Err(err) => return write_failed(lang, err),
@@ -914,8 +917,16 @@ pub async fn set_custom(
     {
         let detail = dns_server::event_detail("custom", &server, &backup);
         server_changed(&state, &admin.username, &detail).await;
+        custom_dns_event(&state, &admin).await;
     }
     Redirect::to(SAVED).into_response()
+}
+
+/// Privacy review 2026-11-17 M2: the phones' DNS server became the family's own (picked, or its address changed) - it
+/// then sees every query - so every parent is told at once. Never the address (design 36 §7).
+async fn custom_dns_event(state: &AppState, admin: &crate::models::AdminUser) {
+    let told = crate::parent_events::custom_dns_set(admin.name(), chrono::Utc::now());
+    crate::parent_events::raise_logged(state, &told).await;
 }
 
 /// Where a Custom Server save returns: its group, with the row open again (a form in a closed

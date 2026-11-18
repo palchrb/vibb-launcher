@@ -27,9 +27,10 @@
                 </summary>
                 <div class="info-panel">
                     {% if docker %}
+                    {#- Privacy review 2026-11-17 H1 (the user's choice, 2026-11-18): Watchtower, or the host's update-image.sh,
+                        which checks the image's attestation first, with the newer version when there is one. -#}
                     <p>{{ self.t("settings.updates.docker_how") }}</p>
-                    <pre><code>{{ self.t("settings.updates.docker_command") }}</code></pre>
-                    {% if let Some(version) = newer_version %}<p>{{ self.tp("settings.updates.docker_set", [("version", version.as_str())]) }}</p>{% endif %}
+                    <pre><code>{% if let Some(version) = newer_version %}{{ self.tp("settings.updates.docker_command", [("version", version.as_str())]) }}{% else %}{{ self.tp("settings.updates.docker_command", [("version", "X.Y.Z")]) }}{% endif %}</code></pre>
                     <p>{{ self.t("settings.updates.docker_backup") }}</p>
                     {% else %}
                     <p>{{ self.t("settings.updates.over_ssh") }}</p>

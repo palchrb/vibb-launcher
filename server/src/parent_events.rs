@@ -101,6 +101,18 @@ pub enum Kind {
     /// [Kind::WifiSigninWide]'s switch. No longer raised since the daily count went (2026-11-18); kept so the stored
     /// rows are still told.
     WifiSigninBudget,
+    /// Privacy review 2026-11-17 M2: a parent's change that matters to the kid's safety, pushed to every parent at
+    /// once (no switch) and in each inbox, so one a held or misused session made is seen - an app allowed or ticked
+    /// on a phone, a new contact on a phone, the family's own DNS server set, a phone's location set to Regularly.
+    /// One per real change, never per save of an unchanged page. Told from their parameters ([ChangeParams]).
+    AppAdded,
+    ContactAdded,
+    CustomDnsSet,
+    LocationRegular,
+    /// Privacy review 2026-11-17 M1: a parent downloaded a backup (the whole database), or restored one - no phone,
+    /// no switch, as [Kind::PasskeyAdded]. Told from their parameters ([ChangeParams]).
+    BackupDownloaded,
+    BackupRestored,
 }
 
 /// A kind's own push rate (design 77 §7, QA R2-M3), beside [EVENTS_AN_HOUR] and [URGENT_PUSHES_AN_HOUR]: a phone's
@@ -114,7 +126,7 @@ pub struct PushBudget {
 }
 
 impl Kind {
-    pub const ALL: [Kind; 23] = [
+    pub const ALL: [Kind; 29] = [
         Kind::EmergencyCall,
         Kind::PinUsed,
         Kind::PinLockout,
@@ -138,6 +150,12 @@ impl Kind {
         Kind::RoamingStarted,
         Kind::WifiSigninWide,
         Kind::WifiSigninBudget,
+        Kind::AppAdded,
+        Kind::ContactAdded,
+        Kind::CustomDnsSet,
+        Kind::LocationRegular,
+        Kind::BackupDownloaded,
+        Kind::BackupRestored,
     ];
 
     pub fn wire(self) -> &'static str {
@@ -165,6 +183,12 @@ impl Kind {
             Kind::RoamingStarted => "roaming_started",
             Kind::WifiSigninWide => "wifi_signin_wide",
             Kind::WifiSigninBudget => "wifi_signin_budget",
+            Kind::AppAdded => "app_added",
+            Kind::ContactAdded => "contact_added",
+            Kind::CustomDnsSet => "custom_dns_set",
+            Kind::LocationRegular => "location_regular",
+            Kind::BackupDownloaded => "backup_downloaded",
+            Kind::BackupRestored => "backup_restored",
         }
     }
 
@@ -194,6 +218,15 @@ impl Kind {
         }
     }
 
+    /// Made by a parent's session, not reported by a phone (privacy review 2026-11-17 M2): never held to a phone's
+    /// [EVENTS_AN_HOUR].
+    pub fn parent_made(self) -> bool {
+        matches!(
+            self,
+            Kind::AppAdded | Kind::ContactAdded | Kind::LocationRegular | Kind::ServerTlsOff
+        )
+    }
+
     /// The push's `Urgency` header.
     pub fn urgency(self) -> &'static str {
         if self.urgent() { "high" } else { "normal" }
@@ -211,6 +244,13 @@ impl Kind {
             | Kind::PushOff
             | Kind::ServerTlsOff
             | Kind::ServerTlsSeen => None,
+            // Privacy review 2026-11-17 M1/M2: a change to the kid's safety, or the whole database taken or replaced.
+            Kind::AppAdded
+            | Kind::ContactAdded
+            | Kind::CustomDnsSet
+            | Kind::LocationRegular
+            | Kind::BackupDownloaded
+            | Kind::BackupRestored => None,
             Kind::PinUsed => Some(("push_pin_used", "Parent PIN used")),
             Kind::PinLockout => Some(("push_pin_lockout", "Parent PIN locked")),
             Kind::ForeignAccess => Some(("push_foreign_access", "An app may read the PIN")),
@@ -437,10 +477,33 @@ impl Phone {
             entry: entry.to_string(),
             until,
         };
+        // Security review 2026-11-17 M2: the time-rule screen's use shares its key with the pause it set
+        // ([Phone::rule_pause]), so the two posts of one pause give one row, whichever comes first.
+        let key = match (event.entry, event.until_ms) {
+            (Entry::RulePause, Some(until_ms)) if kind == Kind::PinUsed => rule_pause_key(until_ms),
+            _ => event.event_id.clone(),
+        };
         Some(NewEvent {
             target: format!("/devices/{}/lock#parent-pin", self.id),
-            ..self.with_params(kind, event.event_id.clone(), at, &params)
+            ..self.with_params(kind, key, at, &params)
         })
+    }
+
+    /// Security review 2026-11-17 M2: a new parent-code pause the phone posted (`POST /api/devices/rule-pause`),
+    /// started at `started_at` and lifting until `until_ms` (the latest of its rules' ends - the gate's own `until`).
+    /// Told as the time-rule screen's parent-PIN use (design 98 §4.4.5), under its switch: a token alone can't lift a
+    /// rule without a line in the inbox. One key with that use's ([rule_pause_key]).
+    pub fn rule_pause(&self, started_at: DateTime<Utc>, until_ms: i64) -> NewEvent {
+        let params = PinParams {
+            phone: self.name.clone(),
+            at: instant(started_at),
+            entry: "rule_pause".to_string(),
+            until: DateTime::from_timestamp_millis(until_ms).map(instant),
+        };
+        NewEvent {
+            target: format!("/devices/{}/lock#parent-pin", self.id),
+            ..self.with_params(Kind::PinUsed, rule_pause_key(until_ms), started_at, &params)
+        }
     }
 
     /// An app outside the allowlist that could read the parent PIN (the report's `foreign_access`,
@@ -717,6 +780,12 @@ pub async fn mark_emergency_airplane_off(
     .execute(db)
     .await?;
     Ok(done.rows_affected() > 0)
+}
+
+/// The key of a parent-code pause's event (security review 2026-11-17 M2): its end, as the pause's post and the gate's
+/// PIN event both carry it.
+fn rule_pause_key(until_ms: i64) -> String {
+    format!("rule_pause:{until_ms}")
 }
 
 /// A parent-PIN use or lockout: where the PIN was typed (`override`, `pin_lock`, `settings`,
@@ -1250,7 +1319,18 @@ pub async fn raise(
         .bind(event.kind.wire())
         .fetch_one(&mut *conn)
         .await?;
-        if this_hour >= EVENTS_AN_HOUR {
+        // Code QA M1 (2026-11-18): a parent's own safety change is never dropped - a session made it, not the phone -
+        // and a parent-code pause the phone posted is stored past the budget without a push of its own: it lifts a
+        // rule, so the inbox must have it ("told, not capped").
+        let parent_made = event.kind.parent_made();
+        let pause = event.kind == Kind::PinUsed && event.dedup_key.starts_with("rule_pause:");
+        if this_hour >= EVENTS_AN_HOUR && pause {
+            tracing::warn!(
+                device_id,
+                "a phone's pauses are past their hourly budget; stored, not pushed"
+            );
+            push = Push::No;
+        } else if this_hour >= EVENTS_AN_HOUR && !parent_made {
             tracing::warn!(
                 device_id,
                 kind = event.kind.wire(),
@@ -2572,6 +2652,218 @@ fn passkey_told(
     (crate::audit::clip(&title, TITLE_MAX).to_string(), at)
 }
 
+/// A parent's change that matters to the kid's safety, or a backup taken or restored (privacy review 2026-11-17 M1/M2):
+/// the parent's name, the phone's (empty for none), what - the app's or the contact's name, the backup's file - and
+/// when, as they were.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ChangeParams {
+    #[serde(default)]
+    pub parent: String,
+    #[serde(default)]
+    pub phone: String,
+    #[serde(default)]
+    pub what: String,
+    pub at: String,
+}
+
+/// One change event: pushed at once to every parent (no switch), key = `key`.
+fn change(
+    kind: Kind,
+    device_id: Option<i64>,
+    key: String,
+    target: String,
+    params: &ChangeParams,
+    at: DateTime<Utc>,
+    push: Push,
+) -> NewEvent {
+    NewEvent {
+        device_id,
+        kind,
+        dedup_key: key,
+        title: String::new(),
+        summary: String::new(),
+        target,
+        detail: None,
+        params: Some(serde_json::to_string(params).expect("strings serialize")),
+        push_title: String::new(),
+        push_body: String::new(),
+        happened_at: at,
+        push,
+        budget_key: None,
+    }
+}
+
+/// `parent` allowed `app` on the phone (`device_id`, `phone`) - newly allowed, or ticked from the catalog - at `at`:
+/// key = what the switch named and the instant, target the phone's Apps page.
+pub fn app_added(
+    device_id: i64,
+    phone: &str,
+    parent: &str,
+    app_key: &str,
+    app: &str,
+    at: DateTime<Utc>,
+) -> NewEvent {
+    let params = ChangeParams {
+        parent: parent.to_string(),
+        phone: phone.to_string(),
+        what: app.to_string(),
+        at: instant(at),
+    };
+    change(
+        Kind::AppAdded,
+        Some(device_id),
+        format!("{app_key}:{}", at.timestamp_millis()),
+        format!("/devices/{device_id}/apps"),
+        &params,
+        at,
+        Push::Now,
+    )
+}
+
+/// `parent` put the contact `contact_id` (`contact`) on the phone at `at`: key = the contact and the instant, target its
+/// row on the Calls page.
+pub fn contact_added(
+    device_id: i64,
+    phone: &str,
+    parent: &str,
+    contact_id: i64,
+    contact: &str,
+    at: DateTime<Utc>,
+) -> NewEvent {
+    let params = ChangeParams {
+        parent: parent.to_string(),
+        phone: phone.to_string(),
+        what: contact.to_string(),
+        at: instant(at),
+    };
+    change(
+        Kind::ContactAdded,
+        Some(device_id),
+        format!("{contact_id}:{}", at.timestamp_millis()),
+        format!("/devices/{device_id}/calls#contact-{contact_id}"),
+        &params,
+        at,
+        Push::Now,
+    )
+}
+
+/// `parent` set the family's own DNS server (every phone's) at `at` - never its address (design 36 §7). No phone; target
+/// the Web Filter's server group.
+pub fn custom_dns_set(parent: &str, at: DateTime<Utc>) -> NewEvent {
+    let params = ChangeParams {
+        parent: parent.to_string(),
+        phone: String::new(),
+        what: String::new(),
+        at: instant(at),
+    };
+    change(
+        Kind::CustomDnsSet,
+        None,
+        at.timestamp_millis().to_string(),
+        "/dns#server".to_string(),
+        &params,
+        at,
+        Push::Now,
+    )
+}
+
+/// `parent` set the phone's location to Regularly at `at`: target its Location Settings.
+pub fn location_regular(device_id: i64, phone: &str, parent: &str, at: DateTime<Utc>) -> NewEvent {
+    let params = ChangeParams {
+        parent: parent.to_string(),
+        phone: phone.to_string(),
+        what: String::new(),
+        at: instant(at),
+    };
+    change(
+        Kind::LocationRegular,
+        Some(device_id),
+        at.timestamp_millis().to_string(),
+        format!("/devices/{device_id}/location-settings#location-settings"),
+        &params,
+        at,
+        Push::Now,
+    )
+}
+
+/// `parent` downloaded the backup `file` at `at`: no phone, target Backups.
+pub fn backup_downloaded(parent: &str, file: &str, at: DateTime<Utc>) -> NewEvent {
+    let params = ChangeParams {
+        parent: parent.to_string(),
+        phone: String::new(),
+        what: file.to_string(),
+        at: instant(at),
+    };
+    change(
+        Kind::BackupDownloaded,
+        None,
+        format!("{file}:{}", at.timestamp_millis()),
+        "/backups#backups".to_string(),
+        &params,
+        at,
+        Push::Now,
+    )
+}
+
+/// `parent` (empty: not known) restored the backup `file`, asked at `at`. Raised twice with one key: pushed from the
+/// database it replaces, before the restart (its parents' subscriptions), and into the restored one at the next start
+/// (`push`: [Push::No] - the inbox line there).
+pub fn backup_restored(parent: &str, file: &str, at: DateTime<Utc>, push: Push) -> NewEvent {
+    let params = ChangeParams {
+        parent: parent.to_string(),
+        phone: String::new(),
+        what: file.to_string(),
+        at: instant(at),
+    };
+    change(
+        Kind::BackupRestored,
+        None,
+        format!("{file}:{}", at.timestamp_millis()),
+        "/backups#backups".to_string(),
+        &params,
+        at,
+        push,
+    )
+}
+
+/// A change's words, the same in the inbox and the push: "Mamma allowed Minecraft on Emma's phone", "Mamma added Ola to
+/// Emma's phone", "Mamma set a custom DNS server", "Mamma set Location to Regularly on Emma's phone", "Mamma downloaded
+/// a backup", "Mamma restored a backup" (no name: "A backup was restored") / the time.
+fn change_told(kind: Kind, p: &ChangeParams, zone: &Zone, now: DateTime<Utc>) -> (String, String) {
+    let lang = zone.lang();
+    let phone = phone_of(lang, &p.phone);
+    let key = match kind {
+        Kind::AppAdded => "events.app_added.title",
+        Kind::ContactAdded => "events.contact_added.title",
+        Kind::CustomDnsSet => "events.custom_dns_set.title",
+        Kind::LocationRegular => "events.location_regular.title",
+        Kind::BackupDownloaded => "events.backup_downloaded.title",
+        _ if p.parent.is_empty() => "events.backup_restored.plain",
+        _ => "events.backup_restored.title",
+    };
+    // The app's or the contact's name is cut to fit, else the phone's; never the parent's.
+    let words = |phone: &str, what: &str| {
+        t_params(
+            lang,
+            key,
+            &[
+                ("name", p.parent.as_str()),
+                ("phone", phone),
+                ("what", what),
+            ],
+        )
+    };
+    let title = if p.what.is_empty() {
+        fit_name(&p.phone, TITLE_MAX, |name| words(&phone_of(lang, name), ""))
+    } else {
+        fit_name(&p.what, TITLE_MAX, |what| words(&phone, what))
+    };
+    let at = crate::display_time::parse_db_utc(&p.at)
+        .map(|at| capitalized(&zone.at(at, now)))
+        .unwrap_or_default();
+    (crate::audit::clip(&title, TITLE_MAX).to_string(), at)
+}
+
 /// Notifications ended on a parent's devices (2026-11-04): the parent's name and the devices' labels as they were,
 /// how many, why (`push::Forget::wire`), and when.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -2878,6 +3170,14 @@ pub fn told_as(
         Kind::WifiSigninWide | Kind::WifiSigninBudget => params
             .and_then(|p| serde_json::from_str::<WifiSigninParams>(p).ok())
             .map(|p| wifi_signin_told(form, kind, &p, zone, now)),
+        Kind::AppAdded
+        | Kind::ContactAdded
+        | Kind::CustomDnsSet
+        | Kind::LocationRegular
+        | Kind::BackupDownloaded
+        | Kind::BackupRestored => params
+            .and_then(|p| serde_json::from_str::<ChangeParams>(p).ok())
+            .map(|p| change_told(kind, &p, zone, now)),
         // An older row's words are stored (design 70 §4: one whose title is not empty).
         _ if !title.is_empty() => None,
         _ => params.and_then(|p| phone_event_told(form, kind, p, zone, now)),
@@ -4049,6 +4349,43 @@ mod tests {
                 "14:30",
                 "/devices/3/logins#logins-wifi",
             ),
+            // Privacy review 2026-11-17 M1/M2: a parent's change, told from its parameters, to where it was made.
+            (
+                app_added(3, "Anna", "Mamma", "com.example.game", "Minecraft", two),
+                "Mamma allowed Minecraft on Anna's phone",
+                "14:02",
+                "/devices/3/apps",
+            ),
+            (
+                contact_added(3, "Anna", "Mamma", 12, "Ola", two),
+                "Mamma added Ola to Anna's phone",
+                "14:02",
+                "/devices/3/calls#contact-12",
+            ),
+            (
+                custom_dns_set("Mamma", two),
+                "Mamma set a custom DNS server",
+                "14:02",
+                "/dns#server",
+            ),
+            (
+                location_regular(3, "Anna", "Mamma", two),
+                "Mamma set Location to Regularly on Anna's phone",
+                "14:02",
+                "/devices/3/location-settings#location-settings",
+            ),
+            (
+                backup_downloaded("Mamma", "backup-20261018-020000.zip", two),
+                "Mamma downloaded a backup",
+                "14:02",
+                "/backups#backups",
+            ),
+            (
+                backup_restored("Mamma", "backup-20261018-020000.zip", two, Push::Now),
+                "Mamma restored a backup",
+                "14:02",
+                "/backups#backups",
+            ),
         ];
         for (event, title, summary, target) in &rows {
             // Nothing is stored as words any more (design 70 §4): every kind is told from its
@@ -4989,6 +5326,28 @@ mod tests {
                 Push::Now,
             ),
             phone.wifi_signin_budget("2026-10-18", Push::Now),
+            // Privacy review 2026-11-17: the long names, and a restore whose asker isn't known.
+            app_added(
+                3,
+                &phone.name,
+                "Mamma",
+                "com.example.game",
+                "Minecraft: Bedrock Edition with a long name",
+                two,
+            ),
+            contact_added(
+                3,
+                &phone.name,
+                "Mamma",
+                12,
+                "Bestemor Østby på Hadeland",
+                two,
+            ),
+            custom_dns_set("Mamma", two),
+            location_regular(3, &phone.name, "Mamma", two),
+            backup_downloaded("Mamma", "backup-20261018-020000.zip", two),
+            backup_restored("Mamma", "backup-20261018-020000.zip", two, Push::No),
+            backup_restored("", "backup-20261018-020000.zip", two, Push::No),
         ];
         let kinds: std::collections::BTreeSet<&str> =
             events.iter().map(|e| e.kind.wire()).collect();
