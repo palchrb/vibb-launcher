@@ -3682,17 +3682,6 @@ async fn the_storytel_login_is_write_only_sealed_and_generational() {
     const PASSWORD: &str = "hemmelig-passord-123";
     const EMAIL: &str = "familien@example.org";
 
-    // Nothing stored: 404 whatever the switch.
-    let res = app
-        .request(
-            Method::GET,
-            "/api/devices/music/storytel",
-            Some(&token),
-            None,
-        )
-        .await;
-    assert_eq!(res.status, StatusCode::NOT_FOUND);
-
     let res = app
         .request_form(
             Method::POST,
@@ -3759,16 +3748,7 @@ async fn the_storytel_login_is_write_only_sealed_and_generational() {
     );
     assert_eq!(events(&app, "storytel_login_saved").await.len(), 1);
 
-    // The switch off: 404, generation 0. On: the login, never cached.
-    let res = app
-        .request(
-            Method::GET,
-            "/api/devices/music/storytel",
-            Some(&token),
-            None,
-        )
-        .await;
-    assert_eq!(res.status, StatusCode::NOT_FOUND);
+    // The switch off: generation 0. On: the generation; the login itself never leaves the server.
     assert_eq!(
         music_policy(&app, &token).await["storytel_generation"],
         json!(0)
@@ -3786,6 +3766,12 @@ async fn the_storytel_login_is_write_only_sealed_and_generational() {
         music_policy(&app, &token).await["storytel_generation"],
         json!(1)
     );
+    let policy = app
+        .request(Method::GET, "/api/devices/policy", Some(&token), None)
+        .await
+        .text();
+    assert!(!policy.contains(PASSWORD) && !policy.contains(EMAIL));
+    // The retired login route (design 58 step 3) is the fallback's empty 404, for good.
     let res = app
         .request(
             Method::GET,
@@ -3794,16 +3780,8 @@ async fn the_storytel_login_is_write_only_sealed_and_generational() {
             None,
         )
         .await;
-    assert_eq!(res.status, StatusCode::OK);
-    assert_eq!(res.headers.get(header::CACHE_CONTROL).unwrap(), "no-store");
-    assert_eq!(
-        res.json(),
-        json!({"generation": 1, "email": EMAIL, "password": PASSWORD})
-    );
-    assert_eq!(
-        events(&app, "storytel_login_sent").await,
-        vec![format!("phone {device}: generation 1")]
-    );
+    assert_eq!(res.status, StatusCode::NOT_FOUND);
+    assert!(res.text().is_empty());
 
     // Saved again: a new generation, the phones with the switch are nudged.
     app.request_form(
@@ -3848,29 +3826,20 @@ async fn the_storytel_login_is_write_only_sealed_and_generational() {
         .await
         .unwrap();
     assert_eq!(generation, 3);
-    let res = app
-        .request(
-            Method::GET,
-            "/api/devices/music/storytel",
-            Some(&token),
-            None,
-        )
-        .await;
-    assert_eq!(res.status, StatusCode::NOT_FOUND);
     assert_eq!(events(&app, "storytel_login_cleared").await.len(), 1);
 }
 
 #[tokio::test]
-async fn storytel_without_a_usable_key_is_a_503_and_the_form_says_so() {
+async fn storytel_without_a_usable_key_the_form_says_so() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
-    let (device, token) = app.enrolled_device("phone").await;
+    let (device, _) = app.enrolled_device("phone").await;
     sqlx::query("UPDATE device_policy SET music_storytel = 1 WHERE device_id = ?")
         .bind(device)
         .execute(&app.db)
         .await
         .unwrap();
-    // Sealed with another key (a restored database): 503, and the page asks to enter it again.
+    // Sealed with another key (a restored database): the page asks to enter it again.
     let other = crate::music_secret::MusicKey::from_bytes(&[1; 32]);
     let (ciphertext, nonce) = other.seal(br#"{"email":"a@b.c","password":"p"}"#);
     sqlx::query(
@@ -3883,15 +3852,6 @@ async fn storytel_without_a_usable_key_is_a_503_and_the_form_says_so() {
     .execute(&app.db)
     .await
     .unwrap();
-    let res = app
-        .request(
-            Method::GET,
-            "/api/devices/music/storytel",
-            Some(&token),
-            None,
-        )
-        .await;
-    assert_eq!(res.status, StatusCode::SERVICE_UNAVAILABLE);
     assert!(
         app.get_page("/music/settings", &cookie)
             .await
@@ -3899,17 +3859,9 @@ async fn storytel_without_a_usable_key_is_a_503_and_the_form_says_so() {
             .contains("Enter the login again")
     );
 
-    // No key at all: 503, the form is replaced by the explanation, saving is refused.
+    // No key at all: the form is replaced by the explanation, saving is refused.
     let mut state = app.state.clone();
     state.music_key = None;
-    let res = crate::handlers::music_api::storytel(
-        axum::extract::State(state.clone()),
-        axum::Extension(crate::security::AuthedDevice(crate::security::DeviceRef {
-            id: device,
-        })),
-    )
-    .await;
-    assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
     let page = super::read_response(crate::handlers::music::render_settings_plain(&state).await)
         .await
         .text();
@@ -4126,7 +4078,6 @@ async fn music_routes_refuse_without_a_session_and_write_nothing() {
         "/api/devices/music/library",
         "/api/devices/music/covers/abc",
         "/api/devices/music/files/1",
-        "/api/devices/music/storytel",
     ] {
         let res = app.request(Method::GET, uri, None, None).await;
         assert_eq!(res.status, StatusCode::UNAUTHORIZED, "{uri}");

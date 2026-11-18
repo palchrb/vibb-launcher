@@ -31,9 +31,9 @@ private const val LOG_TAG = "MusicBridge"
  * The bridge the music app binds (design 21 §2, 21b §5): a bound service, not a ContentProvider, so
  * the launcher's own update only disconnects the player instead of killing it. Exported behind the
  * launcher's signature permission `<applicationId>.permission.MUSIC_BRIDGE`, and every call checks
- * that the caller is the music app - its name and our signer ([MusicTrust.callerAllowed], S-L8). Files go out read-only; the Storytel login, a
- * Spotify access token (design 26c §6.1) and the server's Storytel session (design 58 §4) are fetched
- * on request and answered in memory only.
+ * that the caller is the music app - its name and our signer ([MusicTrust.callerAllowed], S-L8). Files go out read-only; a Spotify
+ * access token (design 26c §6.1) and the server's Storytel session (design 58 §4) are fetched on request and answered in
+ * memory only.
  */
 class MusicBridgeService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)

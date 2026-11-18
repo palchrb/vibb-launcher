@@ -67,8 +67,9 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - **Storytel** (`music_secret`): AES-256-GCM, random nonce, AAD `storytel-v1:<key fingerprint>`; the key from
   `MUSIC_SECRET_KEY` or the 0600 key file `data/keys/music-secret.key` (0700 directory, written through a temp file and
   a rename; `data/` is all the unit may write, and no backup copies `data/keys/`). Write-only in the PWA; `generation` +1 on save and
-  clear; policy generation 0 unless the phone's switch is on and a login is stored; the device route is `no-store`,
-  404 (switch off / none), 503 (no key, other key). Never in a page, log, status or event.
+  clear; policy generation 0 unless the phone's switch is on and a login is stored. The login never leaves the server: a
+  phone gets only the server's Storytel JWT (`POST /api/devices/music/storytel/token`, design 58); the old login route
+  went in design 58 step 3, and its path is the fallback's empty 404 for good. Never in a page, log, status or event.
 - **Catalog**: `newest_matching_release` honours `release_tag_prefix` (`release_allowed`: never `server-v*`; with a
   prefix only its tags; without one never `music-v*`), so the launcher row can't take `vibb-music.apk`. Editable on the
   app's page and the add form.

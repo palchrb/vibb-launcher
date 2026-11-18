@@ -8,8 +8,6 @@
 //! - `GET /api/devices/music/covers/{hash}`: a cover the library names.
 //! - `GET /api/devices/music/files/{id}`: an own file, through design 13's `ServeFile` (Range, strong
 //!   ETag, `If-Match` -> 412, 416) plus `X-Content-SHA256`. A file flagged missing is a 404.
-//! - `GET /api/devices/music/storytel`: the family's Storytel login, `no-store`; 404 while this
-//!   phone's switch is off or none is stored, 503 without a usable key.
 //! - `POST /api/devices/music/spotify/token`: an access token of the Spotify account this phone
 //!   plays as (design 26c §2.6), `no-store`, always a JSON `status`; at most 20 a rolling hour.
 //! - `POST /api/devices/music/storytel/token`: the server's Storytel session (design 58 §2.2),
@@ -221,77 +219,6 @@ pub async fn file(
         response.headers_mut().insert(CONTENT_SHA256_HEADER, value);
     }
     response
-}
-
-#[derive(serde::Serialize)]
-struct StorytelLogin {
-    generation: i64,
-    email: String,
-    password: String,
-}
-
-pub async fn storytel(
-    State(state): State<AppState>,
-    Extension(AuthedDevice(device)): Extension<AuthedDevice>,
-) -> Response {
-    let switch: Option<bool> =
-        match sqlx::query_scalar("SELECT music_storytel FROM device_policy WHERE device_id = ?")
-            .bind(device.id)
-            .fetch_optional(&state.db)
-            .await
-        {
-            Ok(switch) => switch,
-            Err(err) => return server_error(device.id, err, "storytel switch lookup failed"),
-        };
-    if switch != Some(true) {
-        return StatusCode::NOT_FOUND.into_response();
-    }
-    type Row = (Option<Vec<u8>>, Option<Vec<u8>>, Option<String>, i64);
-    let row: Row = match sqlx::query_as(
-        "SELECT ciphertext, nonce, key_fingerprint, generation FROM music_storytel WHERE id = 1",
-    )
-    .fetch_one(&state.db)
-    .await
-    {
-        Ok(row) => row,
-        Err(err) => return server_error(device.id, err, "storytel login lookup failed"),
-    };
-    let (Some(ciphertext), Some(nonce), Some(fingerprint), generation) = row else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    let Some(key) = state.music_key.as_ref() else {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
-    };
-    let Some(login) = key
-        .open(&ciphertext, &nonce, &fingerprint)
-        .and_then(|plain| serde_json::from_slice::<crate::storytel::StoredLogin>(&plain).ok())
-    else {
-        // Sealed with another key (a restored database, a new key file): re-enter it in the PWA.
-        tracing::warn!(
-            device_id = device.id,
-            "the stored Storytel login can't be opened with this server's key"
-        );
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
-    };
-    crate::security::record_phone_event_logged(
-        &state.db,
-        device.id,
-        crate::security::PhoneLine::StorytelLoginSent,
-        crate::security::Detail::words(
-            "security.detail.storytel_sent",
-            &[("generation", &generation.to_string())],
-        ),
-    )
-    .await;
-    (
-        [(header::CACHE_CONTROL, "no-store")],
-        axum::Json(StorytelLogin {
-            generation,
-            email: login.email,
-            password: login.password,
-        }),
-    )
-        .into_response()
 }
 
 /// One answer of the token route (design 26c §2.6): always JSON with its `status`, `no-store`.
