@@ -35,12 +35,6 @@ pub fn abroad_choice(stored: &str) -> &'static str {
     }
 }
 
-/// Design 97 §3.1: the policy's `data_roaming` for a launcher from before design 97, derived from the choice so it
-/// never gets more data abroad than chosen - Bare Vibb is `off` there (no data abroad until it is updated).
-pub fn derived_roaming(abroad: &str) -> &'static str {
-    if abroad == "home" { "phone" } else { "off" }
-}
-
 /// The stored "Mobildata for apper" as served: `vibb` or `on`.
 pub fn apps_choice(stored: &str) -> &'static str {
     if stored == "vibb" { "vibb" } else { "on" }
@@ -413,7 +407,7 @@ pub struct Card {
     /// The parent shows the kid's own Mobildata switch (`quick_controls_mask` bit 32).
     pub kid_shown: bool,
     /// The latest report claims each capability; the groups' controls wait for it. The "I utlandet" radios need only
-    /// `data_roaming_v1` (the derived value works there, design 97 §3.2); the kid's switch needs `mobile_network_v2`.
+    /// `data_roaming_v1`; the kid's switch needs `mobile_network_v2`.
     pub mobile_capable: bool,
     pub roaming_capable: bool,
     pub network_capable: bool,

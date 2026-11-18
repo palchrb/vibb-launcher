@@ -1,5 +1,6 @@
 package com.kidslauncher.mdm.server
 
+import com.kidslauncher.mdm.server.dto.PolicyResponse
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -21,8 +22,8 @@ const val MOBILE_DATA_CAPABILITY = "mobile_data_v1"
  * the kid's Mobildata row shows with `quick_controls_mask` bit 32. */
 const val MOBILE_NETWORK_CAPABILITY = "mobile_network_v2"
 
-/** Design 97 §3.1: "I utlandet" as this launcher enforces it. [LEGACY] is an older server's `"phone"`: revision 3's rule,
- * no lock and no abroad sink. */
+/** Design 97 §3.1: "I utlandet" as this launcher enforces it. [NONE] is no policy yet (a Device Owner before its first
+ * policy): no lock and no abroad sink. */
 enum class AbroadChoice(val wire: String) {
     /** Ingen data: Android's roaming locked off, and the abroad sink for what the lock can't cover. */
     OFF("off"),
@@ -32,18 +33,15 @@ enum class AbroadChoice(val wire: String) {
 
     /** Som hjemme: mobile data abroad as at home. */
     HOME("home"),
-    LEGACY("legacy"),
+    NONE("none"),
 }
 
-/** Design 97 §3.1, failing closed: the policy's `abroad` when this build knows it, `OFF` for any other value; with no
- * `abroad` (an older server) revision 3's `data_roaming` - `"phone"` or nothing is [AbroadChoice.LEGACY], anything else
- * `OFF`. */
-fun abroadChoice(abroad: String?, dataRoaming: String?): AbroadChoice = when (abroad) {
-    "off" -> AbroadChoice.OFF
+/** Design 97 §3.1, failing closed: the policy's `abroad` when this build knows it, `OFF` for a missing or any other
+ * value; [AbroadChoice.NONE] only with no policy at all. */
+fun abroadChoice(policy: PolicyResponse?): AbroadChoice = when (policy?.abroad) {
     "vibb" -> AbroadChoice.VIBB
     "home" -> AbroadChoice.HOME
-    null -> if (dataRoaming == null || dataRoaming == "phone") AbroadChoice.LEGACY else AbroadChoice.OFF
-    else -> AbroadChoice.OFF
+    else -> if (policy == null) AbroadChoice.NONE else AbroadChoice.OFF
 }
 
 /** Design 97 §4.2: `DISALLOW_DATA_ROAMING` under Ingen data, lifted by the pause, "Åpne for oppsett" and the offline

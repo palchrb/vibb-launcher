@@ -303,9 +303,9 @@ rewrites them); the launcher's `LockNowTest` decodes them and runs every case th
 The round "Mobilnett" (design 94, data roaming; design 95 revision 3, Bare Vibb and the mobile-network settings lock;
 design 97, "I utlandet", `where` and the kid's switch) is
 `server/testdata/mobile_network.json`, byte-identical in `launcher/app/src/test/resources/`: `capabilities`
-(`data_roaming_v1`, `mobile_data_v1`, `mobile_network_v2`), `policy` (the top-level `abroad`, the `data_roaming` derived
-from it, `apps_mobile` and `mobile_settings_locked` for a new phone and after each save), `abroad_choice` (the launcher's
-reading of `abroad` and an older server's `data_roaming`), the rule rows `roaming_locked` and `settings_locked`
+(`data_roaming_v1`, `mobile_data_v1`, `mobile_network_v2`), `policy` (the top-level `abroad`,
+`apps_mobile` and `mobile_settings_locked` for a new phone and after each save), `abroad_choice` (the launcher's
+reading of `abroad`, a missing one Ingen data, no policy `none`), the rule rows `roaming_locked` and `settings_locked`
 (each with the pause's lift), `where` (the launcher's home/abroad/unknown from telephony), `shapes` (the VPN's shape,
 the sink's reason and lockdown from the filter switch, the choices, the kid's switch, a lift, the network and a held
 sink with no network - the launcher's alone), `kid_row` (the kid's Mobildata row), `report` (the exact `data_roaming`
@@ -314,7 +314,7 @@ and `mobile_data` of a status report) and `clean`/`clean_mobile` (the server's f
 `policy` row, posts `report` and checks what is stored, runs the cleaning rows; the launcher's `MobileNetworkTest`
 decodes the policy rows, runs every rule, `where`, shape and kid-row row through `abroadChoice`, `roamingLocked`,
 `mobileSettingsLocked`, `whereOf`, `parentSinkOn`, `applyShape`, `sinkReason`, `reportedSink`, `alwaysOnFor` and
-`kidMobileRow`, and encodes `report` exactly; both compare the copies. The policy's four keys are pinned by `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTest`.
+`kidMobileRow`, and encodes `report` exactly; both compare the copies. The policy's three keys are pinned by `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTest`.
 
 The heartbeat report (design 95 §3.5, step 95-T2) is `server/testdata/status_heartbeat.json`, byte-identical in
 `launcher/app/src/test/resources/`: `capability` (`status_heartbeat_v1`), `policy` (the top-level `status_heartbeat`,

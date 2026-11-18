@@ -52,8 +52,8 @@ Together: an app store install of something not on the allowlist would still nee
 Three restrictions of ours, all under the standing rule (the offline override, the pause and "Åpne for oppsett" lift
 them), all whether or not the phone is managed in hardening's sense (the parent's explicit choice per phone):
 
-- `DISALLOW_DATA_ROAMING` while the policy's `data_roaming` is `"off"` (the server's default) or a value this build
-  doesn't know (fail closed); `"phone"` and an older server's missing key clear it. Clearing never turns roaming on
+- `DISALLOW_DATA_ROAMING` while the policy's `abroad` is `"off"` (Ingen data), missing or a value this build doesn't know
+  (fail closed, `abroadChoice`); `"vibb"`, `"home"` and no policy at all clear it. Clearing never turns roaming on
   (Android writes nothing on a clear). While locked, `MobileNetworkRuntime.applyDataRoaming` relocks a SIM that still
   reads roaming on (an absent per-SIM key on a dual-SIM phone): clear, wait for `USER_RESTRICTIONS_CHANGED` (5 s at
   most), set again - at most once per subscription per process (design 94 §2.4.2).

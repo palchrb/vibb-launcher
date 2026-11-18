@@ -378,7 +378,7 @@ object AppEnforcer {
         // and the pause. Only true-by-default (filtering on) with no policy yet, as before. Design 97: "I utlandet"'s
         // abroad sink (lifted too) and the kid's own Off (no lift, D4).
         val vpnFilterEnabled = if (overrideActive) false else (policy?.vpnFilterEnabled ?: true)
-        val abroad = abroadChoice(policy?.abroad, policy?.dataRoaming)
+        val abroad = abroadChoice(policy)
         val vpnInputs = VpnInputs(
             filterOn = vpnFilterEnabled,
             parentSink = parentSinkOn(policy?.appsMobile, overrideActive),

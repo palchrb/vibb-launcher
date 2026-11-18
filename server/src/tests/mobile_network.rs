@@ -78,13 +78,11 @@ async fn the_contract() {
         NETWORK_CAPABILITY
     );
 
-    // A new phone: the defaults are the first row (design 97 D1: Bare Vibb abroad, so the derived roaming is off and
-    // locked; apps on, the settings locked).
+    // A new phone: the defaults are the first row (design 97 D1: Bare Vibb abroad; apps on, the settings locked).
     let rows = contract["policy"].as_array().unwrap();
     let pick = |p: &Value| {
         json!({
             "abroad": p["abroad"],
-            "data_roaming": p["data_roaming"],
             "apps_mobile": p["apps_mobile"],
             "mobile_settings_locked": p["mobile_settings_locked"],
         })
@@ -152,7 +150,6 @@ async fn a_bad_save_writes_nothing() {
     }
     let served = policy(&app, &token).await;
     assert_eq!(served["abroad"], "vibb");
-    assert_eq!(served["data_roaming"], "off");
     assert_eq!(served["apps_mobile"], "on");
     let res = save(&app, &cookie, id + 99, &[("group", "mobile-lock")]).await;
     assert_eq!(res.status, StatusCode::NOT_FOUND);

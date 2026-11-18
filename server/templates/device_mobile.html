@@ -62,7 +62,7 @@
         {% for line in card.abroad_lines %}{% if line.warn %}
         <div class="attention attention-action" data-mobile-line="{{ line.key }}"><span class="attention-text">{{ line.title }}{% if let Some(sub) = line.sub %}<span class="attention-sub">{{ sub }}</span>{% endif %}</span></div>
         {% endif %}{% endfor %}
-        {#- Design 97 §3.2: the radios need only data_roaming_v1 (the derived value works there); Bare Vibb on a phone
+        {#- Design 97 §3.2: the radios need only data_roaming_v1; Bare Vibb on a phone
             without mobile_network_v2 says it has no data abroad until Vibb One is updated. No "anbefalt" mark (D1). -#}
         <form method="post" action="/devices/{{ device.id }}/mobile#abroad" class="group" role="radiogroup" aria-labelledby="abroad-title">
             <input type="hidden" name="group" value="abroad">
