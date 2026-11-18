@@ -126,10 +126,7 @@ pub struct DevicePolicy {
     /// Design 95 rev. 3 item 3 (migration 0143): `DISALLOW_CONFIG_MOBILE_NETWORKS` on the phone, on by default.
     #[sqlx(default)]
     pub mobile_settings_locked: bool,
-    /// Design 98 §6.2 (migration 0146): the Oppsett card's "Ikke nå" - the needed steps as they were then
-    /// (`airplane_mode::setup_key`); the card shows again once they change. `None` = never hidden.
-    #[sqlx(default)]
-    pub setup_card_hidden: Option<String>,
+    // `setup_card_hidden` (migration 0146, design 98's "Ikke nå") is a dead column since design 114 (§5.3).
     /// Design 102 (migration 0150): Wi-Fi sign-in on the phone (Part A, D1: on by default). Read through
     /// `logins::portal_policy`; a missing row reads as on (`load_policy`).
     #[sqlx(default)]
@@ -536,10 +533,8 @@ pub struct DeviceStatus {
     /// How many blocks there are in all; the list holds at most `window_relock::BLOCKS_MAX` (QA
     /// of cmd-expiry, Low 2, migration 0068).
     pub relock_blocks_total: Option<i64>,
-    /// The phone's clock format is the policy's (design 34 P12, migrations/0075): `false` = it
-    /// should be but can't be (no "Modify system settings" access, or the write was refused).
-    /// `None` = "Same as the phone".
-    pub clock_format_applied: Option<bool>,
+    // `clock_format_applied` (design 34 P12, migrations/0075) is stored but no page reads it since design 114: a clock
+    // format in use needs "Modify system settings", the setup step `write_settings`.
     // dns_upstream_json (migrations/0079, design 36 §4.2) is read directly by
     // handlers::dns_filter::phone_lines.
     /// The battery's level and whether it charged (design 35 §2.5, migrations/0078). `None`

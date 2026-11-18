@@ -43,9 +43,13 @@ pub enum Kind {
     GoogleBackup,
     NoParentPin,
     EasyParentPin,
+    /// Design 114 §5.2 (QA M4): the phone says Vibb One isn't its device owner (`setup.device_owner` false).
+    NotDeviceOwner,
     PolicyProblem,
     UnseenRestarts,
     ChildLockOff,
+    /// Design 114 §5.2: the required setup steps left on the phone (`setup_status`'s N), one row for all of them.
+    Setup(usize),
     /// Design 59 §2.3: Android's lock on the phone opens with a PIN that isn't the Child PIN.
     ChildPinChanged,
     /// How many apps the phone keeps hidden.
@@ -55,13 +59,6 @@ pub enum Kind {
     NotHomeApp,
     /// The boot cover was armed but not shown: another home screen came up at boot.
     BootCoverNotShown,
-    NoNotificationAccess,
-    /// Design 107 §5.3: Meldinger or Tapte anrop turned off on the phone while Vibb runs it, or every Vibb One
-    /// notification off while SMS or calls are managed ([Facts::notifications_off] holds which).
-    NotificationsOff,
-    /// Design 113 (the user's call): Android's own mobile-data switch is off on the phone - not even Vibb has mobile
-    /// data. Temporary (QA L2): design 114 folds it into its setup row and removes the kind.
-    MobileDataOff,
     /// Design 108c: app push problems, from `unified_push::health::attention` (the server's own data): pushes waiting
     /// on the server, an app's pushes refused past the heal (apps), an app's pushes still going outside (apps).
     AppPushWaiting,
@@ -132,17 +129,16 @@ impl AttentionItem {
             Kind::GoogleBackup => "google-backup",
             Kind::NoParentPin => "no-parent-pin",
             Kind::EasyParentPin => "easy-parent-pin",
+            Kind::NotDeviceOwner => "not-device-owner",
             Kind::PolicyProblem => "policy-problem",
             Kind::UnseenRestarts => "unseen-restarts",
             Kind::ChildLockOff => "child-lock-off",
+            Kind::Setup(_) => "setup",
             Kind::ChildPinChanged => "child-pin-changed",
             Kind::BlockedApps(_) => "blocked-apps",
             Kind::RestartOnce => "restart-once",
             Kind::NotHomeApp => "not-home-app",
             Kind::BootCoverNotShown => "boot-cover-not-shown",
-            Kind::NoNotificationAccess => "notification-access",
-            Kind::NotificationsOff => "notifications-off",
-            Kind::MobileDataOff => "mobile-data-off",
             Kind::AppPushWaiting => "app-push-waiting",
             Kind::AppPushRefused(_) => "app-push-refused",
             Kind::AppPushOutside(_) => "app-push-outside",
@@ -185,11 +181,12 @@ pub struct Facts {
     /// openable Play Store are the parent's choices: no row (2026-11-18).
     pub not_home_app: bool,
     pub boot_cover_not_shown: bool,
-    pub no_notification_access: bool,
-    /// Design 107: the notification channels' row, if it is raised (`notification_channels::attention`).
-    pub notifications_off: Option<crate::notification_channels::Attention>,
-    /// Design 113: the report's `mobile_data.enabled` is `false`; unknown is `false`.
-    pub mobile_data_off: bool,
+    /// Design 114 §5.2: the setup hold - the pause's row says "Setting up" and leads to Device › Oppsett.
+    pub setup_hold: bool,
+    /// Design 114 §5.2: the report's `setup.device_owner` is `false`.
+    pub not_device_owner: bool,
+    /// Design 114 §2.3: N while the summary's setup row is raised (`setup_status::setup_row`), outside the hold; else 0.
+    pub setup_left: usize,
     /// Design 108c: the app push rows (`unified_push::health::attention`).
     pub app_push: crate::unified_push::health::AppPushAttention,
     /// From the call report, in its order (`Waiting` left out by [items]).
@@ -219,9 +216,11 @@ pub fn items(lang: Lang, device_id: i64, facts: &Facts) -> Vec<AttentionItem> {
     add(facts.google_backup, Kind::GoogleBackup);
     add(facts.no_parent_pin, Kind::NoParentPin);
     add(facts.easy_parent_pin, Kind::EasyParentPin);
+    add(facts.not_device_owner, Kind::NotDeviceOwner);
     add(facts.policy_problem, Kind::PolicyProblem);
     add(facts.unseen_restarts, Kind::UnseenRestarts);
     add(facts.child_lock_off, Kind::ChildLockOff);
+    add(facts.setup_left > 0, Kind::Setup(facts.setup_left));
     add(facts.child_pin_changed, Kind::ChildPinChanged);
     add(
         facts.blocked_apps > 0,
@@ -230,9 +229,6 @@ pub fn items(lang: Lang, device_id: i64, facts: &Facts) -> Vec<AttentionItem> {
     add(facts.restart_once, Kind::RestartOnce);
     add(facts.not_home_app, Kind::NotHomeApp);
     add(facts.boot_cover_not_shown, Kind::BootCoverNotShown);
-    add(facts.no_notification_access, Kind::NoNotificationAccess);
-    add(facts.notifications_off.is_some(), Kind::NotificationsOff);
-    add(facts.mobile_data_off, Kind::MobileDataOff);
     add(facts.app_push.waiting_since.is_some(), Kind::AppPushWaiting);
     add(
         !facts.app_push.refused.is_empty(),
@@ -263,13 +259,18 @@ pub fn items(lang: Lang, device_id: i64, facts: &Facts) -> Vec<AttentionItem> {
         .map(|kind| AttentionItem {
             kind,
             level: level(kind),
-            title: match (kind, &facts.notifications_off) {
-                (Kind::NotificationsOff, Some(off)) => {
-                    crate::notification_channels::attention_title(lang, off)
+            title: match kind {
+                Kind::RestrictionsPaused if facts.setup_hold => {
+                    t(lang, "device.attention.setup_hold").to_string()
                 }
                 _ => title(lang, kind),
             },
-            target: target(kind, device_id),
+            target: match kind {
+                Kind::RestrictionsPaused if facts.setup_hold => {
+                    format!("/devices/{device_id}/setup#open")
+                }
+                _ => target(kind, device_id),
+            },
             at_last_report: facts.report_stale && kind.read_from_report(),
         })
         .collect()
@@ -283,17 +284,16 @@ fn level(kind: Kind) -> Level {
         | Kind::GoogleBackup
         | Kind::NoParentPin
         | Kind::EasyParentPin
+        | Kind::NotDeviceOwner
         | Kind::PolicyProblem
         | Kind::UnseenRestarts
         | Kind::ChildLockOff => Level::Alarm,
         Kind::BlockedApps(_)
+        | Kind::Setup(_)
         | Kind::ChildPinChanged
         | Kind::RestartOnce
         | Kind::NotHomeApp
         | Kind::BootCoverNotShown
-        | Kind::NoNotificationAccess
-        | Kind::NotificationsOff
-        | Kind::MobileDataOff
         | Kind::AppPushWaiting
         | Kind::AppPushRefused(_)
         | Kind::AppPushOutside(_)
@@ -319,9 +319,13 @@ fn title(lang: Lang, kind: Kind) -> String {
         Kind::GoogleBackup => t(lang, "device.attention.google_backup"),
         Kind::NoParentPin => t(lang, "device.attention.no_parent_pin"),
         Kind::EasyParentPin => t(lang, "device.attention.easy_parent_pin"),
+        Kind::NotDeviceOwner => t(lang, "device.attention.not_device_owner"),
         Kind::PolicyProblem => t(lang, "device.attention.policy_problem"),
         Kind::UnseenRestarts => t(lang, "device.attention.unseen_restarts"),
         Kind::ChildLockOff => t(lang, "device.attention.child_lock_off"),
+        Kind::Setup(n) => {
+            return t_count(lang, "setup.summary", count(n), &[]);
+        }
         Kind::ChildPinChanged => t(lang, "device.attention.child_pin_changed"),
         Kind::BlockedApps(n) => {
             return t_count(lang, "device.attention.blocked_apps", count(n), &[]);
@@ -329,10 +333,6 @@ fn title(lang: Lang, kind: Kind) -> String {
         Kind::RestartOnce => t(lang, "device.attention.restart_once"),
         Kind::NotHomeApp => t(lang, "device.attention.not_home_app"),
         Kind::BootCoverNotShown => t(lang, "device.attention.boot_cover_not_shown"),
-        Kind::NoNotificationAccess => t(lang, "device.attention.notification_access"),
-        // Worded from its facts in [items] (the names); this is its all-off form.
-        Kind::NotificationsOff => t(lang, "device.attention.notifications_all_off"),
-        Kind::MobileDataOff => t(lang, "device.attention.mobile_data_off"),
         Kind::AppPushWaiting => t(lang, "device.attention.app_push_waiting"),
         Kind::AppPushRefused(n) => {
             return t_count(lang, "device.attention.app_push_refused", count(n), &[]);
@@ -368,7 +368,7 @@ fn target(kind: Kind, id: i64) -> String {
         Kind::RestrictionsPaused => ("", "quick"),
         Kind::ForeignAccess => ("", "foreign-access"),
         Kind::BlockedApps(_) => ("", "blocked-apps"),
-        Kind::DoNotDisturb | Kind::NotificationsOff => ("/about", "sound"),
+        Kind::DoNotDisturb => ("/about", "sound"),
         Kind::PolicyProblem => ("/about", "software"),
         Kind::UnseenRestarts => ("/about", "diagnostics"),
         Kind::GoogleBackup => ("/advanced", "restrictions"),
@@ -376,8 +376,10 @@ fn target(kind: Kind, id: i64) -> String {
         Kind::NotHomeApp | Kind::BootCoverNotShown => ("/advanced", "updates"),
         Kind::NoParentPin | Kind::EasyParentPin => ("/lock", "parent-pin"),
         Kind::ChildLockOff | Kind::ChildPinChanged => ("/lock", "child-pin"),
-        Kind::NoNotificationAccess => ("/home", "layout"),
-        Kind::MobileDataOff => ("/mobile", "mobile-data"),
+        Kind::NotDeviceOwner => ("/setup", "step-device_owner"),
+        Kind::Setup(_) => {
+            return format!("/devices/{id}/setup");
+        }
         Kind::AppPushWaiting | Kind::AppPushRefused(_) | Kind::AppPushOutside(_) => {
             ("/apps", "app-push")
         }
@@ -608,6 +610,8 @@ pub fn facts_of(s: &Sources, now_ms: i64) -> Facts {
     let escapes =
         crate::handlers::device_pages::escapes_card(policy, latest, now_ms, s.last_phone_on_ms)
             .notes;
+    let (setup_missing, setup_readings) = crate::setup_status::state_of(policy, latest, &[]);
+    let setup_row = crate::setup_status::setup_row(&setup_missing, &setup_readings);
     Facts {
         not_set_up: false,
         report_stale: matches!(
@@ -653,22 +657,18 @@ pub fn facts_of(s: &Sources, now_ms: i64) -> Facts {
         boot_cover_not_shown: escapes
             .iter()
             .any(|n| matches!(n, EscapeNote::BootCoverNotShown { .. })),
-        // Home Screen's own warning, so the row and the page agree.
-        // (Only whether it shows: its words are the page's.)
-        no_notification_access: crate::handlers::device_pages::notification_access_note(
-            crate::i18n::Lang::default(),
-            latest,
-        )
-        .is_some(),
-        // About › Sound's own reading, so the row and the page agree.
-        notifications_off: latest
-            .and_then(crate::notification_channels::report)
-            .and_then(|report| crate::notification_channels::attention(policy, &report)),
-        // Mobilnett's own reading (its orange "data-off" line), so the row and the page agree. The kid's own switch
-        // (`kid == "off"`, Android's still on) never raises it.
-        mobile_data_off: latest
-            .and_then(crate::mobile_network::mobile_report)
-            .is_some_and(|m| m.enabled == Some(false)),
+        // Design 114: the one setup rule, as Device › Oppsett reads it. Ticks don't count here (no required step is
+        // ticked), so no read of them. Held back in the setup hold (§5.2) and for a phone that isn't device owner
+        // (QA M4: its own row stands alone).
+        setup_hold: latest.is_some_and(|st| crate::setup_status::in_hold(st, now_ms)),
+        not_device_owner: setup_readings.get("device_owner").copied().flatten() == Some(false),
+        setup_left: if setup_row
+            && !latest.is_some_and(|st| crate::setup_status::in_hold(st, now_ms))
+        {
+            crate::setup_status::count(&setup_missing)
+        } else {
+            0
+        },
         app_push: s.app_push.clone(),
         calls: s.call_problems.to_vec(),
         // Device › Time reads the same typed report.
@@ -716,13 +716,8 @@ mod tests {
             restart_once: true,
             not_home_app: true,
             boot_cover_not_shown: true,
-            no_notification_access: true,
-            notifications_off: Some(crate::notification_channels::Attention {
-                all_off: false,
-                keys: vec!["messages", "missed_calls"],
-                names: None,
-            }),
-            mobile_data_off: true,
+            not_device_owner: true,
+            setup_left: 3,
             app_push: crate::unified_push::health::AppPushAttention {
                 waiting_since: Some(chrono::Utc::now()),
                 refused: vec![("a.b".to_string(), "2026-11-17 10:00:00".to_string())],
@@ -811,17 +806,16 @@ mod tests {
                 "Backup to Google is on",
                 "No Parent PIN set",
                 "Parent PIN easy to guess",
+                "Vibb One doesn't manage the phone",
                 "Phone can't apply its settings",
                 "Phone started without Vibb One",
                 "Lock is off on the phone",
+                "Setup: 3 steps left",
                 "Phone's PIN isn't the Child PIN",
                 "2 blocked apps wait",
                 "Restart the phone once",
                 "Vibb One isn't the Home app",
                 "Boot cover wasn't shown",
-                "Notification access off",
-                "Notifications off: Messages, Missed calls",
-                "Mobile data is off on the phone",
                 "App notifications aren't reaching the phone",
                 "1 app's notifications are refused",
                 "2 apps' notifications go via an outside service",
@@ -848,7 +842,7 @@ mod tests {
         assert_eq!(rows[first_action].level_css(), "action");
         // Each kind has its own key; the calls rows share "calls" (several can show at once).
         let mut with_calls = everything();
-        with_calls.calls.push(CallProblem::NoRedirection);
+        with_calls.calls.push(CallProblem::FailClosed);
         let rows = items(Lang::En, 3, &with_calls);
         let keys: std::collections::HashSet<&str> = rows.iter().map(AttentionItem::key).collect();
         assert_eq!(keys.len(), rows.len() - 1);
@@ -862,6 +856,7 @@ mod tests {
             .map(|r| r.kind)
             .collect();
         kinds.push(Kind::BlockedApps(1));
+        kinds.push(Kind::Setup(1));
         kinds.push(Kind::MusicFailing(1));
         kinds.push(Kind::AppPushRefused(1));
         kinds.push(Kind::AppPushOutside(1));
@@ -879,6 +874,8 @@ mod tests {
             }
         }
         assert_eq!(title(Lang::En, Kind::BlockedApps(1)), "1 blocked app waits");
+        assert_eq!(title(Lang::En, Kind::Setup(1)), "Setup: 1 step left");
+        assert_eq!(title(Lang::Nb, Kind::Setup(4)), "Oppsett: 4 steg igjen");
         assert_eq!(
             title(Lang::En, Kind::MusicFailing(1)),
             "1 music entry fails on the phone"
@@ -925,12 +922,12 @@ mod tests {
             "/devices/7/advanced#updates"
         );
         assert_eq!(target("child-lock-off"), "/devices/7/lock#child-pin");
-        // Step 5: Home Screen.
-        assert_eq!(target("notification-access"), "/devices/7/home#layout");
-        // Design 107: About This Phone's Sound group, where the row is.
-        assert_eq!(target("notifications-off"), "/devices/7/about#sound");
-        // Design 113: Mobilnett's Mobildata group, where the orange line is.
-        assert_eq!(target("mobile-data-off"), "/devices/7/mobile#mobile-data");
+        // Design 114: Device › Oppsett.
+        assert_eq!(target("setup"), "/devices/7/setup");
+        assert_eq!(
+            target("not-device-owner"),
+            "/devices/7/setup#step-device_owner"
+        );
         // Design 108c: Device › Apps' App push group.
         for key in ["app-push-waiting", "app-push-refused", "app-push-outside"] {
             assert_eq!(target(key), "/devices/7/apps#app-push");
@@ -947,5 +944,27 @@ mod tests {
         );
         assert_eq!(target("music-over-limit"), "/devices/7/music#storage-title");
         assert_eq!(target("music-entries"), "/devices/7/music#library");
+    }
+
+    #[test]
+    fn the_setup_hold_is_the_pauses_row_with_its_own_words() {
+        let held = Facts {
+            restrictions_paused: true,
+            setup_hold: true,
+            ..Default::default()
+        };
+        let rows = items(Lang::Nb, 7, &held);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].key(), "restrictions-paused");
+        assert_eq!(rows[0].level, Level::Alarm);
+        assert_eq!(rows[0].title, "I oppsett, uten begrensninger");
+        assert_eq!(rows[0].target, "/devices/7/setup#open");
+        let paused = Facts {
+            restrictions_paused: true,
+            ..Default::default()
+        };
+        let rows = items(Lang::En, 7, &paused);
+        assert_eq!(rows[0].title, "Restrictions paused");
+        assert_eq!(rows[0].target, "/devices/7#quick");
     }
 }

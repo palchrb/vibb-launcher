@@ -61,8 +61,6 @@ const NOT_SAVES: &[&str] = &[
     "/notifications/read-all",
     // Hides a session banner, like a read mark (code QA L1).
     "/account/dismiss-warning",
-    // Design 98: the Oppsett card's "Ikke nå" hides a card, like a read mark.
-    "/devices/{id}/setup-card/hide",
     "/notifications/subscriptions/{id}/test",
     "/backups/create",
     "/backups/upload",

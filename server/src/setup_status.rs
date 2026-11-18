@@ -417,7 +417,7 @@ pub const FEATURES: &[Feature] = &[
     Feature {
         key: "glance",
         page: "lock",
-        anchor: "lock-screen",
+        anchor: "notifications",
     },
     Feature {
         key: "music_card",
@@ -525,7 +525,8 @@ pub fn count(missing: &[&Step]) -> usize {
         .count()
 }
 
-/// An `own_row` alarm step is missing.
+/// An `own_row` alarm step is missing (the contract's `alarm`; the pages raise each alarm step's own row).
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn alarm(missing: &[&Step]) -> bool {
     missing
         .iter()
@@ -593,10 +594,23 @@ pub fn hold_until(cleaned: Option<&str>, arrived_ms: i64) -> Option<i64> {
     }
 }
 
-/// The phone holds a setup hold at `now_ms` by its latest report: paused, with the hold's end stored and ahead
-/// (`DeviceStatus::paused_at` keeps it open up to that end).
+/// The setup hold's end at `now_ms` by the latest report, while it holds (`DeviceStatus::paused_at` keeps a held
+/// report open up to it): the stored end, cut by the ceiling from the report. `None` outside the hold.
+pub fn hold_end(latest: &DeviceStatus, now_ms: i64) -> Option<i64> {
+    let until = latest.setup_hold_until_ms?;
+    if !latest.paused_at(now_ms) {
+        return None;
+    }
+    let ceiling = crate::display_time::parse_db_utc(&latest.reported_at).map(|at| {
+        at.timestamp_millis()
+            .saturating_add(crate::models::SETUP_HOLD_MAX_MS)
+    });
+    Some(ceiling.map_or(until, |ceiling| until.min(ceiling)))
+}
+
+/// The phone is in the setup hold at `now_ms` by its latest report.
 pub fn in_hold(latest: &DeviceStatus, now_ms: i64) -> bool {
-    latest.setup_hold_until_ms.is_some() && latest.paused_at(now_ms)
+    hold_end(latest, now_ms).is_some()
 }
 
 /// The need rule's inputs from the stored policy and the latest report's installed apps (§2.3).
@@ -797,6 +811,273 @@ pub async fn tick(
         let _ = state.command_notify.send(device.id);
     }
     StatusCode::NO_CONTENT.into_response()
+}
+
+// --- The PWA: Device › Oppsett (§5.1), the summary's row (§5.2) and the warning lines (§5.4) ---
+
+/// One step's row on Device › Oppsett.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Row {
+    pub key: &'static str,
+    pub name: String,
+    /// A short value where the state has a detail: Vibb One's channels that are off, the moved roles.
+    pub value: Option<String>,
+    /// The ⓘ: why first where the step had one (`setup.why.<key>`), then what to do on Android's page.
+    pub why: Option<String>,
+    pub how: String,
+    /// `parent_pin` links to Lock Screen & PINs, `device_owner` to Connect.
+    pub link: Option<String>,
+    /// Red (an `own_row` alarm step).
+    pub alarm: bool,
+    /// A `parent` step: a switch that saves by itself.
+    pub tickable: bool,
+    /// Ticked (the switch on).
+    pub ticked: bool,
+}
+
+/// What the page reads, besides the policy and the latest report.
+pub struct PageInput<'a> {
+    pub lang: crate::i18n::Lang,
+    pub device_id: i64,
+    pub policy: &'a DevicePolicy,
+    pub latest: Option<&'a DeviceStatus>,
+    pub ticked: &'a [String],
+}
+
+/// Device › Oppsett's groups (§5.1), top to bottom.
+pub struct Page {
+    /// Missing required `phone` and `server` steps, in table order ("På telefonen").
+    pub phone: Vec<Row>,
+    /// Missing required `parent` steps ("Sjekk selv"): empty while every parent step is optional.
+    pub check: Vec<Row>,
+    /// Missing optional steps, quiet ("Valgfritt").
+    pub optional: Vec<Row>,
+    /// Ticked steps ("Avkrysset (n)"), each can be unticked.
+    pub ticked: Vec<Row>,
+    /// Something the phone can do is missing: the open group offers "Åpne for oppsett".
+    pub openable: bool,
+    /// No report yet: "Venter på telefonen".
+    pub no_report: bool,
+}
+
+impl Page {
+    /// How many steps are ticked, for "Avkrysset (n)".
+    pub fn ticked_count(&self) -> i64 {
+        i64::try_from(self.ticked.len()).unwrap_or(i64::MAX)
+    }
+
+    /// Nothing missing: "Alt er gjort".
+    pub fn all_done(&self) -> bool {
+        self.phone.is_empty()
+            && self.check.is_empty()
+            && self.optional.is_empty()
+            && !self.no_report
+    }
+}
+
+/// The steps missing on this phone now, and the readings they came from.
+pub fn state_of(
+    policy: &DevicePolicy,
+    latest: Option<&DeviceStatus>,
+    ticked: &[String],
+) -> (Vec<&'static Step>, Readings) {
+    let readings = readings_of(policy, latest);
+    let missing = missing(&inputs_of(policy, latest), &readings, ticked);
+    (missing, readings)
+}
+
+/// A step's row in `lang`.
+fn row(input: &PageInput, step: &'static Step) -> Row {
+    use crate::i18n::t;
+    let lang = input.lang;
+    let mut why = match step.key {
+        "background" => Some(t(lang, "setup.why.background").to_string()),
+        "wifi_airplane" => Some(t(lang, "setup.why.wifi_airplane").to_string()),
+        "call_filter" => Some(t(lang, "setup.why.call_filter").to_string()),
+        "assistant" => Some(t(lang, "setup.why.assistant").to_string()),
+        _ => None,
+    };
+    let mut value = None;
+    if let Some(latest) = input.latest {
+        match step.key {
+            "vibb_notifications" => {
+                value = crate::notification_channels::report(latest).map(|report| {
+                    crate::notification_channels::about(lang, input.policy, &report).value
+                });
+            }
+            "default_apps" => {
+                if let Some(airplane) = crate::airplane_mode::report(latest) {
+                    let names: Vec<&str> = airplane
+                        .default_apps_changed
+                        .iter()
+                        .map(|role| role_words(lang, role))
+                        .collect();
+                    value = (!names.is_empty()).then(|| names.join(", "));
+                    if airplane.default_apps_changed.iter().any(|r| r == "sms") {
+                        why = Some(t(lang, "setup.why.default_apps").to_string());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Row {
+        key: step.key,
+        name: t(lang, step.name).to_string(),
+        value,
+        why,
+        how: t(lang, step.how).to_string(),
+        link: match step.key {
+            "parent_pin" => Some(format!("/devices/{}/lock#parent-pin", input.device_id)),
+            "device_owner" => Some(format!("/devices/{}/provision", input.device_id)),
+            _ => None,
+        },
+        alarm: step.level == Level::Alarm,
+        tickable: step.read_by == ReadBy::Parent,
+        ticked: false,
+    }
+}
+
+/// A role in `default_apps_changed`, in plain words ("Anropsfilter", "Nettleser", "Startskjerm").
+pub fn role_words(lang: crate::i18n::Lang, role: &str) -> &'static str {
+    crate::i18n::t(
+        lang,
+        match role {
+            "home" => "setup.role.home",
+            "dialer" => "setup.role.dialer",
+            "sms" => "setup.role.sms",
+            "call_screening" => "setup.role.call_screening",
+            "call_redirection" => "setup.role.call_redirection",
+            _ => "setup.role.browser",
+        },
+    )
+}
+
+/// Device › Oppsett (§5.1).
+pub fn page(input: &PageInput) -> Page {
+    let (missing, _) = state_of(input.policy, input.latest, input.ticked);
+    let mut page = Page {
+        phone: Vec::new(),
+        check: Vec::new(),
+        optional: Vec::new(),
+        ticked: Vec::new(),
+        openable: false,
+        no_report: input.latest.is_none(),
+    };
+    for step in &missing {
+        let row = row(input, step);
+        match (step.need, step.read_by) {
+            (Need::Required, ReadBy::Parent) => page.check.push(row),
+            (Need::Required, _) => page.phone.push(row),
+            (Need::Optional, _) => page.optional.push(row),
+        }
+    }
+    page.openable = missing
+        .iter()
+        .any(|step| step.read_by != ReadBy::Server && step.key != "device_owner");
+    page.ticked = STEPS
+        .iter()
+        .filter(|step| step.read_by == ReadBy::Parent)
+        .filter(|step| input.ticked.iter().any(|key| key == step.key))
+        .map(|step| Row {
+            ticked: true,
+            ..row(input, step)
+        })
+        .collect();
+    page
+}
+
+/// One warning line at a choice (§5.4): the step's words and its row on Device › Oppsett.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Warning {
+    pub key: &'static str,
+    pub title: String,
+    pub href: String,
+}
+
+/// The warning lines of one page (§5.4), by section: [Warnings::at] gives a section's lines.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Warnings(pub Vec<(&'static str, Vec<Warning>)>);
+
+impl Warnings {
+    /// The lines for the section `anchor` (none: empty).
+    pub fn at(&self, anchor: &str) -> &[Warning] {
+        self.0
+            .iter()
+            .find(|(a, _)| *a == anchor)
+            .map_or(&[], |(_, lines)| lines.as_slice())
+    }
+}
+
+/// The warning lines for `page`'s sections (§5.4): a section's lines are the missing steps whose `features` name it,
+/// each step once per page (QA M1), in table order. Only steps that apply warn, so a choice the parent turned off
+/// raises nothing.
+pub fn warnings(
+    lang: crate::i18n::Lang,
+    device_id: i64,
+    page: &str,
+    inputs: &Inputs,
+    missing: &[&'static Step],
+) -> Warnings {
+    let mut out: Vec<(&'static str, Vec<Warning>)> = Vec::new();
+    for step in missing {
+        let Some(warn) = step.warn else { continue };
+        // Its features on this page; the line goes to the first one the parent has on (the clock format at
+        // `#layout`, the touch and sound switches at `#quick-controls`), else to the first.
+        let here: Vec<&Feature> = step
+            .features
+            .iter()
+            .filter_map(|key| FEATURES.iter().find(|f| f.key == *key && f.page == page))
+            .collect();
+        let Some(feature) = here
+            .iter()
+            .find(|f| feature_on(f.key, inputs))
+            .or_else(|| here.first())
+        else {
+            continue;
+        };
+        let line = Warning {
+            key: step.key,
+            title: crate::i18n::t(lang, warn).to_string(),
+            href: format!("/devices/{device_id}/setup#step-{}", step.key),
+        };
+        match out.iter_mut().find(|(anchor, _)| *anchor == feature.anchor) {
+            Some((_, lines)) => lines.push(line),
+            None => out.push((feature.anchor, vec![line])),
+        }
+    }
+    Warnings(out)
+}
+
+/// [warnings] for `page`, from the phone's policy and latest report. Ticks change nothing here: no `parent` step
+/// stops a choice.
+pub fn page_warnings(
+    lang: crate::i18n::Lang,
+    policy: &DevicePolicy,
+    latest: Option<&DeviceStatus>,
+    page: &str,
+) -> Warnings {
+    let (missing, _) = state_of(policy, latest, &[]);
+    warnings(
+        lang,
+        policy.device_id,
+        page,
+        &inputs_of(policy, latest),
+        &missing,
+    )
+}
+
+/// Whether the parent has the choice `feature` on, where the policy says (a step that warns at two sections of one
+/// page goes to the one in use); a choice the policy can't tell is on.
+fn feature_on(feature: &str, inputs: &Inputs) -> bool {
+    match feature {
+        "touch" => inputs.mask & (QUICK_CONTROL_TOUCH | QUICK_CONTROL_SOUND) != 0,
+        "clock_format" => inputs.clock_format != "system",
+        "airplane" => inputs.airplane(),
+        "calls" => inputs.calls_managed,
+        "map_links" => inputs.map_links_on,
+        _ => true,
+    }
 }
 
 #[cfg(test)]

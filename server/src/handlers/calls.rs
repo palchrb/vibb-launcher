@@ -47,10 +47,6 @@ const ROLES_REFRESH_SECS: i64 = 2 * 60;
 const RCS_FORM_URL: &str = "https://messages.google.com/disable-chat";
 const RCS_FORM_LABEL: &str = "messages.google.com/disable-chat";
 
-/// The launcher's package as an adb command names it (behind an ⓘ only, never visible text).
-const LAUNCHER_FOR_ADB: &str = "me.vibb.launcher (a debug build: me.vibb.launcher.debug; a launcher from before 2026-10-06: \
-     com.kidslauncher.mdm)";
-
 struct SelectOption {
     value: String,
     label: String,
@@ -287,6 +283,8 @@ struct DeviceCallsTemplate {
     default_country_code: String,
     /// The call report's problems, as orange rows above the groups.
     warnings: Vec<Note>,
+    /// Design 114 §5.4: the call filter and the full-screen notifications, at the channels (`#settings`).
+    setup_warnings: crate::setup_status::Warnings,
     /// The rest of the report (waiting for the phone, the call-screening role): rows in Settings.
     notes: Vec<Note>,
     /// Reload (`static/auto-reload.js`) while the phone confirms a change.
@@ -694,6 +692,14 @@ async fn load_page(
         sqlx::query_scalar("SELECT default_country_code FROM call_settings WHERE id = 1")
             .fetch_one(&state.db)
             .await?;
+    let latest = sqlx::query_as::<_, crate::models::DeviceStatus>(
+        "SELECT * FROM device_status WHERE device_id = ? ORDER BY reported_at DESC, id DESC LIMIT 1",
+    )
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await?;
+    let setup_warnings =
+        crate::setup_status::page_warnings(lang, &policy, latest.as_ref(), "calls");
     let refused = shown.contact.as_ref().map(|r| r.id);
     let menu = emergency::device_menu(&state.db, id).await?;
     let emergency_suggestions = emergency::suggestions(&menu, &default_country_code)
@@ -814,14 +820,11 @@ async fn load_page(
         .collect();
     let report = call_report(state, &policy).await?;
     let (zone, now) = (Zone::load(&state.db, lang).await, Utc::now());
-    let (warnings, mut notes): (Vec<Note>, Vec<Note>) = report
+    let (warnings, notes): (Vec<Note>, Vec<Note>) = report
         .findings
         .iter()
         .map(|f| f.note(&zone, now))
         .partition(|note| note.warning);
-    if report.screening_hint {
-        notes.push(screening_note(lang));
-    }
     // Design 77 §14: "Legg til…"'s request, only while it is this phone's and live. One prefill source wins (QA L1): a
     // held number's link ignores a request; a refused form carries its own `request` or none; else the link's.
     let request_id = match (shown.add_held, shown.add_sent, shown.add.is_some()) {
@@ -1049,6 +1052,7 @@ async fn load_page(
         contacts,
         default_country_code,
         warnings,
+        setup_warnings,
         notes,
         auto_refresh,
         contacts_notice: shown.notice,
@@ -1093,32 +1097,11 @@ async fn load_page(
     }))
 }
 
-/// The call-screening role is missing while Vibb is the phone app: a plain row, not a warning
-/// (the user's emulator, 2026-10-12), with the adb fix behind its ⓘ. No "accept the prompt":
-/// Android refuses exclusive-role prompts under the launcher's DISALLOW_CONFIG_DEFAULT_APPS.
-fn screening_note(lang: Lang) -> Note {
-    Note {
-        warning: false,
-        title: t(lang, "device.calls.screening").to_string(),
-        value: Some(t(lang, "device.calls.not_granted").to_string()),
-        sub: None,
-        detail: Some(t_params(
-            lang,
-            "device.calls.screening_sub",
-            &[("launcher", LAUNCHER_FOR_ADB)],
-        )),
-        fix: None,
-    }
-}
-
 /// What the calls page and the device page know about a phone's calls, typed (design 31 M5): the
 /// Attention rows take [CallProblem]s, the calls page words each [Finding] as a [Note].
 pub(crate) struct CallReport {
     /// In the order the page shows them; [Finding::Waiting] is the one that isn't a problem.
     pub findings: Vec<Finding>,
-    /// Vibb is the phone app but doesn't hold the call-screening role: good to know, nothing
-    /// wrong (a row, not a warning).
-    pub screening_hint: bool,
     /// Waiting for the phone to confirm a role change (reload the page).
     pub auto_refresh: bool,
     /// The emergency call has left Attention: a parent has read its inbox event, or 24 h have
@@ -1172,7 +1155,6 @@ pub(crate) enum Finding {
     FailClosed,
     NotPhoneApp,
     AnyoneCanCall,
-    NoRedirection,
     CallLogUnreadable,
     /// `unreadable`: the copy can't be read; else it couldn't be written.
     RulesAfterRestart {
@@ -1235,7 +1217,6 @@ impl Finding {
             Finding::FailClosed => CallProblem::FailClosed,
             Finding::NotPhoneApp => CallProblem::NotPhoneApp,
             Finding::AnyoneCanCall => CallProblem::AnyoneCanCall,
-            Finding::NoRedirection => CallProblem::NoRedirection,
             Finding::CallLogUnreadable => CallProblem::CallLogUnreadable,
             Finding::RulesAfterRestart { .. } => CallProblem::RulesAfterRestart,
             Finding::Reported { .. } => CallProblem::Reported,
@@ -1330,14 +1311,6 @@ impl Finding {
             Finding::FailClosed => (say("device.calls.finding.fail_closed"), None),
             Finding::NotPhoneApp => (say("device.calls.finding.not_phone_app"), None),
             Finding::AnyoneCanCall => (say("device.calls.finding.anyone_can_call"), None),
-            Finding::NoRedirection => (
-                say("device.calls.finding.no_redirection"),
-                Some(t_params(
-                    lang,
-                    "device.calls.finding.no_redirection_fix",
-                    &[("launcher", LAUNCHER_FOR_ADB)],
-                )),
-            ),
             Finding::CallLogUnreadable => (say("device.calls.finding.call_log"), None),
             Finding::RulesAfterRestart { unreadable } => (
                 say(if *unreadable {
@@ -1465,7 +1438,6 @@ pub(crate) async fn call_report(
 ) -> Result<CallReport, sqlx::Error> {
     let mut report = CallReport {
         findings: Vec::new(),
-        screening_hint: false,
         auto_refresh: false,
         emergency_left_attention: false,
     };
@@ -1597,15 +1569,9 @@ pub(crate) async fn call_report(
         } else {
             Finding::AnyoneCanCall
         });
-    } else if screening == Some(false) {
-        // A hint, not an error (the user's emulator, 2026-10-12), and nothing it can't know (QA of
-        // cmd-expiry, Medium 3): the phone can't read who else holds the role (RoleManager
-        // .getRoleHolders is a system API), and another holder screens instead of the launcher.
-        report.screening_hint = true;
     }
-    if flag("redirection_role_held") == Some(false) {
-        findings.push(Finding::NoRedirection);
-    }
+    // Design 114: the call-screening and call-redirection roles while Vibb is the phone app are the setup step
+    // `call_filter`, said once - its line at the page's #settings and Device › Oppsett's row.
     if flag("call_log_readable") == Some(false) {
         findings.push(Finding::CallLogUnreadable);
     }
@@ -1744,8 +1710,6 @@ pub enum CallProblem {
     NotPhoneApp,
     /// Not the phone app and nothing screens incoming calls.
     AnyoneCanCall,
-    /// The call-redirection role is missing.
-    NoRedirection,
     /// The call log can't be read (no emergency callback).
     CallLogUnreadable,
     /// The call rules for right after a restart couldn't be saved or read.
@@ -1786,7 +1750,6 @@ impl CallProblem {
                 CallProblem::FailClosed => "device.calls.problem.fail_closed",
                 CallProblem::NotPhoneApp => "device.calls.problem.not_phone_app",
                 CallProblem::AnyoneCanCall => "device.calls.problem.anyone_can_call",
-                CallProblem::NoRedirection => "device.calls.problem.no_redirection",
                 CallProblem::CallLogUnreadable => "device.calls.problem.call_log",
                 CallProblem::RulesAfterRestart => "device.calls.problem.restart",
                 CallProblem::Reported => "device.calls.problem.reported",
@@ -1820,7 +1783,7 @@ impl CallProblem {
 
     /// Every kind, for the tests.
     #[cfg(test)]
-    pub(crate) const ALL: [CallProblem; 22] = [
+    pub(crate) const ALL: [CallProblem; 21] = [
         CallProblem::EmergencyCall,
         CallProblem::CallbackWindow,
         CallProblem::CallScreenFailed,
@@ -1831,7 +1794,6 @@ impl CallProblem {
         CallProblem::FailClosed,
         CallProblem::NotPhoneApp,
         CallProblem::AnyoneCanCall,
-        CallProblem::NoRedirection,
         CallProblem::CallLogUnreadable,
         CallProblem::RulesAfterRestart,
         CallProblem::Reported,
@@ -3251,7 +3213,6 @@ mod tests {
             Finding::FailClosed,
             Finding::NotPhoneApp,
             Finding::AnyoneCanCall,
-            Finding::NoRedirection,
             Finding::CallLogUnreadable,
             Finding::RulesAfterRestart { unreadable: true },
             Finding::RulesAfterRestart { unreadable: false },

@@ -1135,8 +1135,8 @@ async fn a_reserved_name_is_never_an_installed_app() {
     assert_eq!(allowlist().await, before);
 }
 
-/// Home Screen's notification-access warning names the lock screen (design 31 step 5; the device
-/// page's Launcher card before); Lock Screen & PINs says what its first page shows.
+/// Design 114 §5.4: notification access off is one line at the glance (Lock Screen & PINs' #notifications) and at Home
+/// Screen's #layout, each to the step on Device › Oppsett; Lock Screen & PINs says what its first page shows.
 #[tokio::test]
 async fn the_home_screen_warning_and_the_lock_page_name_the_lock_screen() {
     let app = TestApp::new().await;
@@ -1153,8 +1153,13 @@ async fn the_home_screen_warning_and_the_lock_page_name_the_lock_screen() {
         .get_page(&super::device_page(id, super::Section::Home), &cookie)
         .await
         .text();
-    assert!(page.contains("the lock screen shows only missed calls"));
+    assert!(page.contains("data-setup-warning=\"notification_access\""));
     let lock = app.get_page(&lock_page(id), &cookie).await.text();
+    let at = lock
+        .find("data-setup-warning=\"notification_access\"")
+        .expect("the glance's line");
+    assert!(lock[..at].contains("<section id=\"notifications\""));
+    assert!(!lock.contains("only missed calls"));
     assert!(lock.contains("What the lock shows, anyone near the phone can see."));
 }
 

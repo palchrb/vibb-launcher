@@ -170,7 +170,7 @@ async fn the_phones_tick_answers_as_the_contract() {
 async fn the_tick_routes_edges() {
     let app = TestApp::new().await;
     let (id, token) = app.enrolled_device("Testtelefon").await;
-    let long = format!(r#"{{"step": "vibration", "pad": "{}"}}"#, "x".repeat(220));
+    let long = format!(r#"{{"step": "vibration", "pad": "{}"}}"#, "x".repeat(260));
     assert!(long.len() > 256);
     let res = app
         .send(
@@ -194,4 +194,190 @@ async fn the_tick_routes_edges() {
         .await;
     assert_eq!(res.status, StatusCode::UNAUTHORIZED);
     assert!(ticks(&app, id).await.is_empty());
+}
+
+/// Design 114 §5.8: without the phone's Parent PIN, Connect shows one line to it and no QR form or code; the QR's and
+/// New Setup Code's POSTs make no code; the PIN saved from there (`back=provision`) lands on `#qr`, a refusal keeps
+/// `back`.
+#[tokio::test]
+async fn no_setup_code_without_the_parent_pin() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.create_device("Testtelefon").await;
+    sqlx::query(
+        "UPDATE devices SET enrollment_code_hash = NULL, enrollment_code_kind = NULL WHERE id = ?",
+    )
+    .bind(id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let connect = app
+        .get_page(&format!("/devices/{id}/provision"), &cookie)
+        .await
+        .text();
+    assert!(connect.contains(&format!(
+        "href=\"/devices/{id}/lock?back=provision#parent-pin\" data-warning=\"no-parent-pin\""
+    )));
+    assert!(!connect.contains("regenerate-code"));
+    assert!(!connect.contains("name=\"wifi_ssid\""));
+    let qr = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/provision"),
+            Some(&cookie),
+            &[("wifi_ssid", "Hjemme")],
+        )
+        .await;
+    assert_eq!(qr.status, StatusCode::OK);
+    assert!(!qr.text().contains("data-row=\"qr\""));
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/regenerate-code"),
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    super::assert_redirect(&res, &format!("/devices/{id}/provision"), Some("qr"));
+    let hash: Option<String> =
+        sqlx::query_scalar("SELECT enrollment_code_hash FROM devices WHERE id = ?")
+            .bind(id)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(hash, None, "no code made");
+    let summary = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(summary.contains("lock?back=provision#parent-pin"));
+    assert!(!summary.contains("regenerate-code"));
+
+    let lock = app
+        .get_page(&format!("/devices/{id}/lock?back=provision"), &cookie)
+        .await
+        .text();
+    assert!(lock.contains("<input type=\"hidden\" name=\"back\" value=\"provision\">"));
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/parent-pin"),
+            Some(&cookie),
+            &[("new_pin", "12"), ("back", "provision")],
+        )
+        .await;
+    assert_eq!(
+        res.location(),
+        Some(
+            format!("/devices/{id}/lock?back=provision&notice=parent_pin_invalid#parent-pin")
+                .as_str()
+        )
+    );
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/parent-pin"),
+            Some(&cookie),
+            &[("new_pin", "48213957"), ("back", "provision")],
+        )
+        .await;
+    super::assert_redirect(&res, &format!("/devices/{id}/provision"), Some("qr"));
+    let connect = app
+        .get_page(&format!("/devices/{id}/provision"), &cookie)
+        .await
+        .text();
+    assert!(connect.contains("name=\"wifi_ssid\""));
+    assert!(connect.contains("regenerate-code"));
+}
+
+/// Device › Oppsett (§5.1): the groups and rows' ids, a parent tick saved back on its row and moved to "Ticked", the
+/// policy's `setup.ticked`; the summary's row; the hold's open group and the summary's hold row.
+#[tokio::test]
+async fn the_setup_page_and_its_ticks() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("Testtelefon").await;
+    let page = format!("/devices/{id}/setup");
+    let html = app.get_page(&page, &cookie).await.text();
+    assert!(html.contains("data-setup-state=\"no-report\""), "{html}");
+    app.post_status(
+        &token,
+        json!({"notification_listener_enabled": false, "battery_optimization_exempt": false,
+               "setup": {"device_owner": true, "location": false, "data_saver": true}}),
+    )
+    .await;
+    let html = app.get_page(&page, &cookie).await.text();
+    for step in ["location", "notification_access", "background", "vibration"] {
+        assert!(
+            html.contains(&format!("id=\"step-{step}\"")),
+            "{step}: {html}"
+        );
+    }
+    assert!(html.contains("<section id=\"phone\""));
+    assert!(html.contains("<section id=\"optional\""));
+    assert!(!html.contains("<section id=\"check\""));
+    assert!(html.contains(&format!("action=\"/devices/{id}/start-pause#open\"")));
+    let summary = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(summary.contains("Setup: 3 steps left"), "{summary}");
+    assert!(summary.contains("data-row=\"setup\""));
+
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("{page}/ticks"),
+            Some(&cookie),
+            &[("step", "vibration"), ("on", "on")],
+        )
+        .await;
+    super::assert_redirect(&res, &page, Some("step-vibration"));
+    assert_eq!(
+        app.policy(&token).await["setup"],
+        json!({"ticked": ["vibration"]})
+    );
+    let html = app.get_page(&page, &cookie).await.text();
+    assert!(html.contains("data-setup-ticked"), "{html}");
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("{page}/ticks"),
+            Some(&cookie),
+            &[("step", "vibration")],
+        )
+        .await;
+    super::assert_redirect(&res, &page, Some("step-vibration"));
+    assert_eq!(app.policy(&token).await["setup"], json!({"ticked": []}));
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("{page}/ticks"),
+            Some(&cookie),
+            &[("step", "location"), ("on", "on")],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+
+    // The hold: the open group says until when, the summary's pause row is the hold's, no setup row.
+    let now = chrono::Utc::now().timestamp_millis();
+    app.post_status(
+        &token,
+        json!({"restrictions_paused": true, "notification_listener_enabled": false,
+               "setup": {"device_owner": true, "hold_until_ms": now + 3_600_000, "hold_left_ms": 3_600_000}}),
+    )
+    .await;
+    let html = app.get_page(&page, &cookie).await.text();
+    assert!(html.contains("data-setup-open=\"hold\""), "{html}");
+    assert!(html.contains(&format!("action=\"/devices/{id}/end-windows#open\"")));
+    let summary = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(summary.contains("Setting up, no restrictions"), "{summary}");
+    assert!(summary.contains(&format!(
+        "href=\"/devices/{id}/setup#open\" data-attention=\"restrictions-paused\""
+    )));
+    assert!(!summary.contains("data-attention=\"setup\""));
+    assert!(!html.contains("adb "));
 }

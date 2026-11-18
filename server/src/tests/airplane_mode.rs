@@ -182,13 +182,15 @@ async fn the_home_form_takes_bit_64_from_its_row() {
         super::form_action_of(&html, "quick_control_airplane"),
         Some(format!("/devices/{id}/policy#quick-controls").as_str())
     );
-    // Bit 64 on and no role: one short orange line (design 113 QA M6).
+    // Bit 64 on and no role: design 114's setup line at #quick-controls, a link to the step (no sub-line).
     assert!(
-        html.contains(
-            "<span class=\"row-sub tone-orange\" data-airplane-sub>Vibb One isn&#39;t the digital assistant</span>"
-        ),
+        html.contains(&format!(
+            "<a class=\"attention attention-action\" href=\"/devices/{id}/setup#step-assistant\" data-setup-warning=\"assistant\">"
+        )),
         "{html}"
     );
+    assert!(html.contains("Vibb One isn&#39;t the digital assistant</span>"));
+    assert!(!html.contains("data-airplane-sub"), "{html}");
     // About: "Not chosen" is orange only while the kid's Flymodus switch (bit 64) is on (2026-11-18).
     let about_url = format!("/devices/{id}/about");
     let about = app.get_page(&about_url, &cookie).await.text();
@@ -250,7 +252,21 @@ async fn the_home_form_takes_bit_64_from_its_row() {
     assert_redirect(&res, &home, Some("quick-controls"));
     assert_eq!(mask(&app, &token).await, 32 | 64);
 
-    // The role held, no Wi-Fi in airplane mode: that line; the parent's block: its line.
+    // The role held, Wi-Fi in airplane mode not set up: the setup line for it; an OEM that turns Wi-Fi off counts as
+    // done (design 98 §6.2) - no line, no sub-line; the parent's block: its line.
+    report(
+        &app,
+        &token,
+        airplane(false, true, Value::Null, json!([])),
+        json!({}),
+    )
+    .await;
+    let html = app.get_page(&home, &cookie).await.text();
+    assert!(
+        html.contains("data-setup-warning=\"wifi_airplane\""),
+        "{html}"
+    );
+    assert!(!html.contains("data-setup-warning=\"assistant\""), "{html}");
     report(
         &app,
         &token,
@@ -260,11 +276,10 @@ async fn the_home_form_takes_bit_64_from_its_row() {
     .await;
     let html = app.get_page(&home, &cookie).await.text();
     assert!(
-        html.contains(
-            "<span class=\"row-sub\" data-airplane-sub>Fully offline in airplane mode</span>"
-        ),
+        !html.contains("data-setup-warning=\"wifi_airplane\""),
         "{html}"
     );
+    assert!(!html.contains("data-airplane-sub"), "{html}");
     report(
         &app,
         &token,
@@ -288,15 +303,16 @@ async fn the_home_form_takes_bit_64_from_its_row() {
     );
 }
 
-/// §6.2: "Flymodus på siden" in the header (from `on`, and from `going_on` for 10 minutes only), the period that
-/// ended, the emergency line, the role lost (held before); the Oppsett card's steps, its two forms on `#oppsett` with
-/// the flash in the card, "Ikke nå" until the needed steps change; About This Phone's two rows; both languages.
+/// §6.2: "Flymodus på siden" in the header (from `on`, and from `going_on` for 10 minutes only), the emergency line;
+/// design 114: the steps it needs counted in the setup row (no role-lost line, no Oppsett card), listed on Device ›
+/// Oppsett with the moved roles; its open group's Åpne for oppsett lands back on it with the flash; About's rows.
 #[tokio::test]
-async fn the_summary_says_airplane_mode_and_holds_the_setup_card() {
+async fn the_summary_says_airplane_mode_and_counts_its_setup_steps() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("Emma").await;
     let summary = format!("/devices/{id}");
+    let setup = format!("/devices/{id}/setup");
     sqlx::query("UPDATE device_policy SET quick_controls_mask = 1 | 64 WHERE device_id = ?")
         .bind(id)
         .execute(&app.db)
@@ -321,47 +337,38 @@ async fn the_summary_says_airplane_mode_and_holds_the_setup_card() {
     assert!(html.contains("Airplane mode on since"), "{html}");
     // An ended period is no summary box any more (design 101): it is an Activity row.
     assert!(!html.contains("data-airplane-line=\"was-on\""), "{html}");
-    assert!(!html.contains("Airplane mode was on"));
     let activity = app
         .get_page(&format!("{summary}/activity"), &cookie)
         .await
         .text();
     assert!(activity.contains("Airplane mode on "), "{activity}");
-    assert!(!activity.contains("unread-dot"), "{activity}");
-    assert!(
-        !html.contains("data-airplane-line=\"role-lost\""),
-        "never held: the card's step"
-    );
-    assert!(html.contains("<section id=\"oppsett\""), "{html}");
-    for step in [
-        "background",
-        "assistant",
-        "default_apps:call_screening+browser",
-    ] {
+    assert!(!html.contains("data-airplane-line=\"role-lost\""));
+    assert!(!html.contains("<section id=\"oppsett\""), "{html}");
+    assert!(html.contains("Setup: 3 steps left"), "{html}");
+    let page = app.get_page(&setup, &cookie).await.text();
+    for step in ["background", "assistant", "default_apps"] {
         assert!(
-            html.contains(&format!("data-setup-step=\"{step}\"")),
-            "{step}"
+            page.contains(&format!("id=\"step-{step}\"")),
+            "{step}: {page}"
         );
     }
-    assert!(!html.contains("data-setup-step=\"wifi\""), "the role first");
-    assert!(html.contains("Changed during setup: Call screening, Browser."));
-    assert!(html.contains(&format!("action=\"/devices/{id}/start-pause#oppsett\"")));
-    assert!(html.contains("<input type=\"hidden\" name=\"back\" value=\"setup\">"));
+    assert!(
+        !page.contains("id=\"step-wifi_airplane\""),
+        "the role first"
+    );
+    assert!(page.contains("Call screening, Browser"), "{page}");
+    assert!(page.contains(&format!("action=\"/devices/{id}/start-pause#open\"")));
+    assert!(page.contains("<input type=\"hidden\" name=\"back\" value=\"setup\">"));
     let nb = app
-        .get_page(&format!("{summary}?lang=nb"), &cookie)
+        .get_page(&format!("{setup}?lang=nb"), &cookie)
         .await
         .text();
-    for word in [
-        "Flymodus på siden",
-        "Oppsett",
-        "Bakgrunnstilkobling",
-        "Ikke nå",
-        "Anropsfilter, Nettleser",
-    ] {
+    for word in ["Oppsett", "Bakgrunnstilkobling", "Anropsfilter, Nettleser"] {
         assert!(nb.contains(word), "{word}: {nb}");
     }
+    assert!(!nb.contains("Ikke nå"));
 
-    // Åpne for oppsett: back to the card with its flash.
+    // Åpne for oppsett: back to the open group with its flash.
     let res = app
         .request_form(
             Method::POST,
@@ -372,13 +379,13 @@ async fn the_summary_says_airplane_mode_and_holds_the_setup_card() {
         .await;
     assert_redirect(
         &res,
-        &format!("{summary}?notice=setup_start_pause_sent"),
-        Some("oppsett"),
+        &format!("{setup}?notice=setup_start_pause_sent"),
+        Some("open"),
     );
     app.assert_lands(&res, &cookie).await;
     let flash = app.get_page(res.location().unwrap(), &cookie).await.text();
-    assert!(flash.contains("data-flash=\"oppsett\""), "{flash}");
-    // "Ikke nå": hidden, with its flash in the card's place, until the needed steps change.
+    assert!(flash.contains("data-flash=\"open\""), "{flash}");
+    // The hide route is gone.
     let res = app
         .request_form(
             Method::POST,
@@ -387,25 +394,9 @@ async fn the_summary_says_airplane_mode_and_holds_the_setup_card() {
             &[],
         )
         .await;
-    assert_redirect(
-        &res,
-        &format!("{summary}?notice=setup_hidden"),
-        Some("oppsett"),
-    );
-    app.assert_lands(&res, &cookie).await;
-    let html = app.get_page(&summary, &cookie).await.text();
-    assert!(!html.contains("<section id=\"oppsett\""), "{html}");
-    let res = app
-        .request_form(
-            Method::POST,
-            "/devices/999/setup-card/hide",
-            Some(&cookie),
-            &[],
-        )
-        .await;
-    assert_eq!(res.status, axum::http::StatusCode::NOT_FOUND);
+    assert!(res.status.is_client_error(), "{}", res.status);
 
-    // The role chosen: the Wi-Fi step is new, so the card is back; About says so.
+    // The role chosen: the Wi-Fi step is new; About says so.
     let mut held = on.clone();
     held["assistant"] = json!(true);
     report(
@@ -415,8 +406,8 @@ async fn the_summary_says_airplane_mode_and_holds_the_setup_card() {
         json!({"battery_optimization_exempt": false}),
     )
     .await;
-    let html = app.get_page(&summary, &cookie).await.text();
-    assert!(html.contains("data-setup-step=\"wifi\""), "{html}");
+    let page = app.get_page(&setup, &cookie).await.text();
+    assert!(page.contains("id=\"step-wifi_airplane\""), "{page}");
     let about = app
         .get_page(&format!("/devices/{id}/about"), &cookie)
         .await
@@ -426,8 +417,16 @@ async fn the_summary_says_airplane_mode_and_holds_the_setup_card() {
         "{about}"
     );
     assert!(about.contains("Not set up"));
+    // About's row of a missing step links to it, with no how-to (§5.5).
+    assert!(about.contains(&format!(
+        "<a class=\"row\" href=\"/devices/{id}/setup#step-wifi_airplane\" data-row=\"wifi-airplane\">"
+    )));
+    assert!(about.contains(&format!(
+        "<a class=\"row\" href=\"/devices/{id}/setup#step-background\" data-row=\"battery\">"
+    )));
+    assert!(!about.contains("adb "));
 
-    // Lost again: the warning with its steps; About says Not chosen.
+    // Lost again: the step, never a role-lost line; About says Not chosen.
     report(
         &app,
         &token,
@@ -436,9 +435,7 @@ async fn the_summary_says_airplane_mode_and_holds_the_setup_card() {
     )
     .await;
     let html = app.get_page(&summary, &cookie).await.text();
-    assert!(html.contains("data-airplane-line=\"role-lost\""), "{html}");
-    assert!(html.contains("Vibb One is no longer the digital assistant."));
-    assert!(html.contains("To choose Vibb One: open the phone for setup"));
+    assert!(!html.contains("data-airplane-line=\"role-lost\""), "{html}");
     let about = app
         .get_page(&format!("/devices/{id}/about?lang=nb"), &cookie)
         .await
@@ -455,13 +452,19 @@ async fn the_summary_says_airplane_mode_and_holds_the_setup_card() {
         json!(true),
         json!([{"on_ms": now - 1_800_000, "on_by": "kid", "off_ms": now - 600_000, "off_by": "emergency"}]),
     );
-    report(&app, &token, ended, json!({})).await;
+    report(
+        &app,
+        &token,
+        ended,
+        json!({"battery_optimization_exempt": true}),
+    )
+    .await;
     let html = app.get_page(&summary, &cookie).await.text();
     assert!(html.contains("data-airplane-line=\"emergency\""), "{html}");
     assert!(html.contains("An emergency call turned airplane mode off at"));
     assert!(!html.contains(" data-airplane title="), "off now");
     assert!(
-        !html.contains("<section id=\"oppsett\""),
+        !html.contains("data-attention=\"setup\""),
         "nothing needed: {html}"
     );
 
@@ -482,10 +485,10 @@ async fn the_summary_says_airplane_mode_and_holds_the_setup_card() {
     assert!(!html.contains(" data-airplane title="), "{html}");
 }
 
-/// D2: the QR page's Done step offers "Åpne for oppsett nå" - the start-pause with `back=setup` -, landing on the
-/// summary's `#oppsett` with the flash, before the phone has reported.
+/// Design 114 §5.2: the QR page has no "Åpne for oppsett nå" - a phone set up with the QR opens itself in the setup
+/// hold.
 #[tokio::test]
-async fn the_qr_page_opens_the_phone_for_setup() {
+async fn the_qr_page_has_no_open_for_setup() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let res = app
@@ -501,6 +504,14 @@ async fn the_qr_page_opens_the_phone_for_setup() {
         .fetch_one(&app.db)
         .await
         .unwrap();
+    sqlx::query(
+        "UPDATE device_policy SET override_pin_hash = 'aGFzaA', override_pin_salt = 'c2FsdA' \
+         WHERE device_id = ?",
+    )
+    .bind(id)
+    .execute(&app.db)
+    .await
+    .unwrap();
     let qr = app
         .request_form(
             Method::POST,
@@ -510,23 +521,9 @@ async fn the_qr_page_opens_the_phone_for_setup() {
         )
         .await
         .text();
-    assert!(qr.contains("data-row=\"open-setup\""), "{qr}");
-    assert!(qr.contains(&format!("action=\"/devices/{id}/start-pause#oppsett\"")));
-    assert!(qr.contains("Open for setup now"));
-    let res = app
-        .request_form(
-            Method::POST,
-            &format!("/devices/{id}/start-pause"),
-            Some(&cookie),
-            &[("back", "setup")],
-        )
-        .await;
-    assert_redirect(
-        &res,
-        &format!("/devices/{id}?notice=setup_start_pause_sent"),
-        Some("oppsett"),
-    );
-    app.assert_lands(&res, &cookie).await;
+    assert!(qr.contains("data-row=\"qr\""), "the QR: {qr}");
+    assert!(!qr.contains("data-row=\"open-setup\""), "{qr}");
+    assert!(!qr.contains("start-pause"));
 }
 
 /// §7.1: the emergency call's event carries `airplane_off` when the same report has the period the call ended (its

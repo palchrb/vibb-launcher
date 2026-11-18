@@ -33,6 +33,7 @@ async fn enroll_from(app: &TestApp, client: &str, code: &str) -> super::TestResp
 async fn a_qr_code_works_once_and_is_never_stored_in_plain() {
     let app = TestApp::new().await;
     let (id, code) = app.create_device("phone").await;
+    app.set_parent_pin(id).await;
     assert_eq!(code.len(), 26);
     let stored: (Option<String>, Option<String>, Option<String>) = sqlx::query_as(
         "SELECT enrollment_code, enrollment_code_hash, enrollment_code_kind FROM devices \
@@ -77,6 +78,7 @@ async fn a_qr_code_works_once_and_is_never_stored_in_plain() {
 async fn two_phones_racing_for_one_code_get_one_token() {
     let app = TestApp::new().await;
     let (id, code) = app.create_device("phone").await;
+    app.set_parent_pin(id).await;
     let router = app.device_router();
     let mut racing = tokio::task::JoinSet::new();
     for n in 0..8 {
@@ -124,6 +126,7 @@ async fn two_phones_racing_for_one_code_get_one_token() {
 async fn an_expired_code_is_refused() {
     let app = TestApp::new().await;
     let (id, code) = app.create_device("phone").await;
+    app.set_parent_pin(id).await;
     sqlx::query(
         "UPDATE devices SET enrollment_code_expires_at = datetime('now', '-1 minute') WHERE id = ?",
     )
@@ -152,6 +155,7 @@ async fn an_expired_code_is_refused() {
 async fn typed_guesses_without_a_live_typed_code_count_for_nothing() {
     let app = TestApp::new().await;
     let (id, _qr) = app.create_device("phone").await;
+    app.set_parent_pin(id).await;
     for _ in 0..40 {
         let res = enroll_from(&app, "203.0.113.7", "ABCD-EFGH").await;
         assert_eq!(res.status, StatusCode::UNAUTHORIZED);
@@ -177,6 +181,7 @@ async fn twenty_typed_failures_pause_typed_codes_but_never_qr_codes() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (typed_device, _) = app.create_device("typed").await;
+    app.set_parent_pin(typed_device).await;
     let typed = app.new_code(typed_device, Kind::Typed).await;
     // Spread over many addresses, so no client's own bucket fills.
     for n in 0..TYPED_PAUSE_FAILURES {
@@ -210,6 +215,7 @@ async fn twenty_typed_failures_pause_typed_codes_but_never_qr_codes() {
 
     // A flood of QR-shaped junk first, then a real QR code still enrolls.
     let (qr_device, qr) = app.create_device("qr").await;
+    app.set_parent_pin(qr_device).await;
     let junk: Vec<String> = (0..200).map(|_| enrollment::generate(Kind::Qr)).collect();
     for code in &junk {
         let res = enroll_from(&app, "203.0.113.66", code).await;
@@ -240,6 +246,7 @@ async fn twenty_typed_failures_pause_typed_codes_but_never_qr_codes() {
 async fn typed_failures_fill_the_clients_failure_bucket() {
     let app = TestApp::new().await;
     let (id, _) = app.create_device("phone").await;
+    app.set_parent_pin(id).await;
     // Typed failures and bad device tokens fill the same bucket (5 typed ones stay under the
     // server-wide pause of 20).
     let typed = app.new_code(id, Kind::Typed).await;
@@ -284,6 +291,7 @@ async fn new_code_is_shown_once_and_replaces_the_last() {
         .parse()
         .unwrap();
     assert_eq!(connect, format!("/devices/{id}/provision"));
+    app.set_parent_pin(id).await;
     let kind: Option<String> =
         sqlx::query_scalar("SELECT enrollment_code_kind FROM devices WHERE id = ?")
             .bind(id)
@@ -361,6 +369,7 @@ async fn revoking_access_retires_the_token_and_closes_the_stream() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
+    app.set_parent_pin(id).await;
     let stream = app
         .call_via(
             &app.router,
@@ -469,6 +478,7 @@ async fn the_setup_qr_carries_a_qr_code() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, old) = app.create_device("phone").await;
+    app.set_parent_pin(id).await;
     // Looking at the page makes no code (design 22 §0 #7) ...
     let page = app
         .get_page(&format!("/devices/{id}/provision"), &cookie)
@@ -478,6 +488,7 @@ async fn the_setup_qr_carries_a_qr_code() {
     let res = enroll_from(&app, "203.0.113.7", &old).await;
     assert_eq!(res.status, StatusCode::OK, "the old code still works");
     let (id, old) = app.create_device("second").await;
+    app.set_parent_pin(id).await;
     // ... "Make QR code" does.
     let page = app
         .request_form(

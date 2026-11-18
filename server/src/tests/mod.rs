@@ -586,6 +586,19 @@ impl TestApp {
         (id, code)
     }
 
+    /// Design 114 §5.8: a Parent PIN for the phone (a fake hash), which Connect and New Setup Code need before they
+    /// make a code.
+    pub async fn set_parent_pin(&self, device_id: i64) {
+        sqlx::query(
+            "UPDATE device_policy SET override_pin_hash = 'aGFzaA', override_pin_salt = 'c2FsdA' \
+             WHERE device_id = ?",
+        )
+        .bind(device_id)
+        .execute(&self.db)
+        .await
+        .expect("failed to set a Parent PIN");
+    }
+
     /// A new enrollment code of `kind` for a device, as the device page or the QR page makes one.
     pub async fn new_code(&self, device_id: i64, kind: crate::enrollment::Kind) -> String {
         crate::enrollment::new_code(&self.state, device_id, kind)
