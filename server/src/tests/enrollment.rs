@@ -434,12 +434,12 @@ async fn revoking_access_retires_the_token_and_closes_the_stream() {
     // Nothing to disconnect any more; a new code is still offered.
     assert!(!connection.contains("/revoke"), "{page}");
     assert!(connection.contains("/regenerate-code"), "{page}");
-    // Its Attention row links there.
+    // No Attention row any more (2026-11-18): the parent's own removal is a quiet line in the group.
     let summary = app
         .get_page(&format!("/devices/{id}"), &cookie)
         .await
         .text();
-    assert!(summary.contains(&format!(
+    assert!(!summary.contains(&format!(
         "href=\"/devices/{id}/advanced#connection\" data-attention"
     )));
     // And the header says so, with "Connect again" there (L2).
