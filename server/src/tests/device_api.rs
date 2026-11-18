@@ -415,8 +415,7 @@ async fn policy_json_keys_snapshot() {
     // field on the launcher's side); every row in `tests::logins` (`login_windows.json`'s `policy`).
     assert_eq!(
         object["captive_portal"],
-        serde_json::json!({"enabled": true, "require_code": true, "minutes": 10, "day_openings": 4,
-            "day_minutes": 20, "grant": 0})
+        serde_json::json!({"enabled": true, "require_code": true, "minutes": 10, "grant": 0})
     );
     assert!(object["login_browser"].is_null());
     // Design 108 §3.8: `unified_push`, `{on, origin, regs, stopped, refresh}`; every row in `tests::unified_push`

@@ -1335,11 +1335,17 @@ class PolicyResponseCompatTest {
     @Test
     fun `captive_portal and login_browser decode, missing means on with the code and the role off (102)`() {
         val policy = (decodeCached(
-            """{"captive_portal": {"enabled": false, "require_code": false, "minutes": 10, "day_openings": 4,
-                "day_minutes": 20, "grant": 2}, "login_browser": {"package": "com.android.chrome", "hosts": ["idp.feide.no"]}}""",
+            """{"captive_portal": {"enabled": false, "require_code": false, "minutes": 10, "grant": 2},
+                "login_browser": {"package": "com.android.chrome", "hosts": ["idp.feide.no"]}}""",
         ) as CachedPolicy.Ok).policy
         assertEquals(false, com.kidslauncher.mdm.logins.portalPolicyOf(policy).enabled)
         assertEquals(2L, policy.captivePortal!!.grant)
+        // A server from before 2026-11-18 still sends the daily count's keys: read past, the rest kept.
+        val counted = (decodeCached(
+            """{"captive_portal": {"enabled": true, "require_code": false, "minutes": 10, "day_openings": 4,
+                "day_minutes": 20, "grant": 3}}""",
+        ) as CachedPolicy.Ok).policy
+        assertEquals(com.kidslauncher.mdm.logins.CaptivePortalPolicy(requireCode = false, grant = 3), counted.captivePortal)
         assertEquals(listOf("idp.feide.no"), policy.loginBrowser!!.hosts)
         val nullRole = (decodeCached("""{"login_browser": null}""") as CachedPolicy.Ok).policy
         assertNull(nullRole.loginBrowser)

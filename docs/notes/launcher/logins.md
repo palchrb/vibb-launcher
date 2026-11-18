@@ -19,20 +19,19 @@ The server's side is `docs/notes/server/logins.md`.
   window at a time (read from the session files, R3-L5 - an entry after a main-process restart brings the open window
   forward), the network (Wi-Fi, `CAPTIVE_PORTAL`, not `VALIDATED`; a reopen: today's record), Vibb's https check (a
   pass: "Nettet virker allerede", `reportCaptivePortalDismissed`, no code asked), then the approval: a running PIN pause
-  (`pause`), the parent code (`code`, D17: whatever the day's budget), the requirement off (`none`, within the budget), a
-  grant (`grant`, within it), else the keypad.
+  (`pause`), the parent code (`code`), the requirement off (`none`), a grant (`grant`), else the keypad. No daily count
+  since 2026-11-18 (the user): each opening is bounded by its own 10 minutes alone.
 - **The parent code** is `ParentPin.check` with `ParentPinEntry.WIFI_SIGNIN` (one-shot: no window, `windowDuration`
   null), through `ParentPinDialog` - in the main process, never in `:portal`. The lockout is the shared one; every try is
   a PIN event (the server's `Entry::WifiSignin`, "Wi-Fi-innlogging"). No parent code set fails closed (the dialog opens
   with OK disabled and "Ingen foreldrekode er satt – spør en voksen"); `ForeignAccessOn` refuses; `Unavailable(untilSync)`
   on a Wi-Fi-only phone is named residue (the PWA's switch off or a grant over another network ends it). Cancel tells
   Android (`reportCaptivePortalDismissed`), so its notification stays. The entry finishes on `onStop`.
-- **The budget** (`PortalBudget`, pure `budgetToday`/`chargeOpening`/`chargeTime`, main process's own prefs
-  `portal_budget`): 4 code-free openings and 20 minutes a day, charged at the entry (a killed window still counts), its
-  time when the session comes back (`PortalRuntime.fold`; a session file that never ended counts its whole minutes as
-  `lost`); the latest date seen, so a clock set back gives nothing. The policy's `grant` counter: each step not seen
-  adds one opening and 10 minutes, at most 3 a day; a fresh install takes the current counter as used. Code and pause
-  openings use nothing.
+- **The grants** (`PortalGrants`, pure `grantsToday`/`takeGrant`/`grantLeft`, the `grants` rows; the main process's own
+  prefs `portal_budget`, key `grants` - the file keeps its first name; the old daily count's `budget` key gives its grant
+  fields once and goes): the policy's `grant` counter, each step not seen one code-free opening, uncapped since 2026-11-18; taken at the
+  entry (a killed window has used it); an unused one ends with the day (the latest date seen, so a clock set back gives
+  nothing); a fresh install takes the current counter as seen. Code, pause and `none` openings take nothing.
 - **`:portal`** (`PortalWindowActivity`, `android:process=":portal"`, not exported): `Application.onCreate` returns
   right after `preparePortalProcess()` (`WebView.setDataDirectorySuffix("portal")`), so nothing of the main process's
   start-up runs there and no preference is read. The window reads the snapshot `noBackupFilesDir/portal/state.json`
@@ -67,7 +66,7 @@ The server's side is `docs/notes/server/logins.md`.
   trimmed to Copy and Select all (`PortalWebView`), no text classifier.
 - **Closing** (pure `portalClose`, the `close` rows): `validated` (`reportCaptivePortalDismissed()`) or `passes` (Vibb's
   check, every 5 s on the bound network) for a sign-in; `closed_by_vibb`; a pause lifts the limits while it lasts;
-  `timeout` after 10 minutes for every opening; `budget` for a code-free one. A reopen never closes on a working
+  `timeout` after 10 minutes for every opening. A reopen never closes on a working
   network. After each main-frame page Android re-probes at most every 3 s through `reportNetworkConnectivity` (best
   effort, E7); `reportCaptivePortalDismissed()` only at the window's end (code QA L7).
 - **Vibb's https check** (`portal/PortalCheck.kt`, pure `portalPasses`, the `passes` rows): OkHttp on the network's
@@ -82,14 +81,13 @@ The server's side is `docs/notes/server/logins.md`.
   Wi-Fi page's "Åpne påloggingssiden" shows on the same handle (SSIDs agreeing when both are known) or, after a
   reconnect, the same SSID.
 - **The kid's ways in** (`wifiRowState`, the `wifi_rows` rows): Android's notification (in the Silent bundle); the
-  Wi-Fi page's row above the list ("Tilkoblet – må logges på" on the connected network's row, "Logg på", or "Spør en
-  voksen om Wi-Fi-innlogging" with the code off and the budget spent); Home's calm line "Wi-Fi-en vil at du logger på"
+  Wi-Fi page's row above the list ("Tilkoblet – må logges på" on the connected network's row, "Logg på"); Home's calm line "Wi-Fi-en vil at du logger på"
   (`home_portal_line`, never a sound or a badge); both read `PortalRuntime.row()` off the main thread (code QA L9).
   `PortalRuntime.start` watches the Wi-Fi networks
   (`FLAG_INCLUDE_LOCATION_INFO` for the SSID) for both.
-- **The report**: `captive_portal` (`CaptivePortalReport`: `handler` from `resolveActivity`, `parent_code_set`, today's
-  code-free use, the last 10 sessions), a full-report field.
-- **Tests**: `PortalRulesTest` (`login_rules.json`: navigation, sites, schemes, approve, frames, passes, close, budget,
+- **The report**: `captive_portal` (`CaptivePortalReport`: `handler` from `resolveActivity`, `parent_code_set`,
+  the last 10 sessions), a full-report field.
+- **Tests**: `PortalRulesTest` (`login_rules.json`: navigation, sites, schemes, approve, frames, passes, close, grants,
   open sessions, wifi rows, revisit), `LoginWindowsTest` (the shared `login_windows.json`), `ParentPinStoreTest` (the
   one-shot entry), `ServerTransportTest` (both configs, the tailnet fence, the DoH rule, the source scan).
 - **Checks owed**: `docs/testing/emulator.md` §6ap (E1-E7, E10-E13) with `scripts/fake-portal.py`, and the Jelly Star's

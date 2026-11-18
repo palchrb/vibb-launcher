@@ -790,7 +790,7 @@ class HomeActivity : UIObjectActivity() {
     private fun renderPortalLine() {
         if (!contentShown) return
         val app = applicationContext
-        // The row reads the budget and the records (files and preferences): off the main thread (code QA L9).
+        // The row reads the policy and the records (files and preferences): off the main thread (code QA L9).
         lifecycleScope.launch {
             val row = withContext(Dispatchers.IO) { com.kidslauncher.mdm.portal.PortalRuntime.row(app) }
             if (contentShown && !isDestroyed) showPortalLine(row)
@@ -800,7 +800,6 @@ class HomeActivity : UIObjectActivity() {
     private fun showPortalLine(row: com.kidslauncher.mdm.portal.WifiPortalRow) {
         val text = when (row) {
             com.kidslauncher.mdm.portal.WifiPortalRow.SIGN_IN -> R.string.home_portal_line
-            com.kidslauncher.mdm.portal.WifiPortalRow.ASK -> R.string.portal_ask
             else -> null
         }
         binding.homePortalLine.visibility = if (text == null) View.GONE else View.VISIBLE

@@ -1,8 +1,9 @@
 //! Device › Sign-in (`/devices/{id}/logins`, design 102 §5), linked from the Web Filter page, and the Advanced page's
 //! `#wifi-signin` row (revision 5, the user's placement). Server-rendered, no new client JS (Safari 14 is fine).
 //!
-//! - `#logins-wifi`: Part A's switch (`section=wifi`), the parent code's state with a link to Advanced, today's use and
-//!   "Gi én innlogging til nå" (`section=grant`), one group (design 113); `#logins-recent`: the last sign-ins (D6).
+//! - `#logins-wifi`: Part A's switch (`section=wifi`), the parent code's state with a link to Advanced and "Gi én
+//!   innlogging til nå" (`section=grant`, uncapped since 2026-11-18), one group (design 113); `#logins-recent`: the
+//!   last sign-ins (D6).
 //! - `#logins-apps`: Part B's switch (`section=apps`), refused while Chrome is ticked under Apps.
 //! - `#logins-sites`: the presets (`section=preset`) and the parent's own sites (`section=site`, `action=add|remove`).
 //! - Advanced's `#wifi-signin`: "Krev foreldrekode" under "Wi-Fi-innlogging" (`section=wifi_signin`), answered with a
@@ -65,8 +66,6 @@ struct LoginsTemplate {
     device: Device,
     wifi_on: bool,
     require_code: bool,
-    /// The value of "I dag uten kode": "1 av 4 · 5 av 20 min", only with a report that has `captive_portal`.
-    today: Option<String>,
     granted: bool,
     recent: Vec<RecentRow>,
     apps_on: bool,
@@ -331,22 +330,6 @@ pub async fn view(
         .and_then(|s| s.installed_apps_json.as_deref())
         .and_then(|json| serde_json::from_str::<Vec<crate::models::InstalledApp>>(json).ok())
         .map(|apps| apps.iter().any(|a| a.package_name == logins::CHROME));
-    let today = report.as_ref().map(|r| {
-        let grants = r.today.grant_used.clamp(0, logins::GRANTS_A_DAY);
-        t_params(
-            lang,
-            "logins.wifi.today",
-            &[
-                ("openings", &r.today.openings.to_string()),
-                ("day_openings", &(logins::DAY_OPENINGS + grants).to_string()),
-                ("minutes", &(r.today.ms / 60_000).to_string()),
-                (
-                    "day_minutes",
-                    &(logins::DAY_MINUTES + logins::MINUTES * grants).to_string(),
-                ),
-            ],
-        )
-    });
     let chrome_ticked = logins::chrome_ticked(&policy);
     let apps_on = policy.login_browser_enabled && !chrome_ticked;
     Html(
@@ -356,7 +339,6 @@ pub async fn view(
             title: format!("{} · {}", t(lang, "logins.page"), device.name),
             wifi_on: policy.captive_portal_enabled,
             require_code: policy.captive_portal_require_code,
-            today,
             granted: query.get("notice").map(String::as_str) == Some("granted"),
             recent: report
                 .as_ref()

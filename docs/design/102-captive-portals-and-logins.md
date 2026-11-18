@@ -3,6 +3,14 @@
 Status: design, **revision 5**, 2026-11-15 (branch `design-102`). Not built. Revision 1 was b724662cd, revision 2
 3fb9ac2bf, revision 3 7ceedfb81, revision 4 337c8e52a.
 
+**After the build (the user, 2026-11-18, "Enig angående wifi login"): the daily counts are gone.** D2's "4 openings and
+20 minutes a day" for code-free openings and D14's "at most 3 a day" no longer hold. What stays: each opening closes
+after 10 minutes at most or as soon as the network works; the parent code requirement (on by default); "Gi én
+innlogging til nå", one code-free opening per tap, uncapped (an unused one still ends with the day). The policy's
+`captive_portal` lost `day_openings`/`day_minutes`, the report's `captive_portal` lost `today`, a session no longer
+ends `budget`, the kid's "Spør en voksen om Wi-Fi-innlogging" row and the PWA's "I dag uten kode" row are gone, and
+`wifi_signin_budget` is no longer raised. The text below keeps the budget as designed; read it with this note.
+
 **Revision 5** takes the third design QA (`docs/review/qa-102-design.md`, "Revisions 3-4": 0 High, 4 Medium, 6 Low)
 and two decisions of the user (2026-11-15). What changed:
 

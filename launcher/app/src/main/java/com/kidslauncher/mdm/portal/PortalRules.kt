@@ -6,8 +6,8 @@ import java.time.LocalDate
 /*
  * Design 102 Part A: the Wi-Fi sign-in window's rules, pure and JVM-tested (`PortalRulesTest` over
  * `login_rules.json`): where the page may go ([portalNavigation], [portalFrame], [frameDocument]), when the window opens
- * ([portalApprove]) and closes ([portalClose], [portalPasses]), the day's code-free budget ([budgetToday] and its
- * friends) and the Wi-Fi page's row ([wifiRowState], [revisitMatches]). The Android parts are [CaptivePortalEntry],
+ * ([portalApprove]) and closes ([portalClose], [portalPasses]), the parent's grants ([grantsToday] and its friends)
+ * and the Wi-Fi page's row ([wifiRowState], [revisitMatches]). The Android parts are [CaptivePortalEntry],
  * [PortalWindowActivity] and [PortalRuntime].
  */
 
@@ -218,7 +218,7 @@ enum class PinOutcome(val wire: String) {
 
 /** The entry's inputs (§3.2): the network (Wi-Fi, `CAPTIVE_PORTAL`, not `VALIDATED`; for a reopen a matching record),
  * Vibb's https check, the PIN lock, a window open already (read from the session files, R3-L5), the parent code
- * required, a running PIN pause, an unused grant opening today, and the code-free budget. */
+ * required, a running PIN pause, and an unused grant opening today. */
 data class ApproveInput(
     val kind: PortalKind,
     val networkOk: Boolean,
@@ -228,7 +228,6 @@ data class ApproveInput(
     val requireCode: Boolean,
     val pause: Boolean,
     val grantLeft: Boolean,
-    val budgetLeft: Boolean,
 )
 
 /** The entry's next move. */
@@ -239,8 +238,7 @@ sealed interface Approval {
     /** Open the window, approved by `code`, `grant`, `pause` or `none` (the requirement off). */
     data class Open(val approved: String) : Approval
 
-    /** Open nothing: `locked`, `network`, `works` (the network passes), `budget`, `no_code`, `foreign_access`,
-     * `unavailable`. */
+    /** Open nothing: `locked`, `network`, `works` (the network passes), `no_code`, `foreign_access`, `unavailable`. */
     data class Refuse(val reason: String) : Approval
 
     /** A window is open already: bring it forward, start none. */
@@ -249,8 +247,8 @@ sealed interface Approval {
 
 /**
  * The order on every way in (§3.2): the PIN lock; one window at a time; the network; Vibb's https check (a sign-in);
- * then the approval - a running pause, a correct parent code (whatever the day's budget, D17), the requirement off
- * (within the code-free budget), a grant (within it), else the keypad. [pin] is the keypad's answer, `null` before it.
+ * then the approval - a running pause, a correct parent code, the requirement off, a grant, else the keypad (no daily
+ * count since 2026-11-18: each opening is bounded by its own 10 minutes). [pin] is the keypad's answer, `null` before it.
  * No parent code set fails closed (R3-M4); an app that could read the code, or the Keystore key's fault, is refused.
  */
 fun portalApprove(input: ApproveInput, pin: PinOutcome?): Approval = when {
@@ -260,119 +258,89 @@ fun portalApprove(input: ApproveInput, pin: PinOutcome?): Approval = when {
     input.kind == PortalKind.SIGN_IN && input.passes -> Approval.Refuse("works")
     input.pause -> Approval.Open("pause")
     pin == PinOutcome.OK -> Approval.Open("code")
-    !input.requireCode -> if (input.budgetLeft) Approval.Open("none") else Approval.Refuse("budget")
-    input.grantLeft && input.budgetLeft -> Approval.Open("grant")
+    !input.requireCode -> Approval.Open("none")
+    input.grantLeft -> Approval.Open("grant")
     pin == null || pin == PinOutcome.WRONG || pin == PinOutcome.LOCKED_OUT -> Approval.Keypad
     pin == PinOutcome.NOT_CONFIGURED -> Approval.Refuse("no_code")
     pin == PinOutcome.FOREIGN_ACCESS -> Approval.Refuse("foreign_access")
     else -> Approval.Refuse("unavailable")
 }
 
-/** The window's inputs for its close (§3.3): what Android and Vibb's check say, the time open, whether the opening is
- * code-free (the budget binds it) with the day's time left at the opening, and the pause. */
+/** The window's inputs for its close (§3.3): what Android and Vibb's check say, the time open, and the pause. */
 data class CloseInput(
     val kind: PortalKind,
     val validated: Boolean,
     val passes: Boolean,
     val elapsedMs: Long,
     val minutes: Int,
-    val codeFree: Boolean,
-    val budgetLeftMs: Long,
     val openedInPause: Boolean,
     val pauseOn: Boolean,
 )
 
 /** The outcome the window closes with now, or `null` to stay open: a sign-in closes once the network works
  * (`validated`, `passes`); a window opened in a pause closes when the pause ends (`closed_by_vibb`, R2-M4); a pause
- * lifts the limits while it lasts; else 10 minutes from the opening (`timeout`, code openings too) and, code-free, the
- * day's time (`budget`). A reopen never closes on a working network (§3.8). */
+ * lifts the limits while it lasts; else 10 minutes from the opening (`timeout`, every opening). A reopen never closes on
+ * a working network (§3.8). */
 fun portalClose(input: CloseInput): String? = when {
     input.kind == PortalKind.SIGN_IN && input.validated -> "validated"
     input.kind == PortalKind.SIGN_IN && input.passes -> "passes"
     input.openedInPause && !input.pauseOn -> "closed_by_vibb"
     input.pauseOn -> null
     input.elapsedMs >= input.minutes * 60_000L -> "timeout"
-    input.codeFree && input.elapsedMs >= input.budgetLeftMs -> "budget"
     else -> null
 }
 
-/** The grant steps a day counts at most (D14). */
-const val GRANTS_A_DAY = 3
-
 /**
- * The day's code-free budget (§3.4), kept by the main process: the local [date] (the latest seen - a clock set back
- * gives nothing, R2-L2), the code-free [openings] and their [ms], the grant steps added today ([grantUsed], at most
- * [GRANTS_A_DAY]), the grant openings taken ([grantOpenings]) and the policy's counter already taken ([grantSeen]).
+ * The parent's "one more sign-in now" (§3.4, D14), kept by the main process: the local [date] (the latest seen - a clock
+ * set back gives nothing, R2-L2), the grant openings not yet taken ([left]) and the policy's counter already taken
+ * ([seen]). An unused grant ends with the day. No daily cap (2026-11-18): each step is one opening.
  */
-data class PortalBudget(
+data class PortalGrants(
     val date: String,
-    val openings: Int = 0,
-    val ms: Long = 0L,
-    val grantUsed: Int = 0,
-    val grantOpenings: Int = 0,
-    val grantSeen: Long = 0L,
+    val left: Int = 0,
+    val seen: Long = 0L,
 )
 
-/** The budget for [today] and the policy's [grant]: a fresh install (nothing [stored]) takes the current grant as used;
- * a new day starts the counts again; an earlier date than the stored one is no new day; each grant step not seen adds
- * one code-free opening and its minutes, at most [GRANTS_A_DAY] a day (a jump by more adds only up to that). */
-fun budgetToday(stored: PortalBudget?, today: LocalDate, grant: Long): PortalBudget {
-    if (stored == null) return PortalBudget(date = today.toString(), grantSeen = grant)
+/** The grants for [today] and the policy's [grant]: a fresh install (nothing [stored]) takes the current counter as
+ * seen; a new day drops what was left; an earlier date than the stored one is no new day; each step not seen adds one
+ * opening. A counter that went back (another server) is taken as seen. */
+fun grantsToday(stored: PortalGrants?, today: LocalDate, grant: Long): PortalGrants {
+    if (stored == null) return PortalGrants(date = today.toString(), seen = grant)
     val storedDate = runCatching { LocalDate.parse(stored.date) }.getOrNull()
     val day = if (storedDate == null || today.isAfter(storedDate)) {
-        PortalBudget(date = today.toString(), grantSeen = stored.grantSeen)
+        PortalGrants(date = today.toString(), seen = stored.seen)
     } else {
         stored
     }
     return when {
-        grant > day.grantSeen -> {
-            val add = minOf(grant - day.grantSeen, (GRANTS_A_DAY - day.grantUsed).toLong()).coerceAtLeast(0L).toInt()
-            day.copy(grantUsed = day.grantUsed + add, grantSeen = grant)
-        }
-        grant < day.grantSeen -> day.copy(grantSeen = grant)
+        grant > day.seen -> day.copy(
+            left = (day.left.toLong() + (grant - day.seen)).coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
+            seen = grant,
+        )
+        grant < day.seen -> day.copy(seen = grant)
         else -> day
     }
 }
 
-/** The day's code-free openings and minutes, each grant step adding one opening and [minutes]. */
-fun budgetOpenings(b: PortalBudget, dayOpenings: Int): Int = dayOpenings + b.grantUsed
-
-fun budgetMs(b: PortalBudget, dayMinutes: Int, minutes: Int): Long = (dayMinutes + minutes * b.grantUsed) * 60_000L
-
-/** A code-free opening is left: an opening and some time. */
-fun budgetLeft(b: PortalBudget, dayOpenings: Int, dayMinutes: Int, minutes: Int): Boolean =
-    b.openings < budgetOpenings(b, dayOpenings) && b.ms < budgetMs(b, dayMinutes, minutes)
-
 /** An unused grant opening today. */
-fun grantLeft(b: PortalBudget): Boolean = b.grantOpenings < b.grantUsed
+fun grantLeft(g: PortalGrants): Boolean = g.left > 0
 
-/** An opening charged at the entry (§3.4): code-free ones only - a grant's counts as a grant opening too. A code or a
- * pause opening uses nothing (D17). */
-fun chargeOpening(b: PortalBudget, approved: String): PortalBudget = when (approved) {
-    "none" -> b.copy(openings = b.openings + 1)
-    "grant" -> b.copy(openings = b.openings + 1, grantOpenings = b.grantOpenings + 1)
-    else -> b
-}
-
-/** A code-free session's time, charged when it comes back (the whole minutes when it never did). */
-fun chargeTime(b: PortalBudget, ms: Long): PortalBudget = b.copy(ms = b.ms + ms.coerceAtLeast(0L))
+/** An opening taken at the entry: a grant's uses one grant; any other uses nothing. */
+fun takeGrant(g: PortalGrants, approved: String): PortalGrants =
+    if (approved == "grant") g.copy(left = (g.left - 1).coerceAtLeast(0)) else g
 
 /** The row Vibb's Wi-Fi page shows for the connected network (§3.6, §3.8). */
-enum class WifiPortalRow { NONE, SIGN_IN, ASK, REVISIT }
+enum class WifiPortalRow { NONE, SIGN_IN, REVISIT }
 
-/** The connected network's row: a captive Wi-Fi asks for a sign-in - or, with the code not required and the budget
- * spent, says to ask a grown-up; a network with today's record (and not captive) offers the reopen. */
+/** The connected network's row: a captive Wi-Fi asks for a sign-in; a network with today's record (and not captive)
+ * offers the reopen. */
 fun wifiRowState(
     partOn: Boolean,
     captive: Boolean,
-    requireCode: Boolean,
-    budgetLeft: Boolean,
-    grantLeft: Boolean,
     revisit: Boolean,
 ): WifiPortalRow = when {
     !partOn -> WifiPortalRow.NONE
-    captive && (requireCode || budgetLeft || grantLeft) -> WifiPortalRow.SIGN_IN
-    captive -> WifiPortalRow.ASK
+    captive -> WifiPortalRow.SIGN_IN
     revisit -> WifiPortalRow.REVISIT
     else -> WifiPortalRow.NONE
 }

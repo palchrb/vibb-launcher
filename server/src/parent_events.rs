@@ -97,8 +97,9 @@ pub enum Kind {
     /// report's `captive_portal.sessions`, `logins::wide`), keyed by the session's `opened_ms`. Told from its
     /// parameters ([WifiSigninParams]); held at night (`logins::night_push`).
     WifiSigninWide,
-    /// Design 102 §3.4: the day's code-free Wi-Fi sign-ins are used up (`logins::budget_spent`), keyed by the family's
-    /// local date. Shares [Kind::WifiSigninWide]'s switch.
+    /// Design 102 §3.4: the day's code-free Wi-Fi sign-ins were used up, keyed by the family's local date. Shares
+    /// [Kind::WifiSigninWide]'s switch. No longer raised since the daily count went (2026-11-18); kept so the stored
+    /// rows are still told.
     WifiSigninBudget,
 }
 
@@ -544,8 +545,10 @@ impl Phone {
         }
     }
 
-    /// Design 102 §3.4: today's code-free Wi-Fi sign-ins are used up (`logins::budget_spent`), once a day (`date`, the
-    /// family's local date). The target is the "one more" button.
+    /// Design 102 §3.4: today's code-free Wi-Fi sign-ins were used up, once a day (`date`, the family's local date).
+    /// The target is the "one more" button. Raised no more since 2026-11-18 (no daily count): the tests make one to
+    /// check how a stored row is told.
+    #[cfg(test)]
     pub fn wifi_signin_budget(&self, date: &str, push: Push) -> NewEvent {
         let params = WifiSigninParams {
             phone: self.name.clone(),

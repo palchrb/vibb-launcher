@@ -347,7 +347,8 @@ async fn the_apps_page_names_the_login_role() {
 }
 
 /// `wifi_signin_wide` once across two reports (its key is the session's `opened_ms`), never for blocked
-/// sub-resources alone; `wifi_signin_budget` once a day; the parent code's Wi-Fi entry worded.
+/// sub-resources alone; an older launcher's spent daily count raises nothing and shows nowhere (no daily count since
+/// 2026-11-18); the parent code's Wi-Fi entry worded.
 #[tokio::test]
 async fn the_reports_events() {
     let app = TestApp::new().await;
@@ -360,7 +361,6 @@ async fn the_reports_events() {
             "start": "system", "approved": "code"})
     };
     let body = json!({"captive_portal": {"handler": "vibb", "parent_code_set": true,
-    "today": {"openings": 1, "ms": 60_000, "grant_used": 0},
     "sessions": [
         session(now - 600_000, &["portal.example"], &[]),
         session(now - 300_000, &["portal.example", "a.example", "b.example", "c.example"], &[]),
@@ -380,15 +380,28 @@ async fn the_reports_events() {
         .unwrap();
     assert_eq!(target, format!("/devices/{id}/logins#logins-wifi"));
 
-    // The day's code-free openings used up: one event, however many reports say so.
+    // An older launcher's `today` with its daily count spent: dropped, no event, nothing on the page.
     let spent = json!({"captive_portal": {"handler": "vibb", "parent_code_set": true,
-        "today": {"openings": 4, "ms": 600_000, "grant_used": 0}, "sessions": []}});
-    report(&app, &token, spent.clone()).await;
+        "today": {"openings": 4, "ms": 1_200_000, "grant_used": 3}, "sessions": []}});
     report(&app, &token, spent).await;
     assert_eq!(
         kinds(super::told_events(&app, id, crate::i18n::Lang::En).await),
-        ["wifi_signin_wide", "wifi_signin_budget"]
+        ["wifi_signin_wide"]
     );
+    let portal = stored(&app, id).await.0.unwrap();
+    assert!(!portal.contains("today"), "{portal}");
+    let cookie = app.admin_cookie().await;
+    let page = app
+        .get_page(&format!("/devices/{id}/logins"), &cookie)
+        .await
+        .text();
+    assert!(
+        !page.contains("wifi-today")
+            && !page.contains("Today without a code")
+            && !page.contains(" a day"),
+        "{page}"
+    );
+    assert!(page.contains("data-grant"), "the grant button stays");
 
     // The Wi-Fi keypad's right code: a stored PIN event, worded as the Wi-Fi sign-in's.
     let body = json!({"events": [{"id": "00112233445566778899aabbccddeeff", "kind": "unlocked",

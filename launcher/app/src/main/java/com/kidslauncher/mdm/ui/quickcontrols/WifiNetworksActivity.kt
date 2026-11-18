@@ -142,7 +142,7 @@ class WifiNetworksActivity : KidPageActivity() {
     private fun renderPortal() {
         if (isFinishing || isDestroyed) return
         val app = applicationContext
-        // The row reads the budget and the records (files and preferences): off the main thread (code QA L9).
+        // The row reads the policy and the records (files and preferences): off the main thread (code QA L9).
         Thread {
             val row = com.kidslauncher.mdm.portal.PortalRuntime.row(app)
             runOnUiThread { if (!isFinishing && !isDestroyed) showPortal(row) }
@@ -154,12 +154,10 @@ class WifiNetworksActivity : KidPageActivity() {
         adapter.setCaptiveSsid(com.kidslauncher.mdm.portal.PortalRuntime.wifi().takeIf { it.captive }?.ssid)
         val (title, sub) = when (row) {
             com.kidslauncher.mdm.portal.WifiPortalRow.SIGN_IN -> R.string.wifi_portal_sign_in to R.string.wifi_portal_sign_in_sub
-            com.kidslauncher.mdm.portal.WifiPortalRow.ASK -> R.string.portal_ask to null
             com.kidslauncher.mdm.portal.WifiPortalRow.REVISIT -> R.string.wifi_portal_reopen to R.string.wifi_portal_reopen_sub
             com.kidslauncher.mdm.portal.WifiPortalRow.NONE -> null to null
         }
         binding.wifiNetworksPortal.visibility = if (title == null) View.GONE else View.VISIBLE
-        binding.wifiNetworksPortal.isEnabled = row != com.kidslauncher.mdm.portal.WifiPortalRow.ASK
         title?.let { binding.wifiNetworksPortalTitle.setText(it) }
         binding.wifiNetworksPortalSub.visibility = if (sub == null) View.GONE else View.VISIBLE
         sub?.let { binding.wifiNetworksPortalSub.setText(it) }
