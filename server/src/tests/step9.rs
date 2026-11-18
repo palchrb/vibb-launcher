@@ -203,18 +203,32 @@ async fn kiosk_block_switch_and_play_not_suspendable() {
             .unwrap();
     assert_eq!(stored, Some(false));
     let html = page(&app, &cookie, &format!("/devices/{id}/advanced")).await;
-    assert!(
-        html.contains("Play can&#39;t be paused on this phone"),
+    // The parent's block-off choice: no warning row, the sentence behind the block switch's (i) alone.
+    assert_eq!(
+        html.matches("Play can&#39;t be paused on this phone")
+            .count(),
+        1,
         "{html}"
     );
+    assert!(html.contains("data-note=\"play-openable\""), "{html}");
     assert!(
-        html.contains("Block other apps&#39; screens is off, so apps can open the Play Store"),
+        html.contains("Play can&#39;t be paused on this phone, so apps can open the Play Store"),
         "{html}"
     );
     assert_eq!(
         super::input_checked(&html, "block_activity_start", "on"),
         Some(false)
     );
+    // The block on: Play's missing suspension shows nothing.
+    sql(
+        &app,
+        "UPDATE device_policy SET block_activity_start = 1 WHERE device_id = ?",
+        id,
+    )
+    .await;
+    let html = page(&app, &cookie, &format!("/devices/{id}/advanced")).await;
+    assert!(!html.contains("play-openable"), "{html}");
+    assert!(!html.contains("so apps can open the Play Store"), "{html}");
 }
 
 #[tokio::test]

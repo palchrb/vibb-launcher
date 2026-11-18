@@ -308,6 +308,21 @@ pub fn role_words(lang: Lang, role: &str) -> &'static str {
     )
 }
 
+/// A feature the parent chose needs Android's "Modify system settings": the touch switch (bit 16), the Sound bit
+/// (8: the kid's Ringetone and Meldingslyd picks) or a clock format in use. Without one, the grant's absence is only a quiet value (2026-11-18).
+pub fn write_settings_needed(policy: &DevicePolicy) -> bool {
+    policy.quick_controls_mask
+        & (crate::handlers::devices::QUICK_CONTROL_TOUCH
+            | crate::handlers::devices::QUICK_CONTROL_SOUND)
+        != 0
+        || crate::models::clock_format(&policy.clock_format) != "system"
+}
+
+/// The kid's Flymodus switch (bit 64) is on: it needs the Digital assistant role.
+pub fn assistant_needed(policy: &DevicePolicy) -> bool {
+    policy.quick_controls_mask & crate::handlers::devices::QUICK_CONTROL_AIRPLANE != 0
+}
+
 /// One step of the Oppsett card (§6.2).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SetupStep {
@@ -321,7 +336,7 @@ pub struct SetupStep {
 /// The steps the phone needs and hasn't done (§6.2), in the card's order, from a launcher with [CAPABILITY] (the one
 /// with "Fullfør oppsett" and its notification, which the card's words name):
 /// - Bakgrunnstilkobling, always (the report's `battery_optimization_exempt` false);
-/// - Endre systeminnstillinger, only with the touch switch (bit 16) or a clock format in use;
+/// - Endre systeminnstillinger, only with the touch switch (bit 16), the Sound bit (8) or a clock format in use;
 /// - Digital assistent, only with the kid's Flymodus switch (bit 64);
 /// - Wi-Fi i flymodus, only with bit 64 and the role held, done once the phone stored `wifi_kept` (true or false);
 /// - Standardapper endret, while `default_apps_changed` names a role;
@@ -332,7 +347,6 @@ pub fn setup_steps(
     policy: &DevicePolicy,
     latest: Option<&DeviceStatus>,
 ) -> Vec<SetupStep> {
-    use crate::handlers::devices::{QUICK_CONTROL_AIRPLANE, QUICK_CONTROL_TOUCH};
     let Some(latest) = latest else {
         return Vec::new();
     };
@@ -352,18 +366,14 @@ pub fn setup_steps(
             t(lang, "device.summary.setup.background_sub").to_string(),
         ));
     }
-    let mask = policy.quick_controls_mask;
-    if (mask & QUICK_CONTROL_TOUCH != 0
-        || crate::models::clock_format(&policy.clock_format) != "system")
-        && latest.write_settings_granted == Some(false)
-    {
+    if write_settings_needed(policy) && latest.write_settings_granted == Some(false) {
         steps.push(step(
             "write_settings",
             "apps.perms.access.write_settings",
             t(lang, "device.about.write_settings_sub").to_string(),
         ));
     }
-    if mask & QUICK_CONTROL_AIRPLANE != 0 {
+    if assistant_needed(policy) {
         if !report.assistant {
             steps.push(step(
                 "assistant",

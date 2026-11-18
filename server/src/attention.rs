@@ -18,7 +18,6 @@
 
 use crate::AppState;
 use crate::handlers::calls::CallProblem;
-use crate::handlers::device_pages::PlayNote;
 use crate::handlers::window_relock::RelockCard;
 use crate::i18n::{Lang, t, t_count};
 use crate::kiosk_escapes::EscapeNote;
@@ -44,7 +43,6 @@ pub enum Kind {
     GoogleBackup,
     NoParentPin,
     EasyParentPin,
-    AccessRevoked,
     PolicyProblem,
     UnseenRestarts,
     ChildLockOff,
@@ -53,10 +51,6 @@ pub enum Kind {
     /// How many apps the phone keeps hidden.
     BlockedApps(usize),
     RestartOnce,
-    /// Play install mode is on: the Play Store opens on the phone.
-    PlayInstallMode,
-    /// Android won't pause Play and "Block other apps' screens" is off: apps can open it.
-    PlayStoreOpenable,
     /// The launcher isn't Android's Home app: the update fence is partial.
     NotHomeApp,
     /// The boot cover was armed but not shown: another home screen came up at boot.
@@ -90,10 +84,9 @@ pub enum Kind {
     /// the phone's web player) - the music app's tiles say "Spør en voksen".
     MusicSpotify,
     /// The account the phone plays as, from the accounts table (qa-26c-merge2-code L3): its login
-    /// to renew, its login ending within 14 days, two phones on it, no Spotify app set up.
+    /// to renew, its login ending within 14 days, no Spotify app set up.
     MusicSpotifyLogin,
     MusicSpotifyEnding,
-    MusicSpotifyShared,
     MusicSpotifyNoApp,
 }
 
@@ -105,7 +98,6 @@ impl Kind {
             self,
             Kind::NoParentPin
                 | Kind::EasyParentPin
-                | Kind::AccessRevoked
                 | Kind::AppPushWaiting
                 | Kind::AppPushRefused(_)
                 | Kind::AppPushOutside(_)
@@ -144,15 +136,12 @@ impl AttentionItem {
             Kind::GoogleBackup => "google-backup",
             Kind::NoParentPin => "no-parent-pin",
             Kind::EasyParentPin => "easy-parent-pin",
-            Kind::AccessRevoked => "access-revoked",
             Kind::PolicyProblem => "policy-problem",
             Kind::UnseenRestarts => "unseen-restarts",
             Kind::ChildLockOff => "child-lock-off",
             Kind::ChildPinChanged => "child-pin-changed",
             Kind::BlockedApps(_) => "blocked-apps",
             Kind::RestartOnce => "restart-once",
-            Kind::PlayInstallMode => "play-install-mode",
-            Kind::PlayStoreOpenable => "play-store-openable",
             Kind::NotHomeApp => "not-home-app",
             Kind::BootCoverNotShown => "boot-cover-not-shown",
             Kind::NoNotificationAccess => "notification-access",
@@ -173,7 +162,6 @@ impl AttentionItem {
             Kind::MusicSpotify => "music-spotify",
             Kind::MusicSpotifyLogin => "music-spotify-login",
             Kind::MusicSpotifyEnding => "music-spotify-ending",
-            Kind::MusicSpotifyShared => "music-spotify-shared",
             Kind::MusicSpotifyNoApp => "music-spotify-no-app",
         }
     }
@@ -192,7 +180,6 @@ pub struct Facts {
     pub google_backup: bool,
     pub no_parent_pin: bool,
     pub easy_parent_pin: bool,
-    pub access_revoked: bool,
     pub policy_problem: bool,
     pub unseen_restarts: bool,
     pub child_lock_off: bool,
@@ -200,10 +187,9 @@ pub struct Facts {
     pub child_pin_changed: bool,
     pub blocked_apps: usize,
     pub restart_once: bool,
-    /// Advanced's Play and update-fence warnings that let other screens reach the child (design 31
-    /// step 3 fix round, qa-31-s3-code M4/L4; the user can overrule).
-    pub play_install_mode: bool,
-    pub play_store_openable: bool,
+    /// Advanced's update-fence warnings that let other screens reach the child (design 31
+    /// step 3 fix round, qa-31-s3-code M4/L4; the user can overrule). Play's install mode and an
+    /// openable Play Store are the parent's choices: no row (2026-11-18).
     pub not_home_app: bool,
     pub boot_cover_not_shown: bool,
     pub no_notification_access: bool,
@@ -241,7 +227,6 @@ pub fn items(lang: Lang, device_id: i64, facts: &Facts) -> Vec<AttentionItem> {
     add(facts.google_backup, Kind::GoogleBackup);
     add(facts.no_parent_pin, Kind::NoParentPin);
     add(facts.easy_parent_pin, Kind::EasyParentPin);
-    add(facts.access_revoked, Kind::AccessRevoked);
     add(facts.policy_problem, Kind::PolicyProblem);
     add(facts.unseen_restarts, Kind::UnseenRestarts);
     add(facts.child_lock_off, Kind::ChildLockOff);
@@ -251,8 +236,6 @@ pub fn items(lang: Lang, device_id: i64, facts: &Facts) -> Vec<AttentionItem> {
         Kind::BlockedApps(facts.blocked_apps),
     );
     add(facts.restart_once, Kind::RestartOnce);
-    add(facts.play_install_mode, Kind::PlayInstallMode);
-    add(facts.play_store_openable, Kind::PlayStoreOpenable);
     add(facts.not_home_app, Kind::NotHomeApp);
     add(facts.boot_cover_not_shown, Kind::BootCoverNotShown);
     add(facts.no_notification_access, Kind::NoNotificationAccess);
@@ -287,7 +270,6 @@ pub fn items(lang: Lang, device_id: i64, facts: &Facts) -> Vec<AttentionItem> {
     add(music.spotify_account.no_app, Kind::MusicSpotifyNoApp);
     add(music.spotify_account.renew, Kind::MusicSpotifyLogin);
     add(music.spotify_account.ending, Kind::MusicSpotifyEnding);
-    add(music.spotify_account.shared, Kind::MusicSpotifyShared);
     add(music.spotify_cant_play, Kind::MusicSpotify);
     kinds
         .into_iter()
@@ -314,15 +296,12 @@ fn level(kind: Kind) -> Level {
         | Kind::GoogleBackup
         | Kind::NoParentPin
         | Kind::EasyParentPin
-        | Kind::AccessRevoked
         | Kind::PolicyProblem
         | Kind::UnseenRestarts
         | Kind::ChildLockOff => Level::Alarm,
         Kind::BlockedApps(_)
         | Kind::ChildPinChanged
         | Kind::RestartOnce
-        | Kind::PlayInstallMode
-        | Kind::PlayStoreOpenable
         | Kind::NotHomeApp
         | Kind::BootCoverNotShown
         | Kind::NoNotificationAccess
@@ -343,7 +322,6 @@ fn level(kind: Kind) -> Level {
         | Kind::MusicSpotify
         | Kind::MusicSpotifyLogin
         | Kind::MusicSpotifyEnding
-        | Kind::MusicSpotifyShared
         | Kind::MusicSpotifyNoApp => Level::Action,
     }
 }
@@ -357,7 +335,6 @@ fn title(lang: Lang, kind: Kind) -> String {
         Kind::GoogleBackup => t(lang, "device.attention.google_backup"),
         Kind::NoParentPin => t(lang, "device.attention.no_parent_pin"),
         Kind::EasyParentPin => t(lang, "device.attention.easy_parent_pin"),
-        Kind::AccessRevoked => t(lang, "device.attention.access_revoked"),
         Kind::PolicyProblem => t(lang, "device.attention.policy_problem"),
         Kind::UnseenRestarts => t(lang, "device.attention.unseen_restarts"),
         Kind::ChildLockOff => t(lang, "device.attention.child_lock_off"),
@@ -366,8 +343,6 @@ fn title(lang: Lang, kind: Kind) -> String {
             return t_count(lang, "device.attention.blocked_apps", count(n), &[]);
         }
         Kind::RestartOnce => t(lang, "device.attention.restart_once"),
-        Kind::PlayInstallMode => t(lang, "device.attention.play_install_mode"),
-        Kind::PlayStoreOpenable => t(lang, "device.attention.play_store_openable"),
         Kind::NotHomeApp => t(lang, "device.attention.not_home_app"),
         Kind::BootCoverNotShown => t(lang, "device.attention.boot_cover_not_shown"),
         Kind::NoNotificationAccess => t(lang, "device.attention.notification_access"),
@@ -395,7 +370,6 @@ fn title(lang: Lang, kind: Kind) -> String {
         Kind::MusicSpotify => t(lang, "device.attention.music_spotify"),
         Kind::MusicSpotifyLogin => t(lang, "device.attention.music_spotify_login"),
         Kind::MusicSpotifyEnding => t(lang, "device.attention.music_spotify_ending"),
-        Kind::MusicSpotifyShared => t(lang, "device.attention.music_spotify_shared"),
         Kind::MusicSpotifyNoApp => t(lang, "device.attention.music_spotify_no_app"),
     }
     .to_string()
@@ -417,10 +391,7 @@ fn target(kind: Kind, id: i64) -> String {
         Kind::PolicyProblem => ("/about", "software"),
         Kind::UnseenRestarts => ("/about", "diagnostics"),
         Kind::GoogleBackup => ("/advanced", "restrictions"),
-        Kind::AccessRevoked => ("/advanced", "connection"),
-        Kind::RestartOnce | Kind::PlayInstallMode | Kind::PlayStoreOpenable => {
-            ("/advanced", "app-screens")
-        }
+        Kind::RestartOnce => ("/advanced", "app-screens"),
         Kind::NotHomeApp | Kind::BootCoverNotShown => ("/advanced", "updates"),
         Kind::NoParentPin | Kind::EasyParentPin => ("/lock", "parent-pin"),
         Kind::ChildLockOff | Kind::ChildPinChanged => ("/lock", "child-pin"),
@@ -448,7 +419,6 @@ fn target(kind: Kind, id: i64) -> String {
         Kind::MusicSpotify
         | Kind::MusicSpotifyLogin
         | Kind::MusicSpotifyEnding
-        | Kind::MusicSpotifyShared
         | Kind::MusicSpotifyNoApp => ("/music", "music-spotify"),
     };
     format!("/devices/{id}{page}#{anchor}")
@@ -662,8 +632,6 @@ pub fn facts_of(s: &Sources, now_ms: i64) -> Facts {
         android_capable: capability(crate::kid_lock::ANDROID_KEYGUARD_CAPABILITY),
         pin_waiting: false,
     };
-    let play =
-        crate::handlers::device_pages::play_notes(latest, policy.block_activity_start, now_ms);
     let escapes =
         crate::handlers::device_pages::escapes_card(policy, latest, now_ms, s.last_phone_on_ms)
             .notes;
@@ -686,7 +654,6 @@ pub fn facts_of(s: &Sources, now_ms: i64) -> Facts {
         no_parent_pin: crate::handlers::devices::managed_without_pin(policy),
         easy_parent_pin: policy.override_pin_hash.is_some()
             && policy.override_pin_easy == Some(true),
-        access_revoked: s.device.token_hash.is_none(),
         policy_problem: latest
             .and_then(|st| st.policy_state.as_deref())
             .is_some_and(|state| state != "ok"),
@@ -709,10 +676,6 @@ pub fn facts_of(s: &Sources, now_ms: i64) -> Facts {
         )
         .is_empty(),
         // The same notes Advanced shows, so the row and the page agree.
-        play_install_mode: play
-            .iter()
-            .any(|n| matches!(n, PlayNote::InstallMode { .. })),
-        play_store_openable: play.contains(&PlayNote::NotSuspendable { block_on: false }),
         not_home_app: escapes.contains(&EscapeNote::PartialFence),
         boot_cover_not_shown: escapes
             .iter()
@@ -773,15 +736,12 @@ mod tests {
             google_backup: true,
             no_parent_pin: true,
             easy_parent_pin: true,
-            access_revoked: true,
             policy_problem: true,
             unseen_restarts: true,
             child_lock_off: true,
             child_pin_changed: true,
             blocked_apps: 2,
             restart_once: true,
-            play_install_mode: true,
-            play_store_openable: true,
             not_home_app: true,
             boot_cover_not_shown: true,
             no_notification_access: true,
@@ -811,7 +771,6 @@ mod tests {
                     no_app: true,
                     renew: true,
                     ending: true,
-                    shared: true,
                 },
             },
             ..Default::default()
@@ -862,7 +821,6 @@ mod tests {
             [
                 "no-parent-pin",
                 "easy-parent-pin",
-                "access-revoked",
                 // Design 108c: the server's own data, never "at last report".
                 "app-push-waiting",
                 "app-push-refused",
@@ -884,15 +842,12 @@ mod tests {
                 "Backup to Google is on",
                 "No Parent PIN set",
                 "Parent PIN easy to guess",
-                "Access removed",
                 "Phone can't apply its settings",
                 "Phone started without Vibb One",
                 "Lock is off on the phone",
                 "Phone's PIN isn't the Child PIN",
                 "2 blocked apps wait",
                 "Restart the phone once",
-                "Play Store open (install mode)",
-                "Play Store can be opened",
                 "Vibb One isn't the Home app",
                 "Boot cover wasn't shown",
                 "Notification access off",
@@ -913,7 +868,6 @@ mod tests {
                 "No Spotify app set up",
                 "Spotify login needs renewing",
                 "Spotify login ends soon",
-                "Two phones share a Spotify account",
                 "Spotify can't play on this phone",
             ]
         );
@@ -998,16 +952,7 @@ mod tests {
         assert_eq!(target("policy-problem"), "/devices/7/about#software");
         assert_eq!(target("unseen-restarts"), "/devices/7/about#diagnostics");
         assert_eq!(target("google-backup"), "/devices/7/advanced#restrictions");
-        assert_eq!(target("access-revoked"), "/devices/7/advanced#connection");
         assert_eq!(target("restart-once"), "/devices/7/advanced#app-screens");
-        assert_eq!(
-            target("play-install-mode"),
-            "/devices/7/advanced#app-screens"
-        );
-        assert_eq!(
-            target("play-store-openable"),
-            "/devices/7/advanced#app-screens"
-        );
         assert_eq!(target("not-home-app"), "/devices/7/advanced#updates");
         assert_eq!(
             target("boot-cover-not-shown"),

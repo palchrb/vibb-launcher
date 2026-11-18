@@ -203,10 +203,12 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `delete` → `/devices`. `enroll_code.html`'s Back goes to `/advanced#connection` for an enrolled phone, `#access`
   (the not-enrolled card) otherwise.
 - **Attention targets** moved: Do Not Disturb → `/about#sound`, policy problem → `/about#software`, unseen restarts →
-  `/about#diagnostics`, Backup to Google → `/advanced#restrictions`, access removed → `/advanced#connection`, restart
-  once → `/advanced#app-screens`. Four orange rows added in the fix round (qa-31-s3-code M4/L4, decided yes on the
-  user's behalf, the user can overrule): Play install mode and Play openable (not pausable, "Block other apps'
-  screens" off) → `#app-screens`; "Vibb One isn't the Home app" and "Boot cover wasn't shown" → `#updates`. Their facts
+  `/about#diagnostics`, Backup to Google → `/advanced#restrictions`, restart once → `/advanced#app-screens`. Two orange
+  rows added in the fix round (qa-31-s3-code M4/L4): "Vibb One isn't the Home app" and "Boot cover wasn't shown" →
+  `#updates`. Since 2026-11-18 (the borderline choices) access removed, Play install mode and Play openable have no
+  Attention row: access removed is a quiet line in Advanced's Connection group, install mode a quiet note under App
+  screens, "apps can open the Play Store" (block off, Play not pausable) a sentence behind the block switch's ⓘ, and Play
+  not pausable with the block on shows nothing. Their facts
   come from Advanced's own builders (`device_pages::play_notes`, `device_pages::escapes_card`).
 - **Times:** past ones with `Zone::when`, end times with `Zone::until` ("14:05", "00:05 tomorrow", "Mon 14:30",
   "20 Oct 14:30"; qa-31-s3-code M2): the live code, the typed-code pause, install mode. About's Last contact comes
@@ -1623,7 +1625,7 @@ man er inne på en device". Branch `pwa-fixes-b`.
 - **The header** (`phone_status::header`): line 1 the same lead, the screen time named ("4 min screen time today", nb
   "4 min skjermtid i dag"); line 2 the zone the phone is in now ("Test since 22:19", `devices::zone_now`) · the
   battery - the screen time instead when the lead is the battery; a phone turned off, offline or not reachable has
-  line 1 alone. The lock is orange text now (`tone-orange`), not the lock badge's pill.
+  line 1 alone. The lock is plain text now (not orange since 2026-11-18), not the lock badge's pill.
 - **The dot** says what the line leads with (`phone_status::dot`, since 2026-11-01, below): orange for a low battery
   would read as "No contact", so the low battery is said in the line, in orange.
 - **Times**: `Zone::since` - the clock alone today (never "24. okt." for today), "yesterday 21:40", the weekday within

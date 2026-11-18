@@ -145,7 +145,7 @@
         {% endif %}
         <div class="group" role="group" aria-labelledby="storytel-title">
             <label class="row">
-                <span class="row-label">{{ self.t("device.music.storytel_on") }}{% if let Some(unsent) = music.storytel_unsent %}<span class="row-sub tone-orange" data-storytel-unsent>{{ unsent }}</span>{% endif %}</span>
+                <span class="row-label">{{ self.t("device.music.storytel_on") }}{% if let Some(unsent) = music.storytel_unsent %}<span class="row-sub{% if music.storytel_unsent_orange %} tone-orange{% endif %}" data-storytel-unsent>{{ unsent }}</span>{% endif %}</span>
                 <input type="checkbox" role="switch" class="sw" name="storytel" value="on"{% if music.storytel %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
             </label>
         </div>
@@ -167,7 +167,7 @@
     {#- Spotify (design 26c §2.5, §3.6): which account this phone plays as - one per phone, the
         child's own - as an inline picker in its group, back to #music-spotify (below the library:
         without JS a save must not land at the top); what needs the parent as notes above it, the
-        unsent entries as the row's orange sub-line, a refused save's reason in the
+        unsent entries as the row's sub-line (orange only for Storytel's switch on), a refused save's reason in the
         group. Shown once a Spotify app is set up, or while accounts or a binding remain. -#}
     {% if let Some(spotify) = music.spotify %}
     <section id="music-spotify" aria-labelledby="music-spotify-title">
@@ -177,7 +177,7 @@
         {% endfor %}
         <form method="post" action="/devices/{{ device.id }}/music/spotify#music-spotify" class="group">
             <label class="row" for="music_spotify_account">
-                <span class="row-label">{{ self.t("device.music.plays_as") }}{% if let Some(note) = spotify.note %}<span class="row-sub tone-orange" data-row="spotify-off">{{ note }}</span>{% endif %}</span>
+                <span class="row-label">{{ self.t("device.music.plays_as") }}{% if let Some(note) = spotify.note %}<span class="row-sub" data-row="spotify-off">{{ note }}</span>{% endif %}</span>
                 <select class="pick" id="music_spotify_account" name="account" data-autosave{% if spotify.notice.is_some() %} autofocus{% endif %}>
                     <option value="off"{% if spotify.bound.is_none() %} selected{% endif %}>{{ self.t("common.off") }}</option>
                     {% for (id, name) in spotify.accounts %}

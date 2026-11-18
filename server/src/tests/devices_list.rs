@@ -217,9 +217,7 @@ async fn a_locking_rule_and_todays_screen_time_show_on_the_row() {
     let html = app.get_page("/devices", &cookie).await.text();
     let anna_row = row(&html, anna);
     assert!(
-        anna_row.contains(
-            "<span class=\"tone-orange\" data-lock>Skole until 00:00 tomorrow · calls off</span>"
-        ),
+        anna_row.contains("<span data-lock>Skole until 00:00 tomorrow · calls off</span>"),
         "{anna_row}"
     );
     assert_eq!(line(&html, anna), "Skole until 00:00 tomorrow · calls off");
@@ -408,12 +406,13 @@ async fn the_badge_counts_the_device_pages_attention_rows() {
     }
     assert!(badge(row(&list, anna)) >= 4);
     assert!(
-        attention_rows(
+        !attention_rows(
             &app.get_page(&format!("/devices/{otto}"), &cookie)
                 .await
                 .text()
         )
-        .contains(&"access-revoked".to_string())
+        .contains(&"access-revoked".to_string()),
+        "access removed is a quiet line on Advanced, no Attention row"
     );
     assert_eq!(badge(row(&list, mia)), 0);
     assert!(!row(&list, mia).contains("count"));
@@ -522,8 +521,8 @@ async fn locks_shown(app: &TestApp, cookie: &str, id: i64) -> [String; 3] {
         .await
         .text();
     [
-        lock_of(row(&list, id), "<span class=\"tone-orange\" data-lock>"),
-        lock_of(&summary, "<span class=\"tone-orange\" data-lock>"),
+        lock_of(row(&list, id), "<span data-lock>"),
+        lock_of(&summary, "<span data-lock>"),
         lock_of(&time, "<span class=\"badge badge-lock\">"),
     ]
 }

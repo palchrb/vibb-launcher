@@ -459,7 +459,7 @@ fn lead_line(lead: &Lead, facts: &Facts, zone: &Zone, now: DateTime<Utc>) -> Lin
                 .map(|at| zone.relative(at, now));
             vec![Part::new(
                 lock.words(lang, contact.as_deref()),
-                Tone::Warn,
+                Tone::Plain,
                 Some("lock"),
             )]
         }
@@ -658,6 +658,9 @@ mod tests {
             at_last_report: None,
         };
         f.lock = Some(&lock);
+        // A rule in force is as it should be: the plain tone, never orange (2026-11-18).
+        let locked = row(&f, &Zone::from_setting("Europe/Oslo"), now());
+        assert_eq!((locked[0].tone.css(), locked[0].hook), ("", Some("lock")));
         assert_eq!(
             both(&f),
             [
