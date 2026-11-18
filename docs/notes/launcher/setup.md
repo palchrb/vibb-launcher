@@ -58,6 +58,11 @@
   rows that sat there (background connection, Modify system settings, Vibb's notifications, the assistant, Wi-Fi in
   airplane mode, the call filter, fingerprint, media on the lock screen) are flow screens now.
 - The setup notification (`AssistantSetup.refreshNotice`) counts `SetupReadings.count` and opens the flow.
+- The flow shows only missing steps (§6.3): a step done can't be redone from it - re-picking the assistant, Wi-Fi in
+  airplane mode once stored (`wifi_kept` has no on-phone way back) or another fingerprint is Android's own Settings in
+  a pause (code QA L9).
+- The hold fails closed on a wall clock set back past the time elapsed (an NTP or NITZ correction right after the
+  enrolment): `timedWindowActive` ends it; the PWA's "Åpne for oppsett" recovers (code QA L9; the gate's owed checks).
 
 ## Android 14-17
 
