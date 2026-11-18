@@ -348,7 +348,7 @@ fun signerCheck(
  * [listed] (QA of cmd-expiry, Low 1): the apps the PWA listed, package -> the key it showed
  * (`null` = unreadable then); only a listed block whose key is still that one ([shownSigner], as
  * [currentBlocks] reports it) goes - not one that came after the parent looked, nor an app
- * replaced since. `null` (an older server): every block. A package that is gone leaves anyway.
+ * replaced since. `null` (none sent): nothing - fail closed. A package that is gone leaves anyway.
  */
 fun allowBlocked(
     blocked: Map<String, Set<String>?>,
@@ -359,7 +359,7 @@ fun allowBlocked(
     val now = installed[name] ?: return@filter false
     val pin = lockedSigners[name]?.takeIf { it.isNotEmpty() }
     if (pin != null && !sameSigner(pin, now)) return@filter true
-    listed != null && (name !in listed || listed[name] != shownSigner(now)?.takeIf(::isSignerHex))
+    listed == null || name !in listed || listed[name] != shownSigner(now)?.takeIf(::isSignerHex)
 }
 
 /**

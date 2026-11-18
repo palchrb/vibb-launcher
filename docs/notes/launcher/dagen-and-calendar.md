@@ -18,8 +18,7 @@ glance's "Lås opp og åpne Kalender" (`day_title`, `glance_reminder_action`). "
   200/2000 code points - and matching that ignores case per code point and whitespace; replace / prefix with the
   separators trimmed / hide; the first rule that applies wins; the server's `calendar.rs` is the same code, both run
   the shared `calendar_title_rules.json`, `TitleRulesTest`), `CalendarPolicy.kt` (`calendarPolicy`: the policy's
-  `calendar` field by field - missing = an older server, everything shown and nothing on the lock; anything but an
-  object = `UNKNOWN`, Dagen off; a rule it can't use is dropped and its id reported; `CalendarPolicyTest`),
+  `calendar` field by field - missing or anything but an object = `UNKNOWN`, Dagen off; a rule it can't use is dropped and its id reported; `CalendarPolicyTest`),
   `CalendarKey.kt` (the key = 16 hex of SHA-256 over account type NUL account name NUL `Calendars.NAME`; the source =
   only the host of an http(s)/webcal NAME), `CalendarColor.kt` (a colour per calendar, 2026-10-27, mockup §6 B: the
   policy's `calendars[].color` - one of eight names, the ARGB table here, Dagen draws on the night ground only -, an
@@ -140,7 +139,7 @@ glance's "Lås opp og åpne Kalender" (`day_title`, `glance_reminder_action`). "
   `calendar.calendars[]` (no `source`), and `vibbLocal` checks NAME, so "Min kalender" is still made.
 - **Pure** (`day/`): `CalendarPolicy.feeds` (`FeedRef(id, name, rev)`, a row that doesn't read dropped) and
   `feedsComplete` (an array every element of which read - QA L9: only then may a calendar the policy doesn't name be
-  deleted; missing, a bad element, `UNKNOWN`/`OLDER_SERVER` delete nothing); `FeedEvents.kt` (`feedDocument`, the wire
+  deleted; missing, a bad element, `UNKNOWN` delete nothing); `FeedEvents.kt` (`feedDocument`, the wire
   DTOs; `seriesRows(event, phoneZone)`: the master - `_SYNC_ID` = `UID_2445` = uid, `SYNC_DATA1` the series' rev,
   `SYNC_DATA2` the zone a floating (or unknown-zone) series is written in; single DTSTART + DTEND; recurring DTSTART +
   DURATION (`PT<n>S`, all-day `P<n>D`) + RRULE with a local `UNTIL` made UTC in the zone written (`ruleWithUtcUntil`,

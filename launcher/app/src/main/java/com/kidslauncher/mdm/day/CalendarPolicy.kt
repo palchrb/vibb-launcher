@@ -80,11 +80,8 @@ data class CalendarPolicy(
     override fun toString() = "CalendarPolicy(usable=$usable, rules=${rules.size}, feeds=${feeds.size})"
 
     companion object {
-        /** No usable policy: Dagen off. */
+        /** No usable policy (missing, or not an object): Dagen off. */
         val UNKNOWN = CalendarPolicy(usable = false, onHome = false)
-
-        /** An older server without the key: every calendar shown, no rules, nothing on the lock, no "+". */
-        val OLDER_SERVER = CalendarPolicy(usable = true)
     }
 }
 
@@ -93,14 +90,13 @@ private fun JsonObject.bool(key: String): Boolean? = (this[key] as? JsonPrimitiv
 private fun JsonObject.string(key: String): String? = (this[key] as? JsonPrimitive)?.takeIf { it.isString }?.content
 
 /**
- * `PolicyResponse.calendar` field by field: missing or JSON `null` = an older server ([CalendarPolicy.OLDER_SERVER]);
- * anything but an object = [CalendarPolicy.UNKNOWN]. A switch that isn't a JSON boolean is its default; a calendar row
+ * `PolicyResponse.calendar` field by field: missing, JSON `null` or anything but an object = [CalendarPolicy.UNKNOWN] (fail
+ * closed). A switch that isn't a JSON boolean is its default; a calendar row
  * without a string key is dropped, its `color` a name this launcher doesn't know (or none) is no colour; a rule without
  * a numeric id is dropped, one this launcher can't use is dropped and its id reported.
  */
 fun calendarPolicy(element: JsonElement?): CalendarPolicy {
     val obj = when (element) {
-        null, JsonNull -> return CalendarPolicy.OLDER_SERVER
         is JsonObject -> element
         else -> return CalendarPolicy.UNKNOWN
     }

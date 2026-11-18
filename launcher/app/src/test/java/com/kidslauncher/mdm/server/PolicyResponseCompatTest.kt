@@ -730,7 +730,7 @@ class PolicyResponseCompatTest {
         }
         val older = (decodeFresh(serverResponse) as FreshDecode.Ok).policy
         assertNull(older.calendar)
-        assertEquals(com.kidslauncher.mdm.day.CalendarPolicy.OLDER_SERVER, com.kidslauncher.mdm.day.calendarPolicy(older.calendar))
+        assertEquals(com.kidslauncher.mdm.day.CalendarPolicy.UNKNOWN, com.kidslauncher.mdm.day.calendarPolicy(older.calendar))
         assertNull(LastEnforcedPlan.of(policy).toPolicy().calendar)
     }
 
@@ -949,10 +949,10 @@ class PolicyResponseCompatTest {
         assertTrue(callPolicy.mmscHosts.isEmpty())
         assertEquals(1, callPolicy.smsHeldDrop.size)
         assertFalse(callPolicy.smsLockText)
-        // Design 80 D13: `sms_groups` always sent; absent from an older server it is on (today's behaviour).
+        // Design 80 D13: `sms_groups` always sent; absent is off.
         assertTrue(callPolicy.smsGroups)
-        val beforeGroups = serverResponse.replace("\"packages_to_uninstall\"", "\"call_policy\": {\"managed\": true, \"contacts\": []}, \"packages_to_uninstall\"")
-        assertTrue((decodeCached(beforeGroups) as CachedPolicy.Ok).policy.callPolicy!!.smsGroups)
+        val withoutGroups = serverResponse.replace("\"packages_to_uninstall\"", "\"call_policy\": {\"managed\": true, \"contacts\": []}, \"packages_to_uninstall\"")
+        assertFalse((decodeCached(withoutGroups) as CachedPolicy.Ok).policy.callPolicy!!.smsGroups)
         val old = ServerJson.decodeFromString(PolicyContact.serializer(), """{"id": 1, "name": "A", "number": "+4790000001", "inbound": true, "outbound": true}""")
         assertEquals(listOf(false, false, false), listOf(old.smsIn, old.smsOut, old.mms))
         // Unknown keys of a later step (§14's contact_requests) never fail the policy.

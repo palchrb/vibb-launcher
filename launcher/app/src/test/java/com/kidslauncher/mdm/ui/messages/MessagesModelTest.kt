@@ -53,7 +53,7 @@ class MessagesModelTest {
     private val bestemor = RuleContact(5, "Bestemor", "+4790000005", smsOut = true)
 
     private fun rules(sms: ChannelMode = ChannelMode.MANAGED, contacts: List<RuleContact> = listOf(mamma, trener, bestemor)) =
-        CallRules(callsEnabled = true, contacts = contacts, callsMode = ChannelMode.MANAGED, smsMode = sms)
+        CallRules(callsEnabled = true, contacts = contacts, callsMode = ChannelMode.MANAGED, smsMode = sms, smsGroups = true)
 
     private fun judge(rules: CallRules? = rules(), role: Boolean = true, timeBlocked: Boolean = false) = SmsJudge(
         state = rules?.let { CallPolicyState.Managed(it) } ?: CallPolicyState.UnknownFailClosed,

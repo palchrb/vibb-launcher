@@ -162,7 +162,7 @@ class ZonePlanTest {
         assertFalse(zoneWatchActive(owner = true, managed = true, policy = interval.copy(zones = emptyList())))
         assertFalse(zoneWatchActive(owner = true, managed = true, policy = interval.copy(mode = "on_request")))
         assertFalse(zoneWatchActive(owner = true, managed = true, policy = interval.copy(mode = "off")))
-        // An older server (no location_policy): no zones.
+        // No location_policy: no zones.
         assertFalse(zoneWatchActive(owner = true, managed = true, policy = null))
     }
 
@@ -171,7 +171,7 @@ class ZonePlanTest {
         val now = 1_800_000_000_000L
         val policies = listOf(
             null,
-            com.kidslauncher.mdm.server.LEGACY_LOCATION_POLICY,
+            com.kidslauncher.mdm.server.dto.LocationPolicy(),
             interval.copy(zones = emptyList()),
             interval.copy(zones = emptyList(), intervalMinutes = 10),
             interval.copy(mode = "on_request", zones = emptyList()),

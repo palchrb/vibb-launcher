@@ -400,7 +400,7 @@ object PowerEvents {
             // The shutdown's position rule before this process's first sync: the cached policy's.
             prepareExecutor.execute {
                 try {
-                    noteCachedLocationPolicy(currentPolicyDecision().policy?.let { it.locationPolicy ?: LEGACY_LOCATION_POLICY })
+                    noteCachedLocationPolicy(currentPolicyDecision().policy?.let { it.locationPolicy ?: LocationPolicy() })
                 } catch (e: Exception) {
                     Log.w(LOG_TAG, "Couldn't read the location policy: ${e.javaClass.simpleName}")
                 }

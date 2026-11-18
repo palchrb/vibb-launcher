@@ -35,10 +35,6 @@ const val MIN_LOCATION_INTERVAL_MINUTES = 10
  * one platform fence per zone, a crossing's fixes sent at once, `zone_watch` in every report. */
 const val ZONES_CAPABILITY = "zones_v1"
 
-/** Before step 6 (no `location_policy` from the server): a fresh fix at most every 10 minutes,
- * the cached one otherwise, on every sync. */
-val LEGACY_LOCATION_POLICY = LocationPolicy(mode = "interval", intervalMinutes = MIN_LOCATION_INTERVAL_MINUTES)
-
 /**
  * [forced]: a `locate` command asked for the phone's location now (security review P-L2: a `ring` is no request for
  * the location). [sinceLastFreshMs]: wall
@@ -46,7 +42,7 @@ val LEGACY_LOCATION_POLICY = LocationPolicy(mode = "interval", intervalMinutes =
  * An unknown mode is treated as "on_request".
  */
 fun locationAction(policy: LocationPolicy?, forced: Boolean, sinceLastFreshMs: Long): LocationAction {
-    val p = policy ?: LEGACY_LOCATION_POLICY
+    val p = policy ?: LocationPolicy()
     return when (p.mode) {
         "off" -> LocationAction.NONE
         "interval" -> {
@@ -101,7 +97,7 @@ fun locationBackOff(switchedOn: Boolean, staysOn: Boolean): Boolean = switchedOn
  * as current.
  */
 fun cachedFixMaxAgeMs(policy: LocationPolicy?, still: Boolean): Long? =
-    if (still) null else (policy ?: LEGACY_LOCATION_POLICY).intervalMinutes.coerceAtLeast(MIN_LOCATION_INTERVAL_MINUTES) * 60_000L
+    if (still) null else (policy ?: LocationPolicy()).intervalMinutes.coerceAtLeast(MIN_LOCATION_INTERVAL_MINUTES) * 60_000L
 
 /** A cached (or last-known) fix [ageMs] old may be reported under [maxAgeMs] (`null` = any age). */
 fun cachedFixReportable(ageMs: Long, maxAgeMs: Long?): Boolean = maxAgeMs == null || ageMs <= maxAgeMs

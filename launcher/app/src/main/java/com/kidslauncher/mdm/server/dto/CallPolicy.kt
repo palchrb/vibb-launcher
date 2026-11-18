@@ -41,9 +41,8 @@ data class CallPolicy(
      * ([com.kidslauncher.mdm.calls.ContactRequests]); empty from an older server. */
     val contactRequests: List<PolicyContactRequest> = emptyList(),
     /** Design 80 D13: "Gruppemeldinger" - off blocks every group MMS ([com.kidslauncher.mdm.sms.engine.MmsGate.group]).
-     * Always sent by a server with it; absent (an older server) is `true`, today's behaviour - a deliberate exception
-     * to "absent denies": the key loosens nothing a server ever sent, and D12's members rule under it fails closed. */
-    val smsGroups: Boolean = true,
+     * Always sent; absent is off (fail closed). */
+    val smsGroups: Boolean = false,
 )
 
 /** One of [CallPolicy.ownNumbers]: the SIM slot (1 or 2) and the normalised number. */

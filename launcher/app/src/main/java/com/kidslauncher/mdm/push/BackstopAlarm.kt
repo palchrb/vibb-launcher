@@ -8,7 +8,6 @@ import android.content.Intent
 import android.os.SystemClock
 import android.util.Log
 import com.kidslauncher.mdm.preferences.LauncherPreferences
-import com.kidslauncher.mdm.server.LEGACY_LOCATION_POLICY
 import com.kidslauncher.mdm.server.currentPolicyDecision
 
 private const val LOG_TAG = "BackstopAlarm"
@@ -46,7 +45,7 @@ object BackstopAlarm {
         try {
             val alarms = context.getSystemService(AlarmManager::class.java) ?: return
             val policy = currentPolicyDecision().policy
-            val locationPolicy = policy?.let { it.locationPolicy ?: LEGACY_LOCATION_POLICY }
+            val locationPolicy = policy?.let { it.locationPolicy ?: com.kidslauncher.mdm.server.dto.LocationPolicy() }
             // Design 64 step 2: with zones from the last heartbeat (a fix, or one it skipped while
             // the phone stayed put), so a skip waits a whole interval, not the 9-minute floor;
             // without zones from our last own fix, as before (qa-design-64-step2-code Q-2).

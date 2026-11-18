@@ -168,7 +168,7 @@ class SmsContractTest {
     /** Design 80 D13: the group switch's capability, and `call_policy.sms_groups` - sent true and false, absent from an
      * older server read as true (today's behaviour). */
     @Test
-    fun `the group switch is claimed and decodes, absent as on`() {
+    fun `the group switch is claimed and decodes, absent as off`() {
         assertEquals(contract.str("groups_capability"), SMS_GROUPS_CAPABILITY)
         assertTrue(SMS_GROUPS_CAPABILITY in com.kidslauncher.mdm.server.STATUS_CAPABILITIES)
         val policy = contract["policy"]!!.jsonObject
@@ -176,9 +176,8 @@ class SmsContractTest {
         assertTrue(on.smsGroups && on.toRules().smsGroups)
         val off = ServerJson.decodeFromString(CallPolicy.serializer(), policy["groups_off"].toString())
         assertFalse(off.smsGroups || off.toRules().smsGroups)
-        assertTrue(ServerJson.decodeFromString(CallPolicy.serializer(), """{"managed": true}""").smsGroups)
-        // Rules stored before it read as on.
-        assertTrue(com.kidslauncher.mdm.calls.decodeCallRules("""{"calls_enabled": true}""")!!.smsGroups)
+        assertFalse(ServerJson.decodeFromString(CallPolicy.serializer(), """{"managed": true}""").smsGroups)
+        assertFalse(com.kidslauncher.mdm.calls.decodeCallRules("""{"calls_enabled": true}""")!!.smsGroups)
     }
 
     /** Design 82 D1/D4: Meldinger's key, and every `app.lock_read` row - the policy's `lock_glance` as it arrived

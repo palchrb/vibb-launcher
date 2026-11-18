@@ -17,7 +17,6 @@ import com.kidslauncher.mdm.databinding.ActivityWifiNetworksBinding
 import com.kidslauncher.mdm.calls.CallPolicyStore
 import com.kidslauncher.mdm.calls.managed
 import com.kidslauncher.mdm.server.CachedPolicy
-import com.kidslauncher.mdm.server.LEGACY_LOCATION_POLICY
 import com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
 import com.kidslauncher.mdm.server.QuickControls
 import com.kidslauncher.mdm.server.cachedPolicy
@@ -129,7 +128,7 @@ class WifiNetworksActivity : KidPageActivity() {
         } else {
             CallPolicyStore.ensureLoaded(this)
             val forcesOn = hardeningPlan(policy.hardening, hardeningManaged(policy.allowlist, CallPolicyStore.state.managed)).forceLocationOn
-            locationStaysOn(policy.locationPolicy ?: LEGACY_LOCATION_POLICY, forcesOn, ZoneWatch.zonesOn(this, policy))
+            locationStaysOn(policy.locationPolicy ?: com.kidslauncher.mdm.server.dto.LocationPolicy(), forcesOn, ZoneWatch.zonesOn(this, policy))
         }
     } catch (e: Exception) {
         false

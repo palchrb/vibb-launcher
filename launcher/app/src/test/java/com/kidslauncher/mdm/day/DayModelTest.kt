@@ -30,7 +30,7 @@ class DayModelTest {
     private fun row(id: Long, begin: Long, end: Long, title: String, allDay: Boolean = false, calendar: Long = 1, location: String? = null, description: String? = null, status: Int? = null, self: Int? = null, uid: String? = null) =
         InstanceRow(id, begin, end, allDay, title, location, description, calendar, status, self, uid)
 
-    private fun view(rows: List<InstanceRow>, day: LocalDate, zone: ZoneId = oslo, now: Long = 0, policy: CalendarPolicy = CalendarPolicy.OLDER_SERVER) =
+    private fun view(rows: List<InstanceRow>, day: LocalDate, zone: ZoneId = oslo, now: Long = 0, policy: CalendarPolicy = CalendarPolicy(usable = true)) =
         dayView(rows, calendars, policy, day, zone, now, own, tag)
 
     @Test
@@ -97,7 +97,7 @@ class DayModelTest {
         assertEquals(listOf("Skole: Matte"), view(rows, day, policy = policy).timed.map { it.title })
         // A calendar that doesn't sync events is not shown either.
         val noSync = mapOf(1L to school.copy(syncEvents = false))
-        assertTrue(dayView(rows.takeLast(1), noSync, CalendarPolicy.OLDER_SERVER, day, oslo, 0, own, tag).empty)
+        assertTrue(dayView(rows.takeLast(1), noSync, CalendarPolicy(usable = true), day, oslo, 0, own, tag).empty)
     }
 
     @Test
@@ -190,7 +190,7 @@ class DayModelTest {
             three.legend,
         )
         // No colour saved: no dot, still in the key.
-        val plain = dayView(listOf(gym, cinema), all, CalendarPolicy.OLDER_SERVER, day, oslo, 0, own, tag)
+        val plain = dayView(listOf(gym, cinema), all, CalendarPolicy(usable = true), day, oslo, 0, own, tag)
         assertEquals(listOf(null, null), plain.timed.map { it.color })
         assertTrue(plain.legendShown)
     }

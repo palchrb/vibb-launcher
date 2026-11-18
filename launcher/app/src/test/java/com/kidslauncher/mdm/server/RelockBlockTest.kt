@@ -276,8 +276,8 @@ class RelockBlockTest {
         assertEquals(blocked.keys - "org.example.a", allowBlocked(blocked, installed - "org.example.a", emptyMap(), emptyMap()).keys)
         // A listed catalog imposter stays.
         assertEquals(setOf("org.example.a"), allowBlocked(mapOf("org.example.a" to null), installed, mapOf("org.example.a" to setOf(other)), listed).keys)
-        // An older server: every block but the imposter goes.
-        assertTrue(allowBlocked(blocked, installed, emptyMap(), null).isEmpty())
+        // No list: nothing is let out.
+        assertEquals(blocked.keys, allowBlocked(blocked, installed, emptyMap(), null).keys)
     }
 
     @Test
