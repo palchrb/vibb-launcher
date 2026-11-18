@@ -210,7 +210,7 @@ async fn kiosk_block_switch_and_play_not_suspendable() {
     );
     assert!(html.contains("data-note=\"play-openable\""), "{html}");
     assert!(
-        html.contains("Block other apps&#39; screens is off, so apps can open the Play Store"),
+        html.contains("Play can&#39;t be paused on this phone, so apps can open the Play Store"),
         "{html}"
     );
     assert_eq!(

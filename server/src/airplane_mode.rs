@@ -308,10 +308,13 @@ pub fn role_words(lang: Lang, role: &str) -> &'static str {
     )
 }
 
-/// A feature the parent chose needs Android's "Modify system settings": the touch switch (bit 16) or a clock
-/// format in use. Without one, the grant's absence is only a quiet value (2026-11-18).
+/// A feature the parent chose needs Android's "Modify system settings": the touch switch (bit 16), the Sound bit
+/// (8: the kid's Ringetone and Meldingslyd picks) or a clock format in use. Without one, the grant's absence is only a quiet value (2026-11-18).
 pub fn write_settings_needed(policy: &DevicePolicy) -> bool {
-    policy.quick_controls_mask & crate::handlers::devices::QUICK_CONTROL_TOUCH != 0
+    policy.quick_controls_mask
+        & (crate::handlers::devices::QUICK_CONTROL_TOUCH
+            | crate::handlers::devices::QUICK_CONTROL_SOUND)
+        != 0
         || crate::models::clock_format(&policy.clock_format) != "system"
 }
 
@@ -333,7 +336,7 @@ pub struct SetupStep {
 /// The steps the phone needs and hasn't done (§6.2), in the card's order, from a launcher with [CAPABILITY] (the one
 /// with "Fullfør oppsett" and its notification, which the card's words name):
 /// - Bakgrunnstilkobling, always (the report's `battery_optimization_exempt` false);
-/// - Endre systeminnstillinger, only with the touch switch (bit 16) or a clock format in use;
+/// - Endre systeminnstillinger, only with the touch switch (bit 16), the Sound bit (8) or a clock format in use;
 /// - Digital assistent, only with the kid's Flymodus switch (bit 64);
 /// - Wi-Fi i flymodus, only with bit 64 and the role held, done once the phone stored `wifi_kept` (true or false);
 /// - Standardapper endret, while `default_apps_changed` names a role;

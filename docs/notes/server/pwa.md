@@ -1625,7 +1625,7 @@ man er inne på en device". Branch `pwa-fixes-b`.
 - **The header** (`phone_status::header`): line 1 the same lead, the screen time named ("4 min screen time today", nb
   "4 min skjermtid i dag"); line 2 the zone the phone is in now ("Test since 22:19", `devices::zone_now`) · the
   battery - the screen time instead when the lead is the battery; a phone turned off, offline or not reachable has
-  line 1 alone. The lock is orange text now (`tone-orange`), not the lock badge's pill.
+  line 1 alone. The lock is plain text now (not orange since 2026-11-18), not the lock badge's pill.
 - **The dot** says what the line leads with (`phone_status::dot`, since 2026-11-01, below): orange for a low battery
   would read as "No contact", so the low battery is said in the line, in orange.
 - **Times**: `Zone::since` - the clock alone today (never "24. okt." for today), "yesterday 21:40", the weekday within

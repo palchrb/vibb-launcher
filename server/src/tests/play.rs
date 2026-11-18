@@ -577,7 +577,12 @@ async fn write_settings_grant_is_stored_and_shown() {
         let at = row.find("Not allowed</span>").expect("the value");
         row[..at].rsplit("<span").next().unwrap().to_string()
     };
-    for (mask, clock, orange) in [(0, "system", false), (16, "system", true), (0, "24", true)] {
+    for (mask, clock, orange) in [
+        (0, "system", false),
+        (16, "system", true),
+        (8, "system", true),
+        (0, "24", true),
+    ] {
         sqlx::query(
             "UPDATE device_policy SET quick_controls_mask = ?, clock_format = ? WHERE device_id = ?",
         )

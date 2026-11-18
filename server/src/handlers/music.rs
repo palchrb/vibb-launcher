@@ -4561,7 +4561,7 @@ pub struct SpotifyBindingCard {
     pub bound: Option<i64>,
     /// What needs the parent (§4.2's sub-page warnings: a short title, one sentence).
     pub warnings: Vec<Note>,
-    /// Why this phone's ticked Spotify entries aren't sent (not bound): the row's orange sub-line.
+    /// Why this phone's ticked Spotify entries aren't sent (not bound): the row's plain sub-line.
     pub note: Option<String>,
     /// One-shot message after a refused save (`?music_notice=spotify_...`).
     pub notice: Option<&'static str>,
@@ -4672,7 +4672,7 @@ pub struct SpotifyAccountWarnings {
 }
 
 /// [SpotifyAccountWarnings] for the phone of `policy`: all false unless it plays as an account.
-/// Three small reads (the app, the account, the phones bound to it), as `attention::facts`
+/// Two small reads (the app, the account), as `attention::facts`
 /// allows (design 31 §3.8).
 pub async fn spotify_account_warnings(
     state: &AppState,
