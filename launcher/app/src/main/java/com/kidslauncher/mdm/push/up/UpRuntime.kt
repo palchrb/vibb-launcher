@@ -48,6 +48,11 @@ private const val PULL_WAKELOCK_MS = 30_000L
 private const val NET_PULL_MS = 2_000L
 private const val NET_RETRY_MS = 10_000L
 
+/** Design 115 (gate row 4): after a hold, every pull and send waits this long after the last shape change - the routes
+ * and the lockdown's removal reach the apps a moment after the tunnel switches (a sync's own pull 60 ms after it handed
+ * out a message whose fetch failed). Below [NET_PULL_MS], so the "net" pull is never held by it. */
+private const val SETTLE_MS = 1_500L
+
 /** Design 115 §2.4: a MESSAGE whose send found the phone held - reported as failed, so never acknowledged. */
 class UpHeldException : IllegalStateException("held")
 
@@ -266,14 +271,19 @@ object UpRuntime {
      * before the engine exists (no hold was seen in this process).
      */
     fun shapeChanged() {
+        shapeChangedAt = android.os.SystemClock.elapsedRealtime()
         post { engine?.shapeChanged() }
     }
+
+    /** When the VPN's shape last changed ([shapeChanged]), elapsed ms. */
+    @Volatile
+    private var shapeChangedAt = Long.MIN_VALUE / 2
 
     /** What [UpRules.holdOf] reads, and whether only the wanted shape holds (the views of the network disagreeing for a
      * moment, QA M1). The tunnel in the sink answers at once (QA L4). */
     private class HoldParts(val hold: UpHold, val onlyWanted: Boolean)
 
-    private fun holdParts(app: Context): HoldParts {
+    private fun holdParts(app: Context, settle: Boolean = true): HoldParts {
         if (!view().on) return HoldParts(UpHold.NONE, false)
         val tunnel = KidVpnService.tunnelShape
         if (tunnel == VpnShape.SINK) return HoldParts(UpHold.NO_NETWORK, false)
@@ -283,7 +293,11 @@ object UpRuntime {
         val running = KidVpnService.serviceRunning
         val net = if (running) KidVpnService.serviceNet(app) else null
         val hold = UpRules.holdOf(true, tunnel, persisted, lockdown, running, MobileNetworkRuntime.storedInputs(), net)
-        return HoldParts(hold, hold != UpHold.NONE && !(persisted == VpnShape.SINK && lockdown))
+        if (hold != UpHold.NONE) return HoldParts(hold, !(persisted == VpnShape.SINK && lockdown))
+        // The hold just ended: held until the apps' network has settled (the "net" pull comes after it).
+        val settling = settle && engine?.held == true &&
+            android.os.SystemClock.elapsedRealtime() - shapeChangedAt < SETTLE_MS
+        return if (settling) HoldParts(UpHold.NO_NETWORK, true) else HoldParts(UpHold.NONE, false)
     }
 
     /** Design 115 §2.8: the status report's `unified_push` - while UP is on and the phone unlocked; `null` (left out)
@@ -292,7 +306,7 @@ object UpRuntime {
         val app = context.applicationContext
         if (!isUserUnlocked(app) || !view().on) return null
         return try {
-            UpReport(holdParts(app).hold.wire)
+            UpReport(holdParts(app, settle = false).hold.wire)
         } catch (e: Exception) {
             null
         }

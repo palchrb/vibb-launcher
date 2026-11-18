@@ -123,9 +123,10 @@ class UpEngine(
     /** Design 115 §2.5 (QA M5, the one owner): a hold was seen since the last pull run that said so. Every step of the
      * next run posts `held`; cleared only when such a run ends with an answer. Memory only: a new process opens a new
      * stream generation, so its hand-outs never count the hold anyway. */
+    @Volatile
     private var heldSeen = false
 
-    /** A hold was seen (tests). */
+    /** A hold was seen and no pull run has said so yet (the runtime's settle after a shape change reads it). */
     val held: Boolean get() = heldSeen
 
     /** A pull is running or trails (the runtime's wake lock, code QA L2). */

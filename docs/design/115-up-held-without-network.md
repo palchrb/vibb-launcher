@@ -202,6 +202,11 @@ The `refresh` rows gain one: a refresh due, in use, **held** -> not sent (§2.4,
   10 s later; held by the tunnel or the decision, it ends and the next shape change asks again. The "net" pull takes the
   pull's 30 s wake lock when it is asked and has its own future, apart from the ack flush (QA L3), so neither swallows
   the other and Doze can't stretch the 2 s.
+- **The settle (found by the gate, row 4 on 16):** the "net" pull isn't the only pull after a hold - the kid's tap asks
+  a sync whose own pull ran 60 ms after the tunnel left the sink, and the app's fetch of that push failed (the routes
+  and the lockdown's removal reach the apps a moment later). So while the engine has seen a hold (`heldSeen`), every
+  pull and send counts as held for 1.5 s after the last shape change (`UpRuntime.SETTLE_MS`, below the "net" pull's
+  2 s, so that pull is never held by it); the report never counts it.
 - **The policy**: no hook of its own. `policyAccepted`'s pull (`UpRuntime.kt:205`) is asked before `apply()`
   (`L/server/MdmSyncWorker.kt:168`, then `AppEnforcer.apply` at `:261`): while the old shape still holds it is
   refused, and `apply()`'s shape change asks the pull through `shapeChanged`. The other way (the parent turns Bare Vibb

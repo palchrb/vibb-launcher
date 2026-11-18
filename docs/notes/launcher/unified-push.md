@@ -175,7 +175,8 @@ don't deliver".
   `KidVpnService.establish`, `stopSelfCleanly` and the end of `MobileNetworkRuntime.writeAlwaysOn` call
   `UpRuntime.shapeChanged()` (posted to `work`): once a hold was seen, `pullAfterHold()` - the "net" pull 2 s after the
   last ask (its own future and the 30 s wake lock), checked again when it runs, once more 10 s later when only the
-  wanted shape still holds. A refresh due waits while held (`UpRules.pass(..., held)`); pings and the origin's rewrite
+  wanted shape still holds. After a hold (`heldSeen`) every pull and send also counts as held for 1.5 s after the last
+  shape change (`SETTLE_MS`; gate row 4: a sync's own pull 60 ms after the switch handed out a push whose fetch failed). A refresh due waits while held (`UpRules.pass(..., held)`); pings and the origin's rewrite
   are not held.
 - **`held` on the pull** (`UpAckBody.held`, left out when false): every step of the first run after a hold, so its
   hand-outs leave no delivery sample. `heldSeen` lives in the engine alone, cleared when such a run ends with an answer.
