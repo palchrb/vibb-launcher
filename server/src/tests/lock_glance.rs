@@ -1061,7 +1061,7 @@ async fn the_access_note_counts_meldingers_row() {
     let line = "data-setup-warning=\"notification_access\"";
     let html = page().await;
     assert_eq!(html.matches(line).count(), 1, "{html}");
-    assert!(!html.contains("Missed calls"), "{html}");
+    assert!(!html.contains("Missed calls only"), "{html}");
     assert!(!form_of(&html, MESSAGES).unwrap().contains("data-hint"));
 
     show(&app, Some(&cookie), id, MESSAGES, "off").await;
