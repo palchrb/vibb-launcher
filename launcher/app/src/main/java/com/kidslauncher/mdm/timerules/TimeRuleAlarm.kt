@@ -27,24 +27,9 @@ object TimeRuleAlarm {
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
 
-    /** An alarm an older build set on the exported receiver: cancelled once, at the next schedule (it would only
-     * reach a receiver that ignores it now). */
-    @Volatile
-    private var legacyCancelled = false
-
-    private fun cancelLegacy(context: Context, alarms: AlarmManager) {
-        if (legacyCancelled) return
-        legacyCancelled = true
-        PendingIntent.getBroadcast(
-            context, 0, Intent(context, TimeRuleReceiver::class.java).setAction(ACTION_BOUNDARY),
-            PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE,
-        )?.let { alarms.cancel(it); it.cancel() }
-    }
-
     fun schedule(context: Context) {
         try {
             val alarms = context.getSystemService(AlarmManager::class.java) ?: return
-            runCatching { cancelLegacy(context, alarms) }
             val pi = pendingIntent(context)
             // Also the Play edges (handy step 7): install mode's end and the nightly update
             // window's start/end, so the plan follows them with the screen off.

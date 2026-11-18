@@ -249,15 +249,6 @@ fun sweepFiles(files: List<String>, records: List<DownloadRecord>, activeFile: S
 fun installedRecords(records: List<DownloadRecord>, installedTags: Map<Long, String?>): List<DownloadRecord> =
     records.filter { installedTags[it.appId] == it.tag }
 
-/** The cache files older builds downloaded into (`tracked_app_<id>_<nanos>.apk`) - deleted once
- * an hour old (an older build's install may still read one right after an update). */
-const val LEGACY_FILE_AGE_MS = 60 * 60_000L
-
-fun legacyCacheFilesToDelete(files: List<Pair<String, Long>>, nowMs: Long): List<String> =
-    files.filter { (name, modifiedMs) ->
-        name.startsWith("tracked_app_") && name.endsWith(".apk") && nowMs - modifiedMs >= LEGACY_FILE_AGE_MS
-    }.map { it.first }
-
 /** The order the runner takes GO downloads in: catalog apps first, our own update last - first
  * while the parent's Install Now runs ([launcherFirst], qa-37-code M2: "at once" doesn't wait
  * behind a 300 MB catalog app). */

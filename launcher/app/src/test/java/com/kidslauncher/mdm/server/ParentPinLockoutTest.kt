@@ -181,23 +181,6 @@ class ParentPinLockoutTest {
     }
 
     @Test
-    fun `migration - a running lockout becomes level 1 for at most 15 minutes, and attempts carry over`() {
-        val now = at(1_000 * day, elapsed = hour)
-        val running = migrateParentLockout(failedAttempts = 0, lockedUntilWallMs = now.wallMs + 10 * min, now = now, fingerprint = fp)
-        assertEquals(1, levelNow(running, now))
-        assertEquals(10 * min, parentLockoutRemaining(running, now))
-        assertEquals(day, running.decay!!.durationMs)
-        assertEquals(fp, running.pinFingerprint)
-        // A far-future value from a bad clock is capped at 15 minutes.
-        val far = migrateParentLockout(0, now.wallMs + 365 * day, now, fp)
-        assertEquals(15 * min, parentLockoutRemaining(far, now))
-        // Over: no window, no level; the old count carries over (at most 4).
-        assertEquals(ParentLockoutState(failures = 3, pinFingerprint = fp), migrateParentLockout(3, now.wallMs - 1, now, fp))
-        assertEquals(4, migrateParentLockout(9, 0L, now, fp).failures)
-        assertEquals(0, migrateParentLockout(-2, 0L, now, fp).failures)
-    }
-
-    @Test
     fun `an unreadable state becomes a 15-minute lockout with fresh tries after it`() {
         val now = at(3 * day)
         val state = unreadableParentState(now, fp)

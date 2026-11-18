@@ -73,8 +73,7 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   then `checkpointDelayMs(remaining)` - the next minute flip + 200 ms; else `CHECKPOINT_MS`), the tap, the server's
   answer and the pause/override start (`AnchorRefresh.request`). **The request** (`timerules/TimeRequests.kt`,
   `TimeRequestsTest`; design 100 step 2, `docs/design/100-one-vibb-notification.md` §14): DE prefs `time_request`
-  (`record_v1`: `TimeRequestRecord(id 32 hex, askedAtMs, day = the ledger's, liftIdAtAsk, PENDING|ASKED)` - r13's
-  `openUntilMs` stays a field with a default so an old record decodes, a new one doesn't write it -, `count_v1`:
+  (`record_v1`: `TimeRequestRecord(id 32 hex, askedAtMs, day = the ledger's, liftIdAtAsk, PENDING|ASKED)`, `count_v1`:
   `TimeRequestCount(day, accepted)` - the phone's own three a day, D5), one `commit()` under its lock. **One request
   open at a time**, until a parent answers it or the phone's day ends (r13's 30 minutes are gone): pure `requestState(
   record, count, day, policy)` - a record of today is `Pending(at)`/`Waiting(at)` until the policy's

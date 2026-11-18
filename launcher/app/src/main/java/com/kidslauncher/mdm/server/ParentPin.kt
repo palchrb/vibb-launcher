@@ -8,7 +8,6 @@ import com.kidslauncher.mdm.play.PlayRuntime
 import com.kidslauncher.mdm.push.SyncRunner
 import com.kidslauncher.mdm.push.SyncTriggers
 import com.kidslauncher.mdm.server.dto.ParentPinEvent
-import java.security.MessageDigest
 
 /**
  * The one gate for the parent PIN (the offline override PIN) on the phone, design 24 §2: the
@@ -23,33 +22,8 @@ import java.security.MessageDigest
  */
 object ParentPin {
 
-    /** The vault's migration ran in this process (it is idempotent anyway). */
-    @Volatile
-    private var vaultMigrated = false
-
-    /** The parent PIN's vault (design 24b §2), migrated from design 24's plain hash first. */
-    private fun vault(app: Context): PinVaultCore {
-        val vault = PinVault.of(app)
-        if (!vaultMigrated) {
-            vault.migrate(
-                rewriteFingerprint = { ParentPinStore.of(app).rewriteFingerprint(it.from, it.to) },
-                redactCache = { redactCachedPolicy(app) },
-            )
-            vaultMigrated = true
-        }
-        return vault
-    }
-
-    /** The vault's one-time migration, from `Application.initRest` on IO (QA 24b Low 11), so the
-     * main thread's [status] only reads. Never throws. */
-    @Synchronized
-    fun prepareVault(context: Context) {
-        try {
-            vault(context.applicationContext)
-        } catch (e: Exception) {
-            android.util.Log.e("ParentPin", "The vault's migration failed", e)
-        }
-    }
+    /** The parent PIN's vault (design 24b §2). */
+    private fun vault(app: Context): PinVaultCore = PinVault.of(app)
 
     /**
      * PBKDF2 (~0.5 s) and the vault's HMAC: never on the main thread. A final result whose event the
@@ -210,13 +184,6 @@ internal fun removeSentPinEvents(store: ParentPinStore, ids: Set<String>) {
     store.saveQueue(store.queue().filter { it.id !in ids })
 }
 
-/** Design 24's fingerprint of a parent PIN (the kid lock's `KidLockConfig.fingerprint` recipe) -
- * since design 24b computed only from a hash in memory, to carry a lockout over to the vault's
- * fingerprint ([PinVaultCore.fingerprint]). */
-internal fun parentPinFingerprint(hashHex: String, saltHex: String): String =
-    MessageDigest.getInstance("SHA-256").digest("$saltHex:$hashHex".toByteArray())
-        .take(8).joinToString("") { "%02x".format(it) }
-
 /**
  * Load, reset for a new PIN, re-anchor after a reboot - and commit if that changed anything.
  * `null`: the state was unreadable and a committed 15-minute lockout replaces it (QA #2).
@@ -225,7 +192,7 @@ internal fun prepareParentState(
     store: ParentPinStore,
     fingerprint: String,
     now: LockClocks,
-): Pair<ParentLockoutState, List<ParentPinEvent>>? = when (val loaded = store.load(now, fingerprint)) {
+): Pair<ParentLockoutState, List<ParentPinEvent>>? = when (val loaded = store.load(fingerprint)) {
     is ParentPinStore.Loaded.Unreadable -> {
         store.save(unreadableParentState(now, fingerprint), loaded.queue)
         store.logError("Parent PIN state unreadable - a 15-minute lockout replaces it", loaded.error)

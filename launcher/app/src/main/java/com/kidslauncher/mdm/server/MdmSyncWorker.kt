@@ -1434,8 +1434,7 @@ private fun storeAcceptedPolicy(context: Context, policy: PolicyResponse): Unit 
     if (!ok) Log.w(LOG_TAG, "Failed to cache the accepted policy")
 }
 
-/** The cached policy blob is written by the sync and once by the vault's migration
- * ([redactCachedPolicy]) - never both at once (design 24b §2). */
+/** Guards the cached policy blob's writes (design 24b §2). */
 internal val POLICY_CACHE_LOCK = Any()
 
 /**

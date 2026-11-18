@@ -648,7 +648,6 @@ object AppEnforcer {
         // Vibb music's volume cap (design 21 §3): while managed, lifted by the override and the pause.
         com.kidslauncher.mdm.music.VolumeCap.refresh(context, policy, managedForHardening, overrideActive)
 
-        clearRadioRestrictions(dpm, admin)
         // Security review S-L5: no Bluetooth file transfer (OPP) to or from a friend's phone or a PC while managed -
         // audio devices are untouched. Lifted by the override and the pause, like every restriction of ours.
         setRestriction(dpm, admin, UserManager.DISALLOW_BLUETOOTH_SHARING, bluetoothSharingRestricted(managedForHardening, overrideActive))
@@ -1452,21 +1451,6 @@ object AppEnforcer {
         } catch (e: Exception) {
             false
         }
-
-    /**
-     * WiFi/Bluetooth restriction *levels* (open/restricted/disabled, independent of the always-on
-     * kiosk allowlist) were retired as an admin-configurable policy - confirmed in practice not
-     * worth the UI complexity. This unconditionally clears the four restrictions that feature used
-     * to set, every `apply()` cycle same as before, rather than just deleting the code outright -
-     * a device that already had "restricted" or "disabled" saved from before this change needs
-     * those actively lifted, not just abandoned in whatever state they were last left in.
-     */
-    private fun clearRadioRestrictions(dpm: DevicePolicyManager, admin: ComponentName) {
-        setRestriction(dpm, admin, UserManager.DISALLOW_CHANGE_WIFI_STATE, false)
-        setRestriction(dpm, admin, UserManager.DISALLOW_ADD_WIFI_CONFIG, false)
-        setRestriction(dpm, admin, UserManager.DISALLOW_BLUETOOTH, false)
-        setRestriction(dpm, admin, UserManager.DISALLOW_CONFIG_BLUETOOTH, false)
-    }
 
     /**
      * Sets Android's always-on-VPN requirement on the launcher's own package via

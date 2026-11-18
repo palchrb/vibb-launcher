@@ -4,19 +4,8 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
 import com.kidslauncher.mdm.lock.BackoffWindow
-import com.kidslauncher.mdm.lock.LockClocks
-import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.server.dto.ParentPinEvent
 import kotlinx.serialization.builtins.ListSerializer
-
-/** The pre-design-24 counter in the default prefs, read once by the migration and then zeroed. */
-interface LegacyParentPinCounter {
-    fun failedAttempts(): Int
-
-    fun lockedUntilWallMs(): Long
-
-    fun clear()
-}
 
 /**
  * The parent PIN's lockout state and event queue (design 24 §2.2): credential-encrypted prefs
@@ -31,7 +20,6 @@ interface LegacyParentPinCounter {
  */
 class ParentPinStore(
     private val prefs: SharedPreferences,
-    private val legacy: LegacyParentPinCounter,
     val logError: (String, Throwable?) -> Unit,
 ) {
     sealed interface Loaded {
@@ -42,12 +30,12 @@ class ParentPinStore(
         data class Unreadable(val error: Exception, override val queue: List<ParentPinEvent>) : Loaded
     }
 
-    /** The stored state; the first load on a phone without one migrates the old counter
-     * (design 24 §2.2) for [fingerprint], the PIN cached now. */
-    fun load(now: LockClocks, fingerprint: String): Loaded {
+    /** The stored state; the first load on a phone without one starts a fresh one for [fingerprint], the PIN
+     * cached now. */
+    fun load(fingerprint: String): Loaded {
         val queue = queue()
         return try {
-            Loaded.Ok(if (prefs.contains(VERSION)) read() else migrate(now, fingerprint, queue), queue)
+            Loaded.Ok(if (prefs.contains(VERSION)) read() else first(fingerprint, queue), queue)
         } catch (e: Exception) {
             Loaded.Unreadable(e, queue)
         }
@@ -76,8 +64,8 @@ class ParentPinStore(
     }
 
     /**
-     * Design 24b §2 (QA #6): the stored state is about the same PIN under a new fingerprint (the
-     * vault's migration or a re-wrap) - it moves over, so a lockout keeps running. Only when the
+     * Design 24b §2 (QA #6): the stored state is about the same PIN under a new fingerprint (a
+     * re-wrap) - it moves over, so a lockout keeps running. Only when the
      * stored fingerprint is one of [from]; false otherwise or when the commit failed.
      */
     fun rewriteFingerprint(from: Set<String>, to: String): Boolean = try {
@@ -94,10 +82,9 @@ class ParentPinStore(
         false
     }
 
-    private fun migrate(now: LockClocks, fingerprint: String, queue: List<ParentPinEvent>): ParentLockoutState {
-        val state = migrateParentLockout(legacy.failedAttempts(), legacy.lockedUntilWallMs(), now, fingerprint)
-        // A crash between the two leaves only legacy keys that nothing reads any more.
-        if (save(state, queue)) legacy.clear()
+    private fun first(fingerprint: String, queue: List<ParentPinEvent>): ParentLockoutState {
+        val state = ParentLockoutState(pinFingerprint = fingerprint)
+        save(state, queue)
         return state
     }
 
@@ -160,21 +147,7 @@ class ParentPinStore(
 
         fun of(context: Context): ParentPinStore = ParentPinStore(
             context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE),
-            LauncherLegacyCounter,
         ) { message, error -> Log.e("ParentPin", message, error) }
     }
 }
 
-/** `offline_override_failed_attempts`/`offline_override_locked_until` - kept declared in
- * `LauncherPreferences$Config` only for this read (design 24 §2.2). */
-private object LauncherLegacyCounter : LegacyParentPinCounter {
-    override fun failedAttempts(): Int = LauncherPreferences.mdm().offlineOverrideFailedAttempts()
-
-    override fun lockedUntilWallMs(): Long = LauncherPreferences.mdm().offlineOverrideLockedUntil()
-
-    override fun clear() {
-        val mdm = LauncherPreferences.mdm()
-        mdm.offlineOverrideFailedAttempts(0)
-        mdm.offlineOverrideLockedUntil(0)
-    }
-}

@@ -84,11 +84,6 @@ import eu.jonahbauer.android.preference.annotations.Preferences;
                         // comma-separated, written by LockTaskChrome.applyPlan - its passes before the first apply
                         // of a process take them out of the platform's list unlocked and lit, and add them LOCKED or dark.
                         @Preference(name = "rule_clock_pins", type = String.class, defaultValue = ""),
-                        // Cached from the last successful policy sync (PolicyResponse.overridePinHash/
-                        // Salt) so LockActivity can verify a locally-entered offline override PIN
-                        // with zero network at all. Null means no PIN is configured for this device.
-                        @Preference(name = "override_pin_hash", type = String.class),
-                        @Preference(name = "override_pin_salt", type = String.class),
                         // Set locally by LockActivity the moment a correct offline override PIN is
                         // entered; AppEnforcer.apply() treats the policy as fully open while this is
                         // true and not yet expired. Cleared automatically on the next successful
@@ -100,11 +95,6 @@ import eu.jonahbauer.android.preference.annotations.Preferences;
                         // override started - see server.timedWindowActive (clock set-back guard).
                         @Preference(name = "offline_override_elapsed_start", type = long.class, defaultValue = "0"),
                         @Preference(name = "offline_override_boot", type = int.class, defaultValue = "-1"),
-                        // Legacy (design 24): the old 5/15-minute counter of the parent PIN. Read once
-                        // by server.ParentPinStore's migration into its own CE prefs
-                        // (parent_pin_state), then zeroed - nothing else may read or write them.
-                        @Preference(name = "offline_override_failed_attempts", type = int.class, defaultValue = "0"),
-                        @Preference(name = "offline_override_locked_until", type = long.class, defaultValue = "0"),
                         // Set by LockActivity when the offline override is used; reported once via
                         // StatusReportRequest.offlineOverrideUsed on the next successful sync, then
                         // cleared - so the parent notices even though the event itself was offline.

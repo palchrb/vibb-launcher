@@ -12,7 +12,6 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -241,15 +240,6 @@ class TimeRequestsTest {
         assertEquals("no ledger day", UploadStep.DROP, uploadStep(record(), null, null, null))
         assertEquals(UploadStep.NONE, uploadStep(null, null, day, null))
         assertEquals("already taken", UploadStep.NONE, uploadStep(record(TimeRequestPhase.ASKED), null, day, null))
-    }
-
-    /** r13's stored record (with its 30 minutes) still decodes; a new one writes no `open_until_ms`. */
-    @Test
-    fun `an r13 record decodes, a new one has no 30 minutes`() {
-        val r13 = """{"id":"0123456789abcdef0123456789abcdef","asked_at_ms":1,"open_until_ms":1800001,"day":"2026-10-26","lift_id_at_ask":7,"state":"ASKED"}"""
-        val decoded = ServerJson.decodeFromString(TimeRequestRecord.serializer(), r13)
-        assertEquals(RequestState.Waiting(1), requestState(decoded, null, day, null))
-        assertFalse("open_until_ms" in ServerJson.encodeToString(TimeRequestRecord.serializer(), record()))
     }
 
     /** Mutation L15: the answer never overwrites a newer record written while the upload ran. */

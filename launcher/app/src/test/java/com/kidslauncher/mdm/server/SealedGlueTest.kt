@@ -12,13 +12,6 @@ class SealedGlueTest {
     private fun body(text: String, fn: String) = text.substringAfter("fun $fn(").substringBefore("\n    fun ").substringBefore("\n    /**")
 
     @Test
-    fun `a main-thread read never migrates, and the start's background pass runs`() {
-        assertTrue(src("server/SealedPrefs.kt").contains("fun migrateHere(): Boolean = Looper.myLooper() != Looper.getMainLooper()"))
-        val initRest = src("Application.kt").substringAfter("private fun initRest()")
-        assertTrue(initRest.contains("CoroutineScope(Dispatchers.IO).launch { com.kidslauncher.mdm.server.Secrets.migrateAll(app) }"))
-    }
-
-    @Test
     fun `the kid PIN's glue reads the store, keeps the fields on the crash guard and re-seals a failed write`() {
         val runtime = src("lock/PinLockRuntime.kt")
         val configure = body(runtime, "configure")

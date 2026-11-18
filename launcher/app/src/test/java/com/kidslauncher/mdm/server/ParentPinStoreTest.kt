@@ -11,7 +11,7 @@ import org.junit.Test
 
 /**
  * Design 24 §2.1-§2.3 end to end against a fake prefs map: ParentPin.check's steps
- * ([checkParentPin]), the store's migration and its failure modes (QA #2, #3).
+ * ([checkParentPin]), the store and its failure modes (QA #2, #3).
  */
 class ParentPinStoreTest {
 
@@ -54,17 +54,6 @@ class ParentPinStoreTest {
         }
     }
 
-    class FakeLegacy(var failed: Int = 0, var lockedUntil: Long = 0L) : LegacyParentPinCounter {
-        var cleared = false
-        override fun failedAttempts() = failed
-        override fun lockedUntilWallMs() = lockedUntil
-        override fun clear() {
-            cleared = true
-            failed = 0
-            lockedUntil = 0L
-        }
-    }
-
     private val min = 60_000L
     private val salt = "00112233445566778899aabbccddeeff"
     private fun hashOf(pin: String, saltHex: String = salt) =
@@ -73,9 +62,8 @@ class ParentPinStoreTest {
     private val hash = hashOf(pin)
 
     private val prefs = FakePrefs()
-    private val legacy = FakeLegacy()
     private val logged = mutableListOf<String>()
-    private val store = ParentPinStore(prefs, legacy) { message, _ -> logged += message }
+    private val store = ParentPinStore(prefs) { message, _ -> logged += message }
     private var ids = 0
     private var started = mutableListOf<WindowStart?>()
     private var full = false
@@ -104,7 +92,7 @@ class ParentPinStoreTest {
     )
 
     private fun state(now: LockClocks): ParentLockoutState =
-        (store.load(now, parentPinFingerprint(hash, salt)) as ParentPinStore.Loaded.Ok).state
+        (store.load(parentPinFingerprint(hash, salt)) as ParentPinStore.Loaded.Ok).state
 
     private fun kinds() = store.queue().map { it.kind }
 
@@ -213,7 +201,7 @@ class ParentPinStoreTest {
         val newSalt = "ffeeddccbbaa99887766554433221100"
         val newHash = hashOf("135792", newSalt)
         assertEquals(ParentPinResult.Ok, check("135792", now, hashHex = newHash, saltHex = newSalt))
-        val reset = (store.load(now, parentPinFingerprint(newHash, newSalt)) as ParentPinStore.Loaded.Ok).state
+        val reset = (store.load(parentPinFingerprint(newHash, newSalt)) as ParentPinStore.Loaded.Ok).state
         assertEquals(ParentLockoutState(pinFingerprint = parentPinFingerprint(newHash, newSalt)), reset)
         // The events stay: they are about what happened, not about the PIN.
         assertEquals(listOf("wrong", "wrong", "wrong", "wrong", "lockout", "unlocked"), kinds())
@@ -243,7 +231,7 @@ class ParentPinStoreTest {
         )) {
             val good = prefs.map.toMap()
             if (value == null) prefs.map.remove(key) else prefs.map[key] = value
-            assertTrue(key, store.load(now, parentPinFingerprint(hash, salt)) is ParentPinStore.Loaded.Unreadable)
+            assertTrue(key, store.load(parentPinFingerprint(hash, salt)) is ParentPinStore.Loaded.Unreadable)
             prefs.map.clear()
             prefs.map.putAll(good)
         }
@@ -280,28 +268,6 @@ class ParentPinStoreTest {
     }
 
     @Test
-    fun `the first load migrates the old counter once`() {
-        val now = at(5_000_000L)
-        legacy.failed = 2
-        legacy.lockedUntil = now.wallMs + 7 * min
-        assertEquals(ParentPinResult.LockedOut(7 * min), check(pin, now))
-        assertTrue(legacy.cleared)
-        assertEquals(ParentPinStore.STATE_VERSION, prefs.map[ParentPinStore.VERSION])
-        assertEquals(1, levelNow(state(now), now))
-        // Never again: a later legacy value is not read.
-        legacy.lockedUntil = now.wallMs + 99 * min
-        assertEquals(ParentPinResult.Ok, check(pin, at(now.wallMs + 7 * min)))
-    }
-
-    @Test
-    fun `a migration without a running lockout carries the count`() {
-        val now = at(5_000_000L)
-        legacy.failed = 4
-        legacy.lockedUntil = now.wallMs - 1
-        assertEquals(ParentPinResult.LockedOut(15 * min), check("000000", now))
-    }
-
-    @Test
     fun `a reboot during a lockout keeps what the wall clock says is left`() {
         val now = at(1_000_000L)
         repeat(5) { check("000000", now) }
@@ -328,3 +294,8 @@ class ParentPinStoreTest {
         )
     }
 }
+
+/** A fingerprint for the tests' PINs (the vault's is a Keystore HMAC; any stable 16 hex characters do here). */
+internal fun parentPinFingerprint(hashHex: String, saltHex: String): String =
+    java.security.MessageDigest.getInstance("SHA-256").digest("$saltHex:$hashHex".toByteArray())
+        .take(8).joinToString("") { "%02x".format(it) }

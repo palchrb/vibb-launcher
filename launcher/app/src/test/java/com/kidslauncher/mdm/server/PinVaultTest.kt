@@ -42,17 +42,6 @@ class PinVaultTest {
         }
     }
 
-    private class FakeLegacy(var hash: String? = null, var salt: String? = null, var clearFails: Boolean = false) : LegacyPinFields {
-        override fun hash() = hash
-        override fun salt() = salt
-        override fun clear(): Boolean {
-            if (clearFails) return false
-            hash = null
-            salt = null
-            return true
-        }
-    }
-
     private val salt = "00112233445566778899aabbccddeeff"
     private val otherSalt = "ffeeddccbbaa99887766554433221100"
     private fun hashOf(pin: String, saltHex: String = salt) =
@@ -62,11 +51,10 @@ class PinVaultTest {
 
     private val prefs = ParentPinStoreTest.FakePrefs()
     private val key = FakeKey()
-    private val legacy = FakeLegacy()
     private val logged = mutableListOf<String>()
-    private val vault = PinVaultCore(prefs, key, legacy) { message, _ -> logged += message }
+    private val vault = PinVaultCore(prefs, key) { message, _ -> logged += message }
     private val lockoutPrefs = ParentPinStoreTest.FakePrefs()
-    private val store = ParentPinStore(lockoutPrefs, ParentPinStoreTest.FakeLegacy()) { _, _ -> }
+    private val store = ParentPinStore(lockoutPrefs) { _, _ -> }
 
     private fun policy(hash: String?, salt: String? = this.salt) = PolicyResponse(allowlist = emptyList(), overridePinHash = hash, overridePinSalt = salt)
 
@@ -93,7 +81,7 @@ class PinVaultTest {
         // Nothing stored is the hash, or a plain digest of it.
         assertFalse(prefs.map.values.any { it.toString().contains(hash) })
         assertFalse(prefs.map.values.any { it.toString().contains(parentPinFingerprint(hash, salt)) })
-        // Its fingerprint is the tag's, 16 hex characters, not design 24's.
+        // Its fingerprint is the tag's, 16 hex characters, not a plain digest.
         assertEquals(16, vault.fingerprint()!!.length)
         assertNotEquals(parentPinFingerprint(hash, salt), vault.fingerprint())
         // A cached (redacted) policy changes nothing: the parent PIN stays configured.
@@ -110,7 +98,7 @@ class PinVaultTest {
         val newPin = vault.accept(policy(hashOf("135790", otherSalt), otherSalt))
         assertNotEquals(first, vault.fingerprint())
         // Another salt: another PIN save - no lockout carries over to it.
-        assertEquals(setOf(parentPinFingerprint(hashOf("135790", otherSalt), otherSalt)), newPin.change?.from)
+        assertNull(newPin.change)
         assertEquals(PinVerdict.MATCH, vault.verify("135790"))
         val none = vault.accept(policy(null, null))
         assertNull(none.policy.overridePinHash)
@@ -119,51 +107,6 @@ class PinVaultTest {
         // An unusable hash is no PIN either, and never cached.
         assertEquals("", vault.accept(policy("abc")).policy.overridePinHash)
         assertFalse(vault.configured())
-    }
-
-    @Test
-    fun `the migration wraps the plain hash and the running lockout carries over`() {
-        legacy.hash = hash
-        legacy.salt = salt
-        val oldFingerprint = parentPinFingerprint(hash, salt)
-        lockOut(oldFingerprint)
-        var redactions = 0
-        val migrate = {
-            vault.migrate(
-                rewriteFingerprint = { store.rewriteFingerprint(it.from, it.to) },
-                redactCache = { redactions++ },
-            )
-        }
-        migrate()
-        assertEquals(PinVerdict.MATCH, vault.verify(pin))
-        assertNull(legacy.hash)
-        assertNull(legacy.salt)
-        assertEquals(1, redactions)
-        // The lockout runs on under the new fingerprint (QA #6): a new PIN would have reset it.
-        val status = parentPinStatus(store, vault.fingerprint()!!, now)
-        assertEquals(PARENT_LOCKOUT_BASE_MS, status.lockoutMs)
-        // A re-run is a no-op.
-        val tagBefore = prefs.map.toMap()
-        migrate()
-        assertEquals(1, redactions)
-        assertEquals(tagBefore, prefs.map)
-    }
-
-    @Test
-    fun `the migration leaves a state about another PIN alone, and a crash before the cleanup re-runs it`() {
-        legacy.hash = hash
-        legacy.salt = salt
-        lockOut("0123456789abcdef")
-        legacy.clearFails = true
-        vault.migrate(rewriteFingerprint = { store.rewriteFingerprint(it.from, it.to) }, redactCache = {})
-        // Not cleared: it runs again next time, without a second key or tag.
-        val tag = vault.fingerprint()
-        legacy.clearFails = false
-        vault.migrate(rewriteFingerprint = { store.rewriteFingerprint(it.from, it.to) }, redactCache = {})
-        assertEquals(tag, vault.fingerprint())
-        assertNull(legacy.hash)
-        // The state was about another PIN: the vault's fingerprint gives a fresh one.
-        assertEquals(0L, parentPinStatus(store, vault.fingerprint()!!, now).lockoutMs)
     }
 
     @Test
@@ -215,7 +158,7 @@ class PinVaultTest {
         assertTrue(store.rewriteFingerprint(accepted.change!!.from, accepted.change!!.to))
         assertEquals(lockout, parentPinStatus(store, vault.fingerprint()!!, now).lockoutMs)
         // A first PIN whose wrap fails is still set (waiting for its re-wrap).
-        val fresh = PinVaultCore(ParentPinStoreTest.FakePrefs(), FakeKey().apply { failures = 2 }, FakeLegacy()) { _, _ -> }
+        val fresh = PinVaultCore(ParentPinStoreTest.FakePrefs(), FakeKey().apply { failures = 2 }) { _, _ -> }
         fresh.accept(policy(hash))
         assertTrue(fresh.configured())
         assertTrue(fresh.rewrapNeeded())

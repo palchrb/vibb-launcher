@@ -88,7 +88,7 @@ class KidPinSealTest {
         assertTrue(save(PinWrite.Write(written)))
         assertTrue((prefs.map["pin_hash"] as String).startsWith(SealedPrefs.PREFIX))
         assertFalse(prefs.map.values.any { hash in it.toString() || salt in it.toString() })
-        assertEquals(written, PinLockStore.configFrom(prefs, SealedPrefs(box) { _, _ -> }, migrate = false))
+        assertEquals(written, PinLockStore.configFrom(prefs, SealedPrefs(box) { _, _ -> }))
     }
 
     @Test
@@ -130,24 +130,21 @@ class KidPinSealTest {
         save(PinWrite.Write(written))
         val reader = SealedPrefs(box) { _, _ -> }
         box.openFailures = 1
-        assertNull(PinLockStore.configFrom(prefs, reader, migrate = false))
+        assertNull(PinLockStore.configFrom(prefs, reader))
         val memory = kidConfigFor(redacted, null) { null }
         assertEquals(true to LockInactive.BAD_HASH, activation(memory))
-        val healed = kidConfigFor(redacted, memory) { PinLockStore.configFrom(prefs, reader, migrate = false) }
+        val healed = kidConfigFor(redacted, memory) { PinLockStore.configFrom(prefs, reader) }
         assertEquals(written, healed)
         assertEquals(true to null, activation(healed))
     }
 
     @Test
-    fun `a legacy plaintext PIN is read as it is and sealed by a migrating read`() {
+    fun `a plaintext PIN without the prefix reads as none`() {
         prefs.map["pin_hash"] = hash
         prefs.map["pin_salt"] = salt
         prefs.map["pin_length"] = 6
         prefs.map["pin_rev"] = 7L
-        assertEquals(written, PinLockStore.configFrom(prefs, sealed, migrate = false))
+        assertNull(PinLockStore.configFrom(prefs, sealed))
         assertEquals(hash, prefs.map["pin_hash"])
-        assertEquals(written, PinLockStore.configFrom(prefs, sealed, migrate = true))
-        assertTrue((prefs.map["pin_hash"] as String).startsWith(SealedPrefs.PREFIX))
-        assertTrue((prefs.map["pin_salt"] as String).startsWith(SealedPrefs.PREFIX))
     }
 }

@@ -23,14 +23,11 @@ import java.security.SecureRandom
 const val TIME_REQUESTS_A_DAY = 3
 
 /** The request's own record. [day] is the ledger's day it was asked on, [liftIdAtAsk] the largest lift id in the
- * policy then (lift ids only grow on the server: on an older server any newer lift is the answer, §14.7).
- * [openUntilMs] is r13's 30 minutes, gone in design 100 (§14.1): kept with a default so a stored `record_v1` still
- * decodes; a new record leaves it 0 (not written) and nothing reads it. */
+ * policy then (lift ids only grow on the server: on an older server any newer lift is the answer, §14.7). */
 @Serializable
 data class TimeRequestRecord(
     val id: String,
     val askedAtMs: Long,
-    val openUntilMs: Long = 0,
     val day: String,
     val liftIdAtAsk: Long,
     val state: TimeRequestPhase,

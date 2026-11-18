@@ -261,13 +261,12 @@ object AppDownloads {
             reconcileRecords(current, still, now)
         }
         sweepFiles(app)
-        sweepLegacy(app)
         // The switch may have just come on while a download runs on mobile data.
         active?.let { onNetwork(app, currentCaps(app)) }
     }
 
-    /** Without a list (process start, a failed fetch): only records of installed releases, files
-     * without a record, the old cache files. */
+    /** Without a list (process start, a failed fetch): only records of installed releases and files
+     * without a record. */
     fun sweepWithoutList(context: Context) {
         val app = context.applicationContext
         AppDownloadStore.mutate(app) { records ->
@@ -275,7 +274,6 @@ object AppDownloads {
             records - installedRecords(records, installedTags).toSet()
         }
         sweepFiles(app)
-        sweepLegacy(app)
     }
 
     private fun sweepFiles(app: Context) {
@@ -283,16 +281,6 @@ object AppDownloads {
         for (name in sweepFiles(names, AppDownloadStore.load(app), active?.fileName)) {
             Log.i(LOG_TAG, "Removing $name")
             File(dir(app), name).delete()
-        }
-    }
-
-    /** Older builds' `cacheDir/tracked_app_*.apk` (cancelled or failed downloads were never
-     * deleted), once an hour old. */
-    private fun sweepLegacy(app: Context) {
-        val files = app.cacheDir.listFiles().orEmpty().map { it.name to it.lastModified() }
-        for (name in legacyCacheFilesToDelete(files, System.currentTimeMillis())) {
-            Log.i(LOG_TAG, "Removing the old cache file $name")
-            File(app.cacheDir, name).delete()
         }
     }
 

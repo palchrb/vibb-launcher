@@ -1,8 +1,6 @@
 package com.kidslauncher.mdm.server
 
-import android.content.Context
 import android.content.SharedPreferences
-import android.os.Looper
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Log
@@ -47,17 +45,15 @@ interface SecretBox {
 
 /**
  * The phone's secrets on disk only as ciphertext (design r10 §2, security review P-L5): a sealed value is `ks1:` +
- * Base64(IV || ciphertext+tag) in the same pref key as the plaintext before it. Every plaintext the fields held is
- * hex, so the prefix alone tells sealed from legacy.
+ * Base64(IV || ciphertext+tag).
  *
- * - [read]: a sealed value is opened; one that doesn't open (or isn't Base64) is [Sealed.Unreadable], logged once
- *   per stored value, and the stored string is never touched - a transient Keystore error must not cost the phone
- *   its enrolment. A legacy plaintext is returned and, with `migrate`, sealed into the same key (§4).
+ * - [read]: a sealed value is opened; one that doesn't open (or isn't Base64), or a stored string without the prefix,
+ *   is [Sealed.Unreadable] (fail closed), logged once per stored value, and the stored string is never touched - a
+ *   transient Keystore error must not cost the phone its enrolment.
  * - [edit]: every write of a sealed field - seal, put and commit inside [LOCK]; a failed seal commits nothing.
- *   Never a plaintext fallback. The migration commits under the same hold, so it never writes an old value over a
- *   newer one (QA R10-2).
+ *   Never a plaintext fallback.
  * - [LOCK] is a leaf lock: nothing but the prefs and the Keystore runs under it; callers may hold other locks.
- *   A read without `migrate` never takes it (revision check N6): the first-time keygen is only in a seal.
+ *   A read never takes it (revision check N6): the first-time keygen is only in a seal.
  * - The memo: one (stored string, plaintext) pair per AAD; a hit takes no lock and no Keystore call. Only values,
  *   never [Sealed.Unreadable], so a retry can heal (QA R10-12).
  */
@@ -98,12 +94,12 @@ class SealedPrefs(private val box: SecretBox, private val log: (String, Throwabl
         }
     }
 
-    fun read(prefs: SharedPreferences, aad: String, key: String, migrate: Boolean): Sealed {
+    fun read(prefs: SharedPreferences, aad: String, key: String): Sealed {
         val stored = prefs.getString(key, null) ?: return Sealed.Absent
         memos[aad]?.let { if (it.stored == stored) return Sealed.Value(it.plain) }
         if (!stored.startsWith(PREFIX)) {
-            if (migrate) migrate(prefs, aad, key, stored)
-            return Sealed.Value(stored)
+            if (loggedUnreadable.put(aad, stored) != stored) log("Sealed $aad isn't sealed - kept as it is, read as unreadable", null)
+            return Sealed.Unreadable
         }
         return try {
             val blob = Base64.getDecoder().decode(stored.substring(PREFIX.length))
@@ -157,44 +153,13 @@ class SealedPrefs(private val box: SecretBox, private val log: (String, Throwabl
         tryEdit(prefs, write) ?: false
     }
 
-    /** §4: re-read under [LOCK]; still the same plaintext -> sealed into the same key in one commit. A failed seal
-     * keeps the plaintext (the next read retries). */
-    private fun migrate(prefs: SharedPreferences, aad: String, key: String, plain: String) {
-        synchronized(LOCK) {
-            if (prefs.getString(key, null) != plain) return
-            val stored = try {
-                sealString(aad, plain)
-            } catch (e: Exception) {
-                log("Sealing $aad failed - the plaintext stays until the next read", e)
-                return
-            }
-            if (prefs.edit().putString(key, stored).commit()) memos[aad] = Memo(stored, plain) else log("Couldn't commit sealed $aad", null)
-        }
-    }
-
     private fun sealString(aad: String, plain: String): String =
         PREFIX + Base64.getEncoder().encodeToString(box.seal(aad, plain.toByteArray(Charsets.UTF_8)))
 }
 
-/** The sealed fields on this phone, under [SECRETS_KEY_ALIAS]. A read on the main thread never migrates (QA R10-7):
- * it opens, or returns the legacy value; the background pass and background readers migrate. */
+/** The sealed fields on this phone, under [SECRETS_KEY_ALIAS]. */
 object Secrets {
     val prefs = SealedPrefs(KeystoreSecretBox) { message, error -> Log.w("SealedPrefs", message, error) }
-
-    fun migrateHere(): Boolean = Looper.myLooper() != Looper.getMainLooper()
-
-    /** `Application.initRest`'s one background pass (§4): the three through their own accessors, so a reset token
-     * isn't left plain until the next window. Never throws. */
-    fun migrateAll(context: Context) {
-        val app = context.applicationContext
-        try {
-            DeviceToken.get()
-            com.kidslauncher.mdm.lock.PinLockStore.config(app)
-            WindowRelock.store(app).token()
-        } catch (e: Exception) {
-            Log.w("SealedPrefs", "The secrets' migration pass failed", e)
-        }
-    }
 }
 
 /**
@@ -208,7 +173,7 @@ object DeviceToken {
 
     private fun key(): String = LauncherPreferences.mdm().keys().deviceToken()
 
-    fun state(): Sealed = Secrets.prefs.read(prefs(), AAD, key(), migrate = Secrets.migrateHere())
+    fun state(): Sealed = Secrets.prefs.read(prefs(), AAD, key())
 
     /** The token, or `null` - none, blank or [Sealed.Unreadable]: every site's "not enrolled, skip" covers a broken key. */
     fun get(): String? = (state() as? Sealed.Value)?.plain?.takeIf { it.isNotBlank() }

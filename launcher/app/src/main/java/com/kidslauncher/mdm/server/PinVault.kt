@@ -5,8 +5,6 @@ import android.content.SharedPreferences
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Log
-import androidx.preference.PreferenceManager
-import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.server.dto.PolicyResponse
 import java.security.KeyStore
 import java.security.MessageDigest
@@ -27,21 +25,10 @@ interface VaultKey {
     fun recreate()
 }
 
-/** Design 24's plain copy of the parent PIN's hash in the default prefs (`override_pin_hash`/
- * `override_pin_salt`), read once by the vault's migration and then deleted. */
-interface LegacyPinFields {
-    fun hash(): String?
-
-    fun salt(): String?
-
-    /** Deletes both (a synchronous commit); false if that failed. */
-    fun clear(): Boolean
-}
-
 enum class PinVerdict { MATCH, NO_MATCH, UNAVAILABLE }
 
-/** The parent PIN's fingerprint changed although the PIN didn't (the migration, a re-wrap): a
- * lockout state stored for one of [from] carries over to [to] (QA #6). */
+/** The parent PIN's fingerprint changed although the PIN didn't (a re-wrap): a lockout state stored
+ * for one of [from] carries over to [to] (QA #6). */
 data class FingerprintChange(val from: Set<String>, val to: String)
 
 /** [PinVaultCore.accept]'s answer: the policy without the hash, the only copy cached or passed on. */
@@ -49,10 +36,6 @@ data class VaultAccept(val policy: PolicyResponse, val change: FingerprintChange
 
 /** [policy] without the parent PIN's hash: `""` for one, `null` stays `null` (no PIN). */
 fun redactedPolicy(policy: PolicyResponse): PolicyResponse = policy.copy(overridePinHash = policy.overridePinHash?.let { "" })
-
-/** Design 24's fingerprint recipe (SHA-256 of salt:hash) - computed from a hash in memory only,
- * never stored: a stored one would be an offline oracle again. */
-fun legacyParentFingerprint(hashHex: String, saltHex: String): String = parentPinFingerprint(hashHex, saltHex)
 
 /**
  * The parent PIN's vault (design 24b §2, review L6): instead of the PBKDF2 hash, the phone keeps
@@ -73,15 +56,12 @@ fun legacyParentFingerprint(hashHex: String, saltHex: String): String = parentPi
 class PinVaultCore(
     private val prefs: SharedPreferences,
     private val key: VaultKey,
-    private val legacy: LegacyPinFields,
     private val log: (String, Throwable?) -> Unit,
 ) {
     private companion object {
-        const val VERSION = "version"
         const val TAG = "tag"
         const val SALT = "salt"
         const val REWRAP = "rewrap_needed"
-        const val MIGRATED = 1
         const val FINGERPRINT_CHARS = 16
     }
 
@@ -165,56 +145,11 @@ class PinVaultCore(
         }
         val to = tag.take(FINGERPRINT_CHARS)
         // The same PIN as before (the same salt: the server makes a new one for every save) under a
-        // new key, or design 24's fingerprint of it: its lockout carries over. Another PIN resets it.
-        val from = setOfNotNull(
-            legacyParentFingerprint(hash, saltHex),
-            previousTag?.take(FINGERPRINT_CHARS)?.takeIf { previousSalt == saltHex },
-        ) - to
-        return VaultAccept(redacted, if (from.isEmpty()) null else FingerprintChange(from, to))
+        // new key: its lockout carries over. Another PIN resets it.
+        val from = previousTag?.take(FINGERPRINT_CHARS)?.takeIf { previousSalt == saltHex && it != to }
+        return VaultAccept(redacted, from?.let { FingerprintChange(setOf(it), to) })
     }
 
-    /**
-     * The first start of the vault's build (§2), idempotent, each step committed: (1-2) the key is
-     * made and design 24's plain hash wrapped; (3) a lockout state stored for its old fingerprint
-     * moves to the new one ([rewriteFingerprint], while the plain hash still exists); (4) the cached
-     * policy is re-encoded without the hash ([redactCache]); (5) the plain fields go. Flash and
-     * file-based encryption give no guarantee the old bytes leave the disk.
-     */
-    fun migrate(rewriteFingerprint: (FingerprintChange) -> Unit, redactCache: () -> Unit) {
-        if (prefs.getInt(VERSION, 0) >= MIGRATED) return
-        val hash = legacy.hash()
-        val saltHex = legacy.salt()
-        if (hash != null && saltHex != null && PinHash.usable(hash, saltHex)) {
-            if (tag() == null && !rewrapNeeded()) {
-                val tag = hmac(PinHash.parseHex(hash)!!, create = true)?.let(::hex)
-                val editor = prefs.edit().putString(SALT, saltHex)
-                if (tag != null) editor.putString(TAG, tag) else editor.putBoolean(REWRAP, true)
-                editor.commit()
-            }
-            fingerprint()?.let { rewriteFingerprint(FingerprintChange(setOf(legacyParentFingerprint(hash, saltHex)), it)) }
-        }
-        redactCache()
-        if (legacy.clear()) prefs.edit().putInt(VERSION, MIGRATED).commit()
-    }
-}
-
-/**
- * The vault's migration (design 24b §2, step 4): a policy cached before the vault holds the parent
- * PIN's hash - re-encoded with `override_pin_hash = ""`. Re-read under the cache lock, so a newer
- * policy stored meanwhile is never overwritten; a corrupt or absent cache is left alone.
- */
-internal fun redactCachedPolicy(context: Context): Unit = synchronized(POLICY_CACHE_LOCK) {
-    try {
-        val cached = decodeCached(LauncherPreferences.mdm().kidModePolicy()) as? CachedPolicy.Ok ?: return@synchronized
-        if (cached.policy.overridePinHash.isNullOrEmpty()) return@synchronized
-        val redacted = cached.policy.copy(overridePinHash = "")
-        val ok = PreferenceManager.getDefaultSharedPreferences(context).edit()
-            .putString(LauncherPreferences.mdm().keys().kidModePolicy(), ServerJson.encodeToString(PolicyResponse.serializer(), redacted))
-            .commit()
-        if (!ok) Log.w("PinVault", "Couldn't re-encode the cached policy without the PIN hash")
-    } catch (e: Exception) {
-        Log.w("PinVault", "Redacting the cached policy failed", e)
-    }
 }
 
 /** The vault on this phone: CE prefs `pin_vault`, the Keystore key [PIN_VAULT_KEY_ALIAS]. Only
@@ -226,7 +161,6 @@ object PinVault {
     fun of(context: Context): PinVaultCore = PinVaultCore(
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE),
         KeystoreVaultKey,
-        LauncherLegacyPinFields(context.applicationContext),
     ) { message, error -> Log.w(LOG_TAG, message, error) }
 }
 
@@ -250,19 +184,5 @@ private object KeystoreVaultKey : VaultKey {
     override fun recreate() {
         keyStore().deleteEntry(PIN_VAULT_KEY_ALIAS)
         create()
-    }
-}
-
-private class LauncherLegacyPinFields(private val context: Context) : LegacyPinFields {
-    override fun hash(): String? = LauncherPreferences.mdm().overridePinHash()
-
-    override fun salt(): String? = LauncherPreferences.mdm().overridePinSalt()
-
-    override fun clear(): Boolean {
-        val keys = LauncherPreferences.mdm().keys()
-        return PreferenceManager.getDefaultSharedPreferences(context).edit()
-            .remove(keys.overridePinHash())
-            .remove(keys.overridePinSalt())
-            .commit()
     }
 }

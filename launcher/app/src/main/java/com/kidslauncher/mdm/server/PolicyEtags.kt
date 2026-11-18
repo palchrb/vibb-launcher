@@ -25,7 +25,6 @@ import java.security.MessageDigest
 class PolicyEtagStore(
     private val prefs: SharedPreferences,
     private val sealed: SealedPrefs = Secrets.prefs,
-    private val migrate: () -> Boolean = Secrets::migrateHere,
 ) {
     companion object {
         const val PREFS_NAME = "policy_etag"
@@ -38,7 +37,7 @@ class PolicyEtagStore(
 
     /** The kept body for [now], or `null` (and dropped) when there is none for it. Never throws. */
     fun usable(now: PolicyOwner): KeptPolicy? {
-        val kept = when (val state = sealed.read(prefs, AAD, KEY, migrate())) {
+        val kept = when (val state = sealed.read(prefs, AAD, KEY)) {
             Sealed.Absent -> return null
             Sealed.Unreadable -> null
             is Sealed.Value -> decodeKept(state.plain)

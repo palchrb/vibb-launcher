@@ -55,14 +55,10 @@
     <string name="settings_mdm_channel_modes_seen_key" translatable="false">mdm.channel_modes_seen</string>
     <string name="settings_mdm_kiosk_enabled_key" translatable="false">mdm.kiosk_enabled</string>
     <string name="settings_mdm_rule_clock_pins_key" translatable="false">mdm.rule_clock_pins</string>
-    <string name="settings_mdm_override_pin_hash_key" translatable="false">mdm.override_pin_hash</string>
-    <string name="settings_mdm_override_pin_salt_key" translatable="false">mdm.override_pin_salt</string>
     <string name="settings_mdm_offline_override_active_key" translatable="false">mdm.offline_override_active</string>
     <string name="settings_mdm_offline_override_expires_at_key" translatable="false">mdm.offline_override_expires_at</string>
     <string name="settings_mdm_offline_override_elapsed_start_key" translatable="false">mdm.offline_override_elapsed_start</string>
     <string name="settings_mdm_offline_override_boot_key" translatable="false">mdm.offline_override_boot</string>
-    <string name="settings_mdm_offline_override_failed_attempts_key" translatable="false">mdm.offline_override_failed_attempts</string>
-    <string name="settings_mdm_offline_override_locked_until_key" translatable="false">mdm.offline_override_locked_until</string>
     <string name="settings_mdm_offline_override_used_pending_report_key" translatable="false">mdm.offline_override_used_pending_report</string>
     <string name="settings_mdm_last_failed_update_version_code_key" translatable="false">mdm.last_failed_update_version_code</string>
     <string name="settings_mdm_restrictions_paused_key" translatable="false">mdm.restrictions_paused</string>
