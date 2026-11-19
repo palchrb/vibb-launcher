@@ -30,7 +30,10 @@ import kotlin.math.abs
  *   queue are stale in a start, and so is the last state seen before the play call carried on - its track, paused or
  *   playing as it was, at its place (moved on by the time since while it played) - until a fresh state shows
  *   (2026-11-09: Spotify playing that track in place of ours, from where it once stopped, is fresh); unless it is the
- *   sent track near the sent position (a restart of the same track from 0 isn't its old tick).
+ *   sent track near the sent position (a restart of the same track from 0 isn't its old tick). The sent track (a
+ *   context's offset) away from the sent place is passed over only while it is that state carried on (2026-11-19, the
+ *   same in both modes): Spotify playing it at a place of its own - from 0 where the stored place was at the track's
+ *   end - is the play's answer, not a start that never comes.
  * - **A later item of ours playing at a start is ours** when there is evidence it answers the play call: its `prev`
  *   proving the skip - the items between are unplayable (H1) - or (2026-11-09) it is the track of the last state
  *   before the call, played afresh (not that state carried on): the queue simply moves to it and plays on (an
@@ -43,7 +46,9 @@ import kotlin.math.abs
  *   "trenger internett". Any other entry's start still passes over a foreign state.
  * - **Shuffle or repeat not as wanted** (M1; design 49 §1.5: "differs from wanted", not "on"): a state whose
  *   shuffle or repeat isn't the entry's [wanted] is read for nothing - no start, skip, end or foreign track; one
- *   [Event.ShuffleOrRepeat] asks the renderer to set both and play again.
+ *   [Event.ShuffleOrRepeat] asks the renderer to set both and play again. While starting only a state that may be
+ *   ours is judged so (2026-11-19): the old play's tick and a track not in our queue still show the modes from before
+ *   the settings the play call just set, and a second set and play followed.
  * - **Repeat** (design 49 §1.6-§1.7): with Spotify's repeat on (list mode's repeat one = `track`; a context's
  *   `context`/`track`) a track that ran out is never the end - Spotify plays it again or goes on in its context;
  *   only Autoplay evidence (another context) ends a context. List mode's repeat all is ours ([wrap]): the end of the
@@ -326,6 +331,10 @@ class SpotifyTracker {
         if (context == null) return emptyList()
         oldNextUri = null
         prePlayUris = setOfNotNull(lastSeenUri) + adds
+        prePlayOthers = adds.toSet()
+        prePlay = lastSeen?.takeIf { it.uri != null && it.uri == lastSeenUri }
+        prePlayAt = lastSeenAt
+        freshSeen = false
         index = 0
         known = 0
         mode = Mode.STARTING
@@ -506,7 +515,9 @@ class SpotifyTracker {
             if (mode == Mode.OURS) nullAt = null
             if (s.trackless) return emptyList() // L2: evidence of nothing
             if (correcting) return emptyList()
-            if (s.differs(wanted)) {
+            // while starting, only a state that may be ours (2026-11-19): the old play's tick or a track not in our queue
+            // shows the account's modes from before the settings the play call just set - no second set and play
+            if (s.differs(wanted) && (mode == Mode.OURS || mayBeOurs(s, nowMs))) {
                 correcting = true
                 return listOf(Event.ShuffleOrRepeat(index))
             }
@@ -553,22 +564,67 @@ class SpotifyTracker {
     private fun onContextStarting(s: SdkState, nowMs: Long): List<Event> {
         val uri = s.uri ?: return emptyList()
         if (isAdd(s)) return emptyList() // our list's add: Spotify plays a new play's context first
-        val sent = offsetUri
-        val near = abs(s.positionMs - sentPositionMs) <= START_NEAR_MS
-        val atOffset = sent != null && (uri == sent || s.linkedUri == sent) && near
-        // what played before our play took effect - unless it names no context and is the offset we sent at its place (M2)
-        if (s.contextUri != context && !(s.contextUri == null && atOffset)) return emptyList()
-        if (uri in prePlayUris) {
-            // the track of the last state before the play: stale, unless it is the offset we sent near its position
-            // (an artist has no offset: Spotify's start, near 0)
-            if (!((sent == null || uri == sent) && near)) return emptyList()
+        if (contextPassedOver(s, nowMs)) {
+            follow(s, nowMs)
+            return emptyList()
         }
+        freshSeen = true
         if (s.paused) return emptyList() // loaded, not playing yet
         mode = Mode.OURS
         val changed = uri != liveUri
         liveUri = uri
         observe(s, nowMs)
         return listOf(Event.Started(0)) + if (changed) listOf(Event.TrackChanged(uri, s.title)) else emptyList()
+    }
+
+    /**
+     * What a context's start passes over (pure): a state of another context - unless it names no context and is the
+     * offset we sent at its place (M2) - and the track of the last state before the play, unless it is the offset we sent
+     * near its position (an artist has no offset: Spotify's start, near 0) or no longer that state carried on
+     * (2026-11-19: Spotify restarted the offset from 0 when sent at 229 s of a 231 s track, and every play waited 10 s
+     * for a start that never came).
+     */
+    private fun contextPassedOver(s: SdkState, nowMs: Long): Boolean {
+        val uri = s.uri ?: return true
+        val sent = offsetUri
+        val near = abs(s.positionMs - sentPositionMs) <= START_NEAR_MS
+        val atOffset = sent != null && (uri == sent || s.linkedUri == sent) && near
+        if (s.contextUri != context && !(s.contextUri == null && atOffset)) return true
+        if (uri !in prePlayUris) return false
+        if ((sent == null || uri == sent) && near) return false
+        return carriedOn(s, nowMs, byPlace = true)
+    }
+
+    /** While starting, [s] may be ours (pure; shuffle and repeat are judged only then): not passed over, never our add. */
+    private fun mayBeOurs(s: SdkState, nowMs: Long): Boolean {
+        if (mode != Mode.STARTING || isAdd(s)) return false
+        if (context != null) return !contextPassedOver(s, nowMs)
+        return !stale(s, nowMs) && queue.indices.any { matches(s, it) }
+    }
+
+    /**
+     * [s] is the last state seen before the play call carried on (pure): its track at its place, moved on by the time
+     * since while it played ([START_NEAR_MS]) - until a fresh state has come. With no such state known, a track from
+     * before the call is taken as stale. [byPlace]: the place alone decides (the sent track, a context's tracks - a
+     * paused old play resumed at its place by the transfer is still the old play, [follow]); else, as before, a state
+     * paused or playing otherwise than that state is fresh (2026-11-09: Spotify playing that track afresh, from where an
+     * earlier try stopped, in place of ours).
+     */
+    private fun carriedOn(s: SdkState, nowMs: Long, byPlace: Boolean): Boolean {
+        if (freshSeen) return false
+        val pre = prePlay?.takeIf { it.uri == s.uri } ?: return true
+        if (!byPlace && s.paused != pre.paused) return false
+        val carried = pre.positionMs + if (pre.paused) 0 else (nowMs - prePlayAt).coerceAtLeast(0)
+        return abs(s.positionMs - carried) <= START_NEAR_MS
+    }
+
+    /** A passed-over state [s] of the pre-play track playing on from its place: its later ticks are the old play too. */
+    private fun follow(s: SdkState, nowMs: Long) {
+        val pre = prePlay ?: return
+        if (s.uri == pre.uri && !s.paused) {
+            prePlay = s
+            prePlayAt = nowMs
+        }
     }
 
     private fun onContextOurs(s: SdkState, nowMs: Long): List<Event> {
@@ -631,7 +687,10 @@ class SpotifyTracker {
     }
 
     private fun onStarting(s: SdkState, nowMs: Long): List<Event> {
-        if (stale(s, nowMs)) return emptyList() // what played before our play took effect
+        if (stale(s, nowMs)) {
+            follow(s, nowMs) // what played before our play took effect
+            return emptyList()
+        }
         freshSeen = true
         if (matches(s, index)) {
             if (s.paused) return emptyList() // loaded, not playing yet
@@ -677,20 +736,22 @@ class SpotifyTracker {
      * A state of what the old play was or would be playing (H1, L1, qa-26c-step5a-code M3): its expected next
      * (Spotify's own advance while the call was on its way) or an add of ours, by uri; or the last state seen before
      * the play call carried on - its track, paused or playing as it was, at its place moved on by the time since while
-     * it played ([START_NEAR_MS]) - until a fresh state has come (2026-11-09: the same track played afresh, from where it
-     * once stopped, is the play's answer, not the old play's tick). Never the sent track near the sent position.
+     * it played ([carriedOn]) - until a fresh state has come (2026-11-09: the same track played afresh, from where it
+     * once stopped, is the play's answer, not the old play's tick). Never the sent track near the sent position; the
+     * sent track elsewhere only as the old play's next or that state carried on (2026-11-19: Spotify's own place for
+     * our play - from 0 where we sent the track's last seconds - is ours). Pure.
      */
     private fun stale(s: SdkState, nowMs: Long): Boolean {
         val uri = s.uri ?: return false
         if (uri !in prePlayUris) return false
-        // the sent track: stale unless near the sent position (L1: a restart of the same track from 0 isn't its old tick)
-        if (uri == queue[index].uri) return abs(s.positionMs - sentPositionMs) > START_NEAR_MS
+        if (uri == queue[index].uri) {
+            // the sent track near the sent position (L1: a restart of the same track from 0 isn't its old tick)
+            if (abs(s.positionMs - sentPositionMs) <= START_NEAR_MS) return false
+            if (uri in prePlayOthers) return true
+            return carriedOn(s, nowMs, byPlace = true)
+        }
         if (uri in prePlayOthers) return true
-        if (freshSeen) return false
-        val pre = prePlay ?: return true
-        if (s.paused != pre.paused) return false
-        val carried = pre.positionMs + if (pre.paused) 0 else (nowMs - prePlayAt).coerceAtLeast(0)
-        return abs(s.positionMs - carried) <= START_NEAR_MS
+        return carriedOn(s, nowMs, byPlace = false)
     }
 
     /** The next item of a play of ours that is on the player, or null. */
@@ -989,7 +1050,7 @@ class SpotifyTracker {
         /** After this many unplayable items in a row the renderer stops (§5.4: at most three calls). */
         const val UNPLAYABLE_STOP = 3
 
-        /** A start's first state of the track that played before is ours only within this of the sent position (L1). */
+        /** The sent place, and the last state before a play carried on, are matched within this (L1, 2026-11-19). */
         const val START_NEAR_MS = 3_000L
 
         /** At most this many remembered adds (one per window's end; a session never needs many). */

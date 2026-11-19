@@ -260,11 +260,10 @@ class SpotifyTrackerTest {
         )
         val late = state(0, 19_900)
         assertEquals(
-            "a first post 4.8 s past the sent place is read as the old play's (stale): the log says so",
+            "a first post 4.8 s past the sent place: the log says how far (since 2026-11-19 it is ours, not being the old play carried on)",
             "playing at 19 s, the current item, a track from before the play call, +4.7 s from the sent place (starting)",
             t.judged(late),
         )
-        assertEquals(emptyList<String>(), t.onState(late, 1_000).map(::word))
         assertEquals("playing at 0 s, the next item, a track from before the play call, -15.1 s from the sent place (starting)", t.judged(state(1, 0)))
         assertEquals("playing at 0 s, not in our queue, -15.1 s from the sent place (starting)", t.judged(foreign()))
         assertEquals("null (not the active device)", t.judged(Inactive))
@@ -816,5 +815,62 @@ class SpotifyTrackerTest {
         t.onState(cs(1, 15_000).copy(shuffle = true, repeat = 1), 35_000)
         val auto = SdkState(false, 0, 180_000, "spotify:track:FAKEautoplay0000000001", null, emptyList(), emptyList(), "track", "Picked", listOf("Someone"), "spotify:playlist:FAKEradio000000000001", true, 1)
         assertEquals("another context after ours ran out: Autoplay, the end", listOf("NotOurs playing", "Ended"), t.onState(auto, 40_100).map(::word))
+    }
+
+    // --- 2026-11-19, the user's log (music-v0.7.0-rc.3, 13:26): a stored place at the track's end looped ---------------
+
+    /** A context state of track [n] as the log's: a 231 s track, the account's modes as given. */
+    private fun end229(n: Int, pos: Long, paused: Boolean = false, shuffle: Boolean = false, repeat: Int = 0) =
+        SdkState(paused, pos, 231_000, uri(n), null, listOf(uri(n + 1)), emptyList(), "track", "Fake track $n", listOf("Fake Artist"), pl, shuffle, repeat)
+
+    @Test
+    fun `2026-11-19 - the offset sent at 229 s of a 231 s track that Spotify plays from 0 is ours - no 10 s wait, no loop`() {
+        // the earlier try: Spotify played the live track from 0 and the renderer paused it at 9 s ("no state of ours")
+        val t = SpotifyTracker().apply { loadContext(pl, uri(3)) }
+        t.onState(end229(3, 9_000, paused = true), 0)
+        t.playedContext(uri(3), positionMs = 229_000)
+        assertEquals("paused at 9 s, our context, a track from before the play call, -220.0 s from the sent place (starting)", t.judged(end229(3, 9_000, paused = true)))
+        assertEquals("the old pause seen again: still the old play", emptyList<String>(), t.onState(end229(3, 9_000, paused = true), 400).map(::word))
+        assertEquals("Spotify's own place for our play: ours", listOf("Started 0"), t.onState(end229(3, 0), 900).map(::word))
+        assertEquals(Mode.OURS, t.mode)
+        assertEquals("measured at Spotify's place, so the stored one moves off the track's end", 0L, t.measured!!.positionMs)
+        assertEquals(emptyList<String>(), t.onState(end229(3, 4_000), 4_900).map(::word))
+    }
+
+    @Test
+    fun `2026-11-19 - the old play carried on is still passed over - paused, resumed at its place by the transfer, ticking on`() {
+        val t = SpotifyTracker().apply { loadContext(pl, uri(3)) }
+        t.onState(end229(3, 9_000, paused = true), 0)
+        t.playedContext(uri(3), positionMs = 229_000)
+        assertEquals("resumed at its old place", emptyList<String>(), t.onState(end229(3, 9_200), 300).map(::word))
+        assertEquals("its next tick", emptyList<String>(), t.onState(end229(3, 14_200), 5_300).map(::word))
+        assertEquals(Mode.STARTING, t.mode)
+        assertEquals("then Spotify's answer", listOf("Started 0"), t.onState(end229(3, 0), 5_600).map(::word))
+    }
+
+    @Test
+    fun `2026-11-19 - list mode too - the sent track at a place of Spotify's own is ours, the old tick is not`() {
+        val t = SpotifyTracker().apply { load((0..2).map { track(it, 231_000) }, 0) }
+        t.onState(state(0, 9_000, paused = true, duration = 231_000), 0)
+        t.played(0, 2, positionMs = 229_000)
+        assertEquals(emptyList<String>(), t.onState(state(0, 9_000, paused = true, duration = 231_000), 400).map(::word))
+        assertEquals("Started 0", word(t.onState(state(0, 0, duration = 231_000), 900).first()))
+        assertEquals(0L, t.measured!!.positionMs)
+    }
+
+    @Test
+    fun `2026-11-19 (a) - while starting, the old play's modes start no second set and play - our own state's still do`() {
+        val t = SpotifyTracker().apply { loadContext(pl, uri(3)) }
+        t.onState(end229(3, 9_000, paused = true, shuffle = true, repeat = 1), 0)
+        t.playedContext(uri(3), positionMs = 229_000)
+        assertEquals("the track from before the play call, the account's old modes", emptyList<String>(), t.onState(end229(3, 9_000, paused = true, shuffle = true, repeat = 1), 400).map(::word))
+        val foreign = SdkState(false, 0, 180_000, "spotify:track:FAKEautoplay0000000001", null, emptyList(), emptyList(), "track", "Picked", listOf("Someone"), "spotify:playlist:FAKEforeignList000001", true, 1)
+        assertEquals("another context: not judged for its modes", emptyList<String>(), t.onState(foreign, 500).map(::word))
+        assertEquals(listOf("Started 0"), t.onState(end229(3, 0), 900).map(::word))
+        // list mode: a track not in our queue while starting is not judged; our own track with other modes still is
+        val l = SpotifyTracker().apply { load((0..2).map { track(it) }, 0) }
+        l.played(0, 2)
+        assertEquals(emptyList<String>(), l.onState(foreign, 100).map(::word))
+        assertEquals(listOf("ShuffleOrRepeat 0"), l.onState(state(0, 0, shuffle = true), 200).map(::word))
     }
 }

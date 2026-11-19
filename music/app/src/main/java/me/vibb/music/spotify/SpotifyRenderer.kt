@@ -364,7 +364,8 @@ internal class SpotifyRenderer(
 
     // --- a start (§5.4): at most one runs ---
 
-    private data class Request(val index: Int, val posMs: Long, val fresh: Boolean, val settings: Boolean)
+    /** [step]: context mode's next (true) or previous (false) through the SDK once this start is ours ([step]'s fallback). */
+    private data class Request(val index: Int, val posMs: Long, val fresh: Boolean, val settings: Boolean, val step: Boolean? = null)
 
     private class Start(val request: Request, val deadline: Long) {
         /** Where the play starts: the request's, or a seek before its calls (the service's resume overlap). */
@@ -689,6 +690,7 @@ internal class SpotifyRenderer(
         pause(PauseCause.OTHER)
         supersede()
         cancelStep()
+        stepAfterStart = null
         mediaItems = emptyList()
         tracks = emptyList()
         contextUri = null
@@ -858,14 +860,26 @@ internal class SpotifyRenderer(
     /**
      * Next ([forward]) or previous in a context (§5.9, step 6): the SDK's (`vibb.next()` / `vibb.previous()`) -
      * Spotify's order and its own previous rule - while a track of our context is on the player; the tracker reads
-     * where Spotify went ([Event.TrackChanged]). Nothing else: with no context of ours on the player (a restored
-     * queue, a page gone idle, a start on its way) only Spotify knows the next track, and a play goes on from the
-     * live one. Not for list mode, whose steps are the service's (`seekTo(index, ms)`).
+     * where Spotify went ([Event.TrackChanged]). With no context of ours on the player only Spotify knows the next
+     * track: while the kid wants it playing (a start on its way or waiting for its first state, a page gone, the
+     * player lost) the step is a fresh start of the live track from 0 whose first state of ours sends the step
+     * (2026-11-19: a step was dropped while a start waited, and the kid's Next did nothing); paused, nothing is sent
+     * and a play goes on from the live track. Not for list mode, whose steps are the service's (`seekTo(index, ms)`).
      */
     fun step(forward: Boolean) {
         if (contextUri == null || released || detached) return
         if (!host.alive || tracker.mode != Mode.OURS || start != null) {
-            ports.log("spotify: a step with no context of ours on the player - nothing sent")
+            if (!pwr) {
+                ports.log("spotify: a step with no context of ours on the player, paused - nothing sent")
+                return
+            }
+            ports.networkLine()?.let {
+                PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.STAYED)
+                return refuse(it)
+            }
+            ports.log("spotify: a step with no context of ours on the player - a start from the live track, then the step")
+            place = Place(index, 0, ports.now(), moving = false)
+            request(Request(index, 0, fresh = true, settings = needSettings, step = forward))
             return
         }
         // paused, a step only moves (L1): if Spotify plays the track it moved to, that play is paused at once
@@ -875,6 +889,9 @@ internal class SpotifyRenderer(
 
     /** When the kid stepped a paused context (L1): a resume Spotify makes right after it is paused, not shown. */
     private var stepWhilePausedAt: Long? = null
+
+    /** The kid's step that waits for the start it began to be ours ([step] with no context of ours on the player). */
+    private var stepAfterStart: Boolean? = null
 
     /** Our leftover add already skipped with `vibb.next()` (M1): its states until the skip lands send nothing more. */
     private var skippedAdd: String? = null
@@ -1040,6 +1057,7 @@ internal class SpotifyRenderer(
         cancelIdle()
         // past the gates: this start really goes out with the new order's window (qa-39-code N3)
         windowStale = false
+        stepAfterStart = r.step
         val s = Start(r, ports.now() + SPOTIFY_START_BUDGET_MS)
         ports.log("spotify: a start from item ${r.index} at ${r.posMs / 1000} s (${if (host.alive) "the page is up" else "a new page"}, ${if (deviceId != null) "its device known" else "no device yet"})")
         start = s
@@ -1654,6 +1672,10 @@ internal class SpotifyRenderer(
         explicit += Pending(RendererEvent.Ready, null)
         armGap()
         armPrefetch()
+        stepAfterStart?.let {
+            stepAfterStart = null
+            if (contextUri != null && host.alive) sdk(if (it) "next" else "previous")
+        }
     }
 
     /** An unplayable item: the service hears `Error("unplayable")` with that item current, and moves on through [moveOnTo]. */
