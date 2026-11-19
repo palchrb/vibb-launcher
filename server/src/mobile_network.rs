@@ -330,19 +330,30 @@ pub fn roaming_words(lang: Lang, report: &RoamingReport) -> Option<(String, bool
     })
 }
 
-/// The summary header's roaming part (design 94 §6.2), from the latest report. A ship network Android doesn't count as
-/// roaming says nothing while the phone's abroad sink covers it (Bare Vibb, Av), as on the Mobilnett page
-/// ([roaming_warnings]); the roaming emulator run of 2026-11-19, finding 1.
+/// [roaming_words] with a ship network Android doesn't count as roaming worded as a flagged one while the phone's sink
+/// covers it ([ship_covered]): "Roamer på et skips- eller flynett", orange, as the flagged ship (code QA M1 of
+/// `server-small`); uncovered it stays `data_roaming.ship_home`.
+fn shown_roaming_words(
+    lang: Lang,
+    report: &RoamingReport,
+    covered: bool,
+) -> Option<(String, bool)> {
+    if ship_network(report) && !report.roaming && covered {
+        return Some((t(lang, "data_roaming.ship").to_string(), true));
+    }
+    roaming_words(lang, report)
+}
+
+/// The summary header's roaming part (design 94 §6.2), from the latest report, by the Mobilnett page's rule
+/// ([shown_roaming_words]; the roaming emulator run of 2026-11-19, finding 1).
 pub fn summary_roaming(
     lang: Lang,
     latest: &DeviceStatus,
     policy: &DevicePolicy,
 ) -> Option<(String, bool)> {
     let report = roaming_report(latest)?;
-    if ship_network(&report) && !report.roaming && sink_covers_ship(policy) {
-        return None;
-    }
-    roaming_words(lang, &report)
+    let covered = ship_covered(policy, mobile_report(latest).as_ref());
+    shown_roaming_words(lang, &report, covered)
 }
 
 /// One state line: its words, an optional sentence under them, and whether it is a warning (orange).
@@ -383,7 +394,7 @@ fn roaming_warnings(
     report: &RoamingReport,
     mobile: Option<&MobileReport>,
     airplane_locked: bool,
-    sink_covers_ship: bool,
+    ship_covered: bool,
 ) -> Vec<Line> {
     let mut lines = Vec::new();
     if report.locked && report.data_active {
@@ -408,7 +419,7 @@ fn roaming_warnings(
             true,
         ));
     }
-    if ship_network(report) && !report.roaming && !sink_covers_ship {
+    if ship_network(report) && !report.roaming && !ship_covered {
         lines.push(Line {
             key: "ship-home",
             title: t(lang, "data_roaming.ship_home").to_string(),
@@ -419,9 +430,12 @@ fn roaming_warnings(
     lines
 }
 
-/// Whether the phone's abroad sink covers a ship network Android doesn't count as roaming (design 97 Q97-H1).
-fn sink_covers_ship(policy: &DevicePolicy) -> bool {
+/// Whether the phone's abroad sink covers a ship network Android doesn't count as roaming (design 97 Q97-H1): Bare
+/// Vibb or Av, and - where the report says - a sink actually up (code QA L1 of `server-small`: a pause, or a choice not
+/// on the phone yet, leaves the ship uncovered, and the orange `ship_home` comes back).
+fn ship_covered(policy: &DevicePolicy, mobile: Option<&MobileReport>) -> bool {
     abroad_choice(&policy.abroad) != "home"
+        && mobile.is_none_or(|m| matches!(m.sink.as_str(), "abroad" | "parent" | "roaming" | "kid"))
 }
 
 /// The "only Vibb" line for the report's sink (design 97 §5): only the kid's Off, a quiet value on the summary (design
@@ -456,7 +470,7 @@ pub fn summary_lines(
             &report,
             mobile.as_ref(),
             policy.hardening.disallow_airplane_mode,
-            sink_covers_ship(policy),
+            ship_covered(policy, mobile.as_ref()),
         ));
     }
     lines
@@ -550,13 +564,14 @@ fn switch_line(
                 warn: true,
             }
         } else {
-            Line::new(
-                lang,
-                "switch",
-                "mobile.abroad.switch.off",
-                Some("mobile.abroad.switch.off_sub"),
-                true,
-            )
+            // Code QA L2: abroad with data (a network Android doesn't flag, a session still up), the ⓘ says it
+            // works now.
+            let sub = if report.where_is.as_deref() == Some("abroad") {
+                "mobile.abroad.switch.off_has_data_sub"
+            } else {
+                "mobile.abroad.switch.off_sub"
+            };
+            Line::new(lang, "switch", "mobile.abroad.switch.off", Some(sub), true)
         },
     )
 }
@@ -598,9 +613,12 @@ pub fn card(lang: Lang, name: &str, policy: &DevicePolicy, latest: Option<&Devic
         let place_in_switch = report.where_is.as_deref() == Some("abroad")
             && switch_stops_data(report)
             && abroad_lines.iter().any(|l: &Line| l.key == "switch");
-        if let Some((words, warn)) = roaming_words(lang, report)
-            .filter(|_| (report.roaming || abroad_unflagged(report)) && !place_in_switch)
-        {
+        // Code QA M1: a ship network Android doesn't flag, covered by the sink, is worded as a flagged one.
+        let covered = ship_covered(policy, mobile.as_ref());
+        let unflagged_ship = ship_network(report) && !report.roaming && covered;
+        if let Some((words, warn)) = shown_roaming_words(lang, report, covered).filter(|_| {
+            (report.roaming || abroad_unflagged(report) || unflagged_ship) && !place_in_switch
+        }) {
             abroad_lines.push(Line {
                 key: "roaming",
                 title: words,
@@ -623,7 +641,7 @@ pub fn card(lang: Lang, name: &str, policy: &DevicePolicy, latest: Option<&Devic
             report,
             mobile.as_ref(),
             policy.hardening.disallow_airplane_mode,
-            sink_covers_ship(policy),
+            ship_covered(policy, mobile.as_ref()),
         ));
     }
 
@@ -1023,46 +1041,69 @@ mod tests {
         );
     }
 
-    /// The summary's header says what the Mobilnett page says (2026-11-19's emulator run, finding 1): a ship network
-    /// Android doesn't count as roaming is nothing under Bare Vibb or Av, whose abroad sink covers it, and the orange
-    /// "the lock doesn't cover it" only under På; a flagged ship network is roaming under every choice.
+    /// The summary's header says what the Mobilnett page says (2026-11-19's emulator run, finding 1; code QA M1 and L1
+    /// of `server-small`): a ship network Android doesn't count as roaming, covered by the sink under Bare Vibb or Av,
+    /// is worded as a flagged one - "Roamer på et skips- eller flynett", orange - on the header and the page alike; the
+    /// orange "the lock doesn't cover it" is På's, and comes back under Bare Vibb or Av when the report's sink is down
+    /// (a pause); a flagged ship network is roaming under every choice.
     #[test]
     fn the_header_takes_the_pages_ship_rule() {
-        let status = |roaming: &str| DeviceStatus {
+        let status = |roaming: &str, sink: Option<&str>| DeviceStatus {
             data_roaming_json: Some(roaming.into()),
+            mobile_data_json: sink.map(|sink| {
+                format!(r#"{{"enabled":true,"sink":"{sink}","settings_locked":true}}"#)
+            }),
             ..Default::default()
         };
         let choice = |abroad: &str| DevicePolicy {
             abroad: abroad.into(),
             ..Default::default()
         };
-        let unflagged = status(
-            r#"{"locked":false,"roaming":false,"country":null,"network":"90112","enabled":true,"data_active":false,"where":"abroad"}"#,
+        let ship = ("Roamer på et skips- eller flynett".to_string(), true);
+        let ship_home = (
+            "På et skips- eller flynett som ikke regnes som roaming: låsen dekker det ikke"
+                .to_string(),
+            true,
         );
-        assert_eq!(summary_roaming(Lang::Nb, &unflagged, &choice("vibb")), None);
-        assert_eq!(summary_roaming(Lang::Nb, &unflagged, &choice("off")), None);
-        assert_eq!(
-            summary_roaming(Lang::Nb, &unflagged, &choice("home")),
-            Some((
-                "På et skips- eller flynett som ikke regnes som roaming: låsen dekker det ikke"
-                    .to_string(),
-                true
-            ))
-        );
-        for abroad in ["vibb", "off", "home"] {
-            let lines = card(Lang::Nb, "Emma", &choice(abroad), Some(&unflagged)).abroad_lines;
+        let unflagged_json = r#"{"locked":false,"roaming":false,"country":null,"network":"90112","enabled":true,"data_active":false,"where":"abroad"}"#;
+        // (choice, the report's sink, the header, the page's roaming line, the page's ship-home line)
+        let rows = [
+            ("vibb", Some("abroad"), Some(ship.clone()), true, false),
+            ("off", Some("abroad"), Some(ship.clone()), true, false),
+            ("vibb", None, Some(ship.clone()), true, false),
+            // A pause lifts the sink: not covered.
+            ("vibb", Some("off"), Some(ship_home.clone()), false, true),
+            ("off", Some("off"), Some(ship_home.clone()), false, true),
+            ("home", Some("off"), Some(ship_home.clone()), false, true),
+            ("home", None, Some(ship_home.clone()), false, true),
+        ];
+        for (abroad, sink, header, roaming_line, ship_home_line) in rows {
+            let latest = status(unflagged_json, sink);
+            let row = format!("{abroad} {sink:?}");
+            assert_eq!(
+                summary_roaming(Lang::Nb, &latest, &choice(abroad)),
+                header,
+                "{row}"
+            );
+            let lines = card(Lang::Nb, "Emma", &choice(abroad), Some(&latest)).abroad_lines;
+            let roaming = lines.iter().find(|l| l.key == "roaming");
+            assert_eq!(roaming.is_some(), roaming_line, "{row}: {lines:?}");
+            if let Some(line) = roaming {
+                assert_eq!((line.title.clone(), line.warn), ship, "{row}");
+            }
             assert_eq!(
                 lines.iter().any(|l| l.key == "ship-home"),
-                abroad == "home",
-                "{abroad}: {lines:?}"
+                ship_home_line,
+                "{row}: {lines:?}"
             );
         }
         let flagged = status(
             r#"{"locked":false,"roaming":true,"country":null,"network":"90112","enabled":true,"data_active":true,"where":"abroad"}"#,
+            Some("abroad"),
         );
         assert_eq!(
             summary_roaming(Lang::Nb, &flagged, &choice("vibb")),
-            Some(("Roamer på et skips- eller flynett".to_string(), true))
+            Some(ship)
         );
     }
 
@@ -1135,6 +1176,14 @@ mod tests {
             ("roaming", "Roamer i Sverige".to_string(), false, false),
         ];
         assert_eq!(lines(&policy_vibb, unflagged), expected);
+        // Code QA L2: its ⓘ says data works now.
+        let sub = card(Lang::Nb, "Emma", &policy_vibb, Some(&status(unflagged)))
+            .abroad_lines
+            .into_iter()
+            .find(|l| l.key == "switch")
+            .and_then(|l| l.sub)
+            .unwrap();
+        assert!(sub.starts_with("Mobildata virker nå"), "{sub}");
         let session = r#"{"locked":false,"roaming":true,"country":"se","network":"24001","enabled":false,"data_active":true,"where":"abroad"}"#;
         assert_eq!(lines(&policy_vibb, session), expected);
         // The switch on, or Av with the lock in place: nothing about it.

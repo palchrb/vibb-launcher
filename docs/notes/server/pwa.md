@@ -2215,8 +2215,8 @@ pointer here.
   a page without JS); "Automatic" keeps "Vibb style" (R2-M6). No new words, no new form or save (nothing can move the
   page), the header untouched.
 - **Notifications** (2026-11-19): a catalog event's row (`app_update_available`, waiting or held) shows the app's
-  logo in its round avatar by the tile's rule (`tracked_apps::tile_logo`, `logos_by_id`); the letter only without
-  one; a phone's event keeps the phone's picture. `notifications.md`, "App update notices".
+  logo in its round avatar by the tile's rule (`tracked_apps::tile_logo`, `tile_icon`, `avatars_by_id`: the logo with
+  the hairline, else the chosen glyph, else the letter); a phone's event keeps the phone's picture. `notifications.md`, "App update notices".
 - **Tests**: `tests::app_logos` (`the_contract`, `a_catalog_event_shows_the_apps_logo`, `the_rows_follow_the_reports_and_the_files_follow_the_rows`,
   `a_full_phone_is_asked_for_nothing_more`, `only_a_named_logo_is_served_behind_the_session`,
   `the_pages_show_the_logos`, `the_catalog_keeps_the_last_logo`), `app_logos::tests` (the decode's limits, the budget and refusals),
@@ -2396,8 +2396,10 @@ Vibb bruker roamingdata fra før låsen" when the launcher sinks it - and a SIM 
 bare Vibb" and "Mobildata er slått av på telefonen". On the summary only the lines that say something show
 (`mobile_network::summary_lines`, `#mobile-state`, each leading to the page), and "Roamer i Sverige" ends the header's
 second line while the phone is in touch (`phone_status::with_roaming`; `mobile_network::summary_roaming` takes the
-page's ship rule: a ship network Android doesn't count as roaming says nothing under Bare Vibb or Av, whose abroad sink
-covers it - 2026-11-19's roaming emulator run, finding 1). Pinned by `tests::mobile_network`.
+page's ship rule, `shown_roaming_words`: a ship network Android doesn't count as roaming, under Bare Vibb or Av with
+the report's sink up (`ship_covered`; a pause brings the orange «låsen dekker det ikke» back), is worded as a flagged
+one, the orange «Roamer på et skips- eller flynett», on the header and the page alike; «låsen dekker det ikke» is På's
+and the uncovered case's - 2026-11-19's roaming emulator run, finding 1, and `server-small`'s code QA M1, L1). Pinned by `tests::mobile_network`.
 
 Design 113 (2026-11-17, the copy round): "Mobildata" (På / Bare Vibb), "Roaming" (was "I utlandet"; På / Av / Bare
 Vibb, the stored `home`/`off`/`vibb`) and "Lås innstillingene", no sub-line under a choice or switch; each group's
@@ -2405,7 +2407,9 @@ explanation is its footer ⓘ. A wrong state is one orange line above its group,
 er av på telefonen» (Android's own switch), «Androids roamingbryter er av» (only when off under På or Bare Vibb; abroad
 «Roamer i Sverige – Androids roamingbryter er av» with «ingen mobildata nå» behind its ⓘ only while the switch is what
 stops the data - a flagged network and no roaming session up, `mobile_network::switch_stops_data`; on a foreign network
-Android doesn't flag the plain line and the place line, 2026-11-19's roaming emulator run, finding 2), «Ingen mobildata her (nasjonal roaming)», the lingering and
+Android doesn't flag the plain line and the place line, 2026-11-19's roaming emulator run, finding 2; abroad the plain
+line's ⓘ says data works now and stops on a network Android counts as roaming, `mobile.abroad.switch.off_has_data_sub`,
+code QA L2), «Ingen mobildata her (nasjonal roaming)», the lingering and
 still-on lines. Android's switch on, and Av with the lock in place, say nothing; the pause has no switch line of its
 own. No "Mobildata: bare Vibb" line restates the radio; the kid's Off stays a grey line (the summary's «Mobildata: bare
 Vibb – {name} har slått av»). Mobile data off is the Attention row `mobile-data-off` (`attention::Kind::MobileDataOff`,

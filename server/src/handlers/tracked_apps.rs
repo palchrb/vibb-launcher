@@ -1146,6 +1146,9 @@ struct SyncStatus {
     /// The last sync was a "Check Now" that found nothing new (no download, no failure): shown
     /// until the next sync starts.
     nothing_new: bool,
+    /// "Check Now" was pressed while this sync ran (the hourly one, say): its end answers the
+    /// press as a Check Now's does (code QA L3).
+    check_asked: bool,
 }
 
 /// Checksum mismatches in a row of one release before the hourly sync stops downloading it
@@ -1354,6 +1357,7 @@ impl AppSyncs {
         status.running_since = Some(utc_now());
         status.downloading = None;
         status.nothing_new = false;
+        status.check_asked = false;
         Some(SyncGuard {
             syncs: self.clone(),
             id,
@@ -1362,6 +1366,19 @@ impl AppSyncs {
 
     fn status(&self, id: i64) -> SyncStatus {
         self.lock().get(&id).cloned().unwrap_or_default()
+    }
+
+    /// "Check Now" pressed while a sync of `id` runs: that sync's end answers it ([SyncGuard::end]).
+    /// `false` when none runs.
+    fn ask_check(&self, id: i64) -> bool {
+        let mut map = self.lock();
+        match map.get_mut(&id) {
+            Some(status) if status.running_since.is_some() => {
+                status.check_asked = true;
+                true
+            }
+            _ => false,
+        }
     }
 
     /// The version the running sync of `id` downloads, if it got that far.
@@ -1412,20 +1429,28 @@ pub(crate) struct SyncGuard {
 }
 
 impl SyncGuard {
+    /// The end of what isn't a sync (approve, decline, update now): its failure, no answer to a
+    /// Check Now.
     pub(crate) fn finish(self, result: &Result<(), Failure>) {
-        self.end(result, false);
+        self.close(result, false, false);
     }
 
-    /// [SyncGuard::finish] of a "Check Now" (`check`): one that ended without a failure or a
-    /// download found nothing new, and the page says so.
+    /// The end of a sync: a "Check Now" (`check`), or one Check Now was pressed during
+    /// ([AppSyncs::ask_check]), that ended without a failure or a download found nothing new,
+    /// and the page says so.
     fn end(self, result: &Result<(), Failure>, check: bool) {
+        self.close(result, check, true);
+    }
+
+    fn close(self, result: &Result<(), Failure>, check: bool, asked_counts: bool) {
         let mut map = self.syncs.lock();
         let status = map.entry(self.id).or_default();
         status.last_error = result.as_ref().err().map(|failure| SyncFailure {
             at: utc_now(),
             failure: failure.clone(),
         });
-        status.nothing_new = check && result.is_ok() && status.downloading.is_none();
+        let asked = check || (asked_counts && status.check_asked);
+        status.nothing_new = asked && result.is_ok() && status.downloading.is_none();
     }
 }
 
@@ -1450,7 +1475,7 @@ async fn sync_app(state: &AppState, id: i64, forced: bool) -> Result<(), SyncErr
         return Err(SyncError::AlreadyRunning);
     };
     let result = sync_one_app(state, id, forced).await;
-    guard.finish(&result);
+    guard.end(&result, false);
     result.map_err(SyncError::Failed)
 }
 
@@ -2884,17 +2909,21 @@ fn app_tile(app: &TrackedApp, label: &str, logos: &HashMap<String, String>) -> A
         logo: tile_logo(app, logos),
         letter: crate::handlers::devices::initial(label),
         colour: colours[app.id.rem_euclid(colours.len() as i64) as usize],
-        icon: app
-            .display_icon
-            .as_deref()
-            .filter(|key| crate::app_display::icon_known(key))
-            .map(|key| {
-                (
-                    key.to_string(),
-                    crate::app_display::tile_of(&app.display_color),
-                )
-            }),
+        icon: tile_icon(app),
     }
+}
+
+/// A catalog app's chosen glyph and its tile colour, when its key is known.
+fn tile_icon(app: &TrackedApp) -> Option<(String, &'static str)> {
+    app.display_icon
+        .as_deref()
+        .filter(|key| crate::app_display::icon_known(key))
+        .map(|key| {
+            (
+                key.to_string(),
+                crate::app_display::tile_of(&app.display_color),
+            )
+        })
 }
 
 /// A catalog app's logo as its tile shows it (design 87 §8.1): the server's Vibb mark for the launcher, else the
@@ -2907,10 +2936,18 @@ fn tile_logo(app: &TrackedApp, logos: &HashMap<String, String>) -> Option<String
     }
 }
 
-/// The logos of the catalog apps `ids`, by id, as their tiles show them ([tile_logo]): the Notifications rows of a
-/// catalog event (PLAN 2026-11-19). An app without one, or removed, is left out; a failed read is logged and leaves
-/// every row its letter.
-pub(crate) async fn logos_by_id(state: &AppState, ids: &[i64]) -> HashMap<i64, String> {
+/// A catalog app's avatar on Notifications, by its tile's rule (code QA L5): the logo, else the chosen glyph on its
+/// colour, else (no entry) the letter.
+pub(crate) struct CatalogAvatar {
+    pub logo: Option<String>,
+    /// The glyph's key (`/static/app-icons/<key>.svg`) and the tile's colour.
+    pub icon: Option<(String, &'static str)>,
+}
+
+/// The avatars of the catalog apps `ids`, by id, as their tiles show them ([tile_logo], [tile_icon]): the
+/// Notifications rows of a catalog event (PLAN 2026-11-19). An app with neither, or removed, is left out; a failed read
+/// is logged and leaves every row its letter.
+pub(crate) async fn avatars_by_id(state: &AppState, ids: &[i64]) -> HashMap<i64, CatalogAvatar> {
     if ids.is_empty() {
         return HashMap::new();
     }
@@ -2941,7 +2978,11 @@ pub(crate) async fn logos_by_id(state: &AppState, ids: &[i64]) -> HashMap<i64, S
         }
     };
     apps.iter()
-        .filter_map(|app| tile_logo(app, &logos).map(|logo| (app.id, logo)))
+        .filter_map(|app| {
+            let logo = tile_logo(app, &logos);
+            let icon = if logo.is_none() { tile_icon(app) } else { None };
+            (logo.is_some() || icon.is_some()).then_some((app.id, CatalogAvatar { logo, icon }))
+        })
         .collect()
 }
 
@@ -3872,10 +3913,13 @@ async fn render_detail_full(
                 .as_deref()
                 .and_then(|at| When::of(&zone, at, now)),
             sync_downloading: sync.downloading,
+            // Code QA L4: not beside a release held, waiting or declined (the update group says what
+            // there is), and never on a disabled app (the hourly sync, which would clear it, skips it).
             nothing_new: sync.nothing_new
-                && update
-                    .as_ref()
-                    .is_none_or(|u| u.held.is_none() && u.waiting.is_none()),
+                && app.enabled
+                && update.as_ref().is_none_or(|u| {
+                    u.held.is_none() && u.waiting.is_none() && u.declined.is_none()
+                }),
             sync_failure: sync.last_error.map(|failed| FailureView {
                 title: failed.failure.problem.title(lang),
                 detail: failed.failure.detail,
@@ -4191,9 +4235,12 @@ pub async fn check_now(State(state): State<AppState>, lang: Lang, Path(id): Path
         return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.app_not_found");
     }
 
-    // Started here, so the wait below never looks before the sync has begun; one that runs already
-    // (the hourly sync, another Check Now) is what the page shows.
+    // Started here, so the wait below never looks before the sync has begun. One that runs already
+    // (the hourly sync, another Check Now) is what the page shows, refreshing until it ends, and its
+    // end answers this press too - "No new version" included (code QA L3). It isn't forced: a
+    // release refused before is tried again by the next Check Now, not by that sync.
     let Some(guard) = state.app_syncs.start(id) else {
+        state.app_syncs.ask_check(id);
         return Redirect::to(&format!("/apps/tracked/{id}#check")).into_response();
     };
     // In its own task: a large download still finishes, and is cached, after this answers.
@@ -7054,6 +7101,79 @@ mod tests {
         assert!(sync_app(&app.state, id, false).await.is_ok());
         assert!(!page().await.contains(r#"data-sync="nothing-new""#));
         assert_eq!(FakeRepo::count(&fake.file_gets), 1);
+    }
+
+    /// Code QA L3 of `server-small`: Check Now pressed while another sync runs (the hourly one) gets
+    /// that sync's answer - "No new version" at its end -, while the end of what isn't a sync
+    /// (approve, decline) answers nothing.
+    #[tokio::test]
+    async fn check_now_during_a_sync_is_answered_by_its_end() {
+        let app = crate::tests::TestApp::new().await;
+        let cookie = app.admin_cookie().await;
+        let id = fdroid_row(&app, "https://f-droid.org/repo", "me.vibb.testfixture").await;
+        let page = || async {
+            app.get_page(&format!("/apps/tracked/{id}"), &cookie)
+                .await
+                .text()
+        };
+
+        let hourly = app.state.app_syncs.start(id).expect("none runs");
+        check_now(State(app.state.clone()), Lang::En, Path(id)).await;
+        assert!(page().await.contains(r#"data-sync="running""#));
+        hourly.end(&Ok(()), false);
+        let html = page().await;
+        assert!(html.contains(r#"data-sync="nothing-new""#), "{html}");
+
+        // A sync with no press says nothing; nor does an approve's end after a press.
+        app.state.app_syncs.start(id).unwrap().end(&Ok(()), false);
+        assert!(!page().await.contains(r#"data-sync="nothing-new""#));
+        let approve = app.state.app_syncs.start(id).unwrap();
+        check_now(State(app.state.clone()), Lang::En, Path(id)).await;
+        approve.finish(&Ok(()));
+        assert!(!page().await.contains(r#"data-sync="nothing-new""#));
+    }
+
+    /// Code QA L4 of `server-small`: "No new version" isn't shown beside a declined release (the
+    /// update group says what there is), nor on a disabled app.
+    #[tokio::test]
+    async fn no_new_version_hides_beside_a_declined_release_and_on_a_disabled_app() {
+        let app = crate::tests::TestApp::new().await;
+        let cookie = app.admin_cookie().await;
+        let id = fdroid_row(&app, "https://f-droid.org/repo", "me.vibb.testfixture").await;
+        let shown = || async {
+            app.get_page(&format!("/apps/tracked/{id}"), &cookie)
+                .await
+                .text()
+                .contains(r#"data-sync="nothing-new""#)
+        };
+        app.state.app_syncs.start(id).unwrap().end(&Ok(()), true);
+        assert!(shown().await);
+
+        sqlx::query(
+            "UPDATE tracked_apps SET latest_release_tag = 'v1.0', latest_release_asset_id = 1, \
+             declined_release_tag = 'v1.1', declined_release_asset_id = 2 WHERE id = ?",
+        )
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+        assert!(!shown().await, "beside the declined release");
+
+        sqlx::query(
+            "UPDATE tracked_apps SET declined_release_tag = NULL, declined_release_asset_id = NULL, \
+             enabled = 0 WHERE id = ?",
+        )
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+        assert!(!shown().await, "on a disabled app");
+        sqlx::query("UPDATE tracked_apps SET enabled = 1 WHERE id = ?")
+            .bind(id)
+            .execute(&app.db)
+            .await
+            .unwrap();
+        assert!(shown().await);
     }
 
     /// App update notices (2026-10-25): a sync that stores a new release over an older one raises

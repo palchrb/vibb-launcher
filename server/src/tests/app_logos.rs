@@ -765,6 +765,7 @@ async fn a_catalog_event_shows_the_apps_logo() {
         ("Drawing", "org.example.drawing", false),
         ("Notes", "org.example.notes", false),
         ("Vibb One", "me.vibb.launcher", true),
+        ("Chatty", "org.example.chatty", false),
     ] {
         let id: i64 = sqlx::query_scalar(
             "INSERT INTO tracked_apps (name, package_name, github_repo, is_launcher) VALUES (?, ?, 'o/r', ?) \
@@ -778,6 +779,13 @@ async fn a_catalog_event_shows_the_apps_logo() {
         .unwrap();
         ids.push((id, name));
     }
+    // Code QA L5: a chosen glyph without a logo, as on the Apps tab.
+    sqlx::query(
+        "UPDATE tracked_apps SET display_icon = 'chat', display_color = 'sky' WHERE package_name = 'org.example.chatty'",
+    )
+    .execute(&app.db)
+    .await
+    .unwrap();
     let logo = png(SIZE_PX, 90);
     report_and_upload(
         &app,
@@ -815,7 +823,14 @@ async fn a_catalog_event_shows_the_apps_logo() {
         launcher.contains("src=\"/static/icons/vibb-one-tile.svg\""),
         "{launcher}"
     );
+    // The logo with the tile's hairline.
+    assert!(drawing.contains("app-row-logo"), "{drawing}");
     let notes = avatar_of("Notes");
     assert!(!notes.contains("<img"), "{notes}");
     assert!(notes.ends_with(">N"), "the letter: {notes}");
+    let chatty = avatar_of("Chatty");
+    assert!(
+        chatty.contains("src=\"/static/app-icons/chat.svg\"") && !chatty.contains(">C<"),
+        "{chatty}"
+    );
 }

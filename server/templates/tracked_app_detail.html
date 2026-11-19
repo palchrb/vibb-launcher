@@ -27,7 +27,7 @@
         {% if let Some(since) = sync_running %}
         {% if let Some(v) = sync_downloading %}
         <div class="row" data-sync="downloading">
-            <span class="row-label">{{ self.t("apps.app.downloading") }}<span class="row-sub" title="{{ since.exact }}">{{ v }}</span></span>
+            <span class="row-label">{{ self.t("apps.app.downloading") }}<span class="row-sub">{{ v }}</span></span>
         </div>
         {% else %}
         <div class="row" data-sync="running">

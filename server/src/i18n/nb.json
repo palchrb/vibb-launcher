@@ -1150,6 +1150,7 @@
   "mobile.abroad.info": "Gjelder utenfor SIM-kortets land. Av: ingen mobildata. Bare Vibb: bare Vibb får data, noen hundre KB om dagen. På: som hjemme. Samtaler og SMS virker alltid.",
   "mobile.abroad.switch.off": "Androids roamingbryter er av",
   "mobile.abroad.switch.off_sub": "Uten den har telefonen ingen mobildata i utlandet, heller ikke Vibb. Slå den på én gang før dere reiser, under Åpne for oppsett: Innstillinger › Nettverk og internett › SIM-kort › Roaming.",
+  "mobile.abroad.switch.off_has_data_sub": "Mobildata virker nå, men stopper når Android regner nettet som roaming – også for Vibb. Slå den på under Åpne for oppsett: Innstillinger › Nettverk og internett › SIM-kort › Roaming.",
   "mobile.abroad.switch.off_abroad": "{place} – Androids roamingbryter er av",
   "mobile.abroad.switch.off_abroad_sub": "{name} har ingen mobildata nå, heller ikke Vibb. Slå den på under Åpne for oppsett: Innstillinger › Nettverk og internett › SIM-kort › Roaming.",
   "data_roaming.national": "Bruker et annet nett i hjemlandet",

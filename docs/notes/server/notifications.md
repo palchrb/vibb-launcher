@@ -545,8 +545,9 @@ push varsel ... kanskje man kan få valget". Branch `pwa-fixes-b`.
   Target `/apps/tracked/{id}`. Inbox "Signal 7.2.0 is available" / "14:02 · 7.1.4 → 7.2.0"; push "Signal: update
   available" / "14:02 · version 7.2.0". In the inbox under every phone only (a `?device=` filter leaves it out), with
   the app's logo in the round avatar as its tile on the Apps tab shows it (2026-11-19: `notifications::catalog_app_of`
-  reads the event's `app_id`, `tracked_apps::logos_by_id` the logo - the Vibb mark for the launcher, else the logo the
-  phones sent or the catalog's kept one, design 87); a grey avatar and the app's letter only without one
+  reads the event's `app_id`, `tracked_apps::avatars_by_id` the tile - the Vibb mark for the launcher, else the logo
+  the phones sent or the catalog's kept one, design 87, with the tile's hairline; else the chosen glyph on its colour,
+  code QA L5); a grey avatar and the app's letter only without either
   (`notifications::inbox_row`). The push keeps the app's icon: `/app-logos/` is behind the session, which a
   notification's icon fetch doesn't reliably carry (see "The push icon").
 - **`app_updated`** - per phone and version: `device_api::status` compares the report with the previous one

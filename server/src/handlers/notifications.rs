@@ -68,8 +68,12 @@ pub struct InboxRow {
     pub id: i64,
     pub avatar: &'static str,
     pub initial: String,
-    /// The phone's own picture over the letter (server round C).
+    /// The phone's own picture over the letter (server round C); a catalog event's app logo.
     pub photo: Option<String>,
+    /// A catalog event's app logo (`photo`): the tile's hairline ring (code QA L5).
+    pub app_logo: bool,
+    /// A catalog event's app without a logo: its chosen glyph and the tile's colour, in place of the letter.
+    pub app_icon: Option<(String, &'static str)>,
     pub title: String,
     pub summary: String,
     pub detail: Option<String>,
@@ -289,6 +293,8 @@ pub(crate) fn inbox_row(
         avatar,
         initial,
         photo: crate::handlers::device_avatar::src_of(avatar_hash.as_deref()),
+        app_logo: false,
+        app_icon: None,
         title,
         summary,
         detail,
@@ -342,21 +348,29 @@ pub async fn page(
     let older_than = (raw.len() as i64 > parent_events::PAGE)
         .then(|| raw.get(parent_events::PAGE as usize - 1).map(|r| r.0))
         .flatten();
-    // A catalog event shows its app's logo, as the Apps tab does (PLAN 2026-11-19); the letter only without one.
+    // A catalog event shows its app's tile, as the Apps tab does (PLAN 2026-11-19; code QA L5): the logo, else the
+    // chosen glyph, else the letter.
     let apps: Vec<i64> = raw
         .iter()
         .take(parent_events::PAGE as usize)
         .filter_map(catalog_app_of)
         .collect();
-    let logos = crate::handlers::tracked_apps::logos_by_id(&state, &apps).await;
+    let mut avatars = crate::handlers::tracked_apps::avatars_by_id(&state, &apps).await;
     let rows = raw
         .into_iter()
         .take(parent_events::PAGE as usize)
         .map(|raw| {
-            let logo = catalog_app_of(&raw).and_then(|app| logos.get(&app).cloned());
+            let avatar =
+                catalog_app_of(&raw).and_then(|app| avatars.remove(&app).map(|a| (app, a)));
             let mut row = inbox_row(raw, &zone, now, |t| zone.relative(t, now));
-            if logo.is_some() {
-                row.photo = logo;
+            if let Some((app, avatar)) = avatar {
+                row.app_logo = avatar.logo.is_some();
+                if avatar.logo.is_some() {
+                    row.photo = avatar.logo.clone();
+                }
+                row.app_icon = avatar.icon.clone();
+                // Two rows of one app (two releases) both draw it.
+                avatars.insert(app, avatar);
             }
             row.delivery = lines.remove(&row.id).and_then(|d| delivery_line(lang, &d));
             row
