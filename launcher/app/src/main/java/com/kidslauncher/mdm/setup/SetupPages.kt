@@ -18,6 +18,14 @@ import com.kidslauncher.mdm.server.systemPageIntent
 private const val PLAY_SERVICES = "com.google.android.gms"
 
 /**
+ * Row 5's pages in the order "Åpne" tries them. Android 16's SIM page has no Mobile data switch (the emulator gate of
+ * 2026-11-19: "Use this SIM", Mobile network, Roaming, no Mobile data); the Internet panel has it on 14 and 16 alike, so
+ * from 16 the panel comes first. Android 14 keeps the SIM page, which has the switch. Pure.
+ */
+internal fun mobileDataActions(actions: List<String>, sdk: Int): List<String> =
+    if (sdk >= 36) actions.sortedBy { if (it == Settings.Panel.ACTION_INTERNET_CONNECTIVITY) 0 else 1 } else actions
+
+/**
  * Design 114 §6.2.2: the Android pages a step's "Åpne" tries, in order, each explicit to an unsuspended system package
  * (`systemPageIntent`) - so empty outside a window on a managed phone. The actions are the step's own
  * ([SetupStep.pageActions], pinned by the contract); the steps that had a row in parent Settings keep their builders.
@@ -42,7 +50,7 @@ object SetupPages {
                 ),
                 page(context, Intent(actions[1])),
             )
-            SetupStep.MOBILE_DATA -> actions.mapNotNull { page(context, Intent(it)) }
+            SetupStep.MOBILE_DATA -> mobileDataActions(actions, android.os.Build.VERSION.SDK_INT).mapNotNull { page(context, Intent(it)) }
             SetupStep.LOCATION, SetupStep.DATA_SAVER, SetupStep.FULL_SCREEN_INTENT, SetupStep.MAP_VIBB_LINKS ->
                 listOfNotNull(page(context, Intent(actions[0], ours(context))))
             SetupStep.MAP_PLAY_LINKS -> listOfNotNull(page(context, Intent(actions[0], Uri.parse("package:$PLAY_SERVICES"))))

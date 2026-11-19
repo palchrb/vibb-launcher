@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Design 114 §6.2: the setup flow - one step a screen, the parent's calm look (Nunito, the Settings colours); insets
-     by fitsSystemWindows, as the launcher's other parent screens (edge-to-edge is enforced on 15+). -->
+     by fitsSystemWindows, as the launcher's other parent screens (edge-to-edge is enforced on 15+). The borderless
+     buttons name their text colour: the theme's button style (accentButton) gives the ground's colour, invisible here
+     (the emulator gate of 2026-11-19). -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
@@ -63,6 +65,7 @@
         <Button
             android:id="@+id/setup_secondary"
             style="?android:attr/borderlessButtonStyle"
+            android:textColor="?android:textColor"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
@@ -72,6 +75,7 @@
         <Button
             android:id="@+id/setup_tertiary"
             style="?android:attr/borderlessButtonStyle"
+            android:textColor="?android:textColor"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:fontFamily="@font/nunito_bold"

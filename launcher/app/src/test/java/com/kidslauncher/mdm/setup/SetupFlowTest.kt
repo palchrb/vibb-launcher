@@ -173,5 +173,41 @@ class SetupFlowTest {
         SetupRun.markPausedFromFlow(1_000)
         assertTrue(SetupRun.takeReturnAfterPause(2_300, windowOpen = true))
         assertFalse(SetupRun.takeReturnAfterPause(2_400, windowOpen = true))
+        // The parent closed the flow ("Ferdig", Back): nothing comes back.
+        SetupRun.markPausedFromFlow(1_000)
+        SetupRun.clearReturnAfterPause()
+        assertFalse(SetupRun.takeReturnAfterPause(2_300, windowOpen = true))
+        // Both ways back: Home's resume (Android 14) and the destroyed flow itself (Android 16, Settings left in front).
+        val flow = code("setup/SetupFlowActivity.kt")
+        assertTrue("SetupRun.takeReturnAfterPause(" in flow.substringAfter("override fun onDestroy()"))
+        assertTrue("SetupRun.takeReturnAfterPause(" in code("ui/HomeActivity.kt"))
+        assertTrue("SetupRun.clearReturnAfterPause()" in flow.substringAfter("private fun finishFlow()"))
+    }
+
+    @Test
+    fun `the flow reads its step again when it gets its focus back (Android 16's Internet panel, gate 2026-11-19)`() {
+        val flow = code("setup/SetupFlowActivity.kt").substringAfter("override fun onWindowFocusChanged(").substringBefore("override fun ")
+        assertTrue("refresh()" in flow)
+    }
+
+    @Test
+    fun `the borderless buttons are drawn in the text colour, never the ground's (gate 2026-11-19)`() {
+        val layout = File(main, "res/layout/activity_setup_flow.xml").readText()
+        for (id in listOf("setup_secondary", "setup_tertiary")) {
+            val button = layout.substringAfter("@+id/$id\"").substringBefore("/>")
+            assertTrue(id, "android:textColor=\"?android:textColor\"" in button)
+        }
+    }
+
+    @Test
+    fun `mobile data opens the Internet panel first from Android 16, the SIM page before (gate 2026-11-19)`() {
+        val actions = SetupStep.MOBILE_DATA.pageActions!!
+        val sim = "android.settings.NETWORK_OPERATOR_SETTINGS"
+        val panel = "android.settings.panel.action.INTERNET_CONNECTIVITY"
+        assertEquals(listOf(sim, panel), actions)
+        assertEquals(listOf(sim, panel), mobileDataActions(actions, 34))
+        assertEquals(listOf(sim, panel), mobileDataActions(actions, 35))
+        assertEquals(listOf(panel, sim), mobileDataActions(actions, 36))
+        assertEquals(listOf(panel, sim), mobileDataActions(actions, 37))
     }
 }

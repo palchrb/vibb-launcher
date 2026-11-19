@@ -97,7 +97,10 @@ class SetupFlowActivity : UIObjectActivity() {
         // never calls onBackPressed); otherwise it closes the flow.
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                if (!RestrictionsPause.holdActive()) finish()
+                if (!RestrictionsPause.holdActive()) {
+                    SetupRun.clearReturnAfterPause()
+                    finish()
+                }
             }
         })
     }
@@ -129,6 +132,32 @@ class SetupFlowActivity : UIObjectActivity() {
         AppEnforcer.addAppliedListener(appliedListener)
         if (wifiPanelShown && wifiPanelPaused) endWifiStepNow("resume")
         refresh()
+    }
+
+    /** Android 16's Internet panel (row 5) is a SystemUI dialog over this screen: no pause, no resume, no result after
+     * the switch - the step is read again when the screen gets its focus back (the emulator gate of 2026-11-19). */
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus && lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) refresh()
+    }
+
+    /** "Sett på pause i 2 t" (the gate of 2026-11-19, row 13): the pause's leave of lock task clears the flow's task -
+     * Android 14 starts Home (whose resume brings the flow back), Android 16 leaves Settings in front. Either way the
+     * flow comes back once, unless the parent closed it. */
+    override fun onDestroy() {
+        if (!isChangingConfigurations) {
+            val app = applicationContext
+            handler.postDelayed({
+                if (SetupRun.takeReturnAfterPause(SystemClock.elapsedRealtime(), AssistantSetup.setupWindowOpen())) {
+                    try {
+                        app.startActivity(intent(app))
+                    } catch (e: Exception) {
+                        Log.w(LOG_TAG, "Couldn't bring the flow back: ${e.javaClass.simpleName}")
+                    }
+                }
+            }, FLOW_RETURN_DELAY_MS)
+        }
+        super.onDestroy()
     }
 
     override fun onPause() {
@@ -327,6 +356,7 @@ class SetupFlowActivity : UIObjectActivity() {
             }
         }
         SetupRun.reset()
+        SetupRun.clearReturnAfterPause()
         heldRun = false
         finish()
     }

@@ -52,6 +52,12 @@ object SetupRun {
         pausedFromFlowAtMs = nowElapsedMs
     }
 
+    /** The parent closed the flow ("Ferdig", Back): nothing comes back. */
+    @Synchronized
+    fun clearReturnAfterPause() {
+        pausedFromFlowAtMs = null
+    }
+
     /** Home's resume: true once, within [FLOW_RETURN_MS] of the flow's pause and only while the window is open. */
     @Synchronized
     fun takeReturnAfterPause(nowElapsedMs: Long, windowOpen: Boolean): Boolean {
@@ -67,6 +73,9 @@ object SetupRun {
         pageMissing.clear()
     }
 }
+
+/** How long the destroyed flow waits before it comes back (the pause's apply leaves lock task first). */
+const val FLOW_RETURN_DELAY_MS = 1_500L
 
 /** How long after the flow's own pause Home's resume still leads back to the flow (the gate saw ~1.3 s). */
 const val FLOW_RETURN_MS = 15_000L
