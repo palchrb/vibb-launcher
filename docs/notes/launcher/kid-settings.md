@@ -213,7 +213,9 @@ the setup notification.
 - **Lysstyrke's sheet** (2026-11-19, the user's mockup "Valg 1"; it replaced D5's three steps): the cell opens
   `BrightnessSheetActivity` (pure `shortcutWindow`, as Flymodus On; Android closes the shade to start it). The
   airplane window's one pixel and theme, its own task, `noHistory`, out of Recents; it shows a
-  `KidSheetDialog` (`setUpKidSheet`: edge to edge, dimmed, drag down closes) only after `ShortcutsRuntime.verdict`
+  `KidSheetDialog` (`setUpKidSheet` with `ownScrim`: edge to edge, the screen dimmed by its own scrim, not the
+  window's dim - Android drops a dimming window's light navigation bar, which left 3-button navigation's buttons white on
+  Lys's sheet, code QA M3 - drag down closes) only after `ShortcutsRuntime.verdict`
   allows Lysstyrke, else finishes. `sheet_brightness.xml`, in the kid's look (`lookOver`, page tokens;
   `kid_page_handle`, `kid_page_track`): the title, a small sun, kid Settings' slider (0-255, `setBrightness` while
   dragging), a big sun. Tap outside, Back or a drag down closes it; `onStop` finishes it (Home, the lock, screen off), and

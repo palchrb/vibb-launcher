@@ -587,6 +587,7 @@
          behind it. -->
     <style name="KidSheetDialog" parent="Theme.AppCompat.Dialog">
         <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:windowBackground">@android:color/transparent</item>
         <item name="android:windowIsFloating">false</item>
         <item name="android:windowIsTranslucent">true</item>
@@ -599,6 +600,12 @@
     <style name="KidSheetAnimation">
         <item name="android:windowEnterAnimation">@anim/kid_sheet_in</item>
         <item name="android:windowExitAnimation">@anim/kid_sheet_out</item>
+    </style>
+
+    <!-- A sheet with its own scrim (KidSheet.kt's ownScrim): the sheet slides in and its scrim fades in from code; the
+         window as a whole only fades out (Back, the activity leaving). -->
+    <style name="KidSheetScrimAnimation">
+        <item name="android:windowExitAnimation">@android:anim/fade_out</item>
     </style>
 
     <!-- A row of "Bilde av …" (design 79 §5.2): a tonal row on the sheet, the light ink. -->

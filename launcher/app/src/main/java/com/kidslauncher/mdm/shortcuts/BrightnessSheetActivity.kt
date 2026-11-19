@@ -11,6 +11,7 @@ import android.util.Log
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.widget.SeekBar
+import androidx.core.view.WindowCompat
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.calls.setUpKidSheet
 import com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
@@ -25,7 +26,8 @@ import com.kidslauncher.mdm.ui.look.lookOver
  * Started from the panel's cell ([shortcutWindow]): Android closes the shade to start an activity from a notification
  * (no `ACTION_CLOSE_SYSTEM_DIALOGS` on 12+). The window is [ShortcutAirplaneActivity]'s one pixel ([claimNoBars]), so
  * the bars stay as the app in front left them; the sheet is a [Dialog] over it (`KidSheetDialog`, [setUpKidSheet]: edge
- * to edge, dimmed behind, the drag down). It shows only once [ShortcutsRuntime.verdict] - the one tap check, on the tap
+ * to edge, the drag down) with its own scrim, the screen dimmed behind it (the mockup; code QA M3: a window dim would
+ * leave 3-button navigation's buttons white on Lys's white sheet). The bars' buttons take the look's ink. It shows only once [ShortcutsRuntime.verdict] - the one tap check, on the tap
  * thread - allows Lysstyrke now; anything else finishes at once.
  *
  * - **The kiosk**: its own task (`taskAffinity=""`, `excludeFromRecents`, `noHistory`), the launcher's own package, so
@@ -85,8 +87,16 @@ class BrightnessSheetActivity : Activity() {
             })
         }
         val dialog = Dialog(context, R.style.KidSheetDialog)
-        dialog.setUpKidSheet(view)
-        dialog.setCanceledOnTouchOutside(true)
+        dialog.setUpKidSheet(view, ownScrim = true)
+        dialog.window?.let {
+            // The status bar over the scrim stays light-on-dark; the navigation bar's buttons sit on the sheet, in the
+            // look's ink. No contrast scrim: Android shows a bar with one as semi-transparent and ignores its light flag.
+            it.isNavigationBarContrastEnforced = false
+            WindowCompat.getInsetsController(it, it.decorView).apply {
+                isAppearanceLightStatusBars = false
+                isAppearanceLightNavigationBars = context.resources.getBoolean(R.bool.kid_page_light_bars)
+            }
+        }
         dialog.setOnDismissListener { finish() }
         sheet = dialog
         dialog.show()
