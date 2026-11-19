@@ -223,6 +223,152 @@ pub async fn row(db: &SqlitePool, key: &str, scope: &str) -> Result<Option<Row>,
     Ok(raw.map(row_of))
 }
 
+/// An Attention row's title (design 116 §2.3, §6): one per title key. Two failing scopes of one title make one row,
+/// their count summed (QA L3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Title {
+    GithubDown,
+    FdroidDown,
+    /// github's and fdroid's `Fix`, summed: "N apps can't get updates".
+    AppsFix,
+    MetDown,
+    MetFix,
+    CaldavDown,
+    CaldavFix,
+    /// Both problems.
+    CaldavWrite,
+    /// Both problems, counted.
+    CalendarLink,
+    /// Both problems, counted.
+    MusicFeed,
+    StorytelDown,
+    SpotifyDown,
+    /// Both problems, counted.
+    Blocklist,
+}
+
+impl Title {
+    /// The title of a failing row, `None` for a key that shows on no phone (`backup`, part D: a family row).
+    pub fn of(key: &str, problem: Problem) -> Option<Title> {
+        Some(match (key, problem) {
+            ("github", Problem::Down) => Title::GithubDown,
+            ("fdroid", Problem::Down) => Title::FdroidDown,
+            ("github" | "fdroid", Problem::Fix) => Title::AppsFix,
+            ("met", Problem::Down) => Title::MetDown,
+            ("met", Problem::Fix) => Title::MetFix,
+            ("caldav", Problem::Down) => Title::CaldavDown,
+            ("caldav", Problem::Fix) => Title::CaldavFix,
+            ("caldav_write", _) => Title::CaldavWrite,
+            ("calendar_link", _) => Title::CalendarLink,
+            ("music_feed", _) => Title::MusicFeed,
+            ("storytel", _) => Title::StorytelDown,
+            ("spotify", _) => Title::SpotifyDown,
+            ("blocklist", _) => Title::Blocklist,
+            _ => return None,
+        })
+    }
+
+    /// Its words' key (`device.attention.integration.*`); a counted one has `.one`/`.other`.
+    pub fn words(self) -> &'static str {
+        match self {
+            Title::GithubDown => "device.attention.integration.github_down",
+            Title::FdroidDown => "device.attention.integration.fdroid_down",
+            Title::AppsFix => "device.attention.integration.apps_fix",
+            Title::MetDown => "device.attention.integration.met_down",
+            Title::MetFix => "device.attention.integration.met_fix",
+            Title::CaldavDown => "device.attention.integration.caldav_down",
+            Title::CaldavFix => "device.attention.integration.caldav_fix",
+            Title::CaldavWrite => "device.attention.integration.caldav_write",
+            Title::CalendarLink => "device.attention.integration.calendar_link",
+            Title::MusicFeed => "device.attention.integration.music_feed",
+            Title::StorytelDown => "device.attention.integration.storytel_down",
+            Title::SpotifyDown => "device.attention.integration.spotify_down",
+            Title::Blocklist => "device.attention.integration.blocklist",
+        }
+    }
+
+    /// Whether the words carry the count.
+    pub fn counted(self) -> bool {
+        matches!(
+            self,
+            Title::AppsFix | Title::CalendarLink | Title::MusicFeed | Title::Blocklist
+        )
+    }
+
+    /// The row's stable name (`data-attention`): `integration-<title>`.
+    pub fn key(self) -> &'static str {
+        match self {
+            Title::GithubDown => "integration-github-down",
+            Title::FdroidDown => "integration-fdroid-down",
+            Title::AppsFix => "integration-apps-fix",
+            Title::MetDown => "integration-met-down",
+            Title::MetFix => "integration-met-fix",
+            Title::CaldavDown => "integration-caldav-down",
+            Title::CaldavFix => "integration-caldav-fix",
+            Title::CaldavWrite => "integration-caldav-write",
+            Title::CalendarLink => "integration-calendar-link",
+            Title::MusicFeed => "integration-music-feed",
+            Title::StorytelDown => "integration-storytel-down",
+            Title::SpotifyDown => "integration-spotify-down",
+            Title::Blocklist => "integration-blocklist",
+        }
+    }
+
+    /// The page that says what the error is (§2.3).
+    pub fn target(self, device_id: i64) -> String {
+        match self {
+            // The Apps list's `update_failed` badge says which.
+            Title::GithubDown | Title::FdroidDown | Title::AppsFix => "/apps".to_string(),
+            Title::MetDown | Title::MetFix => format!("/devices/{device_id}/lock#weather"),
+            Title::CaldavDown | Title::CaldavFix | Title::CaldavWrite | Title::CalendarLink => {
+                format!("/devices/{device_id}/calendar")
+            }
+            Title::MusicFeed => "/music".to_string(),
+            Title::StorytelDown => "/music/settings#storytel".to_string(),
+            Title::SpotifyDown => format!("/devices/{device_id}/music#music-spotify"),
+            Title::Blocklist => "/dns".to_string(),
+        }
+    }
+}
+
+/// The failing rows that map to this phone (§2.3), in one query: a parent's choice maps to no phone. A scope that is
+/// gone joins nothing.
+const FOR_DEVICE: &str = "SELECT h.key, h.scope, h.ok_at, h.error_at, h.error, h.class, h.failing_since, h.failures      FROM integration_health h WHERE h.failing_since IS NOT NULL AND (        (h.key IN ('github', 'fdroid') AND EXISTS (SELECT 1 FROM tracked_apps t           WHERE h.scope = 'app:' || t.id AND t.enabled = 1 AND (t.is_launcher = 1 OR EXISTS (             SELECT 1 FROM device_tracked_apps d WHERE d.tracked_app_id = t.id AND d.device_id = ?1))))        OR (h.key = 'met' AND h.scope = '' AND EXISTS (SELECT 1 FROM device_policy p           WHERE p.device_id = ?1 AND p.lock_weather = 1))        OR (h.key = 'caldav' AND EXISTS (SELECT 1 FROM calendar_sources s           JOIN device_calendar_feeds f ON f.source_id = s.id           WHERE f.device_id = ?1 AND h.scope = 'account:' || s.account_id))        OR (h.key IN ('caldav', 'calendar_link') AND EXISTS (SELECT 1 FROM device_calendar_feeds f           WHERE f.device_id = ?1 AND h.scope = 'source:' || f.source_id))        OR (h.key = 'caldav_write' AND h.scope = 'device:' || ?1)        OR (h.key = 'music_feed' AND EXISTS (SELECT 1 FROM device_music_entries e           WHERE e.device_id = ?1 AND h.scope = 'entry:' || e.entry_id))        OR (h.key = 'storytel' AND h.scope = '' AND EXISTS (SELECT 1 FROM device_policy p           WHERE p.device_id = ?1 AND p.music_storytel = 1))        OR (h.key = 'spotify' AND EXISTS (SELECT 1 FROM device_policy p           WHERE p.device_id = ?1 AND h.scope = 'account:' || p.music_spotify_account))        OR (h.key = 'blocklist' AND EXISTS (SELECT 1 FROM dns_blocklists b           JOIN device_policy p ON p.device_id = ?1 AND p.vpn_filter_enabled = 1           LEFT JOIN device_blocklist_overrides o ON o.blocklist_id = b.id AND o.device_id = ?1           WHERE h.scope = 'feed:' || b.id AND COALESCE(o.enabled, b.enabled) = 1))      )";
+
+/// The phone's `Integration` rows (§2.3): every failing row that maps to it and is [raised], grouped by [Title] with
+/// the failing scopes summed, in [Title]'s order.
+pub async fn for_device(
+    db: &SqlitePool,
+    device_id: i64,
+    now: DateTime<Utc>,
+) -> Result<Vec<(Title, usize)>, sqlx::Error> {
+    let rows: Vec<RawRow> = sqlx::query_as(FOR_DEVICE)
+        .bind(device_id)
+        .fetch_all(db)
+        .await?;
+    let mut titles = std::collections::BTreeMap::<Title, usize>::new();
+    for row in rows.into_iter().map(row_of) {
+        if let Some(title) =
+            raised(&row, grace(&row.key), now).and_then(|problem| Title::of(&row.key, problem))
+        {
+            *titles.entry(title).or_default() += 1;
+        }
+    }
+    Ok(titles.into_iter().collect())
+}
+
+/// Whether `key` at `scope` raises now (the lock page's weather line reads MET's).
+pub async fn problem(
+    db: &SqlitePool,
+    key: &str,
+    scope: &str,
+    now: DateTime<Utc>,
+) -> Result<Option<Problem>, sqlx::Error> {
+    Ok(row(db, key, scope)
+        .await?
+        .and_then(|row| raised(&row, grace(key), now)))
+}
+
 /// Deletes the rows with neither a success nor a failure in 30 days (`retention::prune`).
 pub async fn prune(db: &SqlitePool) -> Result<sqlx::sqlite::SqliteQueryResult, sqlx::Error> {
     sqlx::query(
@@ -282,7 +428,8 @@ mod tests {
         let grace = Duration::hours(12);
         let start = at(0);
         let late = at(13 * 60);
-        let cases: [(&str, &[Option<Class>], DateTime<Utc>, Option<Problem>); 9] = [
+        type Case<'a> = (&'a str, &'a [Option<Class>], DateTime<Utc>, Option<Problem>);
+        let cases: [Case; 9] = [
             ("never failed", &[None], late, None),
             ("stop at once", &[Some(Stop)], at(1), Some(Problem::Fix)),
             ("one parent waits", &[Some(Parent)], late, None),

@@ -2299,6 +2299,13 @@ async fn render_device(
             tracing::error!(device_id = id, %err, "can't read the phone's last start");
             None
         });
+    // Design 116: the outside services failing behind this phone's features.
+    let integrations = crate::integration_health::for_device(&state.db, id, now)
+        .await
+        .unwrap_or_else(|err| {
+            tracing::error!(device_id = id, %err, "can't read the integrations' health");
+            Vec::new()
+        });
     // The same rows the Devices list counts, from the parts built above (not read twice).
     let connection = connection_of(state, &device, now);
     let facts = crate::attention::facts_of(
@@ -2314,6 +2321,7 @@ async fn render_device(
             spotify_account,
             app_push: &app_push,
             last_phone_on_ms,
+            integrations: &integrations,
         },
         now.timestamp_millis(),
     );

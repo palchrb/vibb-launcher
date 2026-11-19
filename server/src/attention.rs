@@ -81,6 +81,9 @@ pub enum Kind {
     MusicSpotifyLogin,
     MusicSpotifyEnding,
     MusicSpotifyNoApp,
+    /// Design 116 §2.3: an outside service's failure behind this phone's features (the server's own data): its title
+    /// and the failing scopes behind it.
+    Integration(crate::integration_health::Title, usize),
 }
 
 impl Kind {
@@ -94,6 +97,7 @@ impl Kind {
                 | Kind::AppPushWaiting
                 | Kind::AppPushRefused(_)
                 | Kind::AppPushOutside(_)
+                | Kind::Integration(..)
         )
     }
 }
@@ -152,6 +156,7 @@ impl AttentionItem {
             Kind::MusicSpotifyLogin => "music-spotify-login",
             Kind::MusicSpotifyEnding => "music-spotify-ending",
             Kind::MusicSpotifyNoApp => "music-spotify-no-app",
+            Kind::Integration(title, _) => title.key(),
         }
     }
 }
@@ -197,6 +202,9 @@ pub struct Facts {
     pub calls_enforced: bool,
     /// Device › Music's warnings (qa-31-s7-code M1).
     pub music: crate::handlers::music::MusicWarnings,
+    /// Design 116 §2.3: the outside services failing behind this phone's features
+    /// (`integration_health::for_device`), one per title.
+    pub integrations: Vec<(crate::integration_health::Title, usize)>,
 }
 
 /// The rows for one phone, alarms first, worded in `lang`.
@@ -254,6 +262,9 @@ pub fn items(lang: Lang, device_id: i64, facts: &Facts) -> Vec<AttentionItem> {
     add(music.spotify_account.renew, Kind::MusicSpotifyLogin);
     add(music.spotify_account.ending, Kind::MusicSpotifyEnding);
     add(music.spotify_cant_play, Kind::MusicSpotify);
+    for (title, n) in &facts.integrations {
+        add(*n > 0, Kind::Integration(*title, *n));
+    }
     kinds
         .into_iter()
         .map(|kind| AttentionItem {
@@ -306,7 +317,8 @@ fn level(kind: Kind) -> Level {
         | Kind::MusicSpotify
         | Kind::MusicSpotifyLogin
         | Kind::MusicSpotifyEnding
-        | Kind::MusicSpotifyNoApp => Level::Action,
+        | Kind::MusicSpotifyNoApp
+        | Kind::Integration(..) => Level::Action,
     }
 }
 
@@ -352,6 +364,10 @@ fn title(lang: Lang, kind: Kind) -> String {
         Kind::MusicSpotifyLogin => t(lang, "device.attention.music_spotify_login"),
         Kind::MusicSpotifyEnding => t(lang, "device.attention.music_spotify_ending"),
         Kind::MusicSpotifyNoApp => t(lang, "device.attention.music_spotify_no_app"),
+        Kind::Integration(title, n) if title.counted() => {
+            return t_count(lang, title.words(), count(n), &[]);
+        }
+        Kind::Integration(title, _) => t(lang, title.words()),
     }
     .to_string()
 }
@@ -402,6 +418,9 @@ fn target(kind: Kind, id: i64) -> String {
         | Kind::MusicSpotifyLogin
         | Kind::MusicSpotifyEnding
         | Kind::MusicSpotifyNoApp => ("/music", "music-spotify"),
+        Kind::Integration(title, _) => {
+            return title.target(id);
+        }
     };
     format!("/devices/{id}{page}#{anchor}")
 }
@@ -432,6 +451,8 @@ pub struct Sources<'a> {
     /// The newest `phone_on`'s instant (`parent_events::last_phone_on_ms`): the boot cover's "not shown" waits for a
     /// start after the arm.
     pub last_phone_on_ms: Option<i64>,
+    /// Design 116: `integration_health::for_device`, read by the caller.
+    pub integrations: &'a [(crate::integration_health::Title, usize)],
 }
 
 /// Whether the reported Do Not Disturb is the launcher's own for a silent time rule: the report's
@@ -570,6 +591,12 @@ pub async fn facts(state: &AppState, device: &Device, connection: ConnectionStat
             tracing::error!(device_id = id, %err, "attention: can't read the last start");
             None
         });
+    let integrations = crate::integration_health::for_device(&state.db, id, chrono::Utc::now())
+        .await
+        .unwrap_or_else(|err| {
+            tracing::error!(device_id = id, %err, "attention: can't read the integrations' health");
+            Vec::new()
+        });
     facts_of(
         &Sources {
             device,
@@ -583,6 +610,7 @@ pub async fn facts(state: &AppState, device: &Device, connection: ConnectionStat
             spotify_account,
             app_push: &app_push,
             last_phone_on_ms,
+            integrations: &integrations,
         },
         now_ms,
     )
@@ -693,6 +721,7 @@ pub fn facts_of(s: &Sources, now_ms: i64) -> Facts {
             }
             music
         },
+        integrations: s.integrations.to_vec(),
     }
 }
 
