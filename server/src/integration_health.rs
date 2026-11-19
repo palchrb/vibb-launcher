@@ -9,7 +9,8 @@
 //!   (`docs/notes/server/integration-health.md`).
 //! - **Never in the way.** A write error is logged and never fails the call it records.
 //! - **Cheap.** [ok] writes only when the row is failing or its `ok_at` is older than [OK_EVERY] (QA L10): Spotify and
-//!   Storytel call it per request.
+//!   Storytel call it per request. Inside that, an in-memory note of the last success written skips the statement and
+//!   its write lock (code QA L7).
 //! - **A state, not an event** (§2.4): no push, no inbox; the next success clears the row at once.
 
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
@@ -126,9 +127,38 @@ pub async fn failed(db: &SqlitePool, key: &str, scope: &str, code: &str, class: 
     failed_at(db, key, scope, code, class, Utc::now()).await;
 }
 
+/// The successes this process wrote, by database file, key and scope (code QA L7): a success inside [OK_EVERY] of the
+/// last one written, with no failure recorded since, skips the statement - and SQLite's write lock - entirely. Keyed
+/// by the database's file, so two databases in one process (the tests') never share an entry.
+type OkKey = (std::path::PathBuf, String, String);
+static OK_WRITTEN: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<OkKey, DateTime<Utc>>>,
+> = std::sync::LazyLock::new(Default::default);
+
+fn ok_key(db: &SqlitePool, key: &str, scope: &str) -> OkKey {
+    (
+        db.connect_options().get_filename().to_path_buf(),
+        key.to_string(),
+        scope.to_string(),
+    )
+}
+
 /// Records a success at `now`: `ok_at` set, `failing_since` cleared, `failures` 0 - written only when the row is
-/// failing, new, or its `ok_at` is older than [OK_EVERY]. One upsert; an error is logged.
+/// failing, new, or its `ok_at` is older than [OK_EVERY]. One upsert, skipped while [OK_WRITTEN] says the last success
+/// written is recent; an error is logged.
 pub async fn ok_at(db: &SqlitePool, key: &str, scope: &str, now: DateTime<Utc>) {
+    let cache = ok_key(db, key, scope);
+    let recent = OK_WRITTEN
+        .lock()
+        .map(|written| {
+            written
+                .get(&cache)
+                .is_some_and(|at| *at <= now && now - *at <= OK_EVERY)
+        })
+        .unwrap_or(false);
+    if recent {
+        return;
+    }
     let done = sqlx::query(
         "INSERT INTO integration_health (key, scope, ok_at) VALUES (?1, ?2, ?3) \
          ON CONFLICT (key, scope) DO UPDATE SET ok_at = excluded.ok_at, failing_since = NULL, failures = 0 \
@@ -141,8 +171,18 @@ pub async fn ok_at(db: &SqlitePool, key: &str, scope: &str, now: DateTime<Utc>) 
     .bind(stamp(now - OK_EVERY))
     .execute(db)
     .await;
-    if let Err(err) = done {
-        tracing::error!(key, scope, %err, "integration health: can't record a success");
+    match done {
+        Ok(done) if done.rows_affected() > 0 => {
+            if let Ok(mut written) = OK_WRITTEN.lock() {
+                // Only the recent ones are worth keeping: the map stays as small as the keys in use.
+                written.retain(|_, at| (now - *at).abs() <= OK_EVERY);
+                written.insert(cache, now);
+            }
+        }
+        Ok(_) => {}
+        Err(err) => {
+            tracing::error!(key, scope, %err, "integration health: can't record a success")
+        }
     }
 }
 
@@ -163,6 +203,10 @@ pub async fn failed_at(
         class = class.as_str(),
         "integration failed"
     );
+    // The next success is written whatever the cache says.
+    if let Ok(mut written) = OK_WRITTEN.lock() {
+        written.remove(&ok_key(db, key, scope));
+    }
     let code: String = code.chars().take(CODE_MAX).collect();
     let done = sqlx::query(
         "INSERT INTO integration_health (key, scope, error_at, error, class, failing_since, failures) \
@@ -332,8 +376,36 @@ impl Title {
 }
 
 /// The failing rows that map to this phone (§2.3), in one query: a parent's choice maps to no phone. A scope that is
-/// gone joins nothing.
-const FOR_DEVICE: &str = "SELECT h.key, h.scope, h.ok_at, h.error_at, h.error, h.class, h.failing_since, h.failures      FROM integration_health h WHERE h.failing_since IS NOT NULL AND (        (h.key IN ('github', 'fdroid') AND EXISTS (SELECT 1 FROM tracked_apps t           WHERE h.scope = 'app:' || t.id AND t.enabled = 1 AND (t.is_launcher = 1 OR EXISTS (             SELECT 1 FROM device_tracked_apps d WHERE d.tracked_app_id = t.id AND d.device_id = ?1))))        OR (h.key = 'met' AND h.scope = '' AND EXISTS (SELECT 1 FROM device_policy p           WHERE p.device_id = ?1 AND p.lock_weather = 1))        OR (h.key = 'caldav' AND EXISTS (SELECT 1 FROM calendar_sources s           JOIN device_calendar_feeds f ON f.source_id = s.id           WHERE f.device_id = ?1 AND h.scope = 'account:' || s.account_id))        OR (h.key IN ('caldav', 'calendar_link') AND EXISTS (SELECT 1 FROM device_calendar_feeds f           WHERE f.device_id = ?1 AND h.scope = 'source:' || f.source_id))        OR (h.key = 'caldav_write' AND h.scope = 'device:' || ?1)        OR (h.key = 'music_feed' AND EXISTS (SELECT 1 FROM device_music_entries e           WHERE e.device_id = ?1 AND h.scope = 'entry:' || e.entry_id))        OR (h.key = 'storytel' AND h.scope = '' AND EXISTS (SELECT 1 FROM device_policy p           WHERE p.device_id = ?1 AND p.music_storytel = 1))        OR (h.key = 'spotify' AND EXISTS (SELECT 1 FROM device_policy p           WHERE p.device_id = ?1 AND h.scope = 'account:' || p.music_spotify_account))        OR (h.key = 'blocklist' AND EXISTS (SELECT 1 FROM dns_blocklists b           JOIN device_policy p ON p.device_id = ?1 AND p.vpn_filter_enabled = 1           LEFT JOIN device_blocklist_overrides o ON o.blocklist_id = b.id AND o.device_id = ?1           WHERE h.scope = 'feed:' || b.id AND COALESCE(o.enabled, b.enabled) = 1))      )";
+/// gone joins nothing. `caldav_write` maps only while the phone writes to a marked CalDAV calendar (code QA M1), and
+/// its stop only while the phone's stored error says so (code QA M2: the row follows `device_kid_events.error`).
+const FOR_DEVICE: &str = "SELECT h.key, h.scope, h.ok_at, h.error_at, h.error, h.class, h.failing_since, h.failures \
+    FROM integration_health h WHERE h.failing_since IS NOT NULL AND ( \
+    (h.key IN ('github', 'fdroid') AND EXISTS (SELECT 1 FROM tracked_apps t \
+        WHERE h.scope = 'app:' || t.id AND t.enabled = 1 AND (t.is_launcher = 1 OR EXISTS ( \
+            SELECT 1 FROM device_tracked_apps d WHERE d.tracked_app_id = t.id AND d.device_id = ?1)))) \
+    OR (h.key = 'met' AND h.scope = '' AND EXISTS (SELECT 1 FROM device_policy p \
+        WHERE p.device_id = ?1 AND p.lock_weather = 1)) \
+    OR (h.key = 'caldav' AND EXISTS (SELECT 1 FROM calendar_sources s \
+        JOIN device_calendar_feeds f ON f.source_id = s.id \
+        WHERE f.device_id = ?1 AND h.scope = 'account:' || s.account_id)) \
+    OR (h.key IN ('caldav', 'calendar_link') AND EXISTS (SELECT 1 FROM device_calendar_feeds f \
+        WHERE f.device_id = ?1 AND h.scope = 'source:' || f.source_id)) \
+    OR (h.key = 'caldav_write' AND h.scope = 'device:' || ?1 \
+        AND EXISTS (SELECT 1 FROM device_calendar_feeds f JOIN calendar_sources s ON s.id = f.source_id \
+            WHERE f.device_id = ?1 AND f.kid_writes = 1 AND s.kind = 'caldav') \
+        AND (h.class IS NOT 'stop' OR EXISTS (SELECT 1 FROM device_kid_events k \
+            WHERE k.device_id = ?1 AND k.error IS NOT NULL))) \
+    OR (h.key = 'music_feed' AND EXISTS (SELECT 1 FROM device_music_entries e \
+        WHERE e.device_id = ?1 AND h.scope = 'entry:' || e.entry_id)) \
+    OR (h.key = 'storytel' AND h.scope = '' AND EXISTS (SELECT 1 FROM device_policy p \
+        WHERE p.device_id = ?1 AND p.music_storytel = 1)) \
+    OR (h.key = 'spotify' AND EXISTS (SELECT 1 FROM device_policy p \
+        WHERE p.device_id = ?1 AND h.scope = 'account:' || p.music_spotify_account)) \
+    OR (h.key = 'blocklist' AND EXISTS (SELECT 1 FROM dns_blocklists b \
+        JOIN device_policy p ON p.device_id = ?1 AND p.vpn_filter_enabled = 1 \
+        LEFT JOIN device_blocklist_overrides o ON o.blocklist_id = b.id AND o.device_id = ?1 \
+        WHERE h.scope = 'feed:' || b.id AND COALESCE(o.enabled, b.enabled) = 1)) \
+    )";
 
 /// The phone's `Integration` rows (§2.3): every failing row that maps to it and is [raised], grouped by [Title] with
 /// the failing scopes summed, in [Title]'s order.

@@ -423,7 +423,11 @@ pub(crate) fn class_of(err: &FeedError) -> Option<crate::integration_health::Cla
         "not_found" | "not_listed" | "not_caldav" | "no_calendars" | "not_calendar"
         | "unreadable" | "insecure" | "private_address" | "too_big" => Some(Parent),
         "login_refused" | "host_changed" | "key_lost" => Some(Stop),
-        _ => None,
+        // The codes are text: a new one the table misses shows in the log, never as silence (code QA L9).
+        code => {
+            tracing::warn!(code, "integration health: a calendar code with no class");
+            None
+        }
     }
 }
 

@@ -1737,7 +1737,9 @@ async fn failed_request(
 
 /// A write's code in the integration health (design 116 §2.1, key `caldav_write`, scope `device:<id>`), `None` = not
 /// recorded: the phone's set refused (`bad_set`, `tag_pinned:*`), not CalDAV, or a code the table doesn't name (an
-/// event's own refusal, the account's stop - `caldav`'s). Every [Step::StopDevice] code is `stop`.
+/// event's own refusal, the account's stop - `caldav`'s). Every [Step::StopDevice] code is `stop`, and `too_big`: a stop
+/// row shows only while `device_kid_events.error` is set (`integration_health`'s `FOR_DEVICE`, code QA M2), so the
+/// next accepted set, a Test or a fetch that clears the stored error clears the row with it.
 pub(crate) fn class_of(code: &str) -> Option<crate::integration_health::Class> {
     use crate::integration_health::Class::*;
     match code {
@@ -2498,16 +2500,21 @@ async fn counts(
     device_id: i64,
     now: DateTime<Utc>,
 ) -> Result<(i64, i64, Option<String>), sqlx::Error> {
+    Ok((
+        pending_count(db, device_id).await?,
+        back_count(db, device_id, now).await?,
+        error_of(db, device_id).await?,
+    ))
+}
+
+/// The phone's stored error (`device_kid_events.error`), if any.
+async fn error_of(db: &sqlx::SqlitePool, device_id: i64) -> Result<Option<String>, sqlx::Error> {
     let error: Option<Option<String>> =
         sqlx::query_scalar("SELECT error FROM device_kid_events WHERE device_id = ?")
             .bind(device_id)
             .fetch_optional(db)
             .await?;
-    Ok((
-        pending_count(db, device_id).await?,
-        back_count(db, device_id, now).await?,
-        error.flatten(),
-    ))
+    Ok(error.flatten())
 }
 
 fn nudge_if(
@@ -2804,7 +2811,10 @@ async fn work_claimed(
             .await?;
             match outcome {
                 Step::Wrote => {
-                    if !wrote_here {
+                    // A write from an older set clears nothing while the phone's newest set is refused (code QA M2).
+                    if !wrote_here
+                        && error_of(&state.db, device_id).await?.as_deref() != Some("too_big")
+                    {
                         crate::integration_health::ok(
                             &state.db,
                             "caldav_write",
