@@ -200,7 +200,9 @@ class QuietNotificationsTest {
         // The stop: the state first; the revoke posts to main.
         assertEquals("val fd = state.stop()", statements(body(vpn, "private fun stopSelfCleanly()"))[0])
         val revoke = body(vpn, "override fun onRevoke()")
-        assertTrue(Regex("""main\.post \{\s*stopSelfCleanly\(\)\s*if \(vpnStopsNow\(created, foregroundStartsPending\.get\(\)\)\) stopSelf\(\)\s*\}""").containsMatchIn(revoke))
+        assertTrue(Regex("""main\.post \{\s*stopSelfCleanly\(\)\s*if \(vpnStopsNow\(created, foregroundStartsPending\.get\(\)\)\) stopSelf\(\)\s""").containsMatchIn(revoke))
+        // Design 116 §3.1: revoked while the filter is wanted, the state is checked (the while-idle alarm armed).
+        assertTrue("VpnFilterWatch.check(applicationContext, VpnFilterEvent.CHECK)" in revoke)
         assertTrue(statements(revoke).none { it.startsWith("super.onRevoke(") })
     }
 
