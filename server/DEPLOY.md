@@ -228,17 +228,20 @@ silence. `SSE_KEEPALIVE_SECS=120` in `.env` shortens it.
 ### Optional: fewer probes through a TCP proxy
 
 Nothing here is needed; it saves the phones data and battery, and frees a vanished phone's connection sooner (design 121
-§4.6). **The phones straight to the server on its tailnet address (`http://100.x.y.z:3101`) need nothing.**
+§4.6). **Phones straight to the server on its tailnet address (`http://100.x.y.z:3101`) get no probes**; only the faster
+close below applies to them (on the server's host or container, or the host of the `tailscaled` that holds their
+connections with `tailscale serve` or userspace networking).
 
 A front built on Go's network code - Caddy, the caddy-l4 layer-4 proxy, Traefik - sends a TCP keepalive probe every
 15 s on every idle connection it accepts, and the phone's radio wakes to answer each: ~225 probes an hour, ~23 KB/h,
 **~0.56 MB a day per phone**, far more than the stream itself (~2 KB/h). nginx and HAProxy send none by default.
 
-**Find the box that holds the phones' TCP** (the one whose peers are carrier addresses, not your VPS): on it,
-`sudo ss -tnpo state established '( sport = :443 )'` twice, 5 s apart. `timer:(keepalive,Ns,0)` with N at most 15,
-starting over, is the probing. In a container, from its host: `sudo nsenter -t "$(docker inspect -f '{{.State.Pid}}'
-<name>)" -n ss -tnpo state established '( sport = :443 )'` (the Caddy image has no `ss`); in a Proxmox LXC,
-`pct exec <id> -- ss -tnpo ...`.
+**Find the box that holds the phones' TCP** (the one whose peers are the phones' addresses - carrier or tailnet -, not
+another proxy of yours): on it, `sudo ss -tnpo state established '( sport = :<port> )'` with the port the phones
+connect to (443 for a TLS front, 3101 for the tailnet address), twice, 5 s apart. `timer:(keepalive,Ns,0)` with N at
+most 15, starting over, is the probing. In a container, from its host: `sudo nsenter -t "$(docker inspect -f
+'{{.State.Pid}}' <name>)" -n ss -tnpo state established '( sport = :<port> )'` (the Caddy image has no `ss`); in a
+Proxmox LXC, `pct exec <id> -- ss -tnpo ...`.
 
 **caddy-l4 on a VPS in front of your own Caddy** (raw TCP forwarded with the PROXY protocol, TLS at home): caddy-l4 has
 no keepalive option toward the phones. Swap it for nginx's `stream` module (Debian/Ubuntu: `libnginx-mod-stream`), which
@@ -262,7 +265,7 @@ If caddy-l4 also routes other names by SNI, nginx's `ssl_preread` does the same.
 
 **A vanished phone, sooner (optional).** Without probes, a phone that vanishes without closing (lost coverage, a flat
 battery) keeps its connection open on the front until the kernel gives up retransmitting the next keepalive, 15-20 min
-later; the PWA then leaves green after 35 min without contact at the latest. `net.ipv4.tcp_retries2 = 8` on the box that
+later (on every setup, the direct tailnet one too); the PWA then leaves green after 35 min without contact at the latest. `net.ipv4.tcp_retries2 = 8` on the box that
 holds the phones' TCP gives up after ~100 s, so the dot leaves green a few minutes after the vanish. Set it where it
 lasts: a VM's `/etc/sysctl.d/90-vibb.conf` (then `sysctl --system`); a Docker container with its own network namespace
 `sysctls: [net.ipv4.tcp_retries2=8]` (refused with `network_mode: host`, where the host's value applies); a Proxmox

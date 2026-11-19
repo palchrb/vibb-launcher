@@ -249,6 +249,15 @@ fun ruleSheet(lock: String, airplaneRow: Boolean, pinConfigured: Boolean, rulePa
  */
 fun airplaneHoldsStream(streamOnWifi: Boolean, wifiKept: Boolean?): Boolean = !streamOnWifi || wifiKept != true
 
-/** The hold from [airplaneHoldsStream]'s close until the route ends; a route that never released it lets go after
- * this. */
+/** The hold from [airplaneHoldsStream]'s close until the route ends (a route that never released it lets go after this,
+ * as on success), and the wait after a successful turn-on ([airplaneStreamReopens]). */
 const val AIRPLANE_STREAM_HOLD_MS = 30_000L
+
+/**
+ * Design 121 §4.4 (code QA H1): whether the held stream opens again now. After a failed turn-on ([airplaneOn] false):
+ * at once. After a successful one only on a network other than [heldNetwork] - the held one is going with the radios,
+ * and a stream opened on it would dangle at the server's front -, so Wi-Fi that airplane mode kept, or the network
+ * after airplane mode; once [waitedOut] ([AIRPLANE_STREAM_HOLD_MS] after the release) on any network that is still up.
+ */
+fun airplaneStreamReopens(airplaneOn: Boolean, heldNetwork: Long?, defaultNetwork: Long?, waitedOut: Boolean): Boolean =
+    !airplaneOn || (defaultNetwork != null && (defaultNetwork != heldNetwork || waitedOut))

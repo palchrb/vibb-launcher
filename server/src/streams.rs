@@ -213,6 +213,12 @@ pub const ONLINE_WINDOW_MINUTES: i64 = 35;
 /// (`MIN_BACKSTOP_MS`) and margin. Older is Offline. Revisit with any launcher backstop change.
 pub const AWAY_WINDOW_MINUTES: i64 = 45;
 
+/// A phone whose stream is still counted open is never Offline before this long after its last contact (code QA M1,
+/// the coordinator's decision of 2026-11-20): it stays orange "No contact" until the stream closes or this passes - the
+/// old Online window, sized for the 30-min backstop that Android may deliver up to 1.75 × late. A holder drops a dead
+/// phone's connection within ~20 min, so a stream still open past 45 min is almost always a live phone.
+pub const OPEN_STREAM_AWAY_MINUTES: i64 = 60;
+
 /// Away reads green this long after the phone was last reachable ([reach]; design 121 §4.3): a network change, a
 /// proxy reload or a server restart drops the stream, and the phone reconnects in seconds.
 pub const CLOSE_GRACE_MINUTES: i64 = 1;
@@ -277,10 +283,13 @@ pub fn last_contact(inputs: &ConnectionInputs) -> Option<DateTime<Utc>> {
 /// stream:
 /// - a stream "open" with no contact for [ONLINE_WINDOW_MINUTES] (a phone that vanished without closing it): the last
 ///   contact;
-/// - a stream that closed since this server started: the later of the last contact and the close (QA M1: the windows
-///   count from the close, so an idle phone whose last sync is 50 min old never flashes grey);
-/// - no stream since the start, the last contact at most [ONLINE_WINDOW_MINUTES] before it: the start, green for
-///   [RESTART_GRACE_MINUTES] (it may have held a stream when the server stopped; QA L4);
+/// - a stream that closed since this server started while it was still live (its close at most
+///   [ONLINE_WINDOW_MINUTES] after the last contact): the later of the two (QA M1: the windows count from the close,
+///   so an idle phone whose last sync is 30 min old never flashes grey). A later close is a dead phone's connection
+///   dropped by its holder at last, no news of the phone (code QA H2): the last contact;
+/// - no stream since the start, the last contact at most [ONLINE_WINDOW_MINUTES] before it: the last contact, but green
+///   until [RESTART_GRACE_MINUTES] after the start (it may have held a stream when the server stopped; QA L4) - Offline
+///   stays 45 min after the last contact (code QA L3);
 /// - otherwise the last contact.
 ///
 /// Green lasts [CLOSE_GRACE_MINUTES] after reach in every case: a reconnect within the minute never shows.
@@ -290,17 +299,21 @@ pub fn reach(
 ) -> (DateTime<Utc>, DateTime<Utc>) {
     let grace = chrono::Duration::minutes(CLOSE_GRACE_MINUTES);
     match (inputs.stream, inputs.started) {
-        (Some(stream), _) if stream.open == 0 => {
+        (Some(stream), _)
+            if stream.open == 0
+                && stream.since - last_contact
+                    <= chrono::Duration::minutes(ONLINE_WINDOW_MINUTES) =>
+        {
             let at = last_contact.max(stream.since);
             (at, at + grace)
         }
         (None, Some(started))
             if last_contact >= started - chrono::Duration::minutes(ONLINE_WINDOW_MINUTES) =>
         {
-            let at = last_contact.max(started);
             (
-                at,
-                (at + grace).max(started + chrono::Duration::minutes(RESTART_GRACE_MINUTES)),
+                last_contact,
+                (last_contact + grace)
+                    .max(started + chrono::Duration::minutes(RESTART_GRACE_MINUTES)),
             )
         }
         _ => (last_contact, last_contact + grace),
@@ -308,7 +321,8 @@ pub fn reach(
 }
 
 /// The state (§3.10's table, design 121 §4.3): Online with a stream open and a contact within
-/// [ONLINE_WINDOW_MINUTES]; else Away while [reach] is at most [AWAY_WINDOW_MINUTES] old, else Offline.
+/// [ONLINE_WINDOW_MINUTES]; else Away while [reach] is at most [AWAY_WINDOW_MINUTES] old - with the stream still
+/// counted open, [OPEN_STREAM_AWAY_MINUTES] (code QA M1) -, else Offline.
 pub fn connection_state(inputs: &ConnectionInputs, now: DateTime<Utc>) -> ConnectionState {
     if !inputs.enrolled {
         return ConnectionState::NotSetUp;
@@ -329,7 +343,12 @@ pub fn connection_state(inputs: &ConnectionInputs, now: DateTime<Utc>) -> Connec
         };
     }
     let (at, green_until) = reach(inputs, last_contact);
-    if now - at <= chrono::Duration::minutes(AWAY_WINDOW_MINUTES) {
+    let window = if open.is_some() {
+        OPEN_STREAM_AWAY_MINUTES
+    } else {
+        AWAY_WINDOW_MINUTES
+    };
+    if now - at <= chrono::Duration::minutes(window) {
         ConnectionState::Away {
             last_contact,
             green_until,
@@ -492,8 +511,17 @@ mod tests {
             state(phone(now, Some((1, 300)), Some(36), Some(36))),
             away(now, 36, 36)
         );
+        // Code QA M1: with the stream still counted open, orange - never grey - until 60 min after the contact.
         assert_eq!(
-            state(phone(now, Some((1, 300)), Some(46), Some(46))).word(),
+            state(phone(now, Some((1, 300)), Some(50), Some(50))),
+            away(now, 50, 50)
+        );
+        assert_eq!(
+            state(phone(now, Some((1, 300)), Some(60), Some(60))).word(),
+            "Away"
+        );
+        assert_eq!(
+            state(phone(now, Some((1, 300)), Some(61), Some(61))).word(),
             "Offline"
         );
         // No stream: Away up to 45 min, then Offline.
@@ -503,10 +531,15 @@ mod tests {
             state(phone(now, None, Some(46), Some(46))).word(),
             "Offline"
         );
-        // A stream that closed is no contact (open 0), but the windows count from its close (design 121, QA M1).
+        // A stream that closed is no contact (open 0), but the windows count from its close (design 121, QA M1)...
         assert_eq!(
-            state(phone(now, Some((0, 1)), None, Some(50))),
-            away(now, 50, 1)
+            state(phone(now, Some((0, 1)), None, Some(30))),
+            away(now, 30, 1)
+        );
+        // ...only while it was live: a close 49 min after the contact counts from the contact (code QA H2).
+        assert_eq!(
+            state(phone(now, Some((0, 1)), None, Some(50))).word(),
+            "Offline"
         );
         // A stream that just opened is a contact by itself.
         assert_eq!(
@@ -548,9 +581,15 @@ mod tests {
             ..phone(now, None, None, Some(contact_min))
         };
         let seen = |m: i64| Some(minutes_ago(now, m));
-        assert_eq!(green(closed(30, 50)), ("green", seen(50)));
-        assert_eq!(green(closed(120, 50)), ("orange", seen(50)));
+        assert_eq!(green(closed(30, 30)), ("green", seen(30)));
+        assert_eq!(green(closed(120, 30)), ("orange", seen(30)));
         assert_eq!(green(closed(50 * 60, 60)), ("grey", seen(60)));
+        // Code QA H2: a dead phone's stream dropped by its holder at last (the close 41 min after the last contact) is
+        // no news of the phone: orange, Offline 45 min after the contact - never green again.
+        assert_eq!(green(closed(60, 42)), ("orange", seen(42)));
+        assert_eq!(green(closed(60, 46)), ("grey", seen(46)));
+        // A close within 35 min of the contact still counts: green for its minute.
+        assert_eq!(green(closed(30, 34)), ("green", seen(34)));
         // A reconnect within the minute: Online again.
         assert_eq!(green(phone(now, Some((1, 0)), None, Some(50))).0, "green");
         // After a start: no stream yet, the last contact 20 min before it - green for the grace, then orange.
@@ -560,6 +599,8 @@ mod tests {
         };
         assert_eq!(green(started(2, 22)), ("green", seen(22)));
         assert_eq!(green(started(7, 27)), ("orange", seen(27)));
+        // Code QA L3: Offline stays 45 min after the stored contact, the grace only greens the first minutes.
+        assert_eq!(green(started(20, 50)).0, "grey");
         // Long gone before the start: grey.
         assert_eq!(green(started(2, 182)), ("grey", seen(182)));
         // A phone that reported after the start: its own minute.

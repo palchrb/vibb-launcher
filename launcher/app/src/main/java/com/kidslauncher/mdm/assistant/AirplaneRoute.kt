@@ -192,6 +192,7 @@ object AirplaneRoute {
         busy = "on"
         AirplaneRuntime.changed()
         var streamHeld = false
+        var cameOn = false
         try {
             val now = System.currentTimeMillis()
             val plan = airplaneOnPlan(
@@ -218,6 +219,8 @@ object AirplaneRoute {
             } catch (e: Exception) {
                 false
             }
+            // Code QA H1: nothing else - no stream - rides the connection the radios are about to take.
+            if (streamHeld) com.kidslauncher.mdm.server.ServerClients.streamDropped()
             // Step 3.
             val component = resolveVoiceActivity(context)
             if (component == null) {
@@ -242,10 +245,12 @@ object AirplaneRoute {
                 return AirplaneError.TIMEOUT
             }
             recheckWifiKept(context.applicationContext, wifiBefore)
+            cameOn = true
             return AirplaneOn.GO
         } finally {
-            // On success the stream opens again on a network airplane mode kept; after a failure at once.
-            if (streamHeld) com.kidslauncher.mdm.server.CommandListenerService.releaseAirplaneHold()
+            // On success the stream opens again only on another network (Wi-Fi kept, or after airplane mode); after a
+            // failure at once.
+            if (streamHeld) com.kidslauncher.mdm.server.CommandListenerService.releaseAirplaneHold(airplaneOn = cameOn)
             busy = null
             running.set(false)
             AirplaneRuntime.changed()

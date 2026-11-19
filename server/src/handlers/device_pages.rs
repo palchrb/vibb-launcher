@@ -455,10 +455,11 @@ pub(crate) async fn load_latest(
 }
 
 /// The Connection group's rows (§3.10): the state, the last contact, the last full report and the
-/// network of the last request. `held`: a quiet the phone or the parent chose (design 121 §4.3) - grey, never orange.
+/// network of the last request. `held`: a quiet the phone or the parent chose (design 121 §4.3) - its word ("Flymodus",
+/// "I utlandet"; the time is the header's), grey, never orange (code QA L4).
 fn connection_rows(
     connection: &ConnectionState,
-    held: bool,
+    held: Option<crate::phone_status::Held>,
     // From the signals, not the state: a Disconnected phone has one too (qa-31-s3-code M1).
     last_contact: Option<DateTime<Utc>>,
     reported_at: Option<DateTime<Utc>>,
@@ -484,17 +485,25 @@ fn connection_rows(
         },
     )
     .title(connection.online_since().map(|t| zone.exact(t)));
-    let word = match connection {
-        ConnectionState::NotSetUp => "devices.status.not_set_up",
-        ConnectionState::Disconnected => "device.about.disconnected",
-        ConnectionState::NotSeenYet => "devices.status.not_seen_yet",
-        ConnectionState::Online { .. } => "devices.status.online",
-        ConnectionState::Away { .. } => "devices.status.away",
-        ConnectionState::Offline { .. } => "devices.status.offline",
+    let word = match (held, connection) {
+        (Some(crate::phone_status::Held::Airplane(_)), _) => "device.home.airplane",
+        (Some(crate::phone_status::Held::AbroadNoData), _) => "devices.status.abroad",
+        (None, connection) => match connection {
+            ConnectionState::NotSetUp => "devices.status.not_set_up",
+            ConnectionState::Disconnected => "device.about.disconnected",
+            ConnectionState::NotSeenYet => "devices.status.not_seen_yet",
+            ConnectionState::Online { .. } => "devices.status.online",
+            ConnectionState::Away { .. } => "devices.status.away",
+            ConnectionState::Offline { .. } => "devices.status.offline",
+        },
     };
     status.lead = Some((
         t(lang, word),
-        if held { "offline" } else { connection.css() },
+        if held.is_some() {
+            "offline"
+        } else {
+            connection.css()
+        },
     ));
     rows.push(status);
     if matches!(connection, ConnectionState::NotSetUp) {
@@ -573,8 +582,10 @@ pub async fn view_about(
     let reported_at = latest
         .as_ref()
         .and_then(|s| crate::display_time::parse_db_utc(&s.reported_at));
-    let held = device.enrolled_at.is_some()
-        && crate::phone_status::held(&connection, latest.as_ref(), &policy.abroad, now).is_some();
+    let held = latest
+        .as_ref()
+        .filter(|_| device.enrolled_at.is_some())
+        .and_then(|s| crate::phone_status::held(&connection, Some(s), &policy.abroad, now));
     let connection_rows = connection_rows(
         &connection,
         held,

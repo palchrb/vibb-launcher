@@ -666,6 +666,15 @@ async fn flight_mode_through_vibb_is_grey_until_the_phone_is_heard_from() {
         1,
         "{summary}"
     );
+    // About's Connection row says the quiet's word, grey (code QA L4).
+    let about = app
+        .get_page(&format!("/devices/{id}/about"), &cookie)
+        .await
+        .text();
+    assert!(
+        about.contains("<span class=\"state-offline\">Airplane mode</span>"),
+        "{about}"
+    );
     // Heard from again (Wi-Fi kept): the normal state.
     let _stream = app.state.command_streams.open(id);
     let list = app.get_page("/devices", &cookie).await.text();

@@ -16,7 +16,8 @@ traffic.** The status works from what already reaches the server.
   stream): the later of the last contact and the stream's close, or the server's start for a phone with no stream
   since it (last contact at most 35 min before the start). Away while reach is at most 45 min old, green until
   `green_until` - `CLOSE_GRACE_MINUTES` (1) after reach, so a reconnect within the minute never shows and the
-  windows count from the close (QA M1); after a start at least `RESTART_GRACE_MINUTES` (6, QA L4). Then orange "Ingen
+  windows count from the close (QA M1; a close more than 35 min after the last contact doesn't count, code QA H2);
+  after a start at least `RESTART_GRACE_MINUTES` (6, QA L4). Then orange "Ingen
   kontakt · sist sett for 4 min siden"; grey Offline 45 min after reach. "Sist sett" stays the last contact.
   `phone_status::NO_CONTACT_AFTER_MINUTES` is gone. Every page reads it through `connection_state` and
   `phone_status::dot` (the Devices list, the summary's header, About's Connection row); Attention reads Offline as
@@ -52,8 +53,18 @@ row with its (i), and a once-a-minute sweep over every phone that repeats the he
 "once per outage" across restarts - more than this round's status change. Its own round when wanted.
 
 **Known cost:** the backstop is an inexact while-idle alarm; when Android delivers it late, a healthy idle phone with
-its stream open reads orange "Ingen kontakt" from 35 min until its sync lands (design 95 sized the old 60 min for
-that). If it shows in practice, the fix is the backstop's alarm, not the window.
+its stream open reads orange "Ingen kontakt" from 35 min until its sync lands. It never goes grey with its stream still
+open: Offline only once the stream closes or 60 min after the last contact (`OPEN_STREAM_AWAY_MINUTES`, the old
+window design 95 sized for the 30-min alarm up to 1.75 × late; code QA M1, the coordinator's decision). If the orange
+shows in practice, the fix is the backstop's alarm, not the window.
+
+**Code QA fixes (2026-11-20, `docs/review/2026-11-20-offline-status-code-qa.md`, H2 M1 L7):** a successful turn-on no
+longer reconnects at once - the pool is evicted after the `going_on` report, and the stream opens again only on another
+network than the held one or after a 30 s wait (`airplaneStreamReopens`; a failure reconnects at once; a hold that runs
+out is released as on success). A stream's close counts as reach only within 35 min of the last contact: a dead phone's
+connection dropped late by its holder never turns it green (H2). After a restart Offline stays 45 min after the stored
+contact, the grace only greens its first minutes (L3). About's Connection row says "Flymodus" / "I utlandet" while
+held (L4).
 
 **Tests:** `streams::tests` (the windows from the close and the start, the 35-min rows), `phone_status::tests`
 (`a_chosen_quiet_is_grey_for_as_long_as_it_lasts`, the green minute), `tests::airplane_mode::flight_mode_through_vibb_is_grey_until_the_phone_is_heard_from`,

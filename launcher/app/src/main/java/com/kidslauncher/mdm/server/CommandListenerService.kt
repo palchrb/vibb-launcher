@@ -15,6 +15,7 @@ import androidx.core.content.ContextCompat
 import com.kidslauncher.mdm.COMMAND_LISTENER_NOTIFICATION_ID
 import com.kidslauncher.mdm.assistant.AIRPLANE_STREAM_HOLD_MS
 import com.kidslauncher.mdm.assistant.airplaneHoldsStream
+import com.kidslauncher.mdm.assistant.airplaneStreamReopens
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.push.BackstopAlarm
 import com.kidslauncher.mdm.push.LastByteInterceptor
@@ -106,7 +107,13 @@ class CommandListenerService : Service() {
     /** Design 121 §4.4: elapsed realtime until which Vibb's airplane switch holds the stream closed (0 = no hold) -
      * main thread. */
     private var airplaneHoldUntil = 0L
-    private val airplaneHoldEnds = Runnable { releaseAirplaneHold() }
+    /** A hold that ran out is released as on success (code QA L2): never a reconnect racing the radios. */
+    private val airplaneHoldEnds = Runnable { releaseAirplaneHold(airplaneOn = true) }
+    /** After a successful turn-on: until when the stream waits for another network than [airplaneHeldNetwork] (0 = no
+     * wait; [airplaneStreamReopens]) - main thread. */
+    private var airplaneWaitUntil = 0L
+    private var airplaneHeldNetwork: Long? = null
+    private val airplaneWaitEnds = Runnable { followNetwork() }
 
     private fun airplaneHeld(): Boolean = SystemClock.elapsedRealtime() < airplaneHoldUntil
 
@@ -210,6 +217,11 @@ class CommandListenerService : Service() {
      */
     private fun checkStream(reason: String, restartAttempt: Boolean) {
         if (stopped || airplaneHeld()) return
+        if (airplaneWaitUntil != 0L) {
+            // After a turn-on the network decides (code QA H1), not a sync or the screen.
+            followNetwork()
+            return
+        }
         if (!PushState.sseConnected) {
             if (eventSource != null && !restartAttempt) return
             handler.removeCallbacks(connectRunnable)
@@ -262,7 +274,18 @@ class CommandListenerService : Service() {
      * dropped at once - not after its 5-min read timeout - with the shared pool's connections, and opened again on the
      * new one (with no network the open fails and backs off until the next change). */
     private fun followNetwork() {
-        if (stopped || airplaneHeld() || !sseReconnectOnNetwork(eventSource != null, streamNetwork, defaultNetwork)) return
+        if (stopped || airplaneHeld()) return
+        if (airplaneWaitUntil != 0L) {
+            val waitedOut = SystemClock.elapsedRealtime() >= airplaneWaitUntil
+            val reopen = airplaneStreamReopens(true, airplaneHeldNetwork, defaultNetwork, waitedOut)
+            if (reopen || waitedOut) endAirplaneWait()
+            if (!reopen) return
+            Log.i(LOG_TAG, "Another network after airplane mode - opening the command stream")
+            reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS
+            connect()
+            return
+        }
+        if (!sseReconnectOnNetwork(eventSource != null, streamNetwork, defaultNetwork)) return
         Log.i(LOG_TAG, "Default network changed - reconnecting the command stream")
         val old = eventSource
         eventSource = null
@@ -434,6 +457,8 @@ class CommandListenerService : Service() {
         val network = if (eventSource != null) streamNetwork else defaultNetwork
         if (stopped || !airplaneHoldsStream(onWifi(network), wifiKept)) return false
         airplaneHoldUntil = SystemClock.elapsedRealtime() + AIRPLANE_STREAM_HOLD_MS
+        airplaneHeldNetwork = network
+        endAirplaneWait()
         handler.removeCallbacks(airplaneHoldEnds)
         handler.postDelayed(airplaneHoldEnds, AIRPLANE_STREAM_HOLD_MS)
         handler.removeCallbacks(connectRunnable)
@@ -447,13 +472,31 @@ class CommandListenerService : Service() {
         return true
     }
 
-    /** Main thread: the route ended (or the hold ran out) - a stream that is down opens again now. */
-    private fun releaseAirplaneHold() {
+    /**
+     * Main thread: the route ended (or the hold ran out, as on success). After a failure the stream opens again at
+     * once; after a success it waits for another network than the held one ([airplaneStreamReopens], code QA H1) - the
+     * network callback, or [followNetwork] now and once the wait is over.
+     */
+    private fun releaseAirplaneHold(airplaneOn: Boolean) {
         handler.removeCallbacks(airplaneHoldEnds)
-        if (airplaneHoldUntil == 0L) return
+        if (airplaneHoldUntil == 0L && airplaneWaitUntil == 0L) return
         airplaneHoldUntil = 0L
         reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS
-        checkStream("airplane", restartAttempt = true)
+        if (!airplaneOn) {
+            endAirplaneWait()
+            checkStream("airplane", restartAttempt = true)
+            return
+        }
+        if (airplaneWaitUntil == 0L) {
+            airplaneWaitUntil = SystemClock.elapsedRealtime() + AIRPLANE_STREAM_HOLD_MS
+            handler.postDelayed(airplaneWaitEnds, AIRPLANE_STREAM_HOLD_MS)
+        }
+        followNetwork()
+    }
+
+    private fun endAirplaneWait() {
+        airplaneWaitUntil = 0L
+        handler.removeCallbacks(airplaneWaitEnds)
     }
 
     /** Whether the network with this handle is Wi-Fi (unknown: no). */
@@ -500,14 +543,17 @@ class CommandListenerService : Service() {
                 held.set(service.holdForAirplane(wifiKept))
                 done.countDown()
             }
-            done.await(1, TimeUnit.SECONDS)
+            if (!done.await(1, TimeUnit.SECONDS)) {
+                // Code QA L1: the close may land after the report; the hold's own timer releases it then.
+                Log.w(LOG_TAG, "The main thread didn't close the command stream within 1 s - the report goes first")
+            }
             return held.get()
         }
 
-        /** The airplane route ended: the stream may open again. */
-        fun releaseAirplaneHold() {
+        /** The airplane route ended, airplane mode [airplaneOn] or not ([releaseAirplaneHold]). */
+        fun releaseAirplaneHold(airplaneOn: Boolean) {
             val service = running ?: return
-            service.handler.post { service.releaseAirplaneHold() }
+            service.handler.post { service.releaseAirplaneHold(airplaneOn) }
         }
 
         /** Starts the anchor (a no-op if it runs). Safe to call repeatedly. */

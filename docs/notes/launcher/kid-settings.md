@@ -165,7 +165,9 @@ Design 121 §4.4 (step 2a, before the `going_on` post): when airplane mode will 
 (`airplaneHoldsStream`: not on Wi-Fi, or Wi-Fi that `wifi_kept` doesn't say stays), `CommandListenerService.holdForAirplane`
 cancels the stream - an RST_STREAM on the pooled HTTP/2 connection, which stays for the report, so the front has the close
 before the report's answer - and holds every reconnect path until the route's `finally` (`releaseAirplaneHold`, at most
-`AIRPLANE_STREAM_HOLD_MS`). No drop bookkeeping: no reconnect wake lock, no earlier backstop. The server then shows grey
+`AIRPLANE_STREAM_HOLD_MS`, then released as on success). After the report the pool is evicted. A failed turn-on
+reconnects at once; a successful one only on another network than the held one, or after a 30 s wait
+(`airplaneStreamReopens`, code QA H1). No drop bookkeeping: no reconnect wake lock, no earlier backstop. The server then shows grey
 "Flymodus på siden 21:03" for as long as nothing else reaches it (`phone_status::Held`); ~140 B per turn-on.
 
 ## Snarveier, the kid's quick panel in the shade (design 99, `docs/design/99-snarveier.md`)

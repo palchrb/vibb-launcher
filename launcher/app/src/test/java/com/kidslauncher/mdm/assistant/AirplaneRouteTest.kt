@@ -53,6 +53,21 @@ class AirplaneRouteTest {
         assertFalse(airplaneHoldsStream(streamOnWifi = true, wifiKept = true))
     }
 
+    /** Design 121 §4.4, code QA H1/L7: after a failed turn-on the stream opens at once; after a successful one only on
+     * another network than the held one (the held one goes with the radios), or on any network once the wait is over. */
+    @Test
+    fun `after the turn-on the stream reopens only on another network`() {
+        val cell = 101L
+        val wifi = 202L
+        assertTrue("failure", airplaneStreamReopens(airplaneOn = false, heldNetwork = cell, defaultNetwork = cell, waitedOut = false))
+        assertTrue("failure, no network: the open backs off", airplaneStreamReopens(false, cell, null, false))
+        assertFalse("success, the dying network", airplaneStreamReopens(true, cell, cell, false))
+        assertFalse("success, no network", airplaneStreamReopens(true, cell, null, false))
+        assertFalse("success, no network, waited out", airplaneStreamReopens(true, cell, null, true))
+        assertTrue("success, Wi-Fi kept", airplaneStreamReopens(true, cell, wifi, false))
+        assertTrue("success, the network survived the wait", airplaneStreamReopens(true, cell, cell, true))
+    }
+
     /** Design 121 §4.4: the hold comes before step 2's report, is released in the route's `finally`, and never takes
      * the drop's reconnect wake lock. */
     @Test
@@ -62,7 +77,10 @@ class AirplaneRouteTest {
         val hold = route.indexOf("CommandListenerService.holdForAirplane(")
         assertTrue(hold > 0 && hold < route.indexOf("postReportOnly(context, airplaneGoingOn = true)"))
         val turnOn = route.substringAfter("fun turnOn(").substringBefore("private fun recheckWifiKept(")
-        assertTrue(turnOn.substringAfter("} finally {").contains("CommandListenerService.releaseAirplaneHold()"))
+        assertTrue(turnOn.substringAfter("} finally {").contains("CommandListenerService.releaseAirplaneHold(airplaneOn = cameOn)"))
+        // Code QA H1: the pool goes after the report, before the window.
+        val evict = turnOn.indexOf("ServerClients.streamDropped()")
+        assertTrue(evict > turnOn.indexOf("postReportOnly(") && evict < turnOn.indexOf("resolveVoiceActivity("))
         val service = File(root, "server/CommandListenerService.kt").readText()
         val body = service.substringAfter("private fun holdForAirplane(").substringBefore("private fun releaseAirplaneHold(")
         assertFalse(body.contains("markDown()") || body.contains("takeDropWakeLock()") || body.contains("streamDropped()"))

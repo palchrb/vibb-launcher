@@ -124,11 +124,14 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - **Connection** (`streams::connection_state`, pure; `devices::connection_of` feeds it): last contact = the newest
   of `limits::last_access`, `devices.last_seen_at` and an open stream's `since`. Online = a stream open and contact
   <= `ONLINE_WINDOW_MINUTES` (35 since design 121: the phone's backstop reports every 30 min); otherwise **reach**
-  (`streams::reach`, design 121 §4.3) - the later of the last contact and the stream's close, or the server's start
-  for a phone with no stream since it whose last contact is at most 35 min older - and Away while reach <=
-  `AWAY_WINDOW_MINUTES` (45), else Offline; plus Disconnected (enrolled, no token), Not seen yet, Not set up. Away is
+  (`streams::reach`, design 121 §4.3) - the later of the last contact and the stream's close when the close came
+  within 35 min of the contact (a later close is a holder dropping a dead phone, code QA H2), else the last contact -
+  and Away while reach <= `AWAY_WINDOW_MINUTES` (45; with the stream still counted open `OPEN_STREAM_AWAY_MINUTES`,
+  60, so a late backstop is orange, never grey), else Offline; plus Disconnected (enrolled, no token), Not seen yet, Not set up. Away is
   green until `green_until`: `CLOSE_GRACE_MINUTES` (1) after reach (a reconnect within the minute never shows), at
-  least `RESTART_GRACE_MINUTES` (6) after a start (phones reconnect within their 300 s read timeout after a crash).
+  least `RESTART_GRACE_MINUTES` (6) after a start for a phone with no stream since it whose last contact is at most
+  35 min older (phones reconnect within their 300 s read timeout after a crash); Offline stays 45 min after the
+  contact.
   The windows come from the launcher's backstop (`SyncSchedule.kt` 30/15 min, inexact alarms): a launcher change to
   the backstop must revisit them; a backstop Android delivers late shows "No contact" from 35 min until it lands. The
   pages' dots and lines read it through `phone_status::dot` since 2026-11-01 ("Off or out of touch says so" below):
