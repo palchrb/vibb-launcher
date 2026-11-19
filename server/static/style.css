@@ -1191,6 +1191,12 @@ summary.row:active {
     vertical-align: middle;
 }
 
+/* Room between a row's words and its switch (the user, 2026-11-19: "tekst ... for tett på toggles"): `.sw`'s own
+   margin 0 overrode the row's 12px, so a long label ran up to the track. */
+.row > .sw {
+    margin-left: 16px;
+}
+
 /* Laid over the switch: 2px from its left edge, 22px further when on. */
 .sw + .knob,
 .row > .sw + .knob {
@@ -3688,14 +3694,14 @@ div.row[data-way],
 div.row[data-custom] {
     min-height: 53px;
 }
-/* Code QA N3, V3: the value takes the switch's box - no gap of its own (the switch has none: `.sw`'s margin is 0) and
+/* Code QA N3, V3: the value takes the switch's box - the switch's 16 px gap (`.row > .sw`) and
    at least its 64 px - so at the default size the label beside "Tilpasset" has the switch row's room and wraps with
    it; at a larger font the word grows into the label's room instead of being clipped. */
 div.row[data-way] > .row-value,
 div.row[data-custom] > .row-value {
     flex: 0 0 auto;
     min-width: 64px;
-    margin-left: 0;
+    margin-left: 16px;
     text-align: right;
     font-size: 0.8125rem;
     white-space: nowrap;
