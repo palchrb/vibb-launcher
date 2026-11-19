@@ -70,6 +70,9 @@ class KidScreensEscapeTest {
         // Design 110 §7.3: the map links' handler, its notes and plan (the steps' Android pages are the PIN-gated
         // Settings' alone).
         "map",
+        // Design 119 (L7): the link gate - a new way for Vibb One to start other apps (Chrome's tab, an allowed app by
+        // package, the map handler, a browser in a pause) - and its plan.
+        "logins/LinkGateActivity.kt", "logins/LinkGate.kt", "logins/LinkTargets.kt",
     )
 
     /** Design 77 §6.7: the one allowed way out - "Del" on a received picture opens the system's share sheet (a kiosk

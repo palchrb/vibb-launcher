@@ -1,8 +1,45 @@
 # Design 119: Chrome only for a login, never for a link
 
-Status: design, **revision 2, READY TO BUILD**, 2026-11-19 (branch `design-119`). Revision 1 was c3b03002e. It
-changes design 102 Part B (`docs/design/102-captive-portals-and-logins.md` §4, `docs/notes/launcher/logins.md`).
-Part A, the Wi-Fi sign-in window, stays as it is.
+Status: **built** on branch `build-119` (2026-11-19), from revision 2 (READY TO BUILD, branch `design-119`; revision 1
+was c3b03002e). It changes design 102 Part B (`docs/design/102-captive-portals-and-logins.md` §4,
+`docs/notes/launcher/logins.md`). Part A, the Wi-Fi sign-in window, stays as it is.
+
+**Owed before release** (each box is a separate step; the emulator gate of 2026-11-19 is
+`docs/testing/2026-11-19-119-emulator-gate.md`):
+
+- [x] M1 - the role by `dumpsys role` on 14 and 16: a fresh role-on phone, Chrome ticked then unticked, a pause in
+  which Chrome was made the default; hide-then-enable and the nudge (built as one kept flip of `logins.RoleNudge`, not
+  an enable-and-disable pair: the hash is compared when the broadcast arrives); the `vibb_browser` dialog with the
+  restriction lifted.
+  Passed on 14 and 16; the `vibb_browser` dialog not run.
+- [x] M2 - a plain `VIEW`, a session-less Custom Tab, AppAuth's `select`, `getPackageName(null)`, the per-package lookup
+  finding an unverified Organic Maps.
+  Passed on 14 and 16.
+- [x] M3 - unhide, bind and session, the tab under lock task in the caller's task; tap-to-tab time; a `NEW_TASK` caller.
+  Passed on 14 and 16; a `NEW_TASK` caller's window ends by the grace (gate finding 6).
+- [ ] M4 - each end of §4.4 (Element X's MAS, an AppAuth sample, ✕, a for-result caller and an Auth Tab sample's relay,
+  "Open in Chrome browser", a minimised tab, leaving for Meldinger and back within the minute); whether Chrome honours
+  the tab's "Open in Chrome browser" off (code QA L5); an Auth Tab with an https redirect, expected
+  `RESULT_VERIFICATION_FAILED` (code QA L6, §4.5).
+  - Passed on 14 and 16: `done`, AppAuth, ✕, `result`, the grace, `locked`, and `timeout` (14).
+  - Failed on 16 when Vibb's session wasn't bound within 2 s: no `left` (gate finding 2).
+  - Owed: Auth Tab and L6 (Chrome 137+), and L5 (neither Chrome shows the item).
+- [ ] M5 - a Play services passkey or account sheet over the tab does not end the window.
+  It doesn't end it, but the kiosk blocks the sheet, so a passkey login fails outside a pause (gate finding 3).
+- [x] M6 - Element X timeline links: `omaps.app`, a Google short link, `example.com`.
+  Passed on 14 and 16 (the probe's identical intent; the short link after map step 1).
+- [ ] M7 - a process kill of Vibb mid-window; a reboot with Chrome unhidden.
+  - The kill and the reboot's `stale` passed on 14 and 16.
+  - An unclean reboot within seconds of the unhide crashes the platform at boot: a boot loop on 14, one crash on 16
+    (gate finding 1).
+- [ ] §11's emulator gate, steps 1-7, on Android 14 and 16 (17 when an image is at hand).
+  - 1-4, 6 and 7 passed on 14 and 16.
+  - 5 partly: the handler only, not the window.
+  - Android 17 not run.
+- [ ] Code QA M1 - with the role on, Chrome unhidden in Play's nightly update window and hidden at the screen-on;
+  `dumpsys role` still Vibb One's after it; Chrome's `version_name` in the report moves after a night.
+  - Passed on 14 (the clock set by root).
+  - Owed: `version_name` after a night, and 16.
 
 **Revision 2** applies the design QA (`docs/review/119-chrome-only-for-logins-design-qa.md` on `qa-119-design`,
 97de1dd37: 2 High, 5 Medium, 10 Low) and the user's answers (2026-11-19, §12). What changed:
@@ -172,8 +209,14 @@ C is design 102's own "Chrome hidden" state (the role off) with one way in, owne
 
 - `computeEnforcementPlan`'s `loginBrowser` keeps Chrome **pinned** in the kiosk while the role is ready, as today. A
   hidden app can't start, so the pin costs nothing.
-- **Chrome is unhidden only while a login window is open.** The plan reads the window record (§4.4) through
-  `LoginWindow.isOpen()`.
+- **Chrome is unhidden only while a login window is open** - and in Play's nightly update window (code QA M1, below).
+  The plan reads the window record (§4.4) through `LoginWindow.isOpen()`.
+- **Play's update window (code QA M1).** A hidden package is "not installed" to Play, so a Chrome hidden almost always
+  would never be updated, and the kid's logins would run in a Chrome falling behind on security fixes. So the role's
+  Chrome is unhidden while `PlayState.updateWindow` is in force (inside the window, the screen off), as the Play Store is
+  unsuspended then. No login window opens in it, and one open ends (`rule`). The gate keeps the browser role all the
+  while: its component and the nudge don't move, and the hash ignores the hidden state, so no link reaches Chrome. The
+  screen on hides Chrome at once (`PlayRuntime.suspendStoreAtScreenOn`), and the re-check's apply agrees.
 - `BrowserConfig` is unchanged:
   - the lockdown bundle is written and read back while Chrome is hidden;
   - D13's one clear stays;
@@ -278,6 +321,9 @@ Android 15's safer-intent matching and Android 16's intent-redirection hardening
 - **Auth Tab.** The fresh intent copies only Auth Tab's own keys, as `androidx.browser`'s `AuthTabIntent` defines them:
   the launch flag, the redirect scheme, or the https redirect host and path. Chrome then opens an Auth Tab, and its
   result, which carries the redirect, is relayed.
+- **An https redirect (code QA L6)** will likely fail: Chrome checks the redirect host's Digital Asset Links against the
+  **launching** package, Vibb One, not the app, so expect `RESULT_VERIFICATION_FAILED` relayed to the app. A
+  custom-scheme redirect is unaffected. Such apps are ASK 2's case.
 - **If M4 shows the relay failing** for a kind of caller, those apps are ASK 2's case: the parent's pause.
 
 ### 4.6 What the kid sees
@@ -300,8 +346,12 @@ Android 15's safer-intent matching and Android 16's intent-redirection hardening
 
 ### 4.8 What stays (residue, named)
 
-- **During a window**, another app could start Chrome by name, and the tab's "Open in Chrome browser" opens full Chrome.
-  Both stay under `URLBlocklist *`, and both end with the login, or at most 1 minute after the tab is left.
+- **During a window**, another app could start Chrome by name, and the tab's "Open in Chrome browser" opens full Chrome
+  where Chrome ignores the tab's off state (code QA L5). Both stay under `URLBlocklist *`, and both end with the login,
+  or at most 1 minute after the tab is left.
+- **Play's nightly update window (code QA M1)**: Chrome is unhidden for its update, every night the screen is off in
+  the window. No one reaches it then: the screen is off, no login window opens, and the gate holds the browser role. A
+  library that looks browsers up by name would find it, but nothing runs in front with the screen off.
 - **A library that wants a browser by name**:
   - AppAuth picks Vibb, a plain browser, and works through the gate.
   - MSAL finds no safe-listed browser and uses its own WebView, filtered by Vibb's DNS filter like any app.

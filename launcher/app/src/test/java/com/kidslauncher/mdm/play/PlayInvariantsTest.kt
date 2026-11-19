@@ -50,6 +50,10 @@ class PlayInvariantsTest {
                 "enforceUpLinkPin(dpm, admin, context)",
                 // Design 110 §6.2: the map links' handler, the sixth, with its two filters.
                 "enforceMapLinkPin(dpm, admin, context)",
+                // Design 119 §4.1 (L4): the link gate's http/https catch-all, the seventh and last - Android keeps
+                // insertion order among equal priorities, so added first it could shadow the Play blocker's and the map
+                // handler's.
+                "enforceLinkGatePin(dpm, admin, context)",
             ),
             body,
         )
@@ -92,6 +96,9 @@ class PlayInvariantsTest {
         // Design 110: the map links' PPA likewise, whatever the switch (the handler's enabled state decides).
         assertTrue("enforceMapLinkPin" in inApply)
         assertEquals("enforceMapLinkPin(dpm, admin, context)", apply.lines().first { "enforceMapLinkPin(" in it }.trim())
+        // Design 119: the link gate's likewise (its enabled state decides), and after the map handler's in apply too.
+        assertEquals("enforceLinkGatePin(dpm, admin, context)", apply.lines().first { "enforceLinkGatePin(" in it }.trim())
+        assertTrue(apply.indexOf("enforceMapLinkPin(dpm, admin, context)") < apply.indexOf("enforceLinkGatePin(dpm, admin, context)"))
         for (name in inApply) {
             val body = enforcer.substringAfter("private fun $name(").substringBefore("\n    }\n")
             assertTrue(name, "addPersistentPreferredActivity(" in body)

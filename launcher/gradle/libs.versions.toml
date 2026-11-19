@@ -4,6 +4,8 @@ activity-ktx = "1.11.0"
 agp = "8.13.0"
 android-preference-annotations = "1.1.2"
 appcompat = "1.7.1"
+# Design 119 §4.4: Vibb's own Custom Tabs session on Chrome's tab (Apache-2.0); 1.9.0 has Auth Tab's keys.
+browser = "1.9.0"
 constraintlayout = "2.2.1"
 core-ktx = "1.17.0"
 espresso-core = "3.7.0"
@@ -28,6 +30,7 @@ viewpager2 = "1.1.0-beta02"
 # AndroidX dependencies
 androidx-activity = { group = "androidx.activity", name = "activity", version.ref = "activity" }
 androidx-activity-ktx = { group = "androidx.activity", name = "activity-ktx", version.ref = "activity-ktx" }
+androidx-browser = { group = "androidx.browser", name = "browser", version.ref = "browser" }
 androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
 androidx-constraintlayout = { group = "androidx.constraintlayout", name = "constraintlayout", version.ref = "constraintlayout" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "core-ktx" }

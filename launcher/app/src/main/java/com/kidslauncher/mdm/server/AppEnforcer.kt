@@ -285,6 +285,12 @@ object AppEnforcer {
     var lastEnforcedOverride: Boolean? = null
         private set
 
+    /** Design 119 code QA M1: the last completed [apply] left the login role's Chrome unhidden for Play's update window -
+     * the screen-on hides it at once ([PlayRuntime.suspendStoreAtScreenOn]), before the re-check's apply. */
+    @Volatile
+    var lastChromeUpdateUnhidden: Boolean = false
+        private set
+
     private val appliedListeners = java.util.concurrent.CopyOnWriteArraySet<() -> Unit>()
     private val mainHandler by lazy { android.os.Handler(android.os.Looper.getMainLooper()) }
 
@@ -389,6 +395,9 @@ object AppEnforcer {
         if (parentChoice) {
             com.kidslauncher.mdm.map.MapLinksRuntime.setEnabled(context, com.kidslauncher.mdm.map.mapLinksOn(policy))
         }
+        // Design 119 §4.1 (L4): the link gate's catch-all for http and https, after the Play link blocker's and the map
+        // handler's (insertion order among equal priorities). Its use is the gate's enabled state (after the loop).
+        enforceLinkGatePin(dpm, admin, context)
 
         // Hardening that the server switched off is cleared first, before anything below can
         // throw - "Block USB debugging" off is how a parent gets adb back (QA step 4 #8). The
@@ -437,10 +446,16 @@ object AppEnforcer {
         val callState = CallPolicyStore.state
         val callsState = callState.forCalls()
         val smsMode = callState.smsMode
-        applyDialerRole(context, dpm, admin, callsState, smsMode)
+        // Design 119 §4.1 (D2): the link gate while managed and no free browser is allowed - not a restriction, so a pause
+        // leaves it on; its DISALLOW_CONFIG_DEFAULT_APPS (M5) is one, lifted by the pause and the override (D4).
+        val gateOn = com.kidslauncher.mdm.logins.LinkGateRuntime.gateWanted(
+            context, effectiveAllowlist(policy?.allowlist, WindowRelock.blockedPackages(context)),
+        )
+        val gateLock = gateOn && !overrideActive
+        applyDialerRole(context, dpm, admin, callsState, smsMode, gateLock)
         // D1: the SMS role is taken before the plan (with it ours, DISALLOW_SMS stays off); handed back after the
         // package loop, once the previous holder is unhidden (design 09 A6).
-        applySmsRole(context, dpm, admin, callsState, smsMode, allowRelease = false)
+        applySmsRole(context, dpm, admin, callsState, smsMode, gateLock, allowRelease = false)
         // Inside a sync the status report right after this tells the server anyway (qa-09-code #10).
         if (!fromSync) signalRoleChange(context)
         // Design 98 §3.6: the assistant role read on every pass; a change asks for one report.
@@ -481,6 +496,19 @@ object AppEnforcer {
         // the lockdown (D9), whose end is a tightening.
         val loginRole = com.kidslauncher.mdm.logins.loginRoleOf(policy?.loginBrowser, allowlist)
         val browser = BrowserConfig.apply(context, dpm, admin, vpnFilterEnabled, loginRole, lockdownLifted = overrideActive)
+        // Design 119 §4.4: a window that is over ends here (stale, timeout, left), and one whose rule no longer holds -
+        // a time rule, the role off or not ready, the gate off, Play's update window, a pause's start (code QA M2: its
+        // hide before the loop unhides every app) or end - ends `rule`; then the plan reads it.
+        com.kidslauncher.mdm.logins.LoginWindow.duringApply(
+            context,
+            ruleEnds = com.kidslauncher.mdm.logins.loginWindowRuleEnds(
+                timeLocked = scheduleLocked, roleReady = browser.ready, gateOn = gateOn, updateWindow = playState.updateWindow,
+                overrideNow = overrideActive, overrideBefore = lastEnforcedOverride,
+            ),
+        )
+        val loginWindowOpen = com.kidslauncher.mdm.logins.LoginWindow.isOpen(context)
+        // The role's Chrome (the plan's `roleApp`): its hide step re-reads the window under the window's lock (M3).
+        val roleChrome = browser.ready && allowlist != null && !overrideActive && com.kidslauncher.mdm.logins.CHROME_PACKAGE !in allowlist
         val plan = computeEnforcementPlan(
             allowlist = allowlist,
             kioskDesired = policy?.kioskDesired == true,
@@ -510,6 +538,7 @@ object AppEnforcer {
             emergencySos = sos,
             webViewProvider = webViewProviderPackage(),
             loginBrowser = com.kidslauncher.mdm.logins.CHROME_PACKAGE.takeIf { browser.ready },
+            loginWindowOpen = loginWindowOpen,
         )
 
         // Set before the loop below can release the dialer, so its keypad is never usable for
@@ -594,7 +623,11 @@ object AppEnforcer {
                     }
                 }
                 if (hideCall) {
-                    val hiddenOk = dpm.setApplicationHidden(admin, packageName, shouldBeHidden)
+                    val hiddenOk = if (roleChrome && packageName == com.kidslauncher.mdm.logins.CHROME_PACKAGE) {
+                        com.kidslauncher.mdm.logins.LoginWindow.chromeStep(context, dpm, admin, playState.updateWindow)
+                    } else {
+                        dpm.setApplicationHidden(admin, packageName, shouldBeHidden)
+                    }
                     if (!hiddenOk && !(shouldBeHidden && PlatformRefusals.refused(context, packageName, PlatformRefusals.Call.HIDE))) {
                         Log.w(LOG_TAG, "Platform refused to ${if (shouldBeHidden) "hide" else "unhide"} $packageName (setApplicationHidden)")
                     }
@@ -611,10 +644,16 @@ object AppEnforcer {
         // without MATCH_UNINSTALLED_PACKAGES), and the pass that unhides it comes first.
         if (requested != null) applyCameraPermissions(context, dpm, admin, requested, policy, overrideActive)
         // Design 09 A6: the SMS role goes back only now, with the previous holder unhidden by the loop.
-        applySmsRole(context, dpm, admin, callsState, smsMode, allowRelease = true)
+        applySmsRole(context, dpm, admin, callsState, smsMode, gateLock, allowRelease = true)
+        // Design 119 §4.1 (M1): Chrome hidden by the loop first, then the gate switched - enabling it changes the role
+        // service's package hash, so the controller drops a hidden holder and grants the gate -, then the repair.
+        com.kidslauncher.mdm.logins.LinkGateRuntime.afterLoop(
+            context, dpm, admin, gateOn, pauseEnded = lastEnforcedOverride == true && !overrideActive,
+        )
         lastEnforcedLockKey = lock.key()
         lastEnforcedPlayState = playState
         lastEnforcedOverride = overrideActive
+        lastChromeUpdateUnhidden = roleChrome && playState.updateWindow
         if (appliedListeners.isNotEmpty()) mainHandler.post { appliedListeners.forEach { it() } }
         // Design 24b §1.5, after hiding (a hidden package's services leave the enabled lists): the
         // accessibility list while apps are managed (in windows too: QA 24b High 1), the keyboard
@@ -1007,6 +1046,7 @@ object AppEnforcer {
         admin: ComponentName,
         state: CallPolicyState,
         smsMode: ChannelMode?,
+        gateLock: Boolean,
     ) {
         // For the phone book's call-log pass-on, which runs on the main thread (qa-12-code #4).
         systemDialerPackage(context)?.let { CallPrefs.systemDialer(context, it) }
@@ -1048,8 +1088,8 @@ object AppEnforcer {
         // Design 77: the SMS role's lock counts too (lockDefaultAppsFor).
         setRestriction(
             dpm, admin, UserManager.DISALLOW_CONFIG_DEFAULT_APPS,
-            lockDefaultAppsFor(state.managed, CallSystem.dialerRoleHeld(context), smsMode, SmsRuntime.roleHeld(context)) &&
-                !com.kidslauncher.mdm.assistant.AssistantSetup.assistantPickOpen(context),
+            lockDefaultAppsFor(state.managed, CallSystem.dialerRoleHeld(context), smsMode, SmsRuntime.roleHeld(context), gateLock) &&
+                !defaultAppsLockLifted(context),
         )
         val heldAfter = CallSystem.dialerRoleHeld(context)
         // Handed back: our fixed permissions return to DEFAULT (no revoke, no kill) - qa-09-code #4. Not while the SMS
@@ -1080,6 +1120,7 @@ object AppEnforcer {
         admin: ComponentName,
         callsState: CallPolicyState,
         smsMode: ChannelMode?,
+        gateLock: Boolean,
         allowRelease: Boolean,
     ) {
         val held = SmsRuntime.roleHeld(context)
@@ -1126,11 +1167,17 @@ object AppEnforcer {
         val heldAfter = SmsRuntime.roleHeld(context)
         setRestriction(
             dpm, admin, UserManager.DISALLOW_CONFIG_DEFAULT_APPS,
-            lockDefaultAppsFor(callsState.managed, CallSystem.dialerRoleHeld(context), smsMode, heldAfter) &&
-                !com.kidslauncher.mdm.assistant.AssistantSetup.assistantPickOpen(context),
+            lockDefaultAppsFor(callsState.managed, CallSystem.dialerRoleHeld(context), smsMode, heldAfter, gateLock) &&
+                !defaultAppsLockLifted(context),
         )
         signalSmsRoleChange(context, heldAfter)
     }
+
+    /** `DISALLOW_CONFIG_DEFAULT_APPS` lifted for a role's own page: design 98's pick window, or design 119's browser
+     * role dialog (`vibb_browser`, M5) - Android's role request refuses under the restriction. */
+    private fun defaultAppsLockLifted(context: Context): Boolean =
+        com.kidslauncher.mdm.assistant.AssistantSetup.assistantPickOpen(context) ||
+            com.kidslauncher.mdm.logins.BrowserRoleStep.isOpen(context)
 
     /** The installed packages that may take the SMS role back (the known SMS apps and the one before us). */
     private fun smsCandidates(context: Context): Set<String> {
@@ -1655,7 +1702,14 @@ object AppEnforcer {
             decision.policy?.loginBrowser,
             effectiveAllowlist(decision.policy?.allowlist, relockBlocked),
         )
-        if (packageName == com.kidslauncher.mdm.logins.CHROME_PACKAGE && BrowserConfig.roleReady(context, loginRole)) return false
+        // Design 119 §4.2: outside a login window that Chrome is hidden again here, under the window's lock (M3).
+        if (packageName == com.kidslauncher.mdm.logins.CHROME_PACKAGE && BrowserConfig.roleReady(context, loginRole)) {
+            com.kidslauncher.mdm.logins.LoginWindow.chromeAppeared(
+                context, dpm, ComponentName(context, MdmDeviceAdminReceiver::class.java),
+                updateWindow = PlayRuntime.updateWindowActive(context),
+            )
+            return false
+        }
         // Hidden only if not allowed at all - the schedule lock alone just suspends.
         val hide = shouldSuspendNewPackage(
             packageName, decision, overrideActive, context.packageName, systemDialerPackage(context),
@@ -1761,7 +1815,8 @@ object AppEnforcer {
     /**
      * Design 59d step M, for `lock/HomePin` only (it holds its own lock and adds the boot cover's PPA last): our
      * package's PPAs cleared and added back in order - HomeActivity's HOME first, then the Play link blocker, the
-     * call-log pin, the captive portal's and the UnifiedPush link's (design 108). Not `@Synchronized` (the take-over calls it on the main thread while an apply may run). Never throws.
+     * call-log pin, the captive portal's, the UnifiedPush link's (design 108), the map handler's (design 110) and the link
+     * gate's last (design 119 L4: a catch-all added first could shadow the others). Not `@Synchronized` (the take-over calls it on the main thread while an apply may run). Never throws.
      */
     internal fun reseatPreferredActivities(context: Context, dpm: DevicePolicyManager, admin: ComponentName) {
         try {
@@ -1775,6 +1830,7 @@ object AppEnforcer {
         enforceCaptivePortalPin(dpm, admin, context)
         enforceUpLinkPin(dpm, admin, context)
         enforceMapLinkPin(dpm, admin, context)
+        enforceLinkGatePin(dpm, admin, context)
     }
 
     /**
@@ -1830,6 +1886,24 @@ object AppEnforcer {
             } catch (e: Exception) {
                 Log.w(LOG_TAG, "Failed to set the map links' handler", e)
             }
+        }
+    }
+
+    /**
+     * Design 119 §4.1 (L4): `VIEW` http and https with no host go to [com.kidslauncher.mdm.logins.LinkGateActivity] - set
+     * on every [apply] and last in `HomePin`'s re-seat (the seventh): Android keeps insertion order among equal
+     * priorities, so it goes after the Play link blocker's and the map handler's, which it could shadow otherwise. It
+     * matters only in a pause with no browser-role holder; it can't beat an app Android approved for a host. Whether it is
+     * used is the gate's enabled state ([com.kidslauncher.mdm.logins.LinkGateRuntime.afterLoop]).
+     */
+    private fun enforceLinkGatePin(dpm: DevicePolicyManager, admin: ComponentName, context: Context) {
+        try {
+            dpm.addPersistentPreferredActivity(
+                admin, com.kidslauncher.mdm.logins.LinkGateRuntime.preferredFilter(),
+                com.kidslauncher.mdm.logins.LinkGateRuntime.component(context),
+            )
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Failed to set the link gate's handler", e)
         }
     }
 

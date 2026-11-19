@@ -44,8 +44,15 @@ data class LoginBrowserReport(
     val state: String,
     val versionName: String?,
     val writtenMs: Long?,
-    /** With `failed`: `package`, `write`, `readback` or `absent`. */
+    /** With `failed`: `package`, `write`, `readback`, `absent` or `role` (design 119: Vibb One isn't the browser). */
     val reason: String?,
     /** When Chrome's data was cleared (D13), once. */
     val clearedMs: Long?,
+    /** Design 119 §7 (no defaults: every key is encoded, the contract's `report`): Vibb One holds Android's browser
+     * role; `null` while the link gate is off. */
+    val browserRole: Boolean?,
+    /** The hosts the link gate (or Meldinger) stopped: the last 10 of 7 days, a host only. */
+    val refused: List<com.kidslauncher.mdm.logins.RefusedHost>,
+    /** The last login window: its end and whether Vibb's session held, no host. */
+    val lastWindow: com.kidslauncher.mdm.logins.LastWindow?,
 )

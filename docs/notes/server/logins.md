@@ -1,4 +1,4 @@
-# Server notes: Wi-Fi sign-in and Chrome only for logins (design 102)
+# Server notes: Wi-Fi sign-in and Chrome only for logins (designs 102 and 119)
 
 The design is `docs/design/102-captive-portals-and-logins.md` (revision 5 on top), its QA `docs/review/qa-102-design.md`.
 The launcher's side is `docs/notes/launcher/logins.md`.
@@ -16,7 +16,10 @@ The launcher's side is `docs/notes/launcher/logins.md`.
   and path, a pasted http(s) URL keeping its host and path; no other scheme, `*`, query without a pasted URL, space or
   non-ASCII; at most 100 own entries); `clean_portal`/`clean_browser` (field by field: known words, plausible counts and
   instants, hosts cleaned and cut to 20 visited and 10 blocked hosts and frames, the last 10 sessions; a session without
-  a known outcome, start, approval or `opened_ms` is dropped); the events.
+  a known outcome, start, approval or `opened_ms` is dropped; design 119: `browser_role` a boolean or null - the
+  phone's link gate off -, the reason `role`, `refused` the stopped hosts `{at_ms, host}` - a host only, each once,
+  none older than 7 days before the arrival (`REFUSED_MAX_AGE_MS`), the last 10 - and `last_window` whole with a known
+  `WINDOW_ENDS` value or null, never a host); the events.
 - **The events** (`logins::intake`, from the stored report): `wifi_signin_wide` for a session
   that visited more than 3 sites, had a blocked frame (never a blocked sub-resource alone: portal pages load blocked
   analytics, R2-L3) or timed out, keyed by its `opened_ms` (every report repeats the last 10). With the parent code off
@@ -35,10 +38,15 @@ The launcher's side is `docs/notes/launcher/logins.md`.
   `#logins-recent` - the last sign-ins with how each was approved, the sites visited and the blocked hosts;
   `#logins-apps` - "Innlogging i apper med Chrome" (`section=apps`; disabled with the reason while Chrome is ticked, a
   forged on refused), the clear's cost under it (D13), "Chrome finnes ikke på telefonen", the phone's state (Klar,
-  Venter på telefonen, Krever nyere Vibb One, Chrome mangler, Kunne ikke settes); `#logins-sites` - the presets
+  Venter på telefonen, Krever nyere Vibb One, Chrome mangler, Kunne ikke settes; design 119: `failed`/`role` is no state
+  row but the setup step `vibb_browser`'s one orange line "Vibb One er ikke nettleser" at `#logins-apps`, its fix
+  behind the group's ⓘ, whose text says Chrome opens only for the sites below and closes when done); `#logins-sites` - the presets
   (`section=preset`), the own sites with a note and Remove (`section=site`, `action=add|remove`; a refused entry back with
   its reason), "Sperret av nettfilteret" for a listed site the phone's filter blocks (`device_api::filter_blocks`, the
-  delivered lists walked by suffix), and the note about other sites and web-page apps. Every save is a `303` back to its
+  delivered lists walked by suffix), the note about other sites and web-page apps, and design 119's "Stoppet nylig"
+  while the role is on: the phone's stopped hosts newest first, each once, none older than 7 days or already taken by a
+  listed whole-host site (code QA L9: an entry with a path or a port takes no host, so "Legg til" can widen it), each with "Legg til" (the own-site save, `section=site`, back on `#logins-sites`), its ⓘ "Legg til bare
+  innloggingssider." - a choice, never a warning; nothing while empty. Every save is a `303` back to its
   group's anchor (no jump; `scroll-restore.js`), server-rendered, no new client JS (Safari 14).
 - **Advanced › `#wifi-signin`**: "Krev foreldrekode for Wi-Fi-innlogging" (on by default), "Gjelder også å åpne
   påloggingssiden igjen", the warning "Ingen foreldrekode er satt …" while the phone reports none set; its form posts `section=wifi_signin` to the Sign-in page's
@@ -46,6 +54,10 @@ The launcher's side is `docs/notes/launcher/logins.md`.
 - **The Apps page**: Chrome's row says "Brukes bare til innlogging (Innlogging-siden)" while the role is on.
 - **The report**: `captive_portal` and `login_browser` are full-report fields (`status_heartbeat::REPORT_KEYS`, not
   heartbeat fields), cleaned into their columns; `intake_limits` keeps the contract's keys.
-- **The contract**: `testdata/login_windows.json` (root `CLAUDE.md`); `tests::logins` (the policy rows from the page's
-  saves, the reports, `clean`, `entries`, the pages and their anchors, the Apps page's line, the events, the PIN entry);
+- **The setup step `vibb_browser`** (design 119 §4.1, `setup_status`): `when: link_gate` (the latest report's
+  `login_browser.browser_role` isn't null), read from `browser_role`; its feature `login_browser` warns at
+  `/devices/{id}/logins#logins-apps` while the role is on.
+- **The contract**: `testdata/login_windows.json` (root `CLAUDE.md`; its `now_ms` is the clean rows' arrival); `tests::logins` (the policy rows from the page's
+  saves, the reports - the stopped hosts' instants moved to the last minutes -, `clean`, `entries`, the pages and their
+  anchors, the Apps page's line, the events, the PIN entry, `the_stopped_hosts_and_the_browser_role`);
   `policy_json_keys_snapshot` pins `captive_portal` (non-null) and `login_browser` (nullable).

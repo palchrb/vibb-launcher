@@ -491,7 +491,8 @@ fn the_field_tables_keep_every_contract_key() {
                     path.display()
                 );
                 assert_eq!(
-                    crate::logins::clean_browser(browser).as_ref(),
+                    crate::logins::clean_browser(browser, json["now_ms"].as_i64().unwrap())
+                        .as_ref(),
                     Some(browser),
                     "{}'s {key}",
                     path.display()

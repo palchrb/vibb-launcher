@@ -3,9 +3,9 @@ package com.kidslauncher.mdm.ui.messages
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
-import android.content.pm.ApplicationInfo
-import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.text.SpannableString
 import android.text.Spanned
 import android.text.TextPaint
@@ -15,10 +15,12 @@ import android.view.MotionEvent
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import com.kidslauncher.mdm.R
+import com.kidslauncher.mdm.logins.GateStep
+import com.kidslauncher.mdm.logins.LinkGateRuntime
+import com.kidslauncher.mdm.logins.LoginWindow
 import com.kidslauncher.mdm.map.MapLinkActivity
 import com.kidslauncher.mdm.map.MapLinkForms
 import com.kidslauncher.mdm.map.MapLinks
-import com.kidslauncher.mdm.map.MapLinksRuntime
 
 /**
  * Web links in a message bubble (design 110 §15 Q1, the user: "Alle linker i meldinger bør vel kunne trykkes på?
@@ -26,11 +28,14 @@ import com.kidslauncher.mdm.map.MapLinksRuntime
  * phone numbers, e-mail addresses and street addresses stay plain text. The one way a message opens something
  * (`KidScreensEscapeTest`):
  *
+ * - design 119 §5: the link gate's own plan (`linkGatePlan` with `fromMessages`, so never a login window, D3);
  * - a map link, while the parent's switch is on, goes straight to Vibb's own handler ([MapLinkActivity]) - no
  *   Android resolution, no phone step needed;
- * - any other link is a plain `VIEW` to the one app Android names for it that the parent allows ([messageLinkTarget]:
- *   the allowlist, the login browser, Vibb One - never Play services, and nothing during a time rule) - never a
- *   chooser; with none, the kid's calm note.
+ * - any other link is a plain `VIEW` to the one allowed app that declares it (`linkTargetOf` over `LinkLookup`'s
+ *   per-package lookup, so an unverified app is found while a browser exists; the allowed set is
+ *   [messageLinkAllowed]: the allowlist and Vibb One, never the login browser), else a free browser the parent ticked
+ *   - never Play services, never a chooser, nothing during a time rule; with none, the kid's calm note, and the
+ *   host goes into the report's stopped hosts.
  *
  * The text keeps its long press (the reactions): only a press that starts on a link is the link's.
  */
@@ -96,22 +101,47 @@ object MessageLinks {
         }
     }
 
-    /** Opens [url] (§15 Q1): a map link through Vibb's handler while the switch is on, else the one app Android
-     * names, else the note. */
+    /** Opens [url] (§15 Q1): design 119's plan with `fromMessages` ([LinkGateRuntime.decide], never a login window,
+     * D3) - a map link through Vibb's handler while the switch is on, else the one allowed app that declares it, else a
+     * free browser, else the note (the host stopped for the PWA). Decided off the main thread (H1's per-package lookup). */
     fun open(context: Context, url: String) {
-        try {
-            if (MapLinkForms.isMapLink(url) && MapLinksRuntime.on(context)) {
-                val https = MapLinkForms.upgrade(url) ?: url
-                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(https)).setClass(context, MapLinkActivity::class.java))
-                return
+        val app = context.applicationContext
+        val main = Handler(Looper.getMainLooper())
+        Thread {
+            val step = try {
+                LinkGateRuntime.decide(app, url, fromMessages = true, keyguardLocked = false)
+            } catch (e: Exception) {
+                Log.w("MessageLinks", "Couldn't look a link up: ${e.javaClass.simpleName}")
+                GateStep.Note(refused = false)
             }
-            // Code QA L4: an intent filter's scheme is lowercase ("HTTPS://" matches nothing).
-            val view = Intent(Intent.ACTION_VIEW, Uri.parse(url).normalizeScheme()).addCategory(Intent.CATEGORY_BROWSABLE)
-            val pkg = handler(context, view)
+            main.post { start(context, url, step) }
+        }.start()
+    }
+
+    /** On the main thread: the plan's step, or the note - only while the page is still there. */
+    private fun start(context: Context, url: String, step: GateStep) {
+        if ((context as? android.app.Activity)?.isFinishing == true) return
+        try {
+            val pkg = when (step) {
+                GateStep.Map -> {
+                    val https = MapLinkForms.upgrade(url) ?: url
+                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(https)).setClass(context, MapLinkActivity::class.java))
+                    return
+                }
+                is GateStep.App -> step.pkg
+                is GateStep.Browser -> step.pkg
+                is GateStep.Note -> {
+                    if (step.refused) LoginWindow.refuse(context, url)
+                    null
+                }
+                GateStep.Nothing, GateStep.Login -> null
+            }
             if (pkg == null) {
                 cantOpen(context)
                 return
             }
+            // Code QA L4: an intent filter's scheme is lowercase ("HTTPS://" matches nothing).
+            val view = Intent(Intent.ACTION_VIEW, Uri.parse(url).normalizeScheme()).addCategory(Intent.CATEGORY_BROWSABLE)
             context.startActivity(view.setPackage(pkg).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         } catch (e: Exception) {
             Log.w("MessageLinks", "Couldn't open a link: ${e.javaClass.simpleName}")
@@ -126,37 +156,11 @@ object MessageLinks {
             .setPositiveButton(android.R.string.ok, null)
             .show()
     }
-
-    /** The one app that opens [view] ([messageLinkTarget]): Android's own answer first, then its other candidates,
-     * each only while not suspended. */
-    private fun handler(context: Context, view: Intent): String? {
-        val pm = context.packageManager
-        val flags = PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_DEFAULT_ONLY.toLong())
-        val usable = { info: ApplicationInfo -> info.flags and ApplicationInfo.FLAG_SUSPENDED == 0 && info.enabled }
-        val first = pm.resolveActivity(view, flags)?.activityInfo?.takeIf { usable(it.applicationInfo) }?.packageName
-        val rest = pm.queryIntentActivities(view, flags).map { it.activityInfo }.filter { usable(it.applicationInfo) }.map { it.packageName }
-        val policy = com.kidslauncher.mdm.server.currentPolicyDecision().policy
-        val allowlist = policy?.allowlist
-        val allowed = allowlist?.let { list ->
-            list.toSet() + setOfNotNull(
-                com.kidslauncher.mdm.logins.loginRolePackage(com.kidslauncher.mdm.logins.loginRoleOf(policy.loginBrowser, list)),
-                context.packageName,
-            )
-        }
-        val locked = com.kidslauncher.mdm.preferences.LauncherPreferences.mdm().lockReason() != com.kidslauncher.mdm.server.LockReason.NONE
-        return messageLinkTarget(listOfNotNull(first) + rest, allowed, locked)
-    }
 }
 
 /**
- * The one app a message's web link may open (code QA M1): the first of Android's [candidates] (its own answer first)
- * the parent allows - [allowed] is the policy's allowlist with the login browser and Vibb One, `null` on a phone
- * without one (nothing is restricted there) - never Android's chooser, Play services or its framework (never
- * restricted, so never allowed by the list's absence either), and nothing during a time rule ([locked]).
+ * The apps a message's web link may open (design 119 §5): the policy's allowlist and Vibb One - never the login
+ * browser, whatever its role (a message never opens Chrome) -, `null` on a phone without an allowlist (nothing is
+ * restricted there).
  */
-fun messageLinkTarget(candidates: List<String>, allowed: Set<String>?, locked: Boolean): String? =
-    if (locked) {
-        null
-    } else {
-        candidates.firstOrNull { it != "android" && it !in com.kidslauncher.mdm.play.PLAY_NEVER_RESTRICT && (allowed == null || it in allowed) }
-    }
+fun messageLinkAllowed(allowlist: List<String>?, ownPackage: String): Set<String>? = allowlist?.let { it.toSet() + ownPackage }

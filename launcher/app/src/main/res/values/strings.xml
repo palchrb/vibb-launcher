@@ -1004,6 +1004,7 @@
     <string name="setup_step_assistant">Digital assistant</string>
     <string name="setup_step_wifi_airplane">Wi-Fi in airplane mode</string>
     <string name="setup_step_call_filter">Call filter</string>
+    <string name="setup_step_vibb_browser">Browser app</string>
     <string name="setup_step_default_apps">Default apps</string>
     <string name="setup_step_map_play_links">Play services\' links</string>
     <string name="setup_step_map_vibb_links">Vibb One\'s links</string>
@@ -1025,6 +1026,7 @@
     <string name="setup_how_assistant">Choose Vibb One, then OK.</string>
     <string name="setup_how_wifi_airplane">Turn on Wi-Fi in the panel.</string>
     <string name="setup_how_call_filter">Choose Vibb One both times.</string>
+    <string name="setup_how_vibb_browser">Choose Vibb One.</string>
     <string name="setup_how_default_apps">Choose them back.</string>
     <string name="setup_how_map_play_links">Open by default: turn off Open supported links.</string>
     <string name="setup_how_map_vibb_links">Open by default: turn on Open supported links, and tick them all.</string>

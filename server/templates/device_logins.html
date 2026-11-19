@@ -71,6 +71,8 @@
 
     <section id="logins-apps" aria-labelledby="logins-apps-title">
         <h2 class="group-header" id="logins-apps-title">{{ self.t("logins.apps.header") }}</h2>
+        {#- Design 119: "Vibb One er ikke nettleser" - the setup step's one orange line; how to fix it is behind the ⓘ. -#}
+        {% for line in setup_warnings.at("logins-apps") %}{% include "partials/setup_warning.html" %}{% endfor %}
         <form method="post" action="/devices/{{ device.id }}/logins#logins-apps" class="group">
             <input type="hidden" name="section" value="apps">
             <label class="row">
@@ -100,7 +102,7 @@
         <div class="group-footer">{% if !apps_on %}{{ self.t("logins.apps.clear") }}{% endif %}
             <details class="info">
                 <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
-                <div class="info-panel"><p>{{ self.t("logins.apps.sub") }}</p></div>
+                <div class="info-panel"><p>{{ self.t("logins.apps.sub") }}</p>{% if role_missing %}<p data-role-fix>{{ self.t("logins.apps.role_fix") }}</p>{% endif %}</div>
             </details>
         </div>
     </section>
@@ -158,6 +160,30 @@
                 </div>
             </details>
         </div>
+        {#- Design 119 §7 (ASK 4): the hosts the phone's link gate stopped, each with "Legg til" (an own site, the same
+            save as the field above, back on #logins-sites). Nothing while empty; a choice, never a warning (L9). -#}
+        {% if !stopped.is_empty() %}
+        <h3 class="group-header">{{ self.t("logins.stopped.header") }}</h3>
+        <div class="group" data-stopped-list>
+            {% for host in stopped %}
+            <div class="row" data-stopped="{{ host }}">
+                <span class="row-label">{{ host }}</span>
+                <form method="post" action="/devices/{{ device.id }}/logins#logins-sites" class="row-end">
+                    <input type="hidden" name="section" value="site">
+                    <input type="hidden" name="action" value="add">
+                    <input type="hidden" name="entry" value="{{ host }}">
+                    <button type="submit" class="row-action" aria-label="{{ self.tp("logins.stopped.add_label", [("site", host.as_str())]) }}">{{ self.t("logins.stopped.add") }}</button>
+                </form>
+            </div>
+            {% endfor %}
+        </div>
+        <div class="group-footer">
+            <details class="info">
+                <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel"><p>{{ self.t("logins.stopped.note") }}</p></div>
+            </details>
+        </div>
+        {% endif %}
     </section>
 
     </div>

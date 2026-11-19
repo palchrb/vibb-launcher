@@ -15,7 +15,7 @@ enum class StepNeed { REQUIRED, OPTIONAL }
 enum class StepReadBy { PHONE, SERVER, PARENT }
 
 /** §2.3: when a step applies. */
-enum class StepWhen { ALWAYS, CALLS_MANAGED, WRITE_SETTINGS_USED, AIRPLANE, AIRPLANE_ROLE, ANDROID_LOCK, MAP_LINKS }
+enum class StepWhen { ALWAYS, CALLS_MANAGED, WRITE_SETTINGS_USED, AIRPLANE, AIRPLANE_ROLE, ANDROID_LOCK, MAP_LINKS, LINK_GATE }
 
 enum class StepSummary { COUNT, OWN_ROW }
 
@@ -108,6 +108,13 @@ enum class SetupStep(
         emptyList(), listOf("android.settings.MANAGE_DEFAULT_APPS_SETTINGS"),
         R.string.setup_step_default_apps, R.string.setup_how_default_apps,
     ),
+    // Design 119 §4.1: Vibb One as Android's browser while the link gate is on - the role request, its restriction
+    // lifted while the dialog is open (`logins/BrowserRoleStep`).
+    VIBB_BROWSER(
+        "vibb_browser", StepNeed.REQUIRED, StepReadBy.PHONE, StepWhen.LINK_GATE, StepSummary.COUNT, StepLevel.ACTION,
+        listOf("login_browser"), listOf("android.app.role.action.REQUEST_ROLE"),
+        R.string.setup_step_vibb_browser, R.string.setup_how_vibb_browser,
+    ),
     MAP_PLAY_LINKS(
         "map_play_links", StepNeed.REQUIRED, StepReadBy.PHONE, StepWhen.MAP_LINKS, StepSummary.COUNT, StepLevel.ACTION,
         listOf("map_links"), listOf("android.settings.APP_OPEN_BY_DEFAULT_SETTINGS"),
@@ -180,6 +187,8 @@ data class SetupInputs(
     val androidLock: Boolean,
     val mapLinksOn: Boolean,
     val mapAppInstalled: Boolean,
+    /** Design 119: the link gate is on (the report's `login_browser.browser_role` isn't `null`). */
+    val linkGate: Boolean = false,
 ) {
     companion object {
         val NONE = SetupInputs(0, "system", callsManaged = false, androidLock = false, mapLinksOn = false, mapAppInstalled = false)
@@ -196,6 +205,7 @@ fun setupApplies(step: SetupStep, inputs: SetupInputs, readings: Map<String, Boo
     StepWhen.AIRPLANE_ROLE -> inputs.mask and BIT_AIRPLANE != 0L && readings[SetupStep.ASSISTANT.key] == true
     StepWhen.ANDROID_LOCK -> inputs.androidLock
     StepWhen.MAP_LINKS -> inputs.mapLinksOn && inputs.mapAppInstalled
+    StepWhen.LINK_GATE -> inputs.linkGate
 }
 
 /**

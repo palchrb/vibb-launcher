@@ -124,15 +124,21 @@ class PageLookScanTest {
         // (PageManifestTest). The three classes that extend AppCompatActivity directly:
         val direct = sources.filterValues { Regex(""":\s*AppCompatActivity\(\)""").containsMatchIn(it) }.keys
         val root = "com/kidslauncher/mdm"
-        // Design 110: the map links' handler, whose only view is the kid's dialog.
-        assertEquals(setOf("$root/ui/UIObject.kt", "$root/lock/PinLockActivity.kt", "$root/calls/InCallActivity.kt", "$root/map/MapLinkActivity.kt"), direct.toSet())
+        // Design 110: the map links' handler, whose only view is the kid's dialog; design 119: the link gate, likewise.
+        assertEquals(
+            setOf(
+                "$root/ui/UIObject.kt", "$root/lock/PinLockActivity.kt", "$root/calls/InCallActivity.kt", "$root/map/MapLinkActivity.kt",
+                "$root/logins/LinkGateActivity.kt",
+            ),
+            direct.toSet(),
+        )
         fun attach(file: String): String {
             val body = sources.getValue(file).substringAfter("override fun attachBaseContext(newBase: Context) {", "").substringBefore("\n    }\n")
             assertTrue(file, body.isNotEmpty())
             assertTrue(file, body.indexOf("delegate.localNightMode = ") in 0 until body.indexOf("super.attachBaseContext(newBase)"))
             return body
         }
-        for (file in listOf("$root/lock/PinLockActivity.kt", "$root/calls/InCallActivity.kt", "$root/map/MapLinkActivity.kt")) {
+        for (file in listOf("$root/lock/PinLockActivity.kt", "$root/calls/InCallActivity.kt", "$root/map/MapLinkActivity.kt", "$root/logins/LinkGateActivity.kt")) {
             assertTrue(file, attach(file).contains("delegate.localNightMode = AppCompatDelegate.MODE_NIGHT_YES"))
         }
         // UIObjectActivity's constant is night; only the page base class says otherwise, and only pages extend it.

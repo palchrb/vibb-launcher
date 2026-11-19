@@ -1483,7 +1483,7 @@ async fn status_intake(
     let login_browser_json = report
         .login_browser
         .as_ref()
-        .and_then(crate::logins::clean_browser)
+        .and_then(|value| crate::logins::clean_browser(value, arrived_ms))
         .map(|value| value.to_string());
     // Design 107 §4: the Vibb One notification channels turned off, cleaned (the table's keys only, in its order).
     let notification_channels_json = report

@@ -38,10 +38,12 @@ fun smsRoleReturnTo(previous: String?, ownPackage: String, installed: Set<String
 
 /**
  * `DISALLOW_CONFIG_DEFAULT_APPS` while either of our roles is held for a channel we manage - so neither the kid nor
- * another app's role request takes the phone or SMS app away (task 14). Cleared before either role changes.
+ * another app's role request takes the phone or SMS app away (task 14). Cleared before either role changes. Design 119
+ * (M5): also while the link gate is on ([gateLock]: the gate on and no pause or override - the pause lifts the gate's
+ * reason, D4; the call and SMS reasons stay), so neither Chrome's own prompt nor Default apps takes the browser role.
  */
-fun lockDefaultAppsFor(callsManaged: Boolean, dialerHeld: Boolean, smsMode: ChannelMode?, smsRoleHeld: Boolean): Boolean =
-    (callsManaged && dialerHeld) || (smsMode == ChannelMode.MANAGED && smsRoleHeld)
+fun lockDefaultAppsFor(callsManaged: Boolean, dialerHeld: Boolean, smsMode: ChannelMode?, smsRoleHeld: Boolean, gateLock: Boolean = false): Boolean =
+    (callsManaged && dialerHeld) || (smsMode == ChannelMode.MANAGED && smsRoleHeld) || gateLock
 
 /** The SMS permissions every other app is denied in "Styrt av Vibb" (design 77 §2.5, §8.3): a message the engine
  * holds or blocks must not reach anyone else. */

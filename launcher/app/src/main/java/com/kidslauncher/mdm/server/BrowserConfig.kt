@@ -92,6 +92,8 @@ object BrowserConfig {
         // The role off (or another package) after its lockdown was in force: Chrome is hidden first - its tabs end -,
         // and only then is its bundle loosened (code QA L3); the plan then hides it or, ticked, unhides it.
         if (!roleOn && chromeInstalled && prefs.getString(KEY_WRITTEN, null) != null) {
+            // Design 119 §4.4: an open login window ends first (`rule`), its record gone before Chrome hides.
+            com.kidslauncher.mdm.logins.LoginWindow.eventNow(context, com.kidslauncher.mdm.logins.WindowEvent.RULE)
             try {
                 dpm.setApplicationHidden(admin, com.kidslauncher.mdm.logins.CHROME_PACKAGE, true)
             } catch (e: Exception) {
@@ -124,7 +126,9 @@ object BrowserConfig {
                     }
                     val old = prefs.getString(KEY_WRITTEN, null)?.let(::hostsOf)
                     if (com.kidslauncher.mdm.logins.chromeTightened(old, lockdown)) {
-                        // Hiding stops the package: an open tab of the looser phase ends (the plan unhides it).
+                        // Hiding stops the package: an open tab of the looser phase ends. Design 119: a login window
+                        // ends first (`tightened`); Chrome stays hidden until the next one.
+                        com.kidslauncher.mdm.logins.LoginWindow.eventNow(context, com.kidslauncher.mdm.logins.WindowEvent.TIGHTENED)
                         dpm.setApplicationHidden(admin, pkg, true)
                         Log.i(LOG_TAG, "Chrome's lockdown tightened: its tabs ended")
                     }
@@ -158,9 +162,18 @@ object BrowserConfig {
         role is com.kidslauncher.mdm.logins.LoginRole.On &&
             context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_STATE, null) == "on"
 
-    /** The report's `login_browser` (§6.2). */
+    /** The report's `login_browser` (§6.2; design 119 §7: `browser_role` - `null` while the link gate is off -, the
+     * reason `role` when the role is on but Vibb One isn't Android's browser (fail closed: no window opens), the
+     * stopped hosts and the last window). */
     fun report(context: Context): com.kidslauncher.mdm.portal.LoginBrowserReport {
         val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val browserRole = if (com.kidslauncher.mdm.logins.LinkGateRuntime.enabled(context)) {
+            com.kidslauncher.mdm.logins.LinkGateRuntime.roleHeld(context)
+        } else {
+            null
+        }
+        val stored = prefs.getString(KEY_STATE, "off") ?: "off"
+        val (state, reason) = com.kidslauncher.mdm.logins.reportedRoleState(stored, prefs.getString(KEY_REASON, null), browserRole)
         val version = try {
             context.packageManager.getPackageInfo(
                 com.kidslauncher.mdm.logins.CHROME_PACKAGE,
@@ -171,11 +184,15 @@ object BrowserConfig {
         }
         return com.kidslauncher.mdm.portal.LoginBrowserReport(
             packageName = com.kidslauncher.mdm.logins.CHROME_PACKAGE,
-            state = prefs.getString(KEY_STATE, "off") ?: "off",
+            state = state,
             versionName = version,
             writtenMs = prefs.getLong(KEY_WRITTEN_MS, 0L).takeIf { it > 0L },
-            reason = prefs.getString(KEY_REASON, null),
+            reason = reason,
             clearedMs = prefs.getLong(KEY_CLEARED_MS, 0L).takeIf { it > 0L },
+            browserRole = browserRole,
+            // Code QA L8: the stopped hosts only while the role is on - the PWA shows them only then.
+            refused = if (stored == "on") com.kidslauncher.mdm.logins.LoginWindow.refused(context) else emptyList(),
+            lastWindow = com.kidslauncher.mdm.logins.LoginWindow.lastWindow(context),
         )
     }
 

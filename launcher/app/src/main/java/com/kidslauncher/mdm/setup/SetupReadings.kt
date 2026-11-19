@@ -135,6 +135,8 @@ object SetupReadings {
         // `vibb_hosts`), so the server's reading of that report says the same.
         put("map_play_links", read { playLinksDone(MapLinksRuntime.holderLinksAllowed(context)) })
         put("map_vibb_links", read { vibbLinksDone(MapLinksRuntime.vibbHosts(context)) })
+        // Design 119: the report's `login_browser.browser_role`, as the server reads it.
+        put("vibb_browser", read { com.kidslauncher.mdm.logins.LinkGateRuntime.roleHeld(context) })
     }
 
     /** §2.3's inputs from [policy]; [SetupInputs.NONE] before the first one. */
@@ -148,6 +150,7 @@ object SetupReadings {
             androidLock = policy.kidLock?.keyguard == "android",
             mapLinksOn = mapLinksOn(policy),
             mapAppInstalled = mapAppInstalled(reportedPackages(context)),
+            linkGate = com.kidslauncher.mdm.logins.LinkGateRuntime.enabled(context),
         )
     }
 
