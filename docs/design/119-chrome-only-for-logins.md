@@ -11,19 +11,35 @@ was c3b03002e). It changes design 102 Part B (`docs/design/102-captive-portals-a
   which Chrome was made the default; hide-then-enable and the nudge (built as one kept flip of `logins.RoleNudge`, not
   an enable-and-disable pair: the hash is compared when the broadcast arrives); the `vibb_browser` dialog with the
   restriction lifted.
+  Passed on 14 and 16; the `vibb_browser` dialog not run.
 - [x] M2 - a plain `VIEW`, a session-less Custom Tab, AppAuth's `select`, `getPackageName(null)`, the per-package lookup
   finding an unverified Organic Maps.
+  Passed on 14 and 16.
 - [x] M3 - unhide, bind and session, the tab under lock task in the caller's task; tap-to-tab time; a `NEW_TASK` caller.
+  Passed on 14 and 16; a `NEW_TASK` caller's window ends by the grace (gate finding 6).
 - [ ] M4 - each end of §4.4 (Element X's MAS, an AppAuth sample, ✕, a for-result caller and an Auth Tab sample's relay,
   "Open in Chrome browser", a minimised tab, leaving for Meldinger and back within the minute); whether Chrome honours
   the tab's "Open in Chrome browser" off (code QA L5); an Auth Tab with an https redirect, expected
   `RESULT_VERIFICATION_FAILED` (code QA L6, §4.5).
+  - Passed on 14 and 16: `done`, AppAuth, ✕, `result`, the grace, `locked`, and `timeout` (14).
+  - Failed on 16 when Vibb's session wasn't bound within 2 s: no `left` (gate finding 2).
+  - Owed: Auth Tab and L6 (Chrome 137+), and L5 (neither Chrome shows the item).
 - [ ] M5 - a Play services passkey or account sheet over the tab does not end the window.
+  It doesn't end it, but the kiosk blocks the sheet, so a passkey login fails outside a pause (gate finding 3).
 - [x] M6 - Element X timeline links: `omaps.app`, a Google short link, `example.com`.
+  Passed on 14 and 16 (the probe's identical intent; the short link after map step 1).
 - [ ] M7 - a process kill of Vibb mid-window; a reboot with Chrome unhidden.
+  - The kill and the reboot's `stale` passed on 14 and 16.
+  - An unclean reboot within seconds of the unhide crashes the platform at boot: a boot loop on 14, one crash on 16
+    (gate finding 1).
 - [ ] §11's emulator gate, steps 1-7, on Android 14 and 16 (17 when an image is at hand).
+  - 1-4, 6 and 7 passed on 14 and 16.
+  - 5 partly: the handler only, not the window.
+  - Android 17 not run.
 - [ ] Code QA M1 - with the role on, Chrome unhidden in Play's nightly update window and hidden at the screen-on;
   `dumpsys role` still Vibb One's after it; Chrome's `version_name` in the report moves after a night.
+  - Passed on 14 (the clock set by root).
+  - Owed: `version_name` after a night, and 16.
 
 **Revision 2** applies the design QA (`docs/review/119-chrome-only-for-logins-design-qa.md` on `qa-119-design`,
 97de1dd37: 2 High, 5 Medium, 10 Low) and the user's answers (2026-11-19, §12). What changed:
