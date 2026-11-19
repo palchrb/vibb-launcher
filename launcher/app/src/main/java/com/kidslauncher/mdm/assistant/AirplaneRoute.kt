@@ -191,6 +191,8 @@ object AirplaneRoute {
         if (!running.compareAndSet(false, true)) return "busy"
         busy = "on"
         AirplaneRuntime.changed()
+        var streamHeld = false
+        var cameOn = false
         try {
             val now = System.currentTimeMillis()
             val plan = airplaneOnPlan(
@@ -208,12 +210,17 @@ object AirplaneRoute {
             }
             AirplaneRuntime.recordOnStart(context, now)
             AirplaneRuntime.recordError(context, null)
+            // Design 121 §4.4, step 2a: the stream closed first when airplane mode takes its network, so the server
+            // sees it go at once and step 2's report on the same connection is the last it hears ("Flymodus på siden").
+            streamHeld = com.kidslauncher.mdm.server.CommandListenerService.holdForAirplane(AirplaneRuntime.wifiKept(context))
             // Step 2: the parent's page says "Flymodus på", not "not heard from" - outside every lock, 5 s at most.
             val posted = try {
                 runBlocking { withTimeoutOrNull(REPORT_BUDGET_MS) { postReportOnly(context, airplaneGoingOn = true) } } == true
             } catch (e: Exception) {
                 false
             }
+            // Code QA H1: nothing else - no stream - rides the connection the radios are about to take.
+            if (streamHeld) com.kidslauncher.mdm.server.ServerClients.streamDropped()
             // Step 3.
             val component = resolveVoiceActivity(context)
             if (component == null) {
@@ -238,8 +245,12 @@ object AirplaneRoute {
                 return AirplaneError.TIMEOUT
             }
             recheckWifiKept(context.applicationContext, wifiBefore)
+            cameOn = true
             return AirplaneOn.GO
         } finally {
+            // On success the stream opens again only on another network (Wi-Fi kept, or after airplane mode); after a
+            // failure at once.
+            if (streamHeld) com.kidslauncher.mdm.server.CommandListenerService.releaseAirplaneHold(airplaneOn = cameOn)
             busy = null
             running.set(false)
             AirplaneRuntime.changed()

@@ -248,6 +248,14 @@ pub fn roaming_report(latest: &DeviceStatus) -> Option<RoamingReport> {
     serde_json::from_str(latest.data_roaming_json.as_deref()?).ok()
 }
 
+/// Design 121 §4.3: the phone said it is abroad (`where`), the parent's Roaming is Av (`off`, "Ingen data") and no pause
+/// lifts it - a quiet the parent chose, grey on the pages, never "No contact".
+pub fn abroad_no_data(abroad: &str, latest: &DeviceStatus, now_ms: i64) -> bool {
+    abroad_choice(abroad) == "off"
+        && roaming_report(latest).is_some_and(|r| r.where_is.as_deref() == Some("abroad"))
+        && !latest.paused_at(now_ms)
+}
+
 /// The latest report's `mobile_data`.
 pub fn mobile_report(latest: &DeviceStatus) -> Option<MobileReport> {
     serde_json::from_str(latest.mobile_data_json.as_deref()?).ok()

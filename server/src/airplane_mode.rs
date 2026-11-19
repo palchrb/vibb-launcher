@@ -172,19 +172,42 @@ pub fn report(latest: &DeviceStatus) -> Option<Report> {
 pub fn on_since(latest: &DeviceStatus, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
     let report = report(latest)?;
     let reported_at = crate::display_time::parse_db_utc(&latest.reported_at)?;
-    let at_ms = if report.on {
-        report
-            .periods
-            .iter()
-            .rev()
-            .find(|p| p.off_ms.is_none())
-            .map_or(reported_at.timestamp_millis(), |p| p.on_ms)
-    } else if report.going_on && (now - reported_at).num_milliseconds() < GOING_ON_MS {
-        reported_at.timestamp_millis()
-    } else {
+    if !report.on && !(report.going_on && (now - reported_at).num_milliseconds() < GOING_ON_MS) {
         return None;
-    };
-    DateTime::from_timestamp_millis(at_ms.min(now.timestamp_millis()))
+    }
+    DateTime::from_timestamp_millis(since_ms(&report, reported_at).min(now.timestamp_millis()))
+}
+
+/// A contact this long after the turn-on's report is still the report's own (its intake, the database's whole
+/// seconds): [held_since].
+pub const HELD_SLACK_MS: i64 = 10_000;
+
+/// Design 121 §4.3 (QA H2): Vibb's switch told the server before the radios went - the latest report says `going_on`
+/// or `on` - and nothing has reached the server since (`last_contact` at most [HELD_SLACK_MS] after the report). The
+/// phone is then in airplane mode for as long as that holds, all night if need be, unlike [on_since]'s 10 minutes
+/// for a phone that is in touch: since the open period's start, or the report's time. The caller checks that no
+/// stream is live (`phone_status::held`).
+pub fn held_since(latest: &DeviceStatus, last_contact: DateTime<Utc>) -> Option<DateTime<Utc>> {
+    let report = report(latest)?;
+    let reported_at = crate::display_time::parse_db_utc(&latest.reported_at)?;
+    if !(report.on || report.going_on)
+        || (last_contact - reported_at).num_milliseconds() > HELD_SLACK_MS
+    {
+        return None;
+    }
+    DateTime::from_timestamp_millis(
+        since_ms(&report, reported_at).min(reported_at.timestamp_millis()),
+    )
+}
+
+/// The open period's start while the report says `on` (the report's time without one), else the report's time.
+fn since_ms(report: &Report, reported_at: DateTime<Utc>) -> i64 {
+    report
+        .periods
+        .iter()
+        .rev()
+        .find(|p| report.on && p.off_ms.is_none())
+        .map_or(reported_at.timestamp_millis(), |p| p.on_ms)
 }
 
 /// One of the summary's Flymodus lines (§6.2): its words, the steps behind its ⓘ, and whether it is a warning.

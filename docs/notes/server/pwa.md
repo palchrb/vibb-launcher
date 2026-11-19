@@ -123,14 +123,20 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   "today" and backup time use it too. `parent_pin::when_text` is gone (step 10 moved its last callers).
 - **Connection** (`streams::connection_state`, pure; `devices::connection_of` feeds it): last contact = the newest
   of `limits::last_access`, `devices.last_seen_at` and an open stream's `since`. Online = a stream open and contact
-  <= `ONLINE_WINDOW_MINUTES` (60); Away = no stream and <= `AWAY_WINDOW_MINUTES` (45); else Offline; plus
-  Disconnected (enrolled, no token), Not seen yet, Not set up. The two windows come from the launcher's backstop
-  (`SyncSchedule.kt` 30/15 min, inexact alarms up to 1.75 x): a launcher change to the backstop must revisit them.
-  Right after a restart a phone shows Away, or Offline if its last report is over 45 min old, until its stream
-  reconnects: seconds after a clean stop, up to 5 min after a crash or power cut (no special case). The pages' dots
-  and lines read it through `phone_status::dot` since 2026-11-01 ("Off or out of touch says so" below): Away under
-  `NO_CONTACT_AFTER_MINUTES` (10) is green, after it orange "No contact"; About This Phone's Connection row keeps
-  the raw state's word and colour.
+  <= `ONLINE_WINDOW_MINUTES` (35 since design 121: the phone's backstop reports every 30 min); otherwise **reach**
+  (`streams::reach`, design 121 §4.3) - the later of the last contact and the stream's close when the close came
+  within 35 min of the contact (a later close is a holder dropping a dead phone, code QA H2), else the last contact -
+  and Away while reach <= `AWAY_WINDOW_MINUTES` (45; with the stream still counted open `OPEN_STREAM_AWAY_MINUTES`,
+  60, so a late backstop is orange, never grey), else Offline; plus Disconnected (enrolled, no token), Not seen yet, Not set up. Away is
+  green until `green_until`: `CLOSE_GRACE_MINUTES` (1) after reach (a reconnect within the minute never shows), at
+  least `RESTART_GRACE_MINUTES` (6) after a start for a phone with no stream since it whose last contact is at most
+  35 min older (phones reconnect within their 300 s read timeout after a crash); Offline stays 45 min after the
+  contact.
+  The windows come from the launcher's backstop (`SyncSchedule.kt` 30/15 min, inexact alarms): a launcher change to
+  the backstop must revisit them; a backstop Android delivers late shows "No contact" from 35 min until it lands. The
+  pages' dots and lines read it through `phone_status::dot` since 2026-11-01 ("Off or out of touch says so" below):
+  Away in its green minute is green, after it orange "No contact"; About This Phone's Connection row keeps the raw
+  state's word and colour (grey while held - below).
 - **Lock badge and screen time** (`src/time_state.rs`, from the last `time_state`): **the end ("until 14:30",
   "until 07:00 tomorrow") only when provably right** (the parent's rule): the phone reports its own zone
   (`time_state.zone`, the launcher's `ZoneId.systemDefault().id` since design 34 P13; none gets no end) and it is exactly Phone Setup's IANA name (another zone, an offset id, garbage or another case: no end;
@@ -1648,10 +1654,15 @@ man er inne på en device". Branch `pwa-fixes-b`.
   and `offs_now` compared the off's `happened_at` (the phone's clock) with the reports (the server's), so a phone
   clock behind or the report sent as it shut down hid the off. The user accepted the mockup ("Vibb status av og
   frakoblet").
-- **The rule** (`phone_status::dot`, `no_contact`, `NO_CONTACT_AFTER_MINUTES` = 10): turned off - grey at once,
-  "Turned off 20:35 · battery was 100 %"; online (stream open, `ONLINE_WINDOW_MINUTES`) or Away under 10 min -
-  green, the line as before ("Online" when the phone said nothing; a sleeping phone drops its stream for a moment,
-  not worth a word); Away 10-45 min (`AWAY_WINDOW_MINUTES`) - orange, the line leads with **"No contact · last seen
+- **The rule** (`phone_status::dot`, `no_contact`; design 121 moved the 10 min to `streams::reach`'s green minute):
+  turned off - grey at once, "Turned off 20:35 · battery was 100 %"; **a chosen quiet** (`phone_status::Held`,
+  design 121 §4.3) - grey, never "No contact", never pushed: Vibb's Flymodus switch said `going_on`/`on` and nothing
+  reached the server since (`airplane_mode::held_since`, 10 s slack, no live stream), "Airplane mode on since 21:03"
+  for as long as that holds, or abroad with Roaming Av (`mobile_network::abroad_no_data`, not paused) past the green
+  minute, "Abroad · no data" (nb "I utlandet · ingen data"); the list reads it with two small reads only for a phone
+  that isn't online (`devices::held_of`); online (stream open, `ONLINE_WINDOW_MINUTES`) or Away in its green minute -
+  green, the line as before ("Online" when the phone said nothing; a network change drops the stream for a moment,
+  not worth a word); Away past it up to 45 min (`AWAY_WINDOW_MINUTES`) - orange, the line leads with **"No contact · last seen
   20 min ago"** (nb "Ingen kontakt · sist sett for 20 min siden"; `data-no-contact` in `state-away`, then `data-seen`
   with the exact time in `title`) and then the rest of the row's line as before (the lock · the battery, the low
   battery · the screen time, the screen time · the battery); Offline (over 45 min) - grey, "Offline · last seen

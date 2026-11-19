@@ -925,6 +925,7 @@ mod tests {
             let connection = if away {
                 ConnectionState::Away {
                     last_contact: reported,
+                    green_until: reported,
                 }
             } else {
                 ConnectionState::Offline {
@@ -1011,7 +1012,10 @@ mod tests {
         ));
         assert!(!fresh(&report("Skole", "NONE", "x"), &online(now), now));
         // Away: fresh for 15 minutes after the report, then not; offline never.
-        let away = ConnectionState::Away { last_contact: now };
+        let away = ConnectionState::Away {
+            last_contact: now,
+            green_until: now,
+        };
         assert!(fresh(&today, &away, now - Duration::minutes(15)));
         assert!(!fresh(&today, &away, now - Duration::minutes(16)));
         let gone = ConnectionState::Offline { last_contact: now };

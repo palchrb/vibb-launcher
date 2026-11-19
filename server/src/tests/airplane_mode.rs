@@ -635,3 +635,48 @@ async fn the_emergency_call_says_it_turned_airplane_mode_off() {
     let later: Value = serde_json::from_str(&later[0]).unwrap();
     assert_eq!(later["airplane_off"], true, "{later}");
 }
+
+/// Design 121 §4.3 (QA H2): Vibb's switch said `going_on` before the radios went and nothing came since - grey "Airplane
+/// mode on since" on the Devices list and the summary, never "No contact", for as long as that holds; a stream opened
+/// since is the normal state.
+#[tokio::test]
+async fn flight_mode_through_vibb_is_grey_until_the_phone_is_heard_from() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("Emma").await;
+    let mut going = airplane(false, true, json!(false), json!([]));
+    going["going_on"] = json!(true);
+    report(&app, &token, going, json!({})).await;
+    // Past the restart grace: the stream closed before the report, as the launcher closes it.
+    app.state
+        .command_streams
+        .set_started(chrono::Utc::now() - chrono::Duration::hours(3));
+    drop(app.state.command_streams.open(id));
+    let list = app.get_page("/devices", &cookie).await.text();
+    assert!(list.contains("avatar-dot dot-offline"), "{list}");
+    assert!(list.contains("Airplane mode on since"), "{list}");
+    assert!(!list.contains("No contact"), "{list}");
+    let summary = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(summary.contains("state-dot dot-offline"), "{summary}");
+    assert_eq!(
+        summary.matches("Airplane mode on since").count(),
+        1,
+        "{summary}"
+    );
+    // About's Connection row says the quiet's word, grey (code QA L4).
+    let about = app
+        .get_page(&format!("/devices/{id}/about"), &cookie)
+        .await
+        .text();
+    assert!(
+        about.contains("<span class=\"state-offline\">Airplane mode</span>"),
+        "{about}"
+    );
+    // Heard from again (Wi-Fi kept): the normal state.
+    let _stream = app.state.command_streams.open(id);
+    let list = app.get_page("/devices", &cookie).await.text();
+    assert!(list.contains("avatar-dot dot-online"), "{list}");
+}

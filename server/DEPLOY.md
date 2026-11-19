@@ -225,6 +225,58 @@ buffering and no compression on it** - for nginx `proxy_buffering off; proxy_rea
 `SSE_KEEPALIVE_SECS` (5-240, default 240): each keepalive wakes the phone's radio, and the launcher reconnects after 300 s of
 silence. `SSE_KEEPALIVE_SECS=120` in `.env` shortens it.
 
+### Optional: fewer probes through a TCP proxy
+
+Nothing here is needed; it saves the phones data and battery, and frees a vanished phone's connection sooner (design 121
+§4.6). **Phones straight to the server on its tailnet address (`http://100.x.y.z:3101`) get no probes**; only the faster
+close below applies to them (on the server's host or container, or the host of the `tailscaled` that holds their
+connections with `tailscale serve` or userspace networking).
+
+A front built on Go's network code - Caddy, the caddy-l4 layer-4 proxy, Traefik - sends a TCP keepalive probe every
+15 s on every idle connection it accepts, and the phone's radio wakes to answer each: ~225 probes an hour, ~23 KB/h,
+**~0.56 MB a day per phone**, far more than the stream itself (~2 KB/h). nginx and HAProxy send none by default.
+
+**Find the box that holds the phones' TCP** (the one whose peers are the phones' addresses - carrier or tailnet -, not
+another proxy of yours): on it, `sudo ss -tnpo state established '( sport = :<port> )'` with the port the phones
+connect to (443 for a TLS front, 3101 for the tailnet address), twice, 5 s apart. `timer:(keepalive,Ns,0)` with N at
+most 15, starting over, is the probing. In a container, from its host: `sudo nsenter -t "$(docker inspect -f
+'{{.State.Pid}}' <name>)" -n ss -tnpo state established '( sport = :<port> )'` (the Caddy image has no `ss`); in a
+Proxmox LXC, `pct exec <id> -- ss -tnpo ...`.
+
+**caddy-l4 on a VPS in front of your own Caddy** (raw TCP forwarded with the PROXY protocol, TLS at home): caddy-l4 has
+no keepalive option toward the phones. Swap it for nginx's `stream` module (Debian/Ubuntu: `libnginx-mod-stream`), which
+sends no probes and keeps an idle connection 10 min by default (`proxy_timeout`), longer than the 240 s keepalive:
+
+```nginx
+stream {
+    server {
+        listen 443;                      # and [::]:443 if phones reach the VPS over IPv6
+        proxy_pass <home address>:<home port>;
+        proxy_protocol on;               # v1; Caddy's proxy_protocol listener wrapper reads v1 and v2
+    }
+}
+```
+
+If caddy-l4 also routes other names by SNI, nginx's `ssl_preread` does the same. HAProxy works too (`mode tcp`,
+`send-proxy-v2`, `timeout client 10m`, `timeout server 10m`, no `option clitcpka`).
+
+**Caddy itself accepting the phones' connections:** `keepalive_idle 5m` in the global `servers` block (not
+`keepalive_interval -1`, which may fall back to Go's 15 s).
+
+**A vanished phone, sooner (optional).** Without probes, a phone that vanishes without closing (lost coverage, a flat
+battery) keeps its connection open on the front until the kernel gives up retransmitting the next keepalive, 15-20 min
+later (on every setup, the direct tailnet one too); the PWA then leaves green after 35 min without contact at the latest. `net.ipv4.tcp_retries2 = 8` on the box that
+holds the phones' TCP gives up after ~100 s, so the dot leaves green a few minutes after the vanish. Set it where it
+lasts: a VM's `/etc/sysctl.d/90-vibb.conf` (then `sysctl --system`); a Docker container with its own network namespace
+`sysctls: [net.ipv4.tcp_retries2=8]` (refused with `network_mode: host`, where the host's value applies); a Proxmox
+unprivileged LXC `lxc.sysctl.net.ipv4.tcp_retries2: 8` in `/etc/pve/lxc/<id>.conf` on the host (a file inside the
+container is skipped at boot). Check it after a reboot. 8, not lower: a living phone rides out ~100 s of dead spot.
+
+**After the swap:** if the phones' streams start closing every few minutes on mobile data (`docker logs --since 12h
+<server> 2>&1 | grep -c "command stream closed"`, a night on Wi-Fi against one on mobile data), a carrier NAT drops
+mappings idle for under 240 s: add `so_keepalive=2m:15s:9` to nginx's `listen` (probes only in the keepalive's gaps,
+~1.5 KB/h), not a shorter `SSE_KEEPALIVE_SECS`.
+
 ### The phones' certificate check (design 76)
 
 Vibb One (with `server_pin_v1`) talks to this server over https only through a certificate chain from **Let's Encrypt

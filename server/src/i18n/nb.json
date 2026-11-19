@@ -489,6 +489,8 @@
   "devices.status.last_heard": "sist sett {at}",
   "devices.status.no_contact": "Ingen kontakt",
   "devices.status.last_heard_ago": "sist sett for {minutes} min siden",
+  "devices.status.abroad": "I utlandet",
+  "devices.status.no_data": "ingen data",
   "devices.status.off": "Slått av {at}",
   "devices.status.off_battery": "batteriet var {level} %",
   "devices.status.low_battery": "Lavt batteri, {level} %",
