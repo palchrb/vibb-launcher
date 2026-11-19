@@ -678,7 +678,7 @@ async fn the_push_budget() {
     assert!(!page.contains(&format!("id=\"held-{:032x}\"", 1)));
 }
 
-/// 2026-11-19: a decided row (released, expired, dropped) is kept 7 days, an undecided one 30; a phone that posts a
+/// 2026-11-19: a held row (decided or lapsed) is kept 7 days, a blocked one 30; a phone that posts a
 /// decided row again after it is gone brings it back past its window - never waiting, never on the card.
 #[tokio::test]
 async fn decided_held_rows_go_after_7_days() {
@@ -690,6 +690,7 @@ async fn decided_held_rows_go_after_7_days() {
         (2, 8, "held"),
         (3, 6, "released"),
         (4, 31, "held"),
+        (5, 8, "blocked"),
     ] {
         let at = now - days * 86_400_000;
         sqlx::query(
@@ -705,7 +706,7 @@ async fn decided_held_rows_go_after_7_days() {
         .await
         .unwrap();
     }
-    assert_eq!(crate::retention::prune(&app.db).await.sms_held, 2);
+    assert_eq!(crate::retention::prune(&app.db).await.sms_held, 3);
     let left: Vec<String> = sqlx::query_scalar(
         "SELECT held_id FROM device_sms_held WHERE device_id = ? ORDER BY held_id",
     )
@@ -713,7 +714,7 @@ async fn decided_held_rows_go_after_7_days() {
     .fetch_all(&app.db)
     .await
     .unwrap();
-    assert_eq!(left, [format!("{:032x}", 2), format!("{:032x}", 3)]);
+    assert_eq!(left, [format!("{:032x}", 3), format!("{:032x}", 5)]);
     // Posted again as held (its window over long ago): stored, but nothing waits and the card lists nothing.
     let mut again = held_row(1, "short", "2222", 8 * 24 * 60);
     again["expires_at"] = (now - 7 * 86_400_000).into();
@@ -1141,4 +1142,54 @@ async fn the_pools_and_the_findings() {
         .text();
     assert!(nb.contains("SMS-appen er ikke Vibb One - meldinger går tapt"));
     assert!(nb.contains("Ventelisten er full"));
+}
+
+/// QA M1/M3 (2026-11-19): a sender already let through is not waiting - not on the card, not in "Slett alle som
+/// venter" (the message the parent just allowed is never deleted), not in the phone page's count or the digest's.
+#[tokio::test]
+async fn an_allowed_sender_is_not_waiting_anywhere() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = managed_phone(&app).await;
+    contact(&app, id, "Mamma", "+4790000001", true).await;
+    post_held(
+        &app,
+        &token,
+        vec![
+            held_row(1, "number", "+4790000001", 5),
+            held_row(2, "number", "+4790000099", 4),
+        ],
+    )
+    .await;
+    let page = app
+        .get_page(&format!("/devices/{id}/calls"), &cookie)
+        .await
+        .text();
+    assert!(!page.contains(&format!("id=\"held-{:032x}\"", 1)));
+    assert!(page.contains("Delete the 1 message waiting?"), "{page}");
+    let now = Utc::now();
+    assert_eq!(
+        crate::parent_events::waiting_count(&app.db, crate::parent_events::Kind::SmsHeld, id, now)
+            .await
+            .unwrap(),
+        Some(1)
+    );
+    let device = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(device.contains("1 message waiting"), "{device}");
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/calls/held/drop-all"),
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    assert!(res.status.is_redirection());
+    assert_eq!(
+        app.policy(&token).await["call_policy"]["sms_held_drop"],
+        json!([format!("{:032x}", 2)])
+    );
 }

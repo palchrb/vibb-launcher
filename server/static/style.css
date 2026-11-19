@@ -2206,6 +2206,8 @@ th {
 .avatar-c4 { --avatar-bg: #C9B3DE; --avatar-text: #1B1B28; }
 .avatar-c5 { --avatar-bg: #E6AFB4; --avatar-text: #1B1B28; }
 .avatar-c-emergency { --avatar-bg: #3A1E24; --avatar-text: #FF8A8A; }
+/* The phone's red ring on an emergency number (the disc alone is near invisible on the dark scheme). */
+.avatar.avatar-c-emergency { box-shadow: 0 0 0 2px var(--avatar-text); font-size: 0.75rem; }
 
 .avatar-small {
     width: 36px;

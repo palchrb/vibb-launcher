@@ -127,6 +127,8 @@ struct ContactView {
     /// `/contact-photos/original/{hash}` there. `None` for a photo stored before it (the square is refined).
     original: Option<(String, String)>,
     initial: String,
+    /// The avatar's photo: never for an emergency number (the phone shows the number on its red disc).
+    avatar_photo: Option<String>,
     /// The placeholder avatar's colour class (`avatar-c0`..`avatar-c5`, `avatar-c-emergency`): the launcher's rule.
     tone: &'static str,
     /// D6: the row's value ("Anrop og meldinger", "Anrop inn") and its second line ("Melding inn · Hjem").
@@ -792,7 +794,12 @@ async fn load_page(
                 &default_country_code,
             );
             let mut view = ContactView {
-                initial: initial_of(&c.name),
+                initial: if texts_in_refused {
+                    c.phone_number.clone()
+                } else {
+                    initial_of(&c.name)
+                },
+                avatar_photo: c.photo_hash.clone().filter(|_| !texts_in_refused),
                 tone: avatar_tone(c.contact_id, texts_in_refused),
                 id: c.contact_id,
                 summary: String::new(),
@@ -2224,14 +2231,17 @@ pub async fn add_contact(
         // parent ticked "Bruk Matrix-ID-en" (R2-M1), and then the Message button opens Element X with it (design 80
         // M6).
         crate::handlers::contact_requests::mark_added(&mut tx, id, &number, request).await?;
-        // A typed Matrix ID wins over the request's suggestion; the Message button the parent chose wins over
-        // "Element X" for a Matrix ID.
+        // A typed Matrix ID wins over the request's suggestion (ticked "Bruk Matrix-ID-en" or not).
         let message_address = typed_address.map(str::to_string).or_else(|| {
             from_request
                 .and_then(|r| r.matrix_id)
                 .filter(|_| form.contains_key("use_matrix"))
         });
-        let message_app = typed_app.or(message_address.as_ref().map(|_| "element"));
+        // As the edit form: the Message button is what the parent chose (none: the phone's default); only the kid's
+        // request's Matrix ID, taken with its switch, sets Element X.
+        let message_app = typed_app.or_else(|| {
+            (typed_address.is_none() && message_address.is_some()).then_some("element")
+        });
         let added = sqlx::query(
             "INSERT OR IGNORE INTO device_contacts (device_id, contact_id, sort_order, allow_inbound, \
              allow_outbound, show_on_home, sms_in, sms_out, mms, message_address, message_app) \

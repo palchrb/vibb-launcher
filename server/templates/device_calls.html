@@ -23,7 +23,8 @@
     {% endfor %}
 
     {#- Design 77 D16: "Meldinger som venter" at the top while it has rows - who and when, never what; each row
-        anchored #held-<id> (its forms return there; a row no longer waiting lands on #held's notice). The sender is
+        anchored #held-<id>; only rows still waiting are listed (a decided row has left the page), so its forms return to
+        #held, and a row no longer waiting lands on #held's notice. The sender is
         labelled by its type; "Opprett kontakt…" is a link to Add Contact with the number (encoded by the server,
         escaped here), only "Kontakten kan sende melding til" on. "Tillat avsendernavnet" sits behind its confirm,
         which says D17's warning. The section is always there (an empty #held to land on), its words only with rows. -#}
@@ -38,7 +39,7 @@
             {% for row in sms.held %}
             <div class="cell" id="held-{{ row.id }}" data-held="{{ row.id }}">
                 <div class="row">
-                    <span class="row-label">{{ row.label }}<span class="row-sub">{{ row.kind }} · {{ row.when }}</span><span class="row-sub{% if !row.done %} tone-orange{% endif %}">{{ row.status }}</span>{% if let Some(reason) = row.reason %}<span class="row-sub">{{ reason }}</span>{% endif %}</span>
+                    <span class="row-label">{{ row.label }}<span class="row-sub">{{ row.kind }} · {{ row.when }}</span><span class="row-sub tone-orange">{{ row.status }}</span>{% if let Some(reason) = row.reason %}<span class="row-sub">{{ reason }}</span>{% endif %}</span>
                 </div>
                 <div class="held-body">
                     {% if let Some(number) = row.create_number %}
@@ -59,7 +60,6 @@
                         </form>
                     </details>
                     {% endif %}
-                    {% if row.can_drop %}
                     {#- Code QA L1: deleting can't be undone, so it sits behind a confirm like every delete. -#}
                     <details class="confirm cell">
                         <summary class="row row-danger" data-held-action="drop">{{ self.t("device.sms.held.drop") }}&hellip;</summary>
@@ -69,7 +69,6 @@
                             {% include "partials/confirm_cancel.html" %}
                         </form>
                     </details>
-                    {% endif %}
                 </div>
             </div>
             {% endfor %}
@@ -161,8 +160,8 @@
         {% endif %}
     </section>
 
-    {#- Design 77 §14: the kid's requests for a new contact, each row #request-<id> (its forms return there; one no
-        longer open lands on #requests' notice): the name and number the server checked, the number's kind, the kid's
+    {#- Design 77 §14: the kid's requests for a new contact, each open row #request-<id> (only open ones are listed; "Avslå" returns to #requests, and one no
+        longer open lands on its notice): the name and number the server checked, the number's kind, the kid's
         Matrix ID as a suggestion. "Legg til…" opens Add Contact prefilled from the stored request (§14's switches,
         "Bruk Matrix-ID-en" unticked); nothing is added by the request itself. Always there (an empty #requests to
         land on), its words only with rows. -#}
@@ -177,9 +176,8 @@
             {% for row in requests %}
             <div class="cell" id="request-{{ row.id }}" data-request="{{ row.id }}">
                 <div class="row">
-                    <span class="row-label">{{ row.name }}<span class="row-sub">{{ row.number }} · {{ row.when }}</span>{% if let Some(mark) = row.mark %}<span class="row-sub tone-orange">{{ mark }}</span>{% endif %}{% if let Some(matrix) = row.matrix_id %}<span class="row-sub">{{ self.tp("device.requests.matrix", [("id", matrix.as_str())]) }}</span>{% endif %}{% if let Some(status) = row.status %}<span class="row-sub">{{ status }}</span>{% endif %}</span>
+                    <span class="row-label">{{ row.name }}<span class="row-sub">{{ row.number }} · {{ row.when }}</span>{% if let Some(mark) = row.mark %}<span class="row-sub tone-orange">{{ mark }}</span>{% endif %}{% if let Some(matrix) = row.matrix_id %}<span class="row-sub">{{ self.tp("device.requests.matrix", [("id", matrix.as_str())]) }}</span>{% endif %}</span>
                 </div>
-                {% if row.open %}
                 <div class="held-body">
                     {% if row.can_add %}
                     <a class="row row-button" href="/devices/{{ device.id }}/calls?request={{ row.id }}#add-contact" data-request-action="add">{{ self.t("device.requests.add") }}&hellip;</a>
@@ -188,7 +186,6 @@
                         <button type="submit" class="row row-button row-danger" data-request-action="decline">{{ self.t("device.requests.decline") }}</button>
                     </form>
                 </div>
-                {% endif %}
             </div>
             {% endfor %}
         </div>
@@ -271,7 +268,7 @@
             <div class="cell" id="contact-{{ contact.id }}" data-contact="{{ contact.id }}">
                 <details class="edit"{% if contact.open %} open{% endif %}>
                     <summary class="row">
-                        {% if let Some(photo) = contact.photo %}
+                        {% if let Some(photo) = contact.avatar_photo %}
                         <img class="avatar avatar-small avatar-photo" src="/contact-photos/{{ photo }}" alt="" width="36" height="36">
                         {% else %}
                         <span class="avatar avatar-small {{ contact.tone }}" aria-hidden="true">{{ contact.initial }}</span>
