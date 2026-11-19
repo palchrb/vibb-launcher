@@ -2,6 +2,7 @@ package com.kidslauncher.mdm.calls
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.graphics.BitmapFactory
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -12,8 +13,11 @@ import com.kidslauncher.mdm.server.dto.CallPolicy
 import com.kidslauncher.mdm.server.dto.ContactRequestAnswer
 import com.kidslauncher.mdm.server.dto.ContactRequestBody
 import com.kidslauncher.mdm.server.dto.PolicyContactRequest
+import com.kidslauncher.mdm.sms.parse.PictureEncoder
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.File
 import java.security.SecureRandom
 import java.util.concurrent.CopyOnWriteArraySet
@@ -23,7 +27,8 @@ import java.util.concurrent.CopyOnWriteArraySet
  * parents to add someone - a name, a number and maybe a Matrix ID. The phone only asks: nothing here calls, texts or
  * opens anything, and nothing is added on the phone; a parent adds the contact in the PWA, and it arrives with the
  * policy like any other. The pure rules - the form's check, the server's answer, what the policy says, what the phone
- * book shows - and the glue that keeps the requests in prefs and uploads them with the sync.
+ * book shows - and the glue that keeps the requests in prefs and uploads them with the sync. Since Calls & Contacts
+ * tidied (6) an accepted request's picture follows on its own route ([CONTACT_REQUEST_PHOTO_PATH]), once.
  */
 
 /** A name's length after cleaning (the server's `contact_requests::NAME_MAX`). */
@@ -34,6 +39,15 @@ const val CONTACT_REQUESTS_OPEN_MAX = 5
 
 /** A request is kept this long on the phone, as the policy carries it (§14). */
 const val CONTACT_REQUEST_KEEP_MS = 7 * 24 * 60 * 60_000L
+
+/** The request picture's route (`contact_request.json`'s `photo.route`, without its leading slash). */
+const val CONTACT_REQUEST_PHOTO_PATH = "api/devices/contact-request/{id}/photo"
+
+/** The request's picture goes at most this many pixels a side (`photo.send_px`) ... */
+const val CONTACT_REQUEST_PHOTO_PX = 256
+
+/** ... and at most this many bytes (`photo.max_bytes`, the server's `PHOTO_MAX_BYTES`). */
+const val CONTACT_REQUEST_PHOTO_MAX_BYTES = 64 * 1024
 
 /** Where a request stands on the phone. */
 @Serializable
@@ -67,9 +81,12 @@ data class ContactRequestRecord(
     val askedAtMs: Long,
     val phase: ContactRequestPhase = ContactRequestPhase.PENDING,
     val shown: Boolean = false,
-    /** Design 79 §5.5: the kid gave the request a picture (`filesDir/contact_request_photos/<id>.jpg`, on the phone
-     * only - never in [body]). */
+    /** Design 79 §5.5: the kid gave the request a picture (`filesDir/contact_request_photos/<id>.jpg`; never in
+     * [body] - a small copy follows on its own route once the server accepted the request). */
     val photo: Boolean = false,
+    /** Calls & Contacts tidied (6): the picture's upload is done - the server stored it, refused it, or there was none
+     * to send. Never again for this request. */
+    val photoSent: Boolean = false,
 ) {
     /** Still waiting: the kid sees "Venter på svar". */
     val open: Boolean get() = phase == ContactRequestPhase.PENDING || phase == ContactRequestPhase.ASKED
@@ -241,6 +258,34 @@ fun recordsAfterUpload(
     if (it.id == sentId && it.phase == ContactRequestPhase.PENDING) afterContactRequestAnswer(it, verdict) else it
 }
 
+/** What the phone does after the picture's upload answered HTTP [code] (`null` = no answer; `photo.phone_answers`). */
+enum class PhotoUploadAction {
+    /** Stored, or refused for good (a second upload, a request no longer open, too big, not a picture, an old server's
+     * 404): never sent again. */
+    DONE,
+
+    /** 401, 408, 429, 5xx, no answer: sent again with the next sync while the request waits. */
+    RETRY,
+}
+
+/** [PhotoUploadAction] for HTTP [code], as the request's own retry ([contactRequestAnswer]). */
+fun contactRequestPhotoAction(code: Int?): PhotoUploadAction = when {
+    code == null || code == 401 || code == 408 || code == 429 || code >= 500 -> PhotoUploadAction.RETRY
+    else -> PhotoUploadAction.DONE
+}
+
+/** The requests whose picture goes now: accepted by the server (ASKED), with a picture, not sent yet. */
+fun requestPhotosToSend(records: List<ContactRequestRecord>): List<ContactRequestRecord> =
+    records.filter { it.phase == ContactRequestPhase.ASKED && it.photo && !it.photoSent }
+
+/** [records] after the picture of [sentId] was answered with [action]: DONE marks it sent, RETRY changes nothing. */
+fun recordsAfterPhotoUpload(
+    records: List<ContactRequestRecord>,
+    sentId: String,
+    action: PhotoUploadAction,
+): List<ContactRequestRecord> =
+    if (action == PhotoUploadAction.RETRY) records else records.map { if (it.id == sentId) it.copy(photoSent = true) else it }
+
 /** Whether the upload sends the next PENDING request after [verdict]: not after a RETRY (the server or the network is
  * having trouble; the next sync tries again). */
 fun uploadGoesOn(verdict: ContactRequestVerdict): Boolean = verdict != ContactRequestVerdict.RETRY
@@ -284,6 +329,7 @@ private const val RECORDS_KEY = "records_v1"
 private const val PHOTO_DIR = "contact_request_photos"
 private const val DRAFT_DIR = "request_photo_draft"
 private val RECORDS = ListSerializer(ContactRequestRecord.serializer())
+private val JPEG = "image/jpeg".toMediaType()
 
 /** The Android side: the requests in prefs (credential-encrypted: names and numbers), the upload with the sync, the
  * policy's answers, and the phone book's listeners. */
@@ -417,6 +463,52 @@ object ContactRequests {
             Log.i(LOG_TAG, "Contact request: $verdict${code?.let { " (HTTP $it)" } ?: ""}")
             if (!uploadGoesOn(verdict)) return
             update(context) { records -> recordsAfterUpload(records, record.id, verdict) }
+        }
+        uploadPhotos(context, api)
+    }
+
+    /**
+     * Calls & Contacts tidied (6): each accepted request's picture ([requestPhotosToSend]), once - the kid's own square
+     * (design 79 §5.5, encoded by this process) shrunk to [CONTACT_REQUEST_PHOTO_PX] under
+     * [CONTACT_REQUEST_PHOTO_MAX_BYTES] and posted as `image/jpeg`; [contactRequestPhotoAction] decides. A picture that
+     * is gone or can't be shrunk under the limit is done without a post. A RETRY ends the pass (the next sync tries
+     * again while the request waits).
+     */
+    private suspend fun uploadPhotos(context: Context, api: MdmApi) {
+        for (record in requestPhotosToSend(records(context))) {
+            val jpeg = requestPhotoJpeg(File(photoDir(context), "${record.id}.jpg"))
+            val action = if (jpeg == null) {
+                PhotoUploadAction.DONE
+            } else {
+                var code: Int? = null
+                try {
+                    code = api.uploadContactRequestPhoto(record.id, jpeg.toRequestBody(JPEG)).code()
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w(LOG_TAG, "A request's picture didn't get through: ${e.javaClass.simpleName}")
+                }
+                Log.i(LOG_TAG, "Contact request picture: ${code?.let { "HTTP $it" } ?: "no answer"}")
+                contactRequestPhotoAction(code)
+            }
+            if (action == PhotoUploadAction.RETRY) return
+            update(context) { records -> recordsAfterPhotoUpload(records, record.id, action) }
+        }
+    }
+
+    /** The request's picture as it goes: `null` when there is none or it doesn't fit. */
+    private fun requestPhotoJpeg(file: File): ByteArray? {
+        if (!file.isFile) return null
+        val decoded = try {
+            BitmapFactory.decodeFile(file.path)
+        } catch (e: Exception) {
+            null
+        }
+        val bitmap = decoded ?: return null
+        return try {
+            PictureEncoder.forRequest(bitmap)?.bytes
+        } finally {
+            bitmap.recycle()
         }
     }
 }

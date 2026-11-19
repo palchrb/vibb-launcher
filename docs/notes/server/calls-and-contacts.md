@@ -254,13 +254,28 @@ parent decides on the Calls page. It follows design r13's time request.
     open request too.
   - **"Avslå"** (`decline`): `declined`, the event read for every parent, back to `#requests`; a row no longer open lands
     on `?notice=request_gone#requests`.
-- **Not built yet** (the user, 2026-11-09): the kid's side follows design 79 (the phone book as a list, with a photo
-  the kid picks or takes), and the PWA's contact form design 80 (fewer switches, "Avansert"), which will restyle the
-  card and the prefilled Add Contact. **A photo fits without breaking the API:** the intake ignores unknown keys, so
-  the body can gain an optional `photo` (the SHA-256 of a picture the phone first uploads on a route of its own, e.g.
-  `POST /api/devices/contact-request/photo`, re-encoded and size-checked like a contact photo), a nullable
-  `device_contact_requests.photo_hash` column, and "Legg til…" offering it as the contact's photo behind its own
-  switch, as the Matrix ID. The 1 KiB body limit is untouched.
+- **The request's picture** (Calls & Contacts tidied (6), the user 2026-11-19: "Ja, send bildet med (anbefalt)";
+  migration 0160; `contact_request.json`'s `photo`). The picture the kid gave the request on the phone (design 79 §5.5)
+  follows it once the request is accepted, on its own route, so the 1 KiB body is untouched:
+  - **The upload** `POST /api/devices/contact-request/{id}/photo` (`upload_photo`, in `device_routes`, so both listeners
+    take it - a phone straight to `tailnetIP:port` too): raw `image/jpeg` or `image/png`, at most 64 KiB
+    (`PHOTO_MAX_BYTES`), at most 512 px a side read from the header before decoding (`photos::REQUEST_PHOTO_MAX_SIDE`;
+    the phone sends 256). 204 stored; 400 a bad id; 415 another type; 413 too large; 409 no live request of this phone
+    with that id, or one with a picture already (a second upload, a retry after a lost answer); 422 not a picture or too
+    many pixels; 500 the phone retries. Stored exactly as a parent's contact photo (`photos::process_request_photo`:
+    `process_contact` at cover - decoded and re-encoded, no metadata, the square and the kept original), the files and
+    `device_contact_requests.photo_hash`/`photo_original_hash`/`photo_view` under the contact photos' lock. The
+    contact photo stores name these columns too (`CONTACT_PHOTOS`/`CONTACT_ORIGINALS` `referenced_sql` and
+    `forget_sql`), so a prune keeps a waiting request's files and backups carry them.
+  - **The card** shows it in the request's avatar (`/contact-photos/{hash}`; without one the name's letter on a palette
+    tone by the id); **"Legg til…"** shows "Bilde fra Anna" with it, unless the number is a family contact already.
+  - **The save** gives it to the new contact - the three columns copied in Add Contact's transaction, before
+    `mark_added` forgets them on the request - only when the number was new to the family: an existing family contact
+    keeps its own photo (or none), as its name (QA M1), so the kid's picture never reaches the other phones. The
+    contact's photo is then a parent's upload in every way (Adjust crop works, the phone gets the square).
+  - **Dropped** on every decision (`decline`, `mark_added` from any Add Contact or "Add from the family", both followed
+    by `photos::prune`) and when a request lapses (7 days from the ask: `retention::prune` clears the columns,
+    `Pruned::contact_request_photos`, and the hourly pass prunes the files); a deleted phone's rows cascade.
 - **The code QA's fix round** (`docs/review/qa-contact-request.md`):
   - **A live request** (H1) is `state = 'open' AND asked_at > live_since(now)` (7 days from the kid's ask: `asked_at`
     is clamped to the server's now and refused past 7 days at intake, so this is exactly when the phone drops its

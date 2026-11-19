@@ -172,10 +172,16 @@
         <div class="group"><p class="flash flash-error" role="status" data-flash="requests">{{ text }}</p></div>
         {% endif %}
         {% if !requests.is_empty() %}
-        <div class="group">
+        <div class="group group-avatars group-small">
             {% for row in requests %}
             <div class="cell" id="request-{{ row.id }}" data-request="{{ row.id }}">
                 <div class="row">
+                    {#- Calls & Contacts tidied (6): the picture the kid gave the request, else its letter. -#}
+                    {% if let Some(photo) = row.photo %}
+                    <img class="avatar avatar-small avatar-photo" src="/contact-photos/{{ photo }}" alt="" width="36" height="36" data-request-photo>
+                    {% else %}
+                    <span class="avatar avatar-small {{ row.tone }}" aria-hidden="true">{{ row.initial }}</span>
+                    {% endif %}
                     <span class="row-label">{{ row.name }}<span class="row-sub">{{ row.number }} · {{ row.when }}</span>{% if let Some(mark) = row.mark %}<span class="row-sub tone-orange">{{ mark }}</span>{% endif %}{% if let Some(matrix) = row.matrix_id %}<span class="row-sub">{{ self.tp("device.requests.matrix", [("id", matrix.as_str())]) }}</span>{% endif %}</span>
                 </div>
                 <div class="held-body">
@@ -446,6 +452,14 @@
                             the Message button opens Element X with it (design 80 M6). -#}
                         {% if let Some(request) = add_request %}
                         <input type="hidden" name="request" value="{{ request.id }}">
+                        {#- Calls & Contacts tidied (6): the request's picture becomes the new contact's photo; a number the
+                            family has already keeps its contact's own (as its name, QA M1), so then it isn't shown. -#}
+                        {% if let Some(photo) = request.photo %}{% if add_kept.is_none() %}
+                        <div class="row" data-request-photo-row>
+                            <img class="avatar avatar-small avatar-photo" src="/contact-photos/{{ photo }}" alt="" width="36" height="36">
+                            <span class="row-label">{{ self.tp("device.requests.photo", [("name", device.name.as_str())]) }}</span>
+                        </div>
+                        {% endif %}{% endif %}
                         {% if let Some(matrix) = request.matrix_id %}
                         <label class="row" data-use-matrix>
                             <span class="row-label">{{ self.t("device.requests.use_matrix") }}<span class="row-sub">{{ self.tp("device.requests.matrix_hint", [("name", device.name.as_str()), ("id", matrix.as_str())]) }}</span></span>

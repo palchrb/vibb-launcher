@@ -162,7 +162,7 @@ pub(crate) fn avatar_tone(contact_id: i64, emergency: bool) -> &'static str {
 }
 
 /// First letter of a name, upper-cased, for the placeholder avatar.
-fn initial_of(name: &str) -> String {
+pub(crate) fn initial_of(name: &str) -> String {
     name.trim()
         .chars()
         .next()
@@ -2212,12 +2212,17 @@ pub async fn add_contact(
             None => None,
         };
         // QA M1: from a kid's request an existing family contact keeps its name - the kid's words never rename it on
-        // the other phones (a photo later follows the same rule). Otherwise the name is the parent's, as before.
+        // the other phones, and its picture never reaches them either. Otherwise the name is the parent's, as before.
         let rename = if from_request.is_some() {
             "name = contacts.name"
         } else {
             "name = excluded.name"
         };
+        let new_to_family: bool =
+            sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM contacts WHERE phone_number = ?)")
+                .bind(&number)
+                .fetch_one(&mut *tx)
+                .await?;
         let contact_id: i64 = sqlx::query_scalar(&format!(
             "INSERT INTO contacts (name, phone_number) VALUES (?, ?) \
              ON CONFLICT(phone_number) DO UPDATE SET {rename} RETURNING id"
@@ -2226,6 +2231,25 @@ pub async fn add_contact(
         .bind(&number)
         .fetch_one(&mut *tx)
         .await?;
+        // Calls & Contacts tidied (6): the request's picture becomes a new contact's photo, as if the parent had
+        // uploaded it (the square, the kept original and its view - the files are the request's already). Copied
+        // before `mark_added` forgets it on the request, in one transaction, so a prune always sees it named.
+        if let Some((hash, original, view)) = from_request
+            .as_ref()
+            .and_then(|r| r.photo.as_ref())
+            .filter(|_| new_to_family)
+        {
+            sqlx::query(
+                "UPDATE contacts SET photo_hash = ?, photo_original_hash = ?, photo_view = ? \
+                 WHERE id = ? AND photo_hash IS NULL",
+            )
+            .bind(hash)
+            .bind(original)
+            .bind(view)
+            .bind(contact_id)
+            .execute(&mut *tx)
+            .await?;
+        }
         let [inbound, outbound, home, sms_in, sms_out, mms] = switches;
         // The number's live requests (and "Legg til…"'s own) are added; the kid's Matrix ID is saved only when the
         // parent ticked "Bruk Matrix-ID-en" (R2-M1), and then the Message button opens Element X with it (design 80
@@ -2273,6 +2297,8 @@ pub async fn add_contact(
             if added {
                 contact_added_event(state, id, &admin, contact_id).await;
             }
+            // An answered request's picture no contact took goes.
+            photos::prune(state).await;
             saved(
                 state,
                 id,
@@ -2376,6 +2402,8 @@ async fn add_family_contact(
         }
         Ok((true, true, true)) => {
             contact_added_event(state, id, admin, contact_id).await;
+            // An answered request's picture goes (the family contact keeps its own photo).
+            photos::prune(state).await;
             saved(
                 state,
                 id,

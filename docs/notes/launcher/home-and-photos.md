@@ -49,6 +49,8 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   renamed to `filesDir/contact_request_photos/<request id>.jpg` at Send (strays swept at the phone book's first resume, `draftsToSweep`: never the form's, never one younger than an hour); shown on the "Venter på svar" row; handed to
   the contact that arrives in the phone book unless the kid set one already (`reconcileContactRequests`' hand-overs,
   `KidContactPhotos.adopt`), deleted on every other outcome (only an open request keeps one, `requestPhotosToKeep`).
+  Since Calls & Contacts tidied (6) a copy of at most 256 px and 64 KiB goes to the server once the request is
+  accepted (`docs/notes/launcher/calls.md`, "The kid's contact request").
 - **List-sized photos** (§3.7, QA N8): the rows, Home's contacts and the glance rows take a copy at most 160 px
   (`ContactPhotos.cached(.., thumb = true)`, key `<hash>@160`); the card and the call screen the full square.
 

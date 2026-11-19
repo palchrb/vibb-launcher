@@ -96,10 +96,14 @@ pub struct Store {
 pub static CONTACT_PHOTOS: Store = Store {
     what: "contact photo",
     lock: &FILES,
-    referenced_sql: "SELECT DISTINCT photo_hash FROM contacts WHERE photo_hash IS NOT NULL",
+    // A kid's open contact request names its picture too (migration 0160) until a decision copies or clears it.
+    referenced_sql: "SELECT photo_hash FROM contacts WHERE photo_hash IS NOT NULL \
+                     UNION SELECT photo_hash FROM device_contact_requests WHERE photo_hash IS NOT NULL",
     // The original and its view go with the square: no Adjust crop without a photo.
     forget_sql: &[
         "UPDATE contacts SET photo_hash = NULL, photo_original_hash = NULL, photo_view = NULL \
+         WHERE photo_hash = ?",
+        "UPDATE device_contact_requests SET photo_hash = NULL, photo_original_hash = NULL, photo_view = NULL \
          WHERE photo_hash = ?",
     ],
     zip_prefix: "contact_photos",
@@ -113,10 +117,14 @@ pub static CONTACT_PHOTOS: Store = Store {
 pub static CONTACT_ORIGINALS: Store = Store {
     what: "contact photo original",
     lock: &FILES,
-    referenced_sql: "SELECT DISTINCT photo_original_hash FROM contacts \
+    referenced_sql: "SELECT photo_original_hash FROM contacts WHERE photo_original_hash IS NOT NULL \
+                     UNION SELECT photo_original_hash FROM device_contact_requests \
                      WHERE photo_original_hash IS NOT NULL",
     forget_sql: &[
         "UPDATE contacts SET photo_original_hash = NULL, photo_view = NULL \
+         WHERE photo_original_hash = ?",
+        // A request's picture is all three or none: a lost original drops it whole.
+        "UPDATE device_contact_requests SET photo_hash = NULL, photo_original_hash = NULL, photo_view = NULL \
          WHERE photo_original_hash = ?",
     ],
     zip_prefix: "contact_photo_originals",
@@ -603,6 +611,40 @@ pub async fn process_contact_limited(
 ) -> Result<ContactPhoto, ContactPhotoError> {
     let _permit = PROCESSING.acquire().await.expect("semaphore never closed");
     tokio::task::spawn_blocking(move || process_contact(&bytes, view.as_ref()))
+        .await
+        .unwrap_or_else(|err| {
+            tracing::error!(%err, "photo processing task failed");
+            Err(ContactPhotoError::Photo(PhotoError::Undecodable))
+        })
+}
+
+/// A picture a phone sends with the kid's contact request (`contact_requests::upload_photo`): at most this many pixels
+/// a side, read from its header before anything is decoded (the phone sends at most 256).
+pub const REQUEST_PHOTO_MAX_SIDE: u32 = 512;
+
+/// A kid's request picture as a contact photo: at most [REQUEST_PHOTO_MAX_SIDE] a side, then [process_contact] at
+/// cover - re-encoded, no metadata, its original kept, so "Legg til…" can give it to the contact as a parent's upload.
+pub fn process_request_photo(bytes: &[u8]) -> Result<ContactPhoto, ContactPhotoError> {
+    if bytes.is_empty() {
+        return Err(PhotoError::Empty.into());
+    }
+    let (width, height) = ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|_| PhotoError::Undecodable)?
+        .into_dimensions()
+        .map_err(|_| PhotoError::Undecodable)?;
+    if width > REQUEST_PHOTO_MAX_SIDE || height > REQUEST_PHOTO_MAX_SIDE {
+        return Err(PhotoError::TooManyPixels.into());
+    }
+    process_contact(bytes, None)
+}
+
+/// [process_request_photo] on a blocking thread, one at a time with every upload.
+pub async fn process_request_photo_limited(
+    bytes: axum::body::Bytes,
+) -> Result<ContactPhoto, ContactPhotoError> {
+    let _permit = PROCESSING.acquire().await.expect("semaphore never closed");
+    tokio::task::spawn_blocking(move || process_request_photo(&bytes))
         .await
         .unwrap_or_else(|err| {
             tracing::error!(%err, "photo processing task failed");

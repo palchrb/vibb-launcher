@@ -45,6 +45,23 @@ object PictureEncoder {
         return null
     }
 
+    /**
+     * Calls & Contacts tidied (6): a contact request's picture as it goes to the server - the kid's own square (made by
+     * [forContact]) at most [com.kidslauncher.mdm.calls.CONTACT_REQUEST_PHOTO_PX] a side, under
+     * [com.kidslauncher.mdm.calls.CONTACT_REQUEST_PHOTO_MAX_BYTES]: the quality steps down first, then the size. `null`
+     * if even the last step doesn't fit. No EXIF.
+     */
+    fun forRequest(square: Bitmap): Encoded? {
+        val px = com.kidslauncher.mdm.calls.CONTACT_REQUEST_PHOTO_PX
+        for (size in listOf(px, px * 3 / 4, px / 2)) {
+            for (quality in CONTACT_QUALITIES) {
+                val encoded = encode(square, size, quality)
+                if (encoded.bytes.size <= com.kidslauncher.mdm.calls.CONTACT_REQUEST_PHOTO_MAX_BYTES) return encoded
+            }
+        }
+        return null
+    }
+
     /** A kid's contact picture: 512 px, 150 KB at most (design 79 §5.3, §5.4). */
     const val CONTACT_PX = 512
     const val CONTACT_MAX_BYTES = 150 * 1024

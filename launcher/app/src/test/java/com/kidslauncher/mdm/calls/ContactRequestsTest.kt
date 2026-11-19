@@ -192,4 +192,43 @@ class ContactRequestsTest {
         assertEquals(pending, afterContactRequestAnswer(pending, ContactRequestVerdict.RETRY))
         assertTrue(newContactRequestId().matches(Regex("[0-9a-f]{32}")))
     }
+
+    /** Calls & Contacts tidied (6): the picture's limits and route are the contract's, and every `phone_answers` row
+     * reads as its action - the server's `tests::contact_requests::the_photo_answers` produces the `answers` rows. */
+    @Test
+    fun `the request pictures contract`() {
+        val photo = json["photo"]!!.jsonObject
+        assertEquals("/$CONTACT_REQUEST_PHOTO_PATH", photo["route"]!!.jsonPrimitive.content)
+        assertEquals(CONTACT_REQUEST_PHOTO_MAX_BYTES.toLong(), photo["max_bytes"]!!.jsonPrimitive.long)
+        assertEquals(CONTACT_REQUEST_PHOTO_PX.toLong(), photo["send_px"]!!.jsonPrimitive.long)
+        assertTrue(CONTACT_REQUEST_PHOTO_PX <= photo["max_px"]!!.jsonPrimitive.long)
+        assertTrue(photo["content_types"]!!.jsonArray.map { it.jsonPrimitive.content }.contains("image/jpeg"))
+        for (row in photo["phone_answers"]!!.jsonArray.map { it.jsonObject }) {
+            val status = row["status"]!!.jsonPrimitive.content.toIntOrNull()
+            val action = PhotoUploadAction.valueOf(row["action"]!!.jsonPrimitive.content.uppercase())
+            assertEquals("$row", action, contactRequestPhotoAction(status))
+        }
+        // Every status the server answers is in the phone's rows.
+        val phoneStatuses = photo["phone_answers"]!!.jsonArray.map { it.jsonObject["status"]!!.jsonPrimitive.content }
+        for (row in photo["answers"]!!.jsonArray.map { it.jsonObject }) {
+            assertTrue("$row", row["status"]!!.jsonPrimitive.content in phoneStatuses)
+        }
+    }
+
+    /** Only an accepted request with a picture sends it, once: DONE marks it sent, RETRY leaves it for the next sync. */
+    @Test
+    fun `the picture goes once, after the request was accepted`() {
+        val asked = record(1).copy(photo = true)
+        val pending = record(2, ContactRequestPhase.PENDING).copy(photo = true)
+        val noPhoto = record(3)
+        val declined = record(4, ContactRequestPhase.DECLINED).copy(photo = true)
+        val records = listOf(asked, pending, noPhoto, declined)
+        assertEquals(listOf(asked), requestPhotosToSend(records))
+        assertEquals(records, recordsAfterPhotoUpload(records, asked.id, PhotoUploadAction.RETRY))
+        val after = recordsAfterPhotoUpload(records, asked.id, PhotoUploadAction.DONE)
+        assertEquals(listOf(asked.copy(photoSent = true), pending, noPhoto, declined), after)
+        assertEquals(emptyList<ContactRequestRecord>(), requestPhotosToSend(after))
+        // The request's body never carries it.
+        assertEquals(asked.body(), after.first().body())
+    }
 }

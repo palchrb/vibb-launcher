@@ -26,6 +26,39 @@
     {"name": "Ola", "number": "+4791234567", "matrix_id": "@Ola:example.org"},
     {"name": "Ola", "number": "+4791234567", "matrix_id": "@ola:example.org?via=x"}
   ],
+  "photo": {
+    "route": "/api/devices/contact-request/{id}/photo",
+    "content_types": ["image/jpeg", "image/png"],
+    "max_bytes": 65536,
+    "send_px": 256,
+    "max_px": 512,
+    "answers": [
+      {"case": "stored", "status": 204},
+      {"case": "again", "status": 409},
+      {"case": "declined", "status": 409},
+      {"case": "another_phones", "status": 409},
+      {"case": "bad_id", "status": 400},
+      {"case": "wrong_type", "status": 415},
+      {"case": "too_large", "status": 413},
+      {"case": "undecodable", "status": 422},
+      {"case": "too_many_pixels", "status": 422}
+    ],
+    "phone_answers": [
+      {"status": 204, "action": "done"},
+      {"status": 409, "action": "done"},
+      {"status": 400, "action": "done"},
+      {"status": 404, "action": "done"},
+      {"status": 413, "action": "done"},
+      {"status": 415, "action": "done"},
+      {"status": 422, "action": "done"},
+      {"status": 401, "action": "retry"},
+      {"status": 408, "action": "retry"},
+      {"status": 429, "action": "retry"},
+      {"status": 500, "action": "retry"},
+      {"status": 503, "action": "retry"},
+      {"status": null, "action": "retry"}
+    ]
+  },
   "policy": {"contact_requests": [
     {"id": "0123456789abcdef0123456789abcdef", "state": "open"},
     {"id": "fedcba9876543210fedcba9876543210", "state": "declined"},

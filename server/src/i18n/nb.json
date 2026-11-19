@@ -1855,6 +1855,7 @@
   "device.requests.short_choose": "Kortnummer - kan koste penger.",
   "device.requests.emergency": "Nødnummer",
   "device.requests.matrix": "Foreslått Matrix-ID: {id}",
+  "device.requests.photo": "Bilde fra {name}",
   "device.requests.add": "Legg til",
   "device.requests.decline": "Avslå",
   "device.requests.footer": "{name} har bedt om disse fra telefonboken. Ingenting legges til før du lagrer kontakten selv. Avslå gir beskjeden «Ikke lagt til» på telefonen.",
