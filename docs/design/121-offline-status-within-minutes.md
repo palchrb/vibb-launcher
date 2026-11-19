@@ -1,6 +1,69 @@
 # 121 - The phone's status leaves green within minutes of lost contact
 
-Status: design, **revision 2**, 2026-11-19 (branch `design-121`). Docs only, no code in this round. Revision 2 applies
+Status: **revision 3 - built**, 2026-11-19 (branch `offline-status`): the user's decision on revision 2, below. Revision
+2's text (from "Revision 2 applies") stays as the record; where it differs, revision 3 wins.
+
+## Revision 3 - the decision and what was built
+
+**The decision (the user, 2026-11-19, after the data numbers** - today's phone-server line ~150-200 KB/day, answering
+every keepalive +70-95 KB/day: "Ja la oss gjøre det du sier"): **no keepalive answers and no other new periodic
+traffic.** The status works from what already reaches the server.
+
+**Built:**
+
+- **Server status rule** (`streams.rs`): Online needs a contact within **35 min** (`ONLINE_WINDOW_MINUTES`, was 60;
+  the phone's backstop reports every 30 min - zero extra bytes). Otherwise `streams::reach` (§4.3 without the silent
+  stream): the later of the last contact and the stream's close, or the server's start for a phone with no stream
+  since it (last contact at most 35 min before the start). Away while reach is at most 45 min old, green until
+  `green_until` - `CLOSE_GRACE_MINUTES` (1) after reach, so a reconnect within the minute never shows and the
+  windows count from the close (QA M1); after a start at least `RESTART_GRACE_MINUTES` (6, QA L4). Then orange "Ingen
+  kontakt · sist sett for 4 min siden"; grey Offline 45 min after reach. "Sist sett" stays the last contact.
+  `phone_status::NO_CONTACT_AFTER_MINUTES` is gone. Every page reads it through `connection_state` and
+  `phone_status::dot` (the Devices list, the summary's header, About's Connection row); Attention reads Offline as
+  before.
+- **Chosen quiets, grey** (`phone_status::Held`, the lead after "Turned off"): **flight mode through Vibb's switch** -
+  the latest report says `going_on` or `on`, the phone isn't online, and nothing reached the server since
+  (`airplane_mode::held_since`, `HELD_SLACK_MS` 10 s for the report's own intake): "Flymodus på siden 21:03" /
+  "Airplane mode on since 21:03" for as long as that holds (QA H2), never orange; ended by the next contact. **"Ingen
+  data" abroad** - the latest report's `where` is `abroad`, Roaming is Av, no pause lifts it
+  (`mobile_network::abroad_no_data`), past the green minute: "I utlandet · ingen data" / "Abroad · no data". About's
+  Connection row is grey while held. The Devices list reads the report and the Roaming choice only for a phone that
+  isn't online (`devices::held_of`).
+- **The phone tells the server before the radios go** (§4.4, reusing design 98's `going_on` report - no new route, no
+  contract change): step 2a `CommandListenerService.holdForAirplane` cancels the stream when airplane mode takes its
+  network (`airplaneHoldsStream`: not Wi-Fi, or Wi-Fi `wifi_kept` doesn't keep) and holds the reconnect until the
+  route's `finally` (`releaseAirplaneHold`, at most `AIRPLANE_STREAM_HOLD_MS` 30 s); no reconnect wake lock. ~140 B
+  per turn-on. The RST_STREAM is queued before the report's request is built on the same connection (OkHttp writes it
+  from its task queue; the report takes longer to build), so the front normally has the close first; if not, the
+  server learns the close when the holder drops the connection.
+- **DEPLOY.md** "Optional: fewer probes through a TCP proxy": the user's caddy-l4 on the VPS (~0.56 MB/day of probes
+  per phone) -> nginx `stream` with the PROXY protocol, HAProxy, Caddy's `keepalive_idle 5m`, `tcp_retries2 = 8` where
+  it lasts, the carrier-NAT check; a direct `tailnetIP:port` setup needs nothing.
+
+**Dropped:** the keepalive answers (§2 U1, §4.2: `POST /api/devices/alive`, `?answers=1`, the server's own keepalive,
+`stream_silent`) - the user's call on data. So a phone that vanishes without closing its stream (lost coverage, a flat
+battery, Android's own airplane toggle) leaves green when whoever holds its TCP drops the connection (2.5 min in ~38 %
+of the cases behind a Go front, 15-20 min otherwise; sooner with DEPLOY.md's `tcp_retries2`), and at the latest 35 min
+after its last contact. A turned-off phone is design 38's.
+
+**Left out of this round:** the optional push "Ingen kontakt" (§4.5). Small in itself, but with what exists it is a new
+`parent_events` kind (wire, switch, words, Attention's tables), a migration for the off-by-default switch, a settings
+row with its (i), and a once-a-minute sweep over every phone that repeats the held/abroad/turned-off rules and keeps
+"once per outage" across restarts - more than this round's status change. Its own round when wanted.
+
+**Known cost:** the backstop is an inexact while-idle alarm; when Android delivers it late, a healthy idle phone with
+its stream open reads orange "Ingen kontakt" from 35 min until its sync lands (design 95 sized the old 60 min for
+that). If it shows in practice, the fix is the backstop's alarm, not the window.
+
+**Tests:** `streams::tests` (the windows from the close and the start, the 35-min rows), `phone_status::tests`
+(`a_chosen_quiet_is_grey_for_as_long_as_it_lasts`, the green minute), `tests::airplane_mode::flight_mode_through_vibb_is_grey_until_the_phone_is_heard_from`,
+`tests::devices_list` (no restart grace for a server up for hours); the launcher's `AirplaneRouteTest`
+(`airplaneHoldsStream` rows, the hold before the report and released in `finally`, no drop wake lock). Android 14-17:
+the launcher change uses `Network.fromNetworkHandle` (API 28) and OkHttp's cancel only; no version gate.
+
+## Revision 2
+
+Revision 2 applies
 the design QA (`docs/review/121-offline-status-design-qa.md`, H2 M5 L8) and two answers from the user the same day:
 
 - the front: "Caddy l4 på ampere sender rå bytes videre, TLS termineres på caddy hjemme ja. riktig IP sendes videre";
