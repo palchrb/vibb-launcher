@@ -93,6 +93,130 @@ pub fn clean_mobile(value: &Value) -> Option<String> {
     )
 }
 
+/// Design 116 §3.5: how long the phone's filter is down before the server raises "Web filter is down" - the contract's
+/// `vpn_filter.report_after_ms`, the launcher's `VPN_REPORT_AFTER_MS`.
+pub const VPN_REPORT_AFTER_MS: i64 = 600_000;
+
+/// Design 116 §3.4: the report's `vpn_filter`, re-serialised: `state` one of `up`, `down`, `off` (else the field is
+/// dropped), `down_ms` a non-negative integer and `period` at most 32 characters of `[0-9:]`, both kept only with
+/// `down`. A value that isn't an object is `None` (stored `NULL`), never a refused report.
+pub fn clean_vpn_filter(value: &Value) -> Option<String> {
+    let object = value.as_object()?;
+    let state = object
+        .get("state")
+        .and_then(Value::as_str)
+        .filter(|s| matches!(*s, "up" | "down" | "off"))?;
+    let mut clean = serde_json::Map::new();
+    clean.insert("state".into(), json!(state));
+    if state == "down" {
+        if let Some(down_ms) = object
+            .get("down_ms")
+            .and_then(Value::as_i64)
+            .filter(|ms| *ms >= 0)
+        {
+            clean.insert("down_ms".into(), json!(down_ms));
+        }
+        if let Some(period) = object.get("period").and_then(Value::as_str).filter(|p| {
+            !p.is_empty() && p.len() <= 32 && p.bytes().all(|b| b.is_ascii_digit() || b == b':')
+        }) {
+            clean.insert("period".into(), json!(period));
+        }
+    }
+    Some(Value::Object(clean).to_string())
+}
+
+/// A stored `vpn_filter_json`.
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+pub struct VpnFilterReport {
+    pub state: String,
+    #[serde(default)]
+    pub down_ms: Option<i64>,
+    #[serde(default)]
+    pub period: Option<String>,
+}
+
+/// The latest report's `vpn_filter`.
+pub fn vpn_filter_report(latest: &DeviceStatus) -> Option<VpnFilterReport> {
+    serde_json::from_str(latest.vpn_filter_json.as_deref()?).ok()
+}
+
+/// Design 116 §3.4 (QA M10, the contract's `raise` rows): "Web filter is down" holds when the report says `down` for at
+/// least [VPN_REPORT_AFTER_MS], the parent's switch is on now, and the report isn't paused (a pause, the setup hold) -
+/// a parent's choice is never down.
+pub fn filter_down_raised(
+    state: &str,
+    down_ms: Option<i64>,
+    filter_enabled: bool,
+    paused: bool,
+) -> bool {
+    state == "down"
+        && down_ms.is_some_and(|ms| ms >= VPN_REPORT_AFTER_MS)
+        && filter_enabled
+        && !paused
+}
+
+/// The phone's filter is down now by its last report ([filter_down_raised]): the report, for its `down_ms` and
+/// `period`.
+pub fn filter_down(
+    policy: &DevicePolicy,
+    latest: Option<&DeviceStatus>,
+    now_ms: i64,
+) -> Option<VpnFilterReport> {
+    let latest = latest?;
+    let report = vpn_filter_report(latest)?;
+    filter_down_raised(
+        &report.state,
+        report.down_ms,
+        policy.vpn_filter_enabled,
+        latest.paused_at(now_ms),
+    )
+    .then_some(report)
+}
+
+/// [filter_down] read from the database (the `/dns` page's line); a read error is "not down" (logged).
+pub async fn filter_down_of(
+    db: &sqlx::SqlitePool,
+    device_id: i64,
+    now_ms: i64,
+) -> Option<VpnFilterReport> {
+    let read = async {
+        let policy =
+            sqlx::query_as::<_, DevicePolicy>("SELECT * FROM device_policy WHERE device_id = ?")
+                .bind(device_id)
+                .fetch_optional(db)
+                .await?;
+        let latest = sqlx::query_as::<_, DeviceStatus>(
+            "SELECT * FROM device_status WHERE device_id = ? ORDER BY reported_at DESC, id DESC LIMIT 1",
+        )
+        .bind(device_id)
+        .fetch_optional(db)
+        .await?;
+        Ok::<_, sqlx::Error>((policy, latest))
+    };
+    match read.await {
+        Ok((Some(policy), latest)) => filter_down(&policy, latest.as_ref(), now_ms),
+        Ok((None, _)) => None,
+        Err(err) => {
+            tracing::error!(device_id, %err, "can't read whether the web filter is down");
+            None
+        }
+    }
+}
+
+/// Design 116 §3.4: the event "Web filter is down", once per down period (keyed by the report's `period`), at the first
+/// report that raises the row and under its conditions. No event when the filter comes back.
+pub async fn filter_down_intake(state: &crate::AppState, phone: &crate::parent_events::Phone) {
+    let Some(report) = filter_down_of(&state.db, phone.id, phone.now.timestamp_millis()).await
+    else {
+        return;
+    };
+    let Some(period) = report.period.as_deref() else {
+        return;
+    };
+    let started = phone.now - chrono::Duration::milliseconds(report.down_ms.unwrap_or(0));
+    crate::parent_events::raise_logged(state, &phone.filter_down(period, started)).await;
+}
+
 /// A stored `data_roaming_json`.
 #[derive(Debug, Default, Deserialize, Clone, PartialEq, Eq)]
 pub struct RoamingReport {

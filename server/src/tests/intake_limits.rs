@@ -397,6 +397,16 @@ fn the_field_tables_keep_every_contract_key() {
             assert_eq!(kept, expected, "{}'s calendar", path.display());
             checked += 1;
         }
+        // Design 116 §3.5: every `vpn_filter` report kept whole.
+        if let Some(reports) = json.get("vpn_filter").and_then(|v| v.get("reports")) {
+            for (name, sent) in reports.as_object().unwrap() {
+                let kept: serde_json::Value =
+                    serde_json::from_str(&crate::mobile_network::clean_vpn_filter(sent).unwrap())
+                        .unwrap();
+                assert_eq!(&kept, sent, "{}'s vpn_filter {name}", path.display());
+            }
+            checked += 1;
+        }
         // Design 72 §4: the calendar links' rows of the report (`calendar_feeds.json`'s `report`), every key kept.
         if let Some(feeds) = json.get("report").and_then(|r| r.get("feeds")) {
             let blob = serde_json::json!({"readable": true, "calendars": [], "feeds": feeds});

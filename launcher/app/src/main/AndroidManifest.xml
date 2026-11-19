@@ -687,6 +687,11 @@
         <receiver
             android:name=".push.BackstopReceiver"
             android:exported="false" />
+        <!-- Design 116 §3.1: the web filter's while-idle retry alarm (server/VpnRetryAlarm) - our own explicit
+             PendingIntent only. -->
+        <receiver
+            android:name=".server.VpnRetryReceiver"
+            android:exported="false" />
         <!-- Design 108 §5.1: the UnifiedPush distributor's registration receiver - REGISTER, UNREGISTER and MESSAGE_ACK
              from any app, so exported (the second deliberate exception to "every receiver is exported=false", after the
              device-admin kind; UpManifestTest). Installed disabled: enabled only while the policy's unified_push.on

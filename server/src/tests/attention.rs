@@ -814,3 +814,61 @@ async fn an_integrations_failure_shows_on_the_phones_that_use_it() {
     );
     assert_eq!(rows(&app, &cookie, sam).await, ["integration-apps-fix"]);
 }
+
+/// Design 116 §3.4 (QA M10): "Web filter is down" from a report that says so for 10 minutes, red; marked "at last
+/// report" when the phone is offline; none under 10 minutes, with the parent's switch off or the report paused. The
+/// filter page says how long, the `/dns` page names the phone.
+#[tokio::test]
+async fn a_filter_down_report_raises_its_row_unless_a_choice_explains_it() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = clean_phone(&app, "Emma").await;
+    let down =
+        |ms: i64| json!({"vpn_filter": {"state": "down", "down_ms": ms, "period": "5:3000"}});
+    report(&app, &token, down(599_000)).await;
+    assert_eq!(rows(&app, &cookie, id).await, Vec::<String>::new());
+    report(&app, &token, down(1_500_000)).await;
+    assert_eq!(rows(&app, &cookie, id).await, ["filter-down"]);
+    let filter = app
+        .get_page(&format!("/devices/{id}/filter"), &cookie)
+        .await
+        .text();
+    assert!(filter.contains("data-note=\"filter-down\""), "{filter}");
+    assert!(filter.contains("Down for 25 min"), "{filter}");
+    let dns = app.get_page("/dns", &cookie).await.text();
+    assert!(dns.contains("Emma: down"), "{dns}");
+
+    // Offline: the report's row is marked.
+    sqlx::query("UPDATE devices SET last_seen_at = datetime('now', '-3 hours') WHERE id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    app.state.limits.forget_device(id);
+    let page = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    let row = &page[page.find("data-attention=\"filter-down\"").unwrap()..];
+    assert!(row[..row.find("</a>").unwrap()].contains("data-at-last-report"));
+
+    // A pause on the phone, then the parent's own switch off: no row.
+    report(
+        &app,
+        &token,
+        json!({"restrictions_paused": true, "vpn_filter": {"state": "down", "down_ms": 1_500_000, "period": "5:3000"}}),
+    )
+    .await;
+    assert!(
+        !rows(&app, &cookie, id)
+            .await
+            .contains(&"filter-down".to_string())
+    );
+    report(&app, &token, down(1_500_000)).await;
+    sqlx::query("UPDATE device_policy SET vpn_filter_enabled = 0 WHERE device_id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(rows(&app, &cookie, id).await, Vec::<String>::new());
+}

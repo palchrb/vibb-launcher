@@ -311,7 +311,9 @@ reading of `abroad`, a missing one Ingen data, no policy `none`), the rule rows 
 (each with the pause's lift), `where` (the launcher's home/abroad/unknown from telephony), `shapes` (the VPN's shape,
 the sink's reason and lockdown from the filter switch, the choices, the kid's switch, a lift, the network and a held
 sink with no network - the launcher's alone), `kid_row` (the kid's Mobildata row), `report` (the exact `data_roaming`
-and `mobile_data` of a status report) and `clean`/`clean_mobile` (the server's field-by-field cleaning). The server's
+and `mobile_data` of a status report) and `clean`/`clean_mobile` (the server's field-by-field cleaning), and design 116's `vpn_filter` ("filter on, tunnel
+down": `report_after_ms`, the exact `reports`, the `states`, `periods`, `alarm` and `sync` rows the launcher runs, the
+`raise` and `clean` rows the server runs). The server's
 `tests::mobile_network::the_contract` saves the choices through `POST /devices/{id}/mobile` and produces each
 `policy` row, posts `report` and checks what is stored, runs the cleaning rows; the launcher's `MobileNetworkTest`
 decodes the policy rows, runs every rule, `where`, shape and kid-row row through `abroadChoice`, `roamingLocked`,

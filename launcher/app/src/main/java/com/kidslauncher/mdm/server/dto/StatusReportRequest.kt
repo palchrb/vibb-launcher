@@ -135,6 +135,10 @@ data class StatusReportRequest(
     /** Design 95 rev. 3: Android's mobile-data switch, why only Vibb uses cellular, the
      * mobile-network settings lock. Pinned by `mobile_network.json`. */
     val mobileData: com.kidslauncher.mdm.server.MobileDataReport? = null,
+    /** Design 116 §3.1 (S-M2): the web filter's state at report time - `up`, `down` (with the period's length and id) or
+     * `off`; `null` when it couldn't be read (left out). A full-report field. Pinned by `mobile_network.json`'s
+     * `vpn_filter.reports` (`MobileNetworkTest`). */
+    val vpnFilter: com.kidslauncher.mdm.server.VpnFilterReport? = null,
     /** Design 98 §5.1: Flymodus, the assistant role, Wi-Fi in airplane mode and the
      * periods. A full-report field (not in `status_heartbeat_fields`). Pinned by `airplane_mode.json`
      * (`AirplaneModeTest`). */

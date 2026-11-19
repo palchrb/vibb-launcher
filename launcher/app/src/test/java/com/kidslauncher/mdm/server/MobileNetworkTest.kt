@@ -164,8 +164,57 @@ class MobileNetworkTest {
         for (shape in listOf(VpnShape.FILTER, VpnShape.PASS)) {
             assertEquals(shape, alwaysOnBeforeEstablish(shape))
             assertEquals(null, alwaysOnAfterEstablish(shape))
-            assertFalse(retriesFailedEstablish(shape, established = false))
+            // Design 116 §3.1 (S-M2): every shape's failure is retried, not only the sink's.
+            assertTrue(retriesFailedEstablish(shape, established = false))
         }
+        assertFalse(retriesFailedEstablish(VpnShape.NONE, established = false))
+    }
+
+    private val vpn get() = contract["vpn_filter"]!!.jsonObject
+    private fun vpnRows(name: String): List<JsonObject> = vpn[name]!!.jsonArray.map { it.jsonObject }
+    private fun filterState(wire: String?) = VpnFilterState.entries.first { it.wire == wire }
+    private fun JsonObject.long(key: String): Long? = this[key]!!.let { if (it is JsonNull) null else it.jsonPrimitive.content.toLong() }
+
+    /** Design 116 §3.5: the filter's state, its down period, the alarm and the sync, row by row. */
+    @Test
+    fun `the filter's state, period, alarm and sync follow every row`() {
+        assertEquals(VPN_REPORT_AFTER_MS, vpn["report_after_ms"]!!.jsonPrimitive.content.toLong())
+        for (row in vpnRows("states")) {
+            val state = vpnFilterState(row.bool("filter_on")!!, row.bool("tunnel_up")!!, VpnShape.of(row.str("shape")))
+            assertEquals("$row", row.str("state"), state.wire)
+        }
+        for (row in vpnRows("periods")) {
+            val processStart = row.long("process_start_ms")!!
+            var period: VpnDownPeriod? = null
+            var at = 0L
+            for (step in row["steps"]!!.jsonArray.map { it.jsonObject }) {
+                at = step.long("at_ms")!!
+                val event = VpnFilterEvent.entries.first { it.wire == step.str("event") }
+                period = vpnDownPeriod(period, event, filterState(step.str("state")), step.long("boot")!!.toInt(), at, processStart)
+            }
+            val report = vpnFilterReport(if (period == null) VpnFilterState.UP else VpnFilterState.DOWN, period, at)
+            assertEquals(row.str("name"), row.long("down_ms"), report.downMs)
+            assertEquals(row.str("name"), row.str("period"), report.period)
+            assertEquals(row.str("name"), period, VpnDownPeriod.of(period?.id))
+        }
+        for (row in vpnRows("alarm")) {
+            assertEquals("$row", row.str("action"), vpnRetryAlarmAction(filterState(row.str("state")), row.bool("armed")!!).wire)
+        }
+        for (row in vpnRows("sync")) {
+            val action = vpnFilterSyncDue(
+                row.long("down_ms"), row.bool("reported_this_period")!!, filterState(row.str("state")), row.str("last_reported"),
+            )
+            assertEquals("$row", row.str("action"), action.wire)
+        }
+    }
+
+    @Test
+    fun `the filter's reports encode exactly the contract's`() {
+        val reports = vpn["reports"]!!.jsonObject
+        val encode = { report: VpnFilterReport -> ServerJson.encodeToJsonElement(VpnFilterReport.serializer(), report) }
+        assertEquals(reports["up"], encode(vpnFilterReport(VpnFilterState.UP, null, 9_000)))
+        assertEquals(reports["down"], encode(vpnFilterReport(VpnFilterState.DOWN, VpnDownPeriod(5, 3_000), 723_000)))
+        assertEquals(reports["off"], encode(vpnFilterReport(VpnFilterState.OFF, VpnDownPeriod(5, 3_000), 723_000)))
     }
 
     /** Code QA L7: with no network seen the held sink still names its reason. */
@@ -295,6 +344,9 @@ class MobileNetworkTest {
         assertTrue(switch.indexOf("val established = establish(wanted)") < switch.indexOf("alwaysOnAfterEstablish(wanted)"))
         // Every establish goes through switchTo.
         assertEquals(1, Regex("""\bestablish\(wanted\)""").findAll(vpn).count())
+        // Design 116 (QA L1): one retry chain - a lost tunnel's retry reschedules itself only when no switch ran.
+        val retry = vpn.substringAfter("private fun retryTunnel() {").substringBefore("\n    }\n")
+        assertTrue(retry, "val switched = startVpn()" in retry && "!switched" in retry)
     }
 
     @Test

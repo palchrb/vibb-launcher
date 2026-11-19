@@ -108,6 +108,43 @@ async fn the_contract() {
     }
     assert_eq!(clean_roaming(&json!("not an object")), None);
 
+    // Design 116 §3.5: `vpn_filter` - each report stored as it is, the raise rule's rows, the cleaning.
+    let vpn = &contract["vpn_filter"];
+    assert_eq!(
+        vpn["report_after_ms"].as_i64(),
+        Some(crate::mobile_network::VPN_REPORT_AFTER_MS)
+    );
+    for (name, sent) in vpn["reports"].as_object().unwrap() {
+        report(&app, &token, json!({"vpn_filter": sent})).await;
+        let kept: Option<String> = sqlx::query_scalar(
+            "SELECT vpn_filter_json FROM device_status WHERE device_id = ? ORDER BY id DESC LIMIT 1",
+        )
+        .bind(id)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+        let kept: Value = serde_json::from_str(&kept.unwrap()).unwrap();
+        assert_eq!(&kept, sent, "{name}");
+    }
+    for row in vpn["raise"].as_array().unwrap() {
+        assert_eq!(
+            crate::mobile_network::filter_down_raised(
+                row["state"].as_str().unwrap(),
+                row["down_ms"].as_i64(),
+                row["filter_enabled"].as_bool().unwrap(),
+                row["paused"].as_bool().unwrap(),
+            ),
+            row["row"].as_bool().unwrap(),
+            "{row}"
+        );
+    }
+    for row in vpn["clean"].as_array().unwrap() {
+        let cleaned = crate::mobile_network::clean_vpn_filter(&row["in"])
+            .map(|json| serde_json::from_str::<Value>(&json).unwrap())
+            .unwrap_or(Value::Null);
+        assert_eq!(cleaned, row["stored"], "{row}");
+    }
+
     let launcher = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../launcher/app/src/test/resources/mobile_network.json"

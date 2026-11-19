@@ -119,5 +119,97 @@
      "stored": {"enabled": true, "sink": "kid", "settings_locked": true, "kid": "off"}},
     {"in": {"enabled": true, "sink": "abroad", "settings_locked": false, "kid": "maybe"},
      "stored": {"enabled": true, "sink": "abroad", "settings_locked": false, "kid": null}}
-  ]
+  ],
+  "vpn_filter": {
+    "report_after_ms": 600000,
+    "reports": {
+      "up": {"state": "up"},
+      "down": {"state": "down", "down_ms": 720000, "period": "5:3000"},
+      "off": {"state": "off"}
+    },
+    "states": [
+      {"filter_on": true, "tunnel_up": true, "shape": "filter", "state": "up"},
+      {"filter_on": true, "tunnel_up": true, "shape": "sink", "state": "up"},
+      {"filter_on": true, "tunnel_up": true, "shape": "pass", "state": "down", "why": "a tunnel left in PASS after a failed switch to FILTER"},
+      {"filter_on": true, "tunnel_up": false, "shape": "filter", "state": "down"},
+      {"filter_on": true, "tunnel_up": false, "shape": null, "state": "down"},
+      {"filter_on": false, "tunnel_up": true, "shape": "sink", "state": "off"},
+      {"filter_on": false, "tunnel_up": true, "shape": "pass", "state": "off"},
+      {"filter_on": false, "tunnel_up": false, "shape": null, "state": "off"}
+    ],
+    "periods": [
+      {"name": "a failed establish starts one", "process_start_ms": 0,
+       "steps": [{"event": "establish_failed", "state": "down", "boot": 5, "at_ms": 3000},
+                 {"event": "check", "state": "down", "boot": 5, "at_ms": 723000}],
+       "down_ms": 720000, "period": "5:3000"},
+      {"name": "the first 60 s of a process start none", "process_start_ms": 1000,
+       "steps": [{"event": "check", "state": "down", "boot": 5, "at_ms": 30000}],
+       "down_ms": null, "period": null},
+      {"name": "past the first minute a check starts one", "process_start_ms": 1000,
+       "steps": [{"event": "check", "state": "down", "boot": 5, "at_ms": 30000},
+                 {"event": "check", "state": "down", "boot": 5, "at_ms": 61000},
+                 {"event": "check", "state": "down", "boot": 5, "at_ms": 661000}],
+       "down_ms": 600000, "period": "5:61000"},
+      {"name": "a tunnel up ends it", "process_start_ms": 0,
+       "steps": [{"event": "establish_failed", "state": "down", "boot": 5, "at_ms": 3000},
+                 {"event": "check", "state": "up", "boot": 5, "at_ms": 9000},
+                 {"event": "check", "state": "up", "boot": 5, "at_ms": 723000}],
+       "down_ms": null, "period": null},
+      {"name": "the filter turned off ends it", "process_start_ms": 0,
+       "steps": [{"event": "establish_failed", "state": "down", "boot": 5, "at_ms": 3000},
+                 {"event": "check", "state": "off", "boot": 5, "at_ms": 9000},
+                 {"event": "check", "state": "down", "boot": 5, "at_ms": 70000}],
+       "down_ms": 0, "period": "5:70000"},
+      {"name": "a reboot starts a new period", "process_start_ms": 0,
+       "steps": [{"event": "establish_failed", "state": "down", "boot": 5, "at_ms": 3000},
+                 {"event": "check", "state": "down", "boot": 6, "at_ms": 20000}],
+       "down_ms": null, "period": null},
+      {"name": "a reboot's own failure starts its own", "process_start_ms": 0,
+       "steps": [{"event": "establish_failed", "state": "down", "boot": 5, "at_ms": 900000},
+                 {"event": "establish_failed", "state": "down", "boot": 6, "at_ms": 4000},
+                 {"event": "check", "state": "down", "boot": 6, "at_ms": 604000}],
+       "down_ms": 600000, "period": "6:4000"},
+      {"name": "a failure while the filter is off starts none", "process_start_ms": 0,
+       "steps": [{"event": "establish_failed", "state": "off", "boot": 5, "at_ms": 3000}],
+       "down_ms": null, "period": null}
+    ],
+    "alarm": [
+      {"state": "down", "armed": false, "action": "arm"},
+      {"state": "down", "armed": true, "action": "keep"},
+      {"state": "up", "armed": true, "action": "cancel"},
+      {"state": "off", "armed": true, "action": "cancel"},
+      {"state": "up", "armed": false, "action": "keep"},
+      {"state": "off", "armed": false, "action": "keep"}
+    ],
+    "sync": [
+      {"state": "down", "down_ms": 600000, "reported_this_period": false, "last_reported": "up", "action": "request"},
+      {"state": "down", "down_ms": 599999, "reported_this_period": false, "last_reported": "up", "action": "none"},
+      {"state": "down", "down_ms": 900000, "reported_this_period": true, "last_reported": "down", "action": "none"},
+      {"state": "down", "down_ms": null, "reported_this_period": false, "last_reported": "up", "action": "none"},
+      {"state": "up", "down_ms": null, "reported_this_period": false, "last_reported": "down", "action": "request"},
+      {"state": "up", "down_ms": null, "reported_this_period": false, "last_reported": "up", "action": "none"},
+      {"state": "off", "down_ms": null, "reported_this_period": false, "last_reported": "down", "action": "none"}
+    ],
+    "raise": [
+      {"state": "down", "down_ms": 600000, "filter_enabled": true, "paused": false, "row": true},
+      {"state": "down", "down_ms": 599999, "filter_enabled": true, "paused": false, "row": false},
+      {"state": "down", "down_ms": null, "filter_enabled": true, "paused": false, "row": false},
+      {"state": "down", "down_ms": 900000, "filter_enabled": false, "paused": false, "row": false},
+      {"state": "down", "down_ms": 900000, "filter_enabled": true, "paused": true, "row": false},
+      {"state": "up", "down_ms": null, "filter_enabled": true, "paused": false, "row": false},
+      {"state": "off", "down_ms": null, "filter_enabled": true, "paused": false, "row": false}
+    ],
+    "clean": [
+      {"in": {"state": "down", "down_ms": 720000, "period": "5:3000"},
+       "stored": {"state": "down", "down_ms": 720000, "period": "5:3000"}},
+      {"in": {"state": "up", "down_ms": 5, "period": "1:2"},
+       "stored": {"state": "up"}},
+      {"in": {"state": "down", "down_ms": -1, "period": "5:3000; DROP"},
+       "stored": {"state": "down"}},
+      {"in": {"state": "down", "down_ms": "600000", "period": "123456789012345678901234567890123"},
+       "stored": {"state": "down"}},
+      {"in": {"state": "sideways"}, "stored": null},
+      {"in": "down", "stored": null}
+    ]
+  }
 }

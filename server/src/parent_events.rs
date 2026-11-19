@@ -113,6 +113,10 @@ pub enum Kind {
     /// no switch, as [Kind::PasskeyAdded]. Told from their parameters ([ChangeParams]).
     BackupDownloaded,
     BackupRestored,
+    /// Design 116 §3.4 (S-M2): the phone's web filter has been down for `mobile_network::VPN_REPORT_AFTER_MS` while
+    /// the parent's switch is on and nothing lifts it - once per down period (keyed by the report's `period`), urgent,
+    /// under its own switch. No event when it comes back. Told from its parameters ([PhoneAtParams]).
+    FilterDown,
 }
 
 /// A kind's own push rate (design 77 §7, QA R2-M3), beside [EVENTS_AN_HOUR] and [URGENT_PUSHES_AN_HOUR]: a phone's
@@ -126,7 +130,7 @@ pub struct PushBudget {
 }
 
 impl Kind {
-    pub const ALL: [Kind; 29] = [
+    pub const ALL: [Kind; 30] = [
         Kind::EmergencyCall,
         Kind::PinUsed,
         Kind::PinLockout,
@@ -156,6 +160,7 @@ impl Kind {
         Kind::LocationRegular,
         Kind::BackupDownloaded,
         Kind::BackupRestored,
+        Kind::FilterDown,
     ];
 
     pub fn wire(self) -> &'static str {
@@ -189,6 +194,7 @@ impl Kind {
             Kind::LocationRegular => "location_regular",
             Kind::BackupDownloaded => "backup_downloaded",
             Kind::BackupRestored => "backup_restored",
+            Kind::FilterDown => "filter_down",
         }
     }
 
@@ -201,7 +207,7 @@ impl Kind {
     pub fn urgent(self) -> bool {
         matches!(
             self,
-            Kind::EmergencyCall | Kind::PinLockout | Kind::ForeignAccess
+            Kind::EmergencyCall | Kind::PinLockout | Kind::ForeignAccess | Kind::FilterDown
         )
     }
 
@@ -278,6 +284,8 @@ impl Kind {
             Kind::WifiSigninWide | Kind::WifiSigninBudget => {
                 Some(("push_wifi_signin", "Wi-Fi sign-in"))
             }
+            // Design 116 §3.4: on by default (migration 0158).
+            Kind::FilterDown => Some(("push_filter_down", "Web filter down")),
         }
     }
 
@@ -565,6 +573,19 @@ impl Phone {
                 at,
                 &params,
             )
+        }
+    }
+
+    /// Design 116 §3.4: the phone's web filter down since `at`, once per down `period` (the phone's own id for it). The
+    /// target is the phone's Web Filter page, whose orange line says how long.
+    pub fn filter_down(&self, period: &str, at: DateTime<Utc>) -> NewEvent {
+        let params = PhoneAtParams {
+            phone: self.name.clone(),
+            at: instant(at),
+        };
+        NewEvent {
+            target: format!("/devices/{}/filter", self.id),
+            ..self.with_params(Kind::FilterDown, period.to_string(), at, &params)
         }
     }
 
@@ -3394,6 +3415,11 @@ fn phone_event_told(
             };
             (titled(lang, &title_key(""), &p.phone), summary)
         }
+        Kind::FilterDown => {
+            let p: PhoneAtParams = serde_json::from_str(params).ok()?;
+            let (_, when) = at_of(&p.at)?;
+            (titled(lang, &title_key(""), &p.phone), capitalized(&when))
+        }
         Kind::UnseenBoot => {
             let p: PhoneAtParams = serde_json::from_str(params).ok()?;
             let (_, when) = at_of(&p.at)?;
@@ -4386,6 +4412,12 @@ mod tests {
                 "14:02",
                 "/backups#backups",
             ),
+            (
+                phone.filter_down("5:120000", two),
+                "Web filter down on Anna's phone",
+                "14:02",
+                "/devices/3/filter",
+            ),
         ];
         for (event, title, summary, target) in &rows {
             // Nothing is stored as words any more (design 70 §4): every kind is told from its
@@ -5348,6 +5380,7 @@ mod tests {
             backup_downloaded("Mamma", "backup-20261018-020000.zip", two),
             backup_restored("Mamma", "backup-20261018-020000.zip", two, Push::No),
             backup_restored("", "backup-20261018-020000.zip", two, Push::No),
+            phone.filter_down("5:120000", two),
         ];
         let kinds: std::collections::BTreeSet<&str> =
             events.iter().map(|e| e.kind.wire()).collect();
