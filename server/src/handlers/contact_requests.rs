@@ -8,6 +8,11 @@
 //!   open request has it). One `BEGIN IMMEDIATE` transaction; a retried id is one row and one event.
 //! - The policy's `call_policy.contact_requests` ([policy_rows]): `[{id, state}]` of the last 7 days, `open`,
 //!   `declined` or `added`.
+//! - `POST /api/devices/contact-request/{id}/photo` ([upload_photo], Calls & Contacts tidied (6), 2026-11-19): the
+//!   picture the kid gave the request (design 79 §5.5), raw `image/jpeg` or `image/png` of at most [PHOTO_MAX_BYTES],
+//!   sent once the request was accepted. Stored as a parent's contact photo is (`photos::process_request_photo`) against
+//!   a live request of this phone without one; "Legg til…" gives it to a contact new to the family, and a decision or a
+//!   lapse drops it ([decline], [mark_added], `retention::prune`).
 //! - The Calls page's "Forespørsler" ("Requests") card ([load]), each row `#request-<id>` with its number's kind,
 //!   "Legg til…" - Add Contact prefilled ([prefill]), the kid's Matrix ID behind its own unticked "Bruk Matrix-ID-en"
 //!   (QA R2-M1) - and "Avslå" ([decline]). Nothing is added by the request itself: the parent's Add Contact with the
@@ -29,6 +34,8 @@ use crate::security::AuthedDevice;
 
 /// `POST /api/devices/contact-request` takes at most this much (§14).
 pub const BODY_LIMIT: usize = 1024;
+/// `POST /api/devices/contact-request/{id}/photo` takes at most this much (`contact_request.json`'s `photo.max_bytes`).
+pub const PHOTO_MAX_BYTES: usize = 64 * 1024;
 /// A name's length after cleaning, in characters.
 pub const NAME_MAX: usize = 40;
 /// Requests a phone may make in its own day (§14, as r13's three).
@@ -50,9 +57,8 @@ pub fn live_since(now: DateTime<Utc>) -> i64 {
     now.timestamp_millis() - SHOWN_DAYS * DAY_MS
 }
 
-/// The phone's request (`contact_request.json`'s `request`). Unknown keys are ignored (no `deny_unknown_fields`), so a
-/// later optional photo can be added as one more key - a reference such as `photo: "<sha256>"` to a picture the phone
-/// uploads on its own route first.
+/// The phone's request (`contact_request.json`'s `request`). Unknown keys are ignored (no `deny_unknown_fields`). The
+/// request's picture is never in it: it follows on its own route ([upload_photo]).
 #[derive(Debug, serde::Deserialize)]
 pub struct Body {
     pub id: String,
@@ -293,6 +299,123 @@ pub async fn intake(
     }
 }
 
+/// The request's picture's content types (`contact_request.json`'s `photo.content_types`).
+pub const PHOTO_TYPES: [&str; 2] = ["image/jpeg", "image/png"];
+
+/// `POST /api/devices/contact-request/{id}/photo` (Calls & Contacts tidied (6)): the picture the kid gave the request,
+/// raw, sent after an accepted request (`contact_request.json`'s `photo.answers`). 204 stored; 400 an id that isn't
+/// 16-64 lowercase hex; 415 not `image/jpeg` or `image/png`; 413 above [PHOTO_MAX_BYTES]; 409 no live request of this
+/// phone with that id, or one that has a picture already (a second upload, a retry after a lost answer); 422 a picture
+/// that doesn't decode or is over `photos::REQUEST_PHOTO_MAX_SIDE` a side; 500 the database or the disk (the phone
+/// tries again). Decoded and re-encoded as a parent's contact photo, cover, its original kept (no metadata), the files
+/// stored and the row written under the contact photos' lock, so a prune never deletes them between.
+pub async fn upload_photo(
+    State(state): State<AppState>,
+    Extension(AuthedDevice(device)): Extension<AuthedDevice>,
+    Path(id): Path<String>,
+    headers: axum::http::HeaderMap,
+    body: axum::body::Bytes,
+) -> Response {
+    if !super::device_api::time_request_id_ok(&id) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let typed = headers
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(';').next())
+        .is_some_and(|media| {
+            PHOTO_TYPES
+                .iter()
+                .any(|t| media.trim().eq_ignore_ascii_case(t))
+        });
+    if !typed {
+        return StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response();
+    }
+    // Checked before decoding, and again when the row is written. (Above PHOTO_MAX_BYTES the route's own body limit
+    // answers 413 before this handler runs.)
+    match photo_wanted(&state.db, device.id, &id).await {
+        Ok(true) => {}
+        Ok(false) => return StatusCode::CONFLICT.into_response(),
+        Err(err) => {
+            tracing::error!(device_id = device.id, %err, "couldn't read the contact requests");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    }
+    let processed = match crate::photos::process_request_photo_limited(body).await {
+        Ok(processed) => processed,
+        Err(err) => {
+            tracing::info!(
+                device_id = device.id,
+                ?err,
+                "refused a contact request's picture"
+            );
+            return StatusCode::UNPROCESSABLE_ENTITY.into_response();
+        }
+    };
+    // Code QA L1: every failure falls through to the one prune below, after the lock is released - a file stored
+    // before another failed never stays behind.
+    let stored: Result<bool, String> = {
+        let _files = crate::photos::lock_files().await;
+        let mut written = Ok(());
+        for (dir, photo) in [
+            (&state.photo_original_dir, &processed.original),
+            (&state.photo_dir, &processed.cut.square),
+        ] {
+            if let Err(err) = crate::photos::store(dir, photo).await {
+                written = Err(err.to_string());
+                break;
+            }
+        }
+        match written {
+            Err(err) => Err(err),
+            Ok(()) => sqlx::query(
+                "UPDATE device_contact_requests SET photo_hash = ?, photo_original_hash = ?, photo_view = ? \
+                 WHERE device_id = ? AND id = ? AND state = 'open' AND asked_at > ? AND photo_hash IS NULL",
+            )
+            .bind(&processed.cut.square.hash)
+            .bind(&processed.original.hash)
+            .bind(&processed.cut.view)
+            .bind(device.id)
+            .bind(&id)
+            .bind(live_since(Utc::now()))
+            .execute(&state.db)
+            .await
+            .map(|done| done.rows_affected() > 0)
+            .map_err(|err| err.to_string()),
+        }
+    };
+    match stored {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => {
+            // Decided or given a picture meanwhile: the files just written go if nobody names them.
+            crate::photos::prune(&state).await;
+            StatusCode::CONFLICT.into_response()
+        }
+        Err(err) => {
+            tracing::error!(device_id = device.id, %err, "couldn't store a contact request's picture");
+            crate::photos::prune(&state).await;
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+/// Whether the request `id` of the phone is live and has no picture yet.
+async fn photo_wanted(
+    db: &sqlx::SqlitePool,
+    device_id: i64,
+    id: &str,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM device_contact_requests WHERE device_id = ? AND id = ? AND state = 'open' \
+         AND asked_at > ? AND photo_hash IS NULL)",
+    )
+    .bind(device_id)
+    .bind(id)
+    .bind(live_since(Utc::now()))
+    .fetch_one(db)
+    .await
+}
+
 /// `call_policy.contact_requests`'s row (the launcher's `PolicyContactRequest`).
 #[derive(serde::Serialize, Clone, Debug, PartialEq, Eq, sqlx::FromRow)]
 pub struct PolicyRow {
@@ -332,6 +455,11 @@ pub struct RequestView {
     pub matrix_id: Option<String>,
     /// "Legg til…" is offered (never for an emergency number).
     pub can_add: bool,
+    /// The picture the kid gave the request (its square's hash, `/contact-photos/{hash}`).
+    pub photo: Option<String>,
+    /// The letter avatar without a picture: the name's first letter and a palette tone by the request's id.
+    pub initial: String,
+    pub tone: &'static str,
 }
 
 /// The number's mark on the card: an emergency number (stored before the country code changed, say) or a short one.
@@ -353,6 +481,7 @@ struct Row {
     number: String,
     matrix_id: Option<String>,
     asked_at: i64,
+    photo_hash: Option<String>,
 }
 
 /// The card's rows: the last [SHOWN_DAYS]' requests, newest first, newest first.
@@ -365,7 +494,7 @@ pub async fn load(
 ) -> Result<Vec<RequestView>, sqlx::Error> {
     let lang = zone.lang();
     let rows: Vec<Row> = sqlx::query_as(
-        "SELECT id, name, number, matrix_id, asked_at FROM device_contact_requests \
+        "SELECT id, name, number, matrix_id, asked_at, photo_hash FROM device_contact_requests \
          WHERE device_id = ? AND asked_at > ? AND state = 'open' ORDER BY asked_at DESC, id LIMIT 50",
     )
     .bind(device_id)
@@ -375,6 +504,9 @@ pub async fn load(
     Ok(rows
         .into_iter()
         .map(|row| RequestView {
+            initial: super::calls::initial_of(&row.name),
+            tone: request_tone(&row.id),
+            photo: row.photo_hash,
             mark: mark(lang, &row.number, cc),
             can_add: !emergency::is_emergency(&row.number, cc),
             when: zone.when(
@@ -387,6 +519,12 @@ pub async fn load(
             matrix_id: row.matrix_id,
         })
         .collect())
+}
+
+/// A request's letter avatar tone: the palette's by the id's last hex digit (stable, and no contact id yet).
+fn request_tone(id: &str) -> &'static str {
+    let digit = id.chars().last().and_then(|c| c.to_digit(16)).unwrap_or(0);
+    super::calls::avatar_tone(i64::from(digit), false)
 }
 
 /// What "Legg til…" puts into Add Contact: a live request of this phone.
@@ -402,6 +540,8 @@ pub struct Prefill {
     pub asked_name: String,
     /// A short number (no `+`): QA L3's defaults and the cost warning.
     pub short: bool,
+    /// The request's picture (its square's hash): the new contact's photo when the number is new to the family.
+    pub photo: Option<String>,
 }
 
 /// The live request `id` of the phone, for Add Contact's prefill; `None` when it isn't one (decided, lapsed, gone,
@@ -415,7 +555,7 @@ pub async fn prefill(
         return Ok(None);
     }
     let row: Option<Row> = sqlx::query_as(
-        "SELECT id, name, number, matrix_id, asked_at FROM device_contact_requests \
+        "SELECT id, name, number, matrix_id, asked_at, photo_hash FROM device_contact_requests \
          WHERE device_id = ? AND id = ? AND state = 'open' AND asked_at > ?",
     )
     .bind(device_id)
@@ -434,6 +574,7 @@ pub async fn prefill(
     Ok(Some(Prefill {
         name: existing.unwrap_or_else(|| row.name.clone()),
         short: !row.number.starts_with('+'),
+        photo: row.photo_hash,
         id: row.id,
         asked_name: row.name,
         number: row.number,
@@ -460,9 +601,11 @@ async fn mark_read(
 }
 
 /// The request "Legg til…" came from, as Add Contact's save found it: still live on this phone, with the Matrix ID the
-/// kid suggested.
+/// kid suggested and its picture.
 pub struct FromRequest {
     pub matrix_id: Option<String>,
+    /// The picture as stored: the square's hash, the kept original's and the view (all three, or none).
+    pub photo: Option<(String, String, String)>,
 }
 
 /// The live request `request` of the phone, read in Add Contact's transaction before it saves anything: `Some` only
@@ -473,21 +616,34 @@ pub async fn from_request(
     device_id: i64,
     request: &str,
 ) -> Result<Option<FromRequest>, sqlx::Error> {
-    let matrix_id: Option<Option<String>> = sqlx::query_scalar(
-        "SELECT matrix_id FROM device_contact_requests WHERE device_id = ? AND id = ? AND state = 'open' \
-         AND asked_at > ?",
+    type Stored = (
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    );
+    let row: Option<Stored> = sqlx::query_as(
+        "SELECT matrix_id, photo_hash, photo_original_hash, photo_view FROM device_contact_requests \
+         WHERE device_id = ? AND id = ? AND state = 'open' AND asked_at > ?",
     )
     .bind(device_id)
     .bind(request)
     .bind(live_since(Utc::now()))
     .fetch_optional(&mut *tx)
     .await?;
-    Ok(matrix_id.map(|matrix_id| FromRequest { matrix_id }))
+    Ok(row.map(|(matrix_id, hash, original, view)| FromRequest {
+        matrix_id,
+        photo: match (hash, original, view) {
+            (Some(hash), Some(original), Some(view)) => Some((hash, original, view)),
+            _ => None,
+        },
+    }))
 }
 
 /// Add Contact saved `number` on the phone (any path, in its transaction): every live request for it is `added`, and
 /// so is the request "Legg til…" came from (`request`), whatever number the parent saved, and their events are read
-/// for every parent.
+/// for every parent. Their pictures are forgotten (a picture "Legg til…" gave the contact was copied before): the
+/// caller runs `photos::prune` after the commit.
 pub async fn mark_added(
     tx: &mut sqlx::SqliteConnection,
     device_id: i64,
@@ -495,7 +651,8 @@ pub async fn mark_added(
     request: Option<&str>,
 ) -> Result<(), sqlx::Error> {
     let ids: Vec<String> = sqlx::query_scalar(
-        "UPDATE device_contact_requests SET state = 'added', decided_at = datetime('now') \
+        "UPDATE device_contact_requests SET state = 'added', decided_at = datetime('now'), photo_hash = NULL, \
+         photo_original_hash = NULL, photo_view = NULL \
          WHERE device_id = ? AND state = 'open' AND asked_at > ? AND (number = ? OR id = ?) RETURNING id",
     )
     .bind(device_id)
@@ -531,7 +688,8 @@ pub async fn decline(
         // Only a live request: a lapsed one isn't on the card, so its anchor wouldn't render and the page would land at
         // its top - it lands on the card's notice instead (the save never jumps to the top).
         let declined = sqlx::query(
-            "UPDATE device_contact_requests SET state = 'declined', decided_at = datetime('now') \
+            "UPDATE device_contact_requests SET state = 'declined', decided_at = datetime('now'), \
+             photo_hash = NULL, photo_original_hash = NULL, photo_view = NULL \
              WHERE device_id = ? AND id = ? AND state = 'open' AND asked_at > ?",
         )
         .bind(id)
@@ -549,7 +707,11 @@ pub async fn decline(
     .await;
     match result {
         Ok(None) => not_found(lang),
-        Ok(Some(true)) => saved(&state, id, format!("/devices/{id}/calls#requests")),
+        Ok(Some(true)) => {
+            // The request's picture goes with the decision.
+            crate::photos::prune(&state).await;
+            saved(&state, id, format!("/devices/{id}/calls#requests"))
+        }
         Ok(Some(false)) => crate::settings_log::refused(Redirect::to(&format!(
             "/devices/{id}/calls?notice=request_gone#requests"
         ))),

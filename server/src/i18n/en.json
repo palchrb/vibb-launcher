@@ -1857,6 +1857,7 @@
   "device.requests.short_choose": "Short number - may cost money.",
   "device.requests.emergency": "Emergency number",
   "device.requests.matrix": "Suggested Matrix ID: {id}",
+  "device.requests.photo": "Photo from {name}",
   "device.requests.add": "Add",
   "device.requests.decline": "Decline",
   "device.requests.footer": "{name} asked for these from the phone book. Nothing is added until you save the contact yourself. Decline tells the phone \"Not added\".",

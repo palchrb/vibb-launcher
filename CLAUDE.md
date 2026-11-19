@@ -276,10 +276,14 @@ both compare the copies. The receive and send rules (D4/D5) stay the launcher's 
 The kid's contact request from the phone book (design 77 §14) is `server/testdata/contact_request.json`, byte-identical
 in `launcher/app/src/test/resources/`: `request` and `request_without_matrix` (the exact `POST
 /api/devices/contact-request` bodies), `answers` (accepted, `capped`, `invalid`, `known`), the check vectors `valid`
-(with the cleaned name and normalised number) and `invalid`, and `policy` (`call_policy.contact_requests` rows: `open`,
-`declined`, `added`). The server's `tests::contact_requests` posts the requests and produces every answer, and
+(with the cleaned name and normalised number) and `invalid`, `photo` (the request's picture, Calls & Contacts tidied
+(6): `POST /api/devices/contact-request/{id}/photo`'s route, content types and limits, the server's `answers` by case
+and the phone's `phone_answers`, done or retry by status) and `policy` (`call_policy.contact_requests` rows: `open`,
+`declined`, `added`). The server's `tests::contact_requests` posts the requests and produces every answer (the
+picture's in `the_photo_answers`, on both listeners), and
 `handlers::contact_requests::tests` runs the vectors; the launcher's `ContactRequestsTest` encodes the requests exactly,
-reads each answer and policy row and runs the vectors through its own check; both compare the copies. The policy's
+reads each answer and policy row, maps every `phone_answers` row and runs the vectors through its own check; both
+compare the copies. The policy's
 `call_policy.contact_requests` is pinned by `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTest`.
 
 The apps' real logos (design 87) are `server/testdata/app_logos.json`, byte-identical in

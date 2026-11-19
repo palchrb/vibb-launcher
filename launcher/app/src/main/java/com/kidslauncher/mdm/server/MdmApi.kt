@@ -136,6 +136,11 @@ interface MdmApi {
     @POST("api/devices/contact-request")
     suspend fun sendContactRequest(@Body request: com.kidslauncher.mdm.server.dto.ContactRequestBody): Response<ResponseBody>
 
+    /** The picture the kid gave an accepted contact request, raw `image/jpeg` (Calls & Contacts tidied (6)): only the
+     * status counts, read by `contactRequestPhotoAction` - see `calls/ContactRequests`. */
+    @POST(com.kidslauncher.mdm.calls.CONTACT_REQUEST_PHOTO_PATH)
+    suspend fun uploadContactRequestPhoto(@Path("id") id: String, @Body jpeg: okhttp3.RequestBody): Response<Unit>
+
     /** The messages held for the parent and the blocked ones (design 77 §7): who and when, never what - see
      * `sms/SmsRuntime.postHeld`. The raw answer: 200 `SmsHeldAnswer`, 400 `SmsHeldRefusal`. */
     @POST("api/devices/sms-held")

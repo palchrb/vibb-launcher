@@ -513,10 +513,20 @@ the list shows `contactRequestRows`.
   numbers), with listeners for a screen; `performMdmSync` reconciles after `SmsRuntime.policyAccepted` and uploads each
   PENDING request after the time request (`POST /api/devices/contact-request`, `MdmApi.sendContactRequest`,
   `ContactRequestBody`).
-- **The picture stays on the phone** (design 79 revision 2, the user: "Server trenger ikke se bilde barnet selv legger
-  til?"): the request's picture is never uploaded, `ContactRequestBody` is unchanged (`ContactRequestRecord.photo` is
-  a flag of the phone's own, never in `body()`). The upload extension the contact request's QA planned
-  (`docs/review/qa-contact-request.md`, "The photo extension plan") is not needed.
+- **The picture goes with an accepted request** (Calls & Contacts tidied (6), the user 2026-11-19: "Ja, send bildet
+  med (anbefalt)" - this replaces design 79 revision 2's "the picture stays on the phone"): `ContactRequestBody` is
+  unchanged; after the request loop, `ContactRequests.uploadPhotos` posts each ASKED request's picture once
+  (`requestPhotosToSend`, `ContactRequestRecord.photoSent`) to `POST /api/devices/contact-request/{id}/photo`
+  (`MdmApi.uploadContactRequestPhoto`, `CONTACT_REQUEST_PHOTO_PATH`): the kid's own square from
+  `contact_request_photos/<id>.jpg`, re-encoded by `PictureEncoder.forRequest` at most 256 px and 64 KiB
+  (`CONTACT_REQUEST_PHOTO_PX`, `CONTACT_REQUEST_PHOTO_MAX_BYTES`; quality steps first, then 192 and 128 px), no EXIF.
+  `contactRequestPhotoAction`: 401/408/429/5xx/no answer retry with the next sync (as the request), anything else is
+  done - stored, or refused for good (409 a second upload or a request no longer open, an old server's 404). A retry
+  the server answered counts on the record (`photoTries`); the third gives the picture up (`CONTACT_REQUEST_PHOTO_TRIES`,
+  code QA L5), and one with no answer (the network) never counts. A missing
+  file or one that won't fit is done without a post. The shapes are `contact_request.json`'s `photo`
+  (`ContactRequestsTest`). The hand-over to the kid's own pictures when the contact arrives stays as it was; the
+  server makes the picture the new contact's photo (`docs/notes/server/calls-and-contacts.md`).
 - **Code QA L5, done:** the form passes the platform's answer as `checkContactRequest`'s `isEmergency`
   (`CallSystem.isEmergencyOutgoing`, which asks Android's `TelephonyManager.isEmergencyNumber` and keeps the static
   list) - without it the phone would know only `Emergency.staticSet`, and a SIM's or a roaming country's own

@@ -1137,3 +1137,365 @@ async fn retention_keeps_thirty_days() {
     assert_eq!(pruned.contact_requests, 1);
     assert_eq!(rows(&app, id).await.len(), 1);
 }
+
+// Calls & Contacts tidied (6): the request's picture (`contact_request.json`'s `photo`).
+
+/// A `w`×`h` picture in `format`, a gradient (generated: no real photo in the tree).
+fn picture(w: u32, h: u32, format: image::ImageFormat) -> Vec<u8> {
+    let image = image::DynamicImage::ImageRgb8(image::RgbImage::from_fn(w, h, |x, y| {
+        image::Rgb([(x * 4) as u8, (y * 4) as u8, 120])
+    }));
+    let mut out = std::io::Cursor::new(Vec::new());
+    image.write_to(&mut out, format).unwrap();
+    out.into_inner()
+}
+
+/// The phone's upload of request `id`'s picture through `router` from `peer`; the status.
+async fn upload_photo_via(
+    app: &TestApp,
+    router: &axum::Router,
+    peer: std::net::SocketAddr,
+    token: &str,
+    id: &str,
+    content_type: &str,
+    body: Vec<u8>,
+) -> StatusCode {
+    let request = axum::http::Request::builder()
+        .method(Method::POST)
+        .uri(format!("/api/devices/contact-request/{id}/photo"))
+        .header(axum::http::header::AUTHORIZATION, format!("Bearer {token}"))
+        .header(axum::http::header::CONTENT_TYPE, content_type)
+        .body(axum::body::Body::from(body))
+        .unwrap();
+    app.send_via(router, peer, request).await.status
+}
+
+/// The upload on the admin listener from loopback.
+async fn upload_photo(
+    app: &TestApp,
+    token: &str,
+    id: &str,
+    content_type: &str,
+    body: Vec<u8>,
+) -> StatusCode {
+    upload_photo_via(
+        app,
+        &app.router,
+        super::LOOPBACK_PEER,
+        token,
+        id,
+        content_type,
+        body,
+    )
+    .await
+}
+
+type StoredPhoto = (Option<String>, Option<String>, Option<String>);
+
+/// A request's stored picture: the square's hash, the original's and the view.
+async fn request_photo(app: &TestApp, device: i64, n: u32) -> StoredPhoto {
+    sqlx::query_as(
+        "SELECT photo_hash, photo_original_hash, photo_view FROM device_contact_requests \
+         WHERE device_id = ? AND id = ?",
+    )
+    .bind(device)
+    .bind(format!("{n:032x}"))
+    .fetch_one(&app.db)
+    .await
+    .unwrap()
+}
+
+fn stored_file(dir: &std::path::Path, hash: &str) -> bool {
+    crate::photos::path_for(dir, hash).unwrap().exists()
+}
+
+/// Every server row of `photo.answers`, the limits the contract names, and both listeners: the admin listener from
+/// loopback, and the phone listener straight from a tailnet address (no reverse proxy). Stored, the picture is the
+/// contact photo's processing - a square JPEG, its original and view kept, the files on disk - and the card shows it.
+#[tokio::test]
+async fn the_photo_answers() {
+    let app = TestApp::new().await;
+    steady_zone(&app).await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("Anna").await;
+    let (other, other_token) = app.enrolled_device("Per").await;
+    let contract = contract();
+    let photo = &contract["photo"];
+    assert_eq!(
+        photo["max_bytes"],
+        json!(crate::handlers::contact_requests::PHOTO_MAX_BYTES)
+    );
+    assert_eq!(
+        photo["max_px"],
+        json!(crate::photos::REQUEST_PHOTO_MAX_SIDE)
+    );
+    assert_eq!(
+        photo["content_types"],
+        json!(crate::handlers::contact_requests::PHOTO_TYPES)
+    );
+    assert_eq!(photo["route"], "/api/devices/contact-request/{id}/photo");
+    for (n, number) in [(1, "+4791234561"), (2, "+4791234562"), (3, "+4791234563")] {
+        assert_eq!(
+            post(&app, &token, body(n, "Venn", number)).await.1["accepted"],
+            true
+        );
+    }
+    assert_eq!(
+        post(&app, &other_token, body(9, "Lur", "+4791234569"))
+            .await
+            .1["accepted"],
+        true
+    );
+    app.request_form(
+        Method::POST,
+        &format!("/devices/{id}/calls/requests/{:032x}/decline", 3),
+        Some(&cookie),
+        &[],
+    )
+    .await;
+    let send_px = photo["send_px"].as_u64().unwrap() as u32;
+    let jpeg = picture(send_px, send_px, image::ImageFormat::Jpeg);
+    let mut too_large = picture(8, 8, image::ImageFormat::Png);
+    too_large.resize(crate::handlers::contact_requests::PHOTO_MAX_BYTES + 1, 0);
+    let wide = picture(
+        crate::photos::REQUEST_PHOTO_MAX_SIDE + 1,
+        4,
+        image::ImageFormat::Png,
+    );
+    let webp = picture(64, 64, image::ImageFormat::WebP);
+    assert_eq!(
+        crate::photos::process_request_photo(&webp).err(),
+        Some(crate::photos::PhotoError::UnsupportedType.into())
+    );
+    let tailnet: std::net::SocketAddr = "100.101.102.103:50123".parse().unwrap();
+    let device_router = app.device_router();
+    let (first, second) = (format!("{:032x}", 1), format!("{:032x}", 2));
+    for row in photo["answers"].as_array().unwrap() {
+        let case = row["case"].as_str().unwrap();
+        let want = StatusCode::from_u16(row["status"].as_u64().unwrap() as u16).unwrap();
+        let (request, content_type, bytes) = match case {
+            "stored" => (first.clone(), "image/jpeg", jpeg.clone()),
+            "again" => (first.clone(), "image/jpeg", jpeg.clone()),
+            "declined" => (format!("{:032x}", 3), "image/jpeg", jpeg.clone()),
+            "another_phones" => (format!("{:032x}", 9), "image/jpeg", jpeg.clone()),
+            "bad_id" => ("NOT-AN-ID".to_string(), "image/jpeg", jpeg.clone()),
+            "wrong_type" => (second.clone(), "image/gif", jpeg.clone()),
+            "too_large" => (second.clone(), "image/png", too_large.clone()),
+            "undecodable" => (second.clone(), "image/png", b"not a picture".to_vec()),
+            "too_many_pixels" => (second.clone(), "image/png", wide.clone()),
+            // Code QA L2: a WebP (the parents' decoder takes it) under a JPEG label is refused by its bytes.
+            "not_jpeg_or_png" => (second.clone(), "image/jpeg", webp.clone()),
+            other => panic!("a case the server doesn't make: {other}"),
+        };
+        let got = if case == "stored" {
+            // On the phone listener straight from a tailnet address, as a phone without a proxy sends it.
+            upload_photo_via(
+                &app,
+                &device_router,
+                tailnet,
+                &token,
+                &request,
+                content_type,
+                bytes,
+            )
+            .await
+        } else {
+            upload_photo(&app, &token, &request, content_type, bytes).await
+        };
+        assert_eq!(got, want, "{case}");
+    }
+    // Stored as a parent's upload is: the square and its original on disk, the view a full cover.
+    let (hash, original, view) = request_photo(&app, id, 1).await;
+    let (hash, original) = (hash.unwrap(), original.unwrap());
+    assert!(stored_file(&app.state.photo_dir, &hash));
+    assert!(stored_file(&app.state.photo_original_dir, &original));
+    assert_eq!(view.as_deref(), Some("0.000000,0.000000,1.000000,1.000000"));
+    // Refused ones store nothing; another phone's request is untouched.
+    assert_eq!(request_photo(&app, id, 2).await, (None, None, None));
+    assert_eq!(request_photo(&app, other, 9).await, (None, None, None));
+    // The card shows it in the request's avatar; a row without one shows its letter.
+    let page = app
+        .get_page(&format!("/devices/{id}/calls"), &cookie)
+        .await
+        .text();
+    let row = request_html(&page, 1);
+    assert!(
+        row.contains(&format!("src=\"/contact-photos/{hash}\"")),
+        "{row}"
+    );
+    assert!(!request_html(&page, 2).contains("data-request-photo"));
+    assert!(request_html(&page, 2).contains(">V</span>"));
+    // The phone may send a PNG too.
+    assert_eq!(
+        upload_photo(
+            &app,
+            &token,
+            &second,
+            "image/png",
+            picture(64, 64, image::ImageFormat::Png)
+        )
+        .await,
+        StatusCode::NO_CONTENT
+    );
+}
+
+/// Add Contact from request `n` of phone `id`, with `name` and `number`.
+async fn add_from(app: &TestApp, cookie: &str, id: i64, name: &str, number: &str, n: u32) {
+    let request = format!("{n:032x}");
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/contacts"),
+            Some(cookie),
+            &[
+                ("name", name),
+                ("number", number),
+                ("switches", "on"),
+                ("calls_shown", "custom"),
+                ("texts_shown", "custom"),
+                ("inbound", "on"),
+                ("outbound", "on"),
+                ("sms_in", "on"),
+                ("sms_out", "on"),
+                ("request", &request),
+            ],
+        )
+        .await;
+    assert!(res.status.is_redirection(), "{}", res.text());
+}
+
+/// "Legg til…" from a request with a picture: Add Contact shows it, and the new contact's photo is it - the square, the
+/// original and the view, as a parent's upload - which the phone gets; the request forgets it. A number the family
+/// already has keeps its contact's own (no) photo, and the unused files go. "Avslå" drops the picture too.
+#[tokio::test]
+async fn the_photo_follows_legg_til() {
+    let app = TestApp::new().await;
+    steady_zone(&app).await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("Anna").await;
+    let (sibling, _) = app.enrolled_device("Per").await;
+    contact(&app, sibling, "Mormor", "+4791234570").await;
+    for (n, name, number) in [
+        (1, "Ola", "+4791234567"),
+        (2, "Mormor", "+4791234570"),
+        (3, "Kari", "+4791234580"),
+    ] {
+        assert_eq!(
+            post(&app, &token, body(n, name, number)).await.1["accepted"],
+            true
+        );
+        // Each its own picture, so each has its own files.
+        let jpeg = picture(100 + 20 * n, 120, image::ImageFormat::Jpeg);
+        assert_eq!(
+            upload_photo(&app, &token, &format!("{n:032x}"), "image/jpeg", jpeg).await,
+            StatusCode::NO_CONTENT
+        );
+    }
+    let (hash, original, view) = request_photo(&app, id, 1).await;
+    let hash = hash.unwrap();
+
+    // Add Contact from the request shows the picture; for a number the family has, it doesn't.
+    let add = app
+        .get_page(&format!("/devices/{id}/calls?request={:032x}", 1), &cookie)
+        .await
+        .text();
+    assert!(add.contains("data-request-photo-row"), "{add}");
+    assert!(add.contains("Photo from Anna"));
+    let family = app
+        .get_page(&format!("/devices/{id}/calls?request={:032x}", 2), &cookie)
+        .await
+        .text();
+    assert!(!family.contains("data-request-photo-row"));
+    let nb = app
+        .get_page(
+            &format!("/devices/{id}/calls?request={:032x}&lang=nb", 1),
+            &cookie,
+        )
+        .await
+        .text();
+    assert!(nb.contains("Bilde fra Anna"));
+
+    add_from(&app, &cookie, id, "Ola", "+4791234567", 1).await;
+    let photo: StoredPhoto = sqlx::query_as(
+        "SELECT photo_hash, photo_original_hash, photo_view FROM contacts WHERE phone_number = '+4791234567'",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(photo, (Some(hash.clone()), original, view));
+    assert_eq!(request_photo(&app, id, 1).await, (None, None, None));
+    assert!(
+        stored_file(&app.state.photo_dir, &hash),
+        "the contact's now"
+    );
+    // The phone may fetch it now: it is a contact's photo on this phone.
+    let res = app
+        .request(
+            Method::GET,
+            &format!("/api/devices/contact-photos/{hash}"),
+            Some(&token),
+            None,
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK);
+
+    // A family number: Mormor keeps no photo, the request's picture is gone from the row and the disk.
+    let (mormor, mormor_original, _) = request_photo(&app, id, 2).await;
+    let (mormor, mormor_original) = (mormor.unwrap(), mormor_original.unwrap());
+    add_from(&app, &cookie, id, "Mormor", "+4791234570", 2).await;
+    let kept: Option<String> =
+        sqlx::query_scalar("SELECT photo_hash FROM contacts WHERE phone_number = '+4791234570'")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(kept, None, "never on the other phones");
+    assert_eq!(request_photo(&app, id, 2).await, (None, None, None));
+    assert!(!stored_file(&app.state.photo_dir, &mormor));
+    assert!(!stored_file(
+        &app.state.photo_original_dir,
+        &mormor_original
+    ));
+
+    // "Avslå": the picture goes with the decision.
+    let (kari, kari_original, _) = request_photo(&app, id, 3).await;
+    let (kari, kari_original) = (kari.unwrap(), kari_original.unwrap());
+    assert!(stored_file(&app.state.photo_dir, &kari));
+    app.request_form(
+        Method::POST,
+        &format!("/devices/{id}/calls/requests/{:032x}/decline", 3),
+        Some(&cookie),
+        &[],
+    )
+    .await;
+    assert_eq!(request_photo(&app, id, 3).await, (None, None, None));
+    assert!(!stored_file(&app.state.photo_dir, &kari));
+    assert!(!stored_file(&app.state.photo_original_dir, &kari_original));
+}
+
+/// Retention: a request that lapsed (7 days from the ask) forgets its picture; a live one keeps it.
+#[tokio::test]
+async fn a_lapsed_requests_photo_goes() {
+    let app = TestApp::new().await;
+    let (id, _) = app.enrolled_device("Anna").await;
+    stored(&app, id, 1, "+4791234567", 8).await;
+    stored(&app, id, 2, "+4791234568", 1).await;
+    for n in [1u32, 2] {
+        sqlx::query(
+            "UPDATE device_contact_requests SET photo_hash = ?, photo_original_hash = ?, photo_view = '0,0,1,1' \
+             WHERE id = ?",
+        )
+        .bind(format!("{n:064x}"))
+        .bind(format!("{:064x}", n + 10))
+        .bind(format!("{n:032x}"))
+        .execute(&app.db)
+        .await
+        .unwrap();
+    }
+    let pruned = crate::retention::prune(&app.db).await;
+    assert_eq!(pruned.contact_request_photos, 1);
+    assert_eq!(request_photo(&app, id, 1).await, (None, None, None));
+    assert_eq!(
+        request_photo(&app, id, 2).await.0,
+        Some(format!("{:064x}", 2))
+    );
+}

@@ -114,6 +114,13 @@ pub fn device_routes(state: AppState) -> Router<AppState> {
                 handlers::contact_requests::BODY_LIMIT,
             )),
         )
+        // Calls & Contacts tidied (6): the request's picture, raw `image/jpeg` or `image/png`, after an accepted request.
+        .route(
+            "/api/devices/contact-request/{id}/photo",
+            post(handlers::contact_requests::upload_photo).layer(DefaultBodyLimit::max(
+                handlers::contact_requests::PHOTO_MAX_BYTES,
+            )),
+        )
         // Design 114 §4.4: the setup flow's "Gjort" on a step the parent ticks.
         .route(
             "/api/devices/setup/ticks",

@@ -8,8 +8,8 @@ import kotlinx.serialization.Serializable
  * the name the kid typed (cleaned, at most 40 characters), [number] normalised on the phone, [matrixId] the kid's
  * optional Matrix ID (left out when there is none), [askedAtMs] when the kid asked. Pinned by
  * `contact_request.json`'s `request` and `request_without_matrix` (byte-identical with `server/testdata/`,
- * `ContactRequestsTest`). A later optional photo (design 79) is one more nullable field - a hash of a picture uploaded
- * first on its own route - left out when null; the server ignores keys it doesn't know.
+ * `ContactRequestsTest`). The request's picture is never in it: it follows on its own route once the request is
+ * accepted (`MdmApi.uploadContactRequestPhoto`, `contact_request.json`'s `photo`).
  */
 @Serializable
 data class ContactRequestBody(

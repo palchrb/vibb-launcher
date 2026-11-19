@@ -168,6 +168,8 @@ pub struct Pruned {
     pub sms_held: u64,
     /// The kid's requests for a new contact (design 77 §14), 30 days after the server got them.
     pub contact_requests: u64,
+    /// The pictures of the kid's requests no longer live (Calls & Contacts tidied (6)), forgotten on the row.
+    pub contact_request_photos: u64,
     /// The unanswered questions about an MMS address (design 83 §4), `mmsc_hosts::OPEN_DAYS` after a report last
     /// named them.
     pub mmsc_hosts: u64,
@@ -550,6 +552,21 @@ pub async fn prune(db: &SqlitePool) -> Pruned {
             .execute(db)
             .await,
     );
+    // Calls & Contacts tidied (6): a request no longer live (lapsed 7 days after the ask, or decided by a path that
+    // didn't clear it) forgets its picture; `run_pruning` then deletes the files nobody names.
+    let contact_request_photos = rows(
+        failed,
+        "device_contact_requests",
+        sqlx::query(
+            "UPDATE device_contact_requests SET photo_hash = NULL, photo_original_hash = NULL, photo_view = NULL \
+             WHERE photo_hash IS NOT NULL AND (state <> 'open' OR asked_at <= ?)",
+        )
+        .bind(crate::handlers::contact_requests::live_since(
+            chrono::Utc::now(),
+        ))
+        .execute(db)
+        .await,
+    );
     // Design 83 §4: a question nobody answered, 30 days after the phone last reported its picture.
     let mmsc_hosts = rows(
         failed,
@@ -602,6 +619,7 @@ pub async fn prune(db: &SqlitePool) -> Pruned {
         weather,
         sms_held,
         contact_requests,
+        contact_request_photos,
         mmsc_hosts,
         report_bases,
         app_push,
@@ -618,6 +636,10 @@ pub async fn run_pruning(state: AppState) {
         let pruned = prune(&state.db).await;
         // Design 87: every app logo no phone names, and a crash's stray temp file.
         crate::app_logos::prune_all(&state).await;
+        // A request's picture forgotten (or its row deleted): the files nobody names.
+        if pruned.contact_request_photos > 0 || pruned.contact_requests > 0 {
+            crate::photos::prune(&state).await;
+        }
         if pruned != Pruned::default() {
             tracing::info!(?pruned, "Pruned old data");
         }
