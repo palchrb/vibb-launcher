@@ -835,6 +835,19 @@ async fn a_filter_down_report_raises_its_row_unless_a_choice_explains_it() {
         .text();
     assert!(filter.contains("data-note=\"filter-down\""), "{filter}");
     assert!(filter.contains("Down for 25"), "{filter}");
+    // Connected, the period runs on past the report (code QA L2).
+    sqlx::query(
+        "UPDATE device_status SET reported_at = datetime('now', '-20 minutes') WHERE device_id = ?",
+    )
+    .bind(id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let filter = app
+        .get_page(&format!("/devices/{id}/filter"), &cookie)
+        .await
+        .text();
+    assert!(filter.contains("Down for 45"), "{filter}");
     let dns = app.get_page("/dns", &cookie).await.text();
     assert!(dns.contains("Emma: down"), "{dns}");
 

@@ -323,8 +323,6 @@ enum MetCode {
     Status5xx,
     StatusOther,
     Unreadable,
-    /// A body MET cut short, its whole hours kept: stored as the note of a fetch that worked.
-    Cut,
 }
 
 impl MetCode {
@@ -337,7 +335,6 @@ impl MetCode {
             MetCode::Status5xx => "status_5xx",
             MetCode::StatusOther => "status_other",
             MetCode::Unreadable => "unreadable",
-            MetCode::Cut => "cut",
         }
     }
 
@@ -350,8 +347,7 @@ impl MetCode {
             | MetCode::Status429
             | MetCode::Status5xx
             | MetCode::StatusOther
-            | MetCode::Unreadable
-            | MetCode::Cut => Some(Transient),
+            | MetCode::Unreadable => Some(Transient),
             MetCode::Status403 => Some(Parent),
         }
     }
@@ -583,10 +579,10 @@ async fn fill_forecast(
     if let Err(err) = written {
         tracing::error!(cell = row.id, %err, "weather: couldn't store a forecast fetch");
     }
-    // Design 116 §2.1: MET's health, family-wide (one cell's success ends another's run, QA L6).
+    // Design 116 §2.1: MET's health, family-wide (one cell's success ends another's run, QA L6). A body MET cut
+    // short keeps its whole hours, so the kid sees weather: a success (code QA L3; its `cut` stays in `last_error`).
     let failure = match &fetched {
-        Fetched::Hours { note: None, .. } | Fetched::NotModified { .. } => None,
-        Fetched::Hours { note: Some(_), .. } => Some(MetCode::Cut),
+        Fetched::Hours { .. } | Fetched::NotModified { .. } => None,
         Fetched::Failed { code, .. } => Some(*code),
     };
     match failure.map(|code| (code, code.class())) {

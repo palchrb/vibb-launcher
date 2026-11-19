@@ -554,6 +554,12 @@ async fn a_cut_body_keeps_its_whole_hours_until_expires() {
     let (checked, next, failures, error) = cell_row(&app).await;
     assert_eq!((failures, error.as_deref()), (0, Some("cut")));
     assert_eq!(at(&checked), now());
+    // A success in the integration health (code QA L3): the kid sees weather.
+    let health = crate::integration_health::row(&app.db, "met", "")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(health.ok_at.is_some() && health.failing_since.is_none());
     assert!(at(&next) >= now() + Duration::minutes(59), "{next:?}");
 }
 

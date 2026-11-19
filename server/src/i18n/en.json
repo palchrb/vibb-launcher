@@ -3037,6 +3037,7 @@
   "settings.backups.checked": "checked",
   "settings.backups.check_failed": "Backup can't be read",
   "settings.backups.run_failed": "Backup failed",
+  "settings.backups.run_info": "Make a new copy now; if it fails too, see the server log.",
   "settings.backups.check_info": "Vibb opens each new copy and checks the database in it. Make a new copy now; if it fails too, see the server log.",
   "settings.updates.title": "Software Updates",
   "settings.hub.security_log": "Security Log",

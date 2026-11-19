@@ -979,15 +979,18 @@ pub(crate) fn class_of(err: &StorytelError) -> Option<crate::integration_health:
     use crate::integration_health::Class::*;
     match err {
         StorytelError::Fetch(_)
-        | StorytelError::LoginStatus(_)
         | StorytelError::NoJwt
         | StorytelError::ShortLife
         | StorytelError::TooBig
         | StorytelError::BadShelf => Some(Transient),
-        StorytelError::Status(status) if *status >= 500 || matches!(status, 408 | 429) => {
+        // The login's status as the API's (code QA L6): a 400 or 404 is no outage the backoff mends.
+        StorytelError::Status(status) | StorytelError::LoginStatus(status)
+            if *status >= 500 || matches!(status, 408 | 429) =>
+        {
             Some(Transient)
         }
         StorytelError::Status(_)
+        | StorytelError::LoginStatus(_)
         | StorytelError::NotConfigured
         | StorytelError::KeyUnusable
         | StorytelError::Refused(_)
@@ -2538,6 +2541,7 @@ mod tests {
             (StorytelError::Status(429), Some(Transient)),
             (StorytelError::Status(404), None),
             (StorytelError::LoginStatus(502), Some(Transient)),
+            (StorytelError::LoginStatus(404), None),
             (StorytelError::NoJwt, Some(Transient)),
             (StorytelError::ShortLife, Some(Transient)),
             (StorytelError::TooBig, Some(Transient)),

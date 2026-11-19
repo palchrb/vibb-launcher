@@ -28,13 +28,24 @@ pub fn sqlite_path(url: &str) -> Option<PathBuf> {
 /// Creates `dir` if needed and proves this process can write a file in it.
 pub fn check_data_writable(dir: &Path) -> Result<(), String> {
     let uid = rustix::process::getuid().as_raw();
+    // `data/backups` is a folder on the host in Docker (design 116 §5): the compose file's own words (code QA L5).
+    let backups = dir.file_name().is_some_and(|name| name == "backups");
     let explain = |err: std::io::Error| {
-        format!(
-            "{}/ is not writable by uid {uid} ({err}). In Docker: use a named volume (it is \
-             seeded from the image), or chown a bind-mounted directory to {uid}:{uid}. On the \
-             Pi: the directory belongs to the service user (install.sh sets it).",
-            dir.display()
-        )
+        if backups {
+            format!(
+                "{}/ is not writable by uid {uid} ({err}). In Docker: the backups folder on the host must \
+                 belong to it: chown {uid}:{uid} backups. On the Pi: the directory belongs to the service \
+                 user (install.sh sets it).",
+                dir.display()
+            )
+        } else {
+            format!(
+                "{}/ is not writable by uid {uid} ({err}). In Docker: use a named volume (it is \
+                 seeded from the image), or chown a bind-mounted directory to {uid}:{uid}. On the \
+                 Pi: the directory belongs to the service user (install.sh sets it).",
+                dir.display()
+            )
+        }
     };
     std::fs::create_dir_all(dir).map_err(explain)?;
     let probe = dir.join(format!(".write-check-{}", std::process::id()));
@@ -558,6 +569,13 @@ mod tests {
         let err = check_data_writable(&backups).unwrap_err();
         std::fs::set_permissions(&backups, std::fs::Permissions::from_mode(0o700)).unwrap();
         assert!(err.contains("backups/ is not writable by uid"), "{err}");
+        assert!(
+            err.contains(&format!(
+                "chown {uid}:{uid} backups",
+                uid = rustix::process::getuid().as_raw()
+            )),
+            "{err}"
+        );
     }
 
     #[test]

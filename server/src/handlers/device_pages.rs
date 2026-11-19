@@ -1819,16 +1819,27 @@ pub async fn view_filter(
     let filter_down =
         crate::mobile_network::filter_down(&policy, latest.as_ref(), now.timestamp_millis()).map(
             |report| {
-                let minutes = report.down_ms.unwrap_or(0) / 60_000;
-                let line = crate::i18n::t_params(
-                    lang,
-                    "device.filter.down",
-                    &[("duration", &crate::display_time::duration(lang, minutes))],
-                );
                 let stale = matches!(
                     crate::handlers::devices::connection_of(&state, &device, now),
                     crate::streams::ConnectionState::Offline { .. }
                         | crate::streams::ConnectionState::Disconnected
+                );
+                // While the phone is connected the period runs on past its report (code QA L2): the phone's length
+                // plus the server's time since the report - two durations, each on its own clock, never two instants
+                // subtracted across clocks.
+                let since_ms = if stale {
+                    0
+                } else {
+                    latest
+                        .as_ref()
+                        .and_then(|s| crate::display_time::parse_db_utc(&s.reported_at))
+                        .map_or(0, |at| (now - at).num_milliseconds().max(0))
+                };
+                let minutes = (report.down_ms.unwrap_or(0) + since_ms) / 60_000;
+                let line = crate::i18n::t_params(
+                    lang,
+                    "device.filter.down",
+                    &[("duration", &crate::display_time::duration(lang, minutes))],
                 );
                 if stale {
                     format!("{line} · {}", t(lang, "devices.status.lock.at_last_report"))

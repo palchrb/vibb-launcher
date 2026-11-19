@@ -3037,6 +3037,7 @@
   "settings.backups.checked": "kontrollert",
   "settings.backups.check_failed": "Sikkerhetskopien kan ikke leses",
   "settings.backups.run_failed": "Sikkerhetskopieringen feilet",
+  "settings.backups.run_info": "Ta en ny kopi nå; feiler den også, se serverloggen.",
   "settings.backups.check_info": "Vibb åpner hver nye kopi og sjekker databasen i den. Ta en ny kopi nå; feiler den også, se serverloggen.",
   "settings.updates.title": "Oppdateringer",
   "settings.hub.security_log": "Sikkerhetslogg",

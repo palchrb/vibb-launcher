@@ -729,16 +729,17 @@ struct Refused {
 }
 
 impl BackupsTemplate {
-    /// Design 116 §4: the page's orange line, if any.
-    fn problem_line(&self) -> Option<&'static str> {
+    /// Design 116 §4: the page's orange line and its (i), if any - each problem its own how-to (code QA L5).
+    fn problem_line(&self) -> Option<(&'static str, &'static str)> {
         self.problem.map(|problem| {
-            t(
-                self.lang,
-                match problem {
-                    BackupProblem::Check => "settings.backups.check_failed",
-                    BackupProblem::Run => "settings.backups.run_failed",
-                },
-            )
+            let (line, info) = match problem {
+                BackupProblem::Check => (
+                    "settings.backups.check_failed",
+                    "settings.backups.check_info",
+                ),
+                BackupProblem::Run => ("settings.backups.run_failed", "settings.backups.run_info"),
+            };
+            (t(self.lang, line), t(self.lang, info))
         })
     }
 
@@ -1612,6 +1613,9 @@ pub async fn upload_backup(
                 Some(security::Detail::facts(&filename)),
             )
             .await;
+            // The upload sorts as the newest backup: checked now, as a made one is (code QA L4).
+            let (db, data_dir) = (state.db.clone(), state.data_dir.clone());
+            tokio::spawn(async move { check_and_record(&db, &data_dir, &filename).await });
             Done::Upload.redirect()
         }
         Err(err) => {

@@ -19,9 +19,9 @@
         restarts itself (the user, 2026-11-04): Restore… shows the command to run over SSH. -#}
     <section id="backups" aria-label="{{ self.t("settings.backups.title") }}">
         {#- Design 116 §4: a backup that can't be read, or one that failed - the how-to behind its (i). -#}
-        {% if let Some(line) = self.problem_line() %}
+        {% if let Some((line, info)) = self.problem_line() %}
         <div class="attention attention-action" data-note="backup-problem">
-            <div class="attention-text">{{ line }}<div class="attention-sub"><details class="info"><summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("settings.backups.check_info") }}</p></div></details></div></div>
+            <div class="attention-text">{{ line }}<div class="attention-sub"><details class="info"><summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ info }}</p></div></details></div></div>
         </div>
         {% endif %}
         <div class="group">
