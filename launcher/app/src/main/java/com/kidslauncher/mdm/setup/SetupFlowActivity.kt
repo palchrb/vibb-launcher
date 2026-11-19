@@ -34,6 +34,7 @@ import com.kidslauncher.mdm.ui.ParentPinDialog
 import com.kidslauncher.mdm.ui.UIObjectActivity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -56,6 +57,8 @@ class SetupFlowActivity : UIObjectActivity() {
 
     /** The step whose page is open now (its window ends at the return). */
     private var openedStep: SetupStep? = null
+    /** Design 110's step 2 between "Åpne" and its page: MapLinkStep.begin runs (code QA L1). */
+    private var mapStepOpening = false
     private var callFilterQueue: List<Intent> = emptyList()
 
     /** Design 98 §3.5: the Wi-Fi panel opened from here; its return (or a resume after a pause while it was up) ends
@@ -393,10 +396,19 @@ class SetupFlowActivity : UIObjectActivity() {
             }
             // Design 110's step 2 (finding 1): the apps holding Vibb One's hosts suspended while its page is open, so
             // "Add link" offers them all; given back at the return ([pageReturned]), or by MapLinkStep's own limits.
-            SetupStep.MAP_VIBB_LINKS -> lifecycleScope.launch {
-                withContext(Dispatchers.IO) { MapLinkStep.begin(app) }
-                launchPages(step, pages)
-                if (openedStep == null) withContext(Dispatchers.IO) { MapLinkStep.end(app) }
+            // Code QA L1: "Åpne" again while the page opens or is open does nothing (a second page's return would give
+            // the apps back under the first). L2: a recreation or finish during begin still gives them back.
+            SetupStep.MAP_VIBB_LINKS -> if (!mapStepOpening && openedStep == null) {
+                mapStepOpening = true
+                lifecycleScope.launch {
+                    try {
+                        withContext(Dispatchers.IO) { MapLinkStep.begin(app) }
+                        launchPages(step, pages)
+                    } finally {
+                        mapStepOpening = false
+                        if (openedStep == null) withContext(NonCancellable + Dispatchers.IO) { MapLinkStep.end(app) }
+                    }
+                }
             }
             else -> launchPages(step, pages)
         }
@@ -423,6 +435,8 @@ class SetupFlowActivity : UIObjectActivity() {
                 Log.w(LOG_TAG, "No page for ${page.action}, trying the next")
             } catch (e: Exception) {
                 Log.w(LOG_TAG, "Couldn't open the page for ${page.action}: ${e.javaClass.simpleName}")
+                // Code QA L3: no page is open, so the step's window ends (the map step's holders given back).
+                openedStep = null
                 return
             }
         }

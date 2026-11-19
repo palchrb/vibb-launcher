@@ -224,4 +224,16 @@ class SetupFlowTest {
         }
         assertEquals(SetupStep.LOCATION.howRes, setupHowRes(SetupStep.LOCATION, 36))
     }
+
+    /** Code QA L1-L3 (map links x 114): step 2's holders are never left suspended without its page, nor given back
+     * under a second one. */
+    @Test
+    fun `the map step opens one page and gives the holders back whenever none is open`() {
+        val flow = code("setup/SetupFlowActivity.kt")
+        val open = flow.substringAfter("SetupStep.MAP_VIBB_LINKS -> if (").substringBefore("else -> launchPages(")
+        assertTrue(open.startsWith("!mapStepOpening && openedStep == null)"))
+        assertTrue(open.substringAfter("} finally {").contains("if (openedStep == null) withContext(NonCancellable + Dispatchers.IO) { MapLinkStep.end(app) }"))
+        val launch = flow.substringAfter("private fun launchPages(").substringBefore("private fun pageReturned(")
+        assertTrue("openedStep = null" in launch.substringAfter("catch (e: Exception)").substringBefore("return"))
+    }
 }

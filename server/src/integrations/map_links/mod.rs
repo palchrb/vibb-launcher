@@ -260,8 +260,9 @@ pub fn clean(raw: &Value) -> Option<Value> {
     }))
 }
 
-/// Keeps a cleaned report. A report sent during a pause (everything is unhidden then) keeps the last `reach` and
-/// `vibb_hosts` from outside one (§7.5).
+/// Keeps a cleaned report. A report sent during a pause (everything is unhidden then) keeps the last `reach` from
+/// outside one (§7.5). `vibb_hosts` is the paused report's own: it doesn't depend on what is unhidden, and step 2 is done
+/// in a pause or the setup hold, so its reading (design 114's row 16) must tick off then (code QA M1).
 async fn store_report(
     db: &sqlx::SqlitePool,
     device_id: i64,
@@ -276,10 +277,8 @@ async fn store_report(
                 .fetch_optional(db)
                 .await?;
         let before: Option<Value> = before.flatten().and_then(|j| serde_json::from_str(&j).ok());
-        for key in ["reach", "vibb_hosts"] {
-            if let Some(kept) = before.as_ref().and_then(|b| b.get(key)) {
-                stored[key] = kept.clone();
-            }
+        if let Some(kept) = before.as_ref().and_then(|b| b.get("reach")) {
+            stored["reach"] = kept.clone();
         }
     }
     sqlx::query(

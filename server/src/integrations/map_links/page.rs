@@ -80,6 +80,11 @@ pub fn line_code(
     if steps_left {
         return None;
     }
+    // Code QA L5: short links don't reach Vibb One and Play services' links can't be read (114 never counts that as a
+    // step left): no line, rather than "Ready." or "held" over links that go elsewhere.
+    if !reach("short") && report["play_services_links"].as_bool() != Some(false) {
+        return None;
+    }
     // Every host the parent can select is selected (step 2 suspends the apps holding them while its page is open), so
     // Google's long links not reaching Vibb One is an app the parent allowed taking them: Google Maps.
     if !reach("google") {

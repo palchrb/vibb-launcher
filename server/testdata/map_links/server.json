@@ -1,5 +1,5 @@
 {
- "_doc": "Design 110, the server's own rows (integrations::map_links::tests): hops, the place lookup's answers cut down to the paths §8.3 reads (everything else null - none of Google's other content is copied), the PWA's lines (a row whose report leaves a design 114 map step missing shows no line of its own: 114's warning lines say it) and the lookup line.",
+ "_doc": "Design 110, the server's own rows (integrations::map_links::tests): hops, the place lookup's answers cut down to the paths §8.3 reads (everything else null - none of Google's other content is copied), the PWA's lines (a row whose report leaves a design 114 map step missing shows no line of its own: 114's warning lines say it; nor one whose short links don't reach Vibb One while Play services' links are unreadable, code QA L5) and the lookup line.",
  "hops": [
   {
    "name": "artbox",
@@ -591,6 +591,27 @@
      "short": false,
      "google": false,
      "apple": false
+    }
+   },
+   "line": null,
+   "orange": false
+  },
+  {
+   "name": "short_unread_vibb_done",
+   "on": true,
+   "report": {
+    "target": "app.organicmaps",
+    "target_state": "allowed",
+    "play_services_links": null,
+    "vibb_hosts": {
+     "selected": 20,
+     "selectable": 20,
+     "declared": 20
+    },
+    "reach": {
+     "short": false,
+     "google": true,
+     "apple": true
     }
    },
    "line": null,

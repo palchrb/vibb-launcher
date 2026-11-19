@@ -21,7 +21,10 @@ the phone never talks to Google or Apple.
   Google Play services' "Open supported links" off, then Vibb One's on with every link ticked; the flow runs
   `MapLinkStep.begin` before step 2's page and `end` at its return (finding 1). Their readings (`playLinksDone`,
   `vibbLinksDone` in `map/MapLinkRows.kt`) are the report's `play_services_links` and `vibb_hosts`, as the server reads
-  them. From Android 16 the screen's line names the page's two choices (`setupHowRes`, finding 3). The PIN-gated
+  them (`setup_steps.json`'s `map_readings`), and a pause-time report keeps its own `vibb_hosts` (only `reach` is the
+  last unpaused one), so row 16 ticks off on both sides at once. "Åpne" again while step 2's page opens or is open
+  does nothing, and the holders are given back whenever no page opened (a recreation during `begin` included). From
+  Android 16 the screen's line names the page's two choices (`setupHowRes`, finding 3). The PIN-gated
   Settings' "Kartlenker" keeps one row: with the switch off and Play services' links still off, it gives them back (Q4,
   `mapLinkBackShown`).
 - **Meldinger** (Q1): every web link in a bubble is underlined and tappable (`ui/messages/MessageLinks.kt`); a map

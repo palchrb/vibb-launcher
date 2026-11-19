@@ -117,6 +117,24 @@ fn every_preview_row_is_judged_as_recorded() {
     }
 }
 
+/// Code QA L6: design 114's rows 15-16 read from a report as the phone reads them (`setup_steps.json`'s `map_readings`,
+/// which the launcher's `SetupStepsTest` runs through `playLinksDone` and `vibbLinksDone`; `setup_status`'s tests
+/// compare the copies).
+#[test]
+fn the_setup_readings_are_the_phones() {
+    for row in read("testdata/setup_steps.json")["map_readings"]
+        .as_array()
+        .unwrap()
+    {
+        let name = row["name"].as_str().unwrap();
+        let readings = super::setup_part(true, Some(&row["report"])).readings;
+        for key in ["map_play_links", "map_vibb_links"] {
+            let got = readings.iter().find(|(k, _)| *k == key).unwrap().1;
+            assert_eq!(got, row[key].as_bool(), "{name}: {key}");
+        }
+    }
+}
+
 #[test]
 fn the_pwa_lines_follow_the_rows() {
     for row in server_rows()["pwa_lines"].as_array().unwrap() {
@@ -601,7 +619,7 @@ async fn the_policy_and_the_group_follow_the_switch() {
 }
 
 #[tokio::test]
-async fn a_pause_report_keeps_the_last_reach() {
+async fn a_pause_report_keeps_the_last_reach_and_its_own_hosts() {
     let contract = contract();
     let app = TestApp::new().await;
     let (id, token) = phone_on(&app).await;
@@ -615,14 +633,15 @@ async fn a_pause_report_keeps_the_last_reach() {
     .await;
     let kept = super::report(&app.db, id).await.unwrap().unwrap();
     assert_eq!(kept["reach"], contract["report_steps_left"]["reach"]);
-    assert_eq!(
-        kept["vibb_hosts"],
-        contract["report_steps_left"]["vibb_hosts"]
-    );
+    // Code QA M1: the hosts are the paused report's own (step 2 is done in a pause or the hold), so design 114's row 16
+    // ticks off with the phone's.
+    assert_eq!(kept["vibb_hosts"], contract["report"]["vibb_hosts"]);
     assert_eq!(
         kept["play_services_links"],
         contract["report"]["play_services_links"]
     );
+    let readings = super::setup_part(true, Some(&kept)).readings;
+    assert!(readings.contains(&("map_vibb_links", Some(true))));
     app.post_status(&token, json!({"map_links": contract["report"]}))
         .await;
     assert_eq!(

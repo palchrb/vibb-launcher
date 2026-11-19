@@ -6,7 +6,8 @@
   `features` (byte-identical in the launcher's test resources; `setup_status::tests` runs every row and compares the
   copies). `inputs_of` and `readings_of` map the policy, the latest report and the integrations' part
   (`Integrations::setup`: design 110's switch as the `map_links` input and rows 15-16's readings from its own report,
-  114 §2.6) to the rule's inputs and readings;
+  114 §2.6; `setup_steps.json`'s `map_readings` pins those readings against the launcher's) to the rule's inputs and
+  readings;
   `missing`/`count`/`setup_row` are the rule. The server reads `parent_pin` itself; the report's `setup` carries only
   `device_owner`, `mobile_data`, `location`, `data_saver`, `full_screen_intent`, `fingerprint` and the hold's
   `hold_until_ms`/`hold_left_ms` (`clean`); every other reading comes from the field that already carries it.

@@ -165,6 +165,10 @@ private const val BIT_AIRPLANE = 64L
 /** The packages of design 110's map apps (110 §7.1's targets): `map_links` needs one installed. */
 val MAP_APP_PACKAGES = setOf("app.organicmaps", "app.comaps.fdroid", "app.comaps")
 
+/** `map_links`'s map app: one of [MAP_APP_PACKAGES] among [packages], the report's installed packages (a hidden app
+ * counts, as the server reads `installed_apps`). */
+fun mapAppInstalled(packages: Collection<String>): Boolean = MAP_APP_PACKAGES.any { it in packages }
+
 /**
  * §2.3's inputs: the policy's and, for [mapAppInstalled], the reported installed packages. [clockFormat] `"system"`,
  * `"24"` or `"12"`. A phone before its first policy has [NONE]: only the `always` steps apply.

@@ -27,6 +27,7 @@ import com.kidslauncher.mdm.server.RestrictionsPause
 import com.kidslauncher.mdm.server.WriteSettingsAccess
 import com.kidslauncher.mdm.server.cachedPolicy
 import com.kidslauncher.mdm.server.clockFormatChoiceOf
+import com.kidslauncher.mdm.server.controllablePackages
 import com.kidslauncher.mdm.server.dto.PolicyResponse
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -146,15 +147,16 @@ object SetupReadings {
             callsManaged = policy.callPolicy?.callsMode.let { it != null && it != "unmanaged" },
             androidLock = policy.kidLock?.keyguard == "android",
             mapLinksOn = mapLinksOn(policy),
-            mapAppInstalled = MAP_APP_PACKAGES.any { installed(context, it) },
+            mapAppInstalled = mapAppInstalled(reportedPackages(context)),
         )
     }
 
-    private fun installed(context: Context, pkg: String): Boolean = try {
-        context.packageManager.getPackageInfo(pkg, 0)
-        true
+    /** The packages the report's `installed_apps` lists ([controllablePackages], a hidden app included), so the server
+     * reads `map_links`'s need from the same set (code QA M2). */
+    private fun reportedPackages(context: Context): Collection<String> = try {
+        controllablePackages(context.packageManager)
     } catch (e: Exception) {
-        false
+        emptyList()
     }
 
     /** The parent steps ticked: the policy's and the phone's own not yet carried (§4.4). */
