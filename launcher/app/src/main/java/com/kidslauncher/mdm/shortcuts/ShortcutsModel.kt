@@ -200,7 +200,7 @@ fun shortcutTapAllowed(
     val k = ShortcutKey.of(key) ?: return ShortcutTap.UNKNOWN_KEY
     if (!lockKnown) return ShortcutTap.STATE_UNKNOWN
     if (locked) return ShortcutTap.LOCKED
-    if (keyguardLocked && k != ShortcutKey.BRIGHTNESS) return ShortcutTap.KEYGUARD
+    if (keyguardLocked) return ShortcutTap.KEYGUARD
     if (!panel.shown) return ShortcutTap.NOT_IN_PANEL
     val item = panel.items.firstOrNull { it.key == k } ?: return ShortcutTap.NOT_IN_PANEL
     if (item.busy) return ShortcutTap.BUSY

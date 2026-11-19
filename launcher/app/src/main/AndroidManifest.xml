@@ -682,15 +682,14 @@
             android:noHistory="true"
             android:taskAffinity=""
             android:theme="@style/ShortcutWindowTheme" />
-        <!-- Snarveier's Lysstyrke (2026-11-19): the brightness sheet, over whatever is in front and over a keyguard that
-             shows the panel; the slider alone, its own task, finished when it leaves the front. -->
+        <!-- Snarveier's Lysstyrke (2026-11-19): the brightness sheet, over whatever is in front; the slider alone, its
+             own task, finished when it leaves the front. Never over a keyguard (Snarveier is hidden there, code QA L1). -->
         <activity
             android:name=".shortcuts.BrightnessSheetActivity"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|uiMode"
             android:excludeFromRecents="true"
             android:exported="false"
             android:noHistory="true"
-            android:showWhenLocked="true"
             android:taskAffinity=""
             android:theme="@style/ShortcutWindowTheme" />
 

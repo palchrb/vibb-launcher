@@ -189,9 +189,10 @@ class ShortcutsTest {
         assertEquals("a cold process", ShortcutTap.STATE_UNKNOWN, tap("wifi", known = false))
         assertEquals(ShortcutTap.LOCKED, tap("wifi", locked = true))
         assertEquals("a Swipe keyguard (Q99-L1)", ShortcutTap.KEYGUARD, tap("wifi", keyguard = true))
-        // Lysstyrke's sheet holds the slider alone: it may open over a keyguard (2026-11-19), never under Vibb's lock.
+        // Lysstyrke's sheet: refused on a keyguard as every item (code QA L1), and under Vibb's lock.
         val brightness = shortcutsModel(true, mask, listOf("brightness"), false, all)
-        assertEquals(ShortcutTap.ALLOW, tap("brightness", p = brightness, keyguard = true))
+        assertEquals(ShortcutTap.ALLOW, tap("brightness", p = brightness))
+        assertEquals(ShortcutTap.KEYGUARD, tap("brightness", p = brightness, keyguard = true))
         assertEquals(ShortcutTap.LOCKED, tap("brightness", p = brightness, keyguard = true, locked = true))
         assertEquals(ShortcutTap.STATE_UNKNOWN, tap("brightness", p = brightness, keyguard = true, known = false))
         assertEquals("bit 4 off", ShortcutTap.NOT_IN_PANEL, tap("brightness", p = shortcutsModel(true, mask and 4L.inv(), listOf("brightness", "wifi"), false, all)))

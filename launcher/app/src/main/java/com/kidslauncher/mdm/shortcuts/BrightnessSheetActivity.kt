@@ -31,8 +31,9 @@ import com.kidslauncher.mdm.ui.look.lookOver
  * - **The kiosk**: its own task (`taskAffinity=""`, `excludeFromRecents`, `noHistory`), the launcher's own package, so
  *   lock task lets it start; it holds no link, button or intent out, and it finishes when it leaves the front
  *   ([onStop]) - Home, the lock, the screen going off.
- * - **The lock screen**: `showWhenLocked` (manifest), so it opens over a keyguard that shows the panel (a Swipe one;
- *   a PIN keyguard hides it, design 99 S14) and offers the slider alone there too. Vibb's own lock (LOCKED) is refused.
+ * - **The lock screen**: never over it. Snarveier is hidden on every keyguard (`VISIBILITY_SECRET`; checked on a Swipe
+ *   one too, Android 14 and 16, code QA L1), and the tap check refuses Lysstyrke there as every other item, and under
+ *   Vibb's own lock (LOCKED).
  * - **The look**: the kid's (Mørk or Lys, [lookOver]): this activity's context with the look's night bit and the page
  *   colours, so the layout's page tokens resolve as on a page.
  */

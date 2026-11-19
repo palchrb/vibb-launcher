@@ -208,18 +208,19 @@ the setup notification.
   route starts only on its window's first focus, so no finger is left in a collapsing shade (design 98's ~300 ms gap);
   no focus in 3 s - nothing. Every tap runs on `ShortcutsRuntime.taps` through the pure fail-closed
   `shortcutTapAllowed`: an unknown key, the lock mode undecided or the time rules unreadable, LOCKED, Android's keyguard
-  (a Swipe keyguard shows silent notifications; all but Lysstyrke), not in the panel, dimmed, busy, Musikk's app unusable
+  (a Swipe keyguard shows silent notifications), not in the panel, dimmed, busy, Musikk's app unusable
   -> refused, logged.
 - **Lysstyrke's sheet** (2026-11-19, the user's mockup "Valg 1"; it replaced D5's three steps): the cell opens
   `BrightnessSheetActivity` (pure `shortcutWindow`, as Flymodus On; Android closes the shade to start it). The
-  airplane window's one pixel and theme, its own task, `noHistory`, out of Recents, `showWhenLocked`; it shows a
+  airplane window's one pixel and theme, its own task, `noHistory`, out of Recents; it shows a
   `KidSheetDialog` (`setUpKidSheet`: edge to edge, dimmed, drag down closes) only after `ShortcutsRuntime.verdict`
   allows Lysstyrke, else finishes. `sheet_brightness.xml`, in the kid's look (`lookOver`, page tokens;
   `kid_page_handle`, `kid_page_track`): the title, a small sun, kid Settings' slider (0-255, `setBrightness` while
   dragging), a big sun. Tap outside, Back or a drag down closes it; `onStop` finishes it (Home, the lock, screen off), and
-  it holds no intent out (lock task: the launcher's own package). The tap check lets Lysstyrke alone through a keyguard
-  (a Swipe keyguard shows the panel; a PIN keyguard hides it, S14, so on the kid's phone it is never reached there);
-  Vibb's LOCKED still refuses it. A Lysstyrke broadcast (a stale view) does nothing; the glyph is `light_mode`
+  it holds no intent out (lock task: the launcher's own package). Never over a keyguard: Snarveier
+  (`VISIBILITY_SECRET`) didn't show on a Swipe keyguard either, with silent notifications shown on the lock screen
+  (Android 14 and 16, `docs/review/2026-11-19-brightness-sheet-code-qa.md` L1), so the sheet has no `showWhenLocked` and
+  the tap check refuses Lysstyrke on a keyguard and under LOCKED as every item. A Lysstyrke broadcast (a stale view) does nothing; the glyph is `light_mode`
   (`shortcut_glyph_brightness`), the content description the name alone.
 - **Hidden** (§2.6): the long-press menu's "Turn off" on the channel is the kid's choice; the report says `hidden`, Kid
   Settings' row "Skjult i varsellisten", and the anchor's notification goes back to the plain notice (with the time
