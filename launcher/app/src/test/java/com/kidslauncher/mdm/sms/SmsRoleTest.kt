@@ -37,6 +37,9 @@ class SmsRoleTest {
         assertTrue(lockDefaultAppsFor(callsManaged = true, dialerHeld = true, smsMode = ChannelMode.UNMANAGED, smsRoleHeld = false))
         assertFalse(lockDefaultAppsFor(callsManaged = false, dialerHeld = true, smsMode = ChannelMode.OFF, smsRoleHeld = true))
         assertFalse(lockDefaultAppsFor(callsManaged = false, dialerHeld = false, smsMode = ChannelMode.MANAGED, smsRoleHeld = false))
+        // Design 119 (M5): the link gate's own reason, whatever the calls and SMS (the pause lifts it: gateLock false then).
+        assertTrue(lockDefaultAppsFor(callsManaged = false, dialerHeld = false, smsMode = ChannelMode.OFF, smsRoleHeld = false, gateLock = true))
+        assertFalse(lockDefaultAppsFor(callsManaged = false, dialerHeld = false, smsMode = ChannelMode.OFF, smsRoleHeld = false, gateLock = false))
     }
 
     @Test

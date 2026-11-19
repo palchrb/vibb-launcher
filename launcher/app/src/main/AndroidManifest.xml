@@ -774,6 +774,38 @@
                 <data android:pathPrefix="/maps" />
             </intent-filter>
         </activity>
+        <!-- Design 119 §4.1: Vibb One as the phone's browser - the link gate. A full browser to Android (VIEW, BROWSABLE,
+             http and https, no host; no APP_BROWSER category, no CustomTabsService), installed disabled and enabled by
+             the apply while managed and no free browser is allowed. Translucent, never in Recents, standard launch mode
+             with no task affinity: started by an app's link it lands in that app's task, and so does a login's tab. -->
+        <activity
+            android:name=".logins.LinkGateActivity"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|uiMode|keyboard|keyboardHidden|locale|layoutDirection|fontScale|density"
+            android:enabled="false"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:launchMode="standard"
+            android:taskAffinity=""
+            android:theme="@style/MapLinkTheme">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="http" />
+                <data android:scheme="https" />
+            </intent-filter>
+        </activity>
+        <!-- Design 119 §4.1 (M1): a no-op alias whose enabled state the role repair flips, so the role service's package
+             hash changes and Android grants the browser role's fallback, the gate. No filter: never started. -->
+        <activity-alias
+            android:name=".logins.RoleNudge"
+            android:enabled="false"
+            android:exported="false"
+            android:targetActivity=".logins.LinkGateActivity" />
+        <!-- Design 119 §4.4 (L5): the login window's backstop alarm (our own alarm only). -->
+        <receiver
+            android:name=".logins.LoginWindowReceiver"
+            android:exported="false" />
         <!-- Design 108 §2.3: an app removed or its data cleared drops its registrations. Protected system broadcasts on
              the implicit-broadcast exception list, so exported="false". -->
         <receiver

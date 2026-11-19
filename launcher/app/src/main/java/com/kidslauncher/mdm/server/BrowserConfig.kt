@@ -92,6 +92,8 @@ object BrowserConfig {
         // The role off (or another package) after its lockdown was in force: Chrome is hidden first - its tabs end -,
         // and only then is its bundle loosened (code QA L3); the plan then hides it or, ticked, unhides it.
         if (!roleOn && chromeInstalled && prefs.getString(KEY_WRITTEN, null) != null) {
+            // Design 119 §4.4: an open login window ends first (`rule`), its record gone before Chrome hides.
+            com.kidslauncher.mdm.logins.LoginWindow.eventNow(context, com.kidslauncher.mdm.logins.WindowEvent.RULE)
             try {
                 dpm.setApplicationHidden(admin, com.kidslauncher.mdm.logins.CHROME_PACKAGE, true)
             } catch (e: Exception) {
@@ -124,7 +126,9 @@ object BrowserConfig {
                     }
                     val old = prefs.getString(KEY_WRITTEN, null)?.let(::hostsOf)
                     if (com.kidslauncher.mdm.logins.chromeTightened(old, lockdown)) {
-                        // Hiding stops the package: an open tab of the looser phase ends (the plan unhides it).
+                        // Hiding stops the package: an open tab of the looser phase ends. Design 119: a login window
+                        // ends first (`tightened`); Chrome stays hidden until the next one.
+                        com.kidslauncher.mdm.logins.LoginWindow.eventNow(context, com.kidslauncher.mdm.logins.WindowEvent.TIGHTENED)
                         dpm.setApplicationHidden(admin, pkg, true)
                         Log.i(LOG_TAG, "Chrome's lockdown tightened: its tabs ended")
                     }

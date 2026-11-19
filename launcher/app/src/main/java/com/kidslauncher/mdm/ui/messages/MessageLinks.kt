@@ -15,13 +15,12 @@ import android.view.MotionEvent
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import com.kidslauncher.mdm.R
-import com.kidslauncher.mdm.logins.LinkLookup
-import com.kidslauncher.mdm.logins.freeBrowserOf
-import com.kidslauncher.mdm.logins.linkTargetOf
+import com.kidslauncher.mdm.logins.GateStep
+import com.kidslauncher.mdm.logins.LinkGateRuntime
+import com.kidslauncher.mdm.logins.LoginWindow
 import com.kidslauncher.mdm.map.MapLinkActivity
 import com.kidslauncher.mdm.map.MapLinkForms
 import com.kidslauncher.mdm.map.MapLinks
-import com.kidslauncher.mdm.map.MapLinksRuntime
 
 /**
  * Web links in a message bubble (design 110 §15 Q1, the user: "Alle linker i meldinger bør vel kunne trykkes på?
@@ -29,13 +28,14 @@ import com.kidslauncher.mdm.map.MapLinksRuntime
  * phone numbers, e-mail addresses and street addresses stay plain text. The one way a message opens something
  * (`KidScreensEscapeTest`):
  *
+ * - design 119 §5: the link gate's own plan (`linkGatePlan` with `fromMessages`, so never a login window, D3);
  * - a map link, while the parent's switch is on, goes straight to Vibb's own handler ([MapLinkActivity]) - no
  *   Android resolution, no phone step needed;
- * - any other link is a plain `VIEW` to the one allowed app that declares it (design 119 §5: [linkTargetOf] over
- *   [com.kidslauncher.mdm.logins.LinkLookup]'s per-package lookup, so an unverified app is found while a browser
- *   exists; the allowed set is [messageLinkAllowed]: the allowlist and Vibb One, never the login browser), else a
- *   free browser the parent ticked - never Play services, never a chooser, nothing during a time rule; with none, the
- *   kid's calm note.
+ * - any other link is a plain `VIEW` to the one allowed app that declares it (`linkTargetOf` over `LinkLookup`'s
+ *   per-package lookup, so an unverified app is found while a browser exists; the allowed set is
+ *   [messageLinkAllowed]: the allowlist and Vibb One, never the login browser), else a free browser the parent ticked
+ *   - never Play services, never a chooser, nothing during a time rule; with none, the kid's calm note, and the
+ *   host goes into the report's stopped hosts.
  *
  * The text keeps its long press (the reactions): only a press that starts on a link is the link's.
  */
@@ -101,47 +101,47 @@ object MessageLinks {
         }
     }
 
-    /** Opens [url] (§15 Q1): a map link through Vibb's handler while the switch is on, else the one allowed app that
-     * declares it, else the note. The lookup runs off the main thread (one query per allowed package, design 119 H1). */
+    /** Opens [url] (§15 Q1): design 119's plan with `fromMessages` ([LinkGateRuntime.decide], never a login window,
+     * D3) - a map link through Vibb's handler while the switch is on, else the one allowed app that declares it, else a
+     * free browser, else the note (the host stopped for the PWA). Decided off the main thread (H1's per-package lookup). */
     fun open(context: Context, url: String) {
-        try {
-            if (MapLinkForms.isMapLink(url) && MapLinksRuntime.on(context)) {
-                val https = MapLinkForms.upgrade(url) ?: url
-                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(https)).setClass(context, MapLinkActivity::class.java))
-                return
-            }
-        } catch (e: Exception) {
-            Log.w("MessageLinks", "Couldn't open a map link: ${e.javaClass.simpleName}")
-            cantOpen(context)
-            return
-        }
         val app = context.applicationContext
         val main = Handler(Looper.getMainLooper())
         Thread {
-            // Code QA L4: an intent filter's scheme is lowercase ("HTTPS://" matches nothing).
-            val view = try {
-                Intent(Intent.ACTION_VIEW, Uri.parse(url).normalizeScheme()).addCategory(Intent.CATEGORY_BROWSABLE)
-            } catch (e: Exception) {
-                null
-            }
-            val pkg = try {
-                view?.let { handler(app, it) }
+            val step = try {
+                LinkGateRuntime.decide(app, url, fromMessages = true, keyguardLocked = false)
             } catch (e: Exception) {
                 Log.w("MessageLinks", "Couldn't look a link up: ${e.javaClass.simpleName}")
-                null
+                GateStep.Note(refused = false)
             }
-            main.post { start(context, view, pkg) }
+            main.post { start(context, url, step) }
         }.start()
     }
 
-    /** On the main thread: the target, or the note - only while the page is still there. */
-    private fun start(context: Context, view: Intent?, pkg: String?) {
+    /** On the main thread: the plan's step, or the note - only while the page is still there. */
+    private fun start(context: Context, url: String, step: GateStep) {
         if ((context as? android.app.Activity)?.isFinishing == true) return
         try {
-            if (view == null || pkg == null) {
+            val pkg = when (step) {
+                GateStep.Map -> {
+                    val https = MapLinkForms.upgrade(url) ?: url
+                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(https)).setClass(context, MapLinkActivity::class.java))
+                    return
+                }
+                is GateStep.App -> step.pkg
+                is GateStep.Browser -> step.pkg
+                is GateStep.Note -> {
+                    if (step.refused) LoginWindow.refuse(context, url)
+                    null
+                }
+                GateStep.Nothing, GateStep.Login -> null
+            }
+            if (pkg == null) {
                 cantOpen(context)
                 return
             }
+            // Code QA L4: an intent filter's scheme is lowercase ("HTTPS://" matches nothing).
+            val view = Intent(Intent.ACTION_VIEW, Uri.parse(url).normalizeScheme()).addCategory(Intent.CATEGORY_BROWSABLE)
             context.startActivity(view.setPackage(pkg).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         } catch (e: Exception) {
             Log.w("MessageLinks", "Couldn't open a link: ${e.javaClass.simpleName}")
@@ -155,18 +155,6 @@ object MessageLinks {
             .setMessage(R.string.message_link_cant_open)
             .setPositiveButton(android.R.string.ok, null)
             .show()
-    }
-
-    /** The one app that opens [view] (design 119 §5): [linkTargetOf] over the per-package lookup, else a free browser. */
-    private fun handler(context: Context, view: Intent): String? {
-        val allowlist = com.kidslauncher.mdm.server.currentPolicyDecision().policy?.allowlist
-        val own = context.packageName
-        val locked = com.kidslauncher.mdm.preferences.LauncherPreferences.mdm().lockReason() != com.kidslauncher.mdm.server.LockReason.NONE
-        if (locked) return null
-        val found = LinkLookup.find(context, view, allowlist, own)
-        val allowed = messageLinkAllowed(allowlist, own)
-        return linkTargetOf(found.approved, found.declaring, allowed, locked, own, found.browsers.toSet())
-            ?: freeBrowserOf(found.browsers, allowed, own)
     }
 }
 

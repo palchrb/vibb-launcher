@@ -205,6 +205,8 @@ class Application : android.app.Application() {
         } catch (e: Exception) {
             android.util.Log.e("Application", "BootClock.init failed", e)
         }
+        // Design 119 §4.4 (L5): a login window this process didn't open (a restart, a reboot) ends - Chrome hidden.
+        com.kidslauncher.mdm.logins.LoginWindow.atProcessStart(this)
         // Design 24b §3: a boot the launcher didn't see (safe mode, a start cut short) - early, so a
         // crash later in onCreate doesn't make the next start look like one. Never throws.
         com.kidslauncher.mdm.server.BootWitness.record(this)

@@ -200,6 +200,9 @@ fun computeEnforcementPlan(
      * the kiosk (M11, M12), suspended by a time-rule lock like any app (D7), never in the accessibility or input
      * method lists and never among the lock's usable apps. A ticked Chrome is an allowed app and ignores the role. */
     loginBrowser: String? = null,
+    /** Design 119 §4.2: a login window is open - only then is [loginBrowser]'s Chrome unhidden (it stays pinned while
+     * ready, and is never suspended for the role: a window unhides it alone). */
+    loginWindowOpen: Boolean = false,
     /** Design 105 §2.1: the lock in force has a time rule (`lock.rules.isNotEmpty()`), not only the used-up budget. */
     ruleLocked: Boolean = false,
 ): EnforcementPlan {
@@ -225,6 +228,9 @@ fun computeEnforcementPlan(
     if (appsManaged) controllable.filterTo(hide) { it !in allowed && it !in neverRestrict && it != PLAY_STORE && it != roleApp }
     if (suspendSmsApps) controllable.filterTo(hide) { it in smsPackages && it !in neverRestrict }
     val suspend = hide.toMutableSet()
+    // Design 119 §4.2: the role's Chrome is hidden outside a login window - not suspended, so a window's unhide alone
+    // brings it out.
+    if (roleApp != null && com.kidslauncher.mdm.logins.loginChromeHidden(true, loginWindowOpen) && roleApp in controllable) hide += roleApp
     // The alarm apps are spared by the lock only, so an alarm set inside bedtime still rings (an alarm app that isn't
     // allowed is hidden above, lock or not); the allowed ones are pinned during the lock too (below).
     // Design 69 §4.4: the calendar sync apps, while allowed, keep syncing through a lock (not neverRestrict, which

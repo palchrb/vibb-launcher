@@ -36,21 +36,27 @@ class EnforcementPlanTest {
         lockUsableApps = usable, ruleBlocksCalls = noCalls, timeRulesSet = rules, budgetSet = budget,
     )
 
-    /** Design 102 §4.1: Chrome's login role, once its lockdown reads back - unhidden, unsuspended and pinned though not
-     * allowed; suspended by a lock like any app, never pinned then; never in the accessibility or input-method lists. */
+    /** Design 102 §4.1, design 119 §4.2: Chrome's login role, once its lockdown reads back - hidden outside a login
+     * window, unhidden only while one is open, never suspended for the role, always pinned; suspended by a lock like
+     * any app, never pinned then; never in the accessibility or input-method lists. */
     @Test
-    fun `the login role's Chrome is unhidden and pinned, and suspended by a lock`() {
+    fun `the login role's Chrome is unhidden only in a window, pinned, and suspended by a lock`() {
         val chrome = "com.android.chrome"
         val role = computeEnforcementPlan(listOf("org.example.game"), true, 0, false, controllable, OWN, DIALER, loginBrowser = chrome)
-        assertFalse(chrome in role.hide)
+        assertTrue(chrome in role.hide)
         assertFalse(chrome in role.suspend)
         assertTrue(chrome in role.kioskPackages!!)
         assertFalse(chrome in role.permittedAccessibility!!)
         assertFalse(chrome in role.permittedInputMethods!!)
         assertTrue("org.example.music" in role.hide)
+        val window = computeEnforcementPlan(
+            listOf("org.example.game"), true, 0, false, controllable, OWN, DIALER, loginBrowser = chrome, loginWindowOpen = true,
+        )
+        assertFalse(chrome in window.hide)
+        assertFalse(chrome in window.suspend)
+        assertTrue(chrome in window.kioskPackages!!)
         val locked = computeEnforcementPlan(listOf("org.example.game"), true, 0, false, controllable, OWN, DIALER, scheduleLocked = true, loginBrowser = chrome)
         assertTrue(chrome in locked.suspend)
-        assertFalse(chrome in locked.hide)
         assertFalse(chrome in locked.kioskPackages!!)
     }
 
