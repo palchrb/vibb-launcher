@@ -116,19 +116,32 @@ async fn the_contract() {
         row(&contract, "chrome_ticked")
     );
 
+    // Design 119: the stopped hosts' instants moved to the last minutes (the 7-day drop runs on the arrival's clock).
+    let now_ms = contract["now_ms"].as_i64().unwrap();
+    let shift = chrono::Utc::now().timestamp_millis() - now_ms;
+    let moved = |body: &Value| {
+        let mut body = body.clone();
+        if let Some(refused) = body["login_browser"]["refused"].as_array_mut() {
+            for entry in refused {
+                entry["at_ms"] = json!(entry["at_ms"].as_i64().unwrap() + shift);
+            }
+        }
+        body
+    };
     for name in ["report", "report_off"] {
-        report(&app, &token, contract[name].clone()).await;
+        let body = moved(&contract[name]);
+        report(&app, &token, body.clone()).await;
         let (portal, browser) = stored(&app, id).await;
         let portal: Value = serde_json::from_str(&portal.unwrap()).unwrap();
         let browser: Value = serde_json::from_str(&browser.unwrap()).unwrap();
-        assert_eq!(portal, contract[name]["captive_portal"], "{name}");
-        assert_eq!(browser, contract[name]["login_browser"], "{name}");
+        assert_eq!(portal, body["captive_portal"], "{name}");
+        assert_eq!(browser, body["login_browser"], "{name}");
     }
 
     for row in contract["clean"].as_array().unwrap() {
         let cleaned = match row["part"].as_str().unwrap() {
             "captive_portal" => clean_portal(&row["in"]),
-            _ => clean_browser(&row["in"]),
+            _ => clean_browser(&row["in"], now_ms),
         };
         assert_eq!(cleaned.unwrap_or(Value::Null), row["stored"], "{row}");
     }
@@ -496,4 +509,81 @@ async fn code_off_events_push_once_an_hour() {
         "one code-off push and both code-on: {deliveries:?}"
     );
     assert!(!deliveries.iter().any(|k| k == "digest"), "{deliveries:?}");
+}
+
+/// Design 119 §7: the phone's stopped hosts as "Recently stopped" while the role is on - newest first, each once, none
+/// older than 7 days, none a listed site takes - each with Add (an own site, back on `#logins-sites`); and Vibb One not
+/// the browser: the setup step's one line at `#logins-apps` and its fix behind the ⓘ, no second state row.
+#[tokio::test]
+async fn the_stopped_hosts_and_the_browser_role() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("Emma").await;
+    let page = format!("/devices/{id}/logins");
+    save(&app, &cookie, id, &[("section", "apps"), ("on", "on")]).await;
+    save(
+        &app,
+        &cookie,
+        id,
+        &[("section", "preset"), ("preset", "google"), ("on", "on")],
+    )
+    .await;
+    let now = chrono::Utc::now().timestamp_millis();
+    app.post_status(
+        &token,
+        json!({"login_browser": {"package": "com.android.chrome", "state": "on", "browser_role": false, "refused": [
+            {"at_ms": now - 8 * 24 * 3_600_000_i64, "host": "old.example"},
+            {"at_ms": now - 60_000, "host": "school.example"},
+            {"at_ms": now - 50_000, "host": "mail.accounts.google.com"},
+            {"at_ms": now - 40_000, "host": "video.example"},
+            {"at_ms": now - 30_000, "host": "school.example"}
+        ]}}),
+    )
+    .await;
+    let html = app.get_page(&page, &cookie).await.text();
+    super::settings_pages::check_forms(&page, &html);
+    let list = &html[html.find("data-stopped-list").expect("the list")..];
+    let list = &list[..list.find("Add only sign-in sites.").unwrap()];
+    let school = list
+        .find("data-stopped=\"school.example\"")
+        .expect("school");
+    let video = list.find("data-stopped=\"video.example\"").expect("video");
+    assert!(school < video, "newest first: {list}");
+    assert_eq!(list.matches("data-stopped=\"school.example\"").count(), 1);
+    assert!(!list.contains("old.example"), "older than 7 days: {list}");
+    assert!(
+        !list.contains("mail.accounts.google.com"),
+        "a preset's site takes it: {list}"
+    );
+    assert!(html.contains("Recently stopped") && html.contains("Add only sign-in sites."));
+    // Vibb One isn't the browser: one orange line (the setup step's), the fix behind the ⓘ.
+    assert!(
+        html.contains("data-setup-warning=\"vibb_browser\""),
+        "{html}"
+    );
+    assert!(html.contains("data-role-fix"));
+    assert!(!html.contains("data-row=\"apps-state\""), "said once");
+
+    let res = save(
+        &app,
+        &cookie,
+        id,
+        &[
+            ("section", "site"),
+            ("action", "add"),
+            ("entry", "school.example"),
+        ],
+    )
+    .await;
+    assert_redirect(&res, &page, Some("logins-sites"));
+    let html = app.get_page(&page, &cookie).await.text();
+    assert!(html.contains("data-site=\"school.example\""));
+    assert!(!html.contains("data-stopped=\"school.example\""));
+    assert!(html.contains("data-stopped=\"video.example\""));
+
+    // The role off: no list (an own site would do nothing).
+    save(&app, &cookie, id, &[("section", "apps")]).await;
+    let html = app.get_page(&page, &cookie).await.text();
+    assert!(!html.contains("data-stopped-list"));
+    assert!(!html.contains("data-setup-warning=\"vibb_browser\""));
 }

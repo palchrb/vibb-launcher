@@ -91,6 +91,7 @@ class SetupStepsTest {
         androidLock = row.getValue("android_lock").jsonPrimitive.boolean,
         mapLinksOn = row.getValue("map_links_on").jsonPrimitive.boolean,
         mapAppInstalled = row.getValue("map_app_installed").jsonPrimitive.boolean,
+        linkGate = row.getValue("link_gate").jsonPrimitive.boolean,
     )
 
     @Test

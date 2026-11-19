@@ -73,6 +73,7 @@ object SetupPages {
             // The panel isn't a Settings page: it opens once design 98's Wi-Fi step has turned airplane mode on.
             SetupStep.WIFI_AIRPLANE -> listOf(AssistantSetup.wifiPanelIntent())
             SetupStep.CALL_FILTER -> AssistantSetup.screeningRoleIntents(context)
+            SetupStep.VIBB_BROWSER -> com.kidslauncher.mdm.logins.BrowserRoleStep.requestIntents(context)
             SetupStep.FINGERPRINT -> FingerprintEnrol.pageIntents(context)
             SetupStep.MEDIA_ON_LOCK -> MediaLockScreen.pageIntents(context)
             SetupStep.DEFAULT_APPS, SetupStep.VIBRATION, SetupStep.TOUCH_FEEDBACK, SetupStep.LOCK_CLOCK,

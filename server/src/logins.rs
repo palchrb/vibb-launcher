@@ -59,7 +59,23 @@ pub const APPROVALS: &[&str] = &["code", "grant", "pause", "none"];
 pub const HANDLERS: &[&str] = &["vibb", "system", "other"];
 /// The role's state on the phone, and why it failed.
 pub const BROWSER_STATES: &[&str] = &["on", "off", "absent", "failed"];
-pub const BROWSER_REASONS: &[&str] = &["package", "write", "readback", "absent"];
+pub const BROWSER_REASONS: &[&str] = &["package", "write", "readback", "absent", "role"];
+/// How a login window ended (design 119 §4.4): the login done into the app, the tab closed, the result relayed, the tab
+/// left past its minute, 5 minutes, the keyguard, the apply's rule or tightening, a window of an earlier process.
+pub const WINDOW_ENDS: &[&str] = &[
+    "done",
+    "closed",
+    "result",
+    "left",
+    "timeout",
+    "locked",
+    "rule",
+    "tightened",
+    "stale",
+];
+/// Design 119 §7 (L9): the stopped hosts kept - the last 10, none older than 7 days.
+pub const MAX_REFUSED: usize = 10;
+pub const REFUSED_MAX_AGE_MS: i64 = 7 * 24 * 3_600_000;
 
 /// A preset (D11): a name the parent ticks, its words and its hosts. Stored as a set of [Preset::key]s and expanded
 /// when the policy is built, so a corrected preset reaches every phone that ticked it (Q102-M8).
@@ -399,8 +415,10 @@ fn clean_session(session: &Map<String, Value>) -> Option<Value> {
 
 /// The report's `login_browser`, re-built (§6.2): `package` Chrome's or dropped (a launcher never reports another),
 /// `state` one of [BROWSER_STATES], `reason` one of [BROWSER_REASONS] or null, `version_name` cut, the instants
-/// plausible or null. `None` when it isn't an object or its state is unknown.
-pub fn clean_browser(value: &Value) -> Option<Value> {
+/// plausible or null. Design 119 §7: `browser_role` a boolean or null (the link gate off), `refused` the stopped hosts
+/// ([clean_refused], relative to `now_ms`), `last_window` whole or null ([clean_last_window]). `None` when it isn't an
+/// object or its state is unknown.
+pub fn clean_browser(value: &Value, now_ms: i64) -> Option<Value> {
     let object = value.as_object()?;
     let state = word(object.get("state"), BROWSER_STATES)?;
     Some(json!({
@@ -410,6 +428,53 @@ pub fn clean_browser(value: &Value) -> Option<Value> {
         "written_ms": count(object.get("written_ms"), MS_MAX),
         "reason": word(object.get("reason"), BROWSER_REASONS),
         "cleared_ms": count(object.get("cleared_ms"), MS_MAX),
+        "browser_role": object.get("browser_role").and_then(Value::as_bool),
+        "refused": clean_refused(object.get("refused"), now_ms),
+        "last_window": object.get("last_window").and_then(clean_last_window),
+    }))
+}
+
+/// The stopped hosts (design 119 §7, L9): each `{at_ms, host}` with a plausible instant and a host (a path or a query
+/// isn't one: dropped), none older than [REFUSED_MAX_AGE_MS] before `now_ms`, each host once (its latest), the last
+/// [MAX_REFUSED] in the phone's order.
+fn clean_refused(value: Option<&Value>, now_ms: i64) -> Vec<Value> {
+    let mut kept: Vec<(i64, String)> = Vec::new();
+    for entry in value
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_object)
+    {
+        let (Some(at_ms), Some(host)) = (
+            count(entry.get("at_ms"), MS_MAX),
+            entry.get("host").and_then(host),
+        ) else {
+            continue;
+        };
+        if at_ms < now_ms - REFUSED_MAX_AGE_MS {
+            continue;
+        }
+        kept.retain(|(_, h)| *h != host);
+        kept.push((at_ms, host));
+    }
+    let skip = kept.len().saturating_sub(MAX_REFUSED);
+    kept.into_iter()
+        .skip(skip)
+        .map(|(at_ms, host)| json!({"at_ms": at_ms, "host": host}))
+        .collect()
+}
+
+/// The last login window (design 119 §7): `{opened_ms, closed_ms, end, session}` with the close not before the
+/// opening and a known [WINDOW_ENDS] - no host, whatever the phone sends - else `None`.
+fn clean_last_window(value: &Value) -> Option<Value> {
+    let object = value.as_object()?;
+    let opened_ms = count(object.get("opened_ms"), MS_MAX)?;
+    let closed_ms = count(object.get("closed_ms"), MS_MAX).filter(|c| *c >= opened_ms)?;
+    Some(json!({
+        "opened_ms": opened_ms,
+        "closed_ms": closed_ms,
+        "end": word(object.get("end"), WINDOW_ENDS)?,
+        "session": object.get("session").and_then(Value::as_bool)?,
     }))
 }
 
@@ -447,6 +512,18 @@ pub struct BrowserReport {
     pub version_name: Option<String>,
     pub written_ms: Option<i64>,
     pub reason: Option<String>,
+    /// Design 119: Vibb One holds Android's browser role; `None` while the link gate is off.
+    pub browser_role: Option<bool>,
+    /// The hosts the link gate stopped (the PWA's "Stoppet nylig").
+    pub refused: Vec<RefusedHost>,
+}
+
+/// One stopped host.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct RefusedHost {
+    pub at_ms: i64,
+    pub host: String,
 }
 
 /// A session the parent should hear about (§3.7, R2-L3): more than 3 sites visited, a blocked frame (never a blocked

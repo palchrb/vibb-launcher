@@ -52,6 +52,8 @@ pub enum When {
     AirplaneRole,
     AndroidLock,
     MapLinks,
+    /// Design 119: Vibb One's link gate is on (the report's `login_browser.browser_role` isn't null).
+    LinkGate,
 }
 
 /// In the summary's N, or its own Attention row (§2.1).
@@ -276,6 +278,19 @@ pub const STEPS: &[Step] = &[
         "setup.how.default_apps",
         None
     ),
+    // Design 119 §4.1: Vibb One as Android's browser while its link gate is on (no login window opens otherwise).
+    step!(
+        "vibb_browser",
+        Required,
+        Phone,
+        LinkGate,
+        Count,
+        Action,
+        ["login_browser"],
+        "setup.step.vibb_browser",
+        "setup.how.vibb_browser",
+        Some("setup.warn.vibb_browser")
+    ),
     step!(
         "map_play_links",
         Required,
@@ -455,6 +470,11 @@ pub const FEATURES: &[Feature] = &[
         page: "logins",
         anchor: "logins-wifi",
     },
+    Feature {
+        key: "login_browser",
+        page: "logins",
+        anchor: "logins-apps",
+    },
 ];
 
 /// The need rule's inputs (§2.3), from the policy and, for `map_links`, the installed apps.
@@ -466,6 +486,8 @@ pub struct Inputs {
     pub android_lock: bool,
     pub map_links_on: bool,
     pub map_app_installed: bool,
+    /// Design 119: the phone's link gate is on - its report's `login_browser.browser_role` isn't null.
+    pub link_gate: bool,
 }
 
 /// The readings: step key to `Some(true)`/`Some(false)`, `None` unreadable; a key left out is absent (not on this
@@ -507,6 +529,7 @@ pub fn applies(step: &Step, inputs: &Inputs, readings: &Readings) -> bool {
         }
         When::AndroidLock => inputs.android_lock,
         When::MapLinks => inputs.map_links_on && inputs.map_app_installed,
+        When::LinkGate => inputs.link_gate,
     }
 }
 
@@ -642,7 +665,18 @@ pub fn inputs_of(policy: &DevicePolicy, latest: Option<&DeviceStatus>, part: &Se
             .is_some_and(|lock| lock.keyguard == crate::kid_lock::KEYGUARD_ANDROID),
         map_links_on: part.inputs.contains(&"map_links"),
         map_app_installed,
+        link_gate: browser_role(latest).is_some(),
     }
+}
+
+/// Design 119: the latest report's `login_browser.browser_role` - Vibb One holds Android's browser role; `None` while
+/// the phone's link gate is off (or no report says).
+fn browser_role(latest: Option<&DeviceStatus>) -> Option<bool> {
+    latest?
+        .login_browser_json
+        .as_deref()
+        .and_then(|json| serde_json::from_str::<crate::logins::BrowserReport>(json).ok())?
+        .browser_role
 }
 
 /// The server's readings (§2.2's "Reading" column), from the policy, the latest report and the integrations' part
@@ -715,6 +749,7 @@ pub fn readings_of(
     {
         put("call_filter", Some(Some(screening && redirection)));
     }
+    put("vibb_browser", browser_role(Some(latest)).map(Some));
     for (key, reading) in &part.readings {
         put(key, Some(*reading));
     }
@@ -1051,6 +1086,8 @@ pub struct Choices {
     pub locate: bool,
     /// The phone's app-push switch (only the Apps page reads it).
     pub app_push: bool,
+    /// Design 119: Chrome only for logins is on (the role on, Chrome not ticked).
+    pub login_browser: bool,
 }
 
 impl Choices {
@@ -1062,6 +1099,7 @@ impl Choices {
             wifi_signin: policy.captive_portal_enabled,
             locate: policy.location_mode != "off",
             app_push: false,
+            login_browser: policy.login_browser_enabled && !crate::logins::chrome_ticked(policy),
         }
     }
 }
@@ -1148,6 +1186,7 @@ fn feature_on(feature: &str, choices: &Choices) -> bool {
         "wifi_signin" => choices.wifi_signin,
         "locate" => choices.locate,
         "app_push" => choices.app_push,
+        "login_browser" => choices.login_browser,
         "touch" => inputs.mask & (QUICK_CONTROL_TOUCH | QUICK_CONTROL_SOUND) != 0,
         "clock_format" => inputs.clock_format != "system",
         "airplane" => inputs.airplane(),
@@ -1193,6 +1232,7 @@ mod tests {
             When::AirplaneRole => "airplane_role",
             When::AndroidLock => "android_lock",
             When::MapLinks => "map_links",
+            When::LinkGate => "link_gate",
         }
     }
 
@@ -1271,6 +1311,7 @@ mod tests {
             android_lock: row["android_lock"].as_bool().unwrap(),
             map_links_on: row["map_links_on"].as_bool().unwrap(),
             map_app_installed: row["map_app_installed"].as_bool().unwrap(),
+            link_gate: row["link_gate"].as_bool().unwrap(),
         }
     }
 

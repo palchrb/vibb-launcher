@@ -384,6 +384,14 @@ class SetupFlowActivity : UIObjectActivity() {
                 val first = requests.firstOrNull()
                 if (first == null || !launch(step, first)) AssistantSetup.endPickWindow(app, "call_filter")
             }
+            // Design 119: the browser role's request, DISALLOW_CONFIG_DEFAULT_APPS lifted while its dialog is open (M5).
+            SetupStep.VIBB_BROWSER -> lifecycleScope.launch {
+                val first = withContext(Dispatchers.IO) {
+                    com.kidslauncher.mdm.logins.BrowserRoleStep.open(app)
+                    com.kidslauncher.mdm.logins.BrowserRoleStep.requestIntents(app).firstOrNull()
+                }
+                if (first == null || !launch(step, first)) com.kidslauncher.mdm.logins.BrowserRoleStep.end(app)
+            }
             SetupStep.WIFI_AIRPLANE -> lifecycleScope.launch {
                 val result = withContext(Dispatchers.IO) { AssistantSetup.startWifiStep(app) }
                 if (result != AirplaneOn.GO) {
@@ -457,6 +465,7 @@ class SetupFlowActivity : UIObjectActivity() {
                 AssistantSetup.roleMaybeChanged(app)
             }
             SetupStep.DEFAULT_APPS -> AssistantSetup.endPickWindow(app, "page")
+            SetupStep.VIBB_BROWSER -> com.kidslauncher.mdm.logins.BrowserRoleStep.end(app)
             SetupStep.CALL_FILTER -> {
                 val next = callFilterQueue.firstOrNull()
                 callFilterQueue = callFilterQueue.drop(1)

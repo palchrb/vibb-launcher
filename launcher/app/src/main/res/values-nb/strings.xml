@@ -913,6 +913,7 @@
     <string name="setup_step_assistant">Digital assistent</string>
     <string name="setup_step_wifi_airplane">Wi-Fi i flymodus</string>
     <string name="setup_step_call_filter">Samtalefilter</string>
+    <string name="setup_step_vibb_browser">Nettleser</string>
     <string name="setup_step_default_apps">Standardapper</string>
     <string name="setup_step_map_play_links">Lenker i Play-tjenester</string>
     <string name="setup_step_map_vibb_links">Vibb Ones lenker</string>
@@ -934,6 +935,7 @@
     <string name="setup_how_assistant">Velg Vibb One, og trykk OK.</string>
     <string name="setup_how_wifi_airplane">Slå på Wi-Fi i panelet.</string>
     <string name="setup_how_call_filter">Velg Vibb One begge gangene.</string>
+    <string name="setup_how_vibb_browser">Velg Vibb One.</string>
     <string name="setup_how_default_apps">Velg dem tilbake.</string>
     <string name="setup_how_map_play_links">Åpne som standard: slå av Åpne støttede linker.</string>
     <string name="setup_how_map_vibb_links">Åpne som standard: slå på Åpne støttede linker, og kryss av alle.</string>

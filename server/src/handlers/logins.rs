@@ -5,7 +5,8 @@
 //!   innlogging til nå" (`section=grant`, uncapped since 2026-11-18), one group (design 113); `#logins-recent`: the
 //!   last sign-ins (D6).
 //! - `#logins-apps`: Part B's switch (`section=apps`), refused while Chrome is ticked under Apps.
-//! - `#logins-sites`: the presets (`section=preset`) and the parent's own sites (`section=site`, `action=add|remove`).
+//! - `#logins-sites`: the presets (`section=preset`) and the parent's own sites (`section=site`, `action=add|remove`);
+//!   design 119's "Stoppet nylig" - the phone's stopped hosts, each with "Legg til" (the same `section=site` save).
 //! - Advanced's `#wifi-signin`: "Krev foreldrekode" under "Wi-Fi-innlogging" (`section=wifi_signin`), answered with a
 //!   303 back to its anchor there.
 //!
@@ -83,6 +84,11 @@ struct LoginsTemplate {
     site_notice: Option<&'static str>,
     /// Presets whose hosts the filter blocks.
     blocked_presets: Vec<String>,
+    /// Design 119: the phone's link gate is on and Vibb One isn't Android's browser - the (i) says how to fix it (the
+    /// orange line is the setup step's warning at `#logins-apps`).
+    role_missing: bool,
+    /// Design 119 §7 (ASK 4): "Stoppet nylig" - the hosts the phone's link gate stopped, newest first, not yet listed.
+    stopped: Vec<String>,
 }
 crate::i18n::words!(LoginsTemplate);
 
@@ -251,10 +257,38 @@ fn start_key(start: &str) -> &'static str {
 fn apps_state(report: Option<&BrowserReport>) -> Option<(&'static str, bool)> {
     match report.map(|r| r.state.as_str()) {
         Some("on") => None,
+        // Design 119: Vibb One isn't the browser - the setup step's line at `#logins-apps` says it once.
+        Some("failed") if report.and_then(|r| r.reason.as_deref()) == Some("role") => None,
         Some("absent") => Some(("logins.apps.state.absent", true)),
         Some("failed") => Some(("logins.apps.state.failed", true)),
         _ => Some(("logins.apps.state.waiting", false)),
     }
+}
+
+/// Design 119 §7: "Stoppet nylig" - the report's stopped hosts of the last 7 days, newest first, each once, leaving out
+/// one a listed site already takes (its host, or a parent of it unless the entry is a dot entry).
+fn stopped_hosts(report: Option<&BrowserReport>, listed: &[String], now_ms: i64) -> Vec<String> {
+    let Some(report) = report else {
+        return Vec::new();
+    };
+    let taken = |host: &str| {
+        listed.iter().any(|entry| {
+            let exact = entry.starts_with('.');
+            let site = entry_host(entry);
+            host == site || (!exact && host.ends_with(&format!(".{site}")))
+        })
+    };
+    let mut out: Vec<String> = Vec::new();
+    for refused in report.refused.iter().rev() {
+        if refused.at_ms < now_ms - logins::REFUSED_MAX_AGE_MS
+            || out.contains(&refused.host)
+            || taken(&refused.host)
+        {
+            continue;
+        }
+        out.push(refused.host.clone());
+    }
+    out
 }
 
 /// GET `/devices/{id}/logins`. A phone not set up yet has the page too.
@@ -320,7 +354,7 @@ pub async fn view(
         .filter(|h| blocked.contains(**h))
         .map(|h| h.to_string())
         .collect();
-    let sites = own
+    let sites: Vec<SiteRow> = own
         .into_iter()
         .map(|(entry, note)| SiteRow {
             blocked: blocked.contains(&entry_host(&entry)),
@@ -334,6 +368,17 @@ pub async fn view(
         .map(|apps| apps.iter().any(|a| a.package_name == logins::CHROME));
     let chrome_ticked = logins::chrome_ticked(&policy);
     let apps_on = policy.login_browser_enabled && !chrome_ticked;
+    let browser = browser_report(latest);
+    let listed = logins::hosts_of(
+        &ticked,
+        &sites.iter().map(|s| s.entry.clone()).collect::<Vec<_>>(),
+    );
+    let stopped = if apps_on {
+        stopped_hosts(browser.as_ref(), &listed, now.timestamp_millis())
+    } else {
+        Vec::new()
+    };
+    let role_missing = apps_on && browser.as_ref().and_then(|b| b.browser_role) == Some(false);
     Html(
         LoginsTemplate {
             lang,
@@ -358,7 +403,7 @@ pub async fn view(
             chrome_present,
             // "Chrome finnes ikke på telefonen" already says what "Chrome mangler" would (said once).
             apps_state: apps_on
-                .then(|| apps_state(browser_report(latest).as_ref()))
+                .then(|| apps_state(browser.as_ref()))
                 .flatten()
                 .filter(|(key, _)| {
                     !(*key == "logins.apps.state.absent" && chrome_present == Some(false))
@@ -371,6 +416,8 @@ pub async fn view(
                 _ => None,
             },
             blocked_presets,
+            role_missing,
+            stopped,
             device,
         }
         .render()
