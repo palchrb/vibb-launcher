@@ -44,4 +44,8 @@
     <color name="kid_page_accent_edge">#B3A64B25</color>
     <!-- An input on a white card: the compose field's hairline. -->
     <color name="kid_page_field_edge">#24000000</color>
+    <!-- The brightness sheet (Snarveier's Lysstyrke, 2026-11-19): its drag handle and the slider's empty track (at night
+         kid Settings' slider literal). -->
+    <color name="kid_page_handle">#D9D0CB</color>
+    <color name="kid_page_track">#E6DDD8</color>
 </resources>

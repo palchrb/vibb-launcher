@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Snarveier's Lysstyrke (2026-11-19, mockup "Valg 1"): the title, a small sun, kid Settings' slider (0-255) and a big
+     sun - nothing else. Inflated in the kid's look (BrightnessSheetActivity), page tokens only. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bg_brightness_sheet"
+    android:orientation="vertical"
+    android:paddingStart="24dp"
+    android:paddingTop="12dp"
+    android:paddingEnd="24dp"
+    android:paddingBottom="32dp">
+
+    <View
+        android:layout_width="40dp"
+        android:layout_height="5dp"
+        android:layout_gravity="center_horizontal"
+        android:background="@drawable/bg_brightness_sheet_handle" />
+
+    <TextView
+        android:id="@+id/brightness_sheet_title"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:accessibilityHeading="true"
+        android:fontFamily="@font/nunito_extrabold"
+        android:labelFor="@id/brightness_sheet_seekbar"
+        android:text="@string/shortcut_full_brightness"
+        android:textColor="@color/kid_page_ink"
+        android:textSize="20sp" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="14dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <ImageView
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:importantForAccessibility="no"
+            android:src="@drawable/shortcut_glyph_brightness"
+            android:tint="@color/kid_page_dim" />
+
+        <!-- The thumb's half-width of padding, or it is cut at either end (kid Settings' slider). -->
+        <SeekBar
+            android:id="@+id/brightness_sheet_seekbar"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="4dp"
+            android:layout_marginEnd="4dp"
+            android:layout_weight="1"
+            android:contentDescription="@string/shortcut_full_brightness"
+            android:max="255"
+            android:minHeight="48dp"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:progressBackgroundTint="@color/kid_page_track"
+            android:progressTint="@color/kid_slider"
+            android:thumbTint="@color/kid_slider" />
+
+        <ImageView
+            android:layout_width="30dp"
+            android:layout_height="30dp"
+            android:importantForAccessibility="no"
+            android:src="@drawable/shortcut_glyph_brightness"
+            android:tint="@color/kid_page_ink" />
+    </LinearLayout>
+</LinearLayout>

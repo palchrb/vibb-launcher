@@ -839,10 +839,6 @@
     <string name="shortcut_desc_on">%1$s, på</string>
     <string name="shortcut_desc_off">%1$s, av</string>
     <string name="shortcut_desc_sound_off">%1$s, lydløs (vibrerer)</string>
-    <string name="shortcut_desc_level">%1$s, %2$s</string>
-    <string name="shortcut_level_low">lav</string>
-    <string name="shortcut_level_medium">middels</string>
-    <string name="shortcut_level_high">høy</string>
     <string name="shortcut_desc_ask">%1$s, be om mer tid</string>
     <string name="shortcut_desc_asked">%1$s, spurt</string>
     <string name="shortcut_desc_unavailable">%1$s, ikke tilgjengelig nå</string>

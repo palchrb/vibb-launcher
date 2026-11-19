@@ -12,12 +12,10 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.SharedPreferences
-import android.database.ContentObserver
 import android.media.AudioManager
 import android.net.wifi.WifiManager
 import android.os.Handler
 import android.os.Looper
-import android.provider.Settings
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.kidslauncher.mdm.assistant.AirplaneRoute
@@ -121,15 +119,6 @@ object ShortcutsRuntime {
             filter,
             ContextCompat.RECEIVER_NOT_EXPORTED,
         )
-        runCatching {
-            app.contentResolver.registerContentObserver(
-                Settings.System.getUriFor(Settings.System.SCREEN_BRIGHTNESS),
-                false,
-                object : ContentObserver(main) {
-                    override fun onChange(selfChange: Boolean) = requestRefresh()
-                },
-            )
-        }
         Torch.addListener { requestRefresh() }
         AirplaneRuntime.addListener { requestRefresh() }
         LauncherPreferences.getSharedPreferences().registerOnSharedPreferenceChangeListener(prefsListener)
@@ -230,7 +219,6 @@ object ShortcutsRuntime {
             wifiOn = wifiOn,
             bluetoothOn = bluetooth,
             mobile = mobile,
-            brightness = QuickControls.currentBrightness(app),
             ask = ask ?: askNow(app),
             music = music(app),
         )
@@ -355,19 +343,13 @@ object ShortcutsRuntime {
     // ---- a tap ----
 
     /**
-     * One tap ([taps] thread): the model built now, the lock state, the time rules, the keyguard and Musikk's app, through
-     * [shortcutTapAllowed]; then the item's own path. [window]: from [ShortcutAirplaneActivity] with its focus - the
-     * only way Flymodus turns on.
+     * One tap ([taps] thread): [verdict], then the item's own path. [window]: from [ShortcutAirplaneActivity] with its
+     * focus - the only way Flymodus turns on. Lysstyrke's is its sheet's ([BrightnessSheetActivity] asks [verdict]).
      */
     fun tap(context: Context, key: String?, window: Boolean) {
         val app = context.applicationContext
         val panel = computePanel(app)
-        val lockKnown = PinLockRuntime.decided && runCatching { TimeRulesRuntime.snapshot(app, currentPolicyDecision().policy) }.isSuccess
-        val keyguard = runCatching { app.getSystemService(KeyguardManager::class.java)?.isKeyguardLocked }.getOrNull()
-        val musicUsable = if (key == ShortcutKey.MUSIC.wire) panel.items.firstOrNull { it.key == ShortcutKey.MUSIC }?.usable else null
-        val verdict = shortcutTapAllowed(key, panel, lockKnown, PinLockRuntime.mode == LockMode.LOCKED, keyguard != false, musicUsable)
-        if (verdict != ShortcutTap.ALLOW) {
-            Log.i(LOG_TAG, "Tap on $key refused: $verdict")
+        if (verdict(app, key, panel) != ShortcutTap.ALLOW) {
             requestRefresh()
             return
         }
@@ -379,6 +361,20 @@ object ShortcutsRuntime {
             Log.w(LOG_TAG, "Tap on $key failed: ${e.javaClass.simpleName}")
         }
         requestRefresh()
+    }
+
+    /**
+     * The one check ([taps] thread): [panel] - the model built now -, the lock state, the time rules, the keyguard and
+     * Musikk's app, through [shortcutTapAllowed]. A refusal is logged.
+     */
+    fun verdict(context: Context, key: String?, panel: ShortcutsPanel = computePanel(context)): ShortcutTap {
+        val app = context.applicationContext
+        val lockKnown = PinLockRuntime.decided && runCatching { TimeRulesRuntime.snapshot(app, currentPolicyDecision().policy) }.isSuccess
+        val keyguard = runCatching { app.getSystemService(KeyguardManager::class.java)?.isKeyguardLocked }.getOrNull()
+        val musicUsable = if (key == ShortcutKey.MUSIC.wire) panel.items.firstOrNull { it.key == ShortcutKey.MUSIC }?.usable else null
+        val verdict = shortcutTapAllowed(key, panel, lockKnown, PinLockRuntime.mode == LockMode.LOCKED, keyguard != false, musicUsable)
+        if (verdict != ShortcutTap.ALLOW) Log.i(LOG_TAG, "Tap on $key refused: $verdict")
+        return verdict
     }
 
     private fun ShortcutItem.wire() = key.wire
@@ -398,7 +394,8 @@ object ShortcutsRuntime {
             ShortcutKey.WIFI -> QuickControls.setWifiEnabled(app, !item.on)
             ShortcutKey.BLUETOOTH -> QuickControls.setBluetoothEnabled(app, dpm, admin, !item.on)
             ShortcutKey.MOBILE_DATA -> MobileNetworkRuntime.setKidOff(app, item.on)
-            ShortcutKey.BRIGHTNESS -> QuickControls.setBrightness(dpm, admin, (item.level ?: BrightnessStep.MEDIUM).next.value)
+            // The sheet's own (a window, never a broadcast): a broadcast for it is a stale view's.
+            ShortcutKey.BRIGHTNESS -> Log.i(LOG_TAG, "Lysstyrke without its sheet: ignored")
             ShortcutKey.MORE_TIME -> askForTime(app)
             ShortcutKey.MUSIC -> main.post {
                 val reading = MusicSessions.reading

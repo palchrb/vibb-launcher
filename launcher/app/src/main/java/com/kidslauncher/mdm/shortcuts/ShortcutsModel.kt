@@ -40,26 +40,6 @@ val SHORTCUT_DEFAULTS: List<ShortcutKey> = listOf(
     ShortcutKey.MOBILE_DATA, ShortcutKey.BRIGHTNESS, ShortcutKey.MORE_TIME, ShortcutKey.MUSIC,
 )
 
-/** §4.1 (D5): Lysstyrke's three steps and the value each writes (`SCREEN_BRIGHTNESS`, 0-255, manual mode). */
-enum class BrightnessStep(val value: Int) {
-    LOW(40),
-    MEDIUM(128),
-    HIGH(230),
-    ;
-
-    /** A tap moves to the next: lav -> middels -> høy -> lav. */
-    val next: BrightnessStep get() = entries[(ordinal + 1) % entries.size]
-
-    companion object {
-        /** The step the phone's level is nearest to. */
-        fun of(level: Int): BrightnessStep = when {
-            level <= (LOW.value + MEDIUM.value) / 2 -> LOW
-            level <= (MEDIUM.value + HIGH.value) / 2 -> MEDIUM
-            else -> HIGH
-        }
-    }
-}
-
 /** Vibb music as the panel reads it: [session] - Vibb music's own session exists; [playing]; [usable] - the app is
  * usable now (`MusicSessions.usable`: not suspended by a rule, the used-up budget or the camera lock). */
 data class ShortcutMusic(val session: Boolean, val playing: Boolean, val usable: Boolean)
@@ -80,20 +60,18 @@ data class ShortcutsPlatform(
     val bluetoothOn: Boolean? = null,
     /** The kid's Mobildata row (`kidMobileRow`); HIDDEN without bit 32. */
     val mobile: KidMobileRow = KidMobileRow.HIDDEN,
-    val brightness: Int = 128,
     /** The anchor notice's ask part (`timePart`'s `ask`, design 100 §14.3): usable, dimmed while a request is open, or none. */
     val ask: AskPart = AskPart.None,
     val music: ShortcutMusic? = null,
 )
 
 /**
- * One button: [on] - the peach disc; [level] - Lysstyrke's step (never peach); [usable] - a tap does something now
- * (else dimmed); [busy] - Flymodus's route or its Off is running; [asked] - Mer tid's request waits ("Spurt").
+ * One button: [on] - the peach disc (never Lysstyrke's: it opens the brightness sheet); [usable] - a tap does something
+ * now (else dimmed); [busy] - Flymodus's route or its Off is running; [asked] - Mer tid's request waits ("Spurt").
  */
 data class ShortcutItem(
     val key: ShortcutKey,
     val on: Boolean = false,
-    val level: BrightnessStep? = null,
     val usable: Boolean = true,
     val busy: Boolean = false,
     val asked: Boolean = false,
@@ -129,7 +107,7 @@ fun shortcutItem(key: ShortcutKey, mask: Long, p: ShortcutsPlatform): ShortcutIt
                 usable = (p.mobile == KidMobileRow.ON || p.mobile == KidMobileRow.OFF) && !p.airplaneOn,
             )
         }
-        ShortcutKey.BRIGHTNESS -> if (bit(QuickControlFeature.BRIGHTNESS)) ShortcutItem(key, level = BrightnessStep.of(p.brightness)) else null
+        ShortcutKey.BRIGHTNESS -> if (bit(QuickControlFeature.BRIGHTNESS)) ShortcutItem(key) else null
         ShortcutKey.MORE_TIME -> when (p.ask) {
             AskPart.None -> null
             AskPart.Action -> ShortcutItem(key)
@@ -222,7 +200,7 @@ fun shortcutTapAllowed(
     val k = ShortcutKey.of(key) ?: return ShortcutTap.UNKNOWN_KEY
     if (!lockKnown) return ShortcutTap.STATE_UNKNOWN
     if (locked) return ShortcutTap.LOCKED
-    if (keyguardLocked) return ShortcutTap.KEYGUARD
+    if (keyguardLocked && k != ShortcutKey.BRIGHTNESS) return ShortcutTap.KEYGUARD
     if (!panel.shown) return ShortcutTap.NOT_IN_PANEL
     val item = panel.items.firstOrNull { it.key == k } ?: return ShortcutTap.NOT_IN_PANEL
     if (item.busy) return ShortcutTap.BUSY
@@ -231,13 +209,21 @@ fun shortcutTapAllowed(
     return ShortcutTap.ALLOW
 }
 
+/** The windows a cell's tap may open instead of a broadcast ([shortcutWindow]). */
+enum class ShortcutWindow { AIRPLANE, BRIGHTNESS }
+
 /**
- * §4.1, C99-M1: whether a cell's tap opens [ShortcutAirplaneActivity] (the window that closes the shade first) - only
- * Flymodus while off, usable and not busy. A dimmed or busy Flymodus is a broadcast like every other item, refused by
- * [shortcutTapAllowed] with the shade left open (D10: a dimmed tap does nothing).
+ * §4.1, C99-M1: whether a cell's tap opens a window of ours, which Android starts with the shade closed - Flymodus while
+ * off, usable and not busy ([ShortcutAirplaneActivity]), and Lysstyrke, the brightness sheet ([BrightnessSheetActivity],
+ * 2026-11-19: a slider, not three steps). A dimmed or busy item is a broadcast like every other, refused by
+ * [shortcutTapAllowed] with the shade left open (D10: a dimmed tap does nothing). `null`: a broadcast.
  */
-fun shortcutOpensWindow(item: ShortcutItem): Boolean =
-    item.key == ShortcutKey.AIRPLANE && !item.on && item.usable && !item.busy
+fun shortcutWindow(item: ShortcutItem): ShortcutWindow? = when {
+    !item.usable || item.busy -> null
+    item.key == ShortcutKey.AIRPLANE && !item.on -> ShortcutWindow.AIRPLANE
+    item.key == ShortcutKey.BRIGHTNESS -> ShortcutWindow.BRIGHTNESS
+    else -> null
+}
 
 /** §2.3 (Q99-L7): at most one post a second. The delay before the next post may go, from the last post's time. */
 fun shortcutPostDelay(nowMs: Long, lastPostMs: Long?, gapMs: Long = 1_000): Long =

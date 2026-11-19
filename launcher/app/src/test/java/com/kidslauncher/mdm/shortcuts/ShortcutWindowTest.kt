@@ -65,6 +65,26 @@ class ShortcutWindowTest {
     }
 
     @Test
+    fun `the brightness sheet is a one-pixel window of its own task, over the keyguard, out of Recents`() {
+        val nodes = parse("AndroidManifest.xml").getElementsByTagName("activity")
+        val sheet = (0 until nodes.length).map { nodes.item(it) as Element }
+            .single { it.getAttributeNS(ns, "name") == ".shortcuts.BrightnessSheetActivity" }
+        for ((name, value) in listOf(
+            "theme" to "@style/ShortcutWindowTheme", "exported" to "false", "taskAffinity" to "", "noHistory" to "true",
+            "excludeFromRecents" to "true", "showWhenLocked" to "true",
+        )) {
+            assertEquals(name, value, sheet.getAttributeNS(ns, name))
+        }
+        assertTrue(sheet.hasAttributeNS(ns, "taskAffinity"))
+        // Never wakes the screen or dismisses the keyguard.
+        assertEquals("", sheet.getAttributeNS(ns, "turnScreenOn"))
+        val code = file("java/com/kidslauncher/mdm/shortcuts/BrightnessSheetActivity.kt").readText()
+        for (banned in listOf("setTurnScreenOn", "requestDismissKeyguard", "FLAG_DISMISS_KEYGUARD")) assertFalse(banned, code.contains(banned))
+        val claim = code.substringAfter("private fun claimNoBars()").substringBefore("\n    }")
+        assertTrue(claim.contains("window.setLayout(1, 1)"))
+    }
+
+    @Test
     fun `the Vibb notification's header reads only Vibb One`() {
         val code = file("java/com/kidslauncher/mdm/shortcuts/ShortcutsNotification.kt").readText()
         assertFalse(code.contains("setSubText"))

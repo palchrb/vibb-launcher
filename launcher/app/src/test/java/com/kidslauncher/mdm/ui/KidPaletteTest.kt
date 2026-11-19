@@ -500,6 +500,8 @@ class KidPaletteTest {
             // field edge.
             "kid_page_ink_dim" to "@color/kid_ink_dim", "kid_page_card" to "#14FFFFFF", "kid_page_call_glyph" to "@color/kid_call_glyph",
             "kid_page_focus" to "#80F0A884", "kid_page_accent_edge" to "#73F0A884", "kid_page_field_edge" to "@color/kid_sheet_button",
+            // The brightness sheet (2026-11-19): the kid sheets' handle, kid Settings' empty slider track.
+            "kid_page_handle" to "@color/kid_sheet_handle", "kid_page_track" to "#66FFFFFF",
         )
         assertEquals(today, pageNight)
         assertEquals("#FF8A8A", resolve("kid_emergency_text").uppercase())
