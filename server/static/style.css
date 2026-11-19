@@ -2801,6 +2801,25 @@ input.row-input {
     padding: 0 0 16px;
 }
 
+/* An app's Permissions, open (the user's screenshot, 2026-11-19): its rows under the summary's words (48px in) and
+   their switches at the cell's edge, in line with the app's own switch above. */
+.group-apps > .cell > details.app-perms > form {
+    padding: 0;
+}
+
+.group-apps > .cell > details.app-perms > form > .row,
+.group-apps > .cell > details.app-perms > p.row,
+.group-apps > .cell > details.app-perms > details.info > summary.row {
+    padding-left: 48px;
+    padding-right: 0;
+}
+
+.group-apps > .cell > details.app-perms > details.info > .info-panel,
+.group-apps > .cell > details.app-perms > .group-footer {
+    margin-left: 48px;
+    margin-right: 0;
+}
+
 .group-apps > .cell > .flash {
     padding-left: 64px;
 }
