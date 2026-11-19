@@ -217,14 +217,27 @@ const val TELEPHONY_REREAD_MS = 10_000L
  * change is still seen within that time. */
 fun readsTelephony(sameCaps: Boolean, sinceLastReadMs: Long): Boolean = !sameCaps || sinceLastReadMs !in 0 until TELEPHONY_REREAD_MS
 
-/** The always-on decision written before `establish(wanted)`: lockdown off first when leaving for a non-sink shape;
- * nothing before the sink's tunnel (design 95 §2.2). */
-fun alwaysOnBeforeEstablish(wanted: VpnShape): VpnShape? = wanted.takeIf { it != VpnShape.SINK }
+/** The always-on decision written before `establish(wanted)` (design 95 §2.2, design 120 fix A): nothing before the
+ * sink's tunnel, and nothing while lockdown is on ([lockdownNow]: leaving the sink, lockdown goes off last, after the
+ * new tunnel - [alwaysOnAfterEstablish]); otherwise the new shape's (no lockdown change: FILTER and PASS alike). */
+fun alwaysOnBeforeEstablish(wanted: VpnShape, lockdownNow: Boolean): VpnShape? =
+    wanted.takeIf { it != VpnShape.SINK && !lockdownNow }
 
 /** The always-on decision written after `establish(wanted)`: the sink's lockdown whether or not its tunnel came up -
  * code QA M1: a failed switch to the sink fails closed (lockdown over the old tunnel or none cuts every other app), and
- * the decision `sink` is recorded for every later reader. */
-fun alwaysOnAfterEstablish(wanted: VpnShape): VpnShape? = wanted.takeIf { it == VpnShape.SINK }
+ * the decision `sink` is recorded for every later reader. Leaving the sink ([lockdownNow]), lockdown off is the last
+ * change (design 120 fix A): the filter's tunnel is handed over in place while lockdown still blocks everything outside
+ * the VPN, and only then does lockdown go - Android restarts the VPN's agent for it, a new network (netId) every app's
+ * Chromium hears, so WebView and Chrome drop the sink's dead sockets. The other order ended on an in-place change no
+ * app hears. Written whether or not the tunnel came up, as before: the end state of a failed switch is unchanged. */
+fun alwaysOnAfterEstablish(wanted: VpnShape, lockdownNow: Boolean): VpnShape? =
+    wanted.takeIf { it == VpnShape.SINK || lockdownNow }
+
+/** Design 120 fix A: `apply()` leaves lockdown off to the running tunnel's switch ([alwaysOnAfterEstablish]) when
+ * the decision leaves the sink while that tunnel is up - writing it first would end the switch on the in-place change
+ * again. Its decision is recorded all the same; with no tunnel up it writes as before. */
+fun applyLeavesLockdownToSwitch(shape: VpnShape, lockdownNow: Boolean, tunnelUp: Boolean): Boolean =
+    lockdownNow && tunnelUp && shape != VpnShape.NONE && !alwaysOnFor(shape).lockdown
 
 /** A failed `establish()` toward any shape is retried by the service itself (5 s doubling to 5 min; design 116 §3.1,
  * S-M2: the filter and the pass shape too, not only the sink). */

@@ -200,13 +200,16 @@ class KidVpnService : VpnService() {
     private val reshapeRetry = Runnable { reshape() }
     private var reshapeRetryMs = 5_000L
 
-    /** One switch to [wanted] in order: lockdown off first unless it is the sink; the tunnel; the sink's lockdown
-     * whether or not its tunnel came up, then a retry until it does - any shape since design 116 (S-M2), the one retry
-     * chain: 5 s doubling to 5 min, and the while-idle alarm beside it ([VpnFilterWatch]). `true` when established. */
+    /** One switch to [wanted] in order: the tunnel, with lockdown changed after it both ways - the sink's lockdown on
+     * whether or not its tunnel came up, and leaving the sink lockdown off as the last change (design 120 fix A, a new
+     * network every app hears); with lockdown already off the shape's always-on first, as before. Then a retry until
+     * the tunnel is up - any shape since design 116 (S-M2), the one retry chain: 5 s doubling to 5 min, and the
+     * while-idle alarm beside it ([VpnFilterWatch]). `true` when established. */
     private fun switchTo(wanted: VpnShape): Boolean {
-        alwaysOnBeforeEstablish(wanted)?.let { MobileNetworkRuntime.writeAlwaysOn(this, it) }
+        val lockdownNow = MobileNetworkRuntime.lockdownOurs(this)
+        alwaysOnBeforeEstablish(wanted, lockdownNow)?.let { MobileNetworkRuntime.writeAlwaysOn(this, it) }
         val established = establish(wanted)
-        alwaysOnAfterEstablish(wanted)?.let { MobileNetworkRuntime.writeAlwaysOn(this, it) }
+        alwaysOnAfterEstablish(wanted, lockdownNow)?.let { MobileNetworkRuntime.writeAlwaysOn(this, it) }
         if (retriesFailedEstablish(wanted, established)) {
             val step = reshapeRetryStep(main.hasCallbacks(reshapeRetry), reshapeRetryMs)
             if (step == null) {
@@ -230,7 +233,7 @@ class KidVpnService : VpnService() {
         if (state.stopped) return false
         val wanted = wantedShape()
         if (wanted == VpnShape.NONE) return false
-        // Going to the sink: the tunnel first, then lockdown. To anything else: lockdown off first (design 95 §2.2).
+        // The tunnel first, then lockdown on or off ([switchTo]; design 95 §2.2, design 120 fix A).
         if (!switchTo(wanted)) return true
         DnsFilterEngine.onCustomChanged = ::syncCustom
         syncCustom()
