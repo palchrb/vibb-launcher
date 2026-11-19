@@ -45,6 +45,24 @@ pub fn check_data_writable(dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Design 116 §5: the scratch files a crash can leave - a `.partial` copy in `data/backups/` (`backups::snapshot`'s copy
+/// across filesystems). Run at startup, before anything writes one; best-effort.
+pub fn sweep_scratch(data_dir: &Path) {
+    let backups = data_dir.join("backups");
+    let Ok(entries) = std::fs::read_dir(&backups) else {
+        return;
+    };
+    for entry in entries.filter_map(Result::ok) {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.ends_with(crate::handlers::backups::PARTIAL_SUFFIX) {
+            match std::fs::remove_file(entry.path()) {
+                Ok(()) => tracing::info!("removed a partial backup copy: {name}"),
+                Err(err) => tracing::warn!("can't remove {name}: {err}"),
+            }
+        }
+    }
+}
+
 /// The marker the PWA's restore writes in the container: one backup file name.
 pub const RESTORE_REQUEST: &str = "restore_request";
 
@@ -502,6 +520,33 @@ mod tests {
         let err = check_data_writable(&file.join("data")).unwrap_err();
         assert!(err.contains("is not writable by uid"), "{err}");
         assert!(err.contains("named volume"), "{err}");
+    }
+
+    /// Design 116 §5: `data/backups` on the host (a bind mount) that this process can't write stops the start with the
+    /// same line as `data/`; a crash's `.partial` copy is swept, a finished backup kept.
+    #[test]
+    fn a_backups_folder_that_cant_be_written_stops_the_start() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let backups = dir.path().join("data").join("backups");
+        assert_eq!(check_data_writable(&backups), Ok(()));
+        std::fs::write(backups.join("backup-20261118-020000.zip"), "zip").unwrap();
+        std::fs::write(backups.join("pre-migrate-0157-0158.db.partial"), "half").unwrap();
+        sweep_scratch(&dir.path().join("data"));
+        let mut left: Vec<String> = std::fs::read_dir(&backups)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+            .collect();
+        left.sort();
+        assert_eq!(left, ["backup-20261118-020000.zip"]);
+        // Root ignores the mode bits: the check can't fail for it.
+        if rustix::process::getuid().is_root() {
+            return;
+        }
+        std::fs::set_permissions(&backups, std::fs::Permissions::from_mode(0o500)).unwrap();
+        let err = check_data_writable(&backups).unwrap_err();
+        std::fs::set_permissions(&backups, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(err.contains("backups/ is not writable by uid"), "{err}");
     }
 
     #[test]

@@ -313,10 +313,14 @@ async fn main() {
 
     // data/ must be writable before anything else (design 22 §6: a bind mount isn't seeded from
     // the image).
-    if let Err(err) = startup::check_data_writable(std::path::Path::new("data")) {
-        tracing::error!("{err}");
-        std::process::exit(1);
+    // Design 116 §5: data/backups too - in Docker a folder on the host, which must belong to uid 65532.
+    for dir in ["data", "data/backups"] {
+        if let Err(err) = startup::check_data_writable(std::path::Path::new(dir)) {
+            tracing::error!("{err}");
+            std::process::exit(1);
+        }
     }
+    startup::sweep_scratch(std::path::Path::new("data"));
 
     // A restore asked for in data/restore_request (the PWA's in the container, the owner's over
     // SSH on a systemd install): applied before the database is opened, and undone if the

@@ -227,7 +227,8 @@ pub(crate) async fn snapshot(
             .await
             .map_err(|err| format!("the snapshot failed: {err}"))?;
         strip_secrets_in(scratch).await?;
-        tokio::fs::rename(scratch, target)
+        let renamed = tokio::fs::rename(scratch, target).await;
+        place(scratch, target, renamed)
             .await
             .map_err(|err| format!("couldn't move the snapshot to {}: {err}", target.display()))
     }
@@ -236,6 +237,39 @@ pub(crate) async fn snapshot(
         let _ = tokio::fs::remove_file(scratch).await;
     }
     result
+}
+
+/// The suffix of a copy on its way into `data/backups/` from another filesystem ([place]); a crash's leftover is swept
+/// at startup (`startup::sweep_scratch`).
+pub(crate) const PARTIAL_SUFFIX: &str = ".partial";
+
+/// [snapshot]'s move after its `rename` ([renamed]): done, or - design 116 §5, `data/backups` a bind mount on the host
+/// in Docker, so another filesystem than `data/` - on `EXDEV` a copy to `<target>.partial` in the target's folder,
+/// fsynced, renamed there, and the scratch file deleted. A failed copy leaves no `.partial`.
+async fn place(
+    scratch: &std::path::Path,
+    target: &std::path::Path,
+    renamed: std::io::Result<()>,
+) -> std::io::Result<()> {
+    match renamed {
+        Err(err) if err.kind() == std::io::ErrorKind::CrossesDevices => {}
+        other => return other,
+    }
+    let mut partial = target.as_os_str().to_owned();
+    partial.push(PARTIAL_SUFFIX);
+    let partial = std::path::PathBuf::from(partial);
+    let copied = async {
+        tokio::fs::copy(scratch, &partial).await?;
+        tokio::fs::File::open(&partial).await?.sync_all().await?;
+        tokio::fs::rename(&partial, target).await
+    }
+    .await;
+    if copied.is_err() {
+        let _ = tokio::fs::remove_file(&partial).await;
+        return copied;
+    }
+    let _ = tokio::fs::remove_file(scratch).await;
+    Ok(())
 }
 
 /// Clears, in the database file at `path`, what no copy of it may carry: every admin session
@@ -1258,6 +1292,29 @@ pub async fn upload_backup(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Design 116 §5: a rename across filesystems (`EXDEV`, injected) takes the copy path - the target whole, no
+    /// `.partial` and no scratch file left; another error stays the error.
+    #[tokio::test]
+    async fn a_snapshot_across_filesystems_is_copied_into_place() {
+        let dir = tempfile::tempdir().unwrap();
+        let scratch = dir.path().join("snap.db.tmp");
+        let backups = dir.path().join("backups");
+        std::fs::create_dir(&backups).unwrap();
+        let target = backups.join("pre-migrate-0157-0158.db");
+        std::fs::write(&scratch, b"the database").unwrap();
+        let exdev = Err(std::io::Error::from(std::io::ErrorKind::CrossesDevices));
+        place(&scratch, &target, exdev).await.unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"the database");
+        assert!(!scratch.exists());
+        let left: Vec<_> = std::fs::read_dir(&backups).unwrap().collect();
+        assert_eq!(left.len(), 1, "no .partial left");
+        let denied = Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+        assert_eq!(
+            place(&scratch, &target, denied).await.unwrap_err().kind(),
+            std::io::ErrorKind::PermissionDenied
+        );
+    }
 
     /// The page with a backup (which a test machine has none of): every form lands on its own
     /// group, the delete is a confirm; in the container the restore is a typed confirm, on a

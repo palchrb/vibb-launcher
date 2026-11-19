@@ -341,3 +341,33 @@ fn an_unsigned_install_fails_early_and_clearly() {
         assert!(download.contains("aren't signed, and"), "{download}");
     }
 }
+
+/// Design 116 §5: DEPLOY.md's yaml block mounts what `compose.yaml` mounts - the data volume, the backups folder on the
+/// host and the keys' own volume.
+#[test]
+fn deploy_md_mounts_what_compose_yaml_mounts() {
+    let compose = include_str!("../../deploy/compose.yaml");
+    let deploy = include_str!("../../DEPLOY.md");
+    let mut in_compose: Vec<&str> = compose
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("- "))
+        .filter(|mount| mount.contains(":/app/data"))
+        .collect();
+    let block = deploy
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("volumes: ["))
+        .and_then(|rest| rest.strip_suffix(']'))
+        .expect("DEPLOY.md's volumes line");
+    let mut in_deploy: Vec<&str> = block.split(", ").collect();
+    in_compose.sort_unstable();
+    in_deploy.sort_unstable();
+    assert_eq!(in_compose, in_deploy);
+    assert_eq!(
+        in_deploy,
+        [
+            "./backups:/app/data/backups",
+            "handy-data:/app/data",
+            "handy-keys:/app/data/keys"
+        ]
+    );
+}

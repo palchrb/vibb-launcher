@@ -1,6 +1,7 @@
 # Vibb Phone server in Docker (server >= 0.23.0) - server/DEPLOY.md, "Docker".
 #
-# Copy this file and env.example (as .env) to a folder on the host, fill in .env, then:
+# Copy this file and env.example (as .env) to a folder on the host, fill in .env, make the backups folder, then:
+#   mkdir -p backups && sudo chown 65532:65532 backups && sudo chmod 700 backups
 #   docker compose up -d
 #   docker compose cp handy:/app/data/initial-admin-password . && cat initial-admin-password && rm initial-admin-password
 # Sign in as admin and change the password.
@@ -19,7 +20,10 @@ services:
     env_file: .env
     volumes:
       - handy-data:/app/data
-      # The Storytel key: its own volume, so copies of the data volume don't carry it.
+      # The backups (zips, pre-migration and pre-restore copies) in a folder on the host, so the host's own backup
+      # takes them. It must belong to uid 65532: mkdir -p backups && sudo chown 65532:65532 backups && sudo chmod 700 backups
+      - ./backups:/app/data/backups
+      # The Storytel, Web Push and Child PIN keys: their own volume, never in the data volume or the backups folder.
       - handy-keys:/app/data/keys
     read_only: true
     tmpfs: [/tmp]
