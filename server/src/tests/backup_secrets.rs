@@ -202,6 +202,43 @@ async fn a_backup_restores() {
     assert_eq!(phone, "Emma");
 }
 
+/// The flake of the test below (server-v0.85.2's release run): a check that runs beside another - [perform_backup]'s
+/// own task beside the test's - never forgets the other's new row. `forget_gone` listed the folder before it read the
+/// rows, so a backup written and checked in between was taken for a gone file and its row deleted (8 of 300 rows lost
+/// here before the fix). The steps of 0.3 ms move the new backup across the other check's listing.
+///
+/// [perform_backup]: crate::handlers::backups::perform_backup
+#[tokio::test]
+async fn a_check_beside_another_keeps_the_new_backups_row() {
+    use crate::handlers::backups;
+    let app = TestApp::new().await;
+    let dir = app.state.data_dir.join("backups");
+    std::fs::create_dir_all(&dir).unwrap();
+    let other = "backup-10000101-000000.zip";
+    std::fs::write(dir.join(other), b"x").unwrap();
+    let mut lost = 0;
+    for i in 0..200 {
+        let new = format!("backup-2999{i:04}-235959.zip");
+        let (db, data_dir) = (app.db.clone(), app.state.data_dir.clone());
+        let beside =
+            tokio::spawn(async move { backups::check_and_record(&db, &data_dir, other).await });
+        for _ in 0..(i % 12) {
+            tokio::time::sleep(std::time::Duration::from_micros(300)).await;
+        }
+        std::fs::write(dir.join(&new), b"not a zip").unwrap();
+        backups::check_and_record(&app.db, &app.state.data_dir, &new).await;
+        beside.await.unwrap();
+        if crate::integration_health::row(&app.db, "backup", &format!("file:{new}"))
+            .await
+            .unwrap()
+            .is_none()
+        {
+            lost += 1;
+        }
+    }
+    assert_eq!(lost, 0, "rows lost");
+}
+
 /// Design 116 §4: a backup that can't be read is one orange line on Backups and the family's row on the Devices list;
 /// a good one shows a quiet "checked"; deleting the bad file clears both.
 #[tokio::test]
