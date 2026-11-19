@@ -78,6 +78,8 @@ is unhidden: `selectable` counts only the hosts held by unsuspendable apps, and 
 to check that `vibb_hosts` is the paused report's. Add a row: a paused report with all hosts selected makes
 `setup_part`'s `map_vibb_links` `Some(true)`.
 
+Fixed in 4ed80bd2a: `store_report` keeps only `reach` from before a pause; a paused report's `vibb_hosts` is stored as sent, so row 16 ticks off with the phone's. `a_pause_report_keeps_the_last_reach_and_its_own_hosts` checks the hosts are the paused report's and `setup_part` reads `map_vibb_links` `Some(true)`.
+
 ### M2. Phone and server disagree on N while Organic Maps is installed but hidden
 
 `launcher/app/src/main/java/com/kidslauncher/mdm/setup/SetupReadings.kt:153-158` (`installed`), used at `:149`.
@@ -100,6 +102,8 @@ allowed").
 `applicationInfo.flags and FLAG_INSTALLED != 0`, so that a package uninstalled with kept data doesn't count.
 Better still, use the reporter's own `controllablePackages` check, so the two cannot drift apart.
 
+Fixed in 4ed80bd2a: `SetupReadings.inputs` reads the map app from `controllablePackages` (the set `collectInstalledApps` reports, hidden apps included) through `mapAppInstalled`; `SetupStepsTest` pins both.
+
 ## L
 
 ### L1. A double tap on "Åpne" opens two pages, and the first return gives the apps back while the second is open
@@ -116,6 +120,8 @@ Better still, use the reporter's own `controllablePackages` check, so the two ca
 **Fix.** Ignore "Åpne" while a page is opening or open: for example, return early when `openedStep != null` or an
 `opening` flag is set, or disable the button until `refresh()`.
 
+Fixed in 4ed80bd2a: "Åpne" on step 2 does nothing while `mapStepOpening` (begin running) or a page is open (`openedStep`).
+
 ### L2. A recreation or finish during `begin` leaves the holders suspended with no page
 
 `SetupFlowActivity.kt:396-400`.
@@ -128,6 +134,8 @@ Better still, use the reporter's own `controllablePackages` check, so the two ca
 
 **Fix.** Wrap it in `try { ... } finally { if (openedStep == null) withContext(NonCancellable + Dispatchers.IO) { MapLinkStep.end(app) } }`.
 
+Fixed in 4ed80bd2a: begin and launchPages run in `try`/`finally`; the `finally` ends the step under `NonCancellable + Dispatchers.IO` whenever no page opened, a cancelled coroutine included.
+
 ### L3. `launchPages`'s generic catch leaves `openedStep` set, so `end` is skipped
 
 `SetupFlowActivity.kt:424-427` (the code is older; this commit's check at `:399` relies on it).
@@ -138,6 +146,8 @@ Better still, use the reporter's own `controllablePackages` check, so the two ca
   `openedStep` is carried along.
 
 **Fix.** Set `openedStep = null` in that catch, as `launch()` does.
+
+Fixed in 4ed80bd2a: `launchPages`'s generic catch clears `openedStep`, as `launch()` does. One source test in `SetupFlowTest` pins L1-L3.
 
 ### L4. The PWA's ⓘ for rows 15-16 still names Android 14's switch
 
@@ -153,6 +163,8 @@ Better still, use the reporter's own `controllablePackages` check, so the two ca
 
 Or a shorter form that the user approves. Copy is the user's call, under "Words in the UI".
 
+Fixed in 4ed80bd2a: The server doesn't know the phone's Android version, so one wording fits both, Android 16's words first: "Åpne som standard: velg «I nettleseren» (eller slå av Åpne støttede linker)." / "Åpne som standard: velg «I appen» og legg til alle linkene (eller slå på Åpne støttede linker og kryss av alle).", en to match.
+
 ### L5. With Play services' links unreadable and step 2 done, the group says "Ready." though short links don't reach Vibb One
 
 `server/src/integrations/map_links/page.rs:80-88`.
@@ -164,6 +176,8 @@ Or a shorter form that the user approves. Copy is the user's call, under "Words 
 
 **Fix.** Before "held"/"ready", return no line (or `waiting`) when `!reach("short")` and `play_services_links` is
 not `false`. Add a `server.json` row for it.
+
+Fixed in 4ed80bd2a: `line_code` shows no line when short links don't reach Vibb One and Play services' links aren't read off; `server.json`'s `pwa_lines` row `short_unread_vibb_done`.
 
 ### L6. No shared vector pins that the phone and the server read rows 15-16 alike
 
@@ -177,6 +191,8 @@ not `false`. Add a `server.json` row for it.
 **Fix.** Add a `setup_readings` list to `map_links/contract.json` (`{report, map_play_links, map_vibb_links}`: the
 `null` holder, `declared: 0`, `selected < selectable`, all selected), run by `MapLinksTest` and `map_links::tests`
 on both sides, which already compare the copies.
+
+Fixed in 4ed80bd2a: `setup_steps.json` (both copies) has `map_readings` (`{name, report, map_play_links, map_vibb_links}`: unreadable, hosts left, none declared, all selectable selected); the server's `map_links::tests::the_setup_readings_are_the_phones` runs them through `setup_part`, the launcher's `SetupStepsTest` through `playLinksDone`/`vibbLinksDone`.
 
 ## Not findings
 
