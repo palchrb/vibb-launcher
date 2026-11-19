@@ -84,9 +84,11 @@ data class ContactRequestRecord(
     /** Design 79 §5.5: the kid gave the request a picture (`filesDir/contact_request_photos/<id>.jpg`; never in
      * [body] - a small copy follows on its own route once the server accepted the request). */
     val photo: Boolean = false,
-    /** Calls & Contacts tidied (6): the picture's upload is done - the server stored it, refused it, or there was none
-     * to send. Never again for this request. */
+    /** Calls & Contacts tidied (6): the picture's upload is done - the server stored it, refused it, there was none
+     * to send, or it failed [CONTACT_REQUEST_PHOTO_TRIES] times. Never again for this request. */
     val photoSent: Boolean = false,
+    /** Code QA L5: the picture's uploads the server answered with a retry (401, 408, 429, 5xx). */
+    val photoTries: Int = 0,
 ) {
     /** Still waiting: the kid sees "Venter på svar". */
     val open: Boolean get() = phase == ContactRequestPhase.PENDING || phase == ContactRequestPhase.ASKED
@@ -278,13 +280,30 @@ fun contactRequestPhotoAction(code: Int?): PhotoUploadAction = when {
 fun requestPhotosToSend(records: List<ContactRequestRecord>): List<ContactRequestRecord> =
     records.filter { it.phase == ContactRequestPhase.ASKED && it.photo && !it.photoSent }
 
-/** [records] after the picture of [sentId] was answered with [action]: DONE marks it sent, RETRY changes nothing. */
+/** A picture the server answered with a retry this many times is given up (code QA L5: no endless resends). */
+const val CONTACT_REQUEST_PHOTO_TRIES = 3
+
+/**
+ * [records] after the picture of [sentId] was answered with [action]: DONE marks it sent. A RETRY the server
+ * [answered] counts a try, and the [CONTACT_REQUEST_PHOTO_TRIES]th marks it sent too; a RETRY without an answer (the
+ * network, not the picture) changes nothing.
+ */
 fun recordsAfterPhotoUpload(
     records: List<ContactRequestRecord>,
     sentId: String,
     action: PhotoUploadAction,
-): List<ContactRequestRecord> =
-    if (action == PhotoUploadAction.RETRY) records else records.map { if (it.id == sentId) it.copy(photoSent = true) else it }
+    answered: Boolean = true,
+): List<ContactRequestRecord> = records.map { record ->
+    when {
+        record.id != sentId -> record
+        action == PhotoUploadAction.DONE -> record.copy(photoSent = true)
+        !answered -> record
+        else -> {
+            val tries = record.photoTries + 1
+            record.copy(photoTries = tries, photoSent = tries >= CONTACT_REQUEST_PHOTO_TRIES)
+        }
+    }
+}
 
 /** Whether the upload sends the next PENDING request after [verdict]: not after a RETRY (the server or the network is
  * having trouble; the next sync tries again). */
@@ -472,15 +491,15 @@ object ContactRequests {
      * (design 79 §5.5, encoded by this process) shrunk to [CONTACT_REQUEST_PHOTO_PX] under
      * [CONTACT_REQUEST_PHOTO_MAX_BYTES] and posted as `image/jpeg`; [contactRequestPhotoAction] decides. A picture that
      * is gone or can't be shrunk under the limit is done without a post. A RETRY ends the pass (the next sync tries
-     * again while the request waits).
+     * again while the request waits); one the server answered counts towards [CONTACT_REQUEST_PHOTO_TRIES] (code QA L5).
      */
     private suspend fun uploadPhotos(context: Context, api: MdmApi) {
         for (record in requestPhotosToSend(records(context))) {
             val jpeg = requestPhotoJpeg(File(photoDir(context), "${record.id}.jpg"))
+            var code: Int? = null
             val action = if (jpeg == null) {
                 PhotoUploadAction.DONE
             } else {
-                var code: Int? = null
                 try {
                     code = api.uploadContactRequestPhoto(record.id, jpeg.toRequestBody(JPEG)).code()
                 } catch (e: kotlinx.coroutines.CancellationException) {
@@ -491,8 +510,9 @@ object ContactRequests {
                 Log.i(LOG_TAG, "Contact request picture: ${code?.let { "HTTP $it" } ?: "no answer"}")
                 contactRequestPhotoAction(code)
             }
+            val answered = code != null
+            update(context) { records -> recordsAfterPhotoUpload(records, record.id, action, answered) }
             if (action == PhotoUploadAction.RETRY) return
-            update(context) { records -> recordsAfterPhotoUpload(records, record.id, action) }
         }
     }
 

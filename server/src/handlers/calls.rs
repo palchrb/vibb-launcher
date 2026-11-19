@@ -2194,7 +2194,10 @@ pub async fn add_contact(
     }
 
     let result = async {
-        let mut tx = state.db.begin().await?;
+        // A writer from the start (code QA L3): a request's picture landing between this transaction's first read and
+        // its first write would otherwise fail the save (WAL's busy snapshot); now the upload waits and finds the
+        // request answered.
+        let mut tx = state.db.begin_with("BEGIN IMMEDIATE").await?;
         let device_exists: bool =
             sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM device_policy WHERE device_id = ?)")
                 .bind(id)

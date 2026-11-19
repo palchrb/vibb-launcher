@@ -331,10 +331,8 @@ pub async fn upload_photo(
     if !typed {
         return StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response();
     }
-    if body.len() > PHOTO_MAX_BYTES {
-        return StatusCode::PAYLOAD_TOO_LARGE.into_response();
-    }
-    // Checked before decoding, and again when the row is written.
+    // Checked before decoding, and again when the row is written. (Above PHOTO_MAX_BYTES the route's own body limit
+    // answers 413 before this handler runs.)
     match photo_wanted(&state.db, device.id, &id).await {
         Ok(true) => {}
         Ok(false) => return StatusCode::CONFLICT.into_response(),
@@ -354,7 +352,9 @@ pub async fn upload_photo(
             return StatusCode::UNPROCESSABLE_ENTITY.into_response();
         }
     };
-    let stored = {
+    // Code QA L1: every failure falls through to the one prune below, after the lock is released - a file stored
+    // before another failed never stays behind.
+    let stored: Result<bool, String> = {
         let _files = crate::photos::lock_files().await;
         let mut written = Ok(());
         for (dir, photo) in [
@@ -362,15 +362,12 @@ pub async fn upload_photo(
             (&state.photo_dir, &processed.cut.square),
         ] {
             if let Err(err) = crate::photos::store(dir, photo).await {
-                written = Err(err);
+                written = Err(err.to_string());
                 break;
             }
         }
         match written {
-            Err(err) => {
-                tracing::error!(device_id = device.id, %err, "couldn't store a contact request's picture");
-                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-            }
+            Err(err) => Err(err),
             Ok(()) => sqlx::query(
                 "UPDATE device_contact_requests SET photo_hash = ?, photo_original_hash = ?, photo_view = ? \
                  WHERE device_id = ? AND id = ? AND state = 'open' AND asked_at > ? AND photo_hash IS NULL",
@@ -383,7 +380,8 @@ pub async fn upload_photo(
             .bind(live_since(Utc::now()))
             .execute(&state.db)
             .await
-            .map(|done| done.rows_affected() > 0),
+            .map(|done| done.rows_affected() > 0)
+            .map_err(|err| err.to_string()),
         }
     };
     match stored {

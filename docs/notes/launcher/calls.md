@@ -521,7 +521,9 @@ the list shows `contactRequestRows`.
   `contact_request_photos/<id>.jpg`, re-encoded by `PictureEncoder.forRequest` at most 256 px and 64 KiB
   (`CONTACT_REQUEST_PHOTO_PX`, `CONTACT_REQUEST_PHOTO_MAX_BYTES`; quality steps first, then 192 and 128 px), no EXIF.
   `contactRequestPhotoAction`: 401/408/429/5xx/no answer retry with the next sync (as the request), anything else is
-  done - stored, or refused for good (409 a second upload or a request no longer open, an old server's 404). A missing
+  done - stored, or refused for good (409 a second upload or a request no longer open, an old server's 404). A retry
+  the server answered counts on the record (`photoTries`); the third gives the picture up (`CONTACT_REQUEST_PHOTO_TRIES`,
+  code QA L5), and one with no answer (the network) never counts. A missing
   file or one that won't fit is done without a post. The shapes are `contact_request.json`'s `photo`
   (`ContactRequestsTest`). The hand-over to the kid's own pictures when the contact arrives stays as it was; the
   server makes the picture the new contact's photo (`docs/notes/server/calls-and-contacts.md`).

@@ -224,11 +224,35 @@ class ContactRequestsTest {
         val declined = record(4, ContactRequestPhase.DECLINED).copy(photo = true)
         val records = listOf(asked, pending, noPhoto, declined)
         assertEquals(listOf(asked), requestPhotosToSend(records))
-        assertEquals(records, recordsAfterPhotoUpload(records, asked.id, PhotoUploadAction.RETRY))
+        assertEquals(records, recordsAfterPhotoUpload(records, asked.id, PhotoUploadAction.RETRY, answered = false))
         val after = recordsAfterPhotoUpload(records, asked.id, PhotoUploadAction.DONE)
         assertEquals(listOf(asked.copy(photoSent = true), pending, noPhoto, declined), after)
         assertEquals(emptyList<ContactRequestRecord>(), requestPhotosToSend(after))
         // The request's body never carries it.
         assertEquals(asked.body(), after.first().body())
+    }
+
+    /** Code QA L5: a picture the server keeps answering with a retry is given up after [CONTACT_REQUEST_PHOTO_TRIES];
+     * a retry without an answer (the network) never counts, and the count is kept on the record. */
+    @Test
+    fun `a picture the server keeps failing is given up after three tries`() {
+        val asked = record(1).copy(photo = true)
+        var records = listOf(asked)
+        for (attempt in 1 until CONTACT_REQUEST_PHOTO_TRIES) {
+            records = recordsAfterPhotoUpload(records, asked.id, contactRequestPhotoAction(500), answered = true)
+            assertEquals(attempt, records.single().photoTries)
+            assertEquals(listOf(records.single()), requestPhotosToSend(records))
+        }
+        // No answer: no try counted, still sent next time.
+        val offline = recordsAfterPhotoUpload(records, asked.id, contactRequestPhotoAction(null), answered = false)
+        assertEquals(records, offline)
+        // The third answered failure: done, never sent again.
+        records = recordsAfterPhotoUpload(records, asked.id, contactRequestPhotoAction(503), answered = true)
+        assertEquals(CONTACT_REQUEST_PHOTO_TRIES, records.single().photoTries)
+        assertTrue(records.single().photoSent)
+        assertEquals(emptyList<ContactRequestRecord>(), requestPhotosToSend(records))
+        // The count survives the record's storage.
+        val stored = ServerJson.encodeToString(ContactRequestRecord.serializer(), records.single())
+        assertEquals(records.single(), ServerJson.decodeFromString(ContactRequestRecord.serializer(), stored))
     }
 }

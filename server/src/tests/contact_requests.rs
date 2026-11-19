@@ -1262,6 +1262,11 @@ async fn the_photo_answers() {
         4,
         image::ImageFormat::Png,
     );
+    let webp = picture(64, 64, image::ImageFormat::WebP);
+    assert_eq!(
+        crate::photos::process_request_photo(&webp).err(),
+        Some(crate::photos::PhotoError::UnsupportedType.into())
+    );
     let tailnet: std::net::SocketAddr = "100.101.102.103:50123".parse().unwrap();
     let device_router = app.device_router();
     let (first, second) = (format!("{:032x}", 1), format!("{:032x}", 2));
@@ -1278,6 +1283,8 @@ async fn the_photo_answers() {
             "too_large" => (second.clone(), "image/png", too_large.clone()),
             "undecodable" => (second.clone(), "image/png", b"not a picture".to_vec()),
             "too_many_pixels" => (second.clone(), "image/png", wide.clone()),
+            // Code QA L2: a WebP (the parents' decoder takes it) under a JPEG label is refused by its bytes.
+            "not_jpeg_or_png" => (second.clone(), "image/jpeg", webp.clone()),
             other => panic!("a case the server doesn't make: {other}"),
         };
         let got = if case == "stored" {

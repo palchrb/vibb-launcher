@@ -622,15 +622,21 @@ pub async fn process_contact_limited(
 /// a side, read from its header before anything is decoded (the phone sends at most 256).
 pub const REQUEST_PHOTO_MAX_SIDE: u32 = 512;
 
-/// A kid's request picture as a contact photo: at most [REQUEST_PHOTO_MAX_SIDE] a side, then [process_contact] at
+/// A kid's request picture as a contact photo: a JPEG or a PNG by its bytes (anything else, WebP included,
+/// [PhotoError::UnsupportedType]), at most [REQUEST_PHOTO_MAX_SIDE] a side, then [process_contact] at
 /// cover - re-encoded, no metadata, its original kept, so "Legg til…" can give it to the contact as a parent's upload.
 pub fn process_request_photo(bytes: &[u8]) -> Result<ContactPhoto, ContactPhotoError> {
     if bytes.is_empty() {
         return Err(PhotoError::Empty.into());
     }
-    let (width, height) = ImageReader::new(Cursor::new(bytes))
+    let reader = ImageReader::new(Cursor::new(bytes))
         .with_guessed_format()
-        .map_err(|_| PhotoError::Undecodable)?
+        .map_err(|_| PhotoError::Undecodable)?;
+    // Code QA L2: the bytes themselves must be a JPEG or a PNG, whatever the label said (`decode` also takes WebP).
+    if !matches!(reader.format(), Some(ImageFormat::Jpeg | ImageFormat::Png)) {
+        return Err(PhotoError::UnsupportedType.into());
+    }
+    let (width, height) = reader
         .into_dimensions()
         .map_err(|_| PhotoError::Undecodable)?;
     if width > REQUEST_PHOTO_MAX_SIDE || height > REQUEST_PHOTO_MAX_SIDE {

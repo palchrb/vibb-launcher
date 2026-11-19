@@ -41,6 +41,7 @@
       {"case": "wrong_type", "status": 415},
       {"case": "too_large", "status": 413},
       {"case": "undecodable", "status": 422},
+      {"case": "not_jpeg_or_png", "status": 422},
       {"case": "too_many_pixels", "status": 422}
     ],
     "phone_answers": [

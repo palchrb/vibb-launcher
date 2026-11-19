@@ -261,15 +261,17 @@ parent decides on the Calls page. It follows design r13's time request.
     take it - a phone straight to `tailnetIP:port` too): raw `image/jpeg` or `image/png`, at most 64 KiB
     (`PHOTO_MAX_BYTES`), at most 512 px a side read from the header before decoding (`photos::REQUEST_PHOTO_MAX_SIDE`;
     the phone sends 256). 204 stored; 400 a bad id; 415 another type; 413 too large; 409 no live request of this phone
-    with that id, or one with a picture already (a second upload, a retry after a lost answer); 422 not a picture or too
-    many pixels; 500 the phone retries. Stored exactly as a parent's contact photo (`photos::process_request_photo`:
+    with that id, or one with a picture already (a second upload, a retry after a lost answer); 422 not a picture, bytes
+    that aren't JPEG or PNG whatever the label (code QA L2: the parents' decoder also takes WebP), or too many pixels;
+    500 the phone retries (a file stored before the failure is pruned at once, L1). Stored exactly as a parent's contact photo (`photos::process_request_photo`:
     `process_contact` at cover - decoded and re-encoded, no metadata, the square and the kept original), the files and
     `device_contact_requests.photo_hash`/`photo_original_hash`/`photo_view` under the contact photos' lock. The
     contact photo stores name these columns too (`CONTACT_PHOTOS`/`CONTACT_ORIGINALS` `referenced_sql` and
     `forget_sql`), so a prune keeps a waiting request's files and backups carry them.
   - **The card** shows it in the request's avatar (`/contact-photos/{hash}`; without one the name's letter on a palette
     tone by the id); **"Legg til…"** shows "Bilde fra Anna" with it, unless the number is a family contact already.
-  - **The save** gives it to the new contact - the three columns copied in Add Contact's transaction, before
+  - **The save** gives it to the new contact - the three columns copied in Add Contact's transaction (`BEGIN
+    IMMEDIATE` since code QA L3, so a picture landing mid-save waits instead of failing it), before
     `mark_added` forgets them on the request - only when the number was new to the family: an existing family contact
     keeps its own photo (or none), as its name (QA M1), so the kid's picture never reaches the other phones. The
     contact's photo is then a parent's upload in every way (Adjust crop works, the phone gets the square).
