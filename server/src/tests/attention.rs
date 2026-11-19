@@ -622,3 +622,266 @@ async fn a_silent_rules_own_do_not_disturb_is_no_row() {
     report(&app, &token, state(-7, "none")).await;
     assert_eq!(rows(&app, &cookie, id).await, dnd);
 }
+
+/// Design 116 §2.3: an outside service's failure raises a row only on the phones whose features use it - an app on
+/// one phone, Vibb One's own updates on every phone, a disabled app on none, a calendar link on the two phones that
+/// have it, the weather only where it is on, a blocklist only where it is in force -, one row per title with the
+/// failing scopes summed, to the page that says what the error is; a success clears it.
+#[tokio::test]
+async fn an_integrations_failure_shows_on_the_phones_that_use_it() {
+    use crate::integration_health::{Class, Title, failed_at, for_device, ok};
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (emma, _) = clean_phone(&app, "Emma").await;
+    let (jack, _) = clean_phone(&app, "Jack").await;
+    let (sam, _) = clean_phone(&app, "Sam").await;
+    let db = &app.db;
+    let past = chrono::Utc::now() - chrono::Duration::hours(30);
+    // A sustained transient run (`Down`) and a parent-class pair (`Fix`).
+    let down = |key: &'static str, scope: String| async move {
+        for _ in 0..3 {
+            failed_at(db, key, &scope, "network", Class::Transient, past).await;
+        }
+    };
+    let fix = |key: &'static str, scope: String| async move {
+        for _ in 0..2 {
+            failed_at(db, key, &scope, "not_found", Class::Parent, past).await;
+        }
+    };
+    let app_row = |name: &'static str, enabled: bool, launcher: bool| async move {
+        sqlx::query_scalar::<_, i64>(
+            "INSERT INTO tracked_apps (name, package_name, github_repo, enabled, is_launcher) \
+             VALUES (?, '', 'o/r', ?, ?) RETURNING id",
+        )
+        .bind(name)
+        .bind(enabled)
+        .bind(launcher)
+        .fetch_one(db)
+        .await
+        .unwrap()
+    };
+    let tick = |device: i64, app: i64| async move {
+        sqlx::query("INSERT INTO device_tracked_apps (device_id, tracked_app_id) VALUES (?, ?)")
+            .bind(device)
+            .bind(app)
+            .execute(db)
+            .await
+            .unwrap();
+    };
+
+    // Apps: one on Emma, Vibb One (never in device_tracked_apps), one disabled on Emma.
+    let mine = app_row("Fixture", true, false).await;
+    tick(emma, mine).await;
+    let vibb = app_row("Vibb One", true, true).await;
+    let off = app_row("Old", false, false).await;
+    tick(emma, off).await;
+    fix("github", format!("app:{mine}")).await;
+    fix("fdroid", format!("app:{vibb}")).await;
+    down("github", format!("app:{off}")).await;
+
+    // A calendar link on Emma and Jack.
+    let source: i64 = sqlx::query_scalar(
+        "INSERT INTO calendar_sources (uid, url_sealed, url_nonce, url_key_fp, host, rev, feed_json, next_at) \
+         VALUES (?, x'00', x'00', 'fp', 'skole.example.no', 'r', '{}', datetime('now')) RETURNING id",
+    )
+    .bind("a".repeat(32))
+    .fetch_one(db)
+    .await
+    .unwrap();
+    for (device, name) in [(emma, "Skole"), (jack, "Skolen")] {
+        sqlx::query(
+            "INSERT INTO device_calendar_feeds (device_id, source_id, name) VALUES (?, ?, ?)",
+        )
+        .bind(device)
+        .bind(source)
+        .bind(name)
+        .execute(db)
+        .await
+        .unwrap();
+    }
+    down("calendar_link", format!("source:{source}")).await;
+
+    // The weather on Emma only.
+    sqlx::query("UPDATE device_policy SET lock_weather = 1 WHERE device_id = ?")
+        .bind(emma)
+        .execute(db)
+        .await
+        .unwrap();
+    down("met", String::new()).await;
+
+    // Blocklists: Ads on for all but switched off on Emma; Kids off for all but on for Emma; Sam's filter off.
+    let feed = |name: &'static str, enabled: bool| async move {
+        sqlx::query_scalar::<_, i64>(
+            "INSERT INTO dns_blocklists (name, url, enabled) VALUES (?, 'https://lists.example/' || ?, ?) \
+             RETURNING id",
+        )
+        .bind(name)
+        .bind(name)
+        .bind(enabled)
+        .fetch_one(db)
+        .await
+        .unwrap()
+    };
+    let ads = feed("Ads", true).await;
+    let kids = feed("Kids", false).await;
+    for (feed, enabled) in [(ads, false), (kids, true)] {
+        sqlx::query(
+            "INSERT INTO device_blocklist_overrides (device_id, blocklist_id, enabled) VALUES (?, ?, ?)",
+        )
+        .bind(emma)
+        .bind(feed)
+        .bind(enabled)
+        .execute(db)
+        .await
+        .unwrap();
+    }
+    sqlx::query("UPDATE device_policy SET vpn_filter_enabled = 0 WHERE device_id = ?")
+        .bind(sam)
+        .execute(db)
+        .await
+        .unwrap();
+    fix("blocklist", format!("feed:{ads}")).await;
+    fix("blocklist", format!("feed:{kids}")).await;
+
+    let now = chrono::Utc::now();
+    assert_eq!(
+        for_device(db, emma, now).await.unwrap(),
+        [
+            (Title::AppsFix, 2),
+            (Title::MetDown, 1),
+            (Title::CalendarLink, 1),
+            (Title::Blocklist, 1),
+        ]
+    );
+    assert_eq!(
+        for_device(db, jack, now).await.unwrap(),
+        [
+            (Title::AppsFix, 1),
+            (Title::CalendarLink, 1),
+            (Title::Blocklist, 1),
+        ]
+    );
+    assert_eq!(
+        for_device(db, sam, now).await.unwrap(),
+        [(Title::AppsFix, 1)]
+    );
+
+    // The rows on Emma's page: after every other row, one per title, worded and linked.
+    let page = app
+        .get_page(&format!("/devices/{emma}"), &cookie)
+        .await
+        .text();
+    let links: Vec<(String, String)> = super::tags(&page, "a")
+        .into_iter()
+        .filter_map(|tag| {
+            Some((
+                tag.attr("data-attention")?.to_string(),
+                tag.attr("href")?.to_string(),
+            ))
+        })
+        .collect();
+    assert_eq!(
+        links,
+        [
+            ("integration-apps-fix", "/apps".to_string()),
+            (
+                "integration-met-down",
+                format!("/devices/{emma}/lock#weather")
+            ),
+            (
+                "integration-calendar-link",
+                format!("/devices/{emma}/calendar")
+            ),
+            ("integration-blocklist", "/dns".to_string()),
+        ]
+        .map(|(k, h)| (k.to_string(), h))
+    );
+    assert!(page.contains("2 apps can&#39;t get updates"), "{page}");
+    // The lock page says the same as the row.
+    let lock = app
+        .get_page(&format!("/devices/{emma}/lock"), &cookie)
+        .await
+        .text();
+    assert!(lock.contains("data-note=\"weather-down\""));
+    assert!(lock.contains("Weather isn&#39;t loading"));
+
+    // A success clears it at once.
+    ok(db, "met", "").await;
+    ok(db, "calendar_link", &format!("source:{source}")).await;
+    assert_eq!(
+        for_device(db, jack, chrono::Utc::now()).await.unwrap(),
+        [(Title::AppsFix, 1), (Title::Blocklist, 1)]
+    );
+    assert_eq!(rows(&app, &cookie, sam).await, ["integration-apps-fix"]);
+}
+
+/// Design 116 §3.4 (QA M10): "Web filter is down" from a report that says so for 10 minutes, red; marked "at last
+/// report" when the phone is offline; none under 10 minutes, with the parent's switch off or the report paused. The
+/// filter page says how long, the `/dns` page names the phone.
+#[tokio::test]
+async fn a_filter_down_report_raises_its_row_unless_a_choice_explains_it() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = clean_phone(&app, "Emma").await;
+    let down =
+        |ms: i64| json!({"vpn_filter": {"state": "down", "down_ms": ms, "period": "5:3000"}});
+    report(&app, &token, down(599_000)).await;
+    assert_eq!(rows(&app, &cookie, id).await, Vec::<String>::new());
+    report(&app, &token, down(1_500_000)).await;
+    assert_eq!(rows(&app, &cookie, id).await, ["filter-down"]);
+    let filter = app
+        .get_page(&format!("/devices/{id}/filter"), &cookie)
+        .await
+        .text();
+    assert!(filter.contains("data-note=\"filter-down\""), "{filter}");
+    assert!(filter.contains("Down for 25"), "{filter}");
+    // Connected, the period runs on past the report (code QA L2).
+    sqlx::query(
+        "UPDATE device_status SET reported_at = datetime('now', '-20 minutes') WHERE device_id = ?",
+    )
+    .bind(id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let filter = app
+        .get_page(&format!("/devices/{id}/filter"), &cookie)
+        .await
+        .text();
+    assert!(filter.contains("Down for 45"), "{filter}");
+    let dns = app.get_page("/dns", &cookie).await.text();
+    assert!(dns.contains("Emma: down"), "{dns}");
+
+    // Offline: the report's row is marked.
+    sqlx::query("UPDATE devices SET last_seen_at = datetime('now', '-3 hours') WHERE id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    app.state.limits.forget_device(id);
+    let page = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    let row = &page[page.find("data-attention=\"filter-down\"").unwrap()..];
+    assert!(row[..row.find("</a>").unwrap()].contains("data-at-last-report"));
+
+    // A pause on the phone, then the parent's own switch off: no row.
+    report(
+        &app,
+        &token,
+        json!({"restrictions_paused": true, "vpn_filter": {"state": "down", "down_ms": 1_500_000, "period": "5:3000"}}),
+    )
+    .await;
+    assert!(
+        !rows(&app, &cookie, id)
+            .await
+            .contains(&"filter-down".to_string())
+    );
+    report(&app, &token, down(1_500_000)).await;
+    sqlx::query("UPDATE device_policy SET vpn_filter_enabled = 0 WHERE device_id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(rows(&app, &cookie, id).await, Vec::<String>::new());
+}

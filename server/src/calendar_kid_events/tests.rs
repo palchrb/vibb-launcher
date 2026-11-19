@@ -1432,6 +1432,66 @@ async fn a_403_is_read_by_its_body() {
     assert_eq!(state, "login_refused");
 }
 
+/// The phone's `Integration` titles now.
+async fn titles(k: &Kid) -> Vec<(crate::integration_health::Title, usize)> {
+    crate::integration_health::for_device(&k.app.db, k.device, Utc::now())
+        .await
+        .unwrap()
+}
+
+/// Code QA M1: a stop shows only while the phone still writes - the parent's switch-off takes it away.
+#[tokio::test]
+async fn a_stop_goes_with_the_kids_writes() {
+    let k = kid().await;
+    k.dav.switches(|s| s.writes_answer = Some(403));
+    k.post_ok(&k.set(vec![event(
+        1,
+        "Kino",
+        "20261103T160000Z",
+        "20261103T180000Z",
+    )]))
+    .await;
+    k.work().await;
+    assert_eq!(
+        titles(&k).await,
+        [(crate::integration_health::Title::CaldavWrite, 1)]
+    );
+    sqlx::query("UPDATE device_calendar_feeds SET kid_writes = 0 WHERE device_id = ?")
+        .bind(k.device)
+        .execute(&k.app.db)
+        .await
+        .unwrap();
+    assert!(titles(&k).await.is_empty());
+}
+
+/// Code QA M2: a set too big shows until the next accepted set, even one equal to the stored set that writes nothing.
+#[tokio::test]
+async fn a_set_too_big_shows_until_the_next_accepted_set() {
+    let k = kid().await;
+    let kino = event(1, "Kino", "20261103T160000Z", "20261103T180000Z");
+    k.post_ok(&k.set(vec![kino.clone()])).await;
+    k.work().await;
+    let big: Vec<Value> = (0..300)
+        .map(|i| {
+            let mut e = event(1, "Stor", "20261103T160000Z", "20261103T170000Z");
+            e["uid"] = format!("vibb-{TAG}-0b6f2c1e-3d4a-4b5c-8d9e-{i:012}").into();
+            e["description"] = "x".repeat(2000).into();
+            e
+        })
+        .collect();
+    let res = k.post(&k.set(big)).await;
+    assert_eq!(res.status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(
+        titles(&k).await,
+        [(crate::integration_health::Title::CaldavWrite, 1)]
+    );
+    k.clear_writes();
+    k.post_ok(&k.set(vec![kino])).await;
+    k.work().await;
+    assert!(k.writes().is_empty());
+    assert!(titles(&k).await.is_empty());
+}
+
 #[tokio::test]
 async fn a_stopped_calendar_is_tried_again_at_the_next_set_and_fetch() {
     let k = kid().await;
@@ -1440,6 +1500,25 @@ async fn a_stopped_calendar_is_tried_again_at_the_next_set_and_fetch() {
     k.post_ok(&k.set(vec![kino.clone()])).await;
     k.work().await;
     assert!(k.page().await.contains("data-kid-status=\"write_refused\""));
+    // Design 116 §2.1 (QA H2): the stop is `Fix` at once in the integration health.
+    let health = || async {
+        crate::integration_health::row(&k.app.db, "caldav_write", &format!("device:{}", k.device))
+            .await
+            .unwrap()
+            .unwrap()
+    };
+    let row = health().await;
+    assert_eq!(
+        (row.class, row.error.as_deref()),
+        (
+            Some(crate::integration_health::Class::Stop),
+            Some("write_refused")
+        )
+    );
+    assert_eq!(
+        crate::integration_health::raised(&row, TimeDelta::hours(6), Utc::now()),
+        Some(crate::integration_health::Problem::Fix)
+    );
     // The calendar's fetch tries once: still refused, stopped again.
     k.clear_writes();
     k.fetch().await;
@@ -1450,6 +1529,11 @@ async fn a_stopped_calendar_is_tried_again_at_the_next_set_and_fetch() {
     k.fetch().await;
     assert_eq!(k.state_of(1).await.as_deref(), Some("ok"));
     assert!(!k.page().await.contains("data-kid-status=\"write_refused\""));
+    assert_eq!(
+        health().await.failing_since,
+        None,
+        "the retry's good write clears it"
+    );
     // A full calendar: the phone's next set tries again.
     k.dav.switches(|s| s.writes_answer = Some(507));
     let ny = event(2, "Ny", "20261104T091500Z", "20261104T094500Z");
@@ -2214,4 +2298,25 @@ async fn a_report_from_before_a_write_paths_hand_back_leaves_it() {
         .unwrap();
     let back = k.post_ok(&k.set(vec![mine])).await["back"].clone();
     assert_eq!(back[0]["summary"], "Kino P1", "{back}");
+}
+
+/// Design 116 §2.1: every write code's class.
+#[test]
+fn every_write_code_is_classed() {
+    use crate::integration_health::Class::*;
+    for (code, class) in [
+        ("status_429", Some(Transient)),
+        ("status_503", Some(Transient)),
+        ("network", Some(Transient)),
+        ("timeout", Some(Transient)),
+        ("write_refused", Some(Stop)),
+        ("full", Some(Stop)),
+        ("no_etag", Some(Stop)),
+        ("not_listed", Some(Stop)),
+        ("too_big", Some(Stop)),
+        ("bad_set", None),
+        ("tag_pinned:7", None),
+    ] {
+        assert_eq!(class_of(code), class, "{code}");
+    }
 }

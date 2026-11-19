@@ -1621,6 +1621,10 @@ pub async fn check_entry(
     let outcome = run_check(state, entry_id, &link, &play_order, &old, mode, now).await;
     state.music_sweep.set_current(None);
     let (plan, result, requests) = outcome?;
+    // Design 116 §2.1: an NRK or RSS listing's outcome (a recheck only lists nothing); Storytel's and Spotify's own
+    // calls record under their keys.
+    let health = (!mode.recheck_only && matches!(source_kind.as_str(), "nrk" | "rss"))
+        .then(|| result.as_ref().err().map(|err| (err.code(), class_of(err))));
     let mut report = finish(
         state,
         entry_id,
@@ -1634,8 +1638,36 @@ pub async fn check_entry(
     .await?;
     if let Some(report) = report.as_mut() {
         report.name = name;
+        let scope = format!("entry:{entry_id}");
+        match health {
+            Some(None) => crate::integration_health::ok(&state.db, "music_feed", &scope).await,
+            Some(Some((code, Some(class)))) => {
+                crate::integration_health::failed(&state.db, "music_feed", &scope, &code, class)
+                    .await
+            }
+            _ => {}
+        }
     }
     Ok(report)
+}
+
+/// A listing's failure in the integration health (design 116 §2.1, key `music_feed`), `None` = not recorded:
+/// Storytel's and Spotify's entries record under their own keys.
+pub(crate) fn class_of(err: &CheckError) -> Option<crate::integration_health::Class> {
+    use crate::integration_health::Class::*;
+    match err {
+        CheckError::Network(_) | CheckError::Timeout => Some(Transient),
+        CheckError::Status(status) if *status >= 500 || matches!(status, 408 | 429) => {
+            Some(Transient)
+        }
+        // 401/403: the feed went private.
+        CheckError::Status(_)
+        | CheckError::NotFound
+        | CheckError::NotFeed
+        | CheckError::NoItems
+        | CheckError::TooBig => Some(Parent),
+        CheckError::Storytel(_) | CheckError::Spotify(_) => None,
+    }
 }
 
 /// The work of a check, without writing anything.

@@ -101,7 +101,9 @@ class KidVpnService : VpnService() {
     private val reach = ReachTracker()
     private val main = Handler(Looper.getMainLooper())
 
-    /** The shape the tunnel has now (design 95 §2.2), `null` without one; main thread only. */
+    /** The shape the tunnel has now (design 95 §2.2), `null` without one; written on the main thread only, read by the
+     * status report's thread too (design 116, [liveTunnel]). */
+    @Volatile
     private var shape: VpnShape? = null
     /** The last best non-VPN network the watcher saw; `null` before the first. A network lost keeps it: with no
      * network nothing can leak, and a Wi-Fi -> cellular switch passes through "none" for ~60 ms (design 95 §2.3 (b)),
@@ -199,32 +201,41 @@ class KidVpnService : VpnService() {
     private var reshapeRetryMs = 5_000L
 
     /** One switch to [wanted] in order: lockdown off first unless it is the sink; the tunnel; the sink's lockdown
-     * whether or not its tunnel came up, then a retry until it does. `true` when established. */
+     * whether or not its tunnel came up, then a retry until it does - any shape since design 116 (S-M2), the one retry
+     * chain: 5 s doubling to 5 min, and the while-idle alarm beside it ([VpnFilterWatch]). `true` when established. */
     private fun switchTo(wanted: VpnShape): Boolean {
         alwaysOnBeforeEstablish(wanted)?.let { MobileNetworkRuntime.writeAlwaysOn(this, it) }
         val established = establish(wanted)
         alwaysOnAfterEstablish(wanted)?.let { MobileNetworkRuntime.writeAlwaysOn(this, it) }
         if (retriesFailedEstablish(wanted, established)) {
-            Log.w(LOG_TAG, "The sink's tunnel failed: lockdown holds, retrying in $reshapeRetryMs ms")
-            main.removeCallbacks(reshapeRetry)
-            main.postDelayed(reshapeRetry, reshapeRetryMs)
-            reshapeRetryMs = minOf(reshapeRetryMs * 2, 5 * 60_000L)
+            val step = reshapeRetryStep(main.hasCallbacks(reshapeRetry), reshapeRetryMs)
+            if (step == null) {
+                Log.w(LOG_TAG, "The ${wanted.wire} tunnel failed, a retry is already due")
+            } else {
+                val (retryMs, nextMs) = step
+                Log.w(LOG_TAG, "The ${wanted.wire} tunnel failed, retrying in $retryMs ms")
+                main.postDelayed(reshapeRetry, retryMs)
+                reshapeRetryMs = nextMs
+            }
         } else if (established) {
             main.removeCallbacks(reshapeRetry)
             reshapeRetryMs = 5_000L
         }
+        VpnFilterWatch.check(this, if (established) VpnFilterEvent.CHECK else VpnFilterEvent.ESTABLISH_FAILED)
         return established
     }
 
-    private fun startVpn() {
-        if (state.stopped) return
+    /** `true` when a switch ran (its own failure arms the retry, [switchTo]). */
+    private fun startVpn(): Boolean {
+        if (state.stopped) return false
         val wanted = wantedShape()
-        if (wanted == VpnShape.NONE) return
+        if (wanted == VpnShape.NONE) return false
         // Going to the sink: the tunnel first, then lockdown. To anything else: lockdown off first (design 95 §2.2).
-        if (!switchTo(wanted)) return
+        if (!switchTo(wanted)) return true
         DnsFilterEngine.onCustomChanged = ::syncCustom
         syncCustom()
         watchNetwork()
+        return true
     }
 
     /**
@@ -476,11 +487,13 @@ class KidVpnService : VpnService() {
         scheduleRetry(retryMs)
     }
 
+    /** Design 116 (QA L1): one retry chain - a switch that ran and failed has armed [reshapeRetry] itself, so this one
+     * reschedules only when no switch ran. */
     private fun retryTunnel() {
         if (!state.retryDue()) return
-        startVpn()
+        val switched = startVpn()
         settleForeground()
-        if (state.tunnel == null) {
+        if (state.tunnel == null && !switched) {
             val nextMs = state.retryFailed()
             Log.w(LOG_TAG, "Tunnel retry failed, next in $nextMs ms")
             scheduleRetry(nextMs)
@@ -583,6 +596,8 @@ class KidVpnService : VpnService() {
         main.post {
             stopSelfCleanly()
             if (vpnStopsNow(created, foregroundStartsPending.get())) stopSelf()
+            // Design 116 §3.1: revoked while the filter is wanted - the state is down, the while-idle alarm armed.
+            if (MobileNetworkRuntime.storedInputs().filterOn) VpnFilterWatch.check(applicationContext, VpnFilterEvent.CHECK)
         }
     }
 
@@ -649,6 +664,12 @@ class KidVpnService : VpnService() {
         /** The running service, for the status report. */
         @Volatile
         private var live: KidVpnService? = null
+
+        /** Design 116 §3.1 (QA M1): the live instance's tunnel is up, and its shape - `false` and `null` with none. */
+        fun liveTunnel(): Pair<Boolean, VpnShape?> {
+            val service = live ?: return Pair(false, null)
+            return Pair(service.state.tunnel != null, service.shape)
+        }
 
         /** Design 115: the shape the tunnel has now (`shape`'s mirror), `null` without one. A tunnel that died keeps it,
          * as `shape` does: the sink's lockdown still cuts the apps. */

@@ -226,8 +226,131 @@ fun alwaysOnBeforeEstablish(wanted: VpnShape): VpnShape? = wanted.takeIf { it !=
  * the decision `sink` is recorded for every later reader. */
 fun alwaysOnAfterEstablish(wanted: VpnShape): VpnShape? = wanted.takeIf { it == VpnShape.SINK }
 
-/** A failed `establish()` toward the sink is retried by the service itself (5 s doubling to 5 min). */
-fun retriesFailedEstablish(wanted: VpnShape, established: Boolean): Boolean = !established && wanted == VpnShape.SINK
+/** A failed `establish()` toward any shape is retried by the service itself (5 s doubling to 5 min; design 116 §3.1,
+ * S-M2: the filter and the pass shape too, not only the sink). */
+fun retriesFailedEstablish(wanted: VpnShape, established: Boolean): Boolean = !established && wanted != VpnShape.NONE
+
+/** The fast retry's longest wait. */
+const val RESHAPE_RETRY_MAX_MS = 5 * 60_000L
+
+/** The fast retry's step after a failed switch ([retriesFailedEstablish]): `(this wait, the next one)`, or `null` while a
+ * retry is already waiting. Only the retry's own failure doubles the wait (5 s doubling to 5 min): a fresh process's start
+ * commands each failed at once, and each doubled it, from 5 s to 160 s within two seconds (design 116's emulator gate). */
+fun reshapeRetryStep(retryPending: Boolean, delayMs: Long): Pair<Long, Long>? =
+    if (retryPending) null else Pair(delayMs, minOf(delayMs * 2, RESHAPE_RETRY_MAX_MS))
+
+// ---- design 116 part C: "filter on, tunnel down" (S-M2) -----------------------------------------------------------
+
+/** How long the filter is down before a sync tells the server (the contract's `vpn_filter.report_after_ms`, the
+ * server's `VPN_REPORT_AFTER_MS`). */
+const val VPN_REPORT_AFTER_MS = 600_000L
+
+/** A fresh process starts no down period in its first minute (design 116 §3.1, QA H3): a self-update's restart and an
+ * always-on start that is still coming up are not outages. */
+const val VPN_PROCESS_GRACE_MS = 60_000L
+
+/** The report's `vpn_filter.state`. */
+enum class VpnFilterState(val wire: String) {
+    UP("up"),
+    DOWN("down"),
+
+    /** The filter isn't wanted: the parent's switch, a lift, a pause, the offline override, the setup hold. */
+    OFF("off"),
+}
+
+/** Design 116 §3.1, read live at report time (QA M1): `OFF` while the stored inputs say the filter is off; `UP` while a
+ * tunnel is established in the filter or the sink (the sink answers every DNS query `REFUSED`, so it filters); `DOWN`
+ * otherwise - no tunnel, no service, or a tunnel left in `PASS` after a failed switch to `FILTER`. [shape] is the live
+ * service's, never the persisted `tunnelShape`. */
+fun vpnFilterState(filterOn: Boolean, tunnelUp: Boolean, shape: VpnShape?): VpnFilterState = when {
+    !filterOn -> VpnFilterState.OFF
+    tunnelUp && (shape == VpnShape.FILTER || shape == VpnShape.SINK) -> VpnFilterState.UP
+    else -> VpnFilterState.DOWN
+}
+
+/** A down period, measured on the phone only (QA H3): this boot's count (`Settings.Global.BOOT_COUNT`) and its start in
+ * elapsed realtime. [id] is the report's `period` and the server's event key. */
+data class VpnDownPeriod(val boot: Int, val startMs: Long) {
+    val id: String get() = "$boot:$startMs"
+
+    companion object {
+        /** `null` for an absent or unreadable record. */
+        fun of(stored: String?): VpnDownPeriod? {
+            val parts = stored?.split(":")?.takeIf { it.size == 2 } ?: return null
+            val boot = parts[0].toIntOrNull() ?: return null
+            val start = parts[1].toLongOrNull() ?: return null
+            return VpnDownPeriod(boot, start)
+        }
+    }
+}
+
+/** What the down period is told of. */
+enum class VpnFilterEvent(val wire: String) {
+    /** This process's service tried a shape and `establish()` failed. */
+    ESTABLISH_FAILED("establish_failed"),
+
+    /** The state read now: a retry, the alarm, a tunnel up, a report. */
+    CHECK("check"),
+}
+
+/**
+ * Design 116 §3.1 (QA H3): the down period after [event], with the [state] read now. Never across a boot or two clocks:
+ * a stored period of another boot, or one starting after [nowMs], is gone. Any state but `DOWN` ends it. A failed
+ * establish starts one at once; a check starts one only once this process is a minute old ([VPN_PROCESS_GRACE_MS]) - so
+ * a shutdown, a restart and a fresh process's first minute start none.
+ */
+fun vpnDownPeriod(
+    period: VpnDownPeriod?,
+    event: VpnFilterEvent,
+    state: VpnFilterState,
+    boot: Int,
+    nowMs: Long,
+    processStartMs: Long,
+): VpnDownPeriod? {
+    if (state != VpnFilterState.DOWN) return null
+    val current = period?.takeIf { it.boot == boot && it.startMs <= nowMs }
+    if (current != null) return current
+    return when (event) {
+        VpnFilterEvent.ESTABLISH_FAILED -> VpnDownPeriod(boot, nowMs)
+        VpnFilterEvent.CHECK -> VpnDownPeriod(boot, nowMs).takeIf { nowMs - processStartMs >= VPN_PROCESS_GRACE_MS }
+    }
+}
+
+/** Design 116 §3.1: the report's `vpn_filter` - `{state, down_ms?, period?}`; the length and the id only with `down` and
+ * a period. Pinned by `mobile_network.json`'s `vpn_filter.reports`. */
+@Serializable
+data class VpnFilterReport(
+    val state: String,
+    @SerialName("down_ms") val downMs: Long? = null,
+    val period: String? = null,
+)
+
+fun vpnFilterReport(state: VpnFilterState, period: VpnDownPeriod?, nowMs: Long): VpnFilterReport {
+    val down = period?.takeIf { state == VpnFilterState.DOWN }
+    return VpnFilterReport(state.wire, down?.let { nowMs - it.startMs }, down?.id)
+}
+
+enum class VpnAlarmAction(val wire: String) { ARM("arm"), CANCEL("cancel"), KEEP("keep") }
+
+/** Design 116 §3.1: the 5-minute while-idle retry alarm is armed while the filter is down and cancelled once it is up
+ * or off. */
+fun vpnRetryAlarmAction(state: VpnFilterState, armed: Boolean): VpnAlarmAction = when {
+    state == VpnFilterState.DOWN && !armed -> VpnAlarmAction.ARM
+    state != VpnFilterState.DOWN && armed -> VpnAlarmAction.CANCEL
+    else -> VpnAlarmAction.KEEP
+}
+
+enum class VpnSyncAction(val wire: String) { REQUEST("request"), NONE("none") }
+
+/** Design 116 §3.1: a sync tells the server once a period reaches [VPN_REPORT_AFTER_MS] (once per period:
+ * [reportedThisPeriod]), and the first `UP` after a reported `down` ([lastReported], the last report's state). */
+fun vpnFilterSyncDue(downMs: Long?, reportedThisPeriod: Boolean, state: VpnFilterState, lastReported: String?): VpnSyncAction =
+    when {
+        state == VpnFilterState.DOWN && downMs != null && downMs >= VPN_REPORT_AFTER_MS && !reportedThisPeriod ->
+            VpnSyncAction.REQUEST
+        state == VpnFilterState.UP && lastReported == VpnFilterState.DOWN.wire -> VpnSyncAction.REQUEST
+        else -> VpnSyncAction.NONE
+    }
 
 /** [reason] is still configured: what keeps a held sink naming it (design 97 code QA L1). */
 fun SinkReason.stillArmed(inputs: VpnInputs): Boolean = when (this) {

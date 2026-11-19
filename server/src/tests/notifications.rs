@@ -1025,3 +1025,56 @@ async fn every_emergency_call_is_pushed() {
         .unwrap();
     assert_eq!(pushes, 6);
 }
+
+/// Design 116 §3.4: "Web filter down" is one event per down period (its `period`), pushed under its own switch, on by
+/// default; none before 10 minutes, none for a parent's off.
+#[tokio::test]
+async fn the_filter_down_is_one_event_per_period() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("Emma").await;
+    let down = |ms: i64, period: &str| json!({"vpn_filter": {"state": "down", "down_ms": ms, "period": period}});
+    app.post_status(&token, down(300_000, "5:3000")).await;
+    assert!(kinds(&app, id).await.is_empty());
+    for ms in [600_000, 900_000] {
+        app.post_status(&token, down(ms, "5:3000")).await;
+    }
+    app.post_status(&token, json!({"vpn_filter": {"state": "up"}}))
+        .await;
+    app.post_status(&token, down(700_000, "5:4000000")).await;
+    let told = events(&app, id).await;
+    assert_eq!(
+        told,
+        [
+            (
+                "filter_down".to_string(),
+                "Web filter down on Emma's phone".to_string()
+            ),
+            (
+                "filter_down".to_string(),
+                "Web filter down on Emma's phone".to_string()
+            ),
+        ]
+    );
+
+    // The parent's own off: no event.
+    sqlx::query("UPDATE device_policy SET vpn_filter_enabled = 0 WHERE device_id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    app.post_status(&token, down(900_000, "6:1000")).await;
+    assert_eq!(events(&app, id).await.len(), 2);
+
+    // Its own switch on Notify Me About, on by default.
+    let html = app
+        .get_page("/notifications/settings", &cookie)
+        .await
+        .text();
+    assert_eq!(
+        super::input_checked(&html, "push_filter_down", "on"),
+        Some(true)
+    );
+    assert!(html.contains("Web filter down"));
+    assert!(crate::parent_events::Kind::FilterDown.urgent());
+}

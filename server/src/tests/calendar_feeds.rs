@@ -498,6 +498,22 @@ async fn the_fetch_cycle() {
         next - t0.with_nanosecond(0).unwrap(),
         TimeDelta::minutes(15)
     );
+    // Design 116 §2.1: the failure is the source's in the integration health; the next success clears it.
+    let health = || async {
+        crate::integration_health::row(&app.db, "calendar_link", &format!("source:{id}"))
+            .await
+            .unwrap()
+            .unwrap()
+    };
+    let row = health().await;
+    assert_eq!(
+        (row.class, row.failures, row.error.as_deref()),
+        (
+            Some(crate::integration_health::Class::Transient),
+            1,
+            Some("network")
+        )
+    );
 
     // An empty answer is held twice and accepted the third time.
     app.fetch.answer(LINK, 200, EMPTY);
@@ -518,6 +534,10 @@ async fn the_fetch_cycle() {
         Outcome::Changed
     );
     assert_eq!(next_at(&app).await.1, None);
+    assert_eq!(
+        (health().await.failing_since, health().await.failures),
+        (None, 0)
+    );
     // ... or 24 hours after the first.
     app.fetch.answer(LINK, 200, one_event("a", "Back"));
     calendar_feeds::refresh(state, id, t0).await.unwrap();
@@ -564,6 +584,10 @@ async fn the_fetch_cycle() {
     app.fetch.answer(LINK, 200, vec![b'x'; 5_000_001]);
     calendar_feeds::refresh(state, id, t0).await.unwrap();
     assert_eq!(next_at(&app).await.1.as_deref(), Some("too_big"));
+    assert_eq!(
+        health().await.class,
+        Some(crate::integration_health::Class::Parent)
+    );
     let soon = (Utc::now() + TimeDelta::days(2))
         .format("%Y%m%d")
         .to_string();

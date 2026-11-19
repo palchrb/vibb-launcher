@@ -211,6 +211,13 @@ object MobileNetworkRuntime {
         null
     }
 
+    /** Design 116 §3.1 (QA M1): the web filter's state now - the stored inputs' switch and the live service's tunnel and
+     * shape ([KidVpnService.liveTunnel]), never the persisted shape, which keeps a dead tunnel's on purpose. */
+    fun vpnFilterStateNow(): VpnFilterState {
+        val (tunnelUp, shape) = KidVpnService.liveTunnel()
+        return vpnFilterState(storedInputs().filterOn, tunnelUp, shape)
+    }
+
     /** The sink is wanted now: what `AppDownloads` holds the launcher's own downloads for (design 95 §2.4). */
     fun sinkWanted(context: Context): Boolean = sinkReason(storedInputs(), bestNet(context)) != SinkReason.OFF
 

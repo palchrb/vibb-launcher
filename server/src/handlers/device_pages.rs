@@ -1667,6 +1667,9 @@ struct FilterTemplate {
     spotify_global: Vec<String>,
     /// Design 102 §5: the Sign-in row's value ("Wi-Fi: på · Apper: av"; design 113: was its sub-line).
     logins_sub: String,
+    /// Design 116 §3.4: "Down for 25 min" (" · at last report" while the phone is Offline or Disconnected) - the
+    /// Attention row's fact as this page's orange line; `None` while the filter isn't down.
+    filter_down: Option<String>,
 }
 crate::i18n::words!(FilterTemplate);
 
@@ -1809,6 +1812,42 @@ pub async fn view_filter(
         Some("not_a_domain_allow") => "allowed",
         _ => "",
     };
+    let latest = match load_latest(&state, id).await {
+        Ok(latest) => latest,
+        Err(err) => return read_failed(lang, id, "the last report", err),
+    };
+    let filter_down =
+        crate::mobile_network::filter_down(&policy, latest.as_ref(), now.timestamp_millis()).map(
+            |report| {
+                let stale = matches!(
+                    crate::handlers::devices::connection_of(&state, &device, now),
+                    crate::streams::ConnectionState::Offline { .. }
+                        | crate::streams::ConnectionState::Disconnected
+                );
+                // While the phone is connected the period runs on past its report (code QA L2): the phone's length
+                // plus the server's time since the report - two durations, each on its own clock, never two instants
+                // subtracted across clocks.
+                let since_ms = if stale {
+                    0
+                } else {
+                    latest
+                        .as_ref()
+                        .and_then(|s| crate::display_time::parse_db_utc(&s.reported_at))
+                        .map_or(0, |at| (now - at).num_milliseconds().max(0))
+                };
+                let minutes = (report.down_ms.unwrap_or(0) + since_ms) / 60_000;
+                let line = crate::i18n::t_params(
+                    lang,
+                    "device.filter.down",
+                    &[("duration", &crate::display_time::duration(lang, minutes))],
+                );
+                if stale {
+                    format!("{line} · {}", t(lang, "devices.status.lock.at_last_report"))
+                } else {
+                    line
+                }
+            },
+        );
     Html(
         FilterTemplate {
             lang,
@@ -1827,6 +1866,7 @@ pub async fn view_filter(
             retention_days: crate::retention::DNS_LOG_RETENTION_DAYS,
             events,
             logins_sub: crate::handlers::logins::row_sub(lang, &policy),
+            filter_down,
             device,
         }
         .render()

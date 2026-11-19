@@ -85,6 +85,7 @@ pub const REPORT_KEYS: &[&str] = &[
     "tailnet_joined",
     "data_roaming",
     "mobile_data",
+    "vpn_filter",
     "server_tls",
     "battery",
     "extra_locations",

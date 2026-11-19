@@ -61,6 +61,8 @@ struct DevicesListTemplate {
     push_warning: Option<crate::handlers::auth::WarningRow>,
     /// The first opening's offer (2026-11-01, `partials/push_offer.html`); `None` while push is off on this server.
     push_offer: Option<PushOffer>,
+    /// Design 116 §4: the family's one row - the newest backup can't be read, or the backup failed (to `/backups`).
+    backup_warning: Option<&'static str>,
 }
 crate::i18n::words!(DevicesListTemplate);
 
@@ -125,6 +127,18 @@ pub async fn list_devices(
             bell: crate::parent_events::Bell::load(&state.db, admin.id).await,
             push_warning: crate::handlers::notifications::warning_row(&state, admin.id, lang).await,
             push_offer: push_offer(&state, params.get("notice").map(String::as_str)).await,
+            backup_warning: match crate::handlers::backups::backup_state(&state.db, &state.data_dir)
+                .await
+                .0
+            {
+                Some(crate::handlers::backups::BackupProblem::Check) => {
+                    Some(t(lang, "devices.warning.backup_check"))
+                }
+                Some(crate::handlers::backups::BackupProblem::Run) => {
+                    Some(t(lang, "devices.warning.backup_run"))
+                }
+                None => None,
+            },
         }
         .render()
         .unwrap(),
@@ -2299,6 +2313,13 @@ async fn render_device(
             tracing::error!(device_id = id, %err, "can't read the phone's last start");
             None
         });
+    // Design 116: the outside services failing behind this phone's features.
+    let integrations = crate::integration_health::for_device(&state.db, id, now)
+        .await
+        .unwrap_or_else(|err| {
+            tracing::error!(device_id = id, %err, "can't read the integrations' health");
+            Vec::new()
+        });
     // The same rows the Devices list counts, from the parts built above (not read twice).
     let connection = connection_of(state, &device, now);
     let facts = crate::attention::facts_of(
@@ -2314,6 +2335,7 @@ async fn render_device(
             spotify_account,
             app_push: &app_push,
             last_phone_on_ms,
+            integrations: &integrations,
         },
         now.timestamp_millis(),
     );

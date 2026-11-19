@@ -604,6 +604,8 @@ private fun statusReportOf(
             Log.w(LOG_TAG, "Mobile data report failed: ${e.javaClass.simpleName}")
             null
         },
+        // Design 116 §3.1: computed now, from the live service (never a stored state).
+        vpnFilter = VpnFilterWatch.report(context),
         serverTls = ServerTlsReport(
             enforcing = ServerPinStore.enforce(context),
             seen = seen,

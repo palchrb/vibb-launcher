@@ -176,6 +176,8 @@ pub struct Pruned {
     /// App push (design 108 §3.6): expired queue rows, an unseen phone's registrations (tombstoned) and the
     /// tombstones past 30 days (`unified_push::store::prune`).
     pub app_push: u64,
+    /// Design 116: an integration's rows with neither a success nor a failure in 30 days.
+    pub integration_health: u64,
     /// The tables whose statement failed in this pass (logged; security review L9): every other
     /// table was pruned all the same.
     pub failed: Vec<&'static str>,
@@ -231,7 +233,8 @@ fn rows(
 /// - a held or blocked sender `sms::HELD_KEEP_DAYS` after the phone received it (design 77 §7);
 /// - an unanswered question about an MMS address `mmsc_hosts::OPEN_DAYS` after a report last named it (design 83 §4;
 ///   an answered one stays: it is the parent's setting);
-/// - a heartbeat's kept body past `status_heartbeat::MAX_AGE_HOURS`, never expanded again (design 95 §3.5).
+/// - a heartbeat's kept body past `status_heartbeat::MAX_AGE_HOURS`, never expanded again (design 95 §3.5);
+/// - an integration's health row with neither a success nor a failure in 30 days (design 116 §2.1).
 ///
 /// Each statement runs on its own: one that fails is logged and named in [Pruned::failed], and the
 /// rest of the pass goes on (security review L9).
@@ -571,6 +574,12 @@ pub async fn prune(db: &SqlitePool) -> Pruned {
                 0
             }
         };
+    // Design 116 §2.1: an integration's health rows nobody wrote to in 30 days.
+    let integration_health = rows(
+        failed,
+        "integration_health",
+        crate::integration_health::prune(db).await,
+    );
     // (No local is named `*_events`: `admin::every_written_event_has_a_label` reads the table names
     // next to such a `let` as event ids.)
     Pruned {
@@ -592,6 +601,7 @@ pub async fn prune(db: &SqlitePool) -> Pruned {
         mmsc_hosts,
         report_bases,
         app_push,
+        integration_health,
         failed: std::mem::take(failed),
     }
 }

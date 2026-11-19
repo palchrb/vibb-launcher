@@ -38,6 +38,10 @@ pub struct WeatherCard {
     pub no_zone: bool,
     /// On, Location isn't Regularly and no zone: the lock shows no weather now.
     pub needs_position: bool,
+    /// Design 116 §2.3 (QA M3): while the switch is on, MET's `Integration` row as this page's orange line - MET
+    /// doesn't answer (`met_down`), or refuses this server (`met_blocked`, its (i) the owner's `MET_CONTACT`).
+    pub met_down: bool,
+    pub met_blocked: bool,
 }
 
 /// The group's state: the switch, this phone's zones (a deleted or foreign one never shows as chosen), the notes.
@@ -48,6 +52,11 @@ pub async fn card(
 ) -> Result<WeatherCard, sqlx::Error> {
     let zones = crate::zones::list(&state.db, id).await?;
     let on = policy.lock_weather;
+    let met = if on {
+        crate::integration_health::problem(&state.db, "met", "", chrono::Utc::now()).await?
+    } else {
+        None
+    };
     let chosen = policy
         .weather_zone_id
         .filter(|zone| zones.iter().any(|z| z.id == *zone));
@@ -55,6 +64,8 @@ pub async fn card(
         on,
         no_zone: chosen.is_none(),
         needs_position: on && policy.location_mode != "interval" && chosen.is_none(),
+        met_down: met == Some(crate::integration_health::Problem::Down),
+        met_blocked: met == Some(crate::integration_health::Problem::Fix),
         zones: zones
             .into_iter()
             .map(|z| ZoneChoice {

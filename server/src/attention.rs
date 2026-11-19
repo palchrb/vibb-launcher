@@ -45,6 +45,9 @@ pub enum Kind {
     EasyParentPin,
     /// Design 114 §5.2 (QA M4): the phone says Vibb One isn't its device owner (`setup.device_owner` false).
     NotDeviceOwner,
+    /// Design 116 §3.4 (S-M2): the phone's web filter is down - the parent's switch on, the tunnel not filtering, for
+    /// at least `mobile_network::VPN_REPORT_AFTER_MS` (`mobile_network::filter_down`).
+    FilterDown,
     PolicyProblem,
     UnseenRestarts,
     ChildLockOff,
@@ -81,6 +84,9 @@ pub enum Kind {
     MusicSpotifyLogin,
     MusicSpotifyEnding,
     MusicSpotifyNoApp,
+    /// Design 116 §2.3: an outside service's failure behind this phone's features (the server's own data): its title
+    /// and the failing scopes behind it.
+    Integration(crate::integration_health::Title, usize),
 }
 
 impl Kind {
@@ -94,6 +100,7 @@ impl Kind {
                 | Kind::AppPushWaiting
                 | Kind::AppPushRefused(_)
                 | Kind::AppPushOutside(_)
+                | Kind::Integration(..)
         )
     }
 }
@@ -130,6 +137,7 @@ impl AttentionItem {
             Kind::NoParentPin => "no-parent-pin",
             Kind::EasyParentPin => "easy-parent-pin",
             Kind::NotDeviceOwner => "not-device-owner",
+            Kind::FilterDown => "filter-down",
             Kind::PolicyProblem => "policy-problem",
             Kind::UnseenRestarts => "unseen-restarts",
             Kind::ChildLockOff => "child-lock-off",
@@ -152,6 +160,7 @@ impl AttentionItem {
             Kind::MusicSpotifyLogin => "music-spotify-login",
             Kind::MusicSpotifyEnding => "music-spotify-ending",
             Kind::MusicSpotifyNoApp => "music-spotify-no-app",
+            Kind::Integration(title, _) => title.key(),
         }
     }
 }
@@ -181,6 +190,8 @@ pub struct Facts {
     /// openable Play Store are the parent's choices: no row (2026-11-18).
     pub not_home_app: bool,
     pub boot_cover_not_shown: bool,
+    /// Design 116 §3.4: the last report says the web filter is down (`mobile_network::filter_down`).
+    pub filter_down: bool,
     /// Design 114 §5.2: the setup hold - the pause's row says "Setting up" and leads to Device › Oppsett.
     pub setup_hold: bool,
     /// Design 114 §5.2: the report's `setup.device_owner` is `false`.
@@ -197,6 +208,9 @@ pub struct Facts {
     pub calls_enforced: bool,
     /// Device › Music's warnings (qa-31-s7-code M1).
     pub music: crate::handlers::music::MusicWarnings,
+    /// Design 116 §2.3: the outside services failing behind this phone's features
+    /// (`integration_health::for_device`), one per title.
+    pub integrations: Vec<(crate::integration_health::Title, usize)>,
 }
 
 /// The rows for one phone, alarms first, worded in `lang`.
@@ -217,6 +231,7 @@ pub fn items(lang: Lang, device_id: i64, facts: &Facts) -> Vec<AttentionItem> {
     add(facts.no_parent_pin, Kind::NoParentPin);
     add(facts.easy_parent_pin, Kind::EasyParentPin);
     add(facts.not_device_owner, Kind::NotDeviceOwner);
+    add(facts.filter_down, Kind::FilterDown);
     add(facts.policy_problem, Kind::PolicyProblem);
     add(facts.unseen_restarts, Kind::UnseenRestarts);
     add(facts.child_lock_off, Kind::ChildLockOff);
@@ -254,6 +269,9 @@ pub fn items(lang: Lang, device_id: i64, facts: &Facts) -> Vec<AttentionItem> {
     add(music.spotify_account.renew, Kind::MusicSpotifyLogin);
     add(music.spotify_account.ending, Kind::MusicSpotifyEnding);
     add(music.spotify_cant_play, Kind::MusicSpotify);
+    for (title, n) in &facts.integrations {
+        add(*n > 0, Kind::Integration(*title, *n));
+    }
     kinds
         .into_iter()
         .map(|kind| AttentionItem {
@@ -285,6 +303,7 @@ fn level(kind: Kind) -> Level {
         | Kind::NoParentPin
         | Kind::EasyParentPin
         | Kind::NotDeviceOwner
+        | Kind::FilterDown
         | Kind::PolicyProblem
         | Kind::UnseenRestarts
         | Kind::ChildLockOff => Level::Alarm,
@@ -306,7 +325,8 @@ fn level(kind: Kind) -> Level {
         | Kind::MusicSpotify
         | Kind::MusicSpotifyLogin
         | Kind::MusicSpotifyEnding
-        | Kind::MusicSpotifyNoApp => Level::Action,
+        | Kind::MusicSpotifyNoApp
+        | Kind::Integration(..) => Level::Action,
     }
 }
 
@@ -320,6 +340,7 @@ fn title(lang: Lang, kind: Kind) -> String {
         Kind::NoParentPin => t(lang, "device.attention.no_parent_pin"),
         Kind::EasyParentPin => t(lang, "device.attention.easy_parent_pin"),
         Kind::NotDeviceOwner => t(lang, "device.attention.not_device_owner"),
+        Kind::FilterDown => t(lang, "device.attention.filter_down"),
         Kind::PolicyProblem => t(lang, "device.attention.policy_problem"),
         Kind::UnseenRestarts => t(lang, "device.attention.unseen_restarts"),
         Kind::ChildLockOff => t(lang, "device.attention.child_lock_off"),
@@ -352,6 +373,10 @@ fn title(lang: Lang, kind: Kind) -> String {
         Kind::MusicSpotifyLogin => t(lang, "device.attention.music_spotify_login"),
         Kind::MusicSpotifyEnding => t(lang, "device.attention.music_spotify_ending"),
         Kind::MusicSpotifyNoApp => t(lang, "device.attention.music_spotify_no_app"),
+        Kind::Integration(title, n) if title.counted() => {
+            return t_count(lang, title.words(), count(n), &[]);
+        }
+        Kind::Integration(title, _) => t(lang, title.words()),
     }
     .to_string()
 }
@@ -377,6 +402,7 @@ fn target(kind: Kind, id: i64) -> String {
         Kind::NoParentPin | Kind::EasyParentPin => ("/lock", "parent-pin"),
         Kind::ChildLockOff | Kind::ChildPinChanged => ("/lock", "child-pin"),
         Kind::NotDeviceOwner => ("/setup", "step-device_owner"),
+        Kind::FilterDown => ("/filter", "filter"),
         Kind::Setup(_) => {
             return format!("/devices/{id}/setup");
         }
@@ -402,6 +428,9 @@ fn target(kind: Kind, id: i64) -> String {
         | Kind::MusicSpotifyLogin
         | Kind::MusicSpotifyEnding
         | Kind::MusicSpotifyNoApp => ("/music", "music-spotify"),
+        Kind::Integration(title, _) => {
+            return title.target(id);
+        }
     };
     format!("/devices/{id}{page}#{anchor}")
 }
@@ -432,6 +461,8 @@ pub struct Sources<'a> {
     /// The newest `phone_on`'s instant (`parent_events::last_phone_on_ms`): the boot cover's "not shown" waits for a
     /// start after the arm.
     pub last_phone_on_ms: Option<i64>,
+    /// Design 116: `integration_health::for_device`, read by the caller.
+    pub integrations: &'a [(crate::integration_health::Title, usize)],
 }
 
 /// Whether the reported Do Not Disturb is the launcher's own for a silent time rule: the report's
@@ -570,6 +601,12 @@ pub async fn facts(state: &AppState, device: &Device, connection: ConnectionStat
             tracing::error!(device_id = id, %err, "attention: can't read the last start");
             None
         });
+    let integrations = crate::integration_health::for_device(&state.db, id, chrono::Utc::now())
+        .await
+        .unwrap_or_else(|err| {
+            tracing::error!(device_id = id, %err, "attention: can't read the integrations' health");
+            Vec::new()
+        });
     facts_of(
         &Sources {
             device,
@@ -583,6 +620,7 @@ pub async fn facts(state: &AppState, device: &Device, connection: ConnectionStat
             spotify_account,
             app_push: &app_push,
             last_phone_on_ms,
+            integrations: &integrations,
         },
         now_ms,
     )
@@ -657,6 +695,7 @@ pub fn facts_of(s: &Sources, now_ms: i64) -> Facts {
         boot_cover_not_shown: escapes
             .iter()
             .any(|n| matches!(n, EscapeNote::BootCoverNotShown { .. })),
+        filter_down: crate::mobile_network::filter_down(policy, latest, now_ms).is_some(),
         // Design 114: the one setup rule, as Device › Oppsett reads it. Ticks don't count here (no required step is
         // ticked), so no read of them. Held back in the setup hold (§5.2) and for a phone that isn't device owner
         // (QA M4: its own row stands alone).
@@ -693,6 +732,7 @@ pub fn facts_of(s: &Sources, now_ms: i64) -> Facts {
             }
             music
         },
+        integrations: s.integrations.to_vec(),
     }
 }
 
@@ -717,6 +757,7 @@ mod tests {
             not_home_app: true,
             boot_cover_not_shown: true,
             not_device_owner: true,
+            filter_down: true,
             setup_left: 3,
             app_push: crate::unified_push::health::AppPushAttention {
                 waiting_since: Some(chrono::Utc::now()),
@@ -737,6 +778,7 @@ mod tests {
                     ending: true,
                 },
             },
+            integrations: vec![(crate::integration_health::Title::Blocklist, 2)],
             ..Default::default()
         }
     }
@@ -788,7 +830,9 @@ mod tests {
                 // Design 108c: the server's own data, never "at last report".
                 "app-push-waiting",
                 "app-push-refused",
-                "app-push-outside"
+                "app-push-outside",
+                // Design 116: the server's own data too.
+                "integration-blocklist"
             ]
         );
     }
@@ -807,6 +851,7 @@ mod tests {
                 "No Parent PIN set",
                 "Parent PIN easy to guess",
                 "Vibb One doesn't manage the phone",
+                "Web filter is down",
                 "Phone can't apply its settings",
                 "Phone started without Vibb One",
                 "Lock is off on the phone",
@@ -829,6 +874,7 @@ mod tests {
                 "Spotify login needs renewing",
                 "Spotify login ends soon",
                 "Spotify can't play on this phone",
+                "2 blocklists aren't updating",
             ]
         );
         let first_action = rows.iter().position(|r| r.level == Level::Action).unwrap();
@@ -944,6 +990,9 @@ mod tests {
         );
         assert_eq!(target("music-over-limit"), "/devices/7/music#storage-title");
         assert_eq!(target("music-entries"), "/devices/7/music#library");
+        // Design 116: the phone's Web Filter page; an integration's page that says what the error is.
+        assert_eq!(target("filter-down"), "/devices/7/filter#filter");
+        assert_eq!(target("integration-blocklist"), "/dns");
     }
 
     #[test]

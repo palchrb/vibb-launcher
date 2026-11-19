@@ -119,6 +119,7 @@ fn switch_key(column: &str) -> &'static str {
         "push_contact_request" => "settings.notifications.switch.contact_request",
         "push_roaming" => "settings.notifications.switch.roaming",
         "push_wifi_signin" => "settings.notifications.switch.wifi_signin",
+        "push_filter_down" => "settings.notifications.switch.filter_down",
         crate::parent_events::APP_UPDATES_SWITCH => "settings.notifications.switch.app_updates",
         _ => "settings.notifications.switch.unknown",
     }

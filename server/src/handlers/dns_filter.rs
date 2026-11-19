@@ -532,6 +532,20 @@ async fn phone_lines(
         });
         let lines = bypass_lines(lang, name, *filter_on, allowlist.as_deref());
         bypass.extend(lines.into_iter().map(|line| (*id, line)));
+        // Design 116 §3.4: a phone whose filter is down says so, as its Web Filter page and Attention row do.
+        if *filter_on
+            && crate::mobile_network::filter_down_of(&state.db, *id, now.timestamp_millis())
+                .await
+                .is_some()
+        {
+            let line = t_params(
+                lang,
+                "settings.web_filter.line.filter_down",
+                &[("phone", name.as_str())],
+            );
+            server.push((*id, line, true));
+            continue;
+        }
         if let Some((line, warn)) = phone_line(name, *filter_on, report, lookups, &zone, now) {
             server.push((*id, line, warn));
         }

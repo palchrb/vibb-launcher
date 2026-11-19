@@ -287,3 +287,22 @@ failed `establish()` toward the sink still writes the sink's lockdown (other app
 explicit hardening switch "Blokker VPN-innstillinger" off (`disallow_config_vpn: false`) still wins over the sink's
 `DISALLOW_CONFIG_VPN` (L1, kept by design): a restriction the parent lifted stays lifted, so in that combination Bare
 Vibb is not tamper-proof against Settings › VPN.
+
+## Filter on, tunnel down (design 116 part C, security review S-M2, 2026-11-19)
+
+- **The state, live** (`MobileNetwork.kt`'s `vpnFilterState`): `off` while the stored inputs' `filterOn` is false (the
+  switch, a lift, a pause, the offline override, the setup hold), `up` while the live service has a tunnel in `FILTER`
+  or `SINK` (`KidVpnService.liveTunnel`, never the persisted `tunnelShape`), `down` otherwise - a tunnel left in `PASS`
+  after a failed switch to `FILTER` included.
+- **The down period** (`vpnDownPeriod`, `VpnDownPeriod`): stored as `<BOOT_COUNT>:<elapsed start>` in
+  `mdm.vpn_down_period`, so a reboot ends it; started by a failed `establish()`, or by a check once the process is a
+  minute old - a shutdown, a self-update's restart and a fresh process's first minute start none.
+- **The retry**: `retriesFailedEstablish` is any shape now, on one chain (`switchTo` arms `reshapeRetry`, 5 s doubling to
+  5 min; `retryTunnel` reschedules only when no switch ran), and `VpnRetryAlarm` (`setAndAllowWhileIdle`, 5 min, request
+  code 116, `VpnRetryReceiver`: always-on for the stored shape and `KidVpnService.start`) while the state is `down` -
+  armed by each failure and by `onRevoke` while the filter is wanted, cancelled at `up` or `off` (`VpnFilterWatch`).
+- **Telling the server**: the report's `vpn_filter` (`VpnFilterWatch.report`, a full-report field); a sync is requested
+  once a period reaches `VPN_REPORT_AFTER_MS` (10 min) and at the first `up` after a reported `down`
+  (`vpnFilterSyncDue`). The launcher is outside its own VPN in every shape, so the sync works during the outage.
+- Pinned by `mobile_network.json`'s `vpn_filter` rows (`MobileNetworkTest`). The emulator gate (design 116 §3.3) is
+  owed.

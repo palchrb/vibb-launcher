@@ -41,6 +41,9 @@
     <string name="settings_mdm_vpn_shape_key" translatable="false">mdm.vpn_shape</string>
     <string name="settings_mdm_vpn_inputs_r4_key" translatable="false">mdm.vpn_inputs_r4</string>
     <string name="settings_mdm_vpn_sink_reason_key" translatable="false">mdm.vpn_sink_reason</string>
+    <string name="settings_mdm_vpn_down_period_key" translatable="false">mdm.vpn_down_period</string>
+    <string name="settings_mdm_vpn_down_synced_key" translatable="false">mdm.vpn_down_synced</string>
+    <string name="settings_mdm_vpn_filter_reported_key" translatable="false">mdm.vpn_filter_reported</string>
     <string name="settings_mdm_kid_mobile_off_key" translatable="false">mdm.kid_mobile_off</string>
     <string name="settings_mdm_device_token_key" translatable="false">mdm.device_token</string>
     <string name="settings_mdm_enrolled_key" translatable="false">mdm.enrolled</string>

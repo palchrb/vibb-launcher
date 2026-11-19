@@ -188,7 +188,8 @@ class QuietNotificationsTest {
         assertTrue("settleForeground()" in lost)
         assertTrue("scheduleRetry(retryMs)" in lost)
         val retry = statements(body(vpn, "private fun retryTunnel()"))
-        assertEquals(listOf("if (!state.retryDue()) return", "startVpn()", "settleForeground()"), retry.take(3))
+        // Design 116 (QA L1): a switch that ran arms its own retry; this one reschedules only when none ran.
+        assertEquals(listOf("if (!state.retryDue()) return", "val switched = startVpn()", "settleForeground()"), retry.take(3))
         assertTrue("val nextMs = state.retryFailed()" in retry)
         assertTrue("scheduleRetry(nextMs)" in retry)
         // One chain at most: a new schedule replaces the pending retry.
@@ -199,7 +200,9 @@ class QuietNotificationsTest {
         // The stop: the state first; the revoke posts to main.
         assertEquals("val fd = state.stop()", statements(body(vpn, "private fun stopSelfCleanly()"))[0])
         val revoke = body(vpn, "override fun onRevoke()")
-        assertTrue(Regex("""main\.post \{\s*stopSelfCleanly\(\)\s*if \(vpnStopsNow\(created, foregroundStartsPending\.get\(\)\)\) stopSelf\(\)\s*\}""").containsMatchIn(revoke))
+        assertTrue(Regex("""main\.post \{\s*stopSelfCleanly\(\)\s*if \(vpnStopsNow\(created, foregroundStartsPending\.get\(\)\)\) stopSelf\(\)\s""").containsMatchIn(revoke))
+        // Design 116 §3.1: revoked while the filter is wanted, the state is checked (the while-idle alarm armed).
+        assertTrue("VpnFilterWatch.check(applicationContext, VpnFilterEvent.CHECK)" in revoke)
         assertTrue(statements(revoke).none { it.startsWith("super.onRevoke(") })
     }
 

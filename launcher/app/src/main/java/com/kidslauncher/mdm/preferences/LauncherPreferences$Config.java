@@ -163,6 +163,12 @@ import eu.jonahbauer.android.preference.annotations.Preferences;
                         // only while quick_controls_mask has bit 32, and resets to On when a fresh policy clears it (D7).
                         @Preference(name = "kid_mobile_off", type = boolean.class, defaultValue = "false"),
                         @Preference(name = "vpn_shape", type = String.class),
+                        // Design 116 §3.1: the web filter's down period ("<boot count>:<elapsed start ms>",
+                        // VpnDownPeriod; "" none), the period a sync was already asked for, and the state the last
+                        // report sent ("up", "down", "off").
+                        @Preference(name = "vpn_down_period", type = String.class),
+                        @Preference(name = "vpn_down_synced", type = String.class),
+                        @Preference(name = "vpn_filter_reported", type = String.class),
                 }),
         })
 public final class LauncherPreferences$Config {

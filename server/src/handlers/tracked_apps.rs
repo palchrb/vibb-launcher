@@ -1251,6 +1251,9 @@ impl SyncProblem {
 pub struct Failure {
     pub problem: SyncProblem,
     pub detail: String,
+    /// The hourly sync's skip of a release refused before (no call out): never recorded in the integration
+    /// health (design 116 §2.1).
+    pub skipped: bool,
 }
 
 impl Failure {
@@ -1258,6 +1261,62 @@ impl Failure {
         Failure {
             problem,
             detail: detail.into(),
+            skipped: false,
+        }
+    }
+}
+
+/// A sync failure's class in the integration health (design 116 §2.1), `None` = not recorded: this server's own
+/// state or the app removed. Every refusal [SyncStatus::refused] remembers is `stop`; a checksum mismatch is one only
+/// once it is refused (`refused`, after [MISMATCHES_TO_REFUSE] in a row), a transient one before.
+pub(crate) fn class_of(
+    problem: SyncProblem,
+    refused: bool,
+) -> Option<crate::integration_health::Class> {
+    use crate::integration_health::Class::*;
+    use SyncProblem::*;
+    match problem {
+        GithubUnreachable | GithubError | Download | RepoUnreachable => Some(Transient),
+        RepoNotFound | NoRelease | Filter | FdroidUnknown | NotInRepo | RepoError => Some(Parent),
+        ChecksumMismatch if !refused => Some(Transient),
+        OtherApp | OtherKey | Taken | TooBig | Unreadable | CantCheck | IndexSigner | RepoKey
+        | RepoSignature | RepoRollback | ChecksumMismatch => Some(Stop),
+        Server | Removed => None,
+        // The source answered; the cached release is kept on purpose: a success.
+        OlderVersion => None,
+    }
+}
+
+/// Records a GitHub or F-Droid sync's outcome under `github`/`fdroid`, scope `app:<id>` (design 116 §2.1). A manual
+/// app has no source; a remembered refusal's skip calls nothing out and records nothing.
+async fn record_health(state: &AppState, app: &TrackedApp, result: &Result<(), Failure>) {
+    let key = match app.source_type.as_str() {
+        "github" => "github",
+        "fdroid" => "fdroid",
+        _ => return,
+    };
+    let scope = format!("app:{}", app.id);
+    match result {
+        Ok(()) => crate::integration_health::ok(&state.db, key, &scope).await,
+        Err(failure) if failure.skipped => {}
+        Err(failure) if failure.problem == SyncProblem::OlderVersion => {
+            crate::integration_health::ok(&state.db, key, &scope).await
+        }
+        Err(failure) => {
+            let refused = state
+                .app_syncs
+                .refused(app.id)
+                .is_some_and(|(_, _, why)| why.problem == failure.problem);
+            if let Some(class) = class_of(failure.problem, refused) {
+                crate::integration_health::failed(
+                    &state.db,
+                    key,
+                    &scope,
+                    &format!("{:?}", failure.problem),
+                    class,
+                )
+                .await;
+            }
         }
     }
 }
@@ -1375,12 +1434,19 @@ async fn sync_app(state: &AppState, id: i64, forced: bool) -> Result<(), SyncErr
 /// with what the last sync stored.
 async fn sync_one_app(state: &AppState, id: i64, forced: bool) -> Result<(), Failure> {
     let app = read_app(state, id).await?;
-    let Some(listed) = list_releases(state, &app, true, forced).await? else {
+    let result = sync_read_app(state, &app, forced).await;
+    record_health(state, &app, &result).await;
+    result
+}
+
+/// [sync_one_app] once the row is read.
+async fn sync_read_app(state: &AppState, app: &TrackedApp, forced: bool) -> Result<(), Failure> {
+    let Some(listed) = list_releases(state, app, true, forced).await? else {
         // F-Droid's API names the stored release: nothing newer is offered.
-        note_waiting(state, &app, None).await;
+        note_waiting(state, app, None).await;
         return Ok(());
     };
-    sync_listed(state, &app, &listed, forced).await
+    sync_listed(state, app, &listed, forced).await
 }
 
 /// The app's row, read under its guard.
@@ -1882,13 +1948,16 @@ async fn sync_release(
         && refused_tag == tag
         && refused_asset == asset.id
     {
-        return Err(Failure::new(
-            why.problem,
-            format!(
-                "{} (not downloaded again until the release changes; \"Check Now\" tries again)",
-                why.detail
-            ),
-        ));
+        return Err(Failure {
+            skipped: true,
+            ..Failure::new(
+                why.problem,
+                format!(
+                    "{} (not downloaded again until the release changes; \"Check Now\" tries again)",
+                    why.detail
+                ),
+            )
+        });
     }
 
     // Compared as a (tag, asset id) pair, not just the tag - a rolling tag
@@ -7812,5 +7881,103 @@ mod tests {
             Some("v6")
         );
         assert!(held_release(&app.state, id).await.unwrap().is_none());
+    }
+
+    /// Design 116 §2.1: a sync's outcome reaches the integration health. An F-Droid repo that answers is a success;
+    /// a release signed with another key is `stop` at once, and the hourly skip of that remembered refusal records
+    /// nothing. A GitHub app's broken stored filter is `parent`, `Fix` at the second.
+    #[tokio::test]
+    async fn a_sync_records_its_health() {
+        use crate::integration_health::{Class, Problem, grace, raised, row};
+        let app = crate::tests::TestApp::new().await;
+        let (repo, fake) = crate::fdroid::tests::fake_repo("127.0.0.1").await;
+        let (apk, sha) = fixture_apk();
+        serve_fixture(&fake, "me.vibb.testfixture", &sha, &apk);
+        let id = fdroid_row(&app, &repo, "me.vibb.testfixture").await;
+        let scope = format!("app:{id}");
+        sync_one_app(&app.state, id, false).await.unwrap();
+        let health = row(&app.db, "fdroid", &scope).await.unwrap().unwrap();
+        assert!(health.ok_at.is_some());
+        assert_eq!((health.failing_since, health.failures), (None, 0));
+
+        // Another pinned key, the release not cached: refused, then skipped by the hourly sync.
+        sqlx::query(
+            "UPDATE tracked_apps SET signer_sha256 = ?, latest_release_tag = NULL, \
+             latest_release_asset_id = NULL WHERE id = ?",
+        )
+        .bind("ab".repeat(32))
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+        let err = sync_one_app(&app.state, id, false).await.unwrap_err();
+        assert_eq!(err.problem, SyncProblem::OtherKey);
+        let skipped = sync_one_app(&app.state, id, false).await.unwrap_err();
+        assert!(skipped.skipped);
+        let health = row(&app.db, "fdroid", &scope).await.unwrap().unwrap();
+        assert_eq!((health.class, health.failures), (Some(Class::Stop), 1));
+        assert_eq!(
+            raised(&health, grace("fdroid"), chrono::Utc::now()),
+            Some(Problem::Fix)
+        );
+
+        // GitHub: an invalid stored filter fails before any request.
+        let github: i64 = sqlx::query_scalar(
+            "INSERT INTO tracked_apps (name, package_name, github_repo, asset_pattern) \
+             VALUES ('Fixture', '', 'o/r', '^(') RETURNING id",
+        )
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+        for _ in 0..2 {
+            let err = sync_one_app(&app.state, github, false).await.unwrap_err();
+            assert_eq!(err.problem, SyncProblem::Filter);
+        }
+        let health = row(&app.db, "github", &format!("app:{github}"))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!((health.class, health.failures), (Some(Class::Parent), 2));
+        assert_eq!(
+            raised(&health, grace("github"), chrono::Utc::now()),
+            Some(Problem::Fix)
+        );
+    }
+
+    /// Design 116 §2.1: every sync problem's class.
+    #[test]
+    fn every_sync_problem_is_classed() {
+        use crate::integration_health::Class::*;
+        use SyncProblem::*;
+        let rows = [
+            (GithubUnreachable, false, Some(Transient)),
+            (GithubError, false, Some(Transient)),
+            (Download, false, Some(Transient)),
+            (RepoUnreachable, false, Some(Transient)),
+            (RepoNotFound, false, Some(Parent)),
+            (NoRelease, false, Some(Parent)),
+            (Filter, false, Some(Parent)),
+            (FdroidUnknown, false, Some(Parent)),
+            (NotInRepo, false, Some(Parent)),
+            (RepoError, false, Some(Parent)),
+            (OtherApp, true, Some(Stop)),
+            (OtherKey, true, Some(Stop)),
+            (Taken, true, Some(Stop)),
+            (TooBig, false, Some(Stop)),
+            (Unreadable, true, Some(Stop)),
+            (CantCheck, true, Some(Stop)),
+            (IndexSigner, true, Some(Stop)),
+            (RepoKey, false, Some(Stop)),
+            (RepoSignature, false, Some(Stop)),
+            (RepoRollback, false, Some(Stop)),
+            (ChecksumMismatch, true, Some(Stop)),
+            (ChecksumMismatch, false, Some(Transient)),
+            (Server, false, None),
+            (Removed, false, None),
+            (OlderVersion, false, None),
+        ];
+        for (problem, refused, class) in rows {
+            assert_eq!(class_of(problem, refused), class, "{problem:?}");
+        }
     }
 }

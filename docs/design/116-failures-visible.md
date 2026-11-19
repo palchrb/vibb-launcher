@@ -96,9 +96,9 @@ are the call's success, or our own state: the server's disk, a race, our own wai
 | Key | transient | parent | stop | not recorded |
 |---|---|---|---|---|
 | `github`, `fdroid` (`SyncProblem`) | `GithubUnreachable`, `GithubError` (403/429/5xx), `Download`, `RepoUnreachable` | `RepoNotFound`, `NoRelease`, `Filter`, `FdroidUnknown`, `NotInRepo`, `RepoError` | every refusal `SyncStatus.refused` remembers: `OtherApp`, `OtherKey`, `Taken`, `TooBig`, `Unreadable`, `CantCheck`, `IndexSigner`, `RepoKey`, `RepoSignature`, `RepoRollback`, `ChecksumMismatch` (at the refusal, after its 3 tries) | `Server`, `Removed`; the hourly skip of a remembered refusal; `OlderVersion` records `ok` (the source answered; the cached release is kept on purpose) |
-| `met` | `network`, `timeout`, `status_429`, `status_5xx`, `status_other`, `unreadable`, `cut` | `status_403` (the owner's `MET_CONTACT`) | - | - |
+| `met` | `network`, `timeout`, `status_429`, `status_5xx`, `status_other`, `unreadable` | `status_403` (the owner's `MET_CONTACT`) | - | `cut` records `ok` (its whole hours are stored and shown; code QA L3) |
 | `caldav` | network, timeout, 5xx, 408, 429 | `not_found`, `not_listed`, `not_caldav`, `unreadable` | `login_refused`, `host_changed`, `key_lost` (at `account:<id>`) | - |
-| `caldav_write` | 429, 503, network, timeout | - | every `StopDevice` code: `write_refused`, `full`, `no_etag`, `not_listed`, `too_big` (QA H2; recorded when the stop is set; the parent's retry, `RETRIED_STOPS`, clears it at the next good write) | `bad_set`, `tag_pinned:*` (the phone's set refused, not CalDAV) |
+| `caldav_write` | 429, 503, network, timeout | - | every `StopDevice` code: `write_refused`, `full`, `no_etag`, `not_listed`, `too_big` (QA H2; recorded when the stop is set; it shows only while the phone writes and its stored error is set, so whatever clears that error clears the row - code QA M1, M2) | `bad_set`, `tag_pinned:*` (the phone's set refused, not CalDAV) |
 | `calendar_link` (`FeedError`) | `network`, `timeout`, `status` 5xx/408/429, `empty` (held) | `not_found`, `status` (other 4xx), `not_calendar`, `unreadable`, `insecure`, `private_address`, `too_big` | `key_lost` | - |
 | `music_feed` (`CheckError`) | `network`, `timeout`, `http_5xx`, `http_408`, `http_429` | `not_found`, `not_feed`, `no_items`, `too_big`, every other `http_4xx` (401/403: the feed went private) | - | - |
 | `storytel` (`StorytelError`) | `Fetch`, `Status` (5xx/408/429), `LoginStatus` (5xx/408/429), `NoJwt`, `ShortLife`, `TooBig`, `BadShelf` | - (its parent-side problems are `MusicStorytelRefused`'s) | - | `NotConfigured`, `KeyUnusable`, `Refused`, `Cooldown`, `Backoff`, `Busy`, `Database` |
@@ -490,7 +490,8 @@ Checked against "Words in the UI":
 | `settings.backups.checked` (quiet, the newest row) | kontrollert | checked |
 | `settings.backups.check_failed` (the page's orange line) | Sikkerhetskopien kan ikke leses | Backup can't be read |
 | `settings.backups.run_failed` (the page's orange line) | Sikkerhetskopieringen feilet | Backup failed |
-| `settings.backups.check_info` (its (i)) | Vibb åpner hver nye kopi og sjekker databasen i den. Ta en ny kopi nå; feiler den også, se serverloggen. | Vibb opens each new copy and checks the database in it. Make a new copy now; if it fails too, see the server log. |
+| `settings.backups.check_info` (the check's (i)) | Vibb åpner hver nye kopi og sjekker databasen i den. Ta en ny kopi nå; feiler den også, se serverloggen. | Vibb opens each new copy and checks the database in it. Make a new copy now; if it fails too, see the server log. |
+| `settings.backups.run_info` (the failed run's (i); code QA L5) | Ta en ny kopi nå; feiler den også, se serverloggen. | Make a new copy now; if it fails too, see the server log. |
 | `devices.warning.backup_check` / `devices.warning.backup_run` (the Devices list's row) | Sikkerhetskopien kan ikke leses / Sikkerhetskopieringen feilet | Backup can't be read / Backup failed |
 
 Nothing is new on the kid's phone. The "connecting" notification while the filter is down is today's behaviour.

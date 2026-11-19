@@ -74,7 +74,7 @@ async fn a_failing_feed_keeps_its_domains_and_one_never_loaded_is_left_out() {
     let cookie = app.admin_cookie().await;
     let (phone, token) = app.enrolled_device("phone").await;
     let (url, mode) = feed_server().await;
-    add_feed(&app, "Ads", &url).await;
+    let ads = add_feed(&app, "Ads", &url).await;
 
     // Before the first load the feed has nothing: left out, the list answered all the same.
     let (status, body) = blocklist(&app, &token).await;
@@ -110,6 +110,22 @@ async fn a_failing_feed_keeps_its_domains_and_one_never_loaded_is_left_out() {
         assert!(page.contains("The last download failed ("), "{why}");
         assert!(page.contains(why), "{why}");
     }
+    // Design 116 §2.1: the feed's health - the 500 transient, then the page and the size the parent's to mend.
+    let health = || async {
+        crate::integration_health::row(&app.db, "blocklist", &format!("feed:{ads}"))
+            .await
+            .unwrap()
+            .unwrap()
+    };
+    let row = health().await;
+    assert_eq!(
+        (row.class, row.failures, row.error.as_deref()),
+        (
+            Some(crate::integration_health::Class::Parent),
+            3,
+            Some("too_big")
+        )
+    );
 
     // A second feed that never loads (a mistyped URL): left out - no phone ever got it - and the
     // rest, the parent's own domains included, still reaches the phone (QA of the security wave,
@@ -131,6 +147,11 @@ async fn a_failing_feed_keeps_its_domains_and_one_never_loaded_is_left_out() {
     );
     let page = app.get_page("/dns", &cookie).await.text();
     assert!(page.contains("Not loaded yet ("), "{page}");
+    assert_eq!(
+        health().await.failing_since,
+        None,
+        "a good download clears it"
+    );
     // The phone's Web Filter page (design 31 step 5): the list's problem as a short title under
     // its name, the download error only on the global page.
     let page = app
@@ -253,4 +274,23 @@ fn a_feed_parses_to_domains_only() {
             "tabbed.example"
         ]
     );
+}
+
+/// Design 116 §2.1: every download failure's class.
+#[test]
+fn every_feed_failure_is_classed() {
+    use crate::integration_health::Class::*;
+    use dns_engine::FeedFailure;
+    for (failure, class) in [
+        (FeedFailure::Network("reset".into()), Transient),
+        (FeedFailure::Status(503), Transient),
+        (FeedFailure::Status(408), Transient),
+        (FeedFailure::Status(429), Transient),
+        (FeedFailure::Status(404), Parent),
+        (FeedFailure::Status(410), Parent),
+        (FeedFailure::TooBig, Parent),
+        (FeedFailure::NotAList, Parent),
+    ] {
+        assert_eq!(failure.class(), class, "{failure:?}");
+    }
 }

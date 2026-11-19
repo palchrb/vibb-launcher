@@ -1455,6 +1455,11 @@ async fn status_intake(
         .mobile_data
         .as_ref()
         .and_then(crate::mobile_network::clean_mobile);
+    // Design 116 §3.4: the web filter's state at report time, cleaned field by field.
+    let vpn_filter_json = report
+        .vpn_filter
+        .as_ref()
+        .and_then(crate::mobile_network::clean_vpn_filter);
     // Design 98 §5.1: Flymodus, its role and its periods, cleaned field by field.
     let airplane_mode_json = report
         .airplane_mode
@@ -1529,8 +1534,8 @@ async fn status_intake(
           relock_blocks_total, clock_format_applied, battery_level, battery_charging, dns_upstream_json, \
           write_settings_granted, zone_watch_json, tailnet_joined, sms_state_json, data_roaming_json, \
           mobile_data_json, airplane_mode_json, shortcuts_json, captive_portal_json, login_browser_json, \
-          notification_channels_json, up_held, setup_json, setup_hold_until_ms) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          notification_channels_json, up_held, setup_json, setup_hold_until_ms, vpn_filter_json) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(device.id)
     .bind(&report.lock_reason)
@@ -1598,6 +1603,7 @@ async fn status_intake(
     .bind(&up_held)
     .bind(&setup_json)
     .bind(setup_hold_until_ms)
+    .bind(&vpn_filter_json)
     .execute(&state.db)
     .await
     .ok();
@@ -1716,6 +1722,10 @@ async fn status_intake(
             .and_then(|json| serde_json::from_str(json).ok())
         {
             crate::mobile_network::roaming_intake(&state, phone, &roaming).await;
+        }
+        // Design 116 §3.4: "Web filter is down", once per down period.
+        if vpn_filter_json.is_some() {
+            crate::mobile_network::filter_down_intake(&state, phone).await;
         }
     }
     if let Some(line) =

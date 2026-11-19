@@ -1521,7 +1521,9 @@ impl Accounts {
         account: i64,
         min_left: Duration,
     ) -> Result<Minted, SpotifyError> {
-        self.mint(state, account, min_left, None, &mut 0).await
+        let minted = self.mint(state, account, min_left, None, &mut 0).await;
+        health(state, account, minted.as_ref().map(|_| ())).await;
+        minted
     }
 
     /// [Accounts::access_token]; with `rejected` (a token the Web API answered 401 to) the kept
@@ -1812,6 +1814,20 @@ impl Accounts {
         kind: Kind,
         sent: &mut u32,
     ) -> Result<SourceResponse, SpotifyError> {
+        let answer = self.api_get_once(state, account, url, kind, sent).await;
+        health(state, account, answer.as_ref().map(|_| ())).await;
+        answer
+    }
+
+    /// [Accounts::api_get_counted]'s requests.
+    async fn api_get_once(
+        &self,
+        state: &AppState,
+        account: i64,
+        url: &str,
+        kind: Kind,
+        sent: &mut u32,
+    ) -> Result<SourceResponse, SpotifyError> {
         let mut refreshed = false;
         let mut rejected: Option<AccessToken> = None;
         let mut waited = false;
@@ -1863,6 +1879,42 @@ impl Accounts {
                 }
                 404 => return Err(SpotifyError::NotFound),
                 status => return Err(SpotifyError::Status(status)),
+            }
+        }
+    }
+}
+
+/// A Spotify call's failure in the integration health (design 116 §2.1, key `spotify`, scope `account:<id>`), `None` =
+/// not recorded: our own state, or the parent's side (the `MusicSpotify*` rows).
+pub(crate) fn class_of(err: &SpotifyError) -> Option<crate::integration_health::Class> {
+    use crate::integration_health::Class::*;
+    match err {
+        SpotifyError::Fetch(_)
+        | SpotifyError::RateLimited(_)
+        | SpotifyError::Quota
+        | SpotifyError::TooBig
+        | SpotifyError::BadAnswer => Some(Transient),
+        SpotifyError::Status(status) if *status >= 500 => Some(Transient),
+        SpotifyError::Status(_)
+        | SpotifyError::Off
+        | SpotifyError::NoAccount
+        | SpotifyError::Reauthorize
+        | SpotifyError::AppRefused
+        | SpotifyError::NotFound
+        | SpotifyError::Key
+        | SpotifyError::Database(_) => None,
+    }
+}
+
+/// Records a call to Spotify for `account` in the integration health.
+async fn health(state: &AppState, account: i64, outcome: Result<(), &SpotifyError>) {
+    let scope = format!("account:{account}");
+    match outcome {
+        Ok(()) => crate::integration_health::ok(&state.db, "spotify", &scope).await,
+        Err(err) => {
+            if let Some(class) = class_of(err) {
+                crate::integration_health::failed(&state.db, "spotify", &scope, &err.code(), class)
+                    .await;
             }
         }
     }
@@ -3380,6 +3432,13 @@ pub(crate) mod tests {
         assert_eq!(minted.token.secret(), "FAKE-ACCESS-2");
         assert_eq!((minted.account, minted.generation), (account, 1));
         assert_eq!(minted.left, Duration::from_secs(3540), "expires_in - 60 s");
+        // Design 116 §2.1: the account's success in the integration health.
+        let health =
+            crate::integration_health::row(&app.db, "spotify", &format!("account:{account}"))
+                .await
+                .unwrap()
+                .unwrap();
+        assert!(health.ok_at.is_some() && health.failing_since.is_none());
         let requests = app.fetch.requests.lock().unwrap().clone();
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0].method, "POST");
@@ -3668,6 +3727,16 @@ pub(crate) mod tests {
             .fail(TOKEN_URL, FetchError::Network("reset".to_string()));
         assert_eq!(ask().await.err().unwrap().code(), "network");
         assert_eq!(outcome(&app, account).await.1.as_deref(), Some("network"));
+        // Design 116 §2.1: three transient failures of the account in the integration health.
+        let health =
+            crate::integration_health::row(&app.db, "spotify", &format!("account:{account}"))
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            (health.class, health.failures),
+            (Some(crate::integration_health::Class::Transient), 3)
+        );
 
         // invalid_client: the app is refused, not the login.
         app.fetch
@@ -3698,6 +3767,30 @@ pub(crate) mod tests {
         }
         assert_eq!(app.fetch.count(), 0, "no request after invalid_grant");
         assert_eq!(SpotifyError::Reauthorize.code(), "reauthorize");
+    }
+
+    /// Design 116 §2.1: every Spotify error's class.
+    #[test]
+    fn every_spotify_error_is_classed() {
+        use crate::integration_health::Class::*;
+        for (err, class) in [
+            (SpotifyError::Fetch(FetchError::Timeout), Some(Transient)),
+            (SpotifyError::Status(503), Some(Transient)),
+            (SpotifyError::Status(400), None),
+            (SpotifyError::RateLimited(None), Some(Transient)),
+            (SpotifyError::Quota, Some(Transient)),
+            (SpotifyError::TooBig, Some(Transient)),
+            (SpotifyError::BadAnswer, Some(Transient)),
+            (SpotifyError::Off, None),
+            (SpotifyError::NoAccount, None),
+            (SpotifyError::Reauthorize, None),
+            (SpotifyError::AppRefused, None),
+            (SpotifyError::NotFound, None),
+            (SpotifyError::Key, None),
+            (SpotifyError::Database("x".into()), None),
+        ] {
+            assert_eq!(class_of(&err), class, "{err:?}");
+        }
     }
 
     #[tokio::test]

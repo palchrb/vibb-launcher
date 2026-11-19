@@ -34,6 +34,8 @@ struct BackupRow {
     size_display: String,
     when: String,
     exact: String,
+    /// Design 116 §4: the newest backup was opened as a restore would and passed - a quiet "checked".
+    checked: bool,
 }
 
 #[derive(Clone)]
@@ -227,7 +229,8 @@ pub(crate) async fn snapshot(
             .await
             .map_err(|err| format!("the snapshot failed: {err}"))?;
         strip_secrets_in(scratch).await?;
-        tokio::fs::rename(scratch, target)
+        let renamed = tokio::fs::rename(scratch, target).await;
+        place(scratch, target, renamed)
             .await
             .map_err(|err| format!("couldn't move the snapshot to {}: {err}", target.display()))
     }
@@ -236,6 +239,39 @@ pub(crate) async fn snapshot(
         let _ = tokio::fs::remove_file(scratch).await;
     }
     result
+}
+
+/// The suffix of a copy on its way into `data/backups/` from another filesystem ([place]); a crash's leftover is swept
+/// at startup (`startup::sweep_scratch`).
+pub(crate) const PARTIAL_SUFFIX: &str = ".partial";
+
+/// [snapshot]'s move after its `rename` ([renamed]): done, or - design 116 §5, `data/backups` a bind mount on the host
+/// in Docker, so another filesystem than `data/` - on `EXDEV` a copy to `<target>.partial` in the target's folder,
+/// fsynced, renamed there, and the scratch file deleted. A failed copy leaves no `.partial`.
+async fn place(
+    scratch: &std::path::Path,
+    target: &std::path::Path,
+    renamed: std::io::Result<()>,
+) -> std::io::Result<()> {
+    match renamed {
+        Err(err) if err.kind() == std::io::ErrorKind::CrossesDevices => {}
+        other => return other,
+    }
+    let mut partial = target.as_os_str().to_owned();
+    partial.push(PARTIAL_SUFFIX);
+    let partial = std::path::PathBuf::from(partial);
+    let copied = async {
+        tokio::fs::copy(scratch, &partial).await?;
+        tokio::fs::File::open(&partial).await?.sync_all().await?;
+        tokio::fs::rename(&partial, target).await
+    }
+    .await;
+    if copied.is_err() {
+        let _ = tokio::fs::remove_file(&partial).await;
+        return copied;
+    }
+    let _ = tokio::fs::remove_file(scratch).await;
+    Ok(())
 }
 
 /// Clears, in the database file at `path`, what no copy of it may carry: every admin session
@@ -282,7 +318,320 @@ async fn strip_secrets_in(path: &std::path::Path) -> Result<(), String> {
 /// Creates a full backup (a DB snapshot, zipped). Used by both the
 /// admin-triggered handler and the background scheduled-backup task, so the
 /// actual backup logic only needs to be reviewed/maintained in one place.
+///
+/// Design 116 §4: a failure is recorded (`('backup', '')`, `failed`), a success clears that; the new zip is checked in
+/// a task of its own ([check_and_record]), so the answer never waits for it.
 pub async fn perform_backup(state: &AppState) -> Result<String, String> {
+    let made = make_backup(state).await;
+    match &made {
+        Ok(name) => {
+            crate::integration_health::ok(&state.db, CHECK_KEY, "").await;
+            let (db, data_dir, name) = (state.db.clone(), state.data_dir.clone(), name.clone());
+            tokio::spawn(async move { check_and_record(&db, &data_dir, &name).await });
+        }
+        Err(_) => {
+            crate::integration_health::failed(
+                &state.db,
+                CHECK_KEY,
+                "",
+                "failed",
+                crate::integration_health::Class::Stop,
+            )
+            .await
+        }
+    }
+    made
+}
+
+// ---- design 116 part D: the backup check ------------------------------------------------------------------------
+
+/// The integration health's key for the backups: `file:<name>` per checked zip, `''` for a backup that failed.
+pub(crate) const CHECK_KEY: &str = "backup";
+
+/// Why a backup can't be restored by this binary (§4's codes; `failed`, the backup itself, is [perform_backup]'s).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CheckCode {
+    /// No `kidphone.db` in it, or not a zip.
+    NoDb,
+    /// The database can't be opened or read (not SQLite, `devices` won't read).
+    Unreadable,
+    /// `PRAGMA integrity_check` isn't `ok`.
+    Integrity,
+    /// Made by a newer or a different build: a migration this binary doesn't know, another checksum, or one that
+    /// failed.
+    Version,
+}
+
+impl CheckCode {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            CheckCode::NoDb => "no_db",
+            CheckCode::Unreadable => "unreadable",
+            CheckCode::Integrity => "integrity",
+            CheckCode::Version => "version",
+        }
+    }
+}
+
+/// A check's outcome. [Checked::NoRoom]: the scratch copy couldn't be written (a full disk) - the zip may be
+/// whole, so nothing about it is recorded.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Checked {
+    Ok,
+    Failed(CheckCode),
+    NoRoom(String),
+}
+
+/// The scratch copies' prefix in `data/` (never `data/backups/`); a crash's leftover is swept at startup.
+pub(crate) const CHECK_SCRATCH_PREFIX: &str = "backup-check-";
+
+/// Design 116 §4 (QA H1): restorable by this binary - every applied migration succeeded, is one this binary knows,
+/// with that one's checksum, and none is newer than its newest. An older backup passes: the restore migrates it
+/// forward.
+pub(crate) fn restorable(
+    applied: &[(i64, bool, Vec<u8>)],
+    known: &sqlx::migrate::Migrator,
+) -> bool {
+    let newest = known.iter().map(|m| m.version).max().unwrap_or(0);
+    applied.iter().all(|(version, success, checksum)| {
+        *success
+            && *version <= newest
+            && known
+                .iter()
+                .any(|m| m.version == *version && m.checksum.as_ref() == checksum.as_slice())
+    })
+}
+
+/// Opens, as a restore would, the backup at `zip` - its `kidphone.db` under the restore's own 1 GiB cap, copied to a
+/// unique scratch file in `data_dir`, opened read-only and immutable - and checks it: `integrity_check`, the
+/// migrations ([restorable]) and a read of `devices`. The scratch file is deleted afterwards, also on a failure.
+pub(crate) async fn check_file(data_dir: &std::path::Path, zip: &std::path::Path) -> Checked {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let scratch = data_dir.join(format!(
+        "{CHECK_SCRATCH_PREFIX}{}-{}-{}.db",
+        chrono::Utc::now().format("%Y%m%d%H%M%S"),
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let (zip_path, scratch_path) = (zip.to_path_buf(), scratch.clone());
+    let extracted = tokio::task::spawn_blocking(move || extract_db(&zip_path, &scratch_path))
+        .await
+        .unwrap_or_else(|err| Err(Extract::Scratch(err.to_string())));
+    let checked = match extracted {
+        Err(Extract::NoDb) => Checked::Failed(CheckCode::NoDb),
+        Err(Extract::Unreadable) => Checked::Failed(CheckCode::Unreadable),
+        Err(Extract::Scratch(err)) => Checked::NoRoom(err),
+        Ok(()) => check_db(&scratch).await,
+    };
+    let _ = tokio::fs::remove_file(&scratch).await;
+    checked
+}
+
+enum Extract {
+    NoDb,
+    Unreadable,
+    Scratch(String),
+}
+
+/// The zip's `kidphone.db` to `scratch`, at most `startup::RESTORE_MAX_BYTES`.
+fn extract_db(zip: &std::path::Path, scratch: &std::path::Path) -> Result<(), Extract> {
+    use std::io::Read;
+    let file = std::fs::File::open(zip).map_err(|_| Extract::Unreadable)?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|_| Extract::NoDb)?;
+    let mut entry = archive.by_name("kidphone.db").map_err(|_| Extract::NoDb)?;
+    let mut out = std::fs::File::create(scratch).map_err(|e| Extract::Scratch(e.to_string()))?;
+    let mut buffer = vec![0u8; 64 * 1024];
+    let mut total: u64 = 0;
+    loop {
+        let read = entry.read(&mut buffer).map_err(|_| Extract::Unreadable)?;
+        if read == 0 {
+            break;
+        }
+        total += read as u64;
+        if total > crate::startup::RESTORE_MAX_BYTES {
+            return Err(Extract::Unreadable);
+        }
+        out.write_all(&buffer[..read])
+            .map_err(|e| Extract::Scratch(e.to_string()))?;
+    }
+    out.sync_all().map_err(|e| Extract::Scratch(e.to_string()))
+}
+
+async fn check_db(path: &std::path::Path) -> Checked {
+    use sqlx::Connection;
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(path)
+        .read_only(true)
+        .immutable(true);
+    let Ok(mut conn) = sqlx::SqliteConnection::connect_with(&options).await else {
+        return Checked::Failed(CheckCode::Unreadable);
+    };
+    let checked = async {
+        let integrity: Vec<String> = match sqlx::query_scalar("PRAGMA integrity_check")
+            .fetch_all(&mut conn)
+            .await
+        {
+            Ok(rows) => rows,
+            // A file that isn't a database at all.
+            Err(sqlx::Error::Database(err)) if err.message().contains("not a database") => {
+                return Checked::Failed(CheckCode::Unreadable);
+            }
+            Err(_) => return Checked::Failed(CheckCode::Integrity),
+        };
+        if integrity != ["ok"] {
+            return Checked::Failed(CheckCode::Integrity);
+        }
+        let applied: Vec<(i64, bool, Vec<u8>)> =
+            match sqlx::query_as("SELECT version, success, checksum FROM _sqlx_migrations")
+                .fetch_all(&mut conn)
+                .await
+            {
+                Ok(rows) => rows,
+                Err(_) => return Checked::Failed(CheckCode::Version),
+            };
+        if !restorable(&applied, &crate::MIGRATOR) {
+            return Checked::Failed(CheckCode::Version);
+        }
+        match sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM devices")
+            .fetch_one(&mut conn)
+            .await
+        {
+            Ok(_) => Checked::Ok,
+            Err(_) => Checked::Failed(CheckCode::Unreadable),
+        }
+    }
+    .await;
+    let _ = conn.close().await;
+    checked
+}
+
+/// [check_file] for `name` in `data_dir/backups/`, recorded as `('backup', 'file:<name>')` (a row means checked; a
+/// failure is `stop`), and the rows of files that are gone forgotten. A scratch copy that couldn't be written is
+/// logged on its own line and records nothing.
+pub(crate) async fn check_and_record(
+    db: &sqlx::SqlitePool,
+    data_dir: &std::path::Path,
+    name: &str,
+) {
+    let dir = data_dir.join(BACKUP_DIR);
+    let scope = format!("file:{name}");
+    match check_file(data_dir, &dir.join(name)).await {
+        Checked::Ok => crate::integration_health::ok(db, CHECK_KEY, &scope).await,
+        Checked::Failed(code) => {
+            tracing::error!(
+                file = name,
+                code = code.as_str(),
+                "a backup can't be restored"
+            );
+            crate::integration_health::failed(
+                db,
+                CHECK_KEY,
+                &scope,
+                code.as_str(),
+                crate::integration_health::Class::Stop,
+            )
+            .await;
+        }
+        Checked::NoRoom(err) => {
+            tracing::error!(file = name, %err, "couldn't check a backup: no room for its scratch copy (the backup may be whole)");
+        }
+    }
+    forget_gone(db, &dir).await;
+}
+
+/// The `file:` rows of backups that are gone.
+async fn forget_gone(db: &sqlx::SqlitePool, dir: &std::path::Path) {
+    let names = list_backup_filenames(dir).await;
+    let rows: Vec<String> = sqlx::query_scalar(
+        "SELECT scope FROM integration_health WHERE key = ? AND scope LIKE 'file:%'",
+    )
+    .bind(CHECK_KEY)
+    .fetch_all(db)
+    .await
+    .unwrap_or_default();
+    for scope in rows {
+        let gone = scope
+            .strip_prefix("file:")
+            .is_some_and(|name| !names.iter().any(|n| n == name));
+        if gone {
+            let _ = sqlx::query("DELETE FROM integration_health WHERE key = ? AND scope = ?")
+                .bind(CHECK_KEY)
+                .bind(&scope)
+                .execute(db)
+                .await;
+        }
+    }
+}
+
+/// At startup: the newest backup is checked if it has no row (a server from before design 116, or a check a restart
+/// cut short). In its own task.
+pub async fn check_newest_unchecked(db: sqlx::SqlitePool, data_dir: std::path::PathBuf) {
+    let Some(newest) = list_backup_filenames(&data_dir.join(BACKUP_DIR))
+        .await
+        .pop()
+    else {
+        return;
+    };
+    match crate::integration_health::row(&db, CHECK_KEY, &format!("file:{newest}")).await {
+        Ok(None) => check_and_record(&db, &data_dir, &newest).await,
+        Ok(Some(_)) => {}
+        Err(err) => tracing::error!(%err, "couldn't read the backups' checks"),
+    }
+}
+
+/// What the Backups page and the Devices list say about the backups (§4).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BackupProblem {
+    /// The newest backup has a failing check.
+    Check,
+    /// The backup itself failed, after the newest zip (or with none).
+    Run,
+}
+
+/// The backups' state: the problem that shows, if any, and whether the newest backup was checked and passed.
+pub async fn backup_state(
+    db: &sqlx::SqlitePool,
+    data_dir: &std::path::Path,
+) -> (Option<BackupProblem>, bool) {
+    let dir = data_dir.join(BACKUP_DIR);
+    let newest = list_backup_filenames(&dir).await.pop();
+    let row = |scope: String| async move {
+        crate::integration_health::row(db, CHECK_KEY, &scope)
+            .await
+            .unwrap_or_else(|err| {
+                tracing::error!(%err, "couldn't read the backups' checks");
+                None
+            })
+    };
+    let newest_row = match &newest {
+        Some(name) => row(format!("file:{name}")).await,
+        None => None,
+    };
+    if newest_row
+        .as_ref()
+        .is_some_and(|r| r.failing_since.is_some())
+    {
+        return (Some(BackupProblem::Check), false);
+    }
+    let checked = newest_row.is_some_and(|r| r.ok_at.is_some());
+    let made_at = match &newest {
+        Some(name) => tokio::fs::metadata(dir.join(name))
+            .await
+            .ok()
+            .and_then(|meta| meta.modified().ok())
+            .map(chrono::DateTime::<chrono::Utc>::from),
+        None => None,
+    };
+    let run_failed = row(String::new()).await.is_some_and(|r| {
+        r.failing_since.is_some()
+            && r.error_at
+                .is_some_and(|at| made_at.is_none_or(|made| at > made))
+    });
+    (run_failed.then_some(BackupProblem::Run), checked)
+}
+
+/// [perform_backup]'s backup itself.
+async fn make_backup(state: &AppState) -> Result<String, String> {
     let backup_dir = state.data_dir.join(BACKUP_DIR);
     tokio::fs::create_dir_all(&backup_dir)
         .await
@@ -365,6 +714,8 @@ struct BackupsTemplate {
     /// parent has no password field.
     passkey_reauth: bool,
     passkey_only: bool,
+    /// Design 116 §4: the page's orange line - the newest backup can't be read, or the backup failed.
+    problem: Option<BackupProblem>,
 }
 crate::i18n::words!(BackupsTemplate);
 
@@ -378,6 +729,20 @@ struct Refused {
 }
 
 impl BackupsTemplate {
+    /// Design 116 §4: the page's orange line and its (i), if any - each problem its own how-to (code QA L5).
+    fn problem_line(&self) -> Option<(&'static str, &'static str)> {
+        self.problem.map(|problem| {
+            let (line, info) = match problem {
+                BackupProblem::Check => (
+                    "settings.backups.check_failed",
+                    "settings.backups.check_info",
+                ),
+                BackupProblem::Run => ("settings.backups.run_failed", "settings.backups.run_info"),
+            };
+            (t(self.lang, line), t(self.lang, info))
+        })
+    }
+
     /// The reason under `field` of `form` for `file`, if that form was refused there.
     fn why(&self, form: &str, file: &str, field: &str) -> Option<&str> {
         self.refused
@@ -621,11 +986,16 @@ async fn render_backups(
                     |made| zone.when(made, now),
                 ),
                 exact: made.map(|t| zone.exact(t)).unwrap_or_default(),
+                checked: false,
             });
         }
     }
     // The file names start with their time: newest first.
     backups.sort_by(|a, b| b.filename.cmp(&a.filename));
+    let (problem, checked) = backup_state(&state.db, &state.data_dir).await;
+    if let Some(newest) = backups.first_mut() {
+        newest.checked = checked;
+    }
 
     let page = BackupsTemplate {
         lang,
@@ -638,6 +1008,7 @@ async fn render_backups(
         docker,
         passkey_reauth: crate::passkeys::has_here(&state.db, who.admin.id, &who.ceremony).await,
         passkey_only: who.admin.passkey_only,
+        problem,
     };
     (status, Html(page.render().unwrap())).into_response()
 }
@@ -766,7 +1137,11 @@ pub async fn delete_backup(
         return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.backup_not_found");
     }
     match tokio::fs::remove_file(state.data_dir.join(BACKUP_DIR).join(&filename)).await {
-        Ok(()) => Done::Deleted.redirect(),
+        Ok(()) => {
+            // Design 116 §4: its check's row goes with it.
+            forget_gone(&state.db, &state.data_dir.join(BACKUP_DIR)).await;
+            Done::Deleted.redirect()
+        }
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Done::Gone.redirect(),
         Err(err) => {
             tracing::error!(%err, "couldn't delete a backup");
@@ -1238,6 +1613,9 @@ pub async fn upload_backup(
                 Some(security::Detail::facts(&filename)),
             )
             .await;
+            // The upload sorts as the newest backup: checked now, as a made one is (code QA L4).
+            let (db, data_dir) = (state.db.clone(), state.data_dir.clone());
+            tokio::spawn(async move { check_and_record(&db, &data_dir, &filename).await });
             Done::Upload.redirect()
         }
         Err(err) => {
@@ -1259,6 +1637,156 @@ pub async fn upload_backup(
 mod tests {
     use super::*;
 
+    /// A migrated database as one file (a snapshot), its bytes.
+    async fn good_db(dir: &std::path::Path) -> Vec<u8> {
+        let db = crate::connect_db(&format!("sqlite://{}", dir.join("live.db").display())).await;
+        let copy = dir.join("copy.db");
+        snapshot(&db, &dir.join("copy.db.tmp"), &copy)
+            .await
+            .unwrap();
+        db.close().await;
+        std::fs::read(&copy).unwrap()
+    }
+
+    /// `data/backups/<name>` holding `kidphone.db` (`None`: a zip without one).
+    fn zip_with(data: &std::path::Path, name: &str, db: Option<&[u8]>) -> std::path::PathBuf {
+        let dir = data.join(BACKUP_DIR);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(name);
+        let mut writer = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
+        let options = zip::write::SimpleFileOptions::default();
+        match db {
+            Some(_) => writer.start_file("kidphone.db", options).unwrap(),
+            None => writer.start_file("contact_photos/a.jpg", options).unwrap(),
+        }
+        writer.write_all(db.unwrap_or(b"jpeg")).unwrap();
+        writer.finish().unwrap();
+        path
+    }
+
+    /// The same database with `sql` run on it.
+    async fn changed(dir: &std::path::Path, bytes: &[u8], sql: &str) -> Vec<u8> {
+        let path = dir.join("changed.db");
+        std::fs::write(&path, bytes).unwrap();
+        let db = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
+            .await
+            .unwrap();
+        sqlx::raw_sql(sql).execute(&db).await.unwrap();
+        db.close().await;
+        std::fs::read(&path).unwrap()
+    }
+
+    /// Design 116 §4 (QA H1, M8): one case per code - a whole backup passes, an older one too (the restore migrates
+    /// it); no database, not a database, a broken one, a newer or a changed migration fail; no scratch room (a full
+    /// disk) is no verdict; two checks at once each pass; every scratch copy is gone afterwards.
+    #[tokio::test]
+    async fn every_backup_check_has_its_code() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data = tmp.path().join("data");
+        std::fs::create_dir_all(&data).unwrap();
+        let good = good_db(tmp.path()).await;
+        let check = |name: &'static str, db: Option<Vec<u8>>| {
+            let data = data.clone();
+            async move {
+                let zip = zip_with(&data, name, db.as_deref());
+                check_file(&data, &zip).await
+            }
+        };
+        assert_eq!(check("backup-1.zip", Some(good.clone())).await, Checked::Ok);
+        let older = changed(
+            tmp.path(),
+            &good,
+            "DELETE FROM _sqlx_migrations WHERE version > 150",
+        )
+        .await;
+        assert_eq!(check("backup-2.zip", Some(older)).await, Checked::Ok);
+        assert_eq!(
+            check("backup-3.zip", None).await,
+            Checked::Failed(CheckCode::NoDb)
+        );
+        std::fs::write(data.join(BACKUP_DIR).join("backup-4.zip"), b"not a zip").unwrap();
+        assert_eq!(
+            check_file(&data, &data.join(BACKUP_DIR).join("backup-4.zip")).await,
+            Checked::Failed(CheckCode::NoDb)
+        );
+        assert_eq!(
+            check("backup-5.zip", Some(b"SQLite? no".to_vec())).await,
+            Checked::Failed(CheckCode::Unreadable)
+        );
+        let mut broken = good.clone();
+        let page = 4096;
+        for byte in &mut broken[3 * page..4 * page] {
+            *byte = 0xA5;
+        }
+        assert_eq!(
+            check("backup-6.zip", Some(broken)).await,
+            Checked::Failed(CheckCode::Integrity)
+        );
+        let newer = changed(
+            tmp.path(),
+            &good,
+            "INSERT INTO _sqlx_migrations (version, description, success, checksum, execution_time) \
+             VALUES (9999, 'from the future', 1, x'00', 0)",
+        )
+        .await;
+        assert_eq!(
+            check("backup-7.zip", Some(newer)).await,
+            Checked::Failed(CheckCode::Version)
+        );
+        let other = changed(
+            tmp.path(),
+            &good,
+            "UPDATE _sqlx_migrations SET checksum = x'00' WHERE version = 1",
+        )
+        .await;
+        assert_eq!(
+            check("backup-8.zip", Some(other)).await,
+            Checked::Failed(CheckCode::Version)
+        );
+        // No room for the scratch copy: no verdict either way.
+        let zip = zip_with(&data, "backup-9.zip", Some(&good));
+        assert!(matches!(
+            check_file(&tmp.path().join("missing"), &zip).await,
+            Checked::NoRoom(_)
+        ));
+        // Two at once.
+        let (a, b) = tokio::join!(check_file(&data, &zip), check_file(&data, &zip));
+        assert_eq!((a, b), (Checked::Ok, Checked::Ok));
+        let scratch: Vec<_> = std::fs::read_dir(&data)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with(CHECK_SCRATCH_PREFIX)
+            })
+            .collect();
+        assert!(scratch.is_empty(), "every scratch copy deleted");
+    }
+
+    /// Design 116 §5: a rename across filesystems (`EXDEV`, injected) takes the copy path - the target whole, no
+    /// `.partial` and no scratch file left; another error stays the error.
+    #[tokio::test]
+    async fn a_snapshot_across_filesystems_is_copied_into_place() {
+        let dir = tempfile::tempdir().unwrap();
+        let scratch = dir.path().join("snap.db.tmp");
+        let backups = dir.path().join("backups");
+        std::fs::create_dir(&backups).unwrap();
+        let target = backups.join("pre-migrate-0157-0158.db");
+        std::fs::write(&scratch, b"the database").unwrap();
+        let exdev = Err(std::io::Error::from(std::io::ErrorKind::CrossesDevices));
+        place(&scratch, &target, exdev).await.unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"the database");
+        assert!(!scratch.exists());
+        let left: Vec<_> = std::fs::read_dir(&backups).unwrap().collect();
+        assert_eq!(left.len(), 1, "no .partial left");
+        let denied = Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+        assert_eq!(
+            place(&scratch, &target, denied).await.unwrap_err().kind(),
+            std::io::ErrorKind::PermissionDenied
+        );
+    }
+
     /// The page with a backup (which a test machine has none of): every form lands on its own
     /// group, the delete is a confirm; in the container the restore is a typed confirm, on a
     /// systemd install its command for that file; every [Done] code reads back to itself and shows
@@ -1274,6 +1802,7 @@ mod tests {
                     size_display: "1.2 MB".to_string(),
                     when: "03:00".to_string(),
                     exact: String::new(),
+                    checked: false,
                 }],
                 flash,
                 refused: None,
@@ -1282,6 +1811,7 @@ mod tests {
                 docker,
                 passkey_reauth: false,
                 passkey_only: false,
+                problem: None,
             }
             .render()
             .unwrap()
@@ -1373,6 +1903,7 @@ mod tests {
                     size_display: "1 KB".to_string(),
                     when: "now".to_string(),
                     exact: String::new(),
+                    checked: false,
                 })
                 .collect(),
             flash: None,
@@ -1382,6 +1913,7 @@ mod tests {
             docker: false,
             passkey_reauth: false,
             passkey_only: false,
+            problem: None,
         }
         .render()
         .unwrap();

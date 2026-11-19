@@ -510,6 +510,25 @@ async fn a_refused_password_stops_the_account_until_test_passes() {
         assert!(matches!(outcome, Outcome::Failed(ref e) if e.code == "login_refused"));
     }
     assert_eq!(app.fetch.count(), before + 1);
+    // Design 116 §2.1: the stop is the account's in the integration health, `Fix` at once.
+    let health = || async {
+        crate::integration_health::row(&app.db, "caldav", &format!("account:{account}"))
+            .await
+            .unwrap()
+            .unwrap()
+    };
+    let row = health().await;
+    assert_eq!(
+        (row.class, row.error.as_deref()),
+        (
+            Some(crate::integration_health::Class::Stop),
+            Some("login_refused")
+        )
+    );
+    assert_eq!(
+        crate::integration_health::raised(&row, chrono::TimeDelta::hours(12), Utc::now()),
+        Some(crate::integration_health::Problem::Fix)
+    );
     // The account says so at once - its row and its page's alarm -, not each calendar again.
     let page = app
         .get_page(
@@ -597,6 +616,11 @@ async fn a_refused_password_stops_the_account_until_test_passes() {
         .await
         .unwrap();
     assert_eq!(outcome, Outcome::Unchanged, "the same set, fetched again");
+    assert_eq!(
+        health().await.failing_since,
+        None,
+        "a fetch that works clears it"
+    );
     for page in [
         format!("/devices/{anna}/calendar"),
         format!("/devices/{anna}/calendar/caldav/{account}"),

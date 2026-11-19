@@ -365,7 +365,7 @@ services:
     restart: unless-stopped
     network_mode: host
     env_file: .env
-    volumes: [handy-data:/app/data, handy-keys:/app/data/keys]
+    volumes: [handy-data:/app/data, ./backups:/app/data/backups, handy-keys:/app/data/keys]
     read_only: true
     tmpfs: [/tmp]
     cap_drop: [ALL]
@@ -388,10 +388,12 @@ LAUNCHER_SIGNATURE_CHECKSUM=...
 out: `docker compose cp handy:/app/data/initial-admin-password . && cat initial-admin-password && rm
 initial-admin-password`. Sign in as `admin` and change it - the server deletes its copy then.
 
-- **Volumes**: `/app/data` holds the database, backups and caches; `/app/data/keys` (the Storytel, Web Push and Child PIN keys - `kid-pin.key`: lose it and each Child PIN has to be set again before it can be sent or shown) is its own
-  volume, so copies of the data volume don't carry it. Use named volumes: a bind-mounted directory isn't seeded from
-  the image and must belong to uid 65532 (`chown -R 65532:65532 dir`), or the server stops with "data/ is not
-  writable by uid 65532".
+- **Volumes**: `/app/data` holds the database and caches; `/app/data/backups` is the folder `./backups` beside
+  `compose.yaml` on the host (design 116), so the host's own backup takes the backups - make it before the first start:
+  `mkdir -p backups && sudo chown 65532:65532 backups && sudo chmod 700 backups`. `/app/data/keys` (the Storytel, Web Push and Child PIN keys - `kid-pin.key`: lose it and each Child PIN has to be set again before it can be sent or shown) is its own
+  volume, so copies of the data volume and the backups folder don't carry it. Use named volumes for the rest: a
+  bind-mounted directory isn't seeded from the image and must belong to uid 65532 (`chown -R 65532:65532 dir`), or the
+  server stops with "data/ is not writable by uid 65532" (or "data/backups/ ...").
 - **Updating**, either way (privacy review 2026-11-17 H1; the user's choice, 2026-11-18: both are supported):
   - **Watchtower** ([containrrr.dev/watchtower](https://containrrr.dev/watchtower/)) with `HANDY_VERSION=latest`:
     automatic. Nothing checks who built the image, so whoever can push to the package runs code on the server - the
@@ -414,7 +416,7 @@ initial-admin-password`. Sign in as `admin` and change it - the server deletes i
 
   ```
   docker compose stop handy
-  docker run --rm -v handy-data:/data busybox sh -c 'cp /data/backups/pre-migrate-<from>-<to>.db /data/kidphone.db && rm -f /data/kidphone.db-wal /data/kidphone.db-shm && chown 65532:65532 /data/kidphone.db'
+  docker run --rm -v handy-data:/data -v "$PWD/backups:/backups" busybox sh -c 'cp /backups/pre-migrate-<from>-<to>.db /data/kidphone.db && rm -f /data/kidphone.db-wal /data/kidphone.db-shm && chown 65532:65532 /data/kidphone.db'
   ./update-image.sh <the old X.Y.Z>        # or set HANDY_VERSION=<the old X.Y.Z> and: docker compose up -d
   ```
 
@@ -423,7 +425,23 @@ initial-admin-password`. Sign in as `admin` and change it - the server deletes i
   its next start (Docker's restart policy brings it back), and keeps the previous database in
   `data/backups/prerestore-<time>/` (the newest 3 are kept); if the backup won't open, the previous database goes
   back. A backup whose database is over 1 GiB is refused.
-- Copy `data/backups` off the host yourself: the server never copies anything out of its volume.
+- **The host's backup takes `./backups`**: the server never copies anything off the machine. Keep that folder as safe
+  as the admin password: it holds full copies of the family's database.
+- **Moving the backups out of the named volume** (an install from before design 116, once, when the new
+  `compose.yaml` arrives - Watchtower doesn't change it):
+
+  ```
+  docker compose stop handy
+  mkdir -p backups
+  docker run --rm -v <project>_handy-data:/from -v "$PWD/backups:/to" busybox \
+    sh -c 'cp -a /from/backups/. /to/ && chown -R 65532:65532 /to && chmod 700 /to'
+  # take the new compose.yaml (or add the ./backups line), then
+  docker compose up -d
+  # once Settings › Backups lists them, free the volume's old copies:
+  docker run --rm -v <project>_handy-data:/data busybox sh -c 'rm -rf /data/backups/*'
+  ```
+
+  The volume's name carries the compose project's prefix (`docker volume ls`).
 - **Recovery**: `docker compose exec handy /app/kid_phone_server reset-2fa admin` (it also replaces the password,
   and turns Passkey Only off; see "Signing in and recovery").
 

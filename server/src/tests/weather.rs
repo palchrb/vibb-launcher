@@ -400,10 +400,29 @@ async fn failures_back_off_and_keep_the_old_hours() {
     assert_eq!((failures, error.as_deref()), (1, Some("status_5xx")));
     assert_eq!(at(&next), now() + Duration::minutes(5));
     assert_eq!(met_asks(&app), 3);
+    // Design 116 §2.1: MET's health, family-wide - one transient failure, then a success clears it.
+    let health = || async {
+        crate::integration_health::row(&app.db, "met", "")
+            .await
+            .unwrap()
+            .unwrap()
+    };
+    let row = health().await;
+    assert_eq!(
+        (row.class, row.failures, row.error.as_deref()),
+        (
+            Some(crate::integration_health::Class::Transient),
+            1,
+            Some("status_5xx")
+        )
+    );
     // The next try fills it.
     let mut t = now() + Duration::minutes(6);
     app.state.weather.set_now(t);
     assert_eq!(weather(&app, &token).await["status"], "ok");
+    let row = health().await;
+    assert_eq!((row.failing_since, row.failures), (None, 0));
+    assert!(row.ok_at.is_some());
     for (retry, wait) in [
         ("60", Duration::minutes(10)),
         ("Tue, 03 Nov 2026 16:00:00 GMT", Duration::minutes(30)),
@@ -438,6 +457,11 @@ async fn failures_back_off_and_keep_the_old_hours() {
     let (_, next, _, error) = cell_row(&app).await;
     assert_eq!(error.as_deref(), Some("status_403"));
     assert_eq!(at(&next), t + Duration::hours(6));
+    assert_eq!(
+        health().await.class,
+        Some(crate::integration_health::Class::Parent),
+        "a 403 is the owner's MET_CONTACT"
+    );
     // A 200 we can't read waits at least until the `Expires` it came with (code QA M2), 45 min here.
     let t = at(&next);
     app.state.weather.set_now(t);
@@ -530,6 +554,12 @@ async fn a_cut_body_keeps_its_whole_hours_until_expires() {
     let (checked, next, failures, error) = cell_row(&app).await;
     assert_eq!((failures, error.as_deref()), (0, Some("cut")));
     assert_eq!(at(&checked), now());
+    // A success in the integration health (code QA L3): the kid sees weather.
+    let health = crate::integration_health::row(&app.db, "met", "")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(health.ok_at.is_some() && health.failing_since.is_none());
     assert!(at(&next) >= now() + Duration::minutes(59), "{next:?}");
 }
 

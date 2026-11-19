@@ -28,13 +28,24 @@ pub fn sqlite_path(url: &str) -> Option<PathBuf> {
 /// Creates `dir` if needed and proves this process can write a file in it.
 pub fn check_data_writable(dir: &Path) -> Result<(), String> {
     let uid = rustix::process::getuid().as_raw();
+    // `data/backups` is a folder on the host in Docker (design 116 §5): the compose file's own words (code QA L5).
+    let backups = dir.file_name().is_some_and(|name| name == "backups");
     let explain = |err: std::io::Error| {
-        format!(
-            "{}/ is not writable by uid {uid} ({err}). In Docker: use a named volume (it is \
-             seeded from the image), or chown a bind-mounted directory to {uid}:{uid}. On the \
-             Pi: the directory belongs to the service user (install.sh sets it).",
-            dir.display()
-        )
+        if backups {
+            format!(
+                "{}/ is not writable by uid {uid} ({err}). In Docker: the backups folder on the host must \
+                 belong to it: chown {uid}:{uid} backups. On the Pi: the directory belongs to the service \
+                 user (install.sh sets it).",
+                dir.display()
+            )
+        } else {
+            format!(
+                "{}/ is not writable by uid {uid} ({err}). In Docker: use a named volume (it is \
+                 seeded from the image), or chown a bind-mounted directory to {uid}:{uid}. On the \
+                 Pi: the directory belongs to the service user (install.sh sets it).",
+                dir.display()
+            )
+        }
     };
     std::fs::create_dir_all(dir).map_err(explain)?;
     let probe = dir.join(format!(".write-check-{}", std::process::id()));
@@ -43,6 +54,35 @@ pub fn check_data_writable(dir: &Path) -> Result<(), String> {
         .map_err(explain)?;
     std::fs::remove_file(&probe).map_err(explain)?;
     Ok(())
+}
+
+/// Design 116 §4-5: the scratch files a crash can leave - the backup check's `backup-check-*.db` in `data/`, a
+/// `.partial` copy in `data/backups/` (`backups::snapshot`'s copy across filesystems). Run at startup, before anything writes one; best-effort.
+pub fn sweep_scratch(data_dir: &Path) {
+    // The backup check's scratch copies in data/ (`backups::check_file`).
+    if let Ok(entries) = std::fs::read_dir(data_dir) {
+        for entry in entries.filter_map(Result::ok) {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with(crate::handlers::backups::CHECK_SCRATCH_PREFIX)
+                && name.ends_with(".db")
+            {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
+    let backups = data_dir.join("backups");
+    let Ok(entries) = std::fs::read_dir(&backups) else {
+        return;
+    };
+    for entry in entries.filter_map(Result::ok) {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.ends_with(crate::handlers::backups::PARTIAL_SUFFIX) {
+            match std::fs::remove_file(entry.path()) {
+                Ok(()) => tracing::info!("removed a partial backup copy: {name}"),
+                Err(err) => tracing::warn!("can't remove {name}: {err}"),
+            }
+        }
+    }
 }
 
 /// The marker the PWA's restore writes in the container: one backup file name.
@@ -502,6 +542,40 @@ mod tests {
         let err = check_data_writable(&file.join("data")).unwrap_err();
         assert!(err.contains("is not writable by uid"), "{err}");
         assert!(err.contains("named volume"), "{err}");
+    }
+
+    /// Design 116 §5: `data/backups` on the host (a bind mount) that this process can't write stops the start with the
+    /// same line as `data/`; a crash's `.partial` copy is swept, a finished backup kept.
+    #[test]
+    fn a_backups_folder_that_cant_be_written_stops_the_start() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let backups = dir.path().join("data").join("backups");
+        assert_eq!(check_data_writable(&backups), Ok(()));
+        std::fs::write(backups.join("backup-20261118-020000.zip"), "zip").unwrap();
+        std::fs::write(backups.join("pre-migrate-0157-0158.db.partial"), "half").unwrap();
+        sweep_scratch(&dir.path().join("data"));
+        let mut left: Vec<String> = std::fs::read_dir(&backups)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+            .collect();
+        left.sort();
+        assert_eq!(left, ["backup-20261118-020000.zip"]);
+        // Root ignores the mode bits: the check can't fail for it.
+        if rustix::process::getuid().is_root() {
+            return;
+        }
+        std::fs::set_permissions(&backups, std::fs::Permissions::from_mode(0o500)).unwrap();
+        let err = check_data_writable(&backups).unwrap_err();
+        std::fs::set_permissions(&backups, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(err.contains("backups/ is not writable by uid"), "{err}");
+        assert!(
+            err.contains(&format!(
+                "chown {uid}:{uid} backups",
+                uid = rustix::process::getuid().as_raw()
+            )),
+            "{err}"
+        );
     }
 
     #[test]

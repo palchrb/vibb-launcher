@@ -29,6 +29,7 @@ mod handlers;
 mod i18n;
 mod ics;
 mod install_now;
+mod integration_health;
 mod jar_signature;
 mod keys;
 mod kid_lock;
@@ -312,10 +313,14 @@ async fn main() {
 
     // data/ must be writable before anything else (design 22 §6: a bind mount isn't seeded from
     // the image).
-    if let Err(err) = startup::check_data_writable(std::path::Path::new("data")) {
-        tracing::error!("{err}");
-        std::process::exit(1);
+    // Design 116 §5: data/backups too - in Docker a folder on the host, which must belong to uid 65532.
+    for dir in ["data", "data/backups"] {
+        if let Err(err) = startup::check_data_writable(std::path::Path::new(dir)) {
+            tracing::error!("{err}");
+            std::process::exit(1);
+        }
     }
+    startup::sweep_scratch(std::path::Path::new("data"));
 
     // A restore asked for in data/restore_request (the PWA's in the container, the owner's over
     // SSH on a systemd install): applied before the database is opened, and undone if the
@@ -556,6 +561,11 @@ async fn main() {
     music::flag_missing_files(&state.db, &state.music_files_dir).await;
 
     tokio::task::spawn(handlers::backups::run_scheduled_backups(state.clone()));
+    // Design 116 §4: the newest backup checked, if it has no row yet.
+    tokio::task::spawn(handlers::backups::check_newest_unchecked(
+        state.db.clone(),
+        state.data_dir.to_path_buf(),
+    ));
     // Software Updates shows the newest release without waiting on GitHub.
     let release_state = state.clone();
     tokio::task::spawn(async move {

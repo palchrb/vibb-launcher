@@ -584,6 +584,10 @@ pub struct DeviceStatus {
     /// `None` without the hold. [DeviceStatus::paused_at] keeps a held report paused up to it.
     #[sqlx(default)]
     pub setup_hold_until_ms: Option<i64>,
+    /// Design 116 §3.4 (migration 0158): the report's `vpn_filter`, cleaned (`mobile_network::clean_vpn_filter`); read
+    /// through `mobile_network::vpn_filter_report`.
+    #[sqlx(default)]
+    pub vpn_filter_json: Option<String>,
 }
 
 /// The launcher's longest "pause all restrictions" (`RESTRICTIONS_PAUSE_DURATION_MS`, 2 hours from the PIN or the
@@ -1645,6 +1649,10 @@ pub struct StatusReportRequest {
     /// `mobile_network::clean_mobile`.
     #[serde(default)]
     pub mobile_data: Option<serde_json::Value>,
+    /// Design 116 §3.1: the web filter's state at report time, `{state, down_ms?, period?}`, raw - cleaned by
+    /// `mobile_network::clean_vpn_filter`. Absent from an older launcher: nothing raised.
+    #[serde(default)]
+    pub vpn_filter: Option<serde_json::Value>,
     /// Design 98 §5.1: `{on, going_on, assistant, wifi_kept, last_error,
     /// default_apps_changed, periods}`, raw - cleaned by `airplane_mode::clean`.
     #[serde(default)]

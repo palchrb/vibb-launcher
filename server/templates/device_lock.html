@@ -253,6 +253,16 @@
             <div class="attention-text">{{ self.t("device.weather.needs_position") }}<div class="attention-sub"><a href="/devices/{{ device.id }}/location-settings">{{ self.t("device.weather.needs_position_link") }}</a></div></div>
         </div>
         {% endif %}
+        {#- Design 116 §2.3: MET's Attention row, the same words. #}
+        {% if weather.met_blocked %}
+        <div class="attention attention-action" data-note="weather-blocked">
+            <div class="attention-text">{{ self.t("device.lock.weather.blocked") }}<div class="attention-sub"><details class="info"><summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("device.lock.weather.blocked_info") }}</p></div></details></div></div>
+        </div>
+        {% else if weather.met_down %}
+        <div class="attention attention-action" data-note="weather-down">
+            <span class="attention-text">{{ self.t("device.lock.weather.down") }}</span>
+        </div>
+        {% endif %}
         <div class="group">
             <form method="post" action="/devices/{{ device.id }}/weather/lock#weather-lock" class="cell" id="weather-lock">
                 <label class="row">
