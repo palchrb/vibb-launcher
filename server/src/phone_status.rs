@@ -4,7 +4,9 @@
 //!
 //! 1. not set up, access removed, not seen yet (the phone can't tell more);
 //! 2. **turned off** - design 38's `phone_off` later than every `phone_on` and status report
-//!    (`parent_events::offs_now`): "Turned off 21:14 · battery was 3 %";
+//!    (`parent_events::offs_now`): "Turned off 21:14 · battery was 3 %"; then **a quiet the phone or the parent
+//!    chose** ([Held], design 121 §4.3), grey: Vibb's Flymodus switch told the server before the radios went
+//!    ("Airplane mode on since 21:03"), or abroad with Roaming Av ("Abroad · no data");
 //! 3. **offline** (`streams::connection_state`): "Offline · last seen 13:05";
 //! 4. **a rule locks now**: the lock's words · the battery;
 //! 5. **low battery** (the phone's own `low`, latched in `devices.battery_low_since`, while it
@@ -12,11 +14,12 @@
 //! 6. otherwise today's screen time · the battery ("4 min today · 100 %, charging"), or "Online"
 //!    when the phone said neither.
 //!
-//! 4 to 6 get **"No contact · last seen 12 min ago"** before them while the phone has been away
-//! (no stream) for [NO_CONTACT_AFTER_MINUTES] or more (the user's pick of 2026-11-01, "a phone that
-//! is off or out of touch says so"); under that it reads as online - a sleeping phone drops its
-//! stream for a moment all the time, not worth a word. The avatar's [dot] says the same: green
-//! online or away under 10 min, orange with "No contact", grey turned off, offline or not reachable.
+//! 4 to 6 get **"No contact · last seen 12 min ago"** before them while the phone is away past its
+//! green minute (`streams::reach`, design 121: a minute after its stream closed, 35 min without a contact
+//! while one is "open"; the user's pick of 2026-11-01, "a phone that is off or out of touch says so"); under
+//! that it reads as online - a network change drops the stream for a moment, not worth a word. The avatar's
+//! [dot] says the same: green online or in the green minute, orange with "No contact", grey turned off, in a
+//! chosen quiet, offline or not reachable.
 //!
 //! No "seen 7 min ago" and no battery age while the phone is in touch - the dot says that. The
 //! header's line is the same lead ("Online" for the last case), then the zone the phone is in now ("Test since
@@ -30,25 +33,56 @@ use chrono::{DateTime, Utc};
 
 use crate::display_time::Zone;
 use crate::i18n::{t, t_params};
+use crate::models::DeviceStatus;
 use crate::parent_events::OffSince;
 use crate::streams::ConnectionState;
 use crate::time_state::{LockBadge, ScreenTime};
 
-/// Away (no stream) this long or longer: "No contact · last seen 12 min ago" and the orange dot;
-/// under it the phone reads as online. Away lasts `streams::AWAY_WINDOW_MINUTES` (45); past that it
-/// is Offline.
-pub const NO_CONTACT_AFTER_MINUTES: i64 = 10;
-
 /// The avatar's dot, saying what the line leads with.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Dot {
-    /// Online, or away under [NO_CONTACT_AFTER_MINUTES].
+    /// Online, or away in its green minute (`streams::reach`).
     Green,
-    /// Away [NO_CONTACT_AFTER_MINUTES] or longer: "No contact".
+    /// Away past it: "No contact".
     Orange,
-    /// Turned off, offline, or a phone that can't be reached (not set up, access removed, not
-    /// seen yet).
+    /// Turned off, a chosen quiet ([Held]), offline, or a phone that can't be reached (not set up,
+    /// access removed, not seen yet).
     Grey,
+}
+
+/// Design 121 §4.3: a quiet the phone or the parent chose, so not a fault - grey, never "No contact", never pushed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Held {
+    /// Vibb's Flymodus switch told the server before the radios went, and nothing reached it since
+    /// (`airplane_mode::held_since`): "Airplane mode on since 21:03" for as long as that holds.
+    Airplane(DateTime<Utc>),
+    /// Abroad with Roaming Av (`mobile_network::abroad_no_data`), past the green minute: "Abroad · no data".
+    AbroadNoData,
+}
+
+/// The [Held] quiet of a phone that is not online, from its latest report and the parent's stored Roaming
+/// (`device_policy.abroad`). Flight mode at once (the phone said so before it went); abroad only past the green
+/// minute, as "No contact" would be.
+pub fn held(
+    connection: &ConnectionState,
+    latest: Option<&DeviceStatus>,
+    abroad: &str,
+    now: DateTime<Utc>,
+) -> Option<Held> {
+    let latest = latest?;
+    let last_contact = match connection {
+        ConnectionState::Away { last_contact, .. } | ConnectionState::Offline { last_contact } => {
+            *last_contact
+        }
+        _ => return None,
+    };
+    if let Some(since) = crate::airplane_mode::held_since(latest, last_contact) {
+        return Some(Held::Airplane(since));
+    }
+    let quiet = matches!(connection, ConnectionState::Offline { .. })
+        || no_contact(connection, now).is_some();
+    (quiet && crate::mobile_network::abroad_no_data(abroad, latest, now.timestamp_millis()))
+        .then_some(Held::AbroadNoData)
 }
 
 impl Dot {
@@ -62,7 +96,7 @@ impl Dot {
     }
 }
 
-/// The dot of a phone's connection, `off` while it is turned off ([Facts::off]).
+/// The dot of a phone's connection, `off` while it is turned off ([Facts::off]) or in a chosen quiet ([Facts::held]).
 pub fn dot(connection: &ConnectionState, off: bool, now: DateTime<Utc>) -> Dot {
     match connection {
         _ if off => Dot::Grey,
@@ -73,14 +107,13 @@ pub fn dot(connection: &ConnectionState, off: bool, now: DateTime<Utc>) -> Dot {
     }
 }
 
-/// Away [NO_CONTACT_AFTER_MINUTES] or longer: the last contact.
+/// Away past its green minute (`streams::reach`): the last contact.
 pub fn no_contact(connection: &ConnectionState, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
     match *connection {
-        ConnectionState::Away { last_contact }
-            if now - last_contact >= chrono::Duration::minutes(NO_CONTACT_AFTER_MINUTES) =>
-        {
-            Some(last_contact)
-        }
+        ConnectionState::Away {
+            last_contact,
+            green_until,
+        } if now >= green_until => Some(last_contact),
         _ => None,
     }
 }
@@ -107,6 +140,8 @@ pub struct Facts<'a> {
     pub connection: &'a ConnectionState,
     /// Turned off and not on since ([crate::parent_events::off_since]).
     pub off: Option<&'a OffSince>,
+    /// A quiet the phone or the parent chose ([held]).
+    pub held: Option<Held>,
     /// While a rule locks the phone.
     pub lock: Option<&'a LockBadge>,
     pub battery: Option<Battery>,
@@ -207,6 +242,7 @@ pub type Line = Vec<Part>;
 enum Lead<'a> {
     Alone(&'static str),
     Off(&'a OffSince),
+    Held(Held),
     Offline(DateTime<Utc>),
     Lock(&'a LockBadge),
     Low(Battery),
@@ -222,6 +258,9 @@ fn lead<'a>(facts: &Facts<'a>) -> Lead<'a> {
     }
     if let Some(off) = facts.off {
         return Lead::Off(off);
+    }
+    if let Some(held) = facts.held {
+        return Lead::Held(held);
     }
     if let ConnectionState::Offline { last_contact } = facts.connection {
         return Lead::Offline(*last_contact);
@@ -268,8 +307,8 @@ fn rest(lead: &Lead, facts: &Facts, zone: &Zone, now: DateTime<Utc>) -> Line {
     }
 }
 
-/// "No contact · last seen 12 min ago" (nb "Ingen kontakt · sist sett for 12 min siden"): away
-/// [NO_CONTACT_AFTER_MINUTES] or longer, before a lead that would otherwise read as in touch.
+/// "No contact · last seen 12 min ago" (nb "Ingen kontakt · sist sett for 12 min siden"): away past
+/// its green minute ([no_contact]), before a lead that would otherwise read as in touch.
 fn no_contact_line(lead: &Lead, facts: &Facts, zone: &Zone, now: DateTime<Utc>) -> Option<Line> {
     if !matches!(lead, Lead::Lock(_) | Lead::Low(_) | Lead::Plain) {
         return None;
@@ -330,7 +369,7 @@ pub fn with_roaming(
 /// Design 98 §6.2: "Flymodus på siden 21:03" (`since`, `airplane_mode::on_since`). It takes the place of the line
 /// that says the phone isn't heard from - "Offline · last seen 13:05" or "No contact · last seen 12 min ago" - and
 /// goes last on the second line while the phone is in touch (airplane mode with Wi-Fi kept). A phone not set up,
-/// without access, not seen yet or turned off keeps its line.
+/// without access, not seen yet, turned off or [Held] (whose lead already says it) keeps its line.
 pub fn with_airplane(
     mut lines: Vec<Line>,
     facts: &Facts,
@@ -353,7 +392,7 @@ pub fn with_airplane(
     .titled(zone.exact(since));
     let lead = lead(facts);
     match lead {
-        Lead::Alone(_) | Lead::Off(_) => lines,
+        Lead::Alone(_) | Lead::Off(_) | Lead::Held(_) => lines,
         Lead::Offline(_) => {
             match lines.first_mut() {
                 Some(first) => *first = vec![part],
@@ -433,6 +472,30 @@ fn lead_line(lead: &Lead, facts: &Facts, zone: &Zone, now: DateTime<Utc>) -> Lin
             );
             line
         }
+        Lead::Held(Held::Airplane(since)) => vec![
+            Part::new(
+                t_params(
+                    lang,
+                    "devices.status.airplane_since",
+                    &[("at", &zone.since(*since, now))],
+                ),
+                Tone::Off,
+                Some("airplane"),
+            )
+            .titled(zone.exact(*since)),
+        ],
+        Lead::Held(Held::AbroadNoData) => vec![
+            Part::new(
+                t(lang, "devices.status.abroad").to_string(),
+                Tone::Off,
+                Some("abroad"),
+            ),
+            Part::new(
+                t(lang, "devices.status.no_data").to_string(),
+                Tone::Plain,
+                None,
+            ),
+        ],
         Lead::Offline(at) => vec![
             Part::new(
                 t(lang, "devices.status.offline").to_string(),
@@ -560,6 +623,7 @@ mod tests {
         Facts {
             connection,
             off: None,
+            held: None,
             lock: None,
             battery: Some(Battery {
                 level: 100,
@@ -739,13 +803,11 @@ mod tests {
             both(&f),
             [pair("Online", "Online"), pair("På nett", "På nett")]
         );
-        let away = ConnectionState::Away {
-            last_contact: now(),
-        };
+        let away = away(0);
         assert_eq!(both(&facts(&away))[1].0, "100 %");
         let mut quiet = facts(&away);
         quiet.battery = None;
-        // Away under 10 min reads as online, as its green dot says.
+        // Away in its green minute reads as online, as its green dot says.
         assert_eq!(both(&quiet)[1], pair("På nett", "På nett"));
 
         let budget = ScreenTime {
@@ -828,15 +890,18 @@ mod tests {
         assert!(row(&f, &en, now())[0].says_label());
     }
 
+    /// Away, reachable last `minutes` ago (its last contact then), green for the minute after.
     fn away(minutes: i64) -> ConnectionState {
+        let at = now() - chrono::Duration::minutes(minutes);
         ConnectionState::Away {
-            last_contact: now() - chrono::Duration::minutes(minutes),
+            last_contact: at,
+            green_until: at + chrono::Duration::minutes(crate::streams::CLOSE_GRACE_MINUTES),
         }
     }
 
     /// The dot and the line agree (2026-11-01, "a phone that is off or out of touch says so"):
-    /// green in touch or away under 10 min, orange "No contact" from 10 min, grey turned off,
-    /// offline or not reachable.
+    /// green in touch or away in its green minute, orange "No contact" after it (design 121), grey
+    /// turned off, offline or not reachable.
     #[test]
     fn the_dot_says_what_the_line_leads_with() {
         let gone = ConnectionState::Offline {
@@ -845,8 +910,11 @@ mod tests {
         for (connection, off, dot_is) in [
             (online(), false, Dot::Green),
             (away(0), false, Dot::Green),
-            (away(NO_CONTACT_AFTER_MINUTES - 1), false, Dot::Green),
-            (away(NO_CONTACT_AFTER_MINUTES), false, Dot::Orange),
+            (
+                away(crate::streams::CLOSE_GRACE_MINUTES),
+                false,
+                Dot::Orange,
+            ),
             (away(44), false, Dot::Orange),
             (gone, false, Dot::Grey),
             (ConnectionState::NotSetUp, false, Dot::Grey),
@@ -863,16 +931,16 @@ mod tests {
             [Dot::Green, Dot::Orange, Dot::Grey].map(|d| d.css()),
             ["online", "away", "offline"]
         );
-        // Under 10 min the line is as in touch.
-        let nine = away(9);
+        // In the green minute the line is as in touch.
+        let fresh = away(0);
         assert_eq!(
-            both(&facts(&nine)),
+            both(&facts(&fresh)),
             [
                 pair("100 %", "Online · 100 %"),
                 pair("100 %", "På nett · 100 %")
             ]
         );
-        // From 10 min "No contact" leads, the rest of the row's line after it.
+        // After it "No contact" leads, the rest of the row's line after it.
         let ten = away(10);
         assert_eq!(
             both(&facts(&ten)),
@@ -960,6 +1028,134 @@ mod tests {
             (Some("seen"), Some("2026-11-01 12:40:00 CET"))
         );
     }
+    /// A latest report at `reported` with this `airplane_mode` and `data_roaming`.
+    fn report(reported: &str, airplane: Option<&str>, roaming: Option<&str>) -> DeviceStatus {
+        DeviceStatus {
+            reported_at: reported.to_string(),
+            airplane_mode_json: airplane.map(str::to_string),
+            data_roaming_json: roaming.map(str::to_string),
+            ..Default::default()
+        }
+    }
+
+    /// Design 121 §4.3/§7: flight mode through Vibb's switch and Roaming Av abroad are grey for as long as they last;
+    /// a phone in touch, or one heard from after the report, reads normally.
+    #[test]
+    fn a_chosen_quiet_is_grey_for_as_long_as_it_lasts() {
+        let going = r#"{"on":false,"going_on":true,"periods":[]}"#;
+        let on = r#"{"on":true,"going_on":false,"periods":[{"on_ms":1762000000000,"on_by":"kid","off_ms":null}]}"#;
+        let offline = |at: &str| ConnectionState::Offline {
+            last_contact: utc(at),
+        };
+        // `going_on` 3 h ago, nothing since, no stream: grey, all night, with no green minute.
+        let three_h = report("2026-11-01 09:00:00", Some(going), None);
+        assert_eq!(
+            held(
+                &offline("2026-11-01 09:00:01"),
+                Some(&three_h),
+                "home",
+                now()
+            ),
+            Some(Held::Airplane(utc("2026-11-01 09:00:00")))
+        );
+        // `on`: since the open period's start.
+        let on_report = report("2026-11-01 09:00:00", Some(on), None);
+        assert_eq!(
+            held(
+                &offline("2026-11-01 09:00:00"),
+                Some(&on_report),
+                "home",
+                now()
+            ),
+            DateTime::from_timestamp_millis(1_762_000_000_000).map(Held::Airplane)
+        );
+        // Two minutes ago, its stream closed then: grey at once.
+        let fresh = report("2026-11-01 11:58:00", Some(going), None);
+        let closed = ConnectionState::Away {
+            last_contact: utc("2026-11-01 11:58:00"),
+            green_until: utc("2026-11-01 12:30:00"),
+        };
+        assert!(matches!(
+            held(&closed, Some(&fresh), "home", now()),
+            Some(Held::Airplane(_))
+        ));
+        // A request 20 s after the report, or a live stream (Wi-Fi kept): the normal state.
+        let heard = ConnectionState::Away {
+            last_contact: utc("2026-11-01 11:58:20"),
+            green_until: utc("2026-11-01 11:59:20"),
+        };
+        assert_eq!(held(&heard, Some(&fresh), "home", now()), None);
+        assert_eq!(held(&online(), Some(&fresh), "home", now()), None);
+
+        // Abroad with Roaming Av: grey past the green minute, as long as the last report says abroad.
+        let abroad = r#"{"locked":true,"roaming":true,"data_active":false,"where":"abroad"}"#;
+        let home = r#"{"locked":true,"roaming":false,"data_active":true,"where":"home"}"#;
+        let out = report("2026-11-01 11:00:00", None, Some(abroad));
+        let gone = away(5);
+        assert_eq!(
+            held(&gone, Some(&out), "off", now()),
+            Some(Held::AbroadNoData)
+        );
+        assert_eq!(
+            held(&away(0), Some(&out), "off", now()),
+            None,
+            "green minute"
+        );
+        assert_eq!(
+            held(&gone, Some(&out), "vibb", now()),
+            None,
+            "Bare Vibb has data"
+        );
+        let back = report("2026-11-01 11:00:00", None, Some(home));
+        assert_eq!(held(&gone, Some(&back), "off", now()), None);
+        let paused = DeviceStatus {
+            restrictions_paused: true,
+            ..out.clone()
+        };
+        assert_eq!(
+            held(&gone, Some(&paused), "off", now()),
+            None,
+            "a pause lifts it"
+        );
+
+        // The words: grey, alone, in both languages; never "No contact".
+        let mut f = facts(&gone);
+        f.held = Some(Held::Airplane(utc("2026-11-01 11:03:00")));
+        assert_eq!(
+            both(&f),
+            [
+                pair(
+                    "Airplane mode on since 12:03",
+                    "Airplane mode on since 12:03"
+                ),
+                pair("Flymodus på siden 12:03", "Flymodus på siden 12:03"),
+            ]
+        );
+        let zone = Zone::from_setting("Europe/Oslo");
+        let line = row(&f, &zone, now());
+        assert_eq!(
+            (line[0].tone.css(), line[0].hook),
+            ("state-offline", Some("airplane"))
+        );
+        // The header's airplane part isn't said twice.
+        let lines = with_airplane(
+            header(&f, &zone, now()),
+            &f,
+            &zone,
+            now(),
+            Some(utc("2026-11-01 11:03:00")),
+        );
+        assert_eq!(words(&one_line(lines)), "Airplane mode on since 12:03");
+        f.held = Some(Held::AbroadNoData);
+        assert_eq!(
+            both(&f),
+            [
+                pair("Abroad · no data", "Abroad · no data"),
+                pair("I utlandet · ingen data", "I utlandet · ingen data"),
+            ]
+        );
+    }
+
     /// Design 101 §3.1: the header is one line - roaming and airplane mode keep their places in it, the zone alone has
     /// the pin, and a phone that is off, offline or unreachable has its word alone.
     #[test]

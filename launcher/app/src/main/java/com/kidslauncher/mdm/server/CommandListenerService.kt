@@ -13,6 +13,8 @@ import android.os.SystemClock
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.kidslauncher.mdm.COMMAND_LISTENER_NOTIFICATION_ID
+import com.kidslauncher.mdm.assistant.AIRPLANE_STREAM_HOLD_MS
+import com.kidslauncher.mdm.assistant.airplaneHoldsStream
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.push.BackstopAlarm
 import com.kidslauncher.mdm.push.LastByteInterceptor
@@ -101,6 +103,12 @@ class CommandListenerService : Service() {
     private var streamNetwork: Long? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private val networkSettled = Runnable { followNetwork() }
+    /** Design 121 §4.4: elapsed realtime until which Vibb's airplane switch holds the stream closed (0 = no hold) -
+     * main thread. */
+    private var airplaneHoldUntil = 0L
+    private val airplaneHoldEnds = Runnable { releaseAirplaneHold() }
+
+    private fun airplaneHeld(): Boolean = SystemClock.elapsedRealtime() < airplaneHoldUntil
 
     private fun buildClient(path: ServerPath, stamp: AtomicLong): OkHttpClient {
         // Security review S-M1: the path read fresh per connect - the server may be reachable only through the
@@ -201,7 +209,7 @@ class CommandListenerService : Service() {
      * syncs, the wake lock and the earlier backstop apply) and reconnected.
      */
     private fun checkStream(reason: String, restartAttempt: Boolean) {
-        if (stopped) return
+        if (stopped || airplaneHeld()) return
         if (!PushState.sseConnected) {
             if (eventSource != null && !restartAttempt) return
             handler.removeCallbacks(connectRunnable)
@@ -254,7 +262,7 @@ class CommandListenerService : Service() {
      * dropped at once - not after its 5-min read timeout - with the shared pool's connections, and opened again on the
      * new one (with no network the open fails and backs off until the next change). */
     private fun followNetwork() {
-        if (stopped || !sseReconnectOnNetwork(eventSource != null, streamNetwork, defaultNetwork)) return
+        if (stopped || airplaneHeld() || !sseReconnectOnNetwork(eventSource != null, streamNetwork, defaultNetwork)) return
         Log.i(LOG_TAG, "Default network changed - reconnecting the command stream")
         val old = eventSource
         eventSource = null
@@ -272,7 +280,7 @@ class CommandListenerService : Service() {
     /** The token is read off the main thread (design r10, code QA Q-6: a Keystore open, and while it is unreadable
      * nothing is memoised - every 30 s retry would be a keystore2 round trip on main), then the stream opens here. */
     private fun connect() {
-        if (stopped) return
+        if (stopped || airplaneHeld()) return
         eventSource?.cancel()
         eventSource = null
         val gen = ++connectGen
@@ -408,11 +416,53 @@ class CommandListenerService : Service() {
     }
 
     private fun scheduleReconnect() {
-        if (stopped) return
+        if (stopped || airplaneHeld()) return
         handler.removeCallbacks(connectRunnable)
         handler.postDelayed(connectRunnable, reconnectDelayMs)
         // Exponential backoff so a server that's genuinely down isn't hammered.
         reconnectDelayMs = (reconnectDelayMs * 2).coerceAtMost(MAX_RECONNECT_DELAY_MS)
+    }
+
+    /**
+     * Main thread. Design 121 §4.4: before Vibb's switch turns airplane mode on, the stream is cancelled when airplane
+     * mode will take its network ([airplaneHoldsStream]) - an RST_STREAM on the pooled HTTP/2 connection, which stays
+     * for the turn-on's `going_on` report, so the front has the close before the report's answer - and its reconnect is
+     * held until the route ends. No drop bookkeeping: no reconnect wake lock, no earlier backstop.
+     */
+    private fun holdForAirplane(wifiKept: Boolean?): Boolean {
+        // The stream's network, or the default one while it is down (a reconnect then would race the radios).
+        val network = if (eventSource != null) streamNetwork else defaultNetwork
+        if (stopped || !airplaneHoldsStream(onWifi(network), wifiKept)) return false
+        airplaneHoldUntil = SystemClock.elapsedRealtime() + AIRPLANE_STREAM_HOLD_MS
+        handler.removeCallbacks(airplaneHoldEnds)
+        handler.postDelayed(airplaneHoldEnds, AIRPLANE_STREAM_HOLD_MS)
+        handler.removeCallbacks(connectRunnable)
+        connectGen++
+        val source = eventSource
+        eventSource = null
+        source?.cancel()
+        if (PushState.sseConnected) lastByteBeforeDrop = lastByte?.get()
+        PushState.sseConnected = false
+        Log.i(LOG_TAG, "Command stream closed for airplane mode")
+        return true
+    }
+
+    /** Main thread: the route ended (or the hold ran out) - a stream that is down opens again now. */
+    private fun releaseAirplaneHold() {
+        handler.removeCallbacks(airplaneHoldEnds)
+        if (airplaneHoldUntil == 0L) return
+        airplaneHoldUntil = 0L
+        reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS
+        checkStream("airplane", restartAttempt = true)
+    }
+
+    /** Whether the network with this handle is Wi-Fi (unknown: no). */
+    private fun onWifi(handle: Long?): Boolean = try {
+        handle != null && getSystemService(ConnectivityManager::class.java)
+            ?.getNetworkCapabilities(Network.fromNetworkHandle(handle))
+            ?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) == true
+    } catch (e: Exception) {
+        false
     }
 
     companion object {
@@ -435,6 +485,29 @@ class CommandListenerService : Service() {
         fun checkStream(reason: String) {
             val service = running ?: return
             service.handler.post { service.checkStream(reason, restartAttempt = false) }
+        }
+
+        /**
+         * Design 121 §4.4, from the airplane route's thread before its `going_on` report: closes the stream and holds
+         * its reconnect when airplane mode will take its network ([holdForAirplane]); waits for the main thread, 1 s at
+         * most. Returns whether it holds - then [releaseAirplaneHold] when the route ends. A no-op without the anchor.
+         */
+        fun holdForAirplane(wifiKept: Boolean?): Boolean {
+            val service = running ?: return false
+            val held = java.util.concurrent.atomic.AtomicBoolean(false)
+            val done = java.util.concurrent.CountDownLatch(1)
+            service.handler.post {
+                held.set(service.holdForAirplane(wifiKept))
+                done.countDown()
+            }
+            done.await(1, TimeUnit.SECONDS)
+            return held.get()
+        }
+
+        /** The airplane route ended: the stream may open again. */
+        fun releaseAirplaneHold() {
+            val service = running ?: return
+            service.handler.post { service.releaseAirplaneHold() }
         }
 
         /** Starts the anchor (a no-op if it runs). Safe to call repeatedly. */

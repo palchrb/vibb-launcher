@@ -63,7 +63,11 @@ async fn each_phone_shows_its_connection() {
     // Away: a fresh report, no stream.
     let (ella, ella_token) = app.enrolled_device("Ella").await;
     app.post_status(&ella_token, json!({})).await;
-    // Away 20 min: last seen then (nothing in memory), no stream.
+    // Away 20 min: last seen then (nothing in memory), no stream - the server up for hours, so no restart grace
+    // (design 121).
+    app.state
+        .command_streams
+        .set_started(chrono::Utc::now() - chrono::Duration::hours(3));
     let (frida, _) = app.enrolled_device("Frida").await;
     sqlx::query("UPDATE devices SET last_seen_at = datetime('now', '-20 minutes') WHERE id = ?")
         .bind(frida)
@@ -98,13 +102,13 @@ async fn each_phone_shows_its_connection() {
     assert_eq!(line(&html, anna), "Online");
     assert!(anna_row.contains("<span class=\"state-online\">Online</span>"));
 
-    // Away under 10 min reads as online, its dot green (a sleeping phone drops its stream for a
-    // moment; 2026-11-01).
+    // Away in its green minute reads as online, its dot green (a network change drops the stream
+    // for a moment; 2026-11-01, design 121).
     let ella_row = row(&html, ella);
     assert!(ella_row.contains("avatar-dot dot-online"), "{ella_row}");
     assert_eq!(line(&html, ella), "Online");
     assert!(!ella_row.contains("seen"), "{ella_row}");
-    // Away 10 min or more: the orange dot and "No contact" leading the line.
+    // Away past its green minute: the orange dot and "No contact" leading the line.
     let frida_row = row(&html, frida);
     assert!(frida_row.contains("avatar-dot dot-away"), "{frida_row}");
     assert!(frida_row.contains("data-status=\"away\""), "{frida_row}");

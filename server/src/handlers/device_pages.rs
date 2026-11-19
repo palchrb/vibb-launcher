@@ -455,9 +455,10 @@ pub(crate) async fn load_latest(
 }
 
 /// The Connection group's rows (§3.10): the state, the last contact, the last full report and the
-/// network of the last request.
+/// network of the last request. `held`: a quiet the phone or the parent chose (design 121 §4.3) - grey, never orange.
 fn connection_rows(
     connection: &ConnectionState,
+    held: bool,
     // From the signals, not the state: a Disconnected phone has one too (qa-31-s3-code M1).
     last_contact: Option<DateTime<Utc>>,
     reported_at: Option<DateTime<Utc>>,
@@ -491,7 +492,10 @@ fn connection_rows(
         ConnectionState::Away { .. } => "devices.status.away",
         ConnectionState::Offline { .. } => "devices.status.offline",
     };
-    status.lead = Some((t(lang, word), connection.css()));
+    status.lead = Some((
+        t(lang, word),
+        if held { "offline" } else { connection.css() },
+    ));
     rows.push(status);
     if matches!(connection, ConnectionState::NotSetUp) {
         return rows;
@@ -569,8 +573,11 @@ pub async fn view_about(
     let reported_at = latest
         .as_ref()
         .and_then(|s| crate::display_time::parse_db_utc(&s.reported_at));
+    let held = device.enrolled_at.is_some()
+        && crate::phone_status::held(&connection, latest.as_ref(), &policy.abroad, now).is_some();
     let connection_rows = connection_rows(
         &connection,
+        held,
         crate::streams::last_contact(&crate::handlers::devices::connection_inputs(
             &state, &device,
         )),

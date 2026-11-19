@@ -192,10 +192,16 @@ async fn list_row(
     } else {
         (None, None, None)
     };
+    let held = if device.enrolled_at.is_some() {
+        held_of(state, device.id, &connection, now).await
+    } else {
+        None
+    };
     let line = crate::phone_status::row(
         &crate::phone_status::Facts {
             connection: &connection,
             off,
+            held,
             lock: lock.as_ref(),
             battery,
             low_latched: device.battery_low_since.is_some(),
@@ -212,7 +218,7 @@ async fn list_row(
         meter: meter_of(screen_time.as_ref(), std::slice::from_ref(&line)),
         id: device.id,
         name: device.name,
-        dot: crate::phone_status::dot(&connection, off.is_some(), now).css(),
+        dot: crate::phone_status::dot(&connection, off.is_some() || held.is_some(), now).css(),
         line,
         attention,
     }
@@ -338,6 +344,48 @@ pub(crate) fn connection_of(
     crate::streams::connection_state(&connection_inputs(state, device), now)
 }
 
+/// Design 121 §4.3: the quiet a phone that isn't online chose (`phone_status::held`), from its latest report and the
+/// parent's Roaming - read only for such a phone (the Devices list's rows). A failed read is no quiet (logged).
+pub(crate) async fn held_of(
+    state: &AppState,
+    device_id: i64,
+    connection: &crate::streams::ConnectionState,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Option<crate::phone_status::Held> {
+    use crate::streams::ConnectionState;
+    if !matches!(
+        connection,
+        ConnectionState::Away { .. } | ConnectionState::Offline { .. }
+    ) {
+        return None;
+    }
+    let latest = sqlx::query_as::<_, crate::models::DeviceStatus>(
+        "SELECT * FROM device_status WHERE device_id = ? ORDER BY reported_at DESC, id DESC LIMIT 1",
+    )
+    .bind(device_id)
+    .fetch_optional(&state.db)
+    .await
+    .unwrap_or_else(|err| {
+        tracing::error!(device_id, %err, "can't read the last report for the quiet");
+        None
+    });
+    let abroad: Option<String> =
+        sqlx::query_scalar("SELECT abroad FROM device_policy WHERE device_id = ?")
+            .bind(device_id)
+            .fetch_optional(&state.db)
+            .await
+            .unwrap_or_else(|err| {
+                tracing::error!(device_id, %err, "can't read the Roaming choice");
+                None
+            });
+    crate::phone_status::held(
+        connection,
+        latest.as_ref(),
+        abroad.as_deref().unwrap_or("off"),
+        now,
+    )
+}
+
 /// The signals [connection_of] combines (About This Phone also reads the last contact from them).
 pub(crate) fn connection_inputs(
     state: &AppState,
@@ -352,6 +400,7 @@ pub(crate) fn connection_inputs(
             .last_seen_at
             .as_deref()
             .and_then(crate::display_time::parse_db_utc),
+        started: Some(state.command_streams.started()),
     }
 }
 
@@ -2402,10 +2451,16 @@ async fn render_device(
         _ => (None, None, false),
     };
     let off = power_off.as_ref().filter(|_| device.enrolled_at.is_some());
-    let dot = crate::phone_status::dot(&connection, off.is_some(), now).css();
+    // Design 121 §4.3: flight mode through Vibb's switch, Roaming Av abroad - grey, never "No contact".
+    let held = latest
+        .as_ref()
+        .filter(|_| device.enrolled_at.is_some())
+        .and_then(|s| crate::phone_status::held(&connection, Some(s), &policy.abroad, now));
+    let dot = crate::phone_status::dot(&connection, off.is_some() || held.is_some(), now).css();
     let header_facts = crate::phone_status::Facts {
         connection: &connection,
         off,
+        held,
         lock: lock.as_ref(),
         battery: latest
             .as_ref()

@@ -43,6 +43,31 @@ class AirplaneRouteTest {
         }
     }
 
+    /** Design 121 §4.4: the stream closes before the radios go unless it is on Wi-Fi that airplane mode keeps. */
+    @Test
+    fun `the stream is held for airplane mode unless kept Wi-Fi carries it`() {
+        assertTrue(airplaneHoldsStream(streamOnWifi = false, wifiKept = true))
+        assertTrue(airplaneHoldsStream(streamOnWifi = false, wifiKept = null))
+        assertTrue(airplaneHoldsStream(streamOnWifi = true, wifiKept = false))
+        assertTrue(airplaneHoldsStream(streamOnWifi = true, wifiKept = null))
+        assertFalse(airplaneHoldsStream(streamOnWifi = true, wifiKept = true))
+    }
+
+    /** Design 121 §4.4: the hold comes before step 2's report, is released in the route's `finally`, and never takes
+     * the drop's reconnect wake lock. */
+    @Test
+    fun `the route closes the stream before its report and releases it in finally`() {
+        val root = listOf(File("src/main/java/com/kidslauncher/mdm"), File("app/src/main/java/com/kidslauncher/mdm")).first { it.exists() }
+        val route = File(root, "assistant/AirplaneRoute.kt").readText()
+        val hold = route.indexOf("CommandListenerService.holdForAirplane(")
+        assertTrue(hold > 0 && hold < route.indexOf("postReportOnly(context, airplaneGoingOn = true)"))
+        val turnOn = route.substringAfter("fun turnOn(").substringBefore("private fun recheckWifiKept(")
+        assertTrue(turnOn.substringAfter("} finally {").contains("CommandListenerService.releaseAirplaneHold()"))
+        val service = File(root, "server/CommandListenerService.kt").readText()
+        val body = service.substringAfter("private fun holdForAirplane(").substringBefore("private fun releaseAirplaneHold(")
+        assertFalse(body.contains("markDown()") || body.contains("takeDropWakeLock()") || body.contains("streamDropped()"))
+    }
+
     @Test
     fun `the emergency refusal, the cool-down`() {
         assertTrue(emergencyBlocks(ecbm = true, lastEmergencyMs = null, nowMs = 1_000_000))

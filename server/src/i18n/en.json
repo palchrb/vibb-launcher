@@ -489,6 +489,8 @@
   "devices.status.last_heard": "last seen {at}",
   "devices.status.no_contact": "No contact",
   "devices.status.last_heard_ago": "last seen {minutes} min ago",
+  "devices.status.abroad": "Abroad",
+  "devices.status.no_data": "no data",
   "devices.status.off": "Turned off {at}",
   "devices.status.off_battery": "battery was {level} %",
   "devices.status.low_battery": "Low battery, {level} %",

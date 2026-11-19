@@ -89,8 +89,8 @@ async fn the_header_says_whether_the_phone_is_connected() {
     );
     assert!(!html.contains("class=\"app-header\""), "{html}");
 
-    // A report, no stream: Away, under 10 min read as online - the green dot -, the battery under
-    // it (a sleeping phone drops its stream for a moment; 2026-11-01).
+    // A report, no stream: Away, in its green minute read as online - the green dot -, the battery
+    // under it (a network change drops the stream for a moment; 2026-11-01, design 121).
     app.post_status(
         &token,
         json!({ "battery": { "level": 100, "charging": false, "low": false } }),
