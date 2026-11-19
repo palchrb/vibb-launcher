@@ -2046,3 +2046,53 @@ async fn both_map_views_offer_full_screen() {
         );
     }
 }
+
+/// 2026-11-19: Location Settings opened from the phone's page (`?from=device`, and only that value) goes back to the
+/// phone's page with the Devices tab lit; the forms carry `from` and a save keeps it, in place.
+#[tokio::test]
+async fn location_settings_goes_back_to_where_it_was_opened_from() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("Anna").await;
+    let uri = format!("/devices/{id}/location-settings");
+    let plain = app.get_page(&uri, &cookie).await.text();
+    assert!(plain.contains(&format!("href=\"/devices/locate?device={id}\"")));
+    assert!(!plain.contains("name=\"from\""));
+    for odd in ["?from=apps", "?from="] {
+        let page = app.get_page(&format!("{uri}{odd}"), &cookie).await.text();
+        assert!(
+            page.contains(&format!("href=\"/devices/locate?device={id}\"")),
+            "{odd}"
+        );
+    }
+    let from = app
+        .get_page(&format!("{uri}?from=device"), &cookie)
+        .await
+        .text();
+    assert!(!from.contains("/devices/locate?device="), "{from}");
+    assert!(from.contains(&format!("href=\"/devices/{id}\"")));
+    assert_eq!(from.matches("name=\"from\" value=\"device\"").count(), 2);
+    let device_page = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(device_page.contains(&format!("{uri}?from=device")));
+    for (path, field) in [
+        ("location-retention", ("days", "1")),
+        ("location-policy", ("mode", "on_request")),
+    ] {
+        let res = app
+            .request_form(
+                Method::POST,
+                &format!("/devices/{id}/{path}"),
+                Some(&cookie),
+                &[field, ("from", "device")],
+            )
+            .await;
+        assert_eq!(
+            res.location(),
+            Some(format!("{uri}?from=device#location-settings").as_str()),
+            "{path}"
+        );
+    }
+}
