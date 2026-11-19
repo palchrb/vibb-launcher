@@ -101,6 +101,24 @@ object MapLinks {
         return "geo:$at?q=${encode(query)}"
     }
 
+    /**
+     * How the target is started (2026-11-19, the user's "Organic Maps in the background doesn't move"; Organic Maps
+     * 2026.11.11 and CoMaps 2026.11.07 on Android 14 and 16, `docs/notes/launcher/map-links.md`):
+     * - Both take `geo:` in `SplashActivity` (standard launch mode, the app's own task), which hands it on to the
+     *   `singleTask` `MwmActivity`. A `FLAG_ACTIVITY_NEW_TASK` start whose intent `filterEquals` the root intent of the
+     *   app's task (a link opened before) only brings that task to the front: the link is lost.
+     * - With the app running, a new pin moves the map, but the place card doesn't open while the previous one is still
+     *   up (Android 16, both apps, any start).
+     * So the app's task is cleared ([clearsTask]): a fresh `MwmActivity` always opens the pin with its card. Not when
+     * the app itself handed us the link - it is on screen, and recreating it there leaves its map black (its old
+     * activity's GL surface teardown comes after the new one's attach); then the fresh [startIdentity] alone keeps the
+     * start from being dropped.
+     */
+    fun clearsTask(referrer: String?, target: String): Boolean = referrer != target
+
+    /** A fresh identity per start: part of `filterEquals` ([android.content.Intent.setIdentifier]), see [clearsTask]. */
+    fun startIdentity(): String = "vibb-map-" + java.util.UUID.randomUUID()
+
     /** The label of a place the server found: "name, address" (either alone, or null). */
     fun placeLabel(name: String?, address: String?): String? = listOfNotNull(name?.takeIf { it.isNotBlank() }, address?.takeIf { it.isNotBlank() })
         .joinToString(", ").takeIf { it.isNotEmpty() }?.let(::cutLabel)

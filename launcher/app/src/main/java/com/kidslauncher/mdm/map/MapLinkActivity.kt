@@ -33,10 +33,11 @@ import okhttp3.RequestBody.Companion.toRequestBody
  * directly, other apps' links reach it through Android's link resolution - opens in Organic Maps (or CoMaps) as a pin
  * with the place's name and address, or as Organic Maps' offline search when no point is found.
  *
- * Translucent, never in Recents, no history, in the caller's task; the target starts in its own task. Installed
- * disabled and enabled only while the parent's switch is on ([MapLinksRuntime.setEnabled]). Over a time rule or the
- * keyguard it finishes showing nothing. A short link or a place id goes to the server (6 s at most, "Åpner kartet …"
- * after 300 ms); leaving cancels it, and nothing starts after that (a late start would be a blocked background start).
+ * Translucent, never in Recents, no history, in the caller's task; the target starts in its own task, cleared unless
+ * the target itself sent the link, so a running app opens every link ([MapLinks.clearsTask]). Installed disabled and
+ * enabled only while the parent's switch is on ([MapLinksRuntime.setEnabled]). Over a time rule or the keyguard it
+ * finishes showing nothing. A short link or a place id goes to the server (6 s at most, "Åpner kartet …" after 300 ms);
+ * leaving cancels it, and nothing starts after that (a late start would be a blocked background start).
  */
 class MapLinkActivity : AppCompatActivity() {
     private var job: Job? = null
@@ -79,7 +80,10 @@ class MapLinkActivity : AppCompatActivity() {
             startActivity(
                 Intent(Intent.ACTION_VIEW, Uri.parse(uri)).setPackage(pkg)
                     .addCategory(Intent.CATEGORY_BROWSABLE)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    // A running app must still open every link with its card (MapLinks.clearsTask).
+                    .addFlags(if (MapLinks.clearsTask(referrer?.host, pkg)) Intent.FLAG_ACTIVITY_CLEAR_TASK else 0)
+                    .setIdentifier(MapLinks.startIdentity()),
             )
             finish()
         } catch (e: Exception) {

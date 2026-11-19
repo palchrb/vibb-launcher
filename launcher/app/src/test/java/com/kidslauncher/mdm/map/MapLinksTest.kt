@@ -192,4 +192,37 @@ class MapLinksTest {
         }
         for (host in MapLinkForms.MAPS_PATH_HOSTS) assertTrue(host, MapLinkForms.isMapLink("https://$host/maps/AbC"))
     }
+
+    /** 2026-11-19: Organic Maps (and CoMaps) already running in the background stayed where it was: a link opened
+     * before was dropped (its task's root intent `filterEquals` the start), and on Android 16 a new pin's card didn't
+     * open while the previous card was up. The target's task is cleared, except when the target itself sent the link
+     * (it is on screen, and recreating it there blacked out its map); every start has its own identity. */
+    @Test
+    fun `the map app is started cleared, with its own identity`() {
+        assertEquals(50, (1..50).map { MapLinks.startIdentity() }.toSet().size)
+        for (target in MapLinks.TARGETS) {
+            assertTrue(MapLinks.clearsTask("me.vibb.launcher", target))
+            assertTrue(MapLinks.clearsTask("io.element.android.x", target))
+            assertTrue(MapLinks.clearsTask(null, target))
+            assertFalse(MapLinks.clearsTask(target, target))
+        }
+        assertTrue(MapLinks.clearsTask("app.comaps.fdroid", "app.organicmaps"))
+        val main = listOf(File("src/main/java"), File("app/src/main/java")).first { it.exists() }
+        val open = main.resolve("com/kidslauncher/mdm/map/MapLinkActivity.kt").readText()
+            .substringAfter("private fun open(").substringBefore("private fun ask(")
+        for (needed in listOf(
+            ".setPackage(pkg)",
+            ".addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)",
+            ".addFlags(if (MapLinks.clearsTask(referrer?.host, pkg)) Intent.FLAG_ACTIVITY_CLEAR_TASK else 0)",
+            ".setIdentifier(MapLinks.startIdentity())",
+        )) {
+            assertTrue(needed, open.contains(needed))
+        }
+        // The handler is the one place the launcher starts a map app.
+        val starters = main.walk().filter { it.extension == "kt" }.filter { f ->
+            val text = f.readText()
+            MapLinks.TARGETS.any { text.contains("setPackage(\"$it\")") } || text.contains("Uri.parse(\"geo:")
+        }.toList()
+        assertEquals(emptyList<File>(), starters)
+    }
 }
