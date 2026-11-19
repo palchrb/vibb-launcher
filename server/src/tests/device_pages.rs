@@ -2206,7 +2206,9 @@ async fn the_permissions_form_returns_to_its_open_details() {
     assert!(!html.contains("data-row=\"update-note\""));
     let anchor = format!("perms-{element}");
     assert!(
-        html.contains(&format!("<details class=\"app-display\" id=\"{anchor}\">")),
+        html.contains(&format!(
+            "<details class=\"app-display app-perms\" id=\"{anchor}\">"
+        )),
         "closed at first"
     );
     // Nothing reported: only the lock screen's media switch (2026-11-04), no camera.
@@ -2359,7 +2361,9 @@ async fn the_lock_media_switch_returns_to_its_open_details() {
     let page = device_page(id, Section::Apps);
     let html = app.get_page(&page, &cookie).await.text();
     let anchor = format!("perms-{pod}");
-    assert!(html.contains(&format!("<details class=\"app-display\" id=\"{anchor}\">")));
+    assert!(html.contains(&format!(
+        "<details class=\"app-display app-perms\" id=\"{anchor}\">"
+    )));
     assert!(html.contains("Media player on the lock screen"));
     assert!(html.contains("title and picture show on the lock screen"));
     assert!(html.contains(&format!(
