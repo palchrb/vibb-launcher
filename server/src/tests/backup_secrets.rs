@@ -162,3 +162,87 @@ async fn the_live_database_keeps_the_tailscale_key() {
     assert_eq!(copied, "");
     copy.close().await;
 }
+
+/// Design 116 §4: the restore path proven with the same file - a family backed up, the backup checked as a restore
+/// would open it, then put through the restore at the start into a fresh data directory, migrated, and the phone read
+/// back.
+#[tokio::test]
+async fn a_backup_restores() {
+    use crate::handlers::backups;
+    let app = TestApp::new().await;
+    let (id, _) = app.enrolled_device("Emma").await;
+    let name = backups::perform_backup(&app.state).await.unwrap();
+    backups::check_and_record(&app.db, &app.state.data_dir, &name).await;
+    let row = crate::integration_health::row(&app.db, "backup", &format!("file:{name}"))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        row.ok_at.is_some() && row.failing_since.is_none(),
+        "{row:?}"
+    );
+
+    let fresh = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(fresh.path().join("backups")).unwrap();
+    std::fs::copy(
+        app.state.data_dir.join("backups").join(&name),
+        fresh.path().join("backups").join(&name),
+    )
+    .unwrap();
+    std::fs::write(fresh.path().join(startup::RESTORE_REQUEST), &name).unwrap();
+    let db_path = fresh.path().join("kidphone.db");
+    let restored = startup::apply_restore_request(fresh.path(), &db_path).unwrap();
+    assert!(restored.is_some());
+    let db = crate::connect_db(&format!("sqlite://{}", db_path.display())).await;
+    let phone: String = sqlx::query_scalar("SELECT name FROM devices WHERE id = ?")
+        .bind(id)
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    assert_eq!(phone, "Emma");
+}
+
+/// Design 116 §4: a backup that can't be read is one orange line on Backups and the family's row on the Devices list;
+/// a good one shows a quiet "checked"; deleting the bad file clears both.
+#[tokio::test]
+async fn a_backup_that_cant_be_read_shows_until_it_is_gone() {
+    use crate::handlers::backups;
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let good = backups::perform_backup(&app.state).await.unwrap();
+    backups::check_and_record(&app.db, &app.state.data_dir, &good).await;
+    let page = app.get_page("/backups", &cookie).await.text();
+    assert!(page.contains("data-checked>checked<"), "{page}");
+    assert!(!page.contains("data-note=\"backup-problem\""));
+
+    // A newer backup whose database is gone.
+    let bad = "backup-29991231-235959.zip";
+    std::fs::write(app.state.data_dir.join("backups").join(bad), b"not a zip").unwrap();
+    backups::check_and_record(&app.db, &app.state.data_dir, bad).await;
+    let page = app.get_page("/backups", &cookie).await.text();
+    assert!(page.contains("data-note=\"backup-problem\""), "{page}");
+    assert!(
+        page.contains("Backup can&#39;t be read") || page.contains("Backup can't be read"),
+        "{page}"
+    );
+    let list = app.get_page("/devices", &cookie).await.text();
+    assert!(list.contains("id=\"backup-warning\""), "{list}");
+
+    let res = app
+        .request_form(
+            axum::http::Method::POST,
+            &format!("/backups/{bad}/delete"),
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER);
+    let list = app.get_page("/devices", &cookie).await.text();
+    assert!(!list.contains("id=\"backup-warning\""), "{list}");
+    assert!(
+        crate::integration_health::row(&app.db, "backup", &format!("file:{bad}"))
+            .await
+            .unwrap()
+            .is_none()
+    );
+}

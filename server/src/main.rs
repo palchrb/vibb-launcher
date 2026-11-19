@@ -561,6 +561,11 @@ async fn main() {
     music::flag_missing_files(&state.db, &state.music_files_dir).await;
 
     tokio::task::spawn(handlers::backups::run_scheduled_backups(state.clone()));
+    // Design 116 §4: the newest backup checked, if it has no row yet.
+    tokio::task::spawn(handlers::backups::check_newest_unchecked(
+        state.db.clone(),
+        state.data_dir.to_path_buf(),
+    ));
     // Software Updates shows the newest release without waiting on GitHub.
     let release_state = state.clone();
     tokio::task::spawn(async move {

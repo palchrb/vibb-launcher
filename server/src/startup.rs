@@ -45,9 +45,20 @@ pub fn check_data_writable(dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Design 116 §5: the scratch files a crash can leave - a `.partial` copy in `data/backups/` (`backups::snapshot`'s copy
-/// across filesystems). Run at startup, before anything writes one; best-effort.
+/// Design 116 §4-5: the scratch files a crash can leave - the backup check's `backup-check-*.db` in `data/`, a
+/// `.partial` copy in `data/backups/` (`backups::snapshot`'s copy across filesystems). Run at startup, before anything writes one; best-effort.
 pub fn sweep_scratch(data_dir: &Path) {
+    // The backup check's scratch copies in data/ (`backups::check_file`).
+    if let Ok(entries) = std::fs::read_dir(data_dir) {
+        for entry in entries.filter_map(Result::ok) {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with(crate::handlers::backups::CHECK_SCRATCH_PREFIX)
+                && name.ends_with(".db")
+            {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
     let backups = data_dir.join("backups");
     let Ok(entries) = std::fs::read_dir(&backups) else {
         return;
