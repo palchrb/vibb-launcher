@@ -127,6 +127,10 @@ struct ContactView {
     /// `/contact-photos/original/{hash}` there. `None` for a photo stored before it (the square is refined).
     original: Option<(String, String)>,
     initial: String,
+    /// The avatar's photo: never for an emergency number (the phone shows the number on its red disc).
+    avatar_photo: Option<String>,
+    /// The placeholder avatar's colour class (`avatar-c0`..`avatar-c5`, `avatar-c-emergency`): the launcher's rule.
+    tone: &'static str,
     /// D6: the row's value ("Anrop og meldinger", "Anrop inn") and its second line ("Melding inn · Hjem").
     summary: String,
     second: Option<String>,
@@ -134,6 +138,27 @@ struct ContactView {
     open: bool,
     /// A refusal under a field: `message_address` or `photo`, and why.
     error: Option<(&'static str, String)>,
+}
+
+/// The launcher's letter-avatar palette (`HomeModel.kt`'s `AVATAR_PALETTE`, in order), picked by
+/// `floorMod(contact id, 6)`: the PWA's `.avatar-c0`..`.avatar-c5` in `static/style.css` and the emergency one are
+/// the same colours (`tests::calls_simpler::the_avatar_palette_is_the_launchers`). The id is the policy's contact id.
+pub(crate) const AVATAR_TONES: [&str; 6] = [
+    "avatar-c0",
+    "avatar-c1",
+    "avatar-c2",
+    "avatar-c3",
+    "avatar-c4",
+    "avatar-c5",
+];
+
+/// A contact's avatar class: the emergency red for an emergency number, else the palette's by contact id.
+pub(crate) fn avatar_tone(contact_id: i64, emergency: bool) -> &'static str {
+    if emergency {
+        "avatar-c-emergency"
+    } else {
+        AVATAR_TONES[contact_id.rem_euclid(AVATAR_TONES.len() as i64) as usize]
+    }
 }
 
 /// First letter of a name, upper-cased, for the placeholder avatar.
@@ -233,11 +258,20 @@ struct AddView {
     one_way: [String; 4],
     /// Its Avansert is drawn open: a channel is "Tilpasset", or a refused form had it open (`more`).
     adv_open: bool,
+    /// The Message button and the Matrix ID, as in a saved contact's Avansert (one form, one save).
+    message_options: Vec<SelectOption>,
+    message_address: String,
 }
 
 impl AddView {
     /// `switches`: `[inbound, outbound, show_on_home, sms_in, sms_out, mms]`.
-    fn new(lang: Lang, policy: &DevicePolicy, kid: &str, switches: [bool; 6], more: bool) -> Self {
+    fn new(
+        lang: Lang,
+        policy: &DevicePolicy,
+        kid: &str,
+        switches: [bool; 6],
+        sent: Option<&HashMap<String, String>>,
+    ) -> Self {
         let [inbound, outbound, home, sms_in, sms_out, mms] = switches;
         let contact = (
             t(lang, "device.calls.the_contact"),
@@ -263,7 +297,25 @@ impl AddView {
                 sms_in || sms_out,
             ),
             one_way: calls_form::one_way_labels(lang, kid, contact),
-            adv_open: calls.is_custom() || texts.is_custom() || more,
+            adv_open: calls.is_custom()
+                || texts.is_custom()
+                || sent.is_some_and(|f| f.get("more").is_some_and(|m| m == "1"))
+                || sent.is_some_and(|f| {
+                    f.get("message_app").is_some_and(|a| !a.is_empty())
+                        || f.get("message_address")
+                            .is_some_and(|a| !a.trim().is_empty())
+                }),
+            message_options: message_app_options(
+                lang,
+                sent.and_then(|f| f.get("message_app"))
+                    .map(String::as_str)
+                    .filter(|app| !app.is_empty()),
+                Some(&policy.default_message_app),
+            ),
+            message_address: sent
+                .and_then(|f| f.get("message_address"))
+                .map(|a| a.trim().to_string())
+                .unwrap_or_default(),
         }
     }
 }
@@ -742,7 +794,13 @@ async fn load_page(
                 &default_country_code,
             );
             let mut view = ContactView {
-                initial: initial_of(&c.name),
+                initial: if texts_in_refused {
+                    c.phone_number.clone()
+                } else {
+                    initial_of(&c.name)
+                },
+                avatar_photo: c.photo_hash.clone().filter(|_| !texts_in_refused),
+                tone: avatar_tone(c.contact_id, texts_in_refused),
                 id: c.contact_id,
                 summary: String::new(),
                 second: None,
@@ -1065,15 +1123,7 @@ async fn load_page(
         add_name,
         add_number,
         add_error,
-        add: AddView::new(
-            lang,
-            &policy,
-            &device.name,
-            add_switches,
-            shown
-                .add_sent
-                .is_some_and(|sent| sent.get("more").is_some_and(|m| m == "1")),
-        ),
+        add: AddView::new(lang, &policy, &device.name, add_switches, shown.add_sent),
         add_request,
         add_kept,
         add_short,
@@ -2086,6 +2136,23 @@ pub async fn add_contact(
     else {
         return bad_request(lang, "error.out_of_date");
     };
+    // The Message button and the Matrix ID are in the add form too (as in a saved contact's Avansert).
+    let typed_app = match form.get("message_app").map(String::as_str) {
+        None | Some("") => None,
+        Some(app) if MESSAGE_APPS.contains(&app) => Some(app),
+        Some(_) => return bad_request(lang, "error.unknown_message_app"),
+    };
+    let typed_address = match form.get("message_address").map(|s| s.trim()) {
+        None | Some("") => None,
+        Some(mxid) if valid_matrix_id(mxid) => Some(mxid),
+        Some(_) => {
+            return refuse(
+                "message_address",
+                t(lang, "device.calls.matrix_refused").into(),
+            )
+            .await;
+        }
+    };
     let switches = [
         inbound,
         outbound,
@@ -2164,10 +2231,17 @@ pub async fn add_contact(
         // parent ticked "Bruk Matrix-ID-en" (R2-M1), and then the Message button opens Element X with it (design 80
         // M6).
         crate::handlers::contact_requests::mark_added(&mut tx, id, &number, request).await?;
-        let message_address = from_request
-            .and_then(|r| r.matrix_id)
-            .filter(|_| form.contains_key("use_matrix"));
-        let message_app = message_address.as_ref().map(|_| "element");
+        // A typed Matrix ID wins over the request's suggestion (ticked "Bruk Matrix-ID-en" or not).
+        let message_address = typed_address.map(str::to_string).or_else(|| {
+            from_request
+                .and_then(|r| r.matrix_id)
+                .filter(|_| form.contains_key("use_matrix"))
+        });
+        // As the edit form: the Message button is what the parent chose (none: the phone's default); only the kid's
+        // request's Matrix ID, taken with its switch, sets Element X.
+        let message_app = typed_app.or_else(|| {
+            (typed_address.is_none() && message_address.is_some()).then_some("element")
+        });
         let added = sqlx::query(
             "INSERT OR IGNORE INTO device_contacts (device_id, contact_id, sort_order, allow_inbound, \
              allow_outbound, show_on_home, sms_in, sms_out, mms, message_address, message_app) \

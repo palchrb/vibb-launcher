@@ -330,12 +330,8 @@ pub struct RequestView {
     pub when: String,
     /// The kid's suggested Matrix ID.
     pub matrix_id: Option<String>,
-    /// Still waiting for a decision: "Legg til…" and "Avslå".
-    pub open: bool,
     /// "Legg til…" is offered (never for an emergency number).
     pub can_add: bool,
-    /// A decided row's line: "Lagt til" / "Avslått".
-    pub status: Option<&'static str>,
 }
 
 /// The number's mark on the card: an emergency number (stored before the country code changed, say) or a short one.
@@ -357,10 +353,9 @@ struct Row {
     number: String,
     matrix_id: Option<String>,
     asked_at: i64,
-    state: String,
 }
 
-/// The card's rows: the last [SHOWN_DAYS]' requests, the open ones first, newest first.
+/// The card's rows: the last [SHOWN_DAYS]' requests, newest first, newest first.
 pub async fn load(
     db: &sqlx::SqlitePool,
     device_id: i64,
@@ -370,8 +365,8 @@ pub async fn load(
 ) -> Result<Vec<RequestView>, sqlx::Error> {
     let lang = zone.lang();
     let rows: Vec<Row> = sqlx::query_as(
-        "SELECT id, name, number, matrix_id, asked_at, state FROM device_contact_requests \
-         WHERE device_id = ? AND asked_at > ? ORDER BY state = 'open' DESC, asked_at DESC, id LIMIT 50",
+        "SELECT id, name, number, matrix_id, asked_at FROM device_contact_requests \
+         WHERE device_id = ? AND asked_at > ? AND state = 'open' ORDER BY asked_at DESC, id LIMIT 50",
     )
     .bind(device_id)
     .bind(now.timestamp_millis() - SHOWN_DAYS * DAY_MS)
@@ -379,26 +374,17 @@ pub async fn load(
     .await?;
     Ok(rows
         .into_iter()
-        .map(|row| {
-            let open = row.state == "open";
-            RequestView {
-                mark: mark(lang, &row.number, cc),
-                can_add: open && !emergency::is_emergency(&row.number, cc),
-                when: zone.when(
-                    DateTime::from_timestamp_millis(row.asked_at).unwrap_or_default(),
-                    now,
-                ),
-                status: match row.state.as_str() {
-                    "added" => Some(t(lang, "device.requests.added")),
-                    "declined" => Some(t(lang, "device.requests.declined")),
-                    _ => None,
-                },
-                open,
-                id: row.id,
-                name: row.name,
-                number: row.number,
-                matrix_id: row.matrix_id,
-            }
+        .map(|row| RequestView {
+            mark: mark(lang, &row.number, cc),
+            can_add: !emergency::is_emergency(&row.number, cc),
+            when: zone.when(
+                DateTime::from_timestamp_millis(row.asked_at).unwrap_or_default(),
+                now,
+            ),
+            id: row.id,
+            name: row.name,
+            number: row.number,
+            matrix_id: row.matrix_id,
         })
         .collect())
 }
@@ -429,7 +415,7 @@ pub async fn prefill(
         return Ok(None);
     }
     let row: Option<Row> = sqlx::query_as(
-        "SELECT id, name, number, matrix_id, asked_at, state FROM device_contact_requests \
+        "SELECT id, name, number, matrix_id, asked_at FROM device_contact_requests \
          WHERE device_id = ? AND id = ? AND state = 'open' AND asked_at > ?",
     )
     .bind(device_id)
@@ -563,7 +549,7 @@ pub async fn decline(
     .await;
     match result {
         Ok(None) => not_found(lang),
-        Ok(Some(true)) => saved(&state, id, format!("/devices/{id}/calls#request-{request}")),
+        Ok(Some(true)) => saved(&state, id, format!("/devices/{id}/calls#requests")),
         Ok(Some(false)) => crate::settings_log::refused(Redirect::to(&format!(
             "/devices/{id}/calls?notice=request_gone#requests"
         ))),

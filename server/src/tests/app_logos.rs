@@ -638,7 +638,7 @@ async fn the_catalog_keeps_the_last_logo() {
     assert_eq!(kept().await, Some(sha(&old)));
 
     // The last phone drops the app: its row goes, the catalog's logo and file stay, served and shown on the Apps tab
-    // and the app's page - not on the phone's own list.
+    // and the app's page, and on the phone's own list (it is ticked there, not installed).
     assert_eq!(
         wanted(&app, &token, status_body(without.clone())).await,
         json!([])
@@ -657,11 +657,19 @@ async fn the_catalog_keeps_the_last_logo() {
         .await
         .text();
     assert!(page.contains(&tile(&sha(&old))), "{page}");
+    // The phone's Apps page lists the catalog app it is ticked for, not installed: it shows the catalog's logo too,
+    // not a letter (2026-11-19).
+    sqlx::query("INSERT INTO device_tracked_apps (device_id, tracked_app_id) VALUES (?, ?)")
+        .bind(emma)
+        .bind(catalog)
+        .execute(&app.db)
+        .await
+        .unwrap();
     let phone = app
         .get_page(&device_page(emma, Section::Apps), &cookie)
         .await
         .text();
-    assert!(!phone.contains(&tile(&sha(&old))));
+    assert!(phone.contains(&tile(&sha(&old))), "{phone}");
 
     // A newer logo replaces the kept one; the old file goes with its last name.
     report_and_upload(&app, &token, with(&new), &[&new]).await;
@@ -696,4 +704,49 @@ async fn the_catalog_keeps_the_last_logo() {
         .await;
     assert!(res.status.is_redirection());
     assert!(!file(&app, &sha(&new)).exists());
+}
+
+/// QA M2 (2026-11-19, design 87 Q3): an app installed on a phone shows only that phone's own logo - another phone's
+/// logo for the package never reaches its Apps page - while a catalog app ticked for a phone and not installed there
+/// shows the catalog's.
+#[tokio::test]
+async fn an_installed_app_keeps_only_its_own_phones_logo() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (lily, lily_token) = app.enrolled_device("Lily").await;
+    let (_, emma_token) = app.enrolled_device("Emma").await;
+    let catalog: i64 = sqlx::query_scalar(
+        "INSERT INTO tracked_apps (name, package_name, github_repo) VALUES ('Drawing', 'org.example.drawing', 'o/r') \
+         RETURNING id",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO device_tracked_apps (device_id, tracked_app_id) VALUES (?, ?)")
+        .bind(lily)
+        .bind(catalog)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let logo = png(SIZE_PX, 33);
+    let tile = format!("<img src=\"/app-logos/{}\"", sha(&logo));
+    // Emma's phone has the app with a logo; Lily's has it too, with none sent.
+    report_and_upload(
+        &app,
+        &emma_token,
+        json!([app_row("org.example.drawing", "Drawing", Some(&sha(&logo)))]),
+        &[&logo],
+    )
+    .await;
+    wanted(
+        &app,
+        &lily_token,
+        status_body(json!([app_row("org.example.drawing", "Drawing", None)])),
+    )
+    .await;
+    let page = app
+        .get_page(&device_page(lily, Section::Apps), &cookie)
+        .await
+        .text();
+    assert!(!page.contains(&tile), "{page}");
 }

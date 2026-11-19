@@ -135,11 +135,8 @@ async fn each_allow_path_grants_texts_in_alone() {
         );
         assert!(row.contains("Delete Now"));
     }
-    let expired = held_html(&page, 6);
-    assert!(
-        expired.contains("Expired") && !expired.contains("<form"),
-        "{expired}"
-    );
+    // 2026-11-19: a decided or lapsed row is no longer listed - the card keeps what waits for the parent's choice.
+    assert!(!page.contains(&format!("id=\"held-{:032x}\"", 6)));
 
     // Create Contact: Add Contact open with the number, only "Can text Anna" on.
     let add = app
@@ -213,11 +210,7 @@ async fn each_allow_path_grants_texts_in_alone() {
     let res = app
         .request_form(Method::POST, &allow(2), Some(&cookie), &[])
         .await;
-    super::assert_redirect(
-        &res,
-        &format!("/devices/{id}/calls"),
-        Some(&format!("held-{:032x}", 2)),
-    );
+    super::assert_redirect(&res, &format!("/devices/{id}/calls"), Some("held"));
     app.assert_lands(&res, &cookie).await;
     let flags: (bool, bool, bool, bool, bool, bool) = sqlx::query_as(
         "SELECT allow_inbound, allow_outbound, show_on_home, sms_in, sms_out, mms FROM device_contacts \
@@ -241,14 +234,12 @@ async fn each_allow_path_grants_texts_in_alone() {
         app.policy(&token).await["call_policy"]["sms_names"],
         json!(["DNB"])
     );
-    // The row now says it's allowed, without the allow.
+    // The allowed row leaves the card: it is decided.
     let page = app
         .get_page(&format!("/devices/{id}/calls"), &cookie)
         .await
         .text();
-    let name = held_html(&page, 3);
-    assert!(name.contains("Allowed - delivered when the phone gets its rules"));
-    assert!(!name.contains("/allow#"));
+    assert!(!page.contains(&format!("id=\"held-{:032x}\"", 3)));
     // The emergency number, the letterless name and the expired row: refused, nothing written.
     for n in [4, 5, 6] {
         let res = app
@@ -320,11 +311,7 @@ async fn delete_now_and_delete_everything_waiting() {
             &[],
         )
         .await;
-    super::assert_redirect(
-        &res,
-        &format!("/devices/{id}/calls"),
-        Some(&format!("held-{:032x}", 1)),
-    );
+    super::assert_redirect(&res, &format!("/devices/{id}/calls"), Some("held"));
     app.assert_lands(&res, &cookie).await;
     assert_eq!(
         app.policy(&token).await["call_policy"]["sms_held_drop"],
@@ -334,10 +321,9 @@ async fn delete_now_and_delete_everything_waiting() {
         .get_page(&format!("/devices/{id}/calls"), &cookie)
         .await
         .text();
-    let dropped = held_html(&page, 1);
     assert!(
-        dropped.contains("Deleted") && !dropped.contains("<form"),
-        "{dropped}"
+        !page.contains(&format!("id=\"held-{:032x}\"", 1)),
+        "a deleted row leaves the card"
     );
     assert!(page.contains("Delete the 2 messages waiting?"));
     let res = app
@@ -689,7 +675,56 @@ async fn the_push_budget() {
         .get_page(&format!("/devices/{id}/calls"), &cookie)
         .await
         .text();
-    assert!(held_html(&page, 1).contains("Delivered"));
+    assert!(!page.contains(&format!("id=\"held-{:032x}\"", 1)));
+}
+
+/// 2026-11-19: a held row (decided or lapsed) is kept 7 days, a blocked one 30; a phone that posts a
+/// decided row again after it is gone brings it back past its window - never waiting, never on the card.
+#[tokio::test]
+async fn decided_held_rows_go_after_7_days() {
+    let app = TestApp::new().await;
+    let (id, token) = managed_phone(&app).await;
+    let now = Utc::now().timestamp_millis();
+    for (n, days, state) in [
+        (1, 8, "released"),
+        (2, 8, "held"),
+        (3, 6, "released"),
+        (4, 31, "held"),
+        (5, 8, "blocked"),
+    ] {
+        let at = now - days * 86_400_000;
+        sqlx::query(
+            "INSERT INTO device_sms_held (device_id, held_id, at, kind, sender_class, sender, expires_at, state) \
+             VALUES (?, ?, ?, 'sms', 'short', '2222', ?, ?)",
+        )
+        .bind(id)
+        .bind(format!("{n:032x}"))
+        .bind(at)
+        .bind(at + 86_400_000)
+        .bind(state)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    }
+    assert_eq!(crate::retention::prune(&app.db).await.sms_held, 3);
+    let left: Vec<String> = sqlx::query_scalar(
+        "SELECT held_id FROM device_sms_held WHERE device_id = ? ORDER BY held_id",
+    )
+    .bind(id)
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(left, [format!("{:032x}", 3), format!("{:032x}", 5)]);
+    // Posted again as held (its window over long ago): stored, but nothing waits and the card lists nothing.
+    let mut again = held_row(1, "short", "2222", 8 * 24 * 60);
+    again["expires_at"] = (now - 7 * 86_400_000).into();
+    post_held(&app, &token, vec![again]).await;
+    let cookie = app.admin_cookie().await;
+    let page = app
+        .get_page(&format!("/devices/{id}/calls"), &cookie)
+        .await
+        .text();
+    assert!(!page.contains("id=\"held-title\""), "{page}");
 }
 
 /// Code QA M2: past `EVENTS_AN_HOUR` (20 a phone's hour) no event is stored, but the digest still goes and counts
@@ -822,18 +857,9 @@ async fn the_rcs_step_shows_before_and_under_managed() {
         Some(page[start..start + page[start..].find("</div>").unwrap()].to_string())
     };
     for (mode, words) in [
-        (
-            "unmanaged",
-            "Before you choose Managed by Vibb: turn off chat features in Messages.",
-        ),
-        (
-            "off",
-            "Before you choose Managed by Vibb: turn off chat features in Messages.",
-        ),
-        (
-            "managed",
-            "Turn off chat features in Messages if you haven&#39;t.",
-        ),
+        ("unmanaged", "Turn off chat features in Messages first."),
+        ("off", "Turn off chat features in Messages first."),
+        ("managed", "Turn off chat features"),
     ] {
         sqlx::query("UPDATE device_policy SET sms_mode = ?, roles_changed_at = datetime('now') WHERE device_id = ?")
             .bind(mode)
@@ -903,10 +929,7 @@ async fn delete_everything_waiting_leaves_expired_rows_out() {
         .text();
     let row = held_html(&page, 1);
     let confirm = row.find(r#"<details class="confirm cell">"#).unwrap();
-    assert!(
-        row[confirm..].contains(&format!("/drop#held-{:032x}", 1)),
-        "{row}"
-    );
+    assert!(row[confirm..].contains("/drop#held"), "{row}");
     let res = app
         .request_form(
             Method::POST,
@@ -1119,4 +1142,54 @@ async fn the_pools_and_the_findings() {
         .text();
     assert!(nb.contains("SMS-appen er ikke Vibb One - meldinger går tapt"));
     assert!(nb.contains("Ventelisten er full"));
+}
+
+/// QA M1/M3 (2026-11-19): a sender already let through is not waiting - not on the card, not in "Slett alle som
+/// venter" (the message the parent just allowed is never deleted), not in the phone page's count or the digest's.
+#[tokio::test]
+async fn an_allowed_sender_is_not_waiting_anywhere() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = managed_phone(&app).await;
+    contact(&app, id, "Mamma", "+4790000001", true).await;
+    post_held(
+        &app,
+        &token,
+        vec![
+            held_row(1, "number", "+4790000001", 5),
+            held_row(2, "number", "+4790000099", 4),
+        ],
+    )
+    .await;
+    let page = app
+        .get_page(&format!("/devices/{id}/calls"), &cookie)
+        .await
+        .text();
+    assert!(!page.contains(&format!("id=\"held-{:032x}\"", 1)));
+    assert!(page.contains("Delete the 1 message waiting?"), "{page}");
+    let now = Utc::now();
+    assert_eq!(
+        crate::parent_events::waiting_count(&app.db, crate::parent_events::Kind::SmsHeld, id, now)
+            .await
+            .unwrap(),
+        Some(1)
+    );
+    let device = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(device.contains("1 message waiting"), "{device}");
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/calls/held/drop-all"),
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    assert!(res.status.is_redirection());
+    assert_eq!(
+        app.policy(&token).await["call_policy"]["sms_held_drop"],
+        json!([format!("{:032x}", 2)])
+    );
 }

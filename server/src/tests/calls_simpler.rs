@@ -895,10 +895,7 @@ async fn the_page_keeps_on_view_what_needs_a_decision() {
     );
     assert!(html.contains("data-adv-line=\"emergency\">Emergency menu: 112<"));
     assert!(html.contains("data-adv-line=\"messages\">Message button: SMS<"));
-    assert!(
-        part(&html, "id=\"settings\"", "</section>")
-            .contains("Turn off chat features in Messages if you haven't.")
-    );
+    assert!(part(&html, "id=\"settings\"", "</section>").contains("Turn off chat features"));
     assert!(!html.contains("data-rcs-row"));
 
     // A number that isn't an emergency one, a name, the lock text; the RCS step after 14 days.
@@ -947,10 +944,10 @@ async fn the_page_keeps_on_view_what_needs_a_decision() {
     );
     assert!(html.contains("data-adv-line=\"emergency-rules\">1 number follows the call rules<"));
     assert!(html.contains("data-adv-line=\"messages\">Message button: SMS · 2 sender names<"));
-    assert!(!part(&html, "id=\"settings\"", "</section>").contains("chat features in Messages if"));
+    assert!(!part(&html, "id=\"settings\"", "</section>").contains("Turn off chat features"));
     assert!(html.contains("data-rcs-row"));
     // Design 113: Avansert's RCS row is its title alone (the 14-day line stays on the channel only).
-    assert!(!html.contains("chat features in Messages if"), "{html}");
+    assert!(!html.contains("Turn off chat features"), "{html}");
     let nb = page(&app, &cookie, &format!("{calls}?lang=nb")).await;
     assert!(nb.contains("Meldingsknapp: SMS · 2 avsendernavn<"));
     assert!(nb.contains("1 nummer følger anropsreglene"));
@@ -1464,4 +1461,93 @@ async fn a_stale_learned_offer_stores_nothing() {
         own_numbers(&app, id).await,
         [(1, "+4790000009".to_string())]
     );
+}
+
+/// 2026-11-19: Add Contact has the Message button and the Matrix ID while adding (one form, one save); a bad Matrix ID is refused in place; both are stored with the contact.
+#[tokio::test]
+async fn add_contact_has_every_option_and_saves_them() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = managed_phone(&app).await;
+    let html = page(&app, &cookie, &format!("/devices/{id}/calls")).await;
+    let add = part(&html, "id=\"add-contact\"", "</form>");
+    assert!(add.contains("name=\"message_app\"") && add.contains("name=\"message_address\""));
+    let uri = format!("/devices/{id}/contacts");
+    let fields = |address: &'static str| {
+        [
+            ("name", "Kari"),
+            ("number", "+4790000055"),
+            ("switches", "on"),
+            ("calls_shown", "custom"),
+            ("texts_shown", "custom"),
+            ("message_app", "element"),
+            ("message_address", address),
+        ]
+    };
+    let res = app
+        .request_form(Method::POST, &uri, Some(&cookie), &fields("kari"))
+        .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    assert!(res.text().contains("id=\"contact_matrix-error\""));
+    let res = app
+        .request_form(
+            Method::POST,
+            &uri,
+            Some(&cookie),
+            &fields("@kari:example.org"),
+        )
+        .await;
+    assert!(res.status.is_redirection(), "{}", res.text());
+    let stored: (Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT dc.message_app, dc.message_address FROM device_contacts dc \
+         JOIN contacts c ON c.id = dc.contact_id WHERE dc.device_id = ? AND c.phone_number = '+4790000055'",
+    )
+    .bind(id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        stored,
+        (Some("element".into()), Some("@kari:example.org".into()))
+    );
+    let _ = token;
+}
+
+/// 2026-11-19: a contact's letter avatar is the launcher's colour for `contact id mod 6` (`HomeModel.kt`'s
+/// `AVATAR_PALETTE`, `AVATAR_INK`, `EMERGENCY_AVATAR`); the PWA's `.avatar-c0`.. carry exactly those colours.
+#[test]
+fn the_avatar_palette_is_the_launchers() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let kt = std::fs::read_to_string(
+        dir.join("../launcher/app/src/main/java/com/kidslauncher/mdm/ui/home/HomeModel.kt"),
+    )
+    .expect("the launcher's HomeModel.kt (AVATAR_PALETTE, around line 183)");
+    let css = std::fs::read_to_string(dir.join("static/style.css")).unwrap();
+    let hex = |kt_value: &str| kt_value.trim_start_matches("0xFF").to_uppercase();
+    let palette = kt.split("val AVATAR_PALETTE").nth(1).unwrap();
+    let palette = &palette[..palette
+        .find(')')
+        .map_or(0, |_| palette.find("\n)").unwrap())];
+    let colours: Vec<String> = palette
+        .split("AvatarColors(0xFF")
+        .skip(1)
+        .map(|c| hex(&c[..6]))
+        .collect();
+    assert_eq!(colours.len(), 6);
+    let ink = hex(kt
+        .split("AVATAR_INK = 0xFF")
+        .nth(1)
+        .unwrap()
+        .split_whitespace()
+        .next()
+        .unwrap());
+    for (i, colour) in colours.iter().enumerate() {
+        let rule = format!(".avatar-c{i} {{ --avatar-bg: #{colour}; --avatar-text: #{ink}; }}");
+        assert!(css.contains(&rule), "{rule}");
+    }
+    assert!(css.contains(".avatar-c-emergency { --avatar-bg: #3A1E24; --avatar-text: #FF8A8A; }"));
+    assert!(kt.contains("EMERGENCY_AVATAR = AvatarColors(0xFF3A1E24, 0xFFFF8A8A)"));
+    for (id, class) in [(0, "avatar-c0"), (7, "avatar-c1"), (11, "avatar-c5")] {
+        assert_eq!(crate::handlers::calls::avatar_tone(id, false), class);
+    }
 }

@@ -1480,7 +1480,7 @@ async fn budget_digest(
 }
 
 /// What a kind's digest counts when it is pushed (code QA M2: the live count, not the events stored): `sms_held`'s
-/// messages the phone still holds for a decision - held, not dropped, inside their window by the server's clock.
+/// messages the phone still holds for a decision - held, not dropped, inside their window by the server's clock and not already let through.
 /// `None` for a kind without a digest.
 pub async fn waiting_count(
     db: &SqlitePool,
@@ -1489,15 +1489,12 @@ pub async fn waiting_count(
     now: DateTime<Utc>,
 ) -> Result<Option<i64>, sqlx::Error> {
     match kind {
-        Kind::SmsHeld => sqlx::query_scalar(
-            "SELECT COUNT(*) FROM device_sms_held WHERE device_id = ? AND state = 'held' \
-             AND dropped_at IS NULL AND expires_at > ?",
-        )
-        .bind(device_id)
-        .bind(now.timestamp_millis())
-        .fetch_one(db)
-        .await
-        .map(Some),
+        // The rows the Calls page's card lists (2026-11-19): not already let through.
+        Kind::SmsHeld => {
+            crate::handlers::calls_sms::waiting_now(db, device_id, now.timestamp_millis())
+                .await
+                .map(|rows| Some(rows.len() as i64))
+        }
         // QA H1: the live requests, the ones the card shows.
         Kind::ContactRequest => sqlx::query_scalar(
             "SELECT COUNT(*) FROM device_contact_requests WHERE device_id = ? AND state = 'open' \

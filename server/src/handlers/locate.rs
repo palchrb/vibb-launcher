@@ -167,6 +167,12 @@ struct LocationSettingsTemplate {
     /// Design 64 step 2 (the user's decision 3): under "Every", while the phone has zones and
     /// watches them - "30 min while the phone has zones" (the served interval, never written).
     interval_note: Option<String>,
+    /// Opened from the phone's page (`?from=device`): the back arrow goes there, the Devices tab is lit and the forms
+    /// carry `from` so a save stays in place with it.
+    from_device: bool,
+    tab_name: &'static str,
+    back_href: String,
+    back_label: String,
 }
 crate::i18n::words!(LocationSettingsTemplate);
 
@@ -2042,13 +2048,24 @@ pub async fn show_find(
     }
 }
 
+/// `?from=device` for a Location Settings save that came from the phone's page (only that value is kept).
+fn from_suffix(form: &HashMap<String, String>) -> &'static str {
+    if form.get("from").map(String::as_str) == Some("device") {
+        "?from=device"
+    } else {
+        ""
+    }
+}
+
 /// `GET /devices/{id}/location-settings` (design 88): When to locate, Every and Keep history
 /// for, each saving on change and landing back here (`#location-settings`).
 pub async fn show_location_settings(
     State(state): State<AppState>,
     lang: Lang,
     Path(id): Path<i64>,
+    Query(query): Query<HashMap<String, String>>,
 ) -> Response {
+    let from_device = query.get("from").map(String::as_str) == Some("device");
     let device = match phone_or_error(&state, id, lang).await {
         Ok(device) => device,
         Err(answer) => return *answer,
@@ -2074,7 +2091,6 @@ pub async fn show_location_settings(
             lang,
             title: t(lang, "locate.settings.title").to_string(),
             who: crate::handlers::devices::BandAvatar::of(&device),
-            device,
             location_mode: policy.mode,
             location_interval: policy.interval,
             location_retention: policy.retention,
@@ -2092,6 +2108,19 @@ pub async fn show_location_settings(
                 .map(|d| (*d, t_count(lang, "locate.days", *d, &[])))
                 .collect(),
             interval_note,
+            from_device,
+            tab_name: if from_device { "devices" } else { "locate" },
+            back_href: if from_device {
+                format!("/devices/{}", device.id)
+            } else {
+                format!("/devices/locate?device={}", device.id)
+            },
+            back_label: if from_device {
+                device.name.clone()
+            } else {
+                t(lang, "nav.locate").to_string()
+            },
+            device,
         }
         .render()
         .unwrap(),
@@ -2807,7 +2836,8 @@ pub async fn update_location_retention(
             // A failing table is logged by the pass itself (security review L9).
             crate::retention::prune(&state.db).await;
             Redirect::to(&format!(
-                "/devices/{id}/location-settings#location-settings"
+                "/devices/{id}/location-settings{}#location-settings",
+                from_suffix(&form)
             ))
             .into_response()
         }
@@ -2936,7 +2966,10 @@ pub async fn update_location_policy(
             let _ = state.command_notify.send(id);
             let back = match form.get("back").map(String::as_str) {
                 Some("zones") => format!("/devices/{id}/zones#zones"),
-                _ => format!("/devices/{id}/location-settings#location-settings"),
+                _ => format!(
+                    "/devices/{id}/location-settings{}#location-settings",
+                    from_suffix(&form)
+                ),
             };
             Redirect::to(&back).into_response()
         }

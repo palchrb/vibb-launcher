@@ -563,7 +563,7 @@
             <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </a>
         {#- The user, 2026-11-19: the phone's settings all reachable from its page - Finn's location settings, the same page. -#}
-        <a class="row" href="/devices/{{ device.id }}/location-settings" data-row="location">
+        <a class="row" href="/devices/{{ device.id }}/location-settings?from=device" data-row="location">
             <span class="tile tile-blue"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><path d="M8.5 15s-4.5-4.6-4.5-8a4.5 4.5 0 0 1 9 0c0 3.4-4.5 8-4.5 8z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><circle cx="8.5" cy="7" r="1.6" fill="currentColor"/></svg></span>
             <span class="row-label">{{ self.t("device.page.location") }}</span>
             <span class="row-value">{{ location_value }}</span>

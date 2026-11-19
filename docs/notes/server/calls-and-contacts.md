@@ -137,7 +137,7 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
   `devices.sms_ignored_transitions`). At most 500 held rows a phone (`HELD_ROWS_A_PHONE`, every state but `blocked`)
   and, apart, 500 `blocked` rows (`BLOCKED_ROWS_A_PHONE`, code QA L5: a flood of blocked senders never hides a later
   held message): a new id past its bound isn't stored, `"capped": true`, one `sms_held_capped` line
-  (`PhoneLine::SmsHeldCapped`, in the hourly budget). Retention drops a row 30 days after its `at`.
+  (`PhoneLine::SmsHeldCapped`, in the hourly budget). Retention drops a blocked row 30 days after its `at`, any other row 7 days after it (`sms::HELD_DECIDED_KEEP_DAYS`; its 24-hour window is over by then, and a re-posted row comes back past its `expires_at`, never waiting).
 - **The names (D17)**: `sms::valid_name` (1-11 characters after `calendar::clean`, not cut, and a letter -
   `char::is_alphabetic`) and `sms::fold` (NFC, `to_lowercase`); `device_sms_names.fold` is unique per phone. Tests run
   the contract's `names` and `name_matches` rows.
@@ -170,11 +170,12 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
   by the template) and "Kan sende melding til" alone on. A post without `switches` is a 400 (`error.out_of_date`).
   Never `sms_in` for an emergency number.
 - **"Meldinger som venter"** (`#held`, at the top while it has rows; the section is always there so a redirect can
-  land): `device_sms_held` rows but `blocked`, newest first, the last 7 days, at most 100, each `#held-<id>`: "Nummer
-  {number}" / "Avsendernavn «{name}»", SMS/Bilde, when, and its state - "Venter til {time}", "Tillatt - leveres når
-  telefonen henter reglene", "Levert", "Utløpt - meldingen er slettet", "Slettet" (a parent's drop too, before the
-  phone confirms), or "Utløpt" for a row past `expires_at` by the server's clock (R2-L2). Actions only while it
-  waits: "Opprett kontakt…" (a number not in the phone book), "Tillat meldinger fra {contact}" (a contact without
+  land): the rows still waiting for the parent (2026-11-19, `calls_sms::waiting_rows`: `held`, not deleted, inside their window by the
+  server's clock, the sender not already let through - a contact with `sms_in`, a listed name), newest first, at most 100,
+  each `#held-<id>`: "Nummer {number}" / "Avsendernavn «{name}»", SMS/Bilde, when, "Venter til {time}". A decided row
+  (deleted, delivered, expired, allowed) is not listed; the group and its ⓘ go when nothing waits. The same rule counts
+  the phone page's row, the digest and "Slett alle som venter" (exactly the listed rows). A form returns to `#held`.
+  Actions: "Opprett kontakt…" (a number not in the phone book), "Tillat meldinger fra {contact}" (a contact without
   `sms_in`), "Tillat avsendernavnet…" (behind a confirm with D17's warning), "Slett nå…" (behind a confirm, code QA
   L1); an emergency number or a name
   without a letter gets "Slett nå" alone with its reason. `POST /devices/{id}/calls/held/{held_id}/allow` decides from
@@ -241,8 +242,8 @@ parent decides on the Calls page. It follows design r13's time request.
 - **The card** "Forespørsler" ("Requests", `#requests`, each row `#request-<id>`) at the top of the Calls page, under
   "Meldinger som venter": the name and number the server checked, when, the number's mark ("Kortnummer - kan koste
   penger"; "Nødnummer" only for a row stored before the country code changed - the intake refuses them), the kid's
-  Matrix ID as "Foreslått Matrix-ID", and for an open row "Legg til…" and "Avslå"; a decided row reads "Lagt til" or
-  "Avslått" for the rest of its 7 days.
+  Matrix ID as "Foreslått Matrix-ID", "Legg til…" and "Avslå". Only open requests are listed (2026-11-19); an added or
+  declined one stays server-side (the policy's `contact_requests` rows) but leaves the page.
   - **"Legg til…"** is `?request=<id>#add-contact`: Add Contact opened from the stored row of this phone (`prefill`;
     never the link's words), with §14's switches (`REQUEST_ADD_SWITCHES`: "Kan ringe", "I telefonboken", texts both
     ways on; Home and pictures off) and, when the kid gave one, the Matrix ID behind its own unticked "Bruk
@@ -251,7 +252,7 @@ parent decides on the Calls page. It follows design r13's time request.
     stores the request's Matrix ID as the contact's `message_address` only with `use_matrix` ticked - taken from the
     stored row of this phone, never the form. Any Add Contact (and "Add from the family") with the number answers an
     open request too.
-  - **"Avslå"** (`decline`): `declined`, the event read for every parent, back to the row; a row no longer open lands
+  - **"Avslå"** (`decline`): `declined`, the event read for every parent, back to `#requests`; a row no longer open lands
     on `?notice=request_gone#requests`.
 - **Not built yet** (the user, 2026-11-09): the kid's side follows design 79 (the phone book as a list, with a photo
   the kid picks or takes), and the PWA's contact form design 80 (fewer switches, "Avansert"), which will restyle the

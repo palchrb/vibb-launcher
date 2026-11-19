@@ -135,6 +135,12 @@ fn every_template_with_the_bar_sets_its_tab() {
             }
             continue;
         }
+        // Location Settings: Devices when opened from the phone's page (`?from=device`), else Locate; pinned by
+        // `locate_page::location_settings_goes_back_to_where_it_was_opened_from`.
+        if file == "device_location_settings.html" {
+            assert_eq!(line, "{% let tab = *tab_name %}", "{file}");
+            continue;
+        }
         let tab = line
             .strip_prefix("{% let tab = \"")
             .and_then(|rest| rest.strip_suffix("\" %}"))
