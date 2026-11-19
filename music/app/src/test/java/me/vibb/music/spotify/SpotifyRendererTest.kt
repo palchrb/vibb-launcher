@@ -1760,6 +1760,31 @@ class SpotifyRendererTest {
     }
 
     @Test
+    fun `context - 2026-11-19 - a step while the start waits for its first state is a start from the live track at 0, then the SDK's step`() = runBlocking {
+        // the user's log (13:31): the start of the live track at 229 s waited, and the kid's Next and Previous did nothing
+        ports.contexts["e7"] = SpotifyContextTrack(uri(3), "Fake track 3 — Fake Artist")
+        val r = contextRenderer()
+        r.load(contextItems(), 0, 229_000, playNow = true)
+        advance(0)
+        assertEquals("""{"context_uri":"$playlistContext","offset":{"uri":"${uri(3)}"},"position_ms":229000}""", api.plays().single().body)
+        assertTrue(r.showsPlaying)
+        advance(2_000) // no state of ours yet: the first-state wait runs
+        r.step(forward = true)
+        advance(0)
+        assertEquals("a play call, not nothing", 2, api.plays().size)
+        assertEquals("""{"context_uri":"$playlistContext","offset":{"uri":"${uri(3)}"},"position_ms":0}""", api.plays().last().body)
+        assertFalse("no SDK step before the start is ours", page.calls.contains("vibb.next()"))
+        post(cstate(3, 0, duration = 231_000))
+        assertEquals("the step once ours", "vibb.next()", page.calls.last())
+        post(cstate(4, 0))
+        assertEquals("Fake track 4 — Fake Artist", title(r))
+        assertTrue(r.showsPlaying)
+        assertEquals("one step, once", 1, page.calls.count { it == "vibb.next()" })
+        assertEquals(2, api.plays().size)
+        r.release()
+    }
+
+    @Test
     fun `the diagnostic log - the start, the play call, the watchdogs, each state as judged and the page's own lines, never a uri or a title (2026-11-01)`() = runBlocking {
         val r = renderer()
         r.load(mediaItems(5), 0, 0, playNow = true)
