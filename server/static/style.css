@@ -63,8 +63,10 @@
     --bar-fill: #34C759;
 
     /* Switch (§5.4): on #248A3D (4.4:1), off keeps its fill with a #8E8E93 border. */
-    --switch-on: #248A3D;
-    --switch-off: #E3E3E8;
+    /* The switch (the user, 2026-11-19): peach when on, iOS 26's longer shape, no outline when off. */
+    --switch-on: #E8895E;
+    --switch-on-border: #D9784C;
+    --switch-off: #C5C5C7; /* iOS 26's off grey, read off the user's screenshot */
     --switch-off-border: #8E8E93;
     --knob: #FFFFFF;
 
@@ -190,6 +192,8 @@
         --track: #34344A;
         --bar-fill: #30D158;
 
+        --switch-on: #F0A884;
+        --switch-on-border: #F0A884;
         --switch-off: #34344A;
         --knob: #FFFFFF;
         --band-edge: #34344A;
@@ -1145,19 +1149,20 @@ summary.row:active {
     appearance: none;
     flex: none;
     position: relative;
-    width: 51px;
-    height: 31px;
+    width: 64px;
+    height: 28px;
     margin: 0;
-    border: 1px solid var(--switch-off-border);
-    border-radius: 16px;
+    border: 1px solid var(--switch-off);
+    border-radius: 14px;
     background: var(--switch-off);
     cursor: pointer;
-    transition: background-color 0.2s, border-color 0.2s;
+    transition: background-color 0.25s, border-color 0.25s;
+    -webkit-tap-highlight-color: transparent;
 }
 
 .sw:checked {
     background: var(--switch-on);
-    border-color: var(--switch-on);
+    border-color: var(--switch-on-border);
 }
 
 .sw:disabled {
@@ -1172,25 +1177,25 @@ summary.row:active {
        knob showed - the user's iPhone screenshot, 2026-10-19). */
     position: relative;
     flex: none;
-    width: 27px;
-    height: 27px;
-    border-radius: 50%;
+    width: 38px;
+    height: 24px;
+    border-radius: 12px;
     background: var(--knob);
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.25);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.16), 0 2px 6px rgba(0, 0, 0, 0.08);
     pointer-events: none;
-    transition: transform 0.2s;
+    transition: transform 0.32s cubic-bezier(0.3, 1.4, 0.5, 1);
 }
 
-/* Laid over the switch: 2px from its left edge, 20px further when on. */
+/* Laid over the switch: 2px from its left edge, 22px further when on. */
 .sw + .knob,
 .row > .sw + .knob {
-    margin-left: -49px;
-    margin-right: 22px;
+    margin-left: -62px;
+    margin-right: 24px;
 }
 
 .sw:checked + .knob {
-    -webkit-transform: translateX(20px);
-    transform: translateX(20px);
+    -webkit-transform: translateX(22px);
+    transform: translateX(22px);
 }
 
 .sw:disabled + .knob {
@@ -2795,7 +2800,7 @@ input.row-input {
     padding-left: 64px;
 }
 
-/* "On Home" in Name and icon: its ⓘ left of the switch (the row's 16px and the 51px switch), the
+/* "On Home" in Name and icon: its ⓘ left of the switch (the row's 16px and the 64px switch), the
    panel under the row. */
 .on-home {
     position: relative;
@@ -2804,7 +2809,7 @@ input.row-input {
 .on-home > details.info > summary {
     position: absolute;
     top: 4px;
-    right: 67px;
+    right: 80px;
 }
 
 /* ---- Design 31 step 14: the rest of Settings ---- */
@@ -3432,8 +3437,8 @@ details.confirm > summary.row.passkey-row { justify-content: flex-start; color: 
 /* The switch row's switch is a picture of one (its row opens the confirm, or the switch-off page when on): the same
    look as `.sw` on a span. */
 span.sw { display: inline-block; cursor: inherit; }
-span.sw.on { background: var(--switch-on); border-color: var(--switch-on); }
-span.sw.on + .knob { -webkit-transform: translateX(20px); transform: translateX(20px); }
+span.sw.on { background: var(--switch-on); border-color: var(--switch-on-border); }
+span.sw.on + .knob { -webkit-transform: translateX(22px); transform: translateX(22px); }
 details.confirm > summary.row.passkey-only-row,
 a.row.passkey-only-row { justify-content: flex-start; color: var(--label); }
 .passkey-only-row .row-label { flex: 1 1 auto; }
@@ -3660,12 +3665,12 @@ div.row[data-custom] {
     min-height: 53px;
 }
 /* Code QA N3, V3: the value takes the switch's box - no gap of its own (the switch has none: `.sw`'s margin is 0) and
-   at least its 51 px - so at the default size the label beside "Tilpasset" has the switch row's room and wraps with
+   at least its 64 px - so at the default size the label beside "Tilpasset" has the switch row's room and wraps with
    it; at a larger font the word grows into the label's room instead of being clipped. */
 div.row[data-way] > .row-value,
 div.row[data-custom] > .row-value {
     flex: 0 0 auto;
-    min-width: 51px;
+    min-width: 64px;
     margin-left: 0;
     text-align: right;
     font-size: 0.8125rem;
