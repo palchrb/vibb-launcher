@@ -170,6 +170,32 @@ class MobileNetworkTest {
         assertFalse(retriesFailedEstablish(VpnShape.NONE, established = false))
     }
 
+    /** Design 116's emulator gate: a burst of failed starts (a fresh process's start commands) schedules one retry and
+     * leaves the wait at 5 s; only the retry's own failures double it, to 5 min at most. */
+    @Test
+    fun `only the retry's own failure doubles the wait`() {
+        var waitMs = 5_000L
+        var pending = false
+        val scheduled = mutableListOf<Long>()
+        fun fail() {
+            reshapeRetryStep(pending, waitMs)?.let { (now, next) ->
+                scheduled += now
+                waitMs = next
+                pending = true
+            }
+        }
+        repeat(5) { fail() }
+        assertEquals(listOf(5_000L), scheduled)
+        assertEquals(10_000L, waitMs)
+        repeat(8) {
+            pending = false // the retry ran
+            fail()
+        }
+        assertEquals(listOf(5_000L, 10_000L, 20_000L, 40_000L, 80_000L, 160_000L, 300_000L, 300_000L, 300_000L), scheduled)
+        assertEquals(null, reshapeRetryStep(retryPending = true, delayMs = 5_000L))
+        assertEquals(Pair(300_000L, RESHAPE_RETRY_MAX_MS), reshapeRetryStep(retryPending = false, delayMs = 300_000L))
+    }
+
     private val vpn get() = contract["vpn_filter"]!!.jsonObject
     private fun vpnRows(name: String): List<JsonObject> = vpn[name]!!.jsonArray.map { it.jsonObject }
     private fun filterState(wire: String?) = VpnFilterState.entries.first { it.wire == wire }

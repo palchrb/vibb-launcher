@@ -230,6 +230,15 @@ fun alwaysOnAfterEstablish(wanted: VpnShape): VpnShape? = wanted.takeIf { it == 
  * S-M2: the filter and the pass shape too, not only the sink). */
 fun retriesFailedEstablish(wanted: VpnShape, established: Boolean): Boolean = !established && wanted != VpnShape.NONE
 
+/** The fast retry's longest wait. */
+const val RESHAPE_RETRY_MAX_MS = 5 * 60_000L
+
+/** The fast retry's step after a failed switch ([retriesFailedEstablish]): `(this wait, the next one)`, or `null` while a
+ * retry is already waiting. Only the retry's own failure doubles the wait (5 s doubling to 5 min): a fresh process's start
+ * commands each failed at once, and each doubled it, from 5 s to 160 s within two seconds (design 116's emulator gate). */
+fun reshapeRetryStep(retryPending: Boolean, delayMs: Long): Pair<Long, Long>? =
+    if (retryPending) null else Pair(delayMs, minOf(delayMs * 2, RESHAPE_RETRY_MAX_MS))
+
 // ---- design 116 part C: "filter on, tunnel down" (S-M2) -----------------------------------------------------------
 
 /** How long the filter is down before a sync tells the server (the contract's `vpn_filter.report_after_ms`, the

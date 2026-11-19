@@ -208,10 +208,15 @@ class KidVpnService : VpnService() {
         val established = establish(wanted)
         alwaysOnAfterEstablish(wanted)?.let { MobileNetworkRuntime.writeAlwaysOn(this, it) }
         if (retriesFailedEstablish(wanted, established)) {
-            Log.w(LOG_TAG, "The ${wanted.wire} tunnel failed, retrying in $reshapeRetryMs ms")
-            main.removeCallbacks(reshapeRetry)
-            main.postDelayed(reshapeRetry, reshapeRetryMs)
-            reshapeRetryMs = minOf(reshapeRetryMs * 2, 5 * 60_000L)
+            val step = reshapeRetryStep(main.hasCallbacks(reshapeRetry), reshapeRetryMs)
+            if (step == null) {
+                Log.w(LOG_TAG, "The ${wanted.wire} tunnel failed, a retry is already due")
+            } else {
+                val (retryMs, nextMs) = step
+                Log.w(LOG_TAG, "The ${wanted.wire} tunnel failed, retrying in $retryMs ms")
+                main.postDelayed(reshapeRetry, retryMs)
+                reshapeRetryMs = nextMs
+            }
         } else if (established) {
             main.removeCallbacks(reshapeRetry)
             reshapeRetryMs = 5_000L
