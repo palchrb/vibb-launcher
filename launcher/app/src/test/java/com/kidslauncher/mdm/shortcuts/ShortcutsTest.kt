@@ -39,7 +39,6 @@ class ShortcutsTest {
         wifiOn = true,
         bluetoothOn = false,
         mobile = KidMobileRow.ON,
-        brightness = 128,
         ask = AskPart.Action,
         music = ShortcutMusic(session = true, playing = false, usable = true),
     )
@@ -147,9 +146,9 @@ class ShortcutsTest {
         assertFalse(item(ShortcutKey.MOBILE_DATA, all.copy(mobile = KidMobileRow.PARENT))!!.usable)
         assertFalse(item(ShortcutKey.MOBILE_DATA, all.copy(mobile = KidMobileRow.PHONE_OFF))!!.usable)
         assertEquals(ShortcutItem(ShortcutKey.MOBILE_DATA, on = false, usable = false), item(ShortcutKey.MOBILE_DATA, all.copy(airplaneOn = true)))
-        // Lysstyrke: the step, never peach.
-        assertEquals(ShortcutItem(ShortcutKey.BRIGHTNESS, level = BrightnessStep.LOW), item(ShortcutKey.BRIGHTNESS, all.copy(brightness = 10)))
-        assertEquals(BrightnessStep.HIGH, item(ShortcutKey.BRIGHTNESS, all.copy(brightness = 255))!!.level)
+        // Lysstyrke: one plain button (it opens the sheet), never peach; bit 4 off - absent.
+        assertEquals(ShortcutItem(ShortcutKey.BRIGHTNESS), item(ShortcutKey.BRIGHTNESS, all))
+        assertNull(item(ShortcutKey.BRIGHTNESS, all, mask and 4L.inv()))
         // Mer tid: no budget today - absent; asked - dimmed, "Spurt".
         assertNull(item(ShortcutKey.MORE_TIME, all.copy(ask = AskPart.None)))
         assertEquals(ShortcutItem(ShortcutKey.MORE_TIME, usable = false, asked = true), item(ShortcutKey.MORE_TIME, all.copy(ask = AskPart.Asked(1L))))
@@ -175,16 +174,6 @@ class ShortcutsTest {
     @Test
     fun `an unchanged platform is an equal panel, so nothing is posted again`() {
         assertEquals(shortcutsModel(true, mask, null, false, all), shortcutsModel(true, mask, null, false, all.copy()))
-        // Brightness inside one step doesn't change the panel.
-        assertEquals(shortcutsModel(true, mask, listOf("brightness"), false, all.copy(brightness = 120)), shortcutsModel(true, mask, listOf("brightness"), false, all.copy(brightness = 130)))
-    }
-
-    @Test
-    fun `brightness has three steps that go round`() {
-        assertEquals(listOf(BrightnessStep.MEDIUM, BrightnessStep.HIGH, BrightnessStep.LOW), BrightnessStep.entries.map { it.next })
-        assertEquals(BrightnessStep.LOW, BrightnessStep.of(BrightnessStep.LOW.value))
-        assertEquals(BrightnessStep.MEDIUM, BrightnessStep.of(BrightnessStep.MEDIUM.value))
-        assertEquals(BrightnessStep.HIGH, BrightnessStep.of(BrightnessStep.HIGH.value))
     }
 
     // ---- the tap check (Q99-M1) ----
@@ -200,6 +189,13 @@ class ShortcutsTest {
         assertEquals("a cold process", ShortcutTap.STATE_UNKNOWN, tap("wifi", known = false))
         assertEquals(ShortcutTap.LOCKED, tap("wifi", locked = true))
         assertEquals("a Swipe keyguard (Q99-L1)", ShortcutTap.KEYGUARD, tap("wifi", keyguard = true))
+        // Lysstyrke's sheet: refused on a keyguard as every item (code QA L1), and under Vibb's lock.
+        val brightness = shortcutsModel(true, mask, listOf("brightness"), false, all)
+        assertEquals(ShortcutTap.ALLOW, tap("brightness", p = brightness))
+        assertEquals(ShortcutTap.KEYGUARD, tap("brightness", p = brightness, keyguard = true))
+        assertEquals(ShortcutTap.LOCKED, tap("brightness", p = brightness, keyguard = true, locked = true))
+        assertEquals(ShortcutTap.STATE_UNKNOWN, tap("brightness", p = brightness, keyguard = true, known = false))
+        assertEquals("bit 4 off", ShortcutTap.NOT_IN_PANEL, tap("brightness", p = shortcutsModel(true, mask and 4L.inv(), listOf("brightness", "wifi"), false, all)))
         assertEquals("not picked", ShortcutTap.NOT_IN_PANEL, tap("torch"))
         assertEquals("hidden", ShortcutTap.NOT_IN_PANEL, tap("wifi", p = panel.copy(shown = false)))
         val airplaneOn = shortcutsModel(true, mask, listOf("wifi"), false, all.copy(airplaneOn = true))
@@ -242,14 +238,14 @@ class ShortcutsTest {
         assertFalse(notification.contains("addAction") || notification.contains("Notification.Action"))
         assertTrue(notification.contains(".setSmallIcon(R.drawable.ic_stat_vibb)"))
         assertEquals(1, Regex("""PendingIntent\.getActivity\(""").findAll(notification).count())
-        assertTrue(notification.contains("Intent(context, ShortcutAirplaneActivity::class.java)"))
+        assertTrue(notification.contains("ShortcutWindow.AIRPLANE -> ShortcutAirplaneActivity::class.java"))
         assertTrue(notification.contains("PendingIntent.FLAG_IMMUTABLE"))
         assertFalse(notification.contains("FLAG_MUTABLE"))
         val shortcuts = File(main, "java/com/kidslauncher/mdm/shortcuts").listFiles()!!.joinToString("\n") { it.readText() }
         assertEquals(1, Regex("""getActivity\(""").findAll(shortcuts).count())
         assertTrue(code("shortcuts/ShortcutsRuntime.kt").contains("lockscreenVisibility = android.app.Notification.VISIBILITY_SECRET"))
         val manifest = File(main, "AndroidManifest.xml").readText()
-        for (name in listOf(".shortcuts.ShortcutsReceiver", ".shortcuts.ShortcutAirplaneActivity")) {
+        for (name in listOf(".shortcuts.ShortcutsReceiver", ".shortcuts.ShortcutAirplaneActivity", ".shortcuts.BrightnessSheetActivity")) {
             val entry = manifest.substringAfter("android:name=\"$name\"").substringBefore(">")
             assertTrue(name, entry.contains("android:exported=\"false\""))
         }
@@ -276,23 +272,41 @@ class ShortcutsTest {
     }
 
     @Test
-    fun `only a usable flymodus that is off opens the window - dimmed or busy it is a broadcast (C99-M1)`() {
+    fun `a usable flymodus that is off and lysstyrke open a window - everything else is a broadcast (C99-M1)`() {
         fun airplane(state: AirplaneRowState, on: Boolean = false) =
             shortcutsModel(true, mask, listOf("airplane"), false, all.copy(airplane = state, airplaneOn = on)).items.single()
-        assertTrue(shortcutOpensWindow(airplane(AirplaneRowState.OFF)))
+        assertEquals(ShortcutWindow.AIRPLANE, shortcutWindow(airplane(AirplaneRowState.OFF)))
         // The parent's "Blokker flymodus", the emergency refusal, the cool-down: dimmed, so the shade stays open (D10).
         for (state in AirplaneRowState.entries.filter { it != AirplaneRowState.HIDDEN && !it.clickable }) {
             val item = airplane(state)
-            assertFalse(state.name, shortcutOpensWindow(item))
+            assertNull(state.name, shortcutWindow(item))
             assertTrue(state.name, item.busy || !item.usable)
         }
         // On: Off is a broadcast.
-        assertFalse(shortcutOpensWindow(airplane(AirplaneRowState.OFF_ONLY, on = true)))
-        assertFalse(shortcutOpensWindow(ShortcutItem(ShortcutKey.AIRPLANE, usable = false)))
-        assertFalse(shortcutOpensWindow(ShortcutItem(ShortcutKey.AIRPLANE, busy = true)))
-        assertFalse(shortcutOpensWindow(ShortcutItem(ShortcutKey.WIFI)))
-        // The notification asks exactly this.
-        assertTrue(code("shortcuts/ShortcutsNotification.kt").contains("if (shortcutOpensWindow(item)) {"))
+        assertNull(shortcutWindow(airplane(AirplaneRowState.OFF_ONLY, on = true)))
+        assertNull(shortcutWindow(ShortcutItem(ShortcutKey.AIRPLANE, usable = false)))
+        assertNull(shortcutWindow(ShortcutItem(ShortcutKey.AIRPLANE, busy = true)))
+        assertNull(shortcutWindow(ShortcutItem(ShortcutKey.WIFI)))
+        // Lysstyrke (2026-11-19): the panel's item opens the brightness sheet - never a cycle of steps.
+        val brightness = shortcutsModel(true, mask, listOf("brightness"), false, all).items.single()
+        assertEquals(ShortcutWindow.BRIGHTNESS, shortcutWindow(brightness))
+        for (key in ShortcutKey.entries - ShortcutKey.AIRPLANE - ShortcutKey.BRIGHTNESS) {
+            assertNull(key.name, shortcutWindow(ShortcutItem(key)))
+        }
+        // The notification asks exactly this, each window its own activity.
+        val notification = code("shortcuts/ShortcutsNotification.kt")
+        assertTrue(notification.contains("val window = shortcutWindow(item)"))
+        assertTrue(notification.contains("ShortcutWindow.BRIGHTNESS -> BrightnessSheetActivity::class.java"))
+        // The runtime's broadcast path never sets the brightness: the sheet's slider is the one writer.
+        val runtime = code("shortcuts/ShortcutsRuntime.kt")
+        assertFalse(runtime.contains("setBrightness"))
+        val sheet = code("shortcuts/BrightnessSheetActivity.kt")
+        assertTrue(sheet.contains("ShortcutsRuntime.verdict(app, ShortcutKey.BRIGHTNESS.wire)"))
+        assertTrue(sheet.contains("if (verdict == ShortcutTap.ALLOW) show() else finish()"))
+        assertTrue(sheet.contains("if (fromUser) QuickControls.setBrightness(dpm, admin, progress)"))
+        // Nothing in it leads out: no intent, no link, and it ends when it leaves the front.
+        for (out in listOf("startActivity", "Intent(", "PendingIntent", "setOnClickListener")) assertFalse(out, sheet.contains(out))
+        assertTrue(sheet.substringAfter("override fun onStop()").substringBefore("\n    }").contains("finish()"))
     }
 
     @Test

@@ -26,8 +26,8 @@ private val GLYPHS = intArrayOf(R.id.shortcut_glyph_0, R.id.shortcut_glyph_1, R.
  * parent's answer: `AnchorNotice.noteText`); the folded view is the
  * row alone. The small icon is the Vibb mark (`ic_stat_vibb`, literal colours: design 100 M10), as the plain notice's (the user, 2026-11-16). [AnchorNotification] posts it as id
  * 1002, on the panel's channel.
- * Each cell's tap is an explicit, immutable broadcast to [ShortcutsReceiver] with the key alone; Flymodus On is the one
- * activity, [ShortcutAirplaneActivity] (§4.1).
+ * Each cell's tap is an explicit, immutable broadcast to [ShortcutsReceiver] with the key alone; Flymodus On and
+ * Lysstyrke open a window of ours ([shortcutWindow]: [ShortcutAirplaneActivity], [BrightnessSheetActivity]).
  */
 object ShortcutsNotification {
     fun build(context: Context, channelId: String, panel: ShortcutsPanel, time: TimePart): Notification {
@@ -100,7 +100,7 @@ object ShortcutsNotification {
         ShortcutKey.MUSIC -> R.string.shortcut_full_music
     }
 
-    /** The glyph: Lyd's shows the mode (vibrate when off), Lysstyrke's the step; the disc's colour says on or off. */
+    /** The glyph: Lyd's shows the mode (vibrate when off), Lysstyrke's is one plain sun; the disc's colour says on or off. */
     fun glyphRes(item: ShortcutItem): Int = when (item.key) {
         ShortcutKey.TORCH -> R.drawable.torch_glyph_on
         ShortcutKey.SOUND -> if (item.on) R.drawable.shortcut_glyph_sound else R.drawable.shortcut_glyph_vibrate
@@ -108,11 +108,7 @@ object ShortcutsNotification {
         ShortcutKey.WIFI -> R.drawable.shortcut_glyph_wifi
         ShortcutKey.BLUETOOTH -> R.drawable.shortcut_glyph_bluetooth
         ShortcutKey.MOBILE_DATA -> R.drawable.shortcut_glyph_mobile_data
-        ShortcutKey.BRIGHTNESS -> when (item.level) {
-            BrightnessStep.LOW -> R.drawable.shortcut_glyph_brightness_low
-            BrightnessStep.HIGH -> R.drawable.shortcut_glyph_brightness_high
-            else -> R.drawable.shortcut_glyph_brightness_medium
-        }
+        ShortcutKey.BRIGHTNESS -> R.drawable.shortcut_glyph_brightness
         ShortcutKey.MORE_TIME -> R.drawable.shortcut_glyph_more_time
         ShortcutKey.MUSIC -> R.drawable.shortcut_glyph_music
     }
@@ -126,17 +122,8 @@ object ShortcutsNotification {
             item.asked -> context.getString(R.string.shortcut_desc_asked, name)
             !item.usable -> context.getString(R.string.shortcut_desc_unavailable, name)
             item.key == ShortcutKey.MORE_TIME -> context.getString(R.string.shortcut_desc_ask, name)
-            item.key == ShortcutKey.BRIGHTNESS -> context.getString(
-                R.string.shortcut_desc_level,
-                name,
-                context.getString(
-                    when (item.level) {
-                        BrightnessStep.LOW -> R.string.shortcut_level_low
-                        BrightnessStep.HIGH -> R.string.shortcut_level_high
-                        else -> R.string.shortcut_level_medium
-                    },
-                ),
-            )
+            // Lysstyrke opens its sheet: no on or off to say.
+            item.key == ShortcutKey.BRIGHTNESS -> name
             item.key == ShortcutKey.SOUND && !item.on -> context.getString(R.string.shortcut_desc_sound_off, name)
             item.on -> context.getString(R.string.shortcut_desc_on, name)
             else -> context.getString(R.string.shortcut_desc_off, name)
@@ -144,27 +131,30 @@ object ShortcutsNotification {
     }
 
     /**
-     * The cell's tap. Flymodus while off, usable and not busy ([shortcutOpensWindow]): the window that closes the shade
-     * first ([ShortcutAirplaneActivity], §4.1) - the only `getActivity` here. Everything else, a dimmed or busy Flymodus
-     * too (C99-M1: a dimmed tap does nothing and leaves the shade open, D10): our own receiver with the key alone.
+     * The cell's tap. Flymodus while off, usable and not busy, and Lysstyrke ([shortcutWindow]): a window of ours, which
+     * Android starts with the shade closed ([ShortcutAirplaneActivity], [BrightnessSheetActivity]) - the only
+     * `getActivity` here. Everything else, a dimmed or busy item too (C99-M1: a dimmed tap does nothing and leaves the
+     * shade open, D10): our own receiver with the key alone.
      */
-    private fun tapIntent(context: Context, item: ShortcutItem): PendingIntent =
-        if (shortcutOpensWindow(item)) {
-            PendingIntent.getActivity(
-                context,
-                AIRPLANE_WINDOW_REQUEST,
-                Intent(context, ShortcutAirplaneActivity::class.java)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION),
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-            )
-        } else {
-            PendingIntent.getBroadcast(
+    private fun tapIntent(context: Context, item: ShortcutItem): PendingIntent {
+        val window = shortcutWindow(item)
+            ?: return PendingIntent.getBroadcast(
                 context,
                 item.key.ordinal,
                 Intent(context, ShortcutsReceiver::class.java).setAction(ACTION_SHORTCUT).putExtra(EXTRA_SHORTCUT_KEY, item.key.wire),
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )
+        val activity = when (window) {
+            ShortcutWindow.AIRPLANE -> ShortcutAirplaneActivity::class.java
+            ShortcutWindow.BRIGHTNESS -> BrightnessSheetActivity::class.java
         }
+        return PendingIntent.getActivity(
+            context,
+            WINDOW_REQUEST + window.ordinal,
+            Intent(context, activity).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+    }
 
-    private const val AIRPLANE_WINDOW_REQUEST = 100
+    private const val WINDOW_REQUEST = 100
 }

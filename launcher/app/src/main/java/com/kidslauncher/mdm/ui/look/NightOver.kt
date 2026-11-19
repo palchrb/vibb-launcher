@@ -33,3 +33,17 @@ fun showNight(builder: AlertDialog.Builder): AlertDialog = builder.create().also
     it.delegate.localNightMode = AppCompatDelegate.MODE_NIGHT_YES
     it.show()
 }
+
+/**
+ * The context a window outside the pages is drawn in the kid's look from (Snarveier's brightness sheet,
+ * `shortcuts/BrightnessSheetActivity`): the activity's own (its window, its token) under the page theme, with the
+ * applied look's night bit and the page colours laid on, so the page tokens of what is inflated from it resolve as on a
+ * page in that look.
+ */
+fun lookOver(activity: Activity): Context {
+    val look = Configuration().apply { uiMode = nightValues(PageLook.applied).configuration }
+    return ContextThemeWrapper(activity, R.style.KidPageTheme).apply {
+        applyOverrideConfiguration(look)
+        theme.applyStyle(R.style.PageColors, true)
+    }
+}

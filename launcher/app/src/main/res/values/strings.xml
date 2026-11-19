@@ -930,10 +930,6 @@
     <string name="shortcut_desc_on">%1$s, on</string>
     <string name="shortcut_desc_off">%1$s, off</string>
     <string name="shortcut_desc_sound_off">%1$s, silent (vibrate)</string>
-    <string name="shortcut_desc_level">%1$s, %2$s</string>
-    <string name="shortcut_level_low">low</string>
-    <string name="shortcut_level_medium">medium</string>
-    <string name="shortcut_level_high">high</string>
     <string name="shortcut_desc_ask">%1$s, ask for more time</string>
     <string name="shortcut_desc_asked">%1$s, asked</string>
     <string name="shortcut_desc_unavailable">%1$s, not available now</string>

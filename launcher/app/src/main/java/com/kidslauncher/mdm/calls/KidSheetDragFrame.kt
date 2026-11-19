@@ -11,6 +11,7 @@ import android.view.VelocityTracker
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.ViewGroup
+import android.view.ViewTreeObserver
 import android.view.animation.AccelerateDecelerateInterpolator
 import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
@@ -52,6 +53,30 @@ internal class KidSheetDragFrame(context: Context, private val dialog: Dialog) :
     private var closing = false
 
     private val sheet: View? get() = getChildAt(0)
+
+    /**
+     * The sheet's own dim ([setUpKidSheet]'s `ownScrim`, the brightness sheet): faded by its alpha instead of the
+     * window's dim, which Android lets take the navigation bar's light buttons (code QA M3).
+     */
+    var scrim: View? = null
+
+    /** With [scrim]: the sheet slides up from below on its first frame and the scrim fades in with it. */
+    fun slideIn() {
+        viewTreeObserver.addOnPreDrawListener(object : ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw(): Boolean {
+                viewTreeObserver.removeOnPreDrawListener(this)
+                val view = sheet ?: return true
+                moveTo(view.height.toFloat())
+                settleTo(0f, 0f, null)
+                return true
+            }
+        })
+    }
+
+    /** A tap on [scrim]: the sheet slides down and the dialog closes, as a drag past the line does. */
+    fun slideClose() {
+        if (!closing) close(0f)
+    }
 
     override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
         if (closing) return true
@@ -156,6 +181,10 @@ internal class KidSheetDragFrame(context: Context, private val dialog: Dialog) :
     private fun moveTo(offset: Float) {
         val view = sheet ?: return
         view.translationY = offset
+        scrim?.let {
+            it.alpha = KidSheetDrag.dim(1f, offset, view.height.toFloat())
+            return
+        }
         if (baseDim.isNaN()) {
             baseDim = dialog.window?.attributes?.dimAmount ?: return
             shownDim = baseDim

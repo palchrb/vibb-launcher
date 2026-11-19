@@ -41,4 +41,8 @@
     <color name="kid_page_focus">#80F0A884</color>
     <color name="kid_page_accent_edge">#73F0A884</color>
     <color name="kid_page_field_edge">@color/kid_sheet_button</color>
+    <!-- The brightness sheet (Snarveier's Lysstyrke, 2026-11-19): its drag handle and the slider's empty track (at night
+         kid Settings' slider literal). -->
+    <color name="kid_page_handle">@color/kid_sheet_handle</color>
+    <color name="kid_page_track">#66FFFFFF</color>
 </resources>

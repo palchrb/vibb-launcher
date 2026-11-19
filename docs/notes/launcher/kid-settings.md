@@ -186,14 +186,14 @@ the setup notification.
   `ic_stat_gear`, now deleted). Its colours are literal: a theme attribute draws an empty disc in SystemUI (design 100
   M10); checked filled in the status bar and the shade header on Android 14 and 16; Android 17 draws the app's launcher icon in the header instead (`docs/testing/emulator.md` §6ar).
 - **Items** (`ShortcutsModel.kt`, pure, `ShortcutsTest`): torch, sound (bit 8), airplane (bit 64 + the role via
-  `airplaneRow`, Off-only when on), wifi (1), bluetooth (2), mobile_data (32, `kidMobileRow`), brightness (4, three steps
-  40/128/230), more_time (the anchor notice's `ask` part, set by the poster from the time part it posts with -
+  `airplaneRow`, Off-only when on), wifi (1), bluetooth (2), mobile_data (32, `kidMobileRow`), brightness (4, one plain
+  sun that opens the brightness sheet, below), more_time (the anchor notice's `ask` part, set by the poster from the time part it posts with -
   `ShortcutsRuntime.panelFor`, design 100 Q100-L6),
   music (Vibb music's own session only, gated by `MusicSessions.usable`). The panel = the kid's picks (`null` = the
   default order torch, sound, airplane, wifi, bluetooth, mobile_data, brightness, more_time, music) offered now, the first
   four. Shown with device owner, an `Ok` cache, bit **128** (`QuickControlFeature.SHORTCUTS`), an item, not hidden.
 - **The glue** (`ShortcutsRuntime`): the platform's signals are the process's (`init` from `Application.initRest`'s
-  tail, after the torch): airplane, ringer, DND, Wi-Fi, Bluetooth, channel block state, locale, a brightness observer,
+  tail, after the torch): airplane, ringer, DND, Wi-Fi, Bluetooth, channel block state, locale,
   the torch, `AirplaneRuntime`, the policy and `kidMobileOff` prefs; a `MusicSessions` listener while the panel holds
   Musikk (C99-L4). The launcher's own language (a per-app locale, no broadcast) reaches it from
   `Application.onConfigurationChanged` -> `ShortcutsRuntime.languageChanged`: the current channel is created again
@@ -208,7 +208,22 @@ the setup notification.
   route starts only on its window's first focus, so no finger is left in a collapsing shade (design 98's ~300 ms gap);
   no focus in 3 s - nothing. Every tap runs on `ShortcutsRuntime.taps` through the pure fail-closed
   `shortcutTapAllowed`: an unknown key, the lock mode undecided or the time rules unreadable, LOCKED, Android's keyguard
-  (a Swipe keyguard shows silent notifications), not in the panel, dimmed, busy, Musikk's app unusable -> refused, logged.
+  (a Swipe keyguard shows silent notifications), not in the panel, dimmed, busy, Musikk's app unusable
+  -> refused, logged.
+- **Lysstyrke's sheet** (2026-11-19, the user's mockup "Valg 1"; it replaced D5's three steps): the cell opens
+  `BrightnessSheetActivity` (pure `shortcutWindow`, as Flymodus On; Android closes the shade to start it). The
+  airplane window's one pixel and theme, its own task, `noHistory`, out of Recents; it shows a
+  `KidSheetDialog` (`setUpKidSheet` with `ownScrim`: edge to edge, the screen dimmed by its own scrim, not the
+  window's dim - Android drops a dimming window's light navigation bar, which left 3-button navigation's buttons white on
+  Lys's sheet, code QA M3 - drag down closes) only after `ShortcutsRuntime.verdict`
+  allows Lysstyrke, else finishes. `sheet_brightness.xml`, in the kid's look (`lookOver`, page tokens;
+  `kid_page_handle`, `kid_page_track`): the title, a small sun, kid Settings' slider (0-255, `setBrightness` while
+  dragging), a big sun. Tap outside, Back or a drag down closes it; `onStop` finishes it (Home, the lock, screen off), and
+  it holds no intent out (lock task: the launcher's own package). Never over a keyguard: Snarveier
+  (`VISIBILITY_SECRET`) didn't show on a Swipe keyguard either, with silent notifications shown on the lock screen
+  (Android 14 and 16, `docs/review/2026-11-19-brightness-sheet-code-qa.md` L1), so the sheet has no `showWhenLocked` and
+  the tap check refuses Lysstyrke on a keyguard and under LOCKED as every item. A Lysstyrke broadcast (a stale view) does nothing; the glyph is `light_mode`
+  (`shortcut_glyph_brightness`), the content description the name alone.
 - **Hidden** (§2.6): the long-press menu's "Turn off" on the channel is the kid's choice; the report says `hidden`, Kid
   Settings' row "Skjult i varsellisten", and the anchor's notification goes back to the plain notice (with the time
   left) on the listener channel (design 100 §2.4, §5; the swap on a user's block is still to be checked, §11 check 7).

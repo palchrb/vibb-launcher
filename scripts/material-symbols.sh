@@ -77,9 +77,7 @@ airplanemode_active 4f2a2b08cde2d3cfc83ec879b50d0bbadabe41cc11973f377eddcad60cba
 wifi f7c825d97360b22a97e7b5636fbf68ef08fab3de679811553d3eb07590163488
 bluetooth 3736a6c4fb26629b36b2ca6e2f28e5a61a72a4419c1ad18bfcf66bac4490e2de
 signal_cellular_alt b6f7db883b3ca6a83d115b3c3f3ab067ce05672575943936ac3345a31272c224
-brightness_low 5e3a84926f751949be088dba33e445f810017f5ac50b6d40a2d2820d14aa0b92
-brightness_medium 6c08b254162d49f913343d25144ea57218ae042a5e817e182002d434431f36c8
-brightness_high f0293c231724d9e6ad511b66465daa621c086c11c8106e88476dead94633fec4
+light_mode 2084e915cff8a24c5468765baf6b9d04ff560d06dcff6fde4cfe2df7590feaa2
 more_time b30b77839a4137f89c5b620b71ec47676806e594aac5f55bad87486a9d58993e
 call_received ded40fee193027c17c40f3782636bc2b2c96d05cffbfb707d8036bc354775547
 call_made cc1bf7cef8167639587f0fea7cd6a03d0afecf322f0aa0e8cf33743dd4c9c90c
@@ -153,10 +151,9 @@ TORCH_GLYPHS = {"on": "flashlight_on"}
 # The clock on the lock (design 42): the timer tile's glyph and its Stopp button.
 CLOCK_GLYPHS = {"timer": "timer", "stop": "stop"}
 # Snarveier (design 99 §3): the panel's buttons and the picker's rows - one glyph per item (the torch's is torch_glyph_on),
-# Lyd's two modes and Lysstyrke's three steps.
+# Lyd's two modes; Lysstyrke one plain sun (2026-11-19: a tap opens the brightness sheet, no steps).
 SHORTCUT_GLYPHS = {"sound": "volume_up", "vibrate": "vibration", "airplane": "airplanemode_active", "wifi": "wifi",
-                   "bluetooth": "bluetooth", "mobile_data": "signal_cellular_alt", "brightness_low": "brightness_low",
-                   "brightness_medium": "brightness_medium", "brightness_high": "brightness_high",
+                   "bluetooth": "bluetooth", "mobile_data": "signal_cellular_alt", "brightness": "light_mode",
                    "more_time": "more_time", "music": "music_note"}
 # Siste in the phone book (design 106 §3.6): a call that came in and one the kid made.
 CALL_GLYPHS = {"in": "call_received", "out": "call_made"}
