@@ -1520,8 +1520,10 @@ object AppEnforcer {
     private fun applyVpnRestrictions(context: Context, inputs: VpnInputs, quickControlsMask: Long?, shape: VpnShape) {
         MobileNetworkRuntime.storeInputs(inputs, quickControlsMask)
         try {
-            // The single owner (design 95 §2.2): the decided shape is recorded, always-on written for it alone.
-            MobileNetworkRuntime.writeAlwaysOn(context, shape)
+            // The single owner (design 95 §2.2): the decided shape is recorded, always-on written for it alone - but
+            // leaving the sink with the tunnel up, lockdown off is the tunnel switch's last step (design 120 fix A).
+            val keepLockdown = applyLeavesLockdownToSwitch(shape, MobileNetworkRuntime.lockdownOurs(context), KidVpnService.liveTunnel().first)
+            MobileNetworkRuntime.writeAlwaysOn(context, shape, keepLockdown)
             // Code QA L2: keep this start - the service's reshape() then writes its own decision last, so the two
             // writers of always-on settle on the service's view of the network.
             if (shape != VpnShape.NONE) KidVpnService.start(context) else KidVpnService.stop(context)

@@ -328,7 +328,7 @@
    "url": "https://maps.google.com?q=Artbox+AS,+Drammensveien+133,+0277+Oslo&ftid=0x46416db4338a09ff:0x7d7d788043d1f40e",
    "status": 0,
    "body": null,
-   "step": "open:geo:59.947246,10.889123?q=Drammensveien%20133%2C%200277%20Oslo"
+   "step": "open:geo:59.920121,10.650758?q=Drammensveien%20133%2C%200277%20Oslo"
   },
   {
    "name": "nothing found, a point in the link: its own pin",
