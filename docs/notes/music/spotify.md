@@ -49,9 +49,13 @@ Moved from music/CLAUDE.md on 2026-11-01.
   Spotify played the listed sample, from where an earlier try stopped, in place of the chapter; before, it waited
   10 s and stopped "trenger internett") - and the queue moves there (`Started(j)`). A later uri with neither (a cold
   start's state of the account's earlier session of the list, `start.json`) is passed over as before. What a start
-  passes over: the old play's next and our adds by uri, the sent track away from the sent place (L1), and the last
-  state before the call **carried on** (its track, paused or playing as it was, at its place moved on by the time
-  since) until a fresh state comes. On an
+  passes over: the old play's next and our adds by uri, and the last state before the call **carried on** (its track,
+  paused or playing as it was, at its place moved on by the time since) until a fresh state comes. The sent track (a
+  context's offset) away from the sent place is passed over only while it is at that carried place (L1; a paused old
+  play the transfer resumes there is still it): Spotify playing it at a place of its own is ours (2026-11-19, design
+  120: a place sent at 229 s of a 231 s track was restarted from 0, never taken, and every play waited 10 s for
+  "trenger internett"). While starting, shuffle and repeat are judged only on a state that may be ours (the old play's
+  modes started a second set and play). On an
   `audiobook` entry a fresh playing state of no item of ours at a start is Spotify playing something else in the
   book's place (its sample: no audiobook listening time on the account - Premium Family members need the plan
   manager's "Audiobooks+ for Plan Members"): `NotOurs` + `NoListeningTime`, paused, `SpotifyProblem.NO_LISTENING_TIME`
@@ -74,8 +78,10 @@ Moved from music/CLAUDE.md on 2026-11-01.
   the snapshot gives the entry one synthetic item (`contextItem`: key `context`, no url, no duration, titled by the
   live track once one played), so the tile, the stored queue and resume work. A start is `context_uri` - a playlist
   from `offset.uri` = the live track at its place (an offset no longer in it: one more play from the top), an artist
-  from Spotify's start (no resume: `contextResumes`, its place shows 0). Next and previous are the SDK's, sent only
-  while a track of our context is on the player. Every track of the context is ours (a `null` context only for our
+  from Spotify's start (no resume: `contextResumes`, its place shows 0). Next and previous are the SDK's while a
+  track of our context is on the player; with none and the kid wanting it playing (a start waiting, the player lost), a
+  step is a fresh start of the live track from 0 whose first state of ours sends the step (2026-11-19: Next did
+  nothing); paused with none, nothing is sent. Every track of the context is ours (a `null` context only for our
   live track or the one named next); anything else is paused; the end only on evidence; no unplayable item, no
   "Spor N av M", never marked done (`keepsDuration`). The live track (uri and title) is
   `noBackupFilesDir/spotify_context.json` - the store's, written through the renderer's ports, pruned on a parsed
