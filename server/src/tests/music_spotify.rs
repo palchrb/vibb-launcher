@@ -301,6 +301,7 @@ fn migrations_from_73_in_order() {
             (155, "catalog app logo".to_string()),
             (156, "up held".to_string()),
             (157, "setup status".to_string()),
+            (158, "failures visible".to_string()),
         ],
         "0073 (design 30), 0074 (Spotify), 0075 (the clock format), 0076 (the softer \
          wallpapers), 0077 (Vibb One), 0078 (design 35), 0079 (the custom DNS server), 0080 \

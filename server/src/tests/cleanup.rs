@@ -408,6 +408,7 @@ async fn pruning_keeps_only_what_retention_allows() {
             mmsc_hosts: 1,
             report_bases: 0,
             app_push: 0,
+            integration_health: 0,
             failed: vec![],
         }
     );

@@ -29,6 +29,7 @@ mod handlers;
 mod i18n;
 mod ics;
 mod install_now;
+mod integration_health;
 mod jar_signature;
 mod keys;
 mod kid_lock;
