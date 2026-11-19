@@ -341,7 +341,9 @@ class LinkGateActivity : AppCompatActivity() {
     private companion object {
         const val TAG = "LinkGate"
         const val MAX_LINK = 4096
-        const val SESSION_WAIT_MS = 2_000L
+        /** The wait for Chrome's Custom Tabs session (only as long as the bind takes): a cold Chrome took ~2.3 s on
+         * Android 16 in the gate (2026-11-19), and a tab without the session ends nothing when the kid leaves it. */
+        const val SESSION_WAIT_MS = 5_000L
         const val TAB_WAIT_MS = 8_000L
         const val STATE_ANCHOR = "anchor"
     }
