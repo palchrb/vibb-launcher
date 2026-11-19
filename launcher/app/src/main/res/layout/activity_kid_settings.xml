@@ -625,6 +625,7 @@
             <LinearLayout
                 android:id="@+id/kid_settings_brightness_row"
                 android:layout_width="match_parent"
+                android:clipToPadding="false"
                 android:layout_height="wrap_content"
                 android:gravity="center_vertical"
                 android:minHeight="60dp"
@@ -645,16 +646,20 @@
                     android:textColor="@color/kid_ink"
                     android:textSize="16sp" />
 
+                <!-- The thumb needs its half-width of padding or it is cut at either end (the user, 2026-11-19); the
+                     negative margins keep the track in line with the label. -->
                 <SeekBar
                     android:id="@+id/kid_settings_brightness_seekbar"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
+                    android:layout_marginStart="-12dp"
                     android:layout_marginTop="6dp"
+                    android:layout_marginEnd="-12dp"
                     android:contentDescription="@string/quick_controls_brightness"
                     android:max="255"
                     android:minHeight="48dp"
-                    android:paddingStart="0dp"
-                    android:paddingEnd="0dp"
+                    android:paddingStart="12dp"
+                    android:paddingEnd="12dp"
                     android:progressBackgroundTint="#66FFFFFF"
                     android:progressTint="@color/kid_slider"
                     android:thumbTint="@color/kid_slider" />
