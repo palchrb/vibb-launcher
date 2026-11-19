@@ -4,21 +4,22 @@ Status: **built** on branch `build-119` (2026-11-19), from revision 2 (READY TO 
 was c3b03002e). It changes design 102 Part B (`docs/design/102-captive-portals-and-logins.md` §4,
 `docs/notes/launcher/logins.md`). Part A, the Wi-Fi sign-in window, stays as it is.
 
-**Owed before release** (the build ran no emulator; each box is a separate step):
+**Owed before release** (each box is a separate step; the emulator gate of 2026-11-19 is
+`docs/testing/2026-11-19-119-emulator-gate.md`):
 
-- [ ] M1 - the role by `dumpsys role` on 14 and 16: a fresh role-on phone, Chrome ticked then unticked, a pause in
+- [x] M1 - the role by `dumpsys role` on 14 and 16: a fresh role-on phone, Chrome ticked then unticked, a pause in
   which Chrome was made the default; hide-then-enable and the nudge (built as one kept flip of `logins.RoleNudge`, not
   an enable-and-disable pair: the hash is compared when the broadcast arrives); the `vibb_browser` dialog with the
   restriction lifted.
-- [ ] M2 - a plain `VIEW`, a session-less Custom Tab, AppAuth's `select`, `getPackageName(null)`, the per-package lookup
+- [x] M2 - a plain `VIEW`, a session-less Custom Tab, AppAuth's `select`, `getPackageName(null)`, the per-package lookup
   finding an unverified Organic Maps.
-- [ ] M3 - unhide, bind and session, the tab under lock task in the caller's task; tap-to-tab time; a `NEW_TASK` caller.
+- [x] M3 - unhide, bind and session, the tab under lock task in the caller's task; tap-to-tab time; a `NEW_TASK` caller.
 - [ ] M4 - each end of §4.4 (Element X's MAS, an AppAuth sample, ✕, a for-result caller and an Auth Tab sample's relay,
   "Open in Chrome browser", a minimised tab, leaving for Meldinger and back within the minute); whether Chrome honours
   the tab's "Open in Chrome browser" off (code QA L5); an Auth Tab with an https redirect, expected
   `RESULT_VERIFICATION_FAILED` (code QA L6, §4.5).
 - [ ] M5 - a Play services passkey or account sheet over the tab does not end the window.
-- [ ] M6 - Element X timeline links: `omaps.app`, a Google short link, `example.com`.
+- [x] M6 - Element X timeline links: `omaps.app`, a Google short link, `example.com`.
 - [ ] M7 - a process kill of Vibb mid-window; a reboot with Chrome unhidden.
 - [ ] §11's emulator gate, steps 1-7, on Android 14 and 16 (17 when an image is at hand).
 - [ ] Code QA M1 - with the role on, Chrome unhidden in Play's nightly update window and hidden at the screen-on;
