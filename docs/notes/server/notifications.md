@@ -543,8 +543,12 @@ push varsel ... kanskje man kan få valget". Branch `pwa-fixes-b`.
   Check Now that finds it again raises nothing: one event per release, never per sweep. `from`/`to` are
   `tracked_apps::version_of` of the old and new tag ("1.0.56" -> "1.0.57"); a rolling tag's new build has no `from`.
   Target `/apps/tracked/{id}`. Inbox "Signal 7.2.0 is available" / "14:02 · 7.1.4 → 7.2.0"; push "Signal: update
-  available" / "14:02 · version 7.2.0". In the inbox under every phone only (a `?device=` filter leaves it out), with a
-  grey avatar and the app's letter (`notifications::inbox_row`).
+  available" / "14:02 · version 7.2.0". In the inbox under every phone only (a `?device=` filter leaves it out), with
+  the app's logo in the round avatar as its tile on the Apps tab shows it (2026-11-19: `notifications::catalog_app_of`
+  reads the event's `app_id`, `tracked_apps::logos_by_id` the logo - the Vibb mark for the launcher, else the logo the
+  phones sent or the catalog's kept one, design 87); a grey avatar and the app's letter only without one
+  (`notifications::inbox_row`). The push keeps the app's icon: `/app-logos/` is behind the session, which a
+  notification's icon fetch doesn't reliably carry (see "The push icon").
 - **`app_updated`** - per phone and version: `device_api::status` compares the report with the previous one
   (`PreviousReport` now reads `app_version`, `app_version_code`, `music_state_json`) through
   `tracked_apps::note_app_updates`: a versionCode higher than the previous report's that is the catalog row's stored
@@ -626,6 +630,8 @@ push varsel ... kanskje man kan få valget". Branch `pwa-fixes-b`.
   app's: `push::send_due` reads the event's phone's `devices.avatar_hash` (`LEFT JOIN devices` on
   `parent_events.device_id`) and `payload_json` puts `notification.data.icon` = `/phone-avatars/<hash>` or
   `push::APP_ICON` (`/static/icons/icon-192.png`); a summary, a test and a catalog event (no phone) take the app's.
+  A catalog event's push could show the app's logo as the inbox does only once `/app-logos/<hash>` is served
+  without the session as `/phone-avatars/` is (not done: a design choice for the parent, 2026-11-19).
 - **In `data`, not as the notification's own `icon`**: only the worker's legacy path shows an icon we choose (Chrome,
   Firefox: `templates/sw.js` `iconOf(data)` - a path on this server, else the app's icon; another site's picture is
   never shown, `jstest/sw.test.js`). Safari's declarative notification is shown by webpushd itself with the app's own

@@ -750,3 +750,72 @@ async fn an_installed_app_keeps_only_its_own_phones_logo() {
         .text();
     assert!(!page.contains(&tile), "{page}");
 }
+
+/// PLAN 2026-11-19 (the user: "burde vi ta med app logoene her istedetfor de grå bokstav avataren?"): a catalog event
+/// on Notifications shows the app's logo as its tile on the Apps tab does - the logo the phones sent, the Vibb mark for
+/// the launcher - and the grey letter only for an app without one.
+#[tokio::test]
+async fn a_catalog_event_shows_the_apps_logo() {
+    use crate::parent_events::{app_update_available, raise_logged};
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (_, token) = app.enrolled_device("Emma").await;
+    let mut ids = Vec::new();
+    for (name, package, launcher) in [
+        ("Drawing", "org.example.drawing", false),
+        ("Notes", "org.example.notes", false),
+        ("Vibb One", "me.vibb.launcher", true),
+    ] {
+        let id: i64 = sqlx::query_scalar(
+            "INSERT INTO tracked_apps (name, package_name, github_repo, is_launcher) VALUES (?, ?, 'o/r', ?) \
+             RETURNING id",
+        )
+        .bind(name)
+        .bind(package)
+        .bind(launcher)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+        ids.push((id, name));
+    }
+    let logo = png(SIZE_PX, 90);
+    report_and_upload(
+        &app,
+        &token,
+        json!([app_row("org.example.drawing", "Drawing", Some(&sha(&logo)))]),
+        &[&logo],
+    )
+    .await;
+    let now = chrono::Utc::now();
+    for (id, name) in &ids {
+        raise_logged(
+            &app.state,
+            &app_update_available(*id, name, &format!("v2@{id}"), Some("1.0"), "2.0", now),
+        )
+        .await;
+    }
+
+    let page = app.get_page("/notifications", &cookie).await.text();
+    // Each row from its avatar on; the avatar is the row's first span.
+    let avatar_of = |name: &str| {
+        let row = page
+            .split("<span class=\"avatar")
+            .skip(1)
+            .find(|row| row.contains(name))
+            .unwrap_or_else(|| panic!("{name}'s row: {page}"));
+        row[..row.find("</span>").unwrap()].to_string()
+    };
+    let drawing = avatar_of("Drawing");
+    assert!(
+        drawing.contains(&format!("src=\"/app-logos/{}\"", sha(&logo))),
+        "{drawing}"
+    );
+    let launcher = avatar_of("Vibb One");
+    assert!(
+        launcher.contains("src=\"/static/icons/vibb-one-tile.svg\""),
+        "{launcher}"
+    );
+    let notes = avatar_of("Notes");
+    assert!(!notes.contains("<img"), "{notes}");
+    assert!(notes.ends_with(">N"), "the letter: {notes}");
+}

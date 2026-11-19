@@ -2214,7 +2214,10 @@ pointer here.
   the tile an `<img data-preview-logo>` shown only for "App logo" (`static/app-display.js` `?v=6`; server-rendered for
   a page without JS); "Automatic" keeps "Vibb style" (R2-M6). No new words, no new form or save (nothing can move the
   page), the header untouched.
-- **Tests**: `tests::app_logos` (`the_contract`, `the_rows_follow_the_reports_and_the_files_follow_the_rows`,
+- **Notifications** (2026-11-19): a catalog event's row (`app_update_available`, waiting or held) shows the app's
+  logo in its round avatar by the tile's rule (`tracked_apps::tile_logo`, `logos_by_id`); the letter only without
+  one; a phone's event keeps the phone's picture. `notifications.md`, "App update notices".
+- **Tests**: `tests::app_logos` (`the_contract`, `a_catalog_event_shows_the_apps_logo`, `the_rows_follow_the_reports_and_the_files_follow_the_rows`,
   `a_full_phone_is_asked_for_nothing_more`, `only_a_named_logo_is_served_behind_the_session`,
   `the_pages_show_the_logos`, `the_catalog_keeps_the_last_logo`), `app_logos::tests` (the decode's limits, the budget and refusals),
   `intake_limits::the_field_tables_keep_every_contract_key` (`report`'s keys),

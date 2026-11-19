@@ -2881,11 +2881,7 @@ fn capitalised(text: &str) -> String {
 fn app_tile(app: &TrackedApp, label: &str, logos: &HashMap<String, String>) -> AppTile {
     let colours = crate::handlers::devices::AVATAR_COLOURS;
     AppTile {
-        logo: if app.is_launcher {
-            Some(crate::app_logos::VIBB_MARK.to_string())
-        } else {
-            logos.get(&app.package_name).cloned()
-        },
+        logo: tile_logo(app, logos),
         letter: crate::handlers::devices::initial(label),
         colour: colours[app.id.rem_euclid(colours.len() as i64) as usize],
         icon: app
@@ -2899,6 +2895,54 @@ fn app_tile(app: &TrackedApp, label: &str, logos: &HashMap<String, String>) -> A
                 )
             }),
     }
+}
+
+/// A catalog app's logo as its tile shows it (design 87 §8.1): the server's Vibb mark for the launcher, else the
+/// logo most phones sent or the catalog's kept one (`logos`, [crate::app_logos::catalog_logos]).
+fn tile_logo(app: &TrackedApp, logos: &HashMap<String, String>) -> Option<String> {
+    if app.is_launcher {
+        Some(crate::app_logos::VIBB_MARK.to_string())
+    } else {
+        logos.get(&app.package_name).cloned()
+    }
+}
+
+/// The logos of the catalog apps `ids`, by id, as their tiles show them ([tile_logo]): the Notifications rows of a
+/// catalog event (PLAN 2026-11-19). An app without one, or removed, is left out; a failed read is logged and leaves
+/// every row its letter.
+pub(crate) async fn logos_by_id(state: &AppState, ids: &[i64]) -> HashMap<i64, String> {
+    if ids.is_empty() {
+        return HashMap::new();
+    }
+    let json = serde_json::to_string(ids).expect("numbers serialize");
+    let apps: Vec<TrackedApp> = match sqlx::query_as(
+        "SELECT * FROM tracked_apps WHERE id IN (SELECT value FROM json_each(?))",
+    )
+    .bind(json)
+    .fetch_all(&state.db)
+    .await
+    {
+        Ok(apps) => apps,
+        Err(err) => {
+            tracing::error!(%err, "can't read the catalog apps for their logos");
+            return HashMap::new();
+        }
+    };
+    let packages: Vec<String> = apps
+        .iter()
+        .filter(|app| !app.is_launcher && !app.package_name.is_empty())
+        .map(|app| app.package_name.clone())
+        .collect();
+    let logos = match crate::app_logos::catalog_logos_for(state, &packages).await {
+        Ok(logos) => logos,
+        Err(err) => {
+            tracing::error!(%err, "can't read the apps' logos");
+            HashMap::new()
+        }
+    };
+    apps.iter()
+        .filter_map(|app| tile_logo(app, &logos).map(|logo| (app.id, logo)))
+        .collect()
 }
 
 /// The catalog row of `app`, which `phones` phones have ticked; the launcher is on every one of

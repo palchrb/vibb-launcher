@@ -234,6 +234,16 @@ pub(crate) fn row_from(admin: usize) -> String {
     )
 }
 
+/// The catalog app of an event without a phone (`app_update_available`, waiting or held): its parameters' `app_id`.
+/// A phone's event keeps the phone's picture.
+fn catalog_app_of(raw: &Row) -> Option<i64> {
+    if raw.1.is_some() {
+        return None;
+    }
+    let params: serde_json::Value = serde_json::from_str(raw.10.as_deref()?).ok()?;
+    params.get("app_id")?.as_i64()
+}
+
 /// One event as a row: the inbox's, and the phone summary's Activity (design 48 §1.2), which
 /// doesn't show the avatar. `words` says when it happened ("3 min ago" in the inbox, the clock
 /// on the summary); the delivery line is the inbox's to add.
@@ -332,11 +342,22 @@ pub async fn page(
     let older_than = (raw.len() as i64 > parent_events::PAGE)
         .then(|| raw.get(parent_events::PAGE as usize - 1).map(|r| r.0))
         .flatten();
+    // A catalog event shows its app's logo, as the Apps tab does (PLAN 2026-11-19); the letter only without one.
+    let apps: Vec<i64> = raw
+        .iter()
+        .take(parent_events::PAGE as usize)
+        .filter_map(catalog_app_of)
+        .collect();
+    let logos = crate::handlers::tracked_apps::logos_by_id(&state, &apps).await;
     let rows = raw
         .into_iter()
         .take(parent_events::PAGE as usize)
         .map(|raw| {
+            let logo = catalog_app_of(&raw).and_then(|app| logos.get(&app).cloned());
             let mut row = inbox_row(raw, &zone, now, |t| zone.relative(t, now));
+            if logo.is_some() {
+                row.photo = logo;
+            }
             row.delivery = lines.remove(&row.id).and_then(|d| delivery_line(lang, &d));
             row
         })
