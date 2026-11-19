@@ -293,4 +293,18 @@ class SpotifyApiTest {
         assertTrue("no bearer to the fake's token route", http.sent[0].headers.none { it.first == "Authorization" })
         assertEquals(TokenResult.Unreachable, api { throw IOException("down") }.debugToken("http://10.0.2.2:8731/fake/token".toHttpUrl()))
     }
+
+    /** 2026-11-19: a failed answer's reason and message for the log, nothing for a 2xx or an empty body. */
+    @Test
+    fun `a failed answer's words for the log`() {
+        fun words(status: Int, body: String) = SpotifyApi.errorWords(SpotifyResponse(status, null, body.toByteArray()))
+        assertEquals(
+            " NO_ACTIVE_DEVICE \"Player command failed: No active device found\"",
+            words(404, """{"error":{"status":404,"message":"Player command failed: No active device found","reason":"NO_ACTIVE_DEVICE"}}"""),
+        )
+        assertEquals(" \"Service unavailable\"", words(503, """{"error":{"status":503,"message":"Service unavailable"}}"""))
+        assertEquals("", words(204, ""))
+        assertEquals("", words(502, "<html>bad gateway</html>"))
+        assertEquals(SpotifyApi.ERROR_MESSAGE_MAX + 3, words(400, """{"error":{"message":"${"x".repeat(200)}"}}""").length)
+    }
 }

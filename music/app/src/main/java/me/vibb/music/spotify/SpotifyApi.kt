@@ -312,6 +312,23 @@ class SpotifyApi(
         /** `Retry-After` in seconds (`0..3600`) as ms; an HTTP date or junk is none. */
         fun retryAfterMs(raw: String?): Long? = raw?.trim()?.toLongOrNull()?.takeIf { it in 0..3_600 }?.times(1_000)
 
+        /**
+         * A failed answer's words for the log: Spotify's `reason` and `message` (`{"error": {...}}`), the message cut to
+         * [ERROR_MESSAGE_MAX] letters, digits and plain punctuation; empty for a 2xx or a body without them.
+         */
+        fun errorWords(r: SpotifyResponse): String {
+            if (r.status in 200..299) return ""
+            val root = runCatching { JSON.parseToJsonElement(r.body.toString(Charsets.UTF_8)) }.getOrNull() as? JsonObject ?: return ""
+            val error = root["error"] as? JsonObject ?: root
+            val reason = reason(r.body)
+            val message = ((error["message"] as? JsonPrimitive)?.takeIf { it.isString }?.content)
+                ?.filter { it.isLetterOrDigit() || it in " .,:;'()-_/" }?.take(ERROR_MESSAGE_MAX)
+            return listOfNotNull(reason, message?.let { "\"$it\"" }).joinToString(" ", prefix = " ").trimEnd()
+        }
+
+        /** The longest Spotify error message the log keeps. */
+        const val ERROR_MESSAGE_MAX = 80
+
         /** Spotify's error `reason` (`{"error": {"reason": ...}}`, or top-level), a fixed word or null. */
         private fun reason(body: ByteArray): String? {
             val root = runCatching { JSON.parseToJsonElement(body.toString(Charsets.UTF_8)) }.getOrNull() as? JsonObject ?: return null

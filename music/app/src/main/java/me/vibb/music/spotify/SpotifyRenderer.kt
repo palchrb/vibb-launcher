@@ -237,7 +237,16 @@ internal class SpotifyRenderer(
     private val api = SpotifyApi(
         { request ->
             if (request.url.encodedPath == PLAY_PATH) playSentAt = ports.now()
-            http.send(request)
+            // every Web API answer in the log (the path only, never the query or a header): a failed start says which
+            // call failed and how (2026-11-19, a start that stopped UNREACHABLE without saying why)
+            val response = try {
+                http.send(request)
+            } catch (e: Exception) {
+                ports.log("spotify: ${request.method} ${request.url.encodedPath} failed (${e.javaClass.simpleName})")
+                throw e
+            }
+            ports.log("spotify: ${request.method} ${request.url.encodedPath} -> ${response.status}${SpotifyApi.errorWords(response)}")
+            response
         },
         apiBase,
         ports::now,
