@@ -52,6 +52,11 @@
 - `setup/SetupPages.kt` builds each step's pages through `systemPageIntent` (an unsuspended system page - inside a
   window); the assistant, the call filter and the default apps open in design 98's pick window, Wi-Fi in airplane mode
   through its Wi-Fi step.
+- The gate of 2026-11-19 (`docs/testing/2026-11-18-114-emulator-check.md`): row 5 opens the Internet panel first from
+  API 36 (`mobileDataActions`: Android 16's SIM page has no Mobile data switch), and the flow reads its step again on
+  window focus (the panel is a SystemUI dialog there); "Sett på pause i 2 t" from the flow marks the pause
+  (`SetupRun.markPausedFromFlow`) and the flow comes back once - from Home's resume (14 restarts Home) or its own
+  `onDestroy` (16 leaves Settings in front) - since leaving lock task clears every locked task.
 - "Gjort" on a parent step: `SetupTicks` (a pending set, posted to `POST /api/devices/setup/ticks` at the start of
   every sync until done or carried by the policy's `setup.ticked`).
 - Parent Settings has one row, `settings_setup` ("N steg igjen" in orange, or "Fullført"), which opens the flow; the
