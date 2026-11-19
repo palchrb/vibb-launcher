@@ -638,7 +638,7 @@ async fn the_catalog_keeps_the_last_logo() {
     assert_eq!(kept().await, Some(sha(&old)));
 
     // The last phone drops the app: its row goes, the catalog's logo and file stay, served and shown on the Apps tab
-    // and the app's page - not on the phone's own list.
+    // and the app's page, and on the phone's own list (it is ticked there, not installed).
     assert_eq!(
         wanted(&app, &token, status_body(without.clone())).await,
         json!([])
@@ -657,11 +657,19 @@ async fn the_catalog_keeps_the_last_logo() {
         .await
         .text();
     assert!(page.contains(&tile(&sha(&old))), "{page}");
+    // The phone's Apps page lists the catalog app it is ticked for, not installed: it shows the catalog's logo too,
+    // not a letter (2026-11-19).
+    sqlx::query("INSERT INTO device_tracked_apps (device_id, tracked_app_id) VALUES (?, ?)")
+        .bind(emma)
+        .bind(catalog)
+        .execute(&app.db)
+        .await
+        .unwrap();
     let phone = app
         .get_page(&device_page(emma, Section::Apps), &cookie)
         .await
         .text();
-    assert!(!phone.contains(&tile(&sha(&old))));
+    assert!(phone.contains(&tile(&sha(&old))), "{phone}");
 
     // A newer logo replaces the kept one; the old file goes with its last name.
     report_and_upload(&app, &token, with(&new), &[&new]).await;

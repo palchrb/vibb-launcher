@@ -698,6 +698,25 @@ pub async fn phone_logos(
     Ok(logos)
 }
 
+/// A phone's Apps page: this phone's own logo per package first, else the catalog's (`catalog_logos`: another
+/// phone's, or the row's kept one - an app uninstalled from this phone keeps its icon). A failed catalog read is
+/// logged and the phone's logos stand; a failed read of the phone's own is the caller's error, as before.
+pub async fn phone_or_catalog_logos(
+    state: &AppState,
+    device_id: i64,
+) -> Result<HashMap<String, String>, sqlx::Error> {
+    let mut logos = phone_logos(state, device_id).await?;
+    match catalog_logos(state).await {
+        Ok(catalog) => {
+            for (package, src) in catalog {
+                logos.entry(package).or_insert(src);
+            }
+        }
+        Err(err) => tracing::error!(device_id, %err, "can't read the catalog's app logos"),
+    }
+    Ok(logos)
+}
+
 /// The catalog rows' logos (§8.1, R2-L4): per package the hash most phone rows name, a tie to the most recently
 /// updated, whose file exists; else the catalog row's kept logo (0155) when its file exists - package -> URL.
 pub async fn catalog_logos(state: &AppState) -> Result<HashMap<String, String>, sqlx::Error> {

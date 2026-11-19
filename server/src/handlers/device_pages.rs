@@ -1907,7 +1907,7 @@ async fn lock_tiles(
     use crate::app_display as display;
     let defaults = display::catalog_defaults(&state.db).await?;
     let own = display::device_rows(&state.db, id).await?;
-    let logos = crate::app_logos::phone_logos(state, id).await?;
+    let logos = crate::app_logos::phone_or_catalog_logos(state, id).await?;
     Ok(card
         .apps
         .iter()
@@ -2206,7 +2206,7 @@ pub(crate) async fn render_apps(
         Err(err) => return read_failed(lang, id, "the phone's lock-screen media apps", err),
     };
     // Design 87: the apps' logos this phone sent; a failed read is the page's read error, like the reads above.
-    let logos = match crate::app_logos::phone_logos(state, id).await {
+    let logos = match crate::app_logos::phone_or_catalog_logos(state, id).await {
         Ok(logos) => logos,
         Err(err) => return read_failed(lang, id, "the phone's app logos", err),
     };
