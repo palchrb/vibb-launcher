@@ -1,0 +1,45 @@
+# The Vibb Phone server's automatic, verified image update (server/DEPLOY.md, "Docker", "Automatic, verified"):
+# update-image.sh --auto moves the container to the newest stable server-vX.Y.Z release only after its build
+# attestation verifies; a refused check changes nothing and this unit shows failed. Started by handy-update.timer.
+#
+# Install (as root): copy this file and handy-update.timer to /etc/systemd/system/, set WorkingDirectory and ExecStart
+# below to your compose folder, put GH_TOKEN in /etc/handy-update.env (root-only, 0600), then
+#   systemctl daemon-reload && systemctl enable --now handy-update.timer
+# Turn Watchtower off for this container first: the two must not fight over it.
+[Unit]
+Description=Vibb Phone server: verified image update (update-image.sh --auto)
+Documentation=https://github.com/palchrb/vibb-launcher/blob/main/server/DEPLOY.md
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+# The folder with compose.yaml, .env and update-image.sh - yours may differ.
+WorkingDirectory=/opt/handy
+ExecStart=/bin/bash /opt/handy/update-image.sh --auto
+# GH_TOKEN=... for `gh` (a fine-grained token, public repositories read-only, no permissions). Root-only:
+#   install -m 600 -o root -g root /dev/null /etc/handy-update.env && editor /etc/handy-update.env
+EnvironmentFile=/etc/handy-update.env
+Environment=GH_PROMPT_DISABLED=1 GH_NO_UPDATE_NOTIFIER=1
+# A slow pull on a small board; never hang until the next day.
+TimeoutStartSec=30min
+
+# Hardening that still reaches docker: the docker socket is root's anyway (whoever can use it is root), so this keeps
+# the script itself from writing outside its folder, /root's gh and docker state and /var, and from the kernel's knobs.
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=full
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+UMask=0077

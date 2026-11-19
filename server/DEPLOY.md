@@ -407,7 +407,8 @@ where the same removals arrive.
 
 **Recommended: the host's network, with the host's Tailscale and Caddy.** The proxies' defaults then hold, and Docker
 never hides the client's address. The files are in the repo: `server/deploy/compose.yaml`, `server/deploy/env.example`
-(copy it as `.env`), `server/deploy/update-image.sh` and `server/deploy/Caddyfile.example` (option (c) above).
+(copy it as `.env`), `server/deploy/update-image.sh`, `server/deploy/Caddyfile.example` (option (c) above), and for
+automatic verified updates `server/deploy/handy-update.service` and `handy-update.timer` (below).
 `compose.yaml`:
 
 ```yaml
@@ -458,13 +459,16 @@ initial-admin-password`. Sign in as `admin` and change it - the server deletes i
     up -d`. What runs is what was verified; a refused check changes nothing. It needs `docker` with buildx, `jq` and
     `gh` signed in (`gh auth login`, any account: it only reads). Back to Watchtower: `HANDY_VERSION=latest` and an
     empty `HANDY_DIGEST`.
+  - **Automatic, verified**: `./update-image.sh --auto` on a daily systemd timer - the verified path above for each new
+    release, by itself ("Automatic, verified updates" below).
 
   Settings › Software Updates shows this server's version and the newest release; it never updates anything itself.
   Before migrating the database, the new version copies it to `data/backups/pre-migrate-<from>-<to>.db` (the newest 3
   are kept). A pre-migration copy keeps what the old schema held until it rotates out (e.g. 0126's dropped
   `weather_places`, the cells' old place names).
 - **Rolling back**: put the pre-migration copy back, then the old release (Watchtower must not pull `latest` meanwhile:
-  pin `HANDY_VERSION`):
+  pin `HANDY_VERSION`; with the timer below, `sudo systemctl disable --now handy-update.timer` first, or it moves
+  forward again the next night):
 
   ```
   docker compose stop handy
@@ -514,6 +518,58 @@ settings > Change visibility > Public. The release workflow builds each architec
 `x86_64-unknown-linux-musl` on `ubuntu-24.04`, `aarch64-unknown-linux-musl` on the `ubuntu-24.04-arm` runner; no
 `cross`, no QEMU), builds each image from the binary in that architecture's tarball and tests it natively on its own
 runner before the two are joined and get a version tag, and publishes the GitHub release only after that.
+
+### Automatic, verified updates
+
+`update-image.sh --auto` looks up the newest stable `server-vX.Y.Z` release (never a draft or a prerelease; the highest
+version - the same rule as Software Updates and `update.sh`). Newer than `HANDY_VERSION` in `.env`: it takes exactly the
+verified path above (attestation, then the digest pinned in `.env`, then `docker compose up -d`). The same: it does
+nothing. Older: it never goes back. `HANDY_VERSION=latest` is Watchtower's mode: it refuses to move and says so. A
+check that fails changes nothing and exits non-zero, so the unit shows failed. There is no backup step of its own: the
+new server copies the database to `backups/pre-migrate-<from>-<to>.db` before it migrates ("Rolling back" above).
+`handy-update.timer` runs it once a day at 04:30 host time, plus up to an hour at random, and catches up after the
+host was off.
+
+**Turn Watchtower off for this container** - the two would fight over it (Watchtower pulls `latest`, the timer pins a
+digest). Either remove Watchtower, if it watches nothing else, or give the service the label in `compose.yaml`:
+
+```yaml
+    labels: ["com.centurylinklabs.watchtower.enable=false"]
+```
+
+Then `docker compose up -d`.
+
+**Install** (as root; the folder is the one with `compose.yaml` and `.env`, `/opt/handy` below - use yours):
+
+1. Pin a version once, so `.env` no longer says `latest`: `./update-image.sh X.Y.Z` (Settings › Software Updates shows
+   the newest). `docker` with buildx, `jq`, `gh` and `flock` must be on root's path (`gh` from GitHub's apt repository,
+   not a copy in a user's home).
+2. A token for `gh`: GitHub › Settings › Developer settings › Fine-grained tokens › Generate new token, Repository
+   access **Public repositories** (read-only), no permissions, an expiry you will notice. Put it in a file only root can
+   read - never in the repo, and never in `.env`, which the container reads:
+
+   ```
+   sudo install -m 600 -o root -g root /dev/null /etc/handy-update.env
+   sudo editor /etc/handy-update.env      # one line: GH_TOKEN=github_pat_...
+   ```
+
+3. The units: copy `handy-update.service` and `handy-update.timer` from `server/deploy/` to `/etc/systemd/system/`,
+   set `WorkingDirectory=` and the path in `ExecStart=` in the service to your folder, then
+
+   ```
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now handy-update.timer
+   sudo systemctl start handy-update.service     # one run now, to see it work
+   ```
+
+Root runs `update-image.sh`: keep it and the folder writable only by root (or by the docker group, which is root on
+the host anyway).
+
+**Check**: `systemctl list-timers handy-update.timer` (the next and the last run), `journalctl -u handy-update` (what
+each run did: nothing, "checking it" and "Running ...:X.Y.Z@sha256:...", or why it stopped), `systemctl status
+handy-update.service` (failed = a refused check, a lookup that failed, `latest` in `.env`, or an expired token - the
+journal says which; the server keeps running what it ran). When the token expires, make a new one and replace the line.
+Off again: `sudo systemctl disable --now handy-update.timer`.
 
 ## Updating
 
