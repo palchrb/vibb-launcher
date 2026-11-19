@@ -582,8 +582,11 @@
     </style>
 
     <!-- The contact sheet and the emergency sheet: a dialog at the bottom, dimmed behind, slides up. Not floating,
-         so its window runs behind the navigation bar (KidSheet.kt); a floating one left a black strip there. -->
+         so its window runs behind the navigation bar (KidSheet.kt); a floating one left a black strip there. Android 14
+         doesn't draw edge to edge by itself: the bar's colour is transparent here, KidSheet.kt lays the window out
+         behind it. -->
     <style name="KidSheetDialog" parent="Theme.AppCompat.Dialog">
+        <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowBackground">@android:color/transparent</item>
         <item name="android:windowIsFloating">false</item>
         <item name="android:windowIsTranslucent">true</item>

@@ -6,6 +6,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.WindowInsets
 import android.widget.FrameLayout
+import androidx.core.view.WindowCompat
 
 /**
  * The bottom sheets' window ([ContactSheet], [EmergencySheet], [KidPhotoSheet]; style `KidSheetDialog`, not
@@ -30,6 +31,9 @@ internal fun Dialog.setUpKidSheet(content: View) {
     frame.addView(content, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
     setContentView(frame)
     window?.apply {
+        // Android 15+ lays an app targeting 35+ out edge to edge; Android 14 fitted the window above the navigation
+        // bar and painted the bar black under the sheet (code QA M2, 2026-11-19).
+        WindowCompat.setDecorFitsSystemWindows(this, false)
         setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         setGravity(Gravity.BOTTOM)
     }
