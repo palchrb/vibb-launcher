@@ -17,7 +17,10 @@ Part A, the Wi-Fi sign-in window, stays as it is.
 - **M1: the order is hide Chrome, then enable the gate.** A repair re-runs Android's role grant, with measurement rows.
 - **M2:** callers that want a result, and Auth Tab, get their result relayed. Otherwise they are a case for the pause.
 - **M3:** no main-thread wait on the enforcer's lock.
-- **M5:** `DISALLOW_CONFIG_DEFAULT_APPS` stays set while the gate is on, lifted only for the role's setup step.
+- **M5:** `DISALLOW_CONFIG_DEFAULT_APPS` is set while the gate is on.
+  - A pause lifts it, as it lifts every restriction (the user).
+  - The role's setup step lifts it while its dialog is open.
+  - The repair takes the browser role back when the pause ends.
 - **L1-L10:** all applied.
 - **ASK 4 = yes:** the stopped-hosts list with "Legg til".
 
@@ -131,7 +134,8 @@ C is design 102's own "Chrome hidden" state (the role off) with one way in, owne
 - **The repair (M1).** Each apply checks `RoleManager.isRoleHeld(ROLE_BROWSER)`. If the gate is on, Chrome is hidden and
   the role isn't held, the apply flips a no-op component: `logins/RoleNudge`, a disabled activity-alias, enabled and
   disabled again. That changes the hash, and the controller re-grants.
-  - At most once an hour, so a phone where it can't work doesn't loop.
+  - At most once an hour, so a phone where it can't work doesn't loop. A pause's end runs it at once, outside that
+    limit.
   - The report's `browser_role` says what it found.
 - **The on-phone path.** If the repair doesn't give Vibb the role, a new design 114 setup step, `vibb_browser`
   ("Nettleser" / "Browser app"), opens `RoleManager.createRequestRoleIntent(ROLE_BROWSER)` in a pause or the setup
@@ -145,9 +149,13 @@ C is design 102's own "Chrome hidden" state (the role off) with one way in, owne
 - **`DISALLOW_CONFIG_DEFAULT_APPS` (M5)** is set whenever the gate is on, not only while calls or SMS are managed
   (`lockDefaultAppsFor` gains the gate). Without it, Chrome's own "make Chrome your default" prompt during a window, or
   Default apps in a pause, could take the role.
-  - It stays set in a pause and during a window, as the call rules' default-apps lock already does.
-  - It is lifted only for the `vibb_browser` step's dialog and design 98's pick window.
-  - If the role moves anyway, the repair brings it back when Chrome is hidden again.
+  - It stays set during a window.
+  - **A pause lifts the gate's reason for it**, as it lifts every restriction (the user, 2026-11-19: the standing
+    rule holds). The call and SMS rules keep their own reason, as today, so on a phone with managed calls or SMS the
+    lock still holds.
+  - It is also lifted for the `vibb_browser` step's dialog and design 98's pick window.
+  - If the role moves - to Chrome in a pause, or anyway - the repair takes it back once Chrome is hidden again: at the
+    pause's end, or the next apply.
 - **The persistent preferred activity (L4)** for the same filter is set on every apply and in `HomePin`'s re-seat. It
   goes **after** the Play link blocker and the map handler's PPAs: Android keeps insertion order among equal
   priorities, and a catch-all added first could shadow them. `PlayInvariantsTest` pins the order. It earns its place
@@ -287,7 +295,8 @@ Android 15's safer-intent matching and Android 16's intent-redirection hardening
 
 - **A pause or the override** unhides Chrome with every app and lifts its lockdown (design 102 D9, unchanged).
 - **The gate** sends other links to Chrome then (§4.3 step 2). The gate is not a restriction, so a pause leaves it on.
-- **The pause's end** is a tightening: Chrome is hidden, its tabs end, and the repair checks the role.
+- **The pause's end** is a tightening: Chrome is hidden, its tabs end, `DISALLOW_CONFIG_DEFAULT_APPS` is set again,
+  and the repair takes the browser role back if the pause moved it.
 
 ### 4.8 What stays (residue, named)
 
@@ -360,7 +369,7 @@ phone`, `when: link_gate`, `phone_page: android.app.role.action.REQUEST_ROLE`, `
 - `target`: `linkTargetOf`, with the unverified-app row;
 - `window`: each end of §4.4, the grace and its cancel, a stale record, a second link;
 - `plans`: Chrome hidden unless a window is open;
-- `order`: hide before enabling the gate; the repair's once an hour.
+- `order`: hide before enabling the gate; the repair's once an hour; a pause's end runs it at once.
 
 ### The PWA (Words in the UI)
 
@@ -397,7 +406,7 @@ phone`, `when: link_gate`, `phone_page: android.app.role.action.REQUEST_ROLE`, `
 
 | # | What | Expected |
 |---|---|---|
-| M1 | The role, read with `dumpsys role`, on 14 and 16: a fresh role-on phone (Chrome the holder); Chrome ticked → unticked; after a pause in which Chrome was made the default. Each with `DISALLOW_CONFIG_DEFAULT_APPS` set | hide-then-enable gives the gate the role; where it doesn't, the nudge does; the `vibb_browser` step's dialog opens with the restriction lifted |
+| M1 | The role, read with `dumpsys role`, on 14 and 16: a fresh role-on phone (Chrome the holder); Chrome ticked → unticked; after a pause in which Chrome was made the default (the restriction lifted in it), read at the pause's end. Each outside a pause with `DISALLOW_CONFIG_DEFAULT_APPS` set | hide-then-enable gives the gate the role; where it doesn't, the nudge does; after the pause, the repair takes the role back; the `vibb_browser` step's dialog opens with the restriction lifted |
 | M2 | A plain `VIEW`, a session-less Custom Tab, AppAuth's `select`, `getPackageName(null)`, and the per-package lookup | all reach the gate; `getPackageName` returns null; the lookup finds an unverified Organic Maps |
 | M3 | Unhide, bind and session, then the tab | under lock task in the caller's task; the time from tap to tab; a `NEW_TASK` caller (L3) |
 | M4 | Each end of §4.4: Element X's MAS redirect, an AppAuth sample, ✕, a for-result caller and an Auth Tab sample (the relay), "Open in Chrome browser" (`TAB_HIDDEN`, then the hide kills full Chrome), a minimised tab, leaving for Meldinger and coming back within a minute | each ends as its row says; the grace keeps the tab |
@@ -465,8 +474,8 @@ A failing row revises this note before the build goes on.
 - **D1:** Wi-Fi portals stay Part A.
 - **D2:** the gate is on whenever the phone is managed and no browser is a free app, role on or off.
 - **D3:** Meldinger never opens a login window.
-- **D4:** `DISALLOW_CONFIG_DEFAULT_APPS` stays set through pauses while the gate is on, as the call rules' lock already
-  does. It is lifted only for the role's setup step and design 98's pick window.
+- **D4 (the user, 2026-11-19):** a pause lifts the gate's `DISALLOW_CONFIG_DEFAULT_APPS` too - no exception to the
+  pause rule. When the pause ends, the role repair takes the browser role back.
 
 Nothing is open for the user.
 
