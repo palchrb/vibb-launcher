@@ -2842,6 +2842,11 @@ input.row-input {
     right: 80px;
 }
 
+/* The ⓘ's 44px between the words and the switch: a long label stops short of it. */
+.on-home > .row > .sw {
+    margin-left: 44px;
+}
+
 /* ---- Design 31 step 14: the rest of Settings ---- */
 
 /* A form's result at the top of its form group (the schedules): flush with the group's edges. */
