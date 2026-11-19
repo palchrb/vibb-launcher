@@ -796,14 +796,14 @@ async fn an_integrations_failure_shows_on_the_phones_that_use_it() {
         ]
         .map(|(k, h)| (k.to_string(), h))
     );
-    assert!(page.contains("2 apps can't get updates"), "{page}");
+    assert!(page.contains("2 apps can&#39;t get updates"), "{page}");
     // The lock page says the same as the row.
     let lock = app
         .get_page(&format!("/devices/{emma}/lock"), &cookie)
         .await
         .text();
     assert!(lock.contains("data-note=\"weather-down\""));
-    assert!(lock.contains("Weather isn't loading"));
+    assert!(lock.contains("Weather isn&#39;t loading"));
 
     // A success clears it at once.
     ok(db, "met", "").await;
