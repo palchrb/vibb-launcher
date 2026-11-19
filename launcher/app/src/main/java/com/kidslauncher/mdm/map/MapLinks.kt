@@ -47,7 +47,7 @@ data class MapParse(
 object MapLinks {
 
     /** The apps a map link opens, in order (Q3: CoMaps when Organic Maps isn't there). */
-    val TARGETS = listOf("app.organicmaps", "app.comaps.fdroid", "app.comaps")
+    val TARGETS = listOf("app.organicmaps", "app.organicmaps.web", "app.comaps.fdroid", "app.comaps")
 
     private const val MAX_LABEL = 120
 

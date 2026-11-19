@@ -36,7 +36,12 @@ use crate::models::StatusReportRequest;
 use crate::music_net::{BoxFut, Gated, PhoneAsks, Source};
 
 /// The apps a map link may open, in order (Q3: CoMaps when Organic Maps isn't installed).
-pub const TARGETS: [&str; 3] = ["app.organicmaps", "app.comaps.fdroid", "app.comaps"];
+pub const TARGETS: [&str; 4] = [
+    "app.organicmaps",
+    "app.organicmaps.web",
+    "app.comaps.fdroid",
+    "app.comaps",
+];
 /// A target's state on the phone.
 pub const TARGET_STATES: [&str; 4] = ["allowed", "hidden", "suspended", "missing"];
 
