@@ -434,7 +434,7 @@ async fn the_page_saves_on_its_anchors_and_the_home_form_keeps_bit_32() {
         &token,
         json!({
             "data_roaming": {"locked": false, "roaming": true, "country": "se", "network": "24001",
-                             "enabled": false, "data_active": true, "modems": 1, "where": "abroad"},
+                             "enabled": false, "data_active": false, "modems": 1, "where": "abroad"},
             "mobile_data": {"enabled": true, "sink": "kid", "settings_locked": true, "kid": "off"},
         }),
     )

@@ -539,9 +539,12 @@ pub(crate) async fn check_and_record(
     forget_gone(db, &dir).await;
 }
 
-/// The `file:` rows of backups that are gone.
+/// The `file:` rows of backups that are gone. The rows are read before the folder is listed: a backup is written
+/// before its check records its row, so every row read names a file the listing still sees unless it was deleted.
+/// Listed first, a check that ran in between (another backup's, made meanwhile) would have its new row taken for a
+/// gone file's and deleted - the cause of `a_backup_that_cant_be_read_shows_until_it_is_gone`'s flake, where
+/// [perform_backup]'s own check task ran beside the test's.
 async fn forget_gone(db: &sqlx::SqlitePool, dir: &std::path::Path) {
-    let names = list_backup_filenames(dir).await;
     let rows: Vec<String> = sqlx::query_scalar(
         "SELECT scope FROM integration_health WHERE key = ? AND scope LIKE 'file:%'",
     )
@@ -549,6 +552,7 @@ async fn forget_gone(db: &sqlx::SqlitePool, dir: &std::path::Path) {
     .fetch_all(db)
     .await
     .unwrap_or_default();
+    let names = list_backup_filenames(dir).await;
     for scope in rows {
         let gone = scope
             .strip_prefix("file:")

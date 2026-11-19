@@ -467,6 +467,8 @@ async fn check_now_while_a_sync_runs_says_so() {
         .text();
     assert!(html.contains(r#"data-sync="running""#), "{html}");
     assert!(html.contains("Checking now"));
+    // While it runs, the page refreshes itself in place until it shows the result.
+    assert!(html.contains("<span hidden data-waits></span>"), "{html}");
 
     running.finish(&Err(crate::handlers::tracked_apps::Failure::new(
         crate::handlers::tracked_apps::SyncProblem::GithubError,
@@ -477,6 +479,7 @@ async fn check_now_while_a_sync_runs_says_so() {
         .await
         .text();
     assert!(!html.contains(r#"data-sync="running""#));
+    assert!(!html.contains("data-waits"), "{html}");
     // A short title on the page, the raw error behind its ⓘ (design 31 §4.4).
     let failed = &html[html.find(r#"data-sync="failed""#).expect("the failure row")..];
     let (summary, panel) = failed.split_once("</summary>").unwrap();

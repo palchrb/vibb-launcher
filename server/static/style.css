@@ -1951,6 +1951,12 @@ th {
 
 /* A phone's own picture (server round C) over its letter: the same circle, the dot (after it) on
    top. The letter stays under it, so a picture that doesn't load shows the tile. */
+/* A catalog app's chosen glyph in a Notifications avatar (code QA L5), at the tiles' proportion (22 of 36). */
+.avatar-glyph {
+    width: 28px;
+    height: 28px;
+}
+
 .avatar-img {
     position: absolute;
     top: 0;

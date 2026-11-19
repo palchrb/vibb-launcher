@@ -1140,6 +1140,15 @@ struct SyncStatus {
     /// The release (tag, asset id) whose download didn't match the repo's checksum, and how many
     /// syncs in a row it did: at [MISMATCHES_TO_REFUSE] it becomes [SyncStatus::refused].
     mismatches: Option<(String, i64, u32)>,
+    /// The version the running sync downloads, once its listing named a new one ("New version
+    /// found, downloading"); `None` while it lists, and when none runs.
+    downloading: Option<String>,
+    /// The last sync was a "Check Now" that found nothing new (no download, no failure): shown
+    /// until the next sync starts.
+    nothing_new: bool,
+    /// "Check Now" was pressed while this sync ran (the hourly one, say): its end answers the
+    /// press as a Check Now's does (code QA L3).
+    check_asked: bool,
 }
 
 /// Checksum mismatches in a row of one release before the hourly sync stops downloading it
@@ -1346,6 +1355,9 @@ impl AppSyncs {
             return None;
         }
         status.running_since = Some(utc_now());
+        status.downloading = None;
+        status.nothing_new = false;
+        status.check_asked = false;
         Some(SyncGuard {
             syncs: self.clone(),
             id,
@@ -1354,6 +1366,31 @@ impl AppSyncs {
 
     fn status(&self, id: i64) -> SyncStatus {
         self.lock().get(&id).cloned().unwrap_or_default()
+    }
+
+    /// "Check Now" pressed while a sync of `id` runs: that sync's end answers it ([SyncGuard::end]).
+    /// `false` when none runs.
+    fn ask_check(&self, id: i64) -> bool {
+        let mut map = self.lock();
+        match map.get_mut(&id) {
+            Some(status) if status.running_since.is_some() => {
+                status.check_asked = true;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// The version the running sync of `id` downloads, if it got that far.
+    fn downloading(&self, id: i64) -> Option<String> {
+        self.lock()
+            .get(&id)
+            .and_then(|status| status.downloading.clone())
+    }
+
+    /// Notes that the running sync of `id` downloads `version` (the page says so while it runs).
+    fn set_downloading(&self, id: i64, version: String) {
+        self.lock().entry(id).or_default().downloading = Some(version);
     }
 
     fn refused(&self, id: i64) -> Option<(String, i64, Failure)> {
@@ -1392,12 +1429,28 @@ pub(crate) struct SyncGuard {
 }
 
 impl SyncGuard {
+    /// The end of what isn't a sync (approve, decline, update now): its failure, no answer to a
+    /// Check Now.
     pub(crate) fn finish(self, result: &Result<(), Failure>) {
-        self.syncs.lock().entry(self.id).or_default().last_error =
-            result.as_ref().err().map(|failure| SyncFailure {
-                at: utc_now(),
-                failure: failure.clone(),
-            });
+        self.close(result, false, false);
+    }
+
+    /// The end of a sync: a "Check Now" (`check`), or one Check Now was pressed during
+    /// ([AppSyncs::ask_check]), that ended without a failure or a download found nothing new,
+    /// and the page says so.
+    fn end(self, result: &Result<(), Failure>, check: bool) {
+        self.close(result, check, true);
+    }
+
+    fn close(self, result: &Result<(), Failure>, check: bool, asked_counts: bool) {
+        let mut map = self.syncs.lock();
+        let status = map.entry(self.id).or_default();
+        status.last_error = result.as_ref().err().map(|failure| SyncFailure {
+            at: utc_now(),
+            failure: failure.clone(),
+        });
+        let asked = check || (asked_counts && status.check_asked);
+        status.nothing_new = asked && result.is_ok() && status.downloading.is_none();
     }
 }
 
@@ -1405,6 +1458,7 @@ impl Drop for SyncGuard {
     fn drop(&mut self) {
         if let Some(status) = self.syncs.lock().get_mut(&self.id) {
             status.running_since = None;
+            status.downloading = None;
         }
     }
 }
@@ -1421,7 +1475,7 @@ async fn sync_app(state: &AppState, id: i64, forced: bool) -> Result<(), SyncErr
         return Err(SyncError::AlreadyRunning);
     };
     let result = sync_one_app(state, id, forced).await;
-    guard.finish(&result);
+    guard.end(&result, false);
     result.map_err(SyncError::Failed)
 }
 
@@ -1988,6 +2042,11 @@ async fn sync_release(
         .join(format!("{}-{}.apk", file_safe(tag), asset.id))
         .to_string_lossy()
         .into_owned();
+    // Only now, with a release that isn't the cached or the held one, is anything downloaded: the
+    // app's page says "New version found, downloading" from here, and Check Now answers.
+    state
+        .app_syncs
+        .set_downloading(app.id, version_of(tag, app.release_tag_prefix.as_deref()));
     // Streamed to disk, never held in memory: Element X's universal APK is 326 MB.
     let downloaded = tokio::time::timeout(
         DOWNLOAD_TOTAL_TIMEOUT,
@@ -2847,24 +2906,84 @@ fn capitalised(text: &str) -> String {
 fn app_tile(app: &TrackedApp, label: &str, logos: &HashMap<String, String>) -> AppTile {
     let colours = crate::handlers::devices::AVATAR_COLOURS;
     AppTile {
-        logo: if app.is_launcher {
-            Some(crate::app_logos::VIBB_MARK.to_string())
-        } else {
-            logos.get(&app.package_name).cloned()
-        },
+        logo: tile_logo(app, logos),
         letter: crate::handlers::devices::initial(label),
         colour: colours[app.id.rem_euclid(colours.len() as i64) as usize],
-        icon: app
-            .display_icon
-            .as_deref()
-            .filter(|key| crate::app_display::icon_known(key))
-            .map(|key| {
-                (
-                    key.to_string(),
-                    crate::app_display::tile_of(&app.display_color),
-                )
-            }),
+        icon: tile_icon(app),
     }
+}
+
+/// A catalog app's chosen glyph and its tile colour, when its key is known.
+fn tile_icon(app: &TrackedApp) -> Option<(String, &'static str)> {
+    app.display_icon
+        .as_deref()
+        .filter(|key| crate::app_display::icon_known(key))
+        .map(|key| {
+            (
+                key.to_string(),
+                crate::app_display::tile_of(&app.display_color),
+            )
+        })
+}
+
+/// A catalog app's logo as its tile shows it (design 87 §8.1): the server's Vibb mark for the launcher, else the
+/// logo most phones sent or the catalog's kept one (`logos`, [crate::app_logos::catalog_logos]).
+fn tile_logo(app: &TrackedApp, logos: &HashMap<String, String>) -> Option<String> {
+    if app.is_launcher {
+        Some(crate::app_logos::VIBB_MARK.to_string())
+    } else {
+        logos.get(&app.package_name).cloned()
+    }
+}
+
+/// A catalog app's avatar on Notifications, by its tile's rule (code QA L5): the logo, else the chosen glyph on its
+/// colour, else (no entry) the letter.
+pub(crate) struct CatalogAvatar {
+    pub logo: Option<String>,
+    /// The glyph's key (`/static/app-icons/<key>.svg`) and the tile's colour.
+    pub icon: Option<(String, &'static str)>,
+}
+
+/// The avatars of the catalog apps `ids`, by id, as their tiles show them ([tile_logo], [tile_icon]): the
+/// Notifications rows of a catalog event (PLAN 2026-11-19). An app with neither, or removed, is left out; a failed read
+/// is logged and leaves every row its letter.
+pub(crate) async fn avatars_by_id(state: &AppState, ids: &[i64]) -> HashMap<i64, CatalogAvatar> {
+    if ids.is_empty() {
+        return HashMap::new();
+    }
+    let json = serde_json::to_string(ids).expect("numbers serialize");
+    let apps: Vec<TrackedApp> = match sqlx::query_as(
+        "SELECT * FROM tracked_apps WHERE id IN (SELECT value FROM json_each(?))",
+    )
+    .bind(json)
+    .fetch_all(&state.db)
+    .await
+    {
+        Ok(apps) => apps,
+        Err(err) => {
+            tracing::error!(%err, "can't read the catalog apps for their logos");
+            return HashMap::new();
+        }
+    };
+    let packages: Vec<String> = apps
+        .iter()
+        .filter(|app| !app.is_launcher && !app.package_name.is_empty())
+        .map(|app| app.package_name.clone())
+        .collect();
+    let logos = match crate::app_logos::catalog_logos_for(state, &packages).await {
+        Ok(logos) => logos,
+        Err(err) => {
+            tracing::error!(%err, "can't read the apps' logos");
+            HashMap::new()
+        }
+    };
+    apps.iter()
+        .filter_map(|app| {
+            let logo = tile_logo(app, &logos);
+            let icon = if logo.is_none() { tile_icon(app) } else { None };
+            (logo.is_some() || icon.is_some()).then_some((app.id, CatalogAvatar { logo, icon }))
+        })
+        .collect()
 }
 
 /// The catalog row of `app`, which `phones` phones have ticked; the launcher is on every one of
@@ -3378,6 +3497,10 @@ struct TrackedAppDetailTemplate {
     last_checked: Option<When>,
     /// A sync of this app is running since then - "Check now" says so.
     sync_running: Option<When>,
+    /// The version the running sync downloads ("New version found, downloading").
+    sync_downloading: Option<String>,
+    /// The last Check Now found nothing new (and nothing waits or is held).
+    nothing_new: bool,
     /// How the last sync (hourly or "Check now") failed, if it did.
     sync_failure: Option<FailureView>,
     /// Name and icon (design 14): the default for every phone with the app
@@ -3789,6 +3912,14 @@ async fn render_detail_full(
                 .running_since
                 .as_deref()
                 .and_then(|at| When::of(&zone, at, now)),
+            sync_downloading: sync.downloading,
+            // Code QA L4: not beside a release held, waiting or declined (the update group says what
+            // there is), and never on a disabled app (the hourly sync, which would clear it, skips it).
+            nothing_new: sync.nothing_new
+                && app.enabled
+                && update.as_ref().is_none_or(|u| {
+                    u.held.is_none() && u.waiting.is_none() && u.declined.is_none()
+                }),
             sync_failure: sync.last_error.map(|failed| FailureView {
                 title: failed.failure.problem.title(lang),
                 detail: failed.failure.detail,
@@ -4080,14 +4211,19 @@ fn page_read_failed(id: i64, err: sqlx::Error, lang: Lang) -> Response {
     crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.read_app")
 }
 
-/// How long "Check now" waits for its sync before answering: a quick check shows its result at
-/// once, a long download goes on in the background and the page says it is running (qa-catalog
-/// #1: the request used to wait up to the 30 min download cap). Under scroll-restore's 20 s, so
-/// the page comes back where it was.
+/// How long "Check now" waits for the source's listing at most before answering (qa-catalog #1:
+/// the request used to wait up to the 30 min download cap). Under scroll-restore's 20 s, so the
+/// page comes back where it was.
 const CHECK_NOW_WAIT: Duration = Duration::from_secs(10);
 
+/// How often Check Now looks whether its sync has started a download.
+const CHECK_NOW_POLL: Duration = Duration::from_millis(50);
+
 /// Starts a sync of the app (unless one runs - then the page says so) and redirects back to the
-/// app's page, which shows a failure or that it is still running.
+/// app's page once the source's listing is read: the sync's end (a failure, nothing new, a
+/// release waiting or held), or "New version found, downloading" - the download goes on in the
+/// background and the page refreshes in place until it ends (`data-waits`). The release cached
+/// already is never downloaded again ([sync_release]).
 pub async fn check_now(State(state): State<AppState>, lang: Lang, Path(id): Path<i64>) -> Response {
     let exists: Option<i64> = sqlx::query_scalar("SELECT id FROM tracked_apps WHERE id = ?")
         .bind(id)
@@ -4099,14 +4235,35 @@ pub async fn check_now(State(state): State<AppState>, lang: Lang, Path(id): Path
         return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.app_not_found");
     }
 
+    // Started here, so the wait below never looks before the sync has begun. One that runs already
+    // (the hourly sync, another Check Now) is what the page shows, refreshing until it ends, and its
+    // end answers this press too - "No new version" included (code QA L3). It isn't forced: a
+    // release refused before is tried again by the next Check Now, not by that sync.
+    let Some(guard) = state.app_syncs.start(id) else {
+        state.app_syncs.ask_check(id);
+        return Redirect::to(&format!("/apps/tracked/{id}#check")).into_response();
+    };
     // In its own task: a large download still finishes, and is cached, after this answers.
     let task_state = state.clone();
-    let sync = tokio::spawn(async move {
-        if let Err(SyncError::Failed(e)) = sync_app(&task_state, id, true).await {
+    let mut sync = tokio::spawn(async move {
+        let result = sync_one_app(&task_state, id, true).await;
+        if let Err(e) = &result {
             tracing::warn!("tracked app {id} check failed: {e}");
         }
+        guard.end(&result, true);
     });
-    let _ = tokio::time::timeout(CHECK_NOW_WAIT, sync).await;
+    let downloading = async {
+        while state.app_syncs.downloading(id).is_none() {
+            tokio::time::sleep(CHECK_NOW_POLL).await;
+        }
+    };
+    let _ = tokio::time::timeout(CHECK_NOW_WAIT, async {
+        tokio::select! {
+            _ = &mut sync => {}
+            () = downloading => {}
+        }
+    })
+    .await;
     Redirect::to(&format!("/apps/tracked/{id}#check")).into_response()
 }
 
@@ -6870,6 +7027,153 @@ mod tests {
             (2, 1, 1, 1)
         );
         assert_eq!(row_of(&app, id).await.latest_release_file_path, Some(path));
+    }
+
+    /// Check Now says what it does (PLAN, approved 2026-11-19): it answers once the listing names a
+    /// new version, while the APK still downloads - the page says "New version found,
+    /// downloading" and refreshes in place (`data-waits`) until the sync ends; a Check Now that
+    /// finds the cached version downloads nothing and says "No new version", until the next sync.
+    #[tokio::test]
+    async fn check_now_answers_at_the_listing_and_says_what_it_found() {
+        use crate::fdroid::tests::FakeRepo;
+        let app = crate::tests::TestApp::new().await;
+        let cookie = app.admin_cookie().await;
+        let (repo, fake) = crate::fdroid::tests::fake_repo("127.0.0.1").await;
+        let (apk, sha) = fixture_apk();
+        serve_fixture(&fake, "me.vibb.testfixture", &sha, &apk);
+        let gate = std::sync::Arc::new(tokio::sync::Notify::new());
+        *fake.file_gate.lock().unwrap() = Some(gate.clone());
+        let id = fdroid_row(&app, &repo, "me.vibb.testfixture").await;
+        let page = || async {
+            app.get_page(&format!("/apps/tracked/{id}"), &cookie)
+                .await
+                .text()
+        };
+
+        // The APK is held back: Check Now answers anyway, with the download under way.
+        let answer = tokio::time::timeout(
+            CHECK_NOW_WAIT / 2,
+            check_now(State(app.state.clone()), Lang::En, Path(id)),
+        )
+        .await
+        .expect("answers before the download ends");
+        assert_eq!(answer.status(), StatusCode::SEE_OTHER);
+        assert_eq!(
+            app.state.app_syncs.downloading(id).as_deref(),
+            Some("1.0.57")
+        );
+        let html = page().await;
+        assert!(html.contains(r#"data-sync="downloading""#), "{html}");
+        assert!(html.contains("New version found, downloading"), "{html}");
+        assert!(html.contains("data-waits"), "refreshes while it runs");
+
+        gate.notify_one();
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while app.state.app_syncs.status(id).running_since.is_some() {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("the sync ends");
+        let html = page().await;
+        assert!(!html.contains("data-waits"), "{html}");
+        assert!(!html.contains(r#"data-sync="downloading""#));
+        assert!(!html.contains(r#"data-sync="nothing-new""#), "it found one");
+        assert_eq!(
+            row_of(&app, id).await.latest_release_tag.as_deref(),
+            Some("v1.0.57")
+        );
+        assert_eq!(FakeRepo::count(&fake.file_gets), 1);
+
+        // Again: the cached version is listed - nothing downloaded, and the page says so.
+        check_now(State(app.state.clone()), Lang::En, Path(id)).await;
+        assert_eq!(
+            FakeRepo::count(&fake.file_gets),
+            1,
+            "never downloaded again"
+        );
+        let html = page().await;
+        assert!(html.contains(r#"data-sync="nothing-new""#), "{html}");
+        assert!(html.contains("No new version"));
+        assert!(!html.contains("data-waits"));
+
+        // The next sync (the hourly one) ends it.
+        assert!(sync_app(&app.state, id, false).await.is_ok());
+        assert!(!page().await.contains(r#"data-sync="nothing-new""#));
+        assert_eq!(FakeRepo::count(&fake.file_gets), 1);
+    }
+
+    /// Code QA L3 of `server-small`: Check Now pressed while another sync runs (the hourly one) gets
+    /// that sync's answer - "No new version" at its end -, while the end of what isn't a sync
+    /// (approve, decline) answers nothing.
+    #[tokio::test]
+    async fn check_now_during_a_sync_is_answered_by_its_end() {
+        let app = crate::tests::TestApp::new().await;
+        let cookie = app.admin_cookie().await;
+        let id = fdroid_row(&app, "https://f-droid.org/repo", "me.vibb.testfixture").await;
+        let page = || async {
+            app.get_page(&format!("/apps/tracked/{id}"), &cookie)
+                .await
+                .text()
+        };
+
+        let hourly = app.state.app_syncs.start(id).expect("none runs");
+        check_now(State(app.state.clone()), Lang::En, Path(id)).await;
+        assert!(page().await.contains(r#"data-sync="running""#));
+        hourly.end(&Ok(()), false);
+        let html = page().await;
+        assert!(html.contains(r#"data-sync="nothing-new""#), "{html}");
+
+        // A sync with no press says nothing; nor does an approve's end after a press.
+        app.state.app_syncs.start(id).unwrap().end(&Ok(()), false);
+        assert!(!page().await.contains(r#"data-sync="nothing-new""#));
+        let approve = app.state.app_syncs.start(id).unwrap();
+        check_now(State(app.state.clone()), Lang::En, Path(id)).await;
+        approve.finish(&Ok(()));
+        assert!(!page().await.contains(r#"data-sync="nothing-new""#));
+    }
+
+    /// Code QA L4 of `server-small`: "No new version" isn't shown beside a declined release (the
+    /// update group says what there is), nor on a disabled app.
+    #[tokio::test]
+    async fn no_new_version_hides_beside_a_declined_release_and_on_a_disabled_app() {
+        let app = crate::tests::TestApp::new().await;
+        let cookie = app.admin_cookie().await;
+        let id = fdroid_row(&app, "https://f-droid.org/repo", "me.vibb.testfixture").await;
+        let shown = || async {
+            app.get_page(&format!("/apps/tracked/{id}"), &cookie)
+                .await
+                .text()
+                .contains(r#"data-sync="nothing-new""#)
+        };
+        app.state.app_syncs.start(id).unwrap().end(&Ok(()), true);
+        assert!(shown().await);
+
+        sqlx::query(
+            "UPDATE tracked_apps SET latest_release_tag = 'v1.0', latest_release_asset_id = 1, \
+             declined_release_tag = 'v1.1', declined_release_asset_id = 2 WHERE id = ?",
+        )
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+        assert!(!shown().await, "beside the declined release");
+
+        sqlx::query(
+            "UPDATE tracked_apps SET declined_release_tag = NULL, declined_release_asset_id = NULL, \
+             enabled = 0 WHERE id = ?",
+        )
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+        assert!(!shown().await, "on a disabled app");
+        sqlx::query("UPDATE tracked_apps SET enabled = 1 WHERE id = ?")
+            .bind(id)
+            .execute(&app.db)
+            .await
+            .unwrap();
+        assert!(shown().await);
     }
 
     /// App update notices (2026-10-25): a sync that stores a new release over an older one raises
