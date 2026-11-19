@@ -161,6 +161,16 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `display_time::tests`, `streams::tests`, `time_state::tests`, `attention::tests`, `src/tests/devices_list.rs`,
   `src/tests/attention.rs` (a row per fact).
 
+
+**Design 116 (C2) adds two kinds.** `Kind::FilterDown` (red, after `NotDeviceOwner`, from the report's `vpn_filter`:
+`down` for at least `mobile_network::VPN_REPORT_AFTER_MS` while the parent's switch is on and the report isn't paused;
+"at last report" when stale; to `/devices/{id}/filter#filter`, whose orange line says "Down for N" with the how-to
+behind its (i)). `Kind::Integration(Title, n)` (orange, after the music rows, the server's own data so never "at last
+report"): `integration_health::for_device`'s rows, one per title with the failing scopes summed, each to the page that
+says what the error is (`Title::target`; Lock Screen & PINs' `#weather` gains MET's orange line for it). Neither pushes
+but FilterDown's event (`filter_down`, once per down period, urgent, its own switch). The Devices list also shows the
+family's one backup row (`backups::backup_state`, `#backup-warning`, to `/backups`).
+
 ## About This Phone and Advanced (design 31 step 3, `docs/design/31-pwa-redesign.md` §3.2, §8)
 
 - **Two sub-pages** (`src/handlers/device_pages.rs`, `device_about.html`, `device_advanced.html`), reached from two

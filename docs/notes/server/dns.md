@@ -94,3 +94,12 @@ The server runs no DNS listener: each phone filters on-device (the launcher's `K
   24 h, under 5 min, at last report, an old rev, a provider report under Custom -, `the_secure_dns_bypass_on_the_page`,
   `an_allowed_secure_dns_host_says_it_stays_blocked`), `dns_server::tests::doh_hosts_match_the_launchers_asset`, `policy_json_keys_snapshot`
   (`dns_upstream` and its `backup`), the settings redirect table, `migrations_73_to_95_in_order`.
+
+## Filter on, tunnel down (design 116 part C, security review S-M2)
+
+The report's `vpn_filter` (`{state: up|down|off, down_ms?, period?}`, `mobile_network::clean_vpn_filter`, stored in
+`device_status.vpn_filter_json`) is the phone's own view of its filter at report time. `mobile_network::filter_down`
+raises "Web filter is down" (Attention `FilterDown`) once it is `down` for 10 minutes while the parent's switch is on and
+nothing lifts it; the phone's Web Filter page and the `/dns` page's line for that phone ("Emma: down") say the same, and
+the event `filter_down` is raised once per `period`. A missing `vpn_filter` (an older launcher) raises nothing. Every
+blocklist download also records `integration_health('blocklist', 'feed:<id>')` (a typed `dns_engine::FeedFailure`).
