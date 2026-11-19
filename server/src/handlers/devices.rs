@@ -1150,6 +1150,8 @@ struct DeviceDetailTemplate {
     lock_value: &'static str,
     home_value: String,
     filter_value: &'static str,
+    /// The location settings' mode (Finn's page, also reached from here - the user, 2026-11-19).
+    location_value: &'static str,
     /// Device › Mobilnett's row (design 95 rev. 3): its value only when it says something ("Bare Vibb · Roaming på").
     mobile_value: Option<String>,
     /// Design 95 rev. 3: Mobilnett's lines on the summary - only when they say something (the kid's Off, a roaming
@@ -2620,6 +2622,14 @@ async fn render_device(
                     "common.on"
                 } else {
                     "common.off"
+                },
+            ),
+            location_value: t(
+                lang,
+                match policy.location_mode.as_str() {
+                    "off" => "common.off",
+                    "interval" => "locate.settings.interval",
+                    _ => "locate.settings.on_request",
                 },
             ),
             mobile_value: crate::mobile_network::row_value(
