@@ -233,11 +233,20 @@ struct AddView {
     one_way: [String; 4],
     /// Its Avansert is drawn open: a channel is "Tilpasset", or a refused form had it open (`more`).
     adv_open: bool,
+    /// The Message button and the Matrix ID, as in a saved contact's Avansert (one form, one save).
+    message_options: Vec<SelectOption>,
+    message_address: String,
 }
 
 impl AddView {
     /// `switches`: `[inbound, outbound, show_on_home, sms_in, sms_out, mms]`.
-    fn new(lang: Lang, policy: &DevicePolicy, kid: &str, switches: [bool; 6], more: bool) -> Self {
+    fn new(
+        lang: Lang,
+        policy: &DevicePolicy,
+        kid: &str,
+        switches: [bool; 6],
+        sent: Option<&HashMap<String, String>>,
+    ) -> Self {
         let [inbound, outbound, home, sms_in, sms_out, mms] = switches;
         let contact = (
             t(lang, "device.calls.the_contact"),
@@ -263,7 +272,25 @@ impl AddView {
                 sms_in || sms_out,
             ),
             one_way: calls_form::one_way_labels(lang, kid, contact),
-            adv_open: calls.is_custom() || texts.is_custom() || more,
+            adv_open: calls.is_custom()
+                || texts.is_custom()
+                || sent.is_some_and(|f| f.get("more").is_some_and(|m| m == "1"))
+                || sent.is_some_and(|f| {
+                    f.get("message_app").is_some_and(|a| !a.is_empty())
+                        || f.get("message_address")
+                            .is_some_and(|a| !a.trim().is_empty())
+                }),
+            message_options: message_app_options(
+                lang,
+                sent.and_then(|f| f.get("message_app"))
+                    .map(String::as_str)
+                    .filter(|app| !app.is_empty()),
+                Some(&policy.default_message_app),
+            ),
+            message_address: sent
+                .and_then(|f| f.get("message_address"))
+                .map(|a| a.trim().to_string())
+                .unwrap_or_default(),
         }
     }
 }
@@ -1065,15 +1092,7 @@ async fn load_page(
         add_name,
         add_number,
         add_error,
-        add: AddView::new(
-            lang,
-            &policy,
-            &device.name,
-            add_switches,
-            shown
-                .add_sent
-                .is_some_and(|sent| sent.get("more").is_some_and(|m| m == "1")),
-        ),
+        add: AddView::new(lang, &policy, &device.name, add_switches, shown.add_sent),
         add_request,
         add_kept,
         add_short,
@@ -2086,6 +2105,23 @@ pub async fn add_contact(
     else {
         return bad_request(lang, "error.out_of_date");
     };
+    // The Message button and the Matrix ID are in the add form too (as in a saved contact's Avansert).
+    let typed_app = match form.get("message_app").map(String::as_str) {
+        None | Some("") => None,
+        Some(app) if MESSAGE_APPS.contains(&app) => Some(app),
+        Some(_) => return bad_request(lang, "error.unknown_message_app"),
+    };
+    let typed_address = match form.get("message_address").map(|s| s.trim()) {
+        None | Some("") => None,
+        Some(mxid) if valid_matrix_id(mxid) => Some(mxid),
+        Some(_) => {
+            return refuse(
+                "message_address",
+                t(lang, "device.calls.matrix_refused").into(),
+            )
+            .await;
+        }
+    };
     let switches = [
         inbound,
         outbound,
@@ -2164,10 +2200,14 @@ pub async fn add_contact(
         // parent ticked "Bruk Matrix-ID-en" (R2-M1), and then the Message button opens Element X with it (design 80
         // M6).
         crate::handlers::contact_requests::mark_added(&mut tx, id, &number, request).await?;
-        let message_address = from_request
-            .and_then(|r| r.matrix_id)
-            .filter(|_| form.contains_key("use_matrix"));
-        let message_app = message_address.as_ref().map(|_| "element");
+        // A typed Matrix ID wins over the request's suggestion; the Message button the parent chose wins over
+        // "Element X" for a Matrix ID.
+        let message_address = typed_address.map(str::to_string).or_else(|| {
+            from_request
+                .and_then(|r| r.matrix_id)
+                .filter(|_| form.contains_key("use_matrix"))
+        });
+        let message_app = typed_app.or(message_address.as_ref().map(|_| "element"));
         let added = sqlx::query(
             "INSERT OR IGNORE INTO device_contacts (device_id, contact_id, sort_order, allow_inbound, \
              allow_outbound, show_on_home, sms_in, sms_out, mms, message_address, message_app) \

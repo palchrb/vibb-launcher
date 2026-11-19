@@ -300,6 +300,10 @@ pub const HELD_ROWS_A_PHONE: i64 = 500;
 pub const BLOCKED_ROWS_A_PHONE: i64 = 500;
 /// How long the held rows are kept after their `at` (retention).
 pub const HELD_KEEP_DAYS: i64 = 30;
+/// A decided row (released, expired, dropped) is kept this long after its `at`: the page no longer lists it. Its
+/// window is 24 hours, so a phone that posts it again later brings a row already past its `expires_at`, never one
+/// waiting.
+pub const HELD_DECIDED_KEEP_DAYS: i64 = 7;
 /// A row's `at` may be this far past the server's clock (the phone's clock is locked while managed).
 const AT_AHEAD_MS: i64 = 5 * 60 * 1000;
 /// `expires_at - at`: the phone's 24-hour window, plus a minute.

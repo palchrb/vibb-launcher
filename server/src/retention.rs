@@ -164,7 +164,7 @@ pub struct Pruned {
     pub install_progress: u64,
     /// The weather's cells nobody asked for (design 75 §3.1).
     pub weather: u64,
-    /// The held and blocked senders a phone posted (design 77 D16), `sms::HELD_KEEP_DAYS` after their `at`.
+    /// The held and blocked senders a phone posted (design 77 D16), `sms::HELD_KEEP_DAYS` after their `at`, a decided one (released, expired, dropped) `sms::HELD_DECIDED_KEEP_DAYS`.
     pub sms_held: u64,
     /// The kid's requests for a new contact (design 77 §14), 30 days after the server got them.
     pub contact_requests: u64,
@@ -526,13 +526,20 @@ pub async fn prune(db: &SqlitePool) -> Pruned {
     let sms_held = rows(
         failed,
         "device_sms_held",
-        sqlx::query("DELETE FROM device_sms_held WHERE at < ?")
-            .bind(
-                chrono::Utc::now().timestamp_millis()
-                    - crate::sms::HELD_KEEP_DAYS * 24 * 60 * 60 * 1000,
-            )
-            .execute(db)
-            .await,
+        sqlx::query(
+            "DELETE FROM device_sms_held WHERE at < ? \
+             OR (at < ? AND (state NOT IN ('held', 'blocked') OR dropped_at IS NOT NULL))",
+        )
+        .bind(
+            chrono::Utc::now().timestamp_millis()
+                - crate::sms::HELD_KEEP_DAYS * 24 * 60 * 60 * 1000,
+        )
+        .bind(
+            chrono::Utc::now().timestamp_millis()
+                - crate::sms::HELD_DECIDED_KEEP_DAYS * 24 * 60 * 60 * 1000,
+        )
+        .execute(db)
+        .await,
     );
     // Design 77 §14: the kid's requests for a new contact, 30 days after the server got them.
     let contact_requests = rows(

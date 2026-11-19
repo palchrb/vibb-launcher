@@ -371,7 +371,7 @@ pub async fn load(
     let lang = zone.lang();
     let rows: Vec<Row> = sqlx::query_as(
         "SELECT id, name, number, matrix_id, asked_at, state FROM device_contact_requests \
-         WHERE device_id = ? AND asked_at > ? ORDER BY state = 'open' DESC, asked_at DESC, id LIMIT 50",
+         WHERE device_id = ? AND asked_at > ? AND state = 'open' ORDER BY asked_at DESC, id LIMIT 50",
     )
     .bind(device_id)
     .bind(now.timestamp_millis() - SHOWN_DAYS * DAY_MS)
@@ -563,7 +563,7 @@ pub async fn decline(
     .await;
     match result {
         Ok(None) => not_found(lang),
-        Ok(Some(true)) => saved(&state, id, format!("/devices/{id}/calls#request-{request}")),
+        Ok(Some(true)) => saved(&state, id, format!("/devices/{id}/calls#requests")),
         Ok(Some(false)) => crate::settings_log::refused(Redirect::to(&format!(
             "/devices/{id}/calls?notice=request_gone#requests"
         ))),

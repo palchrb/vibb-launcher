@@ -45,14 +45,14 @@
                     <a class="row row-button" href="/devices/{{ device.id }}/calls?add_number={{ number }}#add-contact" data-held-action="create">{{ self.t("device.sms.held.create_contact") }}&hellip;</a>
                     {% endif %}
                     {% if let Some(contact) = row.allow_contact %}
-                    <form method="post" action="/devices/{{ device.id }}/calls/held/{{ row.id }}/allow#held-{{ row.id }}">
+                    <form method="post" action="/devices/{{ device.id }}/calls/held/{{ row.id }}/allow#held">
                         <button type="submit" class="row row-button" data-held-action="allow-contact">{{ self.tp("device.sms.held.allow_contact", [("contact", contact.as_str())]) }}</button>
                     </form>
                     {% endif %}
                     {% if row.allow_name %}
                     <details class="confirm cell">
                         <summary class="row row-button held-allow" data-held-action="allow-name">{{ self.t("device.sms.held.allow_name") }}&hellip;</summary>
-                        <form method="post" action="/devices/{{ device.id }}/calls/held/{{ row.id }}/allow#held-{{ row.id }}" class="confirm-body">
+                        <form method="post" action="/devices/{{ device.id }}/calls/held/{{ row.id }}/allow#held" class="confirm-body">
                             <p>{{ self.t("device.sms.names.warning") }}</p>
                             <button type="submit" class="button-wide">{{ self.t("device.sms.held.allow_name") }}</button>
                             {% include "partials/confirm_cancel.html" %}
@@ -63,7 +63,7 @@
                     {#- Code QA L1: deleting can't be undone, so it sits behind a confirm like every delete. -#}
                     <details class="confirm cell">
                         <summary class="row row-danger" data-held-action="drop">{{ self.t("device.sms.held.drop") }}&hellip;</summary>
-                        <form method="post" action="/devices/{{ device.id }}/calls/held/{{ row.id }}/drop#held-{{ row.id }}" class="confirm-body">
+                        <form method="post" action="/devices/{{ device.id }}/calls/held/{{ row.id }}/drop#held" class="confirm-body">
                             <p>{{ self.tp("device.sms.held.drop_confirm", [("sender", row.label.as_str())]) }}</p>
                             <button type="submit" class="button-destructive">{{ self.t("device.sms.held.drop") }}</button>
                             {% include "partials/confirm_cancel.html" %}
@@ -184,7 +184,7 @@
                     {% if row.can_add %}
                     <a class="row row-button" href="/devices/{{ device.id }}/calls?request={{ row.id }}#add-contact" data-request-action="add">{{ self.t("device.requests.add") }}&hellip;</a>
                     {% endif %}
-                    <form method="post" action="/devices/{{ device.id }}/calls/requests/{{ row.id }}/decline#request-{{ row.id }}">
+                    <form method="post" action="/devices/{{ device.id }}/calls/requests/{{ row.id }}/decline#requests">
                         <button type="submit" class="row row-button row-danger" data-request-action="decline">{{ self.t("device.requests.decline") }}</button>
                     </form>
                 </div>
@@ -477,6 +477,19 @@
                                     <span class="row-label">{{ add.one_way[3] }}</span>
                                     <input type="checkbox" role="switch" class="sw" name="sms_out" value="on"{% if add.sms_out %} checked{% endif %} data-pair="texts"><span class="knob" aria-hidden="true"></span>
                                 </label>
+                                <label class="row row-stacked">
+                                    <span class="row-label">{{ self.t("device.calls.message_button") }}</span>
+                                    <select class="pick" name="message_app">
+                                        {% for option in add.message_options %}
+                                        <option value="{{ option.value }}"{% if option.selected %} selected{% endif %}>{{ option.label }}</option>
+                                        {% endfor %}
+                                    </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                                </label>
+                                <div class="field contact-field">
+                                    <label class="field-label" for="contact_matrix">{{ self.t("device.calls.matrix") }}</label>
+                                    <input type="text" id="contact_matrix" name="message_address" value="{{ add.message_address }}" placeholder="{{ self.t("device.calls.matrix_example") }}" maxlength="255" autocomplete="off" autocapitalize="none" spellcheck="false"{% if let Some((field, _)) = add_error %}{% if *field == "message_address" %} aria-invalid="true" aria-describedby="contact_matrix-error" autofocus{% endif %}{% endif %}>
+                                    {% if let Some((field, why)) = add_error %}{% if *field == "message_address" %}<p class="field-error" id="contact_matrix-error">{{ why }}</p>{% endif %}{% endif %}
+                                </div>
                             </div>
                         </details>
                     </div>

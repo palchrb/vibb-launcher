@@ -501,10 +501,9 @@ async fn add_from_a_request() {
         .get_page(&format!("/devices/{id}/calls"), &cookie)
         .await
         .text();
-    let added = request_html(&page, 4);
     assert!(
-        added.contains("Added") && !added.contains("<form"),
-        "{added}"
+        !page.contains(&format!("id=\"request-{:032x}\"", 4)),
+        "an added request leaves the card"
     );
 }
 
@@ -531,7 +530,7 @@ async fn decline_a_request() {
         .await;
     assert_eq!(
         res.location(),
-        Some(format!("/devices/{id}/calls#request-{request}").as_str())
+        Some(format!("/devices/{id}/calls#requests").as_str())
     );
     assert!(
         app.policy(&token).await["call_policy"]["contact_requests"]
@@ -543,8 +542,10 @@ async fn decline_a_request() {
         .get_page(&format!("/devices/{id}/calls"), &cookie)
         .await
         .text();
-    let row = request_html(&page, 1);
-    assert!(row.contains("Declined") && !row.contains("<form"), "{row}");
+    assert!(
+        !page.contains(&format!("id=\"request-{:032x}\"", 1)),
+        "a declined request leaves the card"
+    );
     let again = app
         .request_form(Method::POST, &action, Some(&cookie), &[])
         .await;

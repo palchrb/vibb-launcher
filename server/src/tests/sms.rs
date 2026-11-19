@@ -518,7 +518,7 @@ async fn held_rows_go_after_30_days() {
     for (n, days) in [(1, 31), (2, 29)] {
         sqlx::query(
             "INSERT INTO device_sms_held (device_id, held_id, at, kind, sender_class, sender, expires_at, state) \
-             VALUES (?, ?, ?, 'sms', 'short', '2222', ?, 'expired')",
+             VALUES (?, ?, ?, 'sms', 'short', '2222', ?, 'held')",
         )
         .bind(id)
         .bind(format!("{n:032x}"))

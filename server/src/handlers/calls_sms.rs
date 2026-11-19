@@ -526,16 +526,14 @@ pub(super) async fn load(
                 &[("until", &zone.until(instant_of(row.expires_at), now))],
             ),
         };
+        let mut allowed = false;
         if open {
-            waiting += 1;
             match row.sender_class.as_str() {
                 "number" | "short" if emergency::is_emergency(&row.sender, cc) => {
                     view.reason = Some(t(lang, "device.sms.emergency_reason"));
                 }
                 "number" | "short" => match contacts.get(&row.sender) {
-                    Some((_, true)) => {
-                        view.status = t(lang, "device.sms.held.allowed").to_string();
-                    }
+                    Some((_, true)) => allowed = true,
                     Some((name, false)) => view.allow_contact = Some(name.clone()),
                     None => {
                         view.create_number =
@@ -547,7 +545,7 @@ pub(super) async fn load(
                 }
                 "alphanumeric" => {
                     if folds.contains(&sms::fold(&sms::clean_name(&row.sender))) {
-                        view.status = t(lang, "device.sms.held.allowed").to_string();
+                        allowed = true;
                     } else {
                         view.allow_name = true;
                     }
@@ -555,7 +553,12 @@ pub(super) async fn load(
                 _ => {}
             }
         }
-        held.push(view);
+        // 2026-11-19: the card lists only senders still waiting for the parent's choice - a deleted, delivered,
+        // expired or already allowed one is decided and leaves the page.
+        if open && !allowed {
+            waiting += 1;
+            held.push(view);
+        }
     }
     let blocked_rows: Vec<HeldRow> = sqlx::query_as(
         "SELECT held_id, at, kind, sender_class, sender, expires_at, state, dropped_at FROM device_sms_held \
@@ -700,9 +703,10 @@ pub(crate) async fn hold_full_until(
     Ok(end.and_then(DateTime::from_timestamp_millis))
 }
 
-/// A held row's own group, or the card when it is gone.
-fn held_row(id: i64, held_id: &str) -> String {
-    format!("/devices/{id}/calls#held-{held_id}")
+/// Where a decided row's form returns: the card (`#held`) - the row is decided and has left the page (2026-11-19),
+/// so its own anchor would land nowhere and jump to the top.
+fn held_row(id: i64, _held_id: &str) -> String {
+    format!("/devices/{id}/calls#held")
 }
 
 /// The card with a notice: a row that is no longer waiting, a full list of names. A refusal: nothing was written.
