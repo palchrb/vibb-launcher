@@ -25,6 +25,7 @@
         Location is the rows' first. The pick is a view choice (design 44 §1.5): static/locate.js
         redraws in place and remembers it; without JS the links show the span here. -#}
     <section id="location" aria-label="{{ self.t("locate.location_aria") }}">
+        {% for line in view.setup_warnings.at("location") %}{% include "partials/setup_warning.html" %}{% endfor %}
         <div class="phone-switch span-pick" role="radiogroup" aria-label="{{ self.t("locate.span.aria") }}" data-span-pick>
             {% for (hours, words) in crate::handlers::locate::SPANS %}
             <a role="radio" href="/devices/locate?device={{ view.device.id }}&amp;span={{ hours }}#location" data-span="{{ hours }}" aria-checked="{% if hours == view.span %}true{% else %}false{% endif %}">{{ self.t(words) }}</a>

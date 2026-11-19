@@ -5004,6 +5004,20 @@ Run on `jelly36` (16) and `compat34` (14) with §6ay's rig and a probe that fetc
 the rows, the results and the one fix it found (the 1.5 s settle after a shape change) are in
 `docs/testing/2026-11-18-up-held-gate.md`. Owed: row 8 (abroad), Android 17, the Jelly Star with Element X.
 
+## 6bb. The phone's setup: the hold and the guided flow (design 114, branch `design-114-build`)
+
+**Run 2026-11-19** (`compat34` and `jelly36`): `docs/testing/2026-11-18-114-emulator-check.md` - every row run passed after
+four fixes on the branch (the flow's invisible secondary buttons, the flow lost by its own pause, mobile data on 16's SIM
+page, the Internet panel's return); owed: Android 15's SIM page, row 9d, the Jelly Star.
+
+
+Needs the user's OK first. The rows are design 114 §11's table (rows 1-16), on `compat34` (14, `-wipe-data`) and
+`jelly36` (16, a restore taken before enrolment); a fresh enrolment each time (the hold starts only on a phone that
+never applied a policy). The phone "Testtelefon" with a test Parent PIN set before the code (Connect needs it). The
+adb shortcuts the PWA no longer shows are in `docs/setup/android-settings.md`, "The emulator's adb shortcuts".
+Owed besides §11's list (code QA L9): a wall-clock correction (NTP or NITZ) right after the enrolment ends the hold
+early, by design (fail closed) - record it if seen, and that the PWA's "Åpne for oppsett" brings the flow back.
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:

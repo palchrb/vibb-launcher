@@ -41,6 +41,8 @@ class ParentPinCallersTest {
         assertTrue(sources.values.none { "fun activate(" in it && "offlineOverrideActive(true)" in it })
         // And the parent app's `start_pause` (24b fix round, QA High 1): no PIN on the phone.
         assertEquals(setOf("ParentPin.kt", "MdmSyncWorker.kt"), callers("RestrictionsPause.start("))
+        // Design 114 §6.1.1 (QA M6): the setup hold - no PIN; its basis is a fresh enrolment, so only the enrolment.
+        assertEquals(setOf("Enrollment.kt"), callers("RestrictionsPause.startHold("))
         assertTrue("\"start_pause\" -> {" in sources.getValue("server/MdmSyncWorker.kt"))
         assertEquals(setOf("ParentPin.kt"), callers("startInstallMode("))
     }

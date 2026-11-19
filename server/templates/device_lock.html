@@ -148,6 +148,7 @@
                     <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 </summary>
                 <form method="post" action="/devices/{{ device.id }}/parent-pin#parent-pin" class="edit-body">
+                    {% if back_provision %}<input type="hidden" name="back" value="provision">{% endif %}
                     <label class="field-label" for="new_pin">{{ self.t("device.lock.new_parent_pin") }}</label>
                     <details class="info field-info"><summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("device.lock.parent_pin_advice") }}</p></div></details>
                     <input type="password" id="new_pin" name="new_pin" inputmode="numeric" pattern="[0-9]{6,10}" maxlength="10" autocomplete="new-password" aria-describedby="new_pin-hint">
@@ -294,6 +295,7 @@
 
     <section id="notifications" aria-labelledby="notifications-title">
         <h2 class="group-header" id="notifications-title">{{ self.t("device.lock.notifications") }}</h2>
+        {% for line in setup_warnings.at("notifications") %}{% include "partials/setup_warning.html" %}{% endfor %}
         {% for note in lock_screen_warnings %}
         {% if note.warning %}
         {% include "partials/note_warning.html" %}

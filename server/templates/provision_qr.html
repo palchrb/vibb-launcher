@@ -48,6 +48,14 @@
         answer lands on it with or without JS. The Wi-Fi password is never stored or shown again. -#}
     <section id="qr" aria-labelledby="qr-title">
         <h2 class="choice-title" id="qr-title">{{ self.t("devices.qr.qr") }}</h2>
+        {#- Design 114 §5.8: no QR and no setup code without the phone's Parent PIN - one orange line to it; the save
+            lands back here (back=provision). -#}
+        {% if no_parent_pin %}
+        <a class="attention attention-action" href="/devices/{{ device.id }}/lock?back=provision#parent-pin" data-warning="no-parent-pin">
+            <span class="attention-text">{{ self.t("device.summary.no_parent_pin") }}</span>
+            <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>
+        {% else %}
         <div class="group">
             {% if missing_checksum %}
             <p class="row row-note">{{ self.t("devices.qr.needs_setup") }}</p>
@@ -79,20 +87,16 @@
             </form>
             {% if !qr_svg.is_empty() && !enrolled %}
             <a class="row row-button" href="/devices/{{ device.id }}" data-row="done">{{ self.t("devices.code.done") }}</a>
-            {#- Design 98 D2: open the phone for setup from here (the start-pause, back=setup): its setup steps and the
-                Google account, landing on the summary's Oppsett card. -#}
-            <form method="post" action="/devices/{{ device.id }}/start-pause#oppsett" class="cell" data-row="open-setup">
-                <input type="hidden" name="back" value="setup">
-                <button type="submit" class="row row-button">{{ self.t("devices.qr.open_setup") }}</button>
-            </form>
             {% endif %}
             {% endif %}
         </div>
         <div class="group-footer">{{ self.t("devices.qr.footer") }}
             <details class="info"><summary aria-label="{{ self.t("devices.qr.info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.tp("devices.qr.info", [("minutes", qr_minutes.to_string().as_str())]) }}</p>{% if !qr_svg.is_empty() && until.is_some() %}<p>{{ self.t("devices.qr.reload_info") }}</p>{% endif %}{% if let Some(launcher) = launcher %}{% if launcher.state == "works" %}{% if let Some(needs) = launcher.needs %}<p data-row="launcher-needs">{{ needs }}</p>{% endif %}{% endif %}{% endif %}</div></details>
         </div>
+        {% endif %}
     </section>
 
+    {% if !no_parent_pin %}
     <section id="setup-code" aria-labelledby="code-title">
         <h2 class="choice-title" id="code-title">{{ self.t("devices.qr.code") }}</h2>
         {% if let Some(until) = paused_until %}
@@ -111,6 +115,7 @@
             <details class="info"><summary aria-label="{{ self.t("devices.qr.code_info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.tp("devices.qr.code_info", [("minutes", code_minutes.to_string().as_str())]) }}</p></div></details>
         </div>
     </section>
+    {% endif %}
     </div>
 </main>
 </body>

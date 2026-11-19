@@ -78,4 +78,52 @@ class RestrictionsPauseTest {
         assertTrue("${serverCopy.absolutePath} not found", serverCopy.isFile)
         assertEquals("${serverCopy.path} differs from the launcher's copy", serverCopy.readText(), contract)
     }
+
+    // Design 114 §6.1: the setup hold - the same pause with the 4-hour ceiling, pinned by the same contract.
+
+    @Test
+    fun `the setup hold lasts the shared contract's ceiling`() {
+        assertEquals(Json.parseToJsonElement(contract).jsonObject.getValue("setup_hold_max_ms").jsonPrimitive.long, SETUP_HOLD_DURATION_MS)
+        assertEquals(SETUP_HOLD_DURATION_MS, pauseDurationMs(hold = true))
+        assertEquals(RESTRICTIONS_PAUSE_DURATION_MS, pauseDurationMs(hold = false))
+    }
+
+    @Test
+    fun `the hold is on to its ceiling by both clocks, and a boot ends it`() {
+        val hold = SETUP_HOLD_DURATION_MS
+        val s = WindowStart(untilWallMs = wall0 + hold, elapsedStartMs = elapsed0, bootCount = boot)
+        fun on(afterMs: Long, wallShiftMs: Long = 0, bootCount: Int = boot) =
+            timedWindowActive(s, wall0 + afterMs + wallShiftMs, elapsed0 + afterMs, bootCount, hold)
+        assertTrue(on(3 * 60 * minute + 59 * minute))
+        assertFalse(on(4 * 60 * minute))
+        assertFalse(on(minute, bootCount = boot + 1))
+        // The wall clock set back can't stretch it past the ceiling.
+        assertFalse(on(minute, wallShiftMs = -2 * hold))
+        // A 2-hour pause's start read with the hold's length would last longer: the flag decides the length.
+        assertFalse(timedWindowActive(start, wall0 + duration, elapsed0 + duration, boot, pauseDurationMs(hold = false)))
+    }
+
+    @Test
+    fun `the hold's time left comes from the elapsed clock`() {
+        val s = WindowStart(untilWallMs = wall0 + SETUP_HOLD_DURATION_MS, elapsedStartMs = elapsed0, bootCount = boot)
+        assertEquals(SETUP_HOLD_DURATION_MS, holdLeftMs(s, elapsed0))
+        assertEquals(SETUP_HOLD_DURATION_MS - 30 * minute, holdLeftMs(s, elapsed0 + 30 * minute))
+        assertEquals(0L, holdLeftMs(s, elapsed0 + SETUP_HOLD_DURATION_MS + minute))
+    }
+
+    /** QA M6: a PIN pause never inherits the hold's length - `start()` writes the flag false, `startHold()` true, both
+     * inside the window's lift before the pause itself, and `clear()` clears it (a source check). */
+    @Test
+    fun `the hold flag's writes`() {
+        val main = listOf("src/main", "app/src/main").map(::File).first { it.isDirectory }
+        val text = File(main, "java/com/kidslauncher/mdm/server/RestrictionsPause.kt").readText()
+        val start = text.substringAfter("fun start(context: Context, start: WindowStart)").substringBefore("fun startHold(")
+        assertTrue(start.indexOf("restrictionsPausedHold(false)") in 0 until start.indexOf("restrictionsPaused(true)"))
+        val hold = text.substringAfter("fun startHold(context: Context)").substringBefore("fun reapply(")
+        // QA M4: the notification grant before the window opens; QA M1: the screen lock unknown.
+        assertTrue(hold.indexOf("POST_NOTIFICATIONS") in 0 until hold.indexOf("WindowRelock.opened("))
+        assertTrue("WindowRelock.opened(app, WindowKind.PAUSE, start, secureKnown = false)" in hold)
+        assertTrue(hold.indexOf("restrictionsPausedHold(true)") in 0 until hold.indexOf("restrictionsPaused(true)"))
+        assertTrue("restrictionsPausedHold(false)" in text.substringAfter("fun clear()"))
+    }
 }

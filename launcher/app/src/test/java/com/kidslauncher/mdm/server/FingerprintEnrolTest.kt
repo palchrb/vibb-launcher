@@ -37,14 +37,6 @@ class FingerprintEnrolTest {
         assertNull(fingerprintEnrolled(BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE))
         assertNull(fingerprintEnrolled(BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE))
         assertNull(fingerprintEnrolled(null))
-        // Q-3: each answer has its own text.
-        assertEquals(R.string.settings_mdm_fingerprint_enrolled, fingerprintStateText(true))
-        assertEquals(R.string.settings_mdm_fingerprint_not_enrolled, fingerprintStateText(false))
-        assertEquals(R.string.settings_mdm_fingerprint_unknown, fingerprintStateText(null))
-        assertEquals(R.string.settings_mdm_fingerprint_open, fingerprintActionText(SystemPageAccess.CAN_OPEN))
-        assertEquals(R.string.settings_mdm_fingerprint_pause_first, fingerprintActionText(SystemPageAccess.PAUSE_FIRST))
-        assertEquals(R.string.settings_mdm_fingerprint_wait, fingerprintActionText(SystemPageAccess.WAIT))
-        assertEquals(R.string.settings_mdm_fingerprint_no_page, fingerprintActionText(SystemPageAccess.NO_PAGE))
     }
 
     /** Code QA Q-1: `canAuthenticate` throws without USE_BIOMETRIC, and the row would always say "Unknown". */
@@ -65,23 +57,4 @@ class FingerprintEnrolTest {
         assertTrue("PackageManager.FEATURE_FINGERPRINT" in enrol)
     }
 
-    @Test
-    fun `the row is hidden until the fragment decides, and decides on every resume`() {
-        val prefs = src("res/xml/preferences.xml")
-        val row = prefs.substringAfter("android:key=\"settings_mdm_fingerprint\"").substringBefore("/>")
-        assertTrue("app:isPreferenceVisible=\"false\"" in row)
-        assertTrue(prefs.indexOf("settings_mdm_write_settings\"") < prefs.indexOf("settings_mdm_fingerprint\""))
-        val fragment = src("java/com/kidslauncher/mdm/ui/settings/launcher/SettingsFragmentLauncher.kt")
-        assertTrue("com.kidslauncher.mdm.lock.AndroidLock.fingerprintLockState(context),\n            FingerprintEnrol.hasSensor(context)," in fragment)
-        assertTrue("openFirstPage(pages, fingerprintLauncher)" in fragment)
-        val rows = fragment.substringAfter("private fun updateSystemPageRows()").substringBefore("\n    }\n")
-        assertTrue("updateFingerprintRow()" in rows)
-        val update = fragment.substringAfter("private fun updateFingerprintRow()").substringBefore("\n    }\n")
-        assertTrue("getString(fingerprintStateText(FingerprintEnrol.enrolled(context)))," in update)
-        assertTrue("getString(fingerprintActionText(access))," in update)
-        val lock = src("java/com/kidslauncher/mdm/lock/AndroidLock.kt").substringAfter("fun fingerprintLockState(")
-        assertTrue("PinLockStore.androidPinRev(app) != null" in lock)
-        assertTrue("PinLockStore.keyguardRequested(app)" in lock)
-        assertTrue("owned = owned(app), deviceSecure = deviceSecure(app)," in lock)
-    }
 }

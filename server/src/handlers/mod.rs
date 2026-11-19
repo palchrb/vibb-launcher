@@ -38,6 +38,7 @@ pub mod rules_now;
 pub mod schedules;
 pub mod settings;
 pub mod settings_hub;
+pub mod setup_page;
 pub mod sw;
 pub mod system_update;
 pub mod time_answer;

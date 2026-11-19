@@ -65,6 +65,7 @@ mod retention;
 mod security;
 mod server_tls;
 mod settings_log;
+mod setup_status;
 mod shortcuts;
 mod sms;
 mod sound_mode;
@@ -1139,6 +1140,12 @@ pub fn build_admin_router(
             "/devices/{id}/mobile",
             get(handlers::mobile_page::view).post(handlers::mobile_page::save),
         )
+        // Design 114 §5.1: Device › Oppsett, and its parent steps' ticks.
+        .route("/devices/{id}/setup", get(handlers::setup_page::view))
+        .route(
+            "/devices/{id}/setup/ticks",
+            post(handlers::setup_page::tick),
+        )
         // Design 102 §5: Device › Sign-in (Wi-Fi sign-in and Chrome only for logins), and Advanced's #wifi-signin row.
         .route(
             "/devices/{id}/logins",
@@ -1197,10 +1204,6 @@ pub fn build_admin_router(
         .route(
             "/devices/{id}/start-pause",
             post(handlers::window_relock::start_pause),
-        )
-        .route(
-            "/devices/{id}/setup-card/hide",
-            post(handlers::device_pages::hide_setup_card),
         )
         .route(
             "/devices/{id}/regenerate-code",

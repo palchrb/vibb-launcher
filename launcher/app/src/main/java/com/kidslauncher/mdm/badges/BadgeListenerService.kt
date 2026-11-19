@@ -42,6 +42,9 @@ class BadgeListenerService : NotificationListenerService() {
         AlarmNoticeReader.attach { keys -> activeOrNull(keys) }
         sweep()
         GlanceReader.connected(this)
+        // Design 114 §4.1: notification access is a setup step - the PWA hears of a change at once (code QA L9: only a
+        // change, not every rebind at a process start).
+        com.kidslauncher.mdm.setup.SetupReadings.listenerChanged(applicationContext, connected = true)
     }
 
     override fun onListenerDisconnected() {
@@ -53,6 +56,7 @@ class BadgeListenerService : NotificationListenerService() {
         GlanceReader.disconnected()
         ClockReader.disconnected()
         AlarmNoticeReader.disconnected()
+        com.kidslauncher.mdm.setup.SetupReadings.listenerChanged(applicationContext, connected = false)
     }
 
     override fun onDestroy() {

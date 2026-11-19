@@ -52,7 +52,8 @@ pub struct Channel {
     pub feature: Option<Feature>,
     /// About's value is orange while it is off and counts.
     pub orange: bool,
-    /// It raises the Attention row while it is off and counts (Q2).
+    /// It raised the Attention row while it is off and counts (Q2); design 114 folds that row (see [Attention]).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub attention: bool,
     /// The ⓘ's sentence for it (`{name}`), if losing it has an effect worth a sentence (§5.4).
     pub effect: Option<&'static str>,
@@ -216,6 +217,7 @@ pub const CHANNELS: &[Channel] = &[
 ];
 
 /// The channel with `key`.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn channel(key: &str) -> Option<&'static Channel> {
     CHANNELS.iter().find(|channel| channel.key == key)
 }
@@ -364,7 +366,24 @@ pub fn about(lang: Lang, policy: &DevicePolicy, report: &Report) -> AboutRow {
     }
 }
 
-/// What the summary's Attention row says (§5.3), typed: the app-wide switch, or the attention channels that count.
+/// The effect sentences of the counted channels that are off (§5.2's ⓘ without its lead and fix): design 114's
+/// Device › Oppsett says them on the `vibb_notifications` row (code QA L3). Empty when nothing counted is off.
+pub fn effects(lang: Lang, policy: &DevicePolicy, report: &Report) -> Vec<String> {
+    let names = names_lang(policy, lang);
+    counted(policy, report)
+        .iter()
+        .filter_map(|channel| {
+            channel
+                .effect
+                .map(|effect| t_params(lang, effect, &[("name", &quoted(lang, names, channel))]))
+        })
+        .collect()
+}
+
+/// What the summary's Attention row said (§5.3), typed: the app-wide switch, or the attention channels that count.
+/// Design 114 folds the row into the setup row (`setup_status`'s `vibb_notifications`, by About's orange); the rule
+/// stays for the contract's `pages` rows' `attention` column, which the tests run.
+#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Attention {
     pub all_off: bool,
@@ -375,6 +394,7 @@ pub struct Attention {
 
 /// The Attention row's facts: a blocked Meldinger or Tapte anrop while its feature counts, or the app-wide switch off
 /// while SMS or calls are managed. Never Samtaler, the minor channels or Snarveier.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn attention(policy: &DevicePolicy, report: &Report) -> Option<Attention> {
     let managed = policy.sms_mode == "managed" || policy.calls_mode == "managed";
     let all_off = report.all_off && managed;
@@ -391,6 +411,7 @@ pub fn attention(policy: &DevicePolicy, report: &Report) -> Option<Attention> {
 }
 
 /// The Attention row's title in `lang` (at most 8 words; the names unquoted).
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn attention_title(lang: Lang, attention: &Attention) -> String {
     if attention.all_off {
         return t(lang, "device.attention.notifications_all_off").to_string();
@@ -417,6 +438,28 @@ mod tests {
 
     fn contract() -> Value {
         serde_json::from_str(CONTRACT).unwrap()
+    }
+
+    /// Design 107's Attention rule over every `pages` row, though design 114 shows it as a setup step: the title, or
+    /// none (the page in English).
+    #[test]
+    fn the_pages_rows_attention() {
+        for row in contract()["pages"].as_array().unwrap() {
+            let policy = DevicePolicy {
+                sms_mode: row["sms_mode"].as_str().unwrap().to_string(),
+                calls_mode: row["calls_mode"].as_str().unwrap().to_string(),
+                launcher_language: row["language"].as_str().unwrap().to_string(),
+                ..Default::default()
+            };
+            let report: Report = serde_json::from_value(row["report"].clone()).unwrap();
+            let title = attention(&policy, &report).map(|a| attention_title(Lang::En, &a));
+            assert_eq!(
+                title.as_deref(),
+                row["attention"].as_str(),
+                "{}",
+                row["case"]
+            );
+        }
     }
 
     #[test]

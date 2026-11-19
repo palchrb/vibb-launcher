@@ -361,6 +361,7 @@ async fn policy_json_keys_snapshot() {
             "rule_pause",
             "screen_timeout_seconds",
             "server_tls",
+            "setup",
             "status_gzip",
             "status_heartbeat",
             "status_heartbeat_fields",
@@ -398,6 +399,7 @@ async fn policy_json_keys_snapshot() {
         "rule_pause",
         "screen_timeout_seconds",
         "server_tls",
+        "setup",
         "status_gzip",
         "status_heartbeat",
         "status_heartbeat_fields",
@@ -408,6 +410,11 @@ async fn policy_json_keys_snapshot() {
     ] {
         assert!(!object[non_null].is_null(), "{non_null} is null");
     }
+    // Design 114 §4.3: a new phone has no step ticked (`setup_steps.json`'s `policy_none`).
+    let contract: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string("testdata/setup_steps.json").unwrap())
+            .unwrap();
+    assert_eq!(object["setup"], contract["policy_none"]);
     // Design 98 §4.4.6: this server takes the phone's parent-code pause; a lift's `phone_key` is pinned with it
     // (`tests::rule_pause`, `rule_pause.json`'s `policy`).
     assert_eq!(object["rule_pause"], serde_json::json!(true));

@@ -22,30 +22,15 @@ import com.journeyapps.barcodescanner.ScanIntentResult
 import com.journeyapps.barcodescanner.ScanOptions
 import com.kidslauncher.mdm.BuildConfig
 import com.kidslauncher.mdm.R
-import com.kidslauncher.mdm.calls.managed
 import com.kidslauncher.mdm.copyToClipboard
 import com.kidslauncher.mdm.getDeviceInfo
-import com.kidslauncher.mdm.server.BatteryExemption
-import com.kidslauncher.mdm.server.BatteryRow
 import com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
-import com.kidslauncher.mdm.server.batteryRowState
 import com.kidslauncher.mdm.server.ParentPinEntry
 import com.kidslauncher.mdm.server.QuickControls
 import com.kidslauncher.mdm.server.RelockTrigger
 import com.kidslauncher.mdm.server.RestrictionsPause
 import com.kidslauncher.mdm.server.WindowRelock
 import com.kidslauncher.mdm.server.AppEnforcer
-import com.kidslauncher.mdm.server.FingerprintEnrol
-import com.kidslauncher.mdm.server.MediaLockScreen
-import com.kidslauncher.mdm.server.SystemPageAccess
-import com.kidslauncher.mdm.server.WriteSettingsAccess
-import com.kidslauncher.mdm.server.fingerprintActionText
-import com.kidslauncher.mdm.server.fingerprintRowShown
-import com.kidslauncher.mdm.server.fingerprintStateText
-import com.kidslauncher.mdm.server.mediaLockText
-import com.kidslauncher.mdm.server.systemPageAccess
-import com.kidslauncher.mdm.server.writeSettingsText
-import com.kidslauncher.mdm.server.writeSettingsRowState
 import com.kidslauncher.mdm.play.InstallModeStart
 import com.kidslauncher.mdm.play.PlayRuntime
 import com.kidslauncher.mdm.server.applyProvisioningExtras
@@ -63,14 +48,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 private const val LOG_TAG = "SettingsFragmentLauncher"
-private const val BACKGROUND_CONNECTION = "settings_mdm_background_connection"
-private const val WRITE_SETTINGS = "settings_mdm_write_settings"
-private const val NOTIFICATIONS = "settings_mdm_notifications"
-private const val ASSISTANT = "settings_mdm_assistant"
-private const val WIFI_APM = "settings_mdm_wifi_apm"
-private const val CALL_FILTER = "settings_mdm_call_filter"
-private const val FINGERPRINT = "settings_mdm_fingerprint"
-private const val MEDIA_LOCK = "settings_mdm_media_lock"
+/** Design 114 §6.3: the one setup row; the steps' own rows moved into the setup flow. */
+private const val SETUP = "settings_setup"
 private const val UNIFIED_PUSH = "settings_mdm_unified_push"
 private const val APP_ACCESS = "settings_mdm_app_access"
 private const val SERVER_CERT_ROW = "settings_mdm_server_cert"
@@ -98,92 +77,6 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
     // throws, per the Activity Result API's own contract.
     private val scanSetupQrLauncher = registerForActivityResult(ScanContract()) { result ->
         handleSetupQrScanResult(result)
-    }
-
-    /** Design 19b: the exemption before Android's dialog opened - a change on return is reported
-     * at once (a sync), so the parent's page follows within seconds. */
-    private var exemptBeforeDialog: Boolean? = null
-    private val batteryDialogLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-        val context = context ?: return@registerForActivityResult
-        if (BatteryExemption.exempt(context) != exemptBeforeDialog) {
-            com.kidslauncher.mdm.push.SyncRunner.request(context.applicationContext, "battery_exemption")
-        }
-        updateBatteryRow()
-    }
-
-    /** "Modify system settings" (PLAN fix backlog, 2026-10-24): the app-op before Android's page
-     * opened - a change on return is reported at once, so the PWA's warning follows. */
-    private var writeSettingsBeforePage: Boolean? = null
-    /** Every page threw ActivityNotFoundException on the last tap: the row says so. */
-    private var writeSettingsPageMissing = false
-    private val writeSettingsLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-        val context = context ?: return@registerForActivityResult
-        if (WriteSettingsAccess.granted(context) != writeSettingsBeforePage) {
-            com.kidslauncher.mdm.push.SyncRunner.request(context.applicationContext, "write_settings")
-        }
-        updateWriteSettingsRow()
-    }
-
-    /** Design 107 §6: the channels' report before Android's notification page opened - a change on return is reported
-     * at once (a sync), so the PWA's row follows. Taken from the row's last read ([notificationsLastRead]), never read on
-     * the main thread at the tap. */
-    private var notificationsBeforePage: com.kidslauncher.mdm.notify.NotificationChannelsReport? = null
-    /** The row's last read (off the main thread, [updateNotificationsRow]). */
-    private var notificationsLastRead: com.kidslauncher.mdm.notify.NotificationChannelsReport? = null
-    /** The row's read in flight: a newer one cancels it, so an older read never lands after a newer one. */
-    private var notificationsJob: kotlinx.coroutines.Job? = null
-    private var notificationsPageMissing = false
-    private val notificationsLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-        val app = context?.applicationContext ?: return@registerForActivityResult
-        val before = notificationsBeforePage
-        lifecycleScope.launch {
-            val now = withContext(Dispatchers.IO) { com.kidslauncher.mdm.notify.NotificationChannelsReader.read(app) }
-            if (now != before) {
-                com.kidslauncher.mdm.push.SyncRunner.request(app, com.kidslauncher.mdm.notify.NOTIFICATION_CHANNELS_SYNC_REASON)
-            }
-            updateNotificationsRow()
-        }
-    }
-
-    /** Design 98 §3.2: Android's "Digital assistant app" page answered - the default-apps window ends now. */
-    private var assistantPageMissing = false
-    private val assistantLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-        val app = context?.applicationContext ?: return@registerForActivityResult
-        com.kidslauncher.mdm.assistant.AssistantSetup.endPickWindow(app, "page")
-        com.kidslauncher.mdm.assistant.AssistantSetup.roleMaybeChanged(app)
-        updateAssistantRows()
-    }
-
-    /** Design 98 §3.5: the Wi-Fi panel opened by this screen; its return (or this screen's resume after a pause while
-     * the panel was up) ends the step. The route's own voice activity pauses this screen too, before the panel opens -
-     * that resume must not end the step (measured on jelly36). */
-    private var wifiPanelShown = false
-    private var wifiPanelPaused = false
-    private val wifiLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-        endWifiStepNow("result")
-    }
-
-    /** Design 98 D10: the call-screening and call-redirection role requests, one after the other, in the window. */
-    private var callFilterQueue: List<Intent> = emptyList()
-    private val callFilterLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-        val next = callFilterQueue.firstOrNull()
-        callFilterQueue = callFilterQueue.drop(1)
-        if (next != null && runCatching { launchCallFilter(next) }.isSuccess) return@registerForActivityResult
-        context?.applicationContext?.let { com.kidslauncher.mdm.assistant.AssistantSetup.endPickWindow(it, "call_filter") }
-        updateAssistantRows()
-    }
-
-    /** "Fingerprint" (the user, 2026-10-24): every enrolment page threw ActivityNotFoundException on the last tap. */
-    private var fingerprintPageMissing = false
-    private val fingerprintLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-        updateFingerprintRow()
-    }
-
-    /** "Media on the lock screen" (PLAN, "Android's lock screen shows the media card"): the page threw
-     * ActivityNotFoundException on the last tap. Read again on return. */
-    private var mediaLockPageMissing = false
-    private val mediaLockLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-        updateMediaLockRow()
     }
 
     /** Design 68 §4.2, "App access": the row tapped and its access before Android's page opened - a change on return is
@@ -285,140 +178,10 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
             true
         }
 
-        // Design 19b: Android's battery-optimisation dialog, opened only when it resolves to an
-        // unsuspended system package - on a managed phone that is during the pause; otherwise
-        // the summary says to pause first. Never through the parent-PIN gate itself.
-        findPreference<Preference>(BACKGROUND_CONNECTION)?.setOnPreferenceClickListener {
-            val context = requireContext()
-            val intent = BatteryExemption.dialogIntent(context)
-            val exempt = BatteryExemption.exempt(context)
-            if (intent != null && batteryRowState(exempt, dialogAvailable = true) == BatteryRow.CAN_ASK) {
-                exemptBeforeDialog = exempt
-                try {
-                    (activity as? com.kidslauncher.mdm.ui.settings.SettingsActivity)?.ownPageOpening()
-                    batteryDialogLauncher.launch(intent)
-                } catch (e: Exception) {
-                    Log.w(LOG_TAG, "Couldn't open the battery dialog", e)
-                }
-            }
-            updateBatteryRow()
-            true
-        }
-
-        // Design 107 §6: Android's notification page for Vibb One, on the write-settings row's path - it resolves only
-        // during the pause (Android's Settings is hidden in the kiosk), so a tap outside one opens nothing and the
-        // summary says what to do.
-        findPreference<Preference>(NOTIFICATIONS)?.setOnPreferenceClickListener {
-            val app = requireContext().applicationContext
-            val pages = com.kidslauncher.mdm.notify.NotificationChannelsReader.pageIntents(app)
-            notificationsPageMissing = false
-            if (pages.isNotEmpty()) {
-                notificationsBeforePage = notificationsLastRead
-                notificationsPageMissing = !openFirstPage(pages, notificationsLauncher)
-            }
-            updateNotificationsRow()
-            true
-        }
-
-        // Android's "Modify system settings" page for Vibb One (the touch sounds row, the clock
-        // format), on the battery row's path: only an unsuspended system page - during the pause on
-        // a managed phone. Our own page first, then Android's list; neither there: the row says so.
-        findPreference<Preference>(WRITE_SETTINGS)?.setOnPreferenceClickListener {
-            val context = requireContext()
-            if (WriteSettingsAccess.granted(context) == false) {
-                val pages = WriteSettingsAccess.pageIntents(context)
-                writeSettingsPageMissing = false
-                if (pages.isNotEmpty()) {
-                    writeSettingsBeforePage = false
-                    writeSettingsPageMissing = !openFirstPage(pages, writeSettingsLauncher)
-                }
-            }
-            updateWriteSettingsRow()
-            true
-        }
-
-        // Design 98 §3.3: "Digital assistent" - the default-apps window (§3.2), then Android's page, explicit to the system
-        // Settings component; only while the phone is open for setup.
-        findPreference<Preference>(ASSISTANT)?.setOnPreferenceClickListener {
-            val app = requireContext().applicationContext
-            if (!com.kidslauncher.mdm.assistant.AirplaneRuntime.roleHeld(app)) {
-                val pages = com.kidslauncher.mdm.assistant.AssistantSetup.assistantPageIntents(app)
-                assistantPageMissing = false
-                if (pages.isNotEmpty() && com.kidslauncher.mdm.assistant.AssistantSetup.setupWindowOpen()) {
-                    lifecycleScope.launch {
-                        withContext(Dispatchers.IO) { com.kidslauncher.mdm.assistant.AssistantSetup.openPickWindow(app) }
-                        assistantPageMissing = !openFirstPage(pages, assistantLauncher)
-                        updateAssistantRows()
-                    }
-                }
-            }
-            updateAssistantRows()
-            true
-        }
-        // §3.5: "Wi-Fi i flymodus" - airplane mode on, Android's Wi-Fi panel, then off again when the parent comes back.
-        findPreference<Preference>(WIFI_APM)?.setOnPreferenceClickListener {
-            val app = requireContext().applicationContext
-            if (com.kidslauncher.mdm.assistant.AirplaneRuntime.roleHeld(app) && com.kidslauncher.mdm.assistant.AssistantSetup.setupWindowOpen()) {
-                lifecycleScope.launch {
-                    val result = withContext(Dispatchers.IO) { com.kidslauncher.mdm.assistant.AssistantSetup.startWifiStep(app) }
-                    if (result != com.kidslauncher.mdm.assistant.AirplaneOn.GO) {
-                        Toast.makeText(app, R.string.settings_wifi_apm_failed, Toast.LENGTH_LONG).show()
-                    } else {
-                        try {
-                            (activity as? com.kidslauncher.mdm.ui.settings.SettingsActivity)?.ownPageOpening()
-                            wifiPanelShown = true
-                            wifiPanelPaused = false
-                            wifiLauncher.launch(com.kidslauncher.mdm.assistant.AssistantSetup.wifiPanelIntent())
-                            Toast.makeText(app, R.string.settings_wifi_apm_line, Toast.LENGTH_LONG).show()
-                        } catch (e: Exception) {
-                            Log.w(LOG_TAG, "Couldn't open the Wi-Fi panel", e)
-                            endWifiStepNow("no_panel")
-                        }
-                    }
-                    updateAssistantRows()
-                }
-            }
-            true
-        }
-        // D10: "Samtalefilter" - the two call-screening roles through Android's own request, inside the same window.
-        findPreference<Preference>(CALL_FILTER)?.setOnPreferenceClickListener {
-            val app = requireContext().applicationContext
-            if (com.kidslauncher.mdm.assistant.AssistantSetup.setupWindowOpen()) {
-                lifecycleScope.launch {
-                    val requests = withContext(Dispatchers.IO) {
-                        com.kidslauncher.mdm.assistant.AssistantSetup.openPickWindow(app)
-                        com.kidslauncher.mdm.assistant.AssistantSetup.screeningRoleIntents(app)
-                    }
-                    callFilterQueue = requests.drop(1)
-                    val first = requests.firstOrNull()
-                    if (first == null || runCatching { launchCallFilter(first) }.isFailure) {
-                        com.kidslauncher.mdm.assistant.AssistantSetup.endPickWindow(app, "call_filter")
-                    }
-                    updateAssistantRows()
-                }
-            }
-            true
-        }
-
-        // Android's fingerprint enrolment for the kid (design 59d §8.4: the parent enrols it again during a pause),
-        // on the same path; Android asks for the Child PIN first. Shown only while Android's credential is ours and
-        // the phone has a sensor ([updateFingerprintRow]).
-        findPreference<Preference>(FINGERPRINT)?.setOnPreferenceClickListener {
-            val pages = FingerprintEnrol.pageIntents(requireContext())
-            fingerprintPageMissing = false
-            if (pages.isNotEmpty()) fingerprintPageMissing = !openFirstPage(pages, fingerprintLauncher)
-            updateFingerprintRow()
-            true
-        }
-
-        // Android's "Show media on lock screen" (its media card on SystemUI's face, whatever our keyguard features say):
-        // its Sound & vibration page on the same path - the summary names the way to the Media page. Android lets no
-        // app read the switch (qa-home-round-code Q-1), so a tap always opens the page.
-        findPreference<Preference>(MEDIA_LOCK)?.setOnPreferenceClickListener {
-            val pages = MediaLockScreen.pageIntents(requireContext())
-            mediaLockPageMissing = false
-            if (pages.isNotEmpty()) mediaLockPageMissing = !openFirstPage(pages, mediaLockLauncher)
-            updateMediaLockRow()
+        // Design 114 §6.3: "Oppsett" opens the setup flow (behind this screen's gate); its steps are there.
+        findPreference<Preference>(SETUP)?.setOnPreferenceClickListener {
+            (activity as? com.kidslauncher.mdm.ui.settings.SettingsActivity)?.ownPageOpening()
+            activity?.let { com.kidslauncher.mdm.setup.SetupFlowActivity.startFromSettings(it) }
             true
         }
 
@@ -565,19 +328,11 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
         super.onResume()
         // Re-read every time: a pause started or ended, or the dialog answered; and after each apply while shown.
         AppEnforcer.addAppliedListener(appliedListener)
-        // Design 98 §3.5: back from the Wi-Fi panel - the step ends (airplane mode off again).
-        if (wifiPanelShown && wifiPanelPaused) endWifiStepNow("resume")
         updateSystemPageRows()
-        // §3.3: the setup notification opens Settings at "Fullfør oppsett".
-        if (activity?.intent?.getBooleanExtra(com.kidslauncher.mdm.assistant.EXTRA_SETTINGS_SECTION, false) == true) {
-            activity?.intent?.removeExtra(com.kidslauncher.mdm.assistant.EXTRA_SETTINGS_SECTION)
-            scrollToPreference(BACKGROUND_CONNECTION)
-        }
         findPreference<Preference>(SERVER_CERT_ROW)?.summary = serverCertSummary(requireContext())
     }
 
     override fun onPause() {
-        if (wifiPanelShown) wifiPanelPaused = true
         AppEnforcer.removeAppliedListener(appliedListener)
         super.onPause()
     }
@@ -600,24 +355,9 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
         return false
     }
 
-    /** Whether a row's Android page can open now ([systemPageAccess]): "no page" only once the open window's plan
-     * is applied (code QA Q-2). */
-    private fun pageAccess(pages: List<Intent>, pageMissing: Boolean): SystemPageAccess = systemPageAccess(
-        pageAvailable = pages.isNotEmpty(),
-        windowOpen = RestrictionsPause.isActive() || com.kidslauncher.mdm.server.OfflineOverride.isActive(),
-        overrideApplied = AppEnforcer.lastEnforcedOverride == true,
-        pageMissing = pageMissing,
-    )
-
-    /** The four rows that open Android's pages, read again: on resume, after a tap, when the pause starts and
-     * after each apply (the window's apply unhides Android's Settings - code QA Q-2). */
+    /** The rows read again: on resume, when the pause starts and after each apply. */
     private fun updateSystemPageRows() {
-        updateBatteryRow()
-        updateWriteSettingsRow()
-        updateNotificationsRow()
-        updateAssistantRows()
-        updateFingerprintRow()
-        updateMediaLockRow()
+        updateSetupRow()
         updateAccessRows()
         updateUnifiedPushRow()
     }
@@ -711,131 +451,29 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
 
     private val appliedListener: () -> Unit = { updateSystemPageRows() }
 
-    private fun updateFingerprintRow() {
-        val context = context ?: return
-        val row = findPreference<Preference>(FINGERPRINT) ?: return
-        row.isVisible = fingerprintRowShown(
-            com.kidslauncher.mdm.lock.AndroidLock.fingerprintLockState(context),
-            FingerprintEnrol.hasSensor(context),
-        )
-        if (!row.isVisible) return
-        val access = pageAccess(FingerprintEnrol.pageIntents(context), fingerprintPageMissing)
-        row.summary = getString(
-            R.string.settings_mdm_fingerprint_summary,
-            getString(fingerprintStateText(FingerprintEnrol.enrolled(context))),
-            getString(fingerprintActionText(access)),
-        )
-    }
+    /** The setup row's read in flight: a newer one cancels it. */
+    private var setupJob: kotlinx.coroutines.Job? = null
 
-    private fun updateMediaLockRow() {
-        val context = context ?: return
-        val row = findPreference<Preference>(MEDIA_LOCK) ?: return
-        row.summary = getString(mediaLockText(pageAccess(MediaLockScreen.pageIntents(context), mediaLockPageMissing)))
-    }
-
-    private fun launchCallFilter(request: Intent) {
-        (activity as? com.kidslauncher.mdm.ui.settings.SettingsActivity)?.ownPageOpening()
-        callFilterLauncher.launch(request)
-    }
-
-    /** §3.5: the Wi-Fi step ends - airplane mode off again (background), then the rows. */
-    private fun endWifiStepNow(why: String) {
-        wifiPanelShown = false
-        wifiPanelPaused = false
+    /** Design 114 §6.3: "{n} steg igjen" in orange while required steps are left (the shared rule's N), else
+     * "Fullført" quietly - read off the main thread. */
+    private fun updateSetupRow() {
         val app = context?.applicationContext ?: return
-        lifecycleScope.launch {
-            withContext(Dispatchers.IO) { com.kidslauncher.mdm.assistant.AssistantSetup.endWifiStep(app, why) }
-            updateAssistantRows()
-        }
-    }
-
-    /** Design 98 §3.3: "Fullfør oppsett"'s rows - the assistant, Wi-Fi in airplane mode, the call filter. */
-    private fun updateAssistantRows() {
-        val context = context ?: return
-        val policy = (com.kidslauncher.mdm.server.cachedPolicy() as? com.kidslauncher.mdm.server.CachedPolicy.Ok)?.policy
-        val bit = (policy?.quickControlsMask ?: 0L) and com.kidslauncher.mdm.server.QuickControlFeature.AIRPLANE != 0L
-        val role = com.kidslauncher.mdm.assistant.AirplaneRuntime.roleHeld(context)
-        findPreference<Preference>(ASSISTANT)?.let { row ->
-            row.isVisible = com.kidslauncher.mdm.assistant.assistantRowShown(bit, role)
-            if (row.isVisible) {
-                val access = pageAccess(com.kidslauncher.mdm.assistant.AssistantSetup.assistantPageIntents(context), assistantPageMissing)
-                row.summary = getString(com.kidslauncher.mdm.assistant.assistantRowText(com.kidslauncher.mdm.assistant.assistantRowState(role, access)))
+        setupJob?.cancel()
+        setupJob = lifecycleScope.launch {
+            val left = withContext(Dispatchers.IO) { runCatching { com.kidslauncher.mdm.setup.SetupReadings.count(app) }.getOrNull() }
+            val context = context ?: return@launch
+            val row = findPreference<Preference>(SETUP) ?: return@launch
+            row.summary = when {
+                left == null -> null
+                left == 0 -> getString(R.string.settings_setup_complete)
+                else -> android.text.SpannableString(resources.getQuantityString(R.plurals.settings_setup_left, left, left)).apply {
+                    setSpan(
+                        android.text.style.ForegroundColorSpan(context.getColor(R.color.setup_left)),
+                        0, length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE,
+                    )
+                }
             }
         }
-        findPreference<Preference>(WIFI_APM)?.let { row ->
-            row.isVisible = role
-            if (role) {
-                val state = com.kidslauncher.mdm.assistant.wifiApmRowState(
-                    com.kidslauncher.mdm.assistant.AirplaneRuntime.wifiKept(context),
-                    com.kidslauncher.mdm.assistant.AssistantSetup.setupWindowOpen(),
-                )
-                row.summary = getString(com.kidslauncher.mdm.assistant.wifiApmRowText(state))
-            }
-        }
-        findPreference<Preference>(CALL_FILTER)?.let { row ->
-            row.isVisible = com.kidslauncher.mdm.assistant.screeningRowShown(
-                com.kidslauncher.mdm.calls.CallPolicyStore.callsState.managed,
-                com.kidslauncher.mdm.calls.CallSystem.screeningRoleHeld(context),
-                com.kidslauncher.mdm.calls.CallSystem.redirectionRoleHeld(context),
-            )
-            if (row.isVisible) {
-                row.summary = getString(
-                    if (com.kidslauncher.mdm.assistant.AssistantSetup.setupWindowOpen()) R.string.settings_call_filter_open else R.string.settings_call_filter_pause_first,
-                )
-            }
-        }
-    }
-
-    /** Design 107 §6: shown only while a channel other than Snarveier's, or the whole app, is turned off (the report's
-     * read, off the main thread); its summary names them in the phone's words and says what a tap does now. */
-    private fun updateNotificationsRow() {
-        val app = context?.applicationContext ?: return
-        notificationsJob?.cancel()
-        notificationsJob = lifecycleScope.launch {
-            val (report, pages, roleHeld) = withContext(Dispatchers.IO) {
-                Triple(
-                    com.kidslauncher.mdm.notify.NotificationChannelsReader.read(app),
-                    com.kidslauncher.mdm.notify.NotificationChannelsReader.pageIntents(app),
-                    com.kidslauncher.mdm.calls.CallSystem.dialerRoleHeld(app),
-                )
-            }
-            if (context == null) return@launch
-            notificationsLastRead = report
-            val row = findPreference<Preference>(NOTIFICATIONS) ?: return@launch
-            val text = com.kidslauncher.mdm.notify.notificationsRowText(report, pageAccess(pages, notificationsPageMissing), roleHeld)
-            row.isVisible = text != null
-            text ?: return@launch
-            val what = if (text.allOff) {
-                getString(R.string.settings_notifications_all_off)
-            } else {
-                getString(
-                    R.string.settings_notifications_off,
-                    text.off.joinToString(", ") { getString(R.string.settings_notifications_quoted, getString(it.nameRes)) },
-                )
-            }
-            row.summary = getString(R.string.settings_notifications_summary, what, getString(text.action))
-        }
-    }
-
-    private fun updateWriteSettingsRow() {
-        val context = context ?: return
-        val row = findPreference<Preference>(WRITE_SETTINGS) ?: return
-        val access = pageAccess(WriteSettingsAccess.pageIntents(context), writeSettingsPageMissing)
-        row.summary = getString(writeSettingsText(writeSettingsRowState(WriteSettingsAccess.granted(context), access)))
-    }
-
-    private fun updateBatteryRow() {
-        val context = context ?: return
-        val row = findPreference<Preference>(BACKGROUND_CONNECTION) ?: return
-        val state = batteryRowState(BatteryExemption.exempt(context), BatteryExemption.dialogIntent(context) != null)
-        row.summary = getString(
-            when (state) {
-                BatteryRow.EXEMPT -> R.string.settings_mdm_background_connection_exempt
-                BatteryRow.CAN_ASK -> R.string.settings_mdm_background_connection_ask
-                BatteryRow.PAUSE_FIRST -> R.string.settings_mdm_background_connection_pause_first
-                BatteryRow.UNKNOWN -> R.string.settings_mdm_background_connection_unknown
-            },
-        )
     }
 
     private fun updateInstallModeSummary(preference: Preference?) {

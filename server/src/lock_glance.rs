@@ -124,16 +124,11 @@ pub async fn policy_lock_glance(
     })
 }
 
-/// What Lock Screen & PINs' Notifications group warns about (design 31 step 4, typed): there is
-/// no lock without a Child PIN; a launcher without notification access shows missed calls only - and Meldinger's
-/// rows, which need none (design 82 D7), while its row is listed and not Off.
+/// What Lock Screen & PINs' Notifications group says (design 31 step 4, typed): there is no lock without a Child PIN.
+/// Notification access off is design 114's setup step, its warning line at `#notifications`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Note {
     NoChildPin,
-    /// No notification access: missed calls only.
-    CallsOnly,
-    /// No notification access: missed calls and Meldinger's rows only.
-    CallsAndMessagesOnly,
 }
 
 impl Note {
@@ -143,14 +138,6 @@ impl Note {
             Note::NoChildPin => (
                 "device.lock.glance.no_child_pin",
                 "device.lock.glance.no_child_pin_sub",
-            ),
-            Note::CallsOnly => (
-                "device.lock.glance.no_access",
-                "device.lock.glance.no_access_sub",
-            ),
-            Note::CallsAndMessagesOnly => (
-                "device.lock.glance.no_access_messages",
-                "device.lock.glance.no_access_messages_sub",
             ),
         };
         crate::handlers::device_pages::Note {
@@ -165,20 +152,13 @@ impl Note {
     }
 }
 
-/// [messages_shown]: Meldinger's row is listed and not Off.
-pub fn notes(kid_pin_set: bool, listener_enabled: Option<bool>, messages_shown: bool) -> Vec<Note> {
-    let mut notes = Vec::new();
-    if !kid_pin_set {
-        notes.push(Note::NoChildPin);
+/// The group's notes.
+pub fn notes(kid_pin_set: bool) -> Vec<Note> {
+    if kid_pin_set {
+        Vec::new()
+    } else {
+        vec![Note::NoChildPin]
     }
-    if listener_enabled == Some(false) {
-        notes.push(if messages_shown {
-            Note::CallsAndMessagesOnly
-        } else {
-            Note::CallsOnly
-        });
-    }
-    notes
 }
 
 /// The security log's words for a tick (`security.detail.lock_screen_app.*`, design 70 §4):
@@ -434,15 +414,9 @@ mod tests {
 
     #[test]
     fn every_note() {
-        assert!(notes(true, Some(true), false).is_empty());
-        assert!(notes(true, None, false).is_empty(), "no report yet");
-        let mut all = notes(false, Some(false), false);
-        assert_eq!(all, [Note::NoChildPin, Note::CallsOnly]);
-        assert_eq!(notes(true, Some(false), false), [Note::CallsOnly]);
-        // Design 82 D7: Meldinger's rows need no notification access - the note says so only while its row shows.
-        assert_eq!(notes(true, Some(false), true), [Note::CallsAndMessagesOnly]);
-        assert!(notes(true, Some(true), true).is_empty());
-        all.push(Note::CallsAndMessagesOnly);
+        assert!(notes(true).is_empty());
+        let all = notes(false);
+        assert_eq!(all, [Note::NoChildPin]);
         for note in all {
             let words = note.note(crate::i18n::Lang::En);
             // No Child PIN is the parent's choice: a quiet note (2026-11-18).

@@ -213,6 +213,7 @@
 
     <section id="updates" aria-labelledby="updates-title">
         <h2 class="group-header" id="updates-title">{{ self.t("device.advanced.updates") }}</h2>
+        {% for line in setup_warnings.at("updates") %}{% include "partials/setup_warning.html" %}{% endfor %}
         {% for note in escape_warnings %}
         {% include "partials/note_warning.html" %}
         {% endfor %}
@@ -311,6 +312,13 @@
                 </details></div></div>
         </div>
         {% endif %}
+        {#- Design 114 §5.8: no setup code without the phone's Parent PIN - the line to it in place of New Setup Code. -#}
+        {% if no_parent_pin %}
+        <a class="attention attention-action" href="/devices/{{ device.id }}/lock?back=provision#parent-pin" data-warning="no-parent-pin">
+            <span class="attention-text">{{ self.t("device.summary.no_parent_pin") }}</span>
+            <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>
+        {% endif %}
         <div class="group">
             {% if let Some((kind, until)) = access.live_code %}
             <div class="row" data-row="live-code">
@@ -318,9 +326,11 @@
                 <span class="row-value">{{ self.tp("device.summary.access.works_until", [("until", until.as_str())]) }}</span>
             </div>
             {% endif %}
+            {% if !no_parent_pin %}
             <form method="post" action="/devices/{{ device.id }}/regenerate-code" class="cell">
                 <button type="submit" class="row row-button">{{ self.t("device.summary.access.new_code") }}</button>
             </form>
+            {% endif %}
             <a class="row" href="/devices/{{ device.id }}/provision">
                 <span class="row-label">{{ self.t("device.summary.access.qr") }}</span>
                 <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>

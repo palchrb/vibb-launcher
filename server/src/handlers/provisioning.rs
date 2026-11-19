@@ -171,6 +171,8 @@ struct ProvisionQrTemplate {
     /// A phone would refuse the launcher the QR names, or the check hasn't ended: no QR is made
     /// (fail closed, like `missing_checksum`).
     launcher_blocks: bool,
+    /// Design 114 §5.8: the phone has no Parent PIN - no QR and no setup code, one orange line to the PIN instead.
+    no_parent_pin: bool,
     wifi_ssid: String,
     /// When the code in the QR expires (local, `Zone::until`), once it is made.
     until: Option<String>,
@@ -202,7 +204,15 @@ impl ProvisionQrTemplate {
         let (back_href, back_label) = crate::handlers::devices::setup_back(lang, &device);
         let launcher =
             crate::launcher_check::line(state, lang, &zone, Some(device.id), auto_reload);
+        // A read that fails counts as no PIN: no code is made then (fail closed).
+        let no_parent_pin = !crate::handlers::devices::parent_pin_set(&state.db, device.id)
+            .await
+            .unwrap_or_else(|err| {
+                tracing::error!(device_id = device.id, %err, "couldn't read the phone's Parent PIN");
+                false
+            });
         ProvisionQrTemplate {
+            no_parent_pin,
             lang,
             title: crate::i18n::t_params(lang, "devices.qr.title", &[("name", &device.name)]),
             enrolled: device.enrolled_at.is_some(),
@@ -348,7 +358,7 @@ pub async fn provision_qr(
     page.wifi_ssid = ssid.to_string();
     // No code at all without a checksum: there would be no QR code to carry it. Nor while the
     // launcher the QR names would be refused, or isn't checked yet (design 86).
-    if page.missing_checksum || page.launcher_blocks {
+    if page.missing_checksum || page.launcher_blocks || page.no_parent_pin {
         return page.page(StatusCode::OK);
     }
     let wifi = (!ssid.is_empty()).then(|| (ssid.to_string(), password.to_string()));

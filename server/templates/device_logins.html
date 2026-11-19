@@ -18,6 +18,7 @@
         Design 113: one group per part, each row a label and its state, every explanation behind the group's ⓘ. -#}
     <section id="logins-wifi" aria-labelledby="logins-wifi-title">
         <h2 class="group-header" id="logins-wifi-title">{{ self.t("logins.wifi.header") }}</h2>
+        {% for line in setup_warnings.at("logins-wifi") %}{% include "partials/setup_warning.html" %}{% endfor %}
         <div class="group">
             <form method="post" action="/devices/{{ device.id }}/logins#logins-wifi" class="cell">
                 <input type="hidden" name="section" value="wifi">

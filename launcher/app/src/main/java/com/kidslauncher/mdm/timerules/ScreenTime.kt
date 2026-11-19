@@ -190,6 +190,8 @@ val FREE_SCREENS = setOf(
     "com.kidslauncher.mdm.calls.LightPhoneBookActivity",
     "com.kidslauncher.mdm.calls.InCallActivity",
     "com.kidslauncher.mdm.ui.settings.SettingsActivity",
+    // Design 114, QA L8: the parent's setup flow, run again later in a pause.
+    "com.kidslauncher.mdm.setup.SetupFlowActivity",
 )
 
 /**
@@ -210,7 +212,10 @@ fun screenTimeCounts(
     pinLocked: Boolean = false,
     voipExempt: Boolean = false,
     musicListening: Boolean = false,
-): Boolean = interactive && !keyguardLocked && !(pinLocked && !voipExempt) && !(freeScreenInFront && !freeScreenSharesScreen) && !musicListening
+    setupHold: Boolean = false,
+): Boolean = interactive && !keyguardLocked && !(pinLocked && !voipExempt) && !(freeScreenInFront && !freeScreenSharesScreen) && !musicListening &&
+    // Design 114 §6.1.2 (QA L8): the parent's setup time isn't the child's - nothing counts while the setup hold lasts.
+    !setupHold
 
 /**
  * "Listening never counts" (design 21 §3, the user's decision after qa-21-step4-code L2): the Vibb

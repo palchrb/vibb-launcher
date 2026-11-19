@@ -155,6 +155,10 @@ data class StatusReportRequest(
      * the phone unlocked; left out otherwise. A full-report field. Pinned by `unified_push.json`'s `report` rows
      * (`UnifiedPushContractTest`). */
     val unifiedPush: com.kidslauncher.mdm.push.up.UpReport? = null,
+    /** Design 114 §4.1: the setup readings no other field carries, and the hold's end while it lasts; built by
+     * [com.kidslauncher.mdm.setup.SetupReport.json] (a reading Android refused is `null`, one that doesn't apply left
+     * out). A full-report field. Pinned by `setup_steps.json`'s `report` rows (`SetupStepsTest`). */
+    val setup: kotlinx.serialization.json.JsonObject? = null,
 )
 
 /**

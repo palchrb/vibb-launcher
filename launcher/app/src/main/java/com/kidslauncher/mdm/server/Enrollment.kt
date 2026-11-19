@@ -3,6 +3,7 @@ package com.kidslauncher.mdm.server
 import android.content.Context
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.server.dto.EnrollRequest
+import com.kidslauncher.mdm.setup.setupHoldStarts
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -21,6 +22,12 @@ fun enrollFailureOf(httpCode: Int): EnrollFailure = EnrollFailure(refused = http
  * `*.ts.net` server resolves only through it, and in the deadlock no sync or stream retries it).
  */
 object Enrollment {
+    private fun deviceOwnerNow(context: Context): Boolean = try {
+        context.getSystemService(android.app.admin.DevicePolicyManager::class.java)?.isDeviceOwnerApp(context.packageName) == true
+    } catch (e: Exception) {
+        false
+    }
+
     /** [connectTailnet] false: the caller has just tried the tailnet in this flow ([applyProvisioningExtras]) - a
      * second attempt would only double the wait (code QA L2 of the upstream port). */
     suspend fun enroll(
@@ -30,6 +37,14 @@ object Enrollment {
         connectTailnet: Boolean = true,
     ): Result<Unit> = withContext(Dispatchers.IO) {
         try {
+            // Design 114 §6.1.1 (QA L10): whether this enrolment starts the setup hold is decided before the token is
+            // stored, so no sync can apply a policy between the token's commit and the check.
+            val mdmBefore = LauncherPreferences.mdm()
+            val startsHold = setupHoldStarts(
+                deviceOwner = deviceOwnerNow(context),
+                policyEverApplied = mdmBefore.policyEverApplied(),
+                cachedPolicy = !mdmBefore.kidModePolicy().isNullOrBlank(),
+            )
             // No-ops when connected or when no key is set.
             if (connectTailnet) TsnetClient.connectFromPreferences(context)
             val response = createMdmApi(serverUrl).enroll(EnrollRequest(code))
@@ -53,6 +68,11 @@ object Enrollment {
             com.kidslauncher.mdm.zones.ZoneWatch.forget(context)
             // And a running Install Now (design 37): its command was the old enrollment's.
             InstallNow.clear(context)
+            // And the setup ticks it hadn't posted (design 114 §4.4): they were for the old enrollment's phone.
+            com.kidslauncher.mdm.setup.SetupTicks.clear(context)
+            // Design 114 §6.1: a fresh phone comes up open, in the setup flow; the first policy's applies run inside the
+            // hold. Before the callers' "enrolled" sync.
+            if (startsHold) RestrictionsPause.startHold(context)
             // The first policy's storm follows (2026-10-25): its package callbacks fold for 2 min.
             com.kidslauncher.mdm.ui.home.AppLoadHold.provisioning(android.os.SystemClock.elapsedRealtime())
             Result.success(Unit)

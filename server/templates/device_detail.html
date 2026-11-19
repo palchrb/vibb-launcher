@@ -77,10 +77,10 @@
     {% endif %}
 
     {% if device.enrolled_at.is_none() %}
-    {#- A phone not set up has no Attention rows; a managed one without a Parent PIN still needs it
-        before setup (qa-31-s10-code L1). -#}
+    {#- A phone not set up has no Attention rows; without its Parent PIN it gets no setup code (design 114 §5.8): the
+        line to the PIN, whose save lands on Connect's QR, in place of New Setup Code. -#}
     {% if no_parent_pin %}
-    <a class="attention attention-action" href="/devices/{{ device.id }}/lock#parent-pin" data-warning="no-parent-pin">
+    <a class="attention attention-action" href="/devices/{{ device.id }}/lock?back=provision#parent-pin" data-warning="no-parent-pin">
         <span class="attention-text">{{ self.t("device.summary.no_parent_pin") }}</span>
         <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </a>
@@ -103,9 +103,11 @@
                 <span class="row-value">{{ self.tp("device.summary.access.works_until", [("until", until.as_str())]) }}</span>
             </div>
             {% endif %}
+            {% if !no_parent_pin %}
             <form method="post" action="/devices/{{ device.id }}/regenerate-code" class="cell">
                 <button type="submit" class="row row-button">{{ self.t("device.summary.access.new_code") }}</button>
             </form>
+            {% endif %}
             <a class="row" href="/devices/{{ device.id }}/provision">
                 <span class="row-label">{{ self.t("device.summary.access.qr") }}</span>
                 <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -116,12 +118,6 @@
             <div class="info-panel"><p>{{ self.t("device.summary.access.footer") }}</p></div>
         </details></div>
     </section>
-    {#- Design 98 D2: the QR page's "Åpne for oppsett nå" lands here (#oppsett) before the phone has reported. -#}
-    {% if let Some((text, refused)) = self.flash("oppsett") %}
-    <section id="oppsett" aria-label="{{ self.t("device.summary.setup.title") }}">
-        <div class="group"><p class="flash{% if refused %} flash-error{% endif %}" role="status" data-flash="oppsett">{{ text }}</p></div>
-    </section>
-    {% endif %}
     {% else %}
 
     {% if !attention.is_empty() %}
@@ -150,8 +146,8 @@
     </section>
     {% endif %}
 
-    {#- Design 98 §6.2: Flymodus' lines - a period that ended within 12 hours, or the emergency call that ended it, and
-        the role lost (its steps behind the ⓘ). "Flymodus på siden 21:03" is the header's. -#}
+    {#- Design 98 §6.2: Flymodus' line - the emergency call that ended a period within 12 hours. The role lost is design
+        114's setup row. "Flymodus på siden 21:03" is the header's. -#}
     {% if !airplane_lines.is_empty() %}
     <section id="airplane-state" aria-label="{{ self.t("device.home.airplane") }}">
         {% for line in airplane_lines %}
@@ -164,48 +160,6 @@
             </div>
         </div>
         {% endfor %}
-    </section>
-    {% endif %}
-
-    {#- Design 98 §6.2: the Oppsett card while a step the phone needs isn't done - Åpne for oppsett (the start-pause,
-        back=setup) and "Ikke nå" (hidden until the needed steps change); both land here, #oppsett, with the flash in
-        the card. Shown for its flash alone too, so the redirect always finds its group. -#}
-    {% if setup.shown || self.flash("oppsett").is_some() %}
-    <section id="oppsett" aria-labelledby="oppsett-title">
-        <h2 class="group-header" id="oppsett-title">{{ self.t("device.summary.setup.title") }}</h2>
-        <div class="group">
-            {% if setup.shown %}
-            {% for step in setup.steps %}
-            {% if step.sub.is_empty() %}
-            <div class="row" data-setup-step="{{ step.id }}">
-                <span class="row-label">{{ step.label }}</span>
-            </div>
-            {% else %}
-            <details class="info cell" data-setup-step="{{ step.id }}">
-                <summary class="row">
-                    <span class="row-label">{{ step.label }}</span>
-                    <svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("common.more_info") }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>
-                </summary>
-                <div class="info-panel"><p>{{ step.sub }}</p></div>
-            </details>
-            {% endif %}
-            {% endfor %}
-            <form method="post" action="/devices/{{ device.id }}/start-pause#oppsett" class="cell">
-                <input type="hidden" name="back" value="setup">
-                <button type="submit" class="row row-button">{{ self.t("device.advanced.setup.button") }}</button>
-            </form>
-            <form method="post" action="/devices/{{ device.id }}/setup-card/hide#oppsett" class="cell">
-                <button type="submit" class="row row-button" data-setup-hide>{{ self.t("device.summary.setup.not_now") }}</button>
-            </form>
-            {% endif %}
-            {% if let Some((text, refused)) = self.flash("oppsett") %}<p class="flash{% if refused %} flash-error{% endif %}" role="status" data-flash="oppsett">{{ text }}</p>{% endif %}
-        </div>
-        {% if setup.shown %}
-        <div class="group-footer"><details class="info">
-            <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
-            <div class="info-panel"><p>{{ self.t("device.summary.setup.footer") }}</p></div>
-        </details></div>
-        {% endif %}
     </section>
     {% endif %}
 
@@ -610,6 +564,13 @@
         </a>
     </div>
     <div class="group group-icons summary-more">
+        {#- Design 114 §5.2: Device › Oppsett, its value quiet (the Attention row is the orange one). -#}
+        <a class="row" href="/devices/{{ device.id }}/setup" data-row="setup">
+            <span class="tile tile-grey"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><path d="M3 4.5l1.5 1.5 3-3M3 9.5l1.5 1.5 3-3M9.5 5h5M9.5 10h5M3 14h11.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+            <span class="row-label">{{ self.t("setup.page.title") }}</span>
+            {% if let Some(value) = setup_value %}<span class="row-value">{{ value }}</span>{% endif %}
+            <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>
         <a class="row" href="/devices/{{ device.id }}/about" data-row="about">
             <span class="tile tile-grey"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><circle cx="8.5" cy="8.5" r="6.3" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8.5 7.6v4.3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="8.5" cy="5.2" r="1" fill="currentColor"/></svg></span>
             <span class="row-label">{{ self.t("device.page.about") }}</span>

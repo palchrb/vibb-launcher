@@ -145,4 +145,19 @@ class LocationPolicyTest {
         assertEquals("on_request", enforcedLocationPolicy(choosePolicy(null, CachedPolicy.Ok(managed), true, null).policy)?.mode)
         assertNull(enforcedLocationPolicy(choosePolicy(null, CachedPolicy.Absent, policyEverApplied = false, lastEnforced = null).policy))
     }
+
+    /** Design 114 §7.1: Vibb's own fine and coarse location are always granted by the apply, never background location
+     * (it follows Locate and the zones); "Off" still takes no fix ([locationAction]'s rows above). The Wi-Fi config read
+     * no longer grants and puts back fine location. */
+    @Test
+    fun `the apply's own location grants are fine and coarse, never background`() {
+        assertEquals(
+            setOf(android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_COARSE_LOCATION),
+            OWN_LOCATION_PERMISSIONS.toSet(),
+        )
+        val main = listOf("src/main", "app/src/main").map { java.io.File(it) }.first { it.isDirectory }
+        val relock = java.io.File(main, "java/com/kidslauncher/mdm/server/WindowRelock.kt").readText()
+        val wifi = relock.substringAfter("private fun <T> withWifiConfigs(").substringBefore("    /**")
+        assertFalse("ACCESS_FINE_LOCATION" in wifi || "setPermissionGrantState" in wifi)
+    }
 }

@@ -1,0 +1,78 @@
+# The phone's setup: the steps, the hold and the flow (design 114)
+
+`docs/design/114-setup-status.md` is the spec; this is where the code is.
+
+## The steps and the one rule
+
+- `setup/SetupSteps.kt` (pure): `SetupStep`, the table of design 114 §2.2 in its order (key, need, `read_by`, `when`,
+  summary, level, features, the Android actions the flow's "Åpne" tries, the name and the screen's one line);
+  `SetupInputs` (the policy's mask, clock format, calls managed, Android's lock, design 110's map links);
+  `setupMissing` / `setupCount` / `setupAlarm` / `setupRow`, the rule the server's `setup_status` runs too;
+  `flowScreens`, `flowButtons`, `flowProgress` for the flow. `write_settings_used` reads bit 16, bit 8 (Sound: the
+  kid's ringtone picks write `Settings.System`) or a clock format in use, as the server's `write_settings_needed`.
+- The shared contract is `setup_steps.json` (byte-identical with `server/testdata/`): `SetupStepsTest` checks the
+  table, the names in nb and en, every `needed` row, the report's exact encoding, the policy, the tick and the copies.
+- `setup/SetupReadings.kt`: the live readings (off the main thread) - the Parent PIN from the vault
+  (`ParentPin.status().configured`: the cached policy carries no hash), Device Owner, fine location, notification
+  access, the user's own mobile-data switch (`isDataEnabledForReason(USER)`, absent without a default data SIM; the
+  manifest's `READ_BASIC_PHONE_STATE`), Data Saver (`restrictBackgroundStatus`), the battery exemption, design 107's
+  orange rule (`channelsOrange`, the server's About rule, checked against 107's `pages` rows), full-screen intents,
+  Modify system settings, the assistant role, Wi-Fi in airplane mode, the call filter's two roles, the moved default
+  apps (read live, `AssistantSetup.defaultAppsChanged`), the fingerprint (absent without a sensor). `report()` is the
+  status report's `setup` (only the readings no other field carries, and the hold's `hold_until_ms`/`hold_left_ms`).
+  `watch()` registers `ACTION_RESTRICT_BACKGROUND_CHANGED`; the listener's connect/disconnect asks for a sync too.
+- The moved default apps (§2.2.1): the pick window that moved a role keeps its snapshot (`assistant_moved_from`) while
+  a role is listed; `stillMoved` drops an entry once its role is back (call screening and redirection are row 13's);
+  the flow's "Standardapper" opens the pick window with `keepSnapshot = true`.
+
+## The setup hold
+
+- `Enrollment.enroll` decides "fresh" (`setupHoldStarts`: device owner, `policy_ever_applied` false, no cached policy)
+  before `DeviceToken.set`, and starts `RestrictionsPause.startHold` in the success path. Only the enrolment calls it
+  (`ParentPinCallersTest`); a re-enrolment of a managed phone never starts one.
+- The hold is the restrictions pause with `restrictions_paused_hold` set: `durationMs()` is `SETUP_HOLD_DURATION_MS`
+  (4 h, `restrictions_pause.json`'s `setup_hold_max_ms`) while it is, else 2 h; `start()` writes it false and
+  `clear()` clears it. `startHold` grants POST_NOTIFICATIONS first, opens the window with the screen lock unknown
+  (`WindowRelock.opened(.., secureKnown = false)`: the relock never removes a PIN set in the setup wizard), then the
+  flag and the pause in the same lift.
+- While it lasts: a `start_pause` command answers "in setup" and changes nothing; screen time doesn't count
+  (`screenTimeCounts(setupHold)`); the window notification's tap opens the flow; Home's resume starts the flow in place
+  of its content. It ends like every window: "Ferdig" (`lockAgain(LOCK_AGAIN)`, synchronous), the PWA's "Lås igjen",
+  a restart, the ceiling.
+- The PWA keeps a held phone "open" up to the hold's end (`paused_at`'s exception, `device_status.setup_hold_until_ms`).
+
+## The flow
+
+- `setup/SetupFlowActivity.kt`: its own task (`taskAffinity` `.setup`, `singleTask`, not exported, out of Recents),
+  so a Home press from Android's page brings it back at the same screen; Back does nothing in the hold (an
+  `OnBackPressedCallback`: predictive back on 16). The run's skips live in `SetupRun` (the process). Screens: Not open
+  (outside a window: "Sett på pause i 2 t", the parent PIN through `ParentPin`), Wait (before the first policy with
+  nothing runnable; "Prøv igjen" and "Ferdig" after 30 s), one step a screen, the end ("Klar" / "N steg igjen" and
+  "Ferdig").
+- `setup/SetupPages.kt` builds each step's pages through `systemPageIntent` (an unsuspended system page - inside a
+  window); the assistant, the call filter and the default apps open in design 98's pick window, Wi-Fi in airplane mode
+  through its Wi-Fi step.
+- The gate of 2026-11-19 (`docs/testing/2026-11-18-114-emulator-check.md`): row 5 opens the Internet panel first from
+  API 36 (`mobileDataActions`: Android 16's SIM page has no Mobile data switch), and the flow reads its step again on
+  window focus (the panel is a SystemUI dialog there); "Sett på pause i 2 t" from the flow marks the pause
+  (`SetupRun.markPausedFromFlow`) and the flow comes back once - from Home's resume (14 restarts Home) or its own
+  `onDestroy` (16 leaves Settings in front) - since leaving lock task clears every locked task.
+- "Gjort" on a parent step: `SetupTicks` (a pending set, posted to `POST /api/devices/setup/ticks` at the start of
+  every sync until done or carried by the policy's `setup.ticked`).
+- Parent Settings has one row, `settings_setup` ("N steg igjen" in orange, or "Fullført"), which opens the flow; the
+  rows that sat there (background connection, Modify system settings, Vibb's notifications, the assistant, Wi-Fi in
+  airplane mode, the call filter, fingerprint, media on the lock screen) are flow screens now.
+- The setup notification (`AssistantSetup.refreshNotice`) counts `SetupReadings.count` and opens the flow.
+- The flow shows only missing steps (§6.3): a step done can't be redone from it - re-picking the assistant, Wi-Fi in
+  airplane mode once stored (`wifi_kept` has no on-phone way back) or another fingerprint is Android's own Settings in
+  a pause (code QA L9).
+- The hold fails closed on a wall clock set back past the time elapsed (an NTP or NITZ correction right after the
+  enrolment): `timedWindowActive` ends it; the PWA's "Åpne for oppsett" recovers (code QA L9; the gate's owed checks).
+
+## Android 14-17
+
+Every API used is in 34 (`canUseFullScreenIntent`, `ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT`) or below
+(`isDataEnabledForReason`, `ACTION_APP_OPEN_BY_DEFAULT_SETTINGS`, `READ_BASIC_PHONE_STATE`): no version gate. The flow
+starts only from Home's resume or a notification tap (no background start); insets by `fitsSystemWindows`
+(edge-to-edge on 15+). The OEM pages' names and the restricted-setting greying are the emulator gate's and the Jelly
+Star's to check (design 114 §11).

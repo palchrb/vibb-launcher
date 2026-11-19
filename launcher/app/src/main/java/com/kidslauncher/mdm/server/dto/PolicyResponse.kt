@@ -174,6 +174,9 @@ data class PolicyResponse(
      * `unified_push_v1`. Missing = off: the receiver and the Link Activity disabled
      * ([com.kidslauncher.mdm.push.up.UpView]). */
     val unifiedPush: com.kidslauncher.mdm.push.up.UnifiedPushPolicy? = null,
+    /** Design 114 §4.3: the setup steps the parent ticked (`{"ticked": [keys]}`); `null` = none ticked (a fail-safe:
+     * the steps stay listed). Pinned by `setup_steps.json`'s `policy` (`SetupStepsTest`). */
+    val setup: com.kidslauncher.mdm.setup.SetupPolicy? = null,
 )
 
 /** `PolicyResponse.kidLock` - `security::hash_pin` on the server (PBKDF2-SHA256, see

@@ -18,20 +18,13 @@ import android.provider.Settings
 import android.util.Log
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.server.AppEnforcer
-import com.kidslauncher.mdm.server.BatteryExemption
 import com.kidslauncher.mdm.server.BootClock
-import com.kidslauncher.mdm.server.CachedPolicy
 import com.kidslauncher.mdm.server.OfflineOverride
-import com.kidslauncher.mdm.server.QuickControlFeature
 import com.kidslauncher.mdm.server.RestrictionsPause
 import com.kidslauncher.mdm.server.ServerJson
 import com.kidslauncher.mdm.server.WindowStart
-import com.kidslauncher.mdm.server.WriteSettingsAccess
-import com.kidslauncher.mdm.server.cachedPolicy
-import com.kidslauncher.mdm.server.clockFormatChoiceOf
 import com.kidslauncher.mdm.server.currentPolicyDecision
 import com.kidslauncher.mdm.server.systemPageIntent
-import com.kidslauncher.mdm.calls.managed
 import kotlinx.serialization.Serializable
 
 private const val LOG_TAG = "AssistantSetup"
@@ -39,6 +32,8 @@ private const val PREFS = "airplane_mode"
 private const val KEY_ROLE_SEEN = "assistant_role_seen"
 private const val KEY_PICK = "assistant_pick_window"
 private const val KEY_SNAPSHOT = "assistant_pick_snapshot"
+/** Design 114 §2.2.1: the snapshot of the window that moved the roles still listed - the original holders. */
+private const val KEY_MOVED_FROM = "assistant_moved_from"
 private const val KEY_WIFI_STEP = "wifi_step_open"
 
 const val NOTIFICATION_CHANNEL_SETUP = "launcher:setup"
@@ -48,9 +43,6 @@ const val ACTION_SETUP_DEADLINE = "me.vibb.launcher.action.SETUP_DEADLINE"
 /** Each deadline its own alarm (code QA L1): one alarm's PendingIntent would move the other's. */
 private const val DEADLINE_PICK = 9801
 private const val DEADLINE_WIFI = 9802
-
-/** Settings opens at "Fullfør oppsett"'s rows (the setup notification's tap). */
-const val EXTRA_SETTINGS_SECTION = "me.vibb.launcher.extra.SETTINGS_SECTION"
 
 /** A stored window ([WindowStart] by every clock, `BootClock`): a reboot or the clock set back ends it. */
 @Serializable
@@ -117,12 +109,18 @@ object AssistantSetup {
     }
 
     /** §3.2 on open: the window stored with its snapshot, the 5-minute alarm, then apply() - before Android's page
-     * opens (the caller opens it after this returns). Background thread. Returns whether it opened. */
-    fun openPickWindow(context: Context): Boolean {
+     * opens (the caller opens it after this returns). Background thread. Returns whether it opened. [keepSnapshot]
+     * (design 114 §2.2.1, the flow's "Standardapper"): the snapshot is the one of the window that moved the roles still
+     * listed, and the list stays - opening the page doesn't clear the step, and the comparison stays against the
+     * original holders. */
+    fun openPickWindow(context: Context, keepSnapshot: Boolean = false): Boolean {
         if (!setupWindowOpen()) return false
-        prefs(context).edit().putString(KEY_SNAPSHOT, ServerJson.encodeToString(DefaultAppsSnapshot.serializer(), snapshot(context))).commit()
+        // Code QA L2: while roles are listed, every step's window keeps the original holders and the list.
+        val kept = if (keepSnapshot || AirplaneRuntime.defaultAppsChanged(context).isNotEmpty()) movedFrom(context) else null
+        val snap = kept ?: snapshot(context)
+        prefs(context).edit().putString(KEY_SNAPSHOT, ServerJson.encodeToString(DefaultAppsSnapshot.serializer(), snap)).commit()
         storeWindow(context, KEY_PICK, BootClock.windowStart(ASSISTANT_PICK_MS))
-        AirplaneRuntime.storeDefaultAppsChanged(context, emptyList())
+        if (kept == null) AirplaneRuntime.storeDefaultAppsChanged(context, emptyList())
         scheduleDeadline(context, DEADLINE_PICK, ASSISTANT_PICK_MS)
         Log.i(LOG_TAG, "The default-apps window is open (5 min at most)")
         AppEnforcer.apply(context, currentPolicyDecision())
@@ -138,6 +136,30 @@ object AssistantSetup {
         Log.i(LOG_TAG, "The default-apps window ends ($why)")
         val app = context.applicationContext
         Thread { runCatching { AppEnforcer.apply(app, currentPolicyDecision()) } }.start()
+    }
+
+    private fun movedFrom(context: Context): DefaultAppsSnapshot? = runCatching {
+        prefs(context).getString(KEY_MOVED_FROM, null)?.let { ServerJson.decodeFromString(DefaultAppsSnapshot.serializer(), it) }
+    }.getOrNull()
+
+    /**
+     * Design 114 §2.2.1 (QA H1): the moved roles, read live - each stored entry leaves once its role is back
+     * ([stillMoved]); the store follows, so the report and the server read the same list. Call screening and redirection
+     * are row 13's, never listed here. Background thread (it reads the roles).
+     */
+    fun defaultAppsChanged(context: Context): List<String> {
+        val stored = AirplaneRuntime.defaultAppsChanged(context)
+        if (stored.isEmpty()) return stored
+        val left = try {
+            stillMoved(stored, movedFrom(context), snapshot(context))
+        } catch (e: Exception) {
+            return stored.filter { it != "call_screening" && it != "call_redirection" }
+        }
+        if (left != stored) {
+            AirplaneRuntime.storeDefaultAppsChanged(context, left)
+            if (left.isEmpty()) prefs(context).edit().remove(KEY_MOVED_FROM).apply()
+        }
+        return left
     }
 
     /** The exclusive roles Vibb can read (§3.2). */
@@ -175,7 +197,14 @@ object AssistantSetup {
                 }.getOrNull()
                 val moved = before?.let { movedRoles(it, snapshot(context)) }.orEmpty()
                 AirplaneRuntime.storeDefaultAppsChanged(context, moved)
-                prefs(context).edit().remove(KEY_PICK).remove(KEY_SNAPSHOT).commit()
+                val edit = prefs(context).edit().remove(KEY_PICK).remove(KEY_SNAPSHOT)
+                // Design 114 §2.2.1: the original holders, kept while a moved role is listed (the live read compares).
+                if (moved.isNotEmpty() && before != null) {
+                    edit.putString(KEY_MOVED_FROM, ServerJson.encodeToString(DefaultAppsSnapshot.serializer(), before))
+                } else {
+                    edit.remove(KEY_MOVED_FROM)
+                }
+                edit.commit()
                 Log.i(LOG_TAG, "The default-apps window closed; moved and not taken back: $moved")
                 com.kidslauncher.mdm.push.SyncRunner.request(context, "assistant_window")
             }
@@ -270,25 +299,9 @@ object AssistantSetup {
 
     // --- §3.3 the setup notification ---
 
-    /** The steps left now (§6.2's rule), from the cached policy. */
-    fun stepsLeft(context: Context): Int {
-        val policy = (cachedPolicy() as? CachedPolicy.Ok)?.policy ?: return 0
-        val mask = policy.quickControlsMask
-        val callsManaged = com.kidslauncher.mdm.calls.CallPolicyStore.callsState.managed
-        return setupStepsLeft(
-            batteryExempt = BatteryExemption.exempt(context),
-            writeSettingsNeeded = mask and QuickControlFeature.TOUCH != 0L || clockFormatChoiceOf(policy.launcherUi).let { it == "24" || it == "12" },
-            writeSettingsGranted = WriteSettingsAccess.granted(context),
-            airplaneBit = mask and QuickControlFeature.AIRPLANE != 0L,
-            roleHeld = AirplaneRuntime.roleHeld(context),
-            wifiKept = AirplaneRuntime.wifiKept(context),
-            screeningNeeded = screeningRowShown(
-                callsManaged,
-                com.kidslauncher.mdm.calls.CallSystem.screeningRoleHeld(context),
-                com.kidslauncher.mdm.calls.CallSystem.redirectionRoleHeld(context),
-            ),
-        )
-    }
+    /** The steps left now: design 114's shared rule ([com.kidslauncher.mdm.setup.SetupReadings.count]), so the
+     * notification's N equals the PWA's for the same report. */
+    fun stepsLeft(context: Context): Int = com.kidslauncher.mdm.setup.SetupReadings.count(context)
 
     /** One quiet notification while the phone is open for setup and steps are left; gone otherwise. */
     fun refreshNotice(context: Context) {
@@ -306,9 +319,8 @@ object AssistantSetup {
                         lockscreenVisibility = Notification.VISIBILITY_SECRET
                     },
             )
-            val open = Intent(context, com.kidslauncher.mdm.ui.settings.SettingsActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                .putExtra(EXTRA_SETTINGS_SECTION, true)
+            // Design 114 §6.4: the tap opens the setup flow (only while a window is open, so no PIN).
+            val open = com.kidslauncher.mdm.setup.SetupFlowActivity.intent(context)
             val tap = PendingIntent.getActivity(context, SETUP_NOTIFICATION_ID, open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
             val notification = Notification.Builder(context, NOTIFICATION_CHANNEL_SETUP)
                 .setSmallIcon(R.drawable.ic_stat_vibb)

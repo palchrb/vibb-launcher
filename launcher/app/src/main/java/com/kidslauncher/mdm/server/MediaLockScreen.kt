@@ -3,7 +3,6 @@ package com.kidslauncher.mdm.server
 import android.content.Context
 import android.content.Intent
 import android.provider.Settings
-import com.kidslauncher.mdm.R
 
 /*
  * "Media on the lock screen" without a manual hunt (PLAN "Fix backlog", "Android's lock screen shows the media card",
@@ -19,14 +18,6 @@ import com.kidslauncher.mdm.R
  * targeting S+ that isn't a system app - a device owner included. So the row has no state line: it always opens the
  * page, and the check is the switch on Android's page.
  */
-
-/** The row's summary for [SystemPageAccess]: each names the way to the Media page's switch. */
-fun mediaLockText(access: SystemPageAccess): Int = when (access) {
-    SystemPageAccess.CAN_OPEN -> R.string.settings_mdm_media_lock_open
-    SystemPageAccess.PAUSE_FIRST -> R.string.settings_mdm_media_lock_pause_first
-    SystemPageAccess.WAIT -> R.string.settings_mdm_media_lock_wait
-    SystemPageAccess.NO_PAGE -> R.string.settings_mdm_media_lock_no_page
-}
 
 object MediaLockScreen {
     /** Android's page to try, explicit to a system package ([systemPageIntent]): Sound & vibration (the Media page

@@ -29,9 +29,8 @@ object BadgeStore {
     }
 
     /**
-     * Whether our listener has notification access. There is no device-owner API to grant it:
-     * `adb shell cmd notification allow_listener <package>/com.kidslauncher.mdm.badges.BadgeListenerService`
-     * at provisioning (design 05). Reported to the server, which warns when it's missing.
+     * Whether our listener has notification access. There is no device-owner API to grant it: the parent allows it in
+     * the setup flow (design 114, row 4). Reported to the server, which counts it as a setup step while it's missing.
      */
     fun accessGranted(context: Context): Boolean =
         NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)

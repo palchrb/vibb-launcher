@@ -15,7 +15,6 @@ import com.kidslauncher.mdm.server.KidModeEnforcer
 import com.kidslauncher.mdm.server.LockReason
 import com.kidslauncher.mdm.server.OfflineOverride
 import com.kidslauncher.mdm.server.OVERRIDE_DURATION_MS
-import com.kidslauncher.mdm.server.RESTRICTIONS_PAUSE_DURATION_MS
 import com.kidslauncher.mdm.server.RelockTrigger
 import com.kidslauncher.mdm.server.RestrictionsPause
 import com.kidslauncher.mdm.server.WindowRelock
@@ -272,7 +271,7 @@ object TimeRulesRuntime {
             .takeIf { mdm.restrictionsPaused() }
         return listOfNotNull(
             override?.let { windowEndMs(it, OVERRIDE_DURATION_MS, clocks.wallMs, clocks.elapsedMs, clocks.bootCount) },
-            pause?.let { windowEndMs(it, RESTRICTIONS_PAUSE_DURATION_MS, clocks.wallMs, clocks.elapsedMs, clocks.bootCount) },
+            pause?.let { windowEndMs(it, com.kidslauncher.mdm.server.pauseDurationMs(mdm.restrictionsPausedHold()), clocks.wallMs, clocks.elapsedMs, clocks.bootCount) },
         )
     }
 

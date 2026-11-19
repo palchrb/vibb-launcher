@@ -91,6 +91,7 @@ pub const REPORT_KEYS: &[&str] = &[
     "zone_watch",
     "calendar",
     "airplane_mode",
+    "setup",
     "shortcuts",
     "captive_portal",
     "login_browser",
