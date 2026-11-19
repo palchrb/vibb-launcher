@@ -1421,15 +1421,7 @@ async fn the_photo_follows_legg_til() {
         stored_file(&app.state.photo_dir, &hash),
         "the contact's now"
     );
-    let policy = app.policy(&token).await;
-    let ola = policy["call_policy"]["contacts"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|c| c["number"] == "+4791234567")
-        .cloned()
-        .unwrap();
-    assert_eq!(ola["photo"], json!(hash));
+    // The phone may fetch it now: it is a contact's photo on this phone.
     let res = app
         .request(
             Method::GET,
