@@ -144,3 +144,66 @@ English and need checking on a Norwegian phone. The PWA's ⓘ no longer names th
     lookups both count. That is half of what tripped the wall (about 20 in 5 minutes) over twice the time.
   - The server's rows `wall_403`, `wall_sorry` and the new `lookup_line` rows, and
     `the_wall_pauses_lookups_and_a_burst_is_capped`, pin this.
+
+## Finding 1: what frees the Google hosts in step 2 (2026-11-19, `compat34` and `jelly36`)
+
+The user, 2026-11-19: "På maps lenkene, kunne vi permanent av installert google maps? Du får teste ulike løsninger."
+Measured with `pm get-app-link-owners --user 0` (the owners Settings' "Add link" reads) and the dialog itself, first by
+adb on a phone without Vibb as Device Owner, then with the branch's build as Device Owner in a real pause. `jelly36`
+restored from `~/kid-look-1-avd-pre-start` before and after (22 of 22 sums, `jelly36.ini` equal); `compat34` started with
+`-wipe-data`.
+
+**Who holds Vibb One's 20 hosts verified, in a pause.**
+- Google Maps: `maps.google.*` (7), `www.google.{no,se,dk,fi,de,co.uk}` (6), `www.google.com`, `google.com`, `goo.gl`.
+- The Google app: `www.google.com` (16: also `google.com`). Google Calendar: `www.google.com`. Google Photos: `goo.gl`.
+- 16 only: the Play Store, `play.google.com` (the Play link blocker's host, not a map host).
+- The Google app's and Calendar's `www.google.com` filters take only their own paths (`/search/about`, `/calendar/…`):
+  they grey the host out in Settings but are never a candidate for a `/maps` link. Photos' `goo.gl` filter is
+  `/photos/.*` only, the same.
+
+| Approach | 14: hosts selectable | 16: hosts selectable |
+|---|---|---|
+| None (the gate) | 4 of 20 | 3 of 20 |
+| A/B: the holders hidden (`setApplicationHidden`, during the page or the whole pause) | 0: a hidden app is still a verified owner, and the dialog never loads ("Ser etter andre linker som støttes …", `SupportedLinkWrapper: getLabel error`) | 0, the same hang (the Device Owner hiding all four, a local build) |
+| C: Google Maps uninstalled for the user (`pm uninstall --user 0`) | 18 (`www.google.com` and `goo.gl` stay held) | 16 (`www.google.com`, `google.com`, `goo.gl`, `play.google.com`) |
+| Google Maps suspended | 18 | 16 |
+| **The four holders suspended while the page is open (built)** | **20** | **19** (`play.google.com`: Android refuses to suspend the Play Store) |
+
+A suspended app's approval drops to `UNVERIFIED[-1]` and it leaves the owners; a hidden one stays `VERIFIED[4]`.
+Uninstalling Google Maps alone leaves `www.google.com` - the commonest long form - greyed out on both versions, so C
+doesn't solve the finding; it would also need the Google app removed.
+
+**The selection, once made, stays** (by adb on both versions, then with the build):
+- when the holders are unsuspended, when Google Maps is uninstalled and brought back (`cmd package install-existing`),
+  and after a reboot;
+- when an update of Google Maps is installed while it is uninstalled for the user (14, `pm install -r -i
+  com.android.vending` of its own APK). That install makes it installed for the user again: a Play update of an
+  uninstalled Maps would bring it back (Play's auto-update only touches installed apps; not tested with a real Play
+  account).
+- With Google Maps visible (a pause, or allowed by the parent) it wins: `VERIFIED[4]` over the parent's
+  `USER_SELECTION[3]`. Outside a pause it is hidden, so Vibb One is the only approved app.
+
+**The build (`map/MapLinkStep`, commit d2c30de44).** Tapping "Vibb Ones lenker" in a pause suspends, as Device
+Owner, every other app holding one of Vibb One's hosts verified (never the enforcer's never-restrict apps or the Play
+Store); the enforcer leaves them suspended meanwhile. They are given back when the page returns, when the pause ends
+(the next pass's plan) or after 15 minutes.
+
+| Row | `jelly36` (16) | `compat34` (14) |
+|---|---|---|
+| The step in a pause | `Holding 4 app(s) suspended for step 2, 0 refused`; Maps, the Google app, Calendar, Photos suspended; 19 of 20 selectable, 19 ticked (`play.google.com` greyed, "Åpnes i Google Play Store") | The same 4; 20 of 20, 20 ticked |
+| A policy push during the step | The pass ran; the four stayed suspended | - |
+| Back from the page | `Gave 4 app(s) back after step 2`; the rows "Ferdig" | The same |
+| After the pause, Chrome as the login browser | `maps.google.com/?q=…`, `www.google.com/maps/place/…`, `www.google.no/maps/…`, `goo.gl/maps/…`, `maps.app.goo.gl/…`, `maps.apple.com/…` all reach `MapLinkActivity`; `example.com` goes to Chrome. A long Google link with a feature id opened as the pin in Organic Maps (canned place) | The same six reach `MapLinkActivity`; `example.com` Chrome |
+| After a reboot | 19 selected, the same seven rows | 20 selected; the five Google rows reach `MapLinkActivity` (the emulator then crashed, exit 139, before the last two) |
+| The report and the PWA | `selected 19, selectable 19, declared 20`, `reach` all true: "Klar." | `20, 20, 20`, all true: "Ready." |
+| Google Maps back | Nothing is removed: the apps are unsuspended when the page returns; with the switch off nothing is left to undo | The same |
+
+**`goo.gl`.** With the four suspended it is selectable on both versions, and `goo.gl/maps/…` reaches Vibb One after the
+step. Photos is suspended for the page's minutes only, never removed.
+
+Not run: Android 15 and 17, the pause ending while the page is open (the plan then decides; held apps are given back by
+the 15-minute timer), a real Play update.
+
+Screenshots (nb) outside the repo: the hanging dialog with hidden holders (14, 16), the dialog with the four suspended
+(14, 16), with Google Maps uninstalled (14, 16), the step's dialog and result (14, 16), the Settings rows, the PWA's
+"Klar.".
