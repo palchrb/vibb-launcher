@@ -281,7 +281,7 @@ agent (AOSP `Vpn.setAlwaysOnPackageInternal`, "Lockdown mode changed"): a new ne
 same network, unheard, and Vibb music's web player kept the sink's dead connections. `apply()` leaving the sink while
 the tunnel is up records its decision but leaves lockdown on for that switch (`applyLeavesLockdownToSwitch`,
 `writeAlwaysOn(keepLockdown)`); with no tunnel up it writes as before. A failed switch out of the sink still ends with
-lockdown off, as before. Not checked on an emulator (no debug way to toggle the sink without a server). `apply()` never
+lockdown off, as before. Checked on compat34 and jelly36 in the code QA (2026-11-19): leaving the sink, `Tunnel: filter` first, then lockdown off - a new VPN network every app hears - from the Wi-Fi switch and from a PWA save. `apply()` never
 writes lockdown off on a doubt about the network (`applyShape`: no network seen and the last shape the sink keeps
 it); a network lost in the watcher keeps the shape too (a Wi-Fi -> cellular switch passes through "none" for ~60 ms).
 While the sink is wanted, the launcher's own downloads (catalog APKs, the self-update, the music files it fetches)

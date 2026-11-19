@@ -36,8 +36,8 @@ the phone never talks to Google or Apple.
   and CoMaps 2026.11.07-16 (F-Droid): compat34 through the handler itself (a Device Owner debug build, cold, in the
   background with the same and another link and with the last card left open, two in a row - every card right; with
   the app on screen and the link sent by itself, no clear: the map moves, no black map, the card can stay shut as above), jelly36 with the handler's intent
-  from the shell (the handler can't be enabled there without a policy). Lock task wasn't on in either (no enrolment);
-  by AOSP's `LockTaskController.activityBlockedFromFinish` only the root of the last locked task is kept from
+  from the shell (the handler can't be enabled there without a policy). The code QA (2026-11-19, `docs/review/2026-11-19-map-open-fix-code-qa.md`) re-ran it enrolled
+  with the kiosk on, on both versions: cold, backgrounded, the same link twice, A after B - every card, the lock kept. By AOSP's `LockTaskController.activityBlockedFromFinish` only the root of the last locked task is kept from
   finishing, and the map app's task never is that.
 - **The two one-time steps** (Q2) are design 114's setup steps `map_play_links` and `map_vibb_links` (114 §2.6): screens
   of the setup flow (`setup/SetupFlowActivity`, "Oppsett" in the PIN-gated Settings), only while the switch is on and
