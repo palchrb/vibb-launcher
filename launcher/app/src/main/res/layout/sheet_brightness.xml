@@ -1,7 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Snarveier's Lysstyrke (2026-11-19, mockup "Valg 1"): the title, a small sun, kid Settings' slider (0-255) and a big
-     sun - nothing else. Inflated in the kid's look (BrightnessSheetActivity), page tokens only. -->
+     sun - nothing else. Inflated in the kid's look (BrightnessSheetActivity), page tokens only.
+     The suns keep android:tint (lint's UseAppTint is ignored on purpose): the sheet is a platform Activity's Dialog,
+     inflated by the platform LayoutInflater with no AppCompat factory, so app:tint would be dropped and the white
+     glyphs would stay white on Lys's white sheet. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:background="@drawable/bg_brightness_sheet"
@@ -41,7 +45,8 @@
             android:layout_height="20dp"
             android:importantForAccessibility="no"
             android:src="@drawable/shortcut_glyph_brightness"
-            android:tint="@color/kid_page_dim" />
+            android:tint="@color/kid_page_dim"
+            tools:ignore="UseAppTint" />
 
         <!-- The thumb's half-width of padding, or it is cut at either end (kid Settings' slider). -->
         <SeekBar
@@ -65,6 +70,7 @@
             android:layout_height="30dp"
             android:importantForAccessibility="no"
             android:src="@drawable/shortcut_glyph_brightness"
-            android:tint="@color/kid_page_ink" />
+            android:tint="@color/kid_page_ink"
+            tools:ignore="UseAppTint" />
     </LinearLayout>
 </LinearLayout>
