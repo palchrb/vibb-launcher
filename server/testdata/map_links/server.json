@@ -618,6 +618,27 @@
    "orange": false
   },
   {
+   "name": "held_all_selected",
+   "on": true,
+   "report": {
+    "target": "app.organicmaps",
+    "target_state": "allowed",
+    "play_services_links": false,
+    "vibb_hosts": {
+     "selected": 20,
+     "selectable": 20,
+     "declared": 20
+    },
+    "reach": {
+     "short": true,
+     "google": false,
+     "apple": true
+    }
+   },
+   "line": "held",
+   "orange": false
+  },
+  {
    "name": "ready",
    "on": true,
    "report": {
@@ -627,6 +648,27 @@
     "vibb_hosts": {
      "selected": 20,
      "selectable": 20,
+     "declared": 20
+    },
+    "reach": {
+     "short": true,
+     "google": true,
+     "apple": true
+    }
+   },
+   "line": "ready",
+   "orange": false
+  },
+  {
+   "name": "ready_play_store_holds_one",
+   "on": true,
+   "report": {
+    "target": "app.organicmaps",
+    "target_state": "allowed",
+    "play_services_links": false,
+    "vibb_hosts": {
+     "selected": 19,
+     "selectable": 19,
      "declared": 20
     },
     "reach": {

@@ -140,18 +140,15 @@ object MapLinksRuntime {
         null
     }
 
-    /** A link to [host] that its filter takes (for the reach and the selectable check). */
-    private fun probe(host: String) = if (host in MapLinkForms.MAPS_PATH_HOSTS) "https://$host/maps/probe" else "https://$host/probe"
-
+    /** Our hosts: how many are selected (or verified), how many the parent can select in step 2 ([selectableHosts]: all
+     * but those an app the step can't suspend holds verified, [MapLinkStep.unsuspendable]), how many there are. */
     fun vibbHosts(context: Context): VibbHosts {
         val ours = userState(context, context.packageName)?.hostToStateMap ?: return VibbHosts(0, 0, 0)
         val selected = ours.count { it.value != DomainVerificationUserState.DOMAIN_STATE_NONE }
-        val selectable = ours.count { (host, state) ->
-            if (state != DomainVerificationUserState.DOMAIN_STATE_NONE) return@count true
-            val other = resolvesTo(context, probe(host))?.takeIf { it != context.packageName && it != "android" }
-            other == null || userState(context, other)?.hostToStateMap?.get(host) != DomainVerificationUserState.DOMAIN_STATE_VERIFIED
-        }
-        return VibbHosts(selected, selectable, ours.size)
+        val domains = domains(context)
+        val unsuspendable = MapLinkStep.unsuspendable(context) - context.packageName
+        val states = if (domains == null) emptyMap() else unsuspendable.mapNotNull { pkg -> MapLinkStep.hostStates(domains, pkg)?.let { pkg to it } }.toMap()
+        return VibbHosts(selected, selectableHosts(ours, states, unsuspendable), ours.size)
     }
 
     fun reach(context: Context): MapReach {

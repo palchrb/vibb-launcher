@@ -118,7 +118,14 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
     /** Design 110 §6.2: back from an "Open by default" page - the rows read again, and a sync so the PWA's line
      * follows. */
     private val mapLinksLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-        context?.applicationContext?.let { com.kidslauncher.mdm.push.SyncRunner.request(it, "map_links_step") }
+        context?.applicationContext?.let { app ->
+            // Step 2's holders back first (finding 1), so the report after it reads the state the parent left.
+            lifecycleScope.launch {
+                withContext(Dispatchers.IO) { com.kidslauncher.mdm.map.MapLinkStep.end(app) }
+                com.kidslauncher.mdm.push.SyncRunner.request(app, "map_links_step")
+                updateMapLinkRows()
+            }
+        }
         updateMapLinkRows()
     }
 
@@ -357,7 +364,17 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
         )) {
             findPreference<Preference>(key)?.setOnPreferenceClickListener {
                 openByDefaultPage(requireContext(), pkg)?.let { page ->
-                    openFirstPage(listOf(page), mapLinksLauncher)
+                    if (key == MAP_LINKS_VIBB) {
+                        // Finding 1: the apps holding Vibb One's hosts suspended while its page is open, so "Add link"
+                        // offers them all (MapLinkStep).
+                        val app = requireContext().applicationContext
+                        lifecycleScope.launch {
+                            withContext(Dispatchers.IO) { com.kidslauncher.mdm.map.MapLinkStep.begin(app) }
+                            if (isAdded) openFirstPage(listOf(page), mapLinksLauncher)
+                        }
+                    } else {
+                        openFirstPage(listOf(page), mapLinksLauncher)
+                    }
                 }
                 updateMapLinkRows()
                 true

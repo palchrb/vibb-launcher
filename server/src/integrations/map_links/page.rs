@@ -77,7 +77,9 @@ pub fn line_code(on: bool, report: Option<&Value>) -> Option<(&'static str, bool
     if !all && hosts("selected") < hosts("selectable") {
         return Some(("step_vibb", true));
     }
-    if !reach("google") && hosts("selectable") < hosts("declared") {
+    // Every host the parent can select is selected (step 2 suspends the apps holding them while its page is open), so
+    // Google's long links not reaching Vibb One is an app the parent allowed taking them: Google Maps.
+    if !reach("google") {
         return Some(("held", false));
     }
     Some(("ready", false))

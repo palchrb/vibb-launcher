@@ -131,6 +131,32 @@ class MapLinksTest {
     }
 
     @Test
+    fun `step 2 suspends the apps holding our hosts verified, and counts what the rest hold`() {
+        val verified = android.content.pm.verify.domain.DomainVerificationUserState.DOMAIN_STATE_VERIFIED
+        val selected = android.content.pm.verify.domain.DomainVerificationUserState.DOMAIN_STATE_SELECTED
+        val none = android.content.pm.verify.domain.DomainVerificationUserState.DOMAIN_STATE_NONE
+        // The emulator check's Android 16 (finding 1): Maps, the Google app, Calendar, Photos; the Play Store holds
+        // play.google.com and Android refuses to suspend it.
+        val states = mapOf(
+            "com.google.android.apps.maps" to mapOf("maps.google.com" to verified, "www.google.com" to verified, "goo.gl" to verified),
+            "com.google.android.googlequicksearchbox" to mapOf("www.google.com" to verified, "google.com" to verified),
+            "com.google.android.apps.photos" to mapOf("goo.gl" to verified, "photos.app.goo.gl" to verified),
+            "com.android.vending" to mapOf("play.google.com" to verified),
+            "com.android.chrome" to mapOf("www.google.com" to none),
+            "org.example.other" to mapOf("maps.google.com" to selected),
+        )
+        val ours = mapOf("maps.google.com" to none, "www.google.com" to none, "google.com" to none, "goo.gl" to none,
+            "play.google.com" to none, "maps.apple.com" to selected)
+        assertEquals(
+            setOf("com.google.android.apps.maps", "com.google.android.googlequicksearchbox", "com.google.android.apps.photos"),
+            stepHolders(ours.keys, states, never = setOf("com.android.vending")),
+        )
+        assertEquals(5, selectableHosts(ours, states, unsuspendable = setOf("com.android.vending")))
+        // A host already ours counts, whoever holds it.
+        assertEquals(6, selectableHosts(ours + ("play.google.com" to selected), states, setOf("com.android.vending")))
+    }
+
+    @Test
     fun `the browser button never loops back to us`() {
         assertTrue(browserOffered(windowOpen = true, browser = "org.example.browser", ownPackage = "me.vibb.launcher"))
         assertTrue(!browserOffered(windowOpen = true, browser = "me.vibb.launcher", ownPackage = "me.vibb.launcher"))

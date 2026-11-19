@@ -303,6 +303,11 @@ object AppEnforcer {
     var lastPlanHide: Set<String>? = null
         private set
 
+    /** The last [apply]'s never-restrict set (`null` = none ran yet): what map links' step 2 never suspends. */
+    @Volatile
+    var lastNeverRestrict: Set<String>? = null
+        private set
+
     /** The last [apply] set its permitted accessibility and keyboard lists (design 24b §1.5): AOSP
      * refuses a list that leaves out an enabled non-system service, and the last list stays. */
     @Volatile
@@ -516,6 +521,7 @@ object AppEnforcer {
 
         lastPlanSuspend = plan.suspend
         lastPlanHide = plan.hide
+        lastNeverRestrict = plan.neverRestrict
         PlatformRefusals.storePlan(context, plan.suspend, plan.hide)
         // What the platform refused on this boot because the package is exempt (Android 17's Settings): not asked again
         // while it still is (QA L1).
@@ -537,7 +543,10 @@ object AppEnforcer {
             // Read after the current state: the PIN lock's camera lock records a package before it
             // suspends it, so a camera it just suspended is never undone here (and neither is a
             // package the update fence holds).
-            val shouldBeSuspended = suspendTarget(packageName, plan.suspend, fenceHeld + com.kidslauncher.mdm.lock.CameraLock.held)
+            // Map links' step 2 holds the apps holding Vibb One's link hosts suspended while its page is open in a pause.
+            val shouldBeSuspended = suspendTarget(
+                packageName, plan.suspend, fenceHeld + com.kidslauncher.mdm.lock.CameraLock.held + com.kidslauncher.mdm.map.MapLinkStep.held(),
+            )
             // Checked separately, every cycle: the two states can disagree (an older build, a
             // policy applied before an exemption, the lock ending), e.g. the system dialer left
             // hidden must be released outright.
