@@ -28,7 +28,7 @@ the phone never talks to Google or Apple.
   Settings' "Kartlenker" keeps one row: with the switch off and Play services' links still off, it gives them back (Q4,
   `mapLinkBackShown`).
 - **Meldinger** (Q1): every web link in a bubble is underlined and tappable (`ui/messages/MessageLinks.kt`); a map
-  link goes straight to the handler while the switch is on; any other link goes to the one app Android names that the parent allows (`messageLinkTarget`: the allowlist, the login browser, Vibb One; never Play services; nothing during a time rule), else the calm note. The bubble's ink plus an underline is the user's choice (2026-11-18).
+  link goes straight to the handler while the switch is on; any other link goes to the one allowed app that declares it (design 119 §5: `linkTargetOf` over `logins/LinkLookup`'s per-package lookup, so an unverified Organic Maps is found while a browser exists; the allowed set `messageLinkAllowed` is the allowlist and Vibb One, never the login browser; never Play services or a full browser; nothing during a time rule), else a free browser the parent ticked, else the calm note. The bubble's ink plus an underline is the user's choice (2026-11-18).
 - **Dagen**: a "Kart" row per map link (at most two) in an event's location or description, for an allowed or suspended target.
 - Vibb's legacy PIN lock isn't checked (phase D removes it; lock task blocks the start under it).
 - **The report** `map_links`: the target, its state, Play services' link handling (`DomainVerificationManager`, API 31),
