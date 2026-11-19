@@ -1,9 +1,12 @@
 {#- Design 110 §9: Device › Apps' "Map links" group (`integrations::map_links::page`), rendered by the integration and
-    placed after "App push" (the page knows only "integration groups"). The switch is an auto-saving form back to
+    placed after "App push" (the page knows only "integration groups"). The steps left on the phone are design 114's
+    warning lines (`setup_warnings`, 114 §2.6). The switch is an auto-saving form back to
     #map-links (design 103: in place). One line under it: orange only for what is wrong or undone, its how-to behind
     the ⓘ; what the switch does is the footer's ⓘ, with the quiet note of a choice the parent made (code QA L10). -#}
 <section id="map-links" aria-labelledby="map-links-title">
     <h2 class="group-header" id="map-links-title">{{ self.t("map_links.group") }}</h2>
+    {#- Design 114 §5.4 (§2.6): the two one-time steps left on the phone, as 114's lines to Device › Oppsett. -#}
+    {% for line in setup_warnings %}{% include "partials/setup_warning.html" %}{% endfor %}
     {% if let Some((lookup, lookup_fix)) = lookup %}
     <div class="attention attention-action" data-warning="map-lookup">
         <div class="attention-text">{{ lookup }}<div class="attention-sub">

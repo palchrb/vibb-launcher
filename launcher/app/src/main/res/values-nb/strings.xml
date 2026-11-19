@@ -892,18 +892,11 @@
     <string name="map_links_open_browser">Åpne i nettleseren</string>
     <string name="message_link_cant_open">Denne lenken kan ikke åpnes her.</string>
     <string name="map_links_settings">Kartlenker</string>
-    <string name="map_links_step_holder">Google Play-tjenester</string>
-    <string name="map_links_step_holder_todo">Slå av «Åpne støttede linker»</string>
-    <string name="map_links_step_vibb">Vibb Ones lenker</string>
-    <string name="map_links_step_vibb_todo">Slå på «Åpne støttede linker» og kryss av alle</string>
-    <string name="map_links_step_done">Ferdig</string>
     <string name="map_links_step_back">Gi Google Play-tjenester lenkene tilbake</string>
     <string name="map_links_step_back_todo">Slå på «Åpne støttede linker» igjen</string>
     <string name="map_links_pause_first">Sett alle begrensninger på pause først</string>
     <string name="map_links_day_row">Kart</string>
     <!-- Design 110, the emulator gate's finding 3: Android 16's "Open by default" page has two choices instead of the switch. -->
-    <string name="map_links_step_holder_todo_16">Velg «I nettleseren»</string>
-    <string name="map_links_step_vibb_todo_16">Velg «I appen» og legg til alle linkene</string>
     <string name="map_links_step_back_todo_16">Velg «I appen» igjen</string>
 
     <!-- Design 114: the phone's setup steps (names checked against setup_steps.json) and the setup flow. -->
@@ -944,6 +937,9 @@
     <string name="setup_how_default_apps">Velg dem tilbake.</string>
     <string name="setup_how_map_play_links">Åpne som standard: slå av Åpne støttede linker.</string>
     <string name="setup_how_map_vibb_links">Åpne som standard: slå på Åpne støttede linker, og kryss av alle.</string>
+    <!-- Android 16's "Open by default" page has two choices instead of the switch (design 110, the emulator gate's finding 3). -->
+    <string name="setup_how_map_play_links_16">Åpne som standard: velg «I nettleseren».</string>
+    <string name="setup_how_map_vibb_links_16">Åpne som standard: velg «I appen», og legg til alle linkene.</string>
     <string name="setup_how_vibration">Lyd og vibrasjon › Vibrasjon og haptikk: ringevibrasjon og varselvibrasjon på.</string>
     <string name="setup_how_touch_feedback">Lyd og vibrasjon › Vibrasjon og haptikk: berøringsrespons på.</string>
     <string name="setup_how_lock_clock">Skjerm › Låseskjerm: dobbeltlinjet klokke av.</string>

@@ -1806,8 +1806,9 @@ async fn locate_view(
         .bind(id)
         .fetch_optional(&state.db)
         .await?;
+        let part = state.integrations.setup(state, id).await;
         device_policy
-            .map(|p| crate::setup_status::page_warnings(lang, &p, latest.as_ref(), "locate"))
+            .map(|p| crate::setup_status::page_warnings(lang, &p, latest.as_ref(), &part, "locate"))
             .unwrap_or_default()
     };
 

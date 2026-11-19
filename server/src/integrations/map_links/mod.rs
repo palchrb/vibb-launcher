@@ -29,7 +29,7 @@ use axum::extract::DefaultBodyLimit;
 use axum::routing::post;
 use serde_json::{Value, json};
 
-use super::{Health, HealthCell, Integration};
+use super::{Health, HealthCell, Integration, SetupPart};
 use crate::AppState;
 use crate::i18n::Lang;
 use crate::models::StatusReportRequest;
@@ -141,9 +141,47 @@ impl Integration for MapLinks {
         lang: Lang,
         device_id: i64,
         from: Option<&'a str>,
+        setup_warnings: &'a crate::setup_status::Warnings,
     ) -> BoxFut<'a, Result<Option<String>, sqlx::Error>> {
-        Box::pin(page::group(state, lang, device_id, from))
+        Box::pin(page::group(state, lang, device_id, from, setup_warnings))
     }
+
+    fn setup<'a>(
+        &'a self,
+        state: &'a AppState,
+        device_id: i64,
+    ) -> BoxFut<'a, Result<SetupPart, sqlx::Error>> {
+        Box::pin(async move {
+            let on = is_on(&state.db, device_id).await?;
+            let report = report(&state.db, device_id).await?;
+            Ok(setup_part(on, report.as_ref()))
+        })
+    }
+}
+
+/// Design 114 §2.6: the two one-time steps (§6.2) are 114's rows 15-16. The switch is the need rule's `map_links`
+/// input (with a map app installed, which 114 reads from the installed apps); the readings come from the last report:
+/// `map_play_links` done when Play services' links read off (`null` unreadable), `map_vibb_links` when every host the
+/// parent can select is selected - as the phone's `SetupReadings` reads them.
+pub fn setup_part(on: bool, report: Option<&Value>) -> SetupPart {
+    let mut part = SetupPart::default();
+    if on {
+        part.inputs.push("map_links");
+    }
+    if let Some(report) = report {
+        let hosts = |key: &str| report["vibb_hosts"][key].as_i64().unwrap_or(0);
+        part.readings.push((
+            "map_play_links",
+            report["play_services_links"]
+                .as_bool()
+                .map(|allowed| !allowed),
+        ));
+        part.readings.push((
+            "map_vibb_links",
+            Some(hosts("declared") > 0 && hosts("selected") >= hosts("selectable")),
+        ));
+    }
+    part
 }
 
 /// The phone's switch (off without a row).

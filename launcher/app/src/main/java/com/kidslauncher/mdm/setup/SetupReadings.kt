@@ -13,6 +13,10 @@ import com.kidslauncher.mdm.assistant.AirplaneRuntime
 import com.kidslauncher.mdm.assistant.AssistantSetup
 import com.kidslauncher.mdm.badges.BadgeStore
 import com.kidslauncher.mdm.calls.CallSystem
+import com.kidslauncher.mdm.map.MapLinksRuntime
+import com.kidslauncher.mdm.map.mapLinksOn
+import com.kidslauncher.mdm.map.playLinksDone
+import com.kidslauncher.mdm.map.vibbLinksDone
 import com.kidslauncher.mdm.notify.NotificationChannelsReader
 import com.kidslauncher.mdm.notify.channelsOrange
 import com.kidslauncher.mdm.server.BatteryExemption
@@ -126,7 +130,10 @@ object SetupReadings {
         put("wifi_airplane", read { AirplaneRuntime.wifiKept(context) != null })
         put("call_filter", read { CallSystem.screeningRoleHeld(context) && CallSystem.redirectionRoleHeld(context) })
         put("default_apps", read { AssistantSetup.defaultAppsChanged(context).isEmpty() })
-        // Rows 15-16 (design 110's `map_links` report) are absent until 110 is built.
+        // Rows 15-16: design 110's two steps, read as its `map_links` report reads them (`play_services_links`,
+        // `vibb_hosts`), so the server's reading of that report says the same.
+        put("map_play_links", read { playLinksDone(MapLinksRuntime.holderLinksAllowed(context)) })
+        put("map_vibb_links", read { vibbLinksDone(MapLinksRuntime.vibbHosts(context)) })
     }
 
     /** §2.3's inputs from [policy]; [SetupInputs.NONE] before the first one. */
@@ -138,8 +145,7 @@ object SetupReadings {
             clockFormat = clock,
             callsManaged = policy.callPolicy?.callsMode.let { it != null && it != "unmanaged" },
             androidLock = policy.kidLock?.keyguard == "android",
-            // Design 110 isn't built: its switch reads as off.
-            mapLinksOn = false,
+            mapLinksOn = mapLinksOn(policy),
             mapAppInstalled = MAP_APP_PACKAGES.any { installed(context, it) },
         )
     }

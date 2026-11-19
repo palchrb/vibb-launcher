@@ -122,7 +122,14 @@ fn the_pwa_lines_follow_the_rows() {
     for row in server_rows()["pwa_lines"].as_array().unwrap() {
         let name = row["name"].as_str().unwrap();
         let report = Some(&row["report"]).filter(|r| !r.is_null());
-        let got = page::line_code(row["on"].as_bool().unwrap(), report)
+        let on = row["on"].as_bool().unwrap();
+        // Design 114's map steps left by this report (a map app installed): their warning lines, not this group's.
+        let steps_left = on
+            && super::setup_part(on, report)
+                .readings
+                .iter()
+                .any(|(_, done)| *done == Some(false));
+        let got = page::line_code(on, report, steps_left)
             .map(|(code, orange)| (code.to_string(), orange));
         let want = row["line"]
             .as_str()
@@ -511,10 +518,17 @@ async fn the_policy_and_the_group_follow_the_switch() {
             .text()
             .contains("id=\"map-links\"")
     );
-    app.post_status(&token, json!({"map_links": contract["report_steps_left"]}))
-        .await;
+    // Organic Maps installed (design 114's `map_links` input reads the installed apps).
+    let organic = json!([{"package_name": "app.organicmaps", "label": "Organic Maps"}]);
+    app.post_status(
+        &token,
+        json!({"map_links": contract["report_steps_left"], "installed_apps": organic}),
+    )
+    .await;
     let html = app.get_page(&page, &cookie).await.text();
     assert!(html.contains("id=\"map-links\"") && html.contains("Open map links in Organic Maps"));
+    // Off: no setup step.
+    assert!(!html.contains("data-setup-warning=\"map_play_links\""));
     assert!(html.contains(&format!("action=\"/devices/{id}/map-links#map-links\"")));
     // The save returns to the group and the policy carries it.
     let res = app
@@ -527,8 +541,28 @@ async fn the_policy_and_the_group_follow_the_switch() {
         .await;
     assert_redirect(&res, &page, Some("map-links"));
     assert_eq!(policy(&token).await["map_links"], contract["policy"]["on"]);
+    // Design 114 §2.6: the two steps left are 114's lines in the group, to their rows on Device › Oppsett, and no line
+    // of the group's own says them again.
     let html = app.get_page(&page, &cookie).await.text();
-    assert!(html.contains("data-line=\"step_play\""));
+    for key in ["map_play_links", "map_vibb_links"] {
+        assert!(
+            html.contains(&format!("data-setup-warning=\"{key}\"")),
+            "{key}"
+        );
+        assert!(
+            html.contains(&format!("href=\"/devices/{id}/setup#step-{key}\"")),
+            "{key}"
+        );
+    }
+    assert!(!html.contains("data-line="));
+    let setup = app
+        .get_page(&format!("/devices/{id}/setup"), &cookie)
+        .await
+        .text();
+    assert!(
+        setup.contains("data-setup-step=\"map_play_links\"")
+            && setup.contains("data-setup-step=\"map_vibb_links\"")
+    );
     // In Norwegian.
     let html = app
         .get_page(&format!("{page}?lang=nb"), &cookie)
@@ -536,7 +570,7 @@ async fn the_policy_and_the_group_follow_the_switch() {
         .text();
     assert!(
         html.contains("Åpne kartlenker i Organic Maps")
-            && html.contains("Ett steg igjen på telefonen")
+            && html.contains("Play-tjenester tar kartlenkene")
     );
     // From the Apps tab the form carries `from`, and the save goes back there.
     let res = app

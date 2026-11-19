@@ -1,5 +1,5 @@
 {
- "_doc": "Design 110, the server's own rows (integrations::map_links::tests): hops, the place lookup's answers cut down to the paths §8.3 reads (everything else null - none of Google's other content is copied), the PWA's lines and the lookup line.",
+ "_doc": "Design 110, the server's own rows (integrations::map_links::tests): hops, the place lookup's answers cut down to the paths §8.3 reads (everything else null - none of Google's other content is copied), the PWA's lines (a row whose report leaves a design 114 map step missing shows no line of its own: 114's warning lines say it) and the lookup line.",
  "hops": [
   {
    "name": "artbox",
@@ -551,8 +551,8 @@
      "apple": false
     }
    },
-   "line": "step_play",
-   "orange": true
+   "line": null,
+   "orange": false
   },
   {
    "name": "step_play_unknown",
@@ -572,8 +572,8 @@
      "apple": false
     }
    },
-   "line": "step_play",
-   "orange": true
+   "line": null,
+   "orange": false
   },
   {
    "name": "step_vibb",
@@ -593,8 +593,8 @@
      "apple": false
     }
    },
-   "line": "step_vibb",
-   "orange": true
+   "line": null,
+   "orange": false
   },
   {
    "name": "held",

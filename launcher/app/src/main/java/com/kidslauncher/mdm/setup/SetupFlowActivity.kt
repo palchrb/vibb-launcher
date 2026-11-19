@@ -21,6 +21,7 @@ import com.kidslauncher.mdm.assistant.AirplaneOn
 import com.kidslauncher.mdm.assistant.AirplaneRuntime
 import com.kidslauncher.mdm.assistant.AssistantSetup
 import com.kidslauncher.mdm.databinding.ActivitySetupFlowBinding
+import com.kidslauncher.mdm.map.MapLinkStep
 import com.kidslauncher.mdm.push.SyncRunner
 import com.kidslauncher.mdm.server.AppEnforcer
 import com.kidslauncher.mdm.server.ParentPinEntry
@@ -295,7 +296,7 @@ class SetupFlowActivity : UIObjectActivity() {
             SystemPageAccess.WAIT -> getString(R.string.setup_flow_wait)
             SystemPageAccess.NO_PAGE -> getString(R.string.setup_flow_no_page)
             else -> listOfNotNull(
-                step.howRes?.let { getString(it) },
+                setupHowRes(step, android.os.Build.VERSION.SDK_INT)?.let { getString(it) },
                 // Design 107's gate §6ax: while Vibb is the dialer Android greys an off channel's switch.
                 getString(R.string.setup_how_vibb_notifications_role).takeIf { step == SetupStep.VIBB_NOTIFICATIONS && state.dialerRole },
             ).joinToString("\n")
@@ -390,6 +391,13 @@ class SetupFlowActivity : UIObjectActivity() {
                     if (!launch(step, AssistantSetup.wifiPanelIntent())) endWifiStepNow("no_panel")
                 }
             }
+            // Design 110's step 2 (finding 1): the apps holding Vibb One's hosts suspended while its page is open, so
+            // "Add link" offers them all; given back at the return ([pageReturned]), or by MapLinkStep's own limits.
+            SetupStep.MAP_VIBB_LINKS -> lifecycleScope.launch {
+                withContext(Dispatchers.IO) { MapLinkStep.begin(app) }
+                launchPages(step, pages)
+                if (openedStep == null) withContext(Dispatchers.IO) { MapLinkStep.end(app) }
+            }
             else -> launchPages(step, pages)
         }
     }
@@ -443,6 +451,15 @@ class SetupFlowActivity : UIObjectActivity() {
             }
             SetupStep.WIFI_AIRPLANE -> {
                 endWifiStepNow("result")
+                return
+            }
+            SetupStep.MAP_VIBB_LINKS -> {
+                // The holders back before the report, so it reads the state the parent left (design 110, finding 1).
+                lifecycleScope.launch {
+                    withContext(Dispatchers.IO) { MapLinkStep.end(app) }
+                    SyncRunner.request(app, SETUP_SYNC_REASON)
+                    refresh()
+                }
                 return
             }
             else -> Unit

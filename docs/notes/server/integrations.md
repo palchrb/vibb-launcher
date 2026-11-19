@@ -15,9 +15,12 @@ server does with an outside service for the phones - lives inside one boundary f
   router walk), which pin the default build. A featureless build compiles; its tests aren't run.
 - **The trait** (`src/integrations/mod.rs`, `Integration`): `name()`, `device_routes()` (merged into the device API
   behind the device token, `device_routes.rs`), `admin_routes()` (merged into the admin router behind the session,
-  `main.rs`), `health()` - and three hooks with do-nothing defaults: `policy()` (its top-level policy key, flattened
-  into `PolicyResponse.integrations`), `intake()` (its part of a status report, from `StatusReportRequest`) and
-  `apps_group()` (its group on Device › Apps, rendered by the integration; the page prints `integration_groups` after
+  `main.rs`), `health()` - and four hooks with do-nothing defaults: `policy()` (its top-level policy key, flattened
+  into `PolicyResponse.integrations`), `intake()` (its part of a status report, from `StatusReportRequest`), `setup()`
+  (its part of design 114's setup steps, `SetupPart`: the need rule's inputs it turns on and its steps' readings;
+  `Integrations::setup` joins them for every `setup_status` caller) and
+  `apps_group()` (its group on Device › Apps, rendered by the integration, given the page's design 114 warning lines
+  for its own section; the page prints `integration_groups` after
   App push and knows nothing else).
 - **No capability**: the trait's `policy` takes no capabilities (map links' key is always sent, the user's 2026-11-18
   rule); a later integration that needs a claim adds the parameter.
@@ -44,7 +47,8 @@ server does with an outside service for the phones - lives inside one boundary f
 - `resolve.rs`: `POST /api/devices/map-links/resolve`, the hops, the lookup, the 5 s deadline, the gate (`busy` at
   once for a third caller), 30 resolves per phone an hour, 100 calls out an hour and 10 in any 10 minutes, an hour's pause
   after Google's wall, the 10-minute cache, the counter.
-- `page.rs`: the Apps group, its line (`server.json`'s `pwa_lines`) and the save (`#map-links`).
+- `page.rs`: the Apps group, its line (`server.json`'s `pwa_lines`; none while design 114's map steps are left - their
+  warning lines say it, §2.6) and the save (`#map-links`). `setup_part` (`mod.rs`) is rows 15-16's input and readings.
 - No capability gates `map_links` in the policy (the user, 2026-11-18: no backwards compatibility on the phones yet).
 - The cache keeps a short link's long link and each place under its own key: a lookup that got no answer is asked
   again on the next tap (code QA M2).

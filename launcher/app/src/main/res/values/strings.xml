@@ -983,18 +983,11 @@
     <string name="map_links_open_browser">Open in browser</string>
     <string name="message_link_cant_open">This link can\'t be opened here.</string>
     <string name="map_links_settings">Map links</string>
-    <string name="map_links_step_holder">Google Play services</string>
-    <string name="map_links_step_holder_todo">Turn off “Open supported links”</string>
-    <string name="map_links_step_vibb">Vibb One\'s links</string>
-    <string name="map_links_step_vibb_todo">Turn on “Open supported links” and tick them all</string>
-    <string name="map_links_step_done">Done</string>
     <string name="map_links_step_back">Let Google Play services open links again</string>
     <string name="map_links_step_back_todo">Turn “Open supported links” back on</string>
     <string name="map_links_pause_first">Pause all restrictions first</string>
     <string name="map_links_day_row">Map</string>
     <!-- Design 110, the emulator gate's finding 3: Android 16's "Open by default" page has two choices instead of the switch. -->
-    <string name="map_links_step_holder_todo_16">Choose “In your browser”</string>
-    <string name="map_links_step_vibb_todo_16">Choose “In the app” and add every link</string>
     <string name="map_links_step_back_todo_16">Choose “In the app” again</string>
 
     <!-- Design 114: the phone's setup steps (names checked against setup_steps.json) and the setup flow. -->
@@ -1035,6 +1028,9 @@
     <string name="setup_how_default_apps">Choose them back.</string>
     <string name="setup_how_map_play_links">Open by default: turn off Open supported links.</string>
     <string name="setup_how_map_vibb_links">Open by default: turn on Open supported links, and tick them all.</string>
+    <!-- Android 16's "Open by default" page has two choices instead of the switch (design 110, the emulator gate's finding 3). -->
+    <string name="setup_how_map_play_links_16">Open by default: choose “In your browser”.</string>
+    <string name="setup_how_map_vibb_links_16">Open by default: choose “In the app”, and add every link.</string>
     <string name="setup_how_vibration">Sound &amp; vibration › Vibration &amp; haptics: ring and notification vibration on.</string>
     <string name="setup_how_touch_feedback">Sound &amp; vibration › Vibration &amp; haptics: touch feedback on.</string>
     <string name="setup_how_lock_clock">Display › Lock screen: double-line clock off.</string>

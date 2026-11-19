@@ -583,7 +583,9 @@ pub async fn view_about(
     let mut sound = Vec::new();
     let mut software = Vec::new();
     let mut diagnostics = Vec::new();
-    let (setup_missing, _) = crate::setup_status::state_of(&policy, latest.as_ref(), &[]);
+    let setup_part = state.integrations.setup(&state, id).await;
+    let (setup_missing, _) =
+        crate::setup_status::state_of(&policy, latest.as_ref(), &setup_part, &[]);
     if let Some(status) = latest.as_ref() {
         let sound_state = crate::sound_mode::state(
             status.ringer_mode.as_deref(),
@@ -1000,6 +1002,7 @@ pub async fn view_advanced(
                 lang,
                 &policy,
                 latest.as_ref(),
+                &state.integrations.setup(&state, id).await,
                 "advanced",
             ),
             no_parent_pin: policy.override_pin_hash.is_none(),
@@ -1501,7 +1504,13 @@ async fn render_lock(
         lock_wake: policy.lock_wake_on_notification,
         lock_buzz: policy.lock_buzz_on_notification,
         lock_screen_warnings: lock_screen.notes.iter().map(|n| n.note(lang)).collect(),
-        setup_warnings: crate::setup_status::page_warnings(lang, &policy, latest.as_ref(), "lock"),
+        setup_warnings: crate::setup_status::page_warnings(
+            lang,
+            &policy,
+            latest.as_ref(),
+            &state.integrations.setup(state, id).await,
+            "lock",
+        ),
         lock_tiles,
         lock_screen,
         child,
@@ -1584,7 +1593,13 @@ pub async fn view_home(State(state): State<AppState>, lang: Lang, Path(id): Path
     };
     let mask = policy.quick_controls_mask;
     let airplane_sub = crate::airplane_mode::home_sub(lang, &policy);
-    let setup_warnings = crate::setup_status::page_warnings(lang, &policy, latest.as_ref(), "home");
+    let setup_warnings = crate::setup_status::page_warnings(
+        lang,
+        &policy,
+        latest.as_ref(),
+        &state.integrations.setup(&state, id).await,
+        "home",
+    );
     let shortcuts_sub = latest
         .as_ref()
         .and_then(crate::shortcuts::report)
@@ -2509,9 +2524,18 @@ pub(crate) async fn render_apps(
         Ok(group) => group,
         Err(err) => return read_failed(lang, id, "the phone's app push", err),
     };
+    // Design 114 §5.4: the page's warning lines, the map links' group's (`#map-links`) among them.
+    let setup_warnings = crate::setup_status::page_warnings_app_push(
+        lang,
+        &policy,
+        latest.as_ref(),
+        &state.integrations.setup(state, id).await,
+        "apps",
+        app_push.on,
+    );
     let integration_groups = match state
         .integrations
-        .apps_groups(state, lang, id, from.as_deref())
+        .apps_groups(state, lang, id, from.as_deref(), &setup_warnings)
         .await
     {
         Ok(groups) => groups,
@@ -2520,13 +2544,7 @@ pub(crate) async fn render_apps(
     Html(
         AppsTemplate {
             lang,
-            setup_warnings: crate::setup_status::page_warnings_app_push(
-                lang,
-                &policy,
-                latest.as_ref(),
-                "apps",
-                app_push.on,
-            ),
+            setup_warnings,
             app_push,
             integration_groups,
             who: crate::handlers::devices::BandAvatar::of(&device),
@@ -2630,6 +2648,7 @@ pub async fn view_music(
                 lang,
                 &policy,
                 latest.as_ref(),
+                &state.integrations.setup(&state, id).await,
                 "music",
             ),
             device,

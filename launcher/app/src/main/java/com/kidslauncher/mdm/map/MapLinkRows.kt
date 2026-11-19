@@ -1,24 +1,16 @@
 package com.kidslauncher.mdm.map
 
-/** One row of the PIN-gated Settings' "Kartlenker" group (§7.4): shown, and done. */
-data class MapLinkRow(val shown: Boolean, val done: Boolean = false)
-
-/** The group's three rows (§6.2, §6.3). */
-data class MapLinkRows(val holder: MapLinkRow, val vibb: MapLinkRow, val back: MapLinkRow) {
-    val shown: Boolean get() = holder.shown || vibb.shown || back.shown
-}
-
-/**
- * Which rows show: while the switch is [on], step 1 (the short-link holder's links off; done when they read off) and
- * step 2 (Vibb One's links ticked; done when every selectable host is); while it is off, only the row that gives the
- * holder its links back, and only while they read off (Q4). [holderAllowed] null = unreadable.
+/*
+ * Design 110's steps on the phone. The two one-time steps (§6.2) are design 114's setup steps `map_play_links` and
+ * `map_vibb_links` (114 §2.6): flow screens, read in `SetupReadings` as the report reads them. The PIN-gated Settings'
+ * "Kartlenker" keeps only §6.3's row.
  */
-fun mapLinkRows(on: Boolean, holderAllowed: Boolean?, hosts: VibbHosts): MapLinkRows = if (on) {
-    MapLinkRows(
-        holder = MapLinkRow(shown = true, done = holderAllowed == false),
-        vibb = MapLinkRow(shown = true, done = hosts.declared > 0 && hosts.selected >= hosts.selectable),
-        back = MapLinkRow(shown = false),
-    )
-} else {
-    MapLinkRows(MapLinkRow(shown = false), MapLinkRow(shown = false), MapLinkRow(shown = holderAllowed == false))
-}
+
+/** Step 1 done: the short-link holder's links read off. [holderAllowed] null = unreadable (no reading). */
+fun playLinksDone(holderAllowed: Boolean?): Boolean? = holderAllowed?.not()
+
+/** Step 2 done: every host the parent can select is selected (or verified). */
+fun vibbLinksDone(hosts: VibbHosts): Boolean = hosts.declared > 0 && hosts.selected >= hosts.selectable
+
+/** §6.3: the row that gives the holder its links back - only while the switch is off and they read off (Q4). */
+fun mapLinkBackShown(on: Boolean, holderAllowed: Boolean?): Boolean = !on && holderAllowed == false

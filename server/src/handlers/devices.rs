@@ -2299,6 +2299,8 @@ async fn render_device(
             tracing::error!(device_id = id, %err, "can't read the phone's last start");
             None
         });
+    // Design 114 §2.6: the integrations' setup steps (design 110's map steps), for the badge and Oppsett's value.
+    let setup_part = state.integrations.setup(state, id).await;
     // The same rows the Devices list counts, from the parts built above (not read twice).
     let connection = connection_of(state, &device, now);
     let facts = crate::attention::facts_of(
@@ -2314,6 +2316,7 @@ async fn render_device(
             spotify_account,
             app_push: &app_push,
             last_phone_on_ms,
+            setup_part: &setup_part,
         },
         now.timestamp_millis(),
     );
@@ -2412,7 +2415,13 @@ async fn render_device(
     );
     let airplane = latest.as_ref().and_then(crate::airplane_mode::report);
     let airplane_lines = crate::airplane_mode::summary_lines(&zone, now, airplane.as_ref());
-    let setup_value = setup_value(lang, &policy, latest.as_ref(), now.timestamp_millis());
+    let setup_value = setup_value(
+        lang,
+        &policy,
+        latest.as_ref(),
+        &setup_part,
+        now.timestamp_millis(),
+    );
     let status = crate::phone_status::one_line(status);
 
     // Activity (design 48); a failed read is no page, never a history that isn't true.
@@ -2629,13 +2638,14 @@ fn setup_value(
     lang: Lang,
     policy: &DevicePolicy,
     latest: Option<&crate::models::DeviceStatus>,
+    part: &crate::integrations::SetupPart,
     now_ms: i64,
 ) -> Option<String> {
     let latest = latest?;
     if crate::setup_status::in_hold(latest, now_ms) {
         return Some(t(lang, "setup.value.hold").to_string());
     }
-    let (missing, _) = crate::setup_status::state_of(policy, Some(latest), &[]);
+    let (missing, _) = crate::setup_status::state_of(policy, Some(latest), part, &[]);
     Some(match crate::setup_status::count(&missing) {
         0 => t(lang, "setup.value.done").to_string(),
         n => t_count(

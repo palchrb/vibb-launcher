@@ -20,6 +20,7 @@ use serde_json::{Map, Value, json};
 
 use crate::AppState;
 use crate::handlers::devices::{QUICK_CONTROL_AIRPLANE, QUICK_CONTROL_SOUND, QUICK_CONTROL_TOUCH};
+use crate::integrations::SetupPart;
 use crate::models::{DevicePolicy, DeviceStatus};
 use crate::security::AuthedDevice;
 
@@ -613,8 +614,9 @@ pub fn in_hold(latest: &DeviceStatus, now_ms: i64) -> bool {
     hold_end(latest, now_ms).is_some()
 }
 
-/// The need rule's inputs from the stored policy and the latest report's installed apps (§2.3).
-pub fn inputs_of(policy: &DevicePolicy, latest: Option<&DeviceStatus>) -> Inputs {
+/// The need rule's inputs from the stored policy, the latest report's installed apps and the integrations' part
+/// (`map_links`: design 110's switch, §2.6).
+pub fn inputs_of(policy: &DevicePolicy, latest: Option<&DeviceStatus>, part: &SetupPart) -> Inputs {
     let map_app_installed = latest
         .and_then(|st| st.installed_apps_json.as_deref())
         .and_then(|json| serde_json::from_str::<Vec<Value>>(json).ok())
@@ -631,15 +633,18 @@ pub fn inputs_of(policy: &DevicePolicy, latest: Option<&DeviceStatus>) -> Inputs
         calls_managed: policy.calls_managed(),
         android_lock: crate::kid_lock::policy_kid_lock(policy)
             .is_some_and(|lock| lock.keyguard == crate::kid_lock::KEYGUARD_ANDROID),
-        // Design 110 isn't built: its switch reads as off.
-        map_links_on: false,
+        map_links_on: part.inputs.contains(&"map_links"),
         map_app_installed,
     }
 }
 
-/// The server's readings (§2.2's "Reading" column), from the policy and the latest report. Without a report only
-/// `parent_pin` is read.
-pub fn readings_of(policy: &DevicePolicy, latest: Option<&DeviceStatus>) -> Readings {
+/// The server's readings (§2.2's "Reading" column), from the policy, the latest report and the integrations' part
+/// (rows 15-16 from design 110's own report, §2.6). Without a report only `parent_pin` is read.
+pub fn readings_of(
+    policy: &DevicePolicy,
+    latest: Option<&DeviceStatus>,
+    part: &SetupPart,
+) -> Readings {
     let mut readings = Readings::new();
     readings.insert(
         "parent_pin".to_string(),
@@ -702,6 +707,9 @@ pub fn readings_of(policy: &DevicePolicy, latest: Option<&DeviceStatus>) -> Read
         (held("screening_role_held"), held("redirection_role_held"))
     {
         put("call_filter", Some(Some(screening && redirection)));
+    }
+    for (key, reading) in &part.readings {
+        put(key, Some(*reading));
     }
     readings
 }
@@ -841,6 +849,8 @@ pub struct PageInput<'a> {
     pub device_id: i64,
     pub policy: &'a DevicePolicy,
     pub latest: Option<&'a DeviceStatus>,
+    /// The integrations' part (`Integrations::setup`).
+    pub part: &'a SetupPart,
     pub ticked: &'a [String],
 }
 
@@ -884,10 +894,11 @@ impl Page {
 pub fn state_of(
     policy: &DevicePolicy,
     latest: Option<&DeviceStatus>,
+    part: &SetupPart,
     ticked: &[String],
 ) -> (Vec<&'static Step>, Readings) {
-    let readings = readings_of(policy, latest);
-    let missing = missing(&inputs_of(policy, latest), &readings, ticked);
+    let readings = readings_of(policy, latest, part);
+    let missing = missing(&inputs_of(policy, latest, part), &readings, ticked);
     (missing, readings)
 }
 
@@ -966,7 +977,7 @@ pub fn role_words(lang: crate::i18n::Lang, role: &str) -> &'static str {
 
 /// Device › Oppsett (§5.1).
 pub fn page(input: &PageInput) -> Page {
-    let (missing, _) = state_of(input.policy, input.latest, input.ticked);
+    let (missing, _) = state_of(input.policy, input.latest, input.part, input.ticked);
     let mut page = Page {
         phone: Vec::new(),
         check: Vec::new(),
@@ -1037,9 +1048,9 @@ pub struct Choices {
 
 impl Choices {
     /// From the policy; app push off unless the caller read its switch ([page_warnings_app_push]).
-    pub fn of(policy: &DevicePolicy, latest: Option<&DeviceStatus>) -> Choices {
+    pub fn of(policy: &DevicePolicy, latest: Option<&DeviceStatus>, part: &SetupPart) -> Choices {
         Choices {
-            inputs: inputs_of(policy, latest),
+            inputs: inputs_of(policy, latest, part),
             notification_filter: policy.notification_auto_cancel,
             wifi_signin: policy.captive_portal_enabled,
             locate: policy.location_mode != "off",
@@ -1090,14 +1101,15 @@ pub fn page_warnings(
     lang: crate::i18n::Lang,
     policy: &DevicePolicy,
     latest: Option<&DeviceStatus>,
+    part: &SetupPart,
     page: &str,
 ) -> Warnings {
-    let (missing, _) = state_of(policy, latest, &[]);
+    let (missing, _) = state_of(policy, latest, part, &[]);
     warnings(
         lang,
         policy.device_id,
         page,
-        &Choices::of(policy, latest),
+        &Choices::of(policy, latest, part),
         &missing,
     )
 }
@@ -1108,13 +1120,14 @@ pub fn page_warnings_app_push(
     lang: crate::i18n::Lang,
     policy: &DevicePolicy,
     latest: Option<&DeviceStatus>,
+    part: &SetupPart,
     page: &str,
     app_push_on: bool,
 ) -> Warnings {
-    let (missing, _) = state_of(policy, latest, &[]);
+    let (missing, _) = state_of(policy, latest, part, &[]);
     let choices = Choices {
         app_push: app_push_on,
-        ..Choices::of(policy, latest)
+        ..Choices::of(policy, latest, part)
     };
     warnings(lang, policy.device_id, page, &choices, &missing)
 }

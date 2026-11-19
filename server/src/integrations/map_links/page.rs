@@ -36,6 +36,8 @@ struct GroupTemplate {
     lang: Lang,
     device_id: i64,
     from: Option<String>,
+    /// Design 114 §5.4: the missing setup steps this group needs (rows 15-16), at the top of the group.
+    setup_warnings: Vec<crate::setup_status::Warning>,
     on: bool,
     switch_label: String,
     /// §8.4: Google's lookup is broken (server-wide), above the switch.
@@ -54,8 +56,14 @@ fn app_name(report: Option<&Value>) -> &'static str {
 }
 
 /// Which line shows (§9, first match; `None` for none): with the switch on, from the report's `reach` first; with it
-/// off, only the quiet note that Google Play services' links are still off.
-pub fn line_code(on: bool, report: Option<&Value>) -> Option<(&'static str, bool)> {
+/// off, only the quiet note that Google Play services' links are still off. `steps_left`: design 114's warning lines
+/// at `#map-links` (rows 15-16, its `map_play_links` and `map_vibb_links`) say what is left on the phone, so no line
+/// of this group's says it again (114 §2.6).
+pub fn line_code(
+    on: bool,
+    report: Option<&Value>,
+    steps_left: bool,
+) -> Option<(&'static str, bool)> {
     if !on {
         return (report.and_then(|r| r["play_services_links"].as_bool()) == Some(false))
             .then_some(("off_play", false));
@@ -64,18 +72,13 @@ pub fn line_code(on: bool, report: Option<&Value>) -> Option<(&'static str, bool
         return Some(("waiting", false));
     };
     let reach = |class: &str| report["reach"][class].as_bool().unwrap_or(false);
-    let hosts = |key: &str| report["vibb_hosts"][key].as_i64().unwrap_or(0);
     match report["target_state"].as_str() {
         Some("hidden") => return Some(("hidden", true)),
         Some("allowed") | Some("suspended") => {}
         _ => return Some(("missing", true)),
     }
-    if !reach("short") && report["play_services_links"].as_bool() != Some(false) {
-        return Some(("step_play", true));
-    }
-    let all = reach("short") && reach("google") && reach("apple");
-    if !all && hosts("selected") < hosts("selectable") {
-        return Some(("step_vibb", true));
+    if steps_left {
+        return None;
     }
     // Every host the parent can select is selected (step 2 suspends the apps holding them while its page is open), so
     // Google's long links not reaching Vibb One is an app the parent allowed taking them: Google Maps.
@@ -95,8 +98,6 @@ fn line(lang: Lang, code: &'static str, orange: bool, app: &str) -> Line {
         "waiting" => ("map_links.line.waiting", None),
         "missing" => ("map_links.line.missing", None),
         "hidden" => ("map_links.line.hidden", Some("map_links.line.hidden_fix")),
-        "step_play" => ("map_links.line.step", Some("map_links.line.step_play_fix")),
-        "step_vibb" => ("map_links.line.step", Some("map_links.line.step_vibb_fix")),
         "held" => ("map_links.line.held", None),
         _ => ("map_links.line.ready", None),
     };
@@ -115,6 +116,7 @@ pub async fn group(
     lang: Lang,
     device_id: i64,
     from: Option<&str>,
+    setup_warnings: &crate::setup_status::Warnings,
 ) -> Result<Option<String>, sqlx::Error> {
     let on = super::is_on(&state.db, device_id).await?;
     let report = super::report(&state.db, device_id).await?;
@@ -127,6 +129,7 @@ pub async fn group(
     let app = app_name(report.as_ref());
     let broken =
         on && super::resolve::lookup_broken(&super::resolve::recent_counts(&state.db).await?);
+    let setup_warnings = setup_warnings.at("map-links").to_vec();
     let html = GroupTemplate {
         lang,
         device_id,
@@ -139,7 +142,9 @@ pub async fn group(
                 t_params(lang, "map_links.line.lookup_fix", &[("app", app)]),
             )
         }),
-        line: line_code(on, report.as_ref()).map(|(code, orange)| line(lang, code, orange, app)),
+        line: line_code(on, report.as_ref(), !setup_warnings.is_empty())
+            .map(|(code, orange)| line(lang, code, orange, app)),
+        setup_warnings,
         footer: t_params(lang, "map_links.footer", &[("app", app)]),
     }
     .render()

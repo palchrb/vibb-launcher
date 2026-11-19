@@ -54,8 +54,6 @@ private const val UNIFIED_PUSH = "settings_mdm_unified_push"
 private const val APP_ACCESS = "settings_mdm_app_access"
 private const val SERVER_CERT_ROW = "settings_mdm_server_cert"
 private const val MAP_LINKS = "settings_map_links"
-private const val MAP_LINKS_HOLDER = "settings_map_links_holder"
-private const val MAP_LINKS_VIBB = "settings_map_links_vibb"
 private const val MAP_LINKS_BACK = "settings_map_links_back"
 
 /**
@@ -83,17 +81,10 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
         handleSetupQrScanResult(result)
     }
 
-    /** Design 110 §6.2: back from an "Open by default" page - the rows read again, and a sync so the PWA's line
-     * follows. */
+    /** Design 110 §6.3: back from Google Play services' "Open by default" page - the row read again, and a sync so the
+     * PWA's line follows. */
     private val mapLinksLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-        context?.applicationContext?.let { app ->
-            // Step 2's holders back first (finding 1), so the report after it reads the state the parent left.
-            lifecycleScope.launch {
-                withContext(Dispatchers.IO) { com.kidslauncher.mdm.map.MapLinkStep.end(app) }
-                com.kidslauncher.mdm.push.SyncRunner.request(app, "map_links_step")
-                updateMapLinkRows()
-            }
-        }
+        context?.applicationContext?.let { com.kidslauncher.mdm.push.SyncRunner.request(it, "map_links_step") }
         updateMapLinkRows()
     }
 
@@ -203,30 +194,15 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
             true
         }
 
-        // Design 110 §6.2, §6.3: "Kartlenker" - each row opens Android's "Open by default" page for its app, explicit to
-        // the system's Settings, so only in a pause; outside one the row says to pause first.
-        for ((key, pkg) in listOf(
-            MAP_LINKS_HOLDER to com.kidslauncher.mdm.map.MapLinkForms.SHORT_LINK_HOLDER,
-            MAP_LINKS_VIBB to requireContext().packageName,
-            MAP_LINKS_BACK to com.kidslauncher.mdm.map.MapLinkForms.SHORT_LINK_HOLDER,
-        )) {
-            findPreference<Preference>(key)?.setOnPreferenceClickListener {
-                openByDefaultPage(requireContext(), pkg)?.let { page ->
-                    if (key == MAP_LINKS_VIBB) {
-                        // Finding 1: the apps holding Vibb One's hosts suspended while its page is open, so "Add link"
-                        // offers them all (MapLinkStep).
-                        val app = requireContext().applicationContext
-                        lifecycleScope.launch {
-                            withContext(Dispatchers.IO) { com.kidslauncher.mdm.map.MapLinkStep.begin(app) }
-                            if (isAdded) openFirstPage(listOf(page), mapLinksLauncher)
-                        }
-                    } else {
-                        openFirstPage(listOf(page), mapLinksLauncher)
-                    }
-                }
-                updateMapLinkRows()
-                true
+        // Design 110 §6.3: "Kartlenker" keeps only the way back (its two steps are the setup flow's, design 114 §2.6) -
+        // Google Play services' "Open by default" page, explicit to the system's Settings, so only in a pause; outside
+        // one the row says to pause first.
+        findPreference<Preference>(MAP_LINKS_BACK)?.setOnPreferenceClickListener {
+            openByDefaultPage(requireContext(), com.kidslauncher.mdm.map.MapLinkForms.SHORT_LINK_HOLDER)?.let { page ->
+                openFirstPage(listOf(page), mapLinksLauncher)
             }
+            updateMapLinkRows()
+            true
         }
 
         val restrictionsPaused = findPreference<SwitchPreference>(mdm.keys().restrictionsPaused())
@@ -407,38 +383,24 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
         updateMapLinkRows()
     }
 
-    /** Design 110 §7.4: the "Kartlenker" group - which rows show, done or what to do, or "pause first". */
+    /** Design 110 §6.3: the "Kartlenker" group - its one row while the switch is off and Play services' links read
+     * off; what to do, or "pause first". */
     private fun updateMapLinkRows() {
         val context = context ?: return
         val group = findPreference<androidx.preference.PreferenceCategory>(MAP_LINKS) ?: return
         val runtime = com.kidslauncher.mdm.map.MapLinksRuntime
-        val rows = com.kidslauncher.mdm.map.mapLinkRows(
-            on = runtime.enabled(context),
-            holderAllowed = runtime.holderLinksAllowed(context),
-            hosts = runtime.vibbHosts(context),
-        )
-        group.isVisible = rows.shown
+        group.isVisible = com.kidslauncher.mdm.map.mapLinkBackShown(runtime.enabled(context), runtime.holderLinksAllowed(context))
+        if (!group.isVisible) return
         // The emulator gate's finding 3: from Android 16 the "Open by default" page has "In the app" / "In your
         // browser", not the "Open supported links" switch (14's; 15 unverified, the switch's words kept there).
         val twoChoices = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.BAKLAVA
-        for ((key, row, pkg, todo) in listOf(
-            MapLinkRowView(MAP_LINKS_HOLDER, rows.holder, com.kidslauncher.mdm.map.MapLinkForms.SHORT_LINK_HOLDER,
-                if (twoChoices) R.string.map_links_step_holder_todo_16 else R.string.map_links_step_holder_todo),
-            MapLinkRowView(MAP_LINKS_VIBB, rows.vibb, context.packageName,
-                if (twoChoices) R.string.map_links_step_vibb_todo_16 else R.string.map_links_step_vibb_todo),
-            MapLinkRowView(MAP_LINKS_BACK, rows.back, com.kidslauncher.mdm.map.MapLinkForms.SHORT_LINK_HOLDER,
-                if (twoChoices) R.string.map_links_step_back_todo_16 else R.string.map_links_step_back_todo),
-        )) {
-            val pref = findPreference<Preference>(key) ?: continue
-            pref.isVisible = row.shown
-            pref.summary = getString(
-                when {
-                    row.done -> R.string.map_links_step_done
-                    openByDefaultPage(context, pkg) != null -> todo
-                    else -> R.string.map_links_pause_first
-                },
-            )
-        }
+        findPreference<Preference>(MAP_LINKS_BACK)?.summary = getString(
+            when {
+                openByDefaultPage(context, com.kidslauncher.mdm.map.MapLinkForms.SHORT_LINK_HOLDER) == null -> R.string.map_links_pause_first
+                twoChoices -> R.string.map_links_step_back_todo_16
+                else -> R.string.map_links_step_back_todo
+            },
+        )
     }
 
     /** Design 110 §6.2: Android's "Open by default" page for [pkg], explicit to the system's Settings; null outside a
@@ -447,8 +409,6 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
         context,
         Intent(android.provider.Settings.ACTION_APP_OPEN_BY_DEFAULT_SETTINGS, android.net.Uri.parse("package:$pkg")),
     )
-
-    private data class MapLinkRowView(val key: String, val row: com.kidslauncher.mdm.map.MapLinkRow, val pkg: String, val todo: Int)
 
     /**
      * Design 108 §6.5: "App push", the distributor's diagnostics - each registration's app, its own description (Element

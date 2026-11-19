@@ -4,7 +4,9 @@
 
 - **One table, one rule** (`src/setup_status.rs`): `STEPS` and `FEATURES` are `testdata/setup_steps.json`'s `steps` and
   `features` (byte-identical in the launcher's test resources; `setup_status::tests` runs every row and compares the
-  copies). `inputs_of` and `readings_of` map the policy and the latest report to the rule's inputs and readings;
+  copies). `inputs_of` and `readings_of` map the policy, the latest report and the integrations' part
+  (`Integrations::setup`: design 110's switch as the `map_links` input and rows 15-16's readings from its own report,
+  114 §2.6) to the rule's inputs and readings;
   `missing`/`count`/`setup_row` are the rule. The server reads `parent_pin` itself; the report's `setup` carries only
   `device_owner`, `mobile_data`, `location`, `data_saver`, `full_screen_intent`, `fingerprint` and the hold's
   `hold_until_ms`/`hold_left_ms` (`clean`); every other reading comes from the field that already carries it.
@@ -18,8 +20,9 @@
 - **Routes**: `GET /devices/{id}/setup` and `POST /devices/{id}/setup/ticks` (`handlers::setup_page`; the PWA's ticks,
   logged by `settings_log`); `POST /api/devices/setup/ticks` (`setup_status::tick`, 256 bytes, the phone line
   `setup_tick_phone`); the policy's `setup: {ticked}`.
-- **Warning lines**: `setup_status::page_warnings(lang, policy, latest, page)` gives a page's lines by section
+- **Warning lines**: `setup_status::page_warnings(lang, policy, latest, part, page)` gives a page's lines by section
   (`Warnings::at(anchor)`), rendered by `partials/setup_warning.html`; a step warns once per page, at the first of its
-  sections whose choice is on. About's rows of a missing step link to it (`device_pages::Row::step_link`).
+  sections whose choice is on. The Apps page hands its lines to the integrations' groups: the map links' group shows
+  `#map-links`'s (rows 15-16) in place of its own step lines. About's rows of a missing step link to it (`device_pages::Row::step_link`).
 - **The Parent PIN before a code** (§5.8): `devices::parent_pin_set`; `provision_qr` and `regenerate_code` make no code
   without it; the PIN form carries `back=provision` and its save lands on `/devices/{id}/provision#qr`.

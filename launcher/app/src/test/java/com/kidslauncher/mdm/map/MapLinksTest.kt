@@ -9,6 +9,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -118,16 +119,18 @@ class MapLinksTest {
     }
 
     @Test
-    fun `the Settings rows follow the switch and the steps`() {
-        val hosts = VibbHosts(selected = 3, selectable = 19, declared = 19)
-        val on = mapLinkRows(on = true, holderAllowed = true, hosts = hosts)
-        assertTrue(on.shown && on.holder.shown && !on.holder.done && on.vibb.shown && !on.vibb.done && !on.back.shown)
-        val done = mapLinkRows(on = true, holderAllowed = false, hosts = VibbHosts(11, 11, 19))
-        assertTrue(done.holder.done && done.vibb.done)
-        // Off: only the way back, only while the holder's links are off (Q4).
-        assertTrue(mapLinkRows(on = false, holderAllowed = false, hosts = hosts).let { it.back.shown && !it.holder.shown && !it.vibb.shown })
-        assertTrue(!mapLinkRows(on = false, holderAllowed = true, hosts = hosts).shown)
-        assertTrue(!mapLinkRows(on = false, holderAllowed = null, hosts = hosts).shown)
+    fun `the steps read done as the report does, and Settings keeps only the way back`() {
+        assertEquals(false, playLinksDone(holderAllowed = true))
+        assertEquals(true, playLinksDone(holderAllowed = false))
+        assertEquals(null, playLinksDone(holderAllowed = null))
+        assertFalse(vibbLinksDone(VibbHosts(selected = 3, selectable = 19, declared = 19)))
+        assertTrue(vibbLinksDone(VibbHosts(11, 11, 19)))
+        assertFalse(vibbLinksDone(VibbHosts(0, 0, 0)))
+        // Off: only the way back, only while the holder's links are off (Q4); on: never (the steps are the setup flow's).
+        assertTrue(mapLinkBackShown(on = false, holderAllowed = false))
+        assertFalse(mapLinkBackShown(on = false, holderAllowed = true))
+        assertFalse(mapLinkBackShown(on = false, holderAllowed = null))
+        assertFalse(mapLinkBackShown(on = true, holderAllowed = false))
     }
 
     @Test

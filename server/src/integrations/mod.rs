@@ -55,6 +55,15 @@ impl HealthCell {
     }
 }
 
+/// An integration's part of the phone's setup steps (design 114): the need rule's inputs it turns on (their `when`
+/// names, design 110's `map_links`) and its steps' readings, from what it keeps (`setup_status::inputs_of`,
+/// `setup_status::readings_of`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SetupPart {
+    pub inputs: Vec<&'static str>,
+    pub readings: Vec<(&'static str, Option<bool>)>,
+}
+
 /// One integration, as the core sees it.
 pub trait Integration: Send + Sync {
     /// Its name: the logs, its contract folder and C2's health rows.
@@ -90,15 +99,25 @@ pub trait Integration: Send + Sync {
     }
 
     /// Its group on Device › Apps, rendered (`None`: nothing to show for this phone). `from` is the page's
-    /// `AppsFrom` value, for the group's forms.
+    /// `AppsFrom` value, for the group's forms; `setup_warnings` the page's design 114 lines, for its own section.
     fn apps_group<'a>(
         &'a self,
         _state: &'a AppState,
         _lang: Lang,
         _device_id: i64,
         _from: Option<&'a str>,
+        _setup_warnings: &'a crate::setup_status::Warnings,
     ) -> BoxFut<'a, Result<Option<String>, sqlx::Error>> {
         Box::pin(async { Ok(None) })
+    }
+
+    /// Its part of this phone's setup steps (design 114). A read error leaves its part out (logged by the caller).
+    fn setup<'a>(
+        &'a self,
+        _state: &'a AppState,
+        _device_id: i64,
+    ) -> BoxFut<'a, Result<SetupPart, sqlx::Error>> {
+        Box::pin(async { Ok(SetupPart::default()) })
     }
 }
 
@@ -191,14 +210,36 @@ impl Integrations {
         lang: Lang,
         device_id: i64,
         from: Option<&str>,
+        setup_warnings: &crate::setup_status::Warnings,
     ) -> Result<Vec<String>, sqlx::Error> {
         let mut groups = Vec::new();
         for one in self.all() {
-            if let Some(group) = one.apps_group(state, lang, device_id, from).await? {
+            if let Some(group) = one
+                .apps_group(state, lang, device_id, from, setup_warnings)
+                .await?
+            {
                 groups.push(group);
             }
         }
         Ok(groups)
+    }
+
+    /// Every integration's part of this phone's setup steps, joined. Never fails: an integration whose read fails is
+    /// left out and logged, so its steps read as not applying (as before its first report).
+    pub async fn setup(&self, state: &AppState, device_id: i64) -> SetupPart {
+        let mut part = SetupPart::default();
+        for one in self.all() {
+            match one.setup(state, device_id).await {
+                Ok(one_part) => {
+                    part.inputs.extend(one_part.inputs);
+                    part.readings.extend(one_part.readings);
+                }
+                Err(err) => {
+                    tracing::error!(device_id, %err, integration = one.name(), "can't read the setup part");
+                }
+            }
+        }
+        part
     }
 }
 

@@ -432,6 +432,8 @@ pub struct Sources<'a> {
     /// The newest `phone_on`'s instant (`parent_events::last_phone_on_ms`): the boot cover's "not shown" waits for a
     /// start after the arm.
     pub last_phone_on_ms: Option<i64>,
+    /// The integrations' part of the setup steps (`Integrations::setup`; design 110's map steps, design 114 §2.6).
+    pub setup_part: &'a crate::integrations::SetupPart,
 }
 
 /// Whether the reported Do Not Disturb is the launcher's own for a silent time rule: the report's
@@ -570,6 +572,7 @@ pub async fn facts(state: &AppState, device: &Device, connection: ConnectionStat
             tracing::error!(device_id = id, %err, "attention: can't read the last start");
             None
         });
+    let setup_part = state.integrations.setup(state, id).await;
     facts_of(
         &Sources {
             device,
@@ -583,6 +586,7 @@ pub async fn facts(state: &AppState, device: &Device, connection: ConnectionStat
             spotify_account,
             app_push: &app_push,
             last_phone_on_ms,
+            setup_part: &setup_part,
         },
         now_ms,
     )
@@ -610,7 +614,8 @@ pub fn facts_of(s: &Sources, now_ms: i64) -> Facts {
     let escapes =
         crate::handlers::device_pages::escapes_card(policy, latest, now_ms, s.last_phone_on_ms)
             .notes;
-    let (setup_missing, setup_readings) = crate::setup_status::state_of(policy, latest, &[]);
+    let (setup_missing, setup_readings) =
+        crate::setup_status::state_of(policy, latest, s.setup_part, &[]);
     let setup_row = crate::setup_status::setup_row(&setup_missing, &setup_readings);
     Facts {
         not_set_up: false,

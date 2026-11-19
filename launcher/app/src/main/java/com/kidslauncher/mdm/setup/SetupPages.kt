@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
+import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.assistant.AssistantSetup
 import com.kidslauncher.mdm.badges.BadgeListenerService
 import com.kidslauncher.mdm.notify.NotificationChannelsReader
@@ -24,6 +25,17 @@ private const val PLAY_SERVICES = "com.google.android.gms"
  */
 internal fun mobileDataActions(actions: List<String>, sdk: Int): List<String> =
     if (sdk >= 36) actions.sortedBy { if (it == Settings.Panel.ACTION_INTERNET_CONNECTIVITY) 0 else 1 } else actions
+
+/**
+ * A step's line on the flow's screen. Android 16's "Open by default" page has "In the app" / "In your browser" instead
+ * of 14's "Open supported links" switch (design 110, the emulator gate's finding 3; 15 unverified, the switch's words
+ * kept there), so the two map steps say that from 16. Pure.
+ */
+internal fun setupHowRes(step: SetupStep, sdk: Int): Int? = when {
+    sdk >= 36 && step == SetupStep.MAP_PLAY_LINKS -> R.string.setup_how_map_play_links_16
+    sdk >= 36 && step == SetupStep.MAP_VIBB_LINKS -> R.string.setup_how_map_vibb_links_16
+    else -> step.howRes
+}
 
 /**
  * Design 114 §6.2.2: the Android pages a step's "Åpne" tries, in order, each explicit to an unsuspended system package

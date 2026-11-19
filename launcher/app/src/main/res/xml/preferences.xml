@@ -70,19 +70,13 @@
         android:title="@string/settings_mdm_restrictions_paused"
         android:summary="@string/settings_mdm_restrictions_paused_summary" />
 
-    <!-- Design 110 §6.2, §6.3: "Kartlenker" - the two one-time steps on Android's "Open by default" pages while the
-         switch is on, and the row that gives Google Play services its links back while it is off; shown and summarised
-         in code (MapLinkRows), each page only in a pause. -->
+    <!-- Design 110 §6.3: "Kartlenker" - the row that gives Google Play services its links back while the switch is off
+         and they read off; shown and summarised in code (mapLinkBackShown), its page only in a pause. The two one-time
+         steps (§6.2) are design 114's setup steps, in the setup flow ("Oppsett"). -->
     <PreferenceCategory
         android:key="settings_map_links"
         android:title="@string/map_links_settings"
         app:isPreferenceVisible="false">
-        <Preference
-            android:key="settings_map_links_holder"
-            android:title="@string/map_links_step_holder" />
-        <Preference
-            android:key="settings_map_links_vibb"
-            android:title="@string/map_links_step_vibb" />
         <Preference
             android:key="settings_map_links_back"
             android:title="@string/map_links_step_back" />

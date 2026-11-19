@@ -210,4 +210,18 @@ class SetupFlowTest {
         assertEquals(listOf(panel, sim), mobileDataActions(actions, 36))
         assertEquals(listOf(panel, sim), mobileDataActions(actions, 37))
     }
+
+    /** Design 110's finding 3: from Android 16 the map steps name "Open by default"'s two choices, not 14's switch. */
+    @Test
+    fun `the map steps' line follows Android 16's Open by default page`() {
+        for (sdk in listOf(34, 35)) {
+            assertEquals(com.kidslauncher.mdm.R.string.setup_how_map_play_links, setupHowRes(SetupStep.MAP_PLAY_LINKS, sdk))
+            assertEquals(com.kidslauncher.mdm.R.string.setup_how_map_vibb_links, setupHowRes(SetupStep.MAP_VIBB_LINKS, sdk))
+        }
+        for (sdk in listOf(36, 37)) {
+            assertEquals(com.kidslauncher.mdm.R.string.setup_how_map_play_links_16, setupHowRes(SetupStep.MAP_PLAY_LINKS, sdk))
+            assertEquals(com.kidslauncher.mdm.R.string.setup_how_map_vibb_links_16, setupHowRes(SetupStep.MAP_VIBB_LINKS, sdk))
+        }
+        assertEquals(SetupStep.LOCATION.howRes, setupHowRes(SetupStep.LOCATION, 36))
+    }
 }

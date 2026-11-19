@@ -106,11 +106,13 @@ pub async fn view(
         .and_then(crate::window_relock::flash)
         .filter(|(group, _)| *group == "open")
         .map(|(_, key)| key);
+    let part = state.integrations.setup(&state, id).await;
     let page = setup_status::page(&setup_status::PageInput {
         lang,
         device_id: id,
         policy: &policy,
         latest: latest.as_ref(),
+        part: &part,
         ticked: &ticked,
     });
     Html(

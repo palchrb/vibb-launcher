@@ -15,9 +15,15 @@ the phone never talks to Google or Apple.
   activity is set on every apply and in `HomePin`'s re-seat (the sixth, `PlayInvariantsTest`). Over a time rule or the
   keyguard it shows nothing; a server call is cancelled in `onStop` and nothing starts after it; the target starts in
   its own task. In a pause the note offers "Åpne i nettleseren" to a named browser, with the original link.
-- **The two one-time steps** (Q2) are rows in the PIN-gated Settings' "Kartlenker" group, each opening Android's
-  "Open by default" page (only in a pause): Google Play services' "Open supported links" off, then Vibb One's on with
-  every link ticked. With the switch off and Play services' links still off, one row gives them back (Q4).
+- **The two one-time steps** (Q2) are design 114's setup steps `map_play_links` and `map_vibb_links` (114 §2.6): screens
+  of the setup flow (`setup/SetupFlowActivity`, "Oppsett" in the PIN-gated Settings), only while the switch is on and
+  Organic Maps or CoMaps is installed. Each opens Android's "Open by default" page (only in a pause or the setup hold):
+  Google Play services' "Open supported links" off, then Vibb One's on with every link ticked; the flow runs
+  `MapLinkStep.begin` before step 2's page and `end` at its return (finding 1). Their readings (`playLinksDone`,
+  `vibbLinksDone` in `map/MapLinkRows.kt`) are the report's `play_services_links` and `vibb_hosts`, as the server reads
+  them. From Android 16 the screen's line names the page's two choices (`setupHowRes`, finding 3). The PIN-gated
+  Settings' "Kartlenker" keeps one row: with the switch off and Play services' links still off, it gives them back (Q4,
+  `mapLinkBackShown`).
 - **Meldinger** (Q1): every web link in a bubble is underlined and tappable (`ui/messages/MessageLinks.kt`); a map
   link goes straight to the handler while the switch is on; any other link goes to the one app Android names that the parent allows (`messageLinkTarget`: the allowlist, the login browser, Vibb One; never Play services; nothing during a time rule), else the calm note. The bubble's ink plus an underline is the user's choice (2026-11-18).
 - **Dagen**: a "Kart" row per map link (at most two) in an event's location or description, for an allowed or suspended target.
