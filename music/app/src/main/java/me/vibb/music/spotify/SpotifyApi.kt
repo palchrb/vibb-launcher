@@ -198,6 +198,9 @@ class SpotifyApi(
     ) {
         private var renewed = false
         private var transferred = false
+
+        /** Whether this start has transferred the playback to the device already. */
+        fun transferredYet(): Boolean = transferred
         private var waited = false
         private var premiumRetried = false
 
@@ -207,7 +210,7 @@ class SpotifyApi(
                 val budget = minOf(SPOTIFY_CALL_MS, deadlineMs - elapsedMs())
                 if (budget <= 0) return StartResult.Unreachable("deadline")
                 val current = token
-                when (val outcome = runInterruptible(Dispatchers.IO) { call(current, budget) }) {
+                when (val outcome = inactiveDevice(runInterruptible(Dispatchers.IO) { call(current, budget) })) {
                     PlayOutcome.Ok -> return null
                     PlayOutcome.DeviceUnknown -> {
                         if (transferred) return StartResult.Unreachable("device")
@@ -248,6 +251,14 @@ class SpotifyApi(
             }
         }
     }
+
+    /**
+     * A 502 before the start's transfer reads as the device unknown (2026-11-19, the user's emulator: a fresh web
+     * player's first call, the shuffle, answered `502 Bad gateway` where Spotify used to answer 404 - its device not
+     * active yet): one transfer and the call once more, as a 404. After the transfer a 502 is the call's failure.
+     */
+    private fun Retries.inactiveDevice(outcome: PlayOutcome): PlayOutcome =
+        if (outcome is PlayOutcome.Failed && outcome.status == 502 && !transferredYet()) PlayOutcome.DeviceUnknown else outcome
 
     private fun finish(outcome: PlayOutcome): StartResult = when (outcome) {
         PlayOutcome.Ok -> StartResult.Sent
