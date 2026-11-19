@@ -45,7 +45,8 @@
     <!-- An input on a white card: the compose field's hairline. -->
     <color name="kid_page_field_edge">#24000000</color>
     <!-- The brightness sheet (Snarveier's Lysstyrke, 2026-11-19): its drag handle and the slider's empty track (at night
-         kid Settings' slider literal). -->
+         kid Settings' slider literal). The platform SeekBar draws the empty track at 30 % (`white_disabled_material`), so
+         the day's track is the colour that lands on #E6DDD8 over white: #E6DDD8 itself showed as #F9F6F5, unseen (code QA M1). -->
     <color name="kid_page_handle">#D9D0CB</color>
-    <color name="kid_page_track">#E6DDD8</color>
+    <color name="kid_page_track">#AC8E7D</color>
 </resources>
