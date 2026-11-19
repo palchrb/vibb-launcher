@@ -72,12 +72,18 @@ object VpnRetryAlarm {
 
 /** Only our own alarm reaches it (explicit component, not exported): always-on written for the stored shape and the
  * service started - `applyVpnRestrictions`' path from the stored inputs, without a sync - then the state checked, which
- * re-arms while it is still down. */
+ * re-arms while it is still down. An alarm left from before the filter was turned off starts nothing (code QA L1): the
+ * service would only post its notification and stop. */
 class VpnRetryReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != ACTION_VPN_RETRY) return
         val app = context.applicationContext
         VpnRetryAlarm.fired()
+        if (MobileNetworkRuntime.vpnFilterStateNow() == VpnFilterState.OFF) {
+            VpnRetryAlarm.cancel(app)
+            VpnFilterWatch.check(app, VpnFilterEvent.CHECK)
+            return
+        }
         MobileNetworkRuntime.storedShape()?.let { MobileNetworkRuntime.writeAlwaysOn(app, it) }
         try {
             KidVpnService.start(app)
@@ -101,8 +107,9 @@ object VpnFilterWatch {
     private fun bootCount(context: Context): Int = try {
         Settings.Global.getInt(context.contentResolver, Settings.Global.BOOT_COUNT)
     } catch (e: Exception) {
-        // A period then ends only when elapsed realtime runs back past its start.
-        -1
+        // A period then ends only when elapsed realtime runs back past its start; 0 keeps the id's digits, which the
+        // server reads (code QA L8).
+        0
     }
 
     /** The state now, the stored period moved by [event], the alarm armed or cancelled, and - unless [reporting], when
