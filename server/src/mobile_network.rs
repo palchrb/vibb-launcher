@@ -330,9 +330,19 @@ pub fn roaming_words(lang: Lang, report: &RoamingReport) -> Option<(String, bool
     })
 }
 
-/// The summary header's roaming part (design 94 §6.2), from the latest report.
-pub fn summary_roaming(lang: Lang, latest: &DeviceStatus) -> Option<(String, bool)> {
-    roaming_words(lang, &roaming_report(latest)?)
+/// The summary header's roaming part (design 94 §6.2), from the latest report. A ship network Android doesn't count as
+/// roaming says nothing while the phone's abroad sink covers it (Bare Vibb, Av), as on the Mobilnett page
+/// ([roaming_warnings]); the roaming emulator run of 2026-11-19, finding 1.
+pub fn summary_roaming(
+    lang: Lang,
+    latest: &DeviceStatus,
+    policy: &DevicePolicy,
+) -> Option<(String, bool)> {
+    let report = roaming_report(latest)?;
+    if ship_network(&report) && !report.roaming && sink_covers_ship(policy) {
+        return None;
+    }
+    roaming_words(lang, &report)
 }
 
 /// One state line: its words, an optional sentence under them, and whether it is a warning (orange).
@@ -493,10 +503,18 @@ pub struct Card {
     pub lock_lines: Vec<Line>,
 }
 
+/// Whether Android's roaming switch, read off, is what keeps the phone off mobile data now: Android counts the network
+/// as roaming (`roaming`) and no roaming session is up (`data_active`). On a foreign network Android doesn't flag, the
+/// switch stops nothing and the phone has data (the roaming emulator run of 2026-11-19, finding 2).
+fn switch_stops_data(report: &RoamingReport) -> bool {
+    report.enabled == Some(false) && report.roaming && !report.data_active
+}
+
 /// The switch line under "Roaming" (design 97 §5; design 113: Android's switch is said only when it is wrong). Under Av
 /// (`off`): nothing when the report says `locked` (the lock working as chosen), the grey "not on the phone yet" while it
 /// isn't and no pause runs. Otherwise (På or Bare Vibb) one orange line only when the switch reads off - leading with the
-/// place while the phone is abroad -, its fix behind the line's ⓘ; on or unknown says nothing.
+/// place and "no mobile data now" while the phone is abroad and the switch is what stops its data
+/// ([switch_stops_data]) -, its fix behind the line's ⓘ; on or unknown says nothing.
 fn switch_line(
     lang: Lang,
     name: &str,
@@ -512,33 +530,35 @@ fn switch_line(
     if report.enabled != Some(false) {
         return None;
     }
-    Some(if report.where_is.as_deref() == Some("abroad") {
-        let place = roaming_words(lang, report)
-            .map(|(words, _)| words)
-            .unwrap_or_else(|| t(lang, "data_roaming.plain").to_string());
-        Line {
-            key: "switch",
-            title: t_params(
+    Some(
+        if report.where_is.as_deref() == Some("abroad") && switch_stops_data(report) {
+            let place = roaming_words(lang, report)
+                .map(|(words, _)| words)
+                .unwrap_or_else(|| t(lang, "data_roaming.plain").to_string());
+            Line {
+                key: "switch",
+                title: t_params(
+                    lang,
+                    "mobile.abroad.switch.off_abroad",
+                    &[("place", &place)],
+                ),
+                sub: Some(t_params(
+                    lang,
+                    "mobile.abroad.switch.off_abroad_sub",
+                    &[("name", name)],
+                )),
+                warn: true,
+            }
+        } else {
+            Line::new(
                 lang,
-                "mobile.abroad.switch.off_abroad",
-                &[("place", &place)],
-            ),
-            sub: Some(t_params(
-                lang,
-                "mobile.abroad.switch.off_abroad_sub",
-                &[("name", name)],
-            )),
-            warn: true,
-        }
-    } else {
-        Line::new(
-            lang,
-            "switch",
-            "mobile.abroad.switch.off",
-            Some("mobile.abroad.switch.off_sub"),
-            true,
-        )
-    })
+                "switch",
+                "mobile.abroad.switch.off",
+                Some("mobile.abroad.switch.off_sub"),
+                true,
+            )
+        },
+    )
 }
 
 /// The page's state from the stored choices and the latest report (design 94 §6.1's table, design 95 rev. 3's lines,
@@ -576,6 +596,7 @@ pub fn card(lang: Lang, name: &str, policy: &DevicePolicy, latest: Option<&Devic
         // The abroad switch-off line already leads with the place: one mention is enough. QA M1 (design 113): only that
         // variant - the plain orange "off" at home or with `where` unknown keeps the place or national line below it.
         let place_in_switch = report.where_is.as_deref() == Some("abroad")
+            && switch_stops_data(report)
             && abroad_lines.iter().any(|l: &Line| l.key == "switch");
         if let Some((words, warn)) = roaming_words(lang, report)
             .filter(|_| (report.roaming || abroad_unflagged(report)) && !place_in_switch)
@@ -1002,6 +1023,49 @@ mod tests {
         );
     }
 
+    /// The summary's header says what the Mobilnett page says (2026-11-19's emulator run, finding 1): a ship network
+    /// Android doesn't count as roaming is nothing under Bare Vibb or Av, whose abroad sink covers it, and the orange
+    /// "the lock doesn't cover it" only under På; a flagged ship network is roaming under every choice.
+    #[test]
+    fn the_header_takes_the_pages_ship_rule() {
+        let status = |roaming: &str| DeviceStatus {
+            data_roaming_json: Some(roaming.into()),
+            ..Default::default()
+        };
+        let choice = |abroad: &str| DevicePolicy {
+            abroad: abroad.into(),
+            ..Default::default()
+        };
+        let unflagged = status(
+            r#"{"locked":false,"roaming":false,"country":null,"network":"90112","enabled":true,"data_active":false,"where":"abroad"}"#,
+        );
+        assert_eq!(summary_roaming(Lang::Nb, &unflagged, &choice("vibb")), None);
+        assert_eq!(summary_roaming(Lang::Nb, &unflagged, &choice("off")), None);
+        assert_eq!(
+            summary_roaming(Lang::Nb, &unflagged, &choice("home")),
+            Some((
+                "På et skips- eller flynett som ikke regnes som roaming: låsen dekker det ikke"
+                    .to_string(),
+                true
+            ))
+        );
+        for abroad in ["vibb", "off", "home"] {
+            let lines = card(Lang::Nb, "Emma", &choice(abroad), Some(&unflagged)).abroad_lines;
+            assert_eq!(
+                lines.iter().any(|l| l.key == "ship-home"),
+                abroad == "home",
+                "{abroad}: {lines:?}"
+            );
+        }
+        let flagged = status(
+            r#"{"locked":false,"roaming":true,"country":null,"network":"90112","enabled":true,"data_active":true,"where":"abroad"}"#,
+        );
+        assert_eq!(
+            summary_roaming(Lang::Nb, &flagged, &choice("vibb")),
+            Some(("Roamer på et skips- eller flynett".to_string(), true))
+        );
+    }
+
     /// Design 113 (QA M1): På, at home on another network of the home country, Android's roaming switch off - the
     /// orange switch line (its fix behind the ⓘ) and the grey national line both show; abroad the switch line names the
     /// place and the place line goes. Under Av with the lock in place, nothing about the switch.
@@ -1053,6 +1117,26 @@ mod tests {
                 true
             )]
         );
+        // Abroad on a network Android doesn't flag as roaming (2026-11-19's emulator run, finding 2): the switch stops
+        // nothing and the phone has data - the plain switch line, never "no mobile data now", and the place on its own
+        // line. A roaming session still up (`data_active`) has data too.
+        let policy_vibb = DevicePolicy {
+            abroad: "vibb".into(),
+            ..Default::default()
+        };
+        let unflagged = r#"{"locked":false,"roaming":false,"country":"se","network":"24001","enabled":false,"data_active":false,"where":"abroad"}"#;
+        let expected = [
+            (
+                "switch",
+                "Androids roamingbryter er av".to_string(),
+                true,
+                true,
+            ),
+            ("roaming", "Roamer i Sverige".to_string(), false, false),
+        ];
+        assert_eq!(lines(&policy_vibb, unflagged), expected);
+        let session = r#"{"locked":false,"roaming":true,"country":"se","network":"24001","enabled":false,"data_active":true,"where":"abroad"}"#;
+        assert_eq!(lines(&policy_vibb, session), expected);
         // The switch on, or Av with the lock in place: nothing about it.
         let on =
             r#"{"locked":false,"roaming":false,"enabled":true,"data_active":false,"where":"home"}"#;

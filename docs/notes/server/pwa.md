@@ -2395,13 +2395,17 @@ The phone's state, worded by
 Vibb bruker roamingdata fra før låsen" when the launcher sinks it - and a SIM still reading roaming on), "Mobildata:
 bare Vibb" and "Mobildata er slått av på telefonen". On the summary only the lines that say something show
 (`mobile_network::summary_lines`, `#mobile-state`, each leading to the page), and "Roamer i Sverige" ends the header's
-second line while the phone is in touch (`phone_status::with_roaming`). Pinned by `tests::mobile_network`.
+second line while the phone is in touch (`phone_status::with_roaming`; `mobile_network::summary_roaming` takes the
+page's ship rule: a ship network Android doesn't count as roaming says nothing under Bare Vibb or Av, whose abroad sink
+covers it - 2026-11-19's roaming emulator run, finding 1). Pinned by `tests::mobile_network`.
 
 Design 113 (2026-11-17, the copy round): "Mobildata" (På / Bare Vibb), "Roaming" (was "I utlandet"; På / Av / Bare
 Vibb, the stored `home`/`off`/`vibb`) and "Lås innstillingene", no sub-line under a choice or switch; each group's
 explanation is its footer ⓘ. A wrong state is one orange line above its group, its fix behind the line's ⓘ: «Mobildata
 er av på telefonen» (Android's own switch), «Androids roamingbryter er av» (only when off under På or Bare Vibb; abroad
-«Roamer i Sverige – Androids roamingbryter er av»), «Ingen mobildata her (nasjonal roaming)», the lingering and
+«Roamer i Sverige – Androids roamingbryter er av» with «ingen mobildata nå» behind its ⓘ only while the switch is what
+stops the data - a flagged network and no roaming session up, `mobile_network::switch_stops_data`; on a foreign network
+Android doesn't flag the plain line and the place line, 2026-11-19's roaming emulator run, finding 2), «Ingen mobildata her (nasjonal roaming)», the lingering and
 still-on lines. Android's switch on, and Av with the lock in place, say nothing; the pause has no switch line of its
 own. No "Mobildata: bare Vibb" line restates the radio; the kid's Off stays a grey line (the summary's «Mobildata: bare
 Vibb – {name} har slått av»). Mobile data off is the Attention row `mobile-data-off` (`attention::Kind::MobileDataOff`,

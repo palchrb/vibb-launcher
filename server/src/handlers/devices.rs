@@ -2479,7 +2479,7 @@ async fn render_device(
         now,
         latest
             .as_ref()
-            .and_then(|s| crate::mobile_network::summary_roaming(lang, s)),
+            .and_then(|s| crate::mobile_network::summary_roaming(lang, s, &policy)),
     );
     // Design 98 §6.2: "Flymodus på siden 21:03" in place of "not heard from" (last on the second line while in touch).
     let status = crate::phone_status::with_airplane(
