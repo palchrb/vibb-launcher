@@ -5018,6 +5018,22 @@ adb shortcuts the PWA no longer shows are in `docs/setup/android-settings.md`, "
 Owed besides §11's list (code QA L9): a wall-clock correction (NTP or NITZ) right after the enrolment ends the hold
 early, by design (fail closed) - record it if seen, and that the PWA's "Åpne for oppsett" brings the flow back.
 
+## 6bc. Failures made visible: "filter on, tunnel down", the Integration row, the backup check (design 116, branch `c2-build`)
+
+**Run 2026-11-19** (`compat34` and `jelly36`): `docs/testing/2026-11-19-c2-emulator-check.md`. Design 116 §3.3's steps
+0-4, code QA L1, one Integration row (a blocklist feed that 404s) and the backup check (an uploaded corrupted copy) all
+passed. One fix went on the branch: the fast retry's wait doubled with every failed start.
+
+Notes for a re-run:
+- Always-on writes and a boot re-grant ACTIVATE_VPN, so the deny goes just before the kill
+  (`run-as me.vibb.launcher.debug kill -9 <pid>`).
+- Step 3's PASS comes from the parent's filter switch with Mobildata "Bare Vibb", not from a pause: a pause gives NONE.
+- The row comes about 14 minutes into the outage: the next retry sees the 10 minutes, and the alarm is inexact (5 to
+  8 min 45 s).
+
+Owed: Android 15 and 17, the push on a subscribed browser, the alarm's Doze recovery on 16 (the emulator's Handler won
+there), the Jelly Star.
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:
