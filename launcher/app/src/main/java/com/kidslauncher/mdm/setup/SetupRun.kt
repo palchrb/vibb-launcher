@@ -43,6 +43,23 @@ object SetupRun {
         pageMissing += key
     }
 
+    /** When "Sett på pause i 2 t" in the flow took the PIN (elapsed ms): the pause's leave of lock task clears every
+     * locked task, the flow's too, and Android starts Home - whose resume brings the flow back ([takeReturnAfterPause]). */
+    private var pausedFromFlowAtMs: Long? = null
+
+    @Synchronized
+    fun markPausedFromFlow(nowElapsedMs: Long) {
+        pausedFromFlowAtMs = nowElapsedMs
+    }
+
+    /** Home's resume: true once, within [FLOW_RETURN_MS] of the flow's pause and only while the window is open. */
+    @Synchronized
+    fun takeReturnAfterPause(nowElapsedMs: Long, windowOpen: Boolean): Boolean {
+        val due = flowReturnDue(pausedFromFlowAtMs, nowElapsedMs, windowOpen)
+        pausedFromFlowAtMs = null
+        return due
+    }
+
     @Synchronized
     fun reset() {
         skipped.clear()
@@ -50,3 +67,10 @@ object SetupRun {
         pageMissing.clear()
     }
 }
+
+/** How long after the flow's own pause Home's resume still leads back to the flow (the gate saw ~1.3 s). */
+const val FLOW_RETURN_MS = 15_000L
+
+/** Whether Home's resume brings the flow back after its "Sett på pause i 2 t" (the gate of 2026-11-19, row 13). Pure. */
+fun flowReturnDue(markedAtMs: Long?, nowElapsedMs: Long, windowOpen: Boolean): Boolean =
+    markedAtMs != null && windowOpen && nowElapsedMs - markedAtMs in 0..FLOW_RETURN_MS

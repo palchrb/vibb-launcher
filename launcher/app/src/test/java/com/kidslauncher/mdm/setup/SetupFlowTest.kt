@@ -161,4 +161,17 @@ class SetupFlowTest {
         val back = flow.substringAfter("private fun pageReturned(").substringBefore("private fun endWifiStepNow(")
         for (end in listOf("endPickWindow(app, \"page\")", "endPickWindow(app, \"call_filter\")", "endWifiStepNow(\"result\")")) assertTrue(end, end in back)
     }
+
+    @Test
+    fun `Home brings the flow back after its own pause, once and only soon after (gate 2026-11-19, row 13)`() {
+        assertTrue(flowReturnDue(1_000, 2_300, windowOpen = true))
+        assertTrue(flowReturnDue(1_000, 1_000 + FLOW_RETURN_MS, windowOpen = true))
+        assertFalse(flowReturnDue(1_000, 1_001 + FLOW_RETURN_MS, windowOpen = true))
+        assertFalse(flowReturnDue(1_000, 2_300, windowOpen = false))
+        assertFalse(flowReturnDue(null, 2_300, windowOpen = true))
+        assertFalse(flowReturnDue(5_000, 2_300, windowOpen = true))
+        SetupRun.markPausedFromFlow(1_000)
+        assertTrue(SetupRun.takeReturnAfterPause(2_300, windowOpen = true))
+        assertFalse(SetupRun.takeReturnAfterPause(2_400, windowOpen = true))
+    }
 }

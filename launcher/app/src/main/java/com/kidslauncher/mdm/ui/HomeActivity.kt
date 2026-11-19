@@ -558,7 +558,16 @@ class HomeActivity : UIObjectActivity() {
         // Checked here (not just via the preference listener) so pressing Home while the lock
         // screen is showing can't be used to bounce back into the drawer/home list underneath it.
         if (redirectToLockScreenIfLocked()) return
-        // Design 114 §6.2.1: during the setup hold Home leads to the setup flow (guidance, not a lock) - its own task
+        // Design 114 §6.2.2: the flow's "Sett på pause i 2 t" - the pause's leave of lock task cleared the flow's task and
+        // Android started Home; back to the flow's steps (the gate of 2026-11-19, row 13).
+        if (com.kidslauncher.mdm.setup.SetupRun.takeReturnAfterPause(
+                android.os.SystemClock.elapsedRealtime(),
+                com.kidslauncher.mdm.assistant.AssistantSetup.setupWindowOpen(),
+            ) && com.kidslauncher.mdm.setup.SetupFlowActivity.startFromHome(this)
+        ) {
+            return
+        }
+                // Design 114 §6.2.1: during the setup hold Home leads to the setup flow (guidance, not a lock) - its own task
         // brought to the front, so a Home press from Android's page returns to the same screen.
         if (com.kidslauncher.mdm.server.RestrictionsPause.holdActive() &&
             com.kidslauncher.mdm.setup.SetupFlowActivity.startFromHome(this)

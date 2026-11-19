@@ -308,7 +308,11 @@ class SetupFlowActivity : UIObjectActivity() {
             ParentPinEntry.PAUSE,
             title = R.string.settings_mdm_restrictions_paused_pin_title,
             notConfigured = R.string.toast_mdm_pause_needs_pin,
-        ) { refresh() }
+        ) {
+            // Leaving lock task clears the flow's task and Android starts Home; Home's resume brings the flow back.
+            SetupRun.markPausedFromFlow(SystemClock.elapsedRealtime())
+            refresh()
+        }
     }
 
     /** "Ferdig" (§6.1.3): ends the window if one is open - the hold or a pause - before the flow finishes into Home
