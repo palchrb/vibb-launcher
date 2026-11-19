@@ -1907,7 +1907,7 @@ async fn lock_tiles(
     use crate::app_display as display;
     let defaults = display::catalog_defaults(&state.db).await?;
     let own = display::device_rows(&state.db, id).await?;
-    let logos = crate::app_logos::phone_or_catalog_logos(state, id).await?;
+    let logos = crate::app_logos::phone_logos(state, id).await?;
     Ok(card
         .apps
         .iter()
@@ -2206,10 +2206,29 @@ pub(crate) async fn render_apps(
         Err(err) => return read_failed(lang, id, "the phone's lock-screen media apps", err),
     };
     // Design 87: the apps' logos this phone sent; a failed read is the page's read error, like the reads above.
-    let logos = match crate::app_logos::phone_or_catalog_logos(state, id).await {
+    let mut logos = match crate::app_logos::phone_logos(state, id).await {
         Ok(logos) => logos,
         Err(err) => return read_failed(lang, id, "the phone's app logos", err),
     };
+    // 2026-11-19: a catalog app ticked for this phone and not installed on it shows the catalog's logo (its kept one
+    // included); an installed app only ever its own (design 87 Q3). A failed catalog read is logged, the page goes on.
+    let missing: Vec<String> = rows
+        .apps
+        .iter()
+        .filter(|a| {
+            a.tracked_app_id.is_some()
+                && !logos.contains_key(&a.package_name)
+                && !rows
+                    .installed
+                    .iter()
+                    .any(|i| i.package_name == a.package_name)
+        })
+        .map(|a| a.package_name.clone())
+        .collect();
+    match crate::app_logos::catalog_logos_for(state, &missing).await {
+        Ok(catalog) => logos.extend(catalog),
+        Err(err) => tracing::error!(device_id = id, %err, "can't read the catalog's app logos"),
+    }
     // Design 82 W2: the phone still has threads to read, so Meldinger may be on Home while SMS is not managed.
     let messages_history = match crate::sms::reported_history(&state.db, id).await {
         Ok(history) => history,

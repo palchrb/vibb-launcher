@@ -698,33 +698,37 @@ pub async fn phone_logos(
     Ok(logos)
 }
 
-/// A phone's Apps page: this phone's own logo per package first, else the catalog's (`catalog_logos`: another
-/// phone's, or the row's kept one - an app uninstalled from this phone keeps its icon). A failed catalog read is
-/// logged and the phone's logos stand; a failed read of the phone's own is the caller's error, as before.
-pub async fn phone_or_catalog_logos(
-    state: &AppState,
-    device_id: i64,
-) -> Result<HashMap<String, String>, sqlx::Error> {
-    let mut logos = phone_logos(state, device_id).await?;
-    match catalog_logos(state).await {
-        Ok(catalog) => {
-            for (package, src) in catalog {
-                logos.entry(package).or_insert(src);
-            }
-        }
-        Err(err) => tracing::error!(device_id, %err, "can't read the catalog's app logos"),
-    }
-    Ok(logos)
-}
-
 /// The catalog rows' logos (§8.1, R2-L4): per package the hash most phone rows name, a tie to the most recently
 /// updated, whose file exists; else the catalog row's kept logo (0155) when its file exists - package -> URL.
 pub async fn catalog_logos(state: &AppState) -> Result<HashMap<String, String>, sqlx::Error> {
+    catalog_logos_in(state, None).await
+}
+
+/// [catalog_logos] for these packages alone: a phone's Apps page asks for the catalog apps ticked for it and not
+/// installed there (2026-11-19; installed apps show only the phone's own logo, design 87 Q3). A failed read is the
+/// caller's to log: the phone's own logos stand.
+pub async fn catalog_logos_for(
+    state: &AppState,
+    packages: &[String],
+) -> Result<HashMap<String, String>, sqlx::Error> {
+    if packages.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let json = serde_json::to_string(packages).expect("strings serialize");
+    catalog_logos_in(state, Some(&json)).await
+}
+
+async fn catalog_logos_in(
+    state: &AppState,
+    only: Option<&str>,
+) -> Result<HashMap<String, String>, sqlx::Error> {
     let rows: Vec<(String, String)> = sqlx::query_as(
         "SELECT package_name, logo_hash FROM device_app_logos \
+         WHERE (?1 IS NULL OR package_name IN (SELECT value FROM json_each(?1))) \
          GROUP BY package_name, logo_hash \
          ORDER BY package_name, COUNT(*) DESC, MAX(updated_at) DESC, logo_hash",
     )
+    .bind(only)
     .fetch_all(&state.db)
     .await?;
     let mut logos = HashMap::new();
@@ -740,8 +744,10 @@ pub async fn catalog_logos(state: &AppState) -> Result<HashMap<String, String>, 
     }
     let kept: Vec<(String, String)> = sqlx::query_as(
         "SELECT package_name, logo_hash FROM tracked_apps \
-         WHERE package_name != '' AND logo_hash IS NOT NULL",
+         WHERE package_name != '' AND logo_hash IS NOT NULL \
+         AND (?1 IS NULL OR package_name IN (SELECT value FROM json_each(?1)))",
     )
+    .bind(only)
     .fetch_all(&state.db)
     .await?;
     for (package, hash) in kept {
