@@ -478,6 +478,8 @@ pub const MAP_APPS: &[&str] = &[
     "app.organicmaps.web",
     "app.comaps.fdroid",
     "app.comaps",
+    "app.comaps.google",
+    "app.comaps.huawei",
 ];
 
 impl Inputs {
