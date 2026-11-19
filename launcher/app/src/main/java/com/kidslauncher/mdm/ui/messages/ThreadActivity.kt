@@ -1176,8 +1176,8 @@ open class ThreadActivity : KidPageActivity() {
             bindActions(holder, m)
         }
 
-        /** D6: the chip on the bubble's bottom edge, at the corner facing the middle - up to three emoji, the kid's own
-         * in the peach ring (dimmed until sent), then "+N"; never wider than its bubble (the bubble widens instead). */
+        /** D6: the chip on the bubble's bottom edge, at the corner facing the middle - up to three bare emoji (no outline or
+         * ring, the user 2026-11-19; the kid's own dimmed until sent), then "+N"; never wider than its bubble (the bubble widens instead). */
         private fun bindChip(holder: Bubble, m: Message, mine: Boolean) {
             val context = holder.itemView.context
             val chip = reactionChip(m.reactions, ::drawable)
@@ -1198,7 +1198,6 @@ open class ThreadActivity : KidPageActivity() {
                         setTextColor(context.getColor(R.color.kid_page_message_in_ink))
                         val pad = KidAvatars.dp(context, 3f)
                         setPadding(pad, 0, pad, 0)
-                        if (e.mine) setBackgroundResource(R.drawable.bg_message_reaction_mine)
                         alpha = if (e.pending) 0.5f else 1f
                     },
                 )

@@ -244,7 +244,7 @@ The server's `call_policy` (always sent by our server, with both channels' modes
   (the list, the notification and `smsto:` all build a new activity; only two row taps 30 ms apart reach `onNewIntent`,
   with a thread 0.1 s old). It becomes worth doing, with a check that the first list after `null` lands at the end,
   the day a way in starts a plain `threadIntent` over a living thread (design 82). **Look:** a 32 dp pill
-  in a 48 dp touch target (`bg_message_new`: a received bubble's `kid_message_in` with the reaction chip's 1 dp
+  in a 48 dp touch target (`bg_message_new`: a received bubble's `kid_message_in` with a 1 dp
   `kid_ground` outline, 8 dp inside the target's top and bottom), Nunito bold 14 sp in `kid_core`, flat (no state
   animator); a 150 ms fade in and out, none with the system's animations off (`ValueAnimator.areAnimatorsEnabled`). No
   sound and no buzz of its own. **TalkBack:** a button, a polite live region touched only when the mark changes (it is
@@ -897,7 +897,7 @@ on the wire but nb's heart.
   The emulator pass below ran with 80 ms. A removal, or a waiting picture that turned out to be a reaction, rebuilds the notification
   only while it is up (`afterReaction`).
 - **The thread (`ThreadActivity`, models in `MessagesModel`):** the chip (`reactionChip`: three different emoji then
-  "+N", the kid's own in a peach ring and dimmed while pending, `•` where `Paint.hasGlyph` says the font can't draw it)
+  "+N", bare - no outline or ring since 2026-11-19 (the user: "Trenger vi de rundingene rundt reactions?") - the kid's own dimmed while pending, `•` where `Paint.hasGlyph` says the font can't draw it)
   on the bubble's bottom edge at the corner facing the middle, with its own room below the bubble (its measured height
   less 5 dp, inside the bubble's padding - never over the text, and the bubble's time line comes under the chip) and
   the bubble never narrower than it; `hasGlyph` kept
