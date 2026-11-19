@@ -727,6 +727,53 @@
                     android:scheme="unifiedpush" />
             </intent-filter>
         </activity>
+        <!-- Design 110 §7.1: the map links' handler - Google Maps and Apple Maps links to Organic Maps (or CoMaps). Two
+             filters, as MapLinksRuntime.preferredFilters (paths apply to every host of one filter): every path on the map
+             hosts, /maps on the general ones. No autoVerify. Installed disabled; enabled only while the parent's switch is
+             on. Translucent, no history, never in Recents; the target starts in its own task. -->
+        <activity
+            android:name=".map.MapLinkActivity"
+            android:configChanges="orientation|screenSize|uiMode"
+            android:enabled="false"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:noHistory="true"
+            android:theme="@style/MapLinkTheme">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="http" />
+                <data android:scheme="https" />
+                <data android:host="maps.app.goo.gl" />
+                <data android:host="maps.google.com" />
+                <data android:host="maps.google.no" />
+                <data android:host="maps.google.se" />
+                <data android:host="maps.google.dk" />
+                <data android:host="maps.google.fi" />
+                <data android:host="maps.google.de" />
+                <data android:host="maps.google.co.uk" />
+                <data android:host="maps.apple.com" />
+                <data android:host="maps.apple" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="http" />
+                <data android:scheme="https" />
+                <data android:host="www.google.com" />
+                <data android:host="google.com" />
+                <data android:host="www.google.no" />
+                <data android:host="www.google.se" />
+                <data android:host="www.google.dk" />
+                <data android:host="www.google.fi" />
+                <data android:host="www.google.de" />
+                <data android:host="www.google.co.uk" />
+                <data android:host="goo.gl" />
+                <data android:pathPrefix="/maps" />
+            </intent-filter>
+        </activity>
         <!-- Design 108 §2.3: an app removed or its data cleared drops its registrations. Protected system broadcasts on
              the implicit-broadcast exception list, so exported="false". -->
         <receiver

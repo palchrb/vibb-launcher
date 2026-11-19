@@ -70,11 +70,12 @@ jobs:
           # shortcuts.json; tests::shortcuts compares it); and Wi-Fi sign-in and Chrome only for logins (design 102,
           # login_windows.json; tests::logins compares it); and the blocked notification channels (design 107,
           # notification_channels.json; tests::notification_channels compares it); and app push (design 108,
-          # unified_push.json; tests::unified_push compares it); and the setup steps (design 114, setup_steps.json;
-          # setup_status::tests compares it); and the MMS
+          # unified_push.json; tests::unified_push compares it); and the map links' contract folder (design 110,
+          # map_links/contract.json; integrations::map_links::tests compares it); and the setup steps (design 114,
+          # setup_steps.json; setup_status::tests compares it); and the MMS
           # servers' generator and
           # its sample (design 83, scripts/mmsc-hosts.py; its output server/testdata/mmsc_hosts.txt is compiled in).
-          if grep -qE '^(server/|\.github/workflows/server-ci\.yml$|(launcher|music)/app/src/test/resources/spotify_hosts\.json$|launcher/app/src/test/resources/(time_status_report|dns_upstream_status|power_report|zone_status_report|launcher_tag_codes|time_request|installed_apps_report|calendar_title_rules|calendar_status_report|calendar_feeds|emergency_numbers|calendar_kid_events|weather|leave_tailnet|server_url_vectors|restrictions_pause|server_tls_report|sms_contract|contact_request|app_logos|lock_now|mobile_network|status_heartbeat|airplane_mode|rule_pause|shortcuts|login_windows|notification_channels|unified_push|setup_steps)\.json$|(launcher|music)/app/src/test/resources/storytel_token_answers\.json$|launcher/app/src/main/assets/dns/doh_hosts\.txt$|scripts/mmsc-hosts(\.py|-sample\.xml)$)' <<<"$files"; then
+          if grep -qE '^(server/|\.github/workflows/server-ci\.yml$|(launcher|music)/app/src/test/resources/spotify_hosts\.json$|launcher/app/src/test/resources/(time_status_report|dns_upstream_status|power_report|zone_status_report|launcher_tag_codes|time_request|installed_apps_report|calendar_title_rules|calendar_status_report|calendar_feeds|emergency_numbers|calendar_kid_events|weather|leave_tailnet|server_url_vectors|restrictions_pause|server_tls_report|sms_contract|contact_request|app_logos|lock_now|mobile_network|status_heartbeat|airplane_mode|rule_pause|shortcuts|login_windows|notification_channels|unified_push|setup_steps)\.json$|launcher/app/src/test/resources/map_links/|(launcher|music)/app/src/test/resources/storytel_token_answers\.json$|launcher/app/src/main/assets/dns/doh_hosts\.txt$|scripts/mmsc-hosts(\.py|-sample\.xml)$)' <<<"$files"; then
             changed=true
           else
             changed=false
@@ -121,6 +122,9 @@ jobs:
       - run: node --test jstest/*.test.js
       # Reports warnings without failing the build; the existing ones predate the test harness.
       - run: cargo clippy --all-targets --locked
+      # The integrations (docs/notes/server/integrations.md): a build without them still compiles (build only; the
+      # core's snapshot tests pin the default build).
+      - run: cargo check --no-default-features --locked
 
   # The container image (design 22 §6), without pushing, as the release builds it: the static musl
   # binary built natively on a runner of each architecture (plain cargo, no cross, no QEMU), then

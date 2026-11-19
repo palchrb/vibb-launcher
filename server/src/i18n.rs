@@ -443,7 +443,14 @@ mod tests {
                     && EN.contains_key(&format!("{key}.other")))
         };
         let mut used = 0;
-        for dir in ["templates", "templates/partials", "src", "src/handlers"] {
+        for dir in [
+            "templates",
+            "templates/partials",
+            "src",
+            "src/handlers",
+            "src/integrations",
+            "src/integrations/map_links",
+        ] {
             for entry in std::fs::read_dir(dir).unwrap() {
                 let path = entry.unwrap().path();
                 if path.is_dir() || path.ends_with("i18n.rs") {
@@ -684,6 +691,8 @@ mod tests {
         "partials/device_app_row.html",
         "partials/app_permissions_form.html",
         "partials/app_push_group.html",
+        // Design 110: the map links integration's group on Device › Apps.
+        "partials/map_links_group.html",
         "partials/status_line.html",
         "partials/push_offer.html",
         "partials/confirm_cancel.html",
@@ -906,7 +915,14 @@ mod tests {
     #[test]
     fn every_key_is_used() {
         let mut quoted = std::collections::HashSet::new();
-        for dir in ["templates", "templates/partials", "src", "src/handlers"] {
+        for dir in [
+            "templates",
+            "templates/partials",
+            "src",
+            "src/handlers",
+            "src/integrations",
+            "src/integrations/map_links",
+        ] {
             for entry in std::fs::read_dir(dir).unwrap() {
                 let path = entry.unwrap().path();
                 if path.is_dir() || path.extension().is_some_and(|e| e == "json") {

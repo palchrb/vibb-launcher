@@ -337,7 +337,13 @@ pub async fn view(
     Html(
         LoginsTemplate {
             lang,
-            setup_warnings: crate::setup_status::page_warnings(lang, &policy, latest, "logins"),
+            setup_warnings: crate::setup_status::page_warnings(
+                lang,
+                &policy,
+                latest,
+                &state.integrations.setup(&state, id).await,
+                "logins",
+            ),
             who: crate::handlers::devices::BandAvatar::of(&device),
             title: format!("{} · {}", t(lang, "logins.page"), device.name),
             wifi_on: policy.captive_portal_enabled,

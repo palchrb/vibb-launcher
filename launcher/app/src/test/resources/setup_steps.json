@@ -87,6 +87,12 @@
     {"name": "a ticked phone step changes nothing", "inputs": {"mask": 0, "clock_format": "system", "calls_managed": false, "android_lock": true, "map_links_on": false, "map_app_installed": false}, "readings": {"parent_pin": true, "device_owner": true, "location": false, "notification_access": true, "mobile_data": true, "data_saver": true, "background": true, "vibb_notifications": true, "default_apps": true}, "ticked": ["location", "vibration", "touch_feedback", "lock_clock", "media_on_lock", "message_banners"], "missing": ["location"], "count": 1, "alarm": false, "setup_row": true},
     {"name": "no report: only the policy's steps", "inputs": {"mask": 0, "clock_format": "system", "calls_managed": false, "android_lock": true, "map_links_on": false, "map_app_installed": false}, "readings": {"parent_pin": true}, "ticked": [], "missing": ["vibration", "touch_feedback", "lock_clock", "media_on_lock", "message_banners"], "count": 0, "alarm": false, "setup_row": false}
   ],
+  "map_readings": [
+    {"name": "Play services' links unreadable: no reading", "report": {"target": "app.organicmaps", "target_state": "allowed", "play_services_links": null, "vibb_hosts": {"selected": 20, "selectable": 20, "declared": 20}, "reach": {"short": false, "google": true, "apple": true}}, "map_play_links": null, "map_vibb_links": true},
+    {"name": "Play services' links on, hosts left to select", "report": {"target": "app.organicmaps", "target_state": "allowed", "play_services_links": true, "vibb_hosts": {"selected": 3, "selectable": 19, "declared": 19}, "reach": {"short": false, "google": true, "apple": true}}, "map_play_links": false, "map_vibb_links": false},
+    {"name": "no hosts declared: never done", "report": {"target": "app.organicmaps", "target_state": "allowed", "play_services_links": false, "vibb_hosts": {"selected": 0, "selectable": 0, "declared": 0}, "reach": {"short": true, "google": true, "apple": true}}, "map_play_links": true, "map_vibb_links": false},
+    {"name": "every selectable host selected, some held elsewhere", "report": {"target": "app.organicmaps", "target_state": "allowed", "play_services_links": false, "vibb_hosts": {"selected": 11, "selectable": 11, "declared": 19}, "reach": {"short": true, "google": true, "apple": true}}, "map_play_links": true, "map_vibb_links": true}
+  ],
   "clean": [
     {"in": {"device_owner": true, "location": "yes", "extra": 1}, "out": {"device_owner": true}},
     {"in": {"fingerprint": null, "mobile_data": false}, "out": {"fingerprint": null, "mobile_data": false}},

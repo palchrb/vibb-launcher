@@ -1129,7 +1129,8 @@ open class ThreadActivity : KidPageActivity() {
             holder.from.text = groupSender
             val body = m.body.orEmpty()
             holder.text.visibility = if (body.isEmpty()) View.GONE else View.VISIBLE
-            holder.text.text = body
+            // Design 110 Q1: its web links underlined and tappable (MessageLinks, the one way a message opens anything).
+            MessageLinks.show(holder.text, body)
             val time = ClockFormat.formatClock(context, m.at)
             val partWords = bindParts(holder, m)
             // Code QA L5: the tap is offered only where the kid could send now, and once until the next read.

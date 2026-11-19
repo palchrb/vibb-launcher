@@ -1,6 +1,9 @@
 package com.kidslauncher.mdm.setup
 
 import com.kidslauncher.mdm.R
+import com.kidslauncher.mdm.map.MapLinksReport
+import com.kidslauncher.mdm.map.playLinksDone
+import com.kidslauncher.mdm.map.vibbLinksDone
 import com.kidslauncher.mdm.server.ServerJson
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -153,5 +156,26 @@ class SetupStepsTest {
         val serverCopy = listOf("../../server/testdata/setup_steps.json", "../server/testdata/setup_steps.json")
             .map(::File).first { it.exists() }
         assertEquals(serverCopy.readText(), contractText)
+    }
+
+    /** Code QA L6: rows 15-16 read from a `map_links` report as the server's `map_links::setup_part` reads it. */
+    @Test
+    fun `the map steps read a report as the server does`() {
+        for (row in contract.getValue("map_readings").jsonArray.map { it.jsonObject }) {
+            val report = ServerJson.decodeFromJsonElement(MapLinksReport.serializer(), row.getValue("report"))
+            assertEquals(row.str("name"), row.getValue("map_play_links").jsonPrimitive.booleanOrNull, playLinksDone(report.playServicesLinks))
+            assertEquals(row.str("name"), row.getValue("map_vibb_links").jsonPrimitive.boolean, vibbLinksDone(report.vibbHosts))
+        }
+    }
+
+    /** Code QA M2: `map_links`'s map app is read from the reported packages (a hidden app included), as the server reads
+     * `installed_apps`. */
+    @Test
+    fun `a hidden map app counts as the report lists it`() {
+        assertTrue(mapAppInstalled(listOf("com.example", "app.comaps")))
+        assertEquals(false, mapAppInstalled(listOf("com.google.android.apps.maps")))
+        val readings = File(main, "java/com/kidslauncher/mdm/setup/SetupReadings.kt").readText()
+        assertTrue("mapAppInstalled = mapAppInstalled(reportedPackages(context))" in readings)
+        assertTrue("controllablePackages(context.packageManager)" in readings.substringAfter("private fun reportedPackages("))
     }
 }

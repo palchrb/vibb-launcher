@@ -48,6 +48,8 @@ class PlayInvariantsTest {
                 "enforceCaptivePortalPin(dpm, admin, context)",
                 // Design 108 §5.2 (L3): the UnifiedPush link's handler, the fifth of ours, so no distributor chooser.
                 "enforceUpLinkPin(dpm, admin, context)",
+                // Design 110 §6.2: the map links' handler, the sixth, with its two filters.
+                "enforceMapLinkPin(dpm, admin, context)",
             ),
             body,
         )
@@ -87,6 +89,9 @@ class PlayInvariantsTest {
         assertTrue("enforceUpLinkPin" in inApply)
         // Unconditional: a statement of its own, not behind UP's switch.
         assertEquals("enforceUpLinkPin(dpm, admin, context)", apply.lines().first { "enforceUpLinkPin(" in it }.trim())
+        // Design 110: the map links' PPA likewise, whatever the switch (the handler's enabled state decides).
+        assertTrue("enforceMapLinkPin" in inApply)
+        assertEquals("enforceMapLinkPin(dpm, admin, context)", apply.lines().first { "enforceMapLinkPin(" in it }.trim())
         for (name in inApply) {
             val body = enforcer.substringAfter("private fun $name(").substringBefore("\n    }\n")
             assertTrue(name, "addPersistentPreferredActivity(" in body)

@@ -210,4 +210,30 @@ class SetupFlowTest {
         assertEquals(listOf(panel, sim), mobileDataActions(actions, 36))
         assertEquals(listOf(panel, sim), mobileDataActions(actions, 37))
     }
+
+    /** Design 110's finding 3: from Android 16 the map steps name "Open by default"'s two choices, not 14's switch. */
+    @Test
+    fun `the map steps' line follows Android 16's Open by default page`() {
+        for (sdk in listOf(34, 35)) {
+            assertEquals(com.kidslauncher.mdm.R.string.setup_how_map_play_links, setupHowRes(SetupStep.MAP_PLAY_LINKS, sdk))
+            assertEquals(com.kidslauncher.mdm.R.string.setup_how_map_vibb_links, setupHowRes(SetupStep.MAP_VIBB_LINKS, sdk))
+        }
+        for (sdk in listOf(36, 37)) {
+            assertEquals(com.kidslauncher.mdm.R.string.setup_how_map_play_links_16, setupHowRes(SetupStep.MAP_PLAY_LINKS, sdk))
+            assertEquals(com.kidslauncher.mdm.R.string.setup_how_map_vibb_links_16, setupHowRes(SetupStep.MAP_VIBB_LINKS, sdk))
+        }
+        assertEquals(SetupStep.LOCATION.howRes, setupHowRes(SetupStep.LOCATION, 36))
+    }
+
+    /** Code QA L1-L3 (map links x 114): step 2's holders are never left suspended without its page, nor given back
+     * under a second one. */
+    @Test
+    fun `the map step opens one page and gives the holders back whenever none is open`() {
+        val flow = code("setup/SetupFlowActivity.kt")
+        val open = flow.substringAfter("SetupStep.MAP_VIBB_LINKS -> if (").substringBefore("else -> launchPages(")
+        assertTrue(open.startsWith("!mapStepOpening && openedStep == null)"))
+        assertTrue(open.substringAfter("} finally {").contains("if (openedStep == null) withContext(NonCancellable + Dispatchers.IO) { MapLinkStep.end(app) }"))
+        val launch = flow.substringAfter("private fun launchPages(").substringBefore("private fun pageReturned(")
+        assertTrue("openedStep = null" in launch.substringAfter("catch (e: Exception)").substringBefore("return"))
+    }
 }

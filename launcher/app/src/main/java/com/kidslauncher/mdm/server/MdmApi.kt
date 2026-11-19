@@ -174,6 +174,11 @@ interface MdmApi {
     @POST("api/devices/up/messages")
     suspend fun upMessages(@Body body: com.kidslauncher.mdm.push.up.UpAckBody): Response<ResponseBody>
 
+    /** Design 110 §8.1: a short link or a place id resolved by the server - the raw answer (`{url?, place?}` or
+     * `{error}`), read by [com.kidslauncher.mdm.map.mapLinkAfter]. */
+    @POST("api/devices/map-links/resolve")
+    suspend fun resolveMapLink(@Body body: okhttp3.RequestBody): Response<ResponseBody>
+
     /** Design 114 §4.4: the flow's "Gjort" on a parent step - `204`, or `400 {"error": "not_a_parent_step"}`; the
      * status read by [com.kidslauncher.mdm.setup.tickAction]. */
     @POST("api/devices/setup/ticks")

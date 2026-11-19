@@ -53,6 +53,8 @@ private const val SETUP = "settings_setup"
 private const val UNIFIED_PUSH = "settings_mdm_unified_push"
 private const val APP_ACCESS = "settings_mdm_app_access"
 private const val SERVER_CERT_ROW = "settings_mdm_server_cert"
+private const val MAP_LINKS = "settings_map_links"
+private const val MAP_LINKS_BACK = "settings_map_links_back"
 
 /**
  * "Set"/"Not set" alone left no way to tell *which* key is configured, or to notice a stale one
@@ -77,6 +79,13 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
     // throws, per the Activity Result API's own contract.
     private val scanSetupQrLauncher = registerForActivityResult(ScanContract()) { result ->
         handleSetupQrScanResult(result)
+    }
+
+    /** Design 110 §6.3: back from Google Play services' "Open by default" page - the row read again, and a sync so the
+     * PWA's line follows. */
+    private val mapLinksLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        context?.applicationContext?.let { com.kidslauncher.mdm.push.SyncRunner.request(it, "map_links_step") }
+        updateMapLinkRows()
     }
 
     /** Design 68 §4.2, "App access": the row tapped and its access before Android's page opened - a change on return is
@@ -182,6 +191,17 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
         findPreference<Preference>(SETUP)?.setOnPreferenceClickListener {
             (activity as? com.kidslauncher.mdm.ui.settings.SettingsActivity)?.ownPageOpening()
             activity?.let { com.kidslauncher.mdm.setup.SetupFlowActivity.startFromSettings(it) }
+            true
+        }
+
+        // Design 110 §6.3: "Kartlenker" keeps only the way back (its two steps are the setup flow's, design 114 §2.6) -
+        // Google Play services' "Open by default" page, explicit to the system's Settings, so only in a pause; outside
+        // one the row says to pause first.
+        findPreference<Preference>(MAP_LINKS_BACK)?.setOnPreferenceClickListener {
+            openByDefaultPage(requireContext(), com.kidslauncher.mdm.map.MapLinkForms.SHORT_LINK_HOLDER)?.let { page ->
+                openFirstPage(listOf(page), mapLinksLauncher)
+            }
+            updateMapLinkRows()
             true
         }
 
@@ -360,7 +380,35 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
         updateSetupRow()
         updateAccessRows()
         updateUnifiedPushRow()
+        updateMapLinkRows()
     }
+
+    /** Design 110 §6.3: the "Kartlenker" group - its one row while the switch is off and Play services' links read
+     * off; what to do, or "pause first". */
+    private fun updateMapLinkRows() {
+        val context = context ?: return
+        val group = findPreference<androidx.preference.PreferenceCategory>(MAP_LINKS) ?: return
+        val runtime = com.kidslauncher.mdm.map.MapLinksRuntime
+        group.isVisible = com.kidslauncher.mdm.map.mapLinkBackShown(runtime.enabled(context), runtime.holderLinksAllowed(context))
+        if (!group.isVisible) return
+        // The emulator gate's finding 3: from Android 16 the "Open by default" page has "In the app" / "In your
+        // browser", not the "Open supported links" switch (14's; 15 unverified, the switch's words kept there).
+        val twoChoices = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.BAKLAVA
+        findPreference<Preference>(MAP_LINKS_BACK)?.summary = getString(
+            when {
+                openByDefaultPage(context, com.kidslauncher.mdm.map.MapLinkForms.SHORT_LINK_HOLDER) == null -> R.string.map_links_pause_first
+                twoChoices -> R.string.map_links_step_back_todo_16
+                else -> R.string.map_links_step_back_todo
+            },
+        )
+    }
+
+    /** Design 110 §6.2: Android's "Open by default" page for [pkg], explicit to the system's Settings; null outside a
+     * pause (Settings is hidden in the kiosk). Here, in the PIN-gated Settings - never in the kid's `map/` code. */
+    private fun openByDefaultPage(context: Context, pkg: String): Intent? = com.kidslauncher.mdm.server.systemPageIntent(
+        context,
+        Intent(android.provider.Settings.ACTION_APP_OPEN_BY_DEFAULT_SETTINGS, android.net.Uri.parse("package:$pkg")),
+    )
 
     /**
      * Design 108 §6.5: "App push", the distributor's diagnostics - each registration's app, its own description (Element

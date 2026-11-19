@@ -4,6 +4,13 @@ version = "0.84.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
 
+# Integrations behind one boundary (src/integrations/, docs/notes/server/integrations.md): each one a feature, on by
+# default, so a build can leave one out with `--no-default-features --features ...`.
+[features]
+default = ["map_links"]
+# Design 110: Google Maps and Apple Maps links opened in Organic Maps, short links and places resolved here.
+map_links = []
+
 [dependencies]
 # Vibb music (design 26b): Storytel's login password is AES-128-CBC with a public key (CBC and the
 # padding by hand over the block cipher); already in the tree through aes-gcm.

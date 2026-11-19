@@ -57,6 +57,8 @@
     </section>
 
     {% include "partials/app_push_group.html" %}
+    {#- The integrations' own groups (design 110's "Map links"), each rendered by its integration. -#}
+    {% for group in integration_groups %}{{ group|safe }}{% endfor %}
 
     <section id="downloads" aria-labelledby="downloads-title">
         <h2 class="group-header" id="downloads-title">{{ self.t("device.apps.downloads") }}</h2>

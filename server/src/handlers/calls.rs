@@ -698,8 +698,13 @@ async fn load_page(
     .bind(id)
     .fetch_optional(&state.db)
     .await?;
-    let setup_warnings =
-        crate::setup_status::page_warnings(lang, &policy, latest.as_ref(), "calls");
+    let setup_warnings = crate::setup_status::page_warnings(
+        lang,
+        &policy,
+        latest.as_ref(),
+        &state.integrations.setup(state, id).await,
+        "calls",
+    );
     let refused = shown.contact.as_ref().map(|r| r.id);
     let menu = emergency::device_menu(&state.db, id).await?;
     let emergency_suggestions = emergency::suggestions(&menu, &default_country_code)

@@ -1,0 +1,51 @@
+{#- Design 110 §9: Device › Apps' "Map links" group (`integrations::map_links::page`), rendered by the integration and
+    placed after "App push" (the page knows only "integration groups"). The steps left on the phone are design 114's
+    warning lines (`setup_warnings`, 114 §2.6). The switch is an auto-saving form back to
+    #map-links (design 103: in place). One line under it: orange only for what is wrong or undone, its how-to behind
+    the ⓘ; what the switch does is the footer's ⓘ, with the quiet note of a choice the parent made (code QA L10). -#}
+<section id="map-links" aria-labelledby="map-links-title">
+    <h2 class="group-header" id="map-links-title">{{ self.t("map_links.group") }}</h2>
+    {#- Design 114 §5.4 (§2.6): the two one-time steps left on the phone, as 114's lines to Device › Oppsett. -#}
+    {% for line in setup_warnings %}{% include "partials/setup_warning.html" %}{% endfor %}
+    {% if let Some((lookup, lookup_fix)) = lookup %}
+    <div class="attention attention-action" data-warning="map-lookup">
+        <div class="attention-text">{{ lookup }}<div class="attention-sub">
+            <details class="info">
+                <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel"><p>{{ lookup_fix }}</p></div>
+            </details></div></div>
+    </div>
+    {% endif %}
+    <div class="group group-small">
+        <form method="post" action="/devices/{{ device_id }}/map-links#map-links" class="cell">
+            {% if let Some(from) = from %}<input type="hidden" name="from" value="{{ from }}">{% endif %}
+            <label class="row" data-row="map-links-switch">
+                <span class="row-label">{{ switch_label }}</span>
+                <input type="checkbox" role="switch" class="sw" name="on" value="on" data-autosave{% if on %} checked{% endif %}><span class="knob" aria-hidden="true"></span>
+            </label>
+            <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
+        </form>
+        {% if let Some(line) = line %}{% if line.shown %}
+        {% if let Some(info) = line.info %}
+        <details class="info cell" data-line="{{ line.code }}">
+            <summary class="row">
+                <span class="row-label{% if line.orange %} text-alarm{% endif %}">{{ line.text }}</span>
+                <svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("common.more_info") }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>
+            </summary>
+            <div class="info-panel"><p>{{ info }}</p></div>
+        </details>
+        {% else %}
+        <p class="row row-note{% if line.orange %} text-alarm{% endif %}" data-line="{{ line.code }}">{{ line.text }}</p>
+        {% endif %}
+        {% endif %}{% endif %}
+    </div>
+    <div class="group-footer">
+        <details class="info">
+            <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+            <div class="info-panel">
+                {%- if let Some(line) = line %}{% if !line.shown %}<p data-line="{{ line.code }}">{{ line.text }}{% if let Some(info) = line.info %} {{ info }}{% endif %}</p>{% endif %}{% endif -%}
+                <p>{{ footer }}</p>
+            </div>
+        </details>
+    </div>
+</section>

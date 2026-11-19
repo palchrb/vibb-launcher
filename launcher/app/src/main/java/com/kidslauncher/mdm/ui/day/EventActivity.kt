@@ -113,12 +113,41 @@ open class EventActivity : KidPageActivity() {
         val description = TitleRules.clean(detail.description, DESCRIPTION_MAX)
         binding.eventDescription.text = description
         binding.eventDescription.visibility = if (description.isEmpty()) View.GONE else View.VISIBLE
+        bindMapRows(listOfNotNull(detail.location, detail.description).joinToString("\n"))
         // Step 3: only the kid's own event (Vibb One's, in the kid's calendar) can be changed or deleted - here only.
         binding.eventOwnActions.visibility = if (mine) View.VISIBLE else View.GONE
         if (mine) {
             binding.eventChange.setOnClickListener { startActivity(EventEditActivity.editIntent(this, eventId)) }
             binding.eventDelete.setOnClickListener { confirmDelete(shown) }
         }
+    }
+
+    /** Design 110 §7.3: a "Kart" row for each of the first two map links in the event's text, while the parent's switch
+     * is on - straight to Vibb's handler, which opens Organic Maps. A plain address gets none (§16). */
+    private fun bindMapRows(text: String) {
+        val box = binding.eventMaps
+        box.removeAllViews()
+        // Code QA L6: only for a target that can open (allowed, or suspended: its own note says so).
+        val target = com.kidslauncher.mdm.map.MapLinksRuntime.target(this).second
+        val usable = target == com.kidslauncher.mdm.map.TargetState.ALLOWED || target == com.kidslauncher.mdm.map.TargetState.SUSPENDED
+        val links = if (usable && com.kidslauncher.mdm.map.MapLinksRuntime.on(this)) {
+            com.kidslauncher.mdm.map.MapLinks.webLinks(text).map { text.substring(it.first, it.last + 1) }
+                .filter(com.kidslauncher.mdm.map.MapLinkForms::isMapLink).distinct().take(2)
+        } else {
+            emptyList()
+        }
+        for (link in links) {
+            val row = layoutInflater.inflate(R.layout.item_event_map_row, box, false) as android.widget.TextView
+            row.setOnClickListener {
+                val https = com.kidslauncher.mdm.map.MapLinkForms.upgrade(link) ?: link
+                startActivity(
+                    android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(https))
+                        .setClass(this, com.kidslauncher.mdm.map.MapLinkActivity::class.java),
+                )
+            }
+            box.addView(row)
+        }
+        box.visibility = if (links.isEmpty()) View.GONE else View.VISIBLE
     }
 
     private class Deleted(val ok: Boolean)

@@ -1407,6 +1407,10 @@ pub struct PolicyResponse {
     /// Design 114 §4.3: `{"ticked": [keys]}`, always sent - the parent steps ticked in the PWA or on the phone, which
     /// the phone leaves out of its flow and its count. Pinned by `policy_json_keys_snapshot`.
     pub setup: crate::setup_status::SetupPolicy,
+    /// The integrations' keys (`integrations::Integrations::policy`), each at the top level: design 110's `map_links`
+    /// (always sent).
+    #[serde(flatten)]
+    pub integrations: serde_json::Map<String, serde_json::Value>,
 }
 
 /// `PolicyResponse.kid_lock`.
@@ -1677,6 +1681,10 @@ pub struct StatusReportRequest {
     /// `unified_push::clean_report` into `device_status.up_held`. A full-report field, sent while UP is on.
     #[serde(default)]
     pub unified_push: Option<serde_json::Value>,
+    /// Design 110 §7.5: the map links' state on the phone (`{target, target_state, play_services_links, vibb_hosts,
+    /// reach}`), raw - the integration cleans it (`integrations::map_links::clean`). A full-report field.
+    #[serde(default)]
+    pub map_links: Option<serde_json::Value>,
     /// Design 76: the launcher's certificate check (`testdata/server_tls_report.json`'s `report`), raw - read
     /// within limits by `server_tls::sanitize`, so nothing in it can fail the report.
     #[serde(default)]

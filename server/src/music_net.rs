@@ -48,6 +48,11 @@ pub enum Kind {
     Calendar,
     /// MET's forecast and nowcast (design 75 §3.3): 1 MB decoded, 10 s.
     Weather,
+    /// A map short link's hop (design 110 §8.1): the `Location` is what counts, the body is cut at 16 KB; 3 s to
+    /// connect, 5 s in all.
+    ShortLink,
+    /// Google's place lookup (design 110 §8.3): the answer was 24 KB, cut at 256 KB; 3 s to connect, 4 s in all.
+    PlacePreview,
 }
 
 impl Kind {
@@ -62,6 +67,8 @@ impl Kind {
             Kind::Token => 64_000,
             Kind::Calendar => 5_000_000,
             Kind::Weather => 1_000_000,
+            Kind::ShortLink => 16_000,
+            Kind::PlacePreview => 256_000,
         }
     }
 
@@ -76,9 +83,23 @@ impl Kind {
             Kind::Token => 20,
             Kind::Calendar => 60,
             Kind::Weather => 10,
+            Kind::ShortLink => 5,
+            Kind::PlacePreview => 4,
         })
     }
+
+    /// The connect timeout: 10 s, but 3 s for the map links' quick calls (design 110 §8.1, whose phone gives up
+    /// after 6 s).
+    pub fn connect(self) -> Duration {
+        match self {
+            Kind::ShortLink | Kind::PlacePreview => QUICK_CONNECT,
+            _ => Duration::from_secs(10),
+        }
+    }
 }
+
+/// [Kind::connect]'s short connect timeout.
+const QUICK_CONNECT: Duration = Duration::from_secs(3);
 
 /// Which addresses a request may reach.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -440,15 +461,17 @@ pub struct HttpSource {
     /// The same without following redirects ([SourceRequest::follow] `false`).
     public_once: reqwest::Client,
     any_once: reqwest::Client,
+    /// `public_once` with [Kind::connect]'s 3 s connect timeout (design 110's quick calls).
+    public_once_quick: reqwest::Client,
 }
 
 impl HttpSource {
     pub fn new() -> Self {
-        let base = |reach: Reach, follow: bool| {
+        let base = |reach: Reach, follow: bool, connect: Duration| {
             let builder = reqwest::Client::builder()
                 .user_agent(crate::net::USER_AGENT)
                 .no_proxy()
-                .connect_timeout(Duration::from_secs(10))
+                .connect_timeout(connect)
                 .read_timeout(Duration::from_secs(30))
                 .redirect(if follow {
                     redirect_policy(reach)
@@ -465,11 +488,13 @@ impl HttpSource {
             .build()
             .expect("the music source client builds")
         };
+        let ten = Duration::from_secs(10);
         HttpSource {
-            public: base(Reach::Public, true),
-            any: base(Reach::Any, true),
-            public_once: base(Reach::Public, false),
-            any_once: base(Reach::Any, false),
+            public: base(Reach::Public, true, ten),
+            any: base(Reach::Any, true, ten),
+            public_once: base(Reach::Public, false, ten),
+            any_once: base(Reach::Any, false, ten),
+            public_once_quick: base(Reach::Public, false, QUICK_CONNECT),
         }
     }
 }
@@ -540,6 +565,9 @@ impl Source for HttpSource {
                 }
                 (Reach::Public, true) => &self.public,
                 (Reach::Any, true) => &self.any,
+                (Reach::Public, false) if request.kind.connect() == QUICK_CONNECT => {
+                    &self.public_once_quick
+                }
                 (Reach::Public, false) => &self.public_once,
                 (Reach::Any, false) => &self.any_once,
             };

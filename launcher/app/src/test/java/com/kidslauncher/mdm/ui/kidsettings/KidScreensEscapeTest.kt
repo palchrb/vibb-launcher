@@ -67,6 +67,9 @@ class KidScreensEscapeTest {
         "calls/KidPhotoActivity.kt", "calls/PhotoCropView.kt", "calls/KidPhotoSheet.kt", "calls/KidContactPhotos.kt", "ui/pictures",
         // Design 106: Siste - its model, its list and the tab's badge.
         "calls/RecentCalls.kt", "calls/RecentCallsAdapter.kt", "calls/RecentBadgeSpan.kt",
+        // Design 110 §7.3: the map links' handler, its notes and plan (the steps' Android pages are the PIN-gated
+        // Settings' alone).
+        "map",
     )
 
     /** Design 77 §6.7: the one allowed way out - "Del" on a received picture opens the system's share sheet (a kiosk
@@ -100,8 +103,9 @@ class KidScreensEscapeTest {
         }
     }
 
-    /** The message screens open nothing from a message: no links, no selectable text, a field without menus (design 77
-     * §6.7) - and the share sheet carries only our own picture, with a read grant. */
+    /** The message screens open nothing from a message but its web links (design 110 Q1, through [MessageLinks] alone):
+     * no autoLink, no selectable text, a field without menus (design 77 §6.7) - and the share sheet carries only our
+     * own picture, with a read grant. */
     @Test
     fun `the message screens link nothing and share only the picture`() {
         val layouts = listOf("item_message_bubble", "activity_thread", "item_messages_row").map { name ->
@@ -113,6 +117,14 @@ class KidScreensEscapeTest {
         val thread = src("ui/messages/ThreadActivity.kt").readText()
         assertTrue(thread.contains("NoTextActions.apply(binding.threadField)"))
         for (token in listOf("Linkify", "LinkMovementMethod", "ACTION_VIEW")) assertTrue(token, !thread.contains(token))
+        // Design 110 Q1: a bubble's text goes through MessageLinks, the one place a message opens anything: a map link to
+        // Vibb's own handler, any other web link to the one app Android names - never a chooser, never Settings.
+        assertTrue(thread.contains("MessageLinks.show(holder.text, body)"))
+        val links = code("ui/messages/MessageLinks.kt")
+        assertTrue(links.contains("setClass(context, MapLinkActivity::class.java)") && links.contains("view.setPackage(pkg)"))
+        assertTrue(!links.contains("LinkMovementMethod") && !links.contains("Linkify") && !links.contains("createChooser"))
+        val others = listOf("ui/messages/MessagesActivity.kt", "ui/messages/MessagesScreens.kt", "ui/messages/PictureActivity.kt").map { code(it) }
+        assertTrue(others.none { it.contains("ACTION_VIEW") })
         val share = src("ui/messages/PictureShare.kt").readText()
         assertTrue(share.contains("Intent(Intent.ACTION_SEND)") && share.contains("setType(\"image/jpeg\")"))
         assertTrue(share.contains("FLAG_GRANT_READ_URI_PERMISSION") && !share.contains("FLAG_GRANT_WRITE_URI_PERMISSION"))

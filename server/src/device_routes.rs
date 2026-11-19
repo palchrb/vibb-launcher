@@ -197,6 +197,8 @@ pub fn device_routes(state: AppState) -> Router<AppState> {
                 crate::unified_push::device::MESSAGES_LIMIT,
             )),
         )
+        // The integrations' device routes (`integrations::Integration::device_routes`), behind the same token.
+        .merge(state.integrations.device_routes())
         .layer(from_fn_with_state(
             state.clone(),
             security::require_device_token,

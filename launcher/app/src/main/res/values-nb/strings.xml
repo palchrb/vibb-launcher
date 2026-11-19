@@ -880,6 +880,25 @@
     <string name="wifi_portal_reopen">Åpne påloggingssiden</string>
     <string name="wifi_portal_reopen_sub">Logg av eller se hvor lenge du har igjen</string>
     <string name="home_portal_line">Wi-Fi-en vil at du logger på</string>
+
+    <!-- Design 110: map links - the kid's notes (§7.4), Meldinger's links (Q1) and the PIN-gated Settings' group. -->
+    <string name="map_links_waiting">Åpner kartet …</string>
+    <string name="map_links_note_missing">Kartet kan ikke åpnes her. Spør en voksen om %1$s.</string>
+    <string name="map_links_note_suspended">%1$s er ikke tilgjengelig akkurat nå.</string>
+    <string name="map_links_note_no_place">Fant ikke noe sted i denne lenken.</string>
+    <string name="map_links_note_list">Dette er en liste med steder. Den kan ikke åpnes i %1$s.</string>
+    <string name="map_links_note_dead">Denne lenken virker ikke lenger.</string>
+    <string name="map_links_note_retry">Fikk ikke åpnet lenken nå. Prøv igjen når du har nett.</string>
+    <string name="map_links_open_browser">Åpne i nettleseren</string>
+    <string name="message_link_cant_open">Denne lenken kan ikke åpnes her.</string>
+    <string name="map_links_settings">Kartlenker</string>
+    <string name="map_links_step_back">Gi Google Play-tjenester lenkene tilbake</string>
+    <string name="map_links_step_back_todo">Slå på «Åpne støttede linker» igjen</string>
+    <string name="map_links_pause_first">Sett alle begrensninger på pause først</string>
+    <string name="map_links_day_row">Kart</string>
+    <!-- Design 110, the emulator gate's finding 3: Android 16's "Open by default" page has two choices instead of the switch. -->
+    <string name="map_links_step_back_todo_16">Velg «I appen» igjen</string>
+
     <!-- Design 114: the phone's setup steps (names checked against setup_steps.json) and the setup flow. -->
     <string name="setup_step_parent_pin">Foreldre-PIN</string>
     <string name="setup_step_device_owner">Enhetseier</string>
@@ -918,6 +937,9 @@
     <string name="setup_how_default_apps">Velg dem tilbake.</string>
     <string name="setup_how_map_play_links">Åpne som standard: slå av Åpne støttede linker.</string>
     <string name="setup_how_map_vibb_links">Åpne som standard: slå på Åpne støttede linker, og kryss av alle.</string>
+    <!-- Android 16's "Open by default" page has two choices instead of the switch (design 110, the emulator gate's finding 3). -->
+    <string name="setup_how_map_play_links_16">Åpne som standard: velg «I nettleseren».</string>
+    <string name="setup_how_map_vibb_links_16">Åpne som standard: velg «I appen», og legg til alle linkene.</string>
     <string name="setup_how_vibration">Lyd og vibrasjon › Vibrasjon og haptikk: ringevibrasjon og varselvibrasjon på.</string>
     <string name="setup_how_touch_feedback">Lyd og vibrasjon › Vibrasjon og haptikk: berøringsrespons på.</string>
     <string name="setup_how_lock_clock">Skjerm › Låseskjerm: dobbeltlinjet klokke av.</string>

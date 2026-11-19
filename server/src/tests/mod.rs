@@ -295,6 +295,8 @@ impl TestApp {
                 std::sync::Arc::new(weather)
             },
             unified_push: Default::default(),
+            // Every integration's calls out answered by the canned fetch, without the spacing.
+            integrations: crate::integrations::Integrations::with_source(fetch.clone()),
         };
 
         // The setup QR's launcher check as if it had just passed (design 86): no test downloads

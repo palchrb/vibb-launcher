@@ -70,6 +70,18 @@
         android:title="@string/settings_mdm_restrictions_paused"
         android:summary="@string/settings_mdm_restrictions_paused_summary" />
 
+    <!-- Design 110 §6.3: "Kartlenker" - the row that gives Google Play services its links back while the switch is off
+         and they read off; shown and summarised in code (mapLinkBackShown), its page only in a pause. The two one-time
+         steps (§6.2) are design 114's setup steps, in the setup flow ("Oppsett"). -->
+    <PreferenceCategory
+        android:key="settings_map_links"
+        android:title="@string/map_links_settings"
+        app:isPreferenceVisible="false">
+        <Preference
+            android:key="settings_map_links_back"
+            android:title="@string/map_links_step_back" />
+    </PreferenceCategory>
+
     <!-- Design 68 §4.2: one row per allowed app and special access it declares (Android's page for it, in a pause),
          filled in code; hidden while empty. Last, so no other row falls under its header. -->
     <PreferenceCategory

@@ -67,6 +67,7 @@ pub async fn view(State(state): State<AppState>, lang: Lang, Path(id): Path<i64>
                 lang,
                 &policy,
                 latest.as_ref(),
+                &state.integrations.setup(&state, id).await,
                 "mobile",
             ),
             device,

@@ -309,7 +309,8 @@ Read from `organicmaps/organicmaps` at `a304448595da95e93b4dbcd85b736b6b05b053e0
   link blocker wins because the Play Store is suspended.
 - **Reading another app's state is allowed** (`getDomainVerificationUserState`, API 31, visibility only). Changing it
   needs a permission a device owner lacks.
-- **Settings won't select a host another app holds VERIFIED.**
+- **Settings won't select a host another app holds VERIFIED** (its "Add link" greys it out, `getOwnersForDomain`). A
+  hidden app still holds its hosts; a suspended or uninstalled one doesn't (the emulator check's finding 1, 2026-11-19).
 
 | Link | Approved today | What wins |
 |---|---|---|
@@ -328,6 +329,13 @@ Android's page (`Settings.ACTION_APP_OPEN_BY_DEFAULT_SETTINGS`, `package:<pkg>`;
 2. **Vibb One › Open by default › "Open supported links" on, every selectable link ticked.**
    - Vibb then holds SELECTION and, after step 1, is the only approved app for a plain `VIEW`.
    - GeoShare's old selections move. The setup note says to remove GeoShare.
+   - **While this page is open, the apps holding Vibb One's hosts verified are suspended** (`map/MapLinkStep`,
+     finding 1): in a pause Google Maps (`maps.google.*`, `www.google.*`, `google.com`, `goo.gl`), the Google app
+     (`www.google.com`, on 16 `google.com`), Google Calendar (`www.google.com`) and Google Photos (`goo.gl`) are all
+     there and would grey 16 or 17 of the 20 hosts out. They come back when the page returns, when the pause ends, or
+     after 15 minutes. Never the enforcer's never-restrict apps or the Play Store (`play.google.com` on 16, which
+     Android refuses to suspend). The selection stays when they come back, after a reboot, and when Google Maps is
+     reinstalled or updated; outside a pause they are hidden, so Vibb One is the only approved app.
 
 **The PPA** is set on every `apply()` and in `HomePin`'s re-seat: the sixth step, with two `IntentFilter`s,
 `PlayInvariantsTest`.
@@ -424,8 +432,8 @@ Android's page (`Settings.ACTION_APP_OPEN_BY_DEFAULT_SETTINGS`, `package:<pkg>`;
 - **The status report's `map_links`** (managed phones):
   - `target` and `target_state`;
   - `play_services_links` (`true`, `false`, or `null` when unreadable);
-  - `vibb_hosts` `{selected, selectable, declared}`, where a host is selectable unless `resolveActivity` lands on
-    another app's VERIFIED handler;
+  - `vibb_hosts` `{selected, selectable, declared}`, where a host is selectable unless an app step 2 can't suspend
+    holds it VERIFIED (§6.2; on 16 the Play Store's `play.google.com`);
   - `reach` `{short, google, apple}`.
 - **`reach` moves** with Google Maps or Chrome being allowed, with a pause, and with the target's state. The PWA
   ignores `reach` from a pause-time report.
@@ -543,7 +551,7 @@ Android's page (`Settings.ACTION_APP_OPEN_BY_DEFAULT_SETTINGS`, `package:<pkg>`;
 | `target_state` `hidden` | "Organic Maps isn't allowed on this phone. Allow it above." (orange) | "Organic Maps er ikke tillatt på telefonen. Tillat den over." (oransje) |
 | `reach.short` false, `play_services_links` not `false` | "One step left on the phone: during a pause, open Vibb One's Settings › Map links › Google Play services." (orange) | "Ett steg igjen på telefonen: under en pause, åpne Vibb Ones innstillinger › Kartlenker › Google Play-tjenester." (oransje) |
 | a class false, `selected < selectable` | "One step left on the phone: during a pause, open Vibb One's Settings › Map links › Vibb One's links." (orange) | "Ett steg igjen på telefonen: under en pause, åpne Vibb Ones innstillinger › Kartlenker › Vibb Ones lenker." (oransje) |
-| `reach.google` false, `selectable < declared` | "Google Maps links open in another app on this phone (Google Maps is allowed)." | "Google Maps-lenker åpnes i en annen app på denne telefonen (Google Maps er tillatt)." |
+| `reach.google` false (every selectable host selected: an allowed app takes them) | "Google Maps links open in another app on this phone (Google Maps is allowed)." | "Google Maps-lenker åpnes i en annen app på denne telefonen (Google Maps er tillatt)." |
 | ready | "Ready." | "Klar." |
 
 - **The lookup line** of §8.4 shows above these when it applies.

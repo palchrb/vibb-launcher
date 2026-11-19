@@ -908,6 +908,8 @@ async fn every_route_is_locked_or_exempt() {
         "merge lock_routes",
         "merge admin_routes",
         "merge device_routes::device_routes",
+        // The integrations' own pages (design 110's pilot), walked below from each one's `admin_routes`.
+        "merge state.integrations.admin_routes",
         "nest_service \"/static\"",
     ]
     .into_iter()
@@ -930,7 +932,15 @@ async fn every_route_is_locked_or_exempt() {
     let get = regex::Regex::new(r"(^|[^a-z_])get\(").unwrap();
     let post = regex::Regex::new(r"(^|[^a-z_])post\(").unwrap();
     let mut routes: Vec<(String, Vec<Method>)> = Vec::new();
-    let mut rest = router;
+    // main.rs's routes, then each integration's admin routes (its `fn admin_routes` body).
+    let integrations = include_str!("../integrations/map_links/mod.rs");
+    let integration_routes = integrations
+        .split("fn admin_routes(")
+        .nth(1)
+        .and_then(|rest| rest.split("\n    }\n").next())
+        .expect("the map links' admin_routes");
+    let walked = format!("{router}\n{integration_routes}");
+    let mut rest = walked.as_str();
     while let Some(at) = rest.find(".route(") {
         rest = &rest[at + ".route(".len()..];
         let arg = rest.trim_start();

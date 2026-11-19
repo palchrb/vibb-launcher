@@ -283,7 +283,9 @@ The server's `call_policy` (always sent by our server, with both channels' modes
 - **The compose bar (QA N2):** the draft carries one `clientId`, kept (also across a rotation and, in memory only, while
   the kid looks elsewhere) until the engine accepted that text; two quick taps send the same id and the engine sends
   once. "2 SMS" over the field past one part (`SmsMessage.calculateLength`). No field menu (`NoTextActions`), bubbles
-  never selectable or linked: nothing opens another app (`KidScreensEscapeTest`, which guards `ui/messages` and allows
+  never selectable (design 110 Q1 made web links the one exception: every `http`/`https` link is underlined and opens
+  through `ui/messages/MessageLinks.kt` alone - a map link to Vibb's own handler, any other to the one app Android names,
+  never a chooser; phone numbers, e-mail and street addresses stay plain): nothing else opens another app (`KidScreensEscapeTest`, which guards `ui/messages` and allows
   `Intent.createChooser` in `PictureShare.kt` alone).
 - **The compose bar with a picture, over the keyboard (2026-11-10, found by the bubble-time emulator pass):** the bar
   with a picture is 234 px at 320 x 569 dp (the 96 dp preview over a field of one or two lines; 266, 299 and 331 px

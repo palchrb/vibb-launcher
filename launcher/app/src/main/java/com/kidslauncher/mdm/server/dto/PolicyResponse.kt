@@ -174,6 +174,9 @@ data class PolicyResponse(
      * `unified_push_v1`. Missing = off: the receiver and the Link Activity disabled
      * ([com.kidslauncher.mdm.push.up.UpView]). */
     val unifiedPush: com.kidslauncher.mdm.push.up.UnifiedPushPolicy? = null,
+    /** Design 110 §7.5: map links - the parent's switch (`{on}`). Missing = off: the handler disabled
+     * ([com.kidslauncher.mdm.map.mapLinksOn]). Pinned by `map_links/contract.json`'s `policy` rows. */
+    val mapLinks: com.kidslauncher.mdm.map.MapLinksPolicy? = null,
     /** Design 114 §4.3: the setup steps the parent ticked (`{"ticked": [keys]}`); `null` = none ticked (a fail-safe:
      * the steps stay listed). Pinned by `setup_steps.json`'s `policy` (`SetupStepsTest`). */
     val setup: com.kidslauncher.mdm.setup.SetupPolicy? = null,

@@ -350,6 +350,7 @@ async fn policy_json_keys_snapshot() {
             "lock_media_apps",
             "lock_task_features",
             "login_browser",
+            "map_links",
             "mobile_settings_locked",
             "music",
             "notification_auto_cancel",
@@ -392,6 +393,7 @@ async fn policy_json_keys_snapshot() {
         "lock_glance",
         "lock_media_apps",
         "lock_task_features",
+        "map_links",
         "music",
         "notification_auto_cancel",
         "packages_to_uninstall",
@@ -435,6 +437,9 @@ async fn policy_json_keys_snapshot() {
         .collect();
     up_keys.sort_unstable();
     assert_eq!(up_keys, ["on", "origin", "refresh", "regs", "stopped"]);
+    // Design 110 §7.5: `map_links`, `{on}`, off for a new phone; every row in `integrations::map_links::tests`
+    // (`map_links/contract.json`'s `policy`).
+    assert_eq!(object["map_links"], serde_json::json!({"on": false}));
 
     // The launcher's CallPolicy DTO: every key present and non-null, also when unmanaged.
     let call_policy = object["call_policy"].as_object().unwrap();
