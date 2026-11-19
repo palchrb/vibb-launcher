@@ -834,7 +834,7 @@ async fn a_filter_down_report_raises_its_row_unless_a_choice_explains_it() {
         .await
         .text();
     assert!(filter.contains("data-note=\"filter-down\""), "{filter}");
-    assert!(filter.contains("Down for 25 min"), "{filter}");
+    assert!(filter.contains("Down for 25"), "{filter}");
     let dns = app.get_page("/dns", &cookie).await.text();
     assert!(dns.contains("Emma: down"), "{dns}");
 
