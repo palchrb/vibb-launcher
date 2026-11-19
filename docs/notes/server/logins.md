@@ -45,7 +45,7 @@ The launcher's side is `docs/notes/launcher/logins.md`.
   its reason), "Sperret av nettfilteret" for a listed site the phone's filter blocks (`device_api::filter_blocks`, the
   delivered lists walked by suffix), the note about other sites and web-page apps, and design 119's "Stoppet nylig"
   while the role is on: the phone's stopped hosts newest first, each once, none older than 7 days or already taken by a
-  listed site, each with "Legg til" (the own-site save, `section=site`, back on `#logins-sites`), its ⓘ "Legg til bare
+  listed whole-host site (code QA L9: an entry with a path or a port takes no host, so "Legg til" can widen it), each with "Legg til" (the own-site save, `section=site`, back on `#logins-sites`), its ⓘ "Legg til bare
   innloggingssider." - a choice, never a warning; nothing while empty. Every save is a `303` back to its
   group's anchor (no jump; `scroll-restore.js`), server-rendered, no new client JS (Safari 14).
 - **Advanced › `#wifi-signin`**: "Krev foreldrekode for Wi-Fi-innlogging" (on by default), "Gjelder også å åpne

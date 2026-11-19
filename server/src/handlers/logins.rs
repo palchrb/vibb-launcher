@@ -266,13 +266,17 @@ fn apps_state(report: Option<&BrowserReport>) -> Option<(&'static str, bool)> {
 }
 
 /// Design 119 §7: "Stoppet nylig" - the report's stopped hosts of the last 7 days, newest first, each once, leaving out
-/// one a listed site already takes (its host, or a parent of it unless the entry is a dot entry).
+/// one a listed site already takes (its host, or a parent of it unless the entry is a dot entry). Only a whole-host entry
+/// takes it (code QA L9): one with a path or a port leaves the row, so "Legg til" can widen it to the host.
 fn stopped_hosts(report: Option<&BrowserReport>, listed: &[String], now_ms: i64) -> Vec<String> {
     let Some(report) = report else {
         return Vec::new();
     };
     let taken = |host: &str| {
         listed.iter().any(|entry| {
+            if entry.contains(['/', ':']) {
+                return false;
+            }
             let exact = entry.starts_with('.');
             let site = entry_host(entry);
             host == site || (!exact && host.ends_with(&format!(".{site}")))

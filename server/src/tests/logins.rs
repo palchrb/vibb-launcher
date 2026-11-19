@@ -580,6 +580,20 @@ async fn the_stopped_hosts_and_the_browser_role() {
     assert!(html.contains("data-site=\"school.example\""));
     assert!(!html.contains("data-stopped=\"school.example\""));
     assert!(html.contains("data-stopped=\"video.example\""));
+    // Code QA L9: an entry with a path takes no host - the row stays, so Add can widen it.
+    save(
+        &app,
+        &cookie,
+        id,
+        &[
+            ("section", "site"),
+            ("action", "add"),
+            ("entry", "video.example/login"),
+        ],
+    )
+    .await;
+    let html = app.get_page(&page, &cookie).await.text();
+    assert!(html.contains("data-stopped=\"video.example\""));
 
     // The role off: no list (an own site would do nothing).
     save(&app, &cookie, id, &[("section", "apps")]).await;
