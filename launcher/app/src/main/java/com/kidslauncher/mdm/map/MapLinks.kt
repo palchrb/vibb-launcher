@@ -130,11 +130,14 @@ object MapLinks {
 
     private fun stToUv(s: Double) = if (s >= 0.5) (4 * s * s - 1) / 3 else (1 - 4 * (1 - s) * (1 - s)) / 3
 
-    /** The centre of the level-8 S2 cell (about 40 km) a place id's first half names: offline, never the place
-     * itself - only where Organic Maps' search starts. Null for a `0x0:` id (a `cid`'s) or an unreadable one. */
+    /** The centre of the level-10 S2 cell (about 10 km) a place id's first half names: offline, never the place
+     * itself - only where Organic Maps' search starts. Null for a `0x0:` id (a `cid`'s) or an unreadable one. Level 10
+     * keeps 23 bits, the finest every measured place allows: their points share 24 (RAI, Bucharest), 31 (Artbox), 33
+     * and 42 leading bits with the id (design 110 §4.2), so level 11's 25 or level 12's 27 would put RAI's centre in
+     * another cell. Artbox's centre is 2 km from it (level 8's, 59.947246,10.889123 over Groruddalen, was 12 km off). */
     fun cellCentre(ftid: String): Pair<Double, Double>? {
         val first = ftid.substringBefore(':').removePrefix("0x").toULongOrNull(16)?.takeIf { it != 0uL } ?: return null
-        val level = 8
+        val level = 10
         val keepBits = 3 + 2 * level
         val id = (first shr (64 - keepBits) shl (64 - keepBits)) or (1uL shl (64 - keepBits - 1))
         val face = (id shr 61).toInt()

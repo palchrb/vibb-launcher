@@ -98,12 +98,21 @@ class MapLinksTest {
     @Test
     fun `the fallback's centre is the place id's coarse cell, offline`() {
         val (lat, lon) = MapLinks.cellCentre("0x46416db4338a09ff:0x7d7d788043d1f40e")!!
-        assertEquals(59.94724649042136, lat, 1e-6)
-        assertEquals(10.889122576340721, lon, 1e-6)
+        assertEquals(59.920121, lat, 1e-6)
+        assertEquals(10.650758, lon, 1e-6)
         assertEquals(null, MapLinks.cellCentre("0x0:0x7d"))
-        // Steak no Don's cell centre is about 14 km from it (level 8, ~40 km cells).
+        // Level 10 (~10 km cells): Artbox at Skøyen within about 2 km (level 8 put it 12 km off, over Groruddalen),
+        // Steak no Don within 1 km.
+        assertTrue(km(lat, lon, 59.9223615, 10.6868892) < 2.1)
         val (sLat, sLon) = MapLinks.cellCentre("0x3551565394d96b57:0x1c9bdbc5990908bf")!!
-        assertTrue(Math.abs(sLat - 34.5945) < 0.3 && Math.abs(sLon - 133.7583) < 0.3)
+        assertTrue(km(sLat, sLon, 34.5945482, 133.7583428) < 1.0)
+    }
+
+    private fun km(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+        val dLat = Math.toRadians(lat2 - lat1)
+        val dLon = Math.toRadians(lon2 - lon1)
+        val h = Math.sin(dLat / 2).let { it * it } + Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2)) * Math.sin(dLon / 2).let { it * it }
+        return 6371.0 * 2 * Math.asin(Math.sqrt(h))
     }
 
     @Test

@@ -157,8 +157,10 @@ The fallback is used when no point is found: no feature id, a failed lookup or c
   the kid taps the hit.
 - **The centre**, in order:
   - the link's `sll`/`center`/`ll`-beside-text;
-  - else the feature id's coarse S2 cell centre, kept to its first 20 bits, about 40 km. This is offline: measured
-    against four places with known points (24, 31, 33 and 42 shared bits; §4.2).
+  - else the feature id's coarse S2 cell centre: level 10, its first 23 bits, about 10 km. This is offline: measured
+    against four places with known points (24, 31, 33 and 42 shared bits; §4.2), so 23 is the finest level all four
+    allow. (Level 8, about 40 km, until 2026-11-19: Artbox's centre was 12 km off, over Groruddalen; level 10 puts it
+    2 km from the place.)
   - else none.
 - **The query candidates** (`map_link_rules.json`, `query_parts`):
   - (a) the whole text;
