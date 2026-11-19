@@ -77,10 +77,18 @@ object LoginWindow {
     /**
      * §4.4 step 1, on the gate's worker: the record written (a second link keeps the first's opening) and Chrome unhidden,
      * under the window's lock. Returns whether Chrome is out; a refused unhide removes the record again.
+     *
+     * Code QA L2: [stillAllowed] - the gate's conditions read again under the lock (the role ready, no lock, no pause, no
+     * update window): an apply between the gate's decision and here may have turned the role off, and its
+     * [duringApply] saw no record then. Cheap reads only: the lock is held for them.
      */
-    fun open(context: Context, session: Boolean): Boolean {
+    fun open(context: Context, session: Boolean, stillAllowed: () -> Boolean): Boolean {
         appContext = context.applicationContext
         val opened = synchronized(lock) {
+            if (!stillAllowed()) {
+                Log.i(LOG_TAG, "No login window: its conditions changed before it opened")
+                return@synchronized false
+            }
             val now = SystemClock.elapsedRealtime()
             val record = windowOpenRecord(readRecord(context), now, System.currentTimeMillis(), BootClock.bootCount(), processToken(), session)
             prefs(context).edit().putString(KEY_RECORD, ServerJson.encodeToString(WindowRecord.serializer(), record)).commit()
@@ -130,13 +138,16 @@ object LoginWindow {
                 graceSince = result.graceSince
                 null
             } else {
-                // Delete the record, then hide Chrome - its process, its tab and any full Chrome task end.
+                // Delete the record, then hide Chrome - its process, its tab and any full Chrome task end. Not in a pause or
+                // the override (code QA M2): every app is unhidden then, Chrome too; the pause's end hides it.
                 prefs(context).edit().remove(KEY_RECORD).commit()
                 graceSince = null
-                try {
-                    dpm(context).setApplicationHidden(admin(context), CHROME_PACKAGE, true)
-                } catch (e: Exception) {
-                    Log.w(LOG_TAG, "Couldn't hide Chrome at the window's end: ${e.javaClass.simpleName}")
+                if (!liftedNow()) {
+                    try {
+                        dpm(context).setApplicationHidden(admin(context), CHROME_PACKAGE, true)
+                    } catch (e: Exception) {
+                        Log.w(LOG_TAG, "Couldn't hide Chrome at the window's end: ${e.javaClass.simpleName}")
+                    }
                 }
                 record to end
             }
@@ -155,10 +166,17 @@ object LoginWindow {
         com.kidslauncher.mdm.push.SyncRunner.request(context, "login_window")
     }
 
+    /** A pause or the parent code's override is on: every restriction lifted, Chrome unhidden with every app. */
+    private fun liftedNow(): Boolean = try {
+        com.kidslauncher.mdm.server.RestrictionsPause.isActive() || com.kidslauncher.mdm.server.OfflineOverride.isActive()
+    } catch (e: Exception) {
+        false
+    }
+
     /**
      * From `AppEnforcer.applyHeld`, on its thread: a window that is over (`stale` after a restart or a reboot,
      * `timeout`, `left`) ends - with Chrome hidden - and one whose rule no longer holds ends `rule` ([ruleEnds]: a time
-     * rule, the role off or not ready, the gate off, a pause's end).
+     * rule, the role off or not ready, the gate off, Play's update window, a pause's start or end).
      */
     fun duringApply(context: Context, ruleEnds: Boolean) {
         appContext = context.applicationContext
@@ -167,16 +185,18 @@ object LoginWindow {
 
     /**
      * The apply's Chrome hide step for the login role (§4.2, M3): under the window's lock, Chrome hidden unless a window
-     * is open now - whatever the plan read a moment earlier. Returns `setApplicationHidden`'s answer.
+     * is open now - whatever the plan read a moment earlier - or Play's update window is in force ([updateWindow], code
+     * QA M1). Returns `setApplicationHidden`'s answer.
      */
-    fun chromeStep(context: Context, dpm: DevicePolicyManager, admin: ComponentName): Boolean = synchronized(lock) {
-        dpm.setApplicationHidden(admin, CHROME_PACKAGE, !openLocked(context))
+    fun chromeStep(context: Context, dpm: DevicePolicyManager, admin: ComponentName, updateWindow: Boolean): Boolean = synchronized(lock) {
+        dpm.setApplicationHidden(admin, CHROME_PACKAGE, loginChromeHidden(true, openLocked(context), updateWindow))
     }
 
     /** [enforceOnNewPackage][com.kidslauncher.mdm.server.AppEnforcer.enforceOnNewPackage]'s check: the role's Chrome
-     * reappeared (the window's own unhide) - hidden again under the lock unless a window is open. */
-    fun chromeAppeared(context: Context, dpm: DevicePolicyManager, admin: ComponentName) = synchronized(lock) {
-        if (!openLocked(context)) {
+     * reappeared (the window's own unhide, the update window's, a Play update) - hidden again under the lock unless a
+     * window is open or the update window is in force; also the screen-on's hide after the update window (M1). */
+    fun chromeAppeared(context: Context, dpm: DevicePolicyManager, admin: ComponentName, updateWindow: Boolean) = synchronized(lock) {
+        if (loginChromeHidden(true, openLocked(context), updateWindow)) {
             try {
                 dpm.setApplicationHidden(admin, CHROME_PACKAGE, true)
             } catch (e: Exception) {

@@ -1,5 +1,6 @@
 package com.kidslauncher.mdm.logins
 
+import com.kidslauncher.mdm.play.PlayState
 import com.kidslauncher.mdm.server.ServerJson
 import com.kidslauncher.mdm.server.computeEnforcementPlan
 import kotlinx.serialization.json.JsonElement
@@ -54,8 +55,9 @@ class LoginBrowserTest {
         val controllable = listOf("me.vibb.launcher", CHROME_PACKAGE, "org.example.game")
         for (row in rows("plans")) {
             val plan = computeEnforcementPlan(
-                strings(row["allowlist"]), true, 0, false, controllable, "me.vibb.launcher", null,
+                strings(row["allowlist"]), true, 0, row["override"]?.jsonPrimitive?.boolean == true, controllable, "me.vibb.launcher", null,
                 scheduleLocked = row.getValue("locked").jsonPrimitive.boolean,
+                playState = PlayState(updateWindow = row["update_window"]?.jsonPrimitive?.boolean == true),
                 loginBrowser = CHROME_PACKAGE.takeIf { row.getValue("role_ready").jsonPrimitive.boolean },
                 loginWindowOpen = row.getValue("window_open").jsonPrimitive.boolean,
             )
@@ -113,6 +115,7 @@ class LoginBrowserTest {
                     loginMatch = row.bool("login_match"),
                     target = str(row["target"]),
                     freeBrowser = str(row["free_browser"]),
+                    updateWindow = row["update_window"]?.jsonPrimitive?.boolean == true,
                 ),
             )
             val (name, pkg, refused) = when (step) {
@@ -200,10 +203,36 @@ class LoginBrowserTest {
         val src = listOf("src/main/java", "app/src/main/java").map { java.io.File(it) }.first { it.isDirectory }
         val enforcer = java.io.File(src, "com/kidslauncher/mdm/server/AppEnforcer.kt").readText()
         val apply = enforcer.substringAfter("private fun applyHeld(").substringBefore("\n    }\n")
-        val hide = apply.indexOf("LoginWindow.chromeStep(context, dpm, admin)")
+        val hide = apply.indexOf("LoginWindow.chromeStep(context, dpm, admin, playState.updateWindow)")
         val gate = apply.indexOf("LinkGateRuntime.afterLoop(")
         assertTrue(hide in 0 until gate)
         assertTrue(apply.indexOf("LoginWindow.duringApply(") in 0 until apply.indexOf("loginWindowOpen = loginWindowOpen"))
+    }
+
+    /** Code QA M1 and M2: when the apply ends a window, and Play's update window - Chrome out for its update while the
+     * gate keeps Android's browser role, so no link reaches Chrome. */
+    @Test
+    fun `the update window unhides Chrome and the gate keeps the role, a pause's start ends a window`() {
+        fun ends(locked: Boolean = false, ready: Boolean = true, gate: Boolean = true, update: Boolean = false, now: Boolean = false, before: Boolean? = false) =
+            loginWindowRuleEnds(locked, ready, gate, update, now, before)
+        assertFalse(ends())
+        assertFalse(ends(before = null))
+        assertTrue(ends(now = true, before = false))
+        assertTrue(ends(now = true, before = null))
+        assertTrue(ends(now = false, before = true))
+        assertFalse(ends(now = true, before = true))
+        assertTrue(ends(update = true))
+        assertTrue(ends(locked = true) && ends(ready = false) && ends(gate = false))
+        // The update window: Chrome unhidden with no window open; the gate stays on (Chrome isn't an allowed app), no
+        // nudge with Chrome visible (the role service's hash unchanged: the role stays Vibb One's), and the gate opens no
+        // window and hands no link to Chrome.
+        assertFalse(loginChromeHidden(roleReady = true, windowOpen = false, updateWindow = true))
+        assertTrue(loginChromeHidden(roleReady = false, windowOpen = false, updateWindow = true))
+        assertTrue(linkGateOn(managed = true, freeBrowsers = listOf(CHROME_PACKAGE).filter { it in setOf("org.example.game") }))
+        assertFalse(roleRepairDue(true, false, chromeVisible = true, roleHeld = false, lastNudgeMs = null, nowMs = 0L, pauseEnded = true))
+        val login = GateInput(false, false, null, false, true, true, false, true, null, null, updateWindow = true)
+        assertEquals(GateStep.Nothing, linkGatePlan(login))
+        assertEquals(GateStep.Login, linkGatePlan(login.copy(updateWindow = false)))
     }
 
     @Test

@@ -285,6 +285,12 @@ object AppEnforcer {
     var lastEnforcedOverride: Boolean? = null
         private set
 
+    /** Design 119 code QA M1: the last completed [apply] left the login role's Chrome unhidden for Play's update window -
+     * the screen-on hides it at once ([PlayRuntime.suspendStoreAtScreenOn]), before the re-check's apply. */
+    @Volatile
+    var lastChromeUpdateUnhidden: Boolean = false
+        private set
+
     private val appliedListeners = java.util.concurrent.CopyOnWriteArraySet<() -> Unit>()
     private val mainHandler by lazy { android.os.Handler(android.os.Looper.getMainLooper()) }
 
@@ -491,10 +497,14 @@ object AppEnforcer {
         val loginRole = com.kidslauncher.mdm.logins.loginRoleOf(policy?.loginBrowser, allowlist)
         val browser = BrowserConfig.apply(context, dpm, admin, vpnFilterEnabled, loginRole, lockdownLifted = overrideActive)
         // Design 119 §4.4: a window that is over ends here (stale, timeout, left), and one whose rule no longer holds -
-        // a time rule, the role off or not ready, the gate off, a pause's end - ends `rule`; then the plan reads it.
+        // a time rule, the role off or not ready, the gate off, Play's update window, a pause's start (code QA M2: its
+        // hide before the loop unhides every app) or end - ends `rule`; then the plan reads it.
         com.kidslauncher.mdm.logins.LoginWindow.duringApply(
             context,
-            ruleEnds = scheduleLocked || !browser.ready || !gateOn || (lastEnforcedOverride == true && !overrideActive),
+            ruleEnds = com.kidslauncher.mdm.logins.loginWindowRuleEnds(
+                timeLocked = scheduleLocked, roleReady = browser.ready, gateOn = gateOn, updateWindow = playState.updateWindow,
+                overrideNow = overrideActive, overrideBefore = lastEnforcedOverride,
+            ),
         )
         val loginWindowOpen = com.kidslauncher.mdm.logins.LoginWindow.isOpen(context)
         // The role's Chrome (the plan's `roleApp`): its hide step re-reads the window under the window's lock (M3).
@@ -614,7 +624,7 @@ object AppEnforcer {
                 }
                 if (hideCall) {
                     val hiddenOk = if (roleChrome && packageName == com.kidslauncher.mdm.logins.CHROME_PACKAGE) {
-                        com.kidslauncher.mdm.logins.LoginWindow.chromeStep(context, dpm, admin)
+                        com.kidslauncher.mdm.logins.LoginWindow.chromeStep(context, dpm, admin, playState.updateWindow)
                     } else {
                         dpm.setApplicationHidden(admin, packageName, shouldBeHidden)
                     }
@@ -643,6 +653,7 @@ object AppEnforcer {
         lastEnforcedLockKey = lock.key()
         lastEnforcedPlayState = playState
         lastEnforcedOverride = overrideActive
+        lastChromeUpdateUnhidden = roleChrome && playState.updateWindow
         if (appliedListeners.isNotEmpty()) mainHandler.post { appliedListeners.forEach { it() } }
         // Design 24b §1.5, after hiding (a hidden package's services leave the enabled lists): the
         // accessibility list while apps are managed (in windows too: QA 24b High 1), the keyboard
@@ -1691,7 +1702,10 @@ object AppEnforcer {
         )
         // Design 119 §4.2: outside a login window that Chrome is hidden again here, under the window's lock (M3).
         if (packageName == com.kidslauncher.mdm.logins.CHROME_PACKAGE && BrowserConfig.roleReady(context, loginRole)) {
-            com.kidslauncher.mdm.logins.LoginWindow.chromeAppeared(context, dpm, ComponentName(context, MdmDeviceAdminReceiver::class.java))
+            com.kidslauncher.mdm.logins.LoginWindow.chromeAppeared(
+                context, dpm, ComponentName(context, MdmDeviceAdminReceiver::class.java),
+                updateWindow = PlayRuntime.updateWindowActive(context),
+            )
             return false
         }
         // Hidden only if not allowed at all - the schedule lock alone just suspends.

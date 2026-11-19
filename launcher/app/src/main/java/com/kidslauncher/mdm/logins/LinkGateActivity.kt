@@ -22,6 +22,7 @@ import androidx.browser.customtabs.CustomTabsClient
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.browser.customtabs.CustomTabsServiceConnection
 import androidx.browser.customtabs.CustomTabsSession
+import androidx.browser.customtabs.ExperimentalOpenInBrowser
 import androidx.core.content.ContextCompat
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.map.MapLinkActivity
@@ -74,8 +75,13 @@ class LinkGateActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // A restore after a process death: that window ended with the process (L5).
-        if (savedInstanceState != null) return finishGate()
+        // A restore: after a process death that window ended with the process (L5, `stale`); an anchor recreated by a
+        // configuration change it doesn't handle (a SIM swap, say) comes back only once its tab is gone - the tab
+        // closed (code QA L7), so the window ends now, not by the grace or the ceiling.
+        if (savedInstanceState != null) {
+            if (savedInstanceState.getBoolean(STATE_ANCHOR)) LoginWindow.event(applicationContext, WindowEvent.ANCHOR_RESUMED)
+            return finishGate()
+        }
         val link = intent?.data?.toString()?.takeIf { it.length <= MAX_LINK }
         val scheme = intent?.data?.scheme?.lowercase()
         if (link == null || (scheme != "http" && scheme != "https")) return finishGate()
@@ -135,7 +141,8 @@ class LinkGateActivity : AppCompatActivity() {
 
     /** On the gate's worker: the window opened (the record, Chrome unhidden), Vibb's session within 2 s, then the tab. */
     private fun openWindow(app: Context, link: String) {
-        if (!LoginWindow.open(app, session = true)) {
+        val role = LinkGateRuntime.loginRole()
+        if (!LoginWindow.open(app, session = true) { LinkGateRuntime.windowStillAllowed(app, role) }) {
             main.post { if (!isFinishing) note() }
             return
         }
@@ -184,19 +191,22 @@ class LinkGateActivity : AppCompatActivity() {
         }
     }
 
-    /** §4.4 step 3: Chrome's tab, by package, with Vibb's session when there is one, the extras that hide download and
-     * bookmark, and only the caller's safe extras (L8) and Auth Tab's keys (§4.5). No `NEW_TASK`. */
+    /** §4.4 step 3: Chrome's tab, by package, with Vibb's session when there is one, the extras that hide download,
+     * bookmark and "Open in Chrome browser" (code QA L5, where Chrome honours it), and only the caller's safe extras (L8)
+     * and Auth Tab's keys (§4.5). No `NEW_TASK`. */
+    @androidx.annotation.OptIn(markerClass = [ExperimentalOpenInBrowser::class])
     private fun startTab(link: String, session: CustomTabsSession?) {
         val builder = if (session != null) CustomTabsIntent.Builder(session) else CustomTabsIntent.Builder()
         builder.setShareState(CustomTabsIntent.SHARE_STATE_OFF)
             .setBookmarksButtonEnabled(false)
             .setDownloadButtonEnabled(false)
-        val scheme = intent?.getIntExtra(CustomTabsIntent.EXTRA_COLOR_SCHEME, -1) ?: -1
+            .setOpenInBrowserButtonState(CustomTabsIntent.OPEN_IN_BROWSER_STATE_OFF)
+        val scheme = callerExtra { intent?.getIntExtra(CustomTabsIntent.EXTRA_COLOR_SCHEME, -1) } ?: -1
         if (scheme in CustomTabsIntent.COLOR_SCHEME_SYSTEM..CustomTabsIntent.COLOR_SCHEME_DARK) builder.setColorScheme(scheme)
         val tab = builder.build().intent.setPackage(CHROME_PACKAGE).setData(Uri.parse(link))
         tab.flags = tab.flags and Intent.FLAG_ACTIVITY_NEW_TASK.inv()
-        copyHeaders(tab)
-        copyAuthTab(tab)
+        callerExtra { copyHeaders(tab) }
+        callerExtra { copyAuthTab(tab) }
         anchor = true
         LoginWindow.anchorStarted(this)
         watchScreen()
@@ -220,10 +230,22 @@ class LinkGateActivity : AppCompatActivity() {
         note()
     }
 
-    @Suppress("DEPRECATION") // Bundle.get: header values are plain strings
+    /**
+     * Code QA L3: the caller's extras are untrusted - a Parcelable class Vibb doesn't have throws
+     * (`BadParcelableException`) on the main thread while they are read. Such an extra is left out; the tab opens
+     * without it.
+     */
+    private inline fun <T> callerExtra(read: () -> T): T? = try {
+        read()
+    } catch (e: RuntimeException) {
+        Log.w(TAG, "Left out a caller's extra: ${e.javaClass.simpleName}")
+        null
+    }
+
     private fun copyHeaders(tab: Intent) {
         val given = intent?.getBundleExtra(Browser.EXTRA_HEADERS) ?: return
-        val headers = given.keySet().associateWith { given.get(it)?.toString().orEmpty() }
+        // getString: null for a value that isn't a string, never another type read.
+        val headers = given.keySet().mapNotNull { key -> given.getString(key)?.let { key to it } }.toMap()
         val safe = safeHeaders(headers)
         if (safe.isNotEmpty()) tab.putExtra(Browser.EXTRA_HEADERS, Bundle().apply { safe.forEach { (k, v) -> putString(k, v) } })
     }
@@ -232,10 +254,11 @@ class LinkGateActivity : AppCompatActivity() {
     private fun copyAuthTab(tab: Intent) {
         val given = intent ?: return
         if (!given.getBooleanExtra(AuthTabIntent.EXTRA_LAUNCH_AUTH_TAB, false)) return
+        // Every key read before any is written: an extra that throws leaves the tab a plain one, never half an Auth Tab.
+        val keys = listOf(AuthTabIntent.EXTRA_REDIRECT_SCHEME, AuthTabIntent.EXTRA_HTTPS_REDIRECT_HOST, AuthTabIntent.EXTRA_HTTPS_REDIRECT_PATH)
+            .mapNotNull { key -> given.getStringExtra(key)?.let { key to it } }
         tab.putExtra(AuthTabIntent.EXTRA_LAUNCH_AUTH_TAB, true)
-        for (key in listOf(AuthTabIntent.EXTRA_REDIRECT_SCHEME, AuthTabIntent.EXTRA_HTTPS_REDIRECT_HOST, AuthTabIntent.EXTRA_HTTPS_REDIRECT_PATH)) {
-            given.getStringExtra(key)?.let { tab.putExtra(key, it) }
-        }
+        keys.forEach { (key, value) -> tab.putExtra(key, value) }
     }
 
     /** The screen off with a secure lock ends the window (`locked`). */
@@ -250,6 +273,11 @@ class LinkGateActivity : AppCompatActivity() {
         }
         ContextCompat.registerReceiver(this, receiver, IntentFilter(Intent.ACTION_SCREEN_OFF), ContextCompat.RECEIVER_NOT_EXPORTED)
         screenOff = receiver
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putBoolean(STATE_ANCHOR, anchor && !ended)
     }
 
     override fun onPause() {
@@ -311,5 +339,6 @@ class LinkGateActivity : AppCompatActivity() {
         const val MAX_LINK = 4096
         const val SESSION_WAIT_MS = 2_000L
         const val TAB_WAIT_MS = 8_000L
+        const val STATE_ANCHOR = "anchor"
     }
 }

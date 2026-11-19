@@ -190,7 +190,8 @@ object BrowserConfig {
             reason = reason,
             clearedMs = prefs.getLong(KEY_CLEARED_MS, 0L).takeIf { it > 0L },
             browserRole = browserRole,
-            refused = com.kidslauncher.mdm.logins.LoginWindow.refused(context),
+            // Code QA L8: the stopped hosts only while the role is on - the PWA shows them only then.
+            refused = if (stored == "on") com.kidslauncher.mdm.logins.LoginWindow.refused(context) else emptyList(),
             lastWindow = com.kidslauncher.mdm.logins.LoginWindow.lastWindow(context),
         )
     }

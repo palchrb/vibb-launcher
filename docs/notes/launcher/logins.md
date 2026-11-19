@@ -109,7 +109,10 @@ Part B's link gate and login window are design 119 (`docs/design/119-chrome-only
   mismatch or Chrome absent: `failed` (`write`, `readback`) or `absent`, Chrome hidden and unpinned.
 - **Enforcement** (`computeEnforcementPlan`'s `loginBrowser`, set only when ready, and design 119's `loginWindowOpen`;
   the `plans` rows and two `EnforcementPlanTest` rows): **hidden outside a login window** and unhidden only while one
-  is open (§4.2), never suspended for the role (a window's unhide alone brings it out), pinned in the kiosk while ready
+  is open (§4.2) - or while Play's nightly update window is in force (code QA M1: `loginChromeHidden`'s `updateWindow`;
+  a hidden package is "not installed" to Play, which would never update it; the screen is off then, no window opens,
+  the gate keeps `ROLE_BROWSER`, and the screen-on hides Chrome at once in `PlayRuntime.suspendStoreAtScreenOn` before
+  the re-check's apply), never suspended for the role (a window's unhide alone brings it out), pinned in the kiosk while ready
   (a Custom Tab runs in the calling app's task, M12), suspended by a time-rule lock like any app and never pinned then
   (D7), never in the accessibility or input-method lists, never among the lock's usable apps. "Ready" means "a window
   may open". The loop's Chrome step for the role (`LoginWindow.chromeStep`) re-reads the window under its own lock.
@@ -162,34 +165,44 @@ when the login is done (the user, 2026-11-19).
 - **The PPA (L4)**: `enforceLinkGatePin`, the seventh, last in `HomePin`'s re-seat and after the map handler's in the
   apply (`PlayInvariantsTest`). It matters only in a pause with no role holder.
 - **The decision** (`LinkGateRuntime.decide`, pure `linkGatePlan`, the `gate` rows), on a worker: the keyguard, the PIN
-  lock or a time rule - nothing; a pause or the override - the link to the first unsuspended browser; a map link with
+  lock, a time rule or Play's update window - nothing; a pause or the override - the link to the first unsuspended browser; a map link with
   the switch on - `MapLinkActivity`; a login link (`loginLinkMatches`, Chrome's `URLAllowlist` reading, the
-  `link_match` rows) - a window, only with the role ready and `ROLE_BROWSER` Vibb One's (else the note: fail closed,
+  `link_match` rows; the URL split by hand as Chrome reads it, `webUrlOf` - code QA L4: `java.net.URI` refused a raw
+  `|` or space, and a backslash ends the authority as in Chrome) - a window, only with the role ready and `ROLE_BROWSER` Vibb One's (else the note: fail closed,
   `failed`/`role`), never from Meldinger (D3); an allowed app that declares the link (`linkTargetOf` over
   `LinkLookup`'s per-package lookup, H1: `setPackage` skips Android's web-link filter, so an unverified Organic Maps is
   found; never Vibb One, Play services or a full browser; the `target` rows); else the note "Denne lenken kan ikke
-  åpnes her." and the host into `refused`. Every start is a fresh intent; copied are only CORS-safelisted
-  `Browser.EXTRA_HEADERS`, the colour scheme (L8) and Auth Tab's own keys (§4.5).
+  åpnes her." and, while the role is ready, the host into `refused` (code QA L8: with the role off nothing is kept or
+  reported). Every start is a fresh intent; copied are only CORS-safelisted `Browser.EXTRA_HEADERS` (read with
+  `getString`), the colour scheme (L8) and Auth Tab's own keys (§4.5) - each read in a `try` (code QA L3: an extra of a
+  class Vibb doesn't have throws on the main thread; it is left out). The tab sets "Open in Chrome browser" off
+  (`setOpenInBrowserButtonState`, code QA L5) where Chrome honours it.
 - **The window** (`LoginWindow`, pure `loginWindowStep`/`windowOpenRecord`, the `window` and `window_open` rows): its own
-  lock (M3) across "write the record, unhide Chrome" and "delete the record, hide Chrome"; Vibb's own Custom Tabs
+  lock (M3) across "write the record, unhide Chrome" and "delete the record, hide Chrome"; the opening reads the gate's
+  conditions again under it (code QA L2: `windowStillAllowed`); the end's hide is skipped in a pause or the override
+  (code QA M2: every app is out then); Vibb's own Custom Tabs
   session (androidx.browser 1.9.0, bound within 2 s, else none and `session: false`, H2); the gate stays under the tab
   as its invisible anchor. Ends: the anchor destroyed by the system (`done`), resumed after the tab (`closed`), the
   relayed result (`result`, Activity Result API), `TAB_HIDDEN`/`onMinimized` past a minute's grace that
   `TAB_SHOWN`/`onUnminimized` cancels (`left`, M4), 5 minutes (`timeout`; a handler timer and an inexact elapsed alarm,
-  `LoginWindowReceiver`), the screen off with a secure lock (`locked`), the apply (`rule`: a time rule, the role off or
-  not ready, the gate off, a pause's end; `tightened`: `BrowserConfig`'s tightening, which ends the window before it
+  `LoginWindowReceiver`), the screen off with a secure lock (`locked`), the apply (`rule`, `loginWindowRuleEnds`: a time rule, the
+  role off or not ready, the gate off, Play's update window, a pause's or the override's start (code QA M2) or end; `tightened`: `BrowserConfig`'s tightening, which ends the window before it
   hides Chrome), a record of another boot or main process (`stale`, at the process start and every apply). A second
-  link keeps the first window's ceiling. `LOGIN_WINDOW_MAX_MS` and `LOGIN_TAB_GRACE_MS` are the launcher's alone.
+  link keeps the first window's ceiling. An anchor recreated by a configuration change it doesn't handle ends the window
+  `closed` (code QA L7: it saves `anchor` and comes back only once its tab is gone). `LOGIN_WINDOW_MAX_MS` and `LOGIN_TAB_GRACE_MS` are the launcher's alone.
 - **Meldinger** runs the same plan with `fromMessages` (never a window); its allowed set (`messageLinkAllowed`) is the
   allowlist and Vibb One, never the login browser.
 - **The setup step `vibb_browser`** ("Nettleser", design 114's table, `when: link_gate`): `RoleManager.
   createRequestRoleIntent(ROLE_BROWSER)` in a pause or the setup hold, the restriction lifted while its dialog is open
   (`BrowserRoleStep`, 5 minutes at most). The phone's reading and the server's are `browser_role`.
-- **Residue (§4.8)**: during a window another app can start Chrome by name, and "Open in Chrome browser" opens full
-  Chrome - both under `URLBlocklist *`, both ending with the window. An app that accepts only Chrome by signature logs in
-  during a pause (ASK 2).
+- **Residue (§4.8)**: during a window another app can start Chrome by name, and "Open in Chrome browser" (where Chrome
+  ignores the off state) opens full Chrome - both under `URLBlocklist *`, both ending with the window. An app that
+  accepts only Chrome by signature logs in during a pause (ASK 2), and so does one using Auth Tab with an https redirect
+  (code QA L6: Chrome checks the redirect host's Digital Asset Links against the launching package, Vibb One). Chrome
+  out in the nightly update window (M1) is reachable by no one: the screen is off and the gate holds the browser role.
 - **Tests**: `LoginBrowserTest` (`gate`, `link_match`, `target`, `window`, `window_open`, `plans`, `order`, the
   hide-before-enable source order), `MessageLinksTest`, `LoginWindowsTest`, `SetupStepsTest`, `PlayInvariantsTest`,
   `KidScreensEscapeTest` (guards the gate and its plan), `EnforcementPlanTest`.
-- **Checks owed**: design 119 §9's measurements M1-M7 and §11's emulator gate on 14 and 16 (the design note's status).
+- **Checks owed**: design 119 §9's measurements M1-M7 and §11's emulator gate on 14 and 16 (the design note's status),
+  and code QA M1's: Chrome's `version_name` moves after a night with the role on.
 

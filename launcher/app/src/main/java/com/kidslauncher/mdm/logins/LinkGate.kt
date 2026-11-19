@@ -23,22 +23,66 @@ const val ROLE_NUDGE_EVERY_MS = 3_600_000L
 const val REFUSED_MAX = 10
 const val REFUSED_MAX_AGE_MS = 7L * 24 * 3_600_000
 
+/** A web URL's parts as Chrome reads them (code QA L4: split by hand, since `java.net.URI` refuses what Chrome
+ * accepts - a raw `|`, space or `{` in a query). The host lower case without a trailing dot, the port given or the
+ * scheme's default, the raw path (`/` for none). */
+data class WebUrl(val scheme: String, val host: String, val port: Int, val path: String)
+
+/**
+ * [url] as Chrome's URL parser (WHATWG, a special scheme) reads its scheme, host, port and path - or `null` for anything
+ * else: tabs and line breaks dropped and the ends trimmed, then `http` or `https` and `//`; the authority ends at the
+ * first `/`, `\`, `?` or `#` (a backslash is a slash to Chrome, so `https://evil.example\@idp.example/` is
+ * `evil.example`); the user info up to the last `@` is dropped; a host of letters, digits, dots and hyphens only (or a
+ * bracketed IPv6) - anything Chrome would decode first (`%2e`) is refused, never matched (fail closed); a port of
+ * digits up to 65535. The path keeps its raw form, a backslash read as `/`.
+ */
+fun webUrlOf(url: String): WebUrl? {
+    val s = url.filter { it != '\t' && it != '\n' && it != '\r' }.trim { it <= ' ' }
+    val colon = s.indexOf(':')
+    if (colon <= 0) return null
+    val scheme = s.substring(0, colon).lowercase()
+    if (scheme != "http" && scheme != "https") return null
+    if (!s.startsWith("//", colon + 1)) return null
+    val start = colon + 3
+    var end = start
+    while (end < s.length && s[end] !in "/\\?#") end++
+    val authority = s.substring(start, end).substringAfterLast('@')
+    val (hostPart, portPart) = if (authority.startsWith("[")) {
+        val close = authority.indexOf(']')
+        if (close < 0) return null
+        val after = authority.substring(close + 1)
+        if (after.isNotEmpty() && !after.startsWith(":")) return null
+        authority.substring(0, close + 1) to after.removePrefix(":").takeIf { after.isNotEmpty() }
+    } else {
+        val c = authority.lastIndexOf(':')
+        if (c >= 0) authority.substring(0, c) to authority.substring(c + 1) else authority to null
+    }
+    val host = hostPart.lowercase().trimEnd('.')
+    val hostOk = if (host.startsWith("[")) {
+        host.length > 2 && host.substring(1, host.length - 1).all { it in "0123456789abcdef:." }
+    } else {
+        host.isNotEmpty() && host.length <= 253 && host.all { it in 'a'..'z' || it in '0'..'9' || it == '.' || it == '-' || it == '_' }
+    }
+    if (!hostOk) return null
+    val default = if (scheme == "https") 443 else 80
+    val port = when {
+        portPart.isNullOrEmpty() -> default
+        portPart.length <= 5 && portPart.all { it in '0'..'9' } -> portPart.toInt().takeIf { it <= 65_535 } ?: return null
+        else -> return null
+    }
+    val rest = s.substring(end)
+    val pathEnd = rest.indexOfFirst { it == '?' || it == '#' }.let { if (it < 0) rest.length else it }
+    val path = rest.substring(0, pathEnd).replace('\\', '/').ifEmpty { "/" }
+    return WebUrl(scheme, host, port, path)
+}
+
 /**
  * A login site's entry ([loginEntry]'s form) matches [url] as Chrome reads `URLAllowlist` (§4.3 step 4): http or https;
  * a host includes its subdomains, a leading dot means that host only; a given port must equal the URL's (its scheme's
- * default when it names none); an optional path is a prefix of the URL's.
+ * default when it names none); an optional path is a prefix of the URL's. The URL is read by [webUrlOf].
  */
 fun loginLinkMatches(entry: String, url: String): Boolean {
-    val uri = try {
-        java.net.URI(url.trim())
-    } catch (e: Exception) {
-        return false
-    }
-    val scheme = uri.scheme?.lowercase() ?: return false
-    if (scheme != "http" && scheme != "https") return false
-    val host = uri.host?.lowercase()?.trimEnd('.') ?: return false
-    val port = if (uri.port >= 0) uri.port else if (scheme == "https") 443 else 80
-    val path = uri.rawPath?.takeIf { it.isNotEmpty() } ?: "/"
+    val u = webUrlOf(url) ?: return false
     val exact = entry.startsWith('.')
     val rest = entry.removePrefix(".")
     val slash = rest.indexOf('/')
@@ -48,19 +92,15 @@ fun loginLinkMatches(entry: String, url: String): Boolean {
     val entryHost = (if (colon >= 0) authority.substring(0, colon) else authority).lowercase()
     val entryPort = if (colon >= 0) authority.substring(colon + 1).toIntOrNull() ?: return false else null
     if (entryHost.isEmpty()) return false
-    val hostOk = if (exact) host == entryHost else host == entryHost || host.endsWith(".$entryHost")
-    return hostOk && (entryPort == null || entryPort == port) && path.startsWith(entryPath)
+    val hostOk = if (exact) u.host == entryHost else u.host == entryHost || u.host.endsWith(".$entryHost")
+    return hostOk && (entryPort == null || entryPort == u.port) && u.path.startsWith(entryPath)
 }
 
 /** The URL is one of the parent's login sites ([hosts]: `login_browser.hosts`, each through [loginEntry]). */
 fun loginLinkMatchesAny(hosts: List<String>, url: String): Boolean = hosts.any { loginLinkMatches(it, url) }
 
 /** A tapped link's host for the report's `refused` (§7: a host only, never a path or a query), `null` for none. */
-fun refusedHostOf(url: String): String? = try {
-    java.net.URI(url.trim()).host?.lowercase()?.trimEnd('.')?.takeIf { it.isNotEmpty() && it.length <= 253 }
-} catch (e: Exception) {
-    null
-}
+fun refusedHostOf(url: String): String? = webUrlOf(url)?.host
 
 /** One stopped host in the report's `login_browser.refused`. */
 @Serializable
@@ -99,6 +139,8 @@ data class GateInput(
     val target: String?,
     /** A browser the parent allows as an app ([freeBrowserOf]); with the gate on there is none - Meldinger's alone. */
     val freeBrowser: String?,
+    /** Play's nightly update window is in force (code QA M1: the role's Chrome is out for its update, the screen off). */
+    val updateWindow: Boolean = false,
 )
 
 /** What the gate does with a link. */
@@ -119,24 +161,25 @@ sealed interface GateStep {
     data class App(val pkg: String) : GateStep
 
     /** The kid's note; [refused] = the host goes into the report's `refused` (a login link while Vibb One isn't the
-     * browser is the report's `failed`/`role`, not a stopped host). */
+     * browser is the report's `failed`/`role`, not a stopped host; with the role off no host is kept - code QA L8: the
+     * PWA shows the list only while the role is on). */
     data class Note(val refused: Boolean) : GateStep
 }
 
 /**
- * §4.3's order: the keyguard, the PIN lock or a time rule - nothing; a pause - the browser; a map link - the map
+ * §4.3's order: the keyguard, the PIN lock, a time rule or Play's update window (code QA M1) - nothing; a pause - the browser; a map link - the map
  * handler; a login link - a window, only while the role is ready, Vibb One holds the browser role (fail closed: the
  * note) and the link isn't from Meldinger (D3); an allowed app that declares the link; a free browser (only Meldinger
- * meets one: with one allowed the gate is off); else the note, the host stopped.
+ * meets one: with one allowed the gate is off); else the note, the host stopped while the role is ready (L8).
  */
 fun linkGatePlan(i: GateInput): GateStep = when {
-    i.locked -> GateStep.Nothing
+    i.locked || i.updateWindow -> GateStep.Nothing
     i.paused -> i.pauseBrowser?.let { GateStep.Browser(it) } ?: GateStep.Note(refused = false)
     i.mapLink -> GateStep.Map
     i.loginMatch && !i.fromMessages && i.roleReady -> if (i.roleHeld) GateStep.Login else GateStep.Note(refused = false)
     i.target != null -> GateStep.App(i.target)
     i.freeBrowser != null -> GateStep.Browser(i.freeBrowser)
-    else -> GateStep.Note(refused = true)
+    else -> GateStep.Note(refused = i.roleReady)
 }
 
 /** §4.1 (D2): the gate is on while the phone is managed (an allowlist) and no free browser is allowed - role on or off. */
@@ -232,8 +275,29 @@ fun windowDeadline(record: WindowRecord, graceSince: Long?): Long {
     return if (graceSince != null) minOf(ceiling, graceSince + LOGIN_TAB_GRACE_MS) else ceiling
 }
 
-/** §4.2: the login role's Chrome is hidden unless a window is open (it stays pinned in the kiosk while ready). */
-fun loginChromeHidden(roleReady: Boolean, windowOpen: Boolean): Boolean = !(roleReady && windowOpen)
+/**
+ * §4.2: the login role's Chrome is hidden unless a window is open (it stays pinned in the kiosk while ready) - or Play's
+ * nightly update window is in force (code QA M1: a hidden package is "not installed" to Play, which would never update
+ * it). The update window means the screen off; its end or the screen on hides Chrome again, no login window opens in
+ * it ([loginWindowRuleEnds], [linkGatePlan]), and the gate keeps Android's browser role all the while: the gate's
+ * component and the nudge stay as they are ([roleRepairDue]: Chrome visible is no repair), so no link reaches Chrome.
+ */
+fun loginChromeHidden(roleReady: Boolean, windowOpen: Boolean, updateWindow: Boolean = false): Boolean =
+    !(roleReady && (windowOpen || updateWindow))
+
+/**
+ * §4.4: the apply ends an open window (`rule`) when its rule no longer holds - a time rule, the role off or not ready,
+ * the gate off, Play's update window (M1) - or when a pause or the override starts or ends (code QA M2: ended at the
+ * pause's start, so its hide comes before the loop that unhides every app, never inside the pause).
+ */
+fun loginWindowRuleEnds(
+    timeLocked: Boolean,
+    roleReady: Boolean,
+    gateOn: Boolean,
+    updateWindow: Boolean,
+    overrideNow: Boolean,
+    overrideBefore: Boolean?,
+): Boolean = timeLocked || !roleReady || !gateOn || updateWindow || overrideNow != (overrideBefore == true)
 
 /** The report's `state` and `reason` (§7): the role `on` while the gate is on and Vibb One isn't Android's browser
  * ([browserRole] `false`) is `failed`/`role` - no login window opens then (fail closed). */

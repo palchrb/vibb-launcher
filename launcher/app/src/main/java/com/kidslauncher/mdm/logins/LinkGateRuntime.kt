@@ -45,21 +45,42 @@ object LinkGateRuntime {
     }
 
     /** Every visible full browser but Vibb One (a lookup with no package keeps only the browsers once one exists;
-     * `MATCH_ALL` asks for all of them, a suspended one included). */
-    fun browsers(context: Context): List<String> = try {
+     * `MATCH_ALL` asks for all of them, a suspended one included); with [includeHidden] a hidden one too
+     * (`MATCH_UNINSTALLED_PACKAGES`). */
+    fun browsers(context: Context, includeHidden: Boolean = false): List<String> = try {
+        val flags = PackageManager.MATCH_ALL.toLong() or (if (includeHidden) PackageManager.MATCH_UNINSTALLED_PACKAGES.toLong() else 0L)
         context.packageManager.queryIntentActivities(
             Intent(Intent.ACTION_VIEW, PROBE).addCategory(Intent.CATEGORY_BROWSABLE),
-            PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_ALL.toLong()),
+            PackageManager.ResolveInfoFlags.of(flags),
         ).map { it.activityInfo.packageName }.distinct().filter { it != context.packageName }
     } catch (e: Exception) {
         emptyList()
     }
 
-    /** §4.1 (D2): the gate wanted - managed ([allowlist] not `null`) and no full browser among the allowed apps. */
+    /** §4.1 (D2): the gate wanted - managed ([allowlist] not `null`) and no full browser among the allowed apps. Read
+     * before the package loop, so a browser ticked in this very policy is still hidden: the hidden ones count too (code
+     * QA L1), and the gate, the role and `DISALLOW_CONFIG_DEFAULT_APPS` follow the parent's choice on this apply. */
     fun gateWanted(context: Context, allowlist: List<String>?): Boolean {
         if (allowlist == null) return false
         val allowed = allowlist.toSet()
-        return linkGateOn(managed = true, freeBrowsers = browsers(context).filter { it in allowed })
+        return linkGateOn(managed = true, freeBrowsers = browsers(context, includeHidden = true).filter { it in allowed })
+    }
+
+    /**
+     * Code QA L2: a login window's conditions read again under [LoginWindow]'s lock, right before it unhides Chrome -
+     * the role ready (its stored state: an apply turning the role off writes it before its window check), no lock, no
+     * pause or override, not Play's update window, the gate on. Cheap reads only; [role] is read before the lock.
+     */
+    fun windowStillAllowed(context: Context, role: LoginRole): Boolean =
+        com.kidslauncher.mdm.server.BrowserConfig.roleReady(context, role) &&
+            com.kidslauncher.mdm.preferences.LauncherPreferences.mdm().lockReason() == com.kidslauncher.mdm.server.LockReason.NONE &&
+            !com.kidslauncher.mdm.server.RestrictionsPause.isActive() && !com.kidslauncher.mdm.server.OfflineOverride.isActive() &&
+            !com.kidslauncher.mdm.play.PlayRuntime.updateWindowActive(context) && enabled(context)
+
+    /** The login role as the gate reads it (the last accepted policy). */
+    fun loginRole(): LoginRole {
+        val policy = com.kidslauncher.mdm.server.currentPolicyDecision().policy
+        return loginRoleOf(policy?.loginBrowser, policy?.allowlist)
     }
 
     /**
@@ -153,6 +174,7 @@ object LinkGateRuntime {
                 loginMatch = loginLinkMatchesAny(loginHostsOf(policy?.loginBrowser).orEmpty(), url),
                 target = found?.let { linkTargetOf(it.approved, it.declaring, allowed, false, own, it.browsers.toSet()) },
                 freeBrowser = found?.let { freeBrowserOf(it.browsers, allowed, own) },
+                updateWindow = com.kidslauncher.mdm.play.PlayRuntime.updateWindowActive(context),
             ),
         )
     }
