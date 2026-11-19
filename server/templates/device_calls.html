@@ -274,7 +274,7 @@
                         {% if let Some(photo) = contact.photo %}
                         <img class="avatar avatar-small avatar-photo" src="/contact-photos/{{ photo }}" alt="" width="36" height="36">
                         {% else %}
-                        <span class="avatar avatar-small" aria-hidden="true">{{ contact.initial }}</span>
+                        <span class="avatar avatar-small {{ contact.tone }}" aria-hidden="true">{{ contact.initial }}</span>
                         {% endif %}
                         <span class="row-label">{{ contact.name }}<span class="row-sub">{{ contact.number }}</span></span>
                         <span class="row-value" data-value="contact">{{ contact.summary }}{% if let Some(second) = contact.second %}<span class="row-sub">{{ second }}</span>{% endif %}</span>

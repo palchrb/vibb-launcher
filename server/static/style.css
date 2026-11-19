@@ -2197,6 +2197,16 @@ th {
     --avatar-inset: 64px;
 }
 
+/* A contact's letter on the launcher's colours (`HomeModel.kt` AVATAR_PALETTE, picked by contact id; the same light
+   discs and dark ink in both schemes), the emergency number's tonal red. */
+.avatar-c0 { --avatar-bg: #E8B49A; --avatar-text: #1B1B28; }
+.avatar-c1 { --avatar-bg: #9FC3E3; --avatar-text: #1B1B28; }
+.avatar-c2 { --avatar-bg: #E3CF9A; --avatar-text: #1B1B28; }
+.avatar-c3 { --avatar-bg: #A9CDB0; --avatar-text: #1B1B28; }
+.avatar-c4 { --avatar-bg: #C9B3DE; --avatar-text: #1B1B28; }
+.avatar-c5 { --avatar-bg: #E6AFB4; --avatar-text: #1B1B28; }
+.avatar-c-emergency { --avatar-bg: #3A1E24; --avatar-text: #FF8A8A; }
+
 .avatar-small {
     width: 36px;
     height: 36px;

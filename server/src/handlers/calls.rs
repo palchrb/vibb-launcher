@@ -127,6 +127,8 @@ struct ContactView {
     /// `/contact-photos/original/{hash}` there. `None` for a photo stored before it (the square is refined).
     original: Option<(String, String)>,
     initial: String,
+    /// The placeholder avatar's colour class (`avatar-c0`..`avatar-c5`, `avatar-c-emergency`): the launcher's rule.
+    tone: &'static str,
     /// D6: the row's value ("Anrop og meldinger", "Anrop inn") and its second line ("Melding inn · Hjem").
     summary: String,
     second: Option<String>,
@@ -134,6 +136,27 @@ struct ContactView {
     open: bool,
     /// A refusal under a field: `message_address` or `photo`, and why.
     error: Option<(&'static str, String)>,
+}
+
+/// The launcher's letter-avatar palette (`HomeModel.kt`'s `AVATAR_PALETTE`, in order), picked by
+/// `floorMod(contact id, 6)`: the PWA's `.avatar-c0`..`.avatar-c5` in `static/style.css` and the emergency one are
+/// the same colours (`tests::calls_simpler::the_avatar_palette_is_the_launchers`). The id is the policy's contact id.
+pub(crate) const AVATAR_TONES: [&str; 6] = [
+    "avatar-c0",
+    "avatar-c1",
+    "avatar-c2",
+    "avatar-c3",
+    "avatar-c4",
+    "avatar-c5",
+];
+
+/// A contact's avatar class: the emergency red for an emergency number, else the palette's by contact id.
+pub(crate) fn avatar_tone(contact_id: i64, emergency: bool) -> &'static str {
+    if emergency {
+        "avatar-c-emergency"
+    } else {
+        AVATAR_TONES[contact_id.rem_euclid(AVATAR_TONES.len() as i64) as usize]
+    }
 }
 
 /// First letter of a name, upper-cased, for the placeholder avatar.
@@ -770,6 +793,7 @@ async fn load_page(
             );
             let mut view = ContactView {
                 initial: initial_of(&c.name),
+                tone: avatar_tone(c.contact_id, texts_in_refused),
                 id: c.contact_id,
                 summary: String::new(),
                 second: None,
