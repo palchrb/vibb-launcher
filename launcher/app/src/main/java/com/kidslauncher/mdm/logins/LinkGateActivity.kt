@@ -202,7 +202,11 @@ class LinkGateActivity : AppCompatActivity() {
             .setDownloadButtonEnabled(false)
             .setOpenInBrowserButtonState(CustomTabsIntent.OPEN_IN_BROWSER_STATE_OFF)
         val scheme = callerExtra { intent?.getIntExtra(CustomTabsIntent.EXTRA_COLOR_SCHEME, -1) } ?: -1
-        if (scheme in CustomTabsIntent.COLOR_SCHEME_SYSTEM..CustomTabsIntent.COLOR_SCHEME_DARK) builder.setColorScheme(scheme)
+        when (scheme) {
+            CustomTabsIntent.COLOR_SCHEME_SYSTEM -> builder.setColorScheme(CustomTabsIntent.COLOR_SCHEME_SYSTEM)
+            CustomTabsIntent.COLOR_SCHEME_LIGHT -> builder.setColorScheme(CustomTabsIntent.COLOR_SCHEME_LIGHT)
+            CustomTabsIntent.COLOR_SCHEME_DARK -> builder.setColorScheme(CustomTabsIntent.COLOR_SCHEME_DARK)
+        }
         val tab = builder.build().intent.setPackage(CHROME_PACKAGE).setData(Uri.parse(link))
         tab.flags = tab.flags and Intent.FLAG_ACTIVITY_NEW_TASK.inv()
         callerExtra { copyHeaders(tab) }
