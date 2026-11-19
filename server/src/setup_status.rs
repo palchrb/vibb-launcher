@@ -473,7 +473,14 @@ pub struct Inputs {
 pub type Readings = BTreeMap<String, Option<bool>>;
 
 /// Design 110's map apps (110 §7.1's targets): the `map_links` steps apply only while one is installed.
-pub const MAP_APPS: &[&str] = &["app.organicmaps", "app.comaps.fdroid", "app.comaps"];
+pub const MAP_APPS: &[&str] = &[
+    "app.organicmaps",
+    "app.organicmaps.web",
+    "app.comaps.fdroid",
+    "app.comaps",
+    "app.comaps.google",
+    "app.comaps.huawei",
+];
 
 impl Inputs {
     /// The Sound bit (8), the touch bit (16) or a clock format in use: Android's "Modify system settings" is needed

@@ -35,8 +35,18 @@ use crate::i18n::Lang;
 use crate::models::StatusReportRequest;
 use crate::music_net::{BoxFut, Gated, PhoneAsks, Source};
 
-/// The apps a map link may open, in order (Q3: CoMaps when Organic Maps isn't installed).
-pub const TARGETS: [&str; 3] = ["app.organicmaps", "app.comaps.fdroid", "app.comaps"];
+/// The apps a map link may open, in order (Q3: CoMaps when Organic Maps isn't installed). Every build's package
+/// (2026-11-19, read from both projects' Gradle files): Organic Maps' Play, F-Droid and Huawei builds share
+/// `app.organicmaps`, its site's build is `.web`; CoMaps' site build is `app.comaps`, the stores' `.fdroid`, `.google`
+/// and `.huawei`. Debug and test builds are left out.
+pub const TARGETS: [&str; 6] = [
+    "app.organicmaps",
+    "app.organicmaps.web",
+    "app.comaps.fdroid",
+    "app.comaps",
+    "app.comaps.google",
+    "app.comaps.huawei",
+];
 /// A target's state on the phone.
 pub const TARGET_STATES: [&str; 4] = ["allowed", "hidden", "suspended", "missing"];
 
