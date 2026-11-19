@@ -153,21 +153,84 @@ class MobileNetworkTest {
     }
 
     /** Code QA M1/T2: a switch to the sink writes lockdown after the tunnel, whether or not it came up, and retries a
-     * failure; a switch away writes lockdown off first. */
+     * failure; with lockdown off, a switch between the other shapes writes their always-on first. */
     @Test
     fun `a failed switch to the sink fails closed and retries`() {
-        assertEquals(null, alwaysOnBeforeEstablish(VpnShape.SINK))
-        assertEquals(VpnShape.SINK, alwaysOnAfterEstablish(VpnShape.SINK))
-        assertTrue(alwaysOnFor(alwaysOnAfterEstablish(VpnShape.SINK)!!).lockdown)
+        for (lockdownNow in listOf(false, true)) {
+            assertEquals(null, alwaysOnBeforeEstablish(VpnShape.SINK, lockdownNow))
+            assertEquals(VpnShape.SINK, alwaysOnAfterEstablish(VpnShape.SINK, lockdownNow))
+        }
+        assertTrue(alwaysOnFor(alwaysOnAfterEstablish(VpnShape.SINK, false)!!).lockdown)
         assertTrue(retriesFailedEstablish(VpnShape.SINK, established = false))
         assertFalse(retriesFailedEstablish(VpnShape.SINK, established = true))
         for (shape in listOf(VpnShape.FILTER, VpnShape.PASS)) {
-            assertEquals(shape, alwaysOnBeforeEstablish(shape))
-            assertEquals(null, alwaysOnAfterEstablish(shape))
+            assertEquals(shape, alwaysOnBeforeEstablish(shape, lockdownNow = false))
+            assertEquals(null, alwaysOnAfterEstablish(shape, lockdownNow = false))
             // Design 116 §3.1 (S-M2): every shape's failure is retried, not only the sink's.
             assertTrue(retriesFailedEstablish(shape, established = false))
         }
         assertFalse(retriesFailedEstablish(VpnShape.NONE, established = false))
+    }
+
+    /** One switch's steps as [switchTo] runs them: the always-on written before, the tunnel, the always-on after. */
+    private fun steps(wanted: VpnShape, lockdownNow: Boolean): List<Pair<String, VpnShape>> = listOfNotNull(
+        alwaysOnBeforeEstablish(wanted, lockdownNow)?.let { "always-on" to it },
+        "tunnel" to wanted,
+        alwaysOnAfterEstablish(wanted, lockdownNow)?.let { "always-on" to it },
+    )
+
+    /** Design 120 fix A: the tunnel first and lockdown changed last, both ways - into the sink lockdown comes on last
+     * (as before), out of it lockdown goes off last (a new network every app's Chromium hears). Fail-closed at every
+     * step: no state on the way lets traffic outside the VPN that neither end does. */
+    @Test
+    fun `lockdown changes last both ways and every step stays closed`() {
+        // Into the sink from the filter or the pass shape (lockdown off).
+        for (from in listOf(VpnShape.FILTER, VpnShape.PASS)) {
+            assertEquals(listOf("tunnel" to VpnShape.SINK, "always-on" to VpnShape.SINK), steps(VpnShape.SINK, lockdownNow = false))
+            assertClosedAllTheWay(from, false, VpnShape.SINK)
+        }
+        // Out of the sink (lockdown on): the new tunnel under lockdown, then lockdown off as the very last change.
+        for (to in listOf(VpnShape.FILTER, VpnShape.PASS)) {
+            val out = steps(to, lockdownNow = true)
+            assertEquals(listOf("tunnel" to to, "always-on" to to), out)
+            assertFalse(alwaysOnFor(out.last().second).lockdown)
+            assertClosedAllTheWay(VpnShape.SINK, true, to)
+        }
+        // Between the filter and the pass shape nothing about lockdown changes: always-on first, as before.
+        assertEquals(listOf("always-on" to VpnShape.PASS, "tunnel" to VpnShape.PASS), steps(VpnShape.PASS, lockdownNow = false))
+        assertEquals(listOf("always-on" to VpnShape.FILTER, "tunnel" to VpnShape.FILTER), steps(VpnShape.FILTER, lockdownNow = false))
+    }
+
+    /** Traffic can leave outside the VPN while lockdown is off and the tunnel isn't the sink (whose routes take all). */
+    private fun assertClosedAllTheWay(from: VpnShape, lockdown: Boolean, to: VpnShape) {
+        fun open(tunnel: VpnShape, lockdownOn: Boolean) = !lockdownOn && tunnel != VpnShape.SINK
+        var tunnel = from
+        var lockdownOn = lockdown
+        val states = mutableListOf(open(tunnel, lockdownOn))
+        for ((step, shape) in steps(to, lockdown)) {
+            if (step == "tunnel") tunnel = shape else lockdownOn = alwaysOnFor(shape).lockdown
+            states += open(tunnel, lockdownOn)
+        }
+        assertEquals(alwaysOnFor(to).lockdown, lockdownOn)
+        for (middle in states.drop(1).dropLast(1)) assertFalse("$from -> $to: $states", middle && !(states.first() && states.last()))
+    }
+
+    /** Design 120 fix A: apply() doesn't write lockdown off ahead of a running tunnel's switch out of the sink. */
+    @Test
+    fun `apply leaves lockdown off to the tunnel's switch`() {
+        for (shape in listOf(VpnShape.FILTER, VpnShape.PASS)) {
+            assertTrue(applyLeavesLockdownToSwitch(shape, lockdownNow = true, tunnelUp = true))
+            assertFalse(applyLeavesLockdownToSwitch(shape, lockdownNow = true, tunnelUp = false))
+            assertFalse(applyLeavesLockdownToSwitch(shape, lockdownNow = false, tunnelUp = true))
+        }
+        assertFalse(applyLeavesLockdownToSwitch(VpnShape.SINK, lockdownNow = true, tunnelUp = true))
+        // The filter turned off: the VPN goes, nothing to wait for.
+        assertFalse(applyLeavesLockdownToSwitch(VpnShape.NONE, lockdownNow = true, tunnelUp = true))
+        val enforcer = listOf(java.io.File("src/main/java/com/kidslauncher/mdm/server/AppEnforcer.kt"), java.io.File("app/src/main/java/com/kidslauncher/mdm/server/AppEnforcer.kt"))
+            .first { it.exists() }.readText()
+        val apply = enforcer.substringAfter("private fun applyVpnRestrictions(").substringBefore("\n    }\n")
+        assertTrue(apply, "applyLeavesLockdownToSwitch(shape, MobileNetworkRuntime.lockdownOurs(context), KidVpnService.liveTunnel().first)" in apply)
+        assertTrue(apply, "MobileNetworkRuntime.writeAlwaysOn(context, shape, keepLockdown)" in apply)
     }
 
     /** Design 116's emulator gate: a burst of failed starts (a fresh process's start commands) schedules one retry and
@@ -366,8 +429,11 @@ class MobileNetworkTest {
         val wanted = vpn.substringAfter("private fun wantedShape(): VpnShape {").substringBefore("\n    }\n")
         assertTrue(wanted, "serviceShape(" in wanted && "storedShape()" in wanted)
         val switch = vpn.substringAfter("private fun switchTo(wanted: VpnShape): Boolean {").substringBefore("\n    }\n")
-        assertTrue(switch.indexOf("alwaysOnBeforeEstablish(wanted)") in 0 until switch.indexOf("establish(wanted)"))
-        assertTrue(switch.indexOf("val established = establish(wanted)") < switch.indexOf("alwaysOnAfterEstablish(wanted)"))
+        // Design 120 fix A: both steps read lockdown as it is before the switch.
+        val lockdownAt = switch.indexOf("val lockdownNow = MobileNetworkRuntime.lockdownOurs(this)")
+        assertTrue(switch, lockdownAt in 0 until switch.indexOf("alwaysOnBeforeEstablish(wanted, lockdownNow)"))
+        assertTrue(switch.indexOf("alwaysOnBeforeEstablish(wanted, lockdownNow)") in 0 until switch.indexOf("establish(wanted)"))
+        assertTrue(switch.indexOf("val established = establish(wanted)") < switch.indexOf("alwaysOnAfterEstablish(wanted, lockdownNow)"))
         // Every establish goes through switchTo.
         assertEquals(1, Regex("""\bestablish\(wanted\)""").findAll(vpn).count())
         // Design 116 (QA L1): one retry chain - a lost tunnel's retry reschedules itself only when no switch ran.

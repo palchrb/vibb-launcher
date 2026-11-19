@@ -17,6 +17,30 @@ the phone never talks to Google or Apple.
   directly, otherwise through the gate (the default browser), which hands it to the handler - Chrome is never in the path. Over a time rule or the
   keyguard it shows nothing; a server call is cancelled in `onStop` and nothing starts after it; the target starts in
   its own task. In a pause the note offers "Åpne i nettleseren" to a named browser, with the original link.
+- **The target's start** (`MapLinks.clearsTask`, `startIdentity`; the user's bug of 2026-11-19: Organic Maps
+  running in the background came to the front without moving). Organic Maps and CoMaps take `geo:` (and their own
+  `om://`/`cm://`, `omaps.app` forms) in `SplashActivity` (standard launch mode, the app's own task), which hands it on
+  to the `singleTask` `MwmActivity` (`onNewIntent` -> `processIntent`). Two things lost a link:
+  - Android only brings the task to the front, starting nothing, when a `NEW_TASK` start `filterEquals` the root
+    intent of the app's task (AOSP `ActivityStarter.complyActivityFlags`: the task's `realActivity` and
+    `isSameIntentFilter`; am's "Activity not started, its current task has been brought to the front"). So a link
+    that started the task, opened again later, was dropped - with other links between, and for an `omaps.app` link
+    as much as a `geo:` one (it only seemed better because it differed from the task's `geo:` root).
+  - On Android 16 (both apps, any start, our flags or none) a new pin moves the map but its place card doesn't open
+    while the previous card is still up.
+  The start therefore carries `FLAG_ACTIVITY_CLEAR_TASK`: a fresh `MwmActivity` processes the link in `onSafeCreate`
+  (the engine already running, OM issue 6712's path) and always opens the pin with its card, and the kid's old state
+  in the app (an open search or card) goes. Not when the target itself sent the link (`Activity.getReferrer()` is the
+  target): it is on screen then, and recreating it there left its map black for good on Android 14 (its old activity's
+  GL `DetachSurface ... destroySurface = 1` came after the new attach). Every start also gets a fresh
+  `Intent.setIdentifier` (part of `filterEquals`), which is what keeps that one start from being dropped. In the
+  background the old surface is already gone, so the clear is safe. Checked 2026-11-19 with Organic Maps 2026.11.11-39
+  and CoMaps 2026.11.07-16 (F-Droid): compat34 through the handler itself (a Device Owner debug build, cold, in the
+  background with the same and another link and with the last card left open, two in a row - every card right; with
+  the app on screen and the link sent by itself, no clear: the map moves, no black map, the card can stay shut as above), jelly36 with the handler's intent
+  from the shell (the handler can't be enabled there without a policy). The code QA (2026-11-19, `docs/review/2026-11-19-map-open-fix-code-qa.md`) re-ran it enrolled
+  with the kiosk on, on both versions: cold, backgrounded, the same link twice, A after B - every card, the lock kept. By AOSP's `LockTaskController.activityBlockedFromFinish` only the root of the last locked task is kept from
+  finishing, and the map app's task never is that.
 - **The two one-time steps** (Q2) are design 114's setup steps `map_play_links` and `map_vibb_links` (114 §2.6): screens
   of the setup flow (`setup/SetupFlowActivity`, "Oppsett" in the PIN-gated Settings), only while the switch is on and
   Organic Maps or CoMaps is installed. Each opens Android's "Open by default" page (only in a pause or the setup hold):

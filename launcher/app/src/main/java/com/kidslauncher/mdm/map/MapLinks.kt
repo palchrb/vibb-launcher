@@ -101,6 +101,24 @@ object MapLinks {
         return "geo:$at?q=${encode(query)}"
     }
 
+    /**
+     * How the target is started (2026-11-19, the user's "Organic Maps in the background doesn't move"; Organic Maps
+     * 2026.11.11 and CoMaps 2026.11.07 on Android 14 and 16, `docs/notes/launcher/map-links.md`):
+     * - Both take `geo:` in `SplashActivity` (standard launch mode, the app's own task), which hands it on to the
+     *   `singleTask` `MwmActivity`. A `FLAG_ACTIVITY_NEW_TASK` start whose intent `filterEquals` the root intent of the
+     *   app's task (a link opened before) only brings that task to the front: the link is lost.
+     * - With the app running, a new pin moves the map, but the place card doesn't open while the previous one is still
+     *   up (Android 16, both apps, any start).
+     * So the app's task is cleared ([clearsTask]): a fresh `MwmActivity` always opens the pin with its card. Not when
+     * the app itself handed us the link - it is on screen, and recreating it there leaves its map black (its old
+     * activity's GL surface teardown comes after the new one's attach); then the fresh [startIdentity] alone keeps the
+     * start from being dropped.
+     */
+    fun clearsTask(referrer: String?, target: String): Boolean = referrer != target
+
+    /** A fresh identity per start: part of `filterEquals` ([android.content.Intent.setIdentifier]), see [clearsTask]. */
+    fun startIdentity(): String = "vibb-map-" + java.util.UUID.randomUUID()
+
     /** The label of a place the server found: "name, address" (either alone, or null). */
     fun placeLabel(name: String?, address: String?): String? = listOfNotNull(name?.takeIf { it.isNotBlank() }, address?.takeIf { it.isNotBlank() })
         .joinToString(", ").takeIf { it.isNotEmpty() }?.let(::cutLabel)
@@ -112,11 +130,14 @@ object MapLinks {
 
     private fun stToUv(s: Double) = if (s >= 0.5) (4 * s * s - 1) / 3 else (1 - 4 * (1 - s) * (1 - s)) / 3
 
-    /** The centre of the level-8 S2 cell (about 40 km) a place id's first half names: offline, never the place
-     * itself - only where Organic Maps' search starts. Null for a `0x0:` id (a `cid`'s) or an unreadable one. */
+    /** The centre of the level-10 S2 cell (about 10 km) a place id's first half names: offline, never the place
+     * itself - only where Organic Maps' search starts. Null for a `0x0:` id (a `cid`'s) or an unreadable one. Level 10
+     * keeps 23 bits, the finest every measured place allows: their points share 24 (RAI, Bucharest), 31 (Artbox), 33
+     * and 42 leading bits with the id (design 110 §4.2), so level 11's 25 or level 12's 27 would put RAI's centre in
+     * another cell. Artbox's centre is 2 km from it (level 8's, 59.947246,10.889123 over Groruddalen, was 12 km off). */
     fun cellCentre(ftid: String): Pair<Double, Double>? {
         val first = ftid.substringBefore(':').removePrefix("0x").toULongOrNull(16)?.takeIf { it != 0uL } ?: return null
-        val level = 8
+        val level = 10
         val keepBits = 3 + 2 * level
         val id = (first shr (64 - keepBits) shl (64 - keepBits)) or (1uL shl (64 - keepBits - 1))
         val face = (id shr 61).toInt()

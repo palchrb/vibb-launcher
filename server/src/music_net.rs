@@ -96,6 +96,13 @@ impl Kind {
             _ => Duration::from_secs(10),
         }
     }
+
+    /// Offer TLS 1.3 alone. Google's place lookup holds rustls's default hello (TLS 1.2 and 1.3) for 5-6 s and then
+    /// answers 403, while the same request with a TLS 1.3-only hello gets its 200 at once (measured 2026-11-19, with
+    /// curl's own request bytes over both hellos): with the 4 s timeout every lookup ended `unreachable`.
+    pub fn tls13_only(self) -> bool {
+        self == Kind::PlacePreview
+    }
 }
 
 /// [Kind::connect]'s short connect timeout.
@@ -463,12 +470,14 @@ pub struct HttpSource {
     any_once: reqwest::Client,
     /// `public_once` with [Kind::connect]'s 3 s connect timeout (design 110's quick calls).
     public_once_quick: reqwest::Client,
+    /// `public_once_quick` offering TLS 1.3 alone ([Kind::tls13_only]).
+    public_once_quick_tls13: reqwest::Client,
 }
 
 impl HttpSource {
     pub fn new() -> Self {
-        let base = |reach: Reach, follow: bool, connect: Duration| {
-            let builder = reqwest::Client::builder()
+        let base = |reach: Reach, follow: bool, connect: Duration, tls13: bool| {
+            let mut builder = reqwest::Client::builder()
                 .user_agent(crate::net::USER_AGENT)
                 .no_proxy()
                 .connect_timeout(connect)
@@ -481,6 +490,9 @@ impl HttpSource {
                 // No `Referer` on a redirect (design 26b QA M1): reqwest copies the previous URL
                 // with its query, and the Storytel login's carries the e-mail and `pwd=`.
                 .referer(false);
+            if tls13 {
+                builder = builder.tls_version_min(reqwest::tls::Version::TLS_1_3);
+            }
             match reach {
                 Reach::Public => builder.dns_resolver(Arc::new(PublicResolver)),
                 Reach::Any => builder,
@@ -490,11 +502,12 @@ impl HttpSource {
         };
         let ten = Duration::from_secs(10);
         HttpSource {
-            public: base(Reach::Public, true, ten),
-            any: base(Reach::Any, true, ten),
-            public_once: base(Reach::Public, false, ten),
-            any_once: base(Reach::Any, false, ten),
-            public_once_quick: base(Reach::Public, false, QUICK_CONNECT),
+            public: base(Reach::Public, true, ten, false),
+            any: base(Reach::Any, true, ten, false),
+            public_once: base(Reach::Public, false, ten, false),
+            any_once: base(Reach::Any, false, ten, false),
+            public_once_quick: base(Reach::Public, false, QUICK_CONNECT, false),
+            public_once_quick_tls13: base(Reach::Public, false, QUICK_CONNECT, true),
         }
     }
 }
@@ -565,6 +578,9 @@ impl Source for HttpSource {
                 }
                 (Reach::Public, true) => &self.public,
                 (Reach::Any, true) => &self.any,
+                (Reach::Public, false) if request.kind.tls13_only() => {
+                    &self.public_once_quick_tls13
+                }
                 (Reach::Public, false) if request.kind.connect() == QUICK_CONNECT => {
                     &self.public_once_quick
                 }
@@ -876,6 +892,15 @@ mod tests {
             strip_tracking("https://example.org/plain.mp3"),
             "https://example.org/plain.mp3"
         );
+    }
+
+    /// Only Google's place lookup offers TLS 1.3 alone: rustls's default hello there got a 403 after 5-6 s.
+    #[test]
+    fn only_the_place_lookup_offers_tls13_alone() {
+        assert!(Kind::PlacePreview.tls13_only());
+        assert!(!Kind::ShortLink.tls13_only());
+        assert!(!Kind::Feed.tls13_only());
+        assert!(!Kind::Weather.tls13_only());
     }
 
     /// A loopback server (no real network): a public-only request to it is refused before it is

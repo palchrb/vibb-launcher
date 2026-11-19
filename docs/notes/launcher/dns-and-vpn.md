@@ -272,7 +272,16 @@ server name only the parent's own DNS server resolves (split-horizon) would need
 
 **One owner of always-on** (`MobileNetworkRuntime.writeAlwaysOn`, `alwaysOnFor`): `apply()`, the service's switch and
 the cold start write exactly what the decided shape needs, recorded first (`vpn_shape`), only on a change. Lockdown
-only in the sink. To the sink: the tunnel first, then lockdown; away from it: lockdown off first. `apply()` never
+only in the sink. The tunnel first and lockdown changed last, both ways (`switchTo`, `alwaysOnBeforeEstablish`/
+`alwaysOnAfterEstablish` with the lockdown read before the switch): to the sink, the tunnel and then lockdown on; away
+from it, the filter's tunnel handed over in place while lockdown still blocks everything outside the VPN, and lockdown
+off last (design 120 fix A, 2026-11-19; it was lockdown off first until then). Lockdown's change restarts the VPN's
+agent (AOSP `Vpn.setAlwaysOnPackageInternal`, "Lockdown mode changed"): a new netId, which every app's Chromium
+(WebView, Chrome) hears and flushes its sockets, host cache and QUIC sessions for - the in-place handover alone is the
+same network, unheard, and Vibb music's web player kept the sink's dead connections. `apply()` leaving the sink while
+the tunnel is up records its decision but leaves lockdown on for that switch (`applyLeavesLockdownToSwitch`,
+`writeAlwaysOn(keepLockdown)`); with no tunnel up it writes as before. A failed switch out of the sink still ends with
+lockdown off, as before. Checked on compat34 and jelly36 in the code QA (2026-11-19): leaving the sink, `Tunnel: filter` first, then lockdown off - a new VPN network every app hears - from the Wi-Fi switch and from a PWA save. `apply()` never
 writes lockdown off on a doubt about the network (`applyShape`: no network seen and the last shape the sink keeps
 it); a network lost in the watcher keeps the shape too (a Wi-Fi -> cellular switch passes through "none" for ~60 ms).
 While the sink is wanted, the launcher's own downloads (catalog APKs, the self-update, the music files it fetches)

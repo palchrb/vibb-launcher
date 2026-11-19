@@ -141,9 +141,11 @@ object MobileNetworkRuntime {
 
     /**
      * The single owner of always-on (design 95 §2.2, [alwaysOnFor]): records [shape] as the decision, then writes what
-     * it needs - only on a change, so a sync that decides the same shape writes nothing. Never throws.
+     * it needs - only on a change, so a sync that decides the same shape writes nothing. With [keepLockdown] (`apply()`
+     * leaving the sink while the tunnel is up, [applyLeavesLockdownToSwitch]) a lockdown that is on stays on: the
+     * tunnel's switch turns it off last (design 120 fix A). Never throws.
      */
-    fun writeAlwaysOn(context: Context, shape: VpnShape) {
+    fun writeAlwaysOn(context: Context, shape: VpnShape, keepLockdown: Boolean = false) {
         // Design 115 (code QA L1): app push is told only of a real change of the decision or of Android's always-on.
         var changed = storedShape() != shape
         runCatching { LauncherPreferences.mdm().vpnShape(shape.wire) }
@@ -156,6 +158,10 @@ object MobileNetworkRuntime {
             val current = dpm.getAlwaysOnVpnPackage(admin)
             val currentLockdown = current != null && dpm.isAlwaysOnVpnLockdownEnabled(admin)
             if (current == pkg && currentLockdown == wanted.lockdown) return
+            if (keepLockdown && currentLockdown && !wanted.lockdown) {
+                Log.i(LOG_TAG, "Always-on: lockdown stays on until the tunnel's switch (${shape.wire})")
+                return
+            }
             changed = true
             dpm.setAlwaysOnVpnPackage(admin, pkg, wanted.lockdown, emptySet())
             Log.i(LOG_TAG, "Always-on: ${pkg ?: "none"}, lockdown ${wanted.lockdown} (${shape.wire})")

@@ -144,6 +144,14 @@ English and need checking on a Norwegian phone. The PWA's ⓘ no longer names th
     lookups both count. That is half of what tripped the wall (about 20 in 5 minutes) over twice the time.
   - The server's rows `wall_403`, `wall_sorry` and the new `lookup_line` rows, and
     `the_wall_pauses_lookups_and_a_burst_is_capped`, pin this.
+- **Proven 2026-11-19: the TLS hello.** The user's server (0.85.1) logged `unreachable` 4 s after the hops, while
+  curl from its VM got 200 in 0.3 s. From the dev VM, 7 requests:
+  - rustls's default hello (TLS 1.2 and 1.3, ring) got a **403 after 5-6 s**, both with reqwest's own request and
+    with curl's exact request bytes.
+  - curl got 200 before and after, also when limited to rustls's three key-exchange groups (no ML-KEM).
+  - rustls offering **TLS 1.3 alone** got 200 in 0.3-0.5 s, with curl's bytes and with the server's reqwest client.
+  - The headers and the URL's encoding are not it.
+  - Fix: the place lookup's client offers TLS 1.3 alone (`Kind::tls13_only`). The short links' hops are unchanged.
 
 ## Finding 1: what frees the Google hosts in step 2 (2026-11-19, `compat34` and `jelly36`)
 
