@@ -263,6 +263,22 @@ class SpotifyApiTest {
     }
 
     @Test
+    fun `a 502 before the transfer is a device not active yet - one transfer, then the call once more (2026-11-19)`() {
+        val badGateway = { SpotifyResponse(502, null, """{"error":{"status":502,"message":"Bad gateway."}}""".toByteArray()) }
+        val http = Script(badGateway, { answer("ok") }, { answer("ok") }, { answer("ok") }, { answer("ok") })
+        assertEquals(StartResult.Sent, runBlocking { api(http).start(device, body, 25_000, tokens = { ok1 }, awaitDevice = { true }, settings = SpotifyModes()) })
+        assertEquals(
+            listOf("/v1/me/player/shuffle", "/v1/me/player", "/v1/me/player/shuffle", "/v1/me/player/repeat", "/v1/me/player/play"),
+            http.sent.map { it.url.encodedPath },
+        )
+        // after the transfer a 502 is the call's own failure
+        val again = Script(badGateway, { answer("ok") }, badGateway)
+        assertEquals(StartResult.Unreachable("http_502"), runBlocking { api(again).start(device, body, 25_000, tokens = { ok1 }, awaitDevice = { true }, settings = SpotifyModes()) })
+        assertEquals(3, again.sent.size)
+        assertEquals("another 5xx isn't read as the device", StartResult.Unreachable("http_503"), start(Script({ answer("unavailable") }), Tokens(ok1)))
+    }
+
+    @Test
     fun `the start's deadline bounds every call`() {
         clock = 24_000
         val http = Script({ answer("ok") })
