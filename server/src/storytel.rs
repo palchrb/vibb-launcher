@@ -973,6 +973,44 @@ impl Plain {
     }
 }
 
+/// A Storytel call's failure in the integration health (design 116 §2.1, key `storytel`, family-wide), `None` = not
+/// recorded: our own state, our own waits, or the parent's side (a refused login is `MusicStorytelRefused`'s).
+pub(crate) fn class_of(err: &StorytelError) -> Option<crate::integration_health::Class> {
+    use crate::integration_health::Class::*;
+    match err {
+        StorytelError::Fetch(_)
+        | StorytelError::LoginStatus(_)
+        | StorytelError::NoJwt
+        | StorytelError::ShortLife
+        | StorytelError::TooBig
+        | StorytelError::BadShelf => Some(Transient),
+        StorytelError::Status(status) if *status >= 500 || matches!(status, 408 | 429) => {
+            Some(Transient)
+        }
+        StorytelError::Status(_)
+        | StorytelError::NotConfigured
+        | StorytelError::KeyUnusable
+        | StorytelError::Refused(_)
+        | StorytelError::Cooldown { .. }
+        | StorytelError::Backoff { .. }
+        | StorytelError::Busy { .. }
+        | StorytelError::Database(_) => None,
+    }
+}
+
+/// Records a call to Storytel in the integration health.
+async fn health(state: &AppState, outcome: Result<(), &StorytelError>) {
+    match outcome {
+        Ok(()) => crate::integration_health::ok(&state.db, "storytel", "").await,
+        Err(err) => {
+            if let Some(class) = class_of(err) {
+                crate::integration_health::failed(&state.db, "storytel", "", &err.code(), class)
+                    .await;
+            }
+        }
+    }
+}
+
 /// What an attempt did, for the row (only ever for the generation it was made with).
 enum Outcome<'a> {
     LoginOk,
@@ -1459,6 +1497,7 @@ impl Account {
                 }
             });
         let now = self.now();
+        health(state, result.as_ref().map(|_| ())).await;
         match result {
             Ok(login) => {
                 record(state, generation, Outcome::LoginOk).await;
@@ -1695,6 +1734,7 @@ impl Account {
                 Ok(answer) => answer,
                 Err(err) => {
                     record(state, credentials.generation, Outcome::Failed(&err.code())).await;
+                    health(state, Err(&err)).await;
                     return Err(err);
                 }
             };
@@ -1710,11 +1750,13 @@ impl Account {
         match read_shelf(response) {
             Ok(groups) => {
                 record(state, credentials.generation, Outcome::ShelfOk).await;
+                health(state, Ok(())).await;
                 Ok(groups)
             }
             Err(err) => {
                 tracing::warn!(code = %err.code(), "storytel: bookshelf failed");
                 record(state, credentials.generation, Outcome::Failed(&err.code())).await;
+                health(state, Err(&err)).await;
                 Err(err)
             }
         }
@@ -2451,6 +2493,16 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(error.as_deref(), Some("http_500"));
+        // Design 116 §2.1: Storytel's health, family-wide - the 5xx a transient failure.
+        let health = || async {
+            crate::integration_health::row(&app.db, "storytel", "")
+                .await
+                .unwrap()
+                .unwrap()
+        };
+        let row = health().await;
+        assert_eq!(row.class, Some(crate::integration_health::Class::Transient));
+        assert!(row.failing_since.is_some() && row.ok_at.is_some());
         // A truncated or unreadable shelf.
         app.fetch.answer(BOOKSHELF, 200, vec![b' '; 8_000_001]);
         assert_eq!(
@@ -2465,9 +2517,46 @@ mod tests {
         // forget() drops the shelf.
         app.fetch.answer(BOOKSHELF, 200, fixture("bookshelf.json"));
         account.bookshelf(&app.state).await.unwrap();
+        assert_eq!(
+            health().await.failing_since,
+            None,
+            "a success clears the run"
+        );
         account.forget().await;
         app.fetch.answer(BOOKSHELF, 500, "down");
         assert!(account.shelf(&app.state, SHELF_TTL).await.is_err());
+    }
+
+    /// Design 116 §2.1: every Storytel error's class.
+    #[test]
+    fn every_storytel_error_is_classed() {
+        use crate::integration_health::Class::*;
+        let at = chrono::Utc::now();
+        for (err, class) in [
+            (StorytelError::Fetch(FetchError::Timeout), Some(Transient)),
+            (StorytelError::Status(503), Some(Transient)),
+            (StorytelError::Status(429), Some(Transient)),
+            (StorytelError::Status(404), None),
+            (StorytelError::LoginStatus(502), Some(Transient)),
+            (StorytelError::NoJwt, Some(Transient)),
+            (StorytelError::ShortLife, Some(Transient)),
+            (StorytelError::TooBig, Some(Transient)),
+            (StorytelError::BadShelf, Some(Transient)),
+            (StorytelError::NotConfigured, None),
+            (StorytelError::KeyUnusable, None),
+            (StorytelError::Refused(401), None),
+            (StorytelError::Cooldown { until: at }, None),
+            (StorytelError::Backoff { until: at }, None),
+            (
+                StorytelError::Busy {
+                    wait: Duration::from_secs(1),
+                },
+                None,
+            ),
+            (StorytelError::Database("x".into()), None),
+        ] {
+            assert_eq!(class_of(&err), class, "{err:?}");
+        }
     }
 
     #[tokio::test]

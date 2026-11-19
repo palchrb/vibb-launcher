@@ -134,11 +134,25 @@ pub async fn compile_blocklist(state: &AppState, shared: &SharedCompiledBlocklis
         let fetched = fetch_feed(&client, &list.url).await.and_then(|text| {
             let domains = parse_feed(&text);
             if domains.is_empty() {
-                Err("no domains in it".to_string())
+                Err(FeedFailure::NotAList)
             } else {
                 Ok(domains)
             }
         });
+        let scope = format!("feed:{}", list.id);
+        match &fetched {
+            Ok(_) => crate::integration_health::ok(&state.db, "blocklist", &scope).await,
+            Err(err) => {
+                crate::integration_health::failed(
+                    &state.db,
+                    "blocklist",
+                    &scope,
+                    &err.code(),
+                    err.class(),
+                )
+                .await
+            }
+        }
         let compiled = match fetched {
             Ok(mut domains) => {
                 let source_hash = domains_hash(&domains);
@@ -187,7 +201,7 @@ pub async fn compile_blocklist(state: &AppState, shared: &SharedCompiledBlocklis
                     domains,
                     loaded,
                     source_hash,
-                    last_error: Some(err),
+                    last_error: Some(err.to_string()),
                 }
             }
         };
@@ -228,32 +242,82 @@ pub async fn compile_blocklist(state: &AppState, shared: &SharedCompiledBlocklis
     };
 }
 
+/// Why a feed's download failed, typed (design 116 §2.1); [std::fmt::Display] is the sentence Settings › Web filter
+/// shows behind its (i).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FeedFailure {
+    /// No answer: the network, DNS, a timeout, a cut body (reqwest's words).
+    Network(String),
+    /// A status other than 2xx.
+    Status(u16),
+    /// Over [MAX_FEED_BYTES].
+    TooBig,
+    /// Nothing in it that looks like a domain (a captive portal's page).
+    NotAList,
+}
+
+impl std::fmt::Display for FeedFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FeedFailure::Network(err) => write!(f, "download failed: {err}"),
+            FeedFailure::Status(status) => match reqwest::StatusCode::from_u16(*status) {
+                Ok(status) => write!(f, "the server answered {status}"),
+                Err(_) => write!(f, "the server answered {status}"),
+            },
+            FeedFailure::TooBig => write!(f, "larger than {} MB", MAX_FEED_BYTES / (1024 * 1024)),
+            FeedFailure::NotAList => write!(f, "no domains in it"),
+        }
+    }
+}
+
+impl FeedFailure {
+    /// The integration health's code and class (design 116 §2.1, key `blocklist`, scope `feed:<id>`).
+    pub fn code(&self) -> String {
+        match self {
+            FeedFailure::Network(_) => "network".to_string(),
+            FeedFailure::Status(status) => format!("http_{status}"),
+            FeedFailure::TooBig => "too_big".to_string(),
+            FeedFailure::NotAList => "not_a_list".to_string(),
+        }
+    }
+
+    pub fn class(&self) -> crate::integration_health::Class {
+        use crate::integration_health::Class::*;
+        match self {
+            FeedFailure::Network(_) => Transient,
+            FeedFailure::Status(status) if *status >= 500 || matches!(status, 408 | 429) => {
+                Transient
+            }
+            FeedFailure::Status(_) | FeedFailure::TooBig | FeedFailure::NotAList => Parent,
+        }
+    }
+}
+
 /// One feed's body: a 2xx answer, at most [MAX_FEED_BYTES] (decompressed).
-async fn fetch_feed(client: &reqwest::Client, url: &str) -> Result<String, String> {
+async fn fetch_feed(client: &reqwest::Client, url: &str) -> Result<String, FeedFailure> {
     let mut response = client
         .get(url)
         .send()
         .await
-        .map_err(|err| format!("download failed: {err}"))?;
+        .map_err(|err| FeedFailure::Network(err.to_string()))?;
     let status = response.status();
     if !status.is_success() {
-        return Err(format!("the server answered {status}"));
+        return Err(FeedFailure::Status(status.as_u16()));
     }
-    let too_big = || format!("larger than {} MB", MAX_FEED_BYTES / (1024 * 1024));
     if response
         .content_length()
         .is_some_and(|length| length > MAX_FEED_BYTES as u64)
     {
-        return Err(too_big());
+        return Err(FeedFailure::TooBig);
     }
     let mut body = Vec::new();
     while let Some(chunk) = response
         .chunk()
         .await
-        .map_err(|err| format!("download failed: {err}"))?
+        .map_err(|err| FeedFailure::Network(err.to_string()))?
     {
         if body.len() + chunk.len() > MAX_FEED_BYTES {
-            return Err(too_big());
+            return Err(FeedFailure::TooBig);
         }
         body.extend_from_slice(&chunk);
     }

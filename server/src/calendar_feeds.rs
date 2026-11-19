@@ -390,9 +390,83 @@ fn uids_of(feed_json: &str) -> HashSet<String> {
         .unwrap_or_default()
 }
 
-/// One fetch of source `id` at `now`, stored (§2.1). A DB error is returned; a fetch error is stored and returned
+/// One fetch of source `id` at `now`, stored (§2.1), its outcome recorded in the integration health (design 116:
+/// `calendar_link`, or `caldav` for a CalDAV calendar). A DB error is returned; a fetch error is stored and returned
 /// as [Outcome::Failed]. A source removed meanwhile writes nothing.
 pub async fn refresh(
+    state: &AppState,
+    id: i64,
+    now: DateTime<Utc>,
+) -> Result<Outcome, sqlx::Error> {
+    let source: Option<(String, Option<i64>)> =
+        sqlx::query_as("SELECT kind, account_id FROM calendar_sources WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await?;
+    let outcome = fetch_and_store(state, id, now).await?;
+    if let Some((kind, account)) = source {
+        record_health(&state.db, id, &kind, account, &outcome).await;
+    }
+    Ok(outcome)
+}
+
+/// A fetch's code in the integration health (design 116 §2.1), `None` = not recorded. Codes are `&'static str`, so
+/// `tests::every_feed_code_is_classed` reads every code the fetches write and checks each has its row here.
+pub(crate) fn class_of(err: &FeedError) -> Option<crate::integration_health::Class> {
+    use crate::integration_health::Class::*;
+    match err.code {
+        "network" | "timeout" | "empty" => Some(Transient),
+        "status" => match err.status {
+            Some(status) if status >= 500 || status == 408 || status == 429 => Some(Transient),
+            _ => Some(Parent),
+        },
+        "not_found" | "not_listed" | "not_caldav" | "no_calendars" | "not_calendar"
+        | "unreadable" | "insecure" | "private_address" | "too_big" => Some(Parent),
+        "login_refused" | "host_changed" | "key_lost" => Some(Stop),
+        _ => None,
+    }
+}
+
+/// Records [refresh]'s outcome: `calendar_link` at `source:<id>`; `caldav` at `source:<id>`, its stops
+/// (`login_refused`, `host_changed`, `key_lost`) at `account:<id>`, and a success clears both.
+async fn record_health(
+    db: &SqlitePool,
+    id: i64,
+    kind: &str,
+    account: Option<i64>,
+    outcome: &Outcome,
+) {
+    use crate::integration_health::{Class, failed, ok};
+    let caldav = kind == "caldav";
+    let key = if caldav { "caldav" } else { "calendar_link" };
+    let source = format!("source:{id}");
+    let account = account.filter(|_| caldav).map(|a| format!("account:{a}"));
+    let held;
+    let err = match outcome {
+        Outcome::Gone => return,
+        Outcome::Unchanged | Outcome::Changed => {
+            ok(db, key, &source).await;
+            if let Some(account) = &account {
+                ok(db, key, account).await;
+            }
+            return;
+        }
+        Outcome::HeldEmpty => {
+            held = FeedError::code("empty");
+            &held
+        }
+        Outcome::Failed(err) => err,
+    };
+    let Some(class) = class_of(err) else { return };
+    let scope = match (&account, class) {
+        (Some(account), Class::Stop) => account,
+        _ => &source,
+    };
+    failed(db, key, scope, err.code, class).await;
+}
+
+/// [refresh]'s fetch and store.
+async fn fetch_and_store(
     state: &AppState,
     id: i64,
     now: DateTime<Utc>,
@@ -971,6 +1045,66 @@ pub fn contract_today() -> NaiveDate {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Design 116 §2.1 (QA M7): every code a calendar fetch writes has its class - the codes are text, so they are
+    /// read from the fetches' source - and the status codes split as the table says.
+    #[test]
+    fn every_feed_code_is_classed() {
+        use crate::integration_health::Class::*;
+        let pattern = regex::Regex::new(
+            r#"(?:FeedError::code\(|code: |not_multistatus\([^,]+, )"([a-z_]+)""#,
+        )
+        .unwrap();
+        let mut codes = std::collections::BTreeSet::from(["empty"]);
+        let files = ["src/calendar_feeds.rs", "src/caldav.rs", "src/ics.rs"]
+            .map(|f| std::fs::read_to_string(f).unwrap());
+        for text in &files {
+            for found in pattern.captures_iter(text) {
+                codes.insert(found.get(1).unwrap().as_str());
+            }
+        }
+        assert!(codes.len() > 10, "{codes:?}");
+        for code in codes {
+            let code: &'static str = Box::leak(code.to_string().into_boxed_str());
+            assert!(
+                class_of(&FeedError::code(code)).is_some(),
+                "{code} has no class"
+            );
+        }
+        let status = |status| {
+            class_of(&FeedError {
+                code: "status",
+                status: Some(status),
+            })
+        };
+        for (code, class) in [
+            (503, Transient),
+            (408, Transient),
+            (429, Transient),
+            (401, Parent),
+            (410, Parent),
+        ] {
+            assert_eq!(status(code), Some(class), "{code}");
+        }
+        for (code, class) in [
+            ("network", Transient),
+            ("timeout", Transient),
+            ("empty", Transient),
+            ("not_found", Parent),
+            ("not_listed", Parent),
+            ("not_caldav", Parent),
+            ("unreadable", Parent),
+            ("insecure", Parent),
+            ("private_address", Parent),
+            ("too_big", Parent),
+            ("not_calendar", Parent),
+            ("login_refused", Stop),
+            ("host_changed", Stop),
+            ("key_lost", Stop),
+        ] {
+            assert_eq!(class_of(&FeedError::code(code)), Some(class), "{code}");
+        }
+    }
 
     /// The shared contract (design 72 §3): `feed` is the document for `contract.ics`, `keys` the phone's calendar key
     /// of each link, `policy` and `report` carry its uid and rev; the launcher's `CalendarFeedsTest` maps `feed` to

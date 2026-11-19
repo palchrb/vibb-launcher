@@ -1098,6 +1098,22 @@ async fn a_failing_source_keeps_the_last_good_list() {
     assert_eq!(row.failures, 3);
     assert_eq!(row.failing_since.as_deref(), Some("2026-10-10 00:00:00"));
     let _ = page;
+    // Design 116 §2.1: the entry's run in the integration health, transient three times.
+    let db = app.db.clone();
+    let health = |entry: i64| {
+        let db = db.clone();
+        async move {
+            crate::integration_health::row(&db, "music_feed", &format!("entry:{entry}"))
+                .await
+                .unwrap()
+                .unwrap()
+        }
+    };
+    let row = health(nrk).await;
+    assert_eq!(
+        (row.class, row.failures),
+        (Some(crate::integration_health::Class::Transient), 3)
+    );
 
     for (body, status, code) in [
         ("".to_string(), 404, "http_404"),
@@ -1142,6 +1158,9 @@ async fn a_failing_source_keeps_the_last_good_list() {
         (row.error, row.failing_since, row.failures),
         (None, None, 0)
     );
+    let row = health(rss).await;
+    assert_eq!((row.failing_since, row.failures), (None, 0));
+    assert_eq!(row.error.as_deref(), Some("too_big"), "the last error kept");
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -3418,4 +3437,29 @@ async fn the_rows_times_are_in_the_phone_setup_zone() {
     assert!(page.contains("Check again after 19:15"), "{page}");
     assert!(page.contains("Next try 19:14"), "{page}");
     assert!(!page.contains("UTC"), "{page}");
+}
+
+/// Design 116 §2.1: every listing failure's class (`music_feed`).
+#[test]
+fn every_check_error_is_classed() {
+    use crate::integration_health::Class::*;
+    use crate::music::CheckError;
+    for (err, class) in [
+        (CheckError::Network("reset".into()), Some(Transient)),
+        (CheckError::Timeout, Some(Transient)),
+        (CheckError::Status(503), Some(Transient)),
+        (CheckError::Status(408), Some(Transient)),
+        (CheckError::Status(429), Some(Transient)),
+        (CheckError::Status(404), Some(Parent)),
+        (CheckError::Status(403), Some(Parent)),
+        (CheckError::Status(401), Some(Parent)),
+        (CheckError::NotFound, Some(Parent)),
+        (CheckError::NotFeed, Some(Parent)),
+        (CheckError::NoItems, Some(Parent)),
+        (CheckError::TooBig, Some(Parent)),
+        (CheckError::Storytel("network".into()), None),
+        (CheckError::Spotify("network".into()), None),
+    ] {
+        assert_eq!(crate::music_sweep::class_of(&err), class, "{err:?}");
+    }
 }

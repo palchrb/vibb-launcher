@@ -307,9 +307,54 @@ enum Fetched {
         next: DateTime<Utc>,
     },
     Failed {
-        code: &'static str,
+        code: MetCode,
         next: DateTime<Utc>,
     },
+}
+
+/// A forecast fetch's failure, as stored in `weather_cells.last_error` and the integration health (design 116 §2.1:
+/// key `met`, family-wide).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MetCode {
+    Network,
+    Timeout,
+    Status429,
+    Status403,
+    Status5xx,
+    StatusOther,
+    Unreadable,
+    /// A body MET cut short, its whole hours kept: stored as the note of a fetch that worked.
+    Cut,
+}
+
+impl MetCode {
+    fn as_str(self) -> &'static str {
+        match self {
+            MetCode::Network => "network",
+            MetCode::Timeout => "timeout",
+            MetCode::Status429 => "status_429",
+            MetCode::Status403 => "status_403",
+            MetCode::Status5xx => "status_5xx",
+            MetCode::StatusOther => "status_other",
+            MetCode::Unreadable => "unreadable",
+            MetCode::Cut => "cut",
+        }
+    }
+
+    /// Design 116 §2.1: a 403 is the owner's `MET_CONTACT`; every other failure is MET's for now.
+    fn class(self) -> Option<crate::integration_health::Class> {
+        use crate::integration_health::Class::*;
+        match self {
+            MetCode::Network
+            | MetCode::Timeout
+            | MetCode::Status429
+            | MetCode::Status5xx
+            | MetCode::StatusOther
+            | MetCode::Unreadable
+            | MetCode::Cut => Some(Transient),
+            MetCode::Status403 => Some(Parent),
+        }
+    }
 }
 
 /// One forecast fetch for `cell` under the server-wide lock, when the row (read again inside it) is still due. A 5xx
@@ -464,15 +509,15 @@ async fn fill_forecast(
             next: next_after(response),
         },
         Ok(response) if response.status == 429 => {
-            failed(&row, "status_429", now, retry_after(response, now))
+            failed(&row, MetCode::Status429, now, retry_after(response, now))
         }
-        Ok(response) if response.status == 403 => failed(&row, "status_403", now, None),
+        Ok(response) if response.status == 403 => failed(&row, MetCode::Status403, now, None),
         Ok(response) if response.status >= 500 => {
-            failed(&row, "status_5xx", now, retry_after(response, now))
+            failed(&row, MetCode::Status5xx, now, retry_after(response, now))
         }
-        Ok(_) => failed(&row, "status_other", now, None),
-        Err(FetchError::Timeout) => failed(&row, "timeout", now, None),
-        Err(_) => failed(&row, "network", now, None),
+        Ok(_) => failed(&row, MetCode::StatusOther, now, None),
+        Err(FetchError::Timeout) => failed(&row, MetCode::Timeout, now, None),
+        Err(_) => failed(&row, MetCode::Network, now, None),
     };
     let written = match &fetched {
         Fetched::Hours {
@@ -514,18 +559,22 @@ async fn fill_forecast(
         }
         Fetched::Failed { code, next } => {
             match *code {
-                "status_403" => tracing::error!(
+                MetCode::Status403 => tracing::error!(
                     cell = row.id,
                     "MET refused the request (403) - check MET_CONTACT and the User-Agent"
                 ),
-                code => tracing::warn!(cell = row.id, code, "weather: MET's forecast failed"),
+                code => tracing::warn!(
+                    cell = row.id,
+                    code = code.as_str(),
+                    "weather: MET's forecast failed"
+                ),
             }
             sqlx::query(
                 "UPDATE weather_cells SET next_fetch_at = ?, failures = failures + 1, \
                  last_error = ? WHERE id = ?",
             )
             .bind(stamp(*next))
-            .bind(code)
+            .bind(code.as_str())
             .bind(row.id)
             .execute(&state.db)
             .await
@@ -534,12 +583,25 @@ async fn fill_forecast(
     if let Err(err) = written {
         tracing::error!(cell = row.id, %err, "weather: couldn't store a forecast fetch");
     }
+    // Design 116 §2.1: MET's health, family-wide (one cell's success ends another's run, QA L6).
+    let failure = match &fetched {
+        Fetched::Hours { note: None, .. } | Fetched::NotModified { .. } => None,
+        Fetched::Hours { note: Some(_), .. } => Some(MetCode::Cut),
+        Fetched::Failed { code, .. } => Some(*code),
+    };
+    match failure.map(|code| (code, code.class())) {
+        None => crate::integration_health::ok(&state.db, "met", "").await,
+        Some((code, Some(class))) => {
+            crate::integration_health::failed(&state.db, "met", "", code.as_str(), class).await
+        }
+        Some((_, None)) => {}
+    }
 }
 
 /// A 200/203 we can't use (a changed shape, cut at the size cap): `unreadable` with its backoff, but never before
 /// the `Expires` MET sent with it (code QA M2: MET's terms forbid repeating a request before it).
 fn unusable(row: &CellRow, now: DateTime<Utc>, not_before: DateTime<Utc>) -> Fetched {
-    match failed(row, "unreadable", now, None) {
+    match failed(row, MetCode::Unreadable, now, None) {
         Fetched::Failed { code, next } => Fetched::Failed {
             code,
             next: next.max(not_before),
@@ -550,20 +612,15 @@ fn unusable(row: &CellRow, now: DateTime<Utc>, not_before: DateTime<Utc>) -> Fet
 
 /// A failed fetch's backoff: a 429 `Retry-After` but at least 10 min doubling per failure to 2 h; a 403 6 h; else
 /// 5, 10, 20, 40, 60 min by the failures so far, or a longer `Retry-After` (a 5xx's).
-fn failed(
-    row: &CellRow,
-    code: &'static str,
-    now: DateTime<Utc>,
-    retry: Option<Duration>,
-) -> Fetched {
+fn failed(row: &CellRow, code: MetCode, now: DateTime<Utc>, retry: Option<Duration>) -> Fetched {
     let failures = u32::try_from(row.failures.clamp(0, 16)).unwrap_or(0);
     let wait = match code {
-        "status_429" => {
+        MetCode::Status429 => {
             let doubled =
                 Duration::minutes(10 * 2_i64.pow(failures.min(4))).min(Duration::hours(2));
             retry.unwrap_or(Duration::zero()).max(doubled)
         }
-        "status_403" => Duration::hours(6),
+        MetCode::Status403 => Duration::hours(6),
         // A 5xx's `Retry-After` is a floor, but one header never holds a cell longer than two hours.
         _ => Duration::minutes([5, 10, 20, 40, 60][failures.min(4) as usize])
             .max(retry.unwrap_or(Duration::zero()).min(Duration::hours(2))),
@@ -891,9 +948,12 @@ mod tests {
             (Some(600), 10),
             (Some(86_400), 120),
         ] {
-            let Fetched::Failed { next, .. } =
-                failed(&row, "status_5xx", now(), retry.map(Duration::seconds))
-            else {
+            let Fetched::Failed { next, .. } = failed(
+                &row,
+                MetCode::Status5xx,
+                now(),
+                retry.map(Duration::seconds),
+            ) else {
                 panic!()
             };
             assert_eq!(next, now() + Duration::minutes(wait), "{retry:?}");

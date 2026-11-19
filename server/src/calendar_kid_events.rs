@@ -1151,6 +1151,7 @@ async fn post_inner(
         .bind(device_id)
         .execute(&state.db)
         .await?;
+        record_failure(&state.db, device_id, "too_big").await;
         return Ok(error_answer(StatusCode::PAYLOAD_TOO_LARGE, "too_big"));
     }
     let set = match read_set(&value) {
@@ -1680,9 +1681,12 @@ async fn refuse_event(
 async fn backoff_account(
     db: &sqlx::SqlitePool,
     account_id: i64,
+    device_id: i64,
+    status: u16,
     retry_after: Option<&str>,
     now: DateTime<Utc>,
 ) -> Result<Step, sqlx::Error> {
+    record_failure(db, device_id, &format!("status_{status}")).await;
     let failures: i64 =
         sqlx::query_scalar("SELECT write_failures + 1 FROM caldav_accounts WHERE id = ?")
             .bind(account_id)
@@ -1727,7 +1731,36 @@ async fn failed_request(
         target.login.stop(state, err.code).await?;
         return Ok(Step::StopAccount);
     }
+    record_failure(&state.db, target.device_id, err.code).await;
     backoff_event(&state.db, target.device_id, row, now, err.code).await
+}
+
+/// A write's code in the integration health (design 116 §2.1, key `caldav_write`, scope `device:<id>`), `None` = not
+/// recorded: the phone's set refused (`bad_set`, `tag_pinned:*`), not CalDAV, or a code the table doesn't name (an
+/// event's own refusal, the account's stop - `caldav`'s). Every [Step::StopDevice] code is `stop`.
+pub(crate) fn class_of(code: &str) -> Option<crate::integration_health::Class> {
+    use crate::integration_health::Class::*;
+    match code {
+        "status_429" | "status_503" | "network" | "timeout" => Some(Transient),
+        "write_refused" | "full" | "no_etag" | "not_listed" | "too_big" => Some(Stop),
+        "bad_set" => None,
+        code if code.starts_with("tag_pinned") => None,
+        _ => None,
+    }
+}
+
+/// Records a write's failure for the phone, when [class_of] classes it.
+async fn record_failure(db: &sqlx::SqlitePool, device_id: i64, code: &str) {
+    if let Some(class) = class_of(code) {
+        crate::integration_health::failed(
+            db,
+            "caldav_write",
+            &format!("device:{device_id}"),
+            code,
+            class,
+        )
+        .await;
+    }
 }
 
 /// Any other answer to a write (D4.4).
@@ -1753,6 +1786,8 @@ async fn other_answer(
             backoff_account(
                 &state.db,
                 target.login.id,
+                target.device_id,
+                answer.status,
                 answer.retry_after.as_deref(),
                 now,
             )
@@ -2296,6 +2331,8 @@ async fn delete_step(
             backoff_account(
                 &state.db,
                 target.login.id,
+                target.device_id,
+                answer.status,
                 answer.retry_after.as_deref(),
                 now,
             )
@@ -2330,7 +2367,15 @@ async fn delete_read_first(
         return Ok(Step::Wrote);
     }
     if matches!(got.status, 429 | 503) {
-        return backoff_account(&state.db, target.login.id, got.retry_after.as_deref(), now).await;
+        return backoff_account(
+            &state.db,
+            target.login.id,
+            target.device_id,
+            got.status,
+            got.retry_after.as_deref(),
+            now,
+        )
+        .await;
     }
     if got.status != 200 {
         return backoff_event(&state.db, target.device_id, row, now, "status").await;
@@ -2577,8 +2622,15 @@ async fn restore_step(
             return Ok(Step::Done);
         }
         429 | 503 => {
-            return backoff_account(&state.db, target.login.id, got.retry_after.as_deref(), now)
-                .await;
+            return backoff_account(
+                &state.db,
+                target.login.id,
+                target.device_id,
+                got.status,
+                got.retry_after.as_deref(),
+                now,
+            )
+            .await;
         }
         _ => return backoff_event(&state.db, target.device_id, row, now, "status").await,
     }
@@ -2751,7 +2803,17 @@ async fn work_claimed(
             .execute(&state.db)
             .await?;
             match outcome {
-                Step::Wrote => wrote_here = true,
+                Step::Wrote => {
+                    if !wrote_here {
+                        crate::integration_health::ok(
+                            &state.db,
+                            "caldav_write",
+                            &format!("device:{device_id}"),
+                        )
+                        .await;
+                    }
+                    wrote_here = true;
+                }
                 Step::Done => {
                     // A step that left the row as it was would come round again: wait for the next pass.
                     let after = row(&state.db, device_id, &next.uid).await?;
@@ -2835,6 +2897,7 @@ async fn stop_device(
         .bind(device_id)
         .execute(db)
         .await?;
+    record_failure(db, device_id, code).await;
     tracing::warn!(
         device_id,
         code,
