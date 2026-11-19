@@ -289,7 +289,7 @@ fn only_vibb_line(lang: Lang, name: &str, sink: &str) -> Option<Line> {
 }
 
 /// The summary's lines (design 95 rev. 3; design 113): only when they say something - the kid's Off (grey) and the
-/// roaming warnings. Mobile data off on the phone is the Attention row's (`attention::Kind::MobileDataOff`), said once.
+/// roaming warnings. Mobile data off on the phone is design 114's setup row (`attention::Kind::Setup`), said once.
 /// Each leads to the Mobilnett page.
 pub fn summary_lines(
     lang: Lang,
@@ -420,16 +420,8 @@ pub fn card(lang: Lang, name: &str, policy: &DevicePolicy, latest: Option<&Devic
 
     let mut data_lines = Vec::new();
     if let Some(m) = &mobile {
-        // Design 113 (the user's call): Android's own mobile-data switch off is orange, its fix behind the ⓘ.
-        if m.enabled == Some(false) {
-            data_lines.push(Line::new(
-                lang,
-                "data-off",
-                "mobile.state.data_off",
-                Some("mobile.state.data_off_sub"),
-                true,
-            ));
-        }
+        // Android's own mobile-data switch off is design 114's setup step `mobile_data`, its warning line at the
+        // group's top (`setup_status::page_warnings`).
         // Code QA L6: the kid's Off is said once on the page, by its own line; the "only Vibb" lines are the summary's
         // (design 113: the parent's and the abroad one restate the chosen radio, so the page has none).
         if m.kid.as_deref() == Some("off") {

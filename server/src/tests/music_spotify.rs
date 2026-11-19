@@ -206,7 +206,7 @@ async fn binding(app: &TestApp, device: i64) -> Option<i64> {
 /// level for Meldinger 0135. Design 83's MMS addresses 0137. Design 85's avatar tones 0138. The
 /// catalog release's versionCode 0139. Design 87's app logos 0140. Design 90's update holds 0141. Design 93's rule
 /// turned on now 0142. Mobilnett (designs 94/95) 0143. Design 95's heartbeat report 0144. Design 97's abroad 0145. Design 98's
-/// airplane mode 0146 and its parent-code rule pause 0147. Design 99's Snarveier 0148. Design 108's app push 0152. Design 108b's gateway mark and VAPID refusal stamp 0153. Design 108c's refusal cause, run starts, delivery samples 0154. The catalog's kept app logo 0155. Design 115's held app push 0156.
+/// airplane mode 0146 and its parent-code rule pause 0147. Design 99's Snarveier 0148. Design 108's app push 0152. Design 108b's gateway mark and VAPID refusal stamp 0153. Design 108c's refusal cause, run starts, delivery samples 0154. The catalog's kept app logo 0155. Design 115's held app push 0156. Design 114's setup status 0157.
 #[test]
 fn migrations_from_73_in_order() {
     let versions: Vec<(i64, String)> = crate::MIGRATOR
@@ -300,7 +300,8 @@ fn migrations_from_73_in_order() {
             (154, "up attention".to_string()),
             (155, "catalog app logo".to_string()),
             (156, "up held".to_string()),
-            // 0157/0158 are reserved by designs 114 and 116.
+            (157, "setup status".to_string()),
+            // 0158 is reserved by design 116 (C2).
             (159, "map links".to_string()),
         ],
         "0073 (design 30), 0074 (Spotify), 0075 (the clock format), 0076 (the softer \

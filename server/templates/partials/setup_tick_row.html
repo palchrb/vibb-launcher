@@ -1,0 +1,17 @@
+{#- Design 114 §5.1: a parent step's row on Device › Oppsett - a switch that saves by itself back to the row
+    (#step-<key>; without JS the <noscript> Save), and its ⓘ with Android's path. Needs `row` and `device`. -#}
+<form method="post" action="/devices/{{ device.id }}/setup/ticks#step-{{ row.key }}" class="cell" id="step-{{ row.key }}" data-setup-step="{{ row.key }}">
+    <input type="hidden" name="step" value="{{ row.key }}">
+    {#- Code QA M3: one row a step - the ⓘ left of the switch (the `.on-home` pattern), its panel under the row. -#}
+    <div class="on-home">
+        <label class="row">
+            <span class="row-label">{{ row.name }}</span>
+            <input type="checkbox" role="switch" class="sw" name="on" value="on"{% if row.ticked %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+        </label>
+        <details class="info">
+            <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+            <div class="info-panel"><p>{{ row.how }}</p></div>
+        </details>
+    </div>
+    <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
+</form>

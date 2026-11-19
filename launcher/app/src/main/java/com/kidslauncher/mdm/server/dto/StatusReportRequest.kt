@@ -158,6 +158,10 @@ data class StatusReportRequest(
     /** Design 110 §7.5: the map links' target, its state, the two steps and what reaches Vibb One. A full-report
      * field. Pinned by `map_links/contract.json`'s `report` rows (`MapLinksContractTest`). */
     val mapLinks: com.kidslauncher.mdm.map.MapLinksReport? = null,
+    /** Design 114 §4.1: the setup readings no other field carries, and the hold's end while it lasts; built by
+     * [com.kidslauncher.mdm.setup.SetupReport.json] (a reading Android refused is `null`, one that doesn't apply left
+     * out). A full-report field. Pinned by `setup_steps.json`'s `report` rows (`SetupStepsTest`). */
+    val setup: kotlinx.serialization.json.JsonObject? = null,
 )
 
 /**

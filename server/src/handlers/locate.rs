@@ -65,6 +65,8 @@ crate::i18n::words!(LocateTemplate);
 /// The chosen phone's part of the page.
 struct Locate {
     device: Device,
+    /// Design 114 §5.4: Vibb One's location permission missing, over the map (`#location`).
+    setup_warnings: crate::setup_status::Warnings,
     /// Design 85 revision 3: every phone's chip over the map ("All" first, this one current), as
     /// the Alle view's; empty with one phone - no chips at all.
     chips: Vec<AllPhone>,
@@ -1791,6 +1793,23 @@ async fn locate_view(
     let policy = location_policy(state, id).await?;
     let phone_zones = phone_zones(state, id, &policy).await?;
     let served_interval = phone_zones.served_interval;
+    let setup_warnings = {
+        let device_policy = sqlx::query_as::<_, crate::models::DevicePolicy>(
+            "SELECT * FROM device_policy WHERE device_id = ?",
+        )
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await?;
+        let latest = sqlx::query_as::<_, crate::models::DeviceStatus>(
+            "SELECT * FROM device_status WHERE device_id = ? ORDER BY reported_at DESC, id DESC LIMIT 1",
+        )
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await?;
+        device_policy
+            .map(|p| crate::setup_status::page_warnings(lang, &p, latest.as_ref(), "locate"))
+            .unwrap_or_default()
+    };
 
     let (newest, mut map) = map_data(state, id, span, zone, now).await?;
     // The newest fix's badge (design 64 §3.5): the zones that fix is surely in.
@@ -1879,6 +1898,7 @@ async fn locate_view(
         });
     Ok(Locate {
         device,
+        setup_warnings,
         chips,
         marker,
         fix,

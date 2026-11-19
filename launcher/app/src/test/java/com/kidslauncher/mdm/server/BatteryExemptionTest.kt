@@ -24,14 +24,4 @@ class BatteryExemptionTest {
         assertNull(dialogTarget(settings.copy(plannedOff = true), own))
     }
 
-    @Test
-    fun `every row state`() {
-        assertEquals(BatteryRow.EXEMPT, batteryRowState(exempt = true, dialogAvailable = false))
-        assertEquals(BatteryRow.EXEMPT, batteryRowState(exempt = true, dialogAvailable = true))
-        assertEquals(BatteryRow.CAN_ASK, batteryRowState(exempt = false, dialogAvailable = true))
-        // Managed, no pause: Android's Settings is hidden - pause first.
-        assertEquals(BatteryRow.PAUSE_FIRST, batteryRowState(exempt = false, dialogAvailable = false))
-        assertEquals(BatteryRow.UNKNOWN, batteryRowState(exempt = null, dialogAvailable = true))
-        assertEquals(BatteryRow.UNKNOWN, batteryRowState(exempt = null, dialogAvailable = false))
-    }
 }

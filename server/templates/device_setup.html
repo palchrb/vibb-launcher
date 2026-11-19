@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="{{ lang.code() }}">
+<head>
+{% include "partials/head.html" %}
+</head>
+<body>
+<div class="top-strip" aria-hidden="true"></div>
+{% let tab = "devices" %}
+{% include "partials/tab_bar.html" %}
+{% import "partials/band.html" as band %}
+<main class="container">
+    {% call band::phone(self.t("setup.page.title"), "/devices/" ~ device.id, device.name, who) %}{% endcall %}
+    <div class="sheet">
+
+    {#- Design 114 §5.1: Device › Oppsett. Top to bottom: the open group (the setup hold, or Åpne for oppsett / Åpnet
+        til … with Lås igjen - the quick actions' commands with back=setup, landing here at #open), the missing
+        required steps ("På telefonen"), the parent's own (only with rows), the optional ones (a parent step's switch
+        saves by itself back to its row: with JS scroll-restore.js keeps the place, without JS the <noscript> Save
+        lands on #step-<key>), and the ticked ones in one closed <details>. Every row is #step-<key>; what to do on
+        Android's page is behind its ⓘ, never in a link (design 113 QA M7). -#}
+    {% if self.open_shown() %}
+    <section id="open" aria-label="{{ self.t("device.advanced.setup.title") }}">
+        <div class="group">
+            {% if let Some(hold) = hold %}
+            <div class="row" data-setup-open="hold"><span class="row-label">{{ hold }}</span></div>
+            <form method="post" action="/devices/{{ device.id }}/end-windows#open" class="cell">
+                <input type="hidden" name="back" value="setup">
+                <button type="submit" class="row row-button">{{ self.t("device.summary.lock_again") }}</button>
+            </form>
+            {% else if let Some(s) = open %}
+            {% if s.open %}
+            <div class="row" data-setup-open="open"><span class="row-label">{% if let Some(value) = s.value %}{{ self.t("device.advanced.setup.title") }}</span><span class="row-value">{{ value }}</span>{% else %}{{ s.open_text }}</span>{% endif %}</div>
+            <form method="post" action="/devices/{{ device.id }}/end-windows#open" class="cell">
+                <input type="hidden" name="back" value="setup">
+                <button type="submit" class="row row-button">{{ self.t("device.summary.lock_again") }}</button>
+            </form>
+            {% else if page.openable %}
+            {% if let Some(line) = s.on_lock %}<p class="row row-note qa-warn">{{ line }}</p>{% endif %}
+            <form method="post" action="/devices/{{ device.id }}/start-pause#open" class="cell" data-setup-open="closed">
+                <input type="hidden" name="back" value="setup">
+                <button type="submit" class="row row-button">{{ self.t("device.advanced.setup.button") }}</button>
+            </form>
+            {% endif %}
+            {% endif %}
+            {% if let Some(key) = flash %}<p class="flash" role="status" data-flash="open">{{ self.t(key) }}</p>{% endif %}
+        </div>
+        <div class="group-footer"><details class="info">
+            <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+            <div class="info-panel"><p>{{ self.t("setup.how.phone") }}</p></div>
+        </details></div>
+    </section>
+    {% endif %}
+
+    {% if page.no_report %}
+    <div class="group"><p class="row row-note" data-setup-state="no-report">{{ self.t("setup.no_report") }}</p></div>
+    {% else if page.all_done() %}
+    <div class="group"><p class="row row-note" data-setup-state="done">{{ self.t("setup.all_done") }}</p></div>
+    {% endif %}
+
+    {% if !page.phone.is_empty() %}
+    <section id="phone" aria-labelledby="phone-title">
+        <h2 class="group-header" id="phone-title">{{ self.t("setup.group.phone") }}</h2>
+        {% for row in page.phone %}{% if row.alarm %}
+        {% if row.key == "parent_pin" %}
+        <a class="attention attention-alarm" id="step-{{ row.key }}" href="{% if let Some(link) = row.link %}{{ link }}{% endif %}" data-setup-step="{{ row.key }}">
+            <span class="attention-text">{{ row.name }}</span>
+            <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>
+        {% else %}
+        <div class="attention attention-alarm" id="step-{{ row.key }}" data-setup-step="{{ row.key }}">
+            <div class="attention-text">{{ row.name }}<div class="attention-sub">
+                <details class="info">
+                    <summary aria-label="{{ self.t("common.how_to_fix") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                    <div class="info-panel"><p>{{ row.how }}</p>{% if let Some(link) = row.link %}<p><a href="{{ link }}">{{ self.t("device.summary.access.qr") }}</a></p>{% endif %}</div>
+                </details></div></div>
+        </div>
+        {% endif %}
+        {% endif %}{% endfor %}
+        {% if page.has_phone_rows() %}
+        <div class="group">
+            {% for row in page.phone %}{% if !row.alarm %}
+            <details class="info cell" id="step-{{ row.key }}" data-setup-step="{{ row.key }}">
+                <summary class="row">
+                    <span class="row-label">{{ row.name }}</span>
+                    {% if let Some(value) = row.value %}<span class="row-value">{{ value }}</span>{% endif %}
+                    <svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("common.more_info") }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>
+                </summary>
+                <div class="info-panel">{% if let Some(why) = row.why %}<p>{{ why }}</p>{% endif %}<p>{{ row.how }}</p></div>
+            </details>
+            {% endif %}{% endfor %}
+        </div>
+        {% endif %}
+    </section>
+    {% endif %}
+
+    {% if !page.check.is_empty() %}
+    <section id="check" aria-labelledby="check-title">
+        <h2 class="group-header" id="check-title">{{ self.t("setup.group.check") }}</h2>
+        <div class="group">
+            {% for row in page.check %}{% include "partials/setup_tick_row.html" %}{% endfor %}
+        </div>
+    </section>
+    {% endif %}
+
+    {% if !page.optional.is_empty() %}
+    <section id="optional" aria-labelledby="optional-title">
+        <h2 class="group-header" id="optional-title">{{ self.t("setup.group.optional") }}</h2>
+        <div class="group">
+            {% for row in page.optional %}
+            {% if row.tickable %}{% include "partials/setup_tick_row.html" %}{% else %}
+            <details class="info cell" id="step-{{ row.key }}" data-setup-step="{{ row.key }}">
+                <summary class="row">
+                    <span class="row-label">{{ row.name }}</span>
+                    <svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("common.more_info") }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>
+                </summary>
+                <div class="info-panel"><p>{{ row.how }}</p></div>
+            </details>
+            {% endif %}
+            {% endfor %}
+        </div>
+    </section>
+    {% endif %}
+
+    {% if !page.ticked.is_empty() %}
+    <section id="ticked" aria-label="{{ self.tc("setup.ticked", page.ticked_count(), []) }}">
+        <details class="row-sheet" data-setup-ticked>
+            <summary class="row"><span class="row-label">{{ self.tc("setup.ticked", page.ticked_count(), []) }}</span>
+                <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </summary>
+            <div class="group">
+                {% for row in page.ticked %}{% include "partials/setup_tick_row.html" %}{% endfor %}
+            </div>
+        </details>
+    </section>
+    {% endif %}
+
+    </div>
+</main>
+</body>
+</html>

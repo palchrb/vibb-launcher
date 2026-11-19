@@ -107,6 +107,9 @@ import eu.jonahbauer.android.preference.annotations.Preferences;
                         @Preference(name = "restrictions_paused_until", type = long.class, defaultValue = "0"),
                         @Preference(name = "restrictions_paused_elapsed_start", type = long.class, defaultValue = "0"),
                         @Preference(name = "restrictions_paused_boot", type = int.class, defaultValue = "-1"),
+                        // Design 114 §6.1.2: the pause is the setup hold (its ceiling, not 2 hours). Written true only by
+                        // RestrictionsPause.startHold, false by start() and clear().
+                        @Preference(name = "restrictions_paused_hold", type = boolean.class, defaultValue = "false"),
                         // JSON blob: per-package {lastInstalledTag, lastFailedTag} for apps
                         // tracked from GitHub Releases (see server.TrackedAppUpdateState) - stops
                         // an already-installed or already-failed release from being re-downloaded

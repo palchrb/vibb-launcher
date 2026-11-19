@@ -173,13 +173,20 @@ pub(crate) struct Inputs<'a> {
     pub now: DateTime<Utc>,
 }
 
-/// The newest `start_pause` the phone answered while its pause still runs: its end, two hours
-/// after the answer (the phone's own pause length).
+/// The opening's end: the setup hold's (design 114 §5.2, from the latest report), else the newest `start_pause` the
+/// phone answered while its pause still runs - two hours after the answer (the phone's own pause length).
 async fn setup_until(
     db: &sqlx::SqlitePool,
     device_id: i64,
+    latest: Option<&DeviceStatus>,
     now: DateTime<Utc>,
 ) -> Result<Option<DateTime<Utc>>, sqlx::Error> {
+    if let Some(end) = latest
+        .and_then(|latest| crate::setup_status::hold_end(latest, now.timestamp_millis()))
+        .and_then(DateTime::from_timestamp_millis)
+    {
+        return Ok(Some(end));
+    }
     let answered: Option<String> = sqlx::query_scalar(
         "SELECT acknowledged_at FROM device_commands WHERE device_id = ? AND command = ? \
          AND acknowledged_at IS NOT NULL AND succeeded IS NOT 0 ORDER BY id DESC LIMIT 1",
@@ -380,7 +387,7 @@ pub(crate) async fn build(
         .latest
         .is_some_and(|s| crate::handlers::rules_now::open_for_setup(s, now_ms));
     let until = if open_for_setup {
-        setup_until(db, input.device_id, now).await?
+        setup_until(db, input.device_id, input.latest, now).await?
     } else {
         None
     };
@@ -570,7 +577,7 @@ pub(crate) async fn setup_card(
     let open = latest.is_some_and(|s| crate::handlers::rules_now::open_for_setup(s, now_ms));
     let paused = latest.is_some_and(|s| s.paused_at(now_ms));
     let until = if paused {
-        setup_until(db, device.id, now).await?
+        setup_until(db, device.id, latest, now).await?
     } else {
         None
     };

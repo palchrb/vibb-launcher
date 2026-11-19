@@ -303,7 +303,8 @@ object AirplaneRuntime {
             assistant = roleHeld(context),
             wifiKept = wifiKept(context),
             lastError = error,
-            defaultAppsChanged = defaultAppsChanged(context),
+            // Design 114 §2.2.1 (QA H1): read live - a role put back leaves the list.
+            defaultAppsChanged = AssistantSetup.defaultAppsChanged(context),
             periods = prunedPeriods(periods(context), now),
         )
     } catch (e: Exception) {

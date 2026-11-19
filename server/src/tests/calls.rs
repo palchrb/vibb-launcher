@@ -827,6 +827,7 @@ async fn calls_page_shows_role_problems_and_fail_closed() {
     call_state["state"] = json!("fail_closed");
     call_state["dialer_role_held"] = json!(false);
     call_state["redirection_role_held"] = json!(false);
+    call_state["screening_role_held"] = json!(true);
     call_state["last_error"] = json!("setDefaultDialerApplication: IllegalArgumentException");
     call_state["call_log_readable"] = json!(false);
     call_state["boot_policy"] = json!("write_failed");
@@ -835,15 +836,20 @@ async fn calls_page_shows_role_problems_and_fail_closed() {
     let page = calls_page(&app, &cookie, id).await;
     for expected in [
         "Phone can&#39;t read its call rules",
-        "Anyone can call this phone",
-        "Blocked numbers may ring briefly",
+        // The screening role held without the dialer role: incoming calls are still screened.
+        "Vibb One isn&#39;t the phone app",
         "Emergency callback may not work",
         "Calls blocked after a restart",
         "Phone reported a calls problem",
     ] {
         assert!(page.contains(expected), "{expected}: {page}");
     }
-    assert_eq!(warnings(&page), 6, "{page}");
+    assert_eq!(warnings(&page), 5, "{page}");
+    // Design 114: the redirection role is the setup step `call_filter`, its line at the channels (#settings).
+    assert!(
+        page.contains("data-setup-warning=\"call_filter\""),
+        "{page}"
+    );
     let shown = visible(&page);
     for hidden in [
         "IllegalArgumentException",
@@ -855,7 +861,7 @@ async fn calls_page_shows_role_problems_and_fail_closed() {
         assert!(!shown.contains(hidden), "{hidden} visible: {shown}");
     }
     assert!(page.contains("The phone said: setDefaultDialerApplication: IllegalArgumentException"));
-    assert!(page.contains("android.app.role.CALL_REDIRECTION me.vibb.launcher"));
+    assert!(!page.contains("adb "));
 }
 
 /// Security review L7: incoming calls are filtered by the phone app's screening or the
@@ -870,15 +876,12 @@ async fn calls_page_says_whether_incoming_calls_are_filtered() {
     set_managed(&app, id, true, true).await;
     let anyone = "Anyone can call this phone";
     let not_phone_app = "Vibb One isn&#39;t the phone app";
-    let screening = "Call screening";
+    // Design 114: the screening role missing while Vibb is the phone app is the setup step `call_filter`.
+    let screening = "data-setup-warning=\"call_filter\"";
     for (dialer, held, present, absent) in [
         (false, None, vec![anyone], vec![not_phone_app, screening]),
-        (
-            false,
-            Some(false),
-            vec![anyone],
-            vec![not_phone_app, screening],
-        ),
+        // Neither role: the warning, and the setup step's line too (it reads both roles).
+        (false, Some(false), vec![anyone], vec![not_phone_app]),
         (
             false,
             Some(true),
@@ -916,11 +919,12 @@ async fn calls_page_says_whether_incoming_calls_are_filtered() {
                 .find(text)
                 .unwrap_or_else(|| panic!("{dialer} {held:?} {text}: {page}"));
             if *text == screening {
-                // A row in the Settings group, not a warning; its fix behind the row's ⓘ.
+                // The setup line at the channels (#settings), no warning of the page's own, no adb.
                 let group = part(&page, "id=\"settings\"", "</section>");
                 assert!(group.contains(screening), "{group}");
-                assert!(group.contains("android.app.role.CALL_SCREENING"), "{group}");
+                assert!(!page.contains("adb "), "{page}");
                 assert_eq!(warnings(&page), 0, "{page}");
+                assert!(summary.contains("data-attention=\"setup\""), "{summary}");
             } else {
                 let open = page[..at].rfind("<div class=\"attention ").unwrap();
                 assert!(

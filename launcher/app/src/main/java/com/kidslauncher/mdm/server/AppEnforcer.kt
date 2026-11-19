@@ -56,6 +56,12 @@ import com.kidslauncher.mdm.play.PlayState
 
 private const val LOG_TAG = "AppEnforcer"
 
+/** Design 114 §7.1: always self-granted while device owner ([AppEnforcer.apply]); never background location. */
+val OWN_LOCATION_PERMISSIONS = listOf(
+    android.Manifest.permission.ACCESS_FINE_LOCATION,
+    android.Manifest.permission.ACCESS_COARSE_LOCATION,
+)
+
 /** Self-granted while calls are managed - see [AppEnforcer.applyCallPermissions]. */
 private val OWN_CALL_PERMISSIONS = listOf(
     android.Manifest.permission.READ_CONTACTS,
@@ -353,6 +359,10 @@ object AppEnforcer {
         val overrideActive = OfflineOverride.isActive() || RestrictionsPause.isActive()
 
         enforceDefaultHome(dpm, admin, context)
+        // Design 114 §7.1: Vibb's own fine and coarse location, always, whatever Locate says (the Wi-Fi page's scan and
+        // the sign-in window's network name need them; Off still never asks LocationManager for a fix). Background
+        // location keeps following Locate and the zones. Written only while not granted; in a window too.
+        for (permission in OWN_LOCATION_PERMISSIONS) QuickControls.selfGrantPermission(context, dpm, admin, permission)
         // Never lifted (QA #2) - the blocker passes links on to Play whenever Play is open.
         enforcePlayLinkBlocker(dpm, admin, context)
         // The call log opens the phone book (design 12), never lifted either.

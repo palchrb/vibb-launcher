@@ -94,6 +94,8 @@ launcher and the music app, in nb and en alike:
 
 **Supported Android: 14 to 17** (the user, 2026-11-16: "alt fremover skal være 14-17 kompatibelt"). Both apps are minSdk 34 and every change must work on Android 14, 15, 16 and 17: an API above 34 behind a `Build.VERSION.SDK_INT` gate with a sane path on 14 (lint's NewApi in CI catches a missing gate, never suppress it), and a platform behaviour that differs between them (Device Owner, lock task, roles, notifications and Modes, VPN, telephony, location, WebView) checked against each version's behaviour changes. A design note names the versions it was checked on; an emulator gate that depends on the version runs on the lowest and the highest it touches. The Jelly Star runs Android 16 (Unihertz's update, from September 2026).
 
+**No backwards compatibility on the phones yet** (the user, 2026-11-18: "Husk dette sånn genrelt ift backwards compatibility; det er enda ikke viktig" - only emulators run Vibb so far): no migration path for phone-side data or stored state and no code for older launcher/music versions; a new format drops or resets the old one. The server's database migrations still run (the user's server holds real data), and a release still ships the server first.
+
 Server (from `server/`): `cargo test`, `cargo fmt --check`, `cargo clippy --all-targets`.
 
 Launcher (from `launcher/`, JDK 17, `local.properties` with `sdk.dir=...`):
@@ -428,6 +430,19 @@ hops, the place lookup's answers cut down to the paths it reads, the PWA's lines
 (`launcher/app/src/test/resources/map_link_rules.json`, `MapLinksTest`: every link form to its pin, search or note)
 stay each side's. The policy's `map_links` is pinned by `policy_json_keys_snapshot` and `PolicyResponseCompatTest`.
 
+The phone setup status (design 114) is `server/testdata/setup_steps.json`, byte-identical in
+`launcher/app/src/test/resources/`: `steps` (the one step table in display order: `key`, `need`, `read_by`, `when`,
+`summary`, `level`, `features`, `phone_page`, `names`), `features` (each PWA choice a step stops and its page and
+section), `report`/`report_no_hold` (the exact `setup` of a status report, the setup hold's `hold_until_ms` and
+`hold_left_ms` in the first), `policy`/`policy_none` (the policy's `setup: {ticked}`), `tick` (the exact `POST
+/api/devices/setup/ticks` body, each answer, the phone's `done`/`retry` per status), `needed` (the need rule's inputs
+and readings to `missing`, `count`, `alarm`, `setup_row`) and `clean` (the server's cleaning). The server's
+`setup_status::tests` runs every row, checks its table and names and compares the copies; `tests::setup_status` posts
+`report` and the ticks; `intake_limits` keeps the report's keys; the launcher's `SetupStepsTest` encodes the report and
+the tick exactly, decodes the policy and runs the rows. `restrictions_pause.json` also carries the setup hold's ceiling
+(`setup_hold_max_ms`: `models::SETUP_HOLD_MAX_MS`, the launcher's `SETUP_HOLD_DURATION_MS`). The policy's `setup` is
+pinned by `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTest`.
+
 ## CI and releases
 
 - `.github/workflows/launcher.yml`, `server-ci.yml` and `music.yml` run on every push/PR, but their build job
@@ -435,7 +450,7 @@ stay each side's. The policy's `map_links` is pinned by `policy_json_keys_snapsh
   (`launcher.yml` also on `.github/actions/build-tsnet/` and the music files its tests read: the bridge, the
   shared snapshots, the three `spotify_hosts.json`, `server/testdata/time_status_report.json`,
   `dns_upstream_status.json`, `power_report.json`, `zone_status_report.json`, `launcher_tag_codes.json`,
-  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json`, `server_url_vectors.json`, `restrictions_pause.json`, `server_tls_report.json`, `sms_contract.json`, `contact_request.json`, `app_logos.json`, `lock_now.json`, `mobile_network.json`, `status_heartbeat.json`, `airplane_mode.json`, `rule_pause.json`, `shortcuts.json`, `login_windows.json`, `notification_channels.json` and `unified_push.json`, `server/testdata/map_links/contract.json`, `music/gradle/` and `music.yml`, and the server's and music's `storytel_token_answers.json`, and `server/testdata/doh_hosts.txt`, and `scripts/yr-symbols.py` with its vendored `yr-symbols-11.svg` and `scripts/fake-portal.py` (the changes job runs both `--selftest`s always); `music.yml` also on the shared
+  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json`, `server_url_vectors.json`, `restrictions_pause.json`, `server_tls_report.json`, `sms_contract.json`, `contact_request.json`, `app_logos.json`, `lock_now.json`, `mobile_network.json`, `status_heartbeat.json`, `airplane_mode.json`, `rule_pause.json`, `shortcuts.json`, `login_windows.json`, `notification_channels.json`, `unified_push.json` and `setup_steps.json`, `server/testdata/map_links/contract.json`, `music/gradle/` and `music.yml`, and the server's and music's `storytel_token_answers.json`, and `server/testdata/doh_hosts.txt`, and `scripts/yr-symbols.py` with its vendored `yr-symbols-11.svg` and `scripts/fake-portal.py` (the changes job runs both `--selftest`s always); `music.yml` also on the shared
   `server/testdata/music_*.json` and `spotify_hosts.json`, the launcher's copy of the bridge AIDL,
   `bridge_contract.json` and `spotify_hosts.json`, `server/testdata/spotify/`, `scripts/fake-sonos.py`,
   `scripts/fake-storytel.py`, `scripts/fake-spotify.py`, `scripts/fake-audio.py`, `scripts/music-splash.py`
@@ -445,7 +460,7 @@ stay each side's. The policy's `map_links` is pinned by `policy_json_keys_snapsh
   `server-ci.yml`'s build job also on the apps' `spotify_hosts.json` and `storytel_token_answers.json` copies and
   the launcher's `time_status_report.json`,
   `dns_upstream_status.json`, `power_report.json`, `zone_status_report.json`, `launcher_tag_codes.json`,
-  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json`, `server_url_vectors.json`, `restrictions_pause.json`, `server_tls_report.json`, `sms_contract.json`, `contact_request.json`, `app_logos.json`, `lock_now.json`, `mobile_network.json`, `status_heartbeat.json`, `airplane_mode.json`, `rule_pause.json`, `shortcuts.json`, `login_windows.json`, `notification_channels.json` and `unified_push.json`, the launcher's `map_links/` folder, and the launcher's `assets/dns/doh_hosts.txt`, and `scripts/mmsc-hosts.py` with its `scripts/mmsc-hosts-sample.xml` (the changes job runs its `--selftest` always);
+  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json`, `server_url_vectors.json`, `restrictions_pause.json`, `server_tls_report.json`, `sms_contract.json`, `contact_request.json`, `app_logos.json`, `lock_now.json`, `mobile_network.json`, `status_heartbeat.json`, `airplane_mode.json`, `rule_pause.json`, `shortcuts.json`, `login_windows.json`, `notification_channels.json`, `unified_push.json` and `setup_steps.json`, the launcher's `map_links/` folder, and the launcher's `assets/dns/doh_hosts.txt`, and `scripts/mmsc-hosts.py` with its `scripts/mmsc-hosts-sample.xml` (the changes job runs its `--selftest` always);
   `server-ci.yml`'s
   `server-image` job only when `server/Dockerfile`, `server/.dockerignore`, `server/deploy/image-smoke.sh`, `server/deploy/distrusted-roots.txt` or
   the workflow changed). The server's Rust (`toolchain: 1.99.0`) is pinned in `server-ci.yml` and

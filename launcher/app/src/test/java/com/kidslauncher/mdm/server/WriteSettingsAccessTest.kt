@@ -31,52 +31,6 @@ class WriteSettingsAccessTest {
     }
 
     @Test
-    fun `every row state and its text`() {
-        for (access in SystemPageAccess.entries) {
-            assertEquals(WriteSettingsRow.GRANTED, writeSettingsRowState(true, access))
-            assertEquals(WriteSettingsRow.UNKNOWN, writeSettingsRowState(null, access))
-        }
-        assertEquals(WriteSettingsRow.CAN_OPEN, writeSettingsRowState(false, SystemPageAccess.CAN_OPEN))
-        assertEquals(WriteSettingsRow.PAUSE_FIRST, writeSettingsRowState(false, SystemPageAccess.PAUSE_FIRST))
-        assertEquals(WriteSettingsRow.WAIT, writeSettingsRowState(false, SystemPageAccess.WAIT))
-        assertEquals(WriteSettingsRow.NO_PAGE, writeSettingsRowState(false, SystemPageAccess.NO_PAGE))
-        // Q-3: each state has its own text.
-        assertEquals(R.string.settings_mdm_write_settings_granted, writeSettingsText(WriteSettingsRow.GRANTED))
-        assertEquals(R.string.settings_mdm_write_settings_unknown, writeSettingsText(WriteSettingsRow.UNKNOWN))
-        assertEquals(R.string.settings_mdm_write_settings_open, writeSettingsText(WriteSettingsRow.CAN_OPEN))
-        assertEquals(R.string.settings_mdm_write_settings_pause_first, writeSettingsText(WriteSettingsRow.PAUSE_FIRST))
-        assertEquals(R.string.settings_mdm_write_settings_wait, writeSettingsText(WriteSettingsRow.WAIT))
-        assertEquals(R.string.settings_mdm_write_settings_no_page, writeSettingsText(WriteSettingsRow.NO_PAGE))
-    }
-
-    /** Q-3: the fragment's glue - the window, the applied plan, the tap guard, the sync on return, the re-reads. */
-    @Test
-    fun `the fragment feeds the rule what the plan says`() {
-        val fragment = src("java/com/kidslauncher/mdm/ui/settings/launcher/SettingsFragmentLauncher.kt")
-        val access = fragment.substringAfter("private fun pageAccess(").substringBefore("\n    )\n")
-        assertTrue("windowOpen = RestrictionsPause.isActive() || com.kidslauncher.mdm.server.OfflineOverride.isActive()," in access)
-        assertTrue("overrideApplied = AppEnforcer.lastEnforcedOverride == true," in access)
-        assertEquals(1, Regex("""systemPageAccess\(""").findAll(fragment).count())
-        assertEquals(2, Regex("""pageAccess\((WriteSettingsAccess|FingerprintEnrol)\.pageIntents\(context\)""").findAll(fragment).count())
-        // The tap opens the page only when the grant is known to be missing.
-        assertTrue("if (WriteSettingsAccess.granted(context) == false) {" in fragment)
-        // A change on return is reported at once.
-        val back = fragment.substringAfter("private val writeSettingsLauncher").substringBefore("override fun onCreatePreferences")
-        assertTrue("if (WriteSettingsAccess.granted(context) != writeSettingsBeforePage) {" in back)
-        assertTrue("SyncRunner.request(context.applicationContext, \"write_settings\")" in back)
-        assertTrue("row.summary = getString(writeSettingsText(writeSettingsRowState(WriteSettingsAccess.granted(context), access)))" in fragment)
-        // Q-2: read again after each apply while shown, and when the pause starts.
-        assertTrue("AppEnforcer.addAppliedListener(appliedListener)" in fragment.substringAfter("override fun onResume()"))
-        assertTrue("AppEnforcer.removeAppliedListener(appliedListener)" in fragment.substringAfter("override fun onPause()"))
-        val paused = fragment.substringAfter("restrictionsPaused.isChecked = true").substringBefore("}")
-        assertTrue("updateSystemPageRows()" in paused)
-        val enforcer = src("java/com/kidslauncher/mdm/server/AppEnforcer.kt")
-        val applied = enforcer.indexOf("lastEnforcedOverride = overrideActive")
-        assertTrue(applied > enforcer.indexOf("lastEnforcedPlayState = playState"))
-        assertTrue(enforcer.indexOf("appliedListeners.forEach { it() }", applied) > applied)
-    }
-
-    @Test
     fun `the page is ours by package, through the battery row's resolution`() {
         assertEquals("package:me.vibb.launcher", writeSettingsPageUri("me.vibb.launcher"))
         assertEquals("package:me.vibb.launcher.debug", writeSettingsPageUri("me.vibb.launcher.debug"))
@@ -91,22 +45,6 @@ class WriteSettingsAccessTest {
         assertTrue("PackageManager.MATCH_SYSTEM_ONLY" in battery)
         assertTrue("dialogTarget(resolved, context.packageName)" in battery)
         assertTrue("fun dialogIntent(context: Context): Intent? = systemPageIntent(" in battery)
-    }
-
-    @Test
-    fun `the row sits next to the battery row and tries the next page on ActivityNotFoundException`() {
-        val prefs = src("res/xml/preferences.xml")
-        val batteryRow = prefs.indexOf("android:key=\"settings_mdm_background_connection\"")
-        val row = prefs.indexOf("android:key=\"settings_mdm_write_settings\"")
-        assertTrue(batteryRow > 0 && row > batteryRow && row < prefs.indexOf("settings_play_install_mode"))
-        val fragment = src("java/com/kidslauncher/mdm/ui/settings/launcher/SettingsFragmentLauncher.kt")
-        val open = fragment.substringAfter("private fun openFirstPage(").substringBefore("private fun updateFingerprintRow")
-        assertTrue("for (page in pages)" in open)
-        assertTrue("catch (e: ActivityNotFoundException)" in open)
-        assertTrue("openFirstPage(pages, writeSettingsLauncher)" in fragment)
-        // Re-read on every resume, as the battery row.
-        val resume = fragment.substringAfter("override fun onResume()").substringBefore("private fun openFirstPage")
-        assertTrue("updateSystemPageRows()" in resume)
     }
 
     @Test

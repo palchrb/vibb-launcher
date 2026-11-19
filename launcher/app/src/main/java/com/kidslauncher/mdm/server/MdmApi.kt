@@ -178,6 +178,11 @@ interface MdmApi {
      * `{error}`), read by [com.kidslauncher.mdm.map.mapLinkAfter]. */
     @POST("api/devices/map-links/resolve")
     suspend fun resolveMapLink(@Body body: okhttp3.RequestBody): Response<ResponseBody>
+
+    /** Design 114 §4.4: the flow's "Gjort" on a parent step - `204`, or `400 {"error": "not_a_parent_step"}`; the
+     * status read by [com.kidslauncher.mdm.setup.tickAction]. */
+    @POST("api/devices/setup/ticks")
+    suspend fun postSetupTick(@Body body: com.kidslauncher.mdm.setup.SetupTickBody): Response<ResponseBody>
 }
 
 /** [callTimeoutMs] bounds a whole call (design 38's prepared shutdown client); `null` = none.

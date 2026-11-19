@@ -72,6 +72,8 @@ pub struct Row {
     /// The exact time, for `title=`.
     pub title: Option<String>,
     pub detail: Option<String>,
+    /// Design 114 §5.5: a row whose setup step is missing links to it on Device › Oppsett (no detail then).
+    pub href: Option<String>,
 }
 
 impl Row {
@@ -84,7 +86,23 @@ impl Row {
             value_class: "",
             title: None,
             detail: None,
+            href: None,
         }
+    }
+
+    /// Design 114 §5.5: while `step` is missing the row links to it on Device › Oppsett and says no more (the how is
+    /// there); otherwise the row is as built.
+    fn step_link(
+        mut self,
+        device_id: i64,
+        missing: &[&crate::setup_status::Step],
+        step: &str,
+    ) -> Row {
+        if missing.iter().any(|s| s.key == step) {
+            self.href = Some(format!("/devices/{device_id}/setup#step-{step}"));
+            self.detail = None;
+        }
+        self
     }
 
     pub(crate) fn detail(mut self, detail: Option<impl Into<String>>) -> Row {
@@ -565,6 +583,7 @@ pub async fn view_about(
     let mut sound = Vec::new();
     let mut software = Vec::new();
     let mut diagnostics = Vec::new();
+    let (setup_missing, _) = crate::setup_status::state_of(&policy, latest.as_ref(), &[]);
     if let Some(status) = latest.as_ref() {
         let sound_state = crate::sound_mode::state(
             status.ringer_mode.as_deref(),
@@ -597,7 +616,8 @@ pub async fn view_about(
                     row.value,
                 )
                 .class(if row.orange { "row-value-action" } else { "" })
-                .detail(row.detail),
+                .detail(row.detail)
+                .step_link(id, &setup_missing, "vibb_notifications"),
             );
         }
 
@@ -644,7 +664,7 @@ pub async fn view_about(
                     t(lang, "common.on"),
                 )
                 .class("row-value-action")
-                .detail(Some(t(lang, "device.about.battery_sub"))),
+                .step_link(id, &setup_missing, "background"),
             ),
             None => {}
         }
@@ -666,11 +686,8 @@ pub async fn view_about(
                 } else {
                     ""
                 })
-                .detail(Some(format!(
-                    "{} {}",
-                    t(lang, "device.about.write_settings_sub"),
-                    t(lang, "device.write_settings_steps")
-                ))),
+                .detail(Some(t(lang, "device.about.write_settings_sub")))
+                .step_link(id, &setup_missing, "write_settings"),
             ),
             None => {}
         }
@@ -691,20 +708,23 @@ pub async fn view_about(
                 } else {
                     ""
                 })
-                .detail(Some(t(lang, "device.airplane.assistant_steps")))
+                .step_link(id, &setup_missing, "assistant")
             });
-            software.push(Row::new(
-                "wifi-airplane",
-                t(lang, "device.about.wifi_airplane"),
-                t(
-                    lang,
-                    match airplane.wifi_kept {
-                        Some(true) => "device.about.wifi_airplane_kept",
-                        Some(false) => "device.about.wifi_airplane_off",
-                        None => "device.about.wifi_airplane_not_set_up",
-                    },
-                ),
-            ));
+            software.push(
+                Row::new(
+                    "wifi-airplane",
+                    t(lang, "device.about.wifi_airplane"),
+                    t(
+                        lang,
+                        match airplane.wifi_kept {
+                            Some(true) => "device.about.wifi_airplane_kept",
+                            Some(false) => "device.about.wifi_airplane_off",
+                            None => "device.about.wifi_airplane_not_set_up",
+                        },
+                    ),
+                )
+                .step_link(id, &setup_missing, "wifi_airplane"),
+            );
         }
         // Design 99 §5.3: Snarveier - what the kid picked, hidden by the kid, or off - from the report's `shortcuts`.
         if let Some(shortcuts) = crate::shortcuts::report(status) {
@@ -853,6 +873,10 @@ struct AdvancedTemplate {
     play_rows: Vec<Note>,
     escapes: crate::kiosk_escapes::EscapesCard,
     escape_warnings: Vec<Note>,
+    /// Design 114 §5.4: notification access off, at the notification filter (`#updates`).
+    setup_warnings: crate::setup_status::Warnings,
+    /// Design 114 §5.8: no Parent PIN - no New Setup Code, the line to the PIN in its place.
+    no_parent_pin: bool,
     escape_rows: Vec<Note>,
     access: crate::handlers::devices::AccessCard,
     /// The Spotify diagnostic log ([SpotifyDiagCard]); `None` on a phone that doesn't play Spotify.
@@ -972,6 +996,13 @@ pub async fn view_advanced(
             escapes,
             escape_warnings,
             escape_rows,
+            setup_warnings: crate::setup_status::page_warnings(
+                lang,
+                &policy,
+                latest.as_ref(),
+                "advanced",
+            ),
+            no_parent_pin: policy.override_pin_hash.is_none(),
             access: crate::handlers::devices::AccessCard {
                 // Security review S-L10's fix round: Leave Tailnet only for a phone on the tailnet.
                 tailnet_joined: latest.as_ref().and_then(|s| s.tailnet_joined) == Some(true),
@@ -1025,6 +1056,8 @@ struct LockTemplate {
     parent: crate::handlers::parent_pin::ParentPinCard,
     /// A refused (or easy) Parent PIN opens its form again.
     parent_open: bool,
+    /// Design 114 §5.8: opened from Connect (`?back=provision`) - the form carries it, so the save lands on the QR.
+    back_provision: bool,
     /// Managed without a Parent PIN (the Attention alarm's facts).
     no_parent_pin: bool,
     /// Screen: "Turn off after", the options, and what the phone last applied when it differs.
@@ -1042,6 +1075,8 @@ struct LockTemplate {
     /// The Notifications group: one switch per app and, on a ticked one, its text switch.
     lock_screen: crate::lock_glance::LockScreenCard,
     lock_screen_warnings: Vec<Note>,
+    /// Design 114 §5.4: notification access off, at the glance (`#notifications`).
+    setup_warnings: crate::setup_status::Warnings,
     /// Each lock-screen row's tile, as the Apps page shows it (package -> [AppTile]).
     lock_tiles: std::collections::HashMap<String, AppTile>,
     /// The parent has a passkey for this host: Show Child PIN offers "Confirm with passkey"
@@ -1170,6 +1205,7 @@ pub async fn view_lock(
         None,
         (passkey, admin.passkey_only),
         lang,
+        query.get("back").map(String::as_str) == Some("provision"),
     )
     .await
 }
@@ -1262,6 +1298,7 @@ pub async fn lock_action(
         Some(reveal),
         (passkey, admin.passkey_only),
         lang,
+        false,
     )
     .await
 }
@@ -1319,6 +1356,7 @@ async fn render_lock(
     reveal: Option<Reveal>,
     (passkey_reauth, passkey_only): (bool, bool),
     lang: Lang,
+    back_provision: bool,
 ) -> Response {
     let device = match load_device(state, id).await {
         Ok(device) => device,
@@ -1446,7 +1484,8 @@ async fn render_lock(
         reveal_answer,
         reveal_error,
         reveal_shown,
-        parent_open: parent.notice.is_some_and(|(_, warning)| warning),
+        parent_open: parent.notice.is_some_and(|(_, warning)| warning) || back_provision,
+        back_provision,
         no_parent_pin: crate::handlers::devices::managed_without_pin(&policy),
         screen_timeout_seconds,
         screen_timeout_options: crate::models::SCREEN_TIMEOUTS.to_vec(),
@@ -1462,6 +1501,7 @@ async fn render_lock(
         lock_wake: policy.lock_wake_on_notification,
         lock_buzz: policy.lock_buzz_on_notification,
         lock_screen_warnings: lock_screen.notes.iter().map(|n| n.note(lang)).collect(),
+        setup_warnings: crate::setup_status::page_warnings(lang, &policy, latest.as_ref(), "lock"),
         lock_tiles,
         lock_screen,
         child,
@@ -1479,53 +1519,6 @@ fn read_failed(lang: Lang, id: i64, what: &str, err: sqlx::Error) -> Response {
     crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.read_phone")
 }
 
-/// The last report says Vibb can't read notifications (`notification_listener_enabled` false):
-/// Home Screen's warning, and the Attention row that links to it.
-pub(crate) fn notification_access_note(lang: Lang, latest: Option<&DeviceStatus>) -> Option<Note> {
-    latest
-        .is_some_and(|s| s.notification_listener_enabled == Some(false))
-        .then(|| Note {
-            warning: true,
-            title: t(lang, "device.home.no_notification_access").to_string(),
-            value: None,
-            sub: None,
-            detail: Some(t(lang, "device.home.no_notification_access_sub").to_string()),
-            // The second sentence lives behind the ⓘ (§4.2: a title and one sentence;
-            // qa-31-s5-code N2).
-            fix: Some(t(lang, "device.home.no_notification_access_fix").to_string()),
-        })
-}
-
-/// The phone should show the parent's clock format but can't (design 34 P12): the policy asks
-/// for "24" or "12" and the last report says `clock_format_applied` false - no "Modify system
-/// settings" access, or Android refused the write. Home Screen's warning above the Language
-/// group; the adb grant and the Settings path behind its ⓘ. "Same as the phone" never warns, nor
-/// does a report without it.
-/// How to grant Vibb One "Modify system settings" (PLAN fix backlog, 2026-10-24) is
-/// `device.write_settings_steps`: the on-phone path first - Vibb One's Settings row that opens Android's page -, adb as
-/// the shortcut. About This Phone's row (after a line saying what needs it) and the clock format's warning (code QA
-/// Q-9).
-pub(crate) fn clock_format_note(
-    lang: Lang,
-    policy: &DevicePolicy,
-    latest: Option<&DeviceStatus>,
-) -> Option<Note> {
-    (crate::models::clock_format(&policy.clock_format) != "system"
-        && latest.is_some_and(|s| s.clock_format_applied == Some(false)))
-    .then(|| Note {
-        warning: true,
-        title: t(lang, "device.home.clock_not_applied").to_string(),
-        value: None,
-        sub: None,
-        detail: None,
-        fix: Some(format!(
-            "{} {}",
-            t(lang, "device.home.clock_not_applied_fix"),
-            t(lang, "device.write_settings_steps")
-        )),
-    })
-}
-
 #[derive(Template)]
 #[template(path = "device_home.html")]
 struct HomeTemplate {
@@ -1534,10 +1527,9 @@ struct HomeTemplate {
     who: crate::handlers::devices::BandAvatar,
     title: String,
     device: Device,
-    /// Above the first group: Vibb can't read notifications.
-    notification_warning: Option<Note>,
-    /// Above the first group too: the phone can't apply the chosen clock format (design 34 P12).
-    clock_warning: Option<Note>,
+    /// Design 114 §5.4: the missing setup steps at the choices they stop (`#layout`: the clock format and the badges;
+    /// `#quick-controls`: Flymodus and the touch and sound switches).
+    setup_warnings: crate::setup_status::Warnings,
     launcher_language: String,
     home_columns: i64,
     /// "system", "24" or "12".
@@ -1552,9 +1544,9 @@ struct HomeTemplate {
     quick_touch: bool,
     /// Security review S-L5: the Bluetooth page pairs any device (`bluetooth_any_device`).
     bluetooth_any_device: bool,
-    /// Design 98 §6.1: the kid's Flymodus switch (bit 64) - its sub-line when it says something and whether it is
-    /// orange (`airplane_mode::home_sub`).
-    airplane_sub: Option<(String, bool)>,
+    /// Design 98 §6.1: the kid's Flymodus switch (bit 64) - "Blokkert under Begrensninger" when it is
+    /// (`airplane_mode::home_sub`).
+    airplane_sub: Option<String>,
     quick_airplane: bool,
     /// Design 99 §5.2: Snarveier (bit 128) - its sub-line when it says something (`shortcuts::home_sub`, from a
     /// report that has `shortcuts`).
@@ -1591,8 +1583,8 @@ pub async fn view_home(State(state): State<AppState>, lang: Lang, Path(id): Path
         Err(err) => return read_failed(lang, id, "the last report", err),
     };
     let mask = policy.quick_controls_mask;
-    let airplane_report = latest.as_ref().and_then(crate::airplane_mode::report);
-    let airplane_sub = crate::airplane_mode::home_sub(lang, &policy, airplane_report.as_ref());
+    let airplane_sub = crate::airplane_mode::home_sub(lang, &policy);
+    let setup_warnings = crate::setup_status::page_warnings(lang, &policy, latest.as_ref(), "home");
     let shortcuts_sub = latest
         .as_ref()
         .and_then(crate::shortcuts::report)
@@ -1602,8 +1594,7 @@ pub async fn view_home(State(state): State<AppState>, lang: Lang, Path(id): Path
             lang,
             who: crate::handlers::devices::BandAvatar::of(&device),
             title: format!("{} · {}", t(lang, "device.page.home"), device.name),
-            notification_warning: notification_access_note(lang, latest.as_ref()),
-            clock_warning: clock_format_note(lang, &policy, latest.as_ref()),
+            setup_warnings,
             launcher_language: policy.launcher_language.clone(),
             home_columns: policy.home_columns,
             clock_format: crate::models::clock_format(&policy.clock_format),
@@ -1624,48 +1615,6 @@ pub async fn view_home(State(state): State<AppState>, lang: Lang, Path(id): Path
         .unwrap(),
     )
     .into_response()
-}
-
-/// `POST /devices/{id}/setup-card/hide` (design 98 §6.2): the summary's Oppsett card's "Ikke nå" - stores the needed
-/// steps as they are now (`airplane_mode::setup_key`), so the card stays away until they change. Back to `#oppsett`
-/// with its flash. 404 for an unknown phone, 500 on a DB error.
-pub async fn hide_setup_card(
-    State(state): State<AppState>,
-    lang: Lang,
-    Path(id): Path<i64>,
-) -> Response {
-    let policy = match load_policy(&state, id).await {
-        Ok(policy) => policy,
-        Err((status, key)) => return crate::i18n::error(lang, status, key),
-    };
-    let latest = match load_latest(&state, id).await {
-        Ok(latest) => latest,
-        Err(err) => return read_failed(lang, id, "the last report", err),
-    };
-    let steps = crate::airplane_mode::setup_steps(lang, &policy, latest.as_ref());
-    let hidden = (!steps.is_empty()).then(|| crate::airplane_mode::setup_key(&steps));
-    match sqlx::query("UPDATE device_policy SET setup_card_hidden = ? WHERE device_id = ?")
-        .bind(hidden)
-        .bind(id)
-        .execute(&state.db)
-        .await
-    {
-        Ok(done) if done.rows_affected() == 0 => {
-            crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.device_not_found")
-        }
-        Ok(_) => {
-            axum::response::Redirect::to(&format!("/devices/{id}?notice=setup_hidden#oppsett"))
-                .into_response()
-        }
-        Err(err) => {
-            tracing::error!(device_id = id, %err, "can't hide the setup card");
-            crate::i18n::error(
-                lang,
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "error.save_failed_log",
-            )
-        }
-    }
 }
 
 /// One blocklist on a phone's Web Filter page.
@@ -2087,6 +2036,8 @@ async fn apps_nav(
 #[template(path = "device_apps.html")]
 struct AppsTemplate {
     lang: Lang,
+    /// Design 114 §5.4: the background connection and Data Saver, at App push (`#app-push`).
+    setup_warnings: crate::setup_status::Warnings,
     /// The phone's small picture on the band (design 84, `band::phone`).
     who: crate::handlers::devices::BandAvatar,
     title: String,
@@ -2569,6 +2520,13 @@ pub(crate) async fn render_apps(
     Html(
         AppsTemplate {
             lang,
+            setup_warnings: crate::setup_status::page_warnings_app_push(
+                lang,
+                &policy,
+                latest.as_ref(),
+                "apps",
+                app_push.on,
+            ),
             app_push,
             integration_groups,
             who: crate::handlers::devices::BandAvatar::of(&device),
@@ -2612,6 +2570,8 @@ struct MusicTemplate {
     /// When the phone last reported (`On the phone`'s footer): its age, and the exact time for
     /// `title=`.
     reported: Option<(String, String)>,
+    /// Design 114 §5.4: notification access off, at what the phone reports (`#on-phone`: the music card).
+    setup_warnings: crate::setup_status::Warnings,
 }
 crate::i18n::words!(MusicTemplate);
 
@@ -2666,6 +2626,12 @@ pub async fn view_music(
             title: t_params(lang, "device.music.title", &[("name", &device.name)]),
             music,
             reported,
+            setup_warnings: crate::setup_status::page_warnings(
+                lang,
+                &policy,
+                latest.as_ref(),
+                "music",
+            ),
             device,
         }
         .render()

@@ -1,7 +1,5 @@
 package com.kidslauncher.mdm.assistant
 
-import com.kidslauncher.mdm.R
-import com.kidslauncher.mdm.server.SystemPageAccess
 import com.kidslauncher.mdm.server.timedWindowActive
 import com.kidslauncher.mdm.server.WindowStart
 import org.junit.Assert.assertEquals
@@ -11,31 +9,6 @@ import org.junit.Test
 
 /** Design 98 §3: "Fullfør oppsett"'s rows, the default-apps window's ends and comparison, the steps left. */
 class AssistantSetupTest {
-    @Test
-    fun `the assistant row - chosen, or the page's access`() {
-        assertEquals(AssistantRow.CHOSEN, assistantRowState(true, SystemPageAccess.PAUSE_FIRST))
-        assertEquals(AssistantRow.CAN_OPEN, assistantRowState(false, SystemPageAccess.CAN_OPEN))
-        assertEquals(AssistantRow.PAUSE_FIRST, assistantRowState(false, SystemPageAccess.PAUSE_FIRST))
-        assertEquals(AssistantRow.WAIT, assistantRowState(false, SystemPageAccess.WAIT))
-        assertEquals(AssistantRow.NO_PAGE, assistantRowState(false, SystemPageAccess.NO_PAGE))
-        assertEquals(R.string.settings_assistant_chosen, assistantRowText(AssistantRow.CHOSEN))
-        // Shown while bit 64 is on or the role is held.
-        assertTrue(assistantRowShown(bit = true, roleHeld = false))
-        assertTrue(assistantRowShown(bit = false, roleHeld = true))
-        assertFalse(assistantRowShown(bit = false, roleHeld = false))
-    }
-
-    @Test
-    fun `the Wi-Fi row and the call filter row`() {
-        assertEquals(WifiApmRow.KEPT, wifiApmRowState(true, false))
-        assertEquals(WifiApmRow.TURNS_OFF, wifiApmRowState(false, true))
-        assertEquals(WifiApmRow.CAN_START, wifiApmRowState(null, true))
-        assertEquals(WifiApmRow.PAUSE_FIRST, wifiApmRowState(null, false))
-        assertTrue(screeningRowShown(callsManaged = true, screeningHeld = true, redirectionHeld = false))
-        assertFalse(screeningRowShown(callsManaged = true, screeningHeld = true, redirectionHeld = true))
-        assertFalse(screeningRowShown(callsManaged = false, screeningHeld = false, redirectionHeld = false))
-    }
-
     @Test
     fun `the window closes on the role, the page, 5 minutes, the pause's end and a reboot`() {
         // The role or the page's answer store it expired; 5 minutes and a reboot make it inactive by BootClock's rule.
@@ -59,21 +32,38 @@ class AssistantSetupTest {
         assertEquals(emptyList<String>(), movedRoles(before, before.copy(dialer = false, sms = false)))
         assertEquals(listOf("home", "call_screening", "browser"), movedRoles(before, before.copy(home = false, callScreening = false, browser = "com.android.chrome")))
         assertEquals(listOf("call_redirection"), movedRoles(before, before.copy(callRedirection = false)))
+        // Code QA L3: a browser moved from the chooser has no way back on Android's page - never listed.
+        assertEquals(emptyList<String>(), movedRoles(before.copy(browser = "android"), before.copy(browser = "com.android.chrome")))
         // A role that wasn't Vibb's before isn't Vibb's loss.
         assertEquals(emptyList<String>(), movedRoles(before.copy(callScreening = false), before.copy(callScreening = false)))
         assertTrue(movedRoles(before, before.copy(home = false)).all { it in setOf("home", "call_screening", "call_redirection", "browser") })
     }
 
+    /** Design 114 §2.2.1 (QA H1): the stored moved roles read live - each leaves once its role is back; screening and
+     * redirection are row 13's. */
     @Test
-    fun `the steps left follow the summary card's rule`() {
-        assertEquals(0, setupStepsLeft(true, false, false, airplaneBit = false, roleHeld = false, wifiKept = null, screeningNeeded = false))
-        assertEquals(1, setupStepsLeft(false, false, false, false, false, null, false))
-        assertEquals(1, setupStepsLeft(true, true, false, false, false, null, false))
-        assertEquals(1, setupStepsLeft(true, false, false, airplaneBit = true, roleHeld = false, wifiKept = null, screeningNeeded = false))
-        assertEquals(1, setupStepsLeft(true, false, false, airplaneBit = true, roleHeld = true, wifiKept = null, screeningNeeded = false))
-        // Wi-Fi set up either way counts as done.
-        assertEquals(0, setupStepsLeft(true, false, false, airplaneBit = true, roleHeld = true, wifiKept = false, screeningNeeded = false))
-        assertEquals(2, setupStepsLeft(false, false, false, airplaneBit = true, roleHeld = false, wifiKept = null, screeningNeeded = false))
-        assertEquals(1, setupStepsLeft(true, false, null, false, false, null, screeningNeeded = true))
+    fun `a moved role put back leaves the list`() {
+        val before = DefaultAppsSnapshot(home = true, dialer = true, sms = true, callScreening = true, callRedirection = true, browser = "org.mozilla.firefox")
+        val moved = before.copy(home = false, dialer = false, sms = false, browser = "com.android.chrome")
+        val all = listOf("home", "dialer", "sms", "call_screening", "call_redirection", "browser")
+        assertEquals(listOf("home", "dialer", "sms", "browser"), stillMoved(all, before, moved))
+        assertEquals(emptyList<String>(), stillMoved(all, before, before))
+        assertEquals(listOf("browser"), stillMoved(listOf("home", "browser"), before, moved.copy(home = true)))
+        assertEquals(listOf("home"), stillMoved(listOf("home", "browser"), before, moved.copy(browser = "org.mozilla.firefox")))
+        // A list without its window's snapshot is reset (no older format carried).
+        assertEquals(emptyList<String>(), stillMoved(listOf("home", "browser", "call_screening"), null, moved))
+    }
+
+    /** §2.2.1: the flow's "Standardapper" opens the pick window without a new snapshot, so the list and the original
+     * holders stay (a source check: the window's own code). */
+    @Test
+    fun `the flow's pick window keeps the snapshot and the list`() {
+        val main = listOf("src/main", "app/src/main").map { java.io.File(it) }.first { it.isDirectory }
+        val setup = java.io.File(main, "java/com/kidslauncher/mdm/assistant/AssistantSetup.kt").readText()
+        val open = setup.substringAfter("fun openPickWindow(").substringBefore("fun endPickWindow(")
+        assertTrue("val kept = if (keepSnapshot || AirplaneRuntime.defaultAppsChanged(context).isNotEmpty()) movedFrom(context) else null" in open)
+        assertTrue("if (kept == null) AirplaneRuntime.storeDefaultAppsChanged(context, emptyList())" in open)
+        val flow = java.io.File(main, "java/com/kidslauncher/mdm/setup/SetupFlowActivity.kt").readText()
+        assertTrue("openPickWindow(app, keepSnapshot = step == SetupStep.DEFAULT_APPS)" in flow)
     }
 }

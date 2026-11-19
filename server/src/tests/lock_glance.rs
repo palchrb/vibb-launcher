@@ -948,7 +948,11 @@ async fn the_page_shows_each_note() {
     .await;
     let html = page().await;
     assert!(!html.contains("without a Child PIN"));
-    assert!(html.contains("Missed calls only"), "{html}");
+    // Design 114: notification access off is the setup step's line in the group.
+    assert!(
+        html.contains("data-setup-warning=\"notification_access\""),
+        "{html}"
+    );
 
     // A launcher with access: no warnings.
     report(
@@ -1035,7 +1039,8 @@ async fn meldingers_row_is_first_only_while_sms_is_managed_and_saves_in_place() 
     );
 }
 
-/// Design 82 D7: the no-access note counts Meldinger while its row shows.
+/// Design 114: the no-access note is the setup step's one line in the group, whether Meldinger's row shows or not
+/// (design 82 D7's two wordings went with the note); Meldinger's form carries no hint.
 #[tokio::test]
 async fn the_access_note_counts_meldingers_row() {
     let app = TestApp::new().await;
@@ -1053,14 +1058,15 @@ async fn the_access_note_counts_meldingers_row() {
         json!({ "notification_listener_enabled": false }),
     )
     .await;
+    let line = "data-setup-warning=\"notification_access\"";
     let html = page().await;
-    assert!(html.contains("Missed calls and Messages only"), "{html}");
+    assert_eq!(html.matches(line).count(), 1, "{html}");
+    assert!(!html.contains("Missed calls only"), "{html}");
     assert!(!form_of(&html, MESSAGES).unwrap().contains("data-hint"));
 
     show(&app, Some(&cookie), id, MESSAGES, "off").await;
     let html = page().await;
-    assert!(html.contains("Missed calls only"), "{html}");
-    assert!(!html.contains("Missed calls and Messages only"), "{html}");
+    assert_eq!(html.matches(line).count(), 1, "{html}");
     let form = form_of(&html, MESSAGES).unwrap();
     assert!(!form.contains("data-hint"), "{form}");
     // Still its own cell: no "unlisted" note.
@@ -1135,8 +1141,8 @@ async fn a_reserved_name_is_never_an_installed_app() {
     assert_eq!(allowlist().await, before);
 }
 
-/// Home Screen's notification-access warning names the lock screen (design 31 step 5; the device
-/// page's Launcher card before); Lock Screen & PINs says what its first page shows.
+/// Design 114 §5.4: notification access off is one line at the glance (Lock Screen & PINs' #notifications) and at Home
+/// Screen's #layout, each to the step on Device › Oppsett; Lock Screen & PINs says what its first page shows.
 #[tokio::test]
 async fn the_home_screen_warning_and_the_lock_page_name_the_lock_screen() {
     let app = TestApp::new().await;
@@ -1153,8 +1159,13 @@ async fn the_home_screen_warning_and_the_lock_page_name_the_lock_screen() {
         .get_page(&super::device_page(id, super::Section::Home), &cookie)
         .await
         .text();
-    assert!(page.contains("the lock screen shows only missed calls"));
+    assert!(page.contains("data-setup-warning=\"notification_access\""));
     let lock = app.get_page(&lock_page(id), &cookie).await.text();
+    let at = lock
+        .find("data-setup-warning=\"notification_access\"")
+        .expect("the glance's line");
+    assert!(lock[..at].contains("<section id=\"notifications\""));
+    assert!(!lock.contains("only missed calls"));
     assert!(lock.contains("What the lock shows, anyone near the phone can see."));
 }
 

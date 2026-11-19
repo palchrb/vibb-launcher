@@ -2134,6 +2134,7 @@ async fn a_posts_own_page_is_marked_so_it_is_never_reloaded() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.create_device("Anna").await;
+    app.set_parent_pin(id).await;
 
     let code = app
         .request_form(

@@ -79,6 +79,9 @@
          WRITE_CALL_LOG only to delete blocked calls older than 30 days (calls.BlockedCallLog). -->
     <uses-permission android:name="android.permission.CALL_PHONE" />
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <!-- Design 114 §4.1: the user's own mobile-data switch (isDataEnabledForReason) also while calls are unmanaged and
+         the device owner hasn't granted READ_PHONE_STATE - a normal permission on 33+, granted at install. -->
+    <uses-permission android:name="android.permission.READ_BASIC_PHONE_STATE" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <!-- Dagen (design 69): the calendar provider that ICSx5 and DAVx5 feed, and the kid's own events in their calendar;
          self-granted by the device owner. -->
@@ -169,6 +172,15 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
+        <!-- Design 114 §6.2: the guided setup - its own task (QA M2: Home's clearTaskOnLaunch would clear it inside
+             Home's), brought to the front by Home during the setup hold; not exported, kept out of Recents. -->
+        <activity
+            android:name=".setup.SetupFlowActivity"
+            android:configChanges="orientation|screenSize|uiMode"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:taskAffinity="${applicationId}.setup" />
         <activity
             android:name=".ui.LegalInfoActivity"
             android:configChanges="uiMode"

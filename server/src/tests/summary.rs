@@ -664,6 +664,8 @@ async fn a_phone_not_set_up_shows_connect_this_phone() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.create_device("Mia").await;
+    // Design 114 §5.8: New Setup Code only with the phone's Parent PIN.
+    app.set_parent_pin(id).await;
     // Both channels not managed (design 77 D2: a new phone starts with SMS managed).
     sqlx::query("UPDATE device_policy SET calls_mode = 'unmanaged', sms_mode = 'unmanaged' WHERE device_id = ?")
         .bind(id)
@@ -697,11 +699,13 @@ async fn a_phone_not_set_up_shows_connect_this_phone() {
         assert!(html.contains(&format!("data-row=\"{row}\"")), "{row}");
     }
     assert!(html.contains(&format!("href=\"/devices/{id}/lock\" data-row=\"lock\"")));
-    // Managed without a Parent PIN: said above Connect This Phone, since there are no Attention
-    // rows yet (qa-31-s10-code L1); gone once a PIN is set.
-    let warning = format!("href=\"/devices/{id}/lock#parent-pin\" data-warning=\"no-parent-pin\"");
+    // Design 114 §5.8: without the Parent PIN an un-enrolled phone says so above Connect This Phone (no Attention rows
+    // yet, qa-31-s10-code L1), linking with back=provision, and New Setup Code isn't offered; gone once a PIN is set.
+    let warning = format!(
+        "href=\"/devices/{id}/lock?back=provision#parent-pin\" data-warning=\"no-parent-pin\""
+    );
     assert!(!html.contains(&warning), "{html}");
-    sqlx::query("UPDATE device_policy SET allowlist_json = '[]' WHERE device_id = ?")
+    sqlx::query("UPDATE device_policy SET override_pin_hash = NULL, override_pin_salt = NULL WHERE device_id = ?")
         .bind(id)
         .execute(&app.db)
         .await
@@ -712,14 +716,8 @@ async fn a_phone_not_set_up_shows_connect_this_phone() {
         .text();
     assert!(html.contains(&warning), "{html}");
     assert!(html.find(&warning) < html.find("<section id=\"access\""));
-    sqlx::query(
-        "UPDATE device_policy SET override_pin_hash = 'aa', override_pin_salt = 'bb' \
-         WHERE device_id = ?",
-    )
-    .bind(id)
-    .execute(&app.db)
-    .await
-    .unwrap();
+    assert!(!html.contains("regenerate-code"), "{html}");
+    app.set_parent_pin(id).await;
     let html = app
         .get_page(&format!("/devices/{id}"), &cookie)
         .await

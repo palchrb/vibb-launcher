@@ -448,6 +448,17 @@ pub(crate) fn managed_without_pin(policy: &DevicePolicy) -> bool {
         && policy.override_pin_hash.is_none()
 }
 
+/// Design 114 §5.8: the phone has its Parent PIN (each phone's own, `device_policy.override_pin_hash`) - no setup code,
+/// QR or typed, is made without it, so no phone enrols without the PIN that opens it offline.
+pub(crate) async fn parent_pin_set(db: &sqlx::SqlitePool, id: i64) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM device_policy WHERE device_id = ? AND override_pin_hash IS NOT NULL)",
+    )
+    .bind(id)
+    .fetch_one(db)
+    .await
+}
+
 /// A phone's name is at most this many characters (it fills a row and a page title).
 pub(crate) const MAX_DEVICE_NAME_CHARS: usize = 40;
 
@@ -629,6 +640,18 @@ pub async fn regenerate_code(
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     };
+    // Design 114 §5.8: no setup code for a phone without its Parent PIN - back to Connect, which asks for it.
+    match parent_pin_set(&state.db, id).await {
+        Ok(true) => {}
+        Ok(false) => {
+            return axum::response::Redirect::to(&format!("/devices/{id}/provision#qr"))
+                .into_response();
+        }
+        Err(err) => {
+            tracing::error!(device_id = id, %err, "couldn't read the phone's Parent PIN");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    }
     let kind = crate::enrollment::Kind::Typed;
     let (code, expires_at) = match crate::enrollment::new_code(&state, id, kind).await {
         Ok(made) => made,
@@ -1087,8 +1110,8 @@ struct DeviceDetailTemplate {
     /// A lift form's or the Regler sheet's flash (`?done=`): the summary group ("quick"), its words
     /// (a rule turned on now's name and end filled in, design 93), refused.
     done: Option<(&'static str, String, bool)>,
-    /// Managed without a Parent PIN: a phone not set up says so (it has no Attention rows,
-    /// qa-31-s10-code L1).
+    /// A phone not set up without its Parent PIN says so (it has no Attention rows, qa-31-s10-code L1), and gets no
+    /// setup code until it is set (design 114 §5.8).
     no_parent_pin: bool,
     /// The lifts End now can still end (`can_end`; the running rule pauses): rows at the end of Quick
     /// actions (Now went, the user 2026-10-20; the Parent PIN's notices are Activity's events, and every
@@ -1118,10 +1141,12 @@ struct DeviceDetailTemplate {
     /// Design 95 rev. 3: Mobilnett's lines on the summary - only when they say something (the kid's Off, a roaming
     /// warning; mobile data off is the Attention row's, design 113), each leading to the page.
     mobile_lines: Vec<crate::mobile_network::Line>,
-    /// Design 98 §6.2: Flymodus' lines - a period ended within 12 h, the one an emergency call ended, the role lost.
+    /// Design 98 §6.2: Flymodus' lines - the one an emergency call ended (the role lost is design 114's setup row).
     airplane_lines: Vec<crate::airplane_mode::Line>,
-    /// Design 98 §6.2: the Oppsett card (`#oppsett`), while a step the phone needs isn't done.
-    setup: crate::airplane_mode::SetupCard,
+    /// Design 114 §5.2: Device › Oppsett's row value - "3 igjen", "I oppsett" or "Fullført", quiet (the Attention row
+    /// says it in orange).
+    /// `None` before the phone's first report (code QA M2: nothing has been read yet).
+    setup_value: Option<String>,
     about_value: Option<String>,
 }
 crate::i18n::words!(DeviceDetailTemplate);
@@ -1209,14 +1234,7 @@ pub(crate) async fn lock_screen_card(
     let empty_text = lock_glance::empty_text(latest_status.is_some(), allowlist.is_some());
     let launcher =
         |package: &str| crate::handlers::device_api::installed_by_launcher(state, Some(package));
-    // [messages_shown]: Meldinger's row is listed and not Off - its rows need no notification access.
-    let notes = |messages_shown: bool| {
-        lock_glance::notes(
-            crate::kid_lock::policy_kid_lock(policy).is_some(),
-            latest_status.and_then(|s| s.notification_listener_enabled),
-            messages_shown,
-        )
-    };
+    let notes = || lock_glance::notes(crate::kid_lock::policy_kid_lock(policy).is_some());
     let ticked: std::collections::BTreeMap<String, bool> = match lock_glance::ticked(
         &state.db,
         policy.device_id,
@@ -1227,7 +1245,7 @@ pub(crate) async fn lock_screen_card(
         Err(err) => {
             tracing::error!(device_id = policy.device_id, %err, "couldn't read the lock screen's apps");
             return LockScreenCard {
-                notes: notes(false),
+                notes: notes(),
                 apps: Vec::new(),
                 unreadable: true,
                 empty_text,
@@ -1255,7 +1273,7 @@ pub(crate) async fn lock_screen_card(
             ticked.get(crate::builtin::MESSAGES).copied(),
         )
     });
-    let notes = notes(messages.as_ref().is_some_and(|row| row.on));
+    let notes = notes();
     let apps = if policy.allowlist_json.is_some() {
         let listed = apps
             .iter()
@@ -2393,25 +2411,8 @@ async fn render_device(
             .and_then(|s| crate::airplane_mode::on_since(s, now)),
     );
     let airplane = latest.as_ref().and_then(crate::airplane_mode::report);
-    let held_before = match &airplane {
-        Some(report) if !report.assistant => {
-            match crate::airplane_mode::assistant_held_before(&state.db, id).await {
-                Ok(held) => held,
-                Err(err) => {
-                    tracing::error!(device_id = id, %err, "can't read the phone's earlier reports");
-                    return crate::i18n::error(
-                        lang,
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "error.read_phone",
-                    );
-                }
-            }
-        }
-        _ => false,
-    };
-    let airplane_lines =
-        crate::airplane_mode::summary_lines(&zone, now, &policy, airplane.as_ref(), held_before);
-    let setup = crate::airplane_mode::SetupCard::of(lang, &policy, latest.as_ref());
+    let airplane_lines = crate::airplane_mode::summary_lines(&zone, now, airplane.as_ref());
+    let setup_value = setup_value(lang, &policy, latest.as_ref(), now.timestamp_millis());
     let status = crate::phone_status::one_line(status);
 
     // Activity (design 48); a failed read is no page, never a history that isn't true.
@@ -2544,7 +2545,12 @@ async fn render_device(
             ask,
             done,
             lifts,
-            no_parent_pin: managed_without_pin(&policy),
+            // Design 114 §5.8: an un-enrolled phone says so whenever its PIN is unset (it gets no setup code).
+            no_parent_pin: if device.enrolled_at.is_none() {
+                policy.override_pin_hash.is_none()
+            } else {
+                managed_without_pin(&policy)
+            },
             relock,
             activity,
             access: access_card(
@@ -2607,13 +2613,38 @@ async fn render_device(
                 latest.as_ref(),
             ),
             airplane_lines,
-            setup,
+            setup_value,
             device,
         }
         .render()
         .unwrap(),
     )
     .into_response()
+}
+
+/// Device › Oppsett's row value on the summary (design 114 §5.2): "I oppsett" during the hold, "{n} igjen" while
+/// required steps are left, else "Fullført"; no value before the first report (code QA M2). Quiet: the Attention row
+/// is the orange one.
+fn setup_value(
+    lang: Lang,
+    policy: &DevicePolicy,
+    latest: Option<&crate::models::DeviceStatus>,
+    now_ms: i64,
+) -> Option<String> {
+    let latest = latest?;
+    if crate::setup_status::in_hold(latest, now_ms) {
+        return Some(t(lang, "setup.value.hold").to_string());
+    }
+    let (missing, _) = crate::setup_status::state_of(policy, Some(latest), &[]);
+    Some(match crate::setup_status::count(&missing) {
+        0 => t(lang, "setup.value.done").to_string(),
+        n => t_count(
+            lang,
+            "setup.value.left",
+            i64::try_from(n).unwrap_or(i64::MAX),
+            &[],
+        ),
+    })
 }
 
 /// Where an app's row is on Device › Apps (design 31 step 6): `app-<package>` - the anchor the

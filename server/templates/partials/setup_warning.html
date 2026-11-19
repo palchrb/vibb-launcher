@@ -1,0 +1,7 @@
+{#- Design 114 §5.4: one missing setup step at the choice it stops - an orange link to its row on Device › Oppsett,
+    the title and the chevron only (no ⓘ inside a link, design 113 QA M7; the how is on Device › Oppsett). Needs `line`
+    (`setup_status::Warning`). -#}
+<a class="attention attention-action" href="{{ line.href }}" data-setup-warning="{{ line.key }}">
+    <span class="attention-text">{{ line.title }}</span>
+    <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+</a>

@@ -5,6 +5,8 @@ set them back. Set them before enrolling, or on the phone during "Pause all rest
 
 ## Touch feedback stays on (launcher round 9 §4)
 
+Design 114's setup step `touch_feedback`: the phone's setup flow (after the QR, or parent Settings › Oppsett) opens Android's page for it.
+
 Android Settings -> Sound & vibration -> Vibration & haptics -> **Touch feedback: on** (the default).
 
 Since Android 13 that toggle writes two settings: `HAPTIC_FEEDBACK_ENABLED`, which Vibb One's "Vibrasjon ved trykk"
@@ -13,6 +15,8 @@ switch (kid Settings, shown when the parent ticks "Touch sounds and vibration" o
 switch shows on while the phone stays without tap vibration - the switch can't bring it back.
 
 ## Vibration for calls and messages stays on (2026-11-04)
+
+Design 114's setup step `vibration`: the phone's setup flow (after the QR, or parent Settings › Oppsett) opens Android's page for it.
 
 Android Settings -> Sound & vibration -> Vibration & haptics -> **Ring vibration: on** and **Notification vibration:
 on** (names vary by phone; on some it is "Vibrate for calls"). The user: "Jeg er fornøyd så lenge telefonen alltid
@@ -27,6 +31,8 @@ still turn its vibration off - check the messaging apps the kid uses (Android Se
 Notifications), also during a pause.
 
 ## "Modify system settings" for Vibb One
+
+Design 114's setup step `write_settings`: the phone's setup flow (after the QR, or parent Settings › Oppsett) opens Android's page for it.
 
 The touch row's two switches and the PWA's clock format (design 34 P12) need the "Modify system settings" app-op; a
 device owner can't grant it to itself. Turn it on from the phone:
@@ -53,6 +59,8 @@ Without it the kid's touch switches are read-only ("Kan ikke endres på denne te
 
 ## Fingerprint (android mode)
 
+Design 114's setup step `fingerprint`: the phone's setup flow (after the QR, or parent Settings › Oppsett) opens Android's page for it.
+
 With Android's lock screen as the gate (design 59) the kid's fingerprint is Android's own, enrolled against the Child
 PIN. Vibb One's Settings (the unlock code) -> **"Pause all restrictions"** -> the row **"Fingerprint"**
 ("Fingeravtrykk", under "Modify system settings"): tap it, type the Child PIN when Android asks, and follow Android's
@@ -61,6 +69,8 @@ fingerprint sensor; it says "Registered" / "Not registered" ("Registrert" / "Ikk
 No adb is needed. Removing Android's PIN by hand also deletes the fingerprint (design 59d §8.4) - enrol it again here.
 
 ## The lock screen's clock: single line (android mode)
+
+Design 114's setup step `lock_clock`: the phone's setup flow (after the QR, or parent Settings › Oppsett) opens Android's page for it.
 
 Android's own lock face (seen for a frame at a wake, and before the first unlock after a reboot) shows a large
 two-line clock by default, on AOSP and Pixel alike. Vibb One's glance copies Android's **one-line** clock (design 59d
@@ -72,6 +82,8 @@ matches the glance's clock within 1 px; with it on, one frame of the stacked clo
 place and default on the Jelly Star.
 
 ## No media card on Android's lock screen (android mode)
+
+Design 114's setup step `media_on_lock`: the phone's setup flow (after the QR, or parent Settings › Oppsett) opens Android's page for it.
 
 Android 13+ puts the media player's card on its own lock face whenever something plays ("Show media on lock screen",
 on by default), whatever the keyguard features say - so the frame before Vibb One's glance shows Android's media card
@@ -122,6 +134,8 @@ device owner has no API for either setting, so this stays a manual step.
 
 ## Banners for other apps' messages (2026-11-17)
 
+Design 114's setup step `message_banners`: the phone's setup flow (after the QR, or parent Settings › Oppsett) opens Android's page for it.
+
 Android shows a notification as a banner (heads-up) only when its channel's importance is High. Some apps create
 their message channel at Default, so a message gives only a sound, the count on Home and an icon in the shade - no
 banner. Element X does this: its "Noisy notifications" channel ("Støyende varsler") is created at importance 3.
@@ -138,3 +152,19 @@ choice per app on the phone, in a pause:
 Check: `adb shell dumpsys notification --noredact | grep -A12 "AppSettings: io.element.android.x"` shows the channel
 with `mImportance=4`. Vibb One's own Meldinger channel needs no step: it is created at High (`launcher:messages_v2`; PLAN, "No heads-up banner
 on Home for messages").
+
+## The emulator's adb shortcuts for the setup steps (design 114 §5.7)
+
+The PWA carries no adb line since design 114: every step has the phone's setup flow. On the emulator (or a phone with
+USB debugging allowed, never a kid's phone in use) these do the same:
+
+    # background - Vibb One on the battery allowlist
+    adb shell dumpsys deviceidle whitelist +me.vibb.launcher
+    # write_settings - Modify system settings
+    adb shell appops set me.vibb.launcher WRITE_SETTINGS allow
+    # notification_access - Vibb One's notification listener
+    adb shell cmd notification allow_listener me.vibb.launcher/com.kidslauncher.mdm.badges.BadgeListenerService
+    # call_filter - the call redirection role (screening likewise with android.app.role.CALL_SCREENING)
+    adb shell cmd role add-role-holder android.app.role.CALL_REDIRECTION me.vibb.launcher
+
+A debug build is `me.vibb.launcher.debug`.

@@ -55,8 +55,14 @@ pub async fn update_parent_pin(
             "error.save_failed_log",
         )
     };
+    // Design 114 §5.8: from Connect (`back=provision`, the only value read), a refusal keeps it.
+    let from_connect = form.get("back").map(String::as_str) == Some("provision");
     let back = |code: &str| {
-        Redirect::to(&format!("/devices/{id}/lock?notice={code}#parent-pin")).into_response()
+        let keep = if from_connect { "back=provision&" } else { "" };
+        Redirect::to(&format!(
+            "/devices/{id}/lock?{keep}notice={code}#parent-pin"
+        ))
+        .into_response()
     };
     let current =
         match sqlx::query_as::<_, DevicePolicy>("SELECT * FROM device_policy WHERE device_id = ?")
@@ -93,7 +99,22 @@ pub async fn update_parent_pin(
             Ok(Some(Some(_))) => {
                 return crate::settings_log::refused(back("override_needed_by_lock"));
             }
-            Ok(_) => ("override_pin_cleared", "parent_pin_cleared"),
+            Ok(_) => {
+                // Design 114 §5.8 (code QA L2): no setup code lives without the Parent PIN - one made before the
+                // removal is void, so no phone enrols without its PIN.
+                if let Err(err) = sqlx::query(
+                    "UPDATE devices SET enrollment_code_hash = NULL, enrollment_code_kind = NULL, \
+                     enrollment_code_expires_at = NULL WHERE id = ?",
+                )
+                .bind(id)
+                .execute(&state.db)
+                .await
+                {
+                    tracing::error!(device_id = id, %err, "failed to void the setup code");
+                }
+                state.enrollment.refresh(&state.db).await;
+                ("override_pin_cleared", "parent_pin_cleared")
+            }
             Err(err) => {
                 tracing::error!(device_id = id, %err, "failed to remove the parent PIN");
                 return save_failed();
@@ -161,6 +182,11 @@ pub async fn update_parent_pin(
     .await;
     // The phone re-syncs at once and takes the new PIN.
     let _ = state.command_notify.send(id);
+    // Design 114 §5.8: a PIN saved from Connect lands back on the QR's form (the form says it worked; no flash).
+    // `clear_pin` ignores `back`; an easy PIN keeps its warning on the PIN form, `back` kept (code QA L1).
+    if from_connect && !form.contains_key("clear_pin") && code != "parent_pin_saved_easy" {
+        return Redirect::to(&format!("/devices/{id}/provision#qr")).into_response();
+    }
     back(code)
 }
 

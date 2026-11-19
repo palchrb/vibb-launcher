@@ -195,12 +195,14 @@ async fn the_page_and_the_summary_say_what_the_phone_reports() {
     // Design 94 §6.2: the header's last part.
     assert!(summary.contains(" data-roaming>"), "{summary}");
 
-    // Mobile data off on the phone: the summary's Attention row says so, once - no Mobilnett line, no part of the row's
-    // value (QA L6); the page's line is orange.
+    // Mobile data off on the phone (design 114: the setup reading, the user's own switch): the summary's setup row
+    // counts it, once - no Mobilnett line, no part of the row's value (QA L6); the page's line is the setup warning
+    // at #mobile-data, said once (QA M1).
     report(
         &app,
         &token,
-        json!({"mobile_data": {"enabled": false, "sink": "off", "settings_locked": true}}),
+        json!({"mobile_data": {"enabled": false, "sink": "off", "settings_locked": true},
+               "setup": {"mobile_data": false}}),
     )
     .await;
     let summary = app
@@ -209,10 +211,11 @@ async fn the_page_and_the_summary_say_what_the_phone_reports() {
         .text();
     assert!(
         summary.contains(&format!(
-            "href=\"/devices/{id}/mobile#mobile-data\" data-attention=\"mobile-data-off\""
+            "href=\"/devices/{id}/setup\" data-attention=\"setup\""
         )),
         "{summary}"
     );
+    assert!(!summary.contains("mobile-data-off"));
     assert!(!summary.contains("data-mobile-line=\"data-off\""));
     assert!(!summary.contains("data-mobile-line=\"only-vibb\""));
     let row = summary.split("data-row=\"mobile\"").nth(1).unwrap();
@@ -220,10 +223,14 @@ async fn the_page_and_the_summary_say_what_the_phone_reports() {
     assert!(row.contains("Only Vibb"), "{row}");
     assert!(!row.contains("Mobile data off"), "{row}");
     let html = app.get_page(&page, &cookie).await.text();
-    assert!(
-        html.contains("<div class=\"attention attention-action\" data-mobile-line=\"data-off\">"),
-        "{html}"
+    assert!(!html.contains("data-mobile-line=\"data-off\""));
+    let line = format!(
+        "<a class=\"attention attention-action\" href=\"/devices/{id}/setup#step-mobile_data\" data-setup-warning=\"mobile_data\">"
     );
+    assert_eq!(html.matches(&line).count(), 1, "{html}");
+    let at = html.find(&line).unwrap();
+    assert!(html[..at].contains("<section id=\"mobile-data\""));
+    assert!(!html[..at].contains("<section id=\"abroad\""));
 }
 
 /// Migration 0145 (design 97 §7, D1/D2): every existing row is set explicitly - `phone` becomes `home` only where the

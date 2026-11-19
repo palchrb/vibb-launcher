@@ -61,6 +61,8 @@ pub struct SiteRow {
 #[template(path = "device_logins.html")]
 struct LoginsTemplate {
     lang: Lang,
+    /// Design 114 §5.4: Vibb One's location permission missing, at Wi-Fi sign-in (`#logins-wifi`).
+    setup_warnings: crate::setup_status::Warnings,
     who: crate::handlers::devices::BandAvatar,
     title: String,
     device: Device,
@@ -335,6 +337,7 @@ pub async fn view(
     Html(
         LoginsTemplate {
             lang,
+            setup_warnings: crate::setup_status::page_warnings(lang, &policy, latest, "logins"),
             who: crate::handlers::devices::BandAvatar::of(&device),
             title: format!("{} · {}", t(lang, "logins.page"), device.name),
             wifi_on: policy.captive_portal_enabled,

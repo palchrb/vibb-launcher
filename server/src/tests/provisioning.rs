@@ -40,6 +40,7 @@ fn extras() -> AdminExtras {
 async fn provision_page_without_checksum_has_no_qr() {
     let app = TestApp::new().await;
     let (id, _) = app.create_device("phone").await;
+    app.set_parent_pin(id).await;
     let mut state = app.state.clone();
     let mut config = (*state.config).clone();
     config.launcher_signature_checksum = None;
@@ -59,6 +60,7 @@ async fn provision_page_without_checksum_has_no_qr() {
 async fn provision_page_with_checksum_shows_qr() {
     let app = TestApp::new().await;
     let (id, _) = app.create_device("phone").await;
+    app.set_parent_pin(id).await;
     let page = provision_page(app.state.clone(), id).await;
     assert!(page.contains("data-row=\"qr\""), "no QR code rendered");
     assert!(!page.contains("data-missing=\"checksum\""));
@@ -241,6 +243,7 @@ async fn the_server_address_is_judged_on_save_and_shown() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.create_device("phone").await;
+    app.set_parent_pin(id).await;
     let save = |url: &'static str| {
         let app = &app;
         let cookie = &cookie;
@@ -406,6 +409,7 @@ async fn every_form_in_the_add_flow_lands_where_it_should() {
         .fetch_one(&app.db)
         .await
         .unwrap();
+    app.set_parent_pin(id).await;
     let connect = format!("/devices/{id}/provision");
     assert_redirect(&res, &connect, None);
     assert_eq!(code_kind(&app, id).await, None, "no code yet");
@@ -487,6 +491,7 @@ async fn connecting_a_connected_phone_again_says_what_happens() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("Anna").await;
+    app.set_parent_pin(id).await;
     let back = format!("class=\"nav-back\" href=\"/devices/{id}/advanced#connection\"");
     let connect = app
         .get_page(&format!("/devices/{id}/provision"), &cookie)
@@ -595,6 +600,7 @@ async fn a_wifi_field_that_cant_be_right_is_refused_before_any_code() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.create_device("Anna").await;
+    app.set_parent_pin(id).await;
     let before = code_hash(&app, id).await;
     let long_name = "N".repeat(33);
     let long_password = "p".repeat(64);
@@ -639,6 +645,7 @@ async fn server_setup_needed_is_one_row_with_its_detail_behind_info() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.create_device("Anna").await;
+    app.set_parent_pin(id).await;
     // No server address yet (the default): the row, the QR form still there.
     let html = app
         .get_page(&format!("/devices/{id}/provision"), &cookie)
@@ -765,6 +772,7 @@ async fn a_wifi_name_at_the_limit_makes_a_qr_and_one_over_is_typed_back() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.create_device("Anna").await;
+    app.set_parent_pin(id).await;
     let action = format!("/devices/{id}/provision");
     let name = "ø".repeat(16);
     let password = "p".repeat(63);
@@ -806,6 +814,7 @@ async fn a_payload_too_big_for_a_qr_code_keeps_the_live_code() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.create_device("Anna").await;
+    app.set_parent_pin(id).await;
     let huge = format!("https://vibb.example.invalid/{}", "a".repeat(3000));
     sqlx::query("UPDATE provisioning_settings SET server_url = ?")
         .bind(&huge)
@@ -838,6 +847,7 @@ async fn a_payload_too_big_for_a_qr_code_keeps_the_live_code() {
 async fn the_env_server_url_loses_to_the_saved_one() {
     let app = TestApp::new().await;
     let (id, _) = app.create_device("Anna").await;
+    app.set_parent_pin(id).await;
     let env = "https://vibb.example.ts.net";
     let mut state = app.state.clone();
     let mut config = (*state.config).clone();
@@ -934,6 +944,7 @@ async fn the_launcher_check_decides_the_qr() {
     use crate::launcher_check::Verdict;
     let app = TestApp::new().await;
     let (id, _) = app.create_device("Emma").await;
+    app.set_parent_pin(id).await;
 
     let page = provision_page(app.state.clone(), id).await;
     assert!(!page.contains("data-launcher="), "{page}");

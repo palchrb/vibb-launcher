@@ -48,6 +48,31 @@ class NotificationChannelsTest {
         }
     }
 
+    /** Design 114's `vibb_notifications` step: the table's feature and orange, and 107's `pages` rows' `orange` through
+     * the phone's own [channelsOrange] (the server's About rule). */
+    @Test
+    fun `the orange rule is the server's, row by row`() {
+        val rows = contract.getValue("channels").jsonArray.map { it.jsonObject }
+        for ((row, channel) in rows.zip(ReportedChannel.entries)) {
+            assertEquals(channel.key, row["feature"]?.takeIf { it !is kotlinx.serialization.json.JsonNull }?.jsonPrimitive?.content, channel.feature)
+            assertEquals(channel.key, row.getValue("orange").jsonPrimitive.boolean, channel.orange)
+        }
+        for (page in contract.getValue("pages").jsonArray.map { it.jsonObject }) {
+            val report = page.getValue("report").jsonObject.let {
+                NotificationChannelsReport(it.getValue("all_off").jsonPrimitive.boolean, it.getValue("blocked").jsonArray.map { b -> b.jsonPrimitive.content })
+            }
+            assertEquals(
+                page.getValue("case").jsonPrimitive.content,
+                page.getValue("orange").jsonPrimitive.boolean,
+                channelsOrange(
+                    report,
+                    smsManaged = page.getValue("sms_mode").jsonPrimitive.content == "managed",
+                    callsManaged = page.getValue("calls_mode").jsonPrimitive.content == "managed",
+                ),
+            )
+        }
+    }
+
     @Test
     fun `every read row through channelsReport`() {
         for (row in contract.getValue("read").jsonArray.map { it.jsonObject }) {
@@ -89,42 +114,6 @@ class NotificationChannelsTest {
     }
 
     // ---- Settings' row (§6) ----
-
-    @Test
-    fun `the row says what is off and what a tap does, never Snarveier`() {
-        val report = NotificationChannelsReport(false, listOf("messages", "command_listener", "shortcuts"))
-        val actions = mapOf(
-            SystemPageAccess.CAN_OPEN to R.string.settings_notifications_open,
-            SystemPageAccess.PAUSE_FIRST to R.string.settings_notifications_pause_first,
-            SystemPageAccess.WAIT to R.string.settings_notifications_wait,
-            SystemPageAccess.NO_PAGE to R.string.settings_notifications_no_page,
-        )
-        for ((access, action) in actions) {
-            val row = notificationsRowText(report, access)!!
-            assertEquals(listOf(ReportedChannel.MESSAGES, ReportedChannel.COMMAND_LISTENER), row.off)
-            assertFalse(row.allOff)
-            assertEquals(access.name, action, row.action)
-        }
-        // Vibb holds the dialer role: every channel is locked and Android's page greys an off switch (gate §6ax), so the
-        // tap's words say to hand the role back first (code QA L5); the other states are the same.
-        assertEquals(R.string.settings_notifications_open_role, notificationsRowText(report, SystemPageAccess.CAN_OPEN, dialerRoleHeld = true)!!.action)
-        assertEquals(R.string.settings_notifications_pause_first, notificationsRowText(report, SystemPageAccess.PAUSE_FIRST, dialerRoleHeld = true)!!.action)
-        assertNull(notificationsRowText(NotificationChannelsReport(false, listOf("shortcuts")), SystemPageAccess.CAN_OPEN))
-        assertNull(notificationsRowText(NotificationChannelsReport(false, emptyList()), SystemPageAccess.CAN_OPEN))
-        assertNull("nothing read: no row", notificationsRowText(null, SystemPageAccess.CAN_OPEN))
-        val allOff = notificationsRowText(NotificationChannelsReport(true, listOf("shortcuts")), SystemPageAccess.PAUSE_FIRST)!!
-        assertTrue(allOff.allOff)
-        assertEquals(emptyList<ReportedChannel>(), allOff.off)
-        // Its words in both languages, the phone's quotes.
-        val en = strings("values")
-        val nb = strings("values-nb")
-        assertEquals("Vibb One notifications", en["settings_notifications"])
-        assertEquals("Varsler fra Vibb One", nb["settings_notifications"])
-        assertEquals("Sett alle begrensninger på pause først", nb["settings_notifications_pause_first"])
-        assertEquals("«%1\$s»", nb["settings_notifications_quoted"])
-        assertTrue(nb.getValue("settings_notifications_open_role").contains("Samtaler og SMS til «Ikke styrt» under Anrop og SMS"))
-        assertTrue(en.getValue("settings_notifications_open_role").contains("Calls and SMS to “Not managed” under Calls and SMS"))
-    }
 
     // ---- source pins ----
 

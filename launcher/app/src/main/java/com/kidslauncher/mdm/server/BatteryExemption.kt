@@ -33,18 +33,6 @@ data class ResolvedDialog(
 fun dialogTarget(resolved: ResolvedDialog?, ownPackage: String): ResolvedDialog? =
     resolved?.takeIf { it.system && !it.suspended && !it.plannedOff && it.packageName != ownPackage }
 
-/** The "Background connection" row's states (19b §2). */
-enum class BatteryRow { EXEMPT, CAN_ASK, PAUSE_FIRST, UNKNOWN }
-
-/** [exempt]: `isIgnoringBatteryOptimizations` (null = unreadable); [dialogAvailable]: a
- * [dialogTarget] exists now. */
-fun batteryRowState(exempt: Boolean?, dialogAvailable: Boolean): BatteryRow = when {
-    exempt == true -> BatteryRow.EXEMPT
-    exempt == null -> BatteryRow.UNKNOWN
-    dialogAvailable -> BatteryRow.CAN_ASK
-    else -> BatteryRow.PAUSE_FIRST
-}
-
 object BatteryExemption {
     /** Whether the launcher is exempt now; null when it can't be read (left out of the report). */
     fun exempt(context: Context): Boolean? = runCatching {

@@ -216,7 +216,11 @@ async fn device_page_explains_the_fence_and_the_filter() {
     assert!(html.contains("Last update failed to install"), "{html}");
     assert!(html.contains("launcher-v1.4.0"), "{html}");
     assert!(html.contains("a call was on"), "{html}");
-    assert!(html.contains("no notification access"), "{html}");
+    // Design 114: no notification access is the setup step's line at #updates.
+    assert!(
+        html.contains("data-setup-warning=\"notification_access\""),
+        "{html}"
+    );
     assert!(html.contains("com.google.android.gms (nag)"), "{html}");
     assert!(html.contains("1 snoozed for an hour"), "{html}");
     assert!(

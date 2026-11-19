@@ -457,6 +457,17 @@ fn the_field_tables_keep_every_contract_key() {
                 checked += 1;
             }
         }
+        // Design 114 §4.2: the report's `setup` (`setup_steps.json`'s `report` and `report_no_hold`), every key kept by
+        // the cleaning.
+        if path.ends_with("setup_steps.json") {
+            for key in ["report", "report_no_hold"] {
+                let blob = &json[key];
+                let kept: serde_json::Value =
+                    serde_json::from_str(&crate::setup_status::clean(blob).unwrap()).unwrap();
+                assert_eq!(&kept, blob, "{}'s {key}", path.display());
+                checked += 1;
+            }
+        }
         // Design 102 §6.2: the report's `captive_portal` and `login_browser` (`login_windows.json`'s `report` and
         // `report_off`), every key kept by the cleaning.
         if path.ends_with("login_windows.json") {
