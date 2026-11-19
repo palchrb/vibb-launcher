@@ -654,7 +654,9 @@ family's one backup row (`backups::backup_state`, `#backup-warning`, to `/backup
   (`/devices/{id}/apps?from=apps`, `?from=app:<id>#app-<package>` from an app page; step 6, and "Opened from the Apps
   tab" there: Back returns here).
 - **`/apps/tracked/{id}`** (`render_detail_full`): the sub-page header; Version, Last checked (local, relative,
-  `display_time`), Check Now with the running state or the failed check's title + ⓘ; Show on phones as (the
+  `display_time`), Check Now with the running state ("New version found, downloading" once the listing names one; the
+  page refreshes in place while it runs), "No new version" after a Check Now that found none, or the failed check's
+  title + ⓘ; Show on phones as (the
   `app_display_form` partial); On phones (the phones with it ticked, every set-up phone for the launcher); Source &
   Signing (a `<details>`, open when a refused save/upload is in it): the release, file, package (+ candidates), key
   (short, whole in ⓘ), Forget Package and Key… (a `<details>` confirm), the Details form, the three switches (one

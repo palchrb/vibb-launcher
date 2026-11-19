@@ -55,8 +55,16 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   set by a sync or an upload; rows synced earlier show nothing until the next sync).
 - **One sync per app** (`AppSyncs`, in memory, `AppState.app_syncs`): `sync_app` takes the app's guard or answers
   "already running"; the row is read under it, so a slower sync can't roll a newer cached release back. "Check now"
-  starts the sync in its own task, waits up to 10 s, then redirects back to the app's page, which says a check is
-  running or shows how the last one (hourly or manual) failed (a short title from `SyncProblem`, the raw error behind ⓘ). The hourly loop skips an app that is syncing.
+  takes the guard itself (`check_now`; one running already is what the page shows), starts the sync in its own task
+  and answers once the source's listing is read: the sync's end, or the moment `sync_release` starts a download
+  (`SyncStatus.downloading`, set only for a release that is neither the cached nor the held one - the cached APK is
+  never downloaded again), at most 10 s (`CHECK_NOW_WAIT`). The app's page then says "Checking now…", "New version
+  found, downloading" with the version, or how the last sync (hourly or manual) failed (a short title from
+  `SyncProblem`, the raw error behind ⓘ); a Check Now that ended with no download and no failure says "No new
+  version" (`SyncStatus.nothing_new`, until the next sync starts; not while a release waits or is held - the
+  `#update` group says that). While a sync runs the check group draws `data-waits`, so the page refreshes in place
+  every 3 s (`static/auto-reload.js`, `handySwap.refresh`: no jump) until it shows the result (2026-11-19, the user:
+  "viser hva som skjer istedetfor at det ser ut som om den bare har fryst"). The hourly loop skips an app that is syncing.
 - **Sync download** is streamed to `<file>.<random>.part` in the app's dir (`AppState.tracked_apps_dir`,
   `data/tracked_apps/<id>/`, a temp dir in tests) and renamed when complete (ZIP header and GitHub's size checked as
   it streams); the temp file goes on any failure, also when the future is dropped (`TempDownload`'s `Drop`); `.part`

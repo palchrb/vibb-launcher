@@ -1280,6 +1280,8 @@ pub(crate) mod tests {
         pub index_gets: std::sync::atomic::AtomicUsize,
         pub api_gets: std::sync::atomic::AtomicUsize,
         pub file_gets: std::sync::atomic::AtomicUsize,
+        /// When set, an APK is served only after a `notify_one` (a download that takes its time).
+        pub file_gate: std::sync::Mutex<Option<std::sync::Arc<tokio::sync::Notify>>>,
     }
 
     impl FakeRepo {
@@ -1337,6 +1339,10 @@ pub(crate) mod tests {
                                 }
                                 _ => {
                                     fake.file_gets.fetch_add(1, SeqCst);
+                                    let gate = fake.file_gate.lock().unwrap().clone();
+                                    if let Some(gate) = gate {
+                                        gate.notified().await;
+                                    }
                                     match fake.files.lock().unwrap().get(&file) {
                                         Some(bytes) => bytes.clone().into_response(),
                                         None => StatusCode::NOT_FOUND.into_response(),

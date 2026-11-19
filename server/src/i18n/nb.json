@@ -2364,6 +2364,8 @@
   "apps.app.last_checked": "Sist sjekket",
   "apps.app.checking": "Sjekker nå…",
   "apps.app.checking_since": "Startet {when}",
+  "apps.app.downloading": "Ny versjon funnet, laster ned",
+  "apps.app.nothing_new": "Ingen ny versjon",
   "apps.app.last_check": "Siste sjekk, {when}",
   "apps.app.failed_about": "Mer om sjekken som feilet",
   "apps.app.check_now": "Sjekk nå",
