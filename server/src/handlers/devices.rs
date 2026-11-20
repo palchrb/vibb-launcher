@@ -564,6 +564,18 @@ pub async fn new_device_form(lang: Lang) -> Response {
     device_add_page(StatusCode::OK, String::new(), None, lang)
 }
 
+/// Why a (trimmed) phone name is refused, `None` when it is fine: Add Phone's rule and Advanced's rename share it
+/// (not empty, at most [MAX_DEVICE_NAME_CHARS] characters; names need not be unique).
+pub(crate) fn device_name_refusal(lang: Lang, name: &str) -> Option<&'static str> {
+    if name.is_empty() {
+        Some(t(lang, "devices.add.name_empty"))
+    } else if name.chars().count() > MAX_DEVICE_NAME_CHARS {
+        Some(t(lang, "devices.add.name_long"))
+    } else {
+        None
+    }
+}
+
 #[derive(Deserialize)]
 pub struct CreateDeviceForm {
     #[serde(default)]
@@ -579,13 +591,7 @@ pub async fn create_device(
     Form(form): Form<CreateDeviceForm>,
 ) -> axum::response::Response {
     let name = form.name.trim();
-    let refusal = if name.is_empty() {
-        Some(t(lang, "devices.add.name_empty"))
-    } else if name.chars().count() > MAX_DEVICE_NAME_CHARS {
-        Some(t(lang, "devices.add.name_long"))
-    } else {
-        None
-    };
+    let refusal = device_name_refusal(lang, name);
     if let Some(why) = refusal {
         let typed: String = name.chars().take(MAX_DEVICE_NAME_CHARS * 4).collect();
         return device_add_page(StatusCode::BAD_REQUEST, typed, Some(why), lang);

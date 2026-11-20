@@ -3935,6 +3935,7 @@
   "device.summary.qa.js_pause": "Sett {rule} på pause i {duration}",
   "device.summary.qa.js_pause_all": "Sett alle regler på pause i {duration}",
   "device.summary.qa.js_extra": "Gi {duration} ekstra",
+  "device.advanced.name": "Navn",
   "device.advanced.setup.title": "Åpne for oppsett",
   "device.advanced.setup.until": "til {at}",
   "device.advanced.setup.on_lock": "{rule} på til {at} står på pause så lenge.",
