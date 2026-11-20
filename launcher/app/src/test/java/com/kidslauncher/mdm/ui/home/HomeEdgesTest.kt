@@ -228,11 +228,13 @@ class HomeEdgesTest {
         assertEquals(PressFeedback.FOCUS_RING_GAP_DP, FOCUS_RING_OUT_DP)
     }
 
-    /** Six-inch F3: at font 1.3 "Bestemor" and "Kristoffer" on two lines touched and read as one word. */
+    /** Six-inch F3: at font 1.3 "Bestemor" and "Kristoffer" on two lines touched and read as one word. Since the name
+     * pill (2026-11-19) the text keeps 8 dp inside its pill, so two neighbours' words are at least 16 dp apart, each
+     * on its own outlined pill. */
     @Test
-    fun `neighbouring contact names are at least 8 dp apart - each keeps 4 dp inside its own cell`() {
+    fun `neighbouring contact names are at least 8 dp apart - each keeps 8 dp inside its pill`() {
         val name = byId(xml("res/layout/item_kid_contact.xml"), "contact_name")
-        assertEquals(listOf("4dp", "4dp"), listOf(name.attr("paddingStart"), name.attr("paddingEnd")))
+        assertEquals(listOf("8dp", "8dp"), listOf(name.attr("paddingStart"), name.attr("paddingEnd")))
         assertEquals("", name.attr("layout_marginStart") + name.attr("layout_marginEnd") + name.attr("padding"))
         // The label is never wider than its cell (its padding inside that width), and the cells sit side by side.
         val home = file("java/com/kidslauncher/mdm/ui/HomeActivity.kt").readText()

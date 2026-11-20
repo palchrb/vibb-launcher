@@ -89,7 +89,8 @@ class WholeWordsTest {
         "en" to listOf("Phone book", "Settings", "Meldinger", "Chrome", "Gmail", "YouTube", "Calendar", "Camera", "Clock", "Calculator", "Messages", "Maps", "Photos"),
     )
 
-    /** A contact name's line: its cell less the label's own sides (4 dp each, six-inch F3). */
+    /** A contact name's line: its cell less the name pill's own padding (8 dp each side; six-inch F3: two neighbours'
+     * words stay at least 16 dp apart). */
     private val nameSides by lazy {
         val doc = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }.newDocumentBuilder()
             .parse(File(main, "res/layout/item_kid_contact.xml"))
@@ -138,8 +139,10 @@ class WholeWordsTest {
                 assertEquals(label, m.labelSp to label, shown(label, m.labelSp, m.cellWidthDp - 4f))
             }
         }
+        // The name pill (2026-11-19): the Jelly Star's three 96 dp cells leave an 80 dp line on the pill.
         val item = nameLine(contactItemDp(contactRow(3, 288f), 3, 288f))
-        for (name in names) assertEquals(name, 15f to name, shown(name, 15f, item))
+        assertEquals(80f, item, 0.001f)
+        for (name in names) assertEquals(name, 14f to name, shown(name, 14f, item))
     }
 
     @Test
@@ -150,20 +153,20 @@ class WholeWordsTest {
                 val item = nameLine(if (row.scrolls) row.itemDp.toFloat() else contactItemDp(row, count, content))
                 for (scale in scales) {
                     for (name in names) {
-                        val (size, display) = shown(name, 15f * scale, item)
+                        val (size, display) = shown(name, 14f * scale, item)
                         assertNoCut("Home $count $content dp ${scale}x '$name'", size, display, item)
                     }
                 }
             }
         }
-        // The Jelly Star (288 dp, three contacts, 96 dp items, an 88 dp line) at 2.0: the short names stay whole, only
-        // smaller.
+        // The Jelly Star (288 dp, three contacts, 96 dp items, an 80 dp line on the name pill) at 2.0: the short names
+        // stay whole, only smaller.
         val item = nameLine(contactItemDp(contactRow(3, 288f), 3, 288f))
         for (name in listOf("Mamma", "Pappa", "Mormor", "Morfar")) {
-            val (size, display) = shown(name, 30f, item)
+            val (size, display) = shown(name, 28f, item)
             assertEquals(name, display)
             // The two the emulator showed cut ("Mamm/a", "Mormo/r") shrink.
-            if (name == "Mamma" || name == "Mormor") assertTrue("$name shrinks at 2.0", size < 30f)
+            if (name == "Mamma" || name == "Mormor") assertTrue("$name shrinks at 2.0", size < 28f)
         }
     }
 

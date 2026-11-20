@@ -1,13 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- A contact on Home as a round avatar (photo or initial) with its two pills (design 106, A5): the rust missed-call
-     pill at the top end, the teal unread-messages pill at the bottom end; 76 or 64 dp - KidAvatars sizes it.
-     Depth is the avatar's own elevation with an oval outline (PressFeedback.depth: 2 dp, 4 dp on Home), so the
-     frame and this item keep clipChildren=false for the shadow. contact_ring is Home's white 3 dp ring
-     (mockup A) over the photo's or the disc's edge, so a photo on a busy wallpaper has an edge; it stays gone
-     in the phone book and for an emergency contact, whose red ring is drawn by KidAvatars.bindContact
-     (KidAvatars.bindHomeRing); on a light wallpaper it grows 1 dp past the avatar for a dark hairline, hence the
-     avatar's clipChildren=false. It is a child of the avatar, so the press scale and shade cover it too; both
-     badges are lifted to the avatar's elevation in PressFeedback.contact and sit after it, so they draw above. -->
+<!-- A contact on Home as a round avatar (photo or initial) with its ring, its name on a pill over the circle's bottom
+     edge (PLAN "Home: contacts with a name pill, its colour from Android", 2026-11-19), and its two pills (design 106,
+     A5): the rust missed-call pill at the top end, the teal unread-messages pill at the bottom end; 76 or 64 dp -
+     KidAvatars.sizeContact sizes the avatar, the badge frame and the name's place. contact_cell holds the three in draw
+     order: the avatar, the name pill over it, then contact_frame with the badges over both (the pill and the frame are
+     lifted to the avatar's elevation in PressFeedback.contact; equal Z draws in child order). Depth is the avatar's own
+     elevation with an oval outline (PressFeedback.depth: 4 dp on Home), so every parent keeps clipChildren=false for
+     the shadows. contact_ring is Home's ring (KidAvatars.bindHomeRing: dark on a light wallpaper, white otherwise,
+     with a 1 dp outline just outside the avatar's edge, hence the avatar's clipChildren=false); it stays gone for an
+     emergency contact, whose red ring is drawn by KidAvatars.bindContact. It is a child of the avatar, so the press
+     scale and shade cover it too. The 8 dp at the bottom leave the pill's shadow its room above the contacts row's
+     clip (code QA L5). -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="wrap_content"
     android:layout_height="wrap_content"
@@ -17,12 +20,14 @@
     android:clipChildren="false"
     android:clipToPadding="false"
     android:paddingTop="4dp"
-    android:paddingBottom="4dp">
+    android:paddingBottom="8dp">
 
+    <!-- The keyboard/D-pad focus ring is this cell's background (PressFeedback.contact, code QA L4): around the avatar,
+         under the pill. -->
     <FrameLayout
-        android:id="@+id/contact_frame"
-        android:layout_width="88dp"
-        android:layout_height="82dp"
+        android:id="@+id/contact_cell"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
         android:clipChildren="false"
         android:clipToPadding="false">
 
@@ -30,7 +35,8 @@
             android:id="@+id/contact_avatar"
             android:layout_width="76dp"
             android:layout_height="76dp"
-            android:layout_gravity="bottom|center_horizontal"
+            android:layout_gravity="top|center_horizontal"
+            android:layout_marginTop="6dp"
             android:clipChildren="false">
 
             <ImageView
@@ -60,41 +66,61 @@
                 android:visibility="gone" />
         </FrameLayout>
 
-        <!-- Design 106 §2.2 (A5): the teal pill with the unread messages, where the green call badge was (bottom end,
-             its end edge 4 dp past the avatar's, within the frame); it grows inward over the avatar. -->
-        <TextView
-            android:id="@+id/contact_unread_badge"
-            style="@style/KidMessageBadge"
-            android:layout_gravity="bottom|end"
-            android:layout_marginEnd="2dp"
-            android:drawablePadding="3dp"
-            android:importantForAccessibility="no" />
+        <!-- The name on its pill (KidAvatars.bindNamePill: its colours from Android's wallpaper hint, a 1 dp outline,
+             a soft shadow), 10 dp over the avatar's bottom edge (KidAvatars.sizeContact sets the top margin). A name
+             is never cut between letters ("Mamm/a" at 2.0, N7): WholeWordTextView. Home sets maxWidth to the cell; the
+             text keeps 8 dp inside its pill, so two neighbours' words are at least 16 dp apart (six-inch F3:
+             "Bestemor" / "Kristoffer" at font 1.3 read as one word). 8 dp, not the mockup's 12: on the Jelly Star's
+             96 dp cells 12 dp would cut "Mamma" at font 2.0 to an ellipsis. -->
+        <com.kidslauncher.mdm.ui.WholeWordTextView
+            android:id="@+id/contact_name"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="top|center_horizontal"
+            android:layout_marginTop="72dp"
+            android:ellipsize="end"
+            android:fontFamily="@font/nunito_extrabold"
+            android:gravity="center"
+            android:maxWidth="104dp"
+            android:maxLines="2"
+            android:paddingStart="8dp"
+            android:paddingTop="3dp"
+            android:paddingEnd="8dp"
+            android:paddingBottom="3dp"
+            android:textColor="@color/kid_ink"
+            android:textSize="14sp"
+            android:textStyle="bold" />
 
-        <!-- The rust pill with the missed calls (phone and Element X), at the top end. -->
-        <TextView
-            android:id="@+id/contact_badge"
-            style="@style/KidBadge"
-            android:layout_gravity="top|end"
-            android:drawablePadding="3dp"
-            android:importantForAccessibility="no" />
+        <!-- The badges' frame: 12 dp wider and 6 dp taller than the avatar, its bottom on the avatar's. No background,
+             not clickable: touches go through to the item. -->
+        <FrameLayout
+            android:id="@+id/contact_frame"
+            android:layout_width="88dp"
+            android:layout_height="82dp"
+            android:layout_gravity="top|center_horizontal"
+            android:clipChildren="false"
+            android:clipToPadding="false">
+
+            <!-- Design 106 §2.2 (A5): the teal pill with the unread messages, where the green call badge was (bottom
+                 end, its end edge 4 dp past the avatar's, within the frame); it grows inward over the avatar. Since
+                 the name pill it rests on the pill's top edge (10 dp up, NAME_PILL_OVERLAP_DP), so it never covers
+                 the name's letters (code QA L3). -->
+            <TextView
+                android:id="@+id/contact_unread_badge"
+                style="@style/KidMessageBadge"
+                android:layout_gravity="bottom|end"
+                android:layout_marginBottom="10dp"
+                android:layout_marginEnd="2dp"
+                android:drawablePadding="3dp"
+                android:importantForAccessibility="no" />
+
+            <!-- The rust pill with the missed calls (phone and Element X), at the top end. -->
+            <TextView
+                android:id="@+id/contact_badge"
+                style="@style/KidBadge"
+                android:layout_gravity="top|end"
+                android:drawablePadding="3dp"
+                android:importantForAccessibility="no" />
+        </FrameLayout>
     </FrameLayout>
-
-    <!-- A name is never cut between letters ("Mamm/a" at 2.0, N7): WholeWordTextView. Its 4 dp sides keep the text
-         inside the cell (Home sets maxWidth to the cell), so two neighbours' names are at least 8 dp apart and never
-         read as one word (six-inch F3: "Bestemor" / "Kristoffer" at font 1.3). -->
-    <com.kidslauncher.mdm.ui.WholeWordTextView
-        android:id="@+id/contact_name"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="6dp"
-        android:ellipsize="end"
-        android:fontFamily="@font/nunito_extrabold"
-        android:gravity="center"
-        android:maxWidth="104dp"
-        android:maxLines="2"
-        android:paddingStart="4dp"
-        android:paddingEnd="4dp"
-        android:textColor="@color/kid_ink"
-        android:textSize="15sp"
-        android:textStyle="bold" />
 </LinearLayout>
