@@ -27,6 +27,14 @@
   a role is listed; `stillMoved` drops an entry once its role is back (call screening and redirection are row 13's);
   the flow's "Standardapper" opens the pick window with `keepSnapshot = true`.
 
+- Design 114b (`docs/design/114b-setup-pin-and-roles.md`): `child_pin` (required, counted) reads
+  `KeyguardManager.isDeviceSecure`. With Vibb One's legacy own lock, a `kid_lock` in the cached policy counts instead
+  (`childPinDone`). It goes in the report's `setup`. In the flow it is a screen done in the PWA (`SetupStep.inPwa`): its
+  line, "Senere", no "Åpne". It moves on by itself after the apply that follows the PIN's arrival, and
+  `MdmDeviceAdminReceiver.onPasswordChanged` asks for a sync. `call_filter_early` (optional, `calls_unmanaged`) is row
+  13's two role requests in the same pick window, offered while calls aren't managed. Its `when` is the exact opposite
+  of row 13's, and it reads the same roles.
+
 ## The setup hold
 
 - `Enrollment.enroll` decides "fresh" (`setupHoldStarts`: device owner, `policy_ever_applied` false, no cached policy)

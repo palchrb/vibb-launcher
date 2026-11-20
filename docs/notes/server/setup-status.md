@@ -9,9 +9,15 @@
   114 §2.6; `setup_steps.json`'s `map_readings` pins those readings against the launcher's) to the rule's inputs and
   readings;
   `missing`/`count`/`setup_row` are the rule. The server reads `parent_pin` itself; the report's `setup` carries only
-  `device_owner`, `mobile_data`, `location`, `data_saver`, `full_screen_intent`, `fingerprint` and the hold's
+  `device_owner`, `child_pin` (114b), `mobile_data`, `location`, `data_saver`, `full_screen_intent`, `fingerprint` and the hold's
   `hold_until_ms`/`hold_left_ms` (`clean`); every other reading comes from the field that already carries it.
   `write_settings_used` is bit 16, bit 8 or a clock format in use (as `airplane_mode::write_settings_needed`).
+- **Design 114b** (`docs/design/114b-setup-pin-and-roles.md`):
+  - `child_pin` (required, counted, read from the report's `setup.child_pin`). On Device › Oppsett it is an orange link
+    to `/devices/{id}/lock#child-pin` (`Row::pwa_link`), and it never makes the page "openable" (`on_phone`).
+  - Lock Screen & PINs gets one orange note at `#child-pin` while the step is missing and no Child PIN is stored
+    (`child_pin_missing`).
+  - `call_filter_early` (optional, `When::CallsUnmanaged`) reads `call_state`'s two roles, as `call_filter` does.
 - **Storage** (migration 0157): `device_status.setup_json`, `setup_hold_until_ms` (`min(hold_until_ms, arrival +
   hold_left_ms)`), `device_setup_ticks` (the parent steps ticked, `by_phone`).
 - **The hold** (`models::DeviceStatus::paused_at`): a report with `setup_hold_until_ms` stays paused until it, never past

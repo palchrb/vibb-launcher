@@ -1603,6 +1603,15 @@ pub(crate) async fn call_report(
     // Design 77 D2: the role, screening and call-log findings are the calls channel's (the launcher reports
     // `call_state.state` for calls alone, and hands the dialer role back while only SMS is managed).
     if !policy.calls_managed() {
+        // Design 114b (code QA M1): with the call roles granted early (`call_filter_early`) an unmanaged phone's
+        // screening and redirection still run - if its rules can't be read they fail closed, so say it here too.
+        if roles != RoleReport::Pending
+            && text("state").as_deref() == Some("fail_closed")
+            && (flag("screening_role_held") == Some(true)
+                || flag("redirection_role_held") == Some(true))
+        {
+            findings.push(Finding::FailClosed);
+        }
         return Ok(report);
     }
     if roles == RoleReport::Pending {

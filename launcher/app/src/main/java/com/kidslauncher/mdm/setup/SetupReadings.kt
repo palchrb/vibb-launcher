@@ -34,7 +34,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 
 /** The report's readings, in the contract's key order. */
-private val REPORT_KEYS = listOf("device_owner", "mobile_data", "location", "data_saver", "full_screen_intent", "fingerprint")
+private val REPORT_KEYS = listOf("device_owner", "child_pin", "mobile_data", "location", "data_saver", "full_screen_intent", "fingerprint")
 
 /**
  * Design 114 §4.1: the status report's `setup` - only the readings no other field carries ([readings], each `true`,
@@ -70,6 +70,10 @@ object SetupReadings {
         false
     }
 
+    /** Design 114b: Android's credential now; `null` when it can't be read (a throw is `null` too, by [read]). */
+    private fun deviceSecure(context: Context): Boolean? =
+        context.getSystemService(android.app.KeyguardManager::class.java)?.isDeviceSecure
+
     private fun read(block: () -> Boolean?): Boolean? = try {
         block()
     } catch (e: Exception) {
@@ -98,6 +102,8 @@ object SetupReadings {
     /** The readings only the `setup` report carries (§4.1). */
     private fun ownReadings(context: Context): Map<String, Boolean?> = buildMap {
         put("device_owner", deviceOwner(context))
+        val cached = policy()
+        put("child_pin", childPinDone(read { deviceSecure(context) }, cached?.kidLock?.keyguard, policyKnown = cached != null))
         mobileData(context, this)
         put("location", read { ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED })
         put("data_saver", read {
@@ -129,7 +135,10 @@ object SetupReadings {
         put("write_settings", WriteSettingsAccess.granted(context))
         put("assistant", read { AirplaneRuntime.roleHeld(context) })
         put("wifi_airplane", read { AirplaneRuntime.wifiKept(context) != null })
-        put("call_filter", read { CallSystem.screeningRoleHeld(context) && CallSystem.redirectionRoleHeld(context) })
+        val callFilter = read { CallSystem.screeningRoleHeld(context) && CallSystem.redirectionRoleHeld(context) }
+        put("call_filter", callFilter)
+        // Design 114b B: the same roles, offered before calls are managed (the server reads it from `call_state` too).
+        put("call_filter_early", callFilter)
         put("default_apps", read { AssistantSetup.defaultAppsChanged(context).isEmpty() })
         // Rows 15-16: design 110's two steps, read as its `map_links` report reads them (`play_services_links`,
         // `vibb_hosts`), so the server's reading of that report says the same.

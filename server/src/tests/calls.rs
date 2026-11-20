@@ -864,6 +864,36 @@ async fn calls_page_shows_role_problems_and_fail_closed() {
     assert!(!page.contains("adb "));
 }
 
+/// Design 114b (code QA M1): an unmanaged phone holding the screening or redirection role (granted early in the
+/// setup) that reports `fail_closed` screens every call shut - said on Anrop too; without either role, nothing.
+#[tokio::test]
+async fn an_unmanaged_phone_with_the_early_roles_says_fail_closed() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    let mut call_state = good_call_state();
+    call_state["state"] = json!("fail_closed");
+    call_state["dialer_role_held"] = json!(false);
+    call_state["redirection_role_held"] = json!(true);
+    call_state["screening_role_held"] = json!(true);
+    app.post_status(&token, json!({ "call_state": call_state.clone() }))
+        .await;
+    let page = calls_page(&app, &cookie, id).await;
+    assert!(
+        page.contains("Phone can&#39;t read its call rules"),
+        "{page}"
+    );
+    call_state["redirection_role_held"] = json!(false);
+    call_state["screening_role_held"] = json!(false);
+    app.post_status(&token, json!({ "call_state": call_state }))
+        .await;
+    let page = calls_page(&app, &cookie, id).await;
+    assert!(
+        !page.contains("Phone can&#39;t read its call rules"),
+        "{page}"
+    );
+}
+
 /// Security review L7: incoming calls are filtered by the phone app's screening or the
 /// call-screening role; the page says when neither does (a warning), and - only as a row in the
 /// Settings group - that the screening role is missing while Vibb is the phone app (the user's

@@ -76,9 +76,16 @@
         </div>
         {% endif %}
         {% endif %}{% endfor %}
+        {#- Design 114b: a step done in the PWA (the Child PIN) - one orange link to its page, no ⓘ inside the link. -#}
+        {% for row in page.phone %}{% if row.pwa_link() %}
+        <a class="attention attention-action" id="step-{{ row.key }}" href="{% if let Some(link) = row.link %}{{ link }}{% endif %}" data-setup-step="{{ row.key }}">
+            <span class="attention-text">{{ row.name }}</span>
+            <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>
+        {% endif %}{% endfor %}
         {% if page.has_phone_rows() %}
         <div class="group">
-            {% for row in page.phone %}{% if !row.alarm %}
+            {% for row in page.phone %}{% if !row.alarm && !row.pwa_link() %}
             <details class="info cell" id="step-{{ row.key }}" data-setup-step="{{ row.key }}">
                 <summary class="row">
                     <span class="row-label">{{ row.name }}</span>
@@ -113,7 +120,7 @@
                     <span class="row-label">{{ row.name }}</span>
                     <svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("common.more_info") }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>
                 </summary>
-                <div class="info-panel"><p>{{ row.how }}</p></div>
+                <div class="info-panel">{% if let Some(why) = row.why %}<p>{{ why }}</p>{% endif %}<p>{{ row.how }}</p></div>
             </details>
             {% endif %}
             {% endfor %}

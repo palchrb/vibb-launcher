@@ -26,7 +26,7 @@ class KidCallRedirectionService : CallRedirectionService() {
     }
 
     override fun onPlaceCall(handle: Uri, initialPhoneAccount: PhoneAccountHandle, allowInteractiveResponsePostRedirect: Boolean) {
-        val state = CallPolicyStore.effectiveState()
+        val state = CallPolicyStore.filterState(this)
         var target: String? = null
         var busy = false
         val verdict = try {
