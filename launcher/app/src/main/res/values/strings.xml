@@ -450,6 +450,7 @@
     <string name="wifi_networks_password_hint">Password</string>
     <string name="wifi_networks_connect">Connect</string>
     <string name="wifi_networks_forget">Forget</string>
+    <string name="wifi_networks_signal">Signal: %1$d of %2$d</string>
     <string name="wifi_networks_cancel">Cancel</string>
 
     <!--

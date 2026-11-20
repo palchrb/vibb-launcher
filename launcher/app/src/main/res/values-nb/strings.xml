@@ -401,6 +401,7 @@
     <string name="wifi_networks_password_hint">Passord</string>
     <string name="wifi_networks_connect">Koble til</string>
     <string name="wifi_networks_forget">Glem</string>
+    <string name="wifi_networks_signal">Signal: %1$d av %2$d</string>
     <string name="wifi_networks_cancel">Avbryt</string>
 
     <!-- Bluetooth devices -->

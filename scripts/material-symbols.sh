@@ -22,6 +22,8 @@
 #   CLOCK_GLYPHS below)
 #   launcher/app/src/main/res/drawable/shortcut_glyph_<key>.xml   (Snarveier's buttons and picker, design 99;
 #   SHORTCUT_GLYPHS below)
+#   launcher/app/src/main/res/drawable/ic_wifi_signal_<0..4>.xml   (the Wi-Fi page's signal bars, 2026-11-20;
+#   WIFI_SIGNAL_GLYPHS below)
 #   launcher/app/src/main/res/drawable/ic_kid_call_<key>.xml   (Siste's incoming and outgoing calls, design 106;
 #   CALL_GLYPHS below)
 #   launcher/app/src/main/res/drawable/ic_kid_<key>.xml   (Home's built-in tiles Telefonbok, Innstillinger and Meldinger,
@@ -84,6 +86,11 @@ call_made cc1bf7cef8167639587f0fea7cd6a03d0afecf322f0aa0e8cf33743dd4c9c90c
 call 799229c2538fa32f883fd41afff038016cf0cbeed0ed84da4b6bc1a5653d3464
 settings 349d48c9515c5cc92bfd22fc5cab61a6d9b90e680825edfa5f77e15f4b2265ef
 sms 95c3e37542e516a28c7ee1227e81e4e6044cdee8b7b5de796d84931a7f5673fa
+signal_wifi_0_bar 73aa4c46f926fd307bb232bc2dad4b8473eb6c7d194f36f7819fa13a01f3c03b
+network_wifi_1_bar 613d5a7506a7a7318ef5680ff09d40f3e0660822b966d3adc1cd65204cb4b557
+network_wifi_2_bar a5d650e375ba34d43a9447f19575b39257a63492a36375249993ba6ebb9f70fc
+network_wifi_3_bar e19e989d39db0059a1ab970779607bb423312dc4325bcfd5d52620b75aa17a39
+signal_wifi_4_bar 43bd8546ddc738ecf7bf66451f4af07fa188991e85177c3f63608364d1807ec4
 HASHES
 
 while read -r name sha; do
@@ -161,9 +168,13 @@ CALL_GLYPHS = {"in": "call_received", "out": "call_made"}
 # Meldinger the bubble with dots (a parent-chosen "chat" app keeps the plain bubble). Also the time-rule screen's
 # phone-book row and Meldinger's default look (AppDisplay.kt's MessagesLook, the server's MESSAGES_LOOK).
 BUILTIN_GLYPHS = {"phone_book": "call", "settings": "settings", "sms": "sms"}
+# The Wi-Fi page's signal bars (2026-11-20): level 0..4 as WifiSignal.kt maps it; ic_wifi_signal_<level>.xml.
+WIFI_SIGNAL_GLYPHS = {"0": "signal_wifi_0_bar", "1": "network_wifi_1_bar", "2": "network_wifi_2_bar",
+                      "3": "network_wifi_3_bar", "4": "signal_wifi_4_bar"}
 write_web_svg("server/static/app-icons", "sms", "sms")
 for prefix, glyphs in (("lock_glyph", LOCK_GLYPHS), ("torch_glyph", TORCH_GLYPHS), ("clock_glyph", CLOCK_GLYPHS),
-                       ("shortcut_glyph", SHORTCUT_GLYPHS), ("ic_kid_call", CALL_GLYPHS), ("ic_kid", BUILTIN_GLYPHS)):
+                       ("shortcut_glyph", SHORTCUT_GLYPHS), ("ic_kid_call", CALL_GLYPHS), ("ic_kid", BUILTIN_GLYPHS),
+                       ("ic_wifi_signal", WIFI_SIGNAL_GLYPHS)):
     for key, name in glyphs.items():
         with open(f"launcher/app/src/main/res/drawable/{prefix}_{key}.xml", "w") as out:
             out.write('<?xml version="1.0" encoding="utf-8"?>\n'
