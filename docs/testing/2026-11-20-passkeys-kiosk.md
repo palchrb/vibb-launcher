@@ -259,5 +259,10 @@ overlay. Recheck with the `cmd overlay lookup` line below on a new Android or Pl
 - **Tests:** `LockTaskHelpersTest`'s fallback row: the Jelly Star's placeholder, both configs unreadable, a malformed
   string, a config naming a package that isn't installed, AOSP's selector missing, and the fallback through the
   forbidden rule.
+- **The new log line on `jellykeys36`** (Android 16 Play image, 12:35 UTC): `config_oemCredentialManagerDialogComponent=
+  "com.google.android.gms/.identitycredentials.ui.CredentialChooserActivity", config_credentialManagerDialogComponent=
+  <no resource>` - the platform's string has no resource of that name on 16, so on the Jelly Star (OEM placeholder)
+  neither named anything, which is the `null`. Here it still resolves to Play services (never pinned, as before);
+  `com.android.credentialmanager` is an installed system app on the image.
 - **Owed on the Jelly Star:** after the next release, the log line's two raw values, and a Bitwarden passkey in the
   login window with the kiosk on.
