@@ -1498,4 +1498,28 @@ Where the build differs from the letter of R2:
   and schedules `sonos-park-retry`; the receiver's standalone path does the same.
 - `musicSuspendAtS` takes the policy and the package (the restrictions writer works per music package).
 
-Owed: the emulator steps (R5) and the real room (R6: D12, D7, D9, D21, D16, D11, D3 first); the code QA's two passes.
+**Emulator, 2026-11-20** (the debug music app unmanaged, the debug feed with `fake-spotify.py --print-library` /
+`--print-listing 6` - its `sonos_rooms` removed and entry 6's target set to the fake speaker's fixture playlist
+`0FakePlaylistKveld0001` -, `fake-sonos.py --track-seconds 20`/`60`):
+- jelly36 (Android 16): R5 step 1 (the transfer: NORMAL, the clear, `AddURIToQueue` 2311, one Browse page, the queue
+  uri, `Seek TRACK_NR`, `Play`; the player shows our track, its number, the bar); the queue's own advance onto the
+  fixture's unlisted episode at position 2 followed as natural and corrected to our next at position 3 (§2.6), the
+  same past the duplicate at position 4; two quick Nexts were two jumps, no add; step 5 (`--refuse-share`: "Can't play
+  on Sonos – ask a grown-up" and the phone, paused); step 6's force-stop and reopen (adopted, no transport command,
+  the map read, an unmapped adopt on the episode followed as pressed, the next press a jump); the queue's end (STOPPED,
+  "queue finished - stop"); the bedtime park with Wi-Fi (`pm suspend`: Stop, the queue uri, the clear); and step 7's
+  retry without the launcher: Wi-Fi off, `pm suspend` - the service's park got no answer and scheduled
+  `sonos-park-retry`, whose first run came at once over the mobile network while the package was suspended (NO_ANSWER,
+  no Wi-Fi), and with Wi-Fi back its next run 5 min 44 s later parked the room (OURS_STOPPED: Stop, the queue uri, the
+  clear). **Android runs a suspended package's WorkManager work on 16.**
+- compat34 (Android 14): the same retry check - the service's park with Wi-Fi off scheduled the retry, its first run
+  came at once while suspended (NO_ANSWER), and with Wi-Fi back the next run 5 min 32 s later found the queue still
+  playing and parked it (OURS_LIVE with the baseline's `BrowseMetadata`: the bookmark, Stop, the queue uri, the clear).
+  **Android 14 runs it too.**
+- compat372 (Android 17): its system_server restarted every few seconds on this VM (the image, not the app: it
+  happened before the app's first activity); the Android 17 check is owed.
+- Not run: steps 2's `--script` and 3's `--queue-*` options, 4 (repeat, "Til slutten"), 6's hand-overs (the web player
+  on the emulator said "Needs the internet" with the fake), 7's managed parts (`ConfigureSleepTimer` from a real
+  `suspend_at_s`: needs the debug launcher as Device Owner with a time rule), 8 (context mode).
+
+Owed: the rest of R5 above and the real room (R6: D12, D7, D9, D21, D16, D11, D3 first); the code QA's two passes.
