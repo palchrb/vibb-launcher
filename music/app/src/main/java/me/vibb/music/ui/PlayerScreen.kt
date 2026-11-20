@@ -169,7 +169,7 @@ fun PlayerScreen(
             // keyed by entry and item: a favourites queue's pages come from many entries (design r12 §0)
             Crossfade(pageKey(shown), animationSpec = tween(if (animationsOn()) 200 else 0), label = "item") { key ->
                 val item = now.queue.firstOrNull { pageKey(it) == key } ?: shown
-                Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(PLAYER_NUMBER_GAP_DP.dp)) {
                     Line(if (item == now.item) now.itemTitle else item.title, 20, 800, Palette.white, Modifier.basicMarquee(iterations = Int.MAX_VALUE))
                     // design r12 §3.2: "Favoritt N av M" over a favourites queue
                     val numberText = if (now.favourites) R.string.favourite_of else when (kindOf(now.entry)) {
@@ -185,7 +185,7 @@ fun PlayerScreen(
                     Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                         if (showsNumber(now)) Line(stringResource(numberText, numberOf(item), of), 13, 700, Palette.sub)
                         heart?.let { on ->
-                            HeartButton(on, PLAYER_HEART_DP.dp, 18.dp, Modifier.align(Alignment.CenterEnd).overlayOnLine()) { onFavourite(item, it) }
+                            HeartButton(on, PLAYER_HEART_DP.dp, PLAYER_HEART_GLYPH_DP.dp, Modifier.align(Alignment.CenterEnd).overlayOnLine()) { onFavourite(item, it) }
                         }
                     }
                 }
@@ -284,8 +284,19 @@ private fun SkipButton(@DrawableRes glyph: Int, seconds: String, label: String, 
     }
 }
 
-/** The player's heart's touch target (dp): the list's 40. */
-const val PLAYER_HEART_DP = 40
+/**
+ * The player's heart: its touch target and glyph (dp) - 44 and 22 since the Jelly Star (2026-11-20: "litt større";
+ * the list keeps its 40 and 18).
+ */
+const val PLAYER_HEART_DP = 44
+const val PLAYER_HEART_GLYPH_DP = 22
+
+/**
+ * The gap between the item's title and its "Episode N av M" line (dp): 8, not 2 (the Jelly Star, 2026-11-20: the number
+ * and the heart sat squeezed under the title). On a 320 dp phone the cover gives those 6 dp (it takes what the group
+ * leaves); on a tall one the group's centring does.
+ */
+const val PLAYER_NUMBER_GAP_DP = 8
 
 /** The skip glyph (dp), its number's fixed size and how far below the button's centre the ring's centre is (dp). */
 const val SKIP_GLYPH_DP = 20
@@ -302,7 +313,8 @@ private fun Modifier.bleed(side: Dp): Modifier = if (side <= 0.dp) this else lay
 
 /**
  * A row of [weights] sharing the width, each child at least as wide as its content unless it
- * [shrinks] ([flexWidths]), [gap] apart; as tall as the tallest child.
+ * [shrinks] ([barWidths]: the one shrinking slot, the output, takes the rest when its name is cut), [gap] apart; as
+ * tall as the tallest child.
  */
 @Composable
 private fun FlexBar(weights: List<Float>, shrinks: List<Boolean>, gap: Dp, content: @Composable () -> Unit) {
@@ -310,10 +322,9 @@ private fun FlexBar(weights: List<Float>, shrinks: List<Boolean>, gap: Dp, conte
         val gapPx = gap.roundToPx()
         val available = (constraints.maxWidth - gapPx * (measurables.size - 1)).coerceAtLeast(0)
         val own = measurables.map { it.maxIntrinsicWidth(constraints.maxHeight) }
-        val fixed = own.filterIndexed { i, _ -> !shrinks[i] }.sum()
-        // S7: a shrinking slot keeps its whole name while the others' mins leave room for it
-        val mins = own.mapIndexed { i, w -> if (shrinks[i]) shrinkerMin(w, available, fixed) else w }
-        val widths = flexWidths(available, weights, mins)
+        // S7: the shrinking slot keeps its whole name while the others' content leaves room for it; a name cut anyway
+        // takes all the rest once the others have theirs (2026-11-20, barWidths)
+        val widths = barWidths(available, weights, own, shrinks.indexOf(true), BAR_AIR_DP.dp.roundToPx(), BAR_OUTPUT_FLOOR_DP.dp.roundToPx())
         val placeables = measurables.mapIndexed { i, m -> m.measure(Constraints.fixedWidth(widths[i])) }
         val height = placeables.maxOfOrNull { it.height } ?: 0
         layout(constraints.maxWidth, height) {

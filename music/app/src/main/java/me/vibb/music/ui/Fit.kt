@@ -106,6 +106,30 @@ fun flexWidths(available: Int, weights: List<Float>, mins: List<Int>): List<Int>
  */
 fun shrinkerMin(ownDp: Int, available: Int, othersDp: Int): Int = if (ownDp <= available - othersDp) ownDp else 0
 
+/** Beside a cut output name, Liste and Sov each keep this much air beyond their content (dp), while the output keeps [BAR_OUTPUT_FLOOR_DP]. */
+const val BAR_AIR_DP = 8
+
+/** The output button's least room when Liste and Sov take their air: its glyph and padding (30 dp) and a readable start of the name. */
+const val BAR_OUTPUT_FLOOR_DP = 72
+
+/**
+ * The player's bottom bar ([FlexBar]): each slot's width from its own content width ([own], px or dp alike), the one
+ * [shrinker] being the output's name. While that name fits whole beside the others' content, [flexWidths] shares the
+ * row by [weights] with every content kept (S7). A name that is cut anyway - a long Sonos room, "Stue og kjøkken" at
+ * font 1.3 on the Jelly Star (2026-11-20) - gets all the rest once the others have taken their content and [air] each
+ * (no air when that would leave the output under [outputFloor]): it shows as much of itself as the row allows, one line,
+ * ellipsized, and never pushes the others. Not code QA L4's weighted share any more: the user asked for the rest.
+ */
+fun barWidths(available: Int, weights: List<Float>, own: List<Int>, shrinker: Int, air: Int, outputFloor: Int): List<Int> {
+    if (shrinker !in own.indices) return flexWidths(available, weights, own)
+    val others = own.filterIndexed { i, _ -> i != shrinker }.sum()
+    if (own[shrinker] <= available - others) return flexWidths(available, weights, own)
+    val withAir = others + air * (own.size - 1)
+    val give = if (available - withAir >= outputFloor) air else 0
+    val widths = own.mapIndexed { i, w -> if (i == shrinker) 0 else w + give }
+    return widths.mapIndexed { i, w -> if (i == shrinker) (available - widths.sum()).coerceAtLeast(0) else w }
+}
+
 /** Five category tiles fill the row with four 4 dp gaps (more scroll), each wide enough for its 44 dp circle. */
 fun categoryTileWidth(availableDp: Float): Float = (availableDp - 4 * 4) / 5
 
@@ -119,6 +143,97 @@ fun categoryTileWidthFor(availableDp: Float, labelDp: Float): Float =
 
 /** A label's measured width gets this much more (sub-pixel rounding, so it never ellipsizes by a hair). */
 const val CATEGORY_LABEL_SLACK_DP = 2f
+
+/** The category row's gap, circle and glyph (dp) and its label (sp): as ever, and compact when the row would not fit otherwise. */
+const val CATEGORY_LABEL_SP = 11
+const val CATEGORY_LABEL_COMPACT_SP = 10
+const val CATEGORY_GAP_DP = 4f
+const val CATEGORY_GAP_COMPACT_DP = 2f
+const val CATEGORY_CIRCLE_DP = 44f
+const val CATEGORY_CIRCLE_COMPACT_DP = 40f
+const val CATEGORY_GLYPH_DP = 20f
+const val CATEGORY_GLYPH_COMPACT_DP = 18f
+
+/** A category tile is never narrower than this (dp): the touch target. Its height is at least 64. */
+const val CATEGORY_TILE_MIN_DP = 48f
+
+/**
+ * The category row laid out: each tile's width, the gap, the circle and its glyph (dp), the labels' size (sp), and
+ * whether the row scrolls.
+ */
+data class CategoryRow(val widths: List<Float>, val gap: Float, val circle: Float, val glyph: Float, val labelSp: Int, val scrolls: Boolean) {
+    val width: Float get() = widths.sum() + gap * (widths.size - 1).coerceAtLeast(0)
+}
+
+/**
+ * The category row in [availableDp] for labels of [labelsDp] at [CATEGORY_LABEL_SP] and [compactDp] at
+ * [CATEGORY_LABEL_COMPACT_SP] (each measured at the font scale) - the Jelly Star, 2026-11-20: with "Favoritter" the
+ * five tiles at a fifth each or their label's width were about 300 dp in 288, and "Podkast" was cut to "Podkas". Three
+ * steps, the first that fits:
+ * - as ever: each tile [categoryTileWidthFor] (a fifth of the row, or its label), 4 dp apart, 44 dp circles, 11 sp;
+ * - compact: 2 dp apart, 40 dp circles, 10 sp labels, each tile at least its label (+ slack) and the 48 dp touch target,
+ *   the rest of the row shared so the narrow tiles grow first (one floor width, [shareFloor]) - the row fills its width;
+ * - neither fits (a large font): every tile at its 11 sp label's width (at least 48), 4 dp apart, 44 dp circles, and the
+ *   row scrolls ([CategoryRow.scrolls]) - the screen hides a tile the edge cuts at rest and shows where more lie.
+ * A label is never cut and never wraps: its tile is always at least as wide.
+ */
+fun categoryRow(availableDp: Float, labelsDp: List<Float>, compactDp: List<Float> = labelsDp): CategoryRow {
+    val n = labelsDp.size
+    val gaps = { gap: Float -> gap * (n - 1).coerceAtLeast(0) }
+    val usual = labelsDp.map { categoryTileWidthFor(availableDp, it) }
+    if (usual.sum() + gaps(CATEGORY_GAP_DP) <= availableDp + FIT_EPSILON) {
+        return CategoryRow(usual, CATEGORY_GAP_DP, CATEGORY_CIRCLE_DP, CATEGORY_GLYPH_DP, CATEGORY_LABEL_SP, scrolls = false)
+    }
+    fun mins(labels: List<Float>) = labels.map { maxOf(CATEGORY_TILE_MIN_DP, kotlin.math.ceil(it) + CATEGORY_LABEL_SLACK_DP) }
+    val compact = mins(compactDp)
+    // a dp less than the row: each width is rounded to whole pixels on its own, so a full row never pokes out by one
+    val room = availableDp - gaps(CATEGORY_GAP_COMPACT_DP) - CATEGORY_ROUNDING_DP
+    if (compact.sum() <= room + FIT_EPSILON) {
+        val floor = shareFloor(room, compact)
+        return CategoryRow(
+            compact.map { maxOf(it, floor) }, CATEGORY_GAP_COMPACT_DP, CATEGORY_CIRCLE_COMPACT_DP, CATEGORY_GLYPH_COMPACT_DP,
+            CATEGORY_LABEL_COMPACT_SP, scrolls = false,
+        )
+    }
+    return CategoryRow(mins(labelsDp), CATEGORY_GAP_DP, CATEGORY_CIRCLE_DP, CATEGORY_GLYPH_DP, CATEGORY_LABEL_SP, scrolls = true)
+}
+
+/** A scrolling row's tile fades out over its first this many dp cut by the edge, while the row moves. */
+const val CATEGORY_CUT_FADE_DP = 12f
+
+/**
+ * A scrolling category row's tile ([startPx]..[endPx] in the row's viewport [viewStartPx]..[viewEndPx]) - its alpha: 1
+ * while whole; cut by the edge, fading out over [fadePx] while the row moves and gone as it rests ([rest] 0 moving, 1
+ * at rest, animated in between) - so a label is never shown cut at rest.
+ */
+fun categoryTileAlpha(startPx: Int, endPx: Int, viewStartPx: Int, viewEndPx: Int, fadePx: Float, rest: Float): Float {
+    val cut = maxOf(0, viewStartPx - startPx) + maxOf(0, endPx - viewEndPx)
+    if (cut <= 0) return 1f
+    val moving = if (fadePx <= 0f) 0f else (1f - cut / fadePx).coerceIn(0f, 1f)
+    return moving * (1f - rest.coerceIn(0f, 1f))
+}
+
+/** The compact row is filled to a dp short of its room (each tile rounds on its own). */
+const val CATEGORY_ROUNDING_DP = 1f
+
+/** Float sums of a row a hair over its room still fit. */
+private const val FIT_EPSILON = 0.01f
+
+/**
+ * The one width [f] with sum(max(f, min)) == [room] (each tile at least its own min, the narrow ones raised to [f]);
+ * the mins must fit [room].
+ */
+fun shareFloor(room: Float, mins: List<Float>): Float {
+    if (mins.isEmpty()) return 0f
+    val sorted = mins.sortedDescending()
+    var fixed = 0f
+    for ((i, m) in sorted.withIndex()) {
+        val f = (room - fixed) / (sorted.size - i)
+        if (f >= m) return f
+        fixed += m
+    }
+    return sorted.last()
+}
 
 /** The carousel's cover (at most 180 dp, [libraryCover]), centred: the room left on each side of it (dp). */
 fun carouselSide(availableDp: Float, coverDp: Float = CAROUSEL_COVER_DP.toFloat()): Float = ((availableDp - coverDp) / 2).coerceAtLeast(0f)
@@ -195,19 +310,61 @@ fun libraryFixedPx(density: Float): Int {
 /** The progress line's room: its 3 dp padding and 4 dp line, each rounded, as the reserved spacer is drawn too. */
 fun progressRoomPx(density: Float): Int = dpToPx(CAROUSEL_PROGRESS_PAD_DP, density) + dpToPx(CAROUSEL_PROGRESS_DP, density)
 
-/** The library's cover in pixels and whether the slot scrolls. */
-data class LibraryFit(val coverPx: Int, val scrolls: Boolean)
+/** The library's cover in pixels, whether the slot scrolls, and the title block's extra room ([libraryBreath]). */
+data class LibraryFit(val coverPx: Int, val scrolls: Boolean, val breath: LibraryBreath = LibraryBreath.NONE)
+
+/**
+ * What the library's title block gets on top of its base gaps (px), from the room the cover leaves once it is at its
+ * 180 dp (the Jelly Star, 2026-11-20: "under karusell bildene ble litt for komprimert" - the title, the hint, the
+ * progress line and the dot sat 3 dp apart while 40-90 dp stood empty above the cover and under the dot): between the
+ * cover and the title, the title and the hint, the hint and the progress line, the progress line and the dots.
+ */
+data class LibraryBreath(val coverTitlePx: Int, val titleHintPx: Int, val hintProgressPx: Int, val progressDotsPx: Int) {
+    val totalPx: Int get() = coverTitlePx + titleHintPx + hintProgressPx + progressDotsPx
+
+    companion object {
+        val NONE = LibraryBreath(0, 0, 0, 0)
+    }
+}
+
+/**
+ * The most each of the title block's gaps grows (dp), in [LibraryBreath]'s order: the cover's gap 8 -> 16, the title's
+ * 3 -> 6, the progress line's 3 + 3 -> 13, the dots' 8 -> 16. Capped, so on a tall phone the block stays one block and
+ * the rest of the room centres as before.
+ */
+val LIBRARY_BREATH_MAX_DP = listOf(8, 3, 7, 8)
+
+/** The share of the cover's leftover room the title block may take (the rest centres above the cover and under the dots). */
+const val LIBRARY_BREATH_SHARE = 2f / 3
+
+/**
+ * The title block's extra room from [sparePx], the slot's room the 180 dp cover leaves: at most
+ * [LIBRARY_BREATH_SHARE] of it, shared among the gaps in proportion to [LIBRARY_BREATH_MAX_DP], each in whole pixels
+ * (floored, so the content never outgrows the slot) and never above its own cap. No spare (a cover below 180 dp: the
+ * room goes to the cover), no extra.
+ */
+fun libraryBreath(sparePx: Int, density: Float): LibraryBreath {
+    if (sparePx <= 0) return LibraryBreath.NONE
+    val caps = LIBRARY_BREATH_MAX_DP.map { dpToPx(it, density) }
+    val all = caps.sum()
+    val budget = minOf(all.toFloat(), sparePx * LIBRARY_BREATH_SHARE)
+    val each = caps.map { (it * budget / all).toInt().coerceAtMost(it) }
+    return LibraryBreath(each[0], each[1], each[2], each[3])
+}
 
 /**
  * The library's cover for a slot of [slotPx] holding the measured title and hint lines ([linesPx]): min(180 dp, what
  * is left once [reservePx] is also kept free), floor [LIBRARY_COVER_MIN_DP]. [reservePx] is the now-playing bar's room (and its gap)
  * while there is no bar, so the cover is the same with and without it (qa-34-s11-code N2: no 180/174 jump when the
- * bar comes or goes). The slot scrolls only when the content is taller than the slot itself.
+ * bar comes or goes). The slot scrolls only when the content is taller than the slot itself. What the 180 dp cover
+ * leaves gives the title block its [LibraryBreath].
  */
 fun libraryFit(slotPx: Int, linesPx: Int, reservePx: Int, density: Float): LibraryFit {
     val room = slotPx - reservePx - linesPx - libraryFixedPx(density)
     val cover = room.coerceIn(dpToPx(LIBRARY_COVER_MIN_DP, density), dpToPx(CAROUSEL_COVER_DP, density))
-    return LibraryFit(cover, librarySlotContentPx(cover, linesPx, density) > slotPx)
+    // the room left once the cover is at its largest: some of it lets the title block breathe (2026-11-20); [reservePx]
+    // is already out of it, so the gaps too are the same with and without the bar
+    return LibraryFit(cover, librarySlotContentPx(cover, linesPx, density) > slotPx, libraryBreath(room - cover, density))
 }
 
 /** The slot's content in pixels with a cover of [coverPx]. */

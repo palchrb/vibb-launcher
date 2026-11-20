@@ -96,11 +96,15 @@ class FitTest {
     }
 
     @Test
-    fun `d50 - the player's heart is overlaid at the number line's end at 40 dp - the number centred, the line's height kept`() {
+    fun `d50 - the player's heart is overlaid at the number line's end at 44 dp - the number centred, the line's height kept`() {
         val player = moduleFile("src/main/java/me/vibb/music/ui/PlayerScreen.kt").readText()
-        assertEquals(40, PLAYER_HEART_DP)
+        // the Jelly Star (2026-11-20): a little bigger than the list's 40/18, and the number line 8 dp under the title
+        assertEquals(44, PLAYER_HEART_DP)
+        assertEquals(22, PLAYER_HEART_GLYPH_DP)
+        assertEquals(8, PLAYER_NUMBER_GAP_DP)
+        assertTrue(player.contains("verticalArrangement = Arrangement.spacedBy(PLAYER_NUMBER_GAP_DP.dp)) {"))
         assertTrue(player.contains("Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {"))
-        assertTrue(player.contains("HeartButton(on, PLAYER_HEART_DP.dp, 18.dp, Modifier.align(Alignment.CenterEnd).overlayOnLine())"))
+        assertTrue(player.contains("HeartButton(on, PLAYER_HEART_DP.dp, PLAYER_HEART_GLYPH_DP.dp, Modifier.align(Alignment.CenterEnd).overlayOnLine())"))
         val widgets = moduleFile("src/main/java/me/vibb/music/ui/Widgets.kt").readText()
         assertTrue("it takes no height in the line", widgets.substringAfter("fun Modifier.overlayOnLine()").contains("layout(placeable.width, 0)"))
         // at 320 dp the number ("Episode 123 av 456", Nunito Bold 13 sp, about 120 dp) centred in 288 dp ends at 204 dp,
@@ -188,19 +192,60 @@ class FitTest {
         assertEquals(0, shrinkerMin(100, 120, 130))
         assertEquals(0, shrinkerMin(100, 120, 80))
         assertEquals(40, shrinkerMin(40, 120, 80))
-        // a Sonos group too long to be whole at 411 dp (about 260 dp of text): Liste and Sov keep their weighted shares,
-        // not their bare content, and the name gives way as before
+        // a name that can be whole at 411 dp ("Barnerommet i andre etasje", 184.7 dp) is, and the others still keep more
+        // than their bare content (barWidths is flexWidths then)
         val room = available(411f).toInt() - 2 * 8
         val mins = listOf(bar(liste), bar(sov))
-        val w = flexWidths(room, listOf(1f, 1f, 1.2f), mins + shrinkerMin(bar(260f), room, mins.sum()))
-        assertEquals(flexWidths(room, listOf(1f, 1f, 1.2f), mins + 0), w)
-        assertTrue("Liste has air", w[0] > mins[0] + 16)
-        // one that can be whole there ("Barnerommet i andre etasje", 184.7 dp) is, and the others still keep more than
-        // their bare content
-        val whole = flexWidths(room, listOf(1f, 1f, 1.2f), mins + shrinkerMin(bar(184.7f), room, mins.sum()))
+        val whole = barWidths(room, listOf(1f, 1f, 1.2f), mins + bar(184.7f), 2, BAR_AIR_DP, BAR_OUTPUT_FLOOR_DP)
+        assertEquals(flexWidths(room, listOf(1f, 1f, 1.2f), mins + bar(184.7f)), whole)
         assertTrue(whole[2] >= bar(184.7f) && whole[0] > mins[0] && whole[1] > mins[1])
         val player = moduleFile("src/main/java/me/vibb/music/ui/PlayerScreen.kt").readText()
-        assertTrue(player.contains("if (shrinks[i]) shrinkerMin(w, available, fixed) else w"))
+        assertTrue(player.contains("barWidths(available, weights, own, shrinks.indexOf(true), BAR_AIR_DP.dp.roundToPx(), BAR_OUTPUT_FLOOR_DP.dp.roundToPx())"))
+    }
+
+    @Test
+    fun `a long output name that is cut takes all the rest once Liste and Sov have theirs, one line, its glyph kept`() {
+        // Nunito ExtraBold 14 sp from the font's advances: "Stue og kjøkken" 106.8 dp, "Soverommet til barna" 144.7 dp
+        val liste = 32.0f
+        val sov = 24.7f
+        val sov30 = 81.4f
+        val weights = listOf(1f, 1f, 1.2f)
+        for (scale in listOf(1.0f, 1.3f, 2.0f)) {
+            for (screen in widths) {
+                val room = available(screen).toInt() - 2 * 8
+                for (sleep in listOf(sov, sov30)) {
+                    for (name in listOf(66.8f, 106.8f, 144.7f, 186.0f)) {
+                        val own = listOf(bar(liste * scale), bar(sleep * scale), bar(name * scale))
+                        val w = barWidths(room, weights, own, 2, BAR_AIR_DP, BAR_OUTPUT_FLOOR_DP)
+                        val what = "$screen dp at $scale, $sleep, $name"
+                        assertTrue("$what: Liste whole", w[0] >= own[0])
+                        assertTrue("$what: Sov whole", w[1] >= own[1])
+                        if (own[0] + own[1] <= room) assertEquals("$what: the row is filled, never pushed", room, w.sum())
+                        if (own[2] > room - own[0] - own[1] && own[0] + own[1] <= room) {
+                            // cut: the output has every pixel Liste and Sov (and their air) leave
+                            assertEquals(what, room - w[0] - w[1], w[2])
+                            assertTrue("$what: at most their air", w[0] <= own[0] + BAR_AIR_DP && w[1] <= own[1] + BAR_AIR_DP)
+                            val weighted = flexWidths(room, weights, own.take(2) + 0)
+                            if (w[0] > own[0]) assertTrue("$what: never less than the old weighted share", w[2] >= minOf(weighted[2], room - own[0] - own[1] - 2 * BAR_AIR_DP))
+                        }
+                    }
+                }
+            }
+        }
+        // the Jelly Star at 1.3, "Stue og kjøkken": 121 dp (91 dp of name) where the weighted share gave 102
+        val jelly = 288 - 16
+        val own = listOf(bar(liste * 1.3f), bar(sov * 1.3f), bar(106.8f * 1.3f))
+        val w = barWidths(jelly, weights, own, 2, BAR_AIR_DP, BAR_OUTPUT_FLOOR_DP)
+        assertEquals(listOf(own[0] + BAR_AIR_DP, own[1] + BAR_AIR_DP, jelly - own[0] - own[1] - 2 * BAR_AIR_DP), w)
+        assertTrue("more than the weighted share (${w[2]})", w[2] > flexWidths(jelly, weights, own.take(2) + 0)[2])
+        // little room: no air, the output keeps all the rest
+        val tight = barWidths(150, weights, listOf(60, 50, 200), 2, BAR_AIR_DP, BAR_OUTPUT_FLOOR_DP)
+        assertEquals(listOf(60, 50, 40), tight)
+        // TalkBack reads the whole name: the button's label is "Spill av på: <name>", never the cut text
+        val player = moduleFile("src/main/java/me/vibb/music/ui/PlayerScreen.kt").readText()
+        assertTrue(player.contains("outputIcon(output), name, stringResource(R.string.output_label, name), Modifier,"))
+        val button = player.substringAfter("private fun BarButton(").substringBefore("\n}\n")
+        assertTrue("the glyph first, the name after it on one line", button.indexOf("Glyph(icon, 20.dp, fg)") in 0 until button.indexOf("Line(label, 14, 800, fg)"))
     }
 
     @Test
@@ -234,7 +279,7 @@ class FitTest {
         for (screen in widths) {
             val room = available(screen).toInt() - 2 * 8
             for (label in labels) {
-                val w = flexWidths(room, listOf(1f, 1f, 1.2f), listOf(bar(liste), bar(sov30), 0))
+                val w = barWidths(room, listOf(1f, 1f, 1.2f), listOf(bar(liste), bar(sov30), bar(label)), 2, BAR_AIR_DP, BAR_OUTPUT_FLOOR_DP)
                 assertEquals("$screen: the row is filled", room, w.sum())
                 assertTrue("$screen: Liste whole", w[0] >= bar(liste))
                 assertTrue("$screen: Sov whole", w[1] >= bar(sov30))
@@ -523,11 +568,11 @@ class FitTest {
     private fun linePx(sp: Int, scale: Float, d: Float) = kotlin.math.ceil(1.364 * sp * scale * d).toInt()
 
     /** The slot's content as Compose draws it: every fixed part rounded on its own (the pager box, the gaps, the
-     * title block's 3 dp gaps, the progress room as padding + line, the dots). */
-    private fun drawnContent(coverPx: Int, scale: Float, d: Float): Int =
+     * title block's 3 dp gaps, the progress room as padding + line, the dots), and the title block's breath. */
+    private fun drawnContent(coverPx: Int, scale: Float, d: Float, breath: LibraryBreath = LibraryBreath.NONE): Int =
         (coverPx + px(4, d)) + px(8, d) +
             (linePx(21, scale, d) + px(3, d) + linePx(13, scale, d) + px(3, d) + px(3, d) + px(4, d)) +
-            px(8, d) + px(8, d)
+            px(8, d) + px(8, d) + breath.totalPx
 
     private val densities = listOf(1.5f, 2f, 2.625f, 3f)
 
@@ -538,7 +583,7 @@ class FitTest {
                 val lines = linePx(21, scale, d) + linePx(13, scale, d)
                 for (slot in px(150, d)..px(420, d)) {
                     val fit = libraryFit(slot, lines, 0, d)
-                    val content = drawnContent(fit.coverPx, scale, d)
+                    val content = drawnContent(fit.coverPx, scale, d, fit.breath)
                     val what = "density $d, scale $scale, slot $slot px: cover ${fit.coverPx}, content $content"
                     if (fit.scrolls) {
                         assertEquals("$what: scrolls only at the floor", px(LIBRARY_COVER_MIN_DP, d), fit.coverPx)
@@ -547,6 +592,7 @@ class FitTest {
                         assertTrue("$what: not a pixel cut", content <= slot)
                         assertTrue("$what: and the cover takes the room", fit.coverPx == px(CAROUSEL_COVER_DP, d) || content == slot)
                     }
+                    if (fit.coverPx < px(CAROUSEL_COVER_DP, d)) assertEquals("$what: the room goes to the cover first", LibraryBreath.NONE, fit.breath)
                 }
             }
         }
@@ -661,10 +707,10 @@ class FitTest {
         assertEquals("never wider than the row", room, categoryTileWidthFor(room, 1_000f), 0.001f)
         // the screen measures each label at the font scale and gives its tile that width
         val tiles = library.substringAfter("private fun CategoryTiles(").substringBefore("private fun CategoryTile(")
-        assertTrue(tiles.contains("categoryTileWidthFor(room, labelDp[name] ?: 0f)"))
+        assertTrue(tiles.contains("categoryRow(maxWidth.value, labelDp.getValue(CATEGORY_LABEL_SP), labelDp.getValue(CATEGORY_LABEL_COMPACT_SP))"))
         assertTrue("measured once per names and font scale (N2)", tiles.contains("remember(measurer, density.density, density.fontScale, names)"))
-        assertTrue(tiles.contains("measurer.measure(name, text(CATEGORY_LABEL_SP.sp, 800, Palette.white), maxLines = 1)"))
-        assertTrue(library.contains("Line(label, CATEGORY_LABEL_SP, 800,"))
+        assertTrue(tiles.contains("measurer.measure(name, text(sp.sp, 800, Palette.white), maxLines = 1)"))
+        assertTrue(library.contains("Line(label, look.labelSp, 800,"))
     }
 
     @Test
@@ -784,5 +830,144 @@ class FitTest {
         assertTrue(player.contains("SheetRow(Icons.headphones, name, sub, selected = false, subtitleLines = 2) { onHeadset(h) }"))
         assertTrue(player.contains("Modifier.fillMaxWidth().heightIn(max = maxHeight).verticalScroll(rememberScrollState())"))
         assertTrue(OUTPUT_SHEET_MAX_SHARE in 0.5f..0.8f)
+    }
+
+    // --- The Jelly Star, 2026-11-20: the library's title block breathes, the category row fits its tiles ---
+
+    @Test
+    fun `the title block breathes from the room the 180 dp cover leaves - capped, two thirds at most, growing with the room`() {
+        assertEquals(listOf(8, 3, 7, 8), LIBRARY_BREATH_MAX_DP)
+        for (d in densities) {
+            val caps = LIBRARY_BREATH_MAX_DP.map { px(it, d) }
+            assertEquals(LibraryBreath.NONE, libraryBreath(0, d))
+            assertEquals(LibraryBreath.NONE, libraryBreath(-5, d))
+            var last = 0
+            for (spare in 0..px(200, d)) {
+                val b = libraryBreath(spare, d)
+                val gaps = listOf(b.coverTitlePx, b.titleHintPx, b.hintProgressPx, b.progressDotsPx)
+                assertTrue("$d/$spare: at most two thirds", b.totalPx <= spare * 2f / 3 + 0.001f)
+                assertTrue("$d/$spare: grows with the room", b.totalPx >= last)
+                gaps.zip(caps).forEach { (got, cap) -> assertTrue("$d/$spare: $got within 0..$cap", got in 0..cap) }
+                last = b.totalPx
+            }
+            val tall = libraryBreath(px(400, d), d)
+            assertEquals("a tall phone: every gap at its cap, the rest centres", caps, listOf(tall.coverTitlePx, tall.titleHintPx, tall.hintProgressPx, tall.progressDotsPx))
+        }
+    }
+
+    @Test
+    fun `the Jelly Star without a navigation bar - the 180 dp cover, the title block grown in full, the same with and without the bar`() {
+        val d = 1.5f
+        val full = LIBRARY_BREATH_MAX_DP.sumOf { px(it, d) }
+        for (scale in listOf(1.0f, 1.3f)) {
+            val with = fitOnJelly(scale, true, 0)
+            assertEquals("$scale: v12's cover", px(CAROUSEL_COVER_DP, d), with.coverPx)
+            assertEquals("$scale: every gap grown", full, with.breath.totalPx)
+            assertEquals("$scale: N2, nothing moves when the bar comes", with.breath, fitOnJelly(scale, false, 0).breath)
+            assertTrue("$scale: not a pixel cut", drawnContent(with.coverPx, scale, d, with.breath) <= slotPx(scale, true, 0, d))
+        }
+        assertEquals("2.0: the room goes to the cover", LibraryBreath.NONE, fitOnJelly(2.0f, true, 0).breath)
+        assertEquals("three buttons at 1.3: a room-limited cover, as before", LibraryBreath.NONE, fitOnJelly(1.3f, true, 48).breath)
+        val carousel = body(library, "private fun Carousel(")
+        assertTrue(carousel.contains("CarouselTitle(entries, pager.targetPage, fit.breath)"))
+        val title = body(library, "private fun CarouselTitle(")
+        for (gap in listOf("coverTitlePx", "titleHintPx", "hintProgressPx", "progressDotsPx")) {
+            assertTrue("the carousel's $gap", title.contains("breath.$gap.pxAsDp()"))
+            assertTrue("the favourites tile's $gap", body(library, "private fun FavouritesCarousel(").contains("breath.$gap.pxAsDp()"))
+        }
+        assertTrue("the progress line's breath stays reserved without the line", title.contains("Spacer(progressBreath.height("))
+    }
+
+    /** Nunito ExtraBold's advances (dp at 11 sp and font scale 1.0), summed from the font's hmtx (no kerning). */
+    private val label11 = mapOf(
+        "Alle" to 21.6f, "Favoritter" to 51.7f, "Musikk" to 36.8f, "Lydbøker" to 48.8f, "Podkast" to 42.6f,
+        "All" to 15.6f, "Favourites" to 54.6f, "Music" to 29.7f, "Audiobooks" to 62.1f, "Podcasts" to 47.1f,
+    )
+
+    /** The labels at [sp], [dpPerSp] dp a sp (text grows linearly here: an upper bound of Android 14+'s curve). */
+    private fun labels(names: List<String>, dpPerSp: Float, sp: Int) = names.map { label11.getValue(it) * sp / 11 * dpPerSp }
+
+    private val nbFive = listOf("Alle", "Favoritter", "Musikk", "Lydbøker", "Podkast")
+    private val nbFour = listOf("Alle", "Musikk", "Lydbøker", "Podkast")
+    private val enFive = listOf("All", "Favourites", "Music", "Audiobooks", "Podcasts")
+
+    /** The row for [names] in [room] at [scale], checked: no label cut, every tile a touch target, within the room unless it scrolls. */
+    private fun row(room: Float, names: List<String>, scale: Float): CategoryRow {
+        val row = categoryRow(room, labels(names, scale, CATEGORY_LABEL_SP), labels(names, scale, CATEGORY_LABEL_COMPACT_SP))
+        val what = "$room dp, $names at $scale"
+        assertEquals(names.size, row.widths.size)
+        row.widths.zip(labels(names, scale, row.labelSp)).forEach { (w, l) ->
+            assertTrue("$what: a $l dp label whole in $w", w >= l + CATEGORY_LABEL_SLACK_DP - 0.001f)
+            assertTrue("$what: $w is a touch target", w >= CATEGORY_TILE_MIN_DP)
+            assertTrue("$what: the circle fits", w >= row.circle)
+        }
+        if (!row.scrolls) assertTrue("$what: ${row.width} within the row", row.width <= room + 0.001f)
+        return row
+    }
+
+    @Test
+    fun `the category row - five tiles fit the Jelly Star at font scale 1_3, closer together with smaller circles`() {
+        val jelly = available(320f)
+        // as ever at 1.0: a fifth each, 4 dp apart, 44 dp circles, 11 sp
+        val at10 = row(jelly, nbFive, 1.0f)
+        assertEquals(CategoryRow(List(5) { categoryTileWidth(jelly) }, 4f, 44f, 20f, 11, scrolls = false), at10)
+        // the photo: at 1.3 the old rule (a fifth or the label, 4 dp apart) needed about 300 dp of 288 and cut "Podkast"
+        val old = labels(nbFive, 1.3f, 11).sumOf { categoryTileWidthFor(jelly, it).toDouble() } + 4 * 4
+        assertTrue("the old row: $old dp", old > jelly)
+        val at13 = row(jelly, nbFive, 1.3f)
+        assertFalse("1.3: all five show", at13.scrolls)
+        assertEquals(CATEGORY_GAP_COMPACT_DP, at13.gap, 0f)
+        assertEquals(CATEGORY_CIRCLE_COMPACT_DP, at13.circle, 0f)
+        assertEquals(CATEGORY_GLYPH_COMPACT_DP, at13.glyph, 0f)
+        assertEquals(CATEGORY_LABEL_COMPACT_SP, at13.labelSp)
+        assertEquals("the compact row fills its width, a dp short for the rounding", jelly - CATEGORY_ROUNDING_DP, at13.width, 0.01f)
+        assertTrue("the narrow tiles grow first: Alle and Musikk alike", at13.widths[0] == at13.widths[2])
+        // four tiles at 1.3: as ever
+        val four = row(jelly, nbFour, 1.3f)
+        assertEquals(4f, four.gap, 0f)
+        assertEquals(44f, four.circle, 0f)
+        assertEquals(11, four.labelSp)
+        assertFalse(four.scrolls)
+        // a large font: the row scrolls rather than cut a label
+        assertTrue("five at 2.0", row(jelly, nbFive, 2.0f).scrolls)
+        assertTrue("English five at 1.3 (\"Audiobooks\")", row(jelly, enFive, 1.3f).scrolls)
+        assertEquals(44f, row(jelly, nbFive, 2.0f).circle, 0f)
+        // every set, every width, every scale: the checks in row()
+        for (screen in widths) {
+            for (scale in listOf(1.0f, 1.15f, 1.3f, 1.5f, 1.8f, 2.0f)) {
+                for (names in listOf(nbFive, nbFour, enFive, listOf("Alle"), nbFive.take(3))) row(available(screen), names, scale)
+            }
+        }
+        assertFalse("a wider phone holds the five at 1.3", row(available(360f), nbFive, 1.3f).scrolls)
+        assertFalse(row(available(411f), enFive, 1.3f).scrolls)
+    }
+
+    @Test
+    fun `shareFloor raises the narrow tiles to one width that fills the room`() {
+        assertEquals(25f, shareFloor(100f, listOf(10f, 10f, 50f)), 0.001f)
+        assertEquals(20f, shareFloor(60f, listOf(10f, 10f, 10f)), 0.001f)
+        assertEquals("exactly the mins", 10f, shareFloor(70f, listOf(10f, 10f, 50f)), 0.001f)
+        assertEquals(0f, shareFloor(10f, emptyList()), 0f)
+    }
+
+    @Test
+    fun `a scrolling row hides a tile the edge cuts at rest, fades it while it moves`() {
+        // a whole tile: always shown
+        assertEquals(1f, categoryTileAlpha(0, 80, 0, 288, 18f, 1f), 0f)
+        assertEquals(1f, categoryTileAlpha(208, 288, 0, 288, 18f, 0f), 0f)
+        // cut 9 px of an 18 px fade while moving: half; at rest: gone
+        assertEquals(0.5f, categoryTileAlpha(250, 297, 0, 288, 18f, 0f), 0.001f)
+        assertEquals(0f, categoryTileAlpha(250, 297, 0, 288, 18f, 1f), 0f)
+        assertEquals("the left edge too", 0.5f, categoryTileAlpha(-9, 40, 0, 288, 18f, 0f), 0.001f)
+        assertEquals("cut past the fade", 0f, categoryTileAlpha(260, 320, 0, 288, 18f, 0f), 0f)
+        assertEquals("a dp cut at rest is still gone", 0f, categoryTileAlpha(250, 289, 0, 288, 18f, 1f), 0f)
+        val tiles = library.substringAfter("private fun CategoryTiles(").substringBefore("private fun CategoryTile(")
+        assertTrue(tiles.contains("userScrollEnabled = row.scrolls"))
+        assertTrue("snaps to a tile's start", tiles.contains("rememberSnapFlingBehavior(list, SnapPosition.Start)"))
+        assertTrue(tiles.contains("categoryTileAlpha(tile.offset, tile.offset + tile.size, view.viewportStartOffset, view.viewportEndOffset, fadePx, rest)"))
+        assertTrue("the chevrons say where more lie", tiles.contains("if (list.canScrollForward)") && tiles.contains("if (list.canScrollBackward)"))
+        // the chevron sits in the screen's 16 dp side, never over a tile, never past the screen's edge
+        assertTrue(tiles.contains("offset(x = CATEGORY_CHEVRON_OUT_DP.dp"))
+        assertTrue(library.contains("CATEGORY_CHEVRON_DP = 12f") && library.contains("CATEGORY_CHEVRON_OUT_DP = 14f"))
     }
 }

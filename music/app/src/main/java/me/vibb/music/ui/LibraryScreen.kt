@@ -28,7 +28,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.gestures.ScrollableDefaults
+import androidx.compose.foundation.gestures.snapping.SnapPosition
+import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PageSize
 import androidx.compose.foundation.pager.PagerDefaults
@@ -190,7 +195,8 @@ fun LibraryScreen(
  * It fills the library's weighted slot (design 34 P10 b, QA L1): the cover is [libraryFit] of the slot's
  * measured height less the title and hint lines measured at the font scale, in whole pixels - at most 180 dp, at
  * least [LIBRARY_COVER_MIN_DP] (64); below that the slot scrolls. Without the now-playing bar ([hasBar] false) the bar's room is kept out
- * of the cover's, so the cover doesn't jump when the bar comes or goes (qa-34-s11-code N2); the spare room centres.
+ * of the cover's, so the cover doesn't jump when the bar comes or goes (qa-34-s11-code N2); the room the 180 dp cover
+ * leaves lets the title block breathe ([libraryBreath], up to two thirds of it), the rest centres.
  * The covers' shadow is soft: the centred one keeps v12's 12 dp, a neighbour has P2's 2 dp, in between it follows
  * the page offset (P10 c).
  */
@@ -227,7 +233,7 @@ private fun Carousel(
             verticalArrangement = Arrangement.spacedBy(CAROUSEL_GAP_DP.dp, Alignment.CenterVertically),
         ) {
             CarouselPager(entries, pager, fit.coverPx, scope, snap, onPlay)
-            CarouselTitle(entries, pager.targetPage)
+            CarouselTitle(entries, pager.targetPage, fit.breath)
         }
     }
 }
@@ -283,16 +289,21 @@ private fun FavouritesCarousel(fav: FavouritesUi, hasBar: Boolean, onPlay: () ->
                     }
                 }
             }
-            Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CAROUSEL_TITLE_GAP_DP.dp)) {
+            val breath = fit.breath
+            Column(
+                Modifier.fillMaxWidth().padding(top = breath.coverTitlePx.pxAsDp()),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(CAROUSEL_TITLE_GAP_DP.dp),
+            ) {
                 Line(name, 21, 800, Palette.white)
                 Line(
                     if (fav.needsWifi) stringResource(R.string.tile_needs_wifi) else pluralStringResource(R.plurals.favourites_count, fav.count, fav.count),
-                    13, 700, Palette.sub,
+                    13, 700, Palette.sub, Modifier.padding(top = breath.titleHintPx.pxAsDp()),
                 )
-                // no progress line: its room stays reserved, as under every tile
-                Spacer(Modifier.height(with(density) { progressRoomPx(density.density).toDp() }))
+                // no progress line: its room (and its breath) stays reserved, as under every tile
+                Spacer(Modifier.padding(top = breath.hintProgressPx.pxAsDp()).height(with(density) { progressRoomPx(density.density).toDp() }))
             }
-            Spacer(Modifier.height(CAROUSEL_DOTS_DP.dp))
+            Spacer(Modifier.padding(top = breath.progressDotsPx.pxAsDp()).height(CAROUSEL_DOTS_DP.dp))
         }
     }
 }
@@ -380,15 +391,21 @@ private fun CarouselPager(
     }
 }
 
-/** The title, the hint (+ progress) and the dots under the pager; the progress line's room is always kept. */
+/**
+ * The title, the hint (+ progress) and the dots under the pager; the progress line's room is always kept. [breath] is
+ * the room the 180 dp cover leaves, given to the gaps ([libraryBreath], 2026-11-20): the same on every page, so nothing
+ * moves on a turn.
+ */
 @Composable
-private fun CarouselTitle(entries: List<EntryUi>, targetPage: Int) {
+private fun CarouselTitle(entries: List<EntryUi>, targetPage: Int, breath: LibraryBreath) {
     val n = entries.size
     val index = carouselIndex(targetPage, n)
     val current = entries[index]
     val density = LocalDensity.current
     // Keyed on the entry, so a position save (the progress line) doesn't fade the title (L13).
-    Crossfade(current.entry.id, animationSpec = tween(if (animationsOn()) 200 else 0), label = "title") { id ->
+    Crossfade(
+        current.entry.id, Modifier.padding(top = breath.coverTitlePx.pxAsDp()), animationSpec = tween(if (animationsOn()) 200 else 0), label = "title",
+    ) { id ->
         val e = entries.firstOrNull { it.entry.id == id } ?: current
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CAROUSEL_TITLE_GAP_DP.dp)) {
             Line(e.entry.name, 21, 800, Palette.white)
@@ -396,23 +413,28 @@ private fun CarouselTitle(entries: List<EntryUi>, targetPage: Int) {
             // tile the network refuses says "Trenger Wi-Fi" there (design 50 §1.4) - one line, the account line first
             val line = e.state?.let { stringResource(rendererStateText(it)) }
                 ?: if (e.needsWifi) stringResource(R.string.tile_needs_wifi) else hintText(e.hint)
-            Line(line, 13, 700, Palette.sub)
-            // without a progress line its 3 + 3 + 4 dp stay reserved, so the cover never resizes on a turn
+            Line(line, 13, 700, Palette.sub, Modifier.padding(top = breath.titleHintPx.pxAsDp()))
+            // without a progress line its 3 + 3 + 4 dp (and its breath) stay reserved, so the cover never resizes on a turn
+            val progressBreath = Modifier.padding(top = breath.hintProgressPx.pxAsDp())
             if (e.progress != null) {
-                Box(Modifier.padding(top = CAROUSEL_PROGRESS_PAD_DP.dp).width(140.dp).height(CAROUSEL_PROGRESS_DP.dp).clip(RoundedCornerShape(2.dp)).background(Palette.track)) {
+                Box(progressBreath.padding(top = CAROUSEL_PROGRESS_PAD_DP.dp).width(140.dp).height(CAROUSEL_PROGRESS_DP.dp).clip(RoundedCornerShape(2.dp)).background(Palette.track)) {
                     Box(Modifier.width(140.dp * e.progress).height(4.dp).background(Palette.peach))
                 }
             } else {
-                Spacer(Modifier.height(with(density) { progressRoomPx(density.density).toDp() }))
+                Spacer(progressBreath.height(with(density) { progressRoomPx(density.density).toDp() }))
             }
         }
     }
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally)) {
+    Row(Modifier.fillMaxWidth().padding(top = breath.progressDotsPx.pxAsDp()), horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally)) {
         for (i in dotWindow(n, index)) {
             Box(Modifier.size(CAROUSEL_DOTS_DP.dp).clip(CircleShape).background(if (i == index) Palette.peach else Palette.dot))
         }
     }
 }
+
+/** Whole pixels as a Dp; Compose rounds each padding back to exactly those pixels on its own ([libraryBreath]). */
+@Composable
+private fun Int.pxAsDp(): Dp = with(LocalDensity.current) { this@pxAsDp.toDp() }
 
 /** The centred cover's shadow (v12) and a neighbour's (design 34 P2's quiet depth), dp. */
 private const val COVER_ELEVATION_DP = 12f
@@ -447,8 +469,11 @@ private fun CoverBadges(e: EntryUi, kind: Boolean) {
 }
 
 /**
- * Alle + the categories with entries here; single choice; more than four scroll. Each tile is as wide as its label
- * needs at the font scale, never narrower than a fifth of the row ([categoryTileWidthFor], N6): a label is never cut.
+ * Alle + the categories with entries here; single choice. The row fits its tiles to its width ([categoryRow],
+ * 2026-11-20: five tiles cut "Podkast" to "Podkas" on the Jelly Star): each as wide as its label needs at the font
+ * scale (N6), a fifth of the row where that fits, else closer together with smaller circles. When even that can't hold
+ * them (a large font) the row scrolls, snapping to a tile's start; a tile the edge cuts is hidden at rest and a quiet
+ * chevron in the screen's side says more lie that way - a label is never shown cut.
  */
 @Composable
 private fun CategoryTiles(tiles: List<Category>, favouritesTile: Boolean, selected: Long?, onCategory: (Long?) -> Unit) {
@@ -457,31 +482,78 @@ private fun CategoryTiles(tiles: List<Category>, favouritesTile: Boolean, select
     val favourites = stringResource(R.string.category_favourites)
     val measurer = rememberTextMeasurer()
     val density = LocalDensity.current
-    // each label as the tile draws it (11 sp ExtraBold, one line), its natural width (dp) at this font scale - measured
+    // each label as the tile draws it (ExtraBold, one line; 11 sp and the compact 10), its natural width (dp) at this font scale - measured
     // once per set of names and font scale, not at every composition of the row (qa-26c-emu-music-code N2)
     val names = listOf(all) + listOfNotNull(favourites.takeIf { favouritesTile }) + tiles.map { it.name }
     val labelDp = remember(measurer, density.density, density.fontScale, names) {
-        names.associateWith { name -> measurer.measure(name, text(CATEGORY_LABEL_SP.sp, 800, Palette.white), maxLines = 1).size.width / density.density }
+        listOf(CATEGORY_LABEL_SP, CATEGORY_LABEL_COMPACT_SP).associateWith { sp ->
+            names.map { name -> measurer.measure(name, text(sp.sp, 800, Palette.white), maxLines = 1).size.width / density.density }
+        }
     }
+    val list = rememberLazyListState()
+    val snapping = rememberSnapFlingBehavior(list, SnapPosition.Start)
+    val plain = ScrollableDefaults.flingBehavior()
+    // a tile the edge cuts fades out while the row moves and is gone once it rests (never a cut label at rest)
+    val rest by animateFloatAsState(if (list.isScrollInProgress) 0f else 1f, tween(if (animationsOn()) 150 else 0), label = "rest")
     BoxWithConstraints(Modifier.fillMaxWidth().semantics { contentDescription = label }) {
-        val room = maxWidth.value
-        val widthOf = { name: String -> categoryTileWidthFor(room, labelDp[name] ?: 0f).dp }
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            item { CategoryTile(null, selected == null, widthOf(all)) { onCategory(null) } }
+        val row = categoryRow(maxWidth.value, labelDp.getValue(CATEGORY_LABEL_SP), labelDp.getValue(CATEGORY_LABEL_COMPACT_SP))
+        val look = TileLook(row.circle.dp, row.glyph.dp, row.labelSp)
+        val fadePx = with(density) { CATEGORY_CUT_FADE_DP.dp.toPx() }
+        fun Modifier.whole(index: Int): Modifier = if (!row.scrolls) this else graphicsLayer {
+            val view = list.layoutInfo
+            val tile = view.visibleItemsInfo.firstOrNull { it.index == index }
+            alpha = if (tile == null) 1f else categoryTileAlpha(tile.offset, tile.offset + tile.size, view.viewportStartOffset, view.viewportEndOffset, fadePx, rest)
+        }
+        LazyRow(
+            state = list,
+            horizontalArrangement = Arrangement.spacedBy(row.gap.dp),
+            userScrollEnabled = row.scrolls,
+            flingBehavior = if (row.scrolls) snapping else plain,
+        ) {
+            item { CategoryTile(null, selected == null, row.widths[0].dp, look, Modifier.whole(0)) { onCategory(null) } }
             // design 50 §1.5: the sentinel id, first after Alle
             if (favouritesTile) {
-                item { CategoryTile(null, selected == FAVOURITES_CATEGORY, widthOf(favourites), favourites = true) { onCategory(FAVOURITES_CATEGORY) } }
+                item {
+                    CategoryTile(null, selected == FAVOURITES_CATEGORY, row.widths[1].dp, look, Modifier.whole(1), favourites = true) {
+                        onCategory(FAVOURITES_CATEGORY)
+                    }
+                }
             }
-            items(tiles, key = { it.id }) { c -> CategoryTile(c, selected == c.id, widthOf(c.name)) { onCategory(c.id) } }
+            val first = if (favouritesTile) 2 else 1
+            itemsIndexed(tiles, key = { _, c -> c.id }) { i, c ->
+                CategoryTile(c, selected == c.id, row.widths[first + i].dp, look, Modifier.whole(first + i)) { onCategory(c.id) }
+            }
+        }
+        if (row.scrolls) {
+            // in the screen's 16 dp side, level with the circles: quiet, never over a tile
+            val y = (row.circle - CATEGORY_CHEVRON_DP) / 2
+            if (list.canScrollBackward) {
+                Glyph(Icons.back, CATEGORY_CHEVRON_DP.dp, Palette.dim, Modifier.align(Alignment.TopStart).offset(x = (-CATEGORY_CHEVRON_OUT_DP).dp, y = y.dp))
+            }
+            if (list.canScrollForward) {
+                Glyph(Icons.forward, CATEGORY_CHEVRON_DP.dp, Palette.dim, Modifier.align(Alignment.TopEnd).offset(x = CATEGORY_CHEVRON_OUT_DP.dp, y = y.dp))
+            }
         }
     }
 }
 
-/** The category tile's label size (sp). */
-private const val CATEGORY_LABEL_SP = 11
+/** A category tile's circle, glyph and label size ([categoryRow]: smaller in a compact row). */
+private data class TileLook(val circle: Dp, val glyph: Dp, val labelSp: Int)
+
+/** The scrolling row's chevron (dp) and how far into the screen's 16 dp side it sits (its far edge 2 dp from the screen's). */
+private const val CATEGORY_CHEVRON_DP = 12f
+private const val CATEGORY_CHEVRON_OUT_DP = 14f
 
 @Composable
-private fun CategoryTile(category: Category?, on: Boolean, width: Dp, favourites: Boolean = false, onClick: () -> Unit) {
+private fun CategoryTile(
+    category: Category?,
+    on: Boolean,
+    width: Dp,
+    look: TileLook,
+    modifier: Modifier,
+    favourites: Boolean = false,
+    onClick: () -> Unit,
+) {
     val label = category?.name ?: stringResource(if (favourites) R.string.category_favourites else R.string.category_all)
     val bg = when {
         !on -> Palette.card
@@ -494,24 +566,24 @@ private fun CategoryTile(category: Category?, on: Boolean, width: Dp, favourites
         else -> Palette.white
     }
     Column(
-        Modifier.width(width).heightIn(min = 64.dp).semantics { selected = on }.button(label, onClick),
+        modifier.width(width).heightIn(min = 64.dp).semantics { selected = on }.button(label, onClick),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         Box(
-            Modifier.size(44.dp).clip(CircleShape).background(bg)
+            Modifier.size(look.circle).clip(CircleShape).background(bg)
                 .border(if (on) 3.dp else 1.dp, if (on) Palette.fg else Palette.ring, CircleShape),
             contentAlignment = Alignment.Center,
         ) {
             if (favourites) {
-                Glyph(ImageVector.vectorResource(R.drawable.player_glyph_favorite), 20.dp, fg)
+                Glyph(ImageVector.vectorResource(R.drawable.player_glyph_favorite), look.glyph, fg)
             } else if (category == null) {
-                Glyph(Icons.grid, 20.dp, fg)
+                Glyph(Icons.grid, look.glyph, fg)
             } else {
-                Image(painterResource(categoryGlyph(category)), null, Modifier.size(20.dp), colorFilter = ColorFilter.tint(fg))
+                Image(painterResource(categoryGlyph(category)), null, Modifier.size(look.glyph), colorFilter = ColorFilter.tint(fg))
             }
         }
-        Line(label, CATEGORY_LABEL_SP, 800, if (on) Palette.white else Palette.dim)
+        Line(label, look.labelSp, 800, if (on) Palette.white else Palette.dim)
     }
 }
 

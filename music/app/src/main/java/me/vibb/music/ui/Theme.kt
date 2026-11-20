@@ -74,6 +74,9 @@ object Icons {
     }.build()
 
     val back = stroked("back", 2.5f, "M15 18l-6-6 6-6")
+
+    /** [back] turned round: the category row's "more this way" mark when it scrolls (2026-11-20). */
+    val forward = stroked("forward", 2.5f, "M9 6l6 6-6 6")
     val search = stroked("search", 2.2f, circle(11f, 11f, 7f), "M20 20l-3.5-3.5")
     val bell = stroked("bell", 2.2f, "M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9", "M10.3 21a1.9 1.9 0 0 0 3.4 0")
     val grid = stroked(
