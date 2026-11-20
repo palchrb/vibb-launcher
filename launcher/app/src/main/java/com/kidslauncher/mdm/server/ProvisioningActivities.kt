@@ -42,7 +42,8 @@ class ProvisioningModeActivity : Activity() {
  * with Google Play services provisioning runs through the DEVICE_POLICY_MANAGEMENT role holder (CloudDPC),
  * which starts this activity with EXTRA_PROVISIONING_ADMIN_EXTRAS_BUNDLE and never sends
  * `onProfileProvisioningComplete` (2026-11-20, a Jelly Star on Android 16). The extras go to
- * [QrExtras.deliver] (applied once, off the main thread, on the process's scope, kept for a retry);
+ * [QrExtras.deliver] (sealed for a retry before it returns - one Keystore operation, so a process death right after
+ * the result loses nothing - then applied once, off the main thread, on the process's scope);
  * nothing to show or accept - the policy arrives with the first sync after enrolling - so it finishes
  * RESULT_OK at once: the setup wizard waits on it.
  */

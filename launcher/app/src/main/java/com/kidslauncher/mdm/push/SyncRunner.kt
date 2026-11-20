@@ -13,9 +13,6 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 private const val LOG_TAG = "SyncRunner"
 
-/** The QR's admin-extras retry: one tailnet connect (30 s) and the enrolment. */
-private const val QR_EXTRAS_RETRY_TIMEOUT_MS = 90_000L
-
 /**
  * Runs the background sync (policy + status + app updates) for every
  * trigger - an SSE nudge, the backstop alarm, process start - inside the anchor
@@ -72,9 +69,10 @@ object SyncRunner {
             // Design 75's R1 gap: a nudged sync pulls the weather too (a zone's save or delete only nudges).
             if ("sse" in reasons) com.kidslauncher.mdm.weather.WeatherPull.nudged()
             // QR setup (2026-11-20): the admin extras of an enrolment that failed for a transient reason (no network,
-            // no tailnet yet, a 5xx) are applied again before the sync. A no-op without kept extras.
+            // no tailnet yet, a 5xx) are applied again before the sync. A no-op without kept extras. No timeout around it
+            // (QA M3): a cancelled enrolment could lose a code the server used; every call in it is time-bounded.
             try {
-                withTimeoutOrNull(QR_EXTRAS_RETRY_TIMEOUT_MS) { com.kidslauncher.mdm.server.QrExtras.retryPending(context) }
+                com.kidslauncher.mdm.server.QrExtras.retryPending(context)
             } catch (e: Exception) {
                 Log.w(LOG_TAG, "Admin extras retry failed: ${e.javaClass.simpleName}")
             }

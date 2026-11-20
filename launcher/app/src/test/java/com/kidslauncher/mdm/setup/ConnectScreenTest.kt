@@ -54,7 +54,16 @@ class ConnectScreenTest {
         assertTrue(check < connect.indexOf("QrExtras.enrolTyped(app, url, code)"))
         assertTrue("CONNECT_SCOPE.launch" in connect)
         for (other in listOf("Enrollment.enroll(", "applyProvisioningExtras(", "runBlocking")) assertFalse(other, other in text)
-        assertTrue("if (!busy && !due(this)) finish()" in text.substringAfter("override fun onStart()"))
+        assertTrue("if (!busy && !due(this)) {\n            finish()" in text.substringAfter("override fun onStart()"))
+        // QA M2, L6: the busy state is the process's (any instance, a QR apply too), one tap is one enrolment, and the
+        // rule is read again whenever it changes.
+        assertTrue("private val busy: Boolean get() = typing.value || QrExtras.running.value > 0" in text)
+        assertTrue("if (!typing.compareAndSet(false, true)) return" in connect)
+        for (flow in listOf("QrExtras.running.collect { render() }", "typing.collect { render() }", "lastError.collect { render() }")) {
+            assertTrue(flow, flow in text.substringAfter("override fun onStart()"))
+        }
+        assertTrue("if (!busyNow && !isFinishing && !due(this)) {" in text.substringAfter("private fun render()"))
+        assertTrue("private val typing = MutableStateFlow(false)" in text)
         assertTrue("connectScreenDue(" in text.substringAfter("fun due(context: Context)"))
         assertTrue("FLAG_SECURE" in text)
     }

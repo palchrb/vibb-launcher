@@ -62,11 +62,28 @@ class QrExtrasTest {
     @Test
     fun `after an apply - done, refused for good, or kept for a retry`() {
         assertEquals(QrExtrasAfter.DONE, qrExtrasAfter(Result.success(Unit)))
-        assertEquals(QrExtrasAfter.REFUSED, qrExtrasAfter(Result.failure(enrollFailureOf(409))))
+        // Only the code's own fault is refused for good (QA M1): 429 (slots full, Retry-After) and 408 are a good code.
+        for (status in listOf(400, 401, 403, 404, 410)) {
+            assertEquals("$status", QrExtrasAfter.REFUSED, qrExtrasAfter(Result.failure(enrollFailureOf(status))))
+        }
+        for (status in listOf(408, 409, 413, 425, 429, 500, 503)) {
+            assertEquals("$status", QrExtrasAfter.RETRY, qrExtrasAfter(Result.failure(enrollFailureOf(status))))
+        }
+        assertEquals(setOf(400, 401, 403, 404, 410), CODE_REFUSED_STATUSES)
         assertEquals(QrExtrasAfter.REFUSED, qrExtrasAfter(Result.failure(EnrollFailure(refused = true, "address"))))
         assertEquals(QrExtrasAfter.RETRY, qrExtrasAfter(Result.failure(enrollFailureOf(502))))
         assertEquals(QrExtrasAfter.RETRY, qrExtrasAfter(Result.failure(EnrollFailure(refused = false, "token not stored"))))
         assertEquals(QrExtrasAfter.RETRY, qrExtrasAfter(Result.failure(IOException("no route"))))
+    }
+
+    @Test
+    fun `Settings' scanner sends a new code, never the one that enrolled this phone`() {
+        assertTrue(scannedCodeSends(enrolled = false, appliedHash = null, code = code))
+        assertTrue(scannedCodeSends(enrolled = false, appliedHash = qrCodeHash(code), code = code))
+        // A deliberate re-scan of a new code re-enrols, as before.
+        assertTrue(scannedCodeSends(enrolled = true, appliedHash = qrCodeHash(code), code = "a-new-code"))
+        assertTrue(scannedCodeSends(enrolled = true, appliedHash = null, code = code))
+        assertFalse(scannedCodeSends(enrolled = true, appliedHash = qrCodeHash(code), code = " $code "))
     }
 
     @Test
@@ -115,14 +132,31 @@ class QrExtrasTest {
     }
 
     @Test
-    fun `kept extras that don't open read as none`() {
+    fun `kept extras that don't open read as unreadable, a broken key told apart`() {
         val prefs = ParentPinStoreTest.FakePrefs()
         val box = SealedPrefsTest.FakeBox()
         QrExtrasStore(prefs, SealedPrefs(box) { _, _ -> }).setPending(extras)
-        box.recreate()
+        box.openFailures = 1
         val other = QrExtrasStore(prefs, SealedPrefs(box) { _, _ -> })
         assertTrue(other.hasPending())
-        assertNull(other.pending())
+        assertEquals(KeptRead.Unreadable, other.pendingRead())
+        assertFalse("a transient error, the key fine", other.keyBroken())
+        assertEquals(KeptRead.Value(extras), other.pendingRead())
+        box.broken = true
+        assertTrue(other.keyBroken())
+        // Opened but not ours: corrupt, dropped.
+        val sealed = SealedPrefs(box) { _, _ -> }
+        sealed.edit(prefs) { it.putSealed("qr_extras/pending", "pending", "not json") }
+        assertEquals(KeptRead.Corrupt, QrExtrasStore(prefs, sealed).pendingRead())
+    }
+
+    @Test
+    fun `an unreadable kept value is dropped only when the key is broken`() {
+        val retry = code("server/QrExtras.kt").substringAfter("suspend fun retryPending(").substringBefore("\n    /**")
+        assertTrue(retry.contains("KeptRead.Unreadable -> if (store.keyBroken()) {"))
+        val unreadable = retry.substringAfter("KeptRead.Unreadable ->")
+        assertTrue(unreadable.indexOf("store.dropPending()") < unreadable.indexOf("} else {"))
+        assertFalse(unreadable.substringAfter("} else {").contains("dropPending"))
     }
 
     private val main = listOf("src/main", "app/src/main").map(::File).first { it.isDirectory }
@@ -146,27 +180,42 @@ class QrExtrasTest {
         val receiver = code("server/MdmDeviceAdminReceiver.kt").substringAfter("fun onProfileProvisioningComplete(")
         assertTrue("QrExtras.deliver(context, bundle, \"Provisioning complete\")" in receiver)
         assertTrue("goAsync()" in receiver)
+        // QA L4: held only briefly - the extras are kept for the retry.
+        assertTrue("QrExtras.finishWithin(job) { pendingResult.finish() }" in receiver)
+        assertTrue("invokeOnCompletion" !in receiver)
         assertFalse("applyProvisioningExtras(" in receiver)
         val runner = code("push/SyncRunner.kt").substringAfter("private fun launchRun(")
         val retry = runner.indexOf("QrExtras.retryPending(context)")
         assertTrue(retry > 0)
         assertTrue("before the sync", retry < runner.indexOf("performMdmSync(context)"))
+        // QA M3: no timeout around it - a cancelled enrolment could lose a code the server used.
+        val retryLine = runner.substring(runner.lastIndexOf('\n', retry), retry)
+        assertFalse("withTimeoutOrNull" in retryLine)
+        assertTrue("withContext(Dispatchers.IO + NonCancellable)" in code("server/Enrollment.kt").substringAfter("suspend fun enroll("))
 
         val qr = code("server/QrExtras.kt")
-        // The QR's apply and "Koble til"'s typed code, each under the one mutex.
-        assertEquals(2, Regex("""applyProvisioningExtras\(""").findAll(qr).count())
-        val typed = qr.substringAfter("suspend fun enrolTyped(").substringBefore("private suspend fun apply(")
-        assertTrue(typed.contains("): Result<Unit> = mutex.withLock {"))
-        assertTrue("applyProvisioningExtras(" in typed)
+        // The QR's apply, "Koble til"'s typed code and Settings' scanner, each under the one mutex, never cancelled.
+        assertEquals(3, Regex("""applyProvisioningExtras\(""").findAll(qr).count())
+        assertTrue("= counted { mutex.withLock { withContext(NonCancellable) { block() } } }" in qr)
+        val typed = qr.substringAfter("suspend fun enrolTyped(").substringBefore("suspend fun applyScanned(")
+        assertTrue(typed.contains("): Result<Unit> = locked {"))
+        // QA M2: an enrolled phone sends nothing.
+        assertTrue(typed.indexOf("if (enrolledNow()) {") in 0 until typed.indexOf("applyProvisioningExtras("))
+        val scanned = qr.substringAfter("suspend fun applyScanned(").substringBefore("private suspend fun apply(")
+        assertTrue(scanned.contains("): Result<Unit> = locked {"))
+        assertTrue(scanned.indexOf("scannedCodeSends(") in 0 until scanned.indexOf("applyProvisioningExtras("))
         val apply = qr.substringAfter("private suspend fun apply(").substringBefore("\n/** What one delivery")
-        assertTrue("one at a time", apply.trimStart().startsWith("context: Context, extras: ProvisioningExtras, source: String) = mutex.withLock {"))
-        // The pending extras are kept before the enrolment is tried.
+        assertTrue("one at a time", apply.trimStart().startsWith("context: Context, extras: ProvisioningExtras, source: String) = locked {"))
+        // QA L1: deliver seals the extras before it launches the apply (and so before the activity's result).
+        val deliver = qr.substringAfter("fun deliver(").substringBefore("fun finishWithin(")
+        assertTrue(deliver.indexOf("store.setPending(extras)") in 0 until deliver.indexOf("scope.launch"))
         assertTrue(apply.indexOf("store.setPending(extras)") < apply.indexOf("applyProvisioningExtras("))
-        // Every apply in the app outside Settings' scanner is this one.
+        // QA L3: every apply in the app is this one (Settings' scanner through applyScanned).
+        assertTrue("QrExtras.applyScanned(appContext, extras)" in code("ui/settings/launcher/SettingsFragmentLauncher.kt"))
         val callers = File(main, "java").walkTopDown().filter { it.isFile && it.extension == "kt" }
             .filter { "applyProvisioningExtras(" in it.readText().replace(Regex("//[^\\n]*"), "") }
             .map { it.name }.toSet()
-        assertEquals(setOf("Provisioning.kt", "QrExtras.kt", "SettingsFragmentLauncher.kt"), callers)
+        assertEquals(setOf("Provisioning.kt", "QrExtras.kt"), callers)
     }
 
     @Test

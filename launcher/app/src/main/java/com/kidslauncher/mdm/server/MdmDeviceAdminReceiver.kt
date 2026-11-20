@@ -74,11 +74,9 @@ class MdmDeviceAdminReceiver : DeviceAdminReceiver() {
         // role holder (CloudDPC on a GMS phone) provisions - applied once, kept for a retry at the next sync.
         val job = QrExtras.deliver(context, bundle, "Provisioning complete") ?: return
 
-        // goAsync() keeps this receiver's process alive long enough for the enroll network call
-        // to finish - DeviceAdminReceiver callbacks follow the same short-lived-broadcast-receiver
-        // lifecycle as any other BroadcastReceiver, so the process could otherwise be torn down
-        // the moment this callback returns (the kept extras still retry at the next sync).
+        // goAsync() keeps this receiver's process up for the enrolment - but only for QR_RECEIVER_HOLD_MS (QA L4): the
+        // apply may wait behind the mutex, and deliver has kept the extras sealed for the next sync's retry.
         val pendingResult = goAsync()
-        job.invokeOnCompletion { pendingResult.finish() }
+        QrExtras.finishWithin(job) { pendingResult.finish() }
     }
 }

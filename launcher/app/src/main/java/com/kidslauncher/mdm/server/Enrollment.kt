@@ -5,14 +5,20 @@ import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.server.dto.EnrollRequest
 import com.kidslauncher.mdm.setup.setupHoldStarts
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 
-/** Why an enrolment failed (code QA Q-1): [refused] - the server answered 4xx (a wrong, used or expired code); else
- * the server wasn't reached, answered 5xx, or the token couldn't be stored. */
+/** Why an enrolment failed (code QA Q-1): [refused] - the server refused the code itself ([CODE_REFUSED_STATUSES]: a
+ * wrong, used or expired code); else the server wasn't reached, was busy (408, 425, 429), answered 5xx, or the token
+ * couldn't be stored - worth trying again. */
 class EnrollFailure(val refused: Boolean, message: String) : Exception(message)
 
-/** An HTTP status's failure: only a 4xx is the code's fault. */
-fun enrollFailureOf(httpCode: Int): EnrollFailure = EnrollFailure(refused = httpCode in 400..499, "HTTP $httpCode")
+/** The statuses that are the code's fault (QA of qr-compliance-extras, M1): the server answers 429 (+Retry-After, the
+ * enrol slots full) and 408 (the body's timeout) for a code that is still good. */
+val CODE_REFUSED_STATUSES = setOf(400, 401, 403, 404, 410)
+
+/** An HTTP status's failure: only [CODE_REFUSED_STATUSES] are the code's fault. */
+fun enrollFailureOf(httpCode: Int): EnrollFailure = EnrollFailure(refused = httpCode in CODE_REFUSED_STATUSES, "HTTP $httpCode")
 
 /**
  * The one enrolment (design r10 §5): `POST /api/devices/enroll` with a one-shot code, the new device token sealed
@@ -35,7 +41,9 @@ object Enrollment {
         serverUrl: String,
         code: String,
         connectTailnet: Boolean = true,
-    ): Result<Unit> = withContext(Dispatchers.IO) {
+    ): Result<Unit> = withContext(Dispatchers.IO + NonCancellable) {
+        // QA of qr-compliance-extras, M3: never cancelled half-way - a POST the server took has used the one-shot code,
+        // and its token must be stored. Every call in here is time-bounded (the tsnet connect, OkHttp's timeouts).
         try {
             // Design 114 §6.1.1 (QA L10): whether this enrolment starts the setup hold is decided before the token is
             // stored, so no sync can apply a policy between the token's commit and the check.
