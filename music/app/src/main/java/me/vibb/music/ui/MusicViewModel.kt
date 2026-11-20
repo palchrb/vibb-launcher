@@ -292,8 +292,9 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * The last "Telefonen" under the web player didn't move the Bluetooth headset's media (2026-11-20, R2's refusal):
-     * the phone row says "Slå av hodetelefonene først" until the routed outputs change. Memory only.
+     * The last "Telefonen" under the web player couldn't move the sound (2026-11-20, R2's refusal, or a wired headset
+     * in): the phone row says "Slå av hodetelefonene først" / "Ta ut ledningen først" until the routed outputs change.
+     * Memory only.
      */
     var phoneRefused by mutableStateOf(false)
         private set
@@ -318,7 +319,13 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
         val bluetooth = hub.outputs.any { it.kind == OutputKind.BLUETOOTH }
         when (webOutputMove(o.key == Output.PHONE_KEY, hub.webPlayer, wired, bluetooth)) {
             WebOutputMove.NONE -> Unit
-            WebOutputMove.WIRED -> PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.PHONE_UNPLUG)
+            WebOutputMove.WIRED -> {
+                // said only once the kid asked for the phone (code QA L5: a wired headset in use is nothing wrong)
+                phoneRoutes = outputIds()
+                phoneRefused = true
+                watch() // the route watch ends the word when the cable comes out (also without the Bluetooth grant)
+                PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.PHONE_UNPLUG)
+            }
             WebOutputMove.BLUETOOTH_OFF -> {
                 if (!bt.granted()) return refusePhone()
                 if (phoneMove?.isActive == true) return
@@ -328,7 +335,7 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
                         val proxy = a2dp()
                         val asked = proxy != null && bt.makeInactive(proxy)
                         if (asked) delay(BLUETOOTH_OFF_CHECK_MS)
-                        if (!bluetoothOffTook(asked, stillRouted = bt.routed().isNotEmpty())) refusePhone()
+                        if (bluetoothOffTook(asked, stillRouted = bt.routed().isNotEmpty())) phoneRefused = false else refusePhone()
                     } finally {
                         calls--
                         releaseA2dp()
@@ -338,7 +345,15 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** The output devices when the last refusal's routes were read (a route change ends the word). */
+    private var phoneRoutes: Set<Int>? = null
+
+    private fun outputIds(): Set<Int> = runCatching {
+        getApplication<Application>().getSystemService(AudioManager::class.java)?.getDevices(AudioManager.GET_DEVICES_OUTPUTS)?.map { it.id }?.toSet()
+    }.getOrNull().orEmpty()
+
     private fun refusePhone() {
+        phoneRoutes = outputIds()
         phoneRefused = true
         PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.PHONE_TURN_OFF)
     }
@@ -408,8 +423,11 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun routesChanged() {
         // a refused "Telefonen" is the routes' word: a headset off, on or made active again ends it (a move in flight
-        // reads the routes itself when its wait ends)
-        if (phoneMove?.isActive != true) phoneRefused = false
+        // reads the routes itself when its wait ends) - a real change only, never the callback's first call at its
+        // registration
+        val outputs = outputIds()
+        if (outputs != phoneRoutes && phoneMove?.isActive != true) phoneRefused = false
+        phoneRoutes = outputs
         viewModelScope.launch {
             val routed = bt.routed()
             routedIds = routed

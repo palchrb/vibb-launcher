@@ -558,6 +558,78 @@ class SpotifyRendererTest {
         assertEquals("unreachable", ports.outcomes.last())
         assertEquals("vibb.pause()", page.calls.last())
         assertFalse(ports.locks)
+        // code QA M2: the dead page went with its process - the kid's tap gets a fresh one, not the same silence
+        assertEquals(2, page.destroys)
+        assertFalse(page.alive)
+        r.play()
+        advance(0)
+        assertEquals(3, page.opens)
+        assertEquals(3, api.plays().size)
+        assertEquals("still at the place", 5_000L, body(api.plays().last())["position_ms"]!!.jsonPrimitive.long)
+        r.release()
+    }
+
+    @Test
+    fun `code QA M3 - the web player's process gone while paused - no word, a fresh page at the next play`() = runBlocking {
+        val r = playing()
+        advance(5_000)
+        post(state(0, 5_000))
+        r.pause()
+        post(state(0, 5_000, paused = true))
+        page.alive = false
+        page.emit(HostEvent.Gone)
+        settle()
+        assertNull("nothing the kid needs to know", r.rendererState)
+        assertEquals(Player.STATE_READY, r.spec().playbackState)
+        assertFalse(r.showsPlaying)
+        r.play()
+        advance(0)
+        assertEquals(2, page.opens)
+        assertEquals(2, api.plays().size)
+        assertEquals(5_000L, body(api.plays().last())["position_ms"]!!.jsonPrimitive.long)
+        r.release()
+    }
+
+    @Test
+    fun `code QA L2 - a recycle re-arms only after 30 s of play, and at most two in 10 minutes`() = runBlocking {
+        val r = playing()
+        advance(5_000)
+        post(state(0, 5_000))
+        page.alive = false
+        page.emit(HostEvent.Gone) // the first recycle
+        advance(0)
+        assertEquals(2, page.opens)
+        post(state(0, 5_000))
+        advance(10_000)
+        post(state(0, 15_000))
+        page.alive = false
+        page.emit(HostEvent.Gone) // 10 s of play: not yet proven - no other
+        advance(0)
+        assertEquals(2, page.opens)
+        assertEquals(RendererState.SPOTIFY_STOPPED, r.rendererState)
+        r.play()
+        advance(0)
+        assertEquals(3, page.opens)
+        // played on 30 s: proven, the second recycle is allowed
+        post(state(0, 15_000))
+        for (s in 1..7) {
+            advance(5_000)
+            post(state(0, 15_000 + s * 5_000L))
+        }
+        page.alive = false
+        page.emit(HostEvent.Gone)
+        advance(0)
+        assertEquals("the second recycle", 4, page.opens)
+        post(state(0, 50_000))
+        for (s in 1..7) {
+            advance(5_000)
+            post(state(0, 50_000 + s * 5_000L))
+        }
+        page.alive = false
+        page.emit(HostEvent.Gone) // proven again, but two already in 10 minutes
+        advance(0)
+        assertEquals("no third in 10 minutes", 4, page.opens)
+        assertEquals(RendererState.SPOTIFY_STOPPED, r.rendererState)
         r.release()
     }
 
@@ -642,6 +714,22 @@ class SpotifyRendererTest {
     }
 
     @Test
+    fun `code QA L6 - R5 wants the place to move on - playing states at a frozen place recycle too`() = runBlocking {
+        val r = playing()
+        advance(5_000)
+        post(state(0, 5_000))
+        r.outputChanged()
+        advance(2_000)
+        post(state(0, 5_000)) // "playing", but the place stands still: the sink died, the SDK ticks on
+        advance(5_000)
+        post(state(0, 5_000))
+        advance(1_000)
+        assertTrue(ports.log.contains("spotify: no state of ours playing on after the output change"))
+        assertEquals(2, page.opens)
+        r.release()
+    }
+
+    @Test
     fun `design 120 R5 - an output change while playing with no state after it recycles once at the place`() = runBlocking {
         val r = playing()
         advance(5_000)
@@ -656,7 +744,7 @@ class SpotifyRendererTest {
         advance(SPOTIFY_OUTPUT_STATE_MS - 1)
         assertEquals(1, page.opens)
         advance(1)
-        assertTrue(ports.log.contains("spotify: no state of ours after the output change"))
+        assertTrue(ports.log.contains("spotify: no state of ours playing on after the output change"))
         assertEquals(1, page.destroys)
         assertEquals(2, page.opens)
         assertEquals(2, api.plays().size)

@@ -206,12 +206,54 @@ const val SPOTIFY_RECYCLE_READY_MS = 10_000L
  * Design 120 R2 and R5 (revision 2): a web player that went silent - no state of ours after a play call, the 30 s gap
  * watch, or nothing after an output change - is thrown away with its process and played once more at its place, in
  * place of "Trenger internett". Only while the kid still wants it playing ([wanted]: playing, not ended), the app may
- * play ([mayPlay]), no call, not detached and the network gate open ([network]); never on a page the failing start made
- * itself ([freshPage]: a new process didn't help - today's UNREACHABLE), and never twice without a state of ours between
- * ([unproven]: the last recycle hasn't played yet) - so no loop.
+ * play ([mayPlay]), no call, not detached and the network gate open ([network]); never on a page that has never played
+ * ([freshPage]: a new process didn't help - today's UNREACHABLE), never again before the last recycle has played
+ * [SPOTIFY_RECYCLE_PROOF_MS] on end ([unproven]), and at most [SPOTIFY_RECYCLE_MAX] in [SPOTIFY_RECYCLE_WINDOW_MS]
+ * ([recent]: a player that crashes at the same point each time stops; code QA L2) - so no loop.
  */
-fun spotifyRecycles(wanted: Boolean, mayPlay: Boolean, inCall: Boolean, detached: Boolean, network: Boolean, freshPage: Boolean, unproven: Boolean): Boolean =
-    wanted && mayPlay && !inCall && !detached && network && !freshPage && !unproven
+fun spotifyRecycles(
+    wanted: Boolean,
+    mayPlay: Boolean,
+    inCall: Boolean,
+    detached: Boolean,
+    network: Boolean,
+    freshPage: Boolean,
+    unproven: Boolean,
+    recent: Int = 0,
+): Boolean = wanted && mayPlay && !inCall && !detached && network && !freshPage && !unproven && recent < SPOTIFY_RECYCLE_MAX
+
+/** A recycled player counts as healthy again after this long of playing on end (code QA L2). */
+const val SPOTIFY_RECYCLE_PROOF_MS = 30_000L
+
+/** At most [SPOTIFY_RECYCLE_MAX] recycles in this window (code QA L2). */
+const val SPOTIFY_RECYCLE_WINDOW_MS = 10 * 60_000L
+const val SPOTIFY_RECYCLE_MAX = 2
+
+/** R5 (code QA L6): after an output change, the position must have moved at least this far past where it stood. */
+const val SPOTIFY_OUTPUT_MOVED_MS = 1_000L
+
+/**
+ * R5's proof (code QA L6): a playing state of ours after the output change at [changeAtMs] whose place moved on - another
+ * item, or at least [SPOTIFY_OUTPUT_MOVED_MS] past where the last measurement before the change put it at the change
+ * (moved on by the time since while it played). A state that only says "playing" at a frozen place is no proof: the
+ * SDK may tick on while Chromium's audio sink is dead.
+ */
+fun spotifyPlayedOn(
+    changeAtMs: Long,
+    beforeIndex: Int?,
+    beforePosMs: Long,
+    beforeAtMs: Long,
+    beforePlaying: Boolean,
+    afterIndex: Int,
+    afterPosMs: Long,
+    afterAtMs: Long,
+    afterPlaying: Boolean,
+): Boolean {
+    if (!afterPlaying || afterAtMs < changeAtMs) return false
+    if (beforeIndex == null || afterIndex != beforeIndex) return true
+    val expected = beforePosMs + if (beforePlaying) (changeAtMs - beforeAtMs).coerceAtLeast(0) else 0
+    return afterPosMs >= expected + SPOTIFY_OUTPUT_MOVED_MS
+}
 
 /** Steps within this coalesce into one play call (vibb's skip debounce). */
 const val SPOTIFY_STEP_COALESCE_MS = 300L

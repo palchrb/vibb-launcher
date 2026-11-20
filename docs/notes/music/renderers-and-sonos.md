@@ -133,7 +133,7 @@ Moved from music/CLAUDE.md on 2026-11-01.
   device, so with a Bluetooth headset routed the view model makes the headset's media inactive
   (`BluetoothLink.makeInactive`: A2DP `setActiveDevice(null)` by reflection - phone-wide, the headset stays connected
   for calls, its row reads "Bytt til" again). If it isn't asked, or the headset is still routed 3 s later
-  (`bluetoothOffTook`), the phone row says "Slå av hodetelefonene først"; with a wired headset in it says "Ta ut
+  (`bluetoothOffTook`), the phone row says "Slå av hodetelefonene først"; a pick with a wired headset in says "Ta ut
   ledningen først" (`phoneRowLine`). Under the web player the sheet ticks the real route (`webPlayerOutput`), never
   "Telefonen" over sound in a headset. The phone's own player keeps its per-player preference.
 - **Calls** (26a §6.7): the launcher sends `CALL_HOLD` / `CALL_RELEASE` (session custom actions, granted only to a

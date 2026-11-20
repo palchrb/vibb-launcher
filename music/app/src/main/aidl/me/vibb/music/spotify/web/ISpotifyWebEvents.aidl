@@ -4,9 +4,6 @@
 package me.vibb.music.spotify.web;
 
 oneway interface ISpotifyWebEvents {
-    /** The page's process is [pid] (the main process ends it itself if it outlives its destroy). */
-    void attached(int pid);
-
     void ready(String deviceId);
 
     void notReady(String deviceId);

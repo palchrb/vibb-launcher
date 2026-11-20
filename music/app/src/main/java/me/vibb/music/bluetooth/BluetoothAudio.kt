@@ -141,17 +141,18 @@ fun webOutputMove(phonePicked: Boolean, onWebPlayer: Boolean, wired: Boolean, bl
 }
 
 /**
- * The phone row's honest word under the web player (the user's R1; CLAUDE.md "Words in the UI": the state only when
- * something is wrong): [UNPLUG] while a wired headset is in ("Ta ut ledningen først"), [TURN_OFF] after the Bluetooth
- * headset's media wouldn't go ("Slå av hodetelefonene først"); else none (the row's own "Innebygd høyttaler").
+ * The phone row's honest word under the web player (the user's R1; CLAUDE.md "Words in the UI": speak up only when
+ * something is wrong - a headset in use isn't, so only after the kid picked "Telefonen" and it couldn't move; code QA
+ * L5): [UNPLUG] with a wired headset in ("Ta ut ledningen først"), [TURN_OFF] when the Bluetooth headset's media wouldn't
+ * go ("Slå av hodetelefonene først"); else none (the row's own "Innebygd høyttaler").
  */
 enum class PhoneRowLine { UNPLUG, TURN_OFF }
 
-/** [refused]: the last [WebOutputMove.BLUETOOTH_OFF] didn't take ([bluetoothOffTook]), and the routes haven't changed since. */
+/** [refused]: the last "Telefonen" couldn't move the sound ([WebOutputMove.WIRED], or [bluetoothOffTook] false), and the routes haven't changed since. */
 fun phoneRowLine(onWebPlayer: Boolean, wired: Boolean, bluetooth: Boolean, refused: Boolean): PhoneRowLine? = when {
-    !onWebPlayer -> null
+    !onWebPlayer || !refused -> null
     wired -> PhoneRowLine.UNPLUG
-    bluetooth && refused -> PhoneRowLine.TURN_OFF
+    bluetooth -> PhoneRowLine.TURN_OFF
     else -> null
 }
 

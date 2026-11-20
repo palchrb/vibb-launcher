@@ -369,3 +369,36 @@ R5 can't be triggered on the emulator, which has no headset to plug in.
 - The Bluetooth pairing that started this (R5 or R2 should bring the music back within about 8-30 s).
 - The real SDK and Widevine in `:web`.
 - The audio focus with the screen off on Android 16, and M4's background-audio check on Android 17 when an image exists.
+
+### 10.1 After the code QA (`docs/review/2026-11-20-spotify-output-recover-code-qa.md`)
+
+These change some rules above; where they disagree, this subsection wins.
+
+- **The clear (M1).** A clear asked by an account change is kept until a page has really opened with it: the first page
+  event from that binding proves it. A process that refuses the page (`stale`), a death before the link, or a page
+  dropped before any event hands the clear on to the next page.
+- **A failed recycle (M2).** When a recycle is refused only because the page never played or the last recycle hasn't
+  proven itself, the dead page goes with its process anyway (after the line). The kid's next tap then gets a fresh
+  process, not the same silence. There is still no automatic second recycle.
+- **A death while paused (M3).** `:web` ending while the music is paused (lmkd picks it first) drops the page quietly,
+  with no line. The next play makes a fresh page at the place.
+- **The loop guard (L1, L2).**
+  - A page counts as fresh from its open until its first playing state of ours. It no longer depends on which start
+    opened it.
+  - A recycle re-arms only after the recycled player has played 30 s on end (`SPOTIFY_RECYCLE_PROOF_MS`), and there
+    are at most 2 recycles in 10 minutes (`SPOTIFY_RECYCLE_MAX`, `SPOTIFY_RECYCLE_WINDOW_MS`). A player that crashes at
+    the same point each time stops at "Stoppet" or "Trenger internett".
+- **R5's proof (L6).** A state alone is no proof. The place must have moved on at least 1 s past where the last
+  measurement put it at the change, or the item must have changed (`spotifyPlayedOn`). A player whose sink died while
+  the SDK still ticks "playing" is recycled too.
+- **A bind that never comes up (L7, L8).** The host tells the renderer at once (`HostEvent.NeverUp`), so the start says
+  "Trenger internett" without the 10-20 s wait. `attached(pid)` is gone from the AIDL; the kill finds the process by its
+  name and our uid.
+- **The process's end (L3).** `:web` kills itself from a posted call, after its service's `onDestroy` has returned.
+- **"Telefonen" (L4, L5).** "Ta ut ledningen først" shows only after the kid picked "Telefonen" with a wired headset
+  in, never unasked. A successful Bluetooth move clears an earlier refusal. The word ends at a real change of the
+  output devices, never at the route callback's first call when it is registered.
+- **Emulator after the fixes (`aosp36`, Android 16).**
+  - `kill -9` of `:web` while paused: no line, still paused at 0:17. The next play made a fresh process at 17 s.
+  - A suspension destroyed the page, and `:web` ended itself with the posted kill. There was no "outlived its destroy"
+    line.

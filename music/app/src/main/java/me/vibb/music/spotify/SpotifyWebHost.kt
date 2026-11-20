@@ -75,6 +75,12 @@ sealed interface HostEvent {
 
     /** The page's renderer process died (`onRenderProcessGone`): the host is gone. */
     data object Gone : HostEvent
+
+    /**
+     * The page's process never came up (the bind refused, a death before it connected, a page refused twice; design 120
+     * code QA L8): no `ready` will come - the renderer's wait ends now. Main process only (RemoteSpotifyHost).
+     */
+    data object NeverUp : HostEvent
 }
 
 /** The web player as the renderer sees it (design 26c §5.2): one page, one Connect device, main thread only. */

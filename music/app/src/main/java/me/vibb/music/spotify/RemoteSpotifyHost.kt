@@ -16,8 +16,12 @@ package me.vibb.music.spotify
  *   main process ends it itself ([WebConnector.kill]: our own uid's process), and past [EXIT_GIVE_UP_MS] the next bind
  *   goes anyway (the web side refuses a second page: [WebSignal.Stale], one bind more);
  * - a death nobody asked for unbinds at once (Android would restart a bound service in an empty process) and is
- *   [HostEvent.Gone] - "Stoppet - trykk spill" - when the page was up; a bind that never came up is no `ready` (R1's
- *   20 s wait, "Trenger internett", the next tap a fresh process), never Gone;
+ *   [HostEvent.Gone] when the page was up; a bind that never came up (refused, dead before it connected, refused a
+ *   page twice) is [HostEvent.NeverUp] - the renderer's ready wait ends at once with "Trenger internett" (QA L8), the
+ *   next tap a fresh process - never Gone;
+ * - the clear asked by [clearStorage] is kept until a page has really opened with it - its first page event proves it
+ *   (code QA M1): a refused process, a death before the link or a page dropped before any event hands it on to the
+ *   next page;
  * - the page's renderer dying in `:web` (L8) is one Gone: the event, and that process's death is then an asked one.
  *
  * Events of an old page never reach a new one: each binding has its own sink, and only the current page's pass.
@@ -37,9 +41,6 @@ internal interface WebLink {
 
 /** What a web process says, on the main thread. */
 internal sealed interface WebSignal {
-    /** The process's pid. */
-    data class Attached(val pid: Int) : WebSignal
-
     /** A page event (`ready`, `notReady`, `needToken`, `state`, `error` - checked in the web process, parsed here). */
     data class Page(val event: HostEvent) : WebSignal
 
@@ -191,10 +192,25 @@ internal class RemoteSpotifyHost(
         val b = connector.bind(sink)
         if (b == null) {
             log("spotify: the web player's process couldn't be bound")
-            c.dead = true
+            neverUp(c)
             return
         }
         c.binding = b
+    }
+
+    /** [c]'s process never came up: no page, and the renderer hears it at once (QA L8) - its clear goes to the next. */
+    private fun neverUp(c: Conn) {
+        c.dead = true
+        keepClear(c)
+        after(0) { if (page === c) events?.invoke(HostEvent.NeverUp) }
+    }
+
+    /** A page dropped before it proved its clear: the next page clears (code QA M1). */
+    private fun keepClear(c: Conn) {
+        if (c.clearFirst) {
+            c.clearFirst = false
+            clearNext = true
+        }
     }
 
     private fun onConnected(c: Conn, link: WebLink) {
@@ -204,8 +220,8 @@ internal class RemoteSpotifyHost(
             return
         }
         c.link = link
+        // the clear stays asked until the page's first event proves it ran (a refused process drops it)
         link.open(fakeBase(), c.clearFirst)
-        c.clearFirst = false
         val queued = c.queue.toList()
         c.queue.clear()
         for (send in queued) send(link)
@@ -214,8 +230,10 @@ internal class RemoteSpotifyHost(
     private fun onSignal(c: Conn, s: WebSignal) {
         when (s) {
             is WebSignal.Log -> log(s.line) // a dying process's disconnect says its lines too
-            is WebSignal.Attached -> Unit
-            is WebSignal.Page -> if (c === page && c.link != null) events?.invoke(s.event)
+            is WebSignal.Page -> if (c === page && c.link != null) {
+                c.clearFirst = false // the page is up: its process cleared before it loaded
+                events?.invoke(s.event)
+            }
             WebSignal.Gone -> if (c === page) {
                 // L8: the renderer died in `:web`, which ends itself - one Gone, its process's death then an asked one
                 page = null
@@ -229,7 +247,7 @@ internal class RemoteSpotifyHost(
                 c.sink = null // that process's death is no longer this page's
                 if (c.rebinds++ >= 1) {
                     log("spotify: the web player's process refused a page twice")
-                    c.dead = true
+                    neverUp(c)
                     return
                 }
                 log("spotify: a web player's process that had a page - a fresh one")
@@ -248,21 +266,24 @@ internal class RemoteSpotifyHost(
             return
         }
         // a death nobody asked for: unbind at once (Android would restart a bound service in an empty process)
-        page = null
         c.binding?.unbind()
         c.binding = null
         awaitExit()
         if (wasUp) {
+            page = null
+            keepClear(c)
             log("spotify: the web player's process ended")
             events?.invoke(HostEvent.Gone)
         } else {
-            // M4: a bind that never came up is no `ready` - R1's wait says "Trenger internett", never "Stoppet"
+            // M4: a bind that never came up is no `ready`, never "Stoppet" - the renderer's wait ends at once (L8)
             log("spotify: the web player's process didn't come up")
+            neverUp(c)
         }
     }
 
     /** [c] goes: its page's destroy, the unbind, and the wait for its process to end before the next bind. */
     private fun end(c: Conn) {
+        keepClear(c)
         c.asked = true
         c.queue.clear()
         c.link?.destroy()

@@ -173,13 +173,13 @@ Moved from music/CLAUDE.md on 2026-11-01.
 
   **A silent player is recycled once** (`spotifyRecycles`): its process goes, and one new start plays at its place.
   This happens on:
-  - no state of ours 10 s after a play call on a page the start didn't make;
+  - no state of ours 10 s after a play call on a page that has played before;
   - the 30 s gap watch, including after an SDK resume;
-  - its process ending under a play;
-  - R5: an audio output that came or went while playing, then 8 s without a state of ours. This is vibb's
+  - its process ending under a play (while paused it goes quietly, no line);
+  - R5: an audio output that came or went while playing, then 8 s without a state of ours whose place moved on. This is vibb's
     `_go_output_rebuild`.
 
-  It never recycles on a page the failing start made, never twice without a state of ours in between, and only while
+  It never recycles a page that never played (that page goes, so the next tap gets a fresh one), never again before the last recycle played 30 s, at most 2 in 10 minutes, and only while
   the kid wants it playing (the gate open, no call). There are no new words for the kid.
 - **The web player's WebView** (26c §5.2, §7.2): one WebView in the `:web` process, `SpotifyWebHost`'s, made with the
   application context by the service and **never attached to a window** (`SourceScanTest`: `WebView(`,

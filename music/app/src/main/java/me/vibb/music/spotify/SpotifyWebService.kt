@@ -83,8 +83,8 @@ class SpotifyWebService : Service() {
     override fun onDestroy() {
         destroyed = true
         end()
-        maybeExit()
         super.onDestroy()
+        maybeExit() // posted: after ActivityThread has reported the service done (code QA L3)
     }
 
     private fun openPage(fakeBase: String?, clearFirst: Boolean, sink: ISpotifyWebEvents?) {
@@ -100,7 +100,6 @@ class SpotifyWebService : Service() {
         // the debug switch (26c §9.3): the main process's base, read only through SpotifyEndpoints' fake-homes parse;
         // a release never sets it
         if (BuildConfig.DEBUG) SpotifyEndpoints.debugBase = fakeBase
-        send(sink) { it.attached(Process.myPid()) }
         val h = SpotifyWebHost(this) { line -> main.post { events?.let { e -> send(e) { it.log(line) } } } }
         h.events = { forward(it) }
         host = h
@@ -121,6 +120,7 @@ class SpotifyWebService : Service() {
                 send(sink) { it.gone() }
                 end()
             }
+            HostEvent.NeverUp -> Unit // the main process's own word
         }
     }
 
@@ -155,8 +155,9 @@ class SpotifyWebService : Service() {
         maybeExit()
     }
 
+    /** The process ends once the page is gone and the service's onDestroy has run and returned (always posted). */
     private fun maybeExit() {
-        if (disconnected && destroyed) Process.killProcess(Process.myPid())
+        main.post { if (disconnected && destroyed) Process.killProcess(Process.myPid()) }
     }
 
     /** Only our own uid calls in (the service isn't exported; a belt). */
@@ -259,7 +260,6 @@ internal class AndroidWebConnector(context: Context) : WebConnector {
             main.post { sink.signal(s) }
         }
 
-        override fun attached(pid: Int) = post(WebSignal.Attached(pid))
 
         override fun ready(deviceId: String?) {
             if (deviceId != null && SpotifyPage.DEVICE_ID.matches(deviceId)) post(WebSignal.Page(HostEvent.Ready(deviceId)))

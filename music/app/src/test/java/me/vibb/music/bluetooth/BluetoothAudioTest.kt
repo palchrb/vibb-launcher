@@ -239,8 +239,9 @@ class BluetoothAudioTest {
     }
 
     @Test
-    fun `phoneRowLine - only under the web player, wired always, Bluetooth only after a refusal`() {
-        assertEquals(PhoneRowLine.UNPLUG, phoneRowLine(onWebPlayer = true, wired = true, bluetooth = false, refused = false))
+    fun `phoneRowLine - only under the web player, and only after the kid picked the phone and it could not move`() {
+        assertEquals(PhoneRowLine.UNPLUG, phoneRowLine(onWebPlayer = true, wired = true, bluetooth = false, refused = true))
+        assertEquals("a wired headset in use is nothing wrong (code QA L5)", null, phoneRowLine(onWebPlayer = true, wired = true, bluetooth = false, refused = false))
         assertEquals(PhoneRowLine.TURN_OFF, phoneRowLine(true, wired = false, bluetooth = true, refused = true))
         assertEquals("a Bluetooth headset the phone can still drop: the row's own line", null, phoneRowLine(true, false, bluetooth = true, refused = false))
         assertEquals("a refusal with the headset gone: nothing to say", null, phoneRowLine(true, false, bluetooth = false, refused = true))

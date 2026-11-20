@@ -68,6 +68,9 @@ import me.vibb.music.logic.itemRemaining
 import me.vibb.music.logic.spotifyNetworkLine
 import me.vibb.music.logic.spotifyPauseCause
 import me.vibb.music.logic.spotifyRecycles
+import me.vibb.music.logic.spotifyPlayedOn
+import me.vibb.music.logic.SPOTIFY_RECYCLE_PROOF_MS
+import me.vibb.music.logic.SPOTIFY_RECYCLE_WINDOW_MS
 import me.vibb.music.logic.spotifySelfResumeShown
 import me.vibb.music.logic.spotifyHeldRecently
 import me.vibb.music.media.MediaCache
@@ -447,11 +450,20 @@ internal class SpotifyRenderer(
 
     // --- design 120 (revision 2): a silent player recycled once ---
 
-    /** The page up now was made by the last start (a new process: its silence is no dead old player - R2 leaves it). */
-    private var pageFromStart = false
+    /**
+     * The page up now has never played (made since its last playing state of ours, code QA L1): its silence is no dead
+     * old player - a new process didn't help, R2 leaves it.
+     */
+    private var pageFresh = false
 
-    /** A recycle happened and no state of ours has come since: no second one (design 120 QA L1). */
+    /** A recycle happened and its player hasn't played [SPOTIFY_RECYCLE_PROOF_MS] on end yet: no second one (L1, L2). */
     private var recycleUnproven = false
+
+    /** Since when ours has played without a break, after a recycle (null: not playing, or proven). */
+    private var playingSince: Long? = null
+
+    /** When the recent recycles happened (at most [SPOTIFY_RECYCLE_MAX] in [SPOTIFY_RECYCLE_WINDOW_MS], L2). */
+    private val recycles = ArrayDeque<Long>()
 
     /** R5: an audio output came or went while playing; a state of ours is awaited. */
     private var outputTimer: (() -> Unit)? = null
@@ -1082,8 +1094,6 @@ internal class SpotifyRenderer(
         cancelGap()
         cancelIdle()
         cancelOutputWatch()
-        // design 120: whether this start makes its page (awaitReady) - a new process's silence is no dead old player
-        pageFromStart = false
         // past the gates: this start really goes out with the new order's window (qa-39-code N3)
         windowStale = false
         stepAfterStart = r.step
@@ -1299,7 +1309,7 @@ internal class SpotifyRenderer(
             // a clear in progress first: the new page must not read what it is removing (L6)
             clearing?.await()
             deviceId = null
-            pageFromStart = true
+            pageFresh = true // until it plays (code QA L1: a dropped start's page stays fresh for the next start)
             host.open()
         }
         deviceId?.let { return it }
@@ -1371,6 +1381,7 @@ internal class SpotifyRenderer(
     }
 
     private fun pause(cause: PauseCause) {
+        playingSince = null
         val s = start
         if (s != null) {
             if (s.calling) s.cancelled = true else dropStart(s)
@@ -1403,6 +1414,7 @@ internal class SpotifyRenderer(
             is HostEvent.NotReady -> ports.record("not_ready")
             is HostEvent.Error -> ports.record("error ${e.kind}") // the kind only, never the SDK's text
             HostEvent.Gone -> ports.record("gone")
+            HostEvent.NeverUp -> ports.record("never up")
             is HostEvent.NeedToken -> Unit
         }
         when (e) {
@@ -1437,18 +1449,26 @@ internal class SpotifyRenderer(
             is HostEvent.Error -> onSdkError(e.kind, e.message)
             HostEvent.Gone -> {
                 deviceId = null
-                val playing = start != null || pwr || tracker.mode == Mode.OURS || tracker.mode == Mode.STARTING
                 if (tracker.mode == Mode.OURS || tracker.mode == Mode.STARTING) tracker.lost()
-                if (start != null) {
-                    sdkProblem = SpotifyProblem.STOPPED
-                    readyWait?.complete(null)
-                } else if (playing) {
+                when {
+                    start != null -> {
+                        sdkProblem = SpotifyProblem.STOPPED
+                        readyWait?.complete(null)
+                    }
                     // design 120 (revision 2): its process ended under a play the kid wants - a new one, once, at the
                     // place (the same rules as a silent player); else "Stoppet - trykk spill" as before
-                    silent(freshPage = false, otherwise = SpotifyProblem.STOPPED, why = "the web player's process ended")
+                    pwr -> silent(freshPage = false, otherwise = SpotifyProblem.STOPPED, why = "the web player's process ended")
+                    else -> {
+                        // paused: nothing the kid needs to know (code QA M3) - the page goes quietly, the next play makes
+                        // a fresh one at the place
+                        ports.log("spotify: the web player's process ended while paused - a new one at the next play")
+                        heldByPage = false
+                        destroyHost()
+                    }
                 }
                 changed()
             }
+            HostEvent.NeverUp -> readyWait?.complete(null) // its process never came up: the start's wait ends now (L8)
         }
     }
 
@@ -1532,7 +1552,12 @@ internal class SpotifyRenderer(
             if (snap is SdkState) snap.durationMs?.let { stateDuration = it }
             if (m.playing) {
                 lastOursAt = m.atMs
-                recycleUnproven = false // the player plays: a later silence may recycle it once more
+                pageFresh = false
+                // a recycled player that plays on end for a while is healthy again: a later silence may recycle it (L2)
+                val since = playingSince ?: m.atMs.also { playingSince = it }
+                if (recycleUnproven && m.atMs - since >= SPOTIFY_RECYCLE_PROOF_MS) recycleUnproven = false
+            } else {
+                playingSince = null
             }
         }
         apply(events)
@@ -1808,7 +1833,7 @@ internal class SpotifyRenderer(
             firstStateTimer = null
             if (pwr && tracker.mode == Mode.STARTING && start == null) {
                 ports.log("spotify: no state of ours after the play call (${ports.now() - firstStateArmedAt} ms)")
-                silent(freshPage = pageFromStart)
+                silent(freshPage = pageFresh)
             }
         }
     }
@@ -1854,17 +1879,28 @@ internal class SpotifyRenderer(
         otherwise: SpotifyProblem = SpotifyProblem.UNREACHABLE,
         why: String = "the web player gave no state",
     ) {
-        val recycles = spotifyRecycles(
-            wanted = pwr && !ended, mayPlay = ports.mayPlay(), inCall = inCall, detached = detached,
-            network = ports.networkLine() == null, freshPage = freshPage, unproven = recycleUnproven,
-        )
-        if (!recycles) {
-            if (recycleUnproven || freshPage) ports.log("spotify: a new web player didn't help - no other")
-            return fail(otherwise)
+        val now = ports.now()
+        while (recycles.isNotEmpty() && now - recycles.first() >= SPOTIFY_RECYCLE_WINDOW_MS) recycles.removeFirst()
+        val wanted = pwr && !ended
+        val mayPlay = ports.mayPlay()
+        val network = ports.networkLine() == null
+        val gatesOpen = spotifyRecycles(wanted, mayPlay, inCall, detached, network, freshPage = false, unproven = false)
+        if (!spotifyRecycles(wanted, mayPlay, inCall, detached, network, freshPage, recycleUnproven, recycles.size)) {
+            fail(otherwise)
+            if (gatesOpen) {
+                // a new process didn't help (or it keeps dying): no automatic other, but the dead page goes with its
+                // process, so the kid's next tap gets a fresh one instead of the same silence (code QA M2)
+                ports.log("spotify: a new web player didn't help - no other, the next tap gets a fresh one")
+                destroyHost()
+                changed()
+            }
+            return
         }
         ports.log("spotify: $why - a new one, once")
         ports.record("recycle")
+        recycles.addLast(now)
         recycleUnproven = true
+        playingSince = null
         val at = startPosition()
         cancelFirstState()
         cancelGap()
@@ -1888,13 +1924,21 @@ internal class SpotifyRenderer(
     fun outputChanged() {
         if (released || detached || !pwr || ended || start != null || tracker.mode != Mode.OURS) return
         val at = ports.now()
+        val before = tracker.measured
         ports.log("spotify: an audio output came or went while playing - a state within ${SPOTIFY_OUTPUT_STATE_MS / 1000} s")
         cancelOutputWatch()
         if (host.alive) host.call("state")
         outputTimer = ports.after(SPOTIFY_OUTPUT_STATE_MS) {
             outputTimer = null
-            if (pwr && !ended && tracker.mode == Mode.OURS && start == null && lastOursAt < at) {
-                ports.log("spotify: no state of ours after the output change")
+            if (!pwr || ended || tracker.mode != Mode.OURS || start != null) return@after
+            // a state alone is no proof: its place must have moved on (code QA L6)
+            val m = tracker.measured
+            val moved = m != null && spotifyPlayedOn(
+                at, before?.index, before?.positionMs ?: 0, before?.atMs ?: at, before?.playing == true,
+                m.index, m.positionMs, m.atMs, m.playing,
+            )
+            if (!moved) {
+                ports.log("spotify: no state of ours playing on after the output change")
                 silent(freshPage = false)
             }
         }
@@ -1953,6 +1997,7 @@ internal class SpotifyRenderer(
         if (tracker.mode == Mode.OURS || tracker.mode == Mode.STARTING) tracker.lost()
         if (host.alive) host.destroy()
         deviceId = null
+        pageFresh = false
         readyWait?.complete(null)
     }
 

@@ -139,12 +139,48 @@ class RemoteSpotifyHostTest {
         host.open()
         proc(0).connect()
         assertEquals("open clear=true base=http://10.0.2.2:8731/", proc(0).calls.first())
+        proc(0).sink.signal(WebSignal.Page(HostEvent.NeedToken(1))) // the page is up: its process cleared first
         host.destroy()
         proc(0).end()
         advance(RemoteSpotifyHost.EXIT_POLL_MS)
         host.open()
         proc(1).connect()
         assertEquals("one clear only", "open clear=false base=http://10.0.2.2:8731/", proc(1).calls.first())
+    }
+
+    @Test
+    fun `code QA M1 - a clear is kept until a page opened with it - across a refused process and a death before the link`() {
+        host.clearStorage {}
+        host.open()
+        proc(0).connect()
+        assertEquals("open clear=true base=null", proc(0).calls.single())
+        proc(0).sink.signal(WebSignal.Stale) // that process had a page: it dropped the open, the clear with it
+        proc(0).end()
+        proc(1).connect()
+        assertEquals("the rebind clears", "open clear=true base=null", proc(1).calls.single())
+        proc(1).sink.signal(WebSignal.Page(HostEvent.NeedToken(1)))
+        host.destroy()
+        proc(1).end()
+
+        host.clearStorage {}
+        host.open()
+        advance(RemoteSpotifyHost.EXIT_POLL_MS)
+        proc(2).end() // died before it connected
+        advance(0)
+        assertEquals(HostEvent.NeverUp, events.last())
+        host.destroy()
+        advance(RemoteSpotifyHost.EXIT_POLL_MS)
+        host.open()
+        proc(3).connect()
+        assertEquals("the next page clears", "open clear=true base=null", proc(3).calls.single())
+
+        // a page dropped before any event of it (R1's wait ran out) hands its clear on too
+        host.destroy()
+        proc(3).end()
+        advance(RemoteSpotifyHost.EXIT_POLL_MS)
+        host.open()
+        proc(4).connect()
+        assertEquals("open clear=true base=null", proc(4).calls.single())
     }
 
     @Test
@@ -191,7 +227,7 @@ class RemoteSpotifyHostTest {
     }
 
     @Test
-    fun `an unasked death is one Gone and unbinds at once - a bind that never came up is none (QA M4)`() {
+    fun `an unasked death is one Gone and unbinds at once - a bind that never came up is NeverUp, never Gone (QA M4, L8)`() {
         host.open()
         proc(0).connect()
         proc(0).end()
@@ -203,8 +239,10 @@ class RemoteSpotifyHostTest {
         host.open()
         advance(RemoteSpotifyHost.EXIT_POLL_MS)
         proc(1).end() // a null binding, or the process died before it was connected
-        assertEquals("no Gone: R1's wait says trenger internett", 1, events.size)
+        advance(0)
+        assertEquals("no Gone: the renderer's wait ends at once", listOf(HostEvent.Gone, HostEvent.NeverUp), events)
         assertFalse(proc(1).bound)
+        assertTrue("the page stays until the renderer drops it", host.alive)
         host.destroy() // the renderer's R1 path: nothing to end
         advance(RemoteSpotifyHost.EXIT_POLL_MS)
 
@@ -212,9 +250,13 @@ class RemoteSpotifyHostTest {
         host.open()
         assertTrue("a refused bind: no ready, no Gone", host.alive)
         host.call("pause")
-        assertEquals(1, events.size)
+        advance(0)
+        assertEquals(HostEvent.NeverUp, events.last())
+        assertEquals(3, events.size)
         host.destroy()
         assertFalse(host.alive)
+        advance(0)
+        assertEquals("never after the page went", 3, events.size)
     }
 
     @Test
@@ -243,6 +285,7 @@ class RemoteSpotifyHostTest {
         proc(1).sink.signal(WebSignal.Stale)
         proc(1).end()
         assertEquals("only once more", 2, connector.procs.size)
-        assertTrue(events.isEmpty())
+        advance(0)
+        assertEquals("then no page: the renderer's wait ends", listOf<HostEvent>(HostEvent.NeverUp), events)
     }
 }
