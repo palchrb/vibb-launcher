@@ -246,9 +246,10 @@ class HomeGridAdapter(
 
 /**
  * The grid's gaps (8 dp between columns, 14 dp between rows) without changing the cell widths
- * GridLayoutManager hands out: each column gives up the same width.
+ * GridLayoutManager hands out: each column gives up the same width. The row gap is read at each layout: Home squeezes
+ * it when the rows only just overflow ([rowGapToFit]).
  */
-class GridGapDecoration(private val columnGapPx: Int, private val rowGapPx: Int, private val columns: () -> Int) :
+class GridGapDecoration(private val columnGapPx: Int, private val rowGapPx: () -> Int, private val columns: () -> Int) :
     RecyclerView.ItemDecoration() {
     override fun getItemOffsets(outRect: Rect, view: View, parent: RecyclerView, state: RecyclerView.State) {
         val position = parent.getChildAdapterPosition(view)
@@ -257,7 +258,7 @@ class GridGapDecoration(private val columnGapPx: Int, private val rowGapPx: Int,
         val column = position % n
         outRect.left = column * columnGapPx / n
         outRect.right = columnGapPx - (column + 1) * columnGapPx / n
-        outRect.top = if (position >= n) rowGapPx else 0
+        outRect.top = if (position >= n) rowGapPx() else 0
     }
 }
 
