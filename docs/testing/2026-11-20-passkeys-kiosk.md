@@ -243,3 +243,21 @@ overlay. Recheck with the `cmd overlay lookup` line below on a new Android or Pl
 - **Whether the parent can set Bitwarden as the preferred service in a pause.** Here it was set before Vibb was Device
   Owner. The managed `compat34` carries `DISALLOW_CONFIG_CREDENTIALS`, which may gray out that Settings page.
 - **Android 17**, and Bitwarden's autofill for passwords in the kiosk.
+
+## The Jelly Star, 2026-11-20 (0.41.0), and the fix (`jelly-round-2`)
+
+- **Found on the phone:** Android 16 started `com.android.credentialmanager/.CredentialSelectorActivity` (AOSP's
+  sheet, no Google overlay), and lock task swapped it for `BlockedAppActivity`. The log's "Kiosk app block helpers"
+  had `CREDENTIAL_SELECTOR=null`: the OEM string is the placeholder "com.android.config oem CredentialManager Dialog
+  Component" (no "/"), and the platform's string gave nothing usable to the launcher either.
+- **Fix:** `credentialSelectorPackage` takes an `installedSystem` check. When neither config names a component whose
+  package is an installed system app, the selector is `com.android.credentialmanager` if that is an installed system
+  app. The forbidden and Play-core rules still apply after it (`lockTaskHelpers`), so Play services is never pinned.
+- **The log:** the "Kiosk app block helpers" line now ends with both raw config values
+  (`config_oemCredentialManagerDialogComponent="..."`, `config_credentialManagerDialogComponent=...`; `<no resource>`
+  or `<unreadable: ...>` when the launcher can't read one), once per apply.
+- **Tests:** `LockTaskHelpersTest`'s fallback row: the Jelly Star's placeholder, both configs unreadable, a malformed
+  string, a config naming a package that isn't installed, AOSP's selector missing, and the fallback through the
+  forbidden rule.
+- **Owed on the Jelly Star:** after the next release, the log line's two raw values, and a Bitwarden passkey in the
+  login window with the kiosk on.

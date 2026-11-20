@@ -1339,7 +1339,11 @@ object AppEnforcer {
     internal fun resolveLockTaskHelpers(context: Context): Set<String> {
         val (resolved, forbidden) = resolveHelpers(context)
         val helpers = lockTaskHelpers(resolved, forbidden)
-        Log.i(LOG_TAG, "Kiosk app block helpers: $resolved -> $helpers (forbidden $forbidden)")
+        Log.i(
+            LOG_TAG,
+            "Kiosk app block helpers: $resolved -> $helpers (forbidden $forbidden); credential selector config: " +
+                CREDENTIAL_CONFIGS.joinToString { "$it=${systemStringRaw(it)}" },
+        )
         // Design 16d: the recents provider on its own line for the device checks (Jelly Star).
         val recents = resolved[HelperKind.RECENTS]
         Log.i(
@@ -1500,16 +1504,32 @@ object AppEnforcer {
         return resolved to forbidden
     }
 
-    /** [HelperKind.CREDENTIAL_SELECTOR]: the framework's two config strings, read as AOSP's `IntentFactory` reads them
-     * ([credentialSelectorPackage]). */
-    private fun credentialSelector(context: Context): String? {
-        fun config(name: String): String? = try {
-            val res = android.content.res.Resources.getSystem()
-            res.getIdentifier(name, "string", "android").takeIf { it != 0 }?.let { res.getString(it) }
-        } catch (e: Exception) {
-            null
+    /** The framework's two Credential Manager selector configs: the OEM's (Android 15+) and the platform's. */
+    private val CREDENTIAL_CONFIGS = listOf("config_oemCredentialManagerDialogComponent", "config_credentialManagerDialogComponent")
+
+    /** A framework string resource by name, `null` when the resource is missing or unreadable. */
+    private fun systemString(name: String): String? = try {
+        val res = android.content.res.Resources.getSystem()
+        res.getIdentifier(name, "string", "android").takeIf { it != 0 }?.let { res.getString(it) }
+    } catch (e: Exception) {
+        null
+    }
+
+    /** [systemString] for the log, with why it is missing (passkeys on the Jelly Star, 2026-11-20). */
+    private fun systemStringRaw(name: String): String = try {
+        val res = android.content.res.Resources.getSystem()
+        when (val id = res.getIdentifier(name, "string", "android")) {
+            0 -> "<no resource>"
+            else -> "\"${res.getString(id)}\""
         }
-        val oem = config("config_oemCredentialManagerDialogComponent")?.takeIf { it.isNotBlank() }
+    } catch (e: Exception) {
+        "<unreadable: ${e.javaClass.simpleName}>"
+    }
+
+    /** [HelperKind.CREDENTIAL_SELECTOR]: the framework's two config strings, read as AOSP's `IntentFactory` reads them,
+     * with AOSP's own selector when neither names a usable component ([credentialSelectorPackage]). */
+    private fun credentialSelector(context: Context): String? {
+        val oem = systemString(CREDENTIAL_CONFIGS[0])?.takeIf { it.isNotBlank() }
         val oemEnabled = oem?.let { ComponentName.unflattenFromString(it) }?.let { component ->
             try {
                 val pm = context.packageManager
@@ -1523,7 +1543,9 @@ object AppEnforcer {
                 false
             }
         } ?: false
-        return credentialSelectorPackage(oem, oemEnabled, config("config_credentialManagerDialogComponent"))
+        return credentialSelectorPackage(oem, oemEnabled, systemString(CREDENTIAL_CONFIGS[1])) { pkg ->
+            helperInfo(context, pkg)?.system == true
+        }
     }
 
     /** See [EnforcementPlan.lockDateTime]. Automatic time is turned on first, so a clock that
