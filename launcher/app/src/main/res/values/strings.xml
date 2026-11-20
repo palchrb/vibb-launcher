@@ -466,6 +466,7 @@
     <string name="bluetooth_devices_connected">Connected</string>
     <string name="bluetooth_devices_pairing">Pairing…</string>
     <string name="bluetooth_devices_pair_failed">Couldn\'t pair with this device.</string>
+    <string name="bluetooth_devices_grown_up">Needs a grown-up</string>
     <string name="bluetooth_devices_forget">Forget</string>
     <string name="bluetooth_devices_connect">Connect</string>
     <string name="bluetooth_devices_disconnect">Disconnect</string>

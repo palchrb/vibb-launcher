@@ -58,15 +58,16 @@ class Application : android.app.Application() {
     // TODO: only update specific apps
     private val launcherAppsCallback = object : LauncherApps.Callback() {
         override fun onPackageRemoved(p0: String?, p1: UserHandle?) {
-            if (p0 == com.kidslauncher.mdm.assistant.SETTINGS_PACKAGE && com.kidslauncher.mdm.assistant.AirplaneRoute.inFlight) return
+            if (p0 == com.kidslauncher.mdm.assistant.SETTINGS_PACKAGE && (com.kidslauncher.mdm.assistant.AirplaneRoute.inFlight || com.kidslauncher.mdm.server.BtPairingWindow.inFlight)) return
             evictIcons(p0)
             loadApps(listOfNotNull(p0))
             clockAppChanged(p0)
         }
 
         override fun onPackageAdded(p0: String?, p1: UserHandle?) {
-            // Design 98 §2.2 step 4: Settings unhidden for a Flymodus turn-on's second is the route's, not an install.
-            if (p0 == com.kidslauncher.mdm.assistant.SETTINGS_PACKAGE && com.kidslauncher.mdm.assistant.AirplaneRoute.inFlight) return
+            // Design 98 §2.2 step 4: Settings unhidden for a Flymodus turn-on's second is the route's, not an install; design
+            // 122: so is Settings unhidden for a Bluetooth pairing window.
+            if (p0 == com.kidslauncher.mdm.assistant.SETTINGS_PACKAGE && (com.kidslauncher.mdm.assistant.AirplaneRoute.inFlight || com.kidslauncher.mdm.server.BtPairingWindow.inFlight)) return
             evictIcons(p0)
             loadApps(listOfNotNull(p0))
             clockAppChanged(p0)
@@ -95,7 +96,7 @@ class Application : android.app.Application() {
         }
 
         override fun onPackageChanged(p0: String?, p1: UserHandle?) {
-            if (p0 == com.kidslauncher.mdm.assistant.SETTINGS_PACKAGE && com.kidslauncher.mdm.assistant.AirplaneRoute.inFlight) return
+            if (p0 == com.kidslauncher.mdm.assistant.SETTINGS_PACKAGE && (com.kidslauncher.mdm.assistant.AirplaneRoute.inFlight || com.kidslauncher.mdm.server.BtPairingWindow.inFlight)) return
             evictIcons(p0)
             loadApps(listOfNotNull(p0))
             clockAppChanged(p0)
@@ -396,6 +397,8 @@ class Application : android.app.Application() {
         Thread {
             try {
                 com.kidslauncher.mdm.assistant.AirplaneRoute.putBackIfMarked(this)
+                // Design 122: the same for a Bluetooth pairing window.
+                com.kidslauncher.mdm.server.BtPairingWindow.putBackIfMarked(this)
                 com.kidslauncher.mdm.assistant.AirplaneRuntime.reconcile(this)
                 // §3.5: a Wi-Fi step left open by a process death ends (airplane mode off again).
                 com.kidslauncher.mdm.assistant.AssistantSetup.atProcessStart(this)

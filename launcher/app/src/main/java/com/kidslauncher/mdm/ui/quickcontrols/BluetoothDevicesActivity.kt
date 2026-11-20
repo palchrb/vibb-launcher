@@ -18,6 +18,7 @@ import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.databinding.ActivityBluetoothDevicesBinding
 import com.kidslauncher.mdm.server.BT_ATTEMPT_TIMEOUT_MS
 import com.kidslauncher.mdm.server.BluetoothAudio
+import com.kidslauncher.mdm.server.BtPairingWindow
 import com.kidslauncher.mdm.server.BtAttemptEnd
 import com.kidslauncher.mdm.server.BtAttemptEvent
 import com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
@@ -31,9 +32,11 @@ import com.kidslauncher.mdm.server.cachedPolicy
 import com.kidslauncher.mdm.ui.kidsettings.SubPage
 import com.kidslauncher.mdm.ui.kidsettings.SubPageGuard
 import com.kidslauncher.mdm.ui.look.KidPageActivity
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Design 111 (code QA L3): whether a start runs a discovery - the page's first, or one cut short by a stop, but never
@@ -53,11 +56,11 @@ internal fun btStartScans(firstStart: Boolean, rescan: Boolean, busy: Boolean): 
  * til…" until it connects, the call is refused, A2DP gives up (CONNECTING -> DISCONNECTED) or 10 s
  * pass - then "Fikk ikke kontakt med <name> - er den på?" ([btAttemptStep]).
  *
- * Note the one thing this screen genuinely can't do anything about: for devices that don't use
- * "Just Works" pairing, Android's own system pairing-confirmation dialog still appears over this
- * screen during [onPairTapped] - that's rendered by the Bluetooth stack itself, and suppressing it
- * needs `BLUETOOTH_PRIVILEGED`, a signature permission no non-preinstalled app can hold. Settings
- * hits the same dialog, so this isn't a regression, just not fully invisible like the WiFi flow.
+ * Android's own pairing dialog (Settings' `BluetoothPairingDialog`) still answers the bond [onPairTapped] starts:
+ * answering it needs `BLUETOOTH_PRIVILEGED`, which no non-preinstalled app can hold. In the kiosk lock task blocks
+ * that dialog, so the tap arms design 122's pairing window ([BtPairingWindow]): Settings pinned for a confirm-only
+ * request while this page is started, closed at the bond's end, this page's stop, the screen off or 30 s. A device that
+ * wants a PIN or a passkey typed gets "Trenger en voksen" on its row.
  */
 class BluetoothDevicesActivity : KidPageActivity() {
     private lateinit var binding: ActivityBluetoothDevicesBinding
@@ -132,6 +135,9 @@ class BluetoothDevicesActivity : KidPageActivity() {
         super.onStart()
         if (guard.start()) return
         dropUnoffered()
+        // Design 122: the pairing window opens only while this page is started; its stop closes it.
+        BtPairingWindow.pageStarted { adapter.setGrownUp(BtPairingWindow.grownUpDevices()) }
+        adapter.setGrownUp(BtPairingWindow.grownUpDevices())
         session = BluetoothAudio.Session(this)
         if (btStartScans(firstStart, rescan, busy = pairingAddress != null || attempts.isNotEmpty())) {
             firstStart = false
@@ -149,6 +155,7 @@ class BluetoothDevicesActivity : KidPageActivity() {
 
     /** Discovery ends with the page leaving the screen (design 111 §2.2): it can sit stopped in Kid Settings' card. */
     override fun onStop() {
+        BtPairingWindow.pageStopped(this)
         guard.stop()
         if (scanning) {
             rescan = true
@@ -327,11 +334,20 @@ class BluetoothDevicesActivity : KidPageActivity() {
         }
         pairingAddress = device.address
         adapter.setPairing(device.address)
-        val started = QuickControls.pairBluetoothDevice(this, device.address)
-        if (!started) {
-            pairingAddress = null
-            adapter.setPairing(null)
-            Toast.makeText(this, R.string.bluetooth_devices_pair_failed, Toast.LENGTH_LONG).show()
+        BtPairingWindow.pairTapped(device.address)
+        adapter.setGrownUp(BtPairingWindow.grownUpDevices())
+        val app = applicationContext
+        lifecycleScope.launch {
+            // Design 122: the window armed (Settings unhidden where it is hidden) before the bond's request is sent.
+            val started = withContext(Dispatchers.IO) {
+                BtPairingWindow.arm(app, device.address)
+                QuickControls.pairBluetoothDevice(app, device.address).also { if (!it) BtPairingWindow.bondNotStarted(app) }
+            }
+            if (!started) {
+                pairingAddress = null
+                adapter.setPairing(null)
+                Toast.makeText(this@BluetoothDevicesActivity, R.string.bluetooth_devices_pair_failed, Toast.LENGTH_LONG).show()
+            }
         }
         // The real outcome (bonded/failed) arrives asynchronously via ACTION_BOND_STATE_CHANGED,
         // handled in registerStateReceiver() - createBond() returning true here only means
@@ -388,7 +404,8 @@ class BluetoothDevicesActivity : KidPageActivity() {
         if (device.address == pairingAddress && bondState != BluetoothDevice.BOND_BONDING) {
             pairingAddress = null
             adapter.setPairing(null)
-            if (bondState != BluetoothDevice.BOND_BONDED) {
+            // Design 122: a device that needs a grown-up says so on its row, not as a failure.
+            if (bondState != BluetoothDevice.BOND_BONDED && !BtPairingWindow.needsGrownUp(device.address)) {
                 Toast.makeText(this, R.string.bluetooth_devices_pair_failed, Toast.LENGTH_LONG).show()
             }
         }

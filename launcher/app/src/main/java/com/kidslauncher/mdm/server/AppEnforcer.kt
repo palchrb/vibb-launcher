@@ -506,6 +506,9 @@ object AppEnforcer {
                 overrideNow = overrideActive, overrideBefore = lastEnforcedOverride,
             ),
         )
+        // Design 122: a Bluetooth pairing window that is over closes, and every one under a time rule, a pause or the
+        // override.
+        BtPairingWindow.duringApply(context, ruleEnds = scheduleLocked || overrideActive)
         val loginWindowOpen = com.kidslauncher.mdm.logins.LoginWindow.isOpen(context)
         // The role's Chrome (the plan's `roleApp`): its hide step re-reads the window under the window's lock (M3).
         val roleChrome = browser.ready && allowlist != null && !overrideActive && com.kidslauncher.mdm.logins.CHROME_PACKAGE !in allowlist
@@ -625,6 +628,9 @@ object AppEnforcer {
                 if (hideCall) {
                     val hiddenOk = if (roleChrome && packageName == com.kidslauncher.mdm.logins.CHROME_PACKAGE) {
                         com.kidslauncher.mdm.logins.LoginWindow.chromeStep(context, dpm, admin, playState.updateWindow)
+                    } else if (packageName == com.kidslauncher.mdm.assistant.SETTINGS_PACKAGE) {
+                        // Design 122: an armed or open Bluetooth pairing window keeps Settings unhidden (its lock).
+                        BtPairingWindow.settingsHideStep(dpm, admin, shouldBeHidden)
                     } else {
                         dpm.setApplicationHidden(admin, packageName, shouldBeHidden)
                     }
