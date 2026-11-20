@@ -129,10 +129,10 @@ class HomeModelTest {
 
     @Test
     fun `grid metrics scale from the mockup`() {
-        // The mockup: 288 dp content, 3 columns -> 60 dp icons, 13 sp labels.
+        // The mockup: 288 dp content, 3 columns -> 60 dp icons, 11.5 sp labels (13 sp until 2026-11-20).
         gridMetrics(288f, 3).let {
             assertEquals(60, it.iconDp)
-            assertEquals(13f, it.labelSp, 0.001f)
+            assertEquals(11.5f, it.labelSp, 0.001f)
             assertEquals(14, it.rowGapDp)
             assertEquals(8, it.columnGapDp)
             assertEquals(24, it.badgeDp)
@@ -143,14 +143,14 @@ class HomeModelTest {
         // Narrow: the 48 dp floor, but never wider than the cell minus 6.
         gridMetrics(240f, 3).let {
             assertEquals(50, it.iconDp)
-            assertEquals(12f, it.labelSp, 0.001f)
+            assertEquals(11f, it.labelSp, 0.001f)
         }
         assertEquals(48, gridMetrics(240f, 4).iconDp) // cell 54
         assertEquals(38, gridMetrics(200f, 4).iconDp) // cell 44: the cell wins over the floor
-        // Wide: scaled, capped at 76 dp and 15 sp.
+        // Wide: scaled, capped at 76 dp and 13 sp.
         gridMetrics(360f, 3).let {
             assertEquals(75, it.iconDp)
-            assertEquals(15f, it.labelSp, 0.001f)
+            assertEquals(13f, it.labelSp, 0.001f)
         }
         assertEquals(75, gridMetrics(360f, 4).iconDp) // cell 84
         assertEquals(76, gridMetrics(480f, 3).iconDp)

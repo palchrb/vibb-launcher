@@ -66,16 +66,31 @@ enum class HelperKind {
     CREDENTIAL_SELECTOR,
 }
 
+/** AOSP's own Credential Manager selector package, the platform's default since Android 14. */
+const val AOSP_CREDENTIAL_SELECTOR = "com.android.credentialmanager"
+
 /**
  * The package of the Credential Manager selector Android starts, by AOSP's rule (`IntentFactory`): the OEM's component
  * ([oemComponent], `config_oemCredentialManagerDialogComponent`, Android 15+) when it is set and its activity is
  * [oemEnabled], else the platform's ([defaultComponent], `config_credentialManagerDialogComponent`). Each is a
- * flattened component (`package/class`); `null` when neither names one.
+ * flattened component (`package/class`) whose package must be [installedSystem].
+ *
+ * When neither names a usable component - a placeholder without "/" (the Jelly Star's OEM string on Android 16), a
+ * string the launcher can't read, a package that isn't an installed system app - it is AOSP's
+ * [AOSP_CREDENTIAL_SELECTOR] when that is an installed system app (the one the Jelly Star starts), else `null`. The
+ * forbidden and Play-core rules still apply afterwards ([lockTaskHelpers]).
  */
-fun credentialSelectorPackage(oemComponent: String?, oemEnabled: Boolean, defaultComponent: String?): String? {
+fun credentialSelectorPackage(
+    oemComponent: String?,
+    oemEnabled: Boolean,
+    defaultComponent: String?,
+    installedSystem: (String) -> Boolean,
+): String? {
     fun pkg(component: String?): String? =
         component?.trim()?.takeIf { '/' in it }?.substringBefore('/')?.takeIf { it.isNotBlank() }
-    return pkg(oemComponent)?.takeIf { oemEnabled } ?: pkg(defaultComponent)
+    val named = pkg(oemComponent)?.takeIf { oemEnabled } ?: pkg(defaultComponent)
+    if (named != null && installedSystem(named)) return named
+    return AOSP_CREDENTIAL_SELECTOR.takeIf(installedSystem)
 }
 
 /** SystemUI's Emergency SOS intent action (`EmergencyGesture.ACTION_LAUNCH_EMERGENCY`). */

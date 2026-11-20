@@ -93,18 +93,44 @@ class LockTaskHelpersTest {
     private val aospSelector = "com.android.credentialmanager/com.android.credentialmanager.CredentialSelectorActivity"
     private val gmsSelector = "com.google.android.gms/.identitycredentials.ui.CredentialChooserActivity"
 
+    /** Both selectors installed as system apps, as on a Google phone. */
+    private val bothInstalled: (String) -> Boolean = { it == "com.android.credentialmanager" || it == "com.google.android.gms" }
+    private val noneInstalled: (String) -> Boolean = { false }
+
     @Test
     fun `the credential selector is the one Android starts - the OEM's when set and enabled, else AOSP's`() {
         // Android 14 (compat34): no OEM config at all.
-        assertEquals("com.android.credentialmanager", credentialSelectorPackage(null, oemEnabled = false, defaultComponent = aospSelector))
+        assertEquals("com.android.credentialmanager", credentialSelectorPackage(null, oemEnabled = false, defaultComponent = aospSelector, bothInstalled))
         // Android 16 with Google's config overlay (jelly36): Play services' sheet.
-        assertEquals("com.google.android.gms", credentialSelectorPackage(gmsSelector, oemEnabled = true, defaultComponent = aospSelector))
+        assertEquals("com.google.android.gms", credentialSelectorPackage(gmsSelector, oemEnabled = true, defaultComponent = aospSelector, bothInstalled))
         // The OEM's component set but disabled or missing: AOSP's, as IntentFactory falls back.
-        assertEquals("com.android.credentialmanager", credentialSelectorPackage(gmsSelector, oemEnabled = false, defaultComponent = aospSelector))
-        // Blank or malformed config strings name nothing.
-        assertEquals("com.android.credentialmanager", credentialSelectorPackage("  ", oemEnabled = true, defaultComponent = aospSelector))
-        assertEquals(null, credentialSelectorPackage("no-slash", oemEnabled = true, defaultComponent = "/x"))
-        assertEquals(null, credentialSelectorPackage(null, oemEnabled = false, defaultComponent = null))
+        assertEquals("com.android.credentialmanager", credentialSelectorPackage(gmsSelector, oemEnabled = false, defaultComponent = aospSelector, bothInstalled))
+        // Blank config strings name nothing.
+        assertEquals("com.android.credentialmanager", credentialSelectorPackage("  ", oemEnabled = true, defaultComponent = aospSelector, bothInstalled))
+    }
+
+    @Test
+    fun `with neither config usable the selector is AOSP's when it is an installed system app (the Jelly Star)`() {
+        // The Jelly Star on Android 16 (0.41.0, 2026-11-20): the OEM string is a placeholder without "/", the
+        // platform's unreadable - Android starts com.android.credentialmanager/.CredentialSelectorActivity.
+        val placeholder = "com.android.config oem CredentialManager Dialog Component"
+        assertEquals("com.android.credentialmanager", credentialSelectorPackage(placeholder, oemEnabled = false, defaultComponent = null, bothInstalled))
+        assertEquals("com.android.credentialmanager", credentialSelectorPackage(placeholder, oemEnabled = true, defaultComponent = null, bothInstalled))
+        // Both configs unreadable.
+        assertEquals("com.android.credentialmanager", credentialSelectorPackage(null, oemEnabled = false, defaultComponent = null, bothInstalled))
+        // Malformed: no package before the "/".
+        assertEquals("com.android.credentialmanager", credentialSelectorPackage("no-slash", oemEnabled = true, defaultComponent = "/x", bothInstalled))
+        // A config naming a package that isn't an installed system app is not usable either.
+        val other = "com.oem.selector/.Sheet"
+        assertEquals("com.android.credentialmanager", credentialSelectorPackage(other, oemEnabled = true, defaultComponent = null, bothInstalled))
+        assertEquals("com.oem.selector", credentialSelectorPackage(other, oemEnabled = true, defaultComponent = null) { it == "com.oem.selector" })
+        // Without AOSP's selector installed: nothing.
+        assertEquals(null, credentialSelectorPackage(placeholder, oemEnabled = false, defaultComponent = null, noneInstalled))
+        assertEquals(null, credentialSelectorPackage(null, oemEnabled = false, defaultComponent = aospSelector, noneInstalled))
+        // The fallback still meets the forbidden and Play-core rules (here: AOSP's would be pinned, Play's never).
+        val fallback = credentialSelectorPackage(placeholder, oemEnabled = false, defaultComponent = null, bothInstalled)!!
+        assertTrue(fallback in lockTaskHelpers(resolved + (HelperKind.CREDENTIAL_SELECTOR to ResolvedHelper(fallback, system = true)), forbidden))
+        assertFalse(fallback in lockTaskHelpers(mapOf(HelperKind.CREDENTIAL_SELECTOR to ResolvedHelper(fallback, system = true)), setOf(fallback)))
     }
 
     @Test

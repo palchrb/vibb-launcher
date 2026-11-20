@@ -45,6 +45,40 @@ class HomeGridAdapter(
     private var metrics: GridMetrics = gridMetrics(MOCKUP_CONTENT_DP, 3)
     private var ink: InkChoice = WallpaperStore.state.ink
 
+    /** The one size of every label in the grid, in px ([sharedLabelPx]); 0 until the first [submit]. */
+    private var labelPx: Float = 0f
+
+    /** Nunito Bold, the labels' font (`item_kid_tile.xml`), for [labelPxFor]'s measuring. */
+    private val labelPaint by lazy {
+        android.text.TextPaint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            typeface = androidx.core.content.res.ResourcesCompat.getFont(activity, R.font.nunito_bold)
+        }
+    }
+
+    /** A tile's label as [onBindViewHolder] shows it. */
+    private fun labelOf(tile: GridTile): String = when (tile) {
+        GridTile.PhoneBook -> activity.getString(R.string.calls_phone_book)
+        is GridTile.Messages -> tile.look.shownName(activity)
+        GridTile.Day -> activity.getString(R.string.day_title)
+        GridTile.Settings -> activity.getString(R.string.kid_settings_title)
+        is GridTile.App -> tile.app.label
+    }
+
+    /**
+     * The grid's one label size (the Jelly Star's layout, 2026-11-20): every label on one line at the largest size at
+     * which all of them fit the cell, the label's own [GridMetrics.labelSp] at most and [gridLabelFloorPx] at least.
+     * The line is the cell less the label's 2 dp sides and 2 px for rounding; a label wider at the floor ends in "…".
+     */
+    private fun labelPxFor(tiles: List<GridTile>, metrics: GridMetrics): Float {
+        val display = activity.resources.displayMetrics
+        val basePx = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, metrics.labelSp, display)
+        val linePx = (metrics.cellWidthDp - 4f) * display.density - 2f
+        return sharedLabelPx(tiles.map(::labelOf), basePx, gridLabelFloorPx(basePx, display.density), linePx) { text, size ->
+            labelPaint.textSize = size
+            labelPaint.measureText(text)
+        }
+    }
+
     /** Stable ids per [gridTileId], handed out once per adapter (never a hash: ids must not clash). */
     private val ids = HashMap<String, Long>()
 
@@ -69,7 +103,14 @@ class HomeGridAdapter(
     ) {
         val oldTiles = this.tiles
         val oldIcons = this.icons
-        val everything = oldTiles.isEmpty() || metrics != this.metrics || ink != this.ink
+        val labelPx = labelPxFor(tiles, metrics)
+        if (labelPx != this.labelPx) {
+            // For the device checks: the labels' own size against the shared one (a normal grid never shrinks).
+            val base = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, metrics.labelSp, activity.resources.displayMetrics)
+            android.util.Log.i("HomeGrid", "Labels: ${metrics.labelSp} sp = $base px, shared $labelPx px")
+        }
+        val everything = oldTiles.isEmpty() || metrics != this.metrics || ink != this.ink || labelPx != this.labelPx
+        this.labelPx = labelPx
         this.tiles = tiles
         this.infos = infos
         this.icons = icons
@@ -134,8 +175,9 @@ class HomeGridAdapter(
             }
         }
 
-        /** Sizes from [gridMetrics]: icon, a frame 4 dp taller for the badge, label size. */
-        fun applyMetrics(m: GridMetrics) {
+        /** Sizes from [gridMetrics]: icon, a frame 4 dp taller for the badge; the label at the grid's shared size
+         * ([labelPx], before the first [submit] the metrics' own). */
+        fun applyMetrics(m: GridMetrics, sharedPx: Float) {
             val context = itemView.context
             val iconPx = KidAvatars.dp(context, m.iconDp.toFloat())
             val framePx = KidAvatars.dp(context, minOf(m.cellWidthDp, m.iconDp + 24f))
@@ -147,14 +189,18 @@ class HomeGridAdapter(
                 width = iconPx
                 height = iconPx
             }
-            label.setTextSize(TypedValue.COMPLEX_UNIT_SP, m.labelSp)
+            if (sharedPx > 0f) {
+                label.setTextSize(TypedValue.COMPLEX_UNIT_PX, sharedPx)
+            } else {
+                label.setTextSize(TypedValue.COMPLEX_UNIT_SP, m.labelSp)
+            }
             PressFeedback.cellBackground(itemView, iconPx, KidAvatars.dp(context, PressFeedback.TILE_ICON_TOP_DP))
         }
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) =
         ViewHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_kid_tile, parent, false))
-            .also { it.applyMetrics(metrics) }
+            .also { it.applyMetrics(metrics, labelPx) }
 
     override fun getItemCount() = tiles.size
 
@@ -199,7 +245,7 @@ class HomeGridAdapter(
 
     override fun onBindViewHolder(holder: ViewHolder, position: Int) {
         val context = holder.itemView.context
-        holder.applyMetrics(metrics)
+        holder.applyMetrics(metrics, labelPx)
         KidInk.label(holder.label, ink)
         // Only the flashlight has a state; a recycled view starts without one.
         holder.itemView.stateDescription = null

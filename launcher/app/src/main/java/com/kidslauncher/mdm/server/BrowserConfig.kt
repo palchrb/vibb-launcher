@@ -124,8 +124,11 @@ object BrowserConfig {
                         state(prefs, "failed", "readback")
                         continue
                     }
+                    // The allowlist really written, the captcha set included (code QA L2): a captcha path gone in an
+                    // update is a tightening too.
+                    val written = lockdown?.let { com.kidslauncher.mdm.logins.chromeAllowlist(it) }
                     val old = prefs.getString(KEY_WRITTEN, null)?.let(::hostsOf)
-                    if (com.kidslauncher.mdm.logins.chromeTightened(old, lockdown)) {
+                    if (com.kidslauncher.mdm.logins.chromeTightened(old, written)) {
                         // Hiding stops the package: an open tab of the looser phase ends. Design 119: a login window
                         // ends first (`tightened`); Chrome stays hidden until the next one.
                         com.kidslauncher.mdm.logins.LoginWindow.eventNow(context, com.kidslauncher.mdm.logins.WindowEvent.TIGHTENED)
@@ -133,7 +136,7 @@ object BrowserConfig {
                         Log.i(LOG_TAG, "Chrome's lockdown tightened: its tabs ended")
                     }
                     prefs.edit()
-                        .putString(KEY_WRITTEN, lockdown?.let { hosts -> kotlinx.serialization.json.JsonArray(hosts.map { kotlinx.serialization.json.JsonPrimitive(it) }).toString() })
+                        .putString(KEY_WRITTEN, written?.let { hosts -> kotlinx.serialization.json.JsonArray(hosts.map { kotlinx.serialization.json.JsonPrimitive(it) }).toString() })
                         .putLong(KEY_WRITTEN_MS, System.currentTimeMillis())
                         .apply()
                     state(prefs, "on", null)
