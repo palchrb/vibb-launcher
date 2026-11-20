@@ -40,9 +40,9 @@ class ContactBadgeLayoutTest {
         assert((0 until all.length).none { (all.item(it) as Element).getAttributeNS(ns, "id") == "@+id/contact_call_badge" })
     }
 
-    /** Mockup A: the white ring is Home's alone - gone in the layout, drawn last, shown by Home, never by the phone book. */
+    /** Mockup A: the ring is Home's alone - gone in the layout, drawn last, shown by Home, never by the phone book. */
     @Test
-    fun `the white ring is gone by default, drawn last and only Home shows it`() {
+    fun `the ring is gone by default, drawn last and only Home shows it`() {
         val ring = byId("contact_ring")
         assertEquals("gone", ring.getAttributeNS(ns, "visibility"))
         val avatar = byId("contact_avatar")
@@ -53,17 +53,34 @@ class ContactBadgeLayoutTest {
         assertEquals("false", avatar.getAttributeNS(ns, "clipChildren"))
         val main = listOf("src/main/java", "app/src/main/java").map(::File).first { it.exists() }
         val home = File(main, "com/kidslauncher/mdm/ui/HomeActivity.kt").readText()
-        assert(home.contains("bindHomeRing(item.findViewById(R.id.contact_ring), emergency, shownInk)"))
+        assert(home.contains("bindHomeRing(item.findViewById(R.id.contact_ring), emergency, pill)"))
         assert(home.contains("PressFeedback.HOME_AVATAR_ELEVATION_DP"))
         main.walkTopDown().filter { it.extension == "kt" && it.name != "HomeActivity.kt" && it.name != "KidAvatars.kt" }
             .forEach { assert(!it.readText().contains("contact_ring")) { it.name } }
     }
 
-    /** A light wallpaper (dark ink) gives the white ring its dark hairline; a dark one and an emergency avatar do not. */
+    /** The name pill (2026-11-19): the avatar, the pill over its bottom edge, then the badges' frame over both - one
+     * cell, in that order, so equal Z (PressFeedback.contact) draws them so; the pill's top is 10 dp over the avatar's
+     * bottom (6 + 76 - 10), and sizeContact keeps that at either avatar size. */
     @Test
-    fun `the ring's hairline is for a light wallpaper only`() {
-        assert(homeRingHairline(darkInk = true, isEmergency = false))
-        assert(!homeRingHairline(darkInk = false, isEmergency = false))
-        assert(!homeRingHairline(darkInk = true, isEmergency = true))
+    fun `the name pill lies over the avatar, under the badges`() {
+        val cell = byId("contact_cell")
+        val children = (0 until cell.childNodes.length).map { cell.childNodes.item(it) }.filterIsInstance<Element>()
+        assertEquals(listOf("@+id/contact_avatar", "@+id/contact_name", "@+id/contact_frame"), children.map { it.getAttributeNS(ns, "id") })
+        assertEquals("false", cell.getAttributeNS(ns, "clipChildren"))
+        assertEquals("${CONTACT_TOP_ROOM_DP}dp", byId("contact_avatar").getAttributeNS(ns, "layout_marginTop"))
+        assertEquals("${CONTACT_TOP_ROOM_DP + 76 - NAME_PILL_OVERLAP_DP}dp", byId("contact_name").getAttributeNS(ns, "layout_marginTop"))
+        assertEquals("14sp", byId("contact_name").getAttributeNS(ns, "textSize"))
+        assertEquals(listOf("3dp", "3dp"), listOf("paddingTop", "paddingBottom").map { byId("contact_name").getAttributeNS(ns, it) })
+        val main = listOf("src/main/java", "app/src/main/java").map(::File).first { it.exists() }
+        val avatars = File(main, "com/kidslauncher/mdm/ui/home/KidAvatars.kt").readText()
+        assert(avatars.contains("dp(context, (CONTACT_TOP_ROOM_DP + avatarDp - NAME_PILL_OVERLAP_DP).toFloat())"))
+        val press = File(main, "com/kidslauncher/mdm/ui/home/PressFeedback.kt").readText()
+        assert(press.contains("findViewById<View>(R.id.contact_name)?.elevation = avatar.elevation"))
+        assert(press.contains("findViewById<View>(R.id.contact_frame)?.apply"))
+        val home = File(main, "com/kidslauncher/mdm/ui/HomeActivity.kt").readText()
+        assert(home.contains("KidAvatars.bindNamePill(this, pill)"))
+        assert(home.contains("WallpaperHint.start(this, wallpaperHintListener)"))
+        assert(home.contains("WallpaperHint.stop(this)"))
     }
 }

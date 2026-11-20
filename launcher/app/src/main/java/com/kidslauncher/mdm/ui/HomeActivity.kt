@@ -86,7 +86,6 @@ import com.kidslauncher.mdm.ui.home.homePressToTop
 import com.kidslauncher.mdm.ui.home.homeResetPending
 import com.kidslauncher.mdm.ui.home.showPhoneBookTile
 import com.kidslauncher.mdm.ui.wallpaper.InkChoice
-import com.kidslauncher.mdm.ui.wallpaper.KidInk
 import com.kidslauncher.mdm.ui.wallpaper.WallpaperGround
 import com.kidslauncher.mdm.ui.wallpaper.WallpaperStore
 import com.kidslauncher.mdm.ui.home.HomeSwipe
@@ -184,6 +183,8 @@ class HomeActivity : UIObjectActivity() {
     }
     private val photoListener: () -> Unit = { renderCallParts() }
     private val wallpaperListener: () -> Unit = { renderWallpaper() }
+    /** The contacts' name pills and rings follow Android's wallpaper hint (PLAN "Home: contacts with a name pill"). */
+    private val wallpaperHintListener: () -> Unit = { renderCallParts() }
 
     /** The plan's hide and suspend sets the grid was last filtered against after an apply (compat-fix-1). */
     private var planOffSeen: Pair<Set<String>?, Set<String>?>? = null
@@ -477,6 +478,7 @@ class HomeActivity : UIObjectActivity() {
         BadgeStore.addListener(badgeListener)
         ContactPhotos.addListener(photoListener)
         WallpaperStore.addListener(wallpaperListener)
+        com.kidslauncher.mdm.ui.wallpaper.WallpaperHint.start(this, wallpaperHintListener)
         com.kidslauncher.mdm.calls.OngoingCalls.addListener(callsListener)
         com.kidslauncher.mdm.server.WindowRelock.addListener(windowListener)
         com.kidslauncher.mdm.assistant.AirplaneRuntime.addListener(airplaneListener)
@@ -730,6 +732,7 @@ class HomeActivity : UIObjectActivity() {
         refreshHandler.removeCallbacks(callTicker)
         ContactPhotos.removeListener(photoListener)
         WallpaperStore.removeListener(wallpaperListener)
+        com.kidslauncher.mdm.ui.wallpaper.WallpaperHint.stop(this)
         contentResolver.unregisterContentObserver(callLogObserver)
         super.onStop()
     }
@@ -1008,6 +1011,8 @@ class HomeActivity : UIObjectActivity() {
             density,
         )
         val itemPx = contactItemPx(layout, contacts.size, contentPx, density)
+        // The pill's and the ring's colours from Android's reading of the wallpaper (white when it has none).
+        val pill = com.kidslauncher.mdm.ui.home.namePillStyle(com.kidslauncher.mdm.ui.wallpaper.WallpaperHint.supportsDarkText)
         val inflater = LayoutInflater.from(this)
         for (contact in contacts) {
             val item = inflater.inflate(R.layout.item_kid_contact, row, false)
@@ -1019,13 +1024,13 @@ class HomeActivity : UIObjectActivity() {
                 item.findViewById<TextView>(R.id.contact_initial),
                 contact, emergency, initialSp = 30f * layout.avatarDp / 76f, thumb = true,
             )
-            KidAvatars.bindHomeRing(item.findViewById(R.id.contact_ring), emergency, shownInk)
+            KidAvatars.bindHomeRing(item.findViewById(R.id.contact_ring), emergency, pill)
             // Design 106 (A5): the rust pill for missed calls, the teal one for unread messages - two counts, no sum.
             val badge = ContactBadge(missed[contact.number]?.count ?: 0, com.kidslauncher.mdm.sms.SmsHome.unreadFrom(contact.number))
             KidAvatars.bindContactBadge(item.findViewById(R.id.contact_badge), item.findViewById(R.id.contact_unread_badge), badge, BadgeSize.HOME)
             item.findViewById<TextView>(R.id.contact_name).apply {
                 text = contact.name
-                KidInk.label(this, shownInk)
+                KidAvatars.bindNamePill(this, pill)
                 maxWidth = itemPx
             }
             item.contentDescription = KidAvatars.contactDescription(this, contact.name, badge)

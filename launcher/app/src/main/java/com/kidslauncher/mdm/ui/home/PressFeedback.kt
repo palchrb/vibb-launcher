@@ -215,16 +215,21 @@ object PressFeedback {
     }
 
     /**
-     * A contact (`item_kid_contact`, Home's row or the phone book): depth on the avatar, the press
-     * on it, the ripple and focus ring around it. The avatar sits [CONTACT_AVATAR_TOP_DP] below the
-     * item's top in both (4 dp padding + the frame's 6 dp for the badge). Both pills (design 106: the rust missed-call
-     * one and the teal unread one) are lifted to the avatar's elevation so they stay drawn above it - `KidBadge` gives
-     * them 2 dp and no shadow, so with [elevationDp] above that (Home's [HOME_AVATAR_ELEVATION_DP]) the avatar's
-     * shadow and body would otherwise draw over them.
+     * A contact (`item_kid_contact`, Home's row): depth on the avatar, the press on it, the ripple and focus ring around
+     * it. The avatar sits [CONTACT_AVATAR_TOP_DP] below the item's top (4 dp padding + the cell's 6 dp for the badge).
+     * The name pill and the badges' frame are lifted to the avatar's elevation: equal Z draws in child order, so the
+     * pill lies over the avatar and the two badges (design 106: the rust missed-call one and the teal unread one) over
+     * both. The frame casts no shadow (no outline); the badges keep the avatar's elevation inside it, as before - `KidBadge`
+     * gives them 2 dp and no shadow. The pill's own shadow is [KidAvatars.bindNamePill]'s.
      */
     fun contact(item: View, avatarPx: Int, elevationDp: Float = PressMotion.ELEVATION_DP) {
         val avatar = item.findViewById<View>(R.id.contact_avatar)
         depth(avatar, elevationDp)
+        item.findViewById<View>(R.id.contact_name)?.elevation = avatar.elevation
+        item.findViewById<View>(R.id.contact_frame)?.apply {
+            outlineProvider = null
+            elevation = avatar.elevation
+        }
         item.findViewById<View>(R.id.contact_unread_badge)?.elevation = avatar.elevation
         item.findViewById<View>(R.id.contact_badge)?.elevation = avatar.elevation
         cellBackground(item, avatarPx, KidAvatars.dp(item.context, CONTACT_AVATAR_TOP_DP))

@@ -49,12 +49,14 @@ internal fun iconKeyIsPackage(cacheKey: String, packageName: String): Boolean {
     }
 }
 
-/** Whether Home's white avatar ring gets its dark hairline: on a light wallpaper (dark ink), not for an emergency avatar (no white ring). */
-internal fun homeRingHairline(darkInk: Boolean, isEmergency: Boolean): Boolean = darkInk && !isEmergency
+/** Home's ring's outline: 1 dp just outside the avatar's edge, in the name pill's outline colour. */
+private const val HOME_RING_OUTLINE_DP = 1f
 
-/** The hairline: 1 dp, black at about 28 %. */
-private const val HOME_RING_HAIRLINE_DP = 1f
-private const val HOME_RING_HAIRLINE_COLOUR = 0x47000000
+/** The ring's width (as `bg_kid_contact_ring`). */
+private const val HOME_RING_DP = 3f
+
+/** The name pill's outline. */
+private const val NAME_PILL_OUTLINE_DP = 1f
 
 /** Where a contact's pills are drawn (the phone book's rows have none since variant D) (design 106 §2.2): the glyph's size in each. */
 enum class BadgeSize(val glyphDp: Float) {
@@ -121,8 +123,9 @@ object KidAvatars {
         ContactPhotos.cachedShown(context, shownPhotoOf(context, contact, isEmergency = false), thumb) != null
 
     /**
-     * Sizes an `item_kid_contact` for Home ([contactRow]): the avatar, and a frame 12 dp wider and 6 dp taller for the
-     * two pills (design 106 §2.2: both stay 24 dp at either avatar size and grow inward over the avatar).
+     * Sizes an `item_kid_contact` for Home ([contactRow]): the avatar ([CONTACT_TOP_ROOM_DP] below the cell's top), the
+     * badges' frame 12 dp wider and 6 dp taller (design 106 §2.2: both pills stay 24 dp at either avatar size and grow
+     * inward over the avatar), and the name pill [NAME_PILL_OVERLAP_DP] over the avatar's bottom edge.
      */
     fun sizeContact(item: View, avatarDp: Int) {
         val context = item.context
@@ -134,36 +137,58 @@ object KidAvatars {
             width = dp(context, avatarDp.toFloat())
             height = dp(context, avatarDp.toFloat())
         }
+        (item.findViewById<View>(R.id.contact_name).layoutParams as android.view.ViewGroup.MarginLayoutParams).topMargin =
+            dp(context, (CONTACT_TOP_ROOM_DP + avatarDp - NAME_PILL_OVERLAP_DP).toFloat())
     }
 
     /**
-     * Home's white ring on a contact's avatar (mockup A): shown for a photo and for an initial disc alike, hidden for an
-     * emergency contact, whose red ring ([bindContact]) is its edge already. Only Home calls this; the phone book
-     * and the sheet leave `contact_ring` gone. On a light wallpaper ([ink] dark, [homeRingHairline]) the white ring
-     * gets a faint dark hairline just outside the avatar's edge, so it can't vanish into a pale photo: the ring view
-     * grows 1 dp past the avatar (the avatar doesn't clip, `item_kid_contact.xml`) and its white stroke is inset by
-     * the same 1 dp, so the ring itself and the photo area are as on a dark wallpaper.
+     * Home's ring on a contact's avatar (mockup A, PLAN "Home: contacts with a name pill"): in [style]'s ring colour -
+     * dark on a light wallpaper, white otherwise ([namePillStyle]) - over the photo's or the disc's edge, so a photo
+     * on a busy wallpaper has an edge; hidden for an emergency contact, whose red ring ([bindContact]) is its edge
+     * already. Only Home calls this; the other screens have no `contact_ring`. A 1 dp outline in [style]'s outline
+     * colour lies just outside the avatar's edge, so either ring holds over a busy wallpaper: the ring view grows 1 dp
+     * past the avatar (the avatar doesn't clip, `item_kid_contact.xml`) and the ring itself is inset by the same 1 dp.
      */
-    fun bindHomeRing(ring: View, isEmergency: Boolean, ink: com.kidslauncher.mdm.ui.wallpaper.InkChoice) {
+    fun bindHomeRing(ring: View, isEmergency: Boolean, style: NamePillStyle) {
         ring.visibility = if (isEmergency) View.GONE else View.VISIBLE
         val context = ring.context
-        val hairline = homeRingHairline(ink.darkInk, isEmergency)
-        val edge = if (hairline) dp(context, HOME_RING_HAIRLINE_DP) else 0
+        val edge = dp(context, HOME_RING_OUTLINE_DP)
         (ring.layoutParams as? android.view.ViewGroup.MarginLayoutParams)?.let {
             it.setMargins(-edge, -edge, -edge, -edge)
             ring.layoutParams = it
         }
-        val white = ContextCompat.getDrawable(context, R.drawable.bg_kid_contact_ring)!!.mutate()
-        ring.background = if (hairline) {
-            val outer = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(Color.TRANSPARENT)
-                setStroke(edge, HOME_RING_HAIRLINE_COLOUR)
-            }
-            LayerDrawable(arrayOf(outer, white)).apply { setLayerInset(1, edge, edge, edge, edge) }
-        } else {
-            white
+        val outline = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(Color.TRANSPARENT)
+            setStroke(edge, style.outline)
         }
+        val band = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(Color.TRANSPARENT)
+            setStroke(dp(context, HOME_RING_DP), style.ring)
+        }
+        ring.background = LayerDrawable(arrayOf(outline, band)).apply { setLayerInset(1, edge, edge, edge, edge) }
+    }
+
+    /**
+     * A Home contact's name on its pill ([style]: [namePillStyle] of Android's wallpaper hint): fully rounded, a 1 dp
+     * outline, the name in the pill's ink with no text shadow, and a soft shadow - the pill has the avatar's elevation
+     * ([PressFeedback.contact]) so it draws over the avatar, its shadow softened by [NamePillStyle.shadow].
+     */
+    fun bindNamePill(name: TextView, style: NamePillStyle) {
+        val context = name.context
+        name.background = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            // Larger than any pill's half height: Android draws the ends as half circles.
+            cornerRadius = dp(context, 999f).toFloat()
+            setColor(style.pill)
+            setStroke(dp(context, NAME_PILL_OUTLINE_DP), style.outline)
+        }
+        name.setTextColor(style.text)
+        name.setShadowLayer(0f, 0f, 0f, 0)
+        name.outlineProvider = android.view.ViewOutlineProvider.BACKGROUND
+        name.outlineSpotShadowColor = style.shadow
+        name.outlineAmbientShadowColor = style.shadow
     }
 
     /** The ring around the sheet's photo, in the contact's colour ([avatarRingColour]). */
