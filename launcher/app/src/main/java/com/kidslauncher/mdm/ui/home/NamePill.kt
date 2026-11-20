@@ -4,7 +4,8 @@ package com.kidslauncher.mdm.ui.home
  * Home's contacts with a name pill (PLAN "Home: contacts with a name pill, its colour from Android", approved
  * 2026-11-19; mockups "Navn på lapp", "lyst/mørkt/urolig bilde"): the round avatar keeps its ring, the name sits on a
  * pill over the circle's bottom edge, and both take their colour from Android's own reading of the wallpaper
- * (`WallpaperColors.HINT_SUPPORTS_DARK_TEXT`, read by `WallpaperHint`). Pure, no Android imports; `NamePillTest`.
+ * (`WallpaperColors.HINT_SUPPORTS_DARK_TEXT` of Home's own ground, read by `WallpaperStore` into its state with the
+ * ground). Pure, no Android imports; `NamePillTest`.
  */
 
 /** `WallpaperColors.HINT_SUPPORTS_DARK_TEXT` (API 27, public `getColorHints()` since 31): Android's word that the
@@ -59,3 +60,22 @@ val NAME_PILL_ON_DARK = NamePillStyle(
 /** Android's hint to the pill: dark on a wallpaper that supports dark text, white otherwise and when unknown. */
 fun namePillStyle(supportsDarkText: Boolean?): NamePillStyle =
     if (supportsDarkText == true) NAME_PILL_ON_LIGHT else NAME_PILL_ON_DARK
+
+/**
+ * Whether Home re-renders the contacts row and the grid after drawing a new ground: the labels' ink or the pills' hint
+ * changed. Both come in the one `WallpaperStore.State` with the ground, so the ground and the pills change in the same
+ * pass - never a new ground under the old pill colours.
+ */
+fun callPartsRestyleDue(
+    shownInk: com.kidslauncher.mdm.ui.wallpaper.InkChoice,
+    shownDarkText: Boolean,
+    ink: com.kidslauncher.mdm.ui.wallpaper.InkChoice,
+    darkText: Boolean,
+): Boolean = ink != shownInk || darkText != shownDarkText
+
+/**
+ * The pill's corner radius in px: half the height of a one-line pill ([lineHeightPx] plus [paddingVerticalPx] above
+ * and below). One line is fully rounded; a name on two lines gets a rounded rectangle with the same corners, never a
+ * stadium whose half-circle ends would cut the corners of a full-width line's first and last letters.
+ */
+fun namePillCornerPx(lineHeightPx: Int, paddingVerticalPx: Int): Float = lineHeightPx / 2f + paddingVerticalPx

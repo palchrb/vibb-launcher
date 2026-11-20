@@ -171,18 +171,28 @@ object KidAvatars {
     }
 
     /**
-     * A Home contact's name on its pill ([style]: [namePillStyle] of Android's wallpaper hint): fully rounded, a 1 dp
-     * outline, the name in the pill's ink with no text shadow, and a soft shadow - the pill has the avatar's elevation
-     * ([PressFeedback.contact]) so it draws over the avatar, its shadow softened by [NamePillStyle.shadow].
+     * A Home contact's name on its pill ([style]: [namePillStyle] of Android's hint on Home's ground): a 1 dp outline,
+     * the name in the pill's ink with no text shadow, and a soft shadow - the pill has the avatar's elevation
+     * ([PressFeedback.contact]) so it draws over the avatar, its shadow softened by [NamePillStyle.shadow]. Its corners
+     * are [namePillCornerPx] of the line height the view lays out with (after [com.kidslauncher.mdm.ui.WholeWordTextView]
+     * fitted the size; set again at each layout): one line fully rounded, two lines a rounded rectangle.
      */
     fun bindNamePill(name: TextView, style: NamePillStyle) {
         val context = name.context
-        name.background = GradientDrawable().apply {
+        val pill = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
-            // Larger than any pill's half height: Android draws the ends as half circles.
-            cornerRadius = dp(context, 999f).toFloat()
+            cornerRadius = namePillCornerPx(name.lineHeight, name.paddingTop)
             setColor(style.pill)
             setStroke(dp(context, NAME_PILL_OUTLINE_DP), style.outline)
+        }
+        name.background = pill
+        name.addOnLayoutChangeListener { view, _, _, _, _, _, _, _, _ ->
+            val text = view as TextView
+            val radius = namePillCornerPx(text.lineHeight, text.paddingTop)
+            if (pill.cornerRadius != radius) {
+                pill.cornerRadius = radius
+                text.invalidateOutline()
+            }
         }
         name.setTextColor(style.text)
         name.setShadowLayer(0f, 0f, 0f, 0)

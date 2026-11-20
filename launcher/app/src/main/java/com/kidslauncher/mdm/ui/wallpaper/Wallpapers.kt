@@ -47,6 +47,16 @@ data class Wallpaper(
 
 const val NAVY_ARGB: Int = 0xFF14213D.toInt()
 
+/**
+ * The cache key of a ground's colour hint (`WallpaperStore`'s `groundSupportsDarkText`): the fill, the scrim over it,
+ * and for a photo whether it was decoded - a photo not decoded is drawn as the placeholder, and that reading must never
+ * stand for the photo.
+ */
+fun groundHintKey(fill: WallpaperFill, decoded: Boolean, scrimArgb: Int): String {
+    val drawn = if (fill is WallpaperFill.Image && !decoded) "placeholder" else fill.describe()
+    return "$drawn|%08x".format(scrimArgb)
+}
+
 /** The launcher's own default: the built-in navy (also what a missing policy means). */
 val NAVY = Wallpaper(1, WallpaperFill.Solid(NAVY_ARGB), "Navy", "navy")
 

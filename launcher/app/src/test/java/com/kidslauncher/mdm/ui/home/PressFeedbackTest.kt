@@ -299,10 +299,13 @@ class PressFeedbackTest {
 
     @Test
     fun `focus has its own visible ring above the icon`() {
-        val src = source("java/com/kidslauncher/mdm/ui/home/PressFeedback.kt").substringAfter("fun cellBackground(").substringBefore("\n    }")
-        assertTrue(src.contains("cell.foreground = StateListDrawable()"))
-        assertTrue(src.contains("android.R.attr.state_focused"))
-        assertTrue(src.contains("iconPx + 2 * gap"))
+        val file = source("java/com/kidslauncher/mdm/ui/home/PressFeedback.kt")
+        assertTrue(file.substringAfter("fun cellBackground(").substringBefore("\n    }").contains("cell.foreground = focusRing(context, iconPx, iconTopPx)"))
+        // Home's contacts move it under the name pill (code QA L4 of the name pill): the cell's background there.
+        val ring = file.substringAfter("private fun focusRing(").substringBefore("\n    }")
+        assertTrue(ring.contains("StateListDrawable()"))
+        assertTrue(ring.contains("android.R.attr.state_focused"))
+        assertTrue(ring.contains("iconPx + 2 * gap"))
     }
 
     private val colours: Map<String, String> = run {

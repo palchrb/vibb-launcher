@@ -63,6 +63,14 @@ object WallpaperStore {
         val lockScrimArgb: Int = 0,
         /** Worked out from the policy at least once: until then the lock keeps its plain ground. */
         val lockReady: Boolean = false,
+        /**
+         * Android's reading of Home's own ground (PLAN "Home: contacts with a name pill, its colour from Android"):
+         * `WallpaperColors.fromBitmap` of [current] as Home draws it, the ink's scrim included, has
+         * `HINT_SUPPORTS_DARK_TEXT` - the dark name pill and ring ([com.kidslauncher.mdm.ui.home.namePillStyle]).
+         * Worked out here with the ground, so a new ground and its pill colours reach Home in one notify. False (the
+         * white pill) until then, for the navy ground with no policy, and when Android can't read it.
+         */
+        val supportsDarkText: Boolean = false,
     )
 
     @Volatile
@@ -87,6 +95,8 @@ object WallpaperStore {
     private val listeners = CopyOnWriteArraySet<() -> Unit>()
     private val main = Handler(Looper.getMainLooper())
     private val imageStats = HashMap<String, LuminanceStats>()
+    /** [State.supportsDarkText] per ground ([groundHintKey]): computed once per photo, colour or gradient and scrim. */
+    private val groundHints = HashMap<String, Boolean>()
 
     /** The allowed photos the phone has - anything of ours outside it is revoked. */
     @Volatile
@@ -219,12 +229,14 @@ object WallpaperStore {
         } catch (e: Exception) {
             false
         }
+        val homeBitmap = if (current.fill is WallpaperFill.Image) bitmap else null
         val next = State(
-            choices, current, ink, if (current.fill is WallpaperFill.Image) bitmap else null, showsOurs,
+            choices, current, ink, homeBitmap, showsOurs,
             lock = lock,
             lockBitmap = if (lock.fill is WallpaperFill.Image) lockBitmap else null,
             lockScrimArgb = blackScrimArgb(lockScrimAlpha),
             lockReady = true,
+            supportsDarkText = groundSupportsDarkText(current.fill, homeBitmap, ink.scrimArgb),
         )
         loaded = true
         if (next != old) {
@@ -264,6 +276,38 @@ object WallpaperStore {
             Log.w(LOG_TAG, "Couldn't decode wallpaper $hash", t)
             null
         }
+    }
+
+    /** Width and height of the render [groundSupportsDarkText] reads: the Jelly Star's 9:16, small and cheap. */
+    private const val HINT_RENDER_W = 54
+    private const val HINT_RENDER_H = 96
+
+    /**
+     * Whether Android finds Home's ground light enough for dark text: [fill] drawn as Home draws it ([WallpaperRender],
+     * a photo centre-cropped) with the ink's [scrimArgb] over it, on a small render, read by
+     * `WallpaperColors.fromBitmap` (API 27) - the same reading Android makes of its own wallpaper. Once per
+     * [groundHintKey]; false when it can't be read. The store's thread only.
+     */
+    private fun groundSupportsDarkText(fill: WallpaperFill, bitmap: Bitmap?, scrimArgb: Int): Boolean {
+        // A photo that didn't decode is drawn as the placeholder: read that, never cache it under the photo's key.
+        val key = groundHintKey(fill, bitmap != null, scrimArgb)
+        synchronized(groundHints) { groundHints[key] }?.let { return it }
+        val hint = try {
+            val small = android.graphics.Bitmap.createBitmap(HINT_RENDER_W, HINT_RENDER_H, Bitmap.Config.ARGB_8888)
+            val canvas = android.graphics.Canvas(small)
+            val bounds = android.graphics.Rect(0, 0, HINT_RENDER_W, HINT_RENDER_H)
+            val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG or android.graphics.Paint.FILTER_BITMAP_FLAG)
+            WallpaperRender.draw(canvas, bounds, fill, bitmap, paint)
+            if ((scrimArgb ushr 24) != 0) canvas.drawColor(scrimArgb)
+            val colors = android.app.WallpaperColors.fromBitmap(small)
+            small.recycle()
+            com.kidslauncher.mdm.ui.home.supportsDarkText(colors.colorHints) == true
+        } catch (t: Throwable) {
+            Log.w(LOG_TAG, "Couldn't read the ground's colours: ${t.javaClass.simpleName}")
+            return false
+        }
+        synchronized(groundHints) { groundHints[key] = hint }
+        return hint
     }
 
     /** The ink of a photo: from its luminance ([imageStatsOf]). */

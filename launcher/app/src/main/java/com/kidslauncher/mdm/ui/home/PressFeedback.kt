@@ -198,6 +198,12 @@ object PressFeedback {
         }
         cell.background = RippleDrawable(ColorStateList.valueOf(highlight), null, mask)
 
+        cell.foreground = focusRing(context, iconPx, iconTopPx)
+    }
+
+    /** The focus ring: [FOCUS_RING_STROKE_DP] of `kid_accent`, [FOCUS_RING_GAP_DP] outside an icon of [iconPx] that
+     * sits [iconTopPx] below the drawable's top, centred - shown only in the focused state. */
+    private fun focusRing(context: android.content.Context, iconPx: Int, iconTopPx: Int): android.graphics.drawable.Drawable {
         val gap = KidAvatars.dp(context, FOCUS_RING_GAP_DP)
         val ring = GradientDrawable().apply {
             shape = GradientDrawable.OVAL
@@ -209,7 +215,7 @@ object PressFeedback {
             setLayerGravity(0, Gravity.TOP or Gravity.CENTER_HORIZONTAL)
             setLayerInsetTop(0, maxOf(0, iconTopPx - gap))
         }
-        cell.foreground = StateListDrawable().apply {
+        return StateListDrawable().apply {
             addState(intArrayOf(android.R.attr.state_focused), placed)
         }
     }
@@ -220,7 +226,9 @@ object PressFeedback {
      * The name pill and the badges' frame are lifted to the avatar's elevation: equal Z draws in child order, so the
      * pill lies over the avatar and the two badges (design 106: the rust missed-call one and the teal unread one) over
      * both. The frame casts no shadow (no outline); the badges keep the avatar's elevation inside it, as before - `KidBadge`
-     * gives them 2 dp and no shadow. The pill's own shadow is [KidAvatars.bindNamePill]'s.
+     * gives them 2 dp and no shadow. The pill's own shadow is [KidAvatars.bindNamePill]'s. The focus ring is not the
+     * item's foreground (it would cross the pill and the name, code QA L4) but `contact_cell`'s background, which takes
+     * the item's focused state: around the avatar, under the pill.
      */
     fun contact(item: View, avatarPx: Int, elevationDp: Float = PressMotion.ELEVATION_DP) {
         val avatar = item.findViewById<View>(R.id.contact_avatar)
@@ -233,6 +241,11 @@ object PressFeedback {
         item.findViewById<View>(R.id.contact_unread_badge)?.elevation = avatar.elevation
         item.findViewById<View>(R.id.contact_badge)?.elevation = avatar.elevation
         cellBackground(item, avatarPx, KidAvatars.dp(item.context, CONTACT_AVATAR_TOP_DP))
+        item.findViewById<View>(R.id.contact_cell)?.let { cell ->
+            item.foreground = null
+            cell.isDuplicateParentStateEnabled = true
+            cell.background = focusRing(item.context, avatarPx, KidAvatars.dp(item.context, CONTACT_TOP_ROOM_DP.toFloat()))
+        }
         attach(item, avatar, scrolling = true)
     }
 

@@ -80,7 +80,23 @@ class ContactBadgeLayoutTest {
         assert(press.contains("findViewById<View>(R.id.contact_frame)?.apply"))
         val home = File(main, "com/kidslauncher/mdm/ui/HomeActivity.kt").readText()
         assert(home.contains("KidAvatars.bindNamePill(this, pill)"))
-        assert(home.contains("WallpaperHint.start(this, wallpaperHintListener)"))
-        assert(home.contains("WallpaperHint.stop(this)"))
+        // The pill's colours are Android's hint on Home's own ground, from the same state as the ground (code QA M1).
+        assert(home.contains("val pill = com.kidslauncher.mdm.ui.home.namePillStyle(shownDarkText)"))
+        assert(home.contains("callPartsRestyleDue(shownInk, shownDarkText, state.ink, state.supportsDarkText)"))
+        assert(!home.contains("WallpaperManager"))
+    }
+
+    /** Code QA L3-L5: the teal badge rests on the pill's top edge, off the name's letters; the focus ring is the cell's
+     * background (around the avatar, under the pill), not the item's foreground; 8 dp under the pill for its shadow. */
+    @Test
+    fun `the badge sits above the pill, the focus ring under it, the shadow has room`() {
+        assertEquals("${NAME_PILL_OVERLAP_DP}dp", byId("contact_unread_badge").getAttributeNS(ns, "layout_marginBottom"))
+        assertEquals("8dp", root.getAttributeNS(ns, "paddingBottom"))
+        val main = listOf("src/main/java", "app/src/main/java").map(::File).first { it.exists() }
+        val press = File(main, "com/kidslauncher/mdm/ui/home/PressFeedback.kt").readText()
+        val contact = press.substringAfter("fun contact(item: View").substringBefore("\n    }\n")
+        assert(contact.contains("item.foreground = null"))
+        assert(contact.contains("cell.isDuplicateParentStateEnabled = true"))
+        assert(contact.contains("cell.background = focusRing(item.context, avatarPx, KidAvatars.dp(item.context, CONTACT_TOP_ROOM_DP.toFloat()))"))
     }
 }

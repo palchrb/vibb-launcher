@@ -183,8 +183,6 @@ class HomeActivity : UIObjectActivity() {
     }
     private val photoListener: () -> Unit = { renderCallParts() }
     private val wallpaperListener: () -> Unit = { renderWallpaper() }
-    /** The contacts' name pills and rings follow Android's wallpaper hint (PLAN "Home: contacts with a name pill"). */
-    private val wallpaperHintListener: () -> Unit = { renderCallParts() }
 
     /** The plan's hide and suspend sets the grid was last filtered against after an apply (compat-fix-1). */
     private var planOffSeen: Pair<Set<String>?, Set<String>?>? = null
@@ -478,7 +476,6 @@ class HomeActivity : UIObjectActivity() {
         BadgeStore.addListener(badgeListener)
         ContactPhotos.addListener(photoListener)
         WallpaperStore.addListener(wallpaperListener)
-        com.kidslauncher.mdm.ui.wallpaper.WallpaperHint.start(this, wallpaperHintListener)
         com.kidslauncher.mdm.calls.OngoingCalls.addListener(callsListener)
         com.kidslauncher.mdm.server.WindowRelock.addListener(windowListener)
         com.kidslauncher.mdm.assistant.AirplaneRuntime.addListener(airplaneListener)
@@ -732,7 +729,6 @@ class HomeActivity : UIObjectActivity() {
         refreshHandler.removeCallbacks(callTicker)
         ContactPhotos.removeListener(photoListener)
         WallpaperStore.removeListener(wallpaperListener)
-        com.kidslauncher.mdm.ui.wallpaper.WallpaperHint.stop(this)
         contentResolver.unregisterContentObserver(callLogObserver)
         super.onStop()
     }
@@ -911,13 +907,19 @@ class HomeActivity : UIObjectActivity() {
     private fun renderWallpaper() {
         if (!contentShown) return
         val state = WallpaperGround.apply(this, binding.root, ownGround = homeGroundDue(contentShown))
-        if (state.ink != shownInk) {
+        // The labels' ink and the contacts' name pills follow the ground just drawn, in this same pass (PLAN "Home:
+        // contacts with a name pill": the store reads Android's hint on Home's own ground, in the same state).
+        if (com.kidslauncher.mdm.ui.home.callPartsRestyleDue(shownInk, shownDarkText, state.ink, state.supportsDarkText)) {
             shownInk = state.ink
+            shownDarkText = state.supportsDarkText
             renderCallParts()
         }
     }
 
     private var shownInk: InkChoice = WallpaperStore.state.ink
+
+    /** The contacts' pill colours as last drawn: Android's dark-text hint on Home's own ground ([WallpaperStore.State]). */
+    private var shownDarkText: Boolean = WallpaperStore.state.supportsDarkText
 
     /** The grid from the last filtered apps and the current badge counts (cheap). */
     private fun renderGrid() {
@@ -1011,8 +1013,8 @@ class HomeActivity : UIObjectActivity() {
             density,
         )
         val itemPx = contactItemPx(layout, contacts.size, contentPx, density)
-        // The pill's and the ring's colours from Android's reading of the wallpaper (white when it has none).
-        val pill = com.kidslauncher.mdm.ui.home.namePillStyle(com.kidslauncher.mdm.ui.wallpaper.WallpaperHint.supportsDarkText)
+        // The pill's and the ring's colours from Android's reading of Home's own ground (white until it is read).
+        val pill = com.kidslauncher.mdm.ui.home.namePillStyle(shownDarkText)
         val inflater = LayoutInflater.from(this)
         for (contact in contacts) {
             val item = inflater.inflate(R.layout.item_kid_contact, row, false)
