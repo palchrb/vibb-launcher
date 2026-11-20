@@ -28,10 +28,12 @@
 //! `kiosk_escapes::EscapeNote`, worded here as a [Note] or a [Row].
 
 use askama::Template;
+use axum::Form;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use axum::response::{Html, IntoResponse, Response};
+use axum::response::{Html, IntoResponse, Redirect, Response};
 use chrono::{DateTime, Utc};
+use serde::Deserialize;
 
 use crate::AppState;
 use crate::display_time::Zone;
@@ -907,6 +909,9 @@ struct AdvancedTemplate {
     setup: Option<crate::handlers::quick_actions::SetupCard>,
     /// Design 102 revision 5: "Krev foreldrekode for Wi-Fi-innlogging" (`#wifi-signin`).
     wifi_signin: crate::handlers::logins::CodeCard,
+    /// A refused rename: what was typed and why (the row opens, the reason under the field).
+    name_refusal: Option<(String, &'static str)>,
+    max_name: usize,
 }
 crate::i18n::words!(AdvancedTemplate);
 
@@ -936,6 +941,19 @@ pub async fn view_advanced(
     Path(id): Path<i64>,
     Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> Response {
+    advanced_page(&state, lang, id, &query, StatusCode::OK, None).await
+}
+
+/// Advanced, rendered with [status]; [name_refusal] a refused rename's typed name and reason.
+async fn advanced_page(
+    state: &AppState,
+    lang: Lang,
+    id: i64,
+    query: &std::collections::HashMap<String, String>,
+    status: StatusCode,
+    name_refusal: Option<(String, &'static str)>,
+) -> Response {
+    let state = state.clone();
     let device = match load_device(&state, id).await {
         Ok(device) => device,
         Err((status, key)) => return crate::i18n::error(lang, status, key),
@@ -1002,49 +1020,102 @@ pub async fn view_advanced(
         .map(|n| n.note(&zone, now))
         .partition(|n| n.warning);
 
-    Html(
-        AdvancedTemplate {
-            lang,
-            who: crate::handlers::devices::BandAvatar::of(&device),
-            title: format!("{} · {}", t(lang, "device.page.advanced"), device.name),
-            hardening: policy.hardening.clone(),
-            backup_service_enabled: latest.as_ref().and_then(|s| s.backup_service_enabled),
-            block_activity_start: play.block_activity_start,
-            play_openable: play.openable,
-            play_warnings,
-            play_rows,
-            escapes,
-            escape_warnings,
-            escape_rows,
-            setup_warnings: crate::setup_status::page_warnings(
+    (
+        status,
+        Html(
+            AdvancedTemplate {
                 lang,
-                &policy,
-                latest.as_ref(),
-                &state.integrations.setup(&state, id).await,
-                "advanced",
-            ),
-            no_parent_pin: policy.override_pin_hash.is_none(),
-            access: crate::handlers::devices::AccessCard {
-                // Security review S-L10's fix round: Leave Tailnet only for a phone on the tailnet.
-                tailnet_joined: latest.as_ref().and_then(|s| s.tailnet_joined) == Some(true),
-                ..crate::handlers::devices::access_card(
-                    &state,
-                    &device,
-                    query.get("notice").map(String::as_str),
-                    &zone,
-                    now,
-                )
-            },
-            spotify_diag: spotify_diag_card(&policy, &zone, now),
-            server_tls,
-            setup,
-            wifi_signin: crate::handlers::logins::code_card(&policy, latest.as_ref()),
-            device,
-        }
-        .render()
-        .unwrap(),
+                name_refusal,
+                max_name: crate::handlers::devices::MAX_DEVICE_NAME_CHARS,
+                who: crate::handlers::devices::BandAvatar::of(&device),
+                title: format!("{} · {}", t(lang, "device.page.advanced"), device.name),
+                hardening: policy.hardening.clone(),
+                backup_service_enabled: latest.as_ref().and_then(|s| s.backup_service_enabled),
+                block_activity_start: play.block_activity_start,
+                play_openable: play.openable,
+                play_warnings,
+                play_rows,
+                escapes,
+                escape_warnings,
+                escape_rows,
+                setup_warnings: crate::setup_status::page_warnings(
+                    lang,
+                    &policy,
+                    latest.as_ref(),
+                    &state.integrations.setup(&state, id).await,
+                    "advanced",
+                ),
+                no_parent_pin: policy.override_pin_hash.is_none(),
+                access: crate::handlers::devices::AccessCard {
+                    // Security review S-L10's fix round: Leave Tailnet only for a phone on the tailnet.
+                    tailnet_joined: latest.as_ref().and_then(|s| s.tailnet_joined) == Some(true),
+                    ..crate::handlers::devices::access_card(
+                        &state,
+                        &device,
+                        query.get("notice").map(String::as_str),
+                        &zone,
+                        now,
+                    )
+                },
+                spotify_diag: spotify_diag_card(&policy, &zone, now),
+                server_tls,
+                setup,
+                wifi_signin: crate::handlers::logins::code_card(&policy, latest.as_ref()),
+                device,
+            }
+            .render()
+            .unwrap(),
+        ),
     )
-    .into_response()
+        .into_response()
+}
+
+#[derive(Deserialize)]
+pub struct RenameForm {
+    #[serde(default)]
+    name: String,
+}
+
+/// POST `/devices/{id}/name`: Advanced's "Name" row. The same rule as Add Phone
+/// ([crate::handlers::devices::device_name_refusal]); a refusal shows Advanced again (400) with the typed name
+/// and the reason under the field, nothing changed. The name is the PWA's alone - the phone never gets it.
+pub async fn rename_device(
+    State(state): State<AppState>,
+    lang: Lang,
+    Path(id): Path<i64>,
+    Form(form): Form<RenameForm>,
+) -> Response {
+    let name = form.name.trim();
+    if let Err((status, key)) = load_device(&state, id).await {
+        return crate::i18n::error(lang, status, key);
+    }
+    if let Some(why) = crate::handlers::devices::device_name_refusal(lang, name) {
+        let typed: String = name
+            .chars()
+            .take(crate::handlers::devices::MAX_DEVICE_NAME_CHARS * 4)
+            .collect();
+        return advanced_page(
+            &state,
+            lang,
+            id,
+            &std::collections::HashMap::new(),
+            StatusCode::BAD_REQUEST,
+            Some((typed, why)),
+        )
+        .await;
+    }
+    match sqlx::query("UPDATE devices SET name = ? WHERE id = ?")
+        .bind(name)
+        .bind(id)
+        .execute(&state.db)
+        .await
+    {
+        Ok(_) => Redirect::to(&format!("/devices/{id}/advanced#name")).into_response(),
+        Err(err) => {
+            tracing::error!(device_id = id, %err, "couldn't rename the phone");
+            crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.save_failed")
+        }
+    }
 }
 
 #[derive(Template)]

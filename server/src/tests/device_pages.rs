@@ -277,7 +277,13 @@ async fn advanced_forms_return_to_their_groups() {
         Option<(String, Option<&'a str>)>,
     );
     // Leave Tailnet shows only for a phone on the tailnet: `tests::leave_tailnet` checks its return.
-    let table: [Row; 7] = [
+    let table: [Row; 8] = [
+        // The Name row: the first form on the page, back to its own row.
+        (
+            "name#name",
+            &[("name", "Emma")],
+            Some((advanced.clone(), Some("name"))),
+        ),
         (
             "hardening#restrictions",
             &[("disallow_factory_reset", "on")],

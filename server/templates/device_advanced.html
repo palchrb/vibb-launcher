@@ -12,6 +12,30 @@
     {% call band::phone(self.t("device.page.advanced"), "/devices/" ~ device.id, device.name, who) %}{% endcall %}
     <div class="sheet">
 
+    {#- Name: the phone's name (the child's), PWA-only. The row opens in place; a refusal opens it again with the
+        typed name and the reason under the field. -#}
+    <section id="name" aria-label="{{ self.t("device.advanced.name") }}">
+        <div class="group">
+            <details class="row-sheet" id="name-sheet"{% if name_refusal.is_some() %} open{% endif %}>
+                <summary class="row">
+                    <span class="row-label">{{ self.t("device.advanced.name") }}</span>
+                    <span class="row-value">{{ device.name }}</span>
+                    <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </summary>
+                <div class="row-sheet-body">
+                    <form method="post" action="/devices/{{ device.id }}/name#name" class="cell form-group">
+                        <div class="field">
+                            <label class="field-label" for="device_name">{{ self.t("device.advanced.name") }}</label>
+                            <input type="text" id="device_name" name="name" value="{% if let Some((typed, _)) = name_refusal %}{{ typed }}{% else %}{{ device.name }}{% endif %}" maxlength="{{ max_name }}" autocomplete="off" required{% if name_refusal.is_some() %} aria-invalid="true" aria-describedby="device_name-error" autofocus{% endif %}>
+                            {% if let Some((_, why)) = name_refusal %}<p class="field-error" id="device_name-error">{{ why }}</p>{% endif %}
+                        </div>
+                        <button type="submit" class="button-wide">{{ self.t("common.save") }}</button>
+                    </form>
+                </div>
+            </details>
+        </div>
+    </section>
+
     {#- Design 93 §6.6, design 103 §3: "Åpne for oppsett" (was the summary's "Unlock 2 h…"), the page's first row, for a
         phone that takes the command. The row opens in place (its chevron turns) and toggles itself shut; the sheet
         holds the button (design 113: its words say the 2 hours). Both forms carry back=advanced and land here, #setup,

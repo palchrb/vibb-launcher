@@ -67,6 +67,7 @@ mod play;
 mod policy_etag;
 mod power;
 mod provisioning;
+mod rename_phone;
 mod rule_pause;
 mod safety_changes;
 pub(crate) mod seeded_family;

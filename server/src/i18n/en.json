@@ -3931,6 +3931,7 @@
   "device.summary.qa.js_pause": "Pause {rule} for {duration}",
   "device.summary.qa.js_pause_all": "Pause all rules for {duration}",
   "device.summary.qa.js_extra": "Give {duration} extra",
+  "device.advanced.name": "Name",
   "device.advanced.setup.title": "Open for setup",
   "device.advanced.setup.until": "until {at}",
   "device.advanced.setup.on_lock": "{rule} on until {at} stays paused meanwhile.",

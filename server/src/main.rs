@@ -1341,6 +1341,11 @@ pub fn build_admin_router(
         // Design 87: the apps' real logos the phones drew, behind the session like every page (no push uses one),
         // only a hash some phone names - never on the phones' routes.
         .route("/app-logos/{hash}", get(app_logos::view))
+        // Advanced's Name row: the phone's name, PWA-only.
+        .route(
+            "/devices/{id}/name",
+            post(handlers::device_pages::rename_device),
+        )
         // The phone's own picture (server round C), from its summary's header.
         .route(
             "/devices/{id}/avatar",

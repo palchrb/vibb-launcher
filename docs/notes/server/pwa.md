@@ -205,6 +205,11 @@ family's one backup row (`backups::backup_state`, `#backup-warning`, to `/backup
   `spotify_diag_until`, which writes its `VibbSpotify` lines until then (`adb logcat -s VibbSpotify`). Not in the
   security log (it changes nothing on the phone but what its own log says). Tests:
   `tests::music_spotify::the_diagnostic_log_runs_fifteen_minutes`.
+- **Name** (2026-11-20, the first row of Advanced, `#name`): the phone's name, PWA-only - it never reaches the phone, no policy or report key.
+  The row opens in place; `POST /devices/{id}/name` (`device_pages::rename_device`) uses Add Phone's rule
+  (`devices::device_name_refusal`: trimmed, not empty, at most 40 characters, no uniqueness), a refusal renders Advanced again
+  (400) with the typed name and the reason under the field, a save is a 303 to `/advanced#name` and so a `settings_saved` line.
+  Any parent can rename (design 62). Tests: `tests::rename_phone`.
 - **Where the forms return** (§5.1): the three auto-saves → their groups, `/devices/{id}/advanced#restrictions`,
   `#app-screens`, `#updates` (the browser pass's fix round: without JS on the switch, with JS `scroll-restore.js`
   keeps the exact position; pinned by the redirect table); `revoke` → `?notice=…#connection` (the flash in the group),
