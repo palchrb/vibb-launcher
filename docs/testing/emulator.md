@@ -213,7 +213,13 @@ enrolling; once managed, the system language is locked (`DISALLOW_CONFIG_LOCALE`
 from Settings › Phone Setup ("Phone language", `PROVISIONING_LOCALE` default `nb_NO`; "Time zone", `PROVISIONING_TIME_ZONE`
 default `Europe/Oslo`). QR provisioning itself (the launcher now has the Android 12+
 `GET_PROVISIONING_MODE`/`ADMIN_POLICY_COMPLIANCE` activities) is **[needs device test]** on the
-Jelly Star and stock GMS phones; adb above stays the fallback.
+Jelly Star and stock GMS phones; adb above stays the fallback. On a GMS phone the provisioning runs
+through the role holder (CloudDPC) and the admin extras reach only `ADMIN_POLICY_COMPLIANCE`
+(2026-11-20, `docs/notes/launcher/hardening.md`, "Provisioning/language"): in a QR test's
+`adb logcat -s Provisioning`, look for `Admin policy compliance: admin extras found`, then
+`applying admin extras` and `admin extras applied - enrolled` (or `enrolment failed ... - tried again
+at the next sync`, then `Retry: ...` at the next sync run); a second delivery logs `skipped (already
+applied)`.
 
 Screen lock: since step 10 the phone has **no Android screen lock** - handy's own PIN lock
 replaces it (set the Child PIN on the phone's Lock Screen & PINs page; the Parent PIN must be set

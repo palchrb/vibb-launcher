@@ -6,7 +6,6 @@ import android.content.Context
 import android.content.Intent
 import android.os.PersistableBundle
 import android.util.Log
-import com.kidslauncher.mdm.server.dto.ProvisioningExtras
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -19,7 +18,8 @@ private const val LOG_TAG = "MdmDeviceAdminReceiver"
  * native zero-touch QR flow was used (not available on GrapheneOS, which has no
  * ManagedProvisioning trigger - see kid-phone-server's `handlers::provisioning`) - the same
  * server URL/Tailscale key/enrollment code the in-app QR scanner applies for devices where that
- * flow isn't available at all.
+ * flow isn't available at all. On a phone with Google Play services (Android 13+) a role holder
+ * provisions and this callback doesn't come: [PolicyComplianceActivity] delivers the extras then.
  */
 class MdmDeviceAdminReceiver : DeviceAdminReceiver() {
     override fun onEnabled(context: Context, intent: Intent) {
@@ -70,25 +70,15 @@ class MdmDeviceAdminReceiver : DeviceAdminReceiver() {
             DevicePolicyManager.EXTRA_PROVISIONING_ADMIN_EXTRAS_BUNDLE,
             PersistableBundle::class.java,
         )
-        val extras = ProvisioningExtras.fromAdminExtrasBundle(bundle)
-        if (extras == null) {
-            Log.i(LOG_TAG, "No admin extras bundle in provisioning intent - skipping auto-enroll")
-            return
-        }
+        // The one apply (2026-11-20): shared with PolicyComplianceActivity, which is the only one that runs when a
+        // role holder (CloudDPC on a GMS phone) provisions - applied once, kept for a retry at the next sync.
+        val job = QrExtras.deliver(context, bundle, "Provisioning complete") ?: return
 
         // goAsync() keeps this receiver's process alive long enough for the enroll network call
-        // to finish - a plain unscoped coroutine launch here risks the process being torn down
-        // the moment this callback returns, since DeviceAdminReceiver callbacks follow the same
-        // short-lived-broadcast-receiver lifecycle as any other BroadcastReceiver.
+        // to finish - DeviceAdminReceiver callbacks follow the same short-lived-broadcast-receiver
+        // lifecycle as any other BroadcastReceiver, so the process could otherwise be torn down
+        // the moment this callback returns (the kept extras still retry at the next sync).
         val pendingResult = goAsync()
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                applyProvisioningExtras(context, extras)
-                    .onSuccess { Log.i(LOG_TAG, "Auto-enrolled from provisioning QR") }
-                    .onFailure { e -> Log.w(LOG_TAG, "Auto-enroll from provisioning QR failed", e) }
-            } finally {
-                pendingResult.finish()
-            }
-        }
+        job.invokeOnCompletion { pendingResult.finish() }
     }
 }
