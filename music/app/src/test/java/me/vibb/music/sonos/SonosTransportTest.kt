@@ -519,7 +519,8 @@ class SonosTransportTest {
         try {
             rig(queueSpeaker()).playShare(share().copy(uri = "spotify:artist:3FakeArtist00000000001"))
             fail("an artist has no share type")
-        } catch (_: ShareRefused) {
+        } catch (e: SonosException) {
+            assertFalse("qa-54a2-code L5: a refusal by kind, never the speaker's", e is ShareRefused)
         }
     }
 

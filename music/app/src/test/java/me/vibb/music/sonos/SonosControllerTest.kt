@@ -1149,7 +1149,7 @@ class SonosControllerTest {
         r.c.playTile()
         r.work.drain()
         assertNull(r.c.takeLost())
-        assertTrue(r.c.takeRefused())
+        assertNotNull(r.c.takeRefused())
         assertEquals("back on what the speaker plays", 0, r.c.index)
         assertTrue(r.c.session)
         assertFalse(r.spk.commands.contains("stop"))

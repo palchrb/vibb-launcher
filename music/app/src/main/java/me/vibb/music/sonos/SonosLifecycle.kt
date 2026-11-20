@@ -2,6 +2,9 @@ package me.vibb.music.sonos
 
 import me.vibb.music.logic.consumableIdOf
 import me.vibb.music.logic.sameStream
+import me.vibb.music.logic.trackSpotifyUri
+import me.vibb.music.spotify.spotifyTarget
+import me.vibb.music.spotify.uriOf
 import me.vibb.music.model.Entry
 import me.vibb.music.model.PlayItem
 import me.vibb.music.model.Source
@@ -45,7 +48,14 @@ fun roomVerdict(choice: RendererChoice, live: Fields?, ofEntry: (String) -> Bool
     val uri = live.uri.orEmpty()
     if (uri.isEmpty()) return RoomVerdict.NOT_OURS
     val stored = choice.uri
-    val ours = if (!stored.isNullOrEmpty()) sameStream(stored, uri) else ofEntry(uri)
+    val ours = when {
+        // design 54 §2.9 (R2, QA-2): under a queue marker ours is the share classify's - vibb's prefix rule unless the
+        // baseline the look set contradicts it (a moved UpdateID and a track in neither list); never
+        // sameStream(marker, TrackURI), which is always false and would leave our playlist playing at bedtime
+        stored != null && isQueueMarker(stored) -> live.ours
+        !stored.isNullOrEmpty() -> sameStream(stored, uri)
+        else -> ofEntry(uri)
+    }
     return when {
         !ours -> RoomVerdict.NOT_OURS
         live.transport?.live == true -> RoomVerdict.OURS_LIVE
@@ -53,12 +63,31 @@ fun roomVerdict(choice: RendererChoice, live: Fields?, ofEntry: (String) -> Bool
     }
 }
 
+/** A share link's stored marker (design 54 §2.9): the speaker's own queue, `x-rincon-queue:<uid>#0`. */
+fun isQueueMarker(uri: String?): Boolean = uri?.startsWith("x-rincon-queue:") == true
+
+/**
+ * The look's share baseline from `renderer.json` (design 54 §2.9, N3): for a queue marker with a stored target, that
+ * target, our listing's track uris of [entry] ([listedKeys], the listing's own order) and the stored `UpdateID`; null
+ * otherwise (vibb's prefix rule then).
+ */
+fun shareBaselineOf(choice: RendererChoice, entry: Entry?, listedKeys: List<String>): ShareBaseline? {
+    if (!isQueueMarker(choice.uri)) return null
+    val target = choice.shareTarget ?: return null
+    val kind = spotifyTarget(entry?.target)?.kind ?: spotifyTarget(target)?.kind ?: return null
+    return ShareBaseline(target, listedKeys.map { uriOf(kind, it) }, choice.queueUpdateId)
+}
+
 /** Our stream there, playing or paused ([roomVerdict] OURS_LIVE): what adopt at start keeps. */
 fun ourLiveSession(choice: RendererChoice, live: Fields?, ofEntry: (String) -> Boolean = { false }): Boolean =
     roomVerdict(choice, live, ofEntry) == RoomVerdict.OURS_LIVE
 
-/** What adopt rebuilds (design 26a §4.7): the queue's keys, speaker-playable, its shuffle flag, the index of the adopted uri. */
-data class AdoptPlan(val keys: List<String>, val shuffled: Boolean, val index: Int)
+/**
+ * What adopt rebuilds (design 26a §4.7): the queue's keys, speaker-playable, its shuffle flag, the index of the adopted
+ * uri. [mapped] false (design 54 R2, QA-4): an ours share track our listing doesn't name - adopted at the stored item
+ * (else 0) with the unmapped look, never stopped.
+ */
+data class AdoptPlan(val keys: List<String>, val shuffled: Boolean, val index: Int, val mapped: Boolean = true)
 
 /**
  * The adopted queue: the stored queue's order ([storedKeys], the stored entry's `NowPlayingRow`,
@@ -66,11 +95,17 @@ data class AdoptPlan(val keys: List<String>, val shuffled: Boolean, val index: I
  * speaker-playable filter (§4.2); the index by [adoptIndex]. Null when the speaker's item isn't in
  * it any more (left the library).
  */
-fun adoptPlan(entry: Entry, order: List<PlayItem>, storedKeys: List<String>?, storedShuffled: Boolean, uri: String): AdoptPlan? {
+fun adoptPlan(entry: Entry, order: List<PlayItem>, storedKeys: List<String>?, storedShuffled: Boolean, uri: String, storedItem: String? = null): AdoptPlan? {
     val byKey = order.associateBy { it.key }
     val items = (storedKeys ?: order.map { it.key }).mapNotNull { byKey[it] }.filter { PlayBodies.speakerPlayable(entry, it) }
-    val index = adoptIndex(entry, items, uri) ?: return null
-    return AdoptPlan(items.map { it.key }, storedKeys != null && storedShuffled, index)
+    val keys = items.map { it.key }
+    val shuffled = storedKeys != null && storedShuffled
+    adoptIndex(entry, items, uri)?.let { return AdoptPlan(keys, shuffled, it) }
+    // design 54 R2 (QA-4): an ours Spotify queue track our listing doesn't name - the stored item, else the first
+    if (entry.source == Source.SPOTIFY && trackSpotifyUri(uri) != null && items.isNotEmpty()) {
+        return AdoptPlan(keys, shuffled, keys.indexOf(storedItem).takeIf { it >= 0 } ?: 0, mapped = false)
+    }
+    return null
 }
 
 /**
@@ -82,6 +117,13 @@ fun adoptPlan(entry: Entry, order: List<PlayItem>, storedKeys: List<String>?, st
  * adopted.
  */
 fun adoptIndex(entry: Entry, items: List<PlayItem>, uri: String): Int? {
+    if (entry.source == Source.SPOTIFY) {
+        // design 54 §2.9 (R2): a Spotify queue track - the item whose uri is the decoded TrackURI; the first occurrence
+        // (adopt's learnQueue corrects a duplicate's index from Track)
+        val track = trackSpotifyUri(uri) ?: return null
+        val kind = spotifyTarget(entry.target)?.kind ?: return null
+        return items.indexOfFirst { uriOf(kind, it.key) == track }.takeIf { it >= 0 }
+    }
     if (entry.source == Source.STORYTEL) {
         val cid = consumableIdOf(uri) ?: return null
         return items.indexOfFirst { it.key == cid }.takeIf { it >= 0 }
@@ -133,6 +175,8 @@ suspend fun suspensionStop(
     lookMs: Long = budgetMs,
     clock: SonosClock = SonosClock({ System.nanoTime() / 1_000_000 }),
     stopMs: Long? = null,
+    /** Design 54 §2.9 (R2): a share session's persisted baseline for the look's classify (null: vibb's prefix rule). */
+    share: ShareBaseline? = null,
     bookmark: suspend (Fields) -> Unit,
 ): RoomVerdict {
     val uid = choice.uid ?: return RoomVerdict.NOT_OURS
@@ -145,7 +189,7 @@ suspend fun suspensionStop(
         val left = lookMs - (clock.elapsedMs() - start)
         val budget = if (looks == 0) minOf(budgetMs, left) else left
         if (budget < BEDTIME_MIN_LOOK_MS) break
-        live = transport.adoptLive(uid, kindOfUri(uri), uri, budget, aux = false) { null }
+        live = transport.adoptLive(uid, kindOfUri(uri), uri, budget, aux = false, share = share) { null }
         looks++
         verdict = roomVerdict(choice, live, ofEntry)
         if (verdict != RoomVerdict.NO_ANSWER || looks >= BEDTIME_MAX_LOOKS) break

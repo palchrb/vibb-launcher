@@ -168,7 +168,7 @@ class GuardsTest {
         // renderer.json -> the phone
         val lifecycle = code("src/main/java/me/vibb/music/sonos/SonosLifecycle.kt")
         val seq = lifecycle.substringAfter("suspend fun suspensionStop(").substringBefore("\n}\n")
-        assertTrue(seq.contains("live = transport.adoptLive(uid, kindOfUri(uri), uri, budget, aux = false) { null }"))
+        assertTrue(seq.contains("live = transport.adoptLive(uid, kindOfUri(uri), uri, budget, aux = false, share = share) { null }"))
         assertTrue(seq.contains("verdict = roomVerdict(choice, live, ofEntry)"))
         assertTrue(seq.indexOf("bookmark(live!!.copy(ours = true))") < seq.indexOf("transport.park(uid, left)"))
         val standalone = code("src/main/java/me/vibb/music/sonos/SonosSuspension.kt")
@@ -324,7 +324,7 @@ class GuardsTest {
         val live = sonos.substringAfter("private fun bookmarkLive(").substringBefore("\n    }\n")
         assertEquals(1, Regex("""\bto\.save\(""").findAll(sonos).count())
         assertTrue(live.contains("BookmarkInput(pl.itemKey, true, f.transport, f.relS, f.durS, false, age)"))
-        assertTrue(live.contains("if (closed || !f.reachable || !f.ours || normUri(f.uri) != normUri(pl.uri)) return"))
+        assertTrue(live.contains("if (closed || !f.reachable || !f.ours || !pl.on(f)) return"))
         for (guess in listOf("optPos", "frozen", "positionAt", "spec(", "startPosMs", "anchor")) assertFalse(guess, live.contains(guess))
         assertTrue(sonos.substringAfter("private fun bookmarkLiveFirst(").substringBefore("\n    }\n").contains("if (closed || !session || !ownsSpeaker || seeded || pending != null) return"))
         // the snapshot is only ever replaced by accept (a poll, a live classify) or the seed of a play
@@ -366,7 +366,7 @@ class GuardsTest {
         assertTrue(command.contains("when (customCommand.customAction) {"))
         val resumption = service.substringAfter("override fun onPlaybackResumption(").substringAfter("rendererReady.await()")
         assertTrue(resumption.trimStart().startsWith("switching.withLock {"))
-        assertTrue(service.contains("private suspend fun lost() = switching.withLock {"))
+        assertTrue(service.contains("private suspend fun lost(askAdult: Boolean) = switching.withLock {"))
         // M1: a hand-off that times out still stops the speaker; the release drains the actor
         assertTrue(service.contains("withTimeoutOrNull(HANDOFF_MS) { sonos.handOff() } ?: run {"))
         assertTrue(service.substringAfter("withTimeoutOrNull(HANDOFF_MS) { sonos.handOff() } ?: run {").substringBefore("}").contains("sonos.abandon()"))
@@ -588,7 +588,8 @@ class GuardsTest {
         // ... and asks for the server's session ahead (design 58 §5.1, QA 58-1): at a start, before the play's job is
         // queued, and at every poll while a book plays - off main and off the actor
         assertTrue(Regex("""controller\.onPoll\(tick, fields\)\s+if \(showsPlaying\) prefetchStorytel\(\)""").containsMatchIn(renderer))
-        assertTrue(renderer.contains("        if (playNow) prefetchStorytel()\n        controller.load(a.entry, a.items, startIndex, startMs)\n        if (playNow) controller.playTile()"))
+        assertTrue(renderer.contains("        if (playNow) prefetchStorytel()\n"))
+        assertTrue(renderer.contains("controller.load(a.entry, a.items, startIndex, startMs, listed = a.listed, one = a.mix != null && a.entry.source == Source.SPOTIFY, contextTrack = contextTrackOf(a))\n        if (playNow) controller.playTile()"))
         assertTrue(renderer.contains("    override fun play() {\n        prefetchStorytel()\n        controller.playTile()\n    }"))
         assertTrue(renderer.contains("        if (queue()?.entry?.source != Source.STORYTEL) return\n        actorScope.launch {"))
         // qa-58-step2-code S2-3: never an exception out of the launch (a scope without a handler)
@@ -634,8 +635,9 @@ class GuardsTest {
         assertTrue(body("private suspend fun startRun(").contains("val (snap, rows) = loaded ?: loadForRenderer()"))
         assertEquals("the ten call sites and loadForRenderer's own, no other read", 11, Regex("""(?<![.\w])load(ForRenderer)?\(""").findAll(service).count() - 2)
         val suspension = code("src/main/java/me/vibb/music/sonos/SonosSuspension.kt")
-        assertEquals("entryMatcher and the bookmark: the stored room's view", 2, Regex("""store\.snapshot\(\)\.forRenderer\(true\)""").findAll(suspension).count())
-        assertEquals(2, Regex("""store\.snapshot\(\)""").findAll(suspension).count())
+        // design 54 §2.9: and the share baseline's listing
+        assertEquals("entryMatcher, the bookmark and the share baseline: the stored room's view", 3, Regex("""store\.snapshot\(\)\.forRenderer\(true\)""").findAll(suspension).count())
+        assertEquals(3, Regex("""store\.snapshot\(\)""").findAll(suspension).count())
         val vm = code("src/main/java/me/vibb/music/ui/MusicViewModel.kt")
         assertTrue(vm.contains("combine(store.snapshots(), PlayerHub.state.map { it.output.kind == OutputKind.SONOS }.distinctUntilChanged()) { snap, onRoom ->\n        snap.forRenderer(onRoom)"))
         assertTrue("the Nytt notification is the phone's", code("src/main/java/me/vibb/music/sync/NewNotifier.kt").contains("val n = count(snap.forRenderer(false))"))
@@ -859,11 +861,12 @@ class GuardsTest {
         assertTrue(changed.contains("if (isSpotify(a.entry)) {\n            "))
         assertTrue("only Spotify's own advance is refused; never moved on", changed.contains("if (auto && !playable(a, index)) refuseSpotify()\n        } else if (!playable(a, index)) {"))
         assertTrue("the natural-advance seek stays the Exo's (QA M4)", changed.contains("if (resumesOnAdvance(auto, renderer.kind)) {"))
-        // the room's queue drops Spotify items (§4.2): toRoom from a Spotify entry keeps the phone playing (QA L1)
+        // design 54: a list-mode Spotify playlist goes to a room as a share link; an artist never ("Kan ikke spilles på Sonos")
         val spotify = Fixtures.entry(6, me.vibb.music.model.Source.SPOTIFY, target = "spotify:playlist:FAKEid6", cache = 0).copy(spotifyMode = "list")
         val track = me.vibb.music.model.PlayItem(6, "t1", "Song — Artist", null, false, 180_000)
-        assertEquals("spotify", me.vibb.music.sonos.PlayBodies.speakerDropReason(spotify, track))
-        assertFalse(me.vibb.music.sonos.PlayBodies.speakerPlayable(spotify, track))
+        assertTrue(me.vibb.music.sonos.PlayBodies.speakerPlayable(spotify, track))
+        val artist = spotify.copy(target = "spotify:artist:FAKEid6")
+        assertEquals("spotify artist", me.vibb.music.sonos.PlayBodies.speakerDropReason(artist, track))
     }
 
     @Test

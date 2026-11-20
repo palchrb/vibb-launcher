@@ -91,23 +91,17 @@ object VolumeCap {
     /** The cap in force now (null = none): also the music app's `volume_cap_pct` (design 26a §5.3). */
     val pctInForce: Int? get() = pct
 
-    @Volatile
-    private var pushed = false
-
     /**
-     * The cap for the enforced [policy] (`AppEnforcer.apply()`), applied at once. Any thread. A cap
-     * in force that changed (or the first of this process) goes to the music app's managed config
-     * too: its Sonos rooms are outside `STREAM_MUSIC` (design 26a §5.3).
+     * The cap for the enforced [policy] (`AppEnforcer.apply()`), applied at once. Any thread. The
+     * music app's managed config follows on every refresh: its Sonos rooms are outside `STREAM_MUSIC`
+     * (design 26a §5.3), and the override's and the pause's start and end move its next suspension
+     * (`suspend_at_s`, design 54 R2). The write is compare-first, so an unchanged config costs nothing.
      */
     fun refresh(context: Context, policy: PolicyResponse?, managed: Boolean, overrideActive: Boolean) {
-        val before = pct
         val app = context.applicationContext
         pct = capPctInForce(policyCap(app, policy), managed, overrideActive)
         main.post { clamp(app) }
-        if (!pushed || before != pct) {
-            pushed = true
-            MusicSync.capChanged(app, policy)
-        }
+        MusicSync.restrictionsChanged(app, policy)
     }
 
     /** The last policy cap read (CE prefs `volume_cap`): what a refused music object keeps (qa-30-s2-code L1). */

@@ -6,8 +6,10 @@ Moved from music/CLAUDE.md on 2026-11-01.
 
 - **Spotify is the third renderer, the web player** (design 26c §5, §5.10): a Spotify entry on a phone output gets
   `SpotifyRenderer` (`phoneRendererFor`; made once per service and kept; `local.standDown()` when it attaches), every
-  other entry the `LocalRenderer`, a room its `SonosRenderer` - a room's queue drops Spotify (`speakerDropReason`
-  `spotify`, "Kan ikke spilles på Sonos"; Spotify on Sonos is 26c's later step 9). `RendererKind.onPhone` (LOCAL,
+  other entry the `LocalRenderer`, a room its `SonosRenderer` - since design 54 round a2 a room plays a Spotify entry
+  through the speaker's own queue (vibb's `spotify_sharelink`; the rule block "Spotify on a room" in
+  `renderers-and-sonos.md`); an artist and, until round a2', a context stay refused (`speakerDropReason`, "Kan ikke
+  spilles på Sonos"). `RendererKind.onPhone` (LOCAL,
   SPOTIFY) replaces `=== local` at every site `GuardsTest` lists. The sound is local audio (noisy, the volume cap,
   the 10 s sleep fade through `vibb.volume`; no hush). **The audio focus is the WebView's own** (26c §5.6 as the
   emulator check §6l A answered it, F2): Chromium's media session takes it when the page's audio starts, pauses on a

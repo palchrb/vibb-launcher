@@ -16,7 +16,8 @@
     "stream_mobile_data": "boolean",
     "download_mobile_data": "boolean",
     "storage_limit_gb": "int",
-    "spotify_diag_until": "int"
+    "spotify_diag_until": "int",
+    "suspend_at_s": "int"
   },
   "report_state": ["report", "held_files", "held_sha256"],
   "now_playing": ["entry", "item", "position_ms", "duration_ms", "playing", "art", "controls"],

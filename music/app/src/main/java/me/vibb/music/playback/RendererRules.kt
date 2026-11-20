@@ -24,8 +24,9 @@ import me.vibb.music.spotify.uriOf
 
 /**
  * Who plays [entry] on the phone (§5.10, "Which renderer"): Spotify's web player for a Spotify entry,
- * the phone's own player (ExoPlayer) for every other. A Sonos room keeps its renderer: its queue never
- * holds a Spotify item (`PlayBodies.speakerDropReason`, §4.2), so a Spotify entry never reaches it.
+ * the phone's own player (ExoPlayer) for every other. A Sonos room keeps its renderer: a Spotify entry with a share
+ * type plays there as a share link (design 54 §2.1), and coming home ([comeHome]) it goes to the web player at its item
+ * and place through this rule.
  */
 fun phoneRendererFor(entry: Entry): RendererKind = if (isSpotify(entry)) RendererKind.SPOTIFY else RendererKind.LOCAL
 
@@ -120,8 +121,9 @@ fun resumesOnAdvance(auto: Boolean, kind: RendererKind): Boolean = auto && kind 
 fun keepsDuration(entry: Entry, key: String): Boolean = !isContextItem(entry, key)
 
 /**
- * Whether next and previous on [entry] are the web player's own (design 26c §5.9, step 6): a Spotify context's -
- * Spotify's order, `vibb.next()`/`vibb.previous()` - never the service's skip rules over its one synthetic item.
+ * Whether next and previous on [entry] are the renderer's own in Spotify's order (design 26c §5.9, step 6): a Spotify
+ * context's - on the phone the web player's `vibb.next()`/`vibb.previous()`, on a room the speaker's queue ±1
+ * (design 54 §2.12, `SonosRenderer.stepContext`) - never the service's skip rules over its one synthetic item.
  */
 fun stepsOnWebPlayer(entry: Entry): Boolean = isSpotifyContext(entry)
 

@@ -151,6 +151,20 @@ class FakeHost : SonosHost {
         ramps.add(volume)
     }
 
+    /** Design 54 §2.9: the share baselines renderer.json would keep (target, UpdateID). */
+    val shared = mutableListOf<Pair<String, String?>>()
+
+    override fun shared(target: String, updateId: String?) {
+        shared.add(target to updateId)
+    }
+
+    /** Design 54 §2.12: a context's live tracks as the store would get them (uri, title, forced). */
+    val contexts = mutableListOf<Triple<String, String, Boolean>>()
+
+    override fun contextTrack(entryKey: String, uri: String, title: String, force: Boolean) {
+        contexts.add(Triple(uri, title, force))
+    }
+
     override fun armedPlaying(playing: Boolean) {
         locks.add(playing)
     }
@@ -225,10 +239,14 @@ class ControllerRig(val uid: String = "RINCON_KID01400") {
     /** The event socket as the controller sees it (design 53), and the confirm polls it asked for. */
     val link = FakeLink()
     var wakes = 0
+
+    /** Design 54 §2.9 item 4: the launcher's edge (epoch ms, 0 = none) and the wall clock it is read against. */
+    var suspendAtMs = 0L
+    var wallMs = 1_800_000_000_000L
     val c = SonosController(
         transport, work, store, { clock.now }, uid, "Barnerom", host, sleep = clock.clock.sleep, mayPlay = { allowed }, cap = { capPct },
         minter = minter, privateMintAllowed = { privateMint }, events = link, wakePoll = { wakes++ },
-        members = { membersOf(it) }, memberVolumes = volumes,
+        members = { membersOf(it) }, memberVolumes = volumes, suspendAt = { suspendAtMs }, wallMs = { wallMs },
     )
 
     /** One event of the socket, received now (design 53 §2.3). */

@@ -261,6 +261,57 @@ object TimeRulesRuntime {
         )
     }
 
+    /**
+     * Design 54 R2/R3: the music app [musicPkg]'s next suspension by a time rule, epoch seconds, 0 = none
+     * ([com.kidslauncher.mdm.music.musicSuspendEdgeS]) - the managed config's `suspend_at_s`. The inputs are
+     * [nextBoundary]'s: the policy in force, the PWA's rule lifts and the parent-code pauses with their ends, the open
+     * override's or pause's end. Any thread. Null while the music app is suspended now or when something can't be read:
+     * the written value stays (qa-54a2-code M1).
+     */
+    fun musicSuspendAtS(
+        context: Context,
+        policy: PolicyResponse? = currentPolicyDecision().policy,
+        musicPkg: String? = com.kidslauncher.mdm.music.MusicStore.installedPackage(context),
+    ): Int? {
+        musicPkg ?: return 0
+        return try {
+            val clocks = clocks()
+            val tp = KidModeEnforcer.timePolicyOf(policy)?.inForceAt(clocks.wallMs) ?: return 0
+            val records = liftRecords(context, tp.lifts, clocks)
+            val byId = records.associateBy { it.id }
+            // The PWA's lifts through their records, each with its own end.
+            val fromPolicy = tp.lifts
+                .filter { it.target == TARGET_RULE && it.phoneKey == null }
+                .mapNotNull { lift ->
+                    byId[lift.id]?.takeIf { liftRecordActive(it, clocks) }
+                        ?.let { com.kidslauncher.mdm.music.TimedLift(lift.ruleId, liftExpiry(it, clocks).toEpochMilli()) }
+                }
+            // Design 98's parent-code pauses: each rule an entry still lifts, until its own end.
+            val pauses = try {
+                val lifting = PhonePauses.lifting(context, clocks)
+                PhonePauses.entries(context).flatMap { e ->
+                    val lifted = lifting[e.key].orEmpty()
+                    e.rules.filter { it.id in lifted }.zip(phonePauseExpiries(e, lifted, clocks)) { r, end ->
+                        com.kidslauncher.mdm.music.TimedLift(r.id, end.toEpochMilli())
+                    }
+                }
+            } catch (e: Exception) {
+                emptyList()
+            }
+            val timed = fromPolicy + pauses
+            val overrideEndMs = if (overrideActive()) windowEnds(clocks).filter { it > clocks.wallMs }.maxOrNull() ?: 0L else 0L
+            com.kidslauncher.mdm.music.musicSuspendEdgeS(
+                tp, clocks.wallMs, zone(), musicPkg,
+                liftsAt = { com.kidslauncher.mdm.music.ruleLiftsAt(timed, it) },
+                overrideEndMs = overrideEndMs,
+                extra = timed.map { Instant.ofEpochMilli(it.untilMs) },
+            )
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't work out the music app's next suspension: ${e.javaClass.simpleName}")
+            null
+        }
+    }
+
     /** The open override's and pause's ends: the earlier of the wall end and now plus the elapsed
      * time left ([windowEndMs]). */
     private fun windowEnds(clocks: Clocks): List<Long> {
@@ -289,7 +340,8 @@ object TimeRulesRuntime {
         ScreenTimeTracker.update(context)
         try {
             // Design r13 §1.4 (R13-5): one snapshot per re-check, for the lock reason and the listeners.
-            val snap = snapshot(context, currentPolicyDecision().policy)
+            val policy = currentPolicyDecision().policy
+            val snap = snapshot(context, policy)
             val changedTo = reevaluateLockReasonFromCache(context, snap)
             // A silent rule's Do Not Disturb follows the same lock (server 0121), at every boundary and screen-on.
             ZenRuleRuntime.follow(context, snap.lock, snap.clocks.elapsedMs)
@@ -313,6 +365,9 @@ object TimeRulesRuntime {
             // The lock's glance page shows what our missed-call notification shows: a rule's start or
             // end re-learns it (design 25, code QA Low 3; never posts anew, never clears).
             if (changedTo != null) com.kidslauncher.mdm.calls.MissedCallNotifier.relearn(context)
+            // Design 54 R3: the music app's `suspend_at_s` again at every boundary and screen-on (written only when it
+            // differs, on IO).
+            com.kidslauncher.mdm.music.MusicSync.restrictionsChanged(context, policy)
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Lock re-check failed", e)
         }

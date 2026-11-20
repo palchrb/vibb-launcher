@@ -250,6 +250,26 @@ class PlayBodyTest {
             fail("a share link's metadata is SoCo's, never vibb's didl()")
         } catch (_: IllegalArgumentException) {
         }
-        assertEquals("54-a1 changes nothing for the kid: a room still refuses Spotify", "spotify", PlayBodies.speakerDropReason(playlist, item(key = keys[0], url = null)))
+    }
+
+    @Test
+    fun `d54a2 the drop reasons by kind and mode, build refuses Spotify, a favourite is one track`() {
+        val track = item(key = "1FakeTrackA00000000001", url = null)
+        fun sp(target: String, mode: String? = null) = entry(id = 9, source = Source.SPOTIFY, target = target).copy(spotifyMode = mode)
+        for (kind in listOf("playlist", "album", "track", "show", "episode")) {
+            assertNull(kind, PlayBodies.speakerDropReason(sp("spotify:$kind:0FakeId0000000000000001"), track))
+        }
+        assertEquals("spotify artist", PlayBodies.speakerDropReason(sp("spotify:artist:3FakeArtist00000000001"), track))
+        assertEquals("no share type", "spotify", PlayBodies.speakerDropReason(sp("junk"), track))
+        assertEquals(if (PlayBodies.CONTEXT_ON_ROOM) null else "spotify context", PlayBodies.speakerDropReason(sp("spotify:playlist:0FakePlaylistKveld0001", "context"), track))
+        assertEquals("an artist context stays refused", "spotify artist", PlayBodies.speakerDropReason(sp("spotify:artist:3FakeArtist00000000001", "context"), track))
+        assertNull("QA-3: never item.url!!", PlayBodies.build(sp("spotify:playlist:0FakePlaylistKveld0001"), track, "RINCON_X", 0.0))
+        val one = PlayBodies.shareOne(sp("spotify:playlist:0FakePlaylistKveld0001"), "1FakeTrackA00000000001", "RINCON_X", 30.0, 180.0)!!
+        assertEquals("spotify:track:1FakeTrackA00000000001", one.uri)
+        assertEquals(listOf(one.uri), one.listed)
+        assertEquals(0, one.trackIndex)
+        assertEquals(Kind.SPOTIFY_SHARELINK, one.kind)
+        assertEquals("a show's favourite is its episode", "spotify:episode:5FakeEpisode0000000003", PlayBodies.shareOne(sp("spotify:show:4FakeShow0000000000001"), "5FakeEpisode0000000003", "RINCON_X", 0.0)!!.uri)
+        assertNull(PlayBodies.shareOne(entry(), "ep1", "RINCON_X", 0.0))
     }
 }

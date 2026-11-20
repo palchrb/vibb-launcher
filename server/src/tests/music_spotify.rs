@@ -400,6 +400,42 @@ async fn routes_need_a_session() {
     assert!(!text.contains("<script>") && !text.contains("%3Cscript"));
 }
 
+/// Design 54 R8 Q3: one line behind the accounts group's (i), in both languages.
+#[tokio::test]
+async fn the_accounts_info_says_sonos_uses_its_own_account() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    set_up(&app, &cookie, HTTPS_REDIRECT).await;
+    for (lang, code, line) in [
+        (
+            "nb",
+            crate::i18n::Lang::Nb,
+            "<p>På Sonos spilles Spotify med kontoen som er koblet til i Sonos-appen</p>",
+        ),
+        (
+            "en",
+            crate::i18n::Lang::En,
+            "<p>On Sonos, Spotify plays through the account linked in the Sonos app</p>",
+        ),
+    ] {
+        let page = app
+            .get_page(&format!("/music/settings?lang={lang}"), &cookie)
+            .await
+            .text();
+        let at = page.find(line).expect(lang);
+        // right after the accounts group's login line, inside that (i)'s panel (qa-54a2-code L3)
+        let login = crate::i18n::t(code, "music.setup.login_info");
+        assert!(
+            page[..at].ends_with(&format!("<p>{login}</p>")),
+            "{lang}: the line follows the accounts group's login_info"
+        );
+        assert!(
+            page[at..].starts_with(&format!("{line}</div></details>")),
+            "{lang}"
+        );
+    }
+}
+
 /// "Not configured" changes nothing else: the music page links to the Spotify page, the Spotify
 /// page explains how to register an app, and a phone's library is the same.
 #[tokio::test]

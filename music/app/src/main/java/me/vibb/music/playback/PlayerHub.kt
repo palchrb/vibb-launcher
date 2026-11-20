@@ -233,7 +233,11 @@ object PlayerHub {
      * [PHONE_UNPLUG], [PHONE_TURN_OFF] (2026-11-20, the user's R1): "Telefonen" picked while the web player plays, and its
      * sound can't move there - a wired headset is in, or the Bluetooth headset's media wouldn't go. Sent by the view model.
      */
-    enum class Message { NOT_DOWNLOADED, NO_NETWORK, CANT_PLAY, CANT_PLAY_ON_SONOS, ROOM_NOT_ALLOWED, STAYED, HEADSET_NO_CONTACT, PHONE_UNPLUG, PHONE_TURN_OFF }
+    /**
+     * [SONOS_ASK_ADULT] (design 54 §2.13, R4): the speaker refused a share link (both service types, or 0 tracks: the
+     * account linked in the Sonos app can't play it) - "Kan ikke spilles på Sonos – spør en voksen"; no source named.
+     */
+    enum class Message { NOT_DOWNLOADED, NO_NETWORK, CANT_PLAY, CANT_PLAY_ON_SONOS, SONOS_ASK_ADULT, ROOM_NOT_ALLOWED, STAYED, HEADSET_NO_CONTACT, PHONE_UNPLUG, PHONE_TURN_OFF }
 
     internal val mutableState = MutableStateFlow(State())
     val state: StateFlow<State> = mutableState

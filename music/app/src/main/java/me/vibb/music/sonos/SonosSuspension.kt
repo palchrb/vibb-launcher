@@ -38,7 +38,12 @@ object SonosSuspension {
      */
     private const val STOP_UNTIL_MS = 8_500L
 
-    suspend fun standalone(context: Context) = withContext(Dispatchers.IO) {
+    /**
+     * [retry]: a NO_ANSWER verdict with renderer.json still on a room schedules [SonosParkRetry] (design 54 §2.9 item 3);
+     * the retry's own run passes false (WorkManager's backoff is its next try). The verdict: NOT_OURS when renderer.json
+     * names no room.
+     */
+    suspend fun standalone(context: Context, retry: Boolean = true): RoomVerdict = withContext(Dispatchers.IO) {
         val app = context.applicationContext
         val t0 = SystemClock.elapsedRealtime()
         // the tail's own Stop leaves our uri on a stopped speaker: the look below parks it (OURS_STOPPED)
@@ -46,24 +51,36 @@ object SonosSuspension {
         val home = SonosHome(app)
         try {
             val choice = home.choice()
-            if (!choice.sonos) return@withContext
+            if (!choice.sonos) return@withContext RoomVerdict.NOT_OURS
             val store = Store.get(app)
             val verdict = if (home.awaitWifi(SonosRenderer.WIFI_WAIT_MS)) {
                 val clock: () -> Long = SystemClock::elapsedRealtime
                 val transport = SonosTransport(SonosSession(clock, SonosHome::log), home.speakers, home.nrk, SonosClock(clock), log = SonosHome::log)
                 val ofEntry = entryMatcher(store, choice)
+                // design 54 §2.9: a share session's look with its persisted baseline (a replaced queue is told apart)
+                val share = shareBaseline(store, choice)
                 val since = clock() - t0
                 val lookMs = maxOf(SonosController.LIVE_BUDGET_MS, LOOKS_UNTIL_MS - since)
                 val stopMs = STOP_UNTIL_MS - since
-                suspensionStop(transport, choice, SonosController.LIVE_BUDGET_MS, ofEntry, lookMs, SonosClock(clock), stopMs) { live -> bookmark(app, store, choice, live) }
+                suspensionStop(transport, choice, SonosController.LIVE_BUDGET_MS, ofEntry, lookMs, SonosClock(clock), stopMs, share) { live -> bookmark(app, store, choice, live) }
             } else {
                 RoomVerdict.NO_ANSWER
             }
             SonosHome.log("sonos: suspended without a room renderer - $verdict")
             if (verdict != RoomVerdict.NO_ANSWER) home.write(RendererChoice.local(choice))
+            if (verdict == RoomVerdict.NO_ANSWER && retry) SonosParkRetry.schedule(app)
+            verdict
         } finally {
             home.release()
         }
+    }
+
+    /** The stored share session's baseline (design 54 §2.9, N3): the target, the entry's listing, the stored UpdateID. */
+    private suspend fun shareBaseline(store: Store, choice: RendererChoice): ShareBaseline? {
+        if (!isQueueMarker(choice.uri)) return null
+        val snap = store.snapshot().forRenderer(true)
+        val entry = snap.entries.firstOrNull { it.id == choice.entryId }
+        return shareBaselineOf(choice, entry, entry?.let { snap.visible(it).map { i -> i.key } }.orEmpty())
     }
 
     /**
@@ -87,8 +104,9 @@ object SonosSuspension {
         // the room's view (design 26b §5.6): the book the speaker plays need not be on the phone
         val snap = store.snapshot().forRenderer(true)
         val entry = snap.entries.firstOrNull { it.id == choice.entryId } ?: return
-        // no built uri stored yet: the item the speaker plays, found by its uri in the entry
-        val itemKey = if (choice.uri.isNullOrEmpty()) {
+        // no built uri stored yet: the item the speaker plays, found by its uri in the entry. Design 54 §2.9 (R2): under a
+        // share link's queue marker too - the queue moved on from the stored item, and only a mapped track is written
+        val itemKey = if (choice.uri.isNullOrEmpty() || isQueueMarker(choice.uri)) {
             val order = snap.order(entry)
             adoptIndex(entry, order, live.uri.orEmpty())?.let { order[it].key }
         } else {

@@ -41,12 +41,22 @@ data class RendererChoice(
     val volume: Int? = null,
     /** The room [volume] belongs to (qa-26a-step3a-code L1: never one room's level onto another). */
     @SerialName("volume_uid") val volumeUid: String? = null,
+    /**
+     * Design 54 §2.9 (N3): a share link's canonical target, written with the queue marker at its play - the look's and
+     * the standalone path's baseline with [queueUpdateId]. Null for every other play.
+     */
+    @SerialName("share_target") val shareTarget: String? = null,
+    /** Design 54 §2.9 (N3): the queue's `UpdateID` at the last read of ours (the transfer's, each re-read). */
+    @SerialName("queue_update_id") val queueUpdateId: String? = null,
 ) {
     val sonos: Boolean get() = renderer == SONOS && !uid.isNullOrEmpty()
 
     /** A play of [itemKey] of [entry] sent as [uri] landed: what a later adopt compares against, through [storedUri]. */
     fun played(entry: Entry, itemKey: String, uri: String): RendererChoice =
-        copy(entryId = entry.id, itemKey = itemKey, uri = storedUri(entry, itemKey, uri))
+        copy(entryId = entry.id, itemKey = itemKey, uri = storedUri(entry, itemKey, uri), shareTarget = null, queueUpdateId = null)
+
+    /** Design 54 §2.9: a share link's play landed or its queue was read - the baseline the next look compares against. */
+    fun shared(target: String, updateId: String?): RendererChoice = copy(shareTarget = target, queueUpdateId = updateId)
 
     /**
      * Migration follow (design 26a §4.8): the new room, and the uri its adopt went out with for

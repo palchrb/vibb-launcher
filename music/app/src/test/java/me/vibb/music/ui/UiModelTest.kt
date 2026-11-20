@@ -83,13 +83,13 @@ class UiModelTest {
     }
 
     @Test
-    fun `a cover tap switches at once on the phone - its bookmarked track - and never on a room`() {
+    fun `a cover tap switches at once on the phone - its bookmarked track - and on a room as a share link`() {
         val sw = playSwitch(snap, 6, null, null, 1_000)!!
         assertEquals("t2", sw.view.item.key)
         assertEquals(30_000L, sw.view.storedPosMs)
         assertEquals("design 49 §1.1: Spotify music shuffles (the user's override of 26c)", true, sw.view.canShuffle)
         assertEquals(true, sw.view.canRepeat)
-        assertNull("a speaker can't play it: the service says Kan ikke spilles på Sonos", playSwitch(snap, 6, null, null, 1_000, onRoom = true))
+        assertEquals("design 54: a room plays a list-mode playlist as a share link", "t2", playSwitch(snap, 6, null, null, 1_000, onRoom = true)?.view?.item?.key)
     }
 
     @Test

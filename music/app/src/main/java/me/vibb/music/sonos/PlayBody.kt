@@ -3,10 +3,12 @@ package me.vibb.music.sonos
 import me.vibb.music.logic.QueuePlan
 import me.vibb.music.logic.isPrivateAddress
 import me.vibb.music.logic.publicOnly
+import me.vibb.music.logic.isSpotifyContext
 import me.vibb.music.logic.redactUri
 import me.vibb.music.model.Entry
 import me.vibb.music.model.PlayItem
 import me.vibb.music.model.Source
+import me.vibb.music.spotify.SpotifyKind
 import me.vibb.music.spotify.spotifyTarget
 import me.vibb.music.spotify.uriOf
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -101,6 +103,8 @@ object PlayBodies {
      * could play ([speakerDropReason]).
      */
     fun build(entry: Entry, item: PlayItem, uid: String, startS: Double, art: String? = null, album: String? = entry.name): PlayBody? {
+        // design 54 R1.12 (QA-3): a Spotify item has no url - it goes to a room only through [share] / [shareOne]
+        if (entry.source == Source.SPOTIFY) return null
         if (speakerDropReason(entry, item) != null) return null
         val durationS = item.durationMs?.let { it / 1000.0 }
         if (entry.source == Source.STORYTEL) {
@@ -123,8 +127,8 @@ object PlayBodies {
     /**
      * Design 54 §2.2: a Spotify entry's share body - the canonical target as the uri, our listing's track uris
      * ([keys] in the listing's own order, `uriOf`) and the start item's index there; the playing item's listed
-     * duration as the tail cadence's hint. Null when the target has no share type (an artist, junk). Nothing calls it
-     * for a room yet: [speakerDropReason] still refuses Spotify (round 54-a2 turns it on).
+     * duration as the tail cadence's hint. Null when the target has no share type (an artist, junk). A context entry
+     * (design 54 §2.12) has no listing: [keys] empty, [index] null.
      */
     fun share(entry: Entry, keys: List<String>, index: Int?, uid: String, startS: Double, hintS: Double? = null): PlayBody? {
         val ref = spotifyTarget(entry.target) ?: return null
@@ -135,6 +139,31 @@ object PlayBodies {
             cadenceHintS = hintS, trackIndex = index?.takeIf { it in listed.indices }, listed = listed,
         )
     }
+
+    /**
+     * Design 54 R2 (r12 §3.5): a Spotify favourite on a room is its own run - one share link per track, never the whole
+     * playlist: the item [key] of [entry] as a `track` (an `episode` for a show's or an episode entry's), listed alone,
+     * index 0. Null when the entry's target isn't a Spotify one.
+     */
+    fun shareOne(entry: Entry, key: String, uid: String, startS: Double, hintS: Double? = null): PlayBody? {
+        val ref = spotifyTarget(entry.target) ?: return null
+        if (entry.source != Source.SPOTIFY) return null
+        val uri = uriOf(ref.kind, key)
+        if (ShareLink.of(uri) == null) return null
+        return PlayBody(uid, Kind.SPOTIFY_SHARELINK, uri, null, entry.name, null, null, startS, cadenceHintS = hintS, trackIndex = 0, listed = listOf(uri))
+    }
+
+    /** Design 54 §2.1: why a Spotify [entry] can't go to a room, or null (a share link). */
+    fun spotifyDropReason(entry: Entry): String? {
+        val ref = spotifyTarget(entry.target) ?: return "spotify"
+        if (ref.kind == SpotifyKind.ARTIST) return "spotify artist"
+        if (ShareLink.of(ref.target) == null) return "spotify"
+        if (isSpotifyContext(entry) && (!CONTEXT_ON_ROOM || ref.kind != SpotifyKind.PLAYLIST)) return "spotify context"
+        return null
+    }
+
+    /** Design 54 §2.12 (round 54-a2'): a playlist context goes to a room; an artist context never (above). */
+    const val CONTEXT_ON_ROOM = true
 
     /**
      * The speaker-playable filter (`sonos_start_target`, 26a §4.2): why [item] can't go to a speaker,
@@ -155,9 +184,10 @@ object PlayBodies {
         // is listed without a url and minted per play - downloaded or not, a speaker fetches it from the
         // CDN. Its URL's address is checked once it exists, in the play job ([mintedDropReason]).
         if (entry.source == Source.STORYTEL) return null
-        // design 26c §4.2: the web player streams a Spotify item on the phone only (Spotify on Sonos is
-        // a later step): a room's queue drops it - "nothing speaker-playable" (CANT_PLAY_ON_SONOS).
-        if (entry.source == Source.SPOTIFY) return "spotify"
+        // design 54 §2.1 (R2): a Spotify entry goes to a room as a share link when its target has a share type
+        // (playlist, album, track, show, episode); an artist never, a target with no share type never, and a context
+        // only from round 54-a2' (§2.12) - refused: "nothing speaker-playable" (CANT_PLAY_ON_SONOS)
+        if (entry.source == Source.SPOTIFY) return spotifyDropReason(entry)
         val url = item.url ?: return "withdrawn"
         val http = url.toHttpUrlOrNull() ?: return "not an http url"
         val nrkSeries = entry.nrkSerie && nrkSeriesSlug(entry.target) != null

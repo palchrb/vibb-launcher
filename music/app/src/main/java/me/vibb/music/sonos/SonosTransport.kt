@@ -10,7 +10,10 @@ import me.vibb.music.logic.QueueRead
 import me.vibb.music.logic.positionNearest
 import me.vibb.music.logic.queuePagesAround
 import me.vibb.music.logic.redactUri
+import me.vibb.music.logic.SLEEP_TIMER_SLACK_MS
+import me.vibb.music.logic.sleepTimerFor
 import me.vibb.music.logic.sleepTimerOurs
+import me.vibb.music.logic.sleepTimerResetDue
 import me.vibb.music.logic.trackSpotifyUri
 
 /*
@@ -99,6 +102,17 @@ interface SpeakerControl : SpeakerIo {
  * [SpeakerUnreachable] instead (no second try).
  */
 class ShareRefused(message: String) : SonosException(message)
+
+/** A jump to our item the speaker's queue doesn't hold (design 54 §2.3: no slot) - nothing was sent. */
+class NotInQueue(message: String) : SonosException(message)
+
+/**
+ * What `renderer.json` keeps of a share session (design 54 §2.9, N3): the canonical [target], our listing's track uris
+ * ([listed]) and the queue's `UpdateID` at the last read ([updateId]) - the look's and the standalone path's baseline.
+ */
+data class ShareBaseline(val target: String, val listed: List<String>, val updateId: String?) {
+    override fun toString(): String = "ShareBaseline(listed=${listed.size} uris, updateId=$updateId)"
+}
 
 /**
  * A share link's start (design 54 §2.2): the queue's [first] added position and [length], the [position] it plays
@@ -251,7 +265,8 @@ class SonosTransport(
      * only (§2.14).
      */
     suspend fun playShare(body: PlayBody, cap: Int? = null, members: List<String> = emptyList(), sleepTimer: String? = null, gate: () -> Boolean = { true }): PlayResult? = mutex.withLock {
-        val link = ShareLink.of(body.uri) ?: throw ShareRefused("not a share link (${body.kind})")
+        // qa-54a2-code L5: no share type is a refusal by kind (the plain words), never the speaker's ShareRefused
+        val link = ShareLink.of(body.uri) ?: throw SonosException("not a share link (${body.kind})")
         session.beginPlay(body.uid, Kind.SPOTIFY_SHARELINK)
         val spk = speakers.speaker(body.uid, verify = true, budgetMs = null)
         HandOverTiming.step("the speaker resolved (its description read)")
@@ -451,31 +466,78 @@ class SonosTransport(
      * sent). [hintS] is the target item's listed duration (the tail cadence's, §2.8).
      */
     suspend fun queuePlay(
-        position: Int,
+        position: Int?,
         startS: Double,
         ifUid: String,
         cap: Int? = null,
         members: List<String> = emptyList(),
         hintS: Double? = null,
+        listed: List<String>? = null,
+        index: Int? = null,
         gate: () -> Boolean = { true },
     ): PlayResult? = mutex.withLock {
         val uid = session.uid
         if (uid == null || uid != ifUid || session.kind != Kind.SPOTIFY_SHARELINK) return@withLock null
+        // design 54 N6: a jump queued while the read ran looks its position up now - the read was ahead of it in the actor
+        val target = position ?: run {
+            val read = session.shareRead
+            val i = index
+            if (read == null || listed == null || i == null) null else QueueMap(listed, read).slotOf(i)
+        } ?: throw NotInQueue("no queue position for that item")
         val spk = speakers.speaker(uid, verify = true, budgetMs = null)
         val unhush = hush(spk, startS)
         val result = try {
             val capped = capRow(spk, uid, cap, members)
             if (!gate()) return@withLock null
-            playFromQueue(spk, uid, position)
+            playFromQueue(spk, uid, target)
             session.jumped(hintS)
             if (capped != null) session.ownVolume(capped)
             val sought = if (startS >= 5) seekSettled(spk, startS) else true
-            PlayResult(uid, queueUri(uid), sought, "", capped)
+            PlayResult(uid, queueUri(uid), sought, "", capped, share = ShareStart(target, session.shareRead?.length ?: target, target, true, 0, session.shareRead ?: QueueRead(target, emptyMap(), null)))
         } finally {
             unhush()
         }
         wake()
         result
+    }
+
+    /**
+     * The speaker's sleep timer to the edge (design 54 §2.9 item 4) at a boundary, a follow or a restriction change:
+     * [suspendAtMs] (epoch ms, 0 = none) from [wallNowMs]. No edge within a day: our own timer cleared (only while it
+     * is still ours); else set when what ours has left differs by more than 30 s ([sleepTimerResetDue]) - a timer
+     * someone set in the Sonos app is replaced at the next boundary (the parent's rule is the edge). Only for an armed
+     * share session on [ifUid]; never at adopt (nobody calls it there). True when a SOAP went out.
+     */
+    suspend fun syncSleepTimer(suspendAtMs: Long, wallNowMs: Long, ifUid: String): Boolean = mutex.withLock {
+        val uid = session.uid
+        if (uid == null || uid != ifUid || session.kind != Kind.SPOTIFY_SHARELINK || !session.armed) return@withLock false
+        val wanted = sleepTimerFor(suspendAtMs, wallNowMs)
+        val own = session.ownSleepLeftMs(uid)
+        if (wanted == null) {
+            // qa-54a2-code M1: our own timer ending within the slack is the edge itself - it stops the room, never cleared
+            if (own == null || own <= SLEEP_TIMER_SLACK_MS) return@withLock false
+            clearOwnSleepTimer(speakers.speaker(uid, verify = false, budgetMs = null), uid)
+            return@withLock true
+        }
+        if (!sleepTimerResetDue(own, ((hmsToS(wanted) ?: 0.0) * 1000).toLong())) return@withLock false
+        applySleepTimer(speakers.speaker(uid, verify = false, budgetMs = null), uid, wanted)
+        true
+    }
+
+    /** The socket's last `metadataStatus` container (design 54 §2.5 (a)) into the share classify; null is no evidence. */
+    suspend fun shareContainer(objectId: String?) = mutex.withLock { session.shareContainer(objectId) }
+
+    /** The playing item's listed duration at a confirmed change (design 54 §2.8): the tail cadence's hint. */
+    suspend fun cadenceHint(hintS: Double?) = mutex.withLock { session.cadenceHint(hintS) }
+
+    /**
+     * The queue's `UpdateID` now (one `Browse Q:0 BrowseMetadata`, design 54 §2.3 N5: the socket's version came back
+     * without one in the read - read the version again, never a mismatch). Null when [ifUid] is no longer the session's.
+     */
+    suspend fun queueVersion(ifUid: String): String? = mutex.withLock {
+        val uid = session.uid
+        if (uid == null || uid != ifUid) return@withLock null
+        speakers.speaker(uid, verify = false, budgetMs = null).queueMeta().updateId
     }
 
     /** `SetPlayMode` on the session's speaker (design 54 §2.7, §2.12); false when [ifUid] is no longer the session's. */
@@ -618,8 +680,22 @@ class SonosTransport(
      * session is disarmed again. Null when the speaker didn't answer in time (disarmed too). Without
      * [aux] the look reads no group and no volume (the bedtime look, §6.1).
      */
-    suspend fun adoptLive(uid: String, kind: Kind, uri: String, budgetMs: Long, aux: Boolean = true, keep: (Fields) -> String?): Fields? = mutex.withLock {
+    suspend fun adoptLive(
+        uid: String,
+        kind: Kind,
+        uri: String,
+        budgetMs: Long,
+        aux: Boolean = true,
+        share: ShareBaseline? = null,
+        keep: (Fields) -> String?,
+    ): Fields? = mutex.withLock {
         session.adopt(uid, kind, uri)
+        // design 54 §2.9 (R2): a share session's look classifies with the persisted baseline - the target, our listing and
+        // the stored UpdateID - so a queue someone replaced is told apart; none stored: vibb's prefix rule
+        if (share != null && kind == Kind.SPOTIFY_SHARELINK) {
+            session.shareSet(share.target, share.listed)
+            session.shareRead(QueueRead(0, emptyMap(), share.updateId))
+        }
         val fields = try {
             session.classify(speakers.speaker(uid, verify = false, budgetMs = budgetMs), aux)
         } catch (e: SonosException) {
@@ -632,8 +708,9 @@ class SonosTransport(
         if (kept == null) {
             session.disarm()
         } else {
-            if (kept != uri) {
-                // the uri renderer.json didn't hold yet: the session's from now on
+            // the uri renderer.json didn't hold yet: the session's from now on. A share session keeps its kind and its
+            // queue marker whatever [keep] names (qa-54a1-code 9: never a one-track url session of its live track)
+            if (kept != uri && kind != Kind.SPOTIFY_SHARELINK) {
                 session.adopt(uid, kindOfUri(kept), kept)
                 session.publish(fields.copy(ours = true, foreignUri = null))
             }
