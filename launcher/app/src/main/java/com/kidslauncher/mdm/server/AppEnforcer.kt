@@ -1508,8 +1508,22 @@ object AppEnforcer {
             HelperKind.RECENTS to systemRecentsPackage(context)?.let { ResolvedHelper(it, system = true) },
             HelperKind.EMERGENCY_SOS to info(emergencySosPackage(context)),
             HelperKind.CREDENTIAL_SELECTOR to info(credentialSelector(context))?.takeIf { it.packageName !in forbidden },
+            // media-provider-helper: the provider's own package (its delete/trash/write confirmation), from the
+            // platform's provider table; `lockTaskHelpers` keeps it only as a system app, never forbidden or Play.
+            HelperKind.MEDIA_PROVIDER to info(mediaProviderPackage(pm)),
         )
         return resolved to forbidden
+    }
+
+    /** [HelperKind.MEDIA_PROVIDER]: the package holding `MediaStore.AUTHORITY`, system apps only; `null` when none
+     * resolves or the lookup fails. */
+    private fun mediaProviderPackage(pm: PackageManager): String? = try {
+        pm.resolveContentProvider(
+            android.provider.MediaStore.AUTHORITY,
+            PackageManager.ComponentInfoFlags.of(PackageManager.MATCH_SYSTEM_ONLY.toLong()),
+        )?.packageName
+    } catch (e: Exception) {
+        null
     }
 
     /** The framework's two Credential Manager selector configs: the OEM's (Android 15+) and the platform's. */

@@ -160,6 +160,37 @@ class LockTaskHelpersTest {
     }
 
     @Test
+    fun `the MediaStore provider is pinned with the block even when the photo picker is another package (media-provider-helper)`() {
+        val module = "com.google.android.providers.media.module"
+        // The newer photo picker: ACTION_PICK_IMAGES no longer resolves to the provider's module.
+        val newPicker = resolved + (HelperKind.PHOTO_PICKER to ResolvedHelper("com.google.android.photopicker", system = true))
+        assertFalse(module in lockTaskHelpers(newPicker, forbidden))
+        val withProvider = newPicker + (HelperKind.MEDIA_PROVIDER to ResolvedHelper(module, system = true))
+        assertTrue(module in lockTaskHelpers(withProvider, forbidden))
+        assertTrue("com.google.android.photopicker" in lockTaskHelpers(withProvider, forbidden))
+        // AOSP's module name the same way; one package for both kinds is one pin.
+        val aosp = "com.android.providers.media.module"
+        assertTrue(aosp in lockTaskHelpers(mapOf(HelperKind.MEDIA_PROVIDER to ResolvedHelper(aosp, system = true)), forbidden))
+        assertEquals(lockTaskHelpers(resolved, forbidden), lockTaskHelpers(resolved + (HelperKind.MEDIA_PROVIDER to ResolvedHelper(module, system = true)), forbidden))
+        // Unknown, non-system, forbidden or Play core: nothing.
+        assertEquals(lockTaskHelpers(newPicker, forbidden), lockTaskHelpers(newPicker + (HelperKind.MEDIA_PROVIDER to null), forbidden))
+        for (bad in listOf(ResolvedHelper("com.evil.media", system = false), ResolvedHelper(settings, system = true), ResolvedHelper("com.google.android.gms", system = true))) {
+            assertEquals(bad.packageName, emptySet<String>(), lockTaskHelpers(mapOf(HelperKind.MEDIA_PROVIDER to bad), forbidden))
+        }
+        assertFalse(module in lockTaskHelpers(withProvider, forbidden + module))
+        // Like every helper: only with the block, and also during a time-rule lock (the app's delete inside a usable app).
+        val pins = lockTaskHelpers(withProvider, forbidden)
+        fun kiosk(block: Boolean, locked: Boolean) = computeEnforcementPlan(
+            allowlist = listOf("org.example.app"), kioskDesired = true, serverLockTaskFeatures = 0, overrideActive = false,
+            controllable = setOf("org.example.app"), ownPackage = "me.vibb.launcher", systemDialer = null,
+            scheduleLocked = locked, blockActivityStart = block, lockTaskHelpers = if (block) pins else emptySet(),
+        ).kioskPackages.orEmpty()
+        assertTrue(module in kiosk(block = true, locked = false))
+        assertTrue(module in kiosk(block = true, locked = true))
+        assertFalse(module in kiosk(block = false, locked = false))
+    }
+
+    @Test
     fun `kiosk with the block pins the recents provider and keeps OVERVIEW - design 16's drop reverted (16d)`() {
         val server = (LOCK_TASK_FEATURE_SYSTEM_INFO or LOCK_TASK_FEATURE_NOTIFICATIONS or LOCK_TASK_FEATURE_HOME or
             LOCK_TASK_FEATURE_OVERVIEW or LOCK_TASK_FEATURE_GLOBAL_ACTIONS).toLong()
