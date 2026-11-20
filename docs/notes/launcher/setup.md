@@ -71,6 +71,22 @@
 - The hold fails closed on a wall clock set back past the time elapsed (an NTP or NITZ correction right after the
   enrolment): `timedWindowActive` ends it; the PWA's "Åpne for oppsett" recovers (code QA L9; the gate's owed checks).
 
+## Koble til (2026-11-20)
+
+- A Device Owner phone that isn't enrolled - a QR whose extras never arrived, any failed QR - gets "Koble til" from
+  Home's resume (`setup/ConnectActivity.kt`, past the gate and the lock, before the hold's flow): the server address
+  (the stored one filled in), "Oppsettkode", one line where the parent finds the code (the phone's page in the parent
+  app › Avansert › Ny oppsettkode) and the button. Pure `connectScreenDue` (`ConnectScreen.kt`): Device Owner, neither
+  `enrolled` nor a stored token, and `settingsAccess` OPEN (no policy ever applied) - never wider than the Settings
+  gate; checked again at every start, so an enrolment by any path closes it.
+- The button runs S-M1's `serverUrlUsable` first (`server_url_refused`, the whole reason), then `QrExtras.enrolTyped`
+  on the process's scope: the QR's one `applyProvisioningExtras` under `QrExtras`' mutex (a kept QR retry never runs
+  beside it; its tailnet key is used, the kept extras dropped once enrolled). A refused code says `re_enrol_failed`,
+  anything else `re_enrol_unreachable`. Enrolled, it finishes and Home's resume leads to the setup flow (the hold
+  started at the enrolment).
+- Back closes it for that one resume of Home; it comes back the next time Home comes to the front. Not exported, out
+  of Recents, `FLAG_SECURE`. `ConnectScreenTest`.
+
 ## Android 14-17
 
 Every API used is in 34 (`canUseFullScreenIntent`, `ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT`) or below

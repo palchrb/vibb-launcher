@@ -76,6 +76,26 @@ object QrExtras {
         apply(context.applicationContext, extras, "Retry")
     }
 
+    /**
+     * "Koble til" (`setup/ConnectActivity`): the address and code the parent typed, through the same one apply and
+     * under the same [mutex] - a kept QR retry never runs beside it - with the kept extras' tailnet key, if any. Once it
+     * enrols, the kept extras go (the retry would skip them anyway: enrolled). Never logs the code.
+     */
+    suspend fun enrolTyped(context: Context, serverUrl: String, code: String): Result<Unit> = mutex.withLock {
+        val app = context.applicationContext
+        val store = store(app)
+        val key = store.pending()?.tailscaleAuthKey.orEmpty()
+        Log.i(LOG_TAG, "Koble til: enrolling with a typed code")
+        val result = applyProvisioningExtras(app, ProvisioningExtras(serverUrl.trim(), key, code.trim()))
+        if (result.isSuccess) {
+            store.dropPending()
+            Log.i(LOG_TAG, "Koble til: enrolled")
+        } else {
+            Log.w(LOG_TAG, "Koble til: enrolment failed (${result.exceptionOrNull()?.javaClass?.simpleName})")
+        }
+        result
+    }
+
     private suspend fun apply(context: Context, extras: ProvisioningExtras, source: String) = mutex.withLock {
         val store = store(context)
         val mdm = LauncherPreferences.mdm()

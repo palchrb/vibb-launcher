@@ -174,6 +174,15 @@
         </activity>
         <!-- Design 114 §6.2: the guided setup - its own task (QA M2: Home's clearTaskOnLaunch would clear it inside
              Home's), brought to the front by Home during the setup hold; not exported, kept out of Recents. -->
+        <!-- "Koble til" (2026-11-20): Home brings it up on a Device Owner phone that isn't enrolled, before the first
+             policy only (setup/ConnectScreen.kt); not exported, kept out of Recents. -->
+        <activity
+            android:name=".setup.ConnectActivity"
+            android:configChanges="orientation|screenSize|uiMode"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:windowSoftInputMode="adjustResize" />
         <activity
             android:name=".setup.SetupFlowActivity"
             android:configChanges="orientation|screenSize|uiMode"

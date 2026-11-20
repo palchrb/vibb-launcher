@@ -153,7 +153,11 @@ class QrExtrasTest {
         assertTrue("before the sync", retry < runner.indexOf("performMdmSync(context)"))
 
         val qr = code("server/QrExtras.kt")
-        assertEquals(1, Regex("""applyProvisioningExtras\(""").findAll(qr).count())
+        // The QR's apply and "Koble til"'s typed code, each under the one mutex.
+        assertEquals(2, Regex("""applyProvisioningExtras\(""").findAll(qr).count())
+        val typed = qr.substringAfter("suspend fun enrolTyped(").substringBefore("private suspend fun apply(")
+        assertTrue(typed.contains("): Result<Unit> = mutex.withLock {"))
+        assertTrue("applyProvisioningExtras(" in typed)
         val apply = qr.substringAfter("private suspend fun apply(").substringBefore("\n/** What one delivery")
         assertTrue("one at a time", apply.trimStart().startsWith("context: Context, extras: ProvisioningExtras, source: String) = mutex.withLock {"))
         // The pending extras are kept before the enrolment is tried.
@@ -172,7 +176,7 @@ class QrExtrasTest {
         assertTrue(logs.size >= 8)
         assertTrue(logs.any { "tried again at the next sync" in it })
         for (line in logs) {
-            for (secret in listOf("enrollmentCode", "tailscaleAuthKey", "\$extras", "{extras}", "bundle}")) {
+            for (secret in listOf("enrollmentCode", "tailscaleAuthKey", "\$extras", "{extras}", "bundle}", "\$code", "{code}", "\$key", "{key}")) {
                 assertFalse("$line names $secret", secret in line)
             }
         }
