@@ -2986,6 +2986,7 @@
   "music.setup.accounts_footer": "One account per phone, the child's own - never yours.",
   "music.setup.login_info_label": "About logging in",
   "music.setup.login_info": "Whoever is logged into Spotify in this browser logs in, so open this page in a private window and log in as the child. A login lasts 6 months; this page warns 14 days before.",
+  "music.setup.sonos_info": "On Sonos, Spotify plays through the account linked in the Sonos app",
   "device.music.title": "Music · {name}",
   "device.music.app": "Music app",
   "device.music.app_footer": "Installed like any app from the catalog. Off uninstalls it.",

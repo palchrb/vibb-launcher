@@ -2986,6 +2986,7 @@
   "music.setup.accounts_footer": "Én konto per telefon, barnets egen - aldri din.",
   "music.setup.login_info_label": "Om innloggingen",
   "music.setup.login_info": "Den som er logget inn på Spotify i denne nettleseren, blir logget inn, så åpne siden i et privat vindu og logg inn som barnet. En innlogging varer i 6 måneder; siden varsler 14 dager før.",
+  "music.setup.sonos_info": "På Sonos spilles Spotify med kontoen som er koblet til i Sonos-appen",
   "device.music.title": "Musikk · {name}",
   "device.music.app": "Musikkapp",
   "device.music.app_footer": "Installeres som alle andre apper fra katalogen. Slås den av, avinstalleres appen.",

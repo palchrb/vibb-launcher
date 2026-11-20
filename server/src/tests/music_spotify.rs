@@ -400,6 +400,34 @@ async fn routes_need_a_session() {
     assert!(!text.contains("<script>") && !text.contains("%3Cscript"));
 }
 
+/// Design 54 R8 Q3: one line behind the accounts group's (i), in both languages.
+#[tokio::test]
+async fn the_accounts_info_says_sonos_uses_its_own_account() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    set_up(&app, &cookie, HTTPS_REDIRECT).await;
+    for (lang, line) in [
+        (
+            "nb",
+            "<p>På Sonos spilles Spotify med kontoen som er koblet til i Sonos-appen</p>",
+        ),
+        (
+            "en",
+            "<p>On Sonos, Spotify plays through the account linked in the Sonos app</p>",
+        ),
+    ] {
+        let page = app
+            .get_page(&format!("/music/settings?lang={lang}"), &cookie)
+            .await
+            .text();
+        let at = page.find(line).expect(lang);
+        assert!(
+            page[..at].rfind("<div class=\"info-panel\">").is_some(),
+            "{lang}"
+        );
+    }
+}
+
 /// "Not configured" changes nothing else: the music page links to the Spotify page, the Spotify
 /// page explains how to register an app, and a phone's library is the same.
 #[tokio::test]
