@@ -37,6 +37,10 @@ object CallPolicyStore {
     @Volatile
     private var source = PolicySource.NONE
 
+    /** The last refresh read the boot copy and found none written (the file read, the key absent) - design 114b. */
+    @Volatile
+    private var bootCopyMissing = false
+
     /** The DE string this process last really committed (`null` after a failed write). Taken from
      * disk only once, on the first read in this process; never re-read from the prefs afterwards:
      * after a failed commit() their in-memory map already holds the new value (QA direct-boot #2). */
@@ -87,6 +91,7 @@ object CallPolicyStore {
             Log.w(LOG_TAG, "No usable boot call policy, failing closed until unlock")
         }
         val before = state
+        bootCopyMissing = plan.source == PolicySource.BOOT && deJson != null && decodeBootPolicy(deJson.getOrNull()) == BootPolicyRead.Missing
         state = newState
         source = plan.source
         // Round L5: a contact added to the phone book or moved to Element X after a missed call still gets its mark.
@@ -124,6 +129,22 @@ object CallPolicyStore {
      * screening, redirection and in-call services and the phone book decide with this.
      */
     fun effectiveState(): CallPolicyState = withTimeRule(callsState, TimeRulesStore.callsBlockedNow())
+
+    /**
+     * What the screening and redirection services (and the in-call service's re-check) decide with: [effectiveState],
+     * read as unmanaged before the first unlock when no boot copy was ever written and Vibb One isn't the phone app
+     * ([filterStateBeforeUnlock], design 114b code QA M1).
+     */
+    fun filterState(context: Context): CallPolicyState {
+        val state = effectiveState()
+        if (state != CallPolicyState.UnknownFailClosed || source != PolicySource.BOOT || !bootCopyMissing) return state
+        val dialerHeld = try {
+            context.getSystemService(android.app.role.RoleManager::class.java)?.isRoleHeld(android.app.role.RoleManager.ROLE_DIALER)
+        } catch (e: Exception) {
+            null
+        }
+        return filterStateBeforeUnlock(state, source, bootCopyMissing, dialerHeld)
+    }
 
     /**
      * Design 77 D2: what the calls channel enforces - [state] (the whole policy, managed while either channel is) with

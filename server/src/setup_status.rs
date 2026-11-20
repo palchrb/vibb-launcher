@@ -787,7 +787,29 @@ pub fn readings_of(
     for (key, reading) in &part.readings {
         put(key, Some(*reading));
     }
+    // Design 114b (code QA M2): no Child PIN stored - the step is missing whatever PIN the phone reports.
+    if let Some(reading) = child_pin_reading(
+        readings.get("child_pin").copied(),
+        crate::kid_lock::policy_kid_lock(policy).is_some(),
+    ) {
+        readings.insert("child_pin".to_string(), reading);
+    }
     readings
+}
+
+/// The latest report's own `setup.child_pin`: `None` when it doesn't carry the key (a launcher before 114b),
+/// `Some(None)` unreadable on the phone.
+pub fn reported_child_pin(latest: Option<&DeviceStatus>) -> Option<Option<bool>> {
+    let setup: Map<String, Value> = serde_json::from_str(latest?.setup_json.as_deref()?).ok()?;
+    setup.get("child_pin").map(Value::as_bool)
+}
+
+/// Design 114b (code QA M2): the `child_pin` reading from the phone's ([reported], absent stays absent) and whether a
+/// Child PIN is stored: without one the step is missing whatever PIN the phone has - one the kid or Android's setup
+/// set isn't the Child PIN, and the parent is asked. The contract's `child_pin_readings` pin it with the phone's
+/// `childPinDone`.
+pub fn child_pin_reading(reported: Option<Option<bool>>, stored: bool) -> Option<Option<bool>> {
+    reported.map(|reading| if stored { reading } else { Some(false) })
 }
 
 /// The parent steps ticked for a phone, in table order.
@@ -965,12 +987,10 @@ impl Page {
         self.phone.iter().any(|row| !row.alarm && !row.pwa_link())
     }
 
-    /// Nothing missing: "Alt er gjort".
+    /// No required step missing: "Alt er gjort", as the summary's "Fullført" (code QA M3, design 114b) - optional rows
+    /// stay listed quietly under Valgfritt.
     pub fn all_done(&self) -> bool {
-        self.phone.is_empty()
-            && self.check.is_empty()
-            && self.optional.is_empty()
-            && !self.no_report
+        self.phone.is_empty() && self.check.is_empty() && !self.no_report
     }
 }
 
@@ -1099,7 +1119,11 @@ pub fn page(input: &PageInput) -> Page {
             (Need::Optional, _) => page.optional.push(row),
         }
     }
-    page.openable = missing.iter().any(|step| on_phone(step));
+    // Code QA M3/L3 (design 114b): only a required step offers "Åpne for oppsett" - an optional one (the call filter
+    // offered early, an unenrolled fingerprint, a parent's tick) never keeps it up.
+    page.openable = missing
+        .iter()
+        .any(|step| step.need == Need::Required && on_phone(step));
     page.ticked = STEPS
         .iter()
         .filter(|step| step.read_by == ReadBy::Parent)
@@ -1433,6 +1457,27 @@ mod tests {
         assert_eq!(hold_until(Some(r#"{"hold_until_ms": 10}"#), 100), Some(10));
         assert_eq!(hold_until(Some(r#"{"device_owner": true}"#), 100), None);
         assert_eq!(hold_until(None, 100), None);
+    }
+
+    /// Design 114b (code QA M2): the server's `child_pin` from the phone's reading and whether a Child PIN is stored
+    /// (`keyguard` not null) - the same rows the launcher's `childPinDone` runs for `phone`.
+    #[test]
+    fn the_child_pin_readings() {
+        let contract = contract();
+        for row in contract["child_pin_readings"].as_array().unwrap() {
+            let stored = !row["keyguard"].is_null();
+            assert_eq!(
+                child_pin_reading(Some(row["phone"].as_bool()), stored),
+                Some(row["server"].as_bool()),
+                "{}",
+                row["name"]
+            );
+        }
+        // A launcher that doesn't report it: absent, whatever is stored.
+        assert_eq!(child_pin_reading(None, false), None);
+        // The page's step: a step done only in the PWA never opens the phone.
+        let step = STEPS.iter().find(|s| s.key == "child_pin").unwrap();
+        assert!(!on_phone(step));
     }
 
     #[test]

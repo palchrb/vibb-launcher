@@ -541,35 +541,64 @@ async fn the_child_pin_step() {
         .await
         .text();
     assert!(summary.contains("Setup: 1 step left"), "{summary}");
-    let lock = app
-        .get_page(&format!("/devices/{id}/lock"), &cookie)
-        .await
-        .text();
-    assert!(lock.contains("The phone has no PIN"), "{lock}");
+    let lock_page = format!("/devices/{id}/lock");
+    let lock = app.get_page(&lock_page, &cookie).await.text();
+    assert!(lock.contains(">No Child PIN"), "{lock}");
     assert!(lock.contains("Choose a Child PIN below."));
 
-    // A Child PIN stored and on its way: the card's own notes, not this line.
-    sqlx::query(
-        "UPDATE device_policy SET kid_pin_hash = 'aGFzaA', kid_pin_salt = 'c2FsdA', kid_pin_length = 4 \
-         WHERE device_id = ?",
-    )
-    .bind(id)
-    .execute(&app.db)
-    .await
-    .unwrap();
-    let lock = app
-        .get_page(&format!("/devices/{id}/lock"), &cookie)
-        .await
-        .text();
-    assert!(!lock.contains("The phone has no PIN"), "{lock}");
-
+    // Code QA M2: a PIN the kid or Android's setup set isn't the Child PIN - still missing, still the line.
     app.post_status(
         &token,
         json!({"setup": {"device_owner": true, "child_pin": true}}),
     )
     .await;
     let html = app.get_page(&page, &cookie).await.text();
+    assert!(html.contains("id=\"step-child_pin\""), "{html}");
+    let lock = app.get_page(&lock_page, &cookie).await.text();
+    assert!(lock.contains(">No Child PIN"), "{lock}");
+
+    // A Child PIN stored, the phone without a PIN and nothing on its way (code QA L1): "The phone has no PIN", never
+    // "not the Child PIN" beside it, and no such Attention row.
+    sqlx::query(
+        "UPDATE device_policy SET kid_pin_hash = 'aGFzaA', kid_pin_salt = 'c2FsdA', kid_pin_length = 4, \
+         kid_keyguard = 'android' WHERE device_id = ?",
+    )
+    .bind(id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    app.post_status(
+        &token,
+        json!({"capabilities": ["android_keyguard_v1"],
+               "lock_state": {"keyguard": "android", "reset_token": true},
+               "setup": {"device_owner": true, "child_pin": false}}),
+    )
+    .await;
+    let lock = app.get_page(&lock_page, &cookie).await.text();
+    assert!(lock.contains(">The phone has no PIN"), "{lock}");
+    assert!(!lock.contains(">No Child PIN"), "{lock}");
+    assert!(!lock.contains("isn&#39;t the Child PIN"), "{lock}");
+    let summary = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(!summary.contains("isn&#39;t the Child PIN"), "{summary}");
+
+    // Stored and on the phone: done, no line.
+    app.post_status(
+        &token,
+        json!({"capabilities": ["android_keyguard_v1"],
+               "lock_state": {"keyguard": "android", "reset_token": true, "pin_rev": 0},
+               "setup": {"device_owner": true, "child_pin": true}}),
+    )
+    .await;
+    let html = app.get_page(&page, &cookie).await.text();
     assert!(!html.contains("id=\"step-child_pin\""), "{html}");
+    let lock = app.get_page(&lock_page, &cookie).await.text();
+    assert!(
+        !lock.contains(">The phone has no PIN") && !lock.contains(">No Child PIN"),
+        "{lock}"
+    );
 }
 
 /// Design 114b B: while calls aren't managed the call roles are offered as a quiet optional row (never counted, never

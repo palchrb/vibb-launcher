@@ -109,13 +109,7 @@ class SetupFlowTest {
         assertEquals(listOf(FlowButton.LATER), flowButtons(SetupStep.CHILD_PIN, pageMissing = false))
         val early = flowScreens(setupMissing(SetupInputs.NONE, noPin, emptySet()), emptySet(), windowOpen = true, policyKnown = false)
         assertEquals("child_pin", keys(early).first())
-        // The reading: Android's credential; Vibb One's legacy lock with a Child PIN; unreadable stays unreadable.
-        assertEquals(true, childPinDone(androidCredential = true, keyguard = null))
-        assertEquals(false, childPinDone(androidCredential = false, keyguard = null))
-        assertEquals(false, childPinDone(androidCredential = false, keyguard = "android"))
-        assertEquals(true, childPinDone(androidCredential = false, keyguard = "own"))
-        assertEquals(null, childPinDone(androidCredential = null, keyguard = "android"))
-        // The flow has no page to open for it and reads it as a PWA step.
+        // The reading's rows are the contract's `child_pin_readings` (SetupStepsTest). The flow has no page to open for it and reads it as a PWA step.
         val flow = File(listOf("src/main", "app/src/main").map(::File).first { it.isDirectory }, "java/com/kidslauncher/mdm/setup/SetupFlowActivity.kt").readText()
         assertTrue("if (!step.inPwa) access = systemPageAccess(" in flow)
     }

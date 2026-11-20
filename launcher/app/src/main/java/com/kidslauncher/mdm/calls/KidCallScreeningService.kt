@@ -50,7 +50,7 @@ class KidCallScreeningService : CallScreeningService() {
  * screening service for such a call on the emulator (E7: `Skipping call filtering ... ecm=true`), so
  * [KidInCallService]'s re-check is where it is let through - a device check whether a real SIM does too. */
 fun incomingVerdict(context: Context, details: Call.Details): Verdict {
-    val state = CallPolicyStore.effectiveState()
+    val state = CallPolicyStore.filterState(context)
     return try {
         decideIncoming(
             raw = PhoneNumbers.numberFromHandle(details.handle?.toString()),

@@ -9,6 +9,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 
 class BootCallPolicyTest {
 
@@ -85,6 +86,27 @@ class BootCallPolicyTest {
         assertEquals(BootPolicyRead.Missing, decodeBootPolicy(null))
         assertEquals(BootPolicyRead.Missing, decodeBootPolicy(""))
         assertEquals(CallPolicyState.UnknownFailClosed, bootPolicyState(decodeBootPolicy(null)))
+    }
+
+    /** Design 114b (code QA M1): before the first unlock, no copy ever written and Vibb One not the phone app - the
+     * screening and redirection roles granted early on an unmanaged phone must not reject every call. */
+    @Test
+    fun `the filters before unlock - no copy and not the phone app reads as unmanaged, nothing else`() {
+        val closed = CallPolicyState.UnknownFailClosed
+        assertEquals(CallPolicyState.Unmanaged, filterStateBeforeUnlock(closed, PolicySource.BOOT, copyMissing = true, dialerHeld = false))
+        assertEquals(Verdict.ALLOW, incoming(filterStateBeforeUnlock(closed, PolicySource.BOOT, true, false), "+4733333333"))
+        // Vibb One the phone app (a managed phone: the Device Owner took it), or the role unreadable: closed.
+        assertEquals(closed, filterStateBeforeUnlock(closed, PolicySource.BOOT, copyMissing = true, dialerHeld = true))
+        assertEquals(closed, filterStateBeforeUnlock(closed, PolicySource.BOOT, copyMissing = true, dialerHeld = null))
+        // A copy that exists but can't be read, or after the unlock (CE decides): closed.
+        assertEquals(closed, filterStateBeforeUnlock(closed, PolicySource.BOOT, copyMissing = false, dialerHeld = false))
+        assertEquals(closed, filterStateBeforeUnlock(closed, PolicySource.CE, copyMissing = true, dialerHeld = false))
+        // Any other state passes as it is.
+        assertEquals(managed, filterStateBeforeUnlock(managed, PolicySource.BOOT, copyMissing = true, dialerHeld = false))
+        val main = listOf("src/main", "app/src/main").map { File(it) }.first { it.isDirectory }
+        for (service in listOf("KidCallScreeningService.kt", "KidCallRedirectionService.kt")) {
+            assertTrue(service, "CallPolicyStore.filterState(" in File(main, "java/com/kidslauncher/mdm/calls/$service").readText())
+        }
     }
 
     @Test

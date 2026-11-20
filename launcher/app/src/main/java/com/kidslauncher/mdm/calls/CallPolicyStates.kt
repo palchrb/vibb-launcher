@@ -62,7 +62,10 @@ fun decodeCallRules(json: String?): CallRules? {
  * - Anything else while [callsManagedLast] is set (no `call_policy` in the cache, cache corrupt
  *   or missing): the [lastRules] stored with the last managed policy - so parents can still call
  *   (QA blocker 3) - or, if those are unreadable too, [CallPolicyState.UnknownFailClosed].
- * - A corrupt cache on a phone without [callsManagedLast]: also fail closed - we can't tell.
+ * - A corrupt cache on a phone without [callsManagedLast] (the caller folds the DE copy's witness into it,
+ *   [refreshPlan]): unmanaged, as an absent one - design 114b (code QA M1): an unmanaged phone may hold the screening
+ *   and redirection roles (granted early in the setup), and failing closed there would reject every call. Nothing
+ *   witnesses that calls were ever managed: `calls_managed_last` is written in the same commit as the cache.
  */
 fun callPolicyState(cached: CachedPolicy, callsManagedLast: Boolean, lastRules: CallRules?): CallPolicyState {
     val fallback = if (lastRules != null && callsManagedLast) {
@@ -79,8 +82,7 @@ fun callPolicyState(cached: CachedPolicy, callsManagedLast: Boolean, lastRules: 
                 else -> CallPolicyState.Managed(callPolicy.toRules())
             }
         }
-        is CachedPolicy.Corrupt -> fallback
-        CachedPolicy.Absent -> if (callsManagedLast) fallback else CallPolicyState.Unmanaged
+        is CachedPolicy.Corrupt, CachedPolicy.Absent -> if (callsManagedLast) fallback else CallPolicyState.Unmanaged
     }
 }
 

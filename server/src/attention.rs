@@ -648,6 +648,7 @@ pub fn facts_of(s: &Sources, now_ms: i64) -> Facts {
             crate::kid_lock::ANDROID_KEYGUARD_CAPABILITY,
         ),
         pin_waiting: false,
+        no_pin: crate::setup_status::reported_child_pin(latest) == Some(Some(false)),
     };
     let escapes =
         crate::handlers::device_pages::escapes_card(policy, latest, now_ms, s.last_phone_on_ms)

@@ -28,16 +28,21 @@ role requests are design 114's own. The flow's buttons and lines are the same vi
 | names | Barne-PIN / Child PIN |
 
 **The reading** is a new field in the report's `setup`, `child_pin`, since no other field carries it. It is `true` when
-the phone has a PIN:
+the Child PIN locks the phone (`childPinDone`; code QA M2 tightened it the same day):
 
+- **No Child PIN stored** (the cached policy has no `kid_lock`): `false`, whatever PIN the phone has. A PIN the kid or
+  Android's setup wizard set isn't the Child PIN. The PIN is set from the PWA so the server knows it, and the parent
+  is asked. The server applies the same rule to the report (`setup_status::child_pin_reading`: no Child PIN stored,
+  `false`).
 - **Android's lock** (`kid_lock.keyguard` `android`, the lock every phone runs, memory "Android lock only"): reads
-  `KeyguardManager.isDeviceSecure`. A PIN set by Android's setup wizard counts as done. The phone is locked, and Lock
-  Screen & PINs' existing note ("Telefonens PIN er ikke barne-PIN-en", design 59) already says that this PIN isn't the
-  Child PIN.
-- **Vibb One's own lock** (legacy; phase D removes it): the cached policy carries a `kid_lock`. That lock steps aside
-  for an Android credential and the relock removes one set in a window, so `isDeviceSecure` would read "no PIN" forever
-  there. This costs one line.
-- If the read fails, the reading is `null`: never counted.
+  `KeyguardManager.isDeviceSecure`. A PIN changed on the phone afterwards stays Lock Screen & PINs' own warning
+  ("Telefonens PIN er ikke barne-PIN-en", design 59). Counting it here too would make two rows for one problem.
+- **Vibb One's own lock** (legacy; phase D removes it): a Child PIN in the policy is done. That lock steps aside for an
+  Android credential and the relock removes one set in a window, so `isDeviceSecure` would read "no PIN" forever
+  there.
+- **Before the first policy:** Android's credential, the only thing known.
+- If the read fails, the reading is `null` (never counted), except with no Child PIN stored, which is `false`.
+- The contract's `child_pin_readings` pin every case on both sides.
 
 **Why `required` and `count`, not `own_row`/`alarm` like `parent_pin`.** The Parent PIN has its own red Attention row
 (`NoParentPin`), and the QR waits for it. The Child PIN has no row of its own. As a counted orange step it shows in the
@@ -48,9 +53,12 @@ oransje linje".
 - **Device › Oppsett.** The row is an orange link at the top of "På telefonen", like `parent_pin`'s red one. It leads
   to `/devices/{id}/lock#child-pin` and has no ⓘ inside the link (design 113 QA M7). It never makes the page offer
   "Åpne for oppsett": the phone can't do this step.
-- **Lås › Barne-PIN** (`#child-pin`). While the step is missing and no Child PIN is stored, there is one orange note
-  above the group: "Telefonen har ingen PIN". How to fix it is behind its ⓘ. Once a Child PIN is stored, the card's
-  own notes take over (waiting, sending), so it is said once.
+- **Lås › Barne-PIN** (`#child-pin`): one orange note above the group while the step is missing, the fix behind its ⓘ.
+  - No Child PIN stored: "Ingen barne-PIN".
+  - A Child PIN stored but the phone reports no PIN, and no send waiting or under way: "Telefonen har ingen PIN".
+    That is the card's notes' job while a send is on its way.
+  - In that second case "Telefonens PIN er ikke barne-PIN-en" and its Attention row are held back (code QA L1,
+    `PhoneLock::no_pin`), so one problem has one line.
 - The lock glance is not shown without a PIN. This is unchanged (decided 2026-11-20: the face sits over Android's PIN
   lock).
 
@@ -96,13 +104,29 @@ Why this shape:
 - **"Calls Off" is `calls_managed`** (114 QA L5), so there the required row applies, not this one.
 
 The cost the parent sees: a phone that never manages calls keeps a quiet "Samtalefilter" row under Device › Oppsett's
-"Valgfritt", as an unenrolled fingerprint does. So "Alt er gjort" waits for it. No orange, no count.
+"Valgfritt", as an unenrolled fingerprint does. No orange, no count. Code QA M3: "Alt er gjort" and the summary's
+"Fullført" follow the required steps alone, and only a required step keeps "Åpne for oppsett" up.
+
+**Fail closed on an unmanaged phone (code QA M1).** With these two roles held, an unmanaged phone's screening and
+redirection services run for every call. A state that fails closed would reject every incoming call and cancel every
+outgoing one. Before 114b no unmanaged phone had either role.
+- A corrupt policy cache now follows the absent cache's rule (`callPolicyState`). It fails closed only while
+  `calls_managed_last` or the boot copy witnesses managed calls; otherwise it is unmanaged.
+- Before the first unlock with no boot copy ever written, the screening and redirection services read the fail-closed
+  state as unmanaged (`filterStateBeforeUnlock`), but only while Vibb One isn't the phone app. A managed phone holds
+  the dialer role, and an unreadable role stays closed. An unreadable or corrupt copy stays closed too. The state
+  itself isn't changed: the dialer role and the SMS permissions keep failing closed.
+- Anrop raises its "can't read its call rules" warning when an unmanaged phone that holds either role reports
+  `fail_closed`.
 
 ## The contract (`setup_steps.json`, byte-identical in both dirs)
 
 - `steps`: two new rows, `child_pin` (third) and `call_filter_early` (after `call_filter`).
 - `report` and `report_no_hold`: gain `"child_pin": true` after `device_owner` (the phone's key order).
 - `clean`: a row whose `child_pin` is kept and one whose non-boolean is dropped.
+- `child_pin_readings` (code QA M2): each row is `{android_credential, keyguard, policy_known}`. `keyguard` is `null`
+  when no Child PIN is stored. Each row maps to `phone` (`childPinDone`) and to `server`
+  (`setup_status::child_pin_reading` of that report).
 - `needed`, four new rows:
   - no PIN on the phone, `child_pin` counted;
   - calls unmanaged, the roles not held: only the optional row;
@@ -128,8 +152,10 @@ The PWA (`src/i18n/*.json`):
 | `setup.step.call_filter_early` | Samtalefilter | Call filter |
 | `setup.how.call_filter_early` | Velg Vibb One begge gangene. | Choose Vibb One both times. |
 | `setup.why.call_filter_early` | Trengs først når Vibb styrer samtaler. | Only needed once Vibb manages calls. |
+| `device.lock.no_child_pin` | Ingen barne-PIN | No Child PIN |
 | `device.lock.no_pin` | Telefonen har ingen PIN | The phone has no PIN |
 | `device.lock.no_pin_fix` | Velg en barne-PIN under. | Choose a Child PIN below. |
+| `device.lock.no_pin_send` | Send barne-PIN-en igjen under. | Send the Child PIN again below. |
 
 The phone (`strings.xml`):
 

@@ -1334,6 +1334,7 @@ fn phone_lock<'a>(
         state,
         android_capable: has_capability(latest, crate::kid_lock::ANDROID_KEYGUARD_CAPABILITY),
         pin_waiting,
+        no_pin: crate::setup_status::reported_child_pin(latest) == Some(Some(false)),
     }
 }
 
@@ -1435,20 +1436,42 @@ async fn render_lock(
         .map(|n| n.note(lang, reported.as_deref()))
         .partition(|n| n.warning);
     let setup_part = state.integrations.setup(state, id).await;
-    // Design 114b: the phone has no PIN and none is stored - one orange line at the Child PIN, how behind its ⓘ. A
-    // stored PIN on its way is the card's own notes.
-    if !child.pin_set
-        && crate::setup_status::child_pin_missing(&policy, latest.as_ref(), &setup_part)
+    // Design 114b: the setup step `child_pin` missing, said once at the Child PIN, the fix behind its ⓘ. No Child PIN
+    // stored (whatever PIN the phone has, code QA M2): "Ingen barne-PIN". One stored but the phone has no PIN (code QA
+    // L1: in place of "not the Child PIN", which `PhoneLock::no_pin` holds back): "Telefonen har ingen PIN" - unless a
+    // send is waiting or under way, which the card's own row says.
+    let sending = matches!(
+        pin_send,
+        Some(
+            crate::kid_lock::PinSend::Waiting
+                | crate::kid_lock::PinSend::Sent { .. }
+                | crate::kid_lock::PinSend::Taken { .. }
+        )
+    );
+    if crate::setup_status::child_pin_missing(&policy, latest.as_ref(), &setup_part)
+        && (!child.pin_set || !sending)
     {
+        let (title, fix) = if child.pin_set {
+            (
+                "device.lock.no_pin",
+                if send_again {
+                    "device.lock.no_pin_send"
+                } else {
+                    "device.lock.no_pin_fix"
+                },
+            )
+        } else {
+            ("device.lock.no_child_pin", "device.lock.no_pin_fix")
+        };
         child_warnings.insert(
             0,
             Note {
                 warning: true,
-                title: t(lang, "device.lock.no_pin").to_string(),
+                title: t(lang, title).to_string(),
                 value: None,
                 sub: None,
                 detail: None,
-                fix: Some(t(lang, "device.lock.no_pin_fix").to_string()),
+                fix: Some(t(lang, fix).to_string()),
             },
         );
     }

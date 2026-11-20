@@ -873,6 +873,9 @@ pub struct PhoneLock<'a> {
     pub android_capable: bool,
     /// A [SET_KID_PIN] waits to go out.
     pub pin_waiting: bool,
+    /// Design 114b (code QA L1): the report's `setup.child_pin` says the phone has no PIN at all - the setup step
+    /// `child_pin` and Lock Screen & PINs' no-PIN line say it, so [LockNote::PinNotChildPin] doesn't too.
+    pub no_pin: bool,
 }
 
 impl PhoneLock<'_> {
@@ -929,7 +932,7 @@ pub fn lock_card(policy: &DevicePolicy, phone: &PhoneLock, now_ms: i64) -> LockC
                 sending: phone.pin_waiting,
             });
         }
-        if android && runs_android && state.pin_rev.is_none() {
+        if android && runs_android && state.pin_rev.is_none() && !phone.no_pin {
             card.notes.push(LockNote::PinNotChildPin {
                 stored: policy.kid_pin_sealed.is_some(),
             });
@@ -1591,6 +1594,7 @@ mod tests {
             state: Some(state),
             android_capable: true,
             pin_waiting: false,
+            no_pin: false,
         }
     }
 

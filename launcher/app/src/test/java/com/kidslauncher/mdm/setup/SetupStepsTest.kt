@@ -152,6 +152,25 @@ class SetupStepsTest {
         assertNotNull(SetupStep.of("message_banners"))
     }
 
+    /** Design 114b (code QA M2): the phone's `child_pin` reading, row by row - the server's `child_pin_reading` runs the
+     * same rows for its `server` column. */
+    @Test
+    fun `the Child PIN's reading is the contract's`() {
+        val rows = contract.getValue("child_pin_readings").jsonArray.map { it.jsonObject }
+        assertTrue(rows.size >= 6)
+        for (row in rows) {
+            fun bool(key: String) = row.getValue(key).let { if (it is JsonNull) null else it.jsonPrimitive.boolean }
+            val keyguard = row.getValue("keyguard").let { if (it is JsonNull) null else it.jsonPrimitive.content }
+            assertEquals(
+                row.str("name"),
+                bool("phone"),
+                childPinDone(bool("android_credential"), keyguard, row.getValue("policy_known").jsonPrimitive.boolean),
+            )
+        }
+        val readings = File(main, "java/com/kidslauncher/mdm/setup/SetupReadings.kt").readText()
+        assertTrue("put(\"child_pin\", childPinDone(read { deviceSecure(context) }, cached?.kidLock?.keyguard, policyKnown = cached != null))" in readings)
+    }
+
     @Test
     fun `the two copies of the contract are identical`() {
         val serverCopy = listOf("../../server/testdata/setup_steps.json", "../server/testdata/setup_steps.json")

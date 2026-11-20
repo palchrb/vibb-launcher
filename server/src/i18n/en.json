@@ -1458,6 +1458,8 @@
   "device.lock.child_pin_hint": "4-6 digits",
   "device.lock.no_pin": "The phone has no PIN",
   "device.lock.no_pin_fix": "Choose a Child PIN below.",
+  "device.lock.no_pin_send": "Send the Child PIN again below.",
+  "device.lock.no_child_pin": "No Child PIN",
   "device.lock.save_child_pin": "Save Child PIN",
   "device.lock.lock": "Lock",
   "device.lock.lock_after_pin": "Starts when the Child PIN is set",

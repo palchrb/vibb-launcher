@@ -212,13 +212,19 @@ data class SetupInputs(
 }
 
 /**
- * Design 114b A: the `child_pin` reading - the phone has a PIN. Android's credential ([androidCredential], `null`
- * unreadable); with Vibb One's legacy own lock ([keyguard] of the cached `kid_lock`, `null` without one) a Child PIN in
- * the policy is the PIN, since that lock steps aside for an Android credential and the relock removes one.
+ * Design 114b A: the `child_pin` reading - the phone is locked by the Child PIN. [keyguard] is the cached `kid_lock`'s
+ * (`null`: no Child PIN stored), [policyKnown] whether a policy has landed.
+ * - Before the first policy: Android's credential ([androidCredential], `null` unreadable) - nothing else is known.
+ * - No Child PIN stored: not done, whatever PIN the phone has (code QA M2: one the kid or Android's setup set isn't the
+ *   Child PIN - the parent is asked; it is set from the PWA so the server knows it).
+ * - Vibb One's legacy own lock: done - the Child PIN is that lock's, which steps aside for an Android credential.
+ * - Android's lock: Android's credential. A PIN changed on the phone is Lock Screen & PINs' own warning, not this.
+ * The contract's `child_pin_readings` pin it (the server's `setup_status::child_pin_reading` runs the same rows).
  */
-fun childPinDone(androidCredential: Boolean?, keyguard: String?): Boolean? = when {
-    androidCredential == true -> true
-    keyguard != null && keyguard != "android" -> true
+fun childPinDone(androidCredential: Boolean?, keyguard: String?, policyKnown: Boolean): Boolean? = when {
+    !policyKnown -> androidCredential
+    keyguard == null -> false
+    keyguard != "android" -> true
     else -> androidCredential
 }
 

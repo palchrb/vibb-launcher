@@ -102,7 +102,8 @@ object SetupReadings {
     /** The readings only the `setup` report carries (§4.1). */
     private fun ownReadings(context: Context): Map<String, Boolean?> = buildMap {
         put("device_owner", deviceOwner(context))
-        put("child_pin", read { childPinDone(androidCredential = deviceSecure(context), policy()?.kidLock?.keyguard) })
+        val cached = policy()
+        put("child_pin", childPinDone(read { deviceSecure(context) }, cached?.kidLock?.keyguard, policyKnown = cached != null))
         mobileData(context, this)
         put("location", read { ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED })
         put("data_saver", read {

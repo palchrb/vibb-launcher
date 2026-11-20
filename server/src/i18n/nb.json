@@ -1458,6 +1458,8 @@
   "device.lock.child_pin_hint": "4-6 sifre",
   "device.lock.no_pin": "Telefonen har ingen PIN",
   "device.lock.no_pin_fix": "Velg en barne-PIN under.",
+  "device.lock.no_pin_send": "Send barne-PIN-en igjen under.",
+  "device.lock.no_child_pin": "Ingen barne-PIN",
   "device.lock.save_child_pin": "Lagre barne-PIN",
   "device.lock.lock": "Lås",
   "device.lock.lock_after_pin": "Starter når barne-PIN-en er satt",

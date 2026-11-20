@@ -191,6 +191,20 @@ fun bootWitnessesManaged(deJson: String?): Boolean {
     return read.policy.mode != BootCallPolicy.UNMANAGED
 }
 
+/**
+ * Design 114b (code QA M1): what the screening and redirection services enforce. Before the first unlock with no boot
+ * copy ever written ([copyMissing]: the file read, the key absent) nothing witnesses that calls were managed, and while
+ * Vibb One isn't the phone app ([dialerHeld] `false`, read - not guessed) the fail-closed state reads as unmanaged: an
+ * unmanaged phone may hold those two roles (granted early in the setup). A managed phone holds the dialer role (the
+ * Device Owner takes it); an unreadable role, and an unreadable or corrupt copy, stay closed.
+ */
+fun filterStateBeforeUnlock(state: CallPolicyState, source: PolicySource, copyMissing: Boolean, dialerHeld: Boolean?): CallPolicyState =
+    if (state == CallPolicyState.UnknownFailClosed && source == PolicySource.BOOT && copyMissing && dialerHeld == false) {
+        CallPolicyState.Unmanaged
+    } else {
+        state
+    }
+
 /** What [CallPolicyStore.refresh] read from credential-encrypted storage. */
 sealed interface CeRead {
     data class Ok(val cached: CachedPolicy, val callsManagedLast: Boolean, val lastRules: CallRules?) : CeRead

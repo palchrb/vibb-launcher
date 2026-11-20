@@ -42,12 +42,22 @@ class CallPolicyStateTest {
     }
 
     @Test
-    fun `corrupt cache keeps the last managed rules, else fails closed`() {
+    fun `corrupt cache keeps the last managed rules, fails closed without them, unmanaged as an absent one`() {
         assertEquals(CallPolicyState.Managed(otherRules), callPolicyState(CachedPolicy.Corrupt("x"), true, otherRules))
         assertEquals(CallPolicyState.UnknownFailClosed, callPolicyState(CachedPolicy.Corrupt("x"), true, null))
-        assertEquals(CallPolicyState.UnknownFailClosed, callPolicyState(CachedPolicy.Corrupt("x"), false, null))
+        // Design 114b (code QA M1): nothing says calls were ever managed - an unmanaged phone holding the screening
+        // and redirection roles (granted early in the setup) must not reject every call. Absent's rule.
+        assertEquals(CallPolicyState.Unmanaged, callPolicyState(CachedPolicy.Corrupt("x"), false, null))
+        assertEquals(callPolicyState(CachedPolicy.Absent, false, null), callPolicyState(CachedPolicy.Corrupt("x"), false, null))
         // Rules without the flag don't count: the flag is written with them, so they're stale.
-        assertEquals(CallPolicyState.UnknownFailClosed, callPolicyState(CachedPolicy.Corrupt("x"), false, otherRules))
+        assertEquals(CallPolicyState.Unmanaged, callPolicyState(CachedPolicy.Corrupt("x"), false, otherRules))
+        // The DE copy's witness (folded into the flag by refreshPlan) still fails a corrupt cache closed.
+        val witness = encodeBootPolicy(bootPolicyFor(CallPolicyState.Managed(otherRules)))
+        val plan = refreshPlan(true, CeRead.Ok(CachedPolicy.Corrupt("x"), false, null), witness, witness)
+        assertEquals(CallPolicyState.UnknownFailClosed, plan.state)
+        assertEquals(true, plan.repairManagedLast)
+        val unmanagedCopy = encodeBootPolicy(bootPolicyFor(CallPolicyState.Unmanaged))
+        assertEquals(CallPolicyState.Unmanaged, refreshPlan(true, CeRead.Ok(CachedPolicy.Corrupt("x"), false, null), unmanagedCopy, unmanagedCopy).state)
     }
 
     @Test
