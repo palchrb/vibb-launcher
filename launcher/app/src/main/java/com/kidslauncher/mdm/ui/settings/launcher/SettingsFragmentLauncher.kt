@@ -33,7 +33,6 @@ import com.kidslauncher.mdm.server.WindowRelock
 import com.kidslauncher.mdm.server.AppEnforcer
 import com.kidslauncher.mdm.play.InstallModeStart
 import com.kidslauncher.mdm.play.PlayRuntime
-import com.kidslauncher.mdm.server.applyProvisioningExtras
 import com.kidslauncher.mdm.server.dto.ProvisioningExtras
 import com.kidslauncher.mdm.server.performMdmSync
 import com.kidslauncher.mdm.server.OutsideRow
@@ -666,7 +665,8 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
         }
         val appContext = context.applicationContext
         CoroutineScope(Dispatchers.IO).launch {
-            val outcome = applyProvisioningExtras(appContext, extras)
+            // QA L3: the QR's one apply under its mutex; a re-scan of the code that enrolled this phone sends nothing.
+            val outcome = com.kidslauncher.mdm.server.QrExtras.applyScanned(appContext, extras)
             withContext(Dispatchers.Main) {
                 outcome.onSuccess {
                     Toast.makeText(context, R.string.toast_mdm_enroll_success, Toast.LENGTH_LONG)

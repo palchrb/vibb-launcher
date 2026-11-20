@@ -68,6 +68,14 @@ object SyncRunner {
             Log.i(LOG_TAG, "Sync for $reasons")
             // Design 75's R1 gap: a nudged sync pulls the weather too (a zone's save or delete only nudges).
             if ("sse" in reasons) com.kidslauncher.mdm.weather.WeatherPull.nudged()
+            // QR setup (2026-11-20): the admin extras of an enrolment that failed for a transient reason (no network,
+            // no tailnet yet, a 5xx) are applied again before the sync. A no-op without kept extras. No timeout around it
+            // (QA M3): a cancelled enrolment could lose a code the server used; every call in it is time-bounded.
+            try {
+                com.kidslauncher.mdm.server.QrExtras.retryPending(context)
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "Admin extras retry failed: ${e.javaClass.simpleName}")
+            }
             try {
                 if (withTimeoutOrNull(SYNC_TIMEOUT_MS) { performMdmSync(context) } == null) {
                     Log.w(LOG_TAG, "Policy sync timed out")

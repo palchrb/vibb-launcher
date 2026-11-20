@@ -576,6 +576,9 @@ class HomeActivity : UIObjectActivity() {
         ) {
             return
         }
+        // "Koble til" (2026-11-20): a Device Owner phone that isn't enrolled (a QR whose extras never arrived, any failed
+        // QR) leads to the server address and the setup code - only before the first policy, as Settings opens.
+        if (com.kidslauncher.mdm.setup.ConnectActivity.startFromHome(this)) return
         // Design 114 §6.2.1: during the setup hold Home leads to the setup flow (guidance, not a lock) - its own task
         // brought to the front, so a Home press from Android's page returns to the same screen.
         if (com.kidslauncher.mdm.server.RestrictionsPause.holdActive() &&

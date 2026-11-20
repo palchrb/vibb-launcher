@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- "Koble til" (2026-11-20): a Device Owner phone with no enrolment - the server address, the setup code, the enrol
+     button. The setup flow's look (Nunito, the parent's colours, insets by fitsSystemWindows). The code field as the
+     lock's "Ny oppsettkode": no suggestions, no autofill. -->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true"
+    android:fitsSystemWindows="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingHorizontal="28dp"
+        android:paddingTop="40dp"
+        android:paddingBottom="28dp">
+
+        <TextView
+            android:id="@+id/connect_title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="@font/nunito_extrabold"
+            android:text="@string/connect_title"
+            android:textSize="28sp" />
+
+        <EditText
+            android:id="@+id/connect_server_url"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:fontFamily="@font/nunito_bold"
+            android:hint="@string/settings_mdm_server_url"
+            android:importantForAutofill="no"
+            android:imeOptions="flagNoExtractUi|flagNoPersonalizedLearning|actionNext"
+            android:inputType="textUri|textNoSuggestions"
+            android:minHeight="56dp"
+            android:singleLine="true" />
+
+        <EditText
+            android:id="@+id/connect_code"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:fontFamily="@font/nunito_bold"
+            android:hint="@string/re_enrol_field"
+            android:importantForAutofill="no"
+            android:imeOptions="flagNoExtractUi|flagNoPersonalizedLearning|actionDone"
+            android:inputType="textVisiblePassword|textNoSuggestions|textCapCharacters"
+            android:maxLength="64"
+            android:minHeight="56dp"
+            android:singleLine="true" />
+
+        <TextView
+            android:id="@+id/connect_hint"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:alpha="0.7"
+            android:fontFamily="@font/nunito_bold"
+            android:text="@string/connect_hint"
+            android:textSize="14sp" />
+
+        <TextView
+            android:id="@+id/connect_error"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:accessibilityLiveRegion="polite"
+            android:fontFamily="@font/nunito_bold"
+            android:textColor="@color/dialog_error_text"
+            android:textSize="14sp"
+            android:visibility="gone" />
+
+        <Space
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:minHeight="32dp" />
+
+        <Button
+            android:id="@+id/connect_button"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:enabled="false"
+            android:fontFamily="@font/nunito_bold"
+            android:minHeight="56dp"
+            android:text="@string/connect_title" />
+    </LinearLayout>
+</ScrollView>

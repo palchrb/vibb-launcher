@@ -79,6 +79,30 @@
 - The hold fails closed on a wall clock set back past the time elapsed (an NTP or NITZ correction right after the
   enrolment): `timedWindowActive` ends it; the PWA's "Åpne for oppsett" recovers (code QA L9; the gate's owed checks).
 
+## Koble til (2026-11-20)
+
+- A Device Owner phone that isn't enrolled - a QR whose extras never arrived, any failed QR - gets "Koble til" from
+  Home's resume (`setup/ConnectActivity.kt`, past the gate and the lock, before the hold's flow): the server address
+  (the stored one filled in), "Oppsettkode", one line where the parent finds the code (the phone's page in the parent
+  app › Avansert › Ny oppsettkode) and the button. Pure `connectScreenDue` (`ConnectScreen.kt`): Device Owner, neither
+  `enrolled` nor a stored token, and `settingsAccess` OPEN (no policy ever applied) - never wider than the Settings
+  gate; checked again at every start, so an enrolment by any path closes it.
+- The button runs S-M1's `serverUrlUsable` first (`server_url_refused`, the whole reason), then `QrExtras.enrolTyped`
+  on the process's scope: the QR's one `applyProvisioningExtras` under `QrExtras`' mutex (a kept QR retry never runs
+  beside it; its tailnet key is used, the kept extras dropped once enrolled), and on an enrolled phone nothing is sent
+  (a second tap, a second instance, a QR retry that got there first). A refused code (`CODE_REFUSED_STATUSES`) says
+  `re_enrol_failed`, anything else - 408, 429, a 5xx, no network - `re_enrol_unreachable`. Enrolled, it finishes and
+  Home's resume leads to the setup flow (the hold started at the enrolment).
+- The busy state and the failure line are the process's, not the instance's (Home's `singleTask` and a recreation make
+  new ones): `typing` (one tap, one enrolment) and `QrExtras.running` (any apply in flight, a QR delivery or retry
+  too) show "Kobler til …"; when neither runs, the rule is read again and an enrolled phone's screen finishes.
+- No tailnet key field: the kept QR extras' key is used, and for a tailnet-only (`*.ts.net`) server without a QR the
+  parent sets the key in Settings (open before the first policy: Back, the drawer's Settings, "Tailscale-nøkkel" / "Tailscale auth key"),
+  then comes back. Lighter than an expander on a screen meant for two fields, and the case is rare: the server's QR
+  carries the key.
+- Back closes it for that one resume of Home; it comes back the next time Home comes to the front. Not exported, out
+  of Recents, `FLAG_SECURE`. `ConnectScreenTest`.
+
 ## Android 14-17
 
 Every API used is in 34 (`canUseFullScreenIntent`, `ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT`) or below

@@ -113,6 +113,9 @@ class SealedPrefs(private val box: SecretBox, private val log: (String, Throwabl
         }
     }
 
+    /** The key itself is broken ([SecretBox.keyBroken]), not a transient Keystore error. Never throws. */
+    fun keyBroken(): Boolean = box.keyBroken()
+
     /** True when [block] ran and its edits were committed; a throwing seal (or block) commits nothing. */
     fun edit(prefs: SharedPreferences, block: (Editor) -> Unit): Boolean = tryEdit(prefs, block) ?: false
 
