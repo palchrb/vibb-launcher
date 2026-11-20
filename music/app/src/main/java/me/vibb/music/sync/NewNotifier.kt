@@ -64,6 +64,9 @@ object NewNotifier {
         )
         val notification = NotificationCompat.Builder(context, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_vibb_music)
+            // The icon's circle in the shade: the night ink, so the white mark reads (2026-11-20, the Jelly Star: with
+            // no colour Android drew it pale on pale).
+            .setColor(context.getColor(R.color.vibb_night))
             .setContentTitle(text)
             .setNumber(n)
             .setSilent(true)

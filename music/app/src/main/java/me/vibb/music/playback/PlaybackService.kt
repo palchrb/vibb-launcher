@@ -578,6 +578,7 @@ class PlaybackService : MediaSessionService() {
         }
         return Notification.Builder(this, MEDIA_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_vibb_music)
+            .setColor(getColor(R.color.vibb_night))
             .setContentTitle(getString(R.string.app_name))
             .setVisibility(Notification.VISIBILITY_SECRET)
             .setCategory(Notification.CATEGORY_TRANSPORT)
