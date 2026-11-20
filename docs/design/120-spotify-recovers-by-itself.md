@@ -1,6 +1,7 @@
 # 120 - Spotify recovers by itself after a network change
 
-Status: design. Revision 1, 2026-11-19. No code in this round.
+Status: revision 2, 2026-11-20 - option B, R2 and a new trigger R5 built on `spotify-output-recover` (§10). Revision 1,
+2026-11-19, was design only.
 
 Inputs: the user's emulator logs of 2026-11-19 (music-v0.7.0-rc.3, Android 16 AVD, the Vibb launcher as Device Owner
 with its VpnService DNS filter); design 26c (the web player), 95 and 97 (the launcher's VPN shapes); the music notes
@@ -270,3 +271,101 @@ plays. Recommended: **yes**. A pause, a network change and a play is the common 
 a slower start.
 
 Everything else follows from the evidence and needs no choice.
+
+## 10. Revision 2 (2026-11-20): option B, R2 and R5 built
+
+**Why now.** Fix A (the launcher's order) fixed the network trigger, and B was parked "until the bug shows on another
+trigger". It did on the user's Jelly Star on 2026-11-20: the first time a Bluetooth headset paired while Spotify
+played, the player went silent, the app said "Trenger internett", and only killing the app helped. That is this note's
+dead player (§1), with the audio route as the trigger (scratchpad `sonos-bt.md` §3b). vibb has the same class of bug on
+the Pi and heals it the same way: `_go_output_rebuild` rebuilds go-librespot's output and replays from its place. The
+user chose B + R2 + R5 the same day.
+
+**Built.**
+
+- **B, as §4.2 with the design QA's fixes.** `SpotifyWebService` runs in `:web` (not exported, bound only) and holds the
+  unchanged `SpotifyWebHost`. The renderer's host is `RemoteSpotifyHost` over a private AIDL pair in
+  `src/main/aidl/me/vibb/music/spotify/web/` (L5). The binder glue (`AndroidWebConnector`) is thin, so the logic is
+  JVM-tested through Kotlin seams (L6).
+  - **The lifecycle (H1).** Each page gets its own process. A destroy sends `destroy()` and unbinds. The next bind waits
+    until Android no longer lists the old process; past 3 s the main process kills it (our own uid), and past 4 s it
+    binds anyway. The web side ends itself only after its service's `onDestroy`. A process that already had a page
+    answers `stale`, and the main process binds a fresh one, once. Each binding has its own sink, so an old process's
+    events never reach a new page.
+  - **Calls (M4, L4).** `alive` is true from `open()`. Calls queue in order until the process is connected, and a queued
+    token is dropped with its page. Calls are typed: `token(id, token?)`, `seek(ms)`, `volume(level)`, and
+    `command(name)` for pause, resume, next, previous and state. `connect` and `disconnect` belong to the web side.
+  - **Deaths (M4, L8).** An unasked death unbinds at once. If the page was up it is `Gone`. A bind that never came up
+    gives no `ready`, and R1's wait applies. The renderer dying in `:web` gives one `Gone` and ends that process.
+  - **The clear (M3).** The clear runs in the next page's own process before the page loads (`open`'s `clearFirst`).
+  - **The process itself (§4.2).** Events are sent from `:web`'s main looper (L3). The main process calls
+    `WebView.disableWebView()`, and `MusicApp` returns at once in `:web`. The bind uses `BIND_AUTO_CREATE |
+    BIND_INCLUDE_CAPABILITIES` (M2).
+- **The debug switch.** `:web` has no debug feed, so the main process passes the base at each `open`. A seventh reader,
+  `SpotifyEndpoints.webBase()`, returns it, and it goes through the fake-homes parse. The web side assigns its own copy
+  only in a debug build. That assignment is the one in `src/main`, and SourceScanTest pins it.
+- **R2, with L1, L2, L7 and H2.** These silences recycle the page with its process and make one new start at the same
+  place, with shuffle and repeat set again, `tracker.newDevice()` and `lastSet = null`:
+  - no state of ours within 10 s of a play call, on a page the start didn't make;
+  - the 30 s gap watch, which also covers a resume through the SDK;
+  - and, new in this revision, the page's process ending under a play the kid wants. Without this, a killed `:web`
+    would only say "Stoppet - trykk spill". With it, the music goes on, and a second death before any state is
+    "Stoppet" as before.
+
+  The rule is `spotifyRecycles`. It recycles only while the kid still wants the music playing: `pwr` is set and the
+  track hasn't ended, playing is allowed, there is no call, the renderer isn't detached and the network gate is open.
+  It never recycles on a page the failing start made (a new process didn't help: UNREACHABLE as before). It never
+  recycles twice without a state of ours in between, which is the loop guard and replaces L1's "per kid action". A
+  recycled start waits at most 10 s for `ready` (L7).
+- **R5 (new).** An audio output that is added or removed (the service's `AudioDeviceCallback`, a headset sink) while the
+  web player plays asks the page for its state at once (`vibb.state()`). If no state of ours comes within 8 s, the page
+  is recycled once by the same rule. A headset that is removed pauses first (becoming noisy), so in practice R5 covers a
+  headset arriving.
+
+**Not built.** R3 (a 502 on a page that is up) and R4 (the network snapshot) are not built. Fix A covers the network
+trigger, and R2 now catches any dead page within 30 s, so a remaining case costs at most that wait. M5's new
+`player.js` diagnostic lines are not built either.
+
+**Words.** None for the kid or the parent. The fixed diagnostic lines:
+- "the web player gave no state - a new one, once"
+- "the web player's process ended - a new one, once"
+- "no state of ours after the output change"
+- "a new web player didn't help - no other"
+- "the old web player's process is still ending - the new one waits"
+- "the old web player's process outlived its destroy - ended"
+- "the web player's process ended"
+- "the web player's process didn't come up"
+
+**Android 14 to 17.** `android:process`, bound services, `linkToDeath`, killing a process of our own uid,
+`getRunningAppProcesses` for our own processes, `disableWebView` and `getProcessName` (API 28) behave the same on all
+four. Two things are not verified:
+- whether audio focus and Android 17's background-audio hardening judge `:web` by its uid or by its own process (QA
+  M2). The binding includes capabilities, and the phone check below decides;
+- the Jelly Star's real SDK, with Widevine in a second process.
+
+**Tests.**
+- `RemoteSpotifyHostTest`: the lifecycle against a fake glue.
+- `SpotifyRendererTest`: R2 on a step, on the gap after a resume, and on a process death; the gates; R5; the second
+  silence stopping.
+- `SpotifyRulesTest`: `spotifyRecycles`.
+- `SourceScanTest`: the manifest, `MusicApp`'s early return, the bind flags, the debug base's one assignment and the
+  AIDL's folder.
+
+**Emulator (§6l A2, `fake-spotify.py`, unmanaged, `compat34` Android 14 and `aosp36` Android 16, both wiped).**
+- A play runs in `me.vibb.music.debug:web`, with the clear before the first page in that process. From a tap to the
+  first state with a new process took about 1.1 s on 14.
+- `kill -9` of `:web` while playing: a new process, and play went on from the same place (34 s on 14, 19 s on 16)
+  within about 1.3 s.
+- `kill -STOP` of `:web`, the hung player: the 30 s gap watch recycled it, the frozen process was killed at the 3 s
+  ceiling, and play went on from the place (66 s on 14, 28 s on 16).
+- On 16 with the app in the background (Home), a recycle's new `:web` got the audio focus: `dumpsys audio` showed
+  Chromium's `AudioFocusDelegate` of the app's uid on top.
+- On 14, a pause and a resume went through the page, the 5-minute idle close left no `:web` process, and the next play
+  made a new one.
+
+R5 can't be triggered on the emulator, which has no headset to plug in.
+
+**Owed on the phone.**
+- The Bluetooth pairing that started this (R5 or R2 should bring the music back within about 8-30 s).
+- The real SDK and Widevine in `:web`.
+- The audio focus with the screen off on Android 16, and M4's background-audio check on Android 17 when an image exists.

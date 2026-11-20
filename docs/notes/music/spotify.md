@@ -162,7 +162,26 @@ Moved from music/CLAUDE.md on 2026-11-01.
   spilles nå", "Spør en voksen om hjelp"). This is a stated deviation
   from Spotify's Developer Policy II (attribution where its content is shown; 26c §7.3): the attribution is the parent's
   PWA's only. Don't add the word, a logo or a source line back without the user.
-- **The web player's WebView** (26c §5.2, §7.2): one WebView in the process, `SpotifyWebHost`'s, made with the
+- **The web player in its own process** (design 120 option B, revision 2, 2026-11-20): `SpotifyWebService` in `:web`
+  (not exported, bound only) holds the one `SpotifyWebHost`, **one page per process**. The renderer's host is
+  `RemoteSpotifyHost`, over a private AIDL in `src/main/aidl/me/vibb/music/spotify/web/` (not the launcher bridge).
+  - A destroy unbinds, and the next bind waits until the old process has ended; the main process kills it after 3 s.
+  - A process that already had a page refuses another.
+  - The stores are cleared in the next page's own process.
+  - The main process makes no WebView (`disableWebView`), and `MusicApp` returns at once in `:web`.
+  - `:web` takes the debug base from `SpotifyEndpoints.webBase()` at each page's open, in a debug build only.
+
+  **A silent player is recycled once** (`spotifyRecycles`): its process goes, and one new start plays at its place.
+  This happens on:
+  - no state of ours 10 s after a play call on a page the start didn't make;
+  - the 30 s gap watch, including after an SDK resume;
+  - its process ending under a play;
+  - R5: an audio output that came or went while playing, then 8 s without a state of ours. This is vibb's
+    `_go_output_rebuild`.
+
+  It never recycles on a page the failing start made, never twice without a state of ours in between, and only while
+  the kid wants it playing (the gate open, no call). There are no new words for the kid.
+- **The web player's WebView** (26c §5.2, §7.2): one WebView in the `:web` process, `SpotifyWebHost`'s, made with the
   application context by the service and **never attached to a window** (`SourceScanTest`: `WebView(`,
   `android.webkit` and `addJavascriptInterface` only in that file, no `addView`); JavaScript and DOM storage on, media
   without a gesture, file and content access off, no geolocation or multiple windows, `RENDERER_PRIORITY_IMPORTANT`,
