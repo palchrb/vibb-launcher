@@ -3,6 +3,6 @@
      ground. -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
     <solid android:color="@color/kid_messages_tile" />
-    <corners android:radius="12dp" />
+    <corners android:radius="11dp" />
     <stroke android:width="2dp" android:color="@color/kid_page_ground" />
 </shape>

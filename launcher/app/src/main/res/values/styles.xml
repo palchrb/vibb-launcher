@@ -440,8 +440,8 @@
 
     <style name="KidBadge">
         <item name="android:layout_width">wrap_content</item>
-        <item name="android:layout_height">24dp</item>
-        <item name="android:minWidth">24dp</item>
+        <item name="android:layout_height">22dp</item>
+        <item name="android:minWidth">22dp</item>
         <item name="android:background">@drawable/bg_kid_badge</item>
         <!-- Above the elevated icon/avatar (design 34 P2), without a shadow of its own. -->
         <item name="android:elevation">2dp</item>
@@ -452,7 +452,9 @@
         <item name="android:paddingStart">6dp</item>
         <item name="android:paddingEnd">6dp</item>
         <item name="android:textColor">@android:color/white</item>
-        <item name="android:textSize">14sp</item>
+        <!-- dp, not sp, on purpose: a badge number is a count inside a fixed 22 dp pill; it must not grow with the
+             font scale and crowd the ring (seen at 1.3 on the Jelly Star). -->
+        <item name="android:textSize" tools:ignore="SpUsage">13dp</item>
         <item name="android:visibility">gone</item>
     </style>
 
