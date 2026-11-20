@@ -2,7 +2,8 @@
 <!-- A phone book row (design 79 §3.4, designed at the Jelly Star's 288 dp of content): a solid night tile (bg_day_event,
      #1B1B28, 18 dp), Dagen's row on Dagen's ground; the 44 dp avatar with its two pills (design 106); the name (never cut between letters,
      WholeWordTextView) and a second line only when there is something to say; Ring and Melding as two 38 dp tonal discs
-     in touching 48 dp targets at the tile's end (its end padding 0). From font scale 1.3 (rowLayout) the buttons move
+     in touching 48 dp targets at the tile's end (its end padding 0). When the text column holds less than 6 em of the name
+     (rowLayout: from font scale 1.5 on the Jelly Star, 2026-11-20) the buttons move
      to row_stack, on a line of their own from the text's start. A tap anywhere else opens the contact card; the row is
      TalkBack's one node, the buttons its custom actions (PhoneBookAdapter). No long-press. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"

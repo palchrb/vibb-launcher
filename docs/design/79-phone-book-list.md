@@ -234,8 +234,10 @@ mockups are drawn at these sizes, 1 px = 1 dp at font scale 1.0.
     calls the count is both and the time the newest. The longest, "12 tapte anrop i går", is 20 characters;
   - then " · 1 ulest" (`contact_unread_short`, `kid_core_dim`) for unread messages, or alone "1 ulest melding";
   - else nothing.
-- **Large text: the buttons get their own line.** Pure `rowLayout(contentDp, fontScale)`: **inline** below font scale
-  1.3 with a text column of at least 120 dp; else **stacked** - the avatar and the text use the whole width (214 dp),
+- **Large text: the buttons get their own line.** Pure `rowLayout(contentDp, nameDp)` (changed 2026-11-20 for the Jelly
+  Star, which runs font 1.3 - the user approved: inline through 1.3, stacked from 1.5; it stacked from 1.3 before):
+  **inline** while the text column is at least 120 dp and holds at least 6 em of the name at its real rendered size
+  (16 sp through Android 14+'s non-linear scaling: 8 em at 1.0, about 6.3 at 1.3, 5.6 at 1.5 on 288 dp); else **stacked** - the avatar and the text use the whole width (214 dp),
   Ring and Melding on a line under the text, from the text's start. `WholeWordsTest` gains the row at 288 dp, 1.0 / 1.3
   / 2.0, nb and en: no missed-call line cut, the test set's names whole.
 - **Request rows:** the answer (once, at the top) on the tile with a `kid_music_control` disc and the initial; open
@@ -564,7 +566,7 @@ pictures are phone-only (revision 2), and there are no groups, tabs or favourite
 
 | Finding | Where it landed |
 |---|---|
-| H1 the row doesn't fit 288 dp | Fixed, §3.4: the row at 288 dp - 44 dp avatar, two touching 48 dp targets, a 128 dp text column; the short missed line that may wrap; buttons on their own line from font scale 1.3 (`rowLayout`); `WholeWordsTest`; the mockups at 320 dp |
+| H1 the row doesn't fit 288 dp | Fixed, §3.4: the row at 288 dp - 44 dp avatar, two touching 48 dp targets, a 128 dp text column; the short missed line that may wrap; buttons on their own line from font scale 1.3 (`rowLayout`; from 1.5 since 2026-11-20, §3.4); `WholeWordsTest`; the mockups at 320 dp |
 | H2 avatar bindings would read CE | Fixed, §5.4: an in-memory snapshot loaded after the unlock, empty before; `bindContact` reads memory only; decode under `kid:<file>`; a source check |
 | M1 favourites pruned against the wrong list, before the unlock | Favourites are gone (revision 3); the rule it asked for governs the kid's pictures, §5.4: only a CE refresh of `Managed`, against `rules.contacts`; the long-press only for phone-book contacts |
 | M2 the pending upload's states | Moot: no upload |

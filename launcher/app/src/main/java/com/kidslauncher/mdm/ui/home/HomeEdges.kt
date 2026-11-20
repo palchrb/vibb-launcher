@@ -116,3 +116,27 @@ fun contactItemPx(layout: ContactRowLayout, count: Int, contentPx: Int, density:
  */
 fun contactsContentPx(measuredPx: Int, screenWidthDp: Int, density: Float): Int =
     if (measuredPx > 0) measuredPx else max(0, floor((screenWidthDp - 32) * density).toInt() - 1)
+
+/** The least gap between Home's rows when [rowGapToFit] squeezes them (the Jelly Star's layout, 2026-11-20). */
+const val GRID_MIN_ROW_GAP_DP = 6f
+
+/**
+ * The gap between Home's rows (the Jelly Star's layout, 2026-11-20: at font 1.3 "Organic Maps" wraps, its row grows by
+ * a line, and the gear's "Innstillinger" lay under the bottom edge and the fade). [rowHeights] are the laid-out rows'
+ * heights and [content] the grid's height less its paddings, all in one unit (px on the phone, dp in the tests). The
+ * rows keep [gap] when they fit with it, and also when they would still overflow at [minGap] (the grid scrolls and
+ * fades as before). In between - the grid only just overflows - every gap shrinks evenly to what makes the rows fit
+ * exactly: no scroll, no fade, every label whole. A row's height never depends on the gap, so laying out again with the
+ * result gives the same answer.
+ */
+fun rowGapToFit(
+    rowHeights: List<Float>,
+    content: Float,
+    gap: Float = GRID_ROW_GAP_DP.toFloat(),
+    minGap: Float = GRID_MIN_ROW_GAP_DP,
+): Float {
+    val gaps = rowHeights.size - 1
+    if (gaps < 1) return gap
+    val even = (content - rowHeights.sum()) / gaps
+    return if (even >= gap || even < minGap) gap else even
+}

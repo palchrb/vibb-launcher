@@ -2,6 +2,7 @@ package com.kidslauncher.mdm.ui
 
 import com.kidslauncher.mdm.calls.ROW_AVATAR_DP
 import com.kidslauncher.mdm.calls.ROW_GAP_DP
+import com.kidslauncher.mdm.calls.ROW_NAME_SP
 import com.kidslauncher.mdm.calls.ROW_PADDING_START_DP
 import com.kidslauncher.mdm.calls.ROW_STACKED_END_DP
 import com.kidslauncher.mdm.calls.RowLayout
@@ -170,24 +171,51 @@ class WholeWordsTest {
         }
     }
 
-    /** Design 79 §3.4: the phone book's row at the Jelly Star's 288 dp - the text column 128 dp inline below font 1.3,
-     * the whole width less the avatar from 1.3 (the buttons on their own line). */
-    private fun rowColumn(scale: Float): Float = when (rowLayout(288f, scale)) {
-        RowLayout.INLINE -> rowTextColumnDp(288f)
-        RowLayout.STACKED -> 288f - ROW_PADDING_START_DP - ROW_AVATAR_DP - ROW_GAP_DP - ROW_STACKED_END_DP
+    /**
+     * Design 79 §3.4: the phone book's row on a [contentDp] wide page - the inline text column, or the whole width less
+     * the avatar when the buttons are on their own line (the Jelly Star's 288 dp: 128 dp inline through font 1.3, 214 dp
+     * from 1.5 - the Jelly Star's layout, 2026-11-20). The layout is decided by the 16 sp name's real size at [scale]
+     * ([nameDp], Android 14+'s non-linear tables), as on the phone.
+     */
+    private fun rowColumn(scale: Float, contentDp: Float = 288f): Float = when (rowLayout(contentDp, nameDp.getValue(scale))) {
+        RowLayout.INLINE -> rowTextColumnDp(contentDp)
+        RowLayout.STACKED -> contentDp - ROW_PADDING_START_DP - ROW_AVATAR_DP - ROW_GAP_DP - ROW_STACKED_END_DP
     }
 
+    /** The 16 sp name as Android 14+ renders it (dp), by font scale. */
+    private val nameDp = mapOf(1.0f to 16f, 1.3f to 20.2f, 1.5f to 23f, 2.0f to 28f)
+
+    /** The size the text is checked at: 16 sp linear is above the tables' (an upper bound). 13-14 sp is not - the
+     * tables put it up to about 3 % above linear at 1.15-1.5 (14 sp: 16.4, 18.8, 22 dp) - so the 13 sp line is checked
+     * 3 % above linear (code QA L4). */
+    private fun nameSizeDp(scale: Float) = ROW_NAME_SP * scale
+    private fun lineSizeDp(scale: Float) = 13f * scale * 1.03f
+
+    /** The phone book's names: the shared list, two-word names, and long single words that must shrink whole in the
+     * 128 dp inline column at 1.3 (code QA L5). */
+    private val bookNames = names + listOf("Trener Kari", "Sofie Østby", "Bestemor Ingrid", "Kristoffersen", "Mormor-Kristin")
+
+    /** The page widths checked: the Jelly Star (320 dp) and a 360 dp phone, which stays inline at 2.0 (code QA L5). */
+    private val pages = listOf(288f, 328f)
+
     @Test
-    fun `the phone book row at 288 dp - names whole, the second line two lines at most, at 1_0 1_3 2_0 in nb and en`() {
+    fun `the phone book row at 288 and 328 dp - names whole at 1_0 1_3 1_5 2_0 in nb and en`() {
         assertEquals(128f, rowColumn(1.0f), 0.01f)
-        assertEquals(214f, rowColumn(1.3f), 0.01f)
-        for (scale in scales) {
-            val column = rowColumn(scale)
-            for (name in names + listOf("Trener Kari", "Sofie Østby", "Bestemor Ingrid")) {
-                val (size, display) = shown(name, 16f * scale, column)
-                assertNoCut("row ${scale}x '$name'", size, display, column)
+        assertEquals(128f, rowColumn(1.3f), 0.01f)
+        assertEquals(214f, rowColumn(1.5f), 0.01f)
+        // A 360 dp phone: 168 dp inline even at 2.0 (6 em of a 28 dp name).
+        assertEquals(168f, rowColumn(2.0f, 328f), 0.01f)
+        for (content in pages) for (scale in nameDp.keys) {
+            val column = rowColumn(scale, content)
+            for (name in bookNames) {
+                val (size, display) = shown(name, nameSizeDp(scale), column)
+                assertNoCut("row $content dp ${scale}x '$name'", size, display, column)
             }
         }
+        // The long single word in the Jelly Star's inline column at 1.3 is shown whole, smaller if it must.
+        val (size, display) = shown("Kristoffersen", nameSizeDp(1.3f), rowColumn(1.3f))
+        assertEquals("Kristoffersen", display)
+        assertTrue(size >= 0.75f * nameSizeDp(1.3f))
         val doc = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }.newDocumentBuilder()
             .parse(File(main, "res/layout/item_phone_book_row.xml"))
         val all = doc.getElementsByTagName("*")
@@ -201,22 +229,18 @@ class WholeWordsTest {
     private fun partWidth(text: String, sizeDp: Float) = 1.1f * sizeDp + width(" ", sizeDp) + width(text, sizeDp)
 
     @Test
-    fun `the phone book row's glyph line - each part whole, the second wraps to line 2, never an ellipsis`() {
+    fun `the phone book row's glyph line - each part fits a line of its own, so two lines at most, never an ellipsis`() {
         val missedParts = mapOf(
             "nb" to listOf("14:02", "i går", "30. nov.", "99+"),
             "en" to listOf("14:02", "yesterday", "Nov 30", "99+"),
         )
-        for (scale in scales) {
-            val column = rowColumn(scale)
-            val size = 13f * scale
+        for (content in pages) for (scale in nameDp.keys) {
+            val column = rowColumn(scale, content)
+            val size = lineSizeDp(scale)
             for ((lang, firsts) in missedParts) for (first in firsts) for (second in listOf("1", "12", "99+")) {
-                val a = partWidth(first, size)
-                val b = partWidth(second, size)
-                assertTrue("$lang ${scale}x '$first' fits whole", a <= column)
-                assertTrue("$lang ${scale}x '$second' fits whole", b <= column)
-                // One line when both fit with the space between, else the second part alone on line 2 (maxLines 2).
-                val lines = if (a + width(" ", size) + b <= column) 1 else 2
-                assertTrue("$lang ${scale}x '$first' '$second' takes $lines lines", lines <= 2)
+                // Each part whole on a line of its own: one line when both fit, else the second alone on line 2 (maxLines 2).
+                assertTrue("$lang $content dp ${scale}x '$first' fits whole", partWidth(first, size) <= column)
+                assertTrue("$lang $content dp ${scale}x '$second' fits whole", partWidth(second, size) <= column)
             }
         }
     }

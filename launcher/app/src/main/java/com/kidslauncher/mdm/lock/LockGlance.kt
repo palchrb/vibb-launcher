@@ -252,6 +252,26 @@ fun glanceHandle(profile: ClockGeometry?): GlanceHandle = profile?.handle ?: DEF
  */
 fun glanceHandleViewHeightDp(handle: GlanceHandle): Float = handle.heightDp + 2 * handle.bottomDp
 
+/** Where the handle's view sits and what the page keeps free under its content for it (px): [handleMarginPx] its bottom
+ * margin over the window's bottom edge, [extraPx] added to the page's bottom padding. */
+data class GlanceBottomRoom(val handleMarginPx: Int, val extraPx: Int)
+
+/**
+ * The handle's room at the page's bottom (screen-size fix S5; the Jelly Star's layout, 2026-11-20), from the window's
+ * bottom insets: [navBarPx] the navigation bar's, [tappablePx] its tappable part, [handleViewPx] the handle's view.
+ * - A 3-button bar ([tappablePx] > 0): the handle stands on the bar's top edge and the page keeps its height free.
+ * - Gestures: the handle lies in the gesture inset, which the page's padding already leaves free - nothing added
+ *   (more only where that inset is lower than the handle's view).
+ * - Keys below the panel, no bar in the window (the Jelly Star): the inset is 0, so the page keeps the handle's own
+ *   room - Nødsamtale sits as high over the edge as with gestures, the handle under it.
+ */
+fun glanceBottomRoom(navBarPx: Int, tappablePx: Int, handleViewPx: Int): GlanceBottomRoom =
+    if (tappablePx > 0) {
+        GlanceBottomRoom(tappablePx, handleViewPx)
+    } else {
+        GlanceBottomRoom(0, maxOf(0, handleViewPx - navBarPx))
+    }
+
 /**
  * Design 59d step J (the user, rc.2: "la vår låseskjerm bli swipet oppover så den er identisk med android sin egen"):
  * a vertical swipe up anywhere on the glance page asks as "Lås opp" did. [dy] is the travel upwards since the down

@@ -275,7 +275,9 @@ literals.
     - an Element X row says "Tapt anrop i Element X" (the shown label).
   - The time at the end: 13 sp, Nunito 700, `kid_page_dim`.
   - The press is the tile's `kid_page_ripple`.
-  - From font scale 1.3 the time moves under the word, as the rows' `rowLayout` rule does.
+  - From font scale 1.3 the time moves under the word, as the rows' `rowLayout` rule did. Since 2026-11-20 the contacts
+    stack from 1.5 by the name's size; Siste keeps 1.3: its time shares the line with the kind word, not with buttons,
+    and only Kontakter was approved (code QA L6).
 - **TalkBack:** a row is one node with role button. It reads the name, the kind in words, then the time:
   - "Mamma, 2 tapte anrop, i dag 14:02";
   - "Pappa, ringte deg 2 ganger, i går 18:30": its own plural (`recent_described_*`), never the visible "(2)".

@@ -26,6 +26,7 @@ import androidx.activity.OnBackPressedCallback
 import androidx.lifecycle.Observer
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import android.app.role.RoleManager
 import com.kidslauncher.mdm.Application
 import com.kidslauncher.mdm.R
@@ -64,6 +65,7 @@ import com.kidslauncher.mdm.setDefaultHomeScreen
 import com.kidslauncher.mdm.ui.home.BadgeSize
 import com.kidslauncher.mdm.ui.home.ContactBadge
 import com.kidslauncher.mdm.ui.home.GRID_COLUMN_GAP_DP
+import com.kidslauncher.mdm.ui.home.GRID_MIN_ROW_GAP_DP
 import com.kidslauncher.mdm.ui.home.GRID_ROW_GAP_DP
 import com.kidslauncher.mdm.ui.home.GridApp
 import com.kidslauncher.mdm.ui.home.GridGapDecoration
@@ -91,6 +93,7 @@ import com.kidslauncher.mdm.ui.wallpaper.WallpaperStore
 import com.kidslauncher.mdm.ui.home.HomeSwipe
 import com.kidslauncher.mdm.ui.home.SwipeStart
 import com.kidslauncher.mdm.ui.home.homeSwipe
+import com.kidslauncher.mdm.ui.home.rowGapToFit
 import com.kidslauncher.mdm.ui.kidsettings.KidSettingsActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -337,17 +340,24 @@ class HomeActivity : UIObjectActivity() {
 
         // No clock or date any more (design 08): the status bar shows the time.
         gridAdapter = HomeGridAdapter(this, ::trackOverlay)
-        gridLayout = GridLayoutManager(this, gridColumns(null))
+        gridLayout = object : GridLayoutManager(this, gridColumns(null)) {
+            // Every layout of the grid itself (new tiles, a new height), never a scroll or another view's layout.
+            override fun onLayoutCompleted(state: RecyclerView.State?) {
+                super.onLayoutCompleted(state)
+                gridFitDue = true
+            }
+        }
         binding.homeGrid.layoutManager = gridLayout
         binding.homeGrid.adapter = gridAdapter
         // Launcher round 7 §4: one-tile updates (DiffUtil), and nothing moves or fades.
         binding.homeGrid.itemAnimator = null
+        gridRowGapPx = KidAvatars.dp(this, GRID_ROW_GAP_DP.toFloat())
         binding.homeGrid.addItemDecoration(
-            GridGapDecoration(
-                KidAvatars.dp(this, GRID_COLUMN_GAP_DP.toFloat()),
-                KidAvatars.dp(this, GRID_ROW_GAP_DP.toFloat()),
-            ) { gridLayout.spanCount }
+            GridGapDecoration(KidAvatars.dp(this, GRID_COLUMN_GAP_DP.toFloat()), { gridRowGapPx }) { gridLayout.spanCount }
         )
+        // The Jelly Star's layout (2026-11-20): rows that only just overflow get smaller gaps - checked before the frame
+        // after one of the grid's own layouts only (code QA L1, L2: [gridFitDue], [fitGridRowsBeforeDraw]).
+        binding.homeGrid.viewTreeObserver.addOnPreDrawListener { fitGridRowsBeforeDraw() }
         musicCard = com.kidslauncher.mdm.music.MusicHomeCard(this, binding.homeMusicCard)
         // Design 24b §1.3: "Lock again" ends a parent-PIN window - no PIN, it only takes access away.
         binding.homeWindowLockAgain.setOnClickListener {
@@ -920,6 +930,58 @@ class HomeActivity : UIObjectActivity() {
 
     /** The contacts' pill colours as last drawn: Android's dark-text hint on Home's own ground ([WallpaperStore.State]). */
     private var shownDarkText: Boolean = WallpaperStore.state.supportsDarkText
+
+    /** The gap between the grid's rows now: 14 dp, less while [fitGridRows] squeezes them. */
+    private var gridRowGapPx = 0
+
+    /** The grid was laid out since the last fit (its layout manager's `onLayoutCompleted`). */
+    private var gridFitDue = true
+
+    /**
+     * Before a frame, only after one of the grid's own layouts (code QA L2): the fit, and when the gap changed this
+     * frame is dropped (`false`) so the old gap is never drawn - the next traversal lays the grid out with the new gap
+     * and draws it (code QA L1).
+     */
+    private fun fitGridRowsBeforeDraw(): Boolean {
+        if (!gridFitDue || !contentShown) return true
+        gridFitDue = false
+        return !fitGridRows()
+    }
+
+    /**
+     * The Jelly Star's layout (2026-11-20): the laid-out rows' heights against the grid's content ([rowGapToFit]) - when
+     * they only just overflow, every row gap shrinks (to 6 dp at least) so the last row's label is whole and nothing
+     * scrolls or fades. A row not laid out (the grid scrolls by more than a row) keeps 14 dp. True when the gap changed:
+     * only then is the grid laid out again, and the rows' heights don't depend on the gap, so it settles in one pass.
+     */
+    private fun fitGridRows(): Boolean {
+        val grid = binding.homeGrid
+        val columns = gridLayout.spanCount.coerceAtLeast(1)
+        val rows = ((grid.adapter?.itemCount ?: 0) + columns - 1) / columns
+        val heights = IntArray(rows) { -1 }
+        for (i in 0 until grid.childCount) {
+            val child = grid.getChildAt(i)
+            val position = grid.getChildAdapterPosition(child)
+            if (position == RecyclerView.NO_POSITION || position / columns >= rows) continue
+            heights[position / columns] = maxOf(heights[position / columns], child.height)
+        }
+        val gap = KidAvatars.dp(this, GRID_ROW_GAP_DP.toFloat())
+        val fitted = if (heights.any { it < 0 }) {
+            gap
+        } else {
+            rowGapToFit(
+                heights.map { it.toFloat() },
+                (grid.height - grid.paddingTop - grid.paddingBottom).toFloat(),
+                gap.toFloat(),
+                KidAvatars.dp(this, GRID_MIN_ROW_GAP_DP).toFloat(),
+            ).toInt()
+        }
+        if (fitted == gridRowGapPx) return false
+        android.util.Log.i("HomeActivity", "Grid rows ${heights.joinToString()} in ${grid.height - grid.paddingTop - grid.paddingBottom} px: gap $fitted px")
+        gridRowGapPx = fitted
+        grid.invalidateItemDecorations()
+        return true
+    }
 
     /** The grid from the last filtered apps and the current badge counts (cheap). */
     private fun renderGrid() {

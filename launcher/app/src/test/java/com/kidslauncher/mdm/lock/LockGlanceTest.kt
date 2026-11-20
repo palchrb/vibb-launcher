@@ -213,6 +213,24 @@ class LockGlanceTest {
         assertEquals(24f, glanceHandleViewHeightDp(glanceHandle(EMULATOR_PIXEL_CLOCK)), 0.01f)
         assertEquals(20f, glanceHandleViewHeightDp(DEFAULT_GLANCE_HANDLE), 0.01f)
     }
+
+    /** S5 and the Jelly Star's layout (2026-11-20): the handle's room at the page's bottom by the window's bottom insets. */
+    @Test
+    fun `the handle's room - on the bar with 3 buttons, in the gesture inset, its own room with keys below the panel`() {
+        // The Jelly Star's px at 1.5: the handle's view 24 dp = 36 px.
+        val view = (glanceHandleViewHeightDp(glanceHandle(JELLY_STAR_CLOCK)) * 1.5f).toInt()
+        assertEquals(36, view)
+        assertEquals("gestures", GlanceBottomRoom(0, 0), glanceBottomRoom(navBarPx = 36, tappablePx = 0, handleViewPx = view))
+        assertEquals("3 buttons", GlanceBottomRoom(72, 36), glanceBottomRoom(navBarPx = 72, tappablePx = 72, handleViewPx = view))
+        assertEquals("keys, no bar", GlanceBottomRoom(0, 36), glanceBottomRoom(navBarPx = 0, tappablePx = 0, handleViewPx = view))
+        // Code QA L7: a gesture inset lower than the handle's view (some makers report 16-20 dp) - the page keeps the
+        // rest, so the bottom row moves up by the difference; unchanged only from an inset of the handle's view up.
+        assertEquals("gestures, 16 dp", GlanceBottomRoom(0, 12), glanceBottomRoom(navBarPx = 24, tappablePx = 0, handleViewPx = view))
+        assertEquals("gestures, 20 dp", GlanceBottomRoom(0, 6), glanceBottomRoom(navBarPx = 30, tappablePx = 0, handleViewPx = view))
+        assertEquals("gestures, 32 dp", GlanceBottomRoom(0, 0), glanceBottomRoom(navBarPx = 48, tappablePx = 0, handleViewPx = view))
+        // A gesture phone reporting no inset (Samsung's gesture hint off) is the keys phone's case.
+        assertEquals(glanceBottomRoom(0, 0, view), glanceBottomRoom(navBarPx = 0, tappablePx = 0, handleViewPx = view))
+    }
     /** Design 59d step L: Android's small clock's geometry by phone, measured at 240 dpi; else design 96's general one. */
     @Test
     fun `the measured clock profiles - the emulator's Pixel and the Jelly Star at 240 dpi, else none`() {
@@ -763,6 +781,19 @@ class LockMediaGuardTest {
         assertEquals(setOf("addListener", "removeListener", "listening", "bootCount"), window)
     }
 
+    /** The Jelly Star's layout (2026-11-20): the handle's room is the pure [glanceBottomRoom]'s, applied as it says. */
+    @Test
+    fun `the handle's room at the bottom is the pure rule's`() {
+        val glance = file("java/com/kidslauncher/mdm/lock/GlancePanel.kt").readText()
+        val body = glance.substringAfter("private fun handleAboveButtons(").substringBefore("\n    }\n")
+        assertTrue(body, body.contains("glanceBottomRoom("))
+        assertTrue(body, body.contains("navBarPx = insets.getInsets(android.view.WindowInsets.Type.navigationBars()).bottom"))
+        assertTrue(body, body.contains("tappablePx = KidInsets.buttonBarPx(insets)"))
+        assertTrue(body, body.contains("params.bottomMargin = room.handleMarginPx"))
+        assertTrue(body, body.trimEnd().endsWith("return room.extraPx"))
+        assertTrue(glance.contains("KidInsets.apply(glance.root, extraBottom = ::handleAboveButtons)"))
+    }
+
     @Test
     fun `the lock's tile is a live session only - never the snapshot`() {
         // Design 28 §1: a snapshot has no session, so its play would open the player over the lock.
@@ -1010,6 +1041,25 @@ class LockGlanceLayoutTest {
 
     /** The scroller's height: what the anchored bottom block leaves. */
     private fun scroller(navBar: Float) = available(navBar) - parts.bottom
+
+    /** The Jelly Star's layout (2026-11-20): keys below the panel, no bar in the window - the page keeps the handle's
+     * 24 dp ([glanceBottomRoom]), so it is the gesture phone's page and the bottom block sits as high over the edge. */
+    @Test
+    fun `with keys below the panel the page keeps the handle's 24 dp - the gesture phone's page`() {
+        val handleDp = glanceHandleViewHeightDp(glanceHandle(JELLY_STAR_CLOCK))
+        val keysExtraDp = glanceBottomRoom(navBarPx = 0, tappablePx = 0, handleViewPx = (handleDp * 1.5f).toInt()).extraPx / 1.5f
+        assertEquals(24f, keysExtraDp, 0.01f)
+        // 569 dp less the 48 dp status bar and the handle's 24: the 497 dp page of r11 §1.2's gesture rows.
+        assertEquals(available(24f), available(0f) - keysExtraDp, 0.01f)
+        // Nødsamtale's 48 dp row on the root's 8 dp bottom padding: its centre 8 + 24 + 24 = 56 dp over the panel's edge,
+        // as over the screen's edge with gestures (the 24 dp inset) - 32 dp before.
+        val bottom = root.dim("paddingBottom")
+        assertEquals(8f, bottom)
+        assertEquals(56f, bottom + keysExtraDp + 48f / 2, 0.01f)
+        // With gestures the 24 dp inset is the padding's and the rule adds nothing: the same height over the edge.
+        val gestureExtraDp = glanceBottomRoom(navBarPx = 36, tappablePx = 0, handleViewPx = (handleDp * 1.5f).toInt()).extraPx / 1.5f
+        assertEquals(bottom + keysExtraDp + 48f / 2, bottom + 36 / 1.5f + gestureExtraDp + 48f / 2, 0.01f)
+    }
 
     @Test
     fun `the parts match the design's model`() {

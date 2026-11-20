@@ -1616,18 +1616,25 @@ class GlancePanel(
     // ---- the layout (r11 §1.2) ---------------------------------------------------------------------------
 
     /**
-     * S5: with 3-button navigation ([KidInsets.buttonBarPx] > 0) the handle stands on the bar's top edge, and the page
-     * keeps the handle's height free under its content (the px returned, added to the root's bottom padding); with gesture
-     * navigation it stays on the window's bottom edge, as SystemUI's own, and nothing is added.
+     * S5 and the Jelly Star's layout (2026-11-20), decided by [glanceBottomRoom]: with 3-button navigation
+     * ([KidInsets.buttonBarPx] > 0) the handle stands on the bar's top edge and the page keeps the handle's height free
+     * under its content (the px returned, added to the root's bottom padding); with gesture navigation it stays on the
+     * window's bottom edge, as SystemUI's own, and nothing is added where the inset is at least the handle's view (a lower
+     * one gets the rest); with keys below the panel (no bar in the window) it
+     * stays on the edge and the page keeps its height free.
      */
     private fun handleAboveButtons(insets: android.view.WindowInsets): Int {
-        val buttons = KidInsets.buttonBarPx(insets)
         val params = handle.layoutParams as FrameLayout.LayoutParams
-        if (params.bottomMargin != buttons) {
-            params.bottomMargin = buttons
+        val room = glanceBottomRoom(
+            navBarPx = insets.getInsets(android.view.WindowInsets.Type.navigationBars()).bottom,
+            tappablePx = KidInsets.buttonBarPx(insets),
+            handleViewPx = params.height,
+        )
+        if (params.bottomMargin != room.handleMarginPx) {
+            params.bottomMargin = room.handleMarginPx
             handle.layoutParams = params
         }
-        return if (buttons > 0) params.height else 0
+        return room.extraPx
     }
 
     /** The page's room at [height]: the root less its paddings, which carry the visible system bars (`KidInsets`). */

@@ -29,11 +29,15 @@ const val PHONE_BOOK_SEEN_MS = 1_000L
  * contacts in "Ny melding". */
 const val SEARCH_MIN_ROWS = 8
 
-/** The row's text column must keep this much at font scale 1.0 for the buttons to stay on the name's line. */
+/** The row's text column must keep this much for the buttons to stay on the name's line. */
 private const val ROW_INLINE_MIN_TEXT_DP = 120f
 
-/** Below this font scale the buttons stay on the name's line (§3.4). */
-private const val ROW_INLINE_MAX_FONT_SCALE = 1.3f
+/** The name's size (`item_phone_book_row.xml`'s `row_name`). */
+const val ROW_NAME_SP = 16f
+
+/** The buttons stay on the name's line while the text column holds this many of the name's em (the Jelly Star's
+ * layout, 2026-11-20: 8 at font 1.0, about 6.3 at 1.3, 5.6 at 1.5 on the Jelly Star's 128 dp column). */
+private const val ROW_INLINE_MIN_NAME_EM = 6f
 
 /** The row's fixed parts (§3.4): the tile's start padding, the avatar, the gap, the two 48 dp button targets. */
 const val ROW_PADDING_START_DP = 10f
@@ -56,9 +60,16 @@ enum class RowLayout {
 /** The text column of an inline row on a [contentDp] wide page. */
 fun rowTextColumnDp(contentDp: Float): Float = contentDp - ROW_PADDING_START_DP - ROW_AVATAR_DP - ROW_GAP_DP - ROW_BUTTONS_DP
 
-/** §3.4: inline below font scale 1.3 with a text column of at least 120 dp; else stacked. */
-fun rowLayout(contentDp: Float, fontScale: Float): RowLayout =
-    if (fontScale < ROW_INLINE_MAX_FONT_SCALE && rowTextColumnDp(contentDp) >= ROW_INLINE_MIN_TEXT_DP) RowLayout.INLINE else RowLayout.STACKED
+/**
+ * §3.4 as changed for the Jelly Star (2026-11-20): inline while the text column is at least 120 dp and holds at least
+ * 6 em of the name; else stacked. [nameDp] is the name's real rendered size in dp ([ROW_NAME_SP] through Android's
+ * font scaling, non-linear since Android 14), so on the Jelly Star's 288 dp the buttons stay inline through font 1.3
+ * and stack from 1.5 (design 79's first rule stacked from 1.3).
+ */
+fun rowLayout(contentDp: Float, nameDp: Float): RowLayout {
+    val column = rowTextColumnDp(contentDp)
+    return if (column >= ROW_INLINE_MIN_TEXT_DP && column >= ROW_INLINE_MIN_NAME_EM * nameDp) RowLayout.INLINE else RowLayout.STACKED
+}
 
 // ---- the buttons: one rule for the card and the row ----
 

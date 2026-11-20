@@ -88,7 +88,8 @@ emulator -avd jelly36 -port 5556 -wipe-data -no-window -no-audio -gpu swiftshade
 (`qemu.hw.mainkeys=1`): the AVD then has hardware keys and SystemUI hosts **no navigation bar and no taskbar delegate**.
 Quickstep still runs gesture navigation, but nothing turns lock task's `DISABLE_HOME`/`DISABLE_RECENT` into its
 `home_disabled`/`overview_disabled` flags, so every bottom-edge swipe over the lock goes through to the system (the
-user's `jellystar2`, 2026-10-23). A real phone without hardware keys - the Jelly Star - has the navigation bar. **On your
+user's `jellystar2`, 2026-10-23). (This premise needs a second look: the Jelly Star has capacitive keys on the bezel and
+no navigation bar in the app's window - `jellykeys36` below.) **On your
 own AVD made without a device profile**: set `hw.mainKeys = no` in its `config.ini` and cold boot it. The file is
 `~/.config/.android/avd/<name>.avd/config.ini` with newer Android Studio on Linux (the user's machine), else
 `~/.android/avd/<name>.avd/config.ini`; `emulator -list-avds` names the AVDs and `find ~ -name config.ini -path
@@ -102,6 +103,32 @@ and no cutout. For other status-bar heights on the same AVD: `cmd overlay enable
 com.android.internal.display.cutout.emulation.tall` gives 72 px and `.hole` gives 136 px. Disable it again before a
 run that should look like the user's. SystemUI's status bar can lag the cutout for a while after a switch, so re-read
 the frames, or reboot.
+
+**`jellykeys36`: the Jelly Star's window, keys and no navigation bar** (the Jelly Star's layout, 2026-11-20). The real
+Jelly Star's Back/Home/Recents are capacitive keys on the bezel below the panel, so Vibb's windows get no bottom
+`navigationBars` and no `tappableElement` inset: the window's bottom edge is the panel's. `jelly36` has a 24 dp gesture
+inset or a 48 dp 3-button bar, so check bottom-edge layout (Home's last row, the glance's Nødsamtale, anything at the
+bottom) on this one too. Make it as a copy of `jelly36`'s `config.ini` with `hw.mainKeys = yes` - **never edit
+`jelly36` itself** - and boot it fresh:
+
+```sh
+mkdir -p ~/.android/avd/jellykeys36.avd
+sed 's/^hw.mainKeys = no$/hw.mainKeys = yes/' ~/.android/avd/jelly36.avd/config.ini > ~/.android/avd/jellykeys36.avd/config.ini
+sed 's/jelly36/jellykeys36/g' ~/.android/avd/jelly36.ini > ~/.android/avd/jellykeys36.ini
+emulator -avd jellykeys36 -port 5560 -wipe-data -no-window -no-audio -gpu swiftshader_indirect -no-snapshot-save -no-boot-anim
+# hw.mainKeys = yes alone is not enough on the Android 16 Pixel image: the Pixel launcher's taskbar hosts the bar
+# (dumpsys window: mNavigationBar=Window{... Taskbar}, a 36 px gesture inset, 72 px in 3-button mode). Turn it off
+# (before provisioning; Vibb is Home, so nothing else needs it) and the bar is gone at once:
+adb shell pm disable-user --user 0 com.google.android.apps.nexuslauncher
+adb shell dumpsys window | grep -E 'type=(navigationBars|tappableElement) frame'   # only the status bar's top rows
+```
+
+Then provision as in §4. With the bar gone, back is `adb shell input keyevent BACK` (the AVD's hardware keys). The
+glance's log line then reads `(pad 32/32)`: 8 dp + the handle's 24 dp at the bottom (`glanceBottomRoom`), Nødsamtale's
+centre 84 px over the edge as with `jelly36`'s gestures (its 24 dp inset is the handle's view, so nothing is added
+there; a gesture inset lower than 24 dp gets the rest). To compare with `jelly36` on the same data, `pm enable` the Pixel launcher,
+stop the emulator, set `hw.mainKeys = no` in the copy and cold boot it, then `adb reboot` once (the bar comes back only
+with a fresh SystemUI); the copy is then `jelly36` with this phone's data. Remember to set it back to `yes`.
 
 ## 3b. The Jelly Star's size, font scale, time zone, adb-installed apps (design 34 step 0)
 

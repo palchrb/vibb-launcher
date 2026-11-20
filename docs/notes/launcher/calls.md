@@ -612,7 +612,7 @@ layout, sizes, order or behaviour moved. The card, the thread, the call screens 
   Ambulanse?", `calls_confirm_title`).
 - **The row, the adapter, TalkBack:** `PhoneBookAdapter` (a `ListAdapter` over stable keys, no item animator, the
   `PHOTO` payload rebinds only the avatars); `item_phone_book_row.xml` (`docs/notes/launcher/ui-polish.md`, "The phone
-  book's row"); `rowLayout` - the buttons stacked under the text from font scale 1.3. A row is one node, role button,
+  book's row"); `rowLayout` - the buttons stacked under the text when the text column holds less than 6 em of the name, by its real rendered size (from font scale 1.5 on the Jelly Star; 1.3 before 2026-11-20). A row is one node, role button,
   the full sentence ("Pappa, 2 tapte anrop i dag 14:02, 1 ulest melding"; "Ambulanse, nødnummer"), Ring and Melding
   its custom actions ("… i Element X" when Melding leaves Vibb); the two buttons are focusable for a keyboard only.
 - **Search (`ui/search/`, `SearchFoldTest`, `KidSearchTest`):** `searchFold` (per code point: lowercase ROOT, NFD, marks

@@ -186,7 +186,12 @@ fun recentVisible(shown: List<Pair<RecentRow, Boolean>>): Map<String, Long> {
     return out
 }
 
-/** From this font scale a Siste row's time moves under its word (as the rows' [rowLayout]). */
+/**
+ * From this font scale a Siste row's time moves under its word (design 106). Not the contacts' [rowLayout] since that
+ * went by the name's size (2026-11-20, code QA L6): a Siste row has no buttons - its time shares the second line with the
+ * kind ("Tapt anrop i Element X (2)", 13 sp) in the 216 dp column - so the contacts' 6 em of the name says nothing about
+ * it, and the user's approval moved only Kontakter. Moving Siste too is a visible change to check on the emulator first.
+ */
 fun recentTimeBelow(fontScale: Float): Boolean = fontScale >= 1.3f
 
 // ---- the tab ----
