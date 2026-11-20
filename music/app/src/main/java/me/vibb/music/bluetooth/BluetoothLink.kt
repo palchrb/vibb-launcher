@@ -158,10 +158,19 @@ class BluetoothLink(context: Context) {
     /** "Bytt til": `BluetoothA2dp.setActiveDevice` for a connected device that is not routed. */
     suspend fun makeActive(a2dp: BluetoothA2dp, address: String): Boolean = callA2dp(BluetoothAudio.A2DP_SET_ACTIVE, a2dp, address)
 
-    private suspend fun callA2dp(method: String, a2dp: BluetoothA2dp, address: String): Boolean = withContext(Dispatchers.IO) {
+    /**
+     * "Telefonen" under the web player (2026-11-20, the user's R2): `BluetoothA2dp.setActiveDevice(null)` - A2DP's binder
+     * takes a null device as `removeActiveDevice`, the same as the system's own output switcher: the headset's media goes
+     * to the phone's speaker, phone-wide, and the headset stays connected (its HFP for calls). True = asked; whether the
+     * headset really left the routed outputs is the caller's check ([BluetoothAudio.bluetoothOffTook]).
+     */
+    suspend fun makeInactive(a2dp: BluetoothA2dp): Boolean = callA2dp(BluetoothAudio.A2DP_SET_ACTIVE, a2dp, null)
+
+    /** [address] null: no device - only `setActiveDevice` takes that ([makeInactive]). */
+    private suspend fun callA2dp(method: String, a2dp: BluetoothA2dp, address: String?): Boolean = withContext(Dispatchers.IO) {
         try {
-            val device = adapter?.getRemoteDevice(address)
-            if (device == null || !granted()) {
+            val device = if (address == null) null else adapter?.getRemoteDevice(address)
+            if ((address != null && device == null) || !granted()) {
                 false
             } else {
                 BluetoothA2dp::class.java.getMethod(method, BluetoothDevice::class.java).invoke(a2dp, device) as? Boolean ?: false

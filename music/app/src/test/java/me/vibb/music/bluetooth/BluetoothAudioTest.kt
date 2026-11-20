@@ -225,4 +225,35 @@ class BluetoothAudioTest {
         assertEquals("wired headphones picked", HeadsetMove.NONE, headsetTapPlan(room, "dev:9", routedNow = true))
         assertEquals("nothing known now", HeadsetMove.NONE, headsetTapPlan(room, null, routedNow = true))
     }
+
+    // --- "Telefonen" under the web player (2026-11-20, the user's R2 and R1) ---
+
+    @Test
+    fun `webOutputMove - the phone under the web player drops a Bluetooth headset, says so for a wired one`() {
+        assertEquals(WebOutputMove.BLUETOOTH_OFF, webOutputMove(phonePicked = true, onWebPlayer = true, wired = false, bluetooth = true))
+        assertEquals("a wired headset: nothing can move it", WebOutputMove.WIRED, webOutputMove(true, true, wired = true, bluetooth = false))
+        assertEquals("wired wins: dropping Bluetooth wouldn't reach the speaker", WebOutputMove.WIRED, webOutputMove(true, true, wired = true, bluetooth = true))
+        assertEquals("no headset: the phone already plays it", WebOutputMove.NONE, webOutputMove(true, true, wired = false, bluetooth = false))
+        assertEquals("the phone's own player follows the pick itself", WebOutputMove.NONE, webOutputMove(true, onWebPlayer = false, wired = true, bluetooth = true))
+        assertEquals("a headset picked: nothing moves (its row makes it active)", WebOutputMove.NONE, webOutputMove(phonePicked = false, onWebPlayer = true, wired = false, bluetooth = true))
+    }
+
+    @Test
+    fun `phoneRowLine - only under the web player, and only after the kid picked the phone and it could not move`() {
+        assertEquals(PhoneRowLine.UNPLUG, phoneRowLine(onWebPlayer = true, wired = true, bluetooth = false, refused = true))
+        assertEquals("a wired headset in use is nothing wrong (code QA L5)", null, phoneRowLine(onWebPlayer = true, wired = true, bluetooth = false, refused = false))
+        assertEquals(PhoneRowLine.TURN_OFF, phoneRowLine(true, wired = false, bluetooth = true, refused = true))
+        assertEquals("a Bluetooth headset the phone can still drop: the row's own line", null, phoneRowLine(true, false, bluetooth = true, refused = false))
+        assertEquals("a refusal with the headset gone: nothing to say", null, phoneRowLine(true, false, bluetooth = false, refused = true))
+        assertEquals("the phone's own player: never", null, phoneRowLine(onWebPlayer = false, wired = true, bluetooth = true, refused = true))
+    }
+
+    @Test
+    fun `bluetoothOffTook - asked and gone from the routed outputs, else the honest word`() {
+        assertTrue(bluetoothOffTook(asked = true, stillRouted = false))
+        assertFalse("a version that refuses null, or an LE headset A2DP doesn't own", bluetoothOffTook(asked = true, stillRouted = true))
+        assertFalse("the call refused or threw", bluetoothOffTook(asked = false, stillRouted = false))
+        assertFalse(bluetoothOffTook(asked = false, stillRouted = true))
+        assertTrue("the routes are read again after a moment", BLUETOOTH_OFF_CHECK_MS in 1_000L..5_000L)
+    }
 }

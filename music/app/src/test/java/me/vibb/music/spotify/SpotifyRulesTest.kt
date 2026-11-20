@@ -431,4 +431,39 @@ class SpotifyRulesTest {
         assertFalse("negative", me.vibb.music.logic.spotifyDiagLogOn(false, -1, now))
         assertEquals(60 * 60_000L, me.vibb.music.logic.SPOTIFY_DIAG_MAX_AHEAD_MS)
     }
+
+    /** Design 120 R2 and R5 (revision 2): a silent player is recycled once, only while the kid wants it playing. */
+    @Test
+    fun `spotifyRecycles - once, wanted, allowed, never on a fresh page or before the last recycle played`() {
+        fun recycles(
+            wanted: Boolean = true, mayPlay: Boolean = true, inCall: Boolean = false, detached: Boolean = false,
+            network: Boolean = true, freshPage: Boolean = false, unproven: Boolean = false, recent: Int = 0,
+        ) = me.vibb.music.logic.spotifyRecycles(wanted, mayPlay, inCall, detached, network, freshPage, unproven, recent)
+        assertTrue(recycles())
+        assertFalse("paused or ended: nothing starts by itself", recycles(wanted = false))
+        assertFalse("suspended", recycles(mayPlay = false))
+        assertFalse("a call", recycles(inCall = true))
+        assertFalse("another renderer plays", recycles(detached = true))
+        assertFalse("the gate is shut: its own line", recycles(network = false))
+        assertFalse("the start made this page: a new process didn't help", recycles(freshPage = true))
+        assertFalse("no second recycle before the last one played on", recycles(unproven = true))
+        assertTrue(recycles(recent = 1))
+        assertFalse("at most two in 10 minutes (code QA L2)", recycles(recent = me.vibb.music.logic.SPOTIFY_RECYCLE_MAX))
+        assertEquals(30_000L, me.vibb.music.logic.SPOTIFY_RECYCLE_PROOF_MS)
+        assertEquals(10 * 60_000L, me.vibb.music.logic.SPOTIFY_RECYCLE_WINDOW_MS)
+        // R5's proof (code QA L6): the place moved on past where it stood at the change
+        fun on(beforeIndex: Int? = 0, beforePos: Long = 5_000, beforeAt: Long = 1_000, playing: Boolean = true, afterIndex: Int = 0, afterPos: Long, afterAt: Long = 9_000, afterPlaying: Boolean = true) =
+            me.vibb.music.logic.spotifyPlayedOn(3_000, beforeIndex, beforePos, beforeAt, playing, afterIndex, afterPos, afterAt, afterPlaying)
+        assertTrue("7 s at 9 s, stood at 7 s at the change: moved", on(afterPos = 12_000))
+        assertFalse("frozen at the change's place", on(afterPos = 7_000))
+        assertFalse("less than a second on", on(afterPos = 7_999))
+        assertTrue(on(afterPos = 8_000))
+        assertTrue("another item: it moved", on(afterIndex = 1, afterPos = 0))
+        assertFalse("paused is no proof", on(afterPos = 12_000, afterPlaying = false))
+        assertFalse("a state from before the change", on(afterPos = 12_000, afterAt = 2_000))
+        assertTrue("nothing known before", on(beforeIndex = null, afterPos = 0))
+        assertFalse("paused before: its place didn't move by itself", on(playing = false, afterPos = 5_500))
+        assertTrue("the output watch waits past the page's 5 s tick", me.vibb.music.logic.SPOTIFY_OUTPUT_STATE_MS > me.vibb.music.logic.SPOTIFY_STATE_TICK_MS)
+        assertTrue("a recycled page's wait is shorter (QA L7)", me.vibb.music.logic.SPOTIFY_RECYCLE_READY_MS < me.vibb.music.logic.SPOTIFY_READY_MS)
+    }
 }

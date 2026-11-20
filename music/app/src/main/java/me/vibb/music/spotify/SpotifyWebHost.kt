@@ -27,7 +27,9 @@ import java.io.InputStream
  * The phone's one web player (design 26c §5.2, §5.3, §7.2): Spotify's Web Playback SDK in a WebView that
  * is never shown. The renderer talks to it only through [SpotifyHost] (SpotifyRendererTest scripts one);
  * [SpotifyWebHost] is the Android one, kept thin: create, settings, the request interceptor (WebPolicy -
- * every frame's requests and the service workers'), the page bridge both ways, destroy, clear.
+ * every frame's requests and the service workers'), the page bridge both ways, destroy, clear. Since design 120
+ * (option B) it lives in the web player's own process, `:web`, one page per process ([SpotifyWebService]); the
+ * renderer's host is [RemoteSpotifyHost], and the main process makes no WebView ([disableInThisProcess]).
  *
  * - Made with the application context and owned by the playback service's renderer, never an Activity
  *   (the spike's lesson, spike §7b), and never added to a view hierarchy: the kid's screens open no web
@@ -73,6 +75,12 @@ sealed interface HostEvent {
 
     /** The page's renderer process died (`onRenderProcessGone`): the host is gone. */
     data object Gone : HostEvent
+
+    /**
+     * The page's process never came up (the bind refused, a death before it connected, a page refused twice; design 120
+     * code QA L8): no `ready` will come - the renderer's wait ends now. Main process only (RemoteSpotifyHost).
+     */
+    data object NeverUp : HostEvent
 }
 
 /** The web player as the renderer sees it (design 26c §5.2): one page, one Connect device, main thread only. */
@@ -154,8 +162,14 @@ class SpotifyWebHost(context: Context, private val log: (String) -> Unit) : Spot
         v.evaluateJavascript(SpotifyPage.call(name, *args), null)
     }
 
-    override fun destroy() {
-        val v = view ?: return
+    override fun destroy() = destroy {}
+
+    /**
+     * [destroy], then [done] once the view is gone (the SDK's disconnect ran, or [DISCONNECT_WAIT_MS] passed): the web
+     * process ends itself after it (design 120 §4.2, SpotifyWebService).
+     */
+    fun destroy(done: () -> Unit) {
+        val v = view ?: return done()
         // out at once: the page's late bridge calls and loads carry the old generation and are dropped
         view = null
         generation++
@@ -169,6 +183,7 @@ class SpotifyWebHost(context: Context, private val log: (String) -> Unit) : Spot
             v.removeJavascriptInterface(SpotifyPage.BRIDGE)
             v.stopLoading()
             v.destroy()
+            done()
         }
         try {
             v.evaluateJavascript(SpotifyPage.call("disconnect")) { main.postDelayed(kill, DISCONNECT_SETTLE_MS) }
@@ -304,6 +319,13 @@ class SpotifyWebHost(context: Context, private val log: (String) -> Unit) : Spot
         /** The SDK's `disconnect()` has this long after it ran, and the view at most [DISCONNECT_WAIT_MS], before it goes. */
         private const val DISCONNECT_SETTLE_MS = 300L
         private const val DISCONNECT_WAIT_MS = 1_000L
+
+        /**
+         * The main process makes no WebView (design 120 §4.2): only `:web` ([SpotifyWebService]) does, so `app_webview`
+         * stays one process's and an accidental WebView in the main process throws. `MusicApp` calls this first thing
+         * there (API 28).
+         */
+        fun disableInThisProcess() = WebView.disableWebView()
 
         @Volatile
         private var swInstalled = false

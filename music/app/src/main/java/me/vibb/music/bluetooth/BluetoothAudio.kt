@@ -120,6 +120,53 @@ object BluetoothAudio {
     }
 }
 
+/**
+ * What a pick in "Spill av på" does to the web player's sound (2026-11-20, the user's R2 and R1; scratchpad sonos-bt §3a).
+ * The web player's audio is the WebView's own stream, which no per-player preference reaches (design 26c §5.6), so the
+ * phone's speaker can only be had by moving the system's route:
+ * - [BLUETOOTH_OFF]: "Telefonen" with a Bluetooth headset routed - its media is made inactive (A2DP's active device
+ *   null): the sound goes to the speaker phone-wide, the headset stays connected for calls, and its row reads "Bytt
+ *   til" again (a tap there makes it active);
+ * - [WIRED]: "Telefonen" with a wired headset in - nothing can move it (no API): the phone row says so;
+ * - [NONE]: anything else (the phone's own player follows the pick by itself, `setPreferredAudioDevice`).
+ */
+enum class WebOutputMove { NONE, BLUETOOTH_OFF, WIRED }
+
+/** The move for a pick: [phonePicked] "Telefonen", [onWebPlayer] the web player renders, what is routed now. */
+fun webOutputMove(phonePicked: Boolean, onWebPlayer: Boolean, wired: Boolean, bluetooth: Boolean): WebOutputMove = when {
+    !phonePicked || !onWebPlayer -> WebOutputMove.NONE
+    wired -> WebOutputMove.WIRED
+    bluetooth -> WebOutputMove.BLUETOOTH_OFF
+    else -> WebOutputMove.NONE
+}
+
+/**
+ * The phone row's honest word under the web player (the user's R1; CLAUDE.md "Words in the UI": speak up only when
+ * something is wrong - a headset in use isn't, so only after the kid picked "Telefonen" and it couldn't move; code QA
+ * L5): [UNPLUG] with a wired headset in ("Ta ut ledningen først"), [TURN_OFF] when the Bluetooth headset's media wouldn't
+ * go ("Slå av hodetelefonene først"); else none (the row's own "Innebygd høyttaler").
+ */
+enum class PhoneRowLine { UNPLUG, TURN_OFF }
+
+/** [refused]: the last "Telefonen" couldn't move the sound ([WebOutputMove.WIRED], or [bluetoothOffTook] false), and the routes haven't changed since. */
+fun phoneRowLine(onWebPlayer: Boolean, wired: Boolean, bluetooth: Boolean, refused: Boolean): PhoneRowLine? = when {
+    !onWebPlayer || !refused -> null
+    wired -> PhoneRowLine.UNPLUG
+    bluetooth -> PhoneRowLine.TURN_OFF
+    else -> null
+}
+
+/**
+ * Whether a [WebOutputMove.BLUETOOTH_OFF] took: the call was [asked] (no exception, `true`) and, [BLUETOOTH_OFF_CHECK_MS]
+ * later, no Bluetooth output is routed any more ([stillRouted] false). A version that refuses a null device, an LE Audio
+ * headset A2DP doesn't own, or the system making the headset active again at once all read as refused - the honest word,
+ * never a silent "Telefonen" ticked over sound in the headset.
+ */
+fun bluetoothOffTook(asked: Boolean, stillRouted: Boolean): Boolean = asked && !stillRouted
+
+/** How long after [WebOutputMove.BLUETOOTH_OFF] the routed outputs are read again ([bluetoothOffTook]). */
+const val BLUETOOTH_OFF_CHECK_MS = 3_000L
+
 /** What happens to a playing room when a tapped headset is routed (decision 3, 52-3). */
 enum class HeadsetMove { NONE, OUTPUT }
 

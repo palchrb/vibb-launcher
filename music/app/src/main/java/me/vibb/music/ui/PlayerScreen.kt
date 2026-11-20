@@ -28,6 +28,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.platform.LocalConfiguration
 import me.vibb.music.bluetooth.HeadsetLine
 import me.vibb.music.bluetooth.HeadsetRow
+import me.vibb.music.bluetooth.PhoneRowLine
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.animation.Crossfade
@@ -443,6 +444,7 @@ fun OutputSheet(
     items: List<SheetItem>,
     scanning: Boolean,
     current: Output,
+    phoneLine: PhoneRowLine?,
     onOpen: () -> Unit,
     onClose: () -> Unit,
     onPick: (Output) -> Unit,
@@ -468,7 +470,12 @@ fun OutputSheet(
                     is SheetItem.Out -> {
                         val o = item.output
                         val sub = when (o.kind) {
-                            OutputKind.PHONE -> R.string.output_phone_sub
+                            // the web player's sound can't move here now (2026-11-20, R1): the row says what would
+                            OutputKind.PHONE -> when (phoneLine) {
+                                PhoneRowLine.UNPLUG -> R.string.output_phone_unplug
+                                PhoneRowLine.TURN_OFF -> R.string.output_phone_turn_off
+                                null -> R.string.output_phone_sub
+                            }
                             OutputKind.BLUETOOTH -> R.string.output_bluetooth_sub
                             OutputKind.WIRED -> R.string.output_wired_sub
                             OutputKind.SONOS -> R.string.output_sonos

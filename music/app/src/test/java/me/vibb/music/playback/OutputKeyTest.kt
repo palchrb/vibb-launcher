@@ -53,4 +53,16 @@ class OutputKeyTest {
         assertEquals(listOf(RendererKind.LOCAL, RendererKind.SPOTIFY), RendererKind.entries.filter { it.onPhone })
         assertNull(PlayerHub.State().rendererState)
     }
+
+    @Test
+    fun `under the web player the sheet ticks the real route, never the phone over sound in a headset (2026-11-20)`() {
+        val bt = Output("dev:7", OutputKind.BLUETOOTH, "Buds")
+        val wired = Output("dev:9", OutputKind.WIRED, null)
+        assertEquals("the phone picked, the headset still routed: the headset", bt, webPlayerOutput(Output.PHONE, bt))
+        assertEquals("nothing picked", wired, webPlayerOutput(null, wired))
+        assertEquals("the headset's media gone: the phone", Output.PHONE, webPlayerOutput(Output.PHONE, null))
+        assertEquals("a picked headset is it", bt, webPlayerOutput(bt, wired))
+        assertEquals(Output.PHONE, webPlayerOutput(null, null))
+        assertFalse(PlayerHub.State().webPlayer)
+    }
 }

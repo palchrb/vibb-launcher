@@ -129,6 +129,13 @@ Moved from music/CLAUDE.md on 2026-11-01.
   intent or the system output switcher; never a blocking wait for the proxy; names and addresses stay in memory - no
   log interpolates them, and `Output`/`PlayerHub.State`, the report, `music_state`, now-playing and the bridge carry
   none (`SourceScanTest`'s `d52` tests).
+- **"Telefonen" under the web player** (2026-11-20, the user's R2 and R1): the WebView's audio takes no per-player
+  device, so with a Bluetooth headset routed the view model makes the headset's media inactive
+  (`BluetoothLink.makeInactive`: A2DP `setActiveDevice(null)` by reflection - phone-wide, the headset stays connected
+  for calls, its row reads "Bytt til" again). If it isn't asked, or the headset is still routed 3 s later
+  (`bluetoothOffTook`), the phone row says "Slå av hodetelefonene først"; a pick with a wired headset in says "Ta ut
+  ledningen først" (`phoneRowLine`). Under the web player the sheet ticks the real route (`webPlayerOutput`), never
+  "Telefonen" over sound in a headset. The phone's own player keeps its per-player preference.
 - **Calls** (26a §6.7): the launcher sends `CALL_HOLD` / `CALL_RELEASE` (session custom actions, granted only to a
   launcher signed like this app, names in `bridge_contract.json`) - since the emulator round of 2026-10-14 `CALL_HOLD`
   means "a call began" (every call's begin while the music app has a session, playing or not; 26c N3); `logic/CallPause.kt`

@@ -201,10 +201,10 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions, onContent: () -> Unit = {}) 
                                 hub.groupPending, hub.groupFailed, hub.roomVolumes, hub.groupVolume,
                             ),
                         ),
-                        hub.rooms.scanning, hub.output,
+                        hub.rooms.scanning, hub.output, vm.phoneLine(hub),
                         onOpen = { actions.refreshRooms(); vm.outputSheetOpened() },
                         onClose = vm::outputSheetClosed,
-                        onPick = { actions.output(it.key); vm.sheet = null },
+                        onPick = { actions.output(it.key); vm.outputPicked(it, hub); vm.sheet = null },
                         // design 52: a headset only connects (or is made active); the sheet stays open on "Kobler til…"
                         onHeadset = { vm.headsetTapped(it, hub.output.key.takeIf { onRoom }) },
                         onRescan = actions::rescanRooms,
@@ -296,6 +296,8 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions, onContent: () -> Unit = {}) 
                     PlayerHub.Message.CANT_PLAY_ON_SONOS -> R.string.cant_play_on_sonos
                     PlayerHub.Message.ROOM_NOT_ALLOWED -> R.string.room_not_allowed
                     PlayerHub.Message.HEADSET_NO_CONTACT -> R.string.headset_no_contact
+                    PlayerHub.Message.PHONE_UNPLUG -> R.string.output_phone_unplug
+                    PlayerHub.Message.PHONE_TURN_OFF -> R.string.output_phone_turn_off
                     PlayerHub.Message.STAYED -> null // never set (above)
                 }
                 text?.let { Line(stringResource(it), 14, 800, Palette.fg, maxLines = 2, center = true) }
