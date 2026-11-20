@@ -62,6 +62,12 @@ import me.vibb.music.bluetooth.HeadsetLine
 import me.vibb.music.bluetooth.HeadsetMove
 import me.vibb.music.bluetooth.HeadsetRow
 import me.vibb.music.bluetooth.PairedAudio
+import me.vibb.music.bluetooth.PhoneRowLine
+import me.vibb.music.bluetooth.WebOutputMove
+import me.vibb.music.bluetooth.BLUETOOTH_OFF_CHECK_MS
+import me.vibb.music.bluetooth.bluetoothOffTook
+import me.vibb.music.bluetooth.phoneRowLine
+import me.vibb.music.bluetooth.webOutputMove
 import me.vibb.music.bluetooth.connectStep
 import me.vibb.music.bluetooth.headsetTapPlan
 import me.vibb.music.playback.Output
@@ -285,6 +291,58 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * The last "Telefonen" under the web player didn't move the Bluetooth headset's media (2026-11-20, R2's refusal):
+     * the phone row says "Slå av hodetelefonene først" until the routed outputs change. Memory only.
+     */
+    var phoneRefused by mutableStateOf(false)
+        private set
+
+    /** A "Telefonen" move in flight: a second pick waits for it. */
+    private var phoneMove: Job? = null
+
+    /** The phone row's honest word under the web player (R1), or none ([phoneRowLine]). */
+    fun phoneLine(hub: PlayerHub.State): PhoneRowLine? = phoneRowLine(
+        hub.webPlayer, hub.outputs.any { it.kind == OutputKind.WIRED }, hub.outputs.any { it.kind == OutputKind.BLUETOOTH }, phoneRefused,
+    )
+
+    /**
+     * A row of "Spill av på" picked (2026-11-20, the user's R2 and R1): the service applies it as before; under the web
+     * player "Telefonen" also moves the system's route - a routed Bluetooth headset's media made inactive
+     * (`setActiveDevice(null)`, the headset kept connected for calls; its row then reads "Bytt til", which makes it
+     * active again) - or, with a wired headset in, says that nothing can move it. A move that doesn't take within
+     * [BLUETOOTH_OFF_CHECK_MS] says so too, never a silent pick.
+     */
+    fun outputPicked(o: Output, hub: PlayerHub.State) {
+        val wired = hub.outputs.any { it.kind == OutputKind.WIRED }
+        val bluetooth = hub.outputs.any { it.kind == OutputKind.BLUETOOTH }
+        when (webOutputMove(o.key == Output.PHONE_KEY, hub.webPlayer, wired, bluetooth)) {
+            WebOutputMove.NONE -> Unit
+            WebOutputMove.WIRED -> PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.PHONE_UNPLUG)
+            WebOutputMove.BLUETOOTH_OFF -> {
+                if (!bt.granted()) return refusePhone()
+                if (phoneMove?.isActive == true) return
+                calls++
+                phoneMove = viewModelScope.launch {
+                    try {
+                        val proxy = a2dp()
+                        val asked = proxy != null && bt.makeInactive(proxy)
+                        if (asked) delay(BLUETOOTH_OFF_CHECK_MS)
+                        if (!bluetoothOffTook(asked, stillRouted = bt.routed().isNotEmpty())) refusePhone()
+                    } finally {
+                        calls--
+                        releaseA2dp()
+                    }
+                }
+            }
+        }
+    }
+
+    private fun refusePhone() {
+        phoneRefused = true
+        PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.PHONE_TURN_OFF)
+    }
+
     /** Each open attempt's 10 s window, cancelled when the attempt ends sooner (main thread). */
     private val windows = mutableMapOf<String, Job>()
 
@@ -349,6 +407,9 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun routesChanged() {
+        // a refused "Telefonen" is the routes' word: a headset off, on or made active again ends it (a move in flight
+        // reads the routes itself when its wait ends)
+        if (phoneMove?.isActive != true) phoneRefused = false
         viewModelScope.launch {
             val routed = bt.routed()
             routedIds = routed

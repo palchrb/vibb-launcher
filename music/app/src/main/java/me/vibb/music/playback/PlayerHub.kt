@@ -173,8 +173,13 @@ object PlayerHub {
         /** "Til slutten" is set (design 50 §1.2): the pause comes at the current item's end. */
         val sleepAtEnd: Boolean = false,
         val outputs: List<Output> = listOf(Output.PHONE),
-        /** The output in use (the chosen one, else where the system routes). */
+        /** The output in use (the chosen one, else where the system routes; under the web player the real route). */
         val output: Output = Output.PHONE,
+        /**
+         * The web player renders (2026-11-20): "Telefonen" then moves the system's route ("Spill av på"'s
+         * `webOutputMove`), and the phone row says when it can't.
+         */
+        val webPlayer: Boolean = false,
         /**
          * Why the renderer isn't playing what we sent it (the player's quiet line): a Sonos room's four (design 26a
          * §3.3, §4.8) or Spotify's web player's (design 26c §5.8, also the loaded entry's tile - [entryId]); null
@@ -224,7 +229,11 @@ object PlayerHub {
      * [HEADSET_NO_CONTACT] (design 52 decision 3): a "Koble til" in "Spill av på" failed after the kid closed the sheet
      * - the enum has no payload, so its line names no device. Sent by the screens' view model, not the service.
      */
-    enum class Message { NOT_DOWNLOADED, NO_NETWORK, CANT_PLAY, CANT_PLAY_ON_SONOS, ROOM_NOT_ALLOWED, STAYED, HEADSET_NO_CONTACT }
+    /**
+     * [PHONE_UNPLUG], [PHONE_TURN_OFF] (2026-11-20, the user's R1): "Telefonen" picked while the web player plays, and its
+     * sound can't move there - a wired headset is in, or the Bluetooth headset's media wouldn't go. Sent by the view model.
+     */
+    enum class Message { NOT_DOWNLOADED, NO_NETWORK, CANT_PLAY, CANT_PLAY_ON_SONOS, ROOM_NOT_ALLOWED, STAYED, HEADSET_NO_CONTACT, PHONE_UNPLUG, PHONE_TURN_OFF }
 
     internal val mutableState = MutableStateFlow(State())
     val state: StateFlow<State> = mutableState

@@ -39,6 +39,15 @@ data class Output(val key: String, val kind: OutputKind, val name: String?) {
 }
 
 /**
+ * The output the player shows while the web player renders (2026-11-20, the user's R2): where Android really routes its
+ * sound, since no per-player choice reaches the WebView (design 26c §5.6). A chosen headset ([chosen], routed) is it; a
+ * chosen phone - or none - is the routed headset ([routed]: Bluetooth or wired) while one is, else the phone. So
+ * "Telefonen" is ticked only once the headset's media has really gone (`setActiveDevice(null)`), never over sound in it.
+ */
+fun webPlayerOutput(chosen: Output?, routed: Output?): Output =
+    chosen?.takeIf { it.kind == OutputKind.BLUETOOTH || it.kind == OutputKind.WIRED } ?: routed ?: Output.PHONE
+
+/**
  * Why a renderer isn't playing what we sent it, the player's one line under the title. Null while
  * nothing is wrong, and always for the phone's own player. Not `sonos.RendererChoice` (the persisted
  * renderer.json record).

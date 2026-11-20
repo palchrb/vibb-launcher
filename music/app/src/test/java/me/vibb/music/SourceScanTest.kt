@@ -834,8 +834,12 @@ class SourceScanTest {
             Regex("""\S+\.getMethod\([^)]*\)""").findAll(link).map { it.value }.toList(),
         )
         assertEquals(
-            listOf("callA2dp(BluetoothAudio.A2DP_CONNECT, a2dp, address)", "callA2dp(BluetoothAudio.A2DP_SET_ACTIVE, a2dp, address)"),
-            Regex("""callA2dp\(BluetoothAudio\.[A-Z0-9_]+, a2dp, address\)""").findAll(link).map { it.value }.toList(),
+            // 2026-11-20 (R2): "Telefonen" under the web player is setActiveDevice(null) - the headset's media off
+            listOf(
+                "callA2dp(BluetoothAudio.A2DP_CONNECT, a2dp, address)", "callA2dp(BluetoothAudio.A2DP_SET_ACTIVE, a2dp, address)",
+                "callA2dp(BluetoothAudio.A2DP_SET_ACTIVE, a2dp, null)",
+            ),
+            Regex("""callA2dp\(BluetoothAudio\.[A-Z0-9_]+, a2dp, (address|null)\)""").findAll(link).map { it.value }.toList(),
         )
         val pure = code(moduleFile("src/main/java/me/vibb/music/bluetooth/BluetoothAudio.kt"))
         assertTrue(pure.contains("const val A2DP_CONNECT = \"connect\"") && pure.contains("const val A2DP_SET_ACTIVE = \"setActiveDevice\""))

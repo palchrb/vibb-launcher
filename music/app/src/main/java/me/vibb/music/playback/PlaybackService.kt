@@ -2524,10 +2524,11 @@ class PlaybackService : MediaSessionService() {
         reportNowPlaying()
         val a = active
         val outputs = outputs()
+        val chosen = outputs.firstOrNull { it.key == chosenOutput }
+        val routed = outputs.firstOrNull { it.kind == OutputKind.BLUETOOTH || it.kind == OutputKind.WIRED }
+        // the web player's sound is Android's to route (design 26c §5.6): the sheet ticks where it really goes (2026-11-20)
         val output = renderer.room
-            ?: outputs.firstOrNull { it.key == chosenOutput }
-            ?: outputs.firstOrNull { it.kind == OutputKind.BLUETOOTH || it.kind == OutputKind.WIRED }
-            ?: Output.PHONE
+            ?: if (renderer === spotify) webPlayerOutput(chosen, routed) else chosen ?: routed ?: Output.PHONE
         // design 53 §2.7, §2.12: the room's grouping state (none while the phone renders)
         val sonos = renderer as? SonosRenderer
         val now = SystemClock.elapsedRealtime()
@@ -2557,6 +2558,7 @@ class PlaybackService : MediaSessionService() {
             sleepAtEnd = sleepAtEnd,
             outputs = outputs,
             output = output,
+            webPlayer = renderer === spotify,
             rendererState = renderer.rendererState,
             // a room taking our play, or the web player's start on the phone (qa-music-r13-code Q-3)
             connecting = sonos?.controller?.connecting(now) == true || (renderer === spotify && spotify?.starting == true),

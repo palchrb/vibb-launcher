@@ -75,6 +75,9 @@
     <string name="output_label">Play on: %1$s</string>
     <string name="output_phone">The phone</string>
     <string name="output_phone_sub">Built-in speaker</string>
+    <!-- 2026-11-20 (R1): "The phone" while the web player plays and its sound can't move there -->
+    <string name="output_phone_unplug">Unplug the headphones first</string>
+    <string name="output_phone_turn_off">Turn the headphones off first</string>
     <string name="output_bluetooth">Headphones</string>
     <string name="output_bluetooth_sub">Bluetooth · connected</string>
     <string name="output_wired">Headphones</string>
