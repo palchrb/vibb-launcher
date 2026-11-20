@@ -204,31 +204,125 @@ class HomeEdgesTest {
         }
     }
 
+    /**
+     * The bundled Nunito Bold (`res/font/nunito_bold.ttf`, the labels' font): a label's advance width with kerning and
+     * fractional metrics, as Android's `measureText` lays it out unhinted. Through java.awt by reflection - the unit
+     * tests compile against android.jar, which has no java.awt; the JVM that runs them has it. Widths are linear in the
+     * size, so one measure at 1000 units gives the em width.
+     */
+    private val nunitoEm: (String) -> Float by lazy {
+        val fontClass = Class.forName("java.awt.Font")
+        val textAttribute = Class.forName("java.awt.font.TextAttribute")
+        val base = fontClass.getMethod("createFont", Int::class.javaPrimitiveType, File::class.java)
+            .invoke(null, 0 /* TRUETYPE_FONT */, file("res/font/nunito_bold.ttf"))
+        val kerned = fontClass.getMethod("deriveFont", Map::class.java)
+            .invoke(base, mapOf(textAttribute.getField("KERNING").get(null) to textAttribute.getField("KERNING_ON").get(null)))
+        val font = fontClass.getMethod("deriveFont", Float::class.javaPrimitiveType).invoke(kerned, 1000f)
+        val transform = Class.forName("java.awt.geom.AffineTransform")
+        val frcClass = Class.forName("java.awt.font.FontRenderContext")
+        val frc = frcClass.getConstructor(transform, Boolean::class.javaPrimitiveType, Boolean::class.javaPrimitiveType)
+            .newInstance(null, true, true)
+        val bounds = fontClass.getMethod("getStringBounds", String::class.java, frcClass)
+        val cache = HashMap<String, Float>()
+        val measure: (String) -> Float = { text ->
+            cache.getOrPut(text) {
+                val rect = bounds.invoke(font, text, frc)
+                (rect.javaClass.getMethod("getWidth").invoke(rect) as Double).toFloat() / 1000f
+            }
+        }
+        measure
+    }
+
+    /** A label's width at [size] (any unit), in the real font. */
+    private fun nunitoWidth(text: String, size: Float): Float = nunitoEm(text) * size
+
+    /** Home's built-in tiles (`calls_phone_book`, `messages_title`, `day_title`, `kid_settings_title`) in nb and en,
+     * and the system apps' usual names (the coordinator's list, 2026-11-20). */
+    private val builtIn = mapOf(
+        "nb" to listOf("Telefonbok", "Meldinger", "Kalender", "Innstillinger", "Dagen", "Kamera", "Klokke", "Kalkulator"),
+        "en" to listOf("Phone book", "Messages", "Calendar", "Settings", "Today", "Camera", "Clock", "Calculator"),
+    )
+    private val otherApps = listOf("Organic Maps", "YouTube", "Chrome", "Foto", "Spotify", "Vibb Music")
+
+    /** The Jelly Star: 320 dp wide (288 dp content), density 1.5; the label's line as the adapter computes it. */
+    private val jellyDensity = 1.5f
+    private fun jellyLinePx(cols: Int) = (gridMetrics(288f, cols).cellWidthDp - 4f) * jellyDensity - 2f
+
+    /**
+     * Code QA M1 of jelly-round-2, measured (printed for the report): each label's em width in Nunito Bold, and in 3 and
+     * 4 columns at font 1.0/1.15/1.3 (linear; Android 14's table is within a few percent at these sizes) the size it
+     * fits whole at, as a share of the label's own size, against the floor.
+     */
     @Test
-    fun `the Jelly Star at font 1_3 - every nb and en label whole on one line, the same size for all`() {
+    fun `the real font on the Jelly Star - which labels fit whole at which size, 3 and 4 columns`() {
+        val out = StringBuilder("label | em | cols | font | base dp | fits at dp | share | floor dp\n")
+        for (label in builtIn.values.flatten() + otherApps) {
+            for (cols in 3..4) {
+                val m = gridMetrics(288f, cols)
+                val line = jellyLinePx(cols) / jellyDensity
+                for (scale in listOf(1.0f, 1.15f, 1.3f)) {
+                    val base = m.labelSp * scale
+                    val fits = minOf(base, line / nunitoEm(label))
+                    val floor = gridLabelFloorPx(base * jellyDensity, jellyDensity) / jellyDensity
+                    out.append(
+                        "$label | ${"%.3f".format(nunitoEm(label))} | $cols | $scale | ${"%.2f".format(base)} | " +
+                            "${"%.2f".format(fits)} | ${"%.3f".format(fits / base)} | ${"%.2f".format(floor)}\n",
+                    )
+                }
+            }
+        }
+        println(out)
+        // The longest built-in label is nb's Settings.
+        assertEquals("Innstillinger", builtIn.values.flatten().maxBy(nunitoEm))
+    }
+
+    /** The user, 2026-11-20 ("mindre tekst på hjem skjermen på appene"): a normal grid never shrinks or ellipsizes. */
+    @Test
+    fun `the Jelly Star in Nunito Bold - every built-in label whole at its own size in 3 columns, above the floor in 4`() {
+        for (scale in listOf(1.0f, 1.15f, 1.3f)) {
+            for ((lang, words) in builtIn) {
+                // 3 columns: at the label's own size, nothing shrinks.
+                run {
+                    val basePx = gridMetrics(288f, 3).labelSp * scale * jellyDensity
+                    val size = sharedLabelPx(words, basePx, gridLabelFloorPx(basePx, jellyDensity), jellyLinePx(3), ::nunitoWidth)
+                    assertEquals("3 columns, $lang at $scale", basePx, size, 0.001f)
+                }
+                // 4 columns: maybe a little smaller, but whole - never the floor's ellipsis.
+                run {
+                    val basePx = gridMetrics(288f, 4).labelSp * scale * jellyDensity
+                    val floorPx = gridLabelFloorPx(basePx, jellyDensity)
+                    val size = sharedLabelPx(words, basePx, floorPx, jellyLinePx(4), ::nunitoWidth)
+                    for (word in words) assertTrue("4 columns, $lang $word at $scale: $size px", nunitoWidth(word, size) <= jellyLinePx(4))
+                    assertTrue("4 columns, $lang at $scale: $size px over the floor $floorPx", size >= floorPx)
+                }
+            }
+        }
+        // The sizes chosen for it: 11.5 sp at the mockup's width, a floor of 70 % or 10.5 dp.
+        assertEquals(11.5f, gridMetrics(288f, 3).labelSp, 0.001f)
+        assertEquals(0.7f, GRID_LABEL_FLOOR_SHARE)
+        assertEquals(10.5f, GRID_LABEL_MIN_DP)
+    }
+
+    @Test
+    fun `the Jelly Star at font 1_3 in the em model - every nb and en label whole at its own size`() {
         // 320 dp wide (288 dp content), 240 dpi (density 1.5), font 1.3 (the real phone): 3 columns.
         val density = 1.5f
         val m = gridMetrics(288f, 3)
         val line = (m.cellWidthDp - 4f) * density - 2f
-        val base = m.labelSp * 1.3f * density
-        for ((lang, words) in labels) {
-            val size = sharedLabelPx(words, base, gridLabelFloorPx(base, density), line, ::width)
-            assertTrue(lang, size < base) // "Innstillinger" / "Phone book" need a little less
-            assertTrue(lang, size > gridLabelFloorPx(base, density)) // ... but not the floor
-            for (word in words) assertTrue("$lang $word", width(word, size) <= line)
-        }
-        // At font 1.0 nothing changes: every label fits at its own size.
-        for (words in labels.values) {
-            assertEquals(m.labelSp * density, sharedLabelPx(words, m.labelSp * density, gridLabelFloorPx(m.labelSp * density, density), line, ::width), 0.001f)
+        for (scale in listOf(1.0f, 1.3f)) {
+            val base = m.labelSp * scale * density
+            for ((lang, words) in labels) {
+                assertEquals("$lang at $scale", base, sharedLabelPx(words, base, gridLabelFloorPx(base, density), line, ::width), 0.001f)
+            }
         }
     }
 
     @Test
-    fun `a label too wide at the floor sets the floor for all, and the floor is three quarters or 11 dp`() {
+    fun `a label too wide at the floor sets the floor for all, and the floor is 70 percent or 10_5 dp`() {
         val density = 2f
-        // The floor: 75 % of the base, at least 11 dp - unless the base itself is smaller.
-        assertEquals(26f * 0.75f * density, gridLabelFloorPx(26f * density, density), 0.001f)
-        assertEquals(11f * density, gridLabelFloorPx(13f * density, density), 0.001f)
+        // The floor: 70 % of the base, at least 10.5 dp - unless the base itself is smaller.
+        assertEquals(26f * 0.7f * density, gridLabelFloorPx(26f * density, density), 0.001f)
+        assertEquals(10.5f * density, gridLabelFloorPx(13f * density, density), 0.001f)
         assertEquals(10f * density, gridLabelFloorPx(10f * density, density), 0.001f)
         val line = 80f * density
         val base = 17f * density
@@ -281,9 +375,9 @@ class HomeEdgesTest {
                 }
             }
         }
-        // The Jelly Star at 2.0, 3 columns: about 105 dp a row (140 dp while labels took two lines).
+        // The Jelly Star at 2.0, 3 columns: about 100 dp a row (140 dp while labels took two lines at 13 sp).
         val m = gridMetrics(288f, 3)
-        assertEquals(104.5f, tileHeightDp(m, 2.0f), 0.1f)
+        assertEquals(100.4f, tileHeightDp(m, 2.0f), 0.1f)
         // At 1.3, the real phone's: the rows Home showed in the layout round (87 dp with one line, 109 with two) - now
         // every row is the one-line height, so four rows and three 14 dp gaps need 30-46 dp less than before.
         assertTrue(tileHeightDp(m, 1.3f) < 93f)

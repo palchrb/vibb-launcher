@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- One round tile of the home grid (an app, the phone book or Settings). Sizes come from
-     gridMetrics (design 08: 60 dp icon and 13 sp label at the mockup's 288 dp content width);
+     gridMetrics (design 08: 60 dp icon at the mockup's 288 dp content width, GRID_LABEL_SP 11.5 sp label since 2026-11-20);
      the frame is 4 dp taller than the icon so the unread badge can sit above it. The cell's
      background is an oval-masked ripple and the icon has elevation (design 34 P2,
      HomeGridAdapter / PressFeedback); the frame doesn't clip the icon's shadow. The label is one
@@ -52,5 +52,5 @@
         android:paddingStart="2dp"
         android:paddingEnd="2dp"
         android:textColor="@color/kid_ink"
-        android:textSize="13sp" />
+        android:textSize="11.5sp" />
 </LinearLayout>

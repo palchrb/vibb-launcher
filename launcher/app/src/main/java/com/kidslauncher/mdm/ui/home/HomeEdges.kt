@@ -56,10 +56,11 @@ fun remainingScrollPx(canScroll: Boolean, estimatePx: Int): Int = if (canScroll)
 const val GRID_LABEL_MAX_LINES = 1
 
 /** The shared label size's floor: this share of the label's own size ... */
-const val GRID_LABEL_FLOOR_SHARE = 0.75f
+const val GRID_LABEL_FLOOR_SHARE = 0.7f
 
-/** ... but never below 11 sp at font scale 1.0 (Material's smallest label), unless the label's own size is smaller. */
-const val GRID_LABEL_MIN_DP = 11f
+/** ... but never below 10.5 dp, unless the label's own size is smaller: "Innstillinger" needs 10.8 dp in 4 columns on
+ * the Jelly Star (60.7 dp line), so the built-in labels stay whole there at every font scale (2026-11-20). */
+const val GRID_LABEL_MIN_DP = 10.5f
 
 /** The floor of the grid's shared label size, in px: [GRID_LABEL_FLOOR_SHARE] of [basePx], at least [GRID_LABEL_MIN_DP]
  * (in px by [density]) when the base is larger than that. */

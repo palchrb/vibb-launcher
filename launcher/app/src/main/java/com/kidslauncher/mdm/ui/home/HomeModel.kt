@@ -93,9 +93,16 @@ data class GridMetrics(
 )
 
 /**
- * Tile sizes scaled from the mockup (288 dp content, 60 dp icons, 13 sp labels): the icon is
+ * Home's label size at the mockup's 288 dp content (13 sp until 2026-11-20). The user, 2026-11-20: "mindre tekst på
+ * hjem skjermen på appene"; measured in Nunito Bold (`HomeEdgesTest`), 11.5 sp keeps every built-in label whole at
+ * its own size in 3 columns on the Jelly Star at font 1.3 ("Innstillinger" 5.6 em: 83.8 of 85.3 dp).
+ */
+const val GRID_LABEL_SP = 11.5f
+
+/**
+ * Tile sizes scaled from the mockup (288 dp content, 60 dp icons, [GRID_LABEL_SP] labels): the icon is
  * 60 × width/288, between 48 and 76 dp, and always leaves 3 dp on each side of its cell; the
- * label is 13 sp × the same scale, between 12 and 15 sp.
+ * label is [GRID_LABEL_SP] × the same scale, between 11 and 13 sp.
  */
 fun gridMetrics(contentWidthDp: Float, cols: Int): GridMetrics {
     val columns = max(1, cols)
@@ -103,7 +110,7 @@ fun gridMetrics(contentWidthDp: Float, cols: Int): GridMetrics {
     val cell = max(0f, (width - (columns - 1) * GRID_COLUMN_GAP_DP) / columns)
     val scale = width / MOCKUP_CONTENT_DP
     val icon = min((60 * scale).roundToInt().coerceIn(48, 76), floor(cell - 6).toInt())
-    val label = (13 * scale).coerceIn(12f, 15f)
+    val label = (GRID_LABEL_SP * scale).coerceIn(11f, 13f)
     return GridMetrics(cell, max(1, icon), label)
 }
 

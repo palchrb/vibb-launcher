@@ -104,6 +104,11 @@ class HomeGridAdapter(
         val oldTiles = this.tiles
         val oldIcons = this.icons
         val labelPx = labelPxFor(tiles, metrics)
+        if (labelPx != this.labelPx) {
+            // For the device checks: the labels' own size against the shared one (a normal grid never shrinks).
+            val base = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, metrics.labelSp, activity.resources.displayMetrics)
+            android.util.Log.i("HomeGrid", "Labels: ${metrics.labelSp} sp = $base px, shared $labelPx px")
+        }
         val everything = oldTiles.isEmpty() || metrics != this.metrics || ink != this.ink || labelPx != this.labelPx
         this.labelPx = labelPx
         this.tiles = tiles
