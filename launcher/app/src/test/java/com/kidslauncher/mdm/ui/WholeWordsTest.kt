@@ -10,7 +10,6 @@ import com.kidslauncher.mdm.calls.rowLayout
 import com.kidslauncher.mdm.calls.rowTextColumnDp
 import com.kidslauncher.mdm.ui.home.contactItemDp
 import com.kidslauncher.mdm.ui.home.contactRow
-import com.kidslauncher.mdm.ui.home.gridMetrics
 import java.io.File
 import java.util.Locale
 import javax.xml.parsers.DocumentBuilderFactory
@@ -85,11 +84,6 @@ class WholeWordsTest {
         return fit.sizePx to display
     }
 
-    private val labels = mapOf(
-        "nb" to listOf("Telefonbok", "Innstillinger", "Meldinger", "Kalender", "Kamera", "Klokke", "Chrome", "Gmail", "YouTube", "Musikk", "Bilder", "Kalkulator", "Kart"),
-        "en" to listOf("Phone book", "Settings", "Meldinger", "Chrome", "Gmail", "YouTube", "Calendar", "Camera", "Clock", "Calculator", "Messages", "Maps", "Photos"),
-    )
-
     /** A contact name's line: its cell less the name pill's own padding (8 dp each side; six-inch F3: two neighbours'
      * words stay at least 16 dp apart). */
     private val nameSides by lazy {
@@ -112,34 +106,8 @@ class WholeWordsTest {
     // ---- the rule -----------------------------------------------------------------------------
 
     @Test
-    fun `tile labels in nb and en, 3 and 4 columns, at 1_0 1_3 2_0 - a hyphen, a smaller size or an ellipsis, never a letter split`() {
-        for (content in listOf(288f, 320f, 360f)) {
-            for (cols in 3..4) {
-                val m = gridMetrics(content, cols)
-                val line = m.cellWidthDp - 4f // the label's 2 dp side paddings
-                for ((lang, words) in labels) {
-                    for (scale in scales) {
-                        for (label in words) {
-                            val base = m.labelSp * scale
-                            val (size, display) = shown(label, base, line)
-                            assertNoCut("$lang $cols cols $content dp ${scale}x '$label'", size, display, line)
-                            assertTrue(size >= base * WholeWords.FLOOR_SHARE - 0.001f)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    @Test
     fun `at font scale 1_0 nothing changes`() {
-        // 3 columns on the Jelly Star (4 columns are within a few dp in this coarse model).
-        run {
-            val m = gridMetrics(288f, 3)
-            for (label in labels.values.flatten()) {
-                assertEquals(label, m.labelSp to label, shown(label, m.labelSp, m.cellWidthDp - 4f))
-            }
-        }
+        // Home's tile labels left this rule on 2026-11-20 (one line at one shared size, HomeEdgesTest).
         // The name pill (2026-11-19): the Jelly Star's three 96 dp cells leave an 80 dp line on the pill.
         val item = nameLine(contactItemDp(contactRow(3, 288f), 3, 288f))
         assertEquals(80f, item, 0.001f)
@@ -269,17 +237,14 @@ class WholeWordsTest {
     // ---- the wiring ---------------------------------------------------------------------------
 
     @Test
-    fun `the tile label and the contact name are WholeWordTextViews, the tile keeps its hyphenation`() {
+    fun `the contact name is a WholeWordTextView, the tile label no longer (one line, 2026-11-20)`() {
         fun label(path: String, id: String): Element {
             val doc = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }.newDocumentBuilder()
                 .parse(File(main, path))
             val all = doc.getElementsByTagName("*")
             return (0 until all.length).map { all.item(it) as Element }.single { it.getAttributeNS(ns, "id") == "@+id/$id" }
         }
-        val tile = label("res/layout/item_kid_tile.xml", "tile_label")
-        assertEquals("com.kidslauncher.mdm.ui.WholeWordTextView", tile.tagName)
-        assertEquals("normal", tile.getAttributeNS(ns, "hyphenationFrequency"))
-        assertEquals("2", tile.getAttributeNS(ns, "maxLines"))
+        assertEquals("TextView", label("res/layout/item_kid_tile.xml", "tile_label").tagName)
         // Dagen: the title keeps words whole (S3); the second line is a plain TextView (code QA M1: a link in a location
         // would shrink the whole line to the floor).
         assertEquals("com.kidslauncher.mdm.ui.WholeWordTextView", label("res/layout/item_day_event.xml", "day_event_title").tagName)

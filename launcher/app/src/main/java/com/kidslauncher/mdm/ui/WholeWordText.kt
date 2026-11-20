@@ -173,7 +173,7 @@ object WholeWords {
 }
 
 /**
- * A TextView that follows [WholeWords] (Home's tile labels, the contact names on Home and in the
+ * A TextView that follows [WholeWords] (Home's tile labels until 2026-11-20 - now one line at one shared size, HomeEdges' sharedLabelPx -, the contact names on Home and in the
  * phone book, and since the screen-size fixes S3/S4 Dagen's rows and the kid header's title). Measures with an offline [StaticLayout] in the view's own break settings and applies
  * a size or an ellipsis only when it changes, so a layout pass settles. `text` is never changed: an
  * ellipsis is a [TransformationMethod]. TalkBack reads the full text (the node's text is the source while a word

@@ -7,7 +7,7 @@ import kotlin.math.min
 /*
  * Design 34 P4 (docs/design/34-launcher-polish.md at the monorepo root): Home's edges and labels.
  * The top under the status bar stays empty (the user's answer); what changes is that the grid fades
- * at the edges it can scroll past, its labels wrap to two lines, and the contacts row never runs
+ * at the edges it can scroll past, its labels are one line at one shared size (since 2026-11-20), and the contacts row never runs
  * past the screen's edge (the third contact's call badge was cut off). Pure, so the rules are
  * plain JUnit (`HomeEdgesTest`); the views are `FadingRecyclerView`, `item_kid_tile.xml` and
  * `HomeActivity.renderContacts`.
@@ -48,8 +48,47 @@ fun fadeStrength(remainingPx: Int, edgePx: Float, lengthPx: Float): Float {
  */
 fun remainingScrollPx(canScroll: Boolean, estimatePx: Int): Int = if (canScroll) max(1, estimatePx) else 0
 
-/** Grid labels wrap to at most two lines at every font scale (QA L6: no row height to compute). */
-const val GRID_LABEL_MAX_LINES = 2
+/**
+ * Grid labels are one line at every font scale (the Jelly Star's layout, decided by the user 2026-11-20: a two-line
+ * label made its row taller and pushed the last row's label into the bottom fade). Whole words, never wrapped or
+ * hyphenated: the grid's labels share one size ([sharedLabelPx]) and only at its floor does a label end in "…".
+ */
+const val GRID_LABEL_MAX_LINES = 1
+
+/** The shared label size's floor: this share of the label's own size ... */
+const val GRID_LABEL_FLOOR_SHARE = 0.75f
+
+/** ... but never below 11 sp at font scale 1.0 (Material's smallest label), unless the label's own size is smaller. */
+const val GRID_LABEL_MIN_DP = 11f
+
+/** The floor of the grid's shared label size, in px: [GRID_LABEL_FLOOR_SHARE] of [basePx], at least [GRID_LABEL_MIN_DP]
+ * (in px by [density]) when the base is larger than that. */
+fun gridLabelFloorPx(basePx: Float, density: Float): Float =
+    max(basePx * GRID_LABEL_FLOOR_SHARE, min(basePx, GRID_LABEL_MIN_DP * density))
+
+/**
+ * The one size every grid label is drawn at (the Jelly Star's layout, 2026-11-20): the largest size from [basePx] down
+ * to [floorPx] at which every label in [labels] fits [linePx] on one line ([widthAt]: a label's width at a size) - the
+ * smallest any label needs, so neighbours never differ. A label that doesn't fit even at the floor sets the size to the
+ * floor and ends in "…" there (the view's `ellipsize="end"`). Pure; the adapter measures with the label's own font.
+ */
+fun sharedLabelPx(labels: Collection<String>, basePx: Float, floorPx: Float, linePx: Float, widthAt: (String, Float) -> Float): Float {
+    val floor = min(floorPx, basePx)
+    return labels.minOfOrNull { labelNeedsPx(it, basePx, floor, linePx, widthAt) } ?: basePx
+}
+
+/** The largest size from [basePx] down to [floor] at which [label] fits [linePx]; the floor when none does. */
+private fun labelNeedsPx(label: String, basePx: Float, floor: Float, linePx: Float, widthAt: (String, Float) -> Float): Float {
+    val width = widthAt(label, basePx)
+    if (width <= linePx) return basePx
+    // Widths grow about linearly with the size; step down from there until the label fits (hinting rounds).
+    var size = max(floor, basePx * linePx / width)
+    while (size > floor && widthAt(label, size) > linePx) size = max(floor, size - LABEL_STEP_PX)
+    return size
+}
+
+/** The step [sharedLabelPx] takes when the linear estimate is still a little too wide. */
+private const val LABEL_STEP_PX = 0.5f
 
 /** Nunito's line with `includeFontPadding=false`: (ascender 1011 + descender 353) / 1000 em. */
 const val NUNITO_LINE_EM = 1.364f
@@ -60,8 +99,8 @@ const val TILE_BADGE_ROOM_DP = 4f
 const val TILE_LABEL_GAP_DP = 5f
 
 /**
- * A grid tile's height with [lines] label lines at [fontScale] (linear: an upper bound for
- * Android 14's non-linear scaling). A row is as tall as its tallest tile.
+ * A grid tile's height with [lines] label lines (at most [GRID_LABEL_MAX_LINES]) at [fontScale] and the label's own
+ * size (linear: an upper bound for Android 14's non-linear scaling, and for a label the shared size shrank).
  */
 fun tileHeightDp(metrics: GridMetrics, fontScale: Float, lines: Int = GRID_LABEL_MAX_LINES): Float =
     metrics.iconDp + TILE_BADGE_ROOM_DP + TILE_LABEL_GAP_DP +
