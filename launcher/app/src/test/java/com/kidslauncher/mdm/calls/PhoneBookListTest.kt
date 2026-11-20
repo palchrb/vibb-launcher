@@ -181,15 +181,23 @@ class PhoneBookListTest {
     }
 
     @Test
-    fun `the row layout - inline at 288 dp below font 1_3, stacked from 1_3`() {
+    fun `the row layout - inline at 288 dp through font 1_3, stacked from 1_5, by the name's real size`() {
         assertEquals(128f, rowTextColumnDp(288f))
-        assertEquals(RowLayout.INLINE, rowLayout(288f, 1.0f))
-        assertEquals(RowLayout.INLINE, rowLayout(288f, 1.15f))
-        assertEquals(RowLayout.STACKED, rowLayout(288f, 1.3f))
-        assertEquals(RowLayout.STACKED, rowLayout(288f, 2.0f))
-        // A screen too narrow for a 120 dp column.
-        assertEquals(RowLayout.STACKED, rowLayout(270f, 1.0f))
-        assertEquals(RowLayout.INLINE, rowLayout(280f, 1.0f))
+        // The 16 sp name in dp: Android 14+'s non-linear scaling (1.0, 1.15, 1.3, 1.5, 2.0), then the linear sizes of
+        // an upper bound - the answer is the same.
+        val nonLinear = listOf(16f to RowLayout.INLINE, 18.1f to RowLayout.INLINE, 20.2f to RowLayout.INLINE, 23f to RowLayout.STACKED, 28f to RowLayout.STACKED)
+        for ((nameDp, expected) in nonLinear) assertEquals("name $nameDp dp", expected, rowLayout(288f, nameDp))
+        for ((scale, expected) in listOf(1.0f to RowLayout.INLINE, 1.15f to RowLayout.INLINE, 1.3f to RowLayout.INLINE, 1.5f to RowLayout.STACKED, 2.0f to RowLayout.STACKED)) {
+            assertEquals("linear $scale", expected, rowLayout(288f, ROW_NAME_SP * scale))
+        }
+        // A screen too narrow for a 120 dp column, whatever the size.
+        assertEquals(RowLayout.STACKED, rowLayout(270f, 16f))
+        assertEquals(RowLayout.INLINE, rowLayout(280f, 16f))
+        // Wider phones keep the buttons inline at larger sizes: 360 dp holds 200 dp, inline up to a 33 dp name.
+        assertEquals(RowLayout.INLINE, rowLayout(360f, 28f))
+        // The name's size is the layout's.
+        val xml = listOf("src/main/res/layout/item_phone_book_row.xml", "app/src/main/res/layout/item_phone_book_row.xml").map { java.io.File(it) }.first { it.exists() }.readText()
+        assertTrue(xml.substringAfter("android:id=\"@+id/row_name\"").substringBefore("/>").contains("android:textSize=\"${ROW_NAME_SP.toInt()}sp\""))
     }
 
     @Test

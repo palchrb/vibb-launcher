@@ -2,6 +2,7 @@ package com.kidslauncher.mdm.ui
 
 import com.kidslauncher.mdm.calls.ROW_AVATAR_DP
 import com.kidslauncher.mdm.calls.ROW_GAP_DP
+import com.kidslauncher.mdm.calls.ROW_NAME_SP
 import com.kidslauncher.mdm.calls.ROW_PADDING_START_DP
 import com.kidslauncher.mdm.calls.ROW_STACKED_END_DP
 import com.kidslauncher.mdm.calls.RowLayout
@@ -170,18 +171,20 @@ class WholeWordsTest {
         }
     }
 
-    /** Design 79 §3.4: the phone book's row at the Jelly Star's 288 dp - the text column 128 dp inline below font 1.3,
-     * the whole width less the avatar from 1.3 (the buttons on their own line). */
-    private fun rowColumn(scale: Float): Float = when (rowLayout(288f, scale)) {
+    /** Design 79 §3.4: the phone book's row at the Jelly Star's 288 dp - the text column 128 dp inline through font 1.3
+     * (the Jelly Star's layout, 2026-11-20; the name linear here, an upper bound), the whole width less the avatar from
+     * 1.5 (the buttons on their own line). */
+    private fun rowColumn(scale: Float): Float = when (rowLayout(288f, ROW_NAME_SP * scale)) {
         RowLayout.INLINE -> rowTextColumnDp(288f)
         RowLayout.STACKED -> 288f - ROW_PADDING_START_DP - ROW_AVATAR_DP - ROW_GAP_DP - ROW_STACKED_END_DP
     }
 
     @Test
-    fun `the phone book row at 288 dp - names whole, the second line two lines at most, at 1_0 1_3 2_0 in nb and en`() {
+    fun `the phone book row at 288 dp - names whole, the second line two lines at most, at 1_0 1_3 1_5 2_0 in nb and en`() {
         assertEquals(128f, rowColumn(1.0f), 0.01f)
-        assertEquals(214f, rowColumn(1.3f), 0.01f)
-        for (scale in scales) {
+        assertEquals(128f, rowColumn(1.3f), 0.01f)
+        assertEquals(214f, rowColumn(1.5f), 0.01f)
+        for (scale in scales + 1.5f) {
             val column = rowColumn(scale)
             for (name in names + listOf("Trener Kari", "Sofie Østby", "Bestemor Ingrid")) {
                 val (size, display) = shown(name, 16f * scale, column)
@@ -206,7 +209,7 @@ class WholeWordsTest {
             "nb" to listOf("14:02", "i går", "30. nov.", "99+"),
             "en" to listOf("14:02", "yesterday", "Nov 30", "99+"),
         )
-        for (scale in scales) {
+        for (scale in scales + 1.5f) {
             val column = rowColumn(scale)
             val size = 13f * scale
             for ((lang, firsts) in missedParts) for (first in firsts) for (second in listOf("1", "12", "99+")) {

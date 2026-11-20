@@ -536,7 +536,10 @@ open class PhoneBookActivity : KidPageActivity() {
         }
         contactsInfo = info
         bindInfo()
-        adapter.layout = rowLayout(contentWidthDp(), resources.configuration.fontScale)
+        // The name's real size: Android's font scaling (non-linear since Android 14) of the row's 16 sp, in dp.
+        val metrics = resources.displayMetrics
+        val nameDp = android.util.TypedValue.applyDimension(android.util.TypedValue.COMPLEX_UNIT_SP, ROW_NAME_SP, metrics) / metrics.density
+        adapter.layout = rowLayout(contentWidthDp(), nameDp)
         val emergency = view.contacts.mapNotNullTo(mutableSetOf()) { c -> c.number.takeIf { CallSystem.isEmergencyOutgoing(this, it) } }
         // The apps' usability asked once per package, each app's label read once (code QA M2).
         val defaultSms = CallSystem.defaultSmsPackage(this)

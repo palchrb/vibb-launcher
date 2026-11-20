@@ -186,7 +186,7 @@ fun recentVisible(shown: List<Pair<RecentRow, Boolean>>): Map<String, Long> {
     return out
 }
 
-/** From this font scale a Siste row's time moves under its word (as the rows' [rowLayout]). */
+/** From this font scale a Siste row's time moves under its word (design 106; the contacts' [rowLayout] once had the same 1.3). */
 fun recentTimeBelow(fontScale: Float): Boolean = fontScale >= 1.3f
 
 // ---- the tab ----

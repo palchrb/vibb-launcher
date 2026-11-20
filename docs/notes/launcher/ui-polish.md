@@ -98,9 +98,12 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   discs down a list would shout. The press is design 34's `PressMotion` on the disc (visual only) with an oval ripple
   and a 2 dp peach focus ring (`PressFeedback.cellBackground`/`attach`). Dimmed to 40 % and inert while another call is
   live (an emergency number excepted). Without a Melding the slot stays empty inline, so the Rings line up.
-- **Large text** (`rowLayout`): below font scale 1.3 with a 120 dp column the buttons sit inline; else they move to a
-  line of their own under the text, from the text's start, and the text takes 214 dp (`ROW_STACKED_END_DP`).
-  `WholeWordsTest` checks the names and every second line at 1.0 / 1.3 / 2.0 in nb and en; `KidPaletteTest` every ink.
+- **Large text** (`rowLayout(contentDp, nameDp)`): the buttons sit inline while the text column is at least 120 dp and
+  holds at least 6 em of the name at its real rendered size (`ROW_NAME_SP` through Android's font scaling, non-linear
+  since Android 14) - on the Jelly Star's 288 dp through font 1.3, stacked from 1.5 (the Jelly Star's layout, 2026-11-20;
+  design 79 stacked from 1.3); else they move to a line of their own under the text, from the text's start, and the
+  text takes 214 dp (`ROW_STACKED_END_DP`). `WholeWordsTest` checks the names and every second line at 1.0 / 1.3 / 1.5 /
+  2.0 in nb and en; `KidPaletteTest` every ink.
 - **The rest of the page:** the header with the "+" (a 40 dp peach disc in a 48 dp target over the shared header, which
   keeps 48 dp for it), the search pill (`kid_music_tile`, 22 dp corners, a 1.5 dp peach outline at 50 % while focused,
   a peach cursor), the request rows (the answer on the plain tile with a `kid_music_control` disc; an open request
