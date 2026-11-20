@@ -578,21 +578,32 @@ class FitTest {
 
     @Test
     fun `L1 - in whole pixels the content never overflows the slot, at every density`() {
+        // v12's 180 dp cap, and the width's cap on the Jelly Star (217.6 dp) and a 411 dp phone (279.5 dp)
+        val caps = listOf(CAROUSEL_COVER_DP.toFloat(), carouselCoverMax(available(320f)), carouselCoverMax(available(411f)))
         for (d in densities) {
+            val air = 2 * px(LIBRARY_AIR_DP, d)
             for (scale in listOf(1.0f, 1.3f, 2.0f)) {
                 val lines = linePx(21, scale, d) + linePx(13, scale, d)
-                for (slot in px(150, d)..px(420, d)) {
-                    val fit = libraryFit(slot, lines, 0, d)
-                    val content = drawnContent(fit.coverPx, scale, d, fit.breath)
-                    val what = "density $d, scale $scale, slot $slot px: cover ${fit.coverPx}, content $content"
-                    if (fit.scrolls) {
-                        assertEquals("$what: scrolls only at the floor", px(LIBRARY_COVER_MIN_DP, d), fit.coverPx)
-                        assertTrue(what, content > slot)
-                    } else {
-                        assertTrue("$what: not a pixel cut", content <= slot)
-                        assertTrue("$what: and the cover takes the room", fit.coverPx == px(CAROUSEL_COVER_DP, d) || content == slot)
+                for (cap in caps) {
+                    val capPx = (cap * d).toInt()
+                    for (slot in px(150, d)..px(520, d)) {
+                        val fit = libraryFit(slot, lines, 0, d, cap)
+                        val content = drawnContent(fit.coverPx, scale, d, fit.breath)
+                        val what = "density $d, scale $scale, cap $cap, slot $slot px: cover ${fit.coverPx}, content $content"
+                        assertTrue("$what: never over the cap", fit.coverPx <= capPx)
+                        if (fit.scrolls) {
+                            assertEquals("$what: scrolls only at the floor", px(LIBRARY_COVER_MIN_DP, d), fit.coverPx)
+                            assertTrue(what, content > slot)
+                        } else {
+                            assertTrue("$what: not a pixel cut", content <= slot)
+                            // below the cap the cover takes the room less the air above and below; at the floor the air gives way first
+                            assertTrue(
+                                "$what: and the cover takes the room",
+                                fit.coverPx == capPx || content == slot - air || fit.coverPx == px(LIBRARY_COVER_MIN_DP, d),
+                            )
+                        }
+                        if (fit.coverPx < capPx) assertEquals("$what: the room goes to the cover first", LibraryBreath.NONE, fit.breath)
                     }
-                    if (fit.coverPx < px(CAROUSEL_COVER_DP, d)) assertEquals("$what: the room goes to the cover first", LibraryBreath.NONE, fit.breath)
                 }
             }
         }
@@ -602,33 +613,67 @@ class FitTest {
         assertEquals(123, libraryFixedPx(3f))
     }
 
+    /** A phone's screen in dp and its density. */
+    private data class Phone(val w: Int, val h: Int, val d: Float)
+
+    /** The Jelly Star (Android 16, 240 dpi), the 288 x 512 dp frame of the 2026-11-20 mockup, a 320 x 640 dp phone, a 411 x 891 dp one. */
+    private val jellyStar = Phone(320, 569, 1.5f)
+    private val jelly288 = Phone(288, 512, 5f / 3)
+    private val phone320x640 = Phone(320, 640, 2.25f)
+    private val phone411 = Phone(411, 891, 2.625f)
+
+    /** 0 at a 320 dp screen and below, 1 at 411 and above (written out: the model doesn't lean on the code under test). */
+    private fun growth(w: Int) = ((w - 320) / 91f).coerceIn(0f, 1f)
+
+    private fun grow(from: Int, to: Int, w: Int) = Math.round(from + (to - from) * growth(w))
+
+    /** The bar's lines at the screen's sizes (15 + 12 sp up to 320 dp, 16 + 13 from 411), in pixels. */
+    private fun barLinesPx(phone: Phone, scale: Float) =
+        linePx(grow(15, 16, phone.w), scale, phone.d) + linePx(grow(12, 13, phone.w), scale, phone.d)
+
     /**
-     * The library at 320 x 569 dp (the Jelly Star), as LibraryScreen lays it out, in pixels: the status bar (24 dp) and
-     * the navigation bar (gesture 24 dp, three buttons 48 dp) off, the 10 + 12 dp padding, the 52 dp header, 8 dp between
-     * the children; the category tiles (the 44 dp circle, 4 dp, the 11 sp label; at least 64) and the bar (6 + 6 dp
-     * around the larger of the 44 dp button and its 13 + 11 sp lines) keep their own height, the weighted slot gets the
-     * rest. Text grows linearly with the font scale here (Android 14's curve grows large text less): an upper bound.
+     * The now-playing bar as drawn (2026-11-20): at least its cover and padding (52 + 2 x 10 up to 320 dp, 56 + 2 x 12
+     * from 411), else its lines and their 2 dp gap with 6 dp above and below.
      */
-    private fun slotPx(scale: Float, bar: Boolean, nav: Int, d: Float): Int {
-        val tiles = maxOf(px(64, d), px(44, d) + px(4, d) + linePx(11, scale, d))
-        val nowBar = 2 * px(6, d) + maxOf(px(44, d), linePx(13, scale, d) + linePx(11, scale, d))
-        val children = if (bar) 4 else 3
-        return Math.round(569 * d) - px(24, d) - px(nav, d) - px(10, d) - px(12, d) - px(52, d) - (children - 1) * px(8, d) -
-            tiles - (if (bar) nowBar else 0)
+    private fun barPx(phone: Phone, scale: Float): Int {
+        val d = phone.d
+        val cover = grow(52, 56, phone.w)
+        val content = maxOf(px(cover, d), px(grow(48, 52, phone.w), d), barLinesPx(phone, scale) + px(2, d))
+        return maxOf(px(cover + 2 * grow(10, 12, phone.w), d), content + 2 * px(6, d))
     }
 
-    private fun fitOnJelly(scale: Float, bar: Boolean, nav: Int, d: Float = 1.5f): LibraryFit {
-        val lines = linePx(21, scale, d) + linePx(13, scale, d)
-        val reserve = if (bar) 0 else nowBarRoomPx(linePx(13, scale, d) + linePx(11, scale, d), d)
-        return libraryFit(slotPx(scale, bar, nav, d), lines, reserve, d)
+    /**
+     * The library on [phone], as LibraryScreen lays it out, in pixels: the status bar (24 dp) and the navigation bar
+     * (gesture 24 dp, three buttons 48 dp) off, the 10 + 12 dp padding, the 52 dp header, 8 dp between the children; the
+     * category tiles (the usual circle - 44 dp up to 320, 48 from 411 -, 4 dp, the 11 sp label; at least 64) and the
+     * bar ([barPx]) keep their own height, the weighted slot gets the rest. Text grows linearly with the font scale here
+     * (Android 14's curve grows large text less): an upper bound.
+     */
+    private fun slotPx(scale: Float, bar: Boolean, nav: Int, d: Float, phone: Phone = jellyStar.copy(d = d)): Int {
+        val tiles = maxOf(px(64, d), px(grow(44, 48, phone.w), d) + px(4, d) + linePx(11, scale, d))
+        val children = if (bar) 4 else 3
+        return Math.round(phone.h * d) - px(24, d) - px(nav, d) - px(10, d) - px(12, d) - px(52, d) - (children - 1) * px(8, d) -
+            tiles - (if (bar) barPx(phone, scale) else 0)
     }
+
+    /** The library's fit on [phone] as the carousel asks for it: the width's cap, the bar's room kept while it is away. */
+    private fun fitOn(phone: Phone, scale: Float, bar: Boolean, nav: Int): LibraryFit {
+        val d = phone.d
+        val width = (phone.w - 2 * SCREEN_SIDE_DP).toFloat()
+        val lines = linePx(21, scale, d) + linePx(13, scale, d)
+        val reserve = if (bar) 0 else nowBarRoomPx(nowBarSize(width), barLinesPx(phone, scale), d)
+        return libraryFit(slotPx(scale, bar, nav, d, phone), lines, reserve, d, carouselCoverMax(width))
+    }
+
+    private fun fitOnJelly(scale: Float, bar: Boolean, nav: Int, d: Float = 1.5f): LibraryFit = fitOn(jellyStar.copy(d = d), scale, bar, nav)
 
     @Test
     fun `the library on the Jelly Star at font scale 1_0, 1_3 and 2_0`() {
-        // v12's cover at 1.0, a little less at 1.3; at 2.0 with a 24 dp status bar the cover gives way (N6: no scroll)
-        assertEquals(270, fitOnJelly(1.0f, true, 48).coverPx)
+        // with three-button navigation the cover is limited by the height (the taller bar, 2026-11-20: 167 dp at 1.0, was
+        // v12's 180); at 2.0 with a 24 dp status bar the cover gives way (N6: no scroll)
+        assertEquals(250, fitOnJelly(1.0f, true, 48).coverPx)
         val at13 = fitOnJelly(1.3f, true, 48)
-        assertTrue("1.3: ${at13.coverPx} px", at13.coverPx in 250 until 270 && !at13.scrolls)
+        assertTrue("1.3: ${at13.coverPx} px", at13.coverPx in 200 until 250 && !at13.scrolls)
         assertTrue("2.0 with gestures: no scroll", !fitOnJelly(2.0f, true, 24).scrolls)
         val at20 = fitOnJelly(2.0f, true, 48)
         assertTrue("2.0 with three buttons: ${at20.coverPx} px, no scroll", !at20.scrolls && at20.coverPx in px(LIBRARY_COVER_MIN_DP, 1.5f) until px(120, 1.5f))
@@ -651,11 +696,13 @@ class FitTest {
     /**
      * The emulator's screen (`wm density 240`, 320 x 569 dp, Android 16) at font scale 2.0 with the bar, as
      * `d34-music-full-bar-2.0.png` shows it: the status bar grows with the font scale to 136 px (91 dp, not the model's
-     * 24 dp), the category tiles are 118 px and the bar 116 px; [nav] the navigation bar (gestures 24 dp, three buttons 48).
+     * 24 dp), the category tiles are 118 px; the bar is the 2026-11-20 one, its 15 + 12 sp lines with their 2 dp gap and
+     * 6 dp above and below: 127 px (the old one's 13 + 11 sp were 116); [nav] the navigation bar (gestures 24 dp, three
+     * buttons 48).
      */
     private fun emulatorSlot20(nav: Int, d: Float = 1.5f): Int {
         val tiles = maxOf(px(64, d), px(44, d) + px(4, d) + linePx20(11, d))
-        val nowBar = 2 * px(6, d) + maxOf(px(44, d), linePx20(13, d) + linePx20(11, d))
+        val nowBar = maxOf(px(72, d), maxOf(px(52, d), linePx20(15, d) + linePx20(12, d) + px(2, d)) + 2 * px(6, d))
         return Math.round(569 * d) - 136 - px(nav, d) - px(10, d) - px(12, d) - px(52, d) - 3 * px(8, d) - tiles - nowBar
     }
 
@@ -663,7 +710,9 @@ class FitTest {
     fun `N6 - at font scale 2_0 with the bar the hint and the dots fit - the cover gives way before the words`() {
         val d = 1.5f
         val slot = emulatorSlot20(nav = 24)
-        assertEquals("the emulator's slot: the header's bottom to the tiles' top (241..545 px, less a rounding)", 301, slot)
+        // the emulator's slot was 301 px with the old bar (the header's bottom to the tiles' top, 241..545 px, less a
+        // rounding); the taller bar's lines take 11 px of it
+        assertEquals(290, slot)
         val lines = linePx20(21, d) + linePx20(13, d)
         // step 11's floor of 120 dp needed 65 px more than the slot: the hint cut in half, the dots gone (the report)
         val old = librarySlotContentPx(px(120, d), lines, d) - slot
@@ -672,15 +721,14 @@ class FitTest {
         assertFalse("no scroll needed: every line shows", fit.scrolls)
         assertTrue("the cover gives way: ${fit.coverPx} px", fit.coverPx in px(LIBRARY_COVER_MIN_DP, d) until px(120, d))
         assertTrue("drawn as Compose rounds it, not a pixel cut", drawnContentAt20(fit.coverPx, d) <= slot)
-        // the linear model (an upper bound of the text) still fits, at the floor
-        val linear = libraryFit(slot - 2, linePx(21, 2f, d) + linePx(13, 2f, d), 0, d)
-        assertFalse(linear.scrolls)
+        // (the linear model, an upper bound of the text, no longer fits this slot at the floor: the bar's larger lines
+        // took its slack - Android 14+ draws 2.0 by the curve above, which fits)
         // three-button navigation leaves less: the floor, and the slot scrolls (never a clip without a scroll)
         val three = libraryFit(emulatorSlot20(nav = 48), lines, 0, d)
         assertTrue(three.scrolls)
         assertEquals(px(LIBRARY_COVER_MIN_DP, d), three.coverPx)
         // without the bar the cover is the same (N2), the bar's room kept free
-        val reserve = nowBarRoomPx(linePx20(13, d) + linePx20(11, d), d)
+        val reserve = nowBarRoomPx(nowBarSize(available(320f)), linePx20(15, d) + linePx20(12, d), d)
         val without = libraryFit(slot + reserve, lines, reserve, d)
         assertEquals(fit.coverPx, without.coverPx)
     }
@@ -734,7 +782,19 @@ class FitTest {
                 }
             }
         }
-        assertEquals("the bar's room at 1.5: 9 + 66 + 9 px and the 12 px gap", 96, nowBarRoomPx(40, 1.5f))
+        val jelly = nowBarSize(available(320f))
+        assertEquals("the bar's room at 1.5: its 72 dp (108 px) and the 12 px gap", 120, nowBarRoomPx(jelly, 40, 1.5f))
+        assertEquals("lines taller than the cover: 6 dp above and below them", 9 + 123 + 9 + 12, nowBarRoomPx(jelly, 120, 1.5f))
+        assertEquals("a 411 dp phone: 80 dp (210 px) and the 21 px gap", 231, nowBarRoomPx(nowBarSize(available(411f)), 100, 2.625f))
+        // every phone and scale: the room is the bar the slot model draws, and the cover is the same with and without it
+        for (phone in listOf(jelly288, jellyStar, phone320x640, phone411)) {
+            for (scale in listOf(1.0f, 1.3f, 2.0f)) {
+                val width = (phone.w - 2 * SCREEN_SIDE_DP).toFloat()
+                assertEquals("$phone $scale", barPx(phone, scale) + px(8, phone.d), nowBarRoomPx(nowBarSize(width), barLinesPx(phone, scale), phone.d))
+                assertEquals("$phone $scale", fitOn(phone, scale, true, 0).coverPx, fitOn(phone, scale, false, 0).coverPx)
+                assertEquals("$phone $scale", fitOn(phone, scale, true, 0).breath, fitOn(phone, scale, false, 0).breath)
+            }
+        }
     }
 
     @Test
@@ -856,16 +916,19 @@ class FitTest {
     }
 
     @Test
-    fun `the Jelly Star without a navigation bar - the 180 dp cover, the title block grown in full, the same with and without the bar`() {
-        val d = 1.5f
+    fun `a phone with room to spare - the cover at its cap, the title block grown in full, the same with and without the bar`() {
+        // 320 x 640 dp: the Jelly Star's width with room to spare (the Jelly Star itself is room-limited since its cap grew)
+        val phone = phone320x640
+        val d = phone.d
         val full = LIBRARY_BREATH_MAX_DP.sumOf { px(it, d) }
         for (scale in listOf(1.0f, 1.3f)) {
-            val with = fitOnJelly(scale, true, 0)
-            assertEquals("$scale: v12's cover", px(CAROUSEL_COVER_DP, d), with.coverPx)
+            val with = fitOn(phone, scale, true, 0)
+            assertEquals("$scale: the width's cap", (carouselCoverMax(available(320f)) * d).toInt(), with.coverPx)
             assertEquals("$scale: every gap grown", full, with.breath.totalPx)
-            assertEquals("$scale: N2, nothing moves when the bar comes", with.breath, fitOnJelly(scale, false, 0).breath)
-            assertTrue("$scale: not a pixel cut", drawnContent(with.coverPx, scale, d, with.breath) <= slotPx(scale, true, 0, d))
+            assertEquals("$scale: N2, nothing moves when the bar comes", with.breath, fitOn(phone, scale, false, 0).breath)
+            assertTrue("$scale: not a pixel cut", drawnContent(with.coverPx, scale, d, with.breath) <= slotPx(scale, true, 0, d, phone))
         }
+        assertEquals("the Jelly Star at 1.0: a room-limited cover", LibraryBreath.NONE, fitOnJelly(1.0f, true, 0).breath)
         assertEquals("2.0: the room goes to the cover", LibraryBreath.NONE, fitOnJelly(2.0f, true, 0).breath)
         assertEquals("three buttons at 1.3: a room-limited cover, as before", LibraryBreath.NONE, fitOnJelly(1.3f, true, 48).breath)
         val carousel = body(library, "private fun Carousel(")
@@ -969,5 +1032,122 @@ class FitTest {
         // the chevron sits in the screen's 16 dp side, never over a tile, never past the screen's edge
         assertTrue(tiles.contains("offset(x = CATEGORY_CHEVRON_OUT_DP.dp"))
         assertTrue(library.contains("CATEGORY_CHEVRON_DP = 12f") && library.contains("CATEGORY_CHEVRON_OUT_DP = 14f"))
+    }
+
+    // --- 2026-11-20, the approved mockup: a taller now-playing bar, a cover that follows the width, less empty room ---
+
+    @Test
+    fun `the now-playing bar - 72 dp on the Jelly Star, 80 on a 411 dp phone, grown by the width alone`() {
+        val jelly = NowBarSize(cover = 52, coverRadius = 12, play = 48, playGlyph = 18, radius = 20, padH = 10, padV = 10, gap = 12, titleSp = 15, lineSp = 12)
+        assertEquals("the mockup's 288 dp frame", jelly, nowBarSize(available(288f)))
+        assertEquals("the Jelly Star, 320 dp", jelly, nowBarSize(available(320f)))
+        assertEquals(72, jelly.height)
+        val large = NowBarSize(cover = 56, coverRadius = 14, play = 52, playGlyph = 20, radius = 22, padH = 12, padV = 12, gap = 14, titleSp = 16, lineSp = 13)
+        assertEquals(large, nowBarSize(available(411f)))
+        assertEquals(80, large.height)
+        assertEquals("never past the large phone's", large, nowBarSize(available(800f)))
+        var last = 0
+        for (screen in 260..800) {
+            val bar = nowBarSize(available(screen.toFloat()))
+            assertTrue("$screen: the play button is a touch target", bar.play >= 48)
+            assertTrue("$screen: grows with the width", bar.height >= last)
+            last = bar.height
+        }
+        // the bar draws exactly these sizes, its lines at their sp, the padding giving way to tall lines
+        val bar = body(library, "fun NowPlayingBar(")
+        assertTrue(bar.contains("val bar = nowBarSize(maxWidth.value)"))
+        assertTrue(bar.contains("heightIn(min = bar.height.dp).padding(horizontal = bar.padH.dp, vertical = NOW_BAR_PAD_MIN_DP.dp)"))
+        assertTrue(bar.contains("Modifier.size(bar.cover.dp)"))
+        assertTrue(bar.contains("Line(now.itemTitle, bar.titleSp, 800, Palette.white)"))
+        assertTrue("the second line's words as before: the entry's name", bar.contains("Line(now.entry.name, bar.lineSp, 700, Palette.sub)"))
+        assertTrue(bar.contains("onTogglePlay, bar.play.dp, bar.playGlyph.dp, Palette.peach, Palette.bg,"))
+        // the carousels keep the same bar's room out while it is away (N2)
+        assertTrue(body(library, "private fun barReserve(").contains("nowBarRoomPx(bar, lines, LocalDensity.current.density)"))
+        assertTrue(body(library, "private fun barReserve(").contains("measuredLinesPx(bar.titleSp to 800, bar.lineSp to 700)"))
+    }
+
+    @Test
+    fun `the bar's progress line - how far the item has come, none without a length`() {
+        assertEquals(0.25f, nowBarProgress(15_000, 60_000)!!, 0.0001f)
+        assertEquals(0f, nowBarProgress(0, 60_000)!!, 0f)
+        assertEquals("clamped", 1f, nowBarProgress(90_000, 60_000)!!, 0f)
+        assertEquals(0f, nowBarProgress(-5, 60_000)!!, 0f)
+        assertEquals(null, nowBarProgress(15_000, null))
+        assertEquals(null, nowBarProgress(15_000, 0))
+        val bar = body(library, "fun NowPlayingBar(")
+        assertTrue("the player's own position, live", bar.contains("nowBarProgress(livePosition(now), now.durationMs)"))
+        assertTrue("3 dp along the bottom edge", bar.contains("Modifier.align(Alignment.BottomStart).fillMaxWidth(progress).height(NOW_BAR_PROGRESS_DP.dp).background(Palette.peach)"))
+        assertEquals(3, NOW_BAR_PROGRESS_DP)
+    }
+
+    @Test
+    fun `the library's cover follows the width - 68 percent of the screen, the neighbours still peek, never above the player's`() {
+        assertEquals("the mockup's 288 dp frame: the peek limits it", 192f, carouselCoverMax(available(288f)), 0.01f)
+        assertEquals("the Jelly Star", 217.6f, carouselCoverMax(available(320f)), 0.01f)
+        assertEquals("a 411 dp phone", 279.48f, carouselCoverMax(available(411f)), 0.01f)
+        assertEquals("a narrow phone keeps v12's 180", 180f, carouselCoverMax(available(270f)), 0f)
+        for (screen in 240..900) {
+            val content = available(screen.toFloat())
+            val cap = carouselCoverMax(content)
+            assertTrue("$screen: never under v12's", cap >= CAROUSEL_COVER_DP)
+            assertTrue("$screen: one decoded bitmap serves it", cap <= playerArtMax(content))
+            if (cap > CAROUSEL_COVER_DP) assertTrue("$screen: the neighbours peek", carouselPeek(content, cap) >= CAROUSEL_PEEK_MIN_DP - 0.001f)
+        }
+        val carousel = body(library, "private fun Carousel(")
+        val favourites = body(library, "private fun FavouritesCarousel(")
+        for (c in listOf(carousel, favourites)) {
+            assertTrue(c.contains("libraryFit(slot, lines, barReserve(hasBar, maxWidth.value), density.density, carouselCoverMax(maxWidth.value))"))
+        }
+    }
+
+    @Test
+    fun `the library at 288x512, 320x569, 320x640 and 411x891 - the cover, the air above and below, nothing cut`() {
+        // the cover in pixels with the bar and without a navigation bar, at font scale 1.0 and 1.3
+        val covers = mapOf(
+            jelly288 to listOf(263, 233), // 158 and 140 dp: the height limits it
+            jellyStar to listOf(322, 295), // 215 and 197 dp (was 180 under the 180 cap)
+            phone320x640 to listOf(489, 489), // the width's 217.6 dp
+            phone411 to listOf(733, 733), // the width's 279.5 dp (was 180)
+        )
+        for ((phone, want) in covers) {
+            val d = phone.d
+            for ((i, scale) in listOf(1.0f, 1.3f).withIndex()) {
+                val what = "$phone at $scale"
+                val fit = fitOn(phone, scale, true, 0)
+                assertEquals(what, want[i], fit.coverPx)
+                assertFalse(what, fit.scrolls)
+                val slot = slotPx(scale, true, 0, d, phone)
+                val content = drawnContent(fit.coverPx, scale, d, fit.breath)
+                assertTrue("$what: not a pixel cut", content <= slot)
+                // the rest centres: as much above the cover as under the dots; when the height limits the cover, the air
+                if (fit.coverPx < (carouselCoverMax((phone.w - 2 * SCREEN_SIDE_DP).toFloat()) * d).toInt()) {
+                    assertEquals("$what: the air above and below", 2 * px(LIBRARY_AIR_DP, d), slot - content)
+                } else {
+                    assertTrue("$what: more room than the air", slot - content > 2 * px(LIBRARY_AIR_DP, d))
+                }
+            }
+        }
+        // the bar: 72 dp on the Jelly Star and the mockup's frame, 80 on a 411 dp phone
+        assertEquals(px(72, jellyStar.d), barPx(jellyStar, 1.3f))
+        assertEquals(px(72, jelly288.d), barPx(jelly288, 1.3f))
+        assertEquals(px(80, phone411.d), barPx(phone411, 1.3f))
+        assertEquals(4, LIBRARY_AIR_DP)
+    }
+
+    @Test
+    fun `the category circles grow with the width - 44 up to 320 dp, 48 from 411, the row's rules hold at 288 dp`() {
+        assertEquals(44f to 20f, categoryCircle(available(288f)))
+        assertEquals(44f to 20f, categoryCircle(available(320f)))
+        assertEquals(48f to 22f, categoryCircle(available(411f)))
+        assertEquals(48f to 22f, categoryCircle(available(800f)))
+        val large = row(available(411f), nbFive, 1.3f)
+        assertFalse(large.scrolls)
+        assertEquals(48f, large.circle, 0f)
+        assertEquals(22f, large.glyph, 0f)
+        // 288 dp wide: the checks in row() at every scale (five at 1.3 scroll there rather than cut a label)
+        for (scale in listOf(1.0f, 1.15f, 1.3f, 1.5f, 1.8f, 2.0f)) {
+            for (names in listOf(nbFive, nbFour, enFive, listOf("Alle"), nbFive.take(3))) row(available(288f), names, scale)
+        }
+        assertFalse("four at 1.3 fit 288 dp", row(available(288f), nbFour, 1.3f).scrolls)
     }
 }

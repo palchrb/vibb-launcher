@@ -360,9 +360,12 @@ private fun newsRows(s: Snapshot): List<NewsRowUi> = s.news.mapNotNull { n ->
     NewsRowUi(entry, s.library?.categories?.firstOrNull { it.id == entry.category }, item, kindOf(entry))
 }
 
-/** The position to show: live from the player (ticking while it plays and the screen is up), else the stored one. */
+/**
+ * The position to show: live from the player (ticking while it plays and the screen is up), else the stored one. The
+ * player and the library's now-playing bar (its progress line) read it.
+ */
 @Composable
-private fun livePosition(now: NowView): Long {
+internal fun livePosition(now: NowView): Long {
     var pos by remember { mutableLongStateOf(now.storedPosMs) }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     LaunchedEffect(now.live, now.playing, now.item.key, now.storedPosMs) {
