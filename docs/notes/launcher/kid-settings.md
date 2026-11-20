@@ -136,7 +136,10 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   open, the apply's Settings hide step leaves it (`settingsHideStep`), and Home and the install receiver ignore
   Settings' events (`BtPairingWindow.inFlight`). `LockTaskChrome`'s route pin is keyed by owner, so Flymodus' close
   and the pairing window's never end each other. The pure rules are in `server/BtPairingPlan.kt` (`BtPairingPlanTest`).
-  Owed: the Jelly Star with the Jabra, and Android 17's dialog component.
+  Code QA (2026-11-20): the PIN abort runs before the close, and the receiver goes only after its `onReceive` (M1). The
+  marker is cleared only after a close or put-back that went through (L1). Owed: the Jelly Star with the Jabra - our
+  "OPEN" must log before `START ... BluetoothPairingDialog`, because Android 16+ limits cross-process priority for
+  target 36 (M2; design 122, "The Jelly Star check") - and Android 17's dialog component.
 
 ## The kid's hidden apps in Kid Settings (the user, 2026-11-03, branch `kid-unhide`)
 

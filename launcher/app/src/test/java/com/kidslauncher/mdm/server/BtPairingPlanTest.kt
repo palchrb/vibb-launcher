@@ -152,8 +152,31 @@ class BtPairingPlanTest {
         for (action in listOf("BluetoothDevice.ACTION_PAIRING_REQUEST", "BluetoothDevice.ACTION_BOND_STATE_CHANGED", "ACTION_PAIRING_CANCEL", "Intent.ACTION_SCREEN_OFF")) {
             assertTrue(action, window.contains("addAction($action)"))
         }
-        assertTrue(window.contains("== BtRequestAnswer.GROWN_UP && isOrderedBroadcast) {"))
-        assertTrue(window.contains("abortBroadcast()"))
+        // Code QA M1: the abort runs as soon as the answer is known, before the close (which would end the delivery
+        // without its result), and the receiver goes only after its onReceive has returned.
+        val receive = window.substringAfter("BluetoothDevice.ACTION_PAIRING_REQUEST -> {").substringBefore("BluetoothDevice.ACTION_BOND_STATE_CHANGED ->")
+        assertTrue(receive.contains("request(app, device?.address, variant) { answer ->"))
+        assertTrue(receive.contains("if (answer == BtRequestAnswer.GROWN_UP && isOrderedBroadcast) abortBroadcast()"))
+        assertEquals(1, Regex("abortBroadcast\\(\\)").findAll(window).count())
+        val request = window.substringAfter("internal fun request(").substringBefore("internal fun event(")
+        assertTrue(request.indexOf("decided(answer)") in 0 until request.indexOf("when (answer) {"))
+        assertTrue(request.indexOf("when (answer) {") < request.indexOf("closeLocked(app, \"grown_up\")"))
+        val close = window.substringAfter("private fun closeLocked(").substringBefore("private fun rehide(")
+        assertTrue(close.contains("unregisterLater(app)"))
+        assertFalse(close.contains("unregisterLocked(app)"))
+        val later = window.substringAfter("private fun unregisterLater(").substringBefore("private fun unregisterLocked(")
+        assertTrue(later.contains("h.post { synchronized(lock) { if (record == null) unregisterLocked(app) } }"))
+    }
+
+    @Test
+    fun `the arm needs the page still started, and the deadline ticks on the window's thread`() {
+        // Code QA L2 and L3.
+        val arm = window.substringAfter("private fun armNow(").substringBefore("fun bondNotStarted(")
+        assertTrue(arm.indexOf("if (!pageStarted) {") in 0 until arm.indexOf("prefs(app).edit().putLong(KEY_END"))
+        val schedule = window.substringAfter("private fun schedule() {").substringBefore("\n    }")
+        assertTrue(schedule.contains("h.postDelayed(tick,"))
+        assertFalse(window.contains("main.postDelayed(tick"))
+        assertFalse(window.contains("main.removeCallbacks(tick)"))
     }
 
     @Test
@@ -161,8 +184,14 @@ class BtPairingPlanTest {
         val close = window.substringAfter("private fun closeLocked(").substringBefore("private fun rehide(")
         assertTrue(close.contains("val r = record ?: return"))
         assertTrue(close.contains("LockTaskChrome.routeWindow(app, null, LockTaskChrome.RouteOwner.BT_PAIRING)"))
-        assertTrue(close.contains("if (r.unhid && !lifted()) runCatching { rehide(app) }"))
-        assertTrue(close.contains("prefs(app).edit().remove(KEY_END).commit()"))
+        assertTrue(close.contains("if (r.unhid && !lifted()) {"))
+        assertTrue(close.contains("runCatching { rehide(app) }"))
+        // Code QA L1: the marker goes only after the unpin and the re-hide went through.
+        assertTrue(close.contains("if (done) {\n            runCatching { prefs(app).edit().remove(KEY_END).commit() }"))
+        val putBack = window.substringAfter("fun putBackIfMarked(")
+        assertFalse(putBack.contains("finally"))
+        assertTrue(putBack.indexOf("AppEnforcer.apply(app, currentPolicyDecision())") < putBack.indexOf("} catch (e: Exception) {"))
+        assertTrue(putBack.indexOf("return\n            }") < putBack.indexOf("prefs(app).edit().remove(KEY_END).commit()"))
         val app = code(src("java/com/kidslauncher/mdm/Application.kt"))
         assertTrue(app.contains("com.kidslauncher.mdm.server.BtPairingWindow.putBackIfMarked(this)"))
         assertEquals(3, Regex("AirplaneRoute\\.inFlight \\|\\| com\\.kidslauncher\\.mdm\\.server\\.BtPairingWindow\\.inFlight").findAll(app).count())

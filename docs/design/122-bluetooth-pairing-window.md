@@ -106,8 +106,45 @@ The window is open for at most 30 s, and in practice only until the kid answers 
   window, and Settings unreachable after every close.
 - **The real gate** is the Jelly Star with the Jabra (below).
 
+## Code QA fixes (2026-11-20)
+
+- **M1:** a PIN request is now aborted before the close runs. The receiver is unregistered only after its
+  `onReceive` has returned (posted on the window's thread). Unregistered inside its own ordered `onReceive`, AMS
+  finishes the delivery without its result, so the abort was lost and Settings' receiver still ran.
+- **L1:** the marker is cleared only after the unpin and the re-hide went through, at the close and at the
+  put-back. A failure leaves it, and the next start or sync tries again.
+- **L2:** the arm checks again, under the window's lock, that the page is still started.
+- **L3:** the 30 s deadline runs on the window's own thread, not the main looper.
+
+## The Jelly Star check
+
+With the Jabra in pairing mode, kid mode (no pause), Kid Settings › Bluetooth › Manage devices: `adb logcat -c`, a
+tap on the Jabra, then `adb logcat -d -s BtPairingWindow ActivityTaskManager`.
+
+- **Expected:** "Armed (Settings unhidden: false)", then "Pairing request, variant N: OPEN", **before**
+  ActivityTaskManager's `START ... BluetoothPairingDialog`. No `BlockedAppActivity` after it. The dialog shows, then
+  "Closed: bonded (was open)".
+- **Read the order, not just the result:** if the START comes before our OPEN, or `BlockedAppActivity` follows it,
+  Settings' receiver ran first (see the priority risk below).
+- **Then:** `dumpsys device_policy` must not list `com.android.settings` in the lock-task packages.
+
 ## Left and not done
 
+- **Cross-process priority on Android 16+ (code QA M2).** Vibb One targets SDK 36. From Android 16, with
+  `LIMIT_PRIORITY_SCOPE`, an ordered broadcast's priority is promised only within one process. Ordered delivery is
+  still one receiver at a time, but the system no longer promises that our 999 runs before Settings' 0 in another
+  process. If both count as equal priority, AMS's merge puts a registered receiver ahead of a manifest one. That
+  would keep us first, but it is read from the code, not proven. Only the real request shows it: the order check
+  above.
+- **The arm's unhide has never met a real request.** That is the path where Settings is hidden: 14, and 16's Google
+  image. The Jelly Star does not hide Settings, so it tests the pin only. The unhide-then-request path needs a phone
+  or image that hides Settings, with a real headset.
+- **An option that would not depend on the order:** pin Settings at the tap instead of at the request (open at
+  arm), and unpin on a PIN request. This costs:
+  - Settings is pinned, with the shade closed, for the second or two between the tap and the request;
+  - a PIN dialog that Settings starts first would show for the moment before our unpin removes its task.
+
+  Not built. It is the user's choice if the Jelly Star shows the order failing.
 - Whether our page stays started while the dialog shows. The dialog is floating (`Theme.AlertDialog`) and runs in its
   own task, so the page should only pause, not stop. If the page did stop, the window would close at once with
   "Closed: page_stopped" right after "Pairing request, variant 3: OPEN". The Jelly Star check reads exactly this.

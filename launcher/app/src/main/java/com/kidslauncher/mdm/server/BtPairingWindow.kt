@@ -70,7 +70,8 @@ object BtPairingWindow {
     @Volatile
     private var appContext: Context? = null
 
-    private val tick = Runnable { handler?.post { appContext?.let { event(it, BtPairingEvent.CHECK, null) } } }
+    /** The deadline's check, posted on the window's own thread ([schedule]). */
+    private val tick = Runnable { appContext?.let { event(it, BtPairingEvent.CHECK, null) } }
 
     /** Settings' package events are the window's now (Home's list and the install receiver leave them). */
     val inFlight: Boolean
@@ -134,6 +135,11 @@ object BtPairingWindow {
         synchronized(lock) {
             // A window for another device closes first (one window at a time).
             if (record != null) closeLocked(app, "rearmed")
+            // Code QA L2: the page may have stopped between the tap and here (its stop's close found nothing to close).
+            if (!pageStarted) {
+                Log.i(LOG_TAG, "Not armed: the page stopped")
+                return
+            }
             val now = SystemClock.elapsedRealtime()
             var armed = BtPairingRecord(address, now)
             // Written before the unhide: a death after it leaves the marker, and the next start's apply hides Settings.
@@ -179,9 +185,10 @@ object BtPairingWindow {
                 when (intent.action) {
                     BluetoothDevice.ACTION_PAIRING_REQUEST -> {
                         val variant = intent.getIntExtra(BluetoothDevice.EXTRA_PAIRING_VARIANT, BluetoothDevice.ERROR)
-                        if (request(app, device?.address, variant) == BtRequestAnswer.GROWN_UP && isOrderedBroadcast) {
-                            // Settings would only meet lock task's "not available" screen; the bond ends at its timeout.
-                            abortBroadcast()
+                        request(app, device?.address, variant) { answer ->
+                            // Code QA M1: aborted before the close does anything. Settings would only meet lock task's
+                            // "not available" screen; the bond ends at its timeout.
+                            if (answer == BtRequestAnswer.GROWN_UP && isOrderedBroadcast) abortBroadcast()
                         }
                     }
                     BluetoothDevice.ACTION_BOND_STATE_CHANGED -> {
@@ -212,6 +219,20 @@ object BtPairingWindow {
         }
     }
 
+    /**
+     * Code QA M1: the receiver goes only after the `onReceive` running now has returned - posted on the window's thread,
+     * which runs the receiver. Unregistered inside its own ordered `onReceive`, AMS finishes that delivery without its
+     * result (an abort included). A window armed again before the post runs keeps it.
+     */
+    private fun unregisterLater(app: Context) {
+        val h = handler
+        if (h == null) {
+            unregisterLocked(app)
+            return
+        }
+        h.post { synchronized(lock) { if (record == null) unregisterLocked(app) } }
+    }
+
     private fun unregisterLocked(app: Context) {
         val r = receiver ?: return
         receiver = null
@@ -223,13 +244,14 @@ object BtPairingWindow {
     }
 
     /** The ordered request, on the window's thread: Settings pinned before this returns, so its receiver may start the
-     * dialog. */
-    internal fun request(app: Context, address: String?, variant: Int): BtRequestAnswer {
+     * dialog. [decided] runs under the lock with the answer before anything is done about it (the receiver's abort). */
+    internal fun request(app: Context, address: String?, variant: Int, decided: (BtRequestAnswer) -> Unit = {}): BtRequestAnswer {
         val answer = synchronized(lock) {
             val answer = btPairingRequest(
                 record, address, variant, pageStarted, PinLockRuntime.chromeLocked, LockTaskChrome.kioskOn, SystemClock.elapsedRealtime(),
             )
             Log.i(LOG_TAG, "Pairing request, variant $variant: $answer")
+            decided(answer)
             when (answer) {
                 BtRequestAnswer.OPEN -> {
                     val opened = record!!.copy(openedAt = SystemClock.elapsedRealtime())
@@ -273,35 +295,52 @@ object BtPairingWindow {
     /**
      * The one closer, idempotent (no record = nothing to do): the record gone, Settings out of the kiosk's list in two
      * passes, hidden again when the arm unhid it (not in a pause or the override: every app is unhidden then), the
-     * marker cleared, the receiver and the timer gone. Each step runs whatever the one before did.
+     * marker cleared - only when the unpin and the re-hide went through (code QA L1: else the next start or sync puts it
+     * back) -, the receiver (after the running `onReceive`, [unregisterLater]) and the timer gone. Each step runs
+     * whatever the one before did.
      */
     private fun closeLocked(app: Context, reason: String) {
         val r = record ?: return
         record = null
         quietUntil = SystemClock.elapsedRealtime() + QUIET_AFTER_MS
+        var done = true
         if (r.openedAt != null) {
             runCatching { LockTaskChrome.routeWindow(app, null, LockTaskChrome.RouteOwner.BT_PAIRING) }
-                .onFailure { Log.w(LOG_TAG, "Unpin failed: ${it.javaClass.simpleName}") }
+                .onFailure {
+                    done = false
+                    Log.w(LOG_TAG, "Unpin failed: ${it.javaClass.simpleName}")
+                }
         }
-        if (r.unhid && !lifted()) runCatching { rehide(app) }.onFailure { Log.w(LOG_TAG, "Re-hide failed: ${it.javaClass.simpleName}") }
-        runCatching { prefs(app).edit().remove(KEY_END).commit() }
-        unregisterLocked(app)
-        main.removeCallbacks(tick)
+        if (r.unhid && !lifted()) {
+            val hidden = runCatching { rehide(app) }.onFailure { Log.w(LOG_TAG, "Re-hide failed: ${it.javaClass.simpleName}") }
+            if (!hidden.getOrDefault(false)) done = false
+        }
+        if (done) {
+            runCatching { prefs(app).edit().remove(KEY_END).commit() }
+        } else {
+            Log.w(LOG_TAG, "The close didn't finish: the marker stays for the next start or sync")
+        }
+        unregisterLater(app)
+        handler?.removeCallbacks(tick)
         Log.i(LOG_TAG, "Closed: $reason (was ${if (r.openedAt != null) "open" else "armed"})")
     }
 
-    private fun rehide(app: Context) {
+    /** Settings hidden again; `false` = refused twice, an apply follows (and the marker stays). */
+    private fun rehide(app: Context): Boolean {
         repeat(2) {
-            if (dpm(app).setApplicationHidden(admin(app), SETTINGS_PACKAGE, true)) return
+            if (dpm(app).setApplicationHidden(admin(app), SETTINGS_PACKAGE, true)) return true
         }
         Log.w(LOG_TAG, "Settings didn't hide again: an apply follows")
         Thread { runCatching { AppEnforcer.apply(app, currentPolicyDecision()) } }.start()
+        return false
     }
 
+    /** Code QA L3: the deadline's check on the window's own thread, not the main looper. */
     private fun schedule() {
         val r = record ?: return
-        main.removeCallbacks(tick)
-        main.postDelayed(tick, (btPairingDeadline(r) - SystemClock.elapsedRealtime()).coerceAtLeast(0L) + 50L)
+        val h = handler ?: return
+        h.removeCallbacks(tick)
+        h.postDelayed(tick, (btPairingDeadline(r) - SystemClock.elapsedRealtime()).coerceAtLeast(0L) + 50L)
     }
 
     // --- the apply and the start ---
@@ -333,7 +372,8 @@ object BtPairingWindow {
 
     /**
      * A window an earlier process left (its marker set, none of this process): Settings out of the list and the plan's
-     * hide back - one apply - then the marker goes. At the main process's start and before each sync (background).
+     * hide back - one apply - then the marker goes, only once both went through (code QA L1: a failure leaves it, and
+     * the next start or sync tries again). At the main process's start and before each sync (background).
      */
     fun putBackIfMarked(context: Context) {
         val app = context.applicationContext
@@ -344,9 +384,11 @@ object BtPairingWindow {
             try {
                 LockTaskChrome.routeWindow(app, null, LockTaskChrome.RouteOwner.BT_PAIRING)
                 AppEnforcer.apply(app, currentPolicyDecision())
-            } finally {
-                synchronized(lock) { if (record == null) prefs(app).edit().remove(KEY_END).commit() }
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "The put-back failed: ${e.javaClass.simpleName}; the marker stays")
+                return
             }
+            synchronized(lock) { if (record == null) prefs(app).edit().remove(KEY_END).commit() }
         }
     }
 }
