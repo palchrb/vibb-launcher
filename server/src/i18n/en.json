@@ -2369,7 +2369,6 @@
   "apps.app.last_upload": "Last upload",
   "apps.app.last_checked": "Last checked",
   "apps.app.checking": "Checking now…",
-  "apps.app.checking_since": "Started {when}",
   "apps.app.downloading": "New version found, downloading",
   "apps.app.nothing_new": "No new version",
   "apps.app.last_check": "Last check, {when}",
