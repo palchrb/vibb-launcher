@@ -16,8 +16,8 @@
         android:layout_width="24dp"
         android:layout_height="24dp"
         android:layout_marginEnd="12dp"
-        android:tint="?android:attr/textColorSecondary"
-        tools:src="@drawable/ic_wifi_signal_3" />
+        android:tint="@color/kid_page_ink_dim"
+        android:src="@drawable/ic_wifi_signal_3" />
 
     <LinearLayout
         android:layout_width="0dp"

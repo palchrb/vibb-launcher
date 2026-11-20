@@ -58,6 +58,8 @@ class PageTokensScanTest {
         "ic_kid_missed_call", "ic_kid_call_in", "ic_kid_call_out",
         // The phone book row's sub-line (variant D): the chat bubble, tinted teal by the row.
         "ic_kid_badge_message",
+        // The Wi-Fi list's signal bars (set by WifiSignal), tinted in the page's dim ink.
+        "ic_wifi_signal_0", "ic_wifi_signal_1", "ic_wifi_signal_2", "ic_wifi_signal_3", "ic_wifi_signal_4",
     )
 
     /** The same in both looks (§4.1): what sits on a peach fill, the kid's own bubble, and the badge pills (design 106:
