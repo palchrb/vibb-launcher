@@ -20,32 +20,30 @@
         {% if let Some(checked) = last_checked %}
         <div class="row" data-row="last-checked">
             <span class="row-label">{% if app.source_type == "manual" %}{{ self.t("apps.app.last_upload") }}{% else %}{{ self.t("apps.app.last_checked") }}{% endif %}</span>
-            <span class="row-value" title="{{ checked.exact }}">{{ checked.text }}</span>
+            <span class="row-value" title="{{ checked.exact }}">{{ checked.text }}{% if nothing_new && sync_running.is_none() && sync_failure.is_none() %} · <span class="row-label-quiet" data-sync="nothing-new">{{ self.t("apps.app.nothing_new") }}</span>{% endif %}</span>
         </div>
         {% endif %}
-        {#- While a sync runs the page refreshes in place (`data-waits`, static/auto-reload.js) until it shows the result. -#}
-        {% if let Some(since) = sync_running %}
-        {% if let Some(v) = sync_downloading %}
-        <div class="row" data-sync="downloading">
-            <span class="row-label">{{ self.t("apps.app.downloading") }}<span class="row-sub">{{ v }}</span></span>
-        </div>
-        {% else %}
-        <div class="row" data-sync="running">
-            <span class="row-label">{{ self.t("apps.app.checking") }}<span class="row-sub" title="{{ since.exact }}">{{ self.tp("apps.app.checking_since", [("when", since.text.as_str())]) }}</span></span>
-        </div>
-        {% endif %}
-        <span hidden data-waits></span>
-        {% else if let Some(failed) = sync_failure %}
+        {#- The Check Now row never moves: a running sync reads in the button's own row (disabled), the result in "Last checked"; only a failure gets a row of its own. While a sync runs the page refreshes in place (`data-waits`, static/auto-reload.js) until it shows the result. -#}
+        {% if sync_running.is_none() %}{% if let Some(failed) = sync_failure %}
         <details class="info cell" data-sync="failed">
             <summary class="row"><span class="row-label"><span class="text-alarm">{{ failed.title }}</span>{% if let Some(when) = failed.when %}<span class="row-sub" title="{{ when.exact }}">{{ self.tp("apps.app.last_check", [("when", when.text.as_str())]) }}</span>{% endif %}</span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("apps.app.failed_about") }}"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
             <div class="info-panel"><p>{{ failed.detail }}</p>{% if let Some(when) = failed.when %}<p>{{ when.exact }}</p>{% endif %}</div>
         </details>
-        {% else if nothing_new %}
-        <div class="row" data-sync="nothing-new"><span class="row-label row-label-quiet">{{ self.t("apps.app.nothing_new") }}</span></div>
+        {% endif %}{% endif %}
+        {% if sync_running.is_some() %}
+        <span hidden data-waits></span>
         {% endif %}
         {% if app.source_type != "manual" %}
         <form method="post" action="/apps/tracked/{{ app.id }}/check#check" class="cell">
-            <button type="submit" class="row row-button">{{ self.t("apps.app.check_now") }}</button>
+            {% if let Some(since) = sync_running %}
+            {% if let Some(v) = sync_downloading %}
+            <button type="submit" class="row row-button" disabled data-sync="downloading" title="{{ v }}">{{ self.t("apps.app.downloading") }}</button>
+            {% else %}
+            <button type="submit" class="row row-button" disabled data-sync="running" title="{{ since.exact }}">{{ self.t("apps.app.checking") }}</button>
+            {% endif %}
+            {% else %}
+            <button type="submit" class="row row-button">{{ self.t("apps.app.check_now") }}{% if nothing_new && last_checked.is_none() && sync_failure.is_none() %} · <span class="row-label-quiet" data-sync="nothing-new">{{ self.t("apps.app.nothing_new") }}</span>{% endif %}</button>
+            {% endif %}
         </form>
         {% endif %}
     </div>
