@@ -178,6 +178,27 @@ fun noticeStep(
     return NoticeStep.Post(notice, alert = notice.newestId > alerted)
 }
 
+/**
+ * The step under a time rule without calls (the user, 2026-11-20: the phone stays "dumb" during a rule): a post - a new
+ * call from an emergency contact, an update, a re-learn - waits ([NoticeStep.Keep]; [noticeWaits] marks it), and once
+ * calls are allowed again the release's pass ([release]) posts what is there quietly, never alerting. Clears and keeps
+ * are as before.
+ */
+fun noticeStepUnderRule(step: NoticeStep, callsBlocked: Boolean, release: Boolean): NoticeStep = when {
+    step !is NoticeStep.Post -> step
+    callsBlocked -> NoticeStep.Keep
+    release -> step.copy(alert = false)
+    else -> step
+}
+
+/** Whether [step] (before [noticeStepUnderRule]) waits for the rule: the release must post it then. */
+fun noticeWaits(step: NoticeStep, callsBlocked: Boolean): Boolean = callsBlocked && step is NoticeStep.Post
+
+/** The alerted bound after [step] waited (code QA H1): its calls count as alerted, so no pass after the rule rings for
+ * them - only a call newer than them alerts. */
+fun alertedAfterWait(alertedUpToId: Long, step: NoticeStep): Long =
+    if (step is NoticeStep.Post) maxOf(alertedUpToId, step.notice.newestId) else alertedUpToId
+
 /** How long the call log is read back, and how long a dismissed mark is kept (14 days, [MissedCallsRepo]). */
 const val MISSED_CALL_LOG_WINDOW_MS = 14L * 24 * 60 * 60 * 1000
 

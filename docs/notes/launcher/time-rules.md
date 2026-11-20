@@ -60,8 +60,10 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   (`LockRow.Messages`, after the phone book, while `lock.callsAllowed` and Home shows the tile - `SmsHome.tileShown()`,
   so not while the parent keeps Meldinger off Home; with the parent's name and icon for it, design 82) that never opens by
   itself after an unlock; the three message screens check at resume and watch the lock (`LockWatch` with
-  `MessagesScreens.redirectIfLocked`). Messages that come in under a rule without calls are stored and notified
-  silently (step 1), and the gate refuses a send then (`TIME_RULE`: "Du kan ikke sende meldinger nå").
+  `MessagesScreens.redirectIfLocked`). Messages that come in under a rule without calls are stored and, since
+  2026-11-20, not notified until calls are allowed again, then once, quietly (`docs/notes/launcher/calls.md`, "No
+  notification under a rule without calls"; the lock glance shows only what a rule allows: lock-and-glance.md, "Rows
+  under a time rule"), and the gate refuses a send then (`TIME_RULE`: "Du kan ikke sende meldinger nå").
   Two system helpers stay reachable from a thread under a rule that allows calls (step 3b's code QA N9, and step 2's
   L6): the photo picker behind "+" (read-only, the kid's own gallery; it is a lock-task helper, never suspended) and the
   share sheet behind a picture's "Del" (only allowed apps resolve). The "+" shows only while the compose bar is open,

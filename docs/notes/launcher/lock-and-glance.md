@@ -255,6 +255,23 @@ name - Element X's "N new messages" fallback reads "Chat"; a conversation's or a
   only while the swiped row is still the newest - `smsDismissCancels`, code QA L2 - nothing marked read). TalkBack: one node, "3 nye meldinger fra Mamma, [text,] 14:05", click label "Lås opp og åpne
   Meldinger" (`glance_sms_action`). Tests: `SmsGlanceTest`, `LockGlanceTest`, `LockGlanceGuardTest`. Emulator-checked
   2026-11-09: `docs/testing/emulator.md` §6v, step 5.
+- **Rows under a time rule** (the user, 2026-11-20, of "Pappa · 3 nye" with its text on the glance during Skole: "jeg
+  trodde ikke vi skulle vise varsler mens regler er på? ... med mindre vi har tillatt spesielle apper"): while a rule or
+  the used-up budget locks, the glance shows a row only for what the lock allows - the tap's own test
+  (`glanceUsableUnderLock` through `glanceRowShownUnderLock`, pure, `lock/LockGlance.kt`): an app's row when the app is
+  among the lock's usable apps (a rule's exempt apps; the budget's messaging and music apps), a missed-call row and
+  Meldinger's where the rule allows calls (the budget does), Kalender's reminder where every rule allows Kalender (never
+  under the budget alone). The rest is left out of the list and of "+ N varsler til" (`shownRows` ->
+  `glanceRowsUnderLock`); nothing is cancelled or marked read, and it is back as it was when the rule ends, is lifted or
+  paused. The lock is `glanceRowLock(mdm.lockReason(), snapshot.lock)` - none while the enforced reason is NONE, else the
+  time-rule screen's snapshot, so a pause or a lift in it shows every row - kept by the panel with the rule card from the
+  same snapshot (a resume's `readRuleNow`, every re-check's lock listener; a change re-renders). The store's notice-wake
+  and buzz count the same rows (`GlanceStore.putPosted`'s `visibleRows(lock)`, one `GlanceRowLock.now()` per post, a
+  fault fails closed: no row counts), so a post the glance doesn't show never lights the screen; Meldinger's and the
+  missed call's posts don't happen at all under a rule without calls (`docs/notes/launcher/calls.md`, "No notification
+  under a rule without calls"). The music tile, the timer tile, the rule card and Dagen's "Neste" line are no rows and
+  stay; the "Neste" line still yields to a reminder the rule keeps back (no event comes onto the glance that wasn't).
+  Tests: `LockGlanceTest`.
 - **The music tile alone, the player, the flashlight** (round 6, `docs/design/r6-launcher-small-items.md` §2,
   `41-flashlight.md` §1.3; the player r9 §3): a session or listening-window callback never re-renders the page -
   `GlanceCoalescer` folds a frame's callbacks into one `tileChanged`, which renders the tile alone by `glanceLayout`'s

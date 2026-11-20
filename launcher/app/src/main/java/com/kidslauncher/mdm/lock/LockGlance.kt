@@ -1,10 +1,16 @@
 package com.kidslauncher.mdm.lock
 
+import com.kidslauncher.mdm.badges.GlanceCalendarRow
 import com.kidslauncher.mdm.badges.GlanceConversation
+import com.kidslauncher.mdm.badges.GlanceMessageRow
 import com.kidslauncher.mdm.badges.GlanceMissedRow
 import com.kidslauncher.mdm.badges.GlanceRow
+import com.kidslauncher.mdm.badges.GlanceSmsRow
 import com.kidslauncher.mdm.music.MusicSession
 import com.kidslauncher.mdm.music.clockText
+import com.kidslauncher.mdm.server.LockReason
+import com.kidslauncher.mdm.timerules.TimeLock
+import com.kidslauncher.mdm.timerules.UNLOCKED
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -807,6 +813,39 @@ fun glanceUsableUnderLock(lock: com.kidslauncher.mdm.timerules.TimeLock, target:
     target is GlanceTarget.Thread -> lock.callsAllowed
     else -> target.appPackage?.let { it in lock.usableApps } ?: (lock.callsAllowed && callsManaged)
 }
+
+// ---- the rows under a time rule (the user, 2026-11-20) --------------------------------------------
+
+/** What a row's tap takes: a conversation's newest notification, a missed-call contact (or the phone book), Dagen on the
+ * reminder's day, or an SMS thread. */
+fun glanceRowTarget(row: GlanceRow): GlanceTarget = when (row) {
+    is GlanceMessageRow -> GlanceTarget.Conversation(row.conversation, row.notificationKey, row.postTimeMs)
+    is GlanceMissedRow -> GlanceTarget.MissedCalls(row.number)
+    is GlanceCalendarRow -> GlanceTarget.Day(row.epochDay)
+    is GlanceSmsRow -> GlanceTarget.Thread(row.conversationId)
+}
+
+/**
+ * The time lock the glance's rows follow: none while the enforced reason ([reason], `mdm.lockReason()`) is NONE - the
+ * one pref read that answers on most posts -, else the snapshot's [lock] (a pause or a lift already in it shows every
+ * row). The used-up budget alone is a lock too: the rows are then the budget's messaging apps, missed calls and Meldinger.
+ */
+fun glanceRowLock(reason: LockReason, lock: TimeLock): TimeLock = if (reason == LockReason.NONE) UNLOCKED else lock
+
+/**
+ * Whether a row shows on the glance under [lock] (the user, 2026-11-20: "da skal jo telefonen være veldig dum, med
+ * mindre vi har tillatt spesielle apper"): the tap's own test ([glanceUsableUnderLock]) - an app's row when the app is
+ * among the lock's usable apps, a missed-call row and Meldinger's where the rule allows calls, Kalender's reminder
+ * where every rule allows Kalender. The missed-call row follows the rule's calls alone; whether the phone book opens it
+ * (calls managed) stays the tap's question.
+ */
+fun glanceRowShownUnderLock(lock: TimeLock, row: GlanceRow): Boolean =
+    glanceUsableUnderLock(lock, glanceRowTarget(row), callsManaged = true)
+
+/** The rows [lock] leaves on the glance ([glanceRowShownUnderLock]), in their order. The others are only not shown -
+ * nothing is cancelled or marked read, and they are back as they were when the rule ends. */
+fun glanceRowsUnderLock(rows: List<GlanceRow>, lock: TimeLock): List<GlanceRow> =
+    if (!lock.locked) rows else rows.filter { glanceRowShownUnderLock(lock, it) }
 
 /** A glance hand-over made at [handedOverAt] (elapsed realtime) still counts at [now] (`GLANCE_HAND_OVER_MS`). */
 fun glanceHandOverFresh(handedOverAt: Long, now: Long): Boolean = now - handedOverAt in 0..GLANCE_HAND_OVER_MS

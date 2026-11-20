@@ -817,10 +817,27 @@ Meldinger rows". What was decided (the design left it open):
   as the name, "Ukjent avsender: ..." before the text with the switch on.
 - **Modes and time rules - the engine's summary decides:** the row shows whenever the conversation has unread
   messages, the same count as Home's badge (`SmsHome`), in every mode: in "Av"/"Ikke styrt" no new message arrives,
-  and what was left unread before still shows and opens the read-only thread. Under a time rule the row shows (the
-  message was notified, silently, §6.7), and its tap takes the thread only where the rule allows calls - the message
-  screens' own rule (`messagesUsableUnder`), else the plain keypad; from the lock with a rule in force it is handed to
-  the time-rule screen, as every other row.
+  and what was left unread before still shows and opens the read-only thread. Under a time rule (or the used-up
+  budget) the row shows only where the rule allows calls (2026-11-20, `glanceRowsUnderLock`; lock-and-glance.md, "Rows
+  under a time rule"), and its tap then takes the thread - the message screens' own rule (`messagesUsableUnder`); from
+  the lock with a rule in force it is handed to the time-rule screen, as every other row.
+- **No notification under a rule without calls** (the user, 2026-11-20: "da skal jo telefonen være veldig dum"; until
+  then "stored and notified silently", §6.7): a message or a reaction is stored and unread as before, but nothing is
+  posted - `smsPost` (`sms/SmsRuleWait.kt`, `SmsRuleWaitTest`) answers `WAIT` from `TimeRulesStore.callsBlockedNow()`
+  (fail closed), and the conversation (and the one a group MMS left) goes into `SmsPrefs.ruleWaiting` (CE, ids only;
+  not D16's held messages). The glance's swipe mark is spent as a post's would be. `RuleWaitingNotices.release`
+  (`timerules/`), called from every place the lock is decided - `TimeRulesRuntime.recheck` (the boundary, screen-on,
+  every accepted policy, the parent code's pause) and `AppEnforcer.apply` (the pause, the override) - runs
+  `SmsRuntime.releaseAfterRule`: once calls are allowed it clears the mark first, then posts each waiting conversation
+  once through `afterMove` - the silent channel, `wake = false`, so no sound, buzz, heads-up or lock wake - or cancels
+  its notification when nothing is unread there; the thread in front is left out. A notification posted before the
+  rule stays as it was during it. The missed-call notification follows the same rule (`noticeStepUnderRule`: an
+  emergency contact's call can be missed under such a rule; its post waits under `rule_waiting` in its prefs, and the
+  release's pass posts it with `alert = false`, counting it as told). Code QA of the round: a waiting missed-call post
+  marks its calls alerted in the same commit (`alertedAfterWait`), so the relearn at the rule's end, which runs before
+  the release, posts quietly instead of ringing; a release whose post fails waits again (both sides); a setup that ran
+  before `isUserUnlocked()` releases at `ACTION_USER_UNLOCKED` (`Application.releaseWaitingAtUnlock`). Meldinger has no
+  such pass: after a wait only a new message posts with an alert, and that alert is the new message's own.
 - **The level** (design 82 D4, `docs/design/82-meldinger-as-an-app.md`): the parent's choice for Meldinger on the
   lock is the policy's `lock_glance.sms` - `GlancePolicy.sms` (`badges/GlanceRows.kt`: `OFF`, `NAME`, `TEXT`) - and
   one pure function gives it to both readers, `smsLockLevel(sms)` (`sms/SmsGlance.kt`): the word as it is, whatever

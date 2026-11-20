@@ -72,7 +72,8 @@ fun smsGlanceRows(level: SmsLockLevel, conversations: List<Conversation>, messag
     }
 
 /**
- * The channel of a conversation notification's post: silent under a time rule without calls ([silent], as before), and
+ * The channel of a conversation notification's post: silent for a quiet post ([silent]: a picture told again, a rebuild,
+ * the release after a rule without calls - during one nothing is posted, `SmsRuleWait.kt`), and
  * design 81 D12's reaction from someone else ([reaction]) on its own short-buzz channel - silent too under any Do Not
  * Disturb ([passesFilter] false: the filter isn't `ALL`, or unknown), whatever the mode lets through.
  */

@@ -1259,6 +1259,10 @@ Design 34's look: night ground, Nunito, `kid_tile`s, the one peach accent, `KidH
   - the screens are reachable only where the rule says calls are (as the phone book);
   - incoming messages are stored and notified silently;
   - the compose bar says "Du kan ikke sende meldinger nå" ("You can't send messages now").
+  - As built (2026-11-20, the user: the phone stays "dumb" during a rule): no notification at all while the rule is in
+    force - the message (or reaction) is stored and unread, its conversation waits; once calls are allowed again (the
+    rule's end, a lift, a pause, the override) each waiting conversation is posted once, quietly (the silent channel, no
+    sound, buzz, heads-up or lock wake). `sms/SmsRuleWait.kt`, `docs/notes/launcher/calls.md`.
 
 ### 6.8 Notifications, reply, the lock glance
 
@@ -1284,6 +1288,9 @@ Design 34's look: night ground, Nunito, `kid_tile`s, the one peach accent, `KidH
     post wakes the lock under the parent's existing notice-wake switch (round 7) - only with no Do Not Disturb and only
     when it brings a row onto the lock, as an app's notice. The decisions:
     `docs/notes/launcher/calls.md`, "The lock glance's Meldinger row, step 5".
+  - As built (2026-11-20): under a time rule or the used-up budget the glance shows a row only for what the rule
+    allows, Meldinger's only where it allows calls; the rest comes back unchanged when it ends
+    (`docs/notes/launcher/lock-and-glance.md`, "Rows under a time rule").
 
 ### 6.9 i18n
 
