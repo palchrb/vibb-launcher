@@ -64,6 +64,27 @@ enum class HelperKind {
      * (blocked); a provider's screen is reachable only for an allowed app.
      */
     CREDENTIAL_SELECTOR,
+
+    /**
+     * The package of the MediaStore provider (`MediaStore.AUTHORITY`, the MediaProvider module: Google's
+     * `com.google.android.providers.media.module`, AOSP's `com.android.providers.media.module`), resolved from the
+     * platform, never a fixed name (media-provider-helper, 2026-11-20). `MediaStore.createDeleteRequest`,
+     * `createTrashRequest`, `createWriteRequest` and `createFavoriteRequest` hand the app a PendingIntent to the
+     * provider's own confirmation (`PermissionActivity`), which starts in the caller's task - even with Media
+     * management (`MANAGE_MEDIA`), when it finishes at once without a dialog. Not pinned, the block turned an allowed
+     * app's delete (Immich on the Jelly Star) into "App is not available" for "Media picker". [PHOTO_PICKER] pinned it
+     * only where `ACTION_PICK_IMAGES` resolves to the module itself; with the newer photo picker
+     * (`com.google.android.photopicker`, already on the emulator since 2026-10) it doesn't.
+     *
+     * Residual risk (AOSP's MediaProvider manifest, from knowledge, not read on the Jelly Star): besides the
+     * confirmation (not exported, reachable only through a PendingIntent the provider makes for the calling app),
+     * the module exports the older photo picker (`PICK_IMAGES`, `USER_SELECT_IMAGES_FOR_APP`, a disabled
+     * `GET_CONTENT` alias), the picker's cloud-media settings (`PICK_IMAGES_SETTINGS`: choose or turn off a cloud
+     * photo app such as Google Photos for the picker - Play services and Settings stay blocked from there) and the
+     * clear-cache confirmation (`CLEAR_APP_CLEARABLE_CACHE`, which needs `MANAGE_EXTERNAL_STORAGE` and only clears the
+     * caller's own cache). An allowed app could open these; none leads to a browser, Settings or another app.
+     */
+    MEDIA_PROVIDER,
 }
 
 /** AOSP's own Credential Manager selector package, the platform's default since Android 14. */
