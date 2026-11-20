@@ -55,14 +55,9 @@ class WifiNetworkAdapter(
 
         binding.wifiNetworkSsid.text = network.ssid
 
-        // No public signal-strength drawable exists on this platform (the stat_sys_wifi_signal_*
-        // resources are framework-internal, not part of android.R.drawable) - a plain text bar
-        // indicator avoids depending on hidden resources entirely.
-        val bars = "▁▃▅█"
-        val filledBars = (network.signalLevel.coerceIn(0, 4))
-        binding.wifiNetworkSignalText.text = buildString {
-            repeat(4) { i -> append(if (i < filledBars) bars[i] else '▁') }
-        }
+        binding.wifiNetworkSignal.setImageResource(WifiSignal.drawable(network.signalLevel))
+        binding.wifiNetworkSignal.contentDescription =
+            context.getString(R.string.wifi_networks_signal, WifiSignal.level(network.signalLevel), WifiSignal.MAX_LEVEL)
         binding.wifiNetworkLockIcon.visibility = if (network.secured) View.VISIBLE else View.GONE
 
         val statusText = when {
