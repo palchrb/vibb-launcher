@@ -160,8 +160,11 @@ sealed interface RendererEvent {
      */
     data class Error(val code: String, val gated: Boolean = false, val noNetwork: Boolean = false) : RendererEvent
 
-    /** The renderer can't play at all (a Sonos room's failed start, design 26a §4.2): back to the phone, paused. */
-    data object Lost : RendererEvent
+    /**
+     * The renderer can't play at all (a Sonos room's failed start, design 26a §4.2): back to the phone, paused. [askAdult]
+     * (design 54 §2.13): the speaker refused a share link - the account linked in the Sonos app can't play it.
+     */
+    data class Lost(val askAdult: Boolean = false) : RendererEvent
 
     /** After every batch of the events above (Media3's `onEvents`): time to publish. */
     data object StateChanged : RendererEvent

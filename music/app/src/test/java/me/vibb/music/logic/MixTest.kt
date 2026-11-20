@@ -42,7 +42,7 @@ class MixTest {
     }
 
     @Test
-    fun `mixView - the phone holds a book and an own file only with a copy, Spotify in - a room every book, no own file, no Spotify, no withdrawn item`() {
+    fun `mixView - the phone holds a book and an own file only with a copy, Spotify in - a room every book and Spotify, no own file, no withdrawn item`() {
         val s = snapshot(
             library(listOf(pod, series, own, list), files = listOf(file(30, 3), file(31, 3))),
             items(1, listOf("p1", "p2"), gone = setOf("p2")) + items(2, listOf("b1", "b2"), gone = setOf("b1", "b2")) +
@@ -58,7 +58,11 @@ class MixTest {
             mixView(order) { s.holds(it) },
         )
         val room = s.forRenderer(true)
-        assertEquals("a room: every book, no own file, no Spotify, no withdrawn item", listOf(ref(pod, "p1"), ref(series, "b1"), ref(series, "b2")), mixView(order) { room.holds(it) })
+        assertEquals(
+            "a room: every book, the Spotify track (design 54: a share link of its own), no own file, no withdrawn item",
+            listOf(ref(pod, "p1"), ref(series, "b1"), ref(series, "b2"), ref(list, "t1")),
+            mixView(order) { room.holds(it) },
+        )
     }
 
     @Test

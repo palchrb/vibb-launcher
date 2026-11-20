@@ -161,7 +161,10 @@ import me.vibb.music.sonos.RoomVerdict
 import me.vibb.music.sonos.SonosSuspension
 import me.vibb.music.sonos.SonosTail
 import me.vibb.music.sonos.adoptIndex
+import me.vibb.music.sonos.SonosParkRetry
 import me.vibb.music.sonos.adoptPlan
+import me.vibb.music.sonos.isQueueMarker
+import me.vibb.music.sonos.shareBaselineOf
 import me.vibb.music.sonos.Room
 import me.vibb.music.sonos.SpeakerCache
 import me.vibb.music.sonos.RoomsView
@@ -228,6 +231,13 @@ internal class Active(
      * the row writers store it and write no bookmark. Null: an entry's queue.
      */
     var mix: MixQueue? = null
+
+    /**
+     * Design 54 R2: on a room, a Spotify entry's listing - the keys of `Snapshot.visible` in the listing's own order,
+     * never [order]'s direction or the favourites scope (the speaker's queue follows the link's order). Null for every
+     * other queue.
+     */
+    var listed: List<String>? = null
 
     /** [favourites] as `NowPlayingRow.favourites` stores it. */
     fun storedScope(): String? = favourites?.joinToString("\n")
@@ -369,7 +379,13 @@ class PlaybackService : MediaSessionService() {
         PlayerHub.position = { renderer.positionMs() }
         LiveBridge.acquire(this)
         PlayerHub.suspendStop = { scope.launch { suspendStop() } }
-        PlayerHub.capChanged = { (renderer as? SonosRenderer)?.controller?.capChanged() }
+        PlayerHub.capChanged = {
+            (renderer as? SonosRenderer)?.let {
+                it.controller.capChanged()
+                // design 54 R2: the managed config may have moved the edge - the speaker's sleep timer follows it
+                it.edgeChanged()
+            }
+        }
         modeInCall = callMode(audio.mode)
         audio.addOnModeChangedListener(mainExecutor, modeListener)
         // Design 26a §4.7: the phone settles at once; a room only after one classify of it (adopt).
@@ -992,7 +1008,7 @@ class PlaybackService : MediaSessionService() {
                 shownNewestFirst = snap.shownNewestFirst(entry),
                 repeat = snap.repeatOf(entry),
                 favourites = favourites,
-            )
+            ).also { if (!kind.onPhone && entry.source == Source.SPOTIFY) it.listed = snap.visible(entry).map { i -> i.key } }
         } catch (e: Throwable) {
             // A queue that never loads ends its claims (qa-30-s3b-code L6): a claimed progressive item would
             // otherwise stay busy - never fetched - until the next queue loads.
@@ -1195,7 +1211,7 @@ class PlaybackService : MediaSessionService() {
         val (snap, rows) = loaded ?: loadForRenderer()
         val ref = m.items.getOrNull(index) ?: return false
         val entry = snap.entryByKey(ref.entryKey) ?: return false
-        val run = segmentAt(m.items, index)
+        val run = segmentAt(m.items, index, single = roomShareRef(entry, room = !renderer.kind.onPhone))
         val plan = QueuePlan(run.keys, index - run.from, posMs ?: startPos(entry, snap.positions[entry.key]?.get(ref.itemKey)))
         val (a, p) = queueFor(snap, rows, entry, plan, shuffled = false, queueKind(renderer.kind, entry), run.keys.toSet()) ?: return false
         a.mix = m
@@ -1213,6 +1229,9 @@ class PlaybackService : MediaSessionService() {
         m.index = oldIndex
         return false
     }
+
+    /** Design 54 R2 (r12 §3.5): on a room a Spotify favourite is a run of one - one share link per track. */
+    private fun roomShareRef(entry: Entry, room: Boolean): Boolean = room && isSpotify(entry)
 
     /** The service's own pause (a move-on, a held run): never the kid's, so the sleep timer and "Til slutten" stay. */
     private fun selfPause() {
@@ -1394,7 +1413,7 @@ class PlaybackService : MediaSessionService() {
         val m = mixQueueOf(snap, stored, restored.queue)
         val ref = restored.queue[restored.index]
         val entry = snap.entryByKey(ref.entryKey) ?: return Restored.Empty
-        val run = segmentAt(m.items, restored.index)
+        val run = segmentAt(m.items, restored.index, single = roomShareRef(entry, room = !renderer.kind.onPhone))
         val pos = if (restored.same) row.posMs else startPos(entry, snap.positions[entry.key]?.get(ref.itemKey))
         val plan = QueuePlan(run.keys, restored.index - run.from, pos)
         val (a, p) = queueFor(snap, rows, entry, plan, shuffled = false, queueKind(renderer.kind, entry), run.keys.toSet()) ?: return Restored.Empty
@@ -2148,7 +2167,7 @@ class PlaybackService : MediaSessionService() {
                 if (callPause.inCall) callStep()
             }
             is RendererEvent.Error -> onError(event.code, event.gated, event.noNetwork)
-            RendererEvent.Lost -> scope.launch { lost() }
+            is RendererEvent.Lost -> scope.launch { lost(event.askAdult) }
             RendererEvent.StateChanged -> {
                 publish()
                 mixSpotifyLine()
@@ -2806,14 +2825,20 @@ class PlaybackService : MediaSessionService() {
         val order = entry?.let { snap.order(it) }.orEmpty()
         val ofEntry: (String) -> Boolean = { u -> entry != null && adoptIndex(entry, order, u) != null }
         val sonos = sonosRenderer(uid, choice.name)
+        // design 54 §2.9 (R2, QA-2): a share link's look classifies with the persisted baseline and goes on with the stored
+        // queue marker - never the live TrackURI, which would make it a one-track url session
+        val marker = isQueueMarker(choice.uri)
+        val share = shareBaselineOf(choice, entry, entry?.let { snap.visible(it).map { i -> i.key } }.orEmpty())
         // ours: the session goes on with the live TrackURI (vibb posts `snap.uri` to /adopt; design 26b §5.3) -
         // for a Storytel book the signed URL the speaker holds, which the stored marker only names
         val live = withTimeoutOrNull(ADOPT_MS) {
-            sonos.probe(choice.uri.orEmpty()) { f -> if (ourLiveSession(choice, f, ofEntry)) f.uri?.takeIf { it.isNotEmpty() } else null }
+            sonos.probe(choice.uri.orEmpty(), share) { f -> if (ourLiveSession(choice, f, ofEntry)) (if (marker) choice.uri else f.uri?.takeIf { it.isNotEmpty() }) else null }
         }
         val verdict = roomVerdict(choice, live, ofEntry)
-        val uri = live?.uri?.takeIf { verdict == RoomVerdict.OURS_LIVE }.orEmpty()
-        val queue = if (verdict == RoomVerdict.OURS_LIVE && entry != null) adoptedQueue(snap, rows, entry, uri) else null
+        // the item from the live track (design 54 §2.9); the session's uri is the marker
+        val liveUri = live?.uri?.takeIf { verdict == RoomVerdict.OURS_LIVE }.orEmpty()
+        val uri = if (marker && verdict == RoomVerdict.OURS_LIVE) choice.uri.orEmpty() else liveUri
+        val queue = if (verdict == RoomVerdict.OURS_LIVE && entry != null) adoptedQueue(snap, rows, entry, liveUri, choice.itemKey) else null
         if (queue == null || live == null || !renderer.kind.onPhone) {
             if (verdict == RoomVerdict.OURS_LIVE) sonos.stopUnadopted()
             sonos.release()
@@ -2825,7 +2850,7 @@ class PlaybackService : MediaSessionService() {
             withContext(writer) { home.write(RendererChoice.local(home.choice())) }
             return
         }
-        val (a, index) = queue
+        val (a, index, mapped) = queue
         // renderer.json through storedUri on both branches (design 26b §5.3, QA M1): the stored built uri kept,
         // or with none stored yet the live one; a Storytel book's marker either way, never the signed URL
         val adopted = choice.adopted(a.entry, a.items[index].key, uri)
@@ -2836,7 +2861,7 @@ class PlaybackService : MediaSessionService() {
         mix = a.mix
         lastIndex = index
         // design 53 §2.9: the adopt's baseline is the first fresh topology after it (the controller asks for it), nothing sent
-        sonos.adopt(a.items.map { mediaItem(a, it) }, index, uri, live)
+        sonos.adopt(a.items.map { mediaItem(a, it) }, index, uri, live, mapped)
         publish()
         // a room the parent's scope no longer allows: adopted only to be bookmarked and stopped (§5.5)
         leaveDisallowedRoom()
@@ -2865,12 +2890,16 @@ class PlaybackService : MediaSessionService() {
         comeHome(sonos, play = false, quiet = true)
     }
 
-    /** The stored entry's queue on a room ([adoptPlan]) and the index of [uri] in it; null when it can't be rebuilt. */
-    private suspend fun adoptedQueue(snap: Snapshot, rows: List<DownloadRow>, entry: Entry, uri: String): Pair<Active, Int>? {
+    /**
+     * The stored entry's queue on a room ([adoptPlan]) and the index of [uri] in it, and whether that item is mapped;
+     * null when it can't be rebuilt. Design 54 R2 (QA-4): an ours Spotify queue track our list doesn't name is adopted at
+     * [storedItem] (else the first) with the unmapped look - never stopped.
+     */
+    private suspend fun adoptedQueue(snap: Snapshot, rows: List<DownloadRow>, entry: Entry, uri: String, storedItem: String? = null): Triple<Active, Int, Boolean>? {
         val row = withContext(Dispatchers.IO) { store.db.nowPlaying() }?.takeIf { it.entryId == entry.id }
         val stored = row?.keys?.split('\n')?.filter { it.isNotEmpty() }
         val favourites = row?.scope()
-        val plan = adoptPlan(entry, snap.order(entry), stored, row?.shuffled == true, uri) ?: return null
+        val plan = adoptPlan(entry, snap.order(entry), stored, row?.shuffled == true, uri, storedItem) ?: return null
         val a = activeFor(snap, rows, entry, plan.keys, plan.shuffled, RendererKind.SONOS, favourites) ?: return null
         if (a.items.map { it.key } != plan.keys) return null
         // design r12 §3.5: the stored row is a favourites run's - the queue comes back around it, in the room's view
@@ -2880,7 +2909,7 @@ class PlaybackService : MediaSessionService() {
             val m = if (restored != null) {
                 mixQueueOf(snap, storedMix, restored.queue).also {
                     it.index = restored.index
-                    it.run = segmentAt(it.items, restored.index)
+                    it.run = segmentAt(it.items, restored.index, single = roomShareRef(entry, room = true))
                 }
             } else {
                 // only around the adopted item itself; else the room plays on as a favourites queue of that run alone -
@@ -2894,7 +2923,7 @@ class PlaybackService : MediaSessionService() {
             a.mix = m
             a.repeat = runRepeat(m)
         }
-        return a to plan.index
+        return Triple(a, plan.index, plan.mapped)
     }
 
     /**
@@ -2927,11 +2956,19 @@ class PlaybackService : MediaSessionService() {
                 if (withContext(writer) { home.choice() }.sonos) SonosSuspension.standalone(this@PlaybackService)
                 return@withLock
             }
-            withTimeoutOrNull(HANDOFF_MS) { sonos.park() } ?: run {
+            val parked = withTimeoutOrNull(HANDOFF_MS) { sonos.park() } ?: run {
                 SonosHome.log("sonos: the suspension's stop took too long - Stop queued, the bookmark from the last poll")
                 sonos.abandon()
+                null
             }
+            // design 54 §2.9 item 3 (R2): a park with no answer keeps the room recorded and is retried (sonos-park-retry)
+            val noAnswer = parked == null || sonos.parkNoAnswer
+            val choice = withContext(writer) { home.choice() }
             comeHome(sonos, play = false)
+            if (noAnswer && choice.sonos) {
+                withContext(writer) { home.write(choice) }
+                SonosParkRetry.schedule(this@PlaybackService)
+            }
         }
     }
 
@@ -3122,8 +3159,8 @@ class PlaybackService : MediaSessionService() {
             return
         }
         val plan = homePlan(order, item.key, resumeFrom(a0.positions[item.key]))
-        // the phone's renderer for the entry (design 26c §5.10): start attaches it - a Spotify entry never reaches a
-        // room (toRoom keeps the phone playing), so this is the phone's own player in practice
+        // the phone's renderer for the entry (design 26c §5.10): start attaches it - a Spotify entry that played on the
+        // room as a share link (design 54 §2.10) comes home to the web player at its item and place, else the phone's own
         val a = activeFor(snap, rows, a0.entry, plan.keys, shuffled = false, phoneRendererFor(a0.entry), a0.favourites, plan.startIndex)
         if (a == null) {
             publish()
@@ -3143,10 +3180,13 @@ class PlaybackService : MediaSessionService() {
             false
         }
 
-    /** A start on the speaker failed (§4.2): back to the phone, paused, and one topology refresh for the sheet. */
-    private suspend fun lost() = switching.withLock {
+    /**
+     * A start on the speaker failed (§4.2): back to the phone, paused, and one topology refresh for the sheet. [askAdult]
+     * (design 54 §2.13): the speaker refused a share link - "Kan ikke spilles på Sonos – spør en voksen".
+     */
+    private suspend fun lost(askAdult: Boolean) = switching.withLock {
         val sonos = renderer as? SonosRenderer ?: return@withLock
-        PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.CANT_PLAY_ON_SONOS)
+        PlayerHub.mutableMessages.tryEmit(if (askAdult) PlayerHub.Message.SONOS_ASK_ADULT else PlayerHub.Message.CANT_PLAY_ON_SONOS)
         // anything of ours still on the speaker (a superseded play that landed) is stopped, ours-gated
         handOff(sonos)
         comeHome(sonos, play = false, quiet = true)

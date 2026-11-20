@@ -133,7 +133,8 @@ class SpotifyRulesTest {
         assertEquals(listOf(SPOTIFY_CONTEXT_KEY), snap.order(artist).map { it.key })
         assertEquals("the item by its stable key", contextItem(artist), snap.item(7, SPOTIFY_CONTEXT_KEY))
         assertTrue("never on the phone", snap.onPhone[7].orEmpty().isEmpty())
-        assertEquals("spotify", PlayBodies.speakerDropReason(artist, snap.visible(artist)[0]))
+        assertEquals("design 54 §2.1: an artist never goes to a room", "spotify artist", PlayBodies.speakerDropReason(artist, snap.visible(artist)[0]))
+        assertEquals("design 54 R2: a context until round a2'", if (PlayBodies.CONTEXT_ON_ROOM) null else "spotify context", PlayBodies.speakerDropReason(playlist, snap.visible(playlist)[0]))
         assertEquals("Spotify picks: no N av M", Hint.Picks(Kind.MUSIC), hint(artist, listOf(SPOTIFY_CONTEXT_KEY), me.vibb.music.logic.Bookmark(SPOTIFY_CONTEXT_KEY, 60_000)))
         assertEquals("the context's uri plays it", "spotify:artist:FAKEid7", me.vibb.music.playback.spotifyItemUri(artist, SPOTIFY_CONTEXT_KEY))
         assertTrue("hidden while Spotify can't play (the tests' switch)", snap.copy(spotifyPlayable = false).visible(artist).isEmpty())
@@ -211,8 +212,8 @@ class SpotifyRulesTest {
         assertEquals(listOf("t1", "t2"), snap.visible(playlist).map { it.key })
         assertEquals(listOf("t1", "t2"), snap.forRenderer(true).visible(playlist).map { it.key })
         assertEquals(listOf(6L), snap.entries.map { it.id })
-        assertEquals("spotify", PlayBodies.speakerDropReason(playlist, snap.visible(playlist)[0]))
-        assertNull(PlayBodies.build(playlist, snap.visible(playlist)[0], "RINCON_000E58A0B1C201400", 0.0))
+        assertNull("design 54: a room plays it as a share link", PlayBodies.speakerDropReason(playlist, snap.visible(playlist)[0]))
+        assertNull("design 54 R1.12 (QA-3): never vibb's url body - no item.url!!", PlayBodies.build(playlist, snap.visible(playlist)[0], "RINCON_000E58A0B1C201400", 0.0))
     }
 
     @Test

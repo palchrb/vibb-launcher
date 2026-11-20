@@ -184,7 +184,7 @@ class BridgeTest {
             RestrictionKeys.V, RestrictionKeys.MANAGED, RestrictionKeys.LAUNCHER_PACKAGE, RestrictionKeys.LANGUAGE,
             RestrictionKeys.LIBRARY_VERSION, RestrictionKeys.STORYTEL_GENERATION,
             RestrictionKeys.VOLUME_CAP_PCT, RestrictionKeys.STREAM_MOBILE_DATA, RestrictionKeys.DOWNLOAD_MOBILE_DATA,
-            RestrictionKeys.STORAGE_LIMIT_GB, RestrictionKeys.SPOTIFY_DIAG_UNTIL,
+            RestrictionKeys.STORAGE_LIMIT_GB, RestrictionKeys.SPOTIFY_DIAG_UNTIL, RestrictionKeys.SUSPEND_AT_S,
         )
         assertEquals(types.keys, keys.toSet())
         val sample: Map<String, Any> = types.mapValues { (key, type) ->
@@ -199,6 +199,14 @@ class BridgeTest {
         assertEquals(7, read.volumeCapPct)
         assertEquals(7, read.storageLimitGb)
         assertEquals(7L, read.spotifyDiagUntilS)
+        assertEquals(7L, read.suspendAtS)
+        // Design 54 R1.10: `suspend_at_s` is an Int > 0; anything else - 0, negative, absent, a Long, a String - is none.
+        assertEquals(RestrictionKeys.SUSPEND_AT_S, "suspend_at_s")
+        assertEquals(1_795_464_000L, bridgeConfig(sample + (RestrictionKeys.SUSPEND_AT_S to 1_795_464_000)).suspendAtS)
+        for (junk in listOf<Any?>(0, -5, null, 1_795_464_000L, "1795464000")) {
+            assertEquals("$junk", 0L, bridgeConfig(sample + (RestrictionKeys.SUSPEND_AT_S to junk)).suspendAtS)
+        }
+        assertEquals("absent", 0L, bridgeConfig(sample - RestrictionKeys.SUSPEND_AT_S).suspendAtS)
         assertEquals(strings("report_state"), listOf(REPORT_KEY, HELD_FILES_KEY, HELD_SHA256_KEY))
         assertEquals(
             strings("now_playing"),

@@ -934,6 +934,26 @@ t+15 volume 60
   "Fikk ikke kontakt med Kjøkken - er den på?" after a few seconds, while Pause and the volume keys on Stua answer at
   once. With the fake there is no event socket: the outside cases (a `group`/`move` script line) show at the group
   watch (60 s), not at once.
+- **Spotify on a fake room** (design 54 round 54-a2, its R5): the debug feed's Spotify playlist from
+  `python3 -I scripts/fake-spotify.py --print-listing 6 > debug-feed/items/6.json` (§6l A2), the speakers from
+  `python3 -I scripts/fake-sonos.py --track-seconds 20`, and for the hand-over to the phone `fake-spotify.py
+  --track-seconds 20`. Then R5's steps: (1) the transfer - the fake logs `SetPlayMode NORMAL`, `RemoveAllTracksFromQueue`,
+  `AddURIToQueue` (2311), `Browse Q:0`, the queue uri, `Seek TRACK_NR`, `Play` (and `ConfigureSleepTimer` on a managed
+  phone with a rule ahead); (2) five Nexts in 2 s are one `Seek TRACK_NR`, no add; `--script "t+30 next"` is followed
+  with no done mark, the queue's own advance at 20 s is followed and marks the track done; (3) `--queue-extra` (the
+  speaker's title, no bookmark), `--queue-gap` (a step skips it, a pick says "Kan ikke spilles på Sonos"),
+  `--queue-reversed` (corrected at each natural boundary), `--script "t+40 queue-insert"` (the next press transfers);
+  (4) repeat off ends, repeat all wraps by a jump to item 1, repeat one seeks to 0, "Til slutten" pauses before the
+  boundary; (5) `--refuse-share` and `--empty-share` say "Kan ikke spilles på Sonos – spør en voksen" and the phone,
+  paused, an artist says "Kan ikke spilles på Sonos"; (6) the web player <-> Stua at the same track and second, Stua ->
+  Kjøkken, a start 1 s before a track's end, `am force-stop` then open (adopted, no command in the fake's log, the next
+  press a jump), favourites with two Spotify hearts and a podcast (one share link per heart); (7) bedtime on Android 14
+  and 17 (the debug launcher as Device Owner, a rule 3 minutes ahead without the music app among its exempt apps):
+  `ConfigureSleepTimer` about 0:03:00 at the transfer, at the edge Stop, the queue uri, the clear and
+  `ConfigureSleepTimer ""`; with `adb shell svc wifi disable` 30 s before it the fake's timer pauses Stua and after
+  `svc wifi enable` `sonos-park-retry` parks within 5 minutes (whether a suspended package's WorkManager work runs);
+  (8) context mode, once round 54-a2' is in. The fake has no socket: the `itemId` recheck, the container and the
+  metadata title are the JVM tests' and the real room's.
 - Real speakers stay a device check (design 26a, "Device checks"): SSDP, discovery and control with the launcher's VPN
   filter on (no `EPERM`), the NRK service, Doze.
 
@@ -2094,10 +2114,10 @@ Logcat: `VibbHandover` (the hand-over's steps, each `+N ms` since the tap), `Vib
    polls fail, the times back under it. No new wait anywhere.
 4. **Storytel and NRK on the room** (§6i, the NRK fixture): the same line and the same steps (Storytel adds `the
    Storytel URL minted`).
-5. **Spotify on the room** cannot be checked yet: design 54-a2 (the controller's share-link path) isn't built, so a
-   Spotify tile on a room still says "Kan ikke spilles på Sonos" at once (`speakerDropReason`). When 54-a2 lands the
-   share-link steps (`SetPlayMode NORMAL answered`, `the ShareLink request sent/answered`, `the start item's page read`,
-   `Seek TRACK_NR answered`, `the speaker's sleep timer set or cleared`) are already logged by `SonosTransport.playShare`.
+5. **Spotify on the room** (design 54 round a2, its R5 steps 1-8 below §6h): a Spotify tile with Stua chosen shows the
+   same line, and `VibbHandover` logs the share-link steps (`SetPlayMode NORMAL answered`, `the ShareLink request
+   sent/answered`, `the start item's page read`, `Seek TRACK_NR answered`, `the speaker's sleep timer set or
+   cleared`) from `SonosTransport.playShare`.
 
 The code QA's checks (`docs/review/qa-music-r13-code.md`, "Emulator checks to add"; the fix round's line numbers):
 

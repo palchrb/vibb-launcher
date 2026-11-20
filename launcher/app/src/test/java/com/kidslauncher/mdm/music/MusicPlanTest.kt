@@ -508,7 +508,7 @@ class MusicPlanTest {
             mapOf(
                 "v" to 1, "managed" to true, "launcher_package" to "me.vibb.launcher", "language" to "nb", "library_version" to "",
                 "storytel_generation" to 4, "volume_cap_pct" to 60, "stream_mobile_data" to true, "download_mobile_data" to true, "storage_limit_gb" to 5,
-                "spotify_diag_until" to 0,
+                "spotify_diag_until" to 0, "suspend_at_s" to 0,
             ),
             r,
         )
@@ -563,12 +563,28 @@ class MusicPlanTest {
     }
 
     @Test
-    fun `every apply edge pushes a changed cap to the music app`() {
+    fun `every apply edge and every re-check push the restrictions to the music app (design 54 R2)`() {
         val cap = module("src/main/java/com/kidslauncher/mdm/music/VolumeCap.kt").readText()
         val refresh = cap.substringAfter("fun refresh(").substringBefore("\n    }\n")
-        assertTrue(refresh.contains("MusicSync.capChanged(app, policy)"))
+        assertTrue("on every refresh, not only a changed cap", refresh.trimEnd().endsWith("MusicSync.restrictionsChanged(app, policy)"))
         val sync = module("src/main/java/com/kidslauncher/mdm/music/MusicSync.kt").readText()
-        assertTrue(sync.contains("restrictionsFor(music, app.packageName, resolveLauncherLocale(policy.launcherUi?.language), VolumeCap.pctInForce)"))
+        val write = sync.substringAfter("private fun writeRestrictions(").substringBefore("\n    }\n")
+        assertTrue(write.contains("resolveLauncherLocale(policy.launcherUi?.language), VolumeCap.pctInForce,"))
+        assertTrue("the edge on every write", write.contains("TimeRulesRuntime.musicSuspendAtS(app, policy, pkg)"))
+        val runtime = module("src/main/java/com/kidslauncher/mdm/timerules/TimeRulesRuntime.kt").readText()
+        val recheck = runtime.substringAfter("fun recheck(").substringBefore("\n    }\n")
+        assertTrue(recheck.contains("MusicSync.restrictionsChanged(context, policy)"))
+    }
+
+    @Test
+    fun `the managed config carries the music app's next suspension as an Int, 0 when none (design 54 R1_10)`() {
+        assertEquals(MusicRestrictions.SUSPEND_AT_S, "suspend_at_s")
+        val policy = MusicPolicy(null, true, true, null, 2, 0)
+        val written = restrictionsFor(policy, "p", "", null, 1_795_464_000)[MusicRestrictions.SUSPEND_AT_S]
+        assertEquals(1_795_464_000, written)
+        assertTrue("an Int, never a Long (H1)", written is Int && restrictionValueStorable(written))
+        assertEquals(0, restrictionsFor(policy, "p", "", null)[MusicRestrictions.SUSPEND_AT_S])
+        assertEquals("never negative", 0, restrictionsFor(policy, "p", "", null, -1)[MusicRestrictions.SUSPEND_AT_S])
     }
 
     @Test

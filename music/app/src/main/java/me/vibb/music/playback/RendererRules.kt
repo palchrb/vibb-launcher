@@ -24,8 +24,9 @@ import me.vibb.music.spotify.uriOf
 
 /**
  * Who plays [entry] on the phone (§5.10, "Which renderer"): Spotify's web player for a Spotify entry,
- * the phone's own player (ExoPlayer) for every other. A Sonos room keeps its renderer: its queue never
- * holds a Spotify item (`PlayBodies.speakerDropReason`, §4.2), so a Spotify entry never reaches it.
+ * the phone's own player (ExoPlayer) for every other. A Sonos room keeps its renderer: a Spotify entry with a share
+ * type plays there as a share link (design 54 §2.1), and coming home ([comeHome]) it goes to the web player at its item
+ * and place through this rule.
  */
 fun phoneRendererFor(entry: Entry): RendererKind = if (isSpotify(entry)) RendererKind.SPOTIFY else RendererKind.LOCAL
 

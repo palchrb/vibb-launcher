@@ -139,6 +139,9 @@ internal class SonosRenderer(
             scope.launch(writer) { ItemErrors.record(context, entryId, itemKey, NO_AUDIO) }
         }
 
+        // design 54 §2.9 (N3): the share link's target and the queue's UpdateID - the next look's baseline
+        override fun shared(target: String, updateId: String?) = writeChoice { it.shared(target, updateId) }
+
         override fun ramp(volume: Int?) = writeChoice { it.copy(volume = volume, volumeUid = volume?.let { _ -> controller.uid }) }
 
         override fun armedPlaying(playing: Boolean) = onArmedPlaying(playing)
@@ -189,6 +192,8 @@ internal class SonosRenderer(
         wakePoll = { poller?.wake() },
         // design 53 §2.12: the group's other rooms' volumes, set and read off our actor
         memberVolumes = RoomVolumes(home.speakers, actorScope, post = { block -> handler.post { if (!released) block() } }, log = SonosHome::log),
+        // design 54 §2.9 item 4 (R1.10): the launcher's `suspend_at_s`, read live like the cap - the speaker's sleep timer
+        suspendAt = { Bridge.config(context).suspendAtS * 1000 },
     )
 
     private fun suspendedNow(): Boolean = try {
@@ -291,7 +296,8 @@ internal class SonosRenderer(
         mediaItems = items
         lastIndex = -1
         if (playNow) prefetchStorytel()
-        controller.load(a.entry, a.items, startIndex, startMs)
+        // design 54 R2: a Spotify entry's listing in its own order; a favourites run of one Spotify track its one share link
+        controller.load(a.entry, a.items, startIndex, startMs, listed = a.listed, one = a.mix != null && a.entry.source == Source.SPOTIFY)
         if (playNow) controller.playTile()
     }
 
@@ -324,7 +330,12 @@ internal class SonosRenderer(
     /** Design 49 §1.9: shuffle is the service's order ([reorder]); repeat is the controller's advance (wrap, or the item again). */
     override fun setModes(shuffled: Boolean, repeat: Repeat) {
         controller.repeat = repeat
+        // design 54 §2.7: a share link's repeat one and repeat all are the at-end timer's - re-armed
+        controller.modesChanged()
     }
+
+    /** The managed config changed (design 54 R2): the edge may have moved - the speaker's sleep timer follows it. */
+    fun edgeChanged() = controller.edgeChanged()
 
     override fun positionMs(): Long {
         val now = clock()
@@ -441,6 +452,9 @@ internal class SonosRenderer(
      */
     suspend fun park(): Boolean = suspendCancellableCoroutine { cont -> controller.handOff(park = true) { if (cont.isActive) cont.resume(it) } }
 
+    /** The last [park] got no answer (design 54 §2.9 item 3: the room stays recorded and the park is retried). */
+    val parkNoAnswer: Boolean get() = controller.parkNoAnswer
+
     /**
      * Adopt at start (design 26a §4.7), the look: [SonosTransport.adoptLive] in the actor - zero
      * transport commands, one classify of this room within [SonosController.LIVE_BUDGET_MS] once
@@ -448,10 +462,11 @@ internal class SonosRenderer(
      * decides and names the uri the session goes on with; kept, the poller runs on. Null: no Wi-Fi or
      * no answer.
      */
-    suspend fun probe(uri: String, keep: (Fields) -> String?): Fields? {
+    suspend fun probe(uri: String, share: ShareBaseline? = null, keep: (Fields) -> String?): Fields? {
         if (!home.awaitWifi(WIFI_WAIT_MS)) return null
         val target = uid
-        return actor.call({ transport.adoptLive(target, kindOfUri(uri), uri, SonosController.LIVE_BUDGET_MS, keep = keep) }) { }.getOrNull()
+        // design 54 §2.9: a share session's look classifies with the persisted baseline
+        return actor.call({ transport.adoptLive(target, kindOfUri(uri), uri, SonosController.LIVE_BUDGET_MS, share = share, keep = keep) }) { }.getOrNull()
     }
 
     /**
@@ -464,11 +479,11 @@ internal class SonosRenderer(
     }
 
     /** The probe was kept: the queue ([items], the service's MediaItems of `Active.items`) at [index], nothing sent. */
-    fun adopt(items: List<MediaItem>, index: Int, uri: String, live: Fields) {
+    fun adopt(items: List<MediaItem>, index: Int, uri: String, live: Fields, mapped: Boolean = true) {
         val a = queue() ?: return
         mediaItems = items
         lastIndex = -1
-        controller.adopt(a.entry, a.items, index, uri, live)
+        controller.adopt(a.entry, a.items, index, uri, live, listed = a.listed, one = a.mix != null && a.entry.source == Source.SPOTIFY, mapped = mapped)
     }
 
     override fun release() {
@@ -546,8 +561,11 @@ internal class SonosRenderer(
             HandOverTiming.step(if (connecting) "the connecting line shows" else "the connecting line ends")
         }
         if (ended) events += RendererEvent.Ended
-        if (controller.takeLost() != null) events += RendererEvent.Lost
-        if (controller.takeRefused()) PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.CANT_PLAY_ON_SONOS)
+        // design 54 §2.13: the speaker refused the link (the account linked in the Sonos app can't play it) - ask a grown-up
+        controller.takeLost()?.let { events += RendererEvent.Lost(askAdult = it is ShareRefused) }
+        controller.takeRefused()?.let {
+            PlayerHub.mutableMessages.tryEmit(if (it is ShareRefused) PlayerHub.Message.SONOS_ASK_ADULT else PlayerHub.Message.CANT_PLAY_ON_SONOS)
+        }
         events += RendererEvent.StateChanged
         for (e in events) onEvent?.invoke(e)
     }
@@ -581,11 +599,19 @@ internal class SonosRenderer(
                 return b.setPlaybackState(if (plan.phase == PlayPhase.ENDED) Player.STATE_ENDED else Player.STATE_IDLE).build()
             }
             val index = plan.index
+            // design 54 §2.8 (Q6): a track of our share link's queue our list doesn't name shows the speaker's title in
+            // place of the item's (the entry's picture kept), with no number - display only, nothing is written
+            val unmapped = controller.unmappedShown
             val playlist = items.mapIndexed { i, mi ->
                 val durationMs = if (i == index) spec.durationMs else mi.mediaMetadata.durationMs
+                val meta = if (i == index && unmapped != null) {
+                    mi.mediaMetadata.buildUpon().setTitle(unmapped).setDisplayTitle(unmapped).setArtist(null).setTrackNumber(null).build()
+                } else {
+                    mi.mediaMetadata
+                }
                 MediaItemData.Builder(plan.uids[i])
-                    .setMediaItem(mi)
-                    .setMediaMetadata(mi.mediaMetadata)
+                    .setMediaItem(if (meta === mi.mediaMetadata) mi else mi.buildUpon().setMediaMetadata(meta).build())
+                    .setMediaMetadata(meta)
                     .setDurationUs(durationMs?.let { it * 1000 } ?: C.TIME_UNSET)
                     .setIsSeekable(durationMs != null)
                     .build()

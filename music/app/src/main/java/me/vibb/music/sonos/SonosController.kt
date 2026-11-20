@@ -14,6 +14,28 @@ import me.vibb.music.logic.logFailure
 import me.vibb.music.logic.logName
 import me.vibb.music.logic.sonosAnchor
 import me.vibb.music.logic.sonosMintCode
+import me.vibb.music.logic.AtEnd
+import me.vibb.music.logic.Boundary
+import me.vibb.music.logic.QueueMap
+import me.vibb.music.logic.QueueRead
+import me.vibb.music.logic.VersionCheck
+import me.vibb.music.logic.VersionSource
+import me.vibb.music.logic.anchorNearEnd
+import me.vibb.music.logic.atEndAction
+import me.vibb.music.logic.atEndDelayMs
+import me.vibb.music.logic.boundary
+import me.vibb.music.logic.foreignPlayMode
+import me.vibb.music.logic.foreignPlayModes
+import me.vibb.music.logic.itemIndexOf
+import me.vibb.music.logic.listedIndexOf
+import me.vibb.music.logic.shareLanded
+import me.vibb.music.logic.sleepTimerFor
+import me.vibb.music.logic.trackSpotifyUri
+import me.vibb.music.logic.unmappedTitle
+import me.vibb.music.logic.versionCheck
+import me.vibb.music.model.Source
+import me.vibb.music.spotify.spotifyTarget
+import me.vibb.music.spotify.uriOf
 import me.vibb.music.model.Entry
 import me.vibb.music.model.PlayItem
 import me.vibb.music.playback.PauseCause
@@ -121,6 +143,12 @@ interface SonosHost {
      */
     fun storytelUnavailable(entryId: Long, itemKey: String, code: String) {}
 
+    /**
+     * Design 54 §2.9 (N3): a share link's play landed or its queue was read - renderer.json keeps the target and the
+     * queue's `UpdateID`, the next look's baseline.
+     */
+    fun shared(target: String, updateId: String?) {}
+
     /** The sleep ramp runs from [volume] (null: it ended, the volume is back). */
     fun ramp(volume: Int?) {}
 
@@ -215,6 +243,13 @@ class SonosController(
     private val wakePoll: () -> Unit = {},
     /** Our group's other rooms' volumes (design 53 §2.12): set latest-wins and read off our actor. */
     private val memberVolumes: MemberVolumes = MemberVolumes.NONE,
+    /**
+     * Design 54 §2.9 item 4 (R1.10): the next instant the launcher suspends the music app, epoch ms (the managed config's
+     * `suspend_at_s` x 1000; 0 = none) - the speaker's own sleep timer runs to it. Read in the actor's jobs.
+     */
+    private val suspendAt: () -> Long = { 0L },
+    /** The wall clock (epoch ms) the edge is compared with. */
+    private val wallMs: () -> Long = System::currentTimeMillis,
 ) {
     /**
      * The room: the uid we command (a group by its coordinator), and its label. Migration follow moves
@@ -285,10 +320,23 @@ class SonosController(
 
     private class OptPos(val s: Double, val at: Long, val uri: String?)
 
-    private class Pending(val itemKey: String, var at: Long, var uri: String?)
+    /**
+     * A play in flight. Design 54 §2.5: a share link's lands on its queue [position] and Spotify [track] (null: a start
+     * item not found in the queue, N4), not on the uri ([share]).
+     */
+    private class Pending(val itemKey: String, var at: Long, var uri: String?, val share: Boolean = false, var track: String? = null, var position: Int? = null)
 
-    /** The item actually on the speaker (of entry [entryId]): what the bookmark is about. */
-    private class Playing(val entryId: Long?, val index: Int, val itemKey: String, val uri: String)
+    /**
+     * The item actually on the speaker (of entry [entryId]): what the bookmark is about. Design 54: a share link's is the
+     * queue's [position] and its Spotify [track] ([uri] the TrackURI once a poll named it); [index] -1 for a track our
+     * listing doesn't name (the unmapped look: no bookmark, no advance of ours).
+     */
+    private class Playing(val entryId: Long?, val index: Int, val itemKey: String, val uri: String, val track: String? = null, val position: Int? = null) {
+        /** The speaker's snapshot [s] is this item: by the uri, or for a share link by its queue position and track. */
+        fun on(s: Fields): Boolean =
+            if (track != null || position != null) trackSpotifyUri(s.uri) == track && track != null && (s.trackNo == null || position == null || s.trackNo == position)
+            else normUri(s.uri) == normUri(uri)
+    }
 
     private var optTr: Opt? = null
     private var optPos: OptPos? = null
@@ -311,6 +359,11 @@ class SonosController(
      * branch for a play that isn't allowed - and this runs once (then it is cleared). Main thread.
      */
     var holdAtEnd: (() -> Unit)? = null
+        set(value) {
+            field = value
+            // design 54 §2.7: on a share link "Til slutten" is the at-end timer's (dur - pos - 400 ms), armed now
+            if (share) rearmAtEnd()
+        }
 
     /**
      * Our own last volume set per room (vibb's `_sonos_vol_opt`, per room since design 53 §2.12): the base of the next
@@ -386,7 +439,7 @@ class SonosController(
         private set
     private var endedFlag = false
     private var lost: Exception? = null
-    private var refusedFlag = false
+    private var refused: Exception? = null
     private var wasArmedPlaying = false
 
     /** Our last verb or play: its fast-poll window keeps the locks (§6.3). */
@@ -418,10 +471,15 @@ class SonosController(
      * new item: UPnP's TrackURI must change from [fromUri]); polled every [CONFIRM_EVERY_MS] until UPnP agrees or
      * [CONFIRM_UNTIL_MS] after the event.
      */
-    private class Confirm(val gen: Long, val state: TransportState?, val newItem: Boolean, val fromUri: String?, val at: Long) {
-        /** A poll that shows it: the state itself, or another TrackURI than before (a takeover, grouped away, a moved stream). */
+    private class Confirm(val gen: Long, val state: TransportState?, val newItem: Boolean, val fromUri: String?, val at: Long, val fromTrack: Int? = null) {
+        /**
+         * A poll that shows it: the state itself, or another TrackURI than before (a takeover, grouped away, a moved
+         * stream) - or for a share link's new item another queue position (design 54 N6: a duplicate at the next
+         * position has the same uri).
+         */
         fun seenIn(s: Fields): Boolean =
-            normUri(s.uri) != normUri(fromUri) || (!newItem && state != null && !s.transitioning && s.transport == state)
+            normUri(s.uri) != normUri(fromUri) || (newItem && fromTrack != null && s.trackNo != fromTrack) ||
+                (!newItem && state != null && !s.transitioning && s.transport == state)
     }
 
     private var confirm: Confirm? = null
@@ -460,6 +518,68 @@ class SonosController(
     private var bmTr: TransportState? = null
     private var bmStream: String? = null
 
+    // -- design 54: a Spotify link in the speaker's own queue (main thread) --
+
+    /** The loaded entry's listing keys in the listing's own order (`Active.listed`): a share link on this room; else null. */
+    private var shareKeys: List<String>? = null
+
+    /** A favourites run of one Spotify track (design 54 R2, r12 §3.5): its transfer is `PlayBodies.shareOne`. */
+    private var shareOne = false
+
+    /** The loaded entry plays as a share link on this room (design 54 §2.1). */
+    private val share: Boolean get() = shareKeys != null
+
+    /**
+     * The map of the last transfer that landed (design 54 §2.3): its entry and room, the target, our listing's track uris
+     * now ([listed]) and at the transfer ([readListed]: "the listing changed since the read"), the read and its slots.
+     * [reading]: the rest of the queue is still being read (N6: a jump then looks its position up in the actor).
+     * [trusted]: the queue's version hasn't moved since by an edit not ours.
+     */
+    private class QMap(val entryId: Long, var uid: String, val target: String, var listed: List<String>, var read: QueueRead, val readListed: List<String>) {
+        var map = QueueMap(listed, read)
+        var reading = !read.complete
+        var trusted = true
+
+        /** The socket's version a re-read of the `UpdateID` was asked for (N5: once per version). */
+        var versionAsked: String? = null
+
+        fun relist(uris: List<String>) {
+            listed = uris
+            map = QueueMap(uris, read)
+        }
+
+        fun reread(r: QueueRead) {
+            read = r
+            map = QueueMap(listed, r)
+            reading = false
+        }
+    }
+
+    private var qmap: QMap? = null
+
+    /** The unmapped look (Q6, §2.8): the speaker's title for a track of our queue our list doesn't name; null otherwise. */
+    var unmappedShown: String? = null
+        private set
+
+    /** The socket's `itemId` `playing` was confirmed with (§2.5's pairing): a measurement of another item never counts. */
+    private var pairedItem: String? = null
+
+    /** When the socket's `itemId` last changed (the boundary's time, §2.5 step 3); taken by the next confirmed change. */
+    private var itemChangedAt: Long? = null
+
+    /** The socket's last play modes (§2.6: a mode we didn't set is followed) and its last Spotify track (the titles). */
+    private var wsModes: WsPlayModes? = null
+    private var wsTrack: WsTrack? = null
+
+    /** The container last handed to the share classify (§2.5 (a)). */
+    private var containerFed: String? = null
+
+    /** The belt's last Pause (§2.9: one per generation and track). */
+    private var beltKey: String? = null
+
+    /** The at-end timer's arming (§2.7): a newer arming, a load or a play voids an older one. */
+    private var atEndToken = 0L
+
     // -- what the renderer reads --
 
     /** True once per natural advance: the next index change is an automatic one. */
@@ -471,8 +591,11 @@ class SonosController(
     /** A start that failed (once): the renderer reports it and the service goes back to the phone. */
     fun takeLost(): Exception? = lost.also { lost = null }
 
-    /** True once when a start was refused while our session on this uid plays on: "Kan ikke spilles på Sonos". */
-    fun takeRefused(): Boolean = refusedFlag.also { refusedFlag = false }
+    /**
+     * Once, when a start was refused while our session on this uid plays on: why - "Kan ikke spilles på Sonos", or for a
+     * [ShareRefused] "... - spør en voksen" (design 54 §2.13, R2).
+     */
+    fun takeRefused(): Exception? = refused.also { refused = null }
 
     private fun opt(now: Long): Opt? = optTr?.takeIf { now - it.at <= SETTLE_MS }
 
@@ -677,13 +800,21 @@ class SonosController(
      * where it starts; starting below the item's saved place is a deliberate restart (QA L4: the
      * regression guard must not keep the old bookmark against the kid's own choice).
      */
-    fun load(entry: Entry, items: List<PlayItem>, startIndex: Int, startMs: Long) {
+    fun load(entry: Entry, items: List<PlayItem>, startIndex: Int, startMs: Long, listed: List<String>? = null, one: Boolean = false) {
         if (closed) return
         // qa-53d-code 1: the old item's place from a live read when the last measurement is old (the service already
         // switched its queue, so the store the last bookmarkNow saw)
         pinned?.let { bookmarkLiveFirst(it) }
+        val same = this.entry?.id == entry.id
         this.entry = entry
         this.items = items
+        // design 54 R2: a Spotify entry on a room is a share link - its listing's keys (a favourites run: its one track)
+        shareKeys = if (entry.source == Source.SPOTIFY) (if (one) items.map { it.key } else listed ?: items.map { it.key }) else null
+        shareOne = one
+        // §2.3: a load of the same entry keeps the read, its slots rebuilt for the listing now - re-read, never re-added
+        qmap = qmap?.takeIf { same && share && !one }?.also { it.relist(listedUris()) }
+        unmappedShown = null
+        atEndToken++
         index = if (items.isEmpty()) 0 else startIndex.coerceIn(items.indices)
         startPosMs = startMs.coerceAtLeast(0)
         deliberateStart = items.getOrNull(index)?.let { startPosMs < store.savedPosMs(it.key) } ?: false
@@ -691,7 +822,7 @@ class SonosController(
         gen++
         session = false
         // what the speaker holds stays known (a failed start must not lose it); its index is this queue's
-        playing = playing?.let { p -> Playing(p.entryId, if (p.entryId == entry.id) items.indexOfFirst { it.key == p.itemKey } else -1, p.itemKey, p.uri) }
+        playing = playing?.let { p -> Playing(p.entryId, if (p.entryId == entry.id) items.indexOfFirst { it.key == p.itemKey } else -1, p.itemKey, p.uri, p.track, p.position) }
         pending = null
         optTr = null
         optPos = null
@@ -712,13 +843,16 @@ class SonosController(
         val current = items.getOrNull(keep) ?: return
         items = listOf(current) + after
         index = 0
-        playing = playing?.let { Playing(it.entryId, 0, it.itemKey, it.uri) }
+        playing = playing?.let { Playing(it.entryId, if (it.index >= 0) 0 else -1, it.itemKey, it.uri, it.track, it.position) }
         host.changed()
     }
 
     /** The queue is over (the service's `queueEnded`, or a clear): nothing more to show. */
     fun clear() {
         items = emptyList()
+        qmap = null
+        unmappedShown = null
+        atEndToken++
         index = 0
         gen++
         session = false
@@ -740,7 +874,16 @@ class SonosController(
      * it never decides "heard to the end"). Nothing is sent: a playing speaker plays on, a paused
      * one stays paused.
      */
-    fun adopt(entry: Entry, items: List<PlayItem>, idx: Int, uri: String, live: Fields) {
+    fun adopt(
+        entry: Entry,
+        items: List<PlayItem>,
+        idx: Int,
+        uri: String,
+        live: Fields,
+        listed: List<String>? = null,
+        one: Boolean = false,
+        mapped: Boolean = true,
+    ) {
         if (closed || idx !in items.indices) return
         this.entry = entry
         this.items = items
@@ -750,7 +893,17 @@ class SonosController(
         session = true
         ownsSpeaker = true
         ended = false
-        playing = Playing(entry.id, idx, items[idx].key, uri)
+        shareKeys = if (entry.source == Source.SPOTIFY) (if (one) items.map { it.key } else listed ?: items.map { it.key }) else null
+        shareOne = one
+        qmap = null
+        // design 54 §2.9: a share session's item is the live track (found from its uri, its index corrected from Track
+        // once learnQueue has read the slots); one our list doesn't name keeps the stored item with the unmapped look
+        playing = if (share) {
+            Playing(entry.id, if (mapped) idx else -1, if (mapped) items[idx].key else "", live.uri.orEmpty(), live.trackSpotifyUri, live.trackNo)
+        } else {
+            Playing(entry.id, idx, items[idx].key, uri)
+        }
+        unmappedShown = if (share && !mapped) live.trackTitle.orEmpty() else null
         pending = null
         optTr = null
         optPos = null
@@ -766,7 +919,10 @@ class SonosController(
         baselinePending = true
         host.groupsChanged()
         accept(live)
-        host.log("sonos: adopted a live session on start [${idx + 1}/${items.size}] ${logName(items[idx].title, BuildConfig.DEBUG)}")
+        pairedItem = null
+        host.log("sonos: adopted a live session on start [${idx + 1}/${items.size}] ${if (share) "" else logName(items[idx].title, BuildConfig.DEBUG)}")
+        // design 54 §2.9: the map from adoptLive's read (reads only) - its baseline only now the adopt kept the session
+        if (share) learn()
         host.changed()
     }
 
@@ -809,7 +965,8 @@ class SonosController(
         val now = elapsedMs()
         val s = snap
         val settling = pending != null || opt(now) != null
-        val steady = s != null && s.fresh(now) && s.ours && !seeded && !settling && playing?.index == index
+        // design 54 §2.4: a share link's tap with the map untrusted is the re-sync - the transfer heals, never swallowed
+        val steady = s != null && s.fresh(now) && s.ours && !seeded && !settling && playing?.index == index && (!share || mapTrusted())
         when {
             steady && s!!.transport == TransportState.PLAYING -> Unit
             steady && s!!.transport == TransportState.PAUSED_PLAYBACK -> resume(fallback = true)
@@ -830,7 +987,8 @@ class SonosController(
     /** A full start of the current item from its saved place (`sonos_start_target`'s bookmark). */
     private fun restart() {
         val item = items.getOrNull(index) ?: return
-        playIndex(index, store.savedPosMs(item.key) / 1000.0, deliberate = false, PlayWhy.START)
+        // design 54 §2.4: for a share link always a transfer (the heal)
+        playIndex(index, store.savedPosMs(item.key) / 1000.0, deliberate = false, PlayWhy.START, transfer = share)
     }
 
     /** One resume; [fallback]: a refusal falls through to the full start - the transfer is the heal (same tile, L2). */
@@ -1043,12 +1201,14 @@ class SonosController(
      * polls, the snapshot is seeded at the start position (shown, never bookmarked), and a refused
      * start-seek arms the bounded hold. A deliberate restart stamps [seekAt].
      */
-    private fun playIndex(idx: Int, startS: Double, deliberate: Boolean, why: PlayWhy, done: () -> Unit = {}) {
+    private fun playIndex(idx: Int, startS: Double, deliberate: Boolean, why: PlayWhy, transfer: Boolean = false, done: () -> Unit = {}) {
         if (!mayPlay()) {
             host.log("sonos: a play refused - playing isn't allowed now")
             done()
             return
         }
+        // design 54 R2 (QA-3): a share link branches before PlayBodies.build, which refuses Spotify
+        if (share) return playShareIndex(idx, startS, deliberate, why, done, transfer)
         val e = entry
         val item = items.getOrNull(idx)
         // art = null: the phone holds only hashes (a listing's `art`, the library's `cover`) the server serves
@@ -1230,15 +1390,25 @@ class SonosController(
         if (volSet == volSets) res.volume?.let { volOpts[res.uid] = it }
     }
 
-    private fun played(idx: Int, item: PlayItem, res: PlayResult, startS: Double, restored: Int?, volSet: Int) {
+    private fun played(
+        idx: Int,
+        item: PlayItem,
+        res: PlayResult,
+        startS: Double,
+        restored: Int?,
+        volSet: Int,
+        share: Boolean = false,
+        track: String? = null,
+        position: Int? = null,
+    ) {
         val now = elapsedMs()
         if (res.restored) restoredBy(restored)
         // brought down to the cap before Play, or the ramp's leftover put back: the base of the next key press
         tookVolume(res, volSet)
         index = idx // the current generation: nothing newer was pressed
         ownsSpeaker = true
-        playing = Playing(entry?.id, idx, item.key, res.uri)
-        pending = Pending(item.key, now, res.uri)
+        playing = Playing(entry?.id, idx, item.key, res.uri, track, position)
+        pending = Pending(item.key, now, res.uri, share, track, position)
         playAnsweredAt = now
         // a pause pressed while the play was in flight went out after it: that intent stands
         if (optTr?.state != TransportState.PAUSED_PLAYBACK) optTr = Opt(TransportState.PLAYING, now)
@@ -1246,7 +1416,7 @@ class SonosController(
         snap = Fields(
             armed = true, uid = res.uid, kind = transport.session.kind, seq = -1, measuredAt = now,
             reachable = true, transport = TransportState.PLAYING, relS = startS, durS = listed, uri = res.uri, ours = true,
-            volume = res.volume ?: snap?.volume,
+            volume = res.volume ?: snap?.volume, trackNo = position, trackSpotifyUri = track,
         )
         durFromListing = listed != null
         seeded = true
@@ -1254,12 +1424,22 @@ class SonosController(
         lastOursDur = listed
         // the seed's anchor: a new key (a play), so the bar jumps to the start at once (design 53 §2.4)
         measure((startS * 1000).toLong(), now, moving = true, poll = false, seed = true)
-        if (startS >= 5 && !res.sought) {
+        if (startS >= 5 && !res.sought && (!share || track != null)) {
             bmHold = BmHold(item.key, startS, now)
             host.log("sonos: seek refused - playing from the top, bookmark held at ${startS.toInt()}s")
         }
         host.played(item.key, res.uri)
-        host.log("sonos: playing [${idx + 1}/${items.size}] ${logName(item.title, BuildConfig.DEBUG)}")
+        if (share) {
+            pairedItem = null
+            itemChangedAt = null
+            unmappedShown = null
+            beltKey = null
+            qmap?.let { host.shared(it.target, it.read.updateId) }
+            // design 54 §2.14: no title of a Spotify item in a release line
+            host.log("sonos: playing [${idx + 1}/${items.size}] at queue position ${position ?: "?"}${if (track == null) " (the start item isn't in the queue)" else ""}")
+        } else {
+            host.log("sonos: playing [${idx + 1}/${items.size}] ${logName(item.title, BuildConfig.DEBUG)}")
+        }
     }
 
     /**
@@ -1281,7 +1461,7 @@ class SonosController(
             lost = (e as? Exception) ?: SonosException(e.toString())
             return
         }
-        if (why == PlayWhy.START) refusedFlag = true
+        if (why == PlayWhy.START) refused = (e as? Exception) ?: SonosException(e.toString())
         session = true
         val back = playing?.takeIf { it.entryId == entry?.id && it.index in items.indices }
         if (stepWant == null && back != null) {
@@ -1318,7 +1498,13 @@ class SonosController(
         val now = elapsedMs()
         val p = pending
         if (p != null) {
-            val landed = p.uri != null && polled.reachable && polled.ours && normUri(polled.uri) == normUri(p.uri)
+            // design 54 §2.5, R2 (QA-7): a share link lands on its queue position and track - or a later track the map names
+            val landed = p.uri != null && polled.reachable && polled.ours &&
+                if (p.share) {
+                    shareLanded(true, p.position, p.track, polled.trackNo, polled.trackSpotifyUri) { no, t -> qmap?.map?.verifies(no, t) == true }
+                } else {
+                    normUri(polled.uri) == normUri(p.uri)
+                }
             HandOverTiming.step(
                 "a settle poll: ${if (polled.reachable) polled.transport else "no answer"}${if (polled.transitioning) " (transitioning)" else ""}, " +
                     when {
@@ -1331,6 +1517,7 @@ class SonosController(
             if (landed || (p.uri != null && now - p.at > SETTLE_MS)) {
                 pending = null
                 early = null
+                if (landed && p.share) pairedItem = wsItem
                 // design 53 §2.3: an event parked while our play settled counts once this poll saw the play land
                 parked?.let { e ->
                     parked = null
@@ -1347,6 +1534,9 @@ class SonosController(
             host.log("sonos: the session stood down")
             return
         }
+        // design 54 §2.5: the previous track's anchor and duration, before this poll re-bases them (the boundary's verdict)
+        val before = anchor
+        val beforeDurS = currentDurS()
         accept(polled)
         confirmed(polled, now)
         val s = snap ?: return
@@ -1369,6 +1559,8 @@ class SonosController(
         // an ours poll: the socket's measurements count again (design 53 §2.3)
         wsBlocked = false
         agreement(s, now)
+        val shareSession = share && s.kind == Kind.SPOTIFY_SHARELINK
+        if (shareSession) shareTick(s, before, beforeDurS, now)
         val rel = s.relS
         val dur = s.durS
         if (rel != null && s.transport?.live == true) {
@@ -1384,7 +1576,9 @@ class SonosController(
             }
             endsNear = if (dur != null && dur > 0 && rel > dur - ENDS_NEAR_S) endsNear + 1 else 0
         }
-        if (s.transport == TransportState.STOPPED && endsNear > 0 && playing != null) {
+        // design 54 N1b: a share link's queue end is near by the anchor too (a healthy socket polls no tail)
+        val nearEnd = endsNear > 0 || (shareSession && anchorNearEnd(before, beforeDurS?.let { (it * 1000).toLong() }, s.measuredAt ?: now, ENDS_NEAR_S))
+        if (s.transport == TransportState.STOPPED && nearEnd && playing != null) {
             // design 53 §2.8: right after a group change of ours the stream may have moved (an old coordinator may keep
             // its TrackURI): the probe, with the candidate, decides first - the advance only once no coordinator carries it
             if (now - groupChangedAt < SETTLE_MS && !s.probeMissed) {
@@ -1473,6 +1667,10 @@ class SonosController(
                     wsState = e.state
                     wsAt = e.at
                     e.itemId?.let { wsItem = it }
+                    // design 54 §2.5: the boundary's time, the modes a correction reads, the queue's version (trust)
+                    if (e.itemId != null && before != null && e.itemId != before) itemChangedAt = e.at
+                    e.playModes?.let { wsModes = it }
+                    if (session && share) e.queueVersion?.let { shareVersion(it) }
                     // design 53-d: a newer state supersedes a state still being confirmed (ours or not)
                     confirm?.let { c -> if (!c.newItem && e.state != WsPlayback.BUFFERING && e.state.transport != c.state) confirm = null }
                     if (session) {
@@ -1489,7 +1687,10 @@ class SonosController(
                         if (!caused) confirmFor(e, before, now)
                     }
                 }
-                is SocketEvent.Metadata -> if (session) metadata(e)
+                is SocketEvent.Metadata -> if (session) {
+                    metadata(e)
+                    if (share) shareMetadata(e)
+                }
                 is SocketEvent.Moved -> if (session) {
                     // design 53 §2.8: our uid coordinates no subscribed group now - its new coordinator may carry our stream
                     wake(immediate = true, now)
@@ -1510,6 +1711,8 @@ class SonosController(
                     parked = null
                     disagreements = 0
                     wsItem = null
+                    wsModes = null
+                    wsTrack = null
                     confirm = null
                     // design 53-d: the slow check was the socket's - today's cadence from a poll now
                     if (session) wake(immediate = true, now)
@@ -1559,7 +1762,7 @@ class SonosController(
         if (!newItem && state == null) return
         val s = snap
         if (!newItem && s != null && s.reachable && !s.transitioning && s.transport == state) return
-        confirm = Confirm(gen, state, newItem, s?.uri, now)
+        confirm = Confirm(gen, state, newItem, s?.uri, now, s?.trackNo)
     }
 
     /** Design 53-d: our DIDL's id on the socket since our play went out - the early hint ([earlyHint]). */
@@ -1645,6 +1848,9 @@ class SonosController(
                     frozen = null
                 }
                 wsTr = Opt(tr, e.at)
+                // design 54 §2.5's pairing: a measurement of another queue item than the one `playing` was confirmed with
+                // never re-bases the old track's bar (the new track's 0:00 before UPnP shows it)
+                if (share && pairedItem != null && e.itemId != null && e.itemId != pairedItem) return
                 val pos = e.positionMs ?: return
                 // the seek hold ends on an exact position near its target - never on a BUFFERING's pre-seek one
                 optPos?.let { if (abs(pos - (it.s * 1000).toLong()) <= SEEK_EVENT_TOL_MS) optPos = null }
@@ -1702,7 +1908,9 @@ class SonosController(
         if (mv.uid.isEmpty() || mv.uid == uid || s.uid != uid || !s.fresh(now) || adopting) return false
         adopting = true
         val kind = s.kind ?: Kind.URL
-        work.submit({ transport.adopt(mv.uid, kind, mv.uri) }) { r ->
+        // design 54 §2.9: a share session follows with the new coordinator's queue marker, never `Moved.uri`
+        val followUri = if (kind == Kind.SPOTIFY_SHARELINK) queueUri(mv.uid) else mv.uri
+        work.submit({ transport.adopt(mv.uid, kind, followUri) }) { r ->
             adopting = false
             r.onSuccess {
                 uid = mv.uid
@@ -1719,9 +1927,15 @@ class SonosController(
                 knownMembers += knownLeft.keys
                 knownLeft.clear()
                 host.groupsChanged()
-                playing = playing?.let { Playing(it.entryId, it.index, it.itemKey, mv.uri) }
-                host.followed(mv.uid, mv.name, playing?.itemKey, mv.uri)
+                playing = playing?.let { Playing(it.entryId, it.index, it.itemKey, if (kind == Kind.SPOTIFY_SHARELINK) it.uri else mv.uri, it.track, it.position) }
+                host.followed(mv.uid, mv.name, playing?.itemKey, followUri)
                 host.log("sonos: stream moved to ${logName(mv.name, BuildConfig.DEBUG)} (${mv.uid}) - following")
+                if (kind == Kind.SPOTIFY_SHARELINK && share) {
+                    // the slots kept, the version read again on the new coordinator (D13); our sleep timer goes with us
+                    qmap?.uid = mv.uid
+                    learn()
+                    syncSleepTimer()
+                }
             }
             r.onFailure { host.log("sonos: adopt failed (${it.javaClass.simpleName}) - retried next tick") }
             host.changed()
@@ -1776,6 +1990,519 @@ class SonosController(
         }
     }
 
+    // -- design 54: a Spotify link in the speaker's own queue (§2.2-§2.11; main thread) --
+
+    /** Our listing's track uris in the listing's own order (`uriOf`), the speaker's queue order; never logged. */
+    private fun listedUris(): List<String> {
+        val kind = spotifyTarget(entry?.target)?.kind ?: return emptyList()
+        return shareKeys.orEmpty().map { uriOf(kind, it) }
+    }
+
+    /** What a transfer of the loaded entry adds: its canonical target, or for a favourites run its one track's uri. */
+    private fun shareTarget(): String? = if (shareOne) listedUris().firstOrNull() else spotifyTarget(entry?.target)?.target
+
+    /** The map is this entry's and this room's and trusted (§2.4): a step, a pick, the advance jump; else a transfer. */
+    private fun mapTrusted(): Boolean = qmap?.let { it.entryId == entry?.id && it.uid == uid && it.trusted } == true
+
+    /** Our item [i]'s queue position through the map's slots, or null. */
+    private fun slotOfItem(m: QMap, i: Int): Int? = listedIndexOf(items.map { it.key }, shareKeys.orEmpty(), i)?.let { m.map.slotOf(it) }
+
+    /** From our item [from] in the step's direction the first the speaker's queue holds (`playableIndex`'s rule; no wrap). */
+    private fun slottedFrom(m: QMap, from: Int, forward: Boolean): Int? {
+        val range = if (forward) from until items.size else from downTo 0
+        return range.firstOrNull { slotOfItem(m, it) != null }
+    }
+
+    /**
+     * `_sonos_play_entry` for a share link (design 54 §2.2-§2.4): with the map trusted for this entry and room - also
+     * while its read still runs (N6) - a jump within the speaker's queue (`queuePlay`: hushed, the cap on a START, no
+     * clear, no add); else, or with [transfer] (the tile's heal), the transfer: the whole link into the speaker's queue
+     * (`playShare`, its sleep timer to the edge). An item with no slot: a step or our advance skips it in its direction,
+     * a pick of an item added since the read is one transfer, any other pick is refused ("Kan ikke spilles på Sonos").
+     * The map of every transfer that landed is taken, generation or not (§2.3).
+     */
+    private fun playShareIndex(idx: Int, startS: Double, deliberate: Boolean, why: PlayWhy, done: () -> Unit, transfer: Boolean) {
+        val e = entry
+        val item = items.getOrNull(idx)
+        val keys = shareKeys
+        if (e == null || item == null || keys == null) {
+            failed(why, SonosException("nothing-remote-playable"))
+            done()
+            return
+        }
+        val uris = listedUris()
+        val li = listedIndexOf(items.map { it.key }, keys, idx)
+        val m = qmap?.takeIf { !transfer && !shareOne && it.entryId == e.id && it.uid == uid && it.trusted }
+        var position: Int? = null
+        if (m != null && !m.reading) {
+            position = slotOfItem(m, idx)
+            if (position == null) {
+                if (why != PlayWhy.START) {
+                    val from = playing?.index?.takeIf { it >= 0 } ?: index
+                    val other = slottedFrom(m, idx, forward = idx >= from)
+                    if (other != null && other != idx) return playShareIndex(other, 0.0, deliberate, why, done, transfer = false)
+                } else if (m.listed != m.readListed) {
+                    host.log("sonos: share - a pick of an item added since the read: one transfer")
+                    return playShareIndex(idx, startS, deliberate, why, done, transfer = true)
+                }
+                host.log("sonos: share - item ${idx + 1} isn't in the speaker's queue")
+                failed(why, NotInQueue("no slot"))
+                done()
+                return
+            }
+        }
+        val jump = m != null
+        val hintS = item.durationMs?.let { it / 1000.0 }
+        val body = if (jump) null else if (shareOne) PlayBodies.shareOne(e, item.key, uid, startS, hintS) else PlayBodies.share(e, keys, li, uid, startS, hintS)
+        if (!jump && body == null) {
+            failed(why, ShareRefused("no share type"))
+            done()
+            return
+        }
+        val track = li?.let { uris.getOrNull(it) }
+        val now = elapsedMs()
+        val g = ++gen
+        startPending = false
+        session = true
+        ended = false
+        verbAt = now
+        if (deliberate) seekAt = now
+        index = idx
+        val owes = socketAgrees(null, now)
+        pending = Pending(item.key, now, null, share = true, track = track, position = position)
+        optTr = Opt(TransportState.PLAYING, now)
+        optPos = null
+        frozen = null
+        bmHold = null
+        endsNear = 0
+        atEndToken++
+        forgetEvents()
+        val volume = restoreVolume
+        val startCap = if (why == PlayWhy.START) cap()?.takeIf { it in 1..99 } else null
+        val restore = volume?.let { volumeTarget(it, startCap ?: cap()) }
+        val target = uid
+        val group = if (why == PlayWhy.START) members(target) else null
+        val room = if (startCap != null) group.orEmpty() else emptyList()
+        group?.let { baseline(it, accept = false) }
+        val volSet = volSets
+        val gate: () -> Boolean = { !closed && mayPlay() }
+        val timeline = HandOverTiming.play("the play queued for the room's actor [$why, ${Kind.SPOTIFY_SHARELINK.wire}${if (jump) ", a jump" else ""}]")
+        work.submit<PlayResult?>({
+            if (!gate()) return@submit null
+            HandOverTiming.enter(timeline)
+            HandOverTiming.step("the actor runs the play", timeline)
+            var result = (
+                if (jump) {
+                    transport.queuePlay(position, startS, target, startCap, room, hintS, uris, li, gate)
+                } else {
+                    // §2.9 item 4: the speaker's own sleep timer to the edge, read now
+                    transport.playShare(body!!, startCap, room, sleepTimerFor(suspendAt(), wallMs()), gate)
+                }
+                ) ?: return@submit null
+            if (restore != null && result.share?.played != false) {
+                try {
+                    transport.volume(restore, target)
+                    result = result.copy(volume = restore, restored = true)
+                } catch (_: SonosException) {
+                    // best effort: the next play tries again
+                }
+            }
+            result
+        }) { r ->
+            try {
+                val res = r.getOrNull()
+                val start = res?.share
+                // §2.3: a transfer that landed replaced the speaker's queue - its map is taken, generation or not
+                if (!jump && start != null && body != null && !closed) takeMap(e.id, res.uid, body.uri, uris, start.read)
+                val landedTrack = if (start?.found == false) null else track
+                if (closed) {
+                    Unit
+                } else if (g != gen) {
+                    HandOverTiming.step("a superseded play's answer on main", timeline)
+                    if (res != null && start?.played != false) {
+                        playing = Playing(e.id, if (entry?.id == e.id) items.indexOfFirst { it.key == item.key } else -1, item.key, res.uri, landedTrack, start?.position)
+                        ownsSpeaker = true
+                        tookVolume(res, volSet)
+                        if (res.restored) restoredBy(volume)
+                    }
+                    r.onFailure { host.log("sonos: a superseded play failed (${it.javaClass.simpleName})") }
+                } else {
+                    r.fold({
+                        if (res == null || start?.played == false) {
+                            HandOverTiming.step("the play dropped by its token", timeline)
+                            dropped(idx, startS, deliberate)
+                        } else {
+                            played(idx, item, res, startS, volume, volSet, share = true, track = landedTrack, position = start?.position)
+                            HandOverTiming.step("the play's answer on main - it settles until a poll sees our stream (the seed shows)", timeline)
+                            if (owes) events.owed(now, elapsedMs())
+                        }
+                    }, { x ->
+                        HandOverTiming.step("the play failed (${x.javaClass.simpleName})", timeline)
+                        // §2.4: a refused jump - untrusted, the index stays on what plays; the next press heals
+                        if (jump && x !is NotInQueue) qmap?.let { untrust(it, "a jump was refused") }
+                        failed(why, x)
+                    })
+                }
+            } catch (t: Exception) {
+                host.log("sonos: play result failed (${t.javaClass.simpleName})")
+            } finally {
+                done()
+                host.changed()
+            }
+        }
+    }
+
+    /** §2.3: the map of a transfer that landed; the rest of the queue read as its own actor job, off the hush. */
+    private fun takeMap(entryId: Long, at: String, target: String, uris: List<String>, read: QueueRead) {
+        val m = QMap(entryId, at, target, uris, read, uris)
+        qmap = m
+        if (m.reading) readRest(m)
+    }
+
+    /** §2.2 step 12: `readQueue` - the full map; a read that fails leaves the map untrusted (the next press transfers). */
+    private fun readRest(m: QMap) {
+        work.submit({ transport.readQueue(m.uid, m.read) }) { r ->
+            if (qmap !== m || closed) return@submit
+            m.reading = false
+            val read = r.getOrNull()
+            if (read != null) {
+                m.reread(read)
+                host.shared(m.target, read.updateId)
+                host.log("sonos: share - the queue read: ${m.map.slots.count { it != null }} of ${m.listed.size} items in it")
+            } else {
+                r.exceptionOrNull()?.let { untrust(m, "the queue couldn't be read (${it.javaClass.simpleName})") }
+            }
+            host.changed()
+        }
+    }
+
+    /**
+     * Design 54 §2.9: adopt's (and a follow's) read - reads only. It becomes the session's baseline (`shareBaseline`) and
+     * the map, trusted; then the index from `Track` through the slots (a duplicate, or an item `adoptIndex` named first).
+     */
+    private fun learn() {
+        val e = entry ?: return
+        val target = shareTarget() ?: return
+        val g = gen
+        val at = uid
+        val uris = listedUris()
+        work.submit({ transport.learnQueue(at)?.also { transport.shareBaseline(target, uris, it) } }) { r ->
+            if (closed || g != gen || at != uid) return@submit
+            val read = r.getOrNull()
+            if (read == null) {
+                host.log("sonos: share - the adopted queue couldn't be read (${r.exceptionOrNull()?.javaClass?.simpleName ?: "no session"}) - the next press transfers")
+                return@submit
+            }
+            qmap = QMap(e.id, at, target, uris, read, uris).also { it.reading = false }
+            host.shared(target, read.updateId)
+            fixIndexFromTrack()
+            host.changed()
+        }
+    }
+
+    /** The playing item's index from the snapshot's `Track` through the slots (verified by its uri). */
+    private fun fixIndexFromTrack() {
+        val m = qmap ?: return
+        val s = snap ?: return
+        val no = s.trackNo ?: return
+        val li = m.map.itemAt(no)?.takeIf { m.map.verifies(no, s.trackSpotifyUri) } ?: return
+        val idx = itemIndexOf(items.map { it.key }, shareKeys.orEmpty(), li) ?: return
+        if (playing?.index == idx && playing?.position == no) return
+        index = idx
+        playing = Playing(entry?.id, idx, items[idx].key, s.uri.orEmpty(), s.trackSpotifyUri, no)
+        unmappedShown = null
+    }
+
+    /** §2.3: the queue was edited outside the app - healed only by the next explicit press, by a transfer. */
+    private fun untrust(m: QMap, why: String) {
+        if (!m.trusted) return
+        m.trusted = false
+        host.log("sonos: share - the map is untrusted ($why): the next press transfers")
+    }
+
+    /**
+     * N5: the socket's `queueVersion` against the read's, the same source only. Moved: untrusted. The read lacks that
+     * source: the `UpdateID` read once more (one `BrowseMetadata`), never a mismatch. While the read runs: nothing.
+     */
+    private fun shareVersion(v: String) {
+        val m = qmap?.takeIf { it.uid == uid && !it.reading && it.trusted } ?: return
+        when (versionCheck(m.read, VersionSource.SOCKET, v)) {
+            VersionCheck.SAME -> Unit
+            VersionCheck.MOVED -> untrust(m, "the queue's version moved")
+            VersionCheck.REREAD -> {
+                if (m.versionAsked == v) return
+                m.versionAsked = v
+                val target = uid
+                work.submit({ transport.queueVersion(target) }) { r ->
+                    if (qmap !== m) return@submit
+                    val u = r.getOrNull() ?: return@submit
+                    if (m.read.updateId != null && u != m.read.updateId) untrust(m, "the queue's UpdateID moved") else m.read = m.read.copy(socketVersion = v)
+                }
+            }
+        }
+    }
+
+    /** §2.5 (a) and §2.8: the socket's container into the share classify (on a change), and its track for the titles. */
+    private fun shareMetadata(e: SocketEvent.Metadata) {
+        wsTrack = e.track
+        if (e.objectId != containerFed) {
+            containerFed = e.objectId
+            val id = e.objectId
+            work.submit({ transport.shareContainer(id) }) {}
+        }
+        val pl = playing
+        val t = e.track
+        if (unmappedShown != null && pl != null && pl.index < 0 && t != null && t.uri == pl.track) {
+            unmappedTitle(t.name, t.artist)?.let { unmappedShown = it }
+        }
+    }
+
+    /** The unmapped look's title (§2.8): the socket's `name — artist` for that track, else `TrackMetaData`'s. */
+    private fun shownTitle(track: String?, s: Fields): String =
+        wsTrack?.takeIf { it.uri == track }?.let { unmappedTitle(it.name, it.artist) } ?: s.trackTitle.orEmpty()
+
+    /**
+     * §2.5's `pollTick` for a share link, after the ours gate: (1) the belt - an ours PLAYING poll while playing isn't
+     * allowed is one Pause; (3) a track change of the speaker's own - the polled `Track` or track isn't `playing`'s, no
+     * play of ours pending - is [queueMoved]; then the at-end timer is armed from this measurement (§2.7). The queue's
+     * end (2) is the STOPPED-near-the-end rule after it (the anchor counts, N1b).
+     */
+    private fun shareTick(s: Fields, before: SonosAnchor?, beforeDurS: Double?, now: Long) {
+        if (s.transport == TransportState.PLAYING && !s.transitioning && !mayPlay()) belt(s)
+        val pl = playing
+        val no = s.trackNo
+        if (pl != null && no != null && pending == null && s.transport?.live == true && !s.transitioning && (no != pl.position || s.trackSpotifyUri != pl.track)) {
+            queueMoved(s, pl, before, beforeDurS, now)
+        }
+        armAtEnd(s, now)
+    }
+
+    /**
+     * §2.5 step 3, `queueMoved`: `index` and `playing` follow the map's item at `Track` (verified by its uri; trusted and
+     * not verified -> untrusted, then the occurrence nearest the expected one); not mapped -> the unmapped look, the
+     * index stays. Natural (the anchor) or pressed: natural marks the finished item done and is corrected toward our next
+     * when it isn't (§2.6, only on the anchor's verdict and with no mode we didn't set); "Til slutten" and the belt pause
+     * at it; past our last item it pauses and ends; a pressed one is followed as it is. The sleep timer follows the edge.
+     */
+    private fun queueMoved(s: Fields, prev: Playing, before: SonosAnchor?, beforeDurS: Double?, now: Long) {
+        val no = s.trackNo ?: return
+        val track = s.trackSpotifyUri
+        val keys = shareKeys.orEmpty()
+        val itemKeys = items.map { it.key }
+        val m = qmap?.takeIf { it.entryId == entry?.id && it.uid == uid }
+        var li = m?.map?.itemAt(no)
+        if (m != null && li != null && !m.map.verifies(no, track)) {
+            untrust(m, "the speaker's track isn't the map's")
+            li = null
+        }
+        if (li == null && m != null && !m.trusted && track != null) {
+            val expected = prev.index.takeIf { it >= 0 }?.let { listedIndexOf(itemKeys, keys, it) }?.plus(1) ?: 0
+            li = m.map.nearest(track, expected)
+        }
+        val idx = li?.let { itemIndexOf(itemKeys, keys, it) }
+        val changeAt = itemChangedAt ?: s.measuredAt ?: now
+        itemChangedAt = null
+        // a start whose item wasn't in the queue (N4) or an unmapped track: no verdict of ours - followed as pressed
+        val b = if (prev.track == null || prev.index < 0) Boundary.PRESSED else boundary(before, beforeDurS?.let { (it * 1000).toLong() }, changeAt, endsNear > 0)
+        val ourNext = prev.index.takeIf { it >= 0 }?.let { advanceIndex(it, items.size, repeat) }
+        endsNear = 0
+        if (idx != null) {
+            if (b.natural && prev.index >= 0 && idx != prev.index) autoFlag = true
+            index = idx
+            playing = Playing(entry?.id, idx, items[idx].key, s.uri.orEmpty(), track, no)
+            unmappedShown = null
+        } else {
+            playing = Playing(entry?.id, -1, "", s.uri.orEmpty(), track, no)
+            unmappedShown = shownTitle(track, s)
+        }
+        pairedItem = wsItem
+        // the bar is the new track's from this poll on (a new item jumps, design 53 §2.4)
+        s.relS?.let { measure((it * 1000).toLong(), s.measuredAt ?: now, moving = s.transport == TransportState.PLAYING, poll = true) }
+        host.log("sonos: share - the queue moved on (${b.name.lowercase()}) to position $no${if (idx == null) ", a track our list doesn't name" else " [${idx + 1}/${items.size}]"}")
+        val hint = idx?.let { items[it].durationMs }?.let { it / 1000.0 }
+        work.submit({ transport.cadenceHint(hint) }) {}
+        val held = holdAtEnd
+        when {
+            b.natural && prev.index >= 0 && held != null -> {
+                // §2.7: "Til slutten" seen at a natural boundary - Pause at once, our next waits at 0
+                pauseNow("Til slutten at the boundary")
+                holdAt(prev.index, ourNext)
+                holdAtEnd = null
+                held()
+            }
+            !mayPlay() -> belt(s)
+            b.natural && prev.index >= 0 && ourNext == null -> {
+                // past our last item into a track after it (the at-end timer was missed): Pause, ended - never a Stop
+                pauseNow("past our last item")
+                endPaused()
+            }
+            b.correctable && ourNext != null && idx != ourNext -> correct(ourNext)
+        }
+        syncSleepTimer()
+    }
+
+    /** "Til slutten" (design 50) held: our [next] item waits at 0 (none: the queue ended, paused). */
+    private fun holdAt(cur: Int, next: Int?) {
+        if (next == null) return endPaused()
+        if (next != cur) autoFlag = true
+        gen++
+        index = next
+        startPosMs = 0
+        deliberateStart = next <= cur
+        startPending = true
+    }
+
+    /** §2.9's belt: one Pause per generation and track while playing isn't allowed (the time rule, the room scope). */
+    private fun belt(s: Fields) {
+        val key = "$gen|${s.trackNo}"
+        if (beltKey == key) return
+        beltKey = key
+        pauseNow("playing isn't allowed now (the belt)")
+    }
+
+    /** Our own Pause of the speaker's queue (the belt, "Til slutten", our list's end). */
+    private fun pauseNow(why: String) {
+        val now = elapsedMs()
+        host.log("sonos: share - $why: Pause")
+        if (effectiveTransport(now) == TransportState.PLAYING) frozen = OptPos(spec(now).positionAt(now) / 1000.0, now, snap?.uri)
+        optTr = Opt(TransportState.PAUSED_PLAYBACK, now)
+        verbAt = now
+        atEndToken++
+        val target = uid
+        work.submit({ transport.pause(target) }) { r ->
+            r.exceptionOrNull()?.let {
+                host.log("sonos: pause failed (${it.javaClass.simpleName})")
+                optTr = null
+                frozen = null
+            }
+            host.changed()
+        }
+    }
+
+    /** Our list played to its end on a queue that goes on: paused there, the service's `queueEnded` (§2.7). */
+    private fun endPaused() {
+        ended = true
+        endedFlag = true
+        endSession()
+        ownsSpeaker = false
+    }
+
+    /**
+     * §2.6, the correction: our [next] at 0 by one jump (`PlayWhy.ADVANCE`, gated) - but first the mode: the socket's
+     * last `playModes`, else one `GetTransportSettings`; a mode we didn't set (shuffle, repeat from the Sonos app) is
+     * followed, never corrected.
+     */
+    private fun correct(next: Int) {
+        val g = gen
+        val at = playing?.position
+        val modes = wsModes
+        if (events.healthy && modes != null) {
+            if (foreignPlayModes(modes.repeat, modes.repeatOne, modes.shuffle)) return host.log("sonos: share - a play mode we didn't set: followed, not corrected")
+            host.log("sonos: share - the speaker's next isn't ours: corrected")
+            return playIndex(next, 0.0, deliberate = false, PlayWhy.ADVANCE)
+        }
+        val target = uid
+        work.submit({ transport.playMode(target) }) { r ->
+            if (closed || g != gen || playing?.position != at) return@submit
+            if (foreignPlayMode(r.getOrNull())) {
+                host.log("sonos: share - a play mode we didn't set: followed, not corrected")
+            } else {
+                host.log("sonos: share - the speaker's next isn't ours: corrected")
+                playIndex(next, 0.0, deliberate = false, PlayWhy.ADVANCE)
+            }
+            host.changed()
+        }
+    }
+
+    /**
+     * §2.7, the at-end timer: on a PLAYING measurement of a mapped track while an action is armed ("Til slutten", repeat
+     * one, our last item with a queue position after it), `after(dur - pos - 400 ms)`; each measurement arms it anew,
+     * and it fires only for the same generation and queue position, the speaker still playing.
+     */
+    private fun armAtEnd(s: Fields, now: Long) {
+        val token = ++atEndToken
+        val pl = playing ?: return
+        if (closed || !session || pending != null || pl.index < 0 || s.transport != TransportState.PLAYING || s.transitioning || !s.ours || !pl.on(s)) return
+        val slot = pl.position ?: return
+        val length = qmap?.takeIf { it.uid == uid }?.read?.length ?: slot
+        val ourLast = advanceIndex(pl.index, items.size, Repeat.OFF) == null
+        if (atEndAction(holdAtEnd != null, repeat, ourLast, slot < length) == AtEnd.NONE) return
+        val durMs = s.durS?.let { (it * 1000).toLong() }?.takeIf { it > 0 } ?: return
+        val posMs = ((s.relS ?: return) * 1000).toLong() + (now - (s.measuredAt ?: now)).coerceAtLeast(0)
+        val g = gen
+        work.after(atEndDelayMs(durMs, posMs)) {
+            if (closed || atEndToken != token || g != gen || playing?.position != slot) return@after
+            if (effectiveTransport(elapsedMs()) != TransportState.PLAYING) return@after
+            atEnd(atEndAction(holdAtEnd != null, repeat, ourLast, slot < length))
+            host.changed()
+        }
+    }
+
+    /** The modes or "Til slutten" changed: the at-end timer from the last measurement (§2.7). */
+    private fun rearmAtEnd() {
+        val s = snap ?: return
+        if (s.kind == Kind.SPOTIFY_SHARELINK && s.fresh(elapsedMs())) armAtEnd(s, elapsedMs()) else atEndToken++
+    }
+
+    /** `SonosRenderer.setModes` (§2.7): the at-end action for repeat one and repeat all re-armed. */
+    fun modesChanged() {
+        if (share) rearmAtEnd()
+    }
+
+    private fun atEnd(action: AtEnd) {
+        val cur = playing?.takeIf { it.index >= 0 } ?: return
+        when (action) {
+            AtEnd.NONE -> Unit
+            AtEnd.REPEAT_ONE -> if (mayPlay()) {
+                host.log("sonos: share - repeat one: the track again")
+                val now = elapsedMs()
+                seekAt = now
+                verbAt = now
+                bmHold = null
+                val target = uid
+                work.submit({ transport.seek(0.0, target) }) { r ->
+                    r.exceptionOrNull()?.let { host.log("sonos: seek failed (${it.javaClass.simpleName})") }
+                    host.changed()
+                }
+            }
+            AtEnd.WRAP -> if (mayPlay()) {
+                host.log("sonos: share - the end of our list: repeat all from the first")
+                autoFlag = true
+                playIndex(0, 0.0, deliberate = true, PlayWhy.ADVANCE)
+            }
+            AtEnd.HOLD, AtEnd.END -> {
+                bookmarkNow(force = true)
+                pauseNow(if (action == AtEnd.HOLD) "Til slutten" else "the end of our list")
+                if (action == AtEnd.HOLD) {
+                    holdAt(cur.index, advanceIndex(cur.index, items.size, repeat))
+                    holdAtEnd?.let {
+                        holdAtEnd = null
+                        it()
+                    }
+                } else {
+                    endPaused()
+                }
+            }
+        }
+    }
+
+    /** §2.9 item 4: the speaker's sleep timer to the edge - set, re-set past 30 s, or our own cleared (the transport decides). */
+    private fun syncSleepTimer() {
+        if (closed || !session) return
+        val target = uid
+        work.submit({ transport.syncSleepTimer(suspendAt(), wallMs(), target) }) { r ->
+            r.exceptionOrNull()?.let { host.log("sonos: the speaker's sleep timer not set (${it.javaClass.simpleName})") }
+        }
+    }
+
+    /**
+     * The managed config changed (`BRIDGE_CHANGED`, design 54 R2): a lift, a parent's answer, the override or a new
+     * policy moved the edge - the speaker's sleep timer follows it while our share session plays.
+     */
+    fun edgeChanged() {
+        if (!closed && session && share) syncSleepTimer()
+    }
+
     // -- the bookmark (§4.4) --
 
     /**
@@ -1789,7 +2516,7 @@ class SonosController(
         pinned = store.pin()
         val s = snap ?: return
         val pl = playing?.takeIf { it.index >= 0 && it.entryId == entry?.id } ?: return
-        if (seeded || !s.ours || normUri(s.uri) != normUri(pl.uri)) return
+        if (seeded || !s.ours || !pl.on(s)) return
         val now = elapsedMs()
         // the one age term, at most BOOKMARK_AGE_MAX_MS (vibb added only the sidecar's <= 5 s; qa L4)
         val age = s.measuredAt?.takeIf { s.fresh(now) }?.let { (now - it).coerceAtMost(BOOKMARK_AGE_MAX_MS) } ?: 0L
@@ -1816,7 +2543,7 @@ class SonosController(
         if (closed || !session || !ownsSpeaker || seeded || pending != null) return
         val s = snap ?: return
         val pl = playing?.takeIf { it.index >= 0 && it.entryId == entry?.id } ?: return
-        if (!s.ours || s.transport?.live != true || normUri(s.uri) != normUri(pl.uri)) return
+        if (!s.ours || s.transport?.live != true || !pl.on(s)) return
         val at = s.measuredAt ?: return
         if (elapsedMs() - at <= LIVE_BOOKMARK_AFTER_MS) return
         val hold = bmHold?.takeIf { it.itemKey == pl.itemKey }
@@ -1829,7 +2556,7 @@ class SonosController(
 
     /** One live read's place of [pl] ([bookmarkLiveFirst]): the same measured-only rules as [bookmarkNow]. */
     private fun bookmarkLive(f: Fields, pl: Playing, hold: BmHold?, seekAtMs: Long, to: SonosStore) {
-        if (closed || !f.reachable || !f.ours || normUri(f.uri) != normUri(pl.uri)) return
+        if (closed || !f.reachable || !f.ours || !pl.on(f)) return
         val now = elapsedMs()
         val age = f.measuredAt?.let { (now - it).coerceIn(0, BOOKMARK_AGE_MAX_MS) } ?: 0L
         // the speaker's own duration only (a live read carries no listing's)
@@ -1861,6 +2588,7 @@ class SonosController(
             return then(false)
         }
         work.submit({ transport.liveRefresh(LIVE_BUDGET_MS, armedOnly = !park) }) { r ->
+            val looked = r.getOrNull() != null
             val wasPlaying = try {
                 r.getOrNull()?.let { live(it, anyArmed = park) }
                 bookmarkNow(force = true)
@@ -1880,13 +2608,21 @@ class SonosController(
             if (ours) {
                 work.submit({ if (park) transport.park(target) else transport.stop(target) }) { stopped ->
                     stopped.exceptionOrNull()?.let { host.log("sonos: stop failed (${it.javaClass.simpleName}) - the speaker may play on") }
+                    // design 54 §2.9 item 3: a park that didn't go out is no answer - retried
+                    if (park) parkNoAnswer = stopped.getOrNull() != true
                     then(wasPlaying)
                 }
             } else {
+                // not ours by a look that answered is definite; by the last poll alone (the look failed) it is no answer
+                if (park) parkNoAnswer = !looked
                 then(wasPlaying)
             }
         }
     }
+
+    /** The last park ([handOff] with `park`) got no answer (design 54 §2.9 item 3: the room stays recorded, retried). */
+    var parkNoAnswer: Boolean = false
+        private set
 
     /** §6.1's gate: our stream, playing or paused (a play of ours in flight counts) - never a speaker someone else uses. */
     private fun parkGate(): Boolean {

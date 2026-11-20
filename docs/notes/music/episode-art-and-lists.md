@@ -157,7 +157,8 @@ Moved from music/CLAUDE.md on 2026-11-01.
     row, `storedMix` - so no rebuild ever falls back to an entry's queue and moves its bookmark). The service's own pauses
     (a move-on past a run, a run loading paused) go through `selfPause`, never the kid's (the sleep timer stays). **A room**: `toRoom` keeps the room's view of the queue (own files and Spotify out, the
     log line), `comeHome` the phone's again (they are back in), adopt the stored queue around the adopted run; Spotify
-    on a room stays out until round 54-a2 (r12 §3.5's hand-over: one share link per track). **The player**: the header
+    on a room is a run of one per heart since round 54-a2 (r12 §3.5: one share link per track, `segmentAt(..., single)`,
+    `PlayBodies.shareOne`; never the whole playlist). **The player**: the header
     is the playing item's entry, "Favoritt N av M" over the queue, each carousel page its own entry's picture, the heart
     the playing item's, the side slots `controlSlots` of the playing item's entry (shuffle/repeat on a song acting on the
     whole queue); `NowView.favourites`/`entries`, `PlayerHub.State.favouritesQueue`/`favouritesIndex`/

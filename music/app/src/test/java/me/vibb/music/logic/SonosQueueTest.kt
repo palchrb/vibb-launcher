@@ -197,4 +197,33 @@ class SonosQueueTest {
         assertFalse(sleepTimerOurs(null, 3_600_000))
         assertFalse(sleepTimerOurs(3_590.0, null))
     }
+
+    @Test
+    fun `d54a2 our order against the listing's, the landing, the foreign modes, the speaker's title`() {
+        val listed = listOf("A", "C", "A", "D")
+        val ours = listOf("D", "A", "C", "A") // a flip, the duplicate kept in order
+        assertEquals(3, listedIndexOf(ours, listed, 0))
+        assertEquals("the first A is the listing's first", 0, listedIndexOf(ours, listed, 1))
+        assertEquals("the second A the listing's second", 2, listedIndexOf(ours, listed, 3))
+        assertNull(listedIndexOf(listOf("X"), listed, 0))
+        assertEquals(1, itemIndexOf(ours, listed, 0))
+        assertEquals(3, itemIndexOf(ours, listed, 2))
+        assertNull(itemIndexOf(listOf("D"), listed, 1))
+        val mapped: (Int, String?) -> Boolean = { no, t -> no == 3 && t == "c" }
+        assertTrue("its position and track", shareLanded(true, 2, "a", 2, "a", mapped))
+        assertFalse("the old track at the old position", shareLanded(true, 2, "a", 1, "x", mapped))
+        assertFalse("not answered yet", shareLanded(false, 2, "a", 2, "a", mapped))
+        assertTrue("N4: not found - the position alone", shareLanded(true, 1, null, 1, "z", mapped))
+        assertTrue("QA-7: a later track the map names", shareLanded(true, 2, "a", 3, "c", mapped))
+        assertFalse("a later track the map doesn't name", shareLanded(true, 2, "a", 3, "x", mapped))
+        assertFalse(foreignPlayMode("NORMAL"))
+        assertFalse("unknown is no evidence", foreignPlayMode(null))
+        assertTrue(foreignPlayMode("SHUFFLE_NOREPEAT"))
+        assertTrue(foreignPlayModes(repeat = false, repeatOne = true, shuffle = false))
+        assertFalse(foreignPlayModes(repeat = false, repeatOne = false, shuffle = false))
+        assertEquals("Sang & dans — Noen", didlTitle("<DIDL-Lite><item><dc:title>Sang &amp; dans</dc:title><dc:creator>Noen</dc:creator></item></DIDL-Lite>"))
+        assertEquals("Sang", didlTitle("<DIDL-Lite><dc:title>Sang</dc:title></DIDL-Lite>"))
+        assertNull(didlTitle("NOT_IMPLEMENTED"))
+        assertNull(didlTitle(null))
+    }
 }

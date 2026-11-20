@@ -204,3 +204,30 @@ Moved from music/CLAUDE.md on 2026-11-01.
   late episode picture swaps the session player's item in place (`Renderer.replaceItem`); the speaker's DIDL carries
   no art - a listing's `art` is a hash the server serves only to the phone's bearer, so there is no http URL a speaker
   could fetch (design 26a, "Merge of main with design 27").
+- **Spotify on a room (design 54, round 54-a2; vibb's `spotify_sharelink`)**: a Spotify entry whose target has a share
+  type (playlist, album, track, show, episode) goes to a room as one ShareLink add into the speaker's own queue
+  (`SonosTransport.playShare`: NORMAL, clear, `AddURIToQueue` 2311 then 3079 on a fault, the start's Browse page,
+  `play_from_queue`, the settled seek, the speaker's sleep timer), then positional jumps (`queuePlay`). An artist never;
+  a context until round 54-a2' (`PlayBodies.spotifyDropReason`, `CONTEXT_ON_ROOM`); `PlayBodies.build` refuses Spotify
+  (no `item.url!!`). A favourites heart on a room is a run of one (`shareOne`). **The map** (`SonosController`'s
+  `QMap`): one read of the queue after each transfer that landed, generation or not; trusted while the queue's
+  version hasn't moved (`versionCheck`, a moved socket `queueVersion`, a poll's track the map doesn't name, a refused
+  jump); a step, a pick on the loaded entry, our advance and the correction are jumps while trusted (also while the
+  read still runs: the transport looks the slot up), else a transfer; the tile's heal is always a transfer. An item with
+  no slot: a step skips it, a pick of an item added since the read is one transfer, any other pick "Kan ikke spilles på
+  Sonos". **Following**: `ours` is the session's share classify (the prefix unless the container or a moved `UpdateID`
+  with a track in neither list contradicts it), `mapped` the map's item at `Track`; a track change of the speaker's
+  own is natural (the previous anchor within 3 s of its end: a done mark, the correction toward our next after the
+  mode read) or pressed (followed as it is); an unlisted track of our queue is ours with the speaker's title
+  (`unmappedShown`) and no bookmark. **The gate on the speaker's own advance**: NORMAL; the belt (one Pause per
+  generation and track while `mayPlay()` says no); the park (Stop, the queue uri, the clear) whose no-answer keeps the
+  room recorded and is retried (`SonosParkRetry`, `sonos-park-retry`, 5-minute backoff, 2 h, only while suspended);
+  the speaker's own sleep timer to the launcher's `suspend_at_s` (set at a transfer, re-set at a boundary past 30 s,
+  after a follow and at `BRIDGE_CHANGED`; cleared only while ours; never at adopt). **The look** under a queue marker
+  (`x-rincon-queue:<uid>#0`) classifies with renderer.json's `share_target`/`queue_update_id` and goes on with the
+  marker (`roomVerdict` reads `live.ours`, never `sameStream(marker, TrackURI)`); an unlisted ours track adopts at the
+  stored item with the unmapped look, never stopped. "Til slutten", repeat one and our list's end on a queue that goes
+  on are the controller's at-end timer (`dur - pos - 400 ms`). The speaker refusing the link (both services, 0 tracks)
+  is "Kan ikke spilles på Sonos – spør en voksen" (`SONOS_ASK_ADULT`, `RendererEvent.Lost(askAdult)`); no word names a
+  source. Release log lines carry kinds, counts and positions only. Tests: `SonosShareTest`, `SonosQueueTest`,
+  `PlayBodyTest`. Owed: the emulator steps (design 54 R5) and the real room (R6).

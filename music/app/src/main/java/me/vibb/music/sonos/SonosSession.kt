@@ -26,6 +26,7 @@ package me.vibb.music.sonos
 import me.vibb.music.BuildConfig
 import me.vibb.music.logic.QueueRead
 import me.vibb.music.logic.containerContradicts
+import me.vibb.music.logic.didlTitle
 import me.vibb.music.logic.logName
 import me.vibb.music.logic.redactUri
 import me.vibb.music.logic.sameStream
@@ -162,6 +163,8 @@ data class Fields(
     val trackNo: Int? = null,
     /** Design 54 §2.5: a share link's playing track, decoded (`spotify:track:<id>`); null for every other kind or none. */
     val trackSpotifyUri: String? = null,
+    /** Design 54 §2.8: a share link's track as `TrackMetaData` names it (the unmapped look's title); never logged. */
+    val trackTitle: String? = null,
 ) {
     /**
      * The uris as [redactUri] prints them: a Storytel book's TrackURI is a signed URL (design 26b §0); a Spotify queue
@@ -284,6 +287,9 @@ class SonosSession(
      */
     private class Share(val target: String, val listed: Set<String>) {
         var queue: Set<String> = emptySet()
+
+        /** The last read itself (a `queuePlay` that waited for it in the actor looks its position up here, N6). */
+        var read: QueueRead? = null
         var baseline: String? = null
         var container: String? = null
 
@@ -338,8 +344,20 @@ class SonosSession(
     fun shareRead(read: QueueRead) {
         val sh = share ?: return
         sh.queue = read.uris
+        sh.read = read
         read.updateId?.let { sh.baseline = it }
         sh.unknown = null
+    }
+
+    /** The session's last read of the queue (design 54 §2.3), or null: no share session, or none read. */
+    val shareRead: QueueRead? get() = share?.read
+
+    /** The queue's baseline `UpdateID` (design 54 §2.9: `renderer.json`'s `queueUpdateId`), or null. */
+    val shareBaseline: String? get() = share?.baseline
+
+    /** The playing item's listed duration at a confirmed change (design 54 §2.8): the tail cadence's hint. */
+    fun cadenceHint(hintS: Double?) {
+        cadenceHintS = hintS
     }
 
     /** The socket's last `metadataStatus` container (§2.5 (a)): fed by the controller; null is no evidence. */
@@ -640,6 +658,7 @@ class SonosSession(
             transitioning = transitioning,
             trackNo = if (shareKind) pos.track?.trim()?.toIntOrNull() else null,
             trackSpotifyUri = spotify,
+            trackTitle = if (shareKind) didlTitle(pos.trackMetaData) else null,
         )
     }
 

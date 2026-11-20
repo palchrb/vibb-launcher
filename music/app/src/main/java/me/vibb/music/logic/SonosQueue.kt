@@ -294,3 +294,54 @@ fun sleepTimerResetDue(ownLeftMs: Long?, wantedLeftMs: Long): Boolean = ownLeftM
  */
 fun sleepTimerOurs(remainingS: Double?, ownLeftMs: Long?): Boolean =
     remainingS != null && ownLeftMs != null && abs((remainingS * 1000).toLong() - ownLeftMs) <= SLEEP_TIMER_SLACK_MS
+
+/**
+ * Our queue's item [i] ([itemKeys]: the service's order - shuffled, flipped or scoped) as an index of the listing
+ * ([listedKeys]: its own order, the one the speaker's queue follows; design 54 R2 `Active.listed`): the k-th
+ * occurrence of its key for its k-th, else the first. Null when the listing doesn't hold the key.
+ */
+fun listedIndexOf(itemKeys: List<String>, listedKeys: List<String>, i: Int): Int? {
+    val key = itemKeys.getOrNull(i) ?: return null
+    val k = (0 until i).count { itemKeys[it] == key }
+    val at = listedKeys.indices.filter { listedKeys[it] == key }
+    return at.getOrNull(k) ?: at.firstOrNull()
+}
+
+/** The inverse of [listedIndexOf]: the listing's item [j] as an index of our queue, or null when the queue doesn't hold it. */
+fun itemIndexOf(itemKeys: List<String>, listedKeys: List<String>, j: Int): Int? {
+    val key = listedKeys.getOrNull(j) ?: return null
+    val k = (0 until j).count { listedKeys[it] == key }
+    val at = itemKeys.indices.filter { itemKeys[it] == key }
+    return at.getOrNull(k) ?: at.firstOrNull()
+}
+
+/**
+ * A pending play of a share link (design 54 §2.5, R2 QA-7) landed: a poll of ours at the start's queue [position]
+ * with the target's track ([track]; null for a start item not found in the queue, N4) - or, once the play's answer is
+ * in ([answered]), a later position whose track the map names ([mapped]): a start near a track's end has already
+ * moved on by the first poll.
+ */
+fun shareLanded(answered: Boolean, position: Int?, track: String?, polledNo: Int?, polledTrack: String?, mapped: (Int, String?) -> Boolean): Boolean {
+    if (!answered || position == null || polledNo == null) return false
+    if (polledNo == position) return track == null || polledTrack == track
+    return polledNo > position && mapped(polledNo, polledTrack)
+}
+
+/** A play mode a share session didn't set (design 54 §2.6): followed, never corrected. Null (not known) is no evidence. */
+fun foreignPlayMode(mode: String?): Boolean = mode != null && mode != "NORMAL"
+
+/** The socket's play modes as a mode a share session didn't set (§2.6): shuffle, repeat or repeat one. */
+fun foreignPlayModes(repeat: Boolean, repeatOne: Boolean, shuffle: Boolean): Boolean = repeat || repeatOne || shuffle
+
+/**
+ * The speaker's title for an unmapped track (Q6, §2.8), from `TrackMetaData`'s DIDL: `dc:title` and `dc:creator` in
+ * [unmappedTitle]'s form; null when it names none. A light read (one element each, the XML entities undone).
+ */
+fun didlTitle(didl: String?): String? {
+    val d = didl ?: return null
+    fun tag(name: String): String? = Regex("<$name[^>]*>([^<]*)</$name>").find(d)?.groupValues?.get(1)?.let(::xmlText)
+    return unmappedTitle(tag("dc:title"), tag("dc:creator"))
+}
+
+private fun xmlText(s: String): String =
+    s.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&apos;", "'").replace("&amp;", "&")

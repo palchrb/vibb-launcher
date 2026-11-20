@@ -138,7 +138,8 @@ data class Snapshot(
     /**
      * Can this view hold [ref] (design r12 §3.2, r8's rule per item)? Its entry in the library, its item visible here
      * ([visible]: on the phone a Storytel book or an own file only with its copy, a listed Spotify item; on a room every
-     * Storytel book) - on a room also only what a speaker can play (`PlayBodies.speakerPlayable`: no own file, no Spotify).
+     * Storytel book) - on a room also only what a speaker can play (`PlayBodies.speakerPlayable`: no own file, no Spotify artist or context
+     * before design 54's round a2').
      */
     fun holds(ref: MixRef): Boolean {
         val entry = entryByKey(ref.entryKey) ?: return false

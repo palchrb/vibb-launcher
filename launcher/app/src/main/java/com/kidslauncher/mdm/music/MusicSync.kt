@@ -13,6 +13,7 @@ import com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
 import com.kidslauncher.mdm.server.currentPolicyDecision
 import com.kidslauncher.mdm.server.sameBundle
 import com.kidslauncher.mdm.server.dto.PolicyResponse
+import com.kidslauncher.mdm.timerules.TimeRulesRuntime
 import com.kidslauncher.mdm.ui.resolveLauncherLocale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -79,18 +80,19 @@ object MusicSync {
     }
 
     /**
-     * The cap in force changed (`AppEnforcer.apply` -> [VolumeCap.refresh]: a sync, the override or
-     * the pause): the managed config again, so the music app's own Sonos sets follow it at once
-     * (design 26a §5.3). Any thread; the write runs on IO.
+     * What the managed config is made of may have changed: the cap in force (`AppEnforcer.apply` -> [VolumeCap.refresh]:
+     * a sync, the override or the pause), so the music app's own Sonos sets follow it at once (design 26a §5.3), or the
+     * music app's next suspension (`TimeRulesRuntime.recheck`: a boundary, screen-on, a parent-code pause; design 54
+     * R3). The config is written only when it differs, then the nudge. Any thread; the write runs on IO.
      */
-    fun capChanged(context: Context, policy: PolicyResponse?) {
+    fun restrictionsChanged(context: Context, policy: PolicyResponse?) {
         val app = context.applicationContext
         capScope.launch {
             try {
                 val pkg = MusicStore.installedPackage(app) ?: return@launch
                 if (writeRestrictions(app, policy, musicPolicy(policy?.music))) nudge(app, pkg)
             } catch (e: Exception) {
-                Log.w(LOG_TAG, "Couldn't re-push the music app's volume cap", e)
+                Log.w(LOG_TAG, "Couldn't re-push the music app's restrictions", e)
             }
         }
     }
@@ -100,7 +102,8 @@ object MusicSync {
     /**
      * The managed config (21 §2), for each installed music app: written when it differs, cleared
      * when the phone has no policy. Only the device owner writes it. True when it changed.
-     * Synchronized: the sync and a cap edge may write at once.
+     * Synchronized: the sync and a cap edge may write at once. The music app's next suspension
+     * (`suspend_at_s`, design 54 R3) is worked out again on every write.
      */
     @Synchronized
     private fun writeRestrictions(app: Context, policy: PolicyResponse?, music: MusicPolicy?): Boolean {
@@ -112,7 +115,12 @@ object MusicSync {
             val desired = when {
                 policy == null -> Bundle()
                 music == null -> continue // no music object: keep what is there
-                else -> restrictionsBundle(restrictionsFor(music, app.packageName, resolveLauncherLocale(policy.launcherUi?.language), VolumeCap.pctInForce))
+                else -> restrictionsBundle(
+                    restrictionsFor(
+                        music, app.packageName, resolveLauncherLocale(policy.launcherUi?.language), VolumeCap.pctInForce,
+                        TimeRulesRuntime.musicSuspendAtS(app, policy, pkg),
+                    ),
+                )
             }
             val current = try {
                 dpm.getApplicationRestrictions(admin, pkg)

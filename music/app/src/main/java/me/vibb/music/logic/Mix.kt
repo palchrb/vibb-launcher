@@ -48,8 +48,12 @@ data class Run(val entryKey: String, val from: Int, val keys: List<String>) {
     val end: Int get() = from + keys.size
 }
 
-/** The run around [index]: the consecutive refs of its entry, from its first index in [queue]. */
-fun segmentAt(queue: List<MixRef>, index: Int): Run {
+/**
+ * The run around [index]: the consecutive refs of its entry, from its first index in [queue]. [single] (design 54 R2,
+ * r12 §3.5): a run of that one ref - a Spotify favourite on a room is its own share link, never the whole playlist.
+ */
+fun segmentAt(queue: List<MixRef>, index: Int, single: Boolean = false): Run {
+    if (single) return Run(queue[index].entryKey, index, listOf(queue[index].itemKey))
     val key = queue[index].entryKey
     var from = index
     while (from > 0 && queue[from - 1].entryKey == key) from--

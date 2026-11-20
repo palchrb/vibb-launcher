@@ -81,6 +81,12 @@ object MusicRestrictions {
      * epoch seconds (an Int until 2038, H1: no Long), 0 = off.
      */
     const val SPOTIFY_DIAG_UNTIL = "spotify_diag_until"
+
+    /**
+     * Design 54 R1.10/R3: the first instant a time rule suspends the music app ([musicSuspendEdgeS]), epoch seconds (an
+     * Int until 2038, H1: no Long), 0 = none in the next 8 days. The music app sets the speaker's sleep timer from it.
+     */
+    const val SUSPEND_AT_S = "suspend_at_s"
 }
 
 private val JSON = Json { ignoreUnknownKeys = true; explicitNulls = false }
@@ -266,9 +272,10 @@ fun hashFailureSkips(failures: Int, lastAt: Long, nowMs: Long): Boolean =
  * drops the whole bundle for anything else, a Long included (qa-21-step3-code H1).
  * [volumeCapPct] is the cap IN FORCE (`capPctInForce`: the policy's, lifted by the override and the
  * pause), not the policy's: a Sonos room is outside `STREAM_MUSIC`, so the music app clamps its own
- * sets to it (design 26a §5.3).
+ * sets to it (design 26a §5.3). [suspendAtS] is the music app's next suspension, epoch seconds, 0 = none
+ * ([musicSuspendEdgeS], design 54 R3).
  */
-fun restrictionsFor(policy: MusicPolicy, launcherPackage: String, language: String, volumeCapPct: Int?): Map<String, Any> = linkedMapOf(
+fun restrictionsFor(policy: MusicPolicy, launcherPackage: String, language: String, volumeCapPct: Int?, suspendAtS: Int = 0): Map<String, Any> = linkedMapOf(
     MusicRestrictions.V to 1,
     MusicRestrictions.MANAGED to true,
     MusicRestrictions.LAUNCHER_PACKAGE to launcherPackage,
@@ -280,6 +287,7 @@ fun restrictionsFor(policy: MusicPolicy, launcherPackage: String, language: Stri
     MusicRestrictions.DOWNLOAD_MOBILE_DATA to policy.downloadMobileData,
     MusicRestrictions.STORAGE_LIMIT_GB to storageLimitRestriction(policy.storageLimitGb),
     MusicRestrictions.SPOTIFY_DIAG_UNTIL to policy.spotifyDiagUntilS.coerceIn(0, Int.MAX_VALUE.toLong()).toInt(),
+    MusicRestrictions.SUSPEND_AT_S to suspendAtS.coerceAtLeast(0),
 )
 
 /** The restriction's value for the storage limit (design 30 §1.3): the GB, 0 = no limit. */

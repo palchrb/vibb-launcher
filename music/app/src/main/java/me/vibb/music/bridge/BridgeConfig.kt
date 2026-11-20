@@ -69,6 +69,9 @@ object RestrictionKeys {
 
     /** Device › Advanced's Spotify diagnostic log (2026-11-01): its end in epoch seconds, 0 = off. */
     const val SPOTIFY_DIAG_UNTIL = "spotify_diag_until"
+
+    /** Design 54 R1.10/R3: the first instant a time rule suspends this app, epoch seconds (an Int), 0 = none. */
+    const val SUSPEND_AT_S = "suspend_at_s"
 }
 
 /** The limit absent from the launcher's restrictions: 2 GB (design 30 §1.3, §1.8). */
@@ -103,6 +106,11 @@ data class BridgeConfig(
      * release build too, epoch seconds; 0 = off (`spotifyDiagLogOn`).
      */
     val spotifyDiagUntilS: Long = 0,
+    /**
+     * Design 54 R3: the launcher's `suspend_at_s` - the first instant a time rule suspends this app, epoch seconds; 0 =
+     * none in the next 8 days. The speaker's own sleep timer counts down to it.
+     */
+    val suspendAtS: Long = 0,
 ) {
     companion object {
         val UNMANAGED = BridgeConfig(false, null, "", false, false, null, 0)
@@ -123,6 +131,7 @@ fun bridgeConfig(values: Map<String, Any?>): BridgeConfig {
         volumeCapPct = (values[RestrictionKeys.VOLUME_CAP_PCT] as? Int)?.takeIf { it in 1..99 },
         storageLimitGb = storageLimit(values),
         spotifyDiagUntilS = (values[RestrictionKeys.SPOTIFY_DIAG_UNTIL] as? Int)?.takeIf { it > 0 }?.toLong() ?: 0,
+        suspendAtS = (values[RestrictionKeys.SUSPEND_AT_S] as? Int)?.takeIf { it > 0 }?.toLong() ?: 0,
     )
 }
 
