@@ -372,14 +372,13 @@ pub fn wait_hours(app: &TrackedApp, our_repos: &[String]) -> Option<i64> {
     (synced && !ours(app, our_repos)).then_some(app.release_wait_hours.clamp(0, MAX_WAIT_HOURS))
 }
 
-/// Whether an app's first release waits too (the user hasn't decided, 2026-11-12: it does for
-/// now). `false` sends a new app's first release at once - the one line to change.
-pub const FIRST_RELEASE_WAITS: bool = true;
-
-/// The wait the sync applies to the app's next release: [wait_hours], none for a first release
-/// unless [FIRST_RELEASE_WAITS].
+/// The wait the sync applies to the app's next release: [wait_hours], none for a first release.
+/// A newly added app's first release reaches the phones at once; the wait applies only to later
+/// releases (the user, 2026-11-20, adding an app from its F-Droid repo for the first time: "det
+/// er jo litt fake news for en app man installerer for første gang?"). A first release that
+/// already waits is served at the next sync: with no wait it is ripe at once.
 pub fn sync_wait(app: &TrackedApp, our_repos: &[String]) -> Option<i64> {
-    wait_hours(app, our_repos).filter(|_| FIRST_RELEASE_WAITS || app.latest_release_tag.is_some())
+    wait_hours(app, our_repos).filter(|_| app.latest_release_tag.is_some())
 }
 
 /// A JSON array of names as stored (`accepted_permissions`, `latest_release_permissions`);

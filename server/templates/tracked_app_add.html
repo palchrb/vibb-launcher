@@ -102,7 +102,7 @@
                     {% if error_field == "release_wait_hours" %}{% if let Some(e) = error %}<p class="flash flash-error" id="release_wait_hours-error" data-flash="release_wait_hours">{{ e }}</p>{% endif %}{% endif %}
                 </div>
                 {#- The wait's (i): the row is the <label>, so it sits in the group's footer (design 113 P2). -#}
-                <div class="group-footer"><details class="info"><summary aria-label="{{ self.t("apps.update.wait_about") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("apps.wait.footer") }}</p>{% if first_waits %}<p>{{ self.t("apps.wait.first_footer") }}</p>{% endif %}</div></details></div>
+                <div class="group-footer"><details class="info"><summary aria-label="{{ self.t("apps.update.wait_about") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("apps.wait.footer") }}</p></div></details></div>
             </div>
         </div>
 
