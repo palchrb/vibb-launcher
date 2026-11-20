@@ -125,7 +125,8 @@ adb shell dumpsys window | grep -E 'type=(navigationBars|tappableElement) frame'
 
 Then provision as in §4. With the bar gone, back is `adb shell input keyevent BACK` (the AVD's hardware keys). The
 glance's log line then reads `(pad 32/32)`: 8 dp + the handle's 24 dp at the bottom (`glanceBottomRoom`), Nødsamtale's
-centre 84 px over the edge as with gestures. To compare with `jelly36` on the same data, `pm enable` the Pixel launcher,
+centre 84 px over the edge as with `jelly36`'s gestures (its 24 dp inset is the handle's view, so nothing is added
+there; a gesture inset lower than 24 dp gets the rest). To compare with `jelly36` on the same data, `pm enable` the Pixel launcher,
 stop the emulator, set `hw.mainKeys = no` in the copy and cold boot it, then `adb reboot` once (the bar comes back only
 with a fresh SystemUI); the copy is then `jelly36` with this phone's data. Remember to set it back to `yes`.
 

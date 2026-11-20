@@ -223,8 +223,13 @@ class LockGlanceTest {
         assertEquals("gestures", GlanceBottomRoom(0, 0), glanceBottomRoom(navBarPx = 36, tappablePx = 0, handleViewPx = view))
         assertEquals("3 buttons", GlanceBottomRoom(72, 36), glanceBottomRoom(navBarPx = 72, tappablePx = 72, handleViewPx = view))
         assertEquals("keys, no bar", GlanceBottomRoom(0, 36), glanceBottomRoom(navBarPx = 0, tappablePx = 0, handleViewPx = view))
-        // A gesture inset lower than the handle's view: the rest only.
-        assertEquals(GlanceBottomRoom(0, 12), glanceBottomRoom(navBarPx = 24, tappablePx = 0, handleViewPx = view))
+        // Code QA L7: a gesture inset lower than the handle's view (some makers report 16-20 dp) - the page keeps the
+        // rest, so the bottom row moves up by the difference; unchanged only from an inset of the handle's view up.
+        assertEquals("gestures, 16 dp", GlanceBottomRoom(0, 12), glanceBottomRoom(navBarPx = 24, tappablePx = 0, handleViewPx = view))
+        assertEquals("gestures, 20 dp", GlanceBottomRoom(0, 6), glanceBottomRoom(navBarPx = 30, tappablePx = 0, handleViewPx = view))
+        assertEquals("gestures, 32 dp", GlanceBottomRoom(0, 0), glanceBottomRoom(navBarPx = 48, tappablePx = 0, handleViewPx = view))
+        // A gesture phone reporting no inset (Samsung's gesture hint off) is the keys phone's case.
+        assertEquals(glanceBottomRoom(0, 0, view), glanceBottomRoom(navBarPx = 0, tappablePx = 0, handleViewPx = view))
     }
     /** Design 59d step L: Android's small clock's geometry by phone, measured at 240 dpi; else design 96's general one. */
     @Test
@@ -1051,7 +1056,9 @@ class LockGlanceLayoutTest {
         val bottom = root.dim("paddingBottom")
         assertEquals(8f, bottom)
         assertEquals(56f, bottom + keysExtraDp + 48f / 2, 0.01f)
-        assertEquals(56f, bottom + 24f + 48f / 2, 0.01f)
+        // With gestures the 24 dp inset is the padding's and the rule adds nothing: the same height over the edge.
+        val gestureExtraDp = glanceBottomRoom(navBarPx = 36, tappablePx = 0, handleViewPx = (handleDp * 1.5f).toInt()).extraPx / 1.5f
+        assertEquals(bottom + keysExtraDp + 48f / 2, bottom + 36 / 1.5f + gestureExtraDp + 48f / 2, 0.01f)
     }
 
     @Test

@@ -215,17 +215,43 @@ class HomeEdgesTest {
         // Five rows give 32 dp; six 40.
         assertEquals(10f, rowGapToFit(List(5) { 87f }, 475f), 0.001f)
         assertEquals(14f, rowGapToFit(List(6) { 87f }, 400f), 0.001f)
-        // In px, rounded down as Home does, the rows always fit; and laying out again with the result keeps it.
+        // In px, truncated as Home does: a squeezed gap is between the floor and 14 dp and the rows always fit with it;
+        // the full gap is kept exactly when they fit at 14 dp or overflow even at the floor. (That a second layout
+        // keeps the gap - the rows' heights don't depend on it - is GridLayoutManager's, not this rule's.)
         for (density in densities) {
             val px = rows.map { floor(it * density) }
+            val full = floor(14 * density)
+            val least = floor(6 * density)
             for (contentDp in 380..430) {
                 val content = floor(contentDp * density)
-                val gap = rowGapToFit(px, content, floor(14 * density), floor(6 * density)).toInt()
-                val fits = px.sum() + 3 * gap <= content
-                if (gap < floor(14 * density).toInt()) assertTrue("density $density, $contentDp dp", fits)
-                assertEquals(gap, rowGapToFit(px, content, floor(14 * density), floor(6 * density)).toInt())
+                val gap = rowGapToFit(px, content, full, least).toInt()
+                val label = "density $density, $contentDp dp, gap $gap"
+                if (gap < full.toInt()) {
+                    assertTrue(label, gap >= least.toInt())
+                    assertTrue(label, px.sum() + 3 * gap <= content)
+                } else {
+                    assertTrue(label, px.sum() + 3 * full <= content || px.sum() + 3 * least > content)
+                }
             }
         }
+    }
+
+    @Test
+    fun `Home fits the rows before the frame, only after the grid's own layout`() {
+        // Code QA L1, L2: a pre-draw listener that drops the frame when the gap changed (never one frame with the old
+        // gap), run only when the grid's layout manager completed a layout (not on every layout of Home's window).
+        val src = file("java/com/kidslauncher/mdm/ui/HomeActivity.kt").readText()
+        assertTrue(src.contains("binding.homeGrid.viewTreeObserver.addOnPreDrawListener { fitGridRowsBeforeDraw() }"))
+        assertFalse(src.contains("addOnGlobalLayoutListener { fitGridRows"))
+        val manager = src.substringAfter("gridLayout = object : GridLayoutManager(").substringBefore("\n        }\n")
+        assertTrue(manager, manager.contains("override fun onLayoutCompleted(") && manager.contains("gridFitDue = true"))
+        val before = src.substringAfter("private fun fitGridRowsBeforeDraw(): Boolean {").substringBefore("\n    }\n")
+        assertTrue(before, before.contains("if (!gridFitDue || !contentShown) return true"))
+        assertTrue(before, before.contains("gridFitDue = false"))
+        assertTrue(before, before.contains("return !fitGridRows()"))
+        val fit = src.substringAfter("private fun fitGridRows(): Boolean {").substringBefore("\n    }\n")
+        assertTrue(fit, fit.contains("if (fitted == gridRowGapPx) return false"))
+        assertTrue(fit, fit.contains("grid.invalidateItemDecorations()"))
     }
 
     @Test
@@ -235,8 +261,9 @@ class HomeEdgesTest {
         // 24 px bottom padding). 14 dp = 21 px, 6 dp = 9 px.
         fun gap(rows: List<Int>, content: Int) = rowGapToFit(rows.map { it.toFloat() }, content.toFloat(), 21f, 9f).toInt()
         // A screen 26 px taller (wm size 480x880) at font 1.15: 19 px over, the gaps give it - 14 px, every row whole.
-        assertEquals(14, gap(listOf(135, 135, 166, 135), 615))
-        assertTrue(571 + 3 * 14 <= 615)
+        val taller = listOf(135, 135, 166, 135)
+        assertEquals(14, gap(taller, 615))
+        assertTrue(taller.sum() + 3 * gap(taller, 615) <= 615)
         // The phone's own height: at 1.15 45 px over and at 1.3 69 px over - more than the gaps' 36 px, so 14 dp, the
         // grid scrolls and fades as before (the gear's label under the edge).
         assertEquals(21, gap(listOf(135, 135, 166, 135), 589))
