@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
@@ -17,7 +16,7 @@
         android:layout_width="24dp"
         android:layout_height="24dp"
         android:layout_marginEnd="12dp"
-        app:tint="@color/kid_page_ink_dim"
+        android:tint="@color/kid_page_ink_dim"
         android:src="@drawable/ic_wifi_signal_3" />
 
     <LinearLayout
@@ -48,7 +47,7 @@
         android:layout_width="18dp"
         android:layout_height="18dp"
         android:layout_marginStart="8dp"
-        app:tint="?android:attr/textColorSecondary"
+        android:tint="?android:attr/textColorSecondary"
         android:src="@android:drawable/ic_lock_lock"
         android:visibility="gone" />
 
