@@ -1042,3 +1042,438 @@ and the tracker's wait for our first state, `SpotifyRenderer.starting` - the sam
 ...) winning: a refused start sets one, the existing failure path. The line ends with the state that drives it, read at
 the renderer's next flush or poll: a room's 8 s window or freshness running out shows at the next poll, up to 5 s
 late while TRANSITIONING - bounded, no timer of its own (Q-12).
+
+## Revision for 54-a2 (2026-11-20)
+
+The user reopened Spotify on Sonos on 2026-11-20. Their words: "Det skal absolutt gå", and for the scope, "As designed".
+This section brings the note up to date with `main` at e78742e4f. It gives 54-a2's build list. Where it differs from
+§1-§8, this section wins. Paths: `M/` = `music/app/src/main/java/me/vibb/music/`, `L/` =
+`launcher/app/src/main/java/com/kidslauncher/mdm/`.
+
+### R1. What changed since 2026-10-21
+
+1. **54-a1 is on `main`** (c1562b7e2 and its fix round 6592849b6, both 2026-10-21). Every pure rule, verb and fake
+   part that "54-a1 status" lists is present: `ShareLink.kt`, `logic/SonosQueue.kt`, `SonosTransport.playShare`,
+   `queuePlay`, `readQueue`, `learnQueue`, `shareBaseline`, `setPlayMode`, `playMode` and `sleepTimer`, the session's
+   share classify, `SonosEvents`' new fields, and `fake-sonos.py`'s queue. **Nothing calls any of it**:
+   `SonosController.kt` (2459 lines) has no share path.
+2. **The park clears the queue for a share session only.** This was a1's fix round, qa-54a1-code 8. §2.9's "for every
+   kind" is superseded.
+3. **The hand-over timing round r13** (2026-10-25) added the `VibbHandover` lines. `playShare` already logs its steps.
+   It also added "Kobler til høyttaleren…" for every room start, which a Spotify start gets with no change. Recommendation
+   (c) (move the sleep timer and `readQueue` after the landing) **is not taken in 54-a2**: nothing was measured, and N6
+   relies on the read being ahead of a step in the actor. Line 6 and line 12 of the first real run decide it later.
+4. **Favourites (r12, 2026-10-24) handed 54-a2 a rule** (r12 §3.5): on a room, each Spotify favourite is **its own
+   run**, one share link per track (`track` or `episode`, `listed = [uri]`, index 0). It is never the whole playlist.
+   Today `Snapshot.holds` filters Spotify out of the room's view through `speakerPlayable`. Once that returns null,
+   `segmentAt` would join consecutive refs of one playlist into one run. So the room's split must be explicit (R2).
+5. **Spotify was parked on 2026-10-25** (`docs/plan/plan-archive.md`, "A faster Spotify start ... Nothing
+   Spotify-related is built until the user reopens it"). It was reopened on 2026-11-20 (PLAN line 39, decision (1)).
+6. **Design 120 and the web player.** Fix A was built in the launcher on 2026-11-19. On 2026-11-20 the user also chose
+   B (the web player in its own process), R2 and R5. 54-a2 does not touch the web player's insides. It touches
+   `PlaybackService.comeHome`, `toRoom`, the adopt look and `lost()`, and B touches the same file
+   (`spotifyRenderer()`, `attach`). **Build them one after the other, not in parallel worktrees.**
+7. **The tracker fixes of 2026-11-19** (38ceac3ea/18baaf37b, 9803f7c4b, 278c54730): a start at a track's end is now
+   taken, a step is no longer dropped while a start waits, and a 502 before the transfer reads as "not active yet".
+   None of them changes the hand-over. A room that hands back a place 1 s before a track's end now starts on the phone
+   as it should. That case is a test (R6), not code.
+8. **"No backwards compatibility on the phones yet"** (2026-11-18). §2.9 says "an old file without them reads as no
+   baseline". That is only the default of two nullable fields. It is not a migration path, and no code is written for
+   an older file or an older launcher.
+9. **Android 14-17 and "Words in the UI"** (2026-11-16, 2026-11-17) now bind every note. See R4 and R5.
+10. **The bridge's store can't hold a Long.** `restrictionsFor` (`L/music/MusicPlan.kt`) writes Boolean, Int and
+    String only: `UserManagerService.writeBundle` drops the **whole** bundle for anything else (qa-21-step3-code H1).
+    `spotify_diag_until` uses epoch **seconds** as an Int for this reason. §2.14's "`suspend_at_ms` (long, epoch ms)"
+    would wipe every music restriction on the first write. **The key becomes `suspend_at_s`, `"int"`, epoch seconds**
+    (good until 2038, as `spotify_diag_until`), 0 = none.
+11. **The screen-time budget never suspends the music app.** `decideTimeLock`'s SCREEN_TIME lock keeps `musicApps`
+    usable (design 21 §3), so the budget has no edge. Only a time rule whose exempt apps leave out the music app
+    suspends it. §2.9's and §2.14's budget clauses are dropped.
+12. **Code drift.** Line numbers in §0.4 have moved:
+    - `speakerDropReason` is at `PlayBody.kt:152`;
+    - `lost()` is at `PlaybackService.kt:3133`, `comeHome` at `:3070`, `queueFor` at `:1009`;
+    - `phoneRendererFor` is at `RendererRules.kt:30`.
+
+    Three facts §0.4 did not have:
+    - `SonosRenderer.kt:549` drops the failed start's exception (`takeLost() != null`). `failed`'s "refused" path, where
+      the renderer stays, emits `CANT_PLAY_ON_SONOS` at `:550`. So both need the reason.
+    - **`PlayBodies.build` falls through to `item.url!!`** for a Spotify item once `speakerDropReason` returns null.
+      That is a crash, so `build` must refuse Spotify itself (R2).
+    - **`roomVerdict` compares the stored uri with the live TrackURI through `sameStream`.** For the queue marker
+      `x-rincon-queue:<uid>#0` against `x-sonos-spotify:...` that is NOT_OURS. With no fix, the bedtime park and the
+      adopt look would never stop or adopt our own queue. 54-a1 named only `adoptLive`'s half of this (qa-54a1-code 9).
+      The verdict and the service's look need it too (R2).
+13. **`RendererChoice` has no `shareTarget` and no `queueUpdateId` yet.** §2.9's baseline is 54-a2's to add.
+14. **vibb is unchanged.** On `pipewire`, `pi/sonosd.py` was last changed 2026-09-05 (fd6633a88) and `pi/daemon.py`
+    2026-09-21 (1fcadac0d), both before this note. §0.1 still transcribes the `spotify_sharelink` path exactly.
+15. **`fake-sonos.py` serves no event socket**, as §3 says. Everything that rests on the socket can be checked only by
+    the JVM tests from `ws/spotify_queue_2026-10-21.json` and on a real room:
+    - the `itemId` wake and recheck;
+    - the container's evidence for `ours` (a);
+    - the metadata title in context mode.
+
+### R2. The build list
+
+54-a2 is built in **two rounds on one branch line**, delivered together in one release. **54-a2** is list mode,
+favourites, the lifecycle and the edge contract. **54-a2'** is context mode (§4 allowed the split, and the size calls
+for it). Each round has its code QA, and the controller and the lifecycle are reviewed in separate passes (qa-54 L14).
+`speakerDropReason` lets a context through only in a2'. Until then a context on a room keeps today's
+`CANT_PLAY_ON_SONOS`.
+
+**Music app, round 54-a2:**
+
+- `M/sonos/PlayBody.kt`
+  - `speakerDropReason`: a Spotify entry whose target has a ShareLink type (`playlist`, `album`, `track`, `show`,
+    `episode`) returns null. An artist returns `"spotify artist"`. A target with no share type returns
+    `"spotify"`. A context-mode entry returns `"spotify context"` until a2'.
+  - `build` returns null for `Source.SPOTIFY` before any `url` is read. This removes the `item.url!!` crash (R1.12).
+  - `share` stays as it is. Its doc comment drops "nothing calls it".
+  - New `shareOne(entry, key, uid, startS, hintS)` makes a favourite's one-track body: `uriOf(kind, key)` as the target
+    (`track`, or `episode` for a show), `listed = [that uri]`, `trackIndex` 0.
+- `M/playback/PlaybackService.kt`
+  - `activeFor`: a room's Active for a Spotify entry also carries **`listed`**, the keys of `snap.visible(entry)` in
+    the stored listing's own order. It never uses `order()`'s direction or the favourites scope. New field
+    `Active.listed: List<String>?`, null for every other entry.
+  - `lost()` becomes `lost(askAdult: Boolean)`. It emits `SONOS_ASK_ADULT` for a `ShareRefused`, and
+    `CANT_PLAY_ON_SONOS` for anything else. `onRendererEvent`'s `RendererEvent.Lost` carries the flag.
+  - The adopt look (`:2785-2830`):
+    - `ofEntry` and `adoptedQueue` go through the new Spotify `adoptIndex` (below).
+    - The probe's `keep` returns the **stored marker** for a queue marker, never the live TrackURI.
+    - `sonos.adopt(...)` gets the marker as the session's uri.
+    - An ours share track that `adoptIndex` doesn't find (unlisted, the Q6 case) adopts at the stored `itemKey`'s
+      index, else 0, with the unmapped look. **It is never `stopUnadopted()`**: that would stop our own playlist on a
+      restart.
+  - `startRun` and `mixToRoom`: on a room (`!renderer.kind.onPhone`), a Spotify ref is a run of one
+    (`segmentAt(queue, index, single = ...)` or a room-side split in `startRun`). The room plays it through
+    `PlayBodies.shareOne`.
+  - The managed config's change (`BRIDGE_CHANGED`) calls `(renderer as? SonosRenderer)?.edgeChanged()`.
+  - `comeHome`: its comment says a Spotify entry does reach a room. The code is unchanged: `phoneRendererFor` already
+    gives the web player.
+- `M/playback/RendererRules.kt`: `phoneRendererFor`'s doc comment. Nothing else.
+- `M/playback/PlayerHub.kt`: `Message.SONOS_ASK_ADULT`. `M/ui/MusicRoot.kt`: its row (`R.string.cant_play_on_sonos_ask_adult`).
+- `M/bridge/BridgeConfig.kt`:
+  - new key `RestrictionKeys.SUSPEND_AT_S` (`"suspend_at_s"`);
+  - new field `BridgeConfig.suspendAtS: Long` (0 = none);
+  - `bridgeConfig()` reads an `Int > 0`, else 0.
+- `M/sonos/SonosRenderer.kt`:
+  - `load` hands `Active.listed` to the controller;
+  - `adopt` takes the marker;
+  - `setModes` re-arms the controller's at-end action (§2.7; repeat one and repeat all);
+  - `pauseAtItemEnd` for a share session: the room's ramp stays, and the controller's at-end timer (`dur - pos - 400
+    ms`) is the Pause's deadline. The speaker advances gaplessly by itself, so a ramp that lands after the boundary
+    would let the next track sound;
+  - `edgeChanged()`;
+  - lines 549-550 carry the reason (`takeLost()`'s exception is `ShareRefused`; `takeRefused()` becomes a reason).
+- `M/sonos/SonosController.kt` (the bulk, §2.3-§2.11 as written):
+  - The constructor takes `suspendAt: () -> Long` (epoch ms from `suspendAtS * 1000`, 0 = none).
+  - The share start. `playIndex` branches **before** `PlayBodies.build`: a Spotify entry goes through
+    `PlayBodies.share(entry, listed, indexInListed, ...)` (or `shareOne` in a favourites run) and
+    `transport.playShare`. Its `sleepTimer` argument comes from `sleepTimerFor(suspendAt(), now)`.
+  - The map. `QueueMap(listed, read)` comes from `ShareStart.read`, then `readQueue` as the next actor job. The
+    controller keeps every landed transfer's map, generation or not (§2.3; `ShareStart.played = false` included).
+    Trust uses `versionCheck`.
+  - Steps and picks. Trusted, it is `transport.queuePlay(position, ...)`; untrusted, a transfer. The tile follows §2.4.
+  - Following (§2.5's pollTick order: the belt, the queue's end, `queueMoved`, the bookmark):
+    - the socket feeds `session.shareContainer` through the transport, and the `itemId` recheck runs on
+      `CONFIRM_EVERY_MS`/`CONFIRM_UNTIL_MS` (53-d's names for §2.5's `IDLE_RECHECK_*`);
+    - `boundary()` decides natural vs pressed, the correction (§2.6) runs only on a correctable natural boundary, and
+      the mode is read before it (`transport.playMode` without a socket);
+    - the at-end timer (`atEndAction`/`atEndDelayMs`) handles repeat by our advance;
+    - the unmapped look uses `unmappedTitle` and `Renderer.replaceItem`;
+    - adopt's `learnQueue` and `shareBaseline` run only when the adopt kept the session;
+    - the sleep timer is re-set at boundaries (`sleepTimerResetDue`), after a follow, and at `edgeChanged()`.
+  - **The pending play's landing (new, R6 QA-7)** lands in either of two cases:
+    - a poll reads the start position's `Track` with the target's uri;
+    - once the play's answer is in, a poll reads a later `Track` whose uri the map names. A start at a stored place
+      near the track's end has already moved on by then. The pending lands at the start position, then
+      `queueMoved` follows the advance as natural. Before this, such a poll counted as "the old track" for 8 s.
+- `M/sonos/SonosTransport.kt`:
+  - `adoptLive(..., share: ShareBaseline? = null)` calls `session.shareSet` + `session.shareRead` (a `QueueRead` holding
+    only the stored `UpdateID`) before it classifies;
+  - with the kind `SPOTIFY_SHARELINK`, its re-adopt keeps that kind and never switches to `kindOfUri(kept)`
+    (qa-54a1-code 9);
+  - AVTransport `Next`/`Previous` are not built: they gate on [D8+] (§2.12), see a2'.
+- `M/sonos/SonosLifecycle.kt`:
+  - **`roomVerdict` for a queue marker**: ours = `live.ours`, the session's share classify with the baseline the look
+    set. It never uses `sameStream(marker, TrackURI)`. NOT_OURS needs the moved `UpdateID` plus a live track in
+    neither list (§2.9). A Browse that doesn't answer means OURS_LIVE.
+  - **`adoptIndex` for a Spotify entry**: the item whose `uriOf(kind, key)` equals `trackSpotifyUri(uri)`. The first
+    occurrence is fine here: `learnQueue`'s slots correct the index from `Track`.
+  - `suspensionStop` passes the baseline into `adoptLive`.
+- `M/sonos/SonosSuspension.kt`:
+  - the standalone bookmark takes its item from the live uri (`adoptIndex`), never `choice.itemKey` (the queue moved
+    on), and writes only for a mapped track;
+  - **the park retry**: a NO_ANSWER verdict with `renderer.json` still on a room schedules the unique work
+    `sonos-park-retry` in a new file `M/sonos/SonosParkRetry.kt`. It is WorkManager with a `CONNECTED` constraint and
+    a 5-minute backoff. The worker checks for Wi-Fi itself (`SonosHome.awaitWifi`), runs `SonosSuspension.standalone`,
+    ends at a definite verdict or 2 h after the edge, and does nothing while the app isn't suspended. The service's
+    own suspension path schedules the same work after a NO_ANSWER park. It applies to every kind (harmless for a
+    `url` play).
+- `M/sonos/RendererChoice.kt`: two nullable fields, `@SerialName("share_target") shareTarget` and
+  `@SerialName("queue_update_id") queueUpdateId`. They are written with the marker at `played` and after each read
+  (`SonosRenderer`'s host). `local()` drops them.
+- `M/spotify/SpotifyRenderer.kt`: **no change** (checked, R6 QA-5). A detached web player saves nothing:
+  - `queue` is `active.takeIf { renderer === spotify }` (`PlaybackService.kt:1550`);
+  - `TrackChanged` comes only in the tracker's STARTING/OURS modes, and `detached()` sets LOST.
+- Strings: `cant_play_on_sonos_ask_adult` in `values/` and `values-nb/` (R4).
+- Tests: §3's controller, lifecycle and suspension list, and R6's additions.
+
+**Music app, round 54-a2' (context mode, §2.12):**
+- `speakerDropReason` lets a playlist context through. An artist context stays refused.
+- `skipNext`/`skipPrevious`: `stepsOnWebPlayer(entry)` becomes the context rule for both renderers. On a room, a new
+  `SonosRenderer.stepContext(forward)` calls the controller: `queuePlay(Track ± 1)` with the step coalescer, and
+  previous more than 5 s in restarts at 0.
+- The controller's context branch (§2.12): the live track from the socket's metadata, else `TrackMetaData`. It is
+  written through `store.recordSpotifyContext` at a change only. **At `handOff` the last write is forced** with
+  `runBlocking(writer)`, as `persistPlace(force = true)` does (R6 QA-6). Resume uses `findInQueue`.
+- The context's shuffle on a room stays off until [D8+] (Q2 below).
+
+**Launcher (in the same commit as the contract):**
+- `L/music/MusicPlan.kt`: new key `MusicRestrictions.SUSPEND_AT_S`, and `restrictionsFor(..., suspendAtS: Int)` writes
+  it as an Int.
+- **`L/music/MusicSuspendEdge.kt`** (new, pure): `musicSuspendEdgeS(policy, nowMs, zone, musicPkg, liftsAt,
+  overrideEndMs, extra): Int`.
+  - It walks `timerules/TimeRules.nextBoundary` forward from now, with the instants `TimeRulesRuntime.nextBoundary`
+    adds: lift expiries, window ends, `until_ms`, phone pauses.
+  - At each boundary `b` it evaluates `decideTimeLock` with:
+    - `policy.inForceAt(b)`;
+    - the lifts still valid at `b` (a lift whose expiry is at or before `b` no longer lifts);
+    - `overrideActive = overrideEndMs > b`;
+    - no budget.
+  - The first `b` where the lock is in force and `musicPkg !in usableApps` is the edge.
+  - The walk stops at 64 steps or 8 days, whichever comes first. It returns 0 when there is no edge, or when the music
+    app is suspended already.
+- `L/timerules/TimeRulesRuntime.kt`: `musicSuspendAtS(context)` gathers those inputs, and `recheck` calls the new
+  `MusicSync.restrictionsChanged`.
+- `L/music/MusicSync.kt`:
+  - `capChanged` is renamed `restrictionsChanged` (a write only when the bundle differs, then the nudge);
+  - `writeRestrictions` computes the edge on every write.
+- `L/music/VolumeCap.kt`: `refresh` calls `restrictionsChanged` on every refresh, not only when the cap changed.
+  `apply()` runs at the override's and the pause's start and end, and the write is compare-first, so this is cheap.
+- **The contract**: both byte-identical `bridge_contract.json` copies get `"suspend_at_s": "int"` in `restrictions`, in
+  one commit with the launcher and the music app. `MusicPlanTest` checks the launcher's constant and that the value is
+  an Int. `BridgeTest` checks the music app's constant and `bridgeConfig`. A new `MusicSuspendEdgeTest` covers:
+  - a rule that exempts the music app (no edge);
+  - one that doesn't (the edge);
+  - two overlapping rules, intersecting their exempt apps;
+  - a lift expiring before the rule ends;
+  - an override ending inside a rule;
+  - a turned-on rule's `until_ms` (design 93);
+  - a DST day;
+  - the budget (never an edge);
+  - nothing within 8 days (0).
+
+**Server**: nothing. The optional PWA line is Q3.
+
+**Docs with 54-a2:**
+- the files §4 lists;
+- `docs/notes/music/episode-art-and-lists.md`'s r12 line ("stays out until round 54-a2");
+- `docs/testing/emulator.md` §6u item 5 and §6h (R5);
+- `docs/notes/launcher/music-bridge.md` (the new restriction);
+- PLAN's queue entry.
+
+### R3. The bedtime guard and the speaker's sleep timer (§2.9, as it stands now)
+
+There are four layers, as designed. Here is what each one rests on in today's code:
+
+1. **The park.** The launcher suspends the music app at a rule's edge (`AppEnforcer`, usable apps). The app receives
+   `MY_PACKAGE_SUSPENDED`. With the service up, it runs `handOff(park = true)`; without it, it runs
+   `SonosSuspension.standalone`. The park is Stop, then the queue uri, then the share session's queue clear, then our
+   own sleep timer cleared. 54-a2's part is the queue marker's `roomVerdict`/`adoptLive` fix (R1.12). Without it the
+   park would see NOT_OURS and leave the playlist playing.
+2. **NORMAL.** Every transfer sets it, so a missed park ends at the queue's end (at most 1000 tracks).
+3. **The belt.** `mayPlay()` (`playAllowed(suspendedNow())` and the room scope) is checked on every ours PLAYING poll and
+   every confirmed boundary. It sends one Pause per generation and track. It guards only while the service runs.
+4. **The speaker's own sleep timer.** It is `ConfigureSleepTimer` on our coordinator, set to `suspend_at_s - now`
+   (`sleepTimerFor`: none past 24 h, capped at 23:59:59). It is set at four points:
+   - the transfer;
+   - a boundary, when the edge moved by more than 30 s (`sleepTimerResetDue`);
+   - a follow;
+   - `edgeChanged()`: a lift, a parent's answer to a request for more time, the override, a new policy.
+
+   It is cleared by our Stop, the park and a hand-off, and only while it is still ours (`sleepTimerOurs`). It is never
+   set at adopt. It covers a park missed with the phone off Wi-Fi, asleep, or with the process gone. It needs nothing
+   from the phone at the edge.
+
+**What the launcher writes**: `suspend_at_s` is the first instant at which the music app becomes suspended. That is a
+rule whose exempt apps leave out the music app. It is rewritten at:
+- every recheck (each boundary, screen-on);
+- every policy sync;
+- every `apply()` (the override, the pause);
+- the phone's own pauses (design 98).
+
+The budget never gives an edge (R1.11). With no music edge in the next 8 days it is 0, and the speaker gets no timer.
+
+**The park retry** (layer 1's backstop, `sonos-park-retry`). AOSP's `JobSchedulerService` has no check for a suspended
+package, either on `android14-release` or on `main`, read 2026-11-20 for Android 14 to 16. So WorkManager most likely
+runs a suspended app's work. That is now an **emulator check on 14 and 17** (R5 step 7) as well as [D16+] on the Jelly
+Star's 16. If it fails, layers 2-4 stand. The timer is the independent bound, and §2.9's "fallback, truthfully" holds.
+
+**What stays true for the household**: while our session plays before a rule's edge, the room's sleep timer in the Sonos
+app counts down to that edge. A timer the household set before our play is replaced; one set after it is left alone
+(Q1).
+
+### R4. What the kid sees and reads
+
+Spotify is never named to the kid. `SourceScanTest` fails on any string containing "Spotify". "Sonos" is the
+speaker's name the output sheet already shows, so it is allowed. No new state line is added. Only one message is new.
+
+| When | nb | en | String |
+|---|---|---|---|
+| The start was refused by kind (an artist, a context before a2', no share type) | Kan ikke spilles på Sonos | Can't play on Sonos | `cant_play_on_sonos` (exists) |
+| The speaker refused the link (both service types, or 0 tracks: the account linked in the Sonos app can't play it) | Kan ikke spilles på Sonos – spør en voksen | Can't play on Sonos – ask a grown-up | `cant_play_on_sonos_ask_adult` (new) |
+| No answer during the add | Kan ikke spilles på Sonos | Can't play on Sonos | (exists) |
+| From the tap until the room plays | Kobler til høyttaleren… | Connecting to the speaker… | `connecting_speaker` (exists) |
+| A track of the queue our list doesn't have (Q6) | the speaker's "Sang — Artist", with no number and no heart | the same | none |
+| Context mode | the live track's "Sang — Artist" over the entry's cover | the same | none |
+
+Each message is one short line, in the place the existing messages show (`MusicRoot`'s bottom box), and it shows only
+when something went wrong. A start that plays shows nothing new. The account playing elsewhere [D18] uses whichever
+existing room line the classify gives: no new string, and none promised before D18.
+
+### R5. The test plan
+
+**JVM** (no emulator): §3's list as written, and R6's additions. `MusicSuspendEdgeTest` is in the launcher;
+`BridgeTest` and `MusicPlanTest` run on both sides.
+
+**The emulator** needs the user's OK before it runs (the standing rule). It runs on both the lowest and the highest
+version it touches: the version-dependent part (step 7) on **Android 14 and 17**, the rest on one image (jelly36 for
+anything the user sees).
+
+Set up the speakers as §6h does, with the queue's tracks short:
+
+```
+python3 -I scripts/fake-sonos.py --selftest
+python3 -I scripts/fake-spotify.py --selftest
+python3 -I scripts/fake-spotify.py --print-listing 6 > debug-feed/items/6.json   # the fixture playlist, as §6l A2
+python3 -I scripts/fake-sonos.py --track-seconds 20 | tee /tmp/fake-sonos.log    # Stua, Kjøkken; queues from server/testdata/spotify/
+python3 -I scripts/fake-spotify.py --track-seconds 20 | tee /tmp/fake-spotify.log  # only for the hand-over to the phone's web player
+```
+
+1. **The transfer.** Use the Spotify tile with Stua chosen. The fake logs `SetPlayMode NORMAL`,
+   `RemoveAllTracksFromQueue`, `AddURIToQueue` (2311), `Browse Q:0`, the queue uri, `Seek TRACK_NR`, `Play`, and
+   `ConfigureSleepTimer` only on a managed phone with a rule ahead. `VibbHandover` shows the share lines. The player
+   shows our track, its number and its picture.
+2. **Steps, picks and following.** Five Nexts in 2 s give one `queuePlay`, no add, and a title that doesn't flap. A
+   pick in the list is a `queuePlay`. `--script "t+30 next"` (the speaker's own button) is followed at the next poll,
+   with no done mark. The queue's own advance at 20 s is followed and marks the finished track done.
+3. **The map:**
+   - `--queue-extra`: the unmapped look plays on, with no bookmark;
+   - `--queue-gap`: a step skips the missing item, and a pick of it says "Kan ikke spilles på Sonos";
+   - `--queue-reversed`: the correction at each natural boundary;
+   - `--script "t+40 queue-insert"`: untrusted, and the next press is a transfer.
+4. **Repeat and the end.** Repeat off: the queue's end gives `ended`. Repeat all wraps through a `queuePlay` of item 1.
+   Repeat one seeks to 0 before the end. "Til slutten" pauses before the boundary. The fake logs no next track playing.
+5. **Refusals.** `--refuse-share` gives "Kan ikke spilles på Sonos – spør en voksen" and the phone, paused.
+   `--empty-share` gives the same. An artist entry gives "Kan ikke spilles på Sonos" and nothing changes.
+6. **Hand-over and restart:**
+   - the web player to Stua at the same track and second; Stua back to the web player, playing only if Stua played;
+   - Stua to Kjøkken;
+   - a start from a place 1 s before a track's end (lands, then follows; R6 QA-7);
+   - `am force-stop` while Stua plays, then open the app: adopted, no transport command in the fake's log, the map
+     read, and the next press a `queuePlay`;
+   - favourites with two Spotify hearts and one podcast: one share link per heart, the podcast run in between, and
+     `Ended` at each one-track share.
+7. **Bedtime** (managed: the debug launcher as Device Owner, a time rule 3 minutes ahead without the music app among its
+   exempt apps):
+   - the fake logs `ConfigureSleepTimer` at about 0:03:00 at the transfer (the music app reads `suspend_at_s` through
+     `BridgeConfig`; `BridgeTest` and `MusicPlanTest` pin the value itself);
+   - at the edge: Stop, the queue uri, `RemoveAllTracksFromQueue`, `ConfigureSleepTimer ""`;
+   - again, with `adb shell svc wifi disable` 30 s before the edge: the park is NO_ANSWER and the fake's sleep timer
+     pauses Stua at the edge;
+   - `svc wifi enable`: `sonos-park-retry` parks within 5 minutes, which answers whether **Android 14 and 17 run a
+     suspended package's WorkManager work**;
+   - a lift from the PWA before the edge: the edge moves, and the fake's timer is re-set or cleared;
+   - a rule that exempts the music app: no timer.
+8. **Context mode (a2')**, with a context entry from the debug feed (`--print-listing 6 --tracks 0`): the transfer has
+   no listing, the title comes from `TrackMetaData`, steps go ±1, a resume finds the live track, and its end never
+   marks done.
+
+The fake has no socket, so the `itemId` recheck, the container check and the metadata title are left to the JVM tests
+and the real room.
+
+### R6. What only a real Sonos with the household's Spotify linked can confirm
+
+This is §5's list, unchanged in substance. Priorities for the first real run:
+- **D12** (a playlist the linked account can't open: which of the two refusals);
+- **D7** (the queue's end under NORMAL);
+- **D9** (the speaker's buttons);
+- **D21** (the sleep timer: pause or stop, the group, what the Sonos app shows, whether a `TRACK_NR` jump or the park
+  resets it);
+- **D16** (the bedtime park with the queue cleared, and the speaker's own Play button playing nothing);
+- **D11** (a show's and an episode's queue, and its order against `visible()`'s, which `listed` uses);
+- **D3** (a full Browse against our listing).
+
+D16+ is now partly answered by the emulator (R5 step 7). D8+ gates a context's shuffle. D2+ (300 and 1000 tracks)
+and D18 (the account playing elsewhere) need the house's own account and playlists. The 54-0 remainder on the Pi
+(`sonos-play-test.py --more`, `--add-only`, `--golden` with vibb's SoCo) can run before or alongside the build, and
+should run before 54-a2's code QA so the goldens are SoCo's own.
+
+### R7. Design QA of this revision (as a separate reviewer)
+
+I re-read R1-R6 against the code. Findings, all fixed above:
+
+- **QA-1 (High)**: `suspend_at_ms` as a Long would make the launcher's write throw (`restrictionsBundle` refuses it).
+  If forced through, it would drop the whole music bundle. -> `suspend_at_s`, Int (R1.10).
+- **QA-2 (High)**: the queue marker against `sameStream` is NOT_OURS. The bedtime park, both paths, would never stop
+  our playlist, and adopt would stop it instead of adopting it. -> `roomVerdict` and the look read `live.ours` with
+  the baseline, and `keep` returns the marker (R2).
+- **QA-3 (High)**: once Spotify passes the filter, `PlayBodies.build` reaches `item.url!!` and throws. -> `build`
+  refuses Spotify, and `playIndex` branches to the share body first (R2).
+- **QA-4 (Medium)**: an unlisted but ours track at a restart has no `adoptIndex`. The service's look would call
+  `stopUnadopted()` and stop our own queue. -> adopt at the stored item with the unmapped look (R2).
+- **QA-5 (Medium, a race with the tracker, checked and found safe)**: phone to room while the web player's start is in
+  flight. `attach` -> `detached()` supersedes the start. A `PUT play` already sent makes the phone's "Vibb" device
+  play briefly, and its first state is paused by the detached rule. The detached player can't save onto the room's
+  Active (`queue` is gated on `renderer === spotify`) and emits no `TrackChanged` (LOST). No code change. R5 step 6
+  runs it with `fake-spotify.py --slow-ready 3`.
+- **QA-6 (Medium, a race with the tracker)**: room to phone in context mode. Through the web player's port the room's
+  last live-track write would be a `scope.launch(writer)`, while the web player's `load` reads `spotify_context.json`
+  at once. It could start from the
+  previous track. -> the hand-off's write is forced (`runBlocking(writer)`, R2 a2').
+- **QA-7 (Medium)**: a start at a stored place near the track's end. Since 2026-11-19 the web player hands such places
+  over, and the room gets one. The speaker advances inside the 8 s settle, and §2.5's "a different track is the old one"
+  would show the wrong title for up to 8 s and lose the natural boundary. -> the landing rule in R2.
+- **QA-8 (Medium)**: the edge needs the lifts, the override and the phone pauses **as they will be at that instant**,
+  not as they are now. `ruleLifts` is built for now. -> the walk takes `liftsAt(b)` and `overrideEndMs` (R2), and its
+  test rows cover a lift expiring before the rule.
+- **QA-9 (Medium)**: `VolumeCap.refresh` re-pushes only when the cap changed, so an override would leave a stale edge.
+  -> `restrictionsChanged` on every refresh and recheck, compare-first (R2).
+- **QA-10 (Low)**: `listed` taken from `Active.order` would carry the kid's flip and the favourites scope, and the k-th
+  duplicate matching would pair the wrong slots. -> `Active.listed` from `visible()` (R2). Whether a show's listing
+  order matches its queue is [D11].
+- **QA-11 (Low)**: on a room, `segmentAt` would merge consecutive hearts of one playlist into one run. That
+  contradicts r12 §3.5. -> a run of one per Spotify ref on a room (R2).
+- **QA-12 (Low)**: the "Til slutten" ramp can end after the speaker's gapless boundary. -> the at-end timer is the
+  deadline for its Pause, and the belt pauses at a natural boundary while `holdAtEnd` is set (R2, §2.7).
+- **QA-13 (Low, Android 14-17)**:
+  - no new platform surface: SOAP over the Wi-Fi network as every room play today, `MY_PACKAGE_SUSPENDED` (14-17),
+    managed config;
+  - WorkManager is JobScheduler on all four. Android 16's quota change for jobs started while a foreground service
+    runs doesn't touch a one-shot retry;
+  - the suspended-package question is the R5 step 7 check on 14 and 17;
+  - `isPackageSuspended` and `RestrictionsManager` behave the same on 14 to 17;
+  - the build list adds no API above 34, so lint's NewApi has nothing to gate.
+- **QA-14 (Nit)**: §0.4's line numbers and §2.9's "every kind" park are stale. R1 records the current ones, and the
+  body is left as history.
+
+**Build size**: **L, two rounds** (as estimated on 2026-11-20).
+- **54-a2** is about 1.5 rounds: the controller is most of it (an estimated 900-1200 new lines); the lifecycle, the
+  service, the launcher's edge and the contract about 400; the tests about 1200.
+- **54-a2'** (context mode) is about 0.5.
+- Each has its code QA in two passes, then a fix round. The emulator gate (R5) runs once, after a2'.
+- 54-b (the reorder, gated on [D10]) stays later.
+
+### R8. Questions for the user (visible choices; not decided here)
+
+- **Q1. The speaker's sleep timer shows in the Sonos app.** While the kid's playlist plays on a room before bedtime, the
+  room shows a sleep-timer countdown to the rule's edge in the Sonos app. A timer the family set before the kid's play
+  is replaced. This is the bound that stops the room when the phone misses bedtime (no Wi-Fi, asleep). Keep it as
+  designed? **Recommendation: yes.**
+- **Q2. A context playlist's shuffle on a room** (54-a2', until the device check [D8+] passes): hide the shuffle button
+  on a room (**recommended**), or show it doing nothing.
+- **Q3. One line for the parent on the PWA's Spotify page**, behind its (i) only: "On Sonos, Spotify plays through the
+  account linked in the Sonos app" (nb: "På Sonos spilles Spotify med kontoen som er koblet til i Sonos-appen"). Add it
+  (server-only commit), or leave it out?
+- **Q4. The new message**: "Kan ikke spilles på Sonos – spør en voksen" / "Can't play on Sonos – ask a grown-up", when
+  the account linked in the Sonos app can't play the playlist. Keep it, or the shorter "Spør en voksen" alone?
