@@ -158,12 +158,12 @@ object PlayBodies {
         val ref = spotifyTarget(entry.target) ?: return "spotify"
         if (ref.kind == SpotifyKind.ARTIST) return "spotify artist"
         if (ShareLink.of(ref.target) == null) return "spotify"
-        if (isSpotifyContext(entry) && !CONTEXT_ON_ROOM) return "spotify context"
+        if (isSpotifyContext(entry) && (!CONTEXT_ON_ROOM || ref.kind != SpotifyKind.PLAYLIST)) return "spotify context"
         return null
     }
 
-    /** Design 54 R2: a playlist context goes to a room from round 54-a2' (§2.12); an artist context never (above). */
-    const val CONTEXT_ON_ROOM = false
+    /** Design 54 §2.12 (round 54-a2'): a playlist context goes to a room; an artist context never (above). */
+    const val CONTEXT_ON_ROOM = true
 
     /**
      * The speaker-playable filter (`sonos_start_target`, 26a §4.2): why [item] can't go to a speaker,

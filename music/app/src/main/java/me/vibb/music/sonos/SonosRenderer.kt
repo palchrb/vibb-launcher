@@ -23,6 +23,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.suspendCancellableCoroutine
 import me.vibb.music.bridge.Bridge
 import me.vibb.music.data.Store
@@ -31,6 +32,8 @@ import me.vibb.music.logic.NO_AUDIO
 import me.vibb.music.logic.Repeat
 import me.vibb.music.logic.atEndNextLookMs
 import me.vibb.music.logic.itemRemaining
+import me.vibb.music.logic.SpotifyContextTrack
+import me.vibb.music.logic.isSpotifyContext
 import me.vibb.music.logic.playAllowed
 import me.vibb.music.logic.resumeFrom
 import me.vibb.music.model.Source
@@ -141,6 +144,17 @@ internal class SonosRenderer(
 
         // design 54 §2.9 (N3): the share link's target and the queue's UpdateID - the next look's baseline
         override fun shared(target: String, updateId: String?) = writeChoice { it.shared(target, updateId) }
+
+        // design 54 §2.12: a context's live track through the web player's port; a hand-off's is written before the
+        // web player's load reads it (QA-6, as persistPlace's force)
+        override fun contextTrack(entryKey: String, uri: String, title: String, force: Boolean) {
+            val row = SpotifyContextTrack(uri, title)
+            if (force) {
+                runBlocking(writer) { store.recordSpotifyContext(entryKey, row) }
+            } else {
+                scope.launch(writer) { store.recordSpotifyContext(entryKey, row) }
+            }
+        }
 
         override fun ramp(volume: Int?) = writeChoice { it.copy(volume = volume, volumeUid = volume?.let { _ -> controller.uid }) }
 
@@ -297,7 +311,7 @@ internal class SonosRenderer(
         lastIndex = -1
         if (playNow) prefetchStorytel()
         // design 54 R2: a Spotify entry's listing in its own order; a favourites run of one Spotify track its one share link
-        controller.load(a.entry, a.items, startIndex, startMs, listed = a.listed, one = a.mix != null && a.entry.source == Source.SPOTIFY)
+        controller.load(a.entry, a.items, startIndex, startMs, listed = a.listed, one = a.mix != null && a.entry.source == Source.SPOTIFY, contextTrack = contextTrackOf(a))
         if (playNow) controller.playTile()
     }
 
@@ -483,8 +497,14 @@ internal class SonosRenderer(
         val a = queue() ?: return
         mediaItems = items
         lastIndex = -1
-        controller.adopt(a.entry, a.items, index, uri, live, listed = a.listed, one = a.mix != null && a.entry.source == Source.SPOTIFY, mapped = mapped)
+        controller.adopt(a.entry, a.items, index, uri, live, listed = a.listed, one = a.mix != null && a.entry.source == Source.SPOTIFY, mapped = mapped, contextTrack = contextTrackOf(a))
     }
+
+    /** Design 54 §2.12: a context's live track as the store holds it (the in-memory copy, never a wait on main). */
+    private fun contextTrackOf(a: Active): String? = if (isSpotifyContext(a.entry)) store.spotifyContexts()[a.entry.key]?.uri else null
+
+    /** Design 54 §2.12: a context's next or previous on this room - the queue's own ±1. */
+    fun stepContext(forward: Boolean) = controller.stepContext(forward)
 
     override fun release() {
         if (released) return

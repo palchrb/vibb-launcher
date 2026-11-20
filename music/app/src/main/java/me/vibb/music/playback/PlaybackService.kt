@@ -118,6 +118,7 @@ import me.vibb.music.logic.toggledMix
 import me.vibb.music.logic.failureMessage
 import me.vibb.music.logic.finished
 import me.vibb.music.logic.isSpotify
+import me.vibb.music.logic.shuffleShown
 import me.vibb.music.logic.isSpotifyContext
 import me.vibb.music.logic.itemCacheKey
 import me.vibb.music.logic.nextAction
@@ -1866,6 +1867,8 @@ class PlaybackService : MediaSessionService() {
 
     /** Next or previous in a Spotify context (design 26c §5.9): the SDK's, gated as every step (the network line). */
     private fun stepOnWebPlayer(forward: Boolean) {
+        // design 54 §2.12 (round 54-a2'): on a room the context steps in the speaker's own queue (±1)
+        (renderer as? SonosRenderer)?.let { return it.stepContext(forward) }
         val web = renderer as? SpotifyRenderer ?: return
         if (!web.stepsInContext) return
         if (refuseSpotify()) {
@@ -1897,7 +1900,7 @@ class PlaybackService : MediaSessionService() {
 
     private fun toggleShuffle() {
         val a = active ?: return
-        if (!canShuffle(a.entry)) return
+        if (!shuffleShown(a.entry, onRoom = !renderer.kind.onPhone)) return
         mixOf(a)?.let { return toggleMixShuffle(a, it) }
         val on = !a.shuffled
         if (isSpotifyContext(a.entry)) {

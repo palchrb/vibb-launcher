@@ -589,7 +589,7 @@ class GuardsTest {
         // queued, and at every poll while a book plays - off main and off the actor
         assertTrue(Regex("""controller\.onPoll\(tick, fields\)\s+if \(showsPlaying\) prefetchStorytel\(\)""").containsMatchIn(renderer))
         assertTrue(renderer.contains("        if (playNow) prefetchStorytel()\n"))
-        assertTrue(renderer.contains("controller.load(a.entry, a.items, startIndex, startMs, listed = a.listed, one = a.mix != null && a.entry.source == Source.SPOTIFY)\n        if (playNow) controller.playTile()"))
+        assertTrue(renderer.contains("controller.load(a.entry, a.items, startIndex, startMs, listed = a.listed, one = a.mix != null && a.entry.source == Source.SPOTIFY, contextTrack = contextTrackOf(a))\n        if (playNow) controller.playTile()"))
         assertTrue(renderer.contains("    override fun play() {\n        prefetchStorytel()\n        controller.playTile()\n    }"))
         assertTrue(renderer.contains("        if (queue()?.entry?.source != Source.STORYTEL) return\n        actorScope.launch {"))
         // qa-58-step2-code S2-3: never an exception out of the launch (a scope without a handler)

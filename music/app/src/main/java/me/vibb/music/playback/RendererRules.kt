@@ -121,8 +121,9 @@ fun resumesOnAdvance(auto: Boolean, kind: RendererKind): Boolean = auto && kind 
 fun keepsDuration(entry: Entry, key: String): Boolean = !isContextItem(entry, key)
 
 /**
- * Whether next and previous on [entry] are the web player's own (design 26c §5.9, step 6): a Spotify context's -
- * Spotify's order, `vibb.next()`/`vibb.previous()` - never the service's skip rules over its one synthetic item.
+ * Whether next and previous on [entry] are the renderer's own in Spotify's order (design 26c §5.9, step 6): a Spotify
+ * context's - on the phone the web player's `vibb.next()`/`vibb.previous()`, on a room the speaker's queue ±1
+ * (design 54 §2.12, `SonosRenderer.stepContext`) - never the service's skip rules over its one synthetic item.
  */
 fun stepsOnWebPlayer(entry: Entry): Boolean = isSpotifyContext(entry)
 

@@ -158,6 +158,13 @@ class FakeHost : SonosHost {
         shared.add(target to updateId)
     }
 
+    /** Design 54 §2.12: a context's live tracks as the store would get them (uri, title, forced). */
+    val contexts = mutableListOf<Triple<String, String, Boolean>>()
+
+    override fun contextTrack(entryKey: String, uri: String, title: String, force: Boolean) {
+        contexts.add(Triple(uri, title, force))
+    }
+
     override fun armedPlaying(playing: Boolean) {
         locks.add(playing)
     }

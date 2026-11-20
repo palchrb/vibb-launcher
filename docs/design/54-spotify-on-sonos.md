@@ -1477,3 +1477,25 @@ I re-read R1-R6 against the code. Findings, all fixed above:
   (server-only commit), or leave it out?
 - **Q4. The new message**: "Kan ikke spilles på Sonos – spør en voksen" / "Can't play on Sonos – ask a grown-up", when
   the account linked in the Sonos app can't play the playlist. Keep it, or the shorter "Spør en voksen" alone?
+
+## 54-a2 and 54-a2' status (2026-11-20, branch `sonos-spotify-54a2`)
+
+Built as R2 lists it, with R8's recommended answers (each one constant or one line to change): Q1 the speaker's sleep
+timer to the rule's edge replaces a family timer; Q2 a context's shuffle is hidden on a room (`CONTEXT_SHUFFLE_ON_ROOM`,
+`shuffleShown`); Q3 the PWA's (i) line on the Spotify page's accounts group (server-only commit); Q4 "Kan ikke spilles
+på Sonos – spør en voksen" / "Can't play on Sonos – ask a grown-up" (`cant_play_on_sonos_ask_adult`).
+
+Where the build differs from the letter of R2:
+- The map lives in `SonosController` as `QMap` (one per landed transfer; `trusted`, `reading`, the listing at the
+  transfer). A jump queued while the read runs passes the listing and index to `SonosTransport.queuePlay`, which looks
+  the slot up in the session's last read under the mutex (N6); no slot is `NotInQueue`, nothing sent.
+- The at-end timer is armed from polls only (each poll re-arms it); a socket measurement doesn't re-arm it.
+- The unmapped look swaps the session's `MediaItem` title (`unmappedShown`, the notification, the launcher's surfaces);
+  the in-app player screen still shows our item's title and number - owed.
+- `wsBlocked` still clears on any ours poll (53-d's rule); the pairing by `itemId` (`pairedItem`) keeps a new item's
+  measurement off the old track's bar.
+- The service's suspension keeps `renderer.json` on the room after a park with no answer (`SonosController.parkNoAnswer`)
+  and schedules `sonos-park-retry`; the receiver's standalone path does the same.
+- `musicSuspendAtS` takes the policy and the package (the restrictions writer works per music package).
+
+Owed: the emulator steps (R5) and the real room (R6: D12, D7, D9, D21, D16, D11, D3 first); the code QA's two passes.

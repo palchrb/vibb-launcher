@@ -57,6 +57,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.annotation.DrawableRes
 import me.vibb.music.logic.ControlSlots
 import me.vibb.music.logic.TimeRow
+import me.vibb.music.logic.shuffleShown
 import me.vibb.music.logic.SKIP_BACK_MS
 import me.vibb.music.logic.SKIP_FORWARD_MS
 import me.vibb.music.logic.skipSeconds
@@ -208,7 +209,7 @@ fun PlayerScreen(
                     val skips = now.slots == ControlSlots.SKIP
                     if (skips) {
                         SkipButton(R.drawable.player_glyph_replay, skipSeconds(SKIP_BACK_MS), stringResource(R.string.skip_back), row.side.dp) { onSkipBy(-SKIP_BACK_MS) }
-                    } else if (now.canShuffle) {
+                    } else if (shuffleShown(now.entry, onRoom = output.kind == OutputKind.SONOS)) {
                         val state = stringResource(if (now.shuffled) R.string.shuffle_on else R.string.shuffle_off)
                         RoundButton(
                             Icons.shuffle, stringResource(R.string.shuffle), onShuffle, row.side.dp, 20.dp,

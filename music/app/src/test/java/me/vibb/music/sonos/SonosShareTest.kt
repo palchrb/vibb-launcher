@@ -254,6 +254,65 @@ class SonosShareTest {
         assertTrue("our first item at position 1", r.spk.log.contains("seektrack 1"))
     }
 
+    // -- round 54-a2': a context on a room (§2.12) --
+
+    private val ctxEntry = spEntry.copy(spotifyMode = "context")
+    private val ctxItem = PlayItem(9, "context", "Kveldsmusikk", null, false, null)
+
+    private fun ControllerRig.startContext(live: String?, startMs: Long = 0) {
+        c.load(ctxEntry, listOf(ctxItem), 0, startMs, contextTrack = live?.let { "spotify:track:$it" })
+        c.playTile()
+        work.drain()
+    }
+
+    @Test
+    fun `a context resumes at its live track, follows the speaker's tracks by their titles and never marks done`() {
+        assertNull("a playlist context goes to a room", PlayBodies.speakerDropReason(ctxEntry, ctxItem))
+        val r = rig()
+        r.startContext(c, startMs = 42_000)
+        assertTrue("findInQueue found it: position 2, the place sought", r.spk.log.contains("seektrack 2") && r.spk.log.any { it.startsWith("seek 0:00:42") })
+        r.at(2, c, "0:00:43")
+        r.poll()
+        r.advance(60_000)
+        r.at(3, d, "0:00:02")
+        r.poll()
+        assertEquals(0, r.c.index)
+        assertFalse("never a done mark", r.c.takeAuto())
+        assertEquals("the live track and its title through the store's port", Triple("spotify:track:$d", "Ekstra — Noen", false), r.host.contexts.last())
+        // the hand-off writes it forced (QA-6)
+        var done = false
+        r.c.handOff { done = true }
+        r.work.drain()
+        assertTrue(done)
+        assertTrue(r.host.contexts.last().third)
+    }
+
+    @Test
+    fun `a context's live track not in the queue starts at position 1 with no seek, steps are the queue's ±1`() {
+        val r = rig()
+        r.startContext("1FakeTrackX00000000009", startMs = 42_000)
+        assertTrue(r.spk.log.contains("seektrack 1"))
+        assertFalse(r.spk.log.any { it.startsWith("seek 0:") })
+        r.at(1, a, "0:00:01")
+        r.poll()
+        r.c.stepContext(forward = true)
+        r.work.drain()
+        assertTrue(r.spk.log.contains("seektrack 2"))
+        assertEquals(1, count(r, "addqueue"))
+        r.at(2, c, "0:00:20")
+        r.poll()
+        r.c.stepContext(forward = false)
+        r.work.drain()
+        assertTrue("previous more than 5 s in restarts at 0", r.spk.log.any { it.startsWith("seek 0:00:00") })
+        r.advance(1_000)
+        r.at(2, c, "0:00:02")
+        r.poll()
+        r.c.stepContext(forward = false)
+        r.work.drain()
+        assertEquals("seektrack 1", r.spk.log.last { it.startsWith("seektrack") })
+        assertTrue("Q2: a context's shuffle is hidden on a room", !me.vibb.music.logic.shuffleShown(ctxEntry, onRoom = true))
+    }
+
     // -- the look under a queue marker (QA-2, QA-4) --
 
     private val marker = queueUri("RINCON_KID01400")

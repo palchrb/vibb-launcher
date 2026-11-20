@@ -32,6 +32,15 @@ fun controlSlots(entry: Entry): ControlSlots = when (kindOf(entry)) {
  */
 fun canShuffle(entry: Entry): Boolean = controlSlots(entry) == ControlSlots.SHUFFLE_REPEAT && contextResumes(entry)
 
+/**
+ * Design 54 R8 Q2 (round 54-a2'): a context playlist's shuffle on a Sonos room is hidden until the device check [D8+]
+ * passes (the speaker's own SHUFFLE_NOREPEAT); everywhere else [canShuffle].
+ */
+fun shuffleShown(entry: Entry, onRoom: Boolean): Boolean = canShuffle(entry) && !(onRoom && isSpotifyContext(entry) && !CONTEXT_SHUFFLE_ON_ROOM)
+
+/** Design 54 §2.12: the speaker's own shuffle for a context on a room - off until [D8+] (one switch, R8 Q2). */
+const val CONTEXT_SHUFFLE_ON_ROOM = false
+
 /** Repeat is offered wherever shuffle's slots are (design 49 §1.1), an artist context too. */
 fun canRepeat(entry: Entry): Boolean = controlSlots(entry) == ControlSlots.SHUFFLE_REPEAT
 
