@@ -364,7 +364,8 @@ class SourceScanTest {
     fun `the debug base is assigned only in src-debug and read only by its five readers (M2)`() {
         for (f in sources("src/main")) {
             // Storytel's switch and Spotify's (design 26c §9.3, the next test), each in its own endpoints file
-            if (code(f).contains("debugBase")) assertTrue(f.path, f.name in setOf("StorytelEndpoints.kt", "SpotifyEndpoints.kt"))
+            // (and the web player's own process, design 120: its copy from the main process's, the next test)
+            if (code(f).contains("debugBase")) assertTrue(f.path, f.name in setOf("StorytelEndpoints.kt", "SpotifyEndpoints.kt", "SpotifyWebService.kt"))
         }
         val endpoints = code(moduleFile("src/main/java/me/vibb/music/storytel/StorytelEndpoints.kt"))
         assertTrue(endpoints.contains("var debugBase: String? = null"))
@@ -410,7 +411,7 @@ class SourceScanTest {
     fun `Spotify's debug base is assigned only in src-debug and read only by its six readers (26c M3)`() {
         val endpoints = code(moduleFile("src/main/java/me/vibb/music/spotify/SpotifyEndpoints.kt"))
         assertTrue(endpoints.contains("var debugBase: String? = null"))
-        assertEquals("one declaration and six reads", 7, Regex("\\bdebugBase\\b").findAll(endpoints).count())
+        assertEquals("one declaration and seven reads", 8, Regex("\\bdebugBase\\b").findAll(endpoints).count())
         assertFalse("main never assigns it", Regex("debugBase\\s*=[^=]").containsMatchIn(endpoints.replace("var debugBase: String? = null", "")))
         val readers = mapOf(
             "apiBase" to setOf("SpotifyRenderer.kt"),
@@ -419,6 +420,8 @@ class SourceScanTest {
             "webHosts" to setOf("WebPolicy.kt"),
             "webProxy" to setOf("WebPolicy.kt"),
             "debugTokens" to setOf("SpotifyRenderer.kt"),
+            // design 120: the base handed to the web player's own process at each page's open
+            "webBase" to setOf("SpotifyRenderer.kt"),
         )
         for ((reader, allowed) in readers) {
             assertTrue("no reader $reader", endpoints.contains("fun $reader("))
@@ -432,6 +435,12 @@ class SourceScanTest {
         }
         val assigning = sources("src/debug").filter { Regex("SpotifyEndpoints\\.debugBase\\s*=[^=]").containsMatchIn(code(it)) }.map { it.name }
         assertEquals("only the debug feed assigns it", listOf("DebugSpotify.kt"), assigning)
+        // design 120 §4.2: the web player's own process has no debug feed - it takes the main process's base (the reader
+        // above, through the fake-homes parse) at each page's open, once, and only in a debug build
+        val inMain = sources("src/main/java").filter { Regex("debugBase\\s*=[^=]").containsMatchIn(code(it).replace("var debugBase: String? = null", "")) }
+        assertEquals(listOf("SpotifyWebService.kt"), inMain.map { it.name })
+        val web = code(inMain.single())
+        assertEquals(listOf("if (BuildConfig.DEBUG) SpotifyEndpoints.debugBase = fakeBase"), web.lines().map { it.trim() }.filter { it.contains("debugBase =") })
         // read at every process start too, as Storytel's (DebugStartup)
         val startup = code(moduleFile("src/debug/java/me/vibb/music/debugfeed/DebugStorytel.kt")).substringAfter("class DebugStartup")
         assertTrue(startup.contains("DebugSpotify.applyBase(it)"))
@@ -569,6 +578,32 @@ class SourceScanTest {
         assertTrue(renderer.contains("contextName = a?.entry?.name?.takeIf { contextUri != null }"))
         // the live title the service reports is that session title, else the item's
         assertTrue(service.contains("val title = live ?: item?.title"))
+    }
+
+    /**
+     * Design 120 option B (revision 2): the web player in its own process - the service in `:web`, not exported, the only
+     * component there; `MusicApp` does nothing more in that process and makes the main process WebView-free; the renderer's
+     * host is the remote one; the private AIDL stays out of the launcher bridge's folder.
+     */
+    @Test
+    fun `design 120 - the web player's own process`() {
+        val manifest = code(moduleFile("src/main/AndroidManifest.xml"))
+        val service = manifest.substringAfter("android:name=\".spotify.SpotifyWebService\"").substringBefore("/>")
+        assertTrue(service.contains("android:exported=\"false\""))
+        assertTrue(service.contains("android:process=\":web\""))
+        assertEquals("nothing else in :web", 1, Regex("android:process=").findAll(manifest).count())
+        val app = code(moduleFile("src/main/java/me/vibb/music/MusicApp.kt")).substringAfter("override fun onCreate() {").substringBefore("\n    }\n")
+        val early = "if (Application.getProcessName().endsWith(SpotifyWebService.PROCESS_SUFFIX)) return\n        SpotifyWebHost.disableInThisProcess()\n"
+        assertTrue("first thing: the early return in :web, then no WebView in the main process", app.trimStart().removePrefix("super.onCreate()").trimStart().startsWith(early))
+        val web = code(moduleFile("src/main/java/me/vibb/music/spotify/SpotifyWebService.kt"))
+        assertTrue(web.contains("const val PROCESS_SUFFIX = \":web\""))
+        assertTrue("its importance and capabilities follow the playback service's (QA M2)", web.contains("Context.BIND_AUTO_CREATE or Context.BIND_INCLUDE_CAPABILITIES"))
+        assertTrue("the process ends itself only after onDestroy (QA H1 3)", web.contains("if (disconnected && destroyed) Process.killProcess(Process.myPid())"))
+        val renderer = code(moduleFile("src/main/java/me/vibb/music/spotify/SpotifyRenderer.kt"))
+        assertTrue(renderer.contains("val host = RemoteSpotifyHost(AndroidWebConnector(app), ports::after, { SpotifyEndpoints.webBase() }, log)"))
+        assertFalse("the main process makes no web host", renderer.contains("SpotifyWebHost(app"))
+        assertTrue(moduleFile("src/main/aidl/me/vibb/music/spotify/web/ISpotifyWeb.aidl").isFile)
+        assertFalse("never in the launcher bridge's folder", moduleFile("src/main/aidl/me/vibb/bridge").list().orEmpty().any { it.startsWith("ISpotifyWeb") })
     }
 
     /** qa-26c-step5b-code M2: the WebView's console never reaches logcat; L2: the debug switch never meets a real token. */

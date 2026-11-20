@@ -15,6 +15,8 @@ import me.vibb.music.bridge.LiveBridge
 import me.vibb.music.bridge.LAUNCHER_PACKAGES
 import me.vibb.music.playback.PlayerHub
 import me.vibb.music.sonos.SonosSuspension
+import me.vibb.music.spotify.SpotifyWebHost
+import me.vibb.music.spotify.SpotifyWebService
 import me.vibb.music.sync.NewNotifier
 import me.vibb.music.sync.Sync
 
@@ -28,6 +30,10 @@ class MusicApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // design 120 §4.2: the web player's own process runs its page and nothing else - no channel, config, sync or
+        // receiver; and the main process makes no WebView (only `:web` uses app_webview)
+        if (Application.getProcessName().endsWith(SpotifyWebService.PROCESS_SUFFIX)) return
+        SpotifyWebHost.disableInThisProcess()
         NewNotifier.createChannel(this)
         scope.launch { applyConfig(this@MusicApp) }
         Sync.atStart(this)

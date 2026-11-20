@@ -2065,6 +2065,7 @@ class PlaybackService : MediaSessionService() {
                 chosenOutput = null
                 local.setPreferredAudioDevice(null)
             }
+            webPlayerOutputChanged(addedDevices)
             publish()
         }
 
@@ -2074,8 +2075,19 @@ class PlaybackService : MediaSessionService() {
                 chosenOutput = null
                 local.setPreferredAudioDevice(null)
             }
+            webPlayerOutputChanged(removedDevices)
             publish()
         }
+    }
+
+    /**
+     * Design 120 R5 (revision 2): a headset's output came or went under the web player - its player may have died with
+     * the old route (vibb's `_go_output_rebuild`; 2026-11-20, the first Bluetooth pairing on the Jelly Star), so the
+     * renderer looks for a state and recycles it once if none comes.
+     */
+    private fun webPlayerOutputChanged(devices: Array<out AudioDeviceInfo>) {
+        if (renderer !== spotify || devices.none { it.isSink && outputKind(it.type) != null }) return
+        spotify?.outputChanged()
     }
 
     // --- events ---

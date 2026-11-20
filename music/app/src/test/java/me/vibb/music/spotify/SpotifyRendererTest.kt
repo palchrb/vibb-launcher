@@ -22,6 +22,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
 import me.vibb.music.bridge.TokenResult
 import me.vibb.music.logic.Repeat
+import me.vibb.music.logic.SPOTIFY_OUTPUT_STATE_MS
 import me.vibb.music.logic.SPOTIFY_STATE_GAP_MS
 import me.vibb.music.logic.SPOTIFY_STEP_COALESCE_MS
 import me.vibb.music.logic.SpotifyContextTrack
@@ -527,13 +528,28 @@ class SpotifyRendererTest {
     }
 
     @Test
-    fun `held through a 30 s gap, paused with trenger internett after it`() = runBlocking {
+    fun `held through a 30 s gap, then one new web player at the place, and trenger internett when it stays silent too`() = runBlocking {
         val r = playing()
+        advance(5_000)
+        post(state(0, 5_000))
         advance(SPOTIFY_STATE_GAP_MS - 1_000)
         assertTrue("held: a throttled timer, a track change", r.showsPlaying)
         assertEquals(Player.STATE_READY, r.spec().playbackState)
         assertTrue(r.spec().playWhenReady)
-        advance(1_001)
+        advance(1_000)
+        // design 120 R2 (revision 2): the silent player goes with its process, and one new start at its place
+        assertTrue(ports.log.contains("spotify: the web player gave no state - a new one, once"))
+        assertEquals(1, page.destroys)
+        assertEquals(2, page.opens)
+        assertEquals(2, api.plays().size)
+        assertEquals("at the last measured place", 5_000L, body(api.plays().last())["position_ms"]!!.jsonPrimitive.long)
+        assertEquals(uri(0), windowOf(api.plays().last()).first())
+        assertTrue("no word for the kid meanwhile: still playing", r.showsPlaying)
+        assertNull(r.rendererState)
+        assertFalse(ports.outcomes.contains("unreachable"))
+        // the new player is silent too: a page the start made itself is never recycled
+        advance(10_000)
+        assertEquals("no other", 2, page.opens)
         assertFalse(r.showsPlaying)
         assertFalse(r.spec().playWhenReady)
         assertEquals(Player.STATE_READY, r.spec().playbackState)
@@ -556,6 +572,103 @@ class SpotifyRendererTest {
         advance(1)
         assertFalse(r.showsPlaying)
         assertEquals(RendererState.SPOTIFY_NEEDS_INTERNET, r.rendererState)
+        assertEquals("the start made its page: a new process didn't help, no other (design 120 R2)", 1, page.opens)
+        r.release()
+    }
+
+    @Test
+    fun `design 120 R2 - a page up from an earlier start, silent after a play call, is recycled once at the place`() = runBlocking {
+        val r = playing()
+        advance(5_000)
+        post(state(0, 5_000))
+        r.seekTo(1, 0) // a step: a fresh start on the page that is up
+        advance(300)
+        assertEquals(2, api.plays().size)
+        assertEquals(1, page.opens)
+        advance(10_000) // no state of ours: the old player died (the user's fact 2)
+        assertEquals(1, page.destroys)
+        assertEquals("a fresh page, in a fresh process", 2, page.opens)
+        assertEquals(3, api.plays().size)
+        assertEquals(uri(1), windowOf(api.plays().last()).first())
+        assertEquals(0L, body(api.plays().last())["position_ms"]!!.jsonPrimitive.long)
+        assertTrue("the shuffle and repeat set again for the new device", api.paths().count { it.startsWith("PUT /v1/me/player/shuffle") } >= 2)
+        assertTrue(r.showsPlaying)
+        post(state(1, 0))
+        assertTrue(r.showsPlaying)
+        assertNull(r.rendererState)
+        assertEquals(1, r.currentIndex())
+        r.release()
+    }
+
+    @Test
+    fun `design 120 R2 - a resume through the page that goes silent is recycled too (QA H2)`() = runBlocking {
+        val r = playing()
+        advance(5_000)
+        post(state(0, 5_000))
+        r.pause()
+        post(state(0, 5_000, paused = true))
+        advance(60_000)
+        r.play()
+        assertEquals("a resume: no play call", "vibb.resume()", page.calls.last())
+        assertEquals(1, api.plays().size)
+        advance(SPOTIFY_STATE_GAP_MS)
+        assertEquals(2, page.opens)
+        assertEquals(2, api.plays().size)
+        assertEquals(5_000L, body(api.plays().last())["position_ms"]!!.jsonPrimitive.long)
+        r.release()
+    }
+
+    @Test
+    fun `design 120 R2 - never with the network gate shut or in a call - trenger internett as before`() = runBlocking {
+        val r = playing()
+        advance(5_000)
+        post(state(0, 5_000))
+        ports.network = SpotifyLine.NEEDS_INTERNET
+        advance(SPOTIFY_STATE_GAP_MS)
+        assertEquals(1, page.opens)
+        assertEquals(RendererState.SPOTIFY_NEEDS_INTERNET, r.rendererState)
+        r.release()
+
+        ports.network = null
+        val calls = renderer()
+        calls.load(mediaItems(5), 0, 0, playNow = true)
+        advance(0)
+        post(state(0, 0))
+        calls.inCall = true
+        advance(SPOTIFY_STATE_GAP_MS)
+        assertEquals("no new page during a call", 2, page.opens)
+        assertFalse(calls.showsPlaying)
+        calls.release()
+    }
+
+    @Test
+    fun `design 120 R5 - an output change while playing with no state after it recycles once at the place`() = runBlocking {
+        val r = playing()
+        advance(5_000)
+        post(state(0, 5_000))
+        r.outputChanged()
+        assertEquals("the page is asked for its state at once", "vibb.state()", page.calls.last())
+        advance(2_000)
+        post(state(0, 7_000)) // it answered: alive
+        advance(SPOTIFY_OUTPUT_STATE_MS)
+        assertEquals(1, page.opens)
+        r.outputChanged() // a headset paired: its player dies with the old route (2026-11-20)
+        advance(SPOTIFY_OUTPUT_STATE_MS - 1)
+        assertEquals(1, page.opens)
+        advance(1)
+        assertTrue(ports.log.contains("spotify: no state of ours after the output change"))
+        assertEquals(1, page.destroys)
+        assertEquals(2, page.opens)
+        assertEquals(2, api.plays().size)
+        assertEquals("at the last measured place", 7_000L, body(api.plays().last())["position_ms"]!!.jsonPrimitive.long)
+        post(state(0, 7_000))
+        assertTrue(r.showsPlaying)
+        // paused, an output change does nothing
+        r.pause()
+        post(state(0, 7_500, paused = true))
+        r.outputChanged()
+        advance(SPOTIFY_OUTPUT_STATE_MS)
+        assertEquals(2, page.opens)
         r.release()
     }
 

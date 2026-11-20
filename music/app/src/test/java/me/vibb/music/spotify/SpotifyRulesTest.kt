@@ -431,4 +431,23 @@ class SpotifyRulesTest {
         assertFalse("negative", me.vibb.music.logic.spotifyDiagLogOn(false, -1, now))
         assertEquals(60 * 60_000L, me.vibb.music.logic.SPOTIFY_DIAG_MAX_AHEAD_MS)
     }
+
+    /** Design 120 R2 and R5 (revision 2): a silent player is recycled once, only while the kid wants it playing. */
+    @Test
+    fun `spotifyRecycles - once, wanted, allowed, never on a fresh page or before the last recycle played`() {
+        fun recycles(
+            wanted: Boolean = true, mayPlay: Boolean = true, inCall: Boolean = false, detached: Boolean = false,
+            network: Boolean = true, freshPage: Boolean = false, unproven: Boolean = false,
+        ) = me.vibb.music.logic.spotifyRecycles(wanted, mayPlay, inCall, detached, network, freshPage, unproven)
+        assertTrue(recycles())
+        assertFalse("paused or ended: nothing starts by itself", recycles(wanted = false))
+        assertFalse("suspended", recycles(mayPlay = false))
+        assertFalse("a call", recycles(inCall = true))
+        assertFalse("another renderer plays", recycles(detached = true))
+        assertFalse("the gate is shut: its own line", recycles(network = false))
+        assertFalse("the start made this page: a new process didn't help", recycles(freshPage = true))
+        assertFalse("no second recycle before a state of ours", recycles(unproven = true))
+        assertTrue("the output watch waits past the page's 5 s tick", me.vibb.music.logic.SPOTIFY_OUTPUT_STATE_MS > me.vibb.music.logic.SPOTIFY_STATE_TICK_MS)
+        assertTrue("a recycled page's wait is shorter (QA L7)", me.vibb.music.logic.SPOTIFY_RECYCLE_READY_MS < me.vibb.music.logic.SPOTIFY_READY_MS)
+    }
 }

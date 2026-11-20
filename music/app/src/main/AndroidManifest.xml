@@ -74,6 +74,13 @@
             </intent-filter>
         </service>
 
+        <!-- Spotify's web player in its own process (design 120 §4.2): bound by the playback service only, never
+             started; one page per process, so a dead player goes with its process. Nothing else runs in `:web`. -->
+        <service
+            android:name=".spotify.SpotifyWebService"
+            android:exported="false"
+            android:process=":web" />
+
         <!-- The launcher's nudge: it only starts the sync. -->
         <receiver
             android:name=".BridgeChangedReceiver"

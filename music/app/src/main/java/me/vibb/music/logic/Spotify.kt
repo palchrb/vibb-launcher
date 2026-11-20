@@ -192,6 +192,27 @@ const val SPOTIFY_TRANSFER_SETTLE_MS = 3_000L
 const val SPOTIFY_STATE_TICK_MS = 5_000L
 const val SPOTIFY_STATE_GAP_MS = 30_000L
 
+/**
+ * Design 120 R5 (revision 2; vibb's `_go_output_rebuild`): after an audio output came or went while the web player plays,
+ * a state of ours within this long (the page asked for one at once, and ticks every [SPOTIFY_STATE_TICK_MS]) - else its
+ * player died with the old route (2026-11-20: the first Bluetooth pairing on the Jelly Star) and is recycled.
+ */
+const val SPOTIFY_OUTPUT_STATE_MS = 8_000L
+
+/** A recycled web player's page and `ready` (design 120 QA L7): a real outage says "Trenger internett" sooner. */
+const val SPOTIFY_RECYCLE_READY_MS = 10_000L
+
+/**
+ * Design 120 R2 and R5 (revision 2): a web player that went silent - no state of ours after a play call, the 30 s gap
+ * watch, or nothing after an output change - is thrown away with its process and played once more at its place, in
+ * place of "Trenger internett". Only while the kid still wants it playing ([wanted]: playing, not ended), the app may
+ * play ([mayPlay]), no call, not detached and the network gate open ([network]); never on a page the failing start made
+ * itself ([freshPage]: a new process didn't help - today's UNREACHABLE), and never twice without a state of ours between
+ * ([unproven]: the last recycle hasn't played yet) - so no loop.
+ */
+fun spotifyRecycles(wanted: Boolean, mayPlay: Boolean, inCall: Boolean, detached: Boolean, network: Boolean, freshPage: Boolean, unproven: Boolean): Boolean =
+    wanted && mayPlay && !inCall && !detached && network && !freshPage && !unproven
+
 /** Steps within this coalesce into one play call (vibb's skip debounce). */
 const val SPOTIFY_STEP_COALESCE_MS = 300L
 

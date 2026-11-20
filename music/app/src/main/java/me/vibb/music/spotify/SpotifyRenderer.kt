@@ -45,7 +45,9 @@ import me.vibb.music.logic.SLEEP_FADE_MS
 import me.vibb.music.logic.SPOTIFY_CALL_MS
 import me.vibb.music.logic.SPOTIFY_FIRST_STATE_MS
 import me.vibb.music.logic.SPOTIFY_HOST_IDLE_MS
+import me.vibb.music.logic.SPOTIFY_OUTPUT_STATE_MS
 import me.vibb.music.logic.SPOTIFY_READY_MS
+import me.vibb.music.logic.SPOTIFY_RECYCLE_READY_MS
 import me.vibb.music.logic.SPOTIFY_START_BUDGET_MS
 import me.vibb.music.logic.SPOTIFY_STATE_GAP_MS
 import me.vibb.music.logic.SPOTIFY_STEP_COALESCE_MS
@@ -65,6 +67,7 @@ import me.vibb.music.logic.atEndNextLookMs
 import me.vibb.music.logic.itemRemaining
 import me.vibb.music.logic.spotifyNetworkLine
 import me.vibb.music.logic.spotifyPauseCause
+import me.vibb.music.logic.spotifyRecycles
 import me.vibb.music.logic.spotifySelfResumeShown
 import me.vibb.music.logic.spotifyHeldRecently
 import me.vibb.music.media.MediaCache
@@ -364,8 +367,18 @@ internal class SpotifyRenderer(
 
     // --- a start (§5.4): at most one runs ---
 
-    /** [step]: context mode's next (true) or previous (false) through the SDK once this start is ours ([step]'s fallback). */
-    private data class Request(val index: Int, val posMs: Long, val fresh: Boolean, val settings: Boolean, val step: Boolean? = null)
+    /**
+     * [step]: context mode's next (true) or previous (false) through the SDK once this start is ours ([step]'s fallback).
+     * [recycle]: design 120's one more start after a silent player was thrown away (its page's wait is shorter).
+     */
+    private data class Request(
+        val index: Int,
+        val posMs: Long,
+        val fresh: Boolean,
+        val settings: Boolean,
+        val step: Boolean? = null,
+        val recycle: Boolean = false,
+    )
 
     private class Start(val request: Request, val deadline: Long) {
         /** Where the play starts: the request's, or a seek before its calls (the service's resume overlap). */
@@ -432,6 +445,17 @@ internal class SpotifyRenderer(
     private var lookTimer: (() -> Unit)? = null
     private var fadeTimer: (() -> Unit)? = null
 
+    // --- design 120 (revision 2): a silent player recycled once ---
+
+    /** The page up now was made by the last start (a new process: its silence is no dead old player - R2 leaves it). */
+    private var pageFromStart = false
+
+    /** A recycle happened and no state of ours has come since: no second one (design 120 QA L1). */
+    private var recycleUnproven = false
+
+    /** R5: an audio output came or went while playing; a state of ours is awaited. */
+    private var outputTimer: (() -> Unit)? = null
+
     /** The service's `onError` move-on, while it handles our `Error("unplayable")` (step 4's mapping). */
     private class MoveOn(val stop: Boolean)
 
@@ -456,6 +480,7 @@ internal class SpotifyRenderer(
      */
     override fun load(items: List<MediaItem>, startIndex: Int, startMs: Long, playNow: Boolean) {
         detached = false // attached again: a re-attach always loads
+        cancelOutputWatch()
         heldByPage = false
         askedPaused = false
         val a = queue()
@@ -831,7 +856,8 @@ internal class SpotifyRenderer(
         if (released) return
         saveNow(force = true)
         supersede()
-        for (t in listOf(stepTimer, firstStateTimer, gapTimer, idleTimer, prefetchTimer, lookTimer, fadeTimer, atEndTimer)) t?.invoke()
+        for (t in listOf(stepTimer, firstStateTimer, gapTimer, idleTimer, prefetchTimer, lookTimer, fadeTimer, atEndTimer, outputTimer)) t?.invoke()
+        outputTimer = null
         atEndTimer = null
         atEnd = null
         stepTimer = null
@@ -1055,6 +1081,9 @@ internal class SpotifyRenderer(
         cancelFirstState()
         cancelGap()
         cancelIdle()
+        cancelOutputWatch()
+        // design 120: whether this start makes its page (awaitReady) - a new process's silence is no dead old player
+        pageFromStart = false
         // past the gates: this start really goes out with the new order's window (qa-39-code N3)
         windowStale = false
         stepAfterStart = r.step
@@ -1102,7 +1131,7 @@ internal class SpotifyRenderer(
     /** §5.4 steps 2-3: the page and its device with a token, then the Web API calls with their retries. */
     private suspend fun prepareAndCall(s: Start): StartEnd = coroutineScope {
         val r = s.request
-        val readyBy = minOf(s.deadline, ports.now() + SPOTIFY_READY_MS)
+        val readyBy = minOf(s.deadline, ports.now() + if (r.recycle) SPOTIFY_RECYCLE_READY_MS else SPOTIFY_READY_MS)
         // a live page of a known account gets ready beside the token; a new page waits for it, so that it is
         // never made on another account's storage (M1)
         var ready: Deferred<String?>? = if (hostAccount != null && host.alive) async { awaitReady(readyBy) } else null
@@ -1270,6 +1299,7 @@ internal class SpotifyRenderer(
             // a clear in progress first: the new page must not read what it is removing (L6)
             clearing?.await()
             deviceId = null
+            pageFromStart = true
             host.open()
         }
         deviceId?.let { return it }
@@ -1498,7 +1528,10 @@ internal class SpotifyRenderer(
         val m = tracker.measured
         if (m != null && m !== before && m.index == tracker.index) {
             if (snap is SdkState) snap.durationMs?.let { stateDuration = it }
-            if (m.playing) lastOursAt = m.atMs
+            if (m.playing) {
+                lastOursAt = m.atMs
+                recycleUnproven = false // the player plays: a later silence may recycle it once more
+            }
         }
         apply(events)
         syncPlace()
@@ -1773,7 +1806,7 @@ internal class SpotifyRenderer(
             firstStateTimer = null
             if (pwr && tracker.mode == Mode.STARTING && start == null) {
                 ports.log("spotify: no state of ours after the play call (${ports.now() - firstStateArmedAt} ms)")
-                fail(SpotifyProblem.UNREACHABLE)
+                silent(freshPage = pageFromStart)
             }
         }
     }
@@ -1796,7 +1829,8 @@ internal class SpotifyRenderer(
             if (pwr && tracker.mode == Mode.OURS && start == null) {
                 if (ports.now() - lastOursAt >= SPOTIFY_STATE_GAP_MS) {
                     ports.log("spotify: no state for ${SPOTIFY_STATE_GAP_MS / 1000} s")
-                    fail(SpotifyProblem.UNREACHABLE)
+                    // a page that played (or resumed through the SDK, design 120 QA H2) and went silent: never fresh
+                    silent(freshPage = false)
                 } else {
                     armGap()
                 }
@@ -1807,6 +1841,62 @@ internal class SpotifyRenderer(
     private fun cancelGap() {
         gapTimer?.invoke()
         gapTimer = null
+    }
+
+    /**
+     * The web player went silent while the kid wants it playing (design 120 R2, R5; revision 2): thrown away with its
+     * process and played once more at its place - else, as before, paused with "trenger internett".
+     */
+    private fun silent(freshPage: Boolean) {
+        val recycles = spotifyRecycles(
+            wanted = pwr && !ended, mayPlay = ports.mayPlay(), inCall = inCall, detached = detached,
+            network = ports.networkLine() == null, freshPage = freshPage, unproven = recycleUnproven,
+        )
+        if (!recycles) {
+            if (recycleUnproven || freshPage) ports.log("spotify: a new web player didn't help - no other")
+            return fail(SpotifyProblem.UNREACHABLE)
+        }
+        ports.log("spotify: the web player gave no state - a new one, once")
+        ports.record("recycle")
+        recycleUnproven = true
+        val at = startPosition()
+        cancelFirstState()
+        cancelGap()
+        cancelOutputWatch()
+        heldByPage = false
+        // its process goes with it (RemoteSpotifyHost): the next page is a fresh process, as a force stop was
+        destroyHost()
+        // the new page may well report the same device id (its web storage keeps it, QA L2): its Connect queue is empty
+        // and the account's shuffle and repeat are set again all the same
+        tracker.newDevice()
+        lastSet = null
+        request(Request(index, at, fresh = false, settings = true, step = stepAfterStart, recycle = true))
+    }
+
+    /**
+     * An audio output came or went (the service's device callback; design 120 R5, vibb's `_go_output_rebuild`: the
+     * player's output dies with the Bluetooth transport). While ours plays, the page is asked for its state now; with no
+     * state of ours within [SPOTIFY_OUTPUT_STATE_MS] it is recycled once ([silent]). A headset removed is becoming noisy,
+     * which pauses first - so this is mostly a headset arriving (2026-11-20: the first pairing on the Jelly Star).
+     */
+    fun outputChanged() {
+        if (released || detached || !pwr || ended || start != null || tracker.mode != Mode.OURS) return
+        val at = ports.now()
+        ports.log("spotify: an audio output came or went while playing - a state within ${SPOTIFY_OUTPUT_STATE_MS / 1000} s")
+        cancelOutputWatch()
+        if (host.alive) host.call("state")
+        outputTimer = ports.after(SPOTIFY_OUTPUT_STATE_MS) {
+            outputTimer = null
+            if (pwr && !ended && tracker.mode == Mode.OURS && start == null && lastOursAt < at) {
+                ports.log("spotify: no state of ours after the output change")
+                silent(freshPage = false)
+            }
+        }
+    }
+
+    private fun cancelOutputWatch() {
+        outputTimer?.invoke()
+        outputTimer = null
     }
 
     /** The page is destroyed 5 minutes after the last play (§5.2): the device leaves the account's Connect list. */
@@ -2118,7 +2208,9 @@ internal class SpotifyRenderer(
                 }
             }
             val ports = AndroidSpotifyPorts(app, store, scope, writer, SpotifyLocks(app, log), outcome, log)
-            return SpotifyRenderer(SpotifyWebHost(app, log), http, base, ask, ports, Dispatchers.Main, queue, Looper.getMainLooper())
+            // design 120 §4.2: the page lives in its own process, `:web`, one page per process
+            val host = RemoteSpotifyHost(AndroidWebConnector(app), ports::after, { SpotifyEndpoints.webBase() }, log)
+            return SpotifyRenderer(host, http, base, ask, ports, Dispatchers.Main, queue, Looper.getMainLooper())
         }
     }
 }

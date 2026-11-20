@@ -52,7 +52,10 @@ class OutputRowsTest {
         // a headset tap keeps the sheet open (only the routed success closes it, in the view model); a pick closes it
         val root = moduleFile("src/main/java/me/vibb/music/ui/MusicRoot.kt").readText()
         assertTrue(root.contains("onHeadset = { vm.headsetTapped(it, hub.output.key.takeIf { onRoom }) },"))
-        assertTrue(root.contains("onPick = { actions.output(it.key); vm.sheet = null },"))
+        // 2026-11-20 (R2): the view model also moves the web player's sound for "Telefonen"
+        assertTrue(root.contains("onPick = { actions.output(it.key); vm.outputPicked(it, hub); vm.sheet = null },"))
+        assertTrue(root.contains("PlayerHub.Message.PHONE_UNPLUG -> R.string.output_phone_unplug"))
+        assertTrue(root.contains("PlayerHub.Message.PHONE_TURN_OFF -> R.string.output_phone_turn_off"))
         assertTrue(root.contains("PlayerHub.Message.HEADSET_NO_CONTACT -> R.string.headset_no_contact"))
     }
 

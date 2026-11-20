@@ -27,10 +27,11 @@ object SpotifyEndpoints {
     /**
      * The one debug-only switch (design 26c §9.3, 26b M2's way): null unless the debug feed's
      * `config.json` sets `spotify_base` (the emulator's fake on 10.0.2.2; only 10.0.2.2 or loopback is
-     * taken, so a `config.json` left on a real phone never sends a token elsewhere). Only `src/debug`
+     * taken, so a `config.json` left on a real phone never sends a token elsewhere). In the main process only `src/debug`
      * assigns it (SourceScanTest); a release build has no feed, so it stays null there. It has exactly
-     * six readers, all below and nowhere else: (a) [apiBase], (b) [apiOverLan], (c) [sdkUrl],
-     * (d) [webHosts], (e) [webProxy] and (f) [debugTokens].
+     * seven readers, all below and nowhere else: (a) [apiBase], (b) [apiOverLan], (c) [sdkUrl],
+     * (d) [webHosts], (e) [webProxy], (f) [debugTokens] and (g) [webBase] -
+     * the web player's process (design 120) sets its own copy from (g) at each page, in a debug build only.
      */
     @Volatile
     var debugBase: String? = null
@@ -61,6 +62,12 @@ object SpotifyEndpoints {
     /** (f) The fake's token route (`/fake/token?user=kid`), asked instead of the launcher for a run without one; null without the switch. */
     fun debugTokens(): HttpUrl? =
         parse(debugBase)?.newBuilder()?.encodedPath("/fake/token")?.addQueryParameter("user", "kid")?.build()
+
+    /**
+     * (g) The base handed to the web player's own process (design 120 §4.2): it has no debug feed of its own, so the main
+     * process passes the switch at each page's open - only through the fake-homes parse, null without the switch.
+     */
+    fun webBase(): String? = parse(debugBase)?.toString()
 
     /** The fake's homes only (qa-26b-step3-code L2): the emulator's host or loopback, plain http, no user info. */
     private val FAKE_HOMES = setOf("10.0.2.2", "127.0.0.1", "localhost", "::1")
