@@ -5061,6 +5061,36 @@ Notes for a re-run:
 Owed: Android 15 and 17, the push on a subscribed browser, the alarm's Doze recovery on 16 (the emulator's Handler won
 there), the Jelly Star.
 
+## 6bd. The Bluetooth pairing window (design 122, branch `bt-pairing-window`, 2026-11-20)
+
+The emulator has no headset to pair, so the debug build's `BtPairingDebugReceiver` (guarded by DUMP) drives the
+window's own steps: `step` `arm` (the page's tap without `createBond`), `request` with `variant`, and `bond` with
+`state` `bonded` or `none`, for a fake `address`:
+`adb shell am broadcast -n me.vibb.launcher.debug/com.kidslauncher.mdm.server.BtPairingDebugReceiver --es step request --ei variant 3`.
+Android's ordered delivery ahead of Settings' receiver is not simulated.
+
+**Setup:** `jelly36` (Android 16, Google Play) restored clean (22 of 22 sums), started under
+`flock -o ~/emulator.lock` on port 5570. The server was release 0.86.1's x86_64 binary, with
+`LAUNCHER_ADMIN_COMPONENT` set to the debug component, set up over HTTP: an admin with 2FA, one phone, USB debugging
+allowed, a parent PIN, the Bluetooth row, and the Clock allowed. The phone was enrolled with a typed code, and the
+setup flow ended with Finish. Then the kiosk was LOCKED (`mFlags= 127`) and Settings `hidden=true` (case a). Kid
+Settings › Bluetooth › Manage devices was in front. Each check read the lock-task list, `mFlags`, Settings' `hidden`
+and the top activity. Afterwards `jelly36` was restored (22 of 22 sums).
+
+| Test | Result |
+|---|---|
+| 1 open, bonded | **Passed.** The arm unhid Settings without pinning it (`hidden=false`, not in the list, 127). The request (variant 3) pinned it in 38 ms with the shade blocked (125). `bond bonded` closed it: out of the list, 127, `hidden=true` |
+| 2 a Settings start in the window, the page's stop | **Passed.** With the window open (variant 2), `am start com.android.settings/.Settings` opened Settings. This is the package-wide reach the design accepts. Our page stopped and the window closed ("Closed: page_stopped"), and Settings' task went with the unpin. Our page came back on top. The same start afterwards: "Activity class ... does not exist" (hidden) |
+| 3 a PIN | **Passed.** Variant 0: `GROWN_UP`, no pin, closed as `grown_up`, `hidden=true` |
+| 4 timeouts | **Passed.** Armed with no request: closed at 30.08 s. Open with no answer: closed 30.1 s after the request. Both ended with 127 and `hidden=true` |
+| 5 screen off | **Passed.** Closed at once. The page's `onStop` came before `SCREEN_OFF`, so the reason was `page_stopped` |
+| 6 not ours | **Passed.** A request with no arm: `PASS`. Armed for one address with a request for another: `PASS`, no pin. Another device's `bond none` left the arm. The armed device's `bond none` in lower case closed it |
+| 7 a process death | **Passed.** `kill -9` with the window open: 1.2 s later "A pairing window was left open: putting it back". Settings left the list, the apply wrote 127, `hidden=true`, the marker was cleared. Home was in front |
+| 8 an apply during the window | **Passed.** A PWA save (an SSE sync) 0.4 s after the pin: "Settings stays unhidden for the pairing window". The pin and 125 held, and the window closed at its 30 s |
+
+**Not run:** a real bond and the real dialog (owed on the Jelly Star with the Jabra), a pause (the arm refuses then:
+`BtPairingPlanTest`), Android 14 and 17.
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:

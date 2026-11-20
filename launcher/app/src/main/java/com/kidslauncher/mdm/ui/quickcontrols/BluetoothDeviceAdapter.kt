@@ -29,15 +29,18 @@ fun bluetoothRowActions(info: QuickControls.BluetoothDeviceInfo, busy: Boolean):
     )
 }
 
-enum class BtRowStatus { PAIRING, CONNECTED, CONNECTING, NO_CONTACT, PAIRED, NONE }
+enum class BtRowStatus { GROWN_UP, PAIRING, CONNECTED, CONNECTING, NO_CONTACT, PAIRED, NONE }
 
-/** A row's status line: "Tilkoblet" wins over a failure line a late success left behind. */
+/** A row's status line: "Tilkoblet" wins over a failure line a late success left behind; a device not paired that
+ * wants a PIN or a passkey ([grownUp], design 122) says "Trenger en voksen". */
 fun bluetoothRowStatus(
     info: QuickControls.BluetoothDeviceInfo,
     pairing: Boolean,
     attempting: Boolean,
     failed: Boolean,
+    grownUp: Boolean = false,
 ): BtRowStatus = when {
+    grownUp && !info.bonded -> BtRowStatus.GROWN_UP
     pairing -> BtRowStatus.PAIRING
     info.connected -> BtRowStatus.CONNECTED
     attempting || info.state == BtLink.CONNECTING -> BtRowStatus.CONNECTING
@@ -57,6 +60,7 @@ class BluetoothDeviceAdapter(
     private var pairingAddress: String? = null
     private var attempting: Set<String> = emptySet()
     private var failed: Set<String> = emptySet()
+    private var grownUp: Set<String> = emptySet()
 
     @SuppressLint("NotifyDataSetChanged")
     fun submitList(newDevices: List<QuickControls.BluetoothDeviceInfo>) {
@@ -79,6 +83,14 @@ class BluetoothDeviceAdapter(
         notifyDataSetChanged()
     }
 
+    /** The devices that need a grown-up to pair (design 122). */
+    @SuppressLint("NotifyDataSetChanged")
+    fun setGrownUp(addresses: Set<String>) {
+        if (addresses == grownUp) return
+        grownUp = addresses
+        notifyDataSetChanged()
+    }
+
     inner class ViewHolder(val binding: ItemBluetoothDeviceBinding) :
         RecyclerView.ViewHolder(binding.root)
 
@@ -98,7 +110,8 @@ class BluetoothDeviceAdapter(
 
         binding.bluetoothDeviceName.text = device.name
 
-        val statusText = when (bluetoothRowStatus(device, isPairing, isAttempting, device.address in failed)) {
+        val statusText = when (bluetoothRowStatus(device, isPairing, isAttempting, device.address in failed, device.address in grownUp)) {
+            BtRowStatus.GROWN_UP -> context.getString(R.string.bluetooth_devices_grown_up)
             BtRowStatus.PAIRING -> context.getString(R.string.bluetooth_devices_pairing)
             BtRowStatus.CONNECTED -> context.getString(R.string.bluetooth_devices_connected)
             BtRowStatus.CONNECTING -> context.getString(R.string.bluetooth_devices_connecting)

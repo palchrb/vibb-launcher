@@ -111,26 +111,34 @@ object LockTaskChrome {
         }
     }
 
+    /** Who holds a route window ([routeWindow]): design 98's Flymodus route, design 122's Bluetooth pairing window. */
+    enum class RouteOwner { AIRPLANE, BT_PAIRING }
+
     /** Design 98 §2.2 step 4: Settings for a Flymodus turn-on's window - an input like [sosNarrowing], set and cleared
-     * only by [com.kidslauncher.mdm.assistant.AirplaneRoute] through [routeWindow]. Never pinned while LOCKED. */
-    @Volatile
-    private var routePin: String? = null
+     * only by [com.kidslauncher.mdm.assistant.AirplaneRoute] through [routeWindow]. Design 122: the Bluetooth pairing
+     * window ([com.kidslauncher.mdm.server.BtPairingWindow]) holds its own entry, so neither window's close ends the
+     * other's. Never pinned while LOCKED. Under the monitor. */
+    private val routePins = mutableMapOf<RouteOwner, String>()
+
+    /** The package the open windows pin (both pin Settings), `null` = none. Under the monitor. */
+    private val routePin: String? get() = routePins.values.firstOrNull()
 
     /** The window's close is in its first pass ([routeWindow]): Settings out, the shade still blocked. Under the monitor. */
     private var routeClosing = false
 
-    /** The route's window opens ([pkg]) or closes (`null`): one pass now - a close two (Q99-H1: a pass writes the
+    /** [owner]'s window opens ([pkg]) or closes (`null`): one pass now - the last close two (Q99-H1: a pass writes the
      * features before the list, so the first takes Settings out with the shade still blocked, the second gives the shade
      * back; seen on the emulator, docs/testing/emulator.md §6am "Addendum"). Any thread but main. Only from a plan: a
      * pass without one reads the platform's list back and couldn't take Settings out again, so it opens nothing (returns
      * false - the route then refuses). */
-    fun routeWindow(context: Context, pkg: String?): Boolean = synchronized(this) {
+    fun routeWindow(context: Context, pkg: String?, owner: RouteOwner = RouteOwner.AIRPLANE): Boolean = synchronized(this) {
         if (plan == null) {
-            routePin = null
+            routePins.remove(owner)
             return false
         }
-        if (pkg == null && routePin != null) {
-            routePin = null
+        val wasOpen = routePins.isNotEmpty()
+        if (pkg == null) routePins.remove(owner) else routePins[owner] = pkg
+        if (pkg == null && wasOpen && routePins.isEmpty()) {
             routeClosing = true
             try {
                 applyNow(context)
@@ -138,7 +146,6 @@ object LockTaskChrome {
                 routeClosing = false
             }
         }
-        routePin = pkg
         applyNow(context)
         true
     }

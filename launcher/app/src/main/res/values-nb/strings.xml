@@ -412,6 +412,7 @@
     <string name="bluetooth_devices_connected">Tilkoblet</string>
     <string name="bluetooth_devices_pairing">Parer …</string>
     <string name="bluetooth_devices_pair_failed">Klarte ikke å pare med denne enheten.</string>
+    <string name="bluetooth_devices_grown_up">Trenger en voksen</string>
     <string name="bluetooth_devices_forget">Glem</string>
     <string name="bluetooth_devices_connect">Koble til</string>
     <string name="bluetooth_devices_disconnect">Koble fra</string>

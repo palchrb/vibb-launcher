@@ -35,5 +35,10 @@
             android:name="com.kidslauncher.mdm.push.up.UpDebugReceiver"
             android:exported="true"
             android:permission="android.permission.DUMP" />
+        <!-- Design 122: a Bluetooth pairing request the emulator can't have (the window's arm, request and bond). -->
+        <receiver
+            android:name="com.kidslauncher.mdm.server.BtPairingDebugReceiver"
+            android:exported="true"
+            android:permission="android.permission.DUMP" />
     </application>
 </manifest>

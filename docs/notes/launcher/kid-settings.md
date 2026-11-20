@@ -121,6 +121,23 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   (`btPairOffered`). The tap checks again; a sync's apply drops rows it may no longer pair. A paired device keeps its
   row (Forget). Not device-tested: a friend's phone and a PC don't show, headphones and a speaker pair.
 
+- **The pairing window** (design 122, `docs/design/122-bluetooth-pairing-window.md`, 2026-11-20): in the kiosk, lock
+  task blocked Settings' `BluetoothPairingDialog` (`BlockedAppActivity`, seen on the Jelly Star). The pair tap now arms
+  `server/BtPairingWindow` before `createBond` (off the main thread; kiosk on, not LOCKED, no pause - `btPairingArms`),
+  which unhides Settings if it is hidden (its receiver must be in the ordered broadcast's list). Its own receiver
+  (priority 999, ahead of Settings' 0, on its own thread, registered only while armed) takes `PAIRING_REQUEST` first.
+  For the armed device, with a confirm-only variant (2, 3, 6) and the page started, it pins Settings through
+  `LockTaskChrome.routeWindow(..., RouteOwner.BT_PAIRING)` (the shade closed, as for Flymodus) before Settings' receiver
+  starts the dialog. A PIN or passkey variant aborts the broadcast and the row says "Trenger en voksen" (no failure
+  toast). One idempotent closer runs on the device's bond BONDED or NONE, `PAIRING_CANCEL`, the page's `onStop`,
+  screen off, an apply under a rule, a pause or the override, or 30 s (from the tap while armed, from the request once
+  open). It takes Settings out in two passes, re-hides it if the arm unhid it, and clears the DE marker. A marker left
+  by a dead process is put back at the start and before each sync (`putBackIfMarked`: one `apply()`). While armed or
+  open, the apply's Settings hide step leaves it (`settingsHideStep`), and Home and the install receiver ignore
+  Settings' events (`BtPairingWindow.inFlight`). `LockTaskChrome`'s route pin is keyed by owner, so Flymodus' close
+  and the pairing window's never end each other. The pure rules are in `server/BtPairingPlan.kt` (`BtPairingPlanTest`).
+  Owed: the Jelly Star with the Jabra, and Android 17's dialog component.
+
 ## The kid's hidden apps in Kid Settings (the user, 2026-11-03, branch `kid-unhide`)
 
 - **What**: Home's long-press "Skjul" (`ContextMenuActions.toggleHidden`, the local `LauncherPreferences.apps().hidden()`)

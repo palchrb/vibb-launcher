@@ -97,7 +97,8 @@ a boot the shutdown didn't arm (step M's case below the boot cover) can't hang o
   `stillExempt`, QA L1). A release is always made, and any other refusal
   (the Play Store as verifier, a carrier app) is still retried at every pass as before.
 - **What else changes on 17**: Flymodus's route window (design 98) finds Settings unhidden, so it neither unhides nor
-  hides it again - it only pins it for the window. SystemUI's Settings links (`launcher-fix-1`'s sink) resolve to
+  hides it again - it only pins it for the window; so does design 122's Bluetooth pairing window (`BtPairingWindow`,
+  `kid-settings.md`), which pins Settings for the pairing dialog alone, at most 30 s. SystemUI's Settings links (`launcher-fix-1`'s sink) resolve to
   Settings' own activities, which win over the sink's priority -999, so the sink is never reached: under the kiosk (with
   the app-block bit) the start becomes Android's BlockedAppActivity, "App is not available - Settings is not available
   right now" with OK, back to where the kid was - no SystemUI crash (checked with `am start` of

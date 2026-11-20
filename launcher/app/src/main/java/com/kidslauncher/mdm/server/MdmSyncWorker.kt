@@ -88,6 +88,8 @@ private val syncMutex = Mutex()
 suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     // Design 98 §2.2: a Flymodus route's window left open by a process death or reboot is put back first.
     com.kidslauncher.mdm.assistant.AirplaneRoute.putBackIfMarked(context)
+    // Design 122: the same for a Bluetooth pairing window.
+    BtPairingWindow.putBackIfMarked(context)
     val mdm = LauncherPreferences.mdm()
     val serverUrl = mdm.serverUrl()
     val deviceToken = DeviceToken.get()

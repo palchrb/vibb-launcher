@@ -29,7 +29,7 @@ class DebugHookAbsentTest {
         assertTrue(outside.size > 100)
         for (f in outside) {
             // Raw text, comments included: a KDoc naming a hook fails too (design 28 QA L3).
-            for (banned in listOf("LockTaskOverride", "lock_task_debug_override", "extra_lock_task_packages", "PinVaultKeyReceiver", "HeadsetDebugReceiver", "MmsDebugReceiver", "ElementCallDebugReceiver", "UpDebugReceiver", "push_hex")) {
+            for (banned in listOf("LockTaskOverride", "lock_task_debug_override", "extra_lock_task_packages", "PinVaultKeyReceiver", "HeadsetDebugReceiver", "MmsDebugReceiver", "ElementCallDebugReceiver", "UpDebugReceiver", "BtPairingDebugReceiver", "push_hex")) {
                 assertFalse("${f.path} names $banned", f.readText().contains(banned))
             }
         }
@@ -39,7 +39,7 @@ class DebugHookAbsentTest {
     fun `only the debug manifest declares the receivers, guarded by DUMP`() {
         val main = dir("main/AndroidManifest.xml").readText()
         val debug = code(dir("debug/AndroidManifest.xml"))
-        val receivers = listOf("lock" to "LockTaskOverrideReceiver", "server" to "PinVaultKeyReceiver", "music" to "HeadsetDebugReceiver", "sms" to "MmsDebugReceiver", "calls" to "ElementCallDebugReceiver", "push.up" to "UpDebugReceiver")
+        val receivers = listOf("lock" to "LockTaskOverrideReceiver", "server" to "PinVaultKeyReceiver", "music" to "HeadsetDebugReceiver", "sms" to "MmsDebugReceiver", "calls" to "ElementCallDebugReceiver", "push.up" to "UpDebugReceiver", "server" to "BtPairingDebugReceiver")
         // No other hook (no other component of any kind): a new one is listed here (and in checkReleaseHasNoDebugHook) first.
         assertEquals(receivers.size, Regex("<(receiver|activity|activity-alias|service|provider)\\b").findAll(debug).count())
         for ((pkg, name) in receivers) {
