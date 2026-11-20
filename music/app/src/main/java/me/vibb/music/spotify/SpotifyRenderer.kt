@@ -1443,7 +1443,9 @@ internal class SpotifyRenderer(
                     sdkProblem = SpotifyProblem.STOPPED
                     readyWait?.complete(null)
                 } else if (playing) {
-                    fail(SpotifyProblem.STOPPED)
+                    // design 120 (revision 2): its process ended under a play the kid wants - a new one, once, at the
+                    // place (the same rules as a silent player); else "Stoppet - trykk spill" as before
+                    silent(freshPage = false, otherwise = SpotifyProblem.STOPPED, why = "the web player's process ended")
                 }
                 changed()
             }
@@ -1847,16 +1849,20 @@ internal class SpotifyRenderer(
      * The web player went silent while the kid wants it playing (design 120 R2, R5; revision 2): thrown away with its
      * process and played once more at its place - else, as before, paused with "trenger internett".
      */
-    private fun silent(freshPage: Boolean) {
+    private fun silent(
+        freshPage: Boolean,
+        otherwise: SpotifyProblem = SpotifyProblem.UNREACHABLE,
+        why: String = "the web player gave no state",
+    ) {
         val recycles = spotifyRecycles(
             wanted = pwr && !ended, mayPlay = ports.mayPlay(), inCall = inCall, detached = detached,
             network = ports.networkLine() == null, freshPage = freshPage, unproven = recycleUnproven,
         )
         if (!recycles) {
             if (recycleUnproven || freshPage) ports.log("spotify: a new web player didn't help - no other")
-            return fail(SpotifyProblem.UNREACHABLE)
+            return fail(otherwise)
         }
-        ports.log("spotify: the web player gave no state - a new one, once")
+        ports.log("spotify: $why - a new one, once")
         ports.record("recycle")
         recycleUnproven = true
         val at = startPosition()

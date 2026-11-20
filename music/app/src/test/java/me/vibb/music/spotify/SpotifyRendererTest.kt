@@ -1057,8 +1057,20 @@ class SpotifyRendererTest {
     }
 
     @Test
-    fun `the page's renderer gone - paused, stopped, the page destroyed`() = runBlocking {
+    fun `the page's process gone while playing - a new one once at the place (design 120), then stopped`() = runBlocking {
         val r = playing()
+        advance(5_000)
+        post(state(0, 5_000))
+        page.alive = false
+        page.emit(HostEvent.Gone)
+        advance(0)
+        assertTrue(ports.log.contains("spotify: the web player's process ended - a new one, once"))
+        assertEquals(2, page.opens)
+        assertEquals(2, api.plays().size)
+        assertEquals("at the place", 5_000L, body(api.plays().last())["position_ms"]!!.jsonPrimitive.long)
+        assertTrue(r.showsPlaying)
+        assertNull(r.rendererState)
+        // gone again before the new one played: no other - "Stoppet - trykk spill", the tap is the fix
         page.alive = false
         page.emit(HostEvent.Gone)
         settle()
@@ -1067,8 +1079,8 @@ class SpotifyRendererTest {
         assertEquals("an error that stops the renderer", Player.STATE_IDLE, r.spec().playbackState)
         r.play()
         advance(0)
-        assertEquals("a new page", 2, page.opens)
-        assertEquals(2, api.plays().size)
+        assertEquals("a new page", 3, page.opens)
+        assertEquals(3, api.plays().size)
         r.release()
     }
 
