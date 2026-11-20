@@ -90,6 +90,49 @@ class LockTaskHelpersTest {
         }
     }
 
+    private val aospSelector = "com.android.credentialmanager/com.android.credentialmanager.CredentialSelectorActivity"
+    private val gmsSelector = "com.google.android.gms/.identitycredentials.ui.CredentialChooserActivity"
+
+    @Test
+    fun `the credential selector is the one Android starts - the OEM's when set and enabled, else AOSP's`() {
+        // Android 14 (compat34): no OEM config at all.
+        assertEquals("com.android.credentialmanager", credentialSelectorPackage(null, oemEnabled = false, defaultComponent = aospSelector))
+        // Android 16 with Google's config overlay (jelly36): Play services' sheet.
+        assertEquals("com.google.android.gms", credentialSelectorPackage(gmsSelector, oemEnabled = true, defaultComponent = aospSelector))
+        // The OEM's component set but disabled or missing: AOSP's, as IntentFactory falls back.
+        assertEquals("com.android.credentialmanager", credentialSelectorPackage(gmsSelector, oemEnabled = false, defaultComponent = aospSelector))
+        // Blank or malformed config strings name nothing.
+        assertEquals("com.android.credentialmanager", credentialSelectorPackage("  ", oemEnabled = true, defaultComponent = aospSelector))
+        assertEquals(null, credentialSelectorPackage("no-slash", oemEnabled = true, defaultComponent = "/x"))
+        assertEquals(null, credentialSelectorPackage(null, oemEnabled = false, defaultComponent = null))
+    }
+
+    @Test
+    fun `the credential selector is pinned with the block only when it isn't Play services (passkeys-kiosk)`() {
+        val aosp = resolved + (HelperKind.CREDENTIAL_SELECTOR to ResolvedHelper("com.android.credentialmanager", system = true))
+        assertTrue("com.android.credentialmanager" in lockTaskHelpers(aosp, forbidden))
+        // On a GMS phone the sheet is Play services': never pinned, the kiosk stays as it was.
+        val gms = resolved + (HelperKind.CREDENTIAL_SELECTOR to ResolvedHelper("com.google.android.gms", system = true))
+        assertEquals(lockTaskHelpers(resolved, forbidden), lockTaskHelpers(gms, forbidden))
+        // Never a non-system package, never Settings.
+        for (bad in listOf(ResolvedHelper("com.evil.selector", system = false), ResolvedHelper(settings, system = true))) {
+            assertEquals(lockTaskHelpers(resolved, forbidden), lockTaskHelpers(resolved + (HelperKind.CREDENTIAL_SELECTOR to bad), forbidden))
+        }
+        // Like every helper, only with the block.
+        val plan = computeEnforcementPlan(
+            allowlist = listOf("org.example.app"), kioskDesired = true, serverLockTaskFeatures = 0, overrideActive = false,
+            controllable = setOf("org.example.app"), ownPackage = "me.vibb.launcher", systemDialer = null,
+            blockActivityStart = false, lockTaskHelpers = lockTaskHelpers(aosp, forbidden),
+        )
+        assertFalse("com.android.credentialmanager" in plan.kioskPackages.orEmpty())
+        val blocked = computeEnforcementPlan(
+            allowlist = listOf("org.example.app"), kioskDesired = true, serverLockTaskFeatures = 0, overrideActive = false,
+            controllable = setOf("org.example.app"), ownPackage = "me.vibb.launcher", systemDialer = null,
+            blockActivityStart = true, lockTaskHelpers = lockTaskHelpers(aosp, forbidden),
+        )
+        assertTrue("com.android.credentialmanager" in blocked.kioskPackages.orEmpty())
+    }
+
     @Test
     fun `kiosk with the block pins the recents provider and keeps OVERVIEW - design 16's drop reverted (16d)`() {
         val server = (LOCK_TASK_FEATURE_SYSTEM_INFO or LOCK_TASK_FEATURE_NOTIFICATIONS or LOCK_TASK_FEATURE_HOME or

@@ -1495,8 +1495,35 @@ object AppEnforcer {
             // (systemRecentsPackage); `lockTaskHelpers` also drops it when forbidden or Play.
             HelperKind.RECENTS to systemRecentsPackage(context)?.let { ResolvedHelper(it, system = true) },
             HelperKind.EMERGENCY_SOS to info(emergencySosPackage(context)),
+            HelperKind.CREDENTIAL_SELECTOR to info(credentialSelector(context))?.takeIf { it.packageName !in forbidden },
         )
         return resolved to forbidden
+    }
+
+    /** [HelperKind.CREDENTIAL_SELECTOR]: the framework's two config strings, read as AOSP's `IntentFactory` reads them
+     * ([credentialSelectorPackage]). */
+    private fun credentialSelector(context: Context): String? {
+        fun config(name: String): String? = try {
+            val res = android.content.res.Resources.getSystem()
+            res.getIdentifier(name, "string", "android").takeIf { it != 0 }?.let { res.getString(it) }
+        } catch (e: Exception) {
+            null
+        }
+        val oem = config("config_oemCredentialManagerDialogComponent")?.takeIf { it.isNotBlank() }
+        val oemEnabled = oem?.let { ComponentName.unflattenFromString(it) }?.let { component ->
+            try {
+                val pm = context.packageManager
+                val declared = pm.getActivityInfo(component, PackageManager.MATCH_SYSTEM_ONLY or PackageManager.MATCH_DISABLED_COMPONENTS).enabled
+                when (pm.getComponentEnabledSetting(component)) {
+                    PackageManager.COMPONENT_ENABLED_STATE_ENABLED -> true
+                    PackageManager.COMPONENT_ENABLED_STATE_DEFAULT -> declared
+                    else -> false
+                }
+            } catch (e: Exception) {
+                false
+            }
+        } ?: false
+        return credentialSelectorPackage(oem, oemEnabled, config("config_credentialManagerDialogComponent"))
     }
 
     /** See [EnforcementPlan.lockDateTime]. Automatic time is turned on first, so a clock that
