@@ -8,8 +8,8 @@ import kotlinx.serialization.json.Json
 /*
  * Element X: the Message button opens the DM, not the profile (design 15, the learned variant
  * after its QA review). Element X has no "open DM with this user" link - `matrix:u/…?action=chat`
- * opens the profile - but `elementx://open/<session>/<room>` (its notifications' own VIEW link)
- * opens a room. The launcher learns the room from Element X's DM notifications: a notification
+ * opens the profile - but `element://room/<room>` (and, in older builds, `elementx://open/<session>/<room>`)
+ * opens a room ([elementRoomUris]). The launcher learns the room from Element X's DM notifications: a notification
  * whose every sender is one phone-book contact names that contact's DM room (its tag) and the
  * kid's own account (the messaging person). Pure, no Android imports - ElementRoomsTest. The glue
  * is badges/ElementDmReader (reads the notification) and ElementRoomStore (CE prefs).
@@ -133,13 +133,26 @@ fun withLearnedRoom(stored: Map<String, ElementRoom>, learned: LearnedElementRoo
 }
 
 /**
- * `elementx://open/<session>/<room>` (Element X's own notification link), each segment fully
- * percent-encoded (QA #5): Element splits the encoded path on `/` before URL-decoding, so a raw
- * `/` would split a segment and a raw `+` would become a space. `null` for an invalid pair.
+ * The links that open a learned DM room, in the order they are tried (each explicit to Element X,
+ * moving on only when the start throws); empty for an invalid pair. Element X 26.11.1 has no
+ * `elementx` scheme in its intent filters (the old notification link, `-91` on the user's phone,
+ * 2026-11-20), but its `element://room/<id or alias>` link (the matrix.to website's hand-over,
+ * `DefaultMatrixToConverter`, then `DefaultPermalinkParser`) takes a room ID with `?via=`, and so
+ * does an MSC2312 `matrix:roomid/<id>` URI (`action=join` opens a room the account is already in).
+ * Each segment is fully percent-encoded (the `!` too; a v12 room ID has no server part, so `via`
+ * is the session's own server):
+ * 1. `element://room/<room>?via=<server>`
+ * 2. `matrix:roomid/<room without !>?via=<server>&action=join`
+ * 3. `elementx://open/<session>/<room>` (older Element X builds).
  */
-fun elementRoomUri(room: ElementRoom): String? {
-    if (!isMatrixId(room.session) || !isElementRoomId(room.room)) return null
-    return "elementx://open/${uriEncode(room.session)}/${uriEncode(room.room)}"
+fun elementRoomUris(room: ElementRoom): List<String> {
+    if (!isMatrixId(room.session) || !isElementRoomId(room.room)) return emptyList()
+    val via = uriEncode(room.session.substringAfter(':'))
+    return listOf(
+        "element://room/${uriEncode(room.room)}?via=$via",
+        "matrix:roomid/${uriEncode(room.room.removePrefix("!"))}?via=$via&action=join",
+        "elementx://open/${uriEncode(room.session)}/${uriEncode(room.room)}",
+    )
 }
 
 // ---- storage codec ----------------------------------------------------------------------------

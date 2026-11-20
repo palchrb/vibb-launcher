@@ -45,7 +45,7 @@ fun uriEncode(value: String, keep: String = ""): String = buildString {
  * Element X has no matrix.to filter; it handles MSC2312 `matrix:` URIs: `matrix:u/<user id
  * without the @>?action=chat` - which opens the user's **profile** (with a "Message" button;
  * found live 2026-10-06, design 15), so it is only used until the DM room is learned
- * ([elementRoomUri]). Its own `element://user/<mxid>` is the fallback. [mxid] is a valid
+ * ([elementRoomUris]). Its own `element://user/<mxid>` is the fallback. [mxid] is a valid
  * [isMatrixId]. Element X exposes no call intent, so there is no direct-call button.
  */
 fun elementChatUri(mxid: String): String = "matrix:u/${uriEncode(mxid.removePrefix("@"), keep = ":")}?action=chat"
@@ -57,7 +57,7 @@ fun elementUserUri(mxid: String): String = "element://user/${uriEncode(mxid, kee
  * [usable]: the package is installed, not suspended and allowed on this phone (AppEnforcer's
  * allowlist, or unmanaged). [defaultSmsPackage]: `Telephony.Sms.getDefaultSmsPackage`.
  * [learnedRoom]: the DM room learned for an Element MXID ([ElementRoomStore]); with one, Element
- * X opens `elementx://open/<session>/<room>` first and falls back to today's profile links.
+ * X opens the room's links ([elementRoomUris]) first and falls back to today's profile links.
  */
 fun resolveMessageButton(
     contact: RuleContact,
@@ -72,8 +72,8 @@ fun resolveMessageButton(
     "element" -> contact.messageAddress
         ?.takeIf { isMatrixId(it) && usable(MessagePackages.ELEMENT_X) }
         ?.let { mxid ->
-            val room = learnedRoom(mxid)?.let(::elementRoomUri)
-            MessageIntent(ACTION_VIEW, listOfNotNull(room, elementChatUri(mxid), elementUserUri(mxid)), MessagePackages.ELEMENT_X)
+            val room = learnedRoom(mxid)?.let(::elementRoomUris).orEmpty()
+            MessageIntent(ACTION_VIEW, room + listOf(elementChatUri(mxid), elementUserUri(mxid)), MessagePackages.ELEMENT_X)
         }
     "signal" -> if (contact.number.startsWith("+")) {
         MessagePackages.SIGNAL.firstOrNull(usable)

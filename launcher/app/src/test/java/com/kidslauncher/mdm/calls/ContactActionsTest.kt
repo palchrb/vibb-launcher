@@ -48,7 +48,7 @@ class ContactActionsTest {
         val room = ElementRoom("@kid:vibb.me", "!xrLg_-U0V0jULeIm_fvol9NEvBHNxqHrSP5K1R7BUpI")
         val answer = contactActions(element, rules(ChannelMode.MANAGED), false, emptyList(), sms, everything) { room }.message
         assertTrue(answer is MessageAction.App && answer.intent.packageName == MessagePackages.ELEMENT_X)
-        assertTrue((answer as MessageAction.App).intent.uris.first().startsWith("elementx://open/"))
+        assertTrue((answer as MessageAction.App).intent.uris.first().startsWith("element://room/"))
     }
 
     /** The card asks the one rule, and no longer decides on its own. */

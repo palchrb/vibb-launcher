@@ -179,7 +179,7 @@ object ContactSheet {
                 return
             } catch (e: Exception) {
                 // Not found, or refused (SecurityException): try the next form (Element X: the
-                // learned room's elementx:// link, then the profile's matrix:u/ and element://user/
+                // learned room's element://room, matrix:roomid and elementx:// links, then the profile's matrix:u/ and element://user/
                 // links - design 15), then the toast - never a crash (qa-09-code #10). Never logged:
                 // the links carry MXIDs and room IDs.
             }

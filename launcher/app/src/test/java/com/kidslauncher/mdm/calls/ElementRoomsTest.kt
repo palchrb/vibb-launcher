@@ -167,19 +167,27 @@ class ElementRoomsTest {
     }
 
     @Test
-    fun `the link is Element X's own open link, every segment fully encoded`() {
-        // Verified live: this exact link opened the DM.
+    fun `a learned room's links come in order, every segment fully encoded`() {
+        // A v12 room ID has no server part: via is the session's server.
         assertEquals(
-            "elementx://open/%40dockerbot%3Avibb.me/%21xrLg_-U0V0jULeIm_fvol9NEvBHNxqHrSP5K1R7BUpI",
-            elementRoomUri(ElementRoom("@dockerbot:vibb.me", dmRoom)),
+            listOf(
+                "element://room/%21xrLg_-U0V0jULeIm_fvol9NEvBHNxqHrSP5K1R7BUpI?via=vibb.me",
+                "matrix:roomid/xrLg_-U0V0jULeIm_fvol9NEvBHNxqHrSP5K1R7BUpI?via=vibb.me&action=join",
+                "elementx://open/%40dockerbot%3Avibb.me/%21xrLg_-U0V0jULeIm_fvol9NEvBHNxqHrSP5K1R7BUpI",
+            ),
+            elementRoomUris(ElementRoom("@dockerbot:vibb.me", dmRoom)),
         )
-        // A raw `/` would split a segment and a raw `+` would become a space (QA #5).
+        // An old `!id:server` ID and a session with a port; a raw `/` or `+` would break a segment (QA #5).
         assertEquals(
-            "elementx://open/%40a%2Fb%2Bc%3Dd%3Ax.org/%21r%2Fs%2Bt%3Ax.org%3A8448",
-            elementRoomUri(ElementRoom("@a/b+c=d:x.org", "!r/s+t:x.org:8448")),
+            listOf(
+                "element://room/%21r%2Fs%2Bt%3Ax.org%3A8448?via=x.org%3A8448",
+                "matrix:roomid/r%2Fs%2Bt%3Ax.org%3A8448?via=x.org%3A8448&action=join",
+                "elementx://open/%40a%2Fb%2Bc%3Dd%3Ax.org%3A8448/%21r%2Fs%2Bt%3Ax.org%3A8448",
+            ),
+            elementRoomUris(ElementRoom("@a/b+c=d:x.org:8448", "!r/s+t:x.org:8448")),
         )
-        assertNull(elementRoomUri(ElementRoom("kid", dmRoom)))
-        assertNull(elementRoomUri(ElementRoom(kid, "$dmRoom|\$thread")))
+        assertEquals(emptyList<String>(), elementRoomUris(ElementRoom("kid", dmRoom)))
+        assertEquals(emptyList<String>(), elementRoomUris(ElementRoom(kid, "$dmRoom|\$thread")))
     }
 
     // ---- storage ----------------------------------------------------------------------------------

@@ -57,7 +57,7 @@
 #   STRICT=1        count SKIP as a failure
 #   ELEMENT_SESSION, ELEMENT_ROOM  optional (design 15): the kid's own Element X MXID and a DM's room
 #                   ID (as the launcher learns them from Element X's DM notification); with both set,
-#                   Element X's elementx://open link is started and must open Element X - whether it
+#                   Element X's element://room link is started and must open Element X - whether it
 #                   shows that DM (not the room list) is checked on the screenshot. Unset: not run.
 set -uo pipefail
 
@@ -1035,7 +1035,7 @@ else
 fi
 shot after-outgoing
 
-# Design 15, optional: Element X's own open link, built like the launcher's elementRoomUri (every
+# Design 15, optional: Element X's room link, built like the launcher's elementRoomUris (every
 # byte but RFC 3986 unreserved characters percent-encoded). Needs Element X allowed and signed in
 # as ELEMENT_SESSION, and the phone unlocked.
 uri_encode() {
@@ -1051,14 +1051,15 @@ uri_encode() {
 }
 if [ -n "$ELEMENT_SESSION" ] && [ -n "$ELEMENT_ROOM" ]; then
     step "Element X room link (optional)"
-    element_link="elementx://open/$(uri_encode "$ELEMENT_SESSION")/$(uri_encode "$ELEMENT_ROOM")"
+    # The launcher's first link (elementRoomUris): element://room/<room>?via=<the session's server>.
+    element_link="element://room/$(uri_encode "$ELEMENT_ROOM")?via=$(uri_encode "${ELEMENT_SESSION#*:}")"
     element_out="$(sh_ am start -W -a android.intent.action.VIEW -d "$element_link" "$ELEMENT_PKG")"
     if grep -q -E 'Error|unable to resolve' <<<"$element_out"; then
-        fail "the elementx open link starts Element X" "$(grep -m1 -E 'Error|unable to resolve' <<<"$element_out")"
+        fail "the element://room link starts Element X" "$(grep -m1 -E 'Error|unable to resolve' <<<"$element_out")"
     elif wait_for 5 top_package_is "$ELEMENT_PKG"; then
-        pass "the elementx open link starts Element X (screenshot: the DM must be open, not the room list)"
+        pass "the element://room link starts Element X (screenshot: the DM must be open, not the room list)"
     else
-        fail "the elementx open link starts Element X" "top: $(top_activity)"
+        fail "the element://room link starts Element X" "top: $(top_activity)"
     fi
     shot element-room
     sh_ input keyevent KEYCODE_HOME >/dev/null
