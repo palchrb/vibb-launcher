@@ -17,6 +17,7 @@
         android:layout_height="24dp"
         android:layout_marginEnd="12dp"
         android:tint="@color/kid_page_ink_dim"
+        tools:ignore="UseAppTint"
         android:src="@drawable/ic_wifi_signal_3" />
 
     <LinearLayout
