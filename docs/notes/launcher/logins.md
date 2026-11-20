@@ -107,6 +107,18 @@ Part B's link gate and login window are design 119 (`docs/design/119-chrome-only
   booleans; the `bundles` rows), design 67's `DnsOverHttpsMode` over it while the filter is on -, reads it back with
   `getApplicationRestrictions` and compares it typed (`sameBundle`), and only a match makes the role ready. A throw, a
   mismatch or Chrome absent: `failed` (`write`, `readback`) or `absent`, Chrome hidden and unpinned.
+- **Captchas** (2026-11-20, `jelly-round-2`; the user's Authentik needed reCAPTCHA v3 through www.recaptcha.net):
+  `URLAllowlist` is the parent's sites and then the fixed `LOGIN_CAPTCHA_PATHS` (`logins/LoginBrowser.kt`), never shown
+  in the PWA and not part of `login_windows.json`: `www.google.com/recaptcha`, `www.recaptcha.net/recaptcha`,
+  `www.gstatic.com/recaptcha`, `challenges.cloudflare.com`, `hcaptcha.com`, `arkoselabs.com`, `frcapi.com` - in
+  Chrome's format, where a host includes its subdomains (a leading dot would mean that host only), so Google is its
+  `/recaptcha` paths only. Why only these: `URLBlocklist` stops navigations and frames (a captcha's widget is a frame;
+  the user's own `www.recaptcha.net/recaptcha` entry was what fixed his login), not scripts, styles, fonts, images or
+  XHR, so a login page's CDN hosts (Microsoft's `aadcdn.msauth.net`, Google's `ssl.gstatic.com`/`fonts.gstatic.com`,
+  Apple's `appleid.cdn-apple.com`) load without an entry, and no preset carries helper hosts. The DNS filter has no
+  login-window list: it is the parent's category lists for every app (StevenBlack's four, checked 2026-11-20: none of
+  these hosts). Not a login link for the gate, not in Meldinger's plan (a source scan). `login_rules.json`'s `captcha`
+  rows (the set, the frames that pass, the Google search and other pages that don't) and the `bundles` rows pin it.
 - **Enforcement** (`computeEnforcementPlan`'s `loginBrowser`, set only when ready, and design 119's `loginWindowOpen`;
   the `plans` rows and two `EnforcementPlanTest` rows): **hidden outside a login window** and unhidden only while one
   is open (§4.2) - or while Play's nightly update window is in force (code QA M1: `loginChromeHidden`'s `updateWindow`;

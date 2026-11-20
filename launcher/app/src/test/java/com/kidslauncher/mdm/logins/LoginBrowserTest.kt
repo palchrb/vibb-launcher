@@ -67,6 +67,22 @@ class LoginBrowserTest {
         }
     }
 
+    /** PLAN "Captchas in the login window": the fixed set in every lockdown, each an entry as the PWA's rule takes it,
+     * every captcha frame passes and no Google search or other page of those companies does (read as Chrome reads
+     * `URLAllowlist`, [loginLinkMatches]); never a login link for the gate, never in Meldinger's plan. */
+    @Test
+    fun `the captcha set passes the captchas' frames and nothing else`() {
+        val captcha = rules.getValue("captcha").jsonObject
+        assertEquals(strings(captcha["paths"]), LOGIN_CAPTCHA_PATHS)
+        for (path in LOGIN_CAPTCHA_PATHS) assertEquals(path, path, loginEntry(path))
+        for (url in strings(captcha["frames"])!!) assertTrue(url, loginLinkMatchesAny(LOGIN_CAPTCHA_PATHS, url))
+        for (url in strings(captcha["blocked"])!!) assertFalse(url, loginLinkMatchesAny(LOGIN_CAPTCHA_PATHS, url))
+        // Only Chrome's bundle uses it: the gate's login match reads the policy's sites alone.
+        val src = listOf("src/main/java", "app/src/main/java").map { java.io.File(it) }.first { it.isDirectory }
+        val users = src.walkTopDown().filter { it.isFile && it.name.endsWith(".kt") && "LOGIN_CAPTCHA_PATHS" in it.readText() }
+        assertEquals(listOf("LoginBrowser.kt"), users.map { it.name }.toList())
+    }
+
     @Test
     fun `a tightening is a set difference or the lockdown coming back`() {
         for (row in rows("tighten")) {

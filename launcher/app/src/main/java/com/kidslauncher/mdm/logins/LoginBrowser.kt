@@ -34,12 +34,37 @@ object ChromePolicy {
 val CHROME_BLOCKLIST: List<String> = listOf("*", "chrome://*")
 
 /**
+ * The captchas a login page may ask for (PLAN "Captchas in the login window", approved 2026-11-20: the user's Authentik
+ * needed reCAPTCHA v3 through www.recaptcha.net), added to every login window's `URLAllowlist` after the parent's
+ * sites and never shown as entries in the PWA. Chrome's filter format: a host includes its subdomains, a path is a
+ * prefix - so Google's reCAPTCHA is its `/recaptcha` paths only and no Google search is reachable. The
+ * `URLBlocklist` stops navigations and frames, not scripts or images (a captcha's widget is a frame), and the DNS
+ * filter is the parent's category lists, which name none of these. Only Chrome's bundle: never a login link for the
+ * gate, never Meldinger's link plan. Pinned by `login_rules.json`'s `captcha` rows.
+ */
+val LOGIN_CAPTCHA_PATHS: List<String> = listOf(
+    // reCAPTCHA v2, v3 and Enterprise: the widget's frames on Google or recaptcha.net, its files on gstatic.
+    "www.google.com/recaptcha",
+    "www.recaptcha.net/recaptcha",
+    "www.gstatic.com/recaptcha",
+    // Cloudflare Turnstile.
+    "challenges.cloudflare.com",
+    // hCaptcha (newassets., api., js., imgs. ...).
+    "hcaptcha.com",
+    // Arkose Labs (client-api. and the per-customer *-api. hosts; Roblox, Microsoft).
+    "arkoselabs.com",
+    // Friendly Captcha v2 (global., eu. ...).
+    "frcapi.com",
+)
+
+/**
  * The role's lockdown (§4.1's table), each value in its Bundle type: strings (the two lists as JSON arrays in a
- * string, Chrome's schema), ints (CHOICE) and booleans. [hosts] are the policy's sites, each through [loginEntry].
+ * string, Chrome's schema), ints (CHOICE) and booleans. [hosts] are the policy's sites, each through [loginEntry];
+ * the allowlist is they and then [LOGIN_CAPTCHA_PATHS].
  */
 fun chromeLockdown(hosts: List<String>): Map<String, Any> = linkedMapOf(
     ChromePolicy.URL_BLOCKLIST to JsonArray(CHROME_BLOCKLIST.map(::JsonPrimitive)).toString(),
-    ChromePolicy.URL_ALLOWLIST to JsonArray(hosts.map(::JsonPrimitive)).toString(),
+    ChromePolicy.URL_ALLOWLIST to JsonArray((hosts + LOGIN_CAPTCHA_PATHS).distinct().map(::JsonPrimitive)).toString(),
     ChromePolicy.INCOGNITO to 1,
     ChromePolicy.BROWSER_SIGNIN to 0,
     ChromePolicy.SEARCH_PROVIDER to false,

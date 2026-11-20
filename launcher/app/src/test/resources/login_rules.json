@@ -160,8 +160,10 @@
   ],
   "bundles": [
     {"name": "the filter on, no role: secure DNS off only", "filter_on": true, "lockdown": null, "installed": ["com.android.chrome", "com.brave.browser", "org.example"], "expect": {"com.android.chrome": {"DnsOverHttpsMode": {"string": "off"}}, "com.brave.browser": {"DnsOverHttpsMode": {"string": "off"}}}},
-    {"name": "the role on with the filter: the lockdown and secure DNS off, Chrome only", "filter_on": true, "lockdown": ["accounts.google.com", "school.example/login"], "installed": ["com.android.chrome", "com.brave.browser"], "expect": {"com.android.chrome": {"URLBlocklist": {"string": "[\"*\",\"chrome://*\"]"}, "URLAllowlist": {"string": "[\"accounts.google.com\",\"school.example/login\"]"}, "IncognitoModeAvailability": {"int": 1}, "BrowserSignin": {"int": 0}, "DefaultSearchProviderEnabled": {"bool": false}, "SearchSuggestEnabled": {"bool": false}, "ContextualSearchEnabled": {"bool": false}, "NTPContentSuggestionsEnabled": {"bool": false}, "PromotionalTabsEnabled": {"bool": false}, "AllowDinosaurEasterEgg": {"bool": false}, "TosDialogBehavior": {"int": 2}, "DownloadRestrictions": {"int": 3}, "PasswordManagerEnabled": {"bool": false}, "AutofillCreditCardEnabled": {"bool": false}, "PrintingEnabled": {"bool": false}, "ForceGoogleSafeSearch": {"bool": true}, "ForceYouTubeRestrict": {"int": 2}, "DeveloperToolsAvailability": {"int": 2}, "DnsOverHttpsMode": {"string": "off"}}, "com.brave.browser": {"DnsOverHttpsMode": {"string": "off"}}}},
-    {"name": "the role on, the filter off: the lockdown alone", "filter_on": false, "lockdown": ["accounts.google.com", "school.example/login"], "installed": ["com.android.chrome"], "expect": {"com.android.chrome": {"URLBlocklist": {"string": "[\"*\",\"chrome://*\"]"}, "URLAllowlist": {"string": "[\"accounts.google.com\",\"school.example/login\"]"}, "IncognitoModeAvailability": {"int": 1}, "BrowserSignin": {"int": 0}, "DefaultSearchProviderEnabled": {"bool": false}, "SearchSuggestEnabled": {"bool": false}, "ContextualSearchEnabled": {"bool": false}, "NTPContentSuggestionsEnabled": {"bool": false}, "PromotionalTabsEnabled": {"bool": false}, "AllowDinosaurEasterEgg": {"bool": false}, "TosDialogBehavior": {"int": 2}, "DownloadRestrictions": {"int": 3}, "PasswordManagerEnabled": {"bool": false}, "AutofillCreditCardEnabled": {"bool": false}, "PrintingEnabled": {"bool": false}, "ForceGoogleSafeSearch": {"bool": true}, "ForceYouTubeRestrict": {"int": 2}, "DeveloperToolsAvailability": {"int": 2}}}},
+    {"name": "the role on with the filter: the lockdown and secure DNS off, Chrome only", "filter_on": true, "lockdown": ["accounts.google.com", "school.example/login"], "installed": ["com.android.chrome", "com.brave.browser"], "expect": {"com.android.chrome": {"URLBlocklist": {"string": "[\"*\",\"chrome://*\"]"}, "URLAllowlist": {"string": "[\"accounts.google.com\",\"school.example/login\",\"www.google.com/recaptcha\",\"www.recaptcha.net/recaptcha\",\"www.gstatic.com/recaptcha\",\"challenges.cloudflare.com\",\"hcaptcha.com\",\"arkoselabs.com\",\"frcapi.com\"]"}, "IncognitoModeAvailability": {"int": 1}, "BrowserSignin": {"int": 0}, "DefaultSearchProviderEnabled": {"bool": false}, "SearchSuggestEnabled": {"bool": false}, "ContextualSearchEnabled": {"bool": false}, "NTPContentSuggestionsEnabled": {"bool": false}, "PromotionalTabsEnabled": {"bool": false}, "AllowDinosaurEasterEgg": {"bool": false}, "TosDialogBehavior": {"int": 2}, "DownloadRestrictions": {"int": 3}, "PasswordManagerEnabled": {"bool": false}, "AutofillCreditCardEnabled": {"bool": false}, "PrintingEnabled": {"bool": false}, "ForceGoogleSafeSearch": {"bool": true}, "ForceYouTubeRestrict": {"int": 2}, "DeveloperToolsAvailability": {"int": 2}, "DnsOverHttpsMode": {"string": "off"}}, "com.brave.browser": {"DnsOverHttpsMode": {"string": "off"}}}},
+    {"name": "the role on, the filter off: the lockdown alone", "filter_on": false, "lockdown": ["accounts.google.com", "school.example/login"], "installed": ["com.android.chrome"], "expect": {"com.android.chrome": {"URLBlocklist": {"string": "[\"*\",\"chrome://*\"]"}, "URLAllowlist": {"string": "[\"accounts.google.com\",\"school.example/login\",\"www.google.com/recaptcha\",\"www.recaptcha.net/recaptcha\",\"www.gstatic.com/recaptcha\",\"challenges.cloudflare.com\",\"hcaptcha.com\",\"arkoselabs.com\",\"frcapi.com\"]"}, "IncognitoModeAvailability": {"int": 1}, "BrowserSignin": {"int": 0}, "DefaultSearchProviderEnabled": {"bool": false}, "SearchSuggestEnabled": {"bool": false}, "ContextualSearchEnabled": {"bool": false}, "NTPContentSuggestionsEnabled": {"bool": false}, "PromotionalTabsEnabled": {"bool": false}, "AllowDinosaurEasterEgg": {"bool": false}, "TosDialogBehavior": {"int": 2}, "DownloadRestrictions": {"int": 3}, "PasswordManagerEnabled": {"bool": false}, "AutofillCreditCardEnabled": {"bool": false}, "PrintingEnabled": {"bool": false}, "ForceGoogleSafeSearch": {"bool": true}, "ForceYouTubeRestrict": {"int": 2}, "DeveloperToolsAvailability": {"int": 2}}}},
+    {"name": "the parent's own www.recaptcha.net/recaptcha (Authentik): the captcha set doesn't list it twice", "filter_on": false, "lockdown": ["www.recaptcha.net/recaptcha"], "installed": ["com.android.chrome"], "expect": {"com.android.chrome": {"URLBlocklist": {"string": "[\"*\",\"chrome://*\"]"}, "URLAllowlist": {"string": "[\"www.recaptcha.net/recaptcha\",\"www.google.com/recaptcha\",\"www.gstatic.com/recaptcha\",\"challenges.cloudflare.com\",\"hcaptcha.com\",\"arkoselabs.com\",\"frcapi.com\"]"}, "IncognitoModeAvailability": {"int": 1}, "BrowserSignin": {"int": 0}, "DefaultSearchProviderEnabled": {"bool": false}, "SearchSuggestEnabled": {"bool": false}, "ContextualSearchEnabled": {"bool": false}, "NTPContentSuggestionsEnabled": {"bool": false}, "PromotionalTabsEnabled": {"bool": false}, "AllowDinosaurEasterEgg": {"bool": false}, "TosDialogBehavior": {"int": 2}, "DownloadRestrictions": {"int": 3}, "PasswordManagerEnabled": {"bool": false}, "AutofillCreditCardEnabled": {"bool": false}, "PrintingEnabled": {"bool": false}, "ForceGoogleSafeSearch": {"bool": true}, "ForceYouTubeRestrict": {"int": 2}, "DeveloperToolsAvailability": {"int": 2}}}},
+    {"name": "the role on with no sites: the captcha set alone", "filter_on": false, "lockdown": [], "installed": ["com.android.chrome"], "expect": {"com.android.chrome": {"URLBlocklist": {"string": "[\"*\",\"chrome://*\"]"}, "URLAllowlist": {"string": "[\"www.google.com/recaptcha\",\"www.recaptcha.net/recaptcha\",\"www.gstatic.com/recaptcha\",\"challenges.cloudflare.com\",\"hcaptcha.com\",\"arkoselabs.com\",\"frcapi.com\"]"}, "IncognitoModeAvailability": {"int": 1}, "BrowserSignin": {"int": 0}, "DefaultSearchProviderEnabled": {"bool": false}, "SearchSuggestEnabled": {"bool": false}, "ContextualSearchEnabled": {"bool": false}, "NTPContentSuggestionsEnabled": {"bool": false}, "PromotionalTabsEnabled": {"bool": false}, "AllowDinosaurEasterEgg": {"bool": false}, "TosDialogBehavior": {"int": 2}, "DownloadRestrictions": {"int": 3}, "PasswordManagerEnabled": {"bool": false}, "AutofillCreditCardEnabled": {"bool": false}, "PrintingEnabled": {"bool": false}, "ForceGoogleSafeSearch": {"bool": true}, "ForceYouTubeRestrict": {"int": 2}, "DeveloperToolsAvailability": {"int": 2}}}},
     {"name": "a pause lifts the lockdown and the filter: empty", "filter_on": false, "lockdown": null, "installed": ["com.android.chrome"], "expect": {"com.android.chrome": {}}},
     {"name": "Chrome absent: nothing for it", "filter_on": true, "lockdown": ["accounts.google.com", "school.example/login"], "installed": ["com.brave.browser"], "expect": {"com.brave.browser": {"DnsOverHttpsMode": {"string": "off"}}}}],
   "plans": [
@@ -262,5 +264,44 @@
     {"name": "the role is Vibb One's", "gate_on": true, "just_enabled": false, "chrome_visible": false, "role_held": true, "last_nudge_ago_ms": null, "pause_ended": false, "due": false},
     {"name": "the gate just enabled (its own hash change)", "gate_on": true, "just_enabled": true, "chrome_visible": false, "role_held": false, "last_nudge_ago_ms": null, "pause_ended": false, "due": false},
     {"name": "Chrome visible (a pause, or ticked)", "gate_on": true, "just_enabled": false, "chrome_visible": true, "role_held": false, "last_nudge_ago_ms": null, "pause_ended": true, "due": false},
-    {"name": "the gate off", "gate_on": false, "just_enabled": false, "chrome_visible": false, "role_held": false, "last_nudge_ago_ms": null, "pause_ended": false, "due": false}]
+    {"name": "the gate off", "gate_on": false, "just_enabled": false, "chrome_visible": false, "role_held": false, "last_nudge_ago_ms": null, "pause_ended": false, "due": false}],
+  "captcha": {
+      "paths": [
+          "www.google.com/recaptcha",
+          "www.recaptcha.net/recaptcha",
+          "www.gstatic.com/recaptcha",
+          "challenges.cloudflare.com",
+          "hcaptcha.com",
+          "arkoselabs.com",
+          "frcapi.com"
+      ],
+      "frames": [
+          "https://www.google.com/recaptcha/api2/anchor?ar=1&k=key&co=x&hl=nb&v=v&size=invisible",
+          "https://www.google.com/recaptcha/api2/bframe?hl=nb&v=v&k=key",
+          "https://www.google.com/recaptcha/enterprise/anchor?k=key",
+          "https://www.recaptcha.net/recaptcha/api2/anchor?k=key",
+          "https://www.gstatic.com/recaptcha/releases/v/recaptcha__nb.js",
+          "https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/b/turnstile/if/ov2/av0/rcv/x/0x4AAA/auto/fbE/new/normal",
+          "https://newassets.hcaptcha.com/captcha/v1/abc/static/hcaptcha.html#frame=checkbox",
+          "https://js.hcaptcha.com/1/api.js",
+          "https://client-api.arkoselabs.com/fc/gc/?token=x",
+          "https://roblox-api.arkoselabs.com/v2/1.0/enforcement.html",
+          "https://global.frcapi.com/api/v2/captcha/widget"
+      ],
+      "blocked": [
+          "https://www.google.com/",
+          "https://www.google.com/search?q=x",
+          "https://www.google.com/maps",
+          "https://www.google.com/url?q=https://example.org/",
+          "https://google.com/recaptcha/api2/anchor",
+          "https://images.google.com/recaptcha",
+          "https://www.gstatic.com/images/x.png",
+          "https://www.recaptcha.net/",
+          "https://www.cloudflare.com/",
+          "https://dash.cloudflare.com/",
+          "https://notcaptcha.example/hcaptcha.com",
+          "https://hcaptcha.com.evil.example/",
+          "https://friendlycaptcha.com/"
+      ]
+  }
 }
