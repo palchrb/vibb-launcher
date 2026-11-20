@@ -23,6 +23,9 @@ private const val KEY_SHOWN_UP_TO = "shown_up_to_id"
 private const val KEY_ALERTED_UP_TO = "alerted_up_to_id"
 private const val KEY_RESET_UP_TO = "reset_up_to_id"
 
+/** A post waited for a time rule without calls to end (2026-11-20, [noticeStepUnderRule]). */
+private const val KEY_RULE_WAITING = "rule_waiting"
+
 /** After our call ends: Telecom writes the call log asynchronously, so we look twice (qa-12-code #6). */
 private val AFTER_CALL_DELAYS_MS = longArrayOf(3_000L, 10_000L)
 
@@ -251,8 +254,26 @@ object MissedCallNotifier {
         }
     }
 
-    /** [ownDismiss]: the pass after a contact's row was dismissed on the lock ([dismissContact]). */
-    private fun recomputeNow(context: Context, mayPost: Boolean, mayClear: Boolean, ownDismiss: Boolean = false) {
+    /**
+     * The user, 2026-11-20: calls may be allowed again (`RuleWaitingNotices.release`: every lock re-check and
+     * enforcement pass). A post that waited for a rule without calls is made now, once, quietly - no sound, no
+     * heads-up, no lock wake ([noticeStepUnderRule]'s release). Nothing waiting: one pref read on this thread.
+     */
+    fun releaseAfterRule(context: Context) {
+        val app = context.applicationContext
+        runThenDone(null) {
+            if (!CallPolicyStore.userUnlocked(app)) return@runThenDone
+            val prefs = prefs(app)
+            if (!prefs.getBoolean(KEY_RULE_WAITING, false)) return@runThenDone
+            if (com.kidslauncher.mdm.timerules.TimeRulesStore.callsBlockedNow()) return@runThenDone
+            prefs.edit().putBoolean(KEY_RULE_WAITING, false).commit()
+            recomputeNow(app, mayPost = true, mayClear = false, release = true)
+        }
+    }
+
+    /** [ownDismiss]: the pass after a contact's row was dismissed on the lock ([dismissContact]); [release]: the pass
+     * after a rule without calls ([releaseAfterRule]). */
+    private fun recomputeNow(context: Context, mayPost: Boolean, mayClear: Boolean, ownDismiss: Boolean = false, release: Boolean = false) {
         // The in-call service runs before the first unlock too: no call log, no CE prefs then.
         if (!CallPolicyStore.userUnlocked(context)) return
         CallPolicyStore.ensureLoaded(context)
@@ -273,7 +294,7 @@ object MissedCallNotifier {
             missedCallNotice(log, view.contacts, rules.defaultCc, marks, unread.newestId)
         }
         val prefs = prefs(context)
-        val step = noticeStep(
+        val planned = noticeStep(
             notice = notice,
             mayMarkRead = rules?.callsEnabled == true,
             mayPost = mayPost,
@@ -284,6 +305,10 @@ object MissedCallNotifier {
             alertedUpToId = prefs.getLong(KEY_ALERTED_UP_TO, 0L),
             newestLoggedId = maxOf(log.maxOfOrNull { it.id } ?: 0L, unread.newestId),
         )
+        // The user, 2026-11-20: nothing is posted under a rule without calls; it waits for the release.
+        val blocked = !release && com.kidslauncher.mdm.timerules.TimeRulesStore.callsBlockedNow()
+        if (noticeWaits(planned, blocked)) prefs.edit().putBoolean(KEY_RULE_WAITING, true).commit()
+        val step = noticeStepUnderRule(planned, blocked, release)
         when (step) {
             NoticeStep.Keep -> Unit
             is NoticeStep.Clear -> {
@@ -301,7 +326,8 @@ object MissedCallNotifier {
                     lastPosted = step.notice
                     prefs.edit()
                         .putLong(KEY_SHOWN_UP_TO, unread.newestId)
-                        .putLong(KEY_ALERTED_UP_TO, if (step.alert) step.notice.newestId else prefs.getLong(KEY_ALERTED_UP_TO, 0L))
+                        // The release told the kid of these calls (quietly): a later pass doesn't alert for them.
+                        .putLong(KEY_ALERTED_UP_TO, if (step.alert || release) step.notice.newestId else prefs.getLong(KEY_ALERTED_UP_TO, 0L))
                         .commit()
                 }
             }

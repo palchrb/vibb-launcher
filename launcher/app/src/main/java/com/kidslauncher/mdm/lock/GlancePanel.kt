@@ -66,7 +66,9 @@ import com.kidslauncher.mdm.torch.Torch
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.server.LockReason
 import com.kidslauncher.mdm.server.currentPolicyDecision
+import com.kidslauncher.mdm.timerules.TimeLock
 import com.kidslauncher.mdm.timerules.TimeRulesRuntime
+import com.kidslauncher.mdm.timerules.UNLOCKED
 import com.kidslauncher.mdm.ui.ClockFormat
 import com.kidslauncher.mdm.ui.KidInsets
 import com.kidslauncher.mdm.ui.home.AppIconLoader
@@ -211,19 +213,30 @@ class GlancePanel(
      * no card. [renderNow] binds only from this - a notification's render never computes a snapshot. */
     private var ruleCard: RuleCard? = null
 
-    /** `TimeRulesRuntime.recheck`'s snapshot (main thread, between start and stop): a changed card re-renders. */
+    /** The time lock the rows follow (the user, 2026-11-20: [glanceRowsUnderLock]), kept from the same snapshot as
+     * [ruleCard]; [UNLOCKED] while no rule or budget locks. */
+    private var rowLock: TimeLock = UNLOCKED
+
+    /** `TimeRulesRuntime.recheck`'s snapshot (main thread, between start and stop): a changed card or row lock
+     * re-renders. */
     private val lockListener: (TimeRulesRuntime.Snapshot) -> Unit = { snap ->
         guarded("rule card") {
             if (started) {
-                val card = ruleCardOf(LauncherPreferences.mdm().lockReason(), snap)
-                if (card != ruleCard) {
+                val reason = LauncherPreferences.mdm().lockReason()
+                val card = ruleCardOf(reason, snap)
+                val lock = glanceRowLock(reason, snap.lock)
+                if (card != ruleCard || lock != rowLock) {
                     ruleCard = card
+                    rowLock = lock
                     renderNow()
                 }
             }
         }
     }
     private var rows: List<GlanceRow> = emptyList()
+
+    /** Dagen's reminder row is up, shown or kept back by the rule ([shownRows]): the "Neste" line yields to it. */
+    private var reminderUp = false
     private val rowViews = mutableListOf<ViewLockGlanceRowBinding>()
 
     /** A layout or a profile placement changed the page in this traversal: its frame is skipped (the next one is laid
@@ -371,19 +384,25 @@ class GlancePanel(
             backToTop()
             weather.resume()
         }
-        ruleCard = currentRuleCard()
+        readRuleNow()
         renderNow()
     }
 
-    /** The card for now (design r13 §1.4): its own snapshot - the time-rule screen's call - only while a rule or the
-     * budget locks (one pref read otherwise). Its own catch, as the rows have in [renderNow]: a fault is no card, never a
-     * skipped stage decision or render; logged by its class only. A boundary passed while the screen was off lands here. */
-    private fun currentRuleCard(): RuleCard? = try {
-        val reason = LauncherPreferences.mdm().lockReason()
-        if (reason == LockReason.NONE) null else ruleCardOf(reason, TimeRulesRuntime.snapshot(activity, currentPolicyDecision().policy))
-    } catch (e: Throwable) {
-        Log.w(LOG_TAG, "Glance rule card failed: ${e.javaClass.simpleName}")
-        null
+    /** The card and the rows' lock for now (design r13 §1.4; 2026-11-20): one snapshot - the time-rule screen's call -
+     * only while a rule or the budget locks (one pref read otherwise). Its own catch, as the rows have in [renderNow]: a
+     * fault is no card and no row ([GlanceRowLock.CLOSED]), never a skipped stage decision or render; logged by its class
+     * only. A boundary passed while the screen was off lands here. */
+    private fun readRuleNow() {
+        try {
+            val reason = LauncherPreferences.mdm().lockReason()
+            val snap = if (reason == LockReason.NONE) null else TimeRulesRuntime.snapshot(activity, currentPolicyDecision().policy)
+            ruleCard = snap?.let { ruleCardOf(reason, it) }
+            rowLock = snap?.let { glanceRowLock(reason, it.lock) } ?: UNLOCKED
+        } catch (e: Throwable) {
+            Log.w(LOG_TAG, "Glance rule card failed: ${e.javaClass.simpleName}")
+            ruleCard = null
+            rowLock = GlanceRowLock.CLOSED
+        }
     }
 
     /** The card from the kept model ([RuleCardView]): the kind's glyph, line 1 the rule's name or the kind's label, line 2
@@ -1115,12 +1134,7 @@ class GlancePanel(
      * and leaves the row's app (or calls) unusable, the plain keypad without one (QA Q1).
      */
     private fun tap(row: GlanceRow) = guarded("tap") {
-        val target = when (row) {
-            is GlanceMessageRow -> GlanceTarget.Conversation(row.conversation, row.notificationKey, row.postTimeMs)
-            is GlanceMissedRow -> GlanceTarget.MissedCalls(row.number)
-            is GlanceCalendarRow -> GlanceTarget.Day(row.epochDay)
-            is GlanceSmsRow -> GlanceTarget.Thread(row.conversationId)
-        }
+        val target = glanceRowTarget(row)
         val timeRule = LauncherPreferences.mdm().lockReason() != LockReason.NONE
         val taken = glanceTargetTaken(timeRule, timeRule && GlanceOpener.usableUnderTimeRule(activity, target))
         val message = row as? GlanceMessageRow
@@ -1206,7 +1220,8 @@ class GlancePanel(
 
     private fun bindNext() {
         val next = calendar.next()
-        nextWanted = next?.takeIf { rows.none { it is GlanceCalendarRow } }?.let { line ->
+        // A reminder hidden by the rule still keeps the line back: the rule brings no event onto the glance that wasn't.
+        nextWanted = next?.takeIf { !reminderUp }?.let { line ->
             val time = ClockFormat.formatClock(activity, line.row.begin)
             activity.getString(if (line.tomorrow) R.string.glance_tomorrow else R.string.glance_next, line.row.title, time)
         }
@@ -1344,7 +1359,10 @@ class GlancePanel(
         val kept = if (hiddenNumbers.isEmpty() && hiddenPlain == 0) all else withoutDismissed(all, hiddenNumbers.keys, hiddenPlain > 0)
         // Design 77 §6.8: our Meldinger rows among them by time, read from the engine (GlanceReader skips ours).
         val sms = SmsGlance.shown(SmsHome.summary.glance.also { smsRows = it })
-        return listOfNotNull(calendar.reminderRow()) + glanceWithSms(kept, sms)
+        val reminder = calendar.reminderRow()
+        reminderUp = reminder != null
+        // The user, 2026-11-20: under a time rule (or the used-up budget) only what it allows - the rest waits unseen.
+        return glanceRowsUnderLock(listOfNotNull(reminder) + glanceWithSms(kept, sms), rowLock)
     }
 
     // ---- rows -----------------------------------------------------------------------------------

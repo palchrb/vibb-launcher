@@ -304,27 +304,74 @@ object SmsRuntime {
 
     /**
      * Design 81 D12: a reaction from someone else adds its line to the conversation's notification - a short buzz on its
-     * own channel, silent under a time rule (as a message is) and under Do Not Disturb, never a wake; a removal, or a
+     * own channel, silent under Do Not Disturb, never a wake; it waits under a time rule without calls, as a message does; a removal, or a
      * reaction the kid heard of as a waiting picture, only rebuilds a notification that is up.
      */
     private fun notifyAttached(app: Context, engine: SmsEngine, attached: Received.Attached) {
+        // The user, 2026-11-20: under a rule without calls nothing is posted - the conversation waits for the release.
+        if (attached.notify && smsPost(TimeRulesStore.callsBlockedNow(), again = false) == SmsPost.WAIT) {
+            waitForRule(app, attached.conversation.id.takeIf { it != threadInFront }, attached.movedFrom)
+            return
+        }
         attached.movedFrom?.let { SmsNotifier.afterMove(app, engine, it) }
         if (attached.conversation.id == threadInFront) return
         if (attached.notify) {
-            SmsNotifier.notify(app, engine, attached.conversation, attached.reaction, silent = TimeRulesStore.callsBlockedNow(), wake = false, reaction = true)
+            SmsNotifier.notify(app, engine, attached.conversation, attached.reaction, silent = false, wake = false, reaction = true)
         } else {
             SmsNotifier.afterReaction(app, engine, attached.conversation.id)
         }
     }
 
     private fun notifyShown(app: Context, engine: SmsEngine, shown: Received.Shown) {
+        val post = smsPost(TimeRulesStore.callsBlockedNow(), shown.again)
+        // The user, 2026-11-20: under a rule without calls nothing is posted - the conversation waits for the release.
+        if (post == SmsPost.WAIT) {
+            waitForRule(app, shown.conversation.id.takeIf { it != threadInFront }, shown.movedFrom)
+            // The glance's swipe mark is spent as a post's would be: the row the message brings back is no new row later.
+            main.post { SmsGlance.comeBack(shown.conversation.id, shown.message.seq) }
+            return
+        }
         // An MMS that turned out to be a group left the sender's conversation: its notification shows what is still unread
         // there, quietly, or goes (code QA L8; the code QA of step 5: never the whole notification of a thread with unread).
         shown.movedFrom?.let { SmsNotifier.afterMove(app, engine, it) }
         // The kid is reading this thread: it marks the message read itself, no notification (§6.7).
         if (shown.conversation.id == threadInFront) return
         // A picture that waited and has now arrived is told again, quietly: the kid heard of it once (code QA L8).
-        SmsNotifier.notify(app, engine, shown.conversation, shown.message, silent = TimeRulesStore.callsBlockedNow() || shown.again)
+        SmsNotifier.notify(app, engine, shown.conversation, shown.message, silent = post == SmsPost.QUIET)
+    }
+
+    /** The conversations' notifications wait until calls are allowed again ([releaseAfterRule]). Engine thread. */
+    private fun waitForRule(app: Context, vararg conversationIds: String?) {
+        val waiting = SmsPrefs.ruleWaiting(app)
+        val after = smsWaitingAfter(waiting, conversationIds.toList())
+        if (after != waiting) SmsPrefs.ruleWaiting(app, after)
+    }
+
+    /**
+     * The user, 2026-11-20: calls may be allowed again (`RuleWaitingNotices.release`: every lock re-check and enforcement
+     * pass - the rule's end, a lift, a pause, the override). Each waiting conversation is posted once, quietly - the silent
+     * channel, no wake, no buzz - from what is still unread there, or its notification goes ([smsReleased],
+     * `SmsNotifier.afterMove`). The mark is cleared first, so a crash midway never posts twice. Nothing waiting: one pref
+     * read on the engine thread.
+     */
+    fun releaseAfterRule(context: Context) {
+        val app = context.applicationContext
+        engineExecutor.execute {
+            try {
+                if (!CallPolicyStore.userUnlocked(app)) return@execute
+                val waiting = SmsPrefs.ruleWaiting(app)
+                if (waiting.isEmpty()) return@execute
+                val blocked = TimeRulesStore.callsBlockedNow()
+                if (blocked) return@execute
+                val released = smsReleased(waiting, blocked, threadInFront)
+                val engine = engine(app) ?: return@execute
+                SmsPrefs.ruleWaiting(app, emptySet())
+                for (id in released) SmsNotifier.afterMove(app, engine, id)
+                Log.i(LOG_TAG, "Released ${released.size} message notifications after a rule")
+            } catch (t: Throwable) {
+                recordError(app, "release: ${t.javaClass.simpleName}")
+            }
+        }
     }
 
     /** Step 3b: an MMS shown or fetched (from the MMS thread), or one that turned out to be a reaction (design 81 D9) -
@@ -593,6 +640,7 @@ object SmsPrefs {
     private const val LAST_ERROR = "mdm.sms.last_error"
     private const val ROLE_SIGNALLED = "mdm.sms.role_signalled"
     private const val DENIED_PERMISSIONS = "mdm.sms.denied_permissions"
+    private const val RULE_WAITING = "mdm.sms.rule_waiting"
 
     /** What a preferences reset keeps (`resetPreferences`): without them the role is never handed back (QA L3) and a
      * grant we took away never given back (L8). */
@@ -605,6 +653,14 @@ object SmsPrefs {
 
     fun deniedPermissions(context: Context, value: Set<String>) {
         if (value != deniedPermissions(context)) prefs(context).edit().putStringSet(DENIED_PERMISSIONS, value).commit()
+    }
+
+    /** The user, 2026-11-20: the conversations whose notification waits for a rule without calls to end (ids only,
+     * `SmsRuleWait.kt`). */
+    fun ruleWaiting(context: Context): Set<String> = prefs(context).getStringSet(RULE_WAITING, null).orEmpty().toSet()
+
+    fun ruleWaiting(context: Context, value: Set<String>) {
+        prefs(context).edit().putStringSet(RULE_WAITING, value).commit()
     }
 
     fun takenByUs(context: Context) = prefs(context).getBoolean(TAKEN_BY_US, false)

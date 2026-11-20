@@ -32,6 +32,27 @@ class MissedCallNoticeTest {
         contacts: List<RuleContact> = view(),
     ) = missedCallNotice(log.toList(), contacts, "47", seen, upTo)
 
+    /** The user, 2026-11-20: under a rule without calls a post waits (an emergency contact's call can be missed then);
+     * once calls are allowed again the release posts it once, quietly. */
+    @Test
+    fun `under a rule without calls the post waits, the release is quiet`() {
+        val one = notice(missed("90000002", 100, id = 7))!!
+        val post = NoticeStep.Post(one, alert = true)
+        assertEquals(NoticeStep.Keep, noticeStepUnderRule(post, callsBlocked = true, release = false))
+        assertTrue(noticeWaits(post, callsBlocked = true))
+        assertEquals(NoticeStep.Post(one, alert = false), noticeStepUnderRule(post, callsBlocked = false, release = true))
+        assertEquals("no rule: as before", post, noticeStepUnderRule(post, callsBlocked = false, release = false))
+        assertFalse(noticeWaits(post, callsBlocked = false))
+        // A clear or a keep is never held back and never marks a wait.
+        for (step in listOf(NoticeStep.Clear(7), NoticeStep.Clear(null), NoticeStep.Keep)) {
+            assertEquals(step, noticeStepUnderRule(step, callsBlocked = true, release = false))
+            assertFalse(noticeWaits(step, callsBlocked = true))
+        }
+        // The release's pass never posts a notification of nothing and alerts for nothing (mayClear false: a keep).
+        val released = noticeStep(null, mayMarkRead = true, mayPost = true, shown = false, lastPosted = null, unreadUpToId = 7, alertedUpToId = 0, newestLoggedId = 7, mayClear = false)
+        assertEquals(NoticeStep.Keep, noticeStepUnderRule(released, callsBlocked = false, release = true))
+    }
+
     @Test
     fun `one call from one contact`() {
         val result = notice(missed("90000002", 100, id = 7))

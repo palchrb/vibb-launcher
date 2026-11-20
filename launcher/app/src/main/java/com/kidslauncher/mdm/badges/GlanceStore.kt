@@ -73,16 +73,19 @@ object GlanceStore {
 
     /**
      * A post the reader kept (`GlanceReader.posted` only - never a sweep, a ranking update or a
-     * policy re-read): [put], and when it [alerts] and the visible rows gained one
+     * policy re-read): [put], and when it [alerts] and the visible rows (under a time rule only those it leaves on the
+     * lock, `GlanceRowLock`) gained one
      * ([glanceWakes]), the lock may wake the screen (round 7 §3, `PinLockRuntime.noticeCame` -
      * nothing about the notice goes with it). Design 82 W3 (the user, 2026-11-10): when no row is gained but one
      * counts a message more ([glanceRowGrew]), the buzz alone (`PinLockRuntime.noticeUpdated`) - never the wake.
      */
     fun putPosted(notice: GlanceNotice, intent: PendingIntent?, alerts: Boolean) {
-        val before = if (alerts) visibleRows() else emptyList()
+        // The user, 2026-11-20: under a time rule only the rows it leaves on the lock count - one read for both sides.
+        val lock = if (alerts) com.kidslauncher.mdm.lock.GlanceRowLock.now() else com.kidslauncher.mdm.timerules.UNLOCKED
+        val before = if (alerts) visibleRows(lock) else emptyList()
         put(notice, intent)
         if (!alerts) return
-        val after = visibleRows()
+        val after = visibleRows(lock)
         if (glanceWakes(alerts, notice.suspended, glanceRowConversations(before), glanceRowConversations(after))) {
             com.kidslauncher.mdm.lock.PinLockRuntime.noticeCame()
         } else if (glanceRowGrew(alerts, notice.suspended, glanceRowCounts(before), glanceRowCounts(after))) {
@@ -90,7 +93,9 @@ object GlanceStore {
         }
     }
 
-    private fun visibleRows(): List<GlanceRow> = glanceRows(notices.values, null, policy, opened)
+    /** The app rows the lock would show under [lock] (`glanceRowsUnderLock`, the panel's own filter). */
+    private fun visibleRows(lock: com.kidslauncher.mdm.timerules.TimeLock): List<GlanceRow> =
+        com.kidslauncher.mdm.lock.glanceRowsUnderLock(glanceRows(notices.values, null, policy, opened), lock)
 
     fun remove(key: String) {
         intents.remove(key)

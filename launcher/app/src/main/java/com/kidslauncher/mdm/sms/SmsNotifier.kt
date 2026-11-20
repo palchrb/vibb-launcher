@@ -26,8 +26,8 @@ import java.util.UUID
 private const val LOG_TAG = "SmsNotifier"
 
 /** Design 77 §6.8: the message notifications - HIGH, so a message peeks as a banner (2026-11-17: Android can't raise a
- * channel's importance, hence `_v2`), and LOW for a message stored under a time rule without calls ("stored and notified
- * silently", §6.7). */
+ * channel's importance, hence `_v2`), and LOW for the quiet posts: a picture told again, a rebuild, and since 2026-11-20
+ * the release of what waited for a time rule without calls (`SmsRuleWait.kt`: nothing is posted during such a rule). */
 const val NOTIFICATION_CHANNEL_MESSAGES = "launcher:messages_v2"
 const val NOTIFICATION_CHANNEL_MESSAGES_SILENT = "launcher:messages_silent"
 
@@ -89,10 +89,11 @@ object SmsNotifier {
     }
 
     /**
-     * Posts (or updates) [conversation]'s notification after [message] arrived; [silent] under a time rule. [wake]:
+     * Posts (or updates) [conversation]'s notification after [message] arrived; [silent]: a quiet post (a picture told
+     * again, a rebuild, a release - under a rule without calls nothing is posted at all, `SmsRuleWait.kt`). [wake]:
      * this post may be a notice on the lock (a message's own post; not a group move's re-post, [afterMove]). Its lines
      * are what is unread there ([SmsEngine.notifiable]). With [reaction] (design 81 D12) [message] is a reaction from
-     * someone else: its own channel's short buzz, silent under a time rule and under any Do Not Disturb (fail closed),
+     * someone else: its own channel's short buzz, silent under any Do Not Disturb (fail closed),
      * and only while its own line is on the notification ([smsReactionShown]) - else a quiet rebuild ([afterReaction]).
      */
     fun notify(

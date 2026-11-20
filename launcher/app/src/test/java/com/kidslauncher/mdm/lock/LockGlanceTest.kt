@@ -738,10 +738,92 @@ class LockGlanceTest {
         // 2026-11-09: the row's tap reads today afresh (the kept days forgotten), and the target stays the day.
         val tap = src("java/com/kidslauncher/mdm/lock/GlancePanel.kt").readText().substringAfter("private fun tap(row: GlanceRow)")
             .substringBefore("fun takeTarget(")
-        assertTrue(tap.contains("is GlanceCalendarRow -> GlanceTarget.Day(row.epochDay)"))
+        assertTrue(tap.contains("val target = glanceRowTarget(row)"))
+        assertEquals(GlanceTarget.Day(20_752), glanceRowTarget(com.kidslauncher.mdm.badges.GlanceCalendarRow(1, "Fotball", 0, 15, 20_752)))
         assertTrue(tap.contains("if (row is GlanceCalendarRow) calendar.refresh()"))
         assertTrue(src("java/com/kidslauncher/mdm/lock/GlanceCalendar.kt").readText()
             .contains("if (fresh) CalendarStore.forgetDays(day, day.plusDays(1))"))
+    }
+
+    // ---- the rows under a time rule (the user, 2026-11-20) -------------------------------------------
+
+    private val elementRow = com.kidslauncher.mdm.badges.GlanceMessageRow(
+        GlanceConversation("io.element.android.x", "!room:x.org"), "key-1", com.kidslauncher.mdm.badges.GlanceLevel.TEXT,
+        "Pappa", "Kommer kl 5", 3, 300, 300,
+    )
+    private val otherAppRow = elementRow.copy(conversation = GlanceConversation("com.whatsapp", "k"), timeMs = 250)
+    private val missedRow = com.kidslauncher.mdm.badges.GlanceMissedRow("+4790000002", "Mamma", 1, 200)
+    private val reminderRow = com.kidslauncher.mdm.badges.GlanceCalendarRow(1, "Fotball", 0, 15, 20_752)
+    private val smsRow = com.kidslauncher.mdm.badges.GlanceSmsRow(
+        com.kidslauncher.mdm.sms.engine.Conversation(
+            com.kidslauncher.mdm.sms.engine.ConversationId("C1"),
+            listOf(com.kidslauncher.mdm.sms.engine.Participant("+4791234567", null)),
+            "Pappa", 1, 9, 100, 3, canSend = true,
+        ),
+        count = 3, timeMs = 100, upToSeq = 9, text = "Kommer kl 5",
+    )
+    private val allRows = listOf(reminderRow, elementRow, otherAppRow, missedRow, smsRow)
+
+    private fun lock(reason: com.kidslauncher.mdm.server.LockReason, calls: Boolean, apps: Set<String> = emptySet(), calendar: Boolean = false) =
+        com.kidslauncher.mdm.timerules.TimeLock(reason, callsAllowed = calls, usableApps = apps, calendarUsable = calendar)
+
+    @Test
+    fun `under a time rule the glance shows only what the rule allows (2026-11-20)`() {
+        val school = com.kidslauncher.mdm.server.LockReason.SCHOOL
+        // No rule: every row.
+        assertEquals(allRows, glanceRowsUnderLock(allRows, com.kidslauncher.mdm.timerules.UNLOCKED))
+        // Skole without calls, nothing exempt: nothing - "Pappa · 3 nye" with its text is gone, so is "+ N varsler til".
+        assertEquals(emptyList<Any>(), glanceRowsUnderLock(allRows, lock(school, calls = false)))
+        // A rule with calls: the missed call and Meldinger (the phone book's and the message screens' rule), no app.
+        assertEquals(listOf(missedRow, smsRow), glanceRowsUnderLock(allRows, lock(school, calls = true)))
+        // Bedtime with Element X exempt, no calls: Element's row alone.
+        val bedtime = lock(com.kidslauncher.mdm.server.LockReason.BEDTIME, calls = false, apps = setOf("io.element.android.x"))
+        assertEquals(listOf(elementRow), glanceRowsUnderLock(allRows, bedtime))
+        // Kalender's reminder only where every rule allows it.
+        assertEquals(listOf(reminderRow), glanceRowsUnderLock(allRows, lock(school, calls = false, calendar = true)))
+        // The used-up budget alone is a lock too: the budget's messaging apps, missed calls and Meldinger - no Kalender.
+        val budget = com.kidslauncher.mdm.timerules.TimeLock(
+            com.kidslauncher.mdm.server.LockReason.SCREEN_TIME, budgetExhausted = true,
+            usableApps = setOf("io.element.android.x", "me.vibb.music"),
+        )
+        assertEquals(listOf(elementRow, missedRow, smsRow), glanceRowsUnderLock(allRows, budget))
+        assertTrue(glanceRowShownUnderLock(budget, elementRow) && !glanceRowShownUnderLock(budget, otherAppRow))
+    }
+
+    @Test
+    fun `the rows follow the enforced reason - a pause or a lift shows them all, the tap's test is the same`() {
+        val school = lock(com.kidslauncher.mdm.server.LockReason.SCHOOL, calls = false)
+        assertEquals(com.kidslauncher.mdm.timerules.UNLOCKED, glanceRowLock(com.kidslauncher.mdm.server.LockReason.NONE, school))
+        assertEquals(school, glanceRowLock(com.kidslauncher.mdm.server.LockReason.SCHOOL, school))
+        // A pause or a lift: the snapshot is unlocked while the pref still names the rule - every row comes back.
+        val paused = glanceRowLock(com.kidslauncher.mdm.server.LockReason.SCHOOL, com.kidslauncher.mdm.timerules.UNLOCKED)
+        assertEquals(allRows, glanceRowsUnderLock(allRows, paused))
+        // A fault fails closed: no row counts.
+        assertEquals(emptyList<Any>(), glanceRowsUnderLock(allRows, GlanceRowLock.CLOSED))
+        // Each row's target is the tap's; the row shows exactly when the tap would take it (calls managed).
+        val open = lock(com.kidslauncher.mdm.server.LockReason.SCHOOL, calls = true, setOf("com.whatsapp"), calendar = true)
+        for (l in listOf(school, open)) {
+            for (row in allRows) assertEquals(glanceUsableUnderLock(l, glanceRowTarget(row), callsManaged = true), glanceRowShownUnderLock(l, row))
+        }
+        assertEquals(GlanceTarget.Thread("C1"), glanceRowTarget(smsRow))
+        assertEquals(GlanceTarget.MissedCalls("+4790000002"), glanceRowTarget(missedRow))
+        assertEquals(GlanceTarget.Conversation(elementRow.conversation, "key-1", 300), glanceRowTarget(elementRow))
+    }
+
+    @Test
+    fun `the panel and the wake read the filtered rows`() {
+        val panel = src("java/com/kidslauncher/mdm/lock/GlancePanel.kt").readText()
+        val shown = panel.substringAfter("private fun shownRows()").substringBefore("\n    }\n")
+        assertTrue(shown, shown.contains("return glanceRowsUnderLock(listOfNotNull(reminder) + glanceWithSms(kept, sms), rowLock)"))
+        // The card and the rows' lock come from one snapshot, at a resume and at every re-check.
+        assertTrue(panel.contains("val lock = glanceRowLock(reason, snap.lock)"))
+        assertTrue(panel.contains("rowLock = snap?.let { glanceRowLock(reason, it.lock) } ?: UNLOCKED"))
+        // The store's wake and buzz count the same rows, under one read of the lock.
+        val store = src("java/com/kidslauncher/mdm/badges/GlanceStore.kt").readText()
+        val posted = store.substringAfter("fun putPosted(").substringBefore("\n    }\n")
+        assertTrue(posted.contains("val lock = if (alerts) com.kidslauncher.mdm.lock.GlanceRowLock.now() else com.kidslauncher.mdm.timerules.UNLOCKED"))
+        assertTrue(posted.contains("val before = if (alerts) visibleRows(lock) else emptyList()") && posted.contains("val after = visibleRows(lock)"))
+        assertTrue(store.contains("com.kidslauncher.mdm.lock.glanceRowsUnderLock(glanceRows(notices.values, null, policy, opened), lock)"))
     }
 
     private fun src(path: String) = listOf("src/main/$path", "app/src/main/$path").map { java.io.File(it) }.first { it.exists() }

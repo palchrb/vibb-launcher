@@ -193,6 +193,12 @@ object TimeRulesRuntime {
     fun currentLock(context: Context, policy: PolicyResponse?, overrideActive: Boolean): TimeLock =
         snapshot(context, policy, overrideActive).lock
 
+    /** The lock in force now for the cached policy, the override and the pause counted; `null` before [init]. */
+    fun lockNow(): TimeLock? {
+        val context = appContext ?: return null
+        return snapshot(context, currentPolicyDecision().policy).lock
+    }
+
     /** The call path's live answer (TimeRulesStore.liveDecider): a no-calls rule is in force,
      * counting lifts and the override PIN/pause. */
     fun callsBlockedNow(): Boolean {
@@ -365,6 +371,8 @@ object TimeRulesRuntime {
             // The lock's glance page shows what our missed-call notification shows: a rule's start or
             // end re-learns it (design 25, code QA Low 3; never posts anew, never clears).
             if (changedTo != null) com.kidslauncher.mdm.calls.MissedCallNotifier.relearn(context)
+            // The user, 2026-11-20: what a rule without calls kept from the shade comes once, quietly, when it allows calls.
+            RuleWaitingNotices.release(context)
             // Design 54 R3: the music app's `suspend_at_s` again at every boundary and screen-on (written only when it
             // differs, on IO).
             com.kidslauncher.mdm.music.MusicSync.restrictionsChanged(context, policy)

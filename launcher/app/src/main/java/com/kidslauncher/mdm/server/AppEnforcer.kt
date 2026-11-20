@@ -469,6 +469,8 @@ object AppEnforcer {
         val scheduleLocked = lock.locked
         // A silent rule's Do Not Disturb (server 0121) from the same lock: off under the override, the pause and a lift.
         com.kidslauncher.mdm.timerules.ZenRuleRuntime.follow(context, lock, lockDecidedAt)
+        // The user, 2026-11-20: a pause, the override or a lift that allows calls again releases what waited for the rule.
+        com.kidslauncher.mdm.timerules.RuleWaitingNotices.release(context)
         val timePolicy = KidModeEnforcer.timePolicyOf(policy)
 
         // The update fence (step 11): the one release rule runs on every pass, and while the fence
