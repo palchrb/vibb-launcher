@@ -4,6 +4,7 @@ import com.kidslauncher.mdm.timerules.TimePolicy
 import com.kidslauncher.mdm.timerules.TimeRule
 import com.kidslauncher.mdm.timerules.TimeWindow
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 import java.time.Instant
 import java.time.ZoneId
@@ -48,7 +49,7 @@ class MusicSuspendEdgeTest {
         val school = policy(rule(7, everyDay(10, 16)))
         assertEquals(s(2026, 11, 23, 14), edge(school, lifts = listOf(TimedLift(7, ms(2026, 11, 23, 14)))))
         assertEquals("a lift of every rule", s(2026, 11, 23, 14), edge(school, lifts = listOf(TimedLift(null, ms(2026, 11, 23, 14)))))
-        assertEquals("another rule's lift", 0, edge(school, lifts = listOf(TimedLift(8, ms(2026, 11, 23, 14)))))
+        assertNull("another rule's lift: suspended now", edge(school, lifts = listOf(TimedLift(8, ms(2026, 11, 23, 14)))))
     }
 
     @Test
@@ -92,7 +93,12 @@ class MusicSuspendEdgeTest {
     }
 
     @Test
-    fun `already suspended now is 0`() {
-        assertEquals(0, edge(policy(rule(7, everyDay(10, 16)))))
+    fun `already suspended now is null - the written value stays, no rewrite at the edge (qa M1)`() {
+        assertNull(edge(policy(rule(7, everyDay(10, 16)))))
+        assertEquals("kept while suspended", 1_800_000_000, musicEdgeToWrite(1_800_000_000, null))
+        assertEquals("a second's wobble keeps it (L2)", 1_800_000_000, musicEdgeToWrite(1_800_000_000, 1_800_000_002))
+        assertEquals("a real move is written", 1_800_000_060, musicEdgeToWrite(1_800_000_000, 1_800_000_060))
+        assertEquals("the edge gone", 0, musicEdgeToWrite(1_800_000_000, 0))
+        assertEquals("the first edge", 1_800_000_000, musicEdgeToWrite(0, 1_800_000_000))
     }
 }

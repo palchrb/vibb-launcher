@@ -112,20 +112,27 @@ object MusicSync {
         val admin = ComponentName(app, MdmDeviceAdminReceiver::class.java)
         var changed = false
         for (pkg in MusicTrust.installed(app)) {
-            val desired = when {
-                policy == null -> Bundle()
-                music == null -> continue // no music object: keep what is there
-                else -> restrictionsBundle(
-                    restrictionsFor(
-                        music, app.packageName, resolveLauncherLocale(policy.launcherUi?.language), VolumeCap.pctInForce,
-                        TimeRulesRuntime.musicSuspendAtS(app, policy, pkg),
-                    ),
-                )
-            }
             val current = try {
                 dpm.getApplicationRestrictions(admin, pkg)
             } catch (e: Exception) {
                 continue
+            }
+            val desired = when {
+                policy == null -> Bundle()
+                else -> {
+                    // design 54 R3 (qa-54a2-code M1, L2): kept while suspended now, and through a second's wobble
+                    val kept = current.getInt(MusicRestrictions.SUSPEND_AT_S, 0)
+                    val edge = musicEdgeToWrite(kept, TimeRulesRuntime.musicSuspendAtS(app, policy, pkg))
+                    if (music == null) {
+                        // no music object: keep what is there - but the edge follows the rules (qa-54a2-code L1)
+                        if (current.isEmpty || edge == kept) continue
+                        Bundle(current).apply { putInt(MusicRestrictions.SUSPEND_AT_S, edge) }
+                    } else {
+                        restrictionsBundle(
+                            restrictionsFor(music, app.packageName, resolveLauncherLocale(policy.launcherUi?.language), VolumeCap.pctInForce, edge),
+                        )
+                    }
+                }
             }
             if (!sameBundle(current, desired)) {
                 try {

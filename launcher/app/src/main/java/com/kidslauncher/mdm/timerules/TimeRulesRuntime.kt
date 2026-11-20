@@ -265,13 +265,14 @@ object TimeRulesRuntime {
      * Design 54 R2/R3: the music app [musicPkg]'s next suspension by a time rule, epoch seconds, 0 = none
      * ([com.kidslauncher.mdm.music.musicSuspendEdgeS]) - the managed config's `suspend_at_s`. The inputs are
      * [nextBoundary]'s: the policy in force, the PWA's rule lifts and the parent-code pauses with their ends, the open
-     * override's or pause's end. Any thread; 0 when something can't be read.
+     * override's or pause's end. Any thread. Null while the music app is suspended now or when something can't be read:
+     * the written value stays (qa-54a2-code M1).
      */
     fun musicSuspendAtS(
         context: Context,
         policy: PolicyResponse? = currentPolicyDecision().policy,
         musicPkg: String? = com.kidslauncher.mdm.music.MusicStore.installedPackage(context),
-    ): Int {
+    ): Int? {
         musicPkg ?: return 0
         return try {
             val clocks = clocks()
@@ -307,7 +308,7 @@ object TimeRulesRuntime {
             )
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Couldn't work out the music app's next suspension: ${e.javaClass.simpleName}")
-            0
+            null
         }
     }
 

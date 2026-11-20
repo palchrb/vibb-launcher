@@ -10,6 +10,7 @@ import me.vibb.music.logic.QueueRead
 import me.vibb.music.logic.positionNearest
 import me.vibb.music.logic.queuePagesAround
 import me.vibb.music.logic.redactUri
+import me.vibb.music.logic.SLEEP_TIMER_SLACK_MS
 import me.vibb.music.logic.sleepTimerFor
 import me.vibb.music.logic.sleepTimerOurs
 import me.vibb.music.logic.sleepTimerResetDue
@@ -264,7 +265,8 @@ class SonosTransport(
      * only (§2.14).
      */
     suspend fun playShare(body: PlayBody, cap: Int? = null, members: List<String> = emptyList(), sleepTimer: String? = null, gate: () -> Boolean = { true }): PlayResult? = mutex.withLock {
-        val link = ShareLink.of(body.uri) ?: throw ShareRefused("not a share link (${body.kind})")
+        // qa-54a2-code L5: no share type is a refusal by kind (the plain words), never the speaker's ShareRefused
+        val link = ShareLink.of(body.uri) ?: throw SonosException("not a share link (${body.kind})")
         session.beginPlay(body.uid, Kind.SPOTIFY_SHARELINK)
         val spk = speakers.speaker(body.uid, verify = true, budgetMs = null)
         HandOverTiming.step("the speaker resolved (its description read)")
@@ -512,7 +514,8 @@ class SonosTransport(
         val wanted = sleepTimerFor(suspendAtMs, wallNowMs)
         val own = session.ownSleepLeftMs(uid)
         if (wanted == null) {
-            if (own == null) return@withLock false
+            // qa-54a2-code M1: our own timer ending within the slack is the edge itself - it stops the room, never cleared
+            if (own == null || own <= SLEEP_TIMER_SLACK_MS) return@withLock false
             clearOwnSleepTimer(speakers.speaker(uid, verify = false, budgetMs = null), uid)
             return@withLock true
         }

@@ -254,6 +254,77 @@ class SonosShareTest {
         assertTrue("our first item at position 1", r.spk.log.contains("seektrack 1"))
     }
 
+    // -- the code QA's fixes (qa-54a2-code) --
+
+    @Test
+    fun `H1 Til slutten at our last item ends paused and never reads as the run's end`() {
+        val r = rig()
+        r.startShare(index = 2)
+        var held = false
+        r.c.holdAtEnd = { held = true }
+        r.at(3, d, "0:02:59")
+        r.poll()
+        assertTrue("paused at the end", r.spk.commands.contains("pause"))
+        assertTrue("the queue ended (the service's queueEnded holds it)", r.c.takeEnded())
+        assertFalse("held() never runs there - the next favourite would start", held)
+        assertNotNull("Til slutten stays for queueEnded", r.c.holdAtEnd)
+    }
+
+    @Test
+    fun `M1 a heart's one-track map never serves the whole playlist`() {
+        val r = rig()
+        r.c.load(spEntry, listOf(track(c)), 0, 0, listed = keys, one = true)
+        r.c.playTile()
+        r.work.drain()
+        r.at(2, c, "0:00:05")
+        r.poll()
+        r.c.load(spEntry, spItems, 0, 0, listed = keys)
+        r.c.playTile()
+        r.work.drain()
+        assertEquals("the playlist is a transfer of its own", 2, count(r, "addqueue"))
+    }
+
+    @Test
+    fun `M2 the bedtime park takes our stopped share queue too - its clear`() {
+        val r = rig()
+        r.startShare()
+        r.at(1, a, "0:00:30")
+        r.poll()
+        r.c.stop()
+        r.work.drain()
+        r.at(1, a, "0:00:30", transport = "STOPPED")
+        val clears = r.spk.log.count { it == "clearqueue" }
+        r.c.handOff(park = true) { }
+        r.work.drain()
+        assertEquals("parked: the queue cleared", clears + 1, r.spk.log.count { it == "clearqueue" })
+    }
+
+    @Test
+    fun `M3 our list's end on a queue that goes on clears our own sleep timer`() {
+        val r = rig(queue = keys + "1FakeTrackX00000000009")
+        r.suspendAtMs = r.wallMs + 3_600_000
+        r.startShare(index = 2)
+        assertTrue(r.spk.log.contains("sleeptimer 1:00:00"))
+        r.at(3, d, "0:02:59")
+        r.poll()
+        assertTrue(r.c.takeEnded())
+        assertTrue("cleared (still ours)", r.spk.log.contains("sleeptimer "))
+    }
+
+    @Test
+    fun `M1 music - our own timer ending within the slack is never cleared by an edge of 0`() = runBlocking {
+        val r = rig()
+        r.session.beginPlay(r.uid, Kind.SPOTIFY_SHARELINK)
+        r.session.played(queueUri(r.uid))
+        r.session.ownSleepTimer(r.uid, 20_000)
+        assertFalse(r.transport.syncSleepTimer(0, r.wallMs, r.uid))
+        assertFalse(r.spk.log.contains("sleeptimer "))
+        r.session.ownSleepTimer(r.uid, 600_000)
+        r.spk.sleepRemaining = "0:10:00"
+        assertTrue("an edge gone well ahead clears ours", r.transport.syncSleepTimer(0, r.wallMs, r.uid))
+        assertTrue(r.spk.log.contains("sleeptimer "))
+    }
+
     // -- round 54-a2': a context on a room (§2.12) --
 
     private val ctxEntry = spEntry.copy(spotifyMode = "context")

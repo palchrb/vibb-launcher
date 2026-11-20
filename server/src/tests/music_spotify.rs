@@ -406,13 +406,15 @@ async fn the_accounts_info_says_sonos_uses_its_own_account() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     set_up(&app, &cookie, HTTPS_REDIRECT).await;
-    for (lang, line) in [
+    for (lang, code, line) in [
         (
             "nb",
+            crate::i18n::Lang::Nb,
             "<p>På Sonos spilles Spotify med kontoen som er koblet til i Sonos-appen</p>",
         ),
         (
             "en",
+            crate::i18n::Lang::En,
             "<p>On Sonos, Spotify plays through the account linked in the Sonos app</p>",
         ),
     ] {
@@ -421,8 +423,14 @@ async fn the_accounts_info_says_sonos_uses_its_own_account() {
             .await
             .text();
         let at = page.find(line).expect(lang);
+        // right after the accounts group's login line, inside that (i)'s panel (qa-54a2-code L3)
+        let login = crate::i18n::t(code, "music.setup.login_info");
         assert!(
-            page[..at].rfind("<div class=\"info-panel\">").is_some(),
+            page[..at].ends_with(&format!("<p>{login}</p>")),
+            "{lang}: the line follows the accounts group's login_info"
+        );
+        assert!(
+            page[at..].starts_with(&format!("{line}</div></details>")),
             "{lang}"
         );
     }

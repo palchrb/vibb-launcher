@@ -1522,4 +1522,21 @@ Where the build differs from the letter of R2:
   on the emulator said "Needs the internet" with the fake), 7's managed parts (`ConfigureSleepTimer` from a real
   `suspend_at_s`: needs the debug launcher as Device Owner with a time rule), 8 (context mode).
 
-Owed: the rest of R5 above and the real room (R6: D12, D7, D9, D21, D16, D11, D3 first); the code QA's two passes.
+**The code QA's fix round** (2026-11-20, both passes; all taken):
+- H1: "Til slutten" at our last item (the at-end timer or a natural boundary) ends the queue paused without
+  `held()`, so the service's `queueEnded` holds - a favourites run no longer starts the next heart.
+- M1 (music): `load` keeps a map only when it was built for the same target - a heart's one-track map never serves
+  the playlist. M2: the park takes our STOPPED share queue too (its clear). M3: our own sleep timer is cleared when the
+  session ends without a Stop of ours (our list's end, stood down, a takeover), only while it is still ours.
+- M1 (launcher and music): while the music app is suspended now, `musicSuspendEdgeS` is null and the written
+  `suspend_at_s` stays (no rewrite, no nudge at the edge); the music app never clears its own timer that ends within
+  30 s for a 0 edge. L1: a policy without a music object still has its `suspend_at_s` refreshed. L2: an edge within
+  2 s of the written one keeps it (`musicEdgeToWrite`).
+- L1-L6 (music): an adopt's item paired at its first confirming poll; `itemChangedAt` cleared at the landing and when
+  the socket goes; the done mark only when the correction ends on another item; a context's jump lands on its
+  position; no share type is the plain "Kan ikke spilles på Sonos"; `load` re-indexes a repeated track through the map.
+- L3 (server): the PWA test pins the line right after the accounts group's login line.
+
+**Still owed**: Android 17 (its emulator image restarted on this VM); the rest of R5 (steps 2-4, 6's hand-overs, 7's
+managed sleep timer, 8); the real room (R6: D12, D7, D9, D21, D16, D11, D3 first, then D8+, D13/D14, D18 and the
+socket-only paths); the in-app player's unmapped title and number (the session's metadata has it).

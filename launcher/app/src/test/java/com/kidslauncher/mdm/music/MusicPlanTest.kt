@@ -570,7 +570,7 @@ class MusicPlanTest {
         val sync = module("src/main/java/com/kidslauncher/mdm/music/MusicSync.kt").readText()
         val write = sync.substringAfter("private fun writeRestrictions(").substringBefore("\n    }\n")
         assertTrue(write.contains("resolveLauncherLocale(policy.launcherUi?.language), VolumeCap.pctInForce,"))
-        assertTrue("the edge on every write", write.contains("TimeRulesRuntime.musicSuspendAtS(app, policy, pkg)"))
+        assertTrue("the edge on every write", write.contains("musicEdgeToWrite(kept, TimeRulesRuntime.musicSuspendAtS(app, policy, pkg))"))
         val runtime = module("src/main/java/com/kidslauncher/mdm/timerules/TimeRulesRuntime.kt").readText()
         val recheck = runtime.substringAfter("fun recheck(").substringBefore("\n    }\n")
         assertTrue(recheck.contains("MusicSync.restrictionsChanged(context, policy)"))

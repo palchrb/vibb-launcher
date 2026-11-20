@@ -36,7 +36,9 @@ fun ruleLiftsAt(lifts: List<TimedLift>, atMs: Long): RuleLifts {
  * `b`, the override while [overrideEndMs] is after `b`, and no budget: the budget's SCREEN_TIME lock keeps the music
  * app usable (R1.11), so it never gives an edge. The first `b` locked without [musicPkg] among the usable apps is the
  * edge. The walk stops after [MUSIC_EDGE_MAX_STEPS] boundaries or [MUSIC_EDGE_HORIZON_MS], whichever comes first.
- * 0 too when the music app is suspended already at [nowMs].
+ * Null when the music app is suspended already at [nowMs] (qa-54a2-code M1): the edge is now - the caller keeps the
+ * value it wrote ([musicEdgeToWrite]), so the recheck at the edge neither rewrites nor nudges, and the speaker's own
+ * timer runs out as set.
  */
 fun musicSuspendEdgeS(
     policy: TimePolicy?,
@@ -46,13 +48,13 @@ fun musicSuspendEdgeS(
     liftsAt: (Long) -> RuleLifts,
     overrideEndMs: Long,
     extra: Collection<Instant>,
-): Int {
+): Int? {
     if (policy == null) return 0
     fun suspendedAt(atMs: Long): Boolean {
         val lock = decideTimeLock(policy.inForceAt(atMs), localAt(Instant.ofEpochMilli(atMs), zone), overrideEndMs > atMs, liftsAt(atMs))
         return lock.locked && musicPkg !in lock.usableApps
     }
-    if (suspendedAt(nowMs)) return 0
+    if (suspendedAt(nowMs)) return null
     val instants = extra + untilInstants(policy, nowMs) + listOfNotNull(overrideEndMs.takeIf { it > nowMs }?.let { Instant.ofEpochMilli(it) })
     val horizonMs = nowMs + MUSIC_EDGE_HORIZON_MS
     var at = Instant.ofEpochMilli(nowMs)
@@ -64,4 +66,18 @@ fun musicSuspendEdgeS(
         at = b
     }
     return 0
+}
+
+/** Two values of the edge this close (seconds) are one: a lift's or the override's end wobbles by the clocks' second. */
+const val MUSIC_EDGE_STEADY_S = 2
+
+/**
+ * What `suspend_at_s` is written as (qa-54a2-code M1, L2): [computed] null (suspended now) keeps [kept], the bundle's
+ * value; a computed edge within [MUSIC_EDGE_STEADY_S] of the kept one keeps it too (no rewrite, no nudge); else the
+ * computed one.
+ */
+fun musicEdgeToWrite(kept: Int, computed: Int?): Int = when {
+    computed == null -> kept
+    kept > 0 && computed > 0 && kotlin.math.abs(kept - computed) <= MUSIC_EDGE_STEADY_S -> kept
+    else -> computed
 }
