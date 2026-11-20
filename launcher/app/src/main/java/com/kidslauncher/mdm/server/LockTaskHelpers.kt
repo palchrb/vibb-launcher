@@ -53,6 +53,29 @@ enum class HelperKind {
      * block turned the SOS countdown into "App is not available" over the lock.
      */
     EMERGENCY_SOS,
+
+    /**
+     * Android's Credential Manager selector (passkeys-kiosk, docs/testing/2026-11-20-passkeys-kiosk.md): the sheet a
+     * passkey or password request opens in the caller's task, before the provider's own screen. Not pinned, the block
+     * turned every passkey sign-in into "App is not available". The package Android itself uses
+     * ([credentialSelectorPackage]): AOSP's `com.android.credentialmanager` (Android 14 measured), or the OEM's sheet -
+     * on a phone with Google's config overlay that is Play services, which [lockTaskHelpers] never pins, so nothing
+     * changes there. Its own links stay inside the sheet or go to Settings (hidden, or blocked) and Play services
+     * (blocked); a provider's screen is reachable only for an allowed app.
+     */
+    CREDENTIAL_SELECTOR,
+}
+
+/**
+ * The package of the Credential Manager selector Android starts, by AOSP's rule (`IntentFactory`): the OEM's component
+ * ([oemComponent], `config_oemCredentialManagerDialogComponent`, Android 15+) when it is set and its activity is
+ * [oemEnabled], else the platform's ([defaultComponent], `config_credentialManagerDialogComponent`). Each is a
+ * flattened component (`package/class`); `null` when neither names one.
+ */
+fun credentialSelectorPackage(oemComponent: String?, oemEnabled: Boolean, defaultComponent: String?): String? {
+    fun pkg(component: String?): String? =
+        component?.trim()?.takeIf { '/' in it }?.substringBefore('/')?.takeIf { it.isNotBlank() }
+    return pkg(oemComponent)?.takeIf { oemEnabled } ?: pkg(defaultComponent)
 }
 
 /** SystemUI's Emergency SOS intent action (`EmergencyGesture.ACTION_LAUNCH_EMERGENCY`). */
