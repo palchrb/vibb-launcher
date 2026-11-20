@@ -54,6 +54,8 @@ class MdmDeviceAdminReceiver : DeviceAdminReceiver() {
                 // Design 59 §3.7: our own reset consumes its one-shot flag; any other change makes the rev unknown.
                 com.kidslauncher.mdm.lock.AndroidLock.onPasswordChanged(app)
                 AppEnforcer.apply(app, currentPolicyDecision())
+                // Design 114b: the setup step `child_pin` reads the PIN - the PWA hears of it at once.
+                com.kidslauncher.mdm.push.SyncRunner.request(app, com.kidslauncher.mdm.setup.SETUP_SYNC_REASON)
             } catch (e: Exception) {
                 Log.w(LOG_TAG, "Apply after a screen-lock change failed", e)
             } finally {

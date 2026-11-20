@@ -991,6 +991,7 @@
     <!-- Design 114: the phone's setup steps (names checked against setup_steps.json) and the setup flow. -->
     <string name="setup_step_parent_pin">Parent PIN</string>
     <string name="setup_step_device_owner">Device owner</string>
+    <string name="setup_step_child_pin">Child PIN</string>
     <string name="setup_step_location">Location access</string>
     <string name="setup_step_notification_access">Notification access</string>
     <string name="setup_step_mobile_data">Mobile data</string>
@@ -1002,6 +1003,7 @@
     <string name="setup_step_assistant">Digital assistant</string>
     <string name="setup_step_wifi_airplane">Wi-Fi in airplane mode</string>
     <string name="setup_step_call_filter">Call filter</string>
+    <string name="setup_step_call_filter_early">Call filter</string>
     <string name="setup_step_vibb_browser">Browser app</string>
     <string name="setup_step_default_apps">Default apps</string>
     <string name="setup_step_map_play_links">Play services\' links</string>
@@ -1012,6 +1014,7 @@
     <string name="setup_step_lock_clock">One-line clock</string>
     <string name="setup_step_media_on_lock">Media on the lock screen</string>
     <string name="setup_step_message_banners">Message banners</string>
+    <string name="setup_how_child_pin">Set it in the parent app: Lock Screen &amp; PINs › Child PIN.</string>
     <string name="setup_how_location">Permissions › Location › Allow.</string>
     <string name="setup_how_notification_access">Turn on Allow notification access.</string>
     <string name="setup_how_mobile_data">Turn on Mobile data.</string>
@@ -1024,6 +1027,7 @@
     <string name="setup_how_assistant">Choose Vibb One, then OK.</string>
     <string name="setup_how_wifi_airplane">Turn on Wi-Fi in the panel.</string>
     <string name="setup_how_call_filter">Choose Vibb One both times.</string>
+    <string name="setup_how_call_filter_early">Needed if Vibb is to manage calls. Choose Vibb One both times.</string>
     <string name="setup_how_vibb_browser">Choose Vibb One.</string>
     <string name="setup_how_default_apps">Choose them back.</string>
     <string name="setup_how_map_play_links">Open by default: turn off Open supported links.</string>

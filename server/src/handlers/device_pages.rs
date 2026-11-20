@@ -1429,11 +1429,29 @@ async fn render_lock(
         .as_ref()
         .and_then(|s| crate::display_time::parse_db_utc(&s.reported_at))
         .map(|t| zone.when(t, now));
-    let (child_warnings, mut child_rows): (Vec<Note>, Vec<Note>) = child
+    let (mut child_warnings, mut child_rows): (Vec<Note>, Vec<Note>) = child
         .notes
         .iter()
         .map(|n| n.note(lang, reported.as_deref()))
         .partition(|n| n.warning);
+    let setup_part = state.integrations.setup(state, id).await;
+    // Design 114b: the phone has no PIN and none is stored - one orange line at the Child PIN, how behind its ⓘ. A
+    // stored PIN on its way is the card's own notes.
+    if !child.pin_set
+        && crate::setup_status::child_pin_missing(&policy, latest.as_ref(), &setup_part)
+    {
+        child_warnings.insert(
+            0,
+            Note {
+                warning: true,
+                title: t(lang, "device.lock.no_pin").to_string(),
+                value: None,
+                sub: None,
+                detail: None,
+                fix: Some(t(lang, "device.lock.no_pin_fix").to_string()),
+            },
+        );
+    }
     if let Some(send) = pin_send.filter(|_| child.pin_set) {
         child_rows.push(crate::kid_lock::LockNote::PinSent(send).note(lang, None));
     }
@@ -1526,7 +1544,7 @@ async fn render_lock(
             lang,
             &policy,
             latest.as_ref(),
-            &state.integrations.setup(state, id).await,
+            &setup_part,
             "lock",
         ),
         lock_tiles,

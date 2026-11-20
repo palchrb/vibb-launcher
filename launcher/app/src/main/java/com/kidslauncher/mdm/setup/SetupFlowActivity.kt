@@ -198,7 +198,8 @@ class SetupFlowActivity : UIObjectActivity() {
             } else {
                 SetupPages.intents(app, step)
             }
-            access = systemPageAccess(
+            // Design 114b: a step done in the PWA has no page here - its line and "Senere" only.
+            if (!step.inPwa) access = systemPageAccess(
                 pageAvailable = pages.isNotEmpty(),
                 windowOpen = windowOpen,
                 overrideApplied = AppEnforcer.lastEnforcedOverride == true,
@@ -375,7 +376,8 @@ class SetupFlowActivity : UIObjectActivity() {
                 withContext(Dispatchers.IO) { AssistantSetup.openPickWindow(app, keepSnapshot = step == SetupStep.DEFAULT_APPS) }
                 launchPages(step, pages)
             }
-            SetupStep.CALL_FILTER -> lifecycleScope.launch {
+            // Design 114b: the early step asks for the same two roles, in the same window.
+            SetupStep.CALL_FILTER, SetupStep.CALL_FILTER_EARLY -> lifecycleScope.launch {
                 val requests = withContext(Dispatchers.IO) {
                     AssistantSetup.openPickWindow(app)
                     AssistantSetup.screeningRoleIntents(app)
@@ -466,10 +468,10 @@ class SetupFlowActivity : UIObjectActivity() {
             }
             SetupStep.DEFAULT_APPS -> AssistantSetup.endPickWindow(app, "page")
             SetupStep.VIBB_BROWSER -> com.kidslauncher.mdm.logins.BrowserRoleStep.end(app)
-            SetupStep.CALL_FILTER -> {
+            SetupStep.CALL_FILTER, SetupStep.CALL_FILTER_EARLY -> {
                 val next = callFilterQueue.firstOrNull()
                 callFilterQueue = callFilterQueue.drop(1)
-                if (next != null && launch(SetupStep.CALL_FILTER, next)) return
+                if (next != null && launch(step, next)) return
                 AssistantSetup.endPickWindow(app, "call_filter")
             }
             SetupStep.WIFI_AIRPLANE -> {

@@ -97,6 +97,50 @@ class SetupFlowTest {
         assertEquals(listOf(FlowButton.SKIP), flowButtons(SetupStep.LOCK_CLOCK, pageMissing = true))
     }
 
+    /** Design 114b A: the Child PIN is a screen with no "Åpne" (it is set in the PWA), first of the run, counted, and
+     * runnable before the first policy. */
+    @Test
+    fun `the Child PIN - a screen done in the PWA, first and counted`() {
+        val noPin = fresh + ("child_pin" to false)
+        val screens = flowScreens(setupMissing(everything, noPin, emptySet()), emptySet(), windowOpen = true, policyKnown = true)
+        assertEquals("child_pin", keys(screens).first())
+        assertEquals(12, (screens.last() as FlowScreen.End).left)
+        assertTrue(SetupStep.CHILD_PIN.screen && SetupStep.CHILD_PIN.inPwa && SetupStep.CHILD_PIN.pageActions == null)
+        assertEquals(listOf(FlowButton.LATER), flowButtons(SetupStep.CHILD_PIN, pageMissing = false))
+        val early = flowScreens(setupMissing(SetupInputs.NONE, noPin, emptySet()), emptySet(), windowOpen = true, policyKnown = false)
+        assertEquals("child_pin", keys(early).first())
+        // The reading: Android's credential; Vibb One's legacy lock with a Child PIN; unreadable stays unreadable.
+        assertEquals(true, childPinDone(androidCredential = true, keyguard = null))
+        assertEquals(false, childPinDone(androidCredential = false, keyguard = null))
+        assertEquals(false, childPinDone(androidCredential = false, keyguard = "android"))
+        assertEquals(true, childPinDone(androidCredential = false, keyguard = "own"))
+        assertEquals(null, childPinDone(androidCredential = null, keyguard = "android"))
+        // The flow has no page to open for it and reads it as a PWA step.
+        val flow = File(listOf("src/main", "app/src/main").map(::File).first { it.isDirectory }, "java/com/kidslauncher/mdm/setup/SetupFlowActivity.kt").readText()
+        assertTrue("if (!step.inPwa) access = systemPageAccess(" in flow)
+    }
+
+    /** Design 114b B: the call roles offered as an optional step while calls aren't managed - the opposite of row 13,
+     * so the two never show together; the same requests in the same window. */
+    @Test
+    fun `the call filter offered early - optional, never with row 13`() {
+        val unmanaged = everything.copy(callsManaged = false)
+        val roles = fresh + ("call_filter_early" to false)
+        val missing = setupMissing(unmanaged, roles, emptySet())
+        assertTrue(SetupStep.CALL_FILTER_EARLY in missing && SetupStep.CALL_FILTER !in missing)
+        val managed = setupMissing(everything, roles, emptySet())
+        assertTrue(SetupStep.CALL_FILTER in managed && SetupStep.CALL_FILTER_EARLY !in managed)
+        assertEquals(listOf(FlowButton.OPEN, FlowButton.SKIP), flowButtons(SetupStep.CALL_FILTER_EARLY, pageMissing = false))
+        // Optional: never counted, never on the end's list.
+        assertEquals(setupCount(missing), setupCount(missing - SetupStep.CALL_FILTER_EARLY))
+        val main = listOf("src/main", "app/src/main").map(::File).first { it.isDirectory }
+        val flow = File(main, "java/com/kidslauncher/mdm/setup/SetupFlowActivity.kt").readText()
+        assertTrue("SetupStep.CALL_FILTER, SetupStep.CALL_FILTER_EARLY -> lifecycleScope.launch {" in flow)
+        assertTrue("SetupStep.CALL_FILTER, SetupStep.CALL_FILTER_EARLY -> {" in flow)
+        val pages = File(main, "java/com/kidslauncher/mdm/setup/SetupPages.kt").readText()
+        assertTrue("SetupStep.CALL_FILTER, SetupStep.CALL_FILTER_EARLY -> AssistantSetup.screeningRoleIntents(context)" in pages)
+    }
+
     @Test
     fun `the progress counts the run's screens`() {
         // Code QA M1: the steps ahead count - the first screen of seven reads "1 av 7".

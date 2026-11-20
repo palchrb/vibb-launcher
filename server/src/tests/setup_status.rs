@@ -507,3 +507,117 @@ async fn the_setup_row_says_nothing_before_a_report() {
         .text();
     assert!(row_of(&html).contains("row-value"));
 }
+
+/// Design 114b A: a phone with no PIN has `child_pin` counted - an orange link on Device › Oppsett to Lock Screen &
+/// PINs' Child PIN (never "Åpne for oppsett": the phone can't do it), one orange line there while no Child PIN is
+/// stored, and nothing once the phone reports a PIN.
+#[tokio::test]
+async fn the_child_pin_step() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("Testtelefon").await;
+    app.post_status(
+        &token,
+        json!({"setup": {"device_owner": true, "child_pin": false}}),
+    )
+    .await;
+    let page = format!("/devices/{id}/setup");
+    let html = app.get_page(&page, &cookie).await.text();
+    assert!(
+        html.contains(&format!(
+            "<a class=\"attention attention-action\" id=\"step-child_pin\" href=\"/devices/{id}/lock#child-pin\""
+        )),
+        "{html}"
+    );
+    // Not a row of the phone's own group (its ⓘ rows), and never what makes the page offer "Åpne for oppsett".
+    assert!(!html.contains("<details class=\"info cell\" id=\"step-child_pin\""));
+    assert!(
+        !crate::setup_status::STEPS
+            .iter()
+            .any(|step| step.key == "child_pin" && crate::setup_status::on_phone(step))
+    );
+    let summary = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(summary.contains("Setup: 1 step left"), "{summary}");
+    let lock = app
+        .get_page(&format!("/devices/{id}/lock"), &cookie)
+        .await
+        .text();
+    assert!(lock.contains("The phone has no PIN"), "{lock}");
+    assert!(lock.contains("Choose a Child PIN below."));
+
+    // A Child PIN stored and on its way: the card's own notes, not this line.
+    sqlx::query(
+        "UPDATE device_policy SET kid_pin_hash = 'aGFzaA', kid_pin_salt = 'c2FsdA', kid_pin_length = 4 \
+         WHERE device_id = ?",
+    )
+    .bind(id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let lock = app
+        .get_page(&format!("/devices/{id}/lock"), &cookie)
+        .await
+        .text();
+    assert!(!lock.contains("The phone has no PIN"), "{lock}");
+
+    app.post_status(
+        &token,
+        json!({"setup": {"device_owner": true, "child_pin": true}}),
+    )
+    .await;
+    let html = app.get_page(&page, &cookie).await.text();
+    assert!(!html.contains("id=\"step-child_pin\""), "{html}");
+}
+
+/// Design 114b B: while calls aren't managed the call roles are offered as a quiet optional row (never counted, never
+/// a line on Anrop); managed, the required `call_filter` takes over, and roles granted early leave nothing.
+#[tokio::test]
+async fn the_call_filter_offered_early() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("Testtelefon").await;
+    let call_state = |held: bool| {
+        json!({"state": "unmanaged", "dialer_role_held": false, "redirection_role_held": held,
+               "screening_role_held": held, "sms_restricted": false, "outgoing_restricted": false,
+               "call_log_readable": true})
+    };
+    app.post_status(
+        &token,
+        json!({"call_state": call_state(false), "setup": {"device_owner": true}}),
+    )
+    .await;
+    let page = format!("/devices/{id}/setup");
+    let html = app.get_page(&page, &cookie).await.text();
+    let optional = html
+        .split("<section id=\"optional\"")
+        .nth(1)
+        .unwrap_or_default();
+    assert!(optional.contains("id=\"step-call_filter_early\""), "{html}");
+    assert!(!html.contains("id=\"step-call_filter\""));
+    assert!(optional.contains("Only needed once Vibb manages calls."));
+    let summary = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(!summary.contains("data-attention=\"setup\""), "{summary}");
+
+    sqlx::query("UPDATE device_policy SET calls_mode = 'managed' WHERE device_id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let html = app.get_page(&page, &cookie).await.text();
+    assert!(html.contains("id=\"step-call_filter\""), "{html}");
+    assert!(!html.contains("id=\"step-call_filter_early\""));
+
+    app.post_status(
+        &token,
+        json!({"call_state": call_state(true), "setup": {"device_owner": true}}),
+    )
+    .await;
+    let html = app.get_page(&page, &cookie).await.text();
+    assert!(!html.contains("id=\"step-call_filter"), "{html}");
+}

@@ -51,7 +51,7 @@ object SetupPages {
     fun intents(context: Context, step: SetupStep): List<Intent> {
         val actions = step.pageActions ?: return emptyList()
         return when (step) {
-            SetupStep.PARENT_PIN, SetupStep.DEVICE_OWNER -> emptyList()
+            SetupStep.PARENT_PIN, SetupStep.DEVICE_OWNER, SetupStep.CHILD_PIN -> emptyList()
             SetupStep.NOTIFICATION_ACCESS -> listOfNotNull(
                 page(
                     context,
@@ -72,7 +72,7 @@ object SetupPages {
             SetupStep.ASSISTANT -> AssistantSetup.assistantPageIntents(context)
             // The panel isn't a Settings page: it opens once design 98's Wi-Fi step has turned airplane mode on.
             SetupStep.WIFI_AIRPLANE -> listOf(AssistantSetup.wifiPanelIntent())
-            SetupStep.CALL_FILTER -> AssistantSetup.screeningRoleIntents(context)
+            SetupStep.CALL_FILTER, SetupStep.CALL_FILTER_EARLY -> AssistantSetup.screeningRoleIntents(context)
             SetupStep.VIBB_BROWSER -> com.kidslauncher.mdm.logins.BrowserRoleStep.requestIntents(context)
             SetupStep.FINGERPRINT -> FingerprintEnrol.pageIntents(context)
             SetupStep.MEDIA_ON_LOCK -> MediaLockScreen.pageIntents(context)

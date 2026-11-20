@@ -47,6 +47,8 @@ pub enum ReadBy {
 pub enum When {
     Always,
     CallsManaged,
+    /// Design 114b: `calls_mode` is `unmanaged` - the exact opposite of [When::CallsManaged].
+    CallsUnmanaged,
     WriteSettingsUsed,
     Airplane,
     AirplaneRole,
@@ -132,6 +134,20 @@ pub const STEPS: &[Step] = &[
         [],
         "setup.step.device_owner",
         "setup.how.device_owner",
+        None
+    ),
+    // Design 114b A: the phone has a PIN (Android's credential; with Vibb One's legacy lock, a Child PIN in its
+    // policy). Set from the PWA's Lock Screen & PINs, so the server knows it: no page on the phone.
+    step!(
+        "child_pin",
+        Required,
+        Phone,
+        Always,
+        Count,
+        Action,
+        [],
+        "setup.step.child_pin",
+        "setup.how.child_pin",
         None
     ),
     step!(
@@ -265,6 +281,20 @@ pub const STEPS: &[Step] = &[
         "setup.step.call_filter",
         "setup.how.call_filter",
         Some("setup.warn.call_filter")
+    ),
+    // Design 114b B: the same two roles offered before calls are managed (the opposite `when`), so turning calls on
+    // later needs nothing on the phone. Optional: not managing calls is the parent's choice.
+    step!(
+        "call_filter_early",
+        Optional,
+        Phone,
+        CallsUnmanaged,
+        Count,
+        Action,
+        [],
+        "setup.step.call_filter_early",
+        "setup.how.call_filter_early",
+        None
     ),
     step!(
         "default_apps",
@@ -522,6 +552,7 @@ pub fn applies(step: &Step, inputs: &Inputs, readings: &Readings) -> bool {
     match step.when {
         When::Always => true,
         When::CallsManaged => inputs.calls_managed,
+        When::CallsUnmanaged => !inputs.calls_managed,
         When::WriteSettingsUsed => inputs.write_settings_used(),
         When::Airplane => inputs.airplane(),
         When::AirplaneRole => {
@@ -572,6 +603,7 @@ pub fn setup_row(missing: &[&Step], readings: &Readings) -> bool {
 /// The readings the report's `setup` carries (§4.1).
 const REPORT_READINGS: &[&str] = &[
     "device_owner",
+    "child_pin",
     "mobile_data",
     "location",
     "data_saver",
@@ -748,6 +780,8 @@ pub fn readings_of(
         (held("screening_role_held"), held("redirection_role_held"))
     {
         put("call_filter", Some(Some(screening && redirection)));
+        // Design 114b B: the same roles, offered before calls are managed.
+        put("call_filter_early", Some(Some(screening && redirection)));
     }
     put("vibb_browser", browser_role(Some(latest)).map(Some));
     for (key, reading) in &part.readings {
@@ -875,7 +909,7 @@ pub struct Row {
     /// The ⓘ: why first where the step had one (`setup.why.<key>`), then what to do on Android's page.
     pub why: Option<String>,
     pub how: String,
-    /// `parent_pin` links to Lock Screen & PINs, `device_owner` to Connect.
+    /// `parent_pin` and `child_pin` link to Lock Screen & PINs, `device_owner` to Connect.
     pub link: Option<String>,
     /// Red (an `own_row` alarm step).
     pub alarm: bool,
@@ -883,6 +917,14 @@ pub struct Row {
     pub tickable: bool,
     /// Ticked (the switch on).
     pub ticked: bool,
+}
+
+impl Row {
+    /// An orange row done in the PWA (design 114b: the Child PIN): a link to its page among the alarm rows, not a row
+    /// of the phone's group.
+    pub fn pwa_link(&self) -> bool {
+        !self.alarm && self.link.is_some()
+    }
 }
 
 /// What the page reads, besides the policy and the latest report.
@@ -920,7 +962,7 @@ impl Page {
 
     /// "På telefonen" has a row that isn't an alarm row (code QA L7: no empty group under the alarm rows).
     pub fn has_phone_rows(&self) -> bool {
-        self.phone.iter().any(|row| !row.alarm)
+        self.phone.iter().any(|row| !row.alarm && !row.pwa_link())
     }
 
     /// Nothing missing: "Alt er gjort".
@@ -952,6 +994,7 @@ fn row(input: &PageInput, step: &'static Step) -> Row {
         "background" => Some(t(lang, "setup.why.background").to_string()),
         "wifi_airplane" => Some(t(lang, "setup.why.wifi_airplane").to_string()),
         "call_filter" => Some(t(lang, "setup.why.call_filter").to_string()),
+        "call_filter_early" => Some(t(lang, "setup.why.call_filter_early").to_string()),
         "assistant" => Some(t(lang, "setup.why.assistant").to_string()),
         _ => None,
     };
@@ -993,6 +1036,7 @@ fn row(input: &PageInput, step: &'static Step) -> Row {
         how: t(lang, step.how).to_string(),
         link: match step.key {
             "parent_pin" => Some(format!("/devices/{}/lock#parent-pin", input.device_id)),
+            "child_pin" => Some(format!("/devices/{}/lock#child-pin", input.device_id)),
             "device_owner" => Some(format!("/devices/{}/provision", input.device_id)),
             _ => None,
         },
@@ -1017,6 +1061,25 @@ pub fn role_words(lang: crate::i18n::Lang, role: &str) -> &'static str {
     )
 }
 
+/// A step the phone's flow does (so the page offers "Åpne for oppsett" for it): not the server's, not Device Owner
+/// (the QR's) and not the Child PIN (the PWA's Lock Screen & PINs, design 114b).
+pub(crate) fn on_phone(step: &Step) -> bool {
+    step.read_by != ReadBy::Server && !matches!(step.key, "device_owner" | "child_pin")
+}
+
+/// The Child PIN step is missing on this phone now (design 114b): Lock Screen & PINs says so at `#child-pin` while no
+/// Child PIN is stored.
+pub fn child_pin_missing(
+    policy: &DevicePolicy,
+    latest: Option<&DeviceStatus>,
+    part: &SetupPart,
+) -> bool {
+    state_of(policy, latest, part, &[])
+        .0
+        .iter()
+        .any(|step| step.key == "child_pin")
+}
+
 /// Device › Oppsett (§5.1).
 pub fn page(input: &PageInput) -> Page {
     let (missing, _) = state_of(input.policy, input.latest, input.part, input.ticked);
@@ -1036,9 +1099,7 @@ pub fn page(input: &PageInput) -> Page {
             (Need::Optional, _) => page.optional.push(row),
         }
     }
-    page.openable = missing
-        .iter()
-        .any(|step| step.read_by != ReadBy::Server && step.key != "device_owner");
+    page.openable = missing.iter().any(|step| on_phone(step));
     page.ticked = STEPS
         .iter()
         .filter(|step| step.read_by == ReadBy::Parent)
@@ -1227,6 +1288,7 @@ mod tests {
         match when {
             When::Always => "always",
             When::CallsManaged => "calls_managed",
+            When::CallsUnmanaged => "calls_unmanaged",
             When::WriteSettingsUsed => "write_settings_used",
             When::Airplane => "airplane",
             When::AirplaneRole => "airplane_role",

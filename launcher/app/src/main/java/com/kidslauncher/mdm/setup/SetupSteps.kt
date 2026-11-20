@@ -15,7 +15,7 @@ enum class StepNeed { REQUIRED, OPTIONAL }
 enum class StepReadBy { PHONE, SERVER, PARENT }
 
 /** §2.3: when a step applies. */
-enum class StepWhen { ALWAYS, CALLS_MANAGED, WRITE_SETTINGS_USED, AIRPLANE, AIRPLANE_ROLE, ANDROID_LOCK, MAP_LINKS, LINK_GATE }
+enum class StepWhen { ALWAYS, CALLS_MANAGED, CALLS_UNMANAGED, WRITE_SETTINGS_USED, AIRPLANE, AIRPLANE_ROLE, ANDROID_LOCK, MAP_LINKS, LINK_GATE }
 
 enum class StepSummary { COUNT, OWN_ROW }
 
@@ -45,6 +45,12 @@ enum class SetupStep(
     DEVICE_OWNER(
         "device_owner", StepNeed.REQUIRED, StepReadBy.PHONE, StepWhen.ALWAYS, StepSummary.OWN_ROW, StepLevel.ALARM,
         emptyList(), null, R.string.setup_step_device_owner, null,
+    ),
+    // Design 114b A: the phone has a PIN. Set from the PWA (so the server knows it): a screen with no "Åpne", which
+    // moves on by itself when the PIN lands.
+    CHILD_PIN(
+        "child_pin", StepNeed.REQUIRED, StepReadBy.PHONE, StepWhen.ALWAYS, StepSummary.COUNT, StepLevel.ACTION,
+        emptyList(), null, R.string.setup_step_child_pin, R.string.setup_how_child_pin,
     ),
     LOCATION(
         "location", StepNeed.REQUIRED, StepReadBy.PHONE, StepWhen.ALWAYS, StepSummary.COUNT, StepLevel.ACTION,
@@ -103,6 +109,13 @@ enum class SetupStep(
         listOf("calls"), listOf("android.app.role.action.REQUEST_ROLE"),
         R.string.setup_step_call_filter, R.string.setup_how_call_filter,
     ),
+    // Design 114b B: the same two roles offered while calls aren't managed, so turning them on later needs nothing on
+    // the phone. Optional: not managing calls is the parent's choice.
+    CALL_FILTER_EARLY(
+        "call_filter_early", StepNeed.OPTIONAL, StepReadBy.PHONE, StepWhen.CALLS_UNMANAGED, StepSummary.COUNT, StepLevel.ACTION,
+        emptyList(), listOf("android.app.role.action.REQUEST_ROLE"),
+        R.string.setup_step_call_filter_early, R.string.setup_how_call_filter_early,
+    ),
     DEFAULT_APPS(
         "default_apps", StepNeed.REQUIRED, StepReadBy.PHONE, StepWhen.ALWAYS, StepSummary.COUNT, StepLevel.ACTION,
         emptyList(), listOf("android.settings.MANAGE_DEFAULT_APPS_SETTINGS"),
@@ -156,8 +169,11 @@ enum class SetupStep(
     ),
     ;
 
+    /** Done in the PWA, not on the phone (design 114b: the Child PIN): a screen with its line and no "Åpne". */
+    val inPwa: Boolean get() = this == CHILD_PIN
+
     /** Never a flow screen (§6.2.2, §6.2.3): the Parent PIN is the PWA's, Device Owner is the QR's. */
-    val screen: Boolean get() = pageActions != null
+    val screen: Boolean get() = pageActions != null || inPwa
 
     companion object {
         fun of(key: String): SetupStep? = entries.firstOrNull { it.key == key }
@@ -195,10 +211,23 @@ data class SetupInputs(
     }
 }
 
+/**
+ * Design 114b A: the `child_pin` reading - the phone has a PIN. Android's credential ([androidCredential], `null`
+ * unreadable); with Vibb One's legacy own lock ([keyguard] of the cached `kid_lock`, `null` without one) a Child PIN in
+ * the policy is the PIN, since that lock steps aside for an Android credential and the relock removes one.
+ */
+fun childPinDone(androidCredential: Boolean?, keyguard: String?): Boolean? = when {
+    androidCredential == true -> true
+    keyguard != null && keyguard != "android" -> true
+    else -> androidCredential
+}
+
 /** §2.3: whether [step] applies. `airplane_role` also needs the assistant reading done. */
 fun setupApplies(step: SetupStep, inputs: SetupInputs, readings: Map<String, Boolean?>): Boolean = when (step.rule) {
     StepWhen.ALWAYS -> true
     StepWhen.CALLS_MANAGED -> inputs.callsManaged
+    // Design 114b: the exact opposite, so `call_filter_early` and `call_filter` never apply together.
+    StepWhen.CALLS_UNMANAGED -> !inputs.callsManaged
     // The Sound bit too (the kid's ringtone picks write `Settings.System`), as the server's `write_settings_needed`.
     StepWhen.WRITE_SETTINGS_USED -> inputs.mask and (BIT_TOUCH or BIT_SOUND) != 0L || inputs.clockFormat != "system"
     StepWhen.AIRPLANE -> inputs.mask and BIT_AIRPLANE != 0L
@@ -273,7 +302,8 @@ enum class FlowButton { OPEN, LATER, SKIP, DID_IT }
 fun flowButtons(step: SetupStep, pageMissing: Boolean): List<FlowButton> {
     val on = if (step.need == StepNeed.REQUIRED) FlowButton.LATER else FlowButton.SKIP
     return when {
-        pageMissing -> listOf(on)
+        // Design 114b: done in the PWA - no page to open here.
+        pageMissing || step.inPwa -> listOf(on)
         step.readBy == StepReadBy.PARENT -> listOf(FlowButton.OPEN, FlowButton.DID_IT, FlowButton.SKIP)
         else -> listOf(FlowButton.OPEN, on)
     }
