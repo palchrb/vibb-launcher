@@ -67,6 +67,45 @@ class LoginBrowserTest {
         }
     }
 
+    /**
+     * A model of how Chrome weighs `URLBlocklist` against `URLAllowlist` (Chrome Enterprise help, "URL blocklist filter
+     * format"): of the filters matching the host - a leading dot that host only, else it and its subdomains, `*` any -
+     * those with the longest host; scheme and port must match; of those the longest path prefix; an allow wins a tie;
+     * no filter at a host, the host loses its left-most label and the search goes on; nothing matches: allowed.
+     */
+    private fun chromeAllows(blocklist: List<String>, allowlist: List<String>, url: String): Boolean {
+        val scheme = url.substringBefore("://", "").lowercase()
+        if (scheme != "http" && scheme != "https") {
+            // Only `scheme://*` filters name another scheme (`chrome://*`).
+            return allowlist.any { it == "$scheme://*" } || blocklist.none { it == "$scheme://*" }
+        }
+        val u = webUrlOf(url) ?: return false
+        data class Filter(val host: String, val exact: Boolean, val port: Int?, val path: String, val allow: Boolean)
+        fun parse(entry: String, allow: Boolean): Filter? {
+            if (entry == "*") return Filter("", false, null, "", allow)
+            if ("://" in entry) return null
+            val exact = entry.startsWith('.')
+            val rest = entry.removePrefix(".")
+            val slash = rest.indexOf('/')
+            val authority = if (slash >= 0) rest.substring(0, slash) else rest
+            val port = authority.substringAfter(':', "").toIntOrNull()
+            return Filter(authority.substringBefore(':').lowercase(), exact, port, if (slash >= 0) rest.substring(slash) else "", allow)
+        }
+        val filters = blocklist.mapNotNull { parse(it, false) } + allowlist.mapNotNull { parse(it, true) }
+        var host = u.host
+        while (true) {
+            val atHost = filters.filter {
+                it.host == host && (!it.exact || host == u.host) && (it.port == null || it.port == u.port) && u.path.startsWith(it.path)
+            }
+            if (atHost.isNotEmpty()) {
+                val longest = atHost.maxOf { it.path.length }
+                return atHost.filter { it.path.length == longest }.any { it.allow }
+            }
+            if (host.isEmpty()) return true
+            host = if ('.' in host) host.substringAfter('.') else ""
+        }
+    }
+
     /** PLAN "Captchas in the login window": the fixed set in every lockdown, each an entry as the PWA's rule takes it,
      * every captcha frame passes and no Google search or other page of those companies does (read as Chrome reads
      * `URLAllowlist`, [loginLinkMatches]); never a login link for the gate, never in Meldinger's plan. */
@@ -77,6 +116,23 @@ class LoginBrowserTest {
         for (path in LOGIN_CAPTCHA_PATHS) assertEquals(path, path, loginEntry(path))
         for (url in strings(captcha["frames"])!!) assertTrue(url, loginLinkMatchesAny(LOGIN_CAPTCHA_PATHS, url))
         for (url in strings(captcha["blocked"])!!) assertFalse(url, loginLinkMatchesAny(LOGIN_CAPTCHA_PATHS, url))
+        // Code QA L1: hCaptcha's and Arkose's own sites stay closed - with both lists, as Chrome weighs them.
+        assertEquals(strings(captcha["blocks"]), LOGIN_CAPTCHA_BLOCKS)
+        val blocklist = CHROME_BLOCKLIST + LOGIN_CAPTCHA_BLOCKS
+        val allowlist = chromeAllowlist(listOf("accounts.example.org"))
+        for (row in captcha.getValue("chrome").jsonArray.map { it.jsonObject }) {
+            val url = row.getValue("url").jsonPrimitive.content
+            assertEquals(url, row.getValue("allowed").jsonPrimitive.boolean, chromeAllows(blocklist, allowlist, url))
+        }
+        for (url in strings(captcha["frames"])!!) assertTrue(url, chromeAllows(blocklist, allowlist, url))
+        for (url in strings(captcha["blocked"])!!) assertFalse(url, chromeAllows(blocklist, allowlist, url))
+        // Code QA L2: what is written and compared is the whole allowlist, the parent's sites first, each once.
+        assertEquals(listOf("www.recaptcha.net/recaptcha") + (LOGIN_CAPTCHA_PATHS - "www.recaptcha.net/recaptcha"), chromeAllowlist(listOf("www.recaptcha.net/recaptcha")))
+        assertTrue(chromeTightened(chromeAllowlist(emptyList()), chromeAllowlist(emptyList()).drop(1)))
+        val config = java.io.File(listOf("src/main/java", "app/src/main/java").map { java.io.File(it) }.first { it.isDirectory }, "com/kidslauncher/mdm/server/BrowserConfig.kt").readText()
+        assertTrue("written = lockdown?.let { com.kidslauncher.mdm.logins.chromeAllowlist(it) }" in config)
+        assertTrue("chromeTightened(old, written)" in config)
+        assertTrue(".putString(KEY_WRITTEN, written?.let" in config)
         // Only Chrome's bundle uses it: the gate's login match reads the policy's sites alone.
         val src = listOf("src/main/java", "app/src/main/java").map { java.io.File(it) }.first { it.isDirectory }
         val users = src.walkTopDown().filter { it.isFile && it.name.endsWith(".kt") && "LOGIN_CAPTCHA_PATHS" in it.readText() }

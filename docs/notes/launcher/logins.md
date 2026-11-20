@@ -110,9 +110,14 @@ Part B's link gate and login window are design 119 (`docs/design/119-chrome-only
 - **Captchas** (2026-11-20, `jelly-round-2`; the user's Authentik needed reCAPTCHA v3 through www.recaptcha.net):
   `URLAllowlist` is the parent's sites and then the fixed `LOGIN_CAPTCHA_PATHS` (`logins/LoginBrowser.kt`), never shown
   in the PWA and not part of `login_windows.json`: `www.google.com/recaptcha`, `www.recaptcha.net/recaptcha`,
-  `www.gstatic.com/recaptcha`, `challenges.cloudflare.com`, `hcaptcha.com`, `arkoselabs.com`, `frcapi.com` - in
-  Chrome's format, where a host includes its subdomains (a leading dot would mean that host only), so Google is its
-  `/recaptcha` paths only. Why only these: `URLBlocklist` stops navigations and frames (a captcha's widget is a frame;
+  `www.gstatic.com/recaptcha`, `challenges.cloudflare.com`, `newassets.hcaptcha.com`, `assets.hcaptcha.com`,
+  `arkoselabs.com`, `frcapi.com` - in Chrome's format, where a host includes its subdomains (a leading dot would mean
+  that host only), so Google is its `/recaptcha` paths only. hCaptcha is its widget's frame hosts only (code QA L1);
+  Arkose keeps the domain (each customer has its own `*-api.` host) and `URLBlocklist` gains `LOGIN_CAPTCHA_BLOCKS`
+  (`.www.arkoselabs.com`, `.arkoselabs.com/`), which win by Chrome's longest-host-then-longest-path rule, so Arkose's own
+  site stays closed (`LoginBrowserTest`'s model of the rule, the `captcha.chrome` rows). `BrowserConfig` stores and
+  compares the allowlist really written, `chromeAllowlist` (code QA L2), so a captcha path dropped in an update is a
+  tightening too. Why only these: `URLBlocklist` stops navigations and frames (a captcha's widget is a frame;
   the user's own `www.recaptcha.net/recaptcha` entry was what fixed his login), not scripts, styles, fonts, images or
   XHR, so a login page's CDN hosts (Microsoft's `aadcdn.msauth.net`, Google's `ssl.gstatic.com`/`fonts.gstatic.com`,
   Apple's `appleid.cdn-apple.com`) load without an entry, and no preset carries helper hosts. The DNS filter has no

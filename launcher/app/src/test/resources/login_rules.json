@@ -160,10 +160,10 @@
   ],
   "bundles": [
     {"name": "the filter on, no role: secure DNS off only", "filter_on": true, "lockdown": null, "installed": ["com.android.chrome", "com.brave.browser", "org.example"], "expect": {"com.android.chrome": {"DnsOverHttpsMode": {"string": "off"}}, "com.brave.browser": {"DnsOverHttpsMode": {"string": "off"}}}},
-    {"name": "the role on with the filter: the lockdown and secure DNS off, Chrome only", "filter_on": true, "lockdown": ["accounts.google.com", "school.example/login"], "installed": ["com.android.chrome", "com.brave.browser"], "expect": {"com.android.chrome": {"URLBlocklist": {"string": "[\"*\",\"chrome://*\"]"}, "URLAllowlist": {"string": "[\"accounts.google.com\",\"school.example/login\",\"www.google.com/recaptcha\",\"www.recaptcha.net/recaptcha\",\"www.gstatic.com/recaptcha\",\"challenges.cloudflare.com\",\"hcaptcha.com\",\"arkoselabs.com\",\"frcapi.com\"]"}, "IncognitoModeAvailability": {"int": 1}, "BrowserSignin": {"int": 0}, "DefaultSearchProviderEnabled": {"bool": false}, "SearchSuggestEnabled": {"bool": false}, "ContextualSearchEnabled": {"bool": false}, "NTPContentSuggestionsEnabled": {"bool": false}, "PromotionalTabsEnabled": {"bool": false}, "AllowDinosaurEasterEgg": {"bool": false}, "TosDialogBehavior": {"int": 2}, "DownloadRestrictions": {"int": 3}, "PasswordManagerEnabled": {"bool": false}, "AutofillCreditCardEnabled": {"bool": false}, "PrintingEnabled": {"bool": false}, "ForceGoogleSafeSearch": {"bool": true}, "ForceYouTubeRestrict": {"int": 2}, "DeveloperToolsAvailability": {"int": 2}, "DnsOverHttpsMode": {"string": "off"}}, "com.brave.browser": {"DnsOverHttpsMode": {"string": "off"}}}},
-    {"name": "the role on, the filter off: the lockdown alone", "filter_on": false, "lockdown": ["accounts.google.com", "school.example/login"], "installed": ["com.android.chrome"], "expect": {"com.android.chrome": {"URLBlocklist": {"string": "[\"*\",\"chrome://*\"]"}, "URLAllowlist": {"string": "[\"accounts.google.com\",\"school.example/login\",\"www.google.com/recaptcha\",\"www.recaptcha.net/recaptcha\",\"www.gstatic.com/recaptcha\",\"challenges.cloudflare.com\",\"hcaptcha.com\",\"arkoselabs.com\",\"frcapi.com\"]"}, "IncognitoModeAvailability": {"int": 1}, "BrowserSignin": {"int": 0}, "DefaultSearchProviderEnabled": {"bool": false}, "SearchSuggestEnabled": {"bool": false}, "ContextualSearchEnabled": {"bool": false}, "NTPContentSuggestionsEnabled": {"bool": false}, "PromotionalTabsEnabled": {"bool": false}, "AllowDinosaurEasterEgg": {"bool": false}, "TosDialogBehavior": {"int": 2}, "DownloadRestrictions": {"int": 3}, "PasswordManagerEnabled": {"bool": false}, "AutofillCreditCardEnabled": {"bool": false}, "PrintingEnabled": {"bool": false}, "ForceGoogleSafeSearch": {"bool": true}, "ForceYouTubeRestrict": {"int": 2}, "DeveloperToolsAvailability": {"int": 2}}}},
-    {"name": "the parent's own www.recaptcha.net/recaptcha (Authentik): the captcha set doesn't list it twice", "filter_on": false, "lockdown": ["www.recaptcha.net/recaptcha"], "installed": ["com.android.chrome"], "expect": {"com.android.chrome": {"URLBlocklist": {"string": "[\"*\",\"chrome://*\"]"}, "URLAllowlist": {"string": "[\"www.recaptcha.net/recaptcha\",\"www.google.com/recaptcha\",\"www.gstatic.com/recaptcha\",\"challenges.cloudflare.com\",\"hcaptcha.com\",\"arkoselabs.com\",\"frcapi.com\"]"}, "IncognitoModeAvailability": {"int": 1}, "BrowserSignin": {"int": 0}, "DefaultSearchProviderEnabled": {"bool": false}, "SearchSuggestEnabled": {"bool": false}, "ContextualSearchEnabled": {"bool": false}, "NTPContentSuggestionsEnabled": {"bool": false}, "PromotionalTabsEnabled": {"bool": false}, "AllowDinosaurEasterEgg": {"bool": false}, "TosDialogBehavior": {"int": 2}, "DownloadRestrictions": {"int": 3}, "PasswordManagerEnabled": {"bool": false}, "AutofillCreditCardEnabled": {"bool": false}, "PrintingEnabled": {"bool": false}, "ForceGoogleSafeSearch": {"bool": true}, "ForceYouTubeRestrict": {"int": 2}, "DeveloperToolsAvailability": {"int": 2}}}},
-    {"name": "the role on with no sites: the captcha set alone", "filter_on": false, "lockdown": [], "installed": ["com.android.chrome"], "expect": {"com.android.chrome": {"URLBlocklist": {"string": "[\"*\",\"chrome://*\"]"}, "URLAllowlist": {"string": "[\"www.google.com/recaptcha\",\"www.recaptcha.net/recaptcha\",\"www.gstatic.com/recaptcha\",\"challenges.cloudflare.com\",\"hcaptcha.com\",\"arkoselabs.com\",\"frcapi.com\"]"}, "IncognitoModeAvailability": {"int": 1}, "BrowserSignin": {"int": 0}, "DefaultSearchProviderEnabled": {"bool": false}, "SearchSuggestEnabled": {"bool": false}, "ContextualSearchEnabled": {"bool": false}, "NTPContentSuggestionsEnabled": {"bool": false}, "PromotionalTabsEnabled": {"bool": false}, "AllowDinosaurEasterEgg": {"bool": false}, "TosDialogBehavior": {"int": 2}, "DownloadRestrictions": {"int": 3}, "PasswordManagerEnabled": {"bool": false}, "AutofillCreditCardEnabled": {"bool": false}, "PrintingEnabled": {"bool": false}, "ForceGoogleSafeSearch": {"bool": true}, "ForceYouTubeRestrict": {"int": 2}, "DeveloperToolsAvailability": {"int": 2}}}},
+    {"name": "the role on with the filter: the lockdown and secure DNS off, Chrome only", "filter_on": true, "lockdown": ["accounts.google.com", "school.example/login"], "installed": ["com.android.chrome", "com.brave.browser"], "expect": {"com.android.chrome": {"URLBlocklist": {"string": "[\"*\",\"chrome://*\",\".www.arkoselabs.com\",\".arkoselabs.com/\"]"}, "URLAllowlist": {"string": "[\"accounts.google.com\",\"school.example/login\",\"www.google.com/recaptcha\",\"www.recaptcha.net/recaptcha\",\"www.gstatic.com/recaptcha\",\"challenges.cloudflare.com\",\"newassets.hcaptcha.com\",\"assets.hcaptcha.com\",\"arkoselabs.com\",\"frcapi.com\"]"}, "IncognitoModeAvailability": {"int": 1}, "BrowserSignin": {"int": 0}, "DefaultSearchProviderEnabled": {"bool": false}, "SearchSuggestEnabled": {"bool": false}, "ContextualSearchEnabled": {"bool": false}, "NTPContentSuggestionsEnabled": {"bool": false}, "PromotionalTabsEnabled": {"bool": false}, "AllowDinosaurEasterEgg": {"bool": false}, "TosDialogBehavior": {"int": 2}, "DownloadRestrictions": {"int": 3}, "PasswordManagerEnabled": {"bool": false}, "AutofillCreditCardEnabled": {"bool": false}, "PrintingEnabled": {"bool": false}, "ForceGoogleSafeSearch": {"bool": true}, "ForceYouTubeRestrict": {"int": 2}, "DeveloperToolsAvailability": {"int": 2}, "DnsOverHttpsMode": {"string": "off"}}, "com.brave.browser": {"DnsOverHttpsMode": {"string": "off"}}}},
+    {"name": "the role on, the filter off: the lockdown alone", "filter_on": false, "lockdown": ["accounts.google.com", "school.example/login"], "installed": ["com.android.chrome"], "expect": {"com.android.chrome": {"URLBlocklist": {"string": "[\"*\",\"chrome://*\",\".www.arkoselabs.com\",\".arkoselabs.com/\"]"}, "URLAllowlist": {"string": "[\"accounts.google.com\",\"school.example/login\",\"www.google.com/recaptcha\",\"www.recaptcha.net/recaptcha\",\"www.gstatic.com/recaptcha\",\"challenges.cloudflare.com\",\"newassets.hcaptcha.com\",\"assets.hcaptcha.com\",\"arkoselabs.com\",\"frcapi.com\"]"}, "IncognitoModeAvailability": {"int": 1}, "BrowserSignin": {"int": 0}, "DefaultSearchProviderEnabled": {"bool": false}, "SearchSuggestEnabled": {"bool": false}, "ContextualSearchEnabled": {"bool": false}, "NTPContentSuggestionsEnabled": {"bool": false}, "PromotionalTabsEnabled": {"bool": false}, "AllowDinosaurEasterEgg": {"bool": false}, "TosDialogBehavior": {"int": 2}, "DownloadRestrictions": {"int": 3}, "PasswordManagerEnabled": {"bool": false}, "AutofillCreditCardEnabled": {"bool": false}, "PrintingEnabled": {"bool": false}, "ForceGoogleSafeSearch": {"bool": true}, "ForceYouTubeRestrict": {"int": 2}, "DeveloperToolsAvailability": {"int": 2}}}},
+    {"name": "the parent's own www.recaptcha.net/recaptcha (Authentik): the captcha set doesn't list it twice", "filter_on": false, "lockdown": ["www.recaptcha.net/recaptcha"], "installed": ["com.android.chrome"], "expect": {"com.android.chrome": {"URLBlocklist": {"string": "[\"*\",\"chrome://*\",\".www.arkoselabs.com\",\".arkoselabs.com/\"]"}, "URLAllowlist": {"string": "[\"www.recaptcha.net/recaptcha\",\"www.google.com/recaptcha\",\"www.gstatic.com/recaptcha\",\"challenges.cloudflare.com\",\"newassets.hcaptcha.com\",\"assets.hcaptcha.com\",\"arkoselabs.com\",\"frcapi.com\"]"}, "IncognitoModeAvailability": {"int": 1}, "BrowserSignin": {"int": 0}, "DefaultSearchProviderEnabled": {"bool": false}, "SearchSuggestEnabled": {"bool": false}, "ContextualSearchEnabled": {"bool": false}, "NTPContentSuggestionsEnabled": {"bool": false}, "PromotionalTabsEnabled": {"bool": false}, "AllowDinosaurEasterEgg": {"bool": false}, "TosDialogBehavior": {"int": 2}, "DownloadRestrictions": {"int": 3}, "PasswordManagerEnabled": {"bool": false}, "AutofillCreditCardEnabled": {"bool": false}, "PrintingEnabled": {"bool": false}, "ForceGoogleSafeSearch": {"bool": true}, "ForceYouTubeRestrict": {"int": 2}, "DeveloperToolsAvailability": {"int": 2}}}},
+    {"name": "the role on with no sites: the captcha set alone", "filter_on": false, "lockdown": [], "installed": ["com.android.chrome"], "expect": {"com.android.chrome": {"URLBlocklist": {"string": "[\"*\",\"chrome://*\",\".www.arkoselabs.com\",\".arkoselabs.com/\"]"}, "URLAllowlist": {"string": "[\"www.google.com/recaptcha\",\"www.recaptcha.net/recaptcha\",\"www.gstatic.com/recaptcha\",\"challenges.cloudflare.com\",\"newassets.hcaptcha.com\",\"assets.hcaptcha.com\",\"arkoselabs.com\",\"frcapi.com\"]"}, "IncognitoModeAvailability": {"int": 1}, "BrowserSignin": {"int": 0}, "DefaultSearchProviderEnabled": {"bool": false}, "SearchSuggestEnabled": {"bool": false}, "ContextualSearchEnabled": {"bool": false}, "NTPContentSuggestionsEnabled": {"bool": false}, "PromotionalTabsEnabled": {"bool": false}, "AllowDinosaurEasterEgg": {"bool": false}, "TosDialogBehavior": {"int": 2}, "DownloadRestrictions": {"int": 3}, "PasswordManagerEnabled": {"bool": false}, "AutofillCreditCardEnabled": {"bool": false}, "PrintingEnabled": {"bool": false}, "ForceGoogleSafeSearch": {"bool": true}, "ForceYouTubeRestrict": {"int": 2}, "DeveloperToolsAvailability": {"int": 2}}}},
     {"name": "a pause lifts the lockdown and the filter: empty", "filter_on": false, "lockdown": null, "installed": ["com.android.chrome"], "expect": {"com.android.chrome": {}}},
     {"name": "Chrome absent: nothing for it", "filter_on": true, "lockdown": ["accounts.google.com", "school.example/login"], "installed": ["com.brave.browser"], "expect": {"com.brave.browser": {"DnsOverHttpsMode": {"string": "off"}}}}],
   "plans": [
@@ -271,7 +271,8 @@
           "www.recaptcha.net/recaptcha",
           "www.gstatic.com/recaptcha",
           "challenges.cloudflare.com",
-          "hcaptcha.com",
+          "newassets.hcaptcha.com",
+          "assets.hcaptcha.com",
           "arkoselabs.com",
           "frcapi.com"
       ],
@@ -283,7 +284,6 @@
           "https://www.gstatic.com/recaptcha/releases/v/recaptcha__nb.js",
           "https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/b/turnstile/if/ov2/av0/rcv/x/0x4AAA/auto/fbE/new/normal",
           "https://newassets.hcaptcha.com/captcha/v1/abc/static/hcaptcha.html#frame=checkbox",
-          "https://js.hcaptcha.com/1/api.js",
           "https://client-api.arkoselabs.com/fc/gc/?token=x",
           "https://roblox-api.arkoselabs.com/v2/1.0/enforcement.html",
           "https://global.frcapi.com/api/v2/captcha/widget"
@@ -301,7 +301,69 @@
           "https://dash.cloudflare.com/",
           "https://notcaptcha.example/hcaptcha.com",
           "https://hcaptcha.com.evil.example/",
-          "https://friendlycaptcha.com/"
+          "https://friendlycaptcha.com/",
+          "https://hcaptcha.com/",
+          "https://www.hcaptcha.com/privacy",
+          "https://dashboard.hcaptcha.com/signup?type=accessibility",
+          "https://docs.hcaptcha.com/"
+      ],
+      "blocks": [
+          ".www.arkoselabs.com",
+          ".arkoselabs.com/"
+      ],
+      "chrome": [
+          {
+              "url": "https://client-api.arkoselabs.com/v2/key/enforcement.html",
+              "allowed": true
+          },
+          {
+              "url": "https://roblox-api.arkoselabs.com/v2/1.0/enforcement.html",
+              "allowed": true
+          },
+          {
+              "url": "https://iframe.arkoselabs.com/key/index.html",
+              "allowed": true
+          },
+          {
+              "url": "https://www.arkoselabs.com/",
+              "allowed": false
+          },
+          {
+              "url": "https://www.arkoselabs.com/privacy-policy",
+              "allowed": false
+          },
+          {
+              "url": "https://arkoselabs.com/",
+              "allowed": false
+          },
+          {
+              "url": "https://arkoselabs.com/privacy",
+              "allowed": false
+          },
+          {
+              "url": "https://newassets.hcaptcha.com/captcha/v1/abc/static/hcaptcha.html",
+              "allowed": true
+          },
+          {
+              "url": "https://www.hcaptcha.com/",
+              "allowed": false
+          },
+          {
+              "url": "https://www.google.com/recaptcha/api2/anchor?k=key",
+              "allowed": true
+          },
+          {
+              "url": "https://www.google.com/search?q=x",
+              "allowed": false
+          },
+          {
+              "url": "https://accounts.google.com/",
+              "allowed": false
+          },
+          {
+              "url": "chrome://flags",
+              "allowed": false
+          }
       ]
   }
 }

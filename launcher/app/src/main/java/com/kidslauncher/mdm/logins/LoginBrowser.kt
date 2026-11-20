@@ -49,22 +49,39 @@ val LOGIN_CAPTCHA_PATHS: List<String> = listOf(
     "www.gstatic.com/recaptcha",
     // Cloudflare Turnstile.
     "challenges.cloudflare.com",
-    // hCaptcha (newassets., api., js., imgs. ...).
-    "hcaptcha.com",
-    // Arkose Labs (client-api. and the per-customer *-api. hosts; Roblox, Microsoft).
+    // hCaptcha: only its widget's frame hosts (the default asset host and the older one; its script and API calls are
+    // subresources), never hcaptcha.com's own site or dashboard (code QA L1).
+    "newassets.hcaptcha.com",
+    "assets.hcaptcha.com",
+    // Arkose Labs: client-api. and each customer's own *-api. host (Roblox, Microsoft, GitHub ...), which can't be
+    // listed one by one - so the domain, with its own site blocked by [LOGIN_CAPTCHA_BLOCKS].
     "arkoselabs.com",
-    // Friendly Captcha v2 (global., eu. ...).
+    // Friendly Captcha v2 (global., eu. ...): an API domain with no site of its own.
     "frcapi.com",
 )
 
 /**
+ * What [LOGIN_CAPTCHA_PATHS] opens too much of, blocked again in `URLBlocklist` (code QA L1): Arkose Labs' own site,
+ * `www.arkoselabs.com` and the bare `arkoselabs.com`. Chrome picks the filter with the longest host match, then the
+ * longest path, and an allow only wins a full tie: `.www.arkoselabs.com` (that host only) is longer than
+ * `arkoselabs.com`, and `.arkoselabs.com/` matches the bare host as long and with a longer path ("/" against none) -
+ * while `client-api.arkoselabs.com` matches neither and stays allowed. Pinned by `login_rules.json`'s `captcha` rows
+ * through a model of that rule (`LoginBrowserTest`).
+ */
+val LOGIN_CAPTCHA_BLOCKS: List<String> = listOf(".www.arkoselabs.com", ".arkoselabs.com/")
+
+/** The lockdown's `URLAllowlist`: the parent's [hosts] (each through [loginEntry]) and then [LOGIN_CAPTCHA_PATHS] -
+ * what [chromeTightened] compares (code QA L2). */
+fun chromeAllowlist(hosts: List<String>): List<String> = (hosts + LOGIN_CAPTCHA_PATHS).distinct()
+
+/**
  * The role's lockdown (§4.1's table), each value in its Bundle type: strings (the two lists as JSON arrays in a
  * string, Chrome's schema), ints (CHOICE) and booleans. [hosts] are the policy's sites, each through [loginEntry];
- * the allowlist is they and then [LOGIN_CAPTCHA_PATHS].
+ * the allowlist is [chromeAllowlist], the blocklist [CHROME_BLOCKLIST] and [LOGIN_CAPTCHA_BLOCKS].
  */
 fun chromeLockdown(hosts: List<String>): Map<String, Any> = linkedMapOf(
-    ChromePolicy.URL_BLOCKLIST to JsonArray(CHROME_BLOCKLIST.map(::JsonPrimitive)).toString(),
-    ChromePolicy.URL_ALLOWLIST to JsonArray((hosts + LOGIN_CAPTCHA_PATHS).distinct().map(::JsonPrimitive)).toString(),
+    ChromePolicy.URL_BLOCKLIST to JsonArray((CHROME_BLOCKLIST + LOGIN_CAPTCHA_BLOCKS).map(::JsonPrimitive)).toString(),
+    ChromePolicy.URL_ALLOWLIST to JsonArray(chromeAllowlist(hosts).map(::JsonPrimitive)).toString(),
     ChromePolicy.INCOGNITO to 1,
     ChromePolicy.BROWSER_SIGNIN to 0,
     ChromePolicy.SEARCH_PROVIDER to false,

@@ -264,5 +264,9 @@ overlay. Recheck with the `cmd overlay lookup` line below on a new Android or Pl
   <no resource>` - the platform's string has no resource of that name on 16, so on the Jelly Star (OEM placeholder)
   neither named anything, which is the `null`. Here it still resolves to Play services (never pinned, as before);
   `com.android.credentialmanager` is an installed system app on the image.
+- **Owed on the Jelly Star, the selector package's surface** (code QA L3): `adb shell dumpsys package
+  com.android.credentialmanager` - only `CredentialSelectorActivity` exported, guarded by
+  `android.permission.LAUNCH_CREDENTIAL_SELECTOR` (signature), so an allowed app can't start it by itself; anything
+  else exported there is a finding before the pin ships.
 - **Owed on the Jelly Star:** after the next release, the log line's two raw values, and a Bitwarden passkey in the
   login window with the kiosk on.
