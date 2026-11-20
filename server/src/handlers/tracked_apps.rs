@@ -357,7 +357,7 @@ fn matching_releases(
     filter: &AssetFilter,
     tag_prefix: Option<&str>,
 ) -> Vec<(GithubRelease, ReleaseAsset)> {
-    releases
+    let mut matching: Vec<(GithubRelease, ReleaseAsset)> = releases
         .into_iter()
         .filter(|r| !r.draft && (include_prereleases || !r.prerelease))
         .filter(|r| release_allowed(&r.tag_name, tag_prefix))
@@ -366,7 +366,20 @@ fn matching_releases(
             let asset = r.assets.swap_remove(index);
             Some((r, asset))
         })
-        .collect()
+        .collect();
+    // GitHub's list is not newest-first by publication (2026-11-20: `launcher-v0.41.0`, published
+    // 08:43, came before `launcher-v0.42.0-rc.1`, published 14:53, so Check Now kept saying "no new
+    // version"): newest published first, a release without a readable time last, ties in GitHub's order.
+    matching.sort_by_key(|(r, _)| std::cmp::Reverse(published_instant(r)));
+    matching
+}
+
+/// When a release was published, `None` when GitHub gave no readable time.
+fn published_instant(release: &GithubRelease) -> Option<chrono::DateTime<chrono::Utc>> {
+    let at = release.published_at.as_deref()?;
+    chrono::DateTime::parse_from_rfc3339(at)
+        .ok()
+        .map(|t| t.with_timezone(&chrono::Utc))
 }
 
 /// The newest of [matching_releases].
@@ -5780,6 +5793,51 @@ mod tests {
         let (r, a) =
             newest_matching_release(monorepo(), true, &AssetFilter::FirstApk, None).unwrap();
         assert_eq!((r.tag_name.as_str(), a.id), ("launcher-v0.31.0-rc.1", 3));
+    }
+
+    /// GitHub's list as it was on 2026-11-20: the stable launcher-v0.41.0 (published 08:43) listed
+    /// above launcher-v0.42.0-rc.1 (published 14:53). With prereleases the RC is the newest; a release
+    /// without a readable time goes last; without prereleases the stable one stays.
+    #[test]
+    fn the_newest_published_wins_whatever_githubs_order() {
+        let at = |tag: &str, pre: bool, id: i64, published: Option<&str>| GithubRelease {
+            published_at: published.map(str::to_string),
+            ..release(tag, pre, &[(id, "kids-launcher-mdm.apk")])
+        };
+        let list = || {
+            vec![
+                at("launcher-v0.41.0", false, 1, Some("2026-11-20T08:43:10Z")),
+                at("launcher-v0.40.0", false, 9, None),
+                at(
+                    "launcher-v0.42.0-rc.1",
+                    true,
+                    2,
+                    Some("2026-11-20T14:53:40Z"),
+                ),
+                at(
+                    "launcher-v0.41.0-rc.7",
+                    true,
+                    3,
+                    Some("2026-11-20T08:23:23Z"),
+                ),
+            ]
+        };
+        let tags = |pre: bool| {
+            matching_releases(list(), pre, &AssetFilter::FirstApk, Some("launcher-v"))
+                .into_iter()
+                .map(|(r, _)| r.tag_name)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            tags(true),
+            [
+                "launcher-v0.42.0-rc.1",
+                "launcher-v0.41.0",
+                "launcher-v0.41.0-rc.7",
+                "launcher-v0.40.0"
+            ]
+        );
+        assert_eq!(tags(false), ["launcher-v0.41.0", "launcher-v0.40.0"]);
     }
 
     /// Design 21: a music-v* release (a newer RC and a stable one) sits above the launcher's. The

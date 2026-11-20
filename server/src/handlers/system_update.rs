@@ -19,13 +19,13 @@ struct Release {
 
 /// The repo is a monorepo that also publishes the launcher (`launcher-v*`, and those are the
 /// ones GitHub marks "latest"), so this reads the release *list* and takes the newest stable
-/// `server-vX.Y.Z` - never `/releases/latest`. Returns it as `vX.Y.Z`, the form of
+/// `server-vX.Y.Z` (the highest, wherever GitHub lists it) - never `/releases/latest`. Returns it as `vX.Y.Z`, the form of
 /// `crate::APP_VERSION`.
 fn newest_server_version(releases: &[Release]) -> Option<String> {
     releases
         .iter()
         .filter(|r| !r.draft && !r.prerelease)
-        .find_map(|r| {
+        .filter_map(|r| {
             let version = r.tag_name.strip_prefix(SERVER_RELEASE_TAG_PREFIX)?;
             let mut parts = version.split('.');
             let numeric = parts
@@ -37,6 +37,9 @@ fn newest_server_version(releases: &[Release]) -> Option<String> {
                 && parts.next().is_none();
             numeric.then(|| format!("v{version}"))
         })
+        // The highest, not the first: GitHub's list is not newest-first (2026-11-20, a stable launcher
+        // listed above a newer RC).
+        .max_by_key(|v| parse_version(v))
 }
 
 /// `vX.Y.Z` (or `X.Y.Z`) as a comparable triple; anything else is `None`.
@@ -203,6 +206,16 @@ mod tests {
         assert_eq!(
             newest_server_version(&[release("launcher-v1.0.0", false, false)]),
             None
+        );
+        // The highest wherever GitHub lists it.
+        let unordered = [
+            release("server-v0.18.6", false, false),
+            release("server-v0.18.10", false, false),
+            release("server-v0.18.9", false, false),
+        ];
+        assert_eq!(
+            newest_server_version(&unordered).as_deref(),
+            Some("v0.18.10")
         );
     }
 
