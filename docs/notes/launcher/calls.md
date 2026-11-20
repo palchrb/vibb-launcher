@@ -833,7 +833,11 @@ Meldinger rows". What was decided (the design left it open):
   its notification when nothing is unread there; the thread in front is left out. A notification posted before the
   rule stays as it was during it. The missed-call notification follows the same rule (`noticeStepUnderRule`: an
   emergency contact's call can be missed under such a rule; its post waits under `rule_waiting` in its prefs, and the
-  release's pass posts it with `alert = false`, counting it as told).
+  release's pass posts it with `alert = false`, counting it as told). Code QA of the round: a waiting missed-call post
+  marks its calls alerted in the same commit (`alertedAfterWait`), so the relearn at the rule's end, which runs before
+  the release, posts quietly instead of ringing; a release whose post fails waits again (both sides); a setup that ran
+  before `isUserUnlocked()` releases at `ACTION_USER_UNLOCKED` (`Application.releaseWaitingAtUnlock`). Meldinger has no
+  such pass: after a wait only a new message posts with an alert, and that alert is the new message's own.
 - **The level** (design 82 D4, `docs/design/82-meldinger-as-an-app.md`): the parent's choice for Meldinger on the
   lock is the policy's `lock_glance.sms` - `GlancePolicy.sms` (`badges/GlanceRows.kt`: `OFF`, `NAME`, `TEXT`) - and
   one pure function gives it to both readers, `smsLockLevel(sms)` (`sms/SmsGlance.kt`): the word as it is, whatever

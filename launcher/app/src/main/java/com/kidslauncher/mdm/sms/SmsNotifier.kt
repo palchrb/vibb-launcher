@@ -95,6 +95,7 @@ object SmsNotifier {
      * are what is unread there ([SmsEngine.notifiable]). With [reaction] (design 81 D12) [message] is a reaction from
      * someone else: its own channel's short buzz, silent under any Do Not Disturb (fail closed),
      * and only while its own line is on the notification ([smsReactionShown]) - else a quiet rebuild ([afterReaction]).
+     * Returns false when the post failed (no permission, an error) - the release after a rule tries it again.
      */
     fun notify(
         context: Context,
@@ -104,7 +105,7 @@ object SmsNotifier {
         silent: Boolean,
         wake: Boolean = true,
         reaction: Boolean = false,
-    ) {
+    ): Boolean {
         try {
             createChannels(context)
             val id = com.kidslauncher.mdm.sms.engine.ConversationId(conversation.id)
@@ -112,7 +113,7 @@ object SmsNotifier {
             if (reaction && !smsReactionShown(lines, message.id)) {
                 // Read meanwhile, or no room beside five unread messages (verification V1): no buzz without its line.
                 afterReaction(context, engine, conversation.id)
-                return
+                return true
             }
             val me = Person.Builder().setName(context.getString(R.string.sms_notification_me)).build()
             val sender = senderPerson(context, conversation)
@@ -156,11 +157,13 @@ object SmsNotifier {
             val manager = NotificationManagerCompat.from(context)
             manager.notify(conversation.id, MESSAGES_NOTIFICATION_ID, builder.build())
             if (wake) wakeIfAlerts(context, manager, channel, quiet, conversation.id, message.seq, unreadAfter = now?.unread ?: 0)
+            return true
         } catch (e: SecurityException) {
             Log.w(LOG_TAG, "No permission to notify")
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Couldn't post the message notification", e)
         }
+        return false
     }
 
     /**
@@ -199,13 +202,18 @@ object SmsNotifier {
 
     /**
      * A group MMS left [conversationId] (D12; step 3b's code QA L8): that conversation's notification is rebuilt from
-     * what is still unread there, quietly and without a wake - or goes when nothing is. Engine thread.
+     * what is still unread there, quietly and without a wake - or goes when nothing is. Engine thread. False when the
+     * post failed ([notify]).
      */
-    fun afterMove(context: Context, engine: SmsEngine, conversationId: String) {
+    fun afterMove(context: Context, engine: SmsEngine, conversationId: String): Boolean {
         val id = com.kidslauncher.mdm.sms.engine.ConversationId(conversationId)
         val row = engine.conversationRow(id)
         val newest = engine.notifiable(id, SHOWN_MESSAGES).lastOrNull()?.message
-        if (row == null || newest == null) cancel(context, conversationId) else notify(context, engine, row, newest, silent = true, wake = false)
+        if (row == null || newest == null) {
+            cancel(context, conversationId)
+            return true
+        }
+        return notify(context, engine, row, newest, silent = true, wake = false)
     }
 
     /**

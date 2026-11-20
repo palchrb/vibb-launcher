@@ -390,6 +390,20 @@ class Application : android.app.Application() {
         if (com.kidslauncher.mdm.calls.CallPolicyStore.userUnlocked(this)) ensureUnlockedInit()
     }
 
+    /** ACTION_USER_UNLOCKED once: [com.kidslauncher.mdm.timerules.RuleWaitingNotices.release] (idempotent: a second call
+     * finds nothing waiting). Checked once more after registering, so an unlock in between isn't missed. */
+    private fun releaseWaitingAtUnlock() {
+        val app = this
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                runCatching { app.unregisterReceiver(this) }
+                com.kidslauncher.mdm.timerules.RuleWaitingNotices.release(app)
+            }
+        }
+        ContextCompat.registerReceiver(this, receiver, IntentFilter(Intent.ACTION_USER_UNLOCKED), ContextCompat.RECEIVER_NOT_EXPORTED)
+        if (com.kidslauncher.mdm.calls.CallPolicyStore.userUnlocked(this)) receiver.onReceive(null, null)
+    }
+
     private fun initRest() {
         // Design 98 §2.2: a Flymodus route's window left open by a process death or a reboot is put back before
         // anything else and before the first sync (the anchor's start sync waits on apply()'s monitor), and the
@@ -478,6 +492,9 @@ class Application : android.app.Application() {
                 com.kidslauncher.mdm.server.RelockTrigger.TIMER
             },
         )
+        // Code QA L1 (rule-quiet-glance): the unlocked setup can run while the user is still "unlocking" (the component
+        // factory's proof), when both releases of what waited for a rule without calls bail - they go again at the unlock.
+        if (!com.kidslauncher.mdm.calls.CallPolicyStore.userUnlocked(this)) releaseWaitingAtUnlock()
         // Design 24b's fix round (QA High 1): an app that could read the parent PIN, at every start.
         com.kidslauncher.mdm.server.ForeignAccess.checkInBackground(this)
 

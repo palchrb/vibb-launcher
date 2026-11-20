@@ -53,6 +53,31 @@ class MissedCallNoticeTest {
         assertEquals(NoticeStep.Keep, noticeStepUnderRule(released, callsBlocked = false, release = true))
     }
 
+    /** Code QA H1: 07:50 Mamma's call alerted and is left unread; 10:00 Pappa (an emergency contact) is missed under
+     * Skole - the post waits and its calls count as alerted; 14:00 the rule ends and the relearn (mayPost false, ours
+     * still shown with Mamma alone) posts first - quietly, never ringing or waking; a genuinely newer call still rings. */
+    @Test
+    fun `a pass after a wait never rings for the calls that waited (code QA H1)`() {
+        val mammaOnly = notice(missed("90000001", 50, id = 5))!!
+        val both = notice(missed("90000001", 50, id = 5), missed("90000002", 100, id = 7))!!
+        val waited = noticeStep(both, mayMarkRead = false, mayPost = true, shown = true, lastPosted = mammaOnly, unreadUpToId = 7, alertedUpToId = 5, newestLoggedId = 7)
+        assertEquals(NoticeStep.Post(both, alert = true), waited)
+        assertTrue(noticeWaits(waited, callsBlocked = true))
+        val alerted = alertedAfterWait(5, waited)
+        assertEquals(7L, alerted)
+        // The rule's end: the relearn's pass (not blocked, not the release) posts quietly.
+        val relearn = noticeStep(both, mayMarkRead = true, mayPost = false, shown = true, lastPosted = mammaOnly, unreadUpToId = 7, alertedUpToId = alerted, newestLoggedId = 7, mayClear = false)
+        assertEquals(NoticeStep.Post(both, alert = false), noticeStepUnderRule(relearn, callsBlocked = false, release = false))
+        // An update after a call likewise.
+        assertEquals(NoticeStep.Post(both, alert = false), noticeStep(both, true, mayPost = false, shown = true, lastPosted = mammaOnly, unreadUpToId = 7, alertedUpToId = alerted, newestLoggedId = 7))
+        // A newer call after the rule still rings.
+        val three = notice(missed("90000001", 50, id = 5), missed("90000002", 100, id = 7), missed("90000002", 200, id = 9))!!
+        assertEquals(NoticeStep.Post(three, alert = true), noticeStep(three, true, mayPost = true, shown = true, lastPosted = both, unreadUpToId = 9, alertedUpToId = alerted, newestLoggedId = 9))
+        // The bound never goes back, and a keep or a clear leaves it.
+        assertEquals(9L, alertedAfterWait(9, waited))
+        assertEquals(5L, alertedAfterWait(5, NoticeStep.Keep))
+    }
+
     @Test
     fun `one call from one contact`() {
         val result = notice(missed("90000002", 100, id = 7))

@@ -351,7 +351,8 @@ object SmsRuntime {
      * The user, 2026-11-20: calls may be allowed again (`RuleWaitingNotices.release`: every lock re-check and enforcement
      * pass - the rule's end, a lift, a pause, the override). Each waiting conversation is posted once, quietly - the silent
      * channel, no wake, no buzz - from what is still unread there, or its notification goes ([smsReleased],
-     * `SmsNotifier.afterMove`). The mark is cleared first, so a crash midway never posts twice. Nothing waiting: one pref
+     * `SmsNotifier.afterMove`). The mark is cleared first, so a crash midway never posts twice; a post that reports a
+     * failure waits again (code QA L2). Nothing waiting: one pref
      * read on the engine thread.
      */
     fun releaseAfterRule(context: Context) {
@@ -366,8 +367,10 @@ object SmsRuntime {
                 val released = smsReleased(waiting, blocked, threadInFront)
                 val engine = engine(app) ?: return@execute
                 SmsPrefs.ruleWaiting(app, emptySet())
-                for (id in released) SmsNotifier.afterMove(app, engine, id)
-                Log.i(LOG_TAG, "Released ${released.size} message notifications after a rule")
+                val failed = released.filterNot { id -> runCatching { SmsNotifier.afterMove(app, engine, id) }.getOrDefault(false) }
+                // Code QA L2: a post that failed waits again, for the next release (this thread alone writes the mark).
+                if (failed.isNotEmpty()) SmsPrefs.ruleWaiting(app, smsWaitingAfter(SmsPrefs.ruleWaiting(app), failed))
+                Log.i(LOG_TAG, "Released ${released.size - failed.size} message notifications after a rule, ${failed.size} failed")
             } catch (t: Throwable) {
                 recordError(app, "release: ${t.javaClass.simpleName}")
             }

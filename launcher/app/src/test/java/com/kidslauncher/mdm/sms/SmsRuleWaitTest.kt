@@ -64,5 +64,15 @@ class SmsRuleWaitTest {
         assertTrue(missed.contains("val step = noticeStepUnderRule(planned, blocked, release)"))
         assertTrue(missed.contains("val blocked = !release && com.kidslauncher.mdm.timerules.TimeRulesStore.callsBlockedNow()"))
         assertTrue(body(missed, "fun releaseAfterRule(").contains("recomputeNow(app, mayPost = true, mayClear = false, release = true)"))
+        // Code QA H1: the wait and its alerted bound in one commit.
+        val wait = missed.substringAfter("if (noticeWaits(planned, blocked)) {").substringBefore(".commit()")
+        assertTrue(wait, wait.contains(".putBoolean(KEY_RULE_WAITING, true)") && wait.contains(".putLong(KEY_ALERTED_UP_TO, alertedAfterWait("))
+        // Code QA L2: a release whose post failed waits again, on both sides.
+        assertTrue(missed.contains("} else if (release) {"))
+        assertTrue(body(runtime, "fun releaseAfterRule(").contains("if (failed.isNotEmpty()) SmsPrefs.ruleWaiting(app, smsWaitingAfter(SmsPrefs.ruleWaiting(app), failed))"))
+        // Code QA L1: a setup that ran before the user was unlocked releases at the unlock.
+        val application = code("Application.kt")
+        assertTrue(application.contains("if (!com.kidslauncher.mdm.calls.CallPolicyStore.userUnlocked(this)) releaseWaitingAtUnlock()"))
+        assertTrue(body(application, "private fun releaseWaitingAtUnlock()").contains("RuleWaitingNotices.release(app)"))
     }
 }

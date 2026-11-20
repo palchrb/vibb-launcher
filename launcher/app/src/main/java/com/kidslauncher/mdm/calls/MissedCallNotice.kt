@@ -194,6 +194,11 @@ fun noticeStepUnderRule(step: NoticeStep, callsBlocked: Boolean, release: Boolea
 /** Whether [step] (before [noticeStepUnderRule]) waits for the rule: the release must post it then. */
 fun noticeWaits(step: NoticeStep, callsBlocked: Boolean): Boolean = callsBlocked && step is NoticeStep.Post
 
+/** The alerted bound after [step] waited (code QA H1): its calls count as alerted, so no pass after the rule rings for
+ * them - only a call newer than them alerts. */
+fun alertedAfterWait(alertedUpToId: Long, step: NoticeStep): Long =
+    if (step is NoticeStep.Post) maxOf(alertedUpToId, step.notice.newestId) else alertedUpToId
+
 /** How long the call log is read back, and how long a dismissed mark is kept (14 days, [MissedCallsRepo]). */
 const val MISSED_CALL_LOG_WINDOW_MS = 14L * 24 * 60 * 60 * 1000
 

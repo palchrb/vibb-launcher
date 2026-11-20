@@ -234,9 +234,6 @@ class GlancePanel(
         }
     }
     private var rows: List<GlanceRow> = emptyList()
-
-    /** Dagen's reminder row is up, shown or kept back by the rule ([shownRows]): the "Neste" line yields to it. */
-    private var reminderUp = false
     private val rowViews = mutableListOf<ViewLockGlanceRowBinding>()
 
     /** A layout or a profile placement changed the page in this traversal: its frame is skipped (the next one is laid
@@ -1221,7 +1218,8 @@ class GlancePanel(
     private fun bindNext() {
         val next = calendar.next()
         // A reminder hidden by the rule still keeps the line back: the rule brings no event onto the glance that wasn't.
-        nextWanted = next?.takeIf { !reminderUp }?.let { line ->
+        // Read now, not from the bound rows (code QA L3: they wait while a row is held mid-swipe).
+        nextWanted = next?.takeIf { calendar.reminderRow() == null }?.let { line ->
             val time = ClockFormat.formatClock(activity, line.row.begin)
             activity.getString(if (line.tomorrow) R.string.glance_tomorrow else R.string.glance_next, line.row.title, time)
         }
@@ -1360,7 +1358,6 @@ class GlancePanel(
         // Design 77 §6.8: our Meldinger rows among them by time, read from the engine (GlanceReader skips ours).
         val sms = SmsGlance.shown(SmsHome.summary.glance.also { smsRows = it })
         val reminder = calendar.reminderRow()
-        reminderUp = reminder != null
         // The user, 2026-11-20: under a time rule (or the used-up budget) only what it allows - the rest waits unseen.
         return glanceRowsUnderLock(listOfNotNull(reminder) + glanceWithSms(kept, sms), rowLock)
     }

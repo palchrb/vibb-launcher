@@ -267,7 +267,13 @@ object MissedCallNotifier {
             if (!prefs.getBoolean(KEY_RULE_WAITING, false)) return@runThenDone
             if (com.kidslauncher.mdm.timerules.TimeRulesStore.callsBlockedNow()) return@runThenDone
             prefs.edit().putBoolean(KEY_RULE_WAITING, false).commit()
-            recomputeNow(app, mayPost = true, mayClear = false, release = true)
+            try {
+                recomputeNow(app, mayPost = true, mayClear = false, release = true)
+            } catch (e: Exception) {
+                // Code QA L2: a pass that failed waits again, for the next release.
+                prefs.edit().putBoolean(KEY_RULE_WAITING, true).commit()
+                throw e
+            }
         }
     }
 
@@ -307,7 +313,14 @@ object MissedCallNotifier {
         )
         // The user, 2026-11-20: nothing is posted under a rule without calls; it waits for the release.
         val blocked = !release && com.kidslauncher.mdm.timerules.TimeRulesStore.callsBlockedNow()
-        if (noticeWaits(planned, blocked)) prefs.edit().putBoolean(KEY_RULE_WAITING, true).commit()
+        // Code QA H1: the calls that wait count as alerted, in the same commit - no later pass (a relearn at the rule's
+        // end, after a call, the release) rings for them; a genuinely newer call still does.
+        if (noticeWaits(planned, blocked)) {
+            prefs.edit()
+                .putBoolean(KEY_RULE_WAITING, true)
+                .putLong(KEY_ALERTED_UP_TO, alertedAfterWait(prefs.getLong(KEY_ALERTED_UP_TO, 0L), planned))
+                .commit()
+        }
         val step = noticeStepUnderRule(planned, blocked, release)
         when (step) {
             NoticeStep.Keep -> Unit
@@ -329,6 +342,9 @@ object MissedCallNotifier {
                         // The release told the kid of these calls (quietly): a later pass doesn't alert for them.
                         .putLong(KEY_ALERTED_UP_TO, if (step.alert || release) step.notice.newestId else prefs.getLong(KEY_ALERTED_UP_TO, 0L))
                         .commit()
+                } else if (release) {
+                    // Code QA L2: the release's post failed - it waits again, for the next release.
+                    prefs.edit().putBoolean(KEY_RULE_WAITING, true).commit()
                 }
             }
         }
