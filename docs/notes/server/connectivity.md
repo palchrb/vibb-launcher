@@ -154,7 +154,9 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   the live mirror, the app-update scheduler and the external drive are gone, and Software Updates (`updates::page`,
   pure) shows versions only - in docker "Version X is out" with Watchtower (automatic, unchecked) or `./update-image.sh X.Y.Z`
   (the host script that checks the image's attestation before it pulls it by digest; privacy review 2026-11-17 H1,
-  both supported by the user's choice) behind its ⓘ, on a systemd install the `update.sh`
+  both supported by the user's choice; since 2026-11-19 also `--auto` on the host's `deploy/handy-update.timer`, the
+  newest stable release only after its attestation verifies, never from `latest`, never back - DEPLOY.md "Automatic,
+  verified updates", the page doesn't name it yet) behind its ⓘ, on a systemd install the `update.sh`
   command. Backups' Restore… restarts the container in docker and shows the SSH command on a systemd install.
   Image: distroless static nonroot (uid 65532) pinned by digest, a busybox stage seeds `data/` and `data/keys/`
   (0700) owned by 65532, `BIND_ADDR=127.0.0.1:3100`, `HEALTHCHECK` = `healthcheck`. CI `server-image` (only when the

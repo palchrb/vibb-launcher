@@ -1,0 +1,55 @@
+# The Vibb Phone server's automatic, verified image update (server/DEPLOY.md, "Docker", "Automatic, verified
+# updates"): update-image.sh --auto moves the container to the newest stable server-vX.Y.Z release only after its build
+# attestation verifies; a refused check changes nothing and this unit shows failed. Started by handy-update.timer.
+#
+# Install (as root): put GH_TOKEN in /etc/handy-update.env (root-only, 0600), copy this file and handy-update.timer to
+# /etc/systemd/system/, set WorkingDirectory and ExecStart below to your compose folder, then
+#   systemctl daemon-reload && systemctl enable --now handy-update.timer
+# Turn Watchtower off for this container first: the two must not fight over it.
+# Rootless docker: add User=<its user> and Environment=DOCKER_HOST=unix:///run/user/<uid>/docker.sock
+# XDG_RUNTIME_DIR=/run/user/<uid>, run `loginctl enable-linger <user>`, and give that user the folder.
+[Unit]
+Description=Vibb Phone server: verified image update (update-image.sh --auto)
+Documentation=https://github.com/palchrb/vibb-launcher/blob/main/server/DEPLOY.md
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+# The folder with compose.yaml, .env and update-image.sh - yours may differ.
+WorkingDirectory=/opt/handy
+ExecStart=/bin/bash /opt/handy/update-image.sh --auto
+# GH_TOKEN=... for `gh` (a fine-grained token, public repositories read-only, no permissions). Root-only:
+#   install -m 600 -o root -g root /dev/null /etc/handy-update.env && editor /etc/handy-update.env
+EnvironmentFile=/etc/handy-update.env
+# systemd sets no HOME for a root service: without these gh would keep its config, state and TUF cache in the compose
+# folder. /var/lib/handy-update and /var/cache/handy-update are made by systemd.
+StateDirectory=handy-update
+CacheDirectory=handy-update
+Environment=GH_CONFIG_DIR=/var/lib/handy-update/gh XDG_STATE_HOME=/var/lib/handy-update XDG_DATA_HOME=/var/lib/handy-update
+Environment=XDG_CACHE_HOME=/var/cache/handy-update GH_PROMPT_DISABLED=1 GH_NO_UPDATE_NOTIFIER=1
+# A slow pull on a small board; never hang until the next day.
+TimeoutStartSec=30min
+
+# Light hardening that still reaches docker. The docker socket is root's anyway (whoever can use it is root on the
+# host), so this is no sandbox: ProtectSystem=full makes only /usr, /boot, /efi and /etc read-only - /root, /home,
+# /var, /opt and /srv stay writable (the compose folder and /root/.docker, where buildx keeps its state). The rest
+# keeps the run away from the kernel's knobs, devices and new privileges. No ProtectHome: it would hide /root/.docker
+# and a compose folder under /home.
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=full
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+UMask=0077

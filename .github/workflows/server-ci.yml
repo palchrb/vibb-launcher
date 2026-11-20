@@ -98,6 +98,10 @@ jobs:
       # Cheap and always run: scripts/fake-homeserver.py (design 108's emulator gate, docs/testing/emulator.md §6ay)
       # against a loopback recorder. No network.
       run: python3 -I scripts/fake-homeserver.py --selftest
+    - name: The image update script's self-test
+      # Cheap and always run: server/deploy/update-image.sh (--auto's release pick, the version rules, .env's
+      # HANDY_VERSION and its atomic write) on canned data. No network, no docker; jq is on the runner.
+      run: bash server/deploy/update-image.sh --selftest
 
   server-build:
     needs: server-changes
