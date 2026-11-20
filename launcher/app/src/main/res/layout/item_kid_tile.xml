@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- One round tile of the home grid (an app, the phone book or Settings). Sizes come from
      gridMetrics (design 08: 60 dp icon at the mockup's 288 dp content width, GRID_LABEL_SP 11.5 sp label since 2026-11-20);
-     the frame is 4 dp taller than the icon so the unread badge can sit above it. The cell's
+     the frame is 4 dp taller than the icon so the unread badge can sit above it. The 22 dp badge is
+     centred on the icon circle's 45 degree point (circle centre (42,34), r 30 -> (63.2,12.8)): top|end with
+     marginEnd 10 dp and marginTop 2 dp; a wider "12"/"99+" pill grows inward (end-anchored). The cell's
      background is an oval-masked ripple and the icon has elevation (design 34 P2,
      HomeGridAdapter / PressFeedback); the frame doesn't clip the icon's shadow. The label is one
      line at every font scale (the Jelly Star's layout, 2026-11-20, GRID_LABEL_MAX_LINES): whole
@@ -34,7 +36,9 @@
         <TextView
             android:id="@+id/tile_badge"
             style="@style/KidBadge"
-            android:layout_gravity="top|end" />
+            android:layout_gravity="top|end"
+            android:layout_marginTop="2dp"
+            android:layout_marginEnd="10dp" />
     </FrameLayout>
 
     <TextView
