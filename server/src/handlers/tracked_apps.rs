@@ -3008,7 +3008,6 @@ fn catalog_row(
     phones: i64,
     set_up: i64,
     held: bool,
-    first_release: Option<String>,
     logos: &HashMap<String, String>,
     lang: Lang,
 ) -> CatalogRow {
@@ -3038,10 +3037,7 @@ fn catalog_row(
             "badge badge-red",
         ))
     } else if app.latest_release_tag.is_none() {
-        Some((
-            first_release.unwrap_or_else(|| t(lang, "device.apps.no_release").to_string()),
-            "badge",
-        ))
+        Some((t(lang, "device.apps.no_release").to_string(), "badge"))
     } else {
         None
     };
@@ -3189,8 +3185,6 @@ pub async fn list_apps(
             .unwrap_or_default()
             .into_iter()
             .collect();
-    let zone = crate::display_time::Zone::load(&state.db, lang).await;
-    let now = chrono::Utc::now();
     let mut apps: Vec<CatalogRow> = tracked
         .iter()
         .map(|app| {
@@ -3200,7 +3194,6 @@ pub async fn list_apps(
                 counts.get(&app.id).copied().unwrap_or(0),
                 set_up,
                 held.contains(&app.id),
-                first_release_text(app, app_wait(&state, app), &zone, now, lang),
                 &logos,
                 lang,
             )
@@ -3247,8 +3240,6 @@ struct TrackedAppAddTemplate {
     error_field: &'static str,
     /// Design 90: the hours a new release waits, as typed (48 suggested).
     release_wait_hours: String,
-    /// The first release waits too ([crate::catalog_holds::FIRST_RELEASE_WAITS]): the footer says so.
-    first_waits: bool,
 }
 crate::i18n::words!(TrackedAppAddTemplate);
 
@@ -3280,7 +3271,6 @@ pub async fn new_tracked_app_form(lang: Lang) -> impl IntoResponse {
             fdroid_package: String::new(),
             error_field: "",
             release_wait_hours: crate::catalog_holds::DEFAULT_WAIT_HOURS.to_string(),
-            first_waits: crate::catalog_holds::FIRST_RELEASE_WAITS,
         }
         .render()
         .unwrap(),
@@ -3455,7 +3445,6 @@ pub async fn create_tracked_app(
                 .get("release_wait_hours")
                 .cloned()
                 .unwrap_or_else(|| crate::catalog_holds::DEFAULT_WAIT_HOURS.to_string()),
-            first_waits: crate::catalog_holds::FIRST_RELEASE_WAITS,
         };
         return (StatusCode::BAD_REQUEST, Html(page.render().unwrap())).into_response();
     }
@@ -3543,8 +3532,6 @@ struct TrackedAppDetailTemplate {
     update: Option<UpdateGroup>,
     asks: Option<AsksRow>,
     wait: Option<WaitField>,
-    /// "First release reaches the phones … - or Update Now" in place of "No release yet".
-    first_release: Option<String>,
 }
 crate::i18n::words!(TrackedAppDetailTemplate);
 
@@ -3897,7 +3884,6 @@ async fn render_detail_full(
         lang,
     );
     let asks = asks_row(&app, lang);
-    let first_release = first_release_text(&app, app_wait(state, &app), &zone, now, lang);
     let wait = app_wait(state, &app).map(|hours| match extras.wait_refused {
         Some((typed, error)) => WaitField {
             value: typed,
@@ -3962,7 +3948,6 @@ async fn render_detail_full(
             update,
             asks,
             wait,
-            first_release,
         }
         .render()
         .unwrap(),
@@ -4043,28 +4028,6 @@ fn asks_row(app: &TrackedApp, lang: Lang) -> Option<AsksRow> {
         )
     };
     Some(AsksRow { value, names })
-}
-
-/// "First release reaches the phones Thu 14:02 - or Update Now" (design 90, the coordinator's QA):
-/// an app with no served release whose first release waits; `None` otherwise.
-fn first_release_text(
-    app: &TrackedApp,
-    wait: Option<i64>,
-    zone: &crate::display_time::Zone,
-    now: chrono::DateTime<chrono::Utc>,
-    lang: Lang,
-) -> Option<String> {
-    if app.latest_release_tag.is_some() || !crate::catalog_holds::FIRST_RELEASE_WAITS {
-        return None;
-    }
-    app.waiting_release_tag.as_ref()?;
-    let since = crate::display_time::parse_db_utc(app.waiting_release_since.as_deref()?)?;
-    let ready = crate::catalog_holds::ready_at(since, wait?);
-    Some(t_params(
-        lang,
-        "apps.first_release",
-        &[("when", &zone.until(ready, now))],
-    ))
 }
 
 /// The `#update` group's content; `None` when nothing is held, waiting or declined and no answer
@@ -7941,6 +7904,47 @@ mod tests {
             1,
             "served: the found row only"
         );
+    }
+
+    /// The user, 2026-11-20: a first release reaches the phones at once - also one an older server
+    /// stored as waiting - and only the next release waits the app's hours.
+    #[tokio::test]
+    async fn a_first_release_is_served_at_once_and_the_second_waits() {
+        let app = crate::tests::TestApp::new().await;
+        let (repo, fake) = crate::fdroid::tests::fake_repo("127.0.0.1").await;
+        let (apk, sha) = fixture_apk();
+        serve_fixture(&fake, "me.vibb.testfixture", &sha, &apk);
+        added_now(&fake, "me.vibb.testfixture", &sha);
+        let id = fdroid_row(&app, &repo, "me.vibb.testfixture").await;
+        // Added before this rule: the first release waits, nothing served yet.
+        sqlx::query(
+            "UPDATE tracked_apps SET release_wait_hours = 48, waiting_release_tag = 'v1.0.57', \
+             waiting_release_asset_id = 57, waiting_release_since = '2026-11-20T10:00:00Z' \
+             WHERE id = ?",
+        )
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+        sync_one_app(&app.state, id, false).await.unwrap();
+        let row = row_of(&app, id).await;
+        assert_eq!(row.latest_release_tag.as_deref(), Some("v1.0.57"));
+        assert_eq!(row.waiting_release_tag, None);
+        // Now the app has a release: another one waits its hours.
+        sqlx::query("UPDATE tracked_apps SET latest_release_tag = 'v1.0.56', latest_release_asset_id = 56 WHERE id = ?")
+            .bind(id)
+            .execute(&app.db)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM tracked_app_seen_releases WHERE tracked_app_id = ?")
+            .bind(id)
+            .execute(&app.db)
+            .await
+            .unwrap();
+        sync_one_app(&app.state, id, false).await.unwrap();
+        let row = row_of(&app, id).await;
+        assert_eq!(row.latest_release_tag.as_deref(), Some("v1.0.56"));
+        assert_eq!(row.waiting_release_tag.as_deref(), Some("v1.0.57"));
     }
 
     /// §17.3 H2 on another repo's path (IzzyOnDroid's): Update Now sends the waiting release at

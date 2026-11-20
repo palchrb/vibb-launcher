@@ -555,11 +555,11 @@ async fn a_held_release_behind_the_served_one_is_not_approved() {
     assert_redirect(&res, &format!("{page}?held=declined"), Some("update"));
 }
 
-/// The first release waits too (for now, `catalog_holds::FIRST_RELEASE_WAITS`): the Apps tab, the
-/// app's page and Add App say when it reaches the phones and that Update Now sends it - never "No
-/// release".
+/// The first release never waits (the user, 2026-11-20): Add App's wait footer says nothing about
+/// it, and a first release stored as waiting by an older server shows no wait time (the next sync
+/// serves it, `a_first_release_is_served_at_once_and_the_second_waits` in `handlers::tracked_apps`).
 #[tokio::test]
-async fn a_waiting_first_release_says_when_it_comes() {
+async fn a_first_release_has_no_wait_to_tell() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let id: i64 = sqlx::query_scalar(
@@ -571,14 +571,12 @@ async fn a_waiting_first_release_says_when_it_comes() {
     .await
     .unwrap();
     let apps = app.get_page("/apps", &cookie).await.text();
-    assert!(apps.contains("First release reaches the phones"), "{apps}");
+    assert!(!apps.contains("First release reaches"), "{apps}");
     let page = app
         .get_page(&format!("/apps/tracked/{id}"), &cookie)
         .await
         .text();
-    assert!(page.contains("First release reaches the phones"), "{page}");
-    assert!(page.contains("- or Update Now"));
-    assert!(page.contains("/update-now#update"));
+    assert!(!page.contains("First release reaches"), "{page}");
     let add = app.get_page("/apps/tracked/new", &cookie).await.text();
-    assert!(add.contains("The first release waits too"));
+    assert!(!add.contains("first release waits"));
 }

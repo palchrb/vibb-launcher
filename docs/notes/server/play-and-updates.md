@@ -438,9 +438,10 @@ Install Now), so a held or waiting release never reaches them and no contract ch
   `tracked_app_seen_releases` (`note_seen`; a release no longer listed is forgotten), and the anchor is the later of
   the two (`waiting_release_since` stores it for the page). Ready = anchor + the app's hours, computed at every sync and
   page (§17.3 M1: a changed wait re-times it). So after the upgrade every release waits 48 h from its first sight.
-- **The first release waits too** (the user hasn't decided; `catalog_holds::FIRST_RELEASE_WAITS`, one line to send it
-  at once): an app with no served release shows "First release reaches the phones Thu 14:02 - or Update Now" in the
-  Apps tab's badge and the page's Version row, never "No release yet"; Add App's wait footer says Update Now sends it.
+- **The first release never waits** (the user, 2026-11-20: a newly added app's first release at once - "fake news"
+  otherwise; `catalog_holds::sync_wait` gives a row with no served release no wait): it goes straight to
+  `latest_release_*` (the permission hold never applies to it either), and one an older server stored as waiting is
+  served at the next sync. Only later releases wait the app's hours.
 - **The pick** (`catalog_holds::pick`, pure; `sync_listed`): the source's matching releases newest first
   (`fetch_releases`/`matching_releases` for GitHub; `fdroid_releases` for F-Droid: the API's or the index's newest, then
   every older stable version, the stored release under its stored tag). The newest **ripe** one is synced - unless it
