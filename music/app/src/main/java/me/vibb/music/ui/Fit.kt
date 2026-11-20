@@ -12,6 +12,23 @@ import kotlin.math.roundToInt
 /** The screens' side padding (dp). */
 const val SCREEN_SIDE_DP = 16
 
+/*
+ * The library's sizes that grow with the screen (the user, 2026-11-20, the approved mockup: "noe som skalerer bra også
+ * på større skjermer"): the now-playing bar and the category circles grow by the width alone, never by the height,
+ * from the Jelly Star's sizes at a 320 dp screen (and narrower) to a large phone's at 411 dp (and wider).
+ */
+
+/** The screen width (dp) where the growing sizes start, and where they are at their largest. */
+const val GROW_FROM_DP = 320
+const val GROW_TO_DP = 411
+
+/** How far a screen whose content is [contentDp] wide (inside the 16 dp sides) is from [GROW_FROM_DP] to [GROW_TO_DP]: 0..1. */
+fun widthGrowth(contentDp: Float): Float =
+    ((contentDp + 2 * SCREEN_SIDE_DP - GROW_FROM_DP) / (GROW_TO_DP - GROW_FROM_DP)).coerceIn(0f, 1f)
+
+/** A size [from] at [GROW_FROM_DP], [to] at [GROW_TO_DP], whole dp (or sp) in between. */
+private fun grown(from: Int, to: Int, growth: Float): Int = (from + (to - from) * growth).roundToInt()
+
 /** The player's control row: [shuffle or an empty slot] previous, play, next [empty slot] (dp). */
 data class ControlRow(val side: Int, val skip: Int, val play: Int, val gap: Int) {
     /** The buttons' sizes, left to right: the row is symmetric, so play sits exactly in the middle. */
@@ -144,15 +161,28 @@ fun categoryTileWidthFor(availableDp: Float, labelDp: Float): Float =
 /** A label's measured width gets this much more (sub-pixel rounding, so it never ellipsizes by a hair). */
 const val CATEGORY_LABEL_SLACK_DP = 2f
 
-/** The category row's gap, circle and glyph (dp) and its label (sp): as ever, and compact when the row would not fit otherwise. */
+/**
+ * The category row's gap, circle and glyph (dp) and its label (sp): as ever, and compact when the row would not fit
+ * otherwise. The usual circle and glyph grow with the width ([categoryCircle], 2026-11-20): 44/20 up to a 320 dp screen,
+ * 48/22 from 411 dp.
+ */
 const val CATEGORY_LABEL_SP = 11
 const val CATEGORY_LABEL_COMPACT_SP = 10
 const val CATEGORY_GAP_DP = 4f
 const val CATEGORY_GAP_COMPACT_DP = 2f
 const val CATEGORY_CIRCLE_DP = 44f
+const val CATEGORY_CIRCLE_MAX_DP = 48f
 const val CATEGORY_CIRCLE_COMPACT_DP = 40f
 const val CATEGORY_GLYPH_DP = 20f
+const val CATEGORY_GLYPH_MAX_DP = 22f
 const val CATEGORY_GLYPH_COMPACT_DP = 18f
+
+/** The usual (not compact) row's circle and glyph (dp) in a row [availableDp] wide: grown with the width ([widthGrowth]). */
+fun categoryCircle(availableDp: Float): Pair<Float, Float> {
+    val g = widthGrowth(availableDp)
+    return grown(CATEGORY_CIRCLE_DP.toInt(), CATEGORY_CIRCLE_MAX_DP.toInt(), g).toFloat() to
+        grown(CATEGORY_GLYPH_DP.toInt(), CATEGORY_GLYPH_MAX_DP.toInt(), g).toFloat()
+}
 
 /** A category tile is never narrower than this (dp): the touch target. Its height is at least 64. */
 const val CATEGORY_TILE_MIN_DP = 48f
@@ -170,19 +200,21 @@ data class CategoryRow(val widths: List<Float>, val gap: Float, val circle: Floa
  * [CATEGORY_LABEL_COMPACT_SP] (each measured at the font scale) - the Jelly Star, 2026-11-20: with "Favoritter" the
  * five tiles at a fifth each or their label's width were about 300 dp in 288, and "Podkast" was cut to "Podkas". Three
  * steps, the first that fits:
- * - as ever: each tile [categoryTileWidthFor] (a fifth of the row, or its label), 4 dp apart, 44 dp circles, 11 sp;
+ * - as ever: each tile [categoryTileWidthFor] (a fifth of the row, or its label), 4 dp apart, the usual circles
+ *   ([categoryCircle]: 44 dp up to a 320 dp screen, 48 from 411), 11 sp;
  * - compact: 2 dp apart, 40 dp circles, 10 sp labels, each tile at least its label (+ slack) and the 48 dp touch target,
  *   the rest of the row shared so the narrow tiles grow first (one floor width, [shareFloor]) - the row fills its width;
- * - neither fits (a large font): every tile at its 11 sp label's width (at least 48), 4 dp apart, 44 dp circles, and the
+ * - neither fits (a large font): every tile at its 11 sp label's width (at least 48), 4 dp apart, the usual circles, and the
  *   row scrolls ([CategoryRow.scrolls]) - the screen hides a tile the edge cuts at rest and shows where more lie.
  * A label is never cut and never wraps: its tile is always at least as wide.
  */
 fun categoryRow(availableDp: Float, labelsDp: List<Float>, compactDp: List<Float> = labelsDp): CategoryRow {
     val n = labelsDp.size
     val gaps = { gap: Float -> gap * (n - 1).coerceAtLeast(0) }
+    val (circle, glyph) = categoryCircle(availableDp)
     val usual = labelsDp.map { categoryTileWidthFor(availableDp, it) }
     if (usual.sum() + gaps(CATEGORY_GAP_DP) <= availableDp + FIT_EPSILON) {
-        return CategoryRow(usual, CATEGORY_GAP_DP, CATEGORY_CIRCLE_DP, CATEGORY_GLYPH_DP, CATEGORY_LABEL_SP, scrolls = false)
+        return CategoryRow(usual, CATEGORY_GAP_DP, circle, glyph, CATEGORY_LABEL_SP, scrolls = false)
     }
     fun mins(labels: List<Float>) = labels.map { maxOf(CATEGORY_TILE_MIN_DP, kotlin.math.ceil(it) + CATEGORY_LABEL_SLACK_DP) }
     val compact = mins(compactDp)
@@ -195,7 +227,7 @@ fun categoryRow(availableDp: Float, labelsDp: List<Float>, compactDp: List<Float
             CATEGORY_LABEL_COMPACT_SP, scrolls = false,
         )
     }
-    return CategoryRow(mins(labelsDp), CATEGORY_GAP_DP, CATEGORY_CIRCLE_DP, CATEGORY_GLYPH_DP, CATEGORY_LABEL_SP, scrolls = true)
+    return CategoryRow(mins(labelsDp), CATEGORY_GAP_DP, circle, glyph, CATEGORY_LABEL_SP, scrolls = true)
 }
 
 /** A scrolling row's tile fades out over its first this many dp cut by the edge, while the row moves. */
@@ -235,17 +267,41 @@ fun shareFloor(room: Float, mins: List<Float>): Float {
     return sorted.last()
 }
 
-/** The carousel's cover (at most 180 dp, [libraryCover]), centred: the room left on each side of it (dp). */
+/** The carousel's cover ([libraryFit], v12's 180 dp by default), centred: the room left on each side of it (dp). */
 fun carouselSide(availableDp: Float, coverDp: Float = CAROUSEL_COVER_DP.toFloat()): Float = ((availableDp - coverDp) / 2).coerceAtLeast(0f)
 
-/** The library's cover at its largest (mockup v12). */
+/**
+ * The library's cover at its largest on a narrow phone (mockup v12), and the least its cap ever is: wider phones raise
+ * the cap with the width ([carouselCoverMax], 2026-11-20).
+ */
 const val CAROUSEL_COVER_DP = 180
 const val CAROUSEL_SPACING_DP = 8
+
+/** The share of the screen's width the library's cover may take (the approved mockup: 280 dp on a 411 dp phone). */
+const val CAROUSEL_COVER_SHARE = 0.68f
+
+/** Each neighbour still peeks at least this much beside a cover the width raised (dp; the player's on a 320 dp phone). */
+const val CAROUSEL_PEEK_MIN_DP = 24
+
+/**
+ * The library's cover at its largest in a slot [contentDp] wide (inside the screen's sides), height aside (the user,
+ * 2026-11-20: on a 411 dp phone the 180 dp cover left about 200 dp empty above and below it): [CAROUSEL_COVER_SHARE] of
+ * the screen's width, no more than leaves each neighbour [CAROUSEL_PEEK_MIN_DP] beside its 8 dp gap, never above the
+ * player's cover on this screen ([playerArtMax]: the one decoded bitmap, [coverDecodePx]) - and never under v12's
+ * [CAROUSEL_COVER_DP], so a phone narrower than about 265 dp keeps today's cover. 217.6 dp on the Jelly Star (320),
+ * 279.5 on a 411 dp phone. The height that is there still limits it ([libraryFit]).
+ */
+fun carouselCoverMax(contentDp: Float): Float {
+    val screen = contentDp + 2 * SCREEN_SIDE_DP
+    val byWidth = minOf(screen * CAROUSEL_COVER_SHARE, contentDp - 2 * (CAROUSEL_SPACING_DP + CAROUSEL_PEEK_MIN_DP), playerArtMax(contentDp))
+    return maxOf(CAROUSEL_COVER_DP.toFloat(), byWidth)
+}
 
 /**
  * How much of a neighbouring cover shows beside the centred one (dp): pages are a cover apart by 8 dp,
  * a neighbour is scaled to 0.733 about its centre and pulled in by as much as that took off its near
- * edge ([carouselPull], 24 dp at 180), so its near edge stays where the page starts - 46 dp on the Jelly Star.
+ * edge ([carouselPull], 24 dp at 180), so its near edge stays where the page starts - 46 dp beside a 180 dp cover on
+ * the Jelly Star, at least [CAROUSEL_PEEK_MIN_DP] beside [carouselCoverMax].
  */
 fun carouselPeek(availableDp: Float, coverDp: Float = CAROUSEL_COVER_DP.toFloat()): Float =
     availableDp - (carouselSide(availableDp, coverDp) + coverDp + CAROUSEL_SPACING_DP)
@@ -253,15 +309,15 @@ fun carouselPeek(availableDp: Float, coverDp: Float = CAROUSEL_COVER_DP.toFloat(
 /** A library neighbour scaled to [NEIGHBOUR_SCALE] is pulled in by what that took off its near edge (dp). */
 fun carouselPull(coverDp: Float): Float = coverDp * (1 - NEIGHBOUR_SCALE) / 2
 
-/** The category glyph on a cover without art: 84 dp on the 180 dp cover, in proportion below it. */
+/** The category glyph on a cover without art: 84 dp on the 180 dp cover, in proportion below and above it. */
 fun carouselGlyph(coverDp: Float): Float = 84f * coverDp / CAROUSEL_COVER_DP
 
 /*
  * The library's fit (design 34 P10 b, QA L1): the carousel sits in the weighted slot between the header and the
  * category tiles + now-playing bar, which always keep their own height. The cover is sized from the slot as measured
- * (a BoxWithConstraints), less the title and hint lines as measured at the font scale, less the fixed rest:
- * min(180, what is left), never under 64 - below that the slot scrolls, so nothing ever slides under the tiles or
- * the bar. Everything is in whole pixels, each fixed part rounded as Compose rounds a Dp (qa-34-s11-code L1: at
+ * (a BoxWithConstraints), less the title and hint lines as measured at the font scale, less the fixed rest and a little
+ * air ([LIBRARY_AIR_DP]): min([carouselCoverMax] of the width, what is left), never under 64 - below that the slot
+ * scrolls, so nothing ever slides under the tiles or the bar. Everything is in whole pixels, each fixed part rounded as Compose rounds a Dp (qa-34-s11-code L1: at
  * density 1.5 the 3 dp gaps are 4.5 px each, drawn as 5), so the content is never a pixel taller than the slot.
  */
 
@@ -315,7 +371,7 @@ data class LibraryFit(val coverPx: Int, val scrolls: Boolean, val breath: Librar
 
 /**
  * What the library's title block gets on top of its base gaps (px), from the room the cover leaves once it is at its
- * 180 dp (the Jelly Star, 2026-11-20: "under karusell bildene ble litt for komprimert" - the title, the hint, the
+ * largest ([carouselCoverMax]; 180 dp until 2026-11-20's growing cap) (the Jelly Star, 2026-11-20: "under karusell bildene ble litt for komprimert" - the title, the hint, the
  * progress line and the dot sat 3 dp apart while 40-90 dp stood empty above the cover and under the dot): between the
  * cover and the title, the title and the hint, the hint and the progress line, the progress line and the dots.
  */
@@ -338,10 +394,10 @@ val LIBRARY_BREATH_MAX_DP = listOf(8, 3, 7, 8)
 const val LIBRARY_BREATH_SHARE = 2f / 3
 
 /**
- * The title block's extra room from [sparePx], the slot's room the 180 dp cover leaves: at most
+ * The title block's extra room from [sparePx], the slot's room the cover at its largest leaves: at most
  * [LIBRARY_BREATH_SHARE] of it, shared among the gaps in proportion to [LIBRARY_BREATH_MAX_DP], each in whole pixels
- * (floored, so the content never outgrows the slot) and never above its own cap. No spare (a cover below 180 dp: the
- * room goes to the cover), no extra.
+ * (floored, so the content never outgrows the slot) and never above its own cap. No spare (a cover below its largest:
+ * the room goes to the cover), no extra.
  */
 fun libraryBreath(sparePx: Int, density: Float): LibraryBreath {
     if (sparePx <= 0) return LibraryBreath.NONE
@@ -353,15 +409,25 @@ fun libraryBreath(sparePx: Int, density: Float): LibraryBreath {
 }
 
 /**
- * The library's cover for a slot of [slotPx] holding the measured title and hint lines ([linesPx]): min(180 dp, what
- * is left once [reservePx] is also kept free), floor [LIBRARY_COVER_MIN_DP]. [reservePx] is the now-playing bar's room (and its gap)
- * while there is no bar, so the cover is the same with and without it (qa-34-s11-code N2: no 180/174 jump when the
- * bar comes or goes). The slot scrolls only when the content is taller than the slot itself. What the 180 dp cover
- * leaves gives the title block its [LibraryBreath].
+ * The air kept above the cover and under the dots when the cover is limited by the height (dp, each side; 2026-11-20,
+ * the approved mockup): on the Jelly Star the cover then sits about 14 dp under the header's buttons and the dots 12
+ * dp over the category circles, never pressed against them. It gives way at the floor before the slot scrolls.
  */
-fun libraryFit(slotPx: Int, linesPx: Int, reservePx: Int, density: Float): LibraryFit {
-    val room = slotPx - reservePx - linesPx - libraryFixedPx(density)
-    val cover = room.coerceIn(dpToPx(LIBRARY_COVER_MIN_DP, density), dpToPx(CAROUSEL_COVER_DP, density))
+const val LIBRARY_AIR_DP = 4
+
+/**
+ * The library's cover for a slot of [slotPx] holding the measured title and hint lines ([linesPx]): min([capDp] - the
+ * width's [carouselCoverMax] -, what is left once [reservePx] and the air above and below ([LIBRARY_AIR_DP]) are also
+ * kept free), floor [LIBRARY_COVER_MIN_DP]. [reservePx] is the now-playing bar's room (and its gap) while there is no
+ * bar, so the cover is the same with and without it (qa-34-s11-code N2: no 180/174 jump when the bar comes or goes).
+ * The slot scrolls only when the content is taller than the slot itself. What the cover at its cap leaves gives the
+ * title block its [LibraryBreath]; the rest centres, as much above the cover as under the dots.
+ */
+fun libraryFit(slotPx: Int, linesPx: Int, reservePx: Int, density: Float, capDp: Float = CAROUSEL_COVER_DP.toFloat()): LibraryFit {
+    val room = slotPx - reservePx - linesPx - libraryFixedPx(density) - 2 * dpToPx(LIBRARY_AIR_DP, density)
+    // the cap in whole pixels, floored: never a pixel above the width's own limit
+    val cap = maxOf((capDp * density).toInt(), dpToPx(LIBRARY_COVER_MIN_DP, density))
+    val cover = room.coerceIn(dpToPx(LIBRARY_COVER_MIN_DP, density), cap)
     // the room left once the cover is at its largest: some of it lets the title block breathe (2026-11-20); [reservePx]
     // is already out of it, so the gaps too are the same with and without the bar
     return LibraryFit(cover, librarySlotContentPx(cover, linesPx, density) > slotPx, libraryBreath(room - cover, density))
@@ -371,11 +437,70 @@ fun libraryFit(slotPx: Int, linesPx: Int, reservePx: Int, density: Float): Libra
 fun librarySlotContentPx(coverPx: Int, linesPx: Int, density: Float): Int = coverPx + linesPx + libraryFixedPx(density)
 
 /**
- * The now-playing bar's room in pixels, its gap above it included: 6 dp above and below the larger of the 44 dp
- * play button and its two lines ([linesPx], 13 + 11 sp, measured), and the column's 8 dp gap.
+ * The now-playing bar's sizes (dp, the lines in sp; the user, 2026-11-20, the approved mockup: "gjøre den spiller nå
+ * baren her litt høyere"): its cover and that cover's corner, the play button and its glyph, the bar's corner, its
+ * side and top/bottom padding, the gap between its parts, the item's title and the entry's line. 72 dp tall on the
+ * Jelly Star, 80 on a 411 dp phone ([nowBarSize]).
  */
-fun nowBarRoomPx(linesPx: Int, density: Float): Int =
-    2 * dpToPx(6, density) + maxOf(dpToPx(44, density), linesPx) + dpToPx(CAROUSEL_GAP_DP, density)
+data class NowBarSize(
+    val cover: Int,
+    val coverRadius: Int,
+    val play: Int,
+    val playGlyph: Int,
+    val radius: Int,
+    val padH: Int,
+    val padV: Int,
+    val gap: Int,
+    val titleSp: Int,
+    val lineSp: Int,
+) {
+    /** The bar's height (dp) while its lines fit beside the cover: the cover and its padding. */
+    val height: Int get() = cover + 2 * padV
+}
+
+/** The bar's two lines are this far apart (dp), and its progress line along the bottom edge is this tall. */
+const val NOW_BAR_LINE_GAP_DP = 2
+const val NOW_BAR_PROGRESS_DP = 3
+
+/**
+ * Lines taller than the bar's cover (a large font) keep this padding above and below (dp; the old bar's 6): the bar grows
+ * with them from [NowBarSize.height], its padding giving way first, so at font scale 2.0 it takes little more room than
+ * the old one did (N6: the library's hint and dots still fit the emulator's 320 x 569 dp screen with a 91 dp status bar).
+ */
+const val NOW_BAR_PAD_MIN_DP = 6
+
+/**
+ * The now-playing bar in a column [contentDp] wide, grown with the width ([widthGrowth]): up to a 320 dp screen a 52 dp
+ * cover (corner 12), a 48 dp play button (glyph 18), corner 20, 10 dp padding, 12 dp gaps, 15 + 12 sp lines - 72 dp
+ * tall; from 411 dp 56 (14), 52 (20), 22, 12, 14, 16 + 13 sp - 80 dp. The play button is never under the 48 dp touch
+ * target, and the bar's open-player area is as tall as its cover.
+ */
+fun nowBarSize(contentDp: Float): NowBarSize {
+    val g = widthGrowth(contentDp)
+    return NowBarSize(
+        cover = grown(52, 56, g), coverRadius = grown(12, 14, g), play = grown(48, 52, g), playGlyph = grown(18, 20, g),
+        radius = grown(20, 22, g), padH = grown(10, 12, g), padV = grown(10, 12, g), gap = grown(12, 14, g),
+        titleSp = grown(15, 16, g), lineSp = grown(12, 13, g),
+    )
+}
+
+/**
+ * The now-playing bar's room in pixels, its gap above it included: [NowBarSize.height], or - when its two lines
+ * ([linesPx], measured at [NowBarSize.titleSp] and [NowBarSize.lineSp], and their 2 dp gap) need more - the lines with
+ * [NOW_BAR_PAD_MIN_DP] above and below; and the column's 8 dp gap. As the bar is drawn: a `heightIn(min = height)` around
+ * the 6 dp padding. The progress line lies inside the bar's bottom edge: no room of its own.
+ */
+fun nowBarRoomPx(bar: NowBarSize, linesPx: Int, density: Float): Int {
+    fun px(dp: Int) = dpToPx(dp, density)
+    val content = maxOf(px(bar.cover), px(bar.play), linesPx + px(NOW_BAR_LINE_GAP_DP))
+    return maxOf(px(bar.height), content + 2 * px(NOW_BAR_PAD_MIN_DP)) + px(CAROUSEL_GAP_DP)
+}
+
+/** The bar's progress line: how far [positionMs] is into the item ([durationMs]), 0..1; null without a known length. */
+fun nowBarProgress(positionMs: Long, durationMs: Long?): Float? {
+    if (durationMs == null || durationMs <= 0) return null
+    return (positionMs.toFloat() / durationMs).coerceIn(0f, 1f)
+}
 
 // The player's art (design 27 §3.3): today's single cover, or the episode carousel in its place.
 

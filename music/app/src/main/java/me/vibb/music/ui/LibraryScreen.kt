@@ -193,10 +193,12 @@ fun LibraryScreen(
  * entry it lands on; with animations off everything jumps.
  *
  * It fills the library's weighted slot (design 34 P10 b, QA L1): the cover is [libraryFit] of the slot's
- * measured height less the title and hint lines measured at the font scale, in whole pixels - at most 180 dp, at
- * least [LIBRARY_COVER_MIN_DP] (64); below that the slot scrolls. Without the now-playing bar ([hasBar] false) the bar's room is kept out
- * of the cover's, so the cover doesn't jump when the bar comes or goes (qa-34-s11-code N2); the room the 180 dp cover
- * leaves lets the title block breathe ([libraryBreath], up to two thirds of it), the rest centres.
+ * measured height less the title and hint lines measured at the font scale, in whole pixels - at most
+ * [carouselCoverMax] of the slot's width (2026-11-20: 68 % of the screen, 180 dp on a narrow phone), at least
+ * [LIBRARY_COVER_MIN_DP] (64); below that the slot scrolls. Without the now-playing bar ([hasBar] false) the bar's room
+ * ([nowBarRoomPx] at this width's [nowBarSize]) is kept out of the cover's, so the cover doesn't jump when the bar comes
+ * or goes (qa-34-s11-code N2); the room the cover at its cap leaves lets the title block breathe ([libraryBreath], up
+ * to two thirds of it), the rest centres.
  * The covers' shadow is soft: the centred one keeps v12's 12 dp, a neighbour has P2's 2 dp, in between it follows
  * the page offset (P10 c).
  */
@@ -219,12 +221,11 @@ private fun Carousel(
     }
     val density = LocalDensity.current
     val lines = measuredLinesPx(21 to 800, 13 to 700)
-    val barReserve = if (hasBar) 0 else nowBarRoomPx(measuredLinesPx(13 to 800, 11 to 700), density.density)
     val scroll = rememberScrollState()
     BoxWithConstraints(modifier) {
         // the slot is always bounded (a weight); the guard keeps an unbounded caller from throwing
         val slot = if (constraints.hasBoundedHeight) constraints.maxHeight else Int.MAX_VALUE
-        val fit = libraryFit(slot, lines, barReserve, density.density)
+        val fit = libraryFit(slot, lines, barReserve(hasBar, maxWidth.value), density.density, carouselCoverMax(maxWidth.value))
         // verticalScroll clips, so only below the floor: above it the centred cover's 12 dp shadow is never cut (N1)
         val scrolling = if (fit.scrolls) Modifier.verticalScroll(scroll) else Modifier
         val fill = if (constraints.hasBoundedHeight) Modifier.heightIn(min = maxHeight) else Modifier
@@ -248,13 +249,12 @@ private fun Carousel(
 private fun FavouritesCarousel(fav: FavouritesUi, hasBar: Boolean, onPlay: () -> Unit, modifier: Modifier) {
     val density = LocalDensity.current
     val lines = measuredLinesPx(21 to 800, 13 to 700)
-    val barReserve = if (hasBar) 0 else nowBarRoomPx(measuredLinesPx(13 to 800, 11 to 700), density.density)
     val scroll = rememberScrollState()
     val name = stringResource(R.string.category_favourites)
     val label = stringResource(R.string.play_entry, name)
     BoxWithConstraints(modifier) {
         val slot = if (constraints.hasBoundedHeight) constraints.maxHeight else Int.MAX_VALUE
-        val fit = libraryFit(slot, lines, barReserve, density.density)
+        val fit = libraryFit(slot, lines, barReserve(hasBar, maxWidth.value), density.density, carouselCoverMax(maxWidth.value))
         val scrolling = if (fit.scrolls) Modifier.verticalScroll(scroll) else Modifier
         val fill = if (constraints.hasBoundedHeight) Modifier.heightIn(min = maxHeight) else Modifier
         val cover = fit.coverPx / density.density
@@ -306,6 +306,18 @@ private fun FavouritesCarousel(fav: FavouritesUi, hasBar: Boolean, onPlay: () ->
             Spacer(Modifier.padding(top = breath.progressDotsPx.pxAsDp()).height(CAROUSEL_DOTS_DP.dp))
         }
     }
+}
+
+/**
+ * The now-playing bar's room (px) kept out of the cover while there is no bar ([nowBarRoomPx], N2): the bar as it
+ * would be at this width ([nowBarSize] of [widthDp], the slot's width - the bar's own), its lines measured at the font
+ * scale. 0 while the bar shows: it has its own room then.
+ */
+@Composable
+private fun barReserve(hasBar: Boolean, widthDp: Float): Int {
+    val bar = nowBarSize(widthDp)
+    val lines = measuredLinesPx(bar.titleSp to 800, bar.lineSp to 700)
+    return if (hasBar) 0 else nowBarRoomPx(bar, lines, LocalDensity.current.density)
 }
 
 /**
@@ -587,32 +599,47 @@ private fun CategoryTile(
     }
 }
 
-/** The now-playing bar: what plays (or played, paused after a restart) and play/pause. */
+/**
+ * The now-playing bar: what plays (or played, paused after a restart) and play/pause, and a thin peach line along its
+ * bottom edge for how far the item has come (2026-11-20, the approved mockup; the player's own position, live while it
+ * plays, [livePosition]). Its sizes grow with the width ([nowBarSize]: 72 dp tall on the Jelly Star, 80 on a 411 dp
+ * phone); [nowBarRoomPx] is its room, kept out of the cover while it is away.
+ */
 @Composable
 fun NowPlayingBar(now: NowView, onOpen: () -> Unit, onTogglePlay: () -> Unit) {
-    // P2's quiet depth (design 34 P10 c): 2 dp of soft shadow lifts the bar off the night ground.
-    Row(
-        Modifier.fillMaxWidth().shadow(BAR_ELEVATION_DP.dp, RoundedCornerShape(16.dp)).background(Palette.card)
-            .padding(horizontal = 8.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Row(
-            Modifier.weight(1f).button(stringResource(R.string.open_player), onOpen),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Cover(now.cover, now.category, 10.dp, 0.dp, Modifier.size(36.dp), fallback = now.fallback)
-            Column(Modifier.weight(1f)) {
-                Line(now.itemTitle, 13, 800, Palette.white)
-                Line(now.entry.name, 11, 700, Palette.sub)
+    val progress = nowBarProgress(livePosition(now), now.durationMs)
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val bar = nowBarSize(maxWidth.value)
+        // P2's quiet depth (design 34 P10 c): 2 dp of soft shadow lifts the bar off the night ground; the shadow clips
+        // to its shape, so the progress line follows the bar's rounded corners
+        Box(Modifier.fillMaxWidth().shadow(BAR_ELEVATION_DP.dp, RoundedCornerShape(bar.radius.dp)).background(Palette.card)) {
+            Row(
+                // the cover's padding, giving way to lines taller than the cover down to NOW_BAR_PAD_MIN_DP ([nowBarRoomPx])
+                Modifier.fillMaxWidth().heightIn(min = bar.height.dp).padding(horizontal = bar.padH.dp, vertical = NOW_BAR_PAD_MIN_DP.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(bar.gap.dp),
+            ) {
+                Row(
+                    Modifier.weight(1f).button(stringResource(R.string.open_player), onOpen),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(bar.gap.dp),
+                ) {
+                    Cover(now.cover, now.category, bar.coverRadius.dp, 0.dp, Modifier.size(bar.cover.dp), fallback = now.fallback)
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(NOW_BAR_LINE_GAP_DP.dp)) {
+                        Line(now.itemTitle, bar.titleSp, 800, Palette.white)
+                        Line(now.entry.name, bar.lineSp, 700, Palette.sub)
+                    }
+                }
+                RoundButton(
+                    if (now.playing) Icons.pause else Icons.play,
+                    stringResource(if (now.playing) R.string.pause else R.string.play),
+                    onTogglePlay, bar.play.dp, bar.playGlyph.dp, Palette.peach, Palette.bg,
+                )
+            }
+            if (progress != null) {
+                Box(Modifier.align(Alignment.BottomStart).fillMaxWidth(progress).height(NOW_BAR_PROGRESS_DP.dp).background(Palette.peach))
             }
         }
-        RoundButton(
-            if (now.playing) Icons.pause else Icons.play,
-            stringResource(if (now.playing) R.string.pause else R.string.play),
-            onTogglePlay, 44.dp, 18.dp, Palette.peach, Palette.bg,
-        )
     }
 }
 
