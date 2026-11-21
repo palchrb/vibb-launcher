@@ -258,6 +258,41 @@ class CurrentHouseholdTest {
     }
 
     @Test
+    fun `a friend's LAN with the home's key - after the friend's answer only its rooms, back home after the home's only the home's`() {
+        val lan = Lan(SpeakerCache(tmp.root.resolve("sonos.json")))
+        lan.link = WifiLink(1L, "w-lan")
+        lan.lans = mapOf("1" to listOf(home))
+        lan.hits = listOf("192.168.1.10")
+        lan.rooms.refresh()
+        lan.waitForRound()
+        // the friend's LAN, the same key: before any answer the key's household shows, stale (a fast first look)
+        lan.link = WifiLink(2L, "w-lan")
+        lan.lans = mapOf("2" to listOf(friend))
+        lan.hits = listOf("10.0.0.10")
+        val first = lan.rooms.view()
+        assertEquals(listOf("Stua + Kjøkken"), first.sheet.map { it.label })
+        assertTrue(first.stale)
+        lan.rooms.refresh()
+        lan.waitForRound()
+        assertEquals("after the friend's answer only the friend's", listOf("Loft"), lan.rooms.state.value.sheet.map { it.label })
+        assertEquals("the key keeps both for the next connection", setOf("RINCON_H1", "RINCON_F1"), lan.cache.load().networks.getValue("w-lan").households.keys)
+        assertFalse("listed under the key: not refused", lan.rooms.elsewhere("RINCON_H1"))
+        // a failed look later on this connection keeps the sheet to what answered here
+        lan.lans = emptyMap()
+        lan.hits = emptyList()
+        lan.rooms.refresh()
+        lan.waitForRound()
+        assertEquals(listOf("Loft"), lan.rooms.state.value.sheet.map { it.label })
+        // home again: the key's households at once, stale; after the home's answer only the home's
+        lan.link = WifiLink(3L, "w-lan")
+        lan.lans = mapOf("3" to listOf(home))
+        assertEquals(listOf("Stua + Kjøkken", "Loft"), lan.rooms.view().sheet.map { it.label })
+        lan.rooms.refresh()
+        assertEquals(listOf("Stua + Kjøkken"), lan.rooms.state.value.sheet.map { it.label })
+        assertFalse(lan.rooms.state.value.stale)
+    }
+
+    @Test
     fun `M2 two households on one LAN - both listed, neither elsewhere, both asked first`() {
         val s1 = Household(mapOf("RINCON_A1" to Zone("RINCON_A1", "192.168.1.10", 1400, "Stua")), listOf(Group("RINCON_A1", listOf("RINCON_A1"))))
         val s2 = Household(mapOf("RINCON_B1" to Zone("RINCON_B1", "192.168.1.20", 1400, "Loft")), listOf(Group("RINCON_B1", listOf("RINCON_B1"))))

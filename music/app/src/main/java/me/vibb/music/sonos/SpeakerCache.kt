@@ -123,7 +123,7 @@ data class RoomsView(
     val busy: Set<String> = emptySet(),
     /** A look on this connection got no answer (or no Wi-Fi): the rows' "svarer ikke". Not before a look ran (no blink). */
     val noAnswer: Boolean = stale,
-    /** "Spill av på"'s rooms: only the household that answered on the Wi-Fi network the phone is on now ([SpeakerCache.roomsOn]). */
+    /** "Spill av på"'s rooms: the households on the Wi-Fi the phone is on now ([SpeakerCache.sheetRooms]). */
     val sheet: List<Room> = rooms,
 ) {
     /** The view the sheet and its belts read: the current network's rooms as [rooms]. */
@@ -271,11 +271,25 @@ class SpeakerCache(private val file: File, private val wallS: () -> Double = { S
          * Wi-Fi and none on a network where no topology answered yet - the sheet's opening refresh and "Se etter
          * høyttalere" find them; a friend's speakers never show at home, nor the home's anywhere else.
          */
-        fun roomsOn(doc: SpeakerDoc, network: String?): List<Room> {
-            val households = householdsOn(doc, network)
+        fun roomsOn(doc: SpeakerDoc, network: String?): List<Room> = roomsOf(doc, householdsOn(doc, network))
+
+        /** [rooms] of [households]' players and groups only. */
+        fun roomsOf(doc: SpeakerDoc, households: Set<String>): List<Room> {
             if (households.isEmpty()) return emptyList()
             val players = doc.players.filterValues { it.household in households }
             return rooms(doc.copy(players = players, groups = doc.groups.filter { it.coordinator in players }))
+        }
+
+        /**
+         * The sheet's rooms on [link] (2026-11-21): none off Wi-Fi; once a topology or SSDP answer came on this very
+         * connection, only the households that answered on it ([heard]: a household answering later on it joins) - a
+         * household the key remembers from another LAN with the same key (a router's defaults) drops out; before any
+         * answer here, the key's households ([roomsOn], stale-marked) for a fast first look.
+         */
+        fun sheetRooms(doc: SpeakerDoc, link: WifiLink?, heard: Set<String>?): List<Room> = when {
+            link == null -> emptyList()
+            heard != null -> roomsOf(doc, heard)
+            else -> roomsOn(doc, link.key)
         }
 
         /**
@@ -402,6 +416,12 @@ class RoomDirectory(
 
     @Volatile private var failedOn: Long? = null
 
+    /** The households that answered on one connection (its handle): the sheet's once that connection has an answer. */
+    @Volatile private var heard: Pair<Long, Set<String>>? = null
+
+    /** The households that answered on [link]'s connection, or null before any answer on it. */
+    private fun heardOn(link: WifiLink?): Set<String>? = heard?.takeIf { link != null && it.first == link.handle }?.second
+
     private fun onWifi(): Boolean = wifi() != null
 
     /**
@@ -419,9 +439,10 @@ class RoomDirectory(
     }
 
     /**
-     * The cache as it is (a plain read), published: every room, and the sheet's - the current network's household -
-     * with its marks ([SpeakerCache.roomMarks]). Also at every change of the Wi-Fi network (SonosHome): a known
-     * household shows at once on its network, nothing on another.
+     * The cache as it is (a plain read), published: every room, and the sheet's ([SpeakerCache.sheetRooms]: the
+     * households that answered on this connection, before that the network key's) with its marks
+     * ([SpeakerCache.roomMarks]). Also at every change of the Wi-Fi network (SonosHome): a known household shows at
+     * once on its network, nothing on another.
      */
     fun view(): RoomsView = compose(scanning).also { views.value = it }
 
@@ -429,7 +450,7 @@ class RoomDirectory(
         val link = wifi()
         val doc = cache.load()
         val (stale, noAnswer) = SpeakerCache.roomMarks(link, answeredOn, failedOn)
-        return RoomsView(SpeakerCache.rooms(doc), stale, scanning, views.value.busy, noAnswer, SpeakerCache.roomsOn(doc, link?.key))
+        return RoomsView(SpeakerCache.rooms(doc), stale, scanning, views.value.busy, noAnswer, SpeakerCache.sheetRooms(doc, link, heardOn(link)))
     }
 
     /**
@@ -453,8 +474,14 @@ class RoomDirectory(
         if (same) {
             answeredOn = asked.handle
             failedOn = null
+            household.players.keys.firstNotNullOfOrNull { doc.players[it]?.household }?.let { hear(asked.handle, it) }
         }
         return doc
+    }
+
+    @Synchronized
+    private fun hear(handle: Long, household: String) {
+        heard = handle to (heard?.takeIf { it.first == handle }?.second.orEmpty() + household)
     }
 
     /**
@@ -470,7 +497,7 @@ class RoomDirectory(
             return emptySet()
         }
         val doc = cache.load()
-        val rows = SpeakerCache.roomsOn(doc, link.key).filter { it.uid != ours && (ours == null || ours !in it.members) }.take(BUSY_MAX)
+        val rows = SpeakerCache.sheetRooms(doc, link, heardOn(link)).filter { it.uid != ours && (ours == null || ours !in it.members) }.take(BUSY_MAX)
         val found = ConcurrentHashMap.newKeySet<String>()
         withTimeoutOrNull(BUSY_TOTAL_MS) {
             coroutineScope {

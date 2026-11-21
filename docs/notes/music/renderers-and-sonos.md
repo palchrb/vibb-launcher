@@ -192,12 +192,15 @@ Moved from music/CLAUDE.md on 2026-11-01.
   faktisk er på det aktuelle wifi"; ours - vibb lists every speaker it ever saw, 26a §9): every topology answer is
   recorded with the Wi-Fi network it came on (`sonos.json`'s `networks`: key -> every household that answered there,
   so two households on one LAN are both listed; an answer during a change of the handle or the key is recorded for
-  none), and the sheet lists only those households' rooms while the phone is on that network
+  none), and the sheet lists those households' rooms while the phone is on that network - once a topology or SSDP
+  answer came on this very connection, only the households that answered on it (`SpeakerCache.sheetRooms`, kept per
+  `Network` handle in memory; a household answering later on it joins), before that the key's, stale-marked
   (`SpeakerCache.roomsOn`, `RoomsView.sheet`/`forSheet()`); on another network, before any answer there and off Wi-Fi
   no rooms - only "Se etter høyttalere" (the cabin case's stale home rooms are gone). The network's key is
   `SpeakerCache.networkKey`: the link's IPv4 subnets and default gateways from `LinkProperties`, hashed - the same
   after a reconnect or a new lease, no location permission (never the SSID/BSSID), no IPv6; two LANs with a router's
-  same defaults share it, and both households are then listed there until the 30-day prune. Freshness is per connection
+  same defaults share it: the key keeps both for the next connection's first look, and the first answer on a
+  connection narrows the sheet to the LAN that answered (a household listed under the key is never refused for that). Freshness is per connection
   (`Network.getNetworkHandle()`, `roomMarks`): a known household shows at once after a reconnect, `stale` (no
   grouping) until the opening's refresh answers, "svarer ikke" (`noAnswer`) only once a look got none - no blink. The
   refresh asks this network's household first. `RoomsView.rooms` stays every household's: the session's group, label,
