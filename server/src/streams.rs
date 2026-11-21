@@ -201,22 +201,29 @@ impl Drop for StreamGuard {
 /// A phone whose stream is open sends nothing else on a quiet night (the keepalive goes from the server to the
 /// phone), and whoever holds its TCP may keep a vanished phone's stream "open" for 15-20 min. The launcher's backstop
 /// sync runs every 30 min (`push/SyncSchedule.kt`, `BACKSTOP_INTERVAL_MS`), so 35 min without a contact is "not
-/// green" at zero extra bytes. The backstop is an inexact while-idle alarm (`push/BackstopAlarm.kt`) Android may
-/// deliver late in deep Doze: such a phone reads "No contact" until its sync lands - said in design 121 §4.3.
-/// Nothing links the two files at compile time: a launcher change to the backstop must revisit this.
+/// green" at zero extra bytes. Since 2026-11-21 the backstop is an exact while-idle alarm (`push/BackstopAlarm.kt`,
+/// `backstopArm`: `USE_EXACT_ALARM`; inexact only if Android refuses exact alarms): the inexact one came up to 3/4 of
+/// its 30 min late even on a charger, and the Jelly Star read "No contact" with its stream open (design 121, "Known
+/// cost"). An idle phone's last contact is now at most 30 min plus the time from the last sync's report to the next
+/// sync's first request - seconds: the alarm is re-armed when a sync ends, Doze's while-idle floor (~9 min) never
+/// meets a 30-min spacing, and a sync whose request fails has no contact to give, so a wider window wouldn't help it.
+/// The 5 min above 30 are the margin; kept at 35 (not 40) since a wider one only holds a vanished phone green longer.
+/// Nothing links the two files at compile time: a launcher change to the backstop must revisit this (the launcher's
+/// `SyncScheduleTest` names 35 too).
 pub const ONLINE_WINDOW_MINUTES: i64 = 35;
 
 /// Away: no live stream, and the phone was reachable at most this long ago ([reach]; design 31 §3.10, H2).
 ///
-/// With the stream down the backstop runs every 15 min (`BACKSTOP_SSE_DOWN_INTERVAL_MS`), up to
-/// 0.75 × late: 15 × 1.75 = 26.25 min, plus up to 9 min of Doze's while-idle quota
+/// With the stream down the backstop runs every 15 min (`BACKSTOP_SSE_DOWN_INTERVAL_MS`), exact since 2026-11-21; sized
+/// for the inexact fallback, up to 0.75 × late: 15 × 1.75 = 26.25 min, plus up to 9 min of Doze's while-idle quota
 /// (`MIN_BACKSTOP_MS`) and margin. Older is Offline. Revisit with any launcher backstop change.
 pub const AWAY_WINDOW_MINUTES: i64 = 45;
 
 /// A phone whose stream is still counted open is never Offline before this long after its last contact (code QA M1,
 /// the coordinator's decision of 2026-11-20): it stays orange "No contact" until the stream closes or this passes - the
-/// old Online window, sized for the 30-min backstop that Android may deliver up to 1.75 × late. A holder drops a dead
-/// phone's connection within ~20 min, so a stream still open past 45 min is almost always a live phone.
+/// old Online window, sized for the 30-min backstop that Android may deliver up to 1.75 × late (exact since 2026-11-21;
+/// this still covers the inexact fallback). A holder drops a dead phone's connection within ~20 min, so a stream still
+/// open past 45 min is almost always a live phone.
 pub const OPEN_STREAM_AWAY_MINUTES: i64 = 60;
 
 /// Away reads green this long after the phone was last reachable ([reach]; design 121 §4.3): a network change, a
