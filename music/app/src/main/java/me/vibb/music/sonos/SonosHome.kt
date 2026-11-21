@@ -132,8 +132,12 @@ class SonosHome(context: Context) {
         transportState = { ip, port, timeoutMs ->
             soap.call(ip, port, SonosService.AV_TRANSPORT, "GetTransportInfo", listOf("InstanceID" to "0"), timeoutMs)["CurrentTransportState"]
         },
+        scoped = { roomScope },
     )
     val speakers = CachedSpeakers(cache, soap)
+
+    /** The parent's room scope as the service last read it (null = every room): the cache's prune keeps those rooms. */
+    @Volatile var roomScope: List<String>? = null
 
     init {
         // the sheet follows the Wi-Fi network (2026-11-21): a known household at once on its network, none elsewhere -

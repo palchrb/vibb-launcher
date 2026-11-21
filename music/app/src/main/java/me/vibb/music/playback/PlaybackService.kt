@@ -356,10 +356,14 @@ class PlaybackService : MediaSessionService() {
 
     /**
      * The parent's room scope as the library last said (design 26a §5.5; null = every room): the
-     * sheet's rows and the renderer's belt read it. The decisions (the switch, the leave) read the
-     * library itself.
+     * sheet's rows and the renderer's belt read it, and the speaker cache's prune keeps its rooms. The decisions (the
+     * switch, the leave) read the library itself.
      */
     @Volatile private var roomScope: List<String>? = null
+        set(value) {
+            field = value
+            home.roomScope = value
+        }
 
     override fun onCreate() {
         super.onCreate()

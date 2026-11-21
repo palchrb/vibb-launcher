@@ -57,13 +57,17 @@ data class CachedPlayer(
 @Serializable
 data class CachedGroup(val coordinator: String, val members: List<String>)
 
-/** A Wi-Fi network ([SpeakerCache.networkKey]) and the household whose topology last answered on it, and when. */
+/**
+ * A Wi-Fi network ([SpeakerCache.networkKey]): every household whose topology answered on it -> when it last did (two
+ * households on one LAN - an S1/S2 split, a shared building network - are both its).
+ */
 @Serializable
-data class CachedNetwork(val household: String, @SerialName("seen_at") val seenAt: Double)
+data class CachedNetwork(val households: Map<String, Double> = emptyMap())
 
 /**
  * `sonos.json`: `{players: {uid: {ip, port, name, seen_at, household}}, groups: [...], fetched_at, topology_at, played,
- * networks: {key: {household, seen_at}}}`. [groups] are every household's last groups (each topology replaces its own).
+ * networks: {key: {households: {household: seen_at}}}}`. [groups] are every household's last groups (each topology
+ * replaces its own).
  */
 @Serializable
 data class SpeakerDoc(
@@ -73,7 +77,7 @@ data class SpeakerDoc(
     @SerialName("topology_at") val topologyAt: Double? = null,
     /** The room the phone last played on (renderer.json's uid when it was a room; P-L2's evidence of the home). */
     val played: String? = null,
-    /** The Wi-Fi networks a topology answered on, by [SpeakerCache.networkKey]: the sheet's household there. */
+    /** The Wi-Fi networks a topology answered on, by [SpeakerCache.networkKey]: the sheet's households there. */
     val networks: Map<String, CachedNetwork> = emptyMap(),
 )
 
@@ -140,10 +144,10 @@ class SpeakerCache(private val file: File, private val wallS: () -> Double = { S
      * A topology (`refresh_topology`): its players merged in with fresh ip, port and name (DHCP moves
      * and renames heal themselves), its household's groups replaced (another household's kept). [scanned]: it came
      * from an SSDP round (`rescan` stamps `fetched_at`). [network]: the Wi-Fi network it answered on (null: not
-     * known for sure - the network changed during the call); that network's household is this one from now on.
-     * Then the prune ([pruned]).
+     * known for sure - the network changed during the call); this household is one of that network's from now on.
+     * Then the prune ([pruned]) - [scope] is the parent's room scope, kept whatever its age.
      */
-    fun applyTopology(household: Household, scanned: Boolean = false, network: String? = null): SpeakerDoc = update { doc ->
+    fun applyTopology(household: Household, scanned: Boolean = false, network: String? = null, scope: List<String>? = null): SpeakerDoc = update { doc ->
         val now = wallS()
         val key = householdKey(doc, household.players.keys)
         val others = doc.groups.filter { g -> g.coordinator !in household.players && doc.players[g.coordinator]?.household.let { it != null && it != key } }
@@ -153,9 +157,14 @@ class SpeakerCache(private val file: File, private val wallS: () -> Double = { S
                 groups = others + household.groups.map { CachedGroup(it.coordinator, it.members) },
                 topologyAt = now,
                 fetchedAt = if (scanned) now else doc.fetchedAt,
-                networks = if (network != null && key != null) doc.networks + (network to CachedNetwork(key, now)) else doc.networks,
+                networks = if (network != null && key != null) {
+                    doc.networks + (network to CachedNetwork(doc.networks[network]?.households.orEmpty() + (key to now)))
+                } else {
+                    doc.networks
+                },
             ),
             now,
+            scope,
         )
     }
 
@@ -197,21 +206,24 @@ class SpeakerCache(private val file: File, private val wallS: () -> Double = { S
         const val PRUNE_AGE_S = 30 * 86_400.0
 
         /**
-         * The prune (2026-11-21): players not seen for [PRUNE_AGE_S] (or never stamped) go - except the household of
-         * the room the phone last played on ([SpeakerDoc.played], P-L2's home evidence: the parent's card and
-         * renderer.json's room keep it however long the phone was away) -, with the groups they coordinated and the
-         * networks whose household has no player left or that no topology answered on for as long (the played
-         * household's networks kept).
+         * The prune (2026-11-21): players not seen for [PRUNE_AGE_S] (or never stamped) go - except every room of the
+         * parent's [scope] and its household, and the household of the room the phone last played on
+         * ([SpeakerDoc.played]): P-L2's home, which [reportable] names however long the phone was away -, with the
+         * groups they coordinated; a network forgets a household with no player left or that hasn't answered on it for
+         * as long (a kept household's never), and a network with none left goes.
          */
-        fun pruned(doc: SpeakerDoc, nowS: Double): SpeakerDoc {
-            val kept = doc.played?.let { doc.players[it]?.household }
+        fun pruned(doc: SpeakerDoc, nowS: Double, scope: List<String>? = null): SpeakerDoc {
+            val scoped = scope.orEmpty().toSet()
+            val kept = (listOfNotNull(doc.played) + scoped).mapNotNull { doc.players[it]?.household }.toSet()
             fun recent(seenAt: Double?) = seenAt != null && nowS - seenAt <= PRUNE_AGE_S
-            val players = doc.players.filterValues { p -> (kept != null && p.household == kept) || recent(p.seenAt) }
+            val players = doc.players.filter { (uid, p) -> uid in scoped || p.household in kept || recent(p.seenAt) }
             val households = players.values.mapNotNull { it.household }.toSet()
             return doc.copy(
                 players = players,
                 groups = doc.groups.filter { it.coordinator in players },
-                networks = doc.networks.filterValues { n -> n.household in households && (n.household == kept || recent(n.seenAt)) },
+                networks = doc.networks
+                    .mapValues { (_, n) -> CachedNetwork(n.households.filter { (h, at) -> h in households && (h in kept || recent(at)) }) }
+                    .filterValues { it.households.isNotEmpty() },
             )
         }
 
@@ -251,28 +263,33 @@ class SpeakerCache(private val file: File, private val wallS: () -> Double = { S
             return ByteArray(4) { parts[it].toInt().toByte() }
         }
 
-        /** The household whose topology last answered on [network] (null: off Wi-Fi, no IPv4 key, or none answered there yet). */
-        fun householdOn(doc: SpeakerDoc, network: String?): String? = network?.let { doc.networks[it]?.household }
+        /** The households whose topology answered on [network] (none: off Wi-Fi, no IPv4 key, or none answered there yet). */
+        fun householdsOn(doc: SpeakerDoc, network: String?): Set<String> = network?.let { doc.networks[it]?.households?.keys }.orEmpty()
 
         /**
-         * "Spill av på"'s rooms on [network] (2026-11-21): [rooms] of that household's players and groups only. None off
+         * "Spill av på"'s rooms on [network] (2026-11-21): [rooms] of its households' players and groups only. None off
          * Wi-Fi and none on a network where no topology answered yet - the sheet's opening refresh and "Se etter
          * høyttalere" find them; a friend's speakers never show at home, nor the home's anywhere else.
          */
         fun roomsOn(doc: SpeakerDoc, network: String?): List<Room> {
-            val household = householdOn(doc, network) ?: return emptyList()
-            val players = doc.players.filterValues { it.household == household }
+            val households = householdsOn(doc, network)
+            if (households.isEmpty()) return emptyList()
+            val players = doc.players.filterValues { it.household in households }
             return rooms(doc.copy(players = players, groups = doc.groups.filter { it.coordinator in players }))
         }
 
         /**
-         * Is [uid] a room of another household than the one on [network] (2026-11-21)? Then a switch to it is refused
-         * and the startup look never asks it - as an unreachable room. False when the network has no known household
-         * (off Wi-Fi, no answer there yet): today's rules apply, the speaker's own answer decides.
+         * Is [uid] a room of another household than [network]'s (2026-11-21)? Then a switch to it is refused and the
+         * startup look never asks it - as an unreachable room. Only when [confirmed] (a topology answered on this very
+         * connection) and [uid] is a known room of a household that never answered on this network; never on an
+         * unconfirmed mapping (two LANs may share a key), off Wi-Fi or for a uid the cache can't name - the speaker's
+         * own answer decides then.
          */
-        fun elsewhere(doc: SpeakerDoc, uid: String, network: String?): Boolean {
-            val household = householdOn(doc, network) ?: return false
-            return doc.players[uid]?.household != household
+        fun elsewhere(doc: SpeakerDoc, uid: String, network: String?, confirmed: Boolean): Boolean {
+            if (!confirmed) return false
+            val households = householdsOn(doc, network)
+            val household = doc.players[uid]?.household ?: return false
+            return households.isNotEmpty() && household !in households
         }
 
         /**
@@ -369,6 +386,8 @@ class RoomDirectory(
     private val log: (String) -> Unit = {},
     /** A room's `CurrentTransportState` within a time budget (design 53 §2.7's busy look); null when it won't say. */
     private val transportState: (ip: String, port: Int, timeoutMs: Long) -> String? = { _, _, _ -> null },
+    /** The parent's room scope now (null = every room): the prune keeps its rooms and their households. */
+    private val scoped: () -> List<String>? = { null },
 ) {
     private val roundRunning = AtomicBoolean(false)
     private val views = MutableStateFlow(RoomsView(emptyList(), stale = false, scanning = false))
@@ -414,18 +433,23 @@ class RoomDirectory(
     }
 
     /**
-     * Is [uid] a room of another household than the current Wi-Fi network's ([SpeakerCache.elsewhere])? A switch to it
-     * is refused and the startup look doesn't ask it. Blocking (a file read).
+     * Is [uid] a room of another household than the current Wi-Fi network's ([SpeakerCache.elsewhere]: only once a
+     * topology answered on this connection)? A switch to it is refused and the startup look doesn't ask it. Blocking
+     * (a file read).
      */
-    fun elsewhere(uid: String): Boolean = SpeakerCache.elsewhere(cache.load(), uid, wifi()?.key)
+    fun elsewhere(uid: String): Boolean {
+        val link = wifi() ?: return false
+        return SpeakerCache.elsewhere(cache.load(), uid, link.key, confirmed = answeredOn == link.handle)
+    }
 
     /**
      * [household] answered while the phone was on [asked]: merged in, and recorded for that network only if the phone
-     * is still on that very connection (a network change during the call leaves it unattributed and not fresh).
+     * is still on that very connection with the same key (a network change during the call leaves it unattributed and
+     * not fresh).
      */
     private fun answered(asked: WifiLink, household: Household, scanned: Boolean): SpeakerDoc {
-        val same = wifi()?.handle == asked.handle
-        val doc = cache.applyTopology(household, scanned, network = asked.key.takeIf { same })
+        val same = wifi() == asked
+        val doc = cache.applyTopology(household, scanned, network = asked.key.takeIf { same }, scope = scoped())
         if (same) {
             answeredOn = asked.handle
             failedOn = null
@@ -481,8 +505,8 @@ class RoomDirectory(
         val start = elapsedMs()
         var last: Exception? = null
         val doc = cache.load()
-        val here = SpeakerCache.householdOn(doc, link.key)
-        for ((_, rec) in doc.players.entries.sortedWith(compareBy({ here != null && it.value.household != here }, { it.key }))) {
+        val here = SpeakerCache.householdsOn(doc, link.key)
+        for ((_, rec) in doc.players.entries.sortedWith(compareBy({ here.isNotEmpty() && it.value.household !in here }, { it.key }))) {
             val left = TOTAL_MS - (elapsedMs() - start)
             if (left <= 0) break
             try {
