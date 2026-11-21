@@ -555,7 +555,8 @@ Step 3c, after 3b; the one change that touches the server, launcher and music ap
    the battery-optimisation exemption design 19b gives itself.
 4. **Network.** Only on Wi-Fi, never bound to it (§2.1, 5 below); Wi-Fi gone -> the speaker reads UNREACHABLE (backoff, disarm after
    600 s); the kid's phone away from home keeps the cache (the "cabin case", `sonosd.py:1050-1053`): the sheet lists
-   home rooms marked stale and starts no scan without Wi-Fi.
+   home rooms marked stale and starts no scan without Wi-Fi. (Since 2026-11-21 the sheet lists only the household
+   that answered on the current Wi-Fi - none off Wi-Fi; the cache stays. §9.)
 5. **Permissions and the VPN:** `CHANGE_WIFI_MULTICAST_STATE` (the `MulticastLock`), `ACCESS_WIFI_STATE`, `WAKE_LOCK`
    (present). The launcher's `KidVpnService` (`L/server/KidVpnService.kt`) is the device's always-on VPN
    (`setAlwaysOnVpnPackage(admin, pkg, lockdown = false)`, `L/server/AppEnforcer.kt`), covers every app (no allowed or
@@ -709,6 +710,7 @@ Step 3c, after 3b; the one change that touches the server, launcher and music ap
 | uid mismatch 404 triggers nothing (docstring says rescan) | a failed play reverts to local and refreshes the topology | the code's actual behaviour, made visible and useful |
 | process death keeps polling (sidecar) | the speaker plays on until the next start adopts or a suspension edge stops it | no sidecar (§6.2) |
 | no phone, no calls | pause on a call, resume only if we paused (§6.7, pending the user) | the phone rings |
+| the picker lists every speaker ever cached, the cabin case lists the home's stale off Wi-Fi | only the household that answered on the current Wi-Fi network (keyed by its IPv4 subnets and gateways, fresh per connection); none off Wi-Fi or on a network no topology answered on; a switch to, and the startup look at, a room of another household refused as unreachable; players not seen for 30 days pruned (not the household last played on) | the user, 2026-11-21: "Vi bør jo bare vise høyttalere som faktisk er på det aktuelle wifi" - a friend's speakers at home, the home's at a friend's; `docs/notes/music/renderers-and-sonos.md` |
 | the bookmark adds the sidecar's `stale_s` (a poll's measurement lag, <= 5 s) | the one age term from `measuredAt`, capped at 5 s (`BOOKMARK_AGE_MAX_MS`) | qa-26a-step3a-code L4: at a 15 s cruise the uncapped age reached 25 s at a save tick, pause or hand-off; a speaker paused from the Sonos app would get a bookmark that far ahead |
 | the item's http art as `upnp:albumArtURI` (`_sonos_body`, 1270-1322; §2.3, §2.5) | no art in the DIDL, for every source | step 3 had no art URL to pass (`ItemRow` kept none); since design 27 the listing carries a hash the server serves only to the phone's bearer (design 27 §1.5), and the phone's copy is a file - nothing a speaker can fetch. The cheapest later path (qa-26a-merge27-code L3): an optional per-item `art_src` in the listing, set only with `art_hash` and frozen with it, and the entry's `cover_src` from `music_listings.cover_url`; the phone stores them at the next Room bump and `PlayBodies.build` takes `artSrc ?: coverSrc` through the audio's filter (§4.2). A signed LAN picture URL only together with own files on Sonos. "Merge of main with design 27" |
 

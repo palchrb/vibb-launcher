@@ -7,7 +7,8 @@ Moved from music/CLAUDE.md on 2026-11-01.
 - `sonos/` - the Sonos port (26a §1-§2, from vibb `pi/sonosd.py`, `pi/vibb/renderer.py` and `pi/daemon.py`'s
   `_sonos_*`): Android-free `Ssdp`, `Soap` (OkHttp + javax.xml DOM, our own UPnP client, no library; a reply at most 1 MiB, every
   call within a deadline - 10 s without a budget -, a DOCTYPE/ENTITY refused before parsing: security review S-L1), `Topology`,
-  `SpeakerCache` (`noBackupFilesDir/sonos.json`; players merge, groups replace) + `RoomDirectory` (the sheet's rows,
+  `SpeakerCache` (`noBackupFilesDir/sonos.json`; players merge, each household's groups replace its own, each answer
+  recorded with its Wi-Fi network, 30-day prune) + `RoomDirectory` (the sheet's rows - the current Wi-Fi's household -,
   stale + one background SSDP round), `Didl`, `SonosUris`, `NrkService`, `PlayBody` (the speaker-playable filter),
   `SonosSession` (vibb's poll machine: classify, cadence, stall, migration probe, disarm), `SonosTransport` (play with
   the hush and the settled seek, verbs, adopt, the park), `SonosBookmarks` (holds and the regression guard),

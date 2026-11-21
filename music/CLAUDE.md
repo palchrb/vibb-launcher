@@ -47,7 +47,7 @@ Kotlin, one Gradle module (`app/`), the launcher's AGP 8.13 / Kotlin 2.1.20, min
   `LocalRenderer` (the ExoPlayer, the phone's 10 s sleep fade, audio focus) and `RendererGate` (the startup gate).
   The output axis (`Output` keys `phone`/`dev:<id>`/`sonos:<uid>`, `setPreferredAudioDevice`, the headset callbacks)
   stays the phone's and always goes to `LocalRenderer`. "Spill av på"'s rows: the phone, the routed outputs, the paired
-  headsets not routed now ("Koble til" / "Bytt til", design 52), the rooms - on a live room session our group's block
+  headsets not routed now ("Koble til" / "Bytt til", design 52), the rooms of the current Wi-Fi's household only - on a live room session our group's block
   and a "+" on every other row (design 53 §2.7, `groupSheet`) -, "Se etter høyttalere" (`outputSheetRows`/`outputSheetItems`). The third renderer is `spotify/SpotifyRenderer` (26c §5);
   `RendererRules.kt` holds the pure rules of which renderer an entry gets, a Spotify item's playability, the queue's
   kind and its claim, and the call test (`RendererRulesTest`).

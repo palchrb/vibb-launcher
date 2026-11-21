@@ -2598,8 +2598,8 @@ class PlaybackService : MediaSessionService() {
             // a room taking our play, or the web player's start on the phone (qa-music-r13-code Q-3)
             connecting = sonos?.controller?.connecting(now) == true || (renderer === spotify && spotify?.starting == true),
             // only the rooms the parent allows (design 26a §5.5): a group by its coordinator - and our own row with the
-            // rooms the kids grouped into it by hand (design 53 §2.8, Q4)
-            rooms = allowedRooms(home.rooms.state.value, roomScope, sonos?.uid, sonos?.accepted.orEmpty()),
+            // rooms the kids grouped into it by hand (design 53 §2.8, Q4); only the current Wi-Fi's household (2026-11-21)
+            rooms = allowedRooms(home.rooms.state.value.forSheet(), roomScope, sonos?.uid, sonos?.accepted.orEmpty()),
             waiting = waitingMoves.get() > 0,
             roomLive = sonos?.controller?.liveSession(now) == true,
             groupPending = groupPending.keys.toSet(),
@@ -2675,7 +2675,8 @@ class PlaybackService : MediaSessionService() {
      */
     private fun roomJoin(sonos: SonosRenderer, row: String) {
         val c = sonos.controller
-        val view = home.rooms.state.value
+        // a row of the sheet: the current Wi-Fi's household only (2026-11-21)
+        val view = home.rooms.state.value.forSheet()
         val ours = c.uid
         val now = SystemClock.elapsedRealtime()
         val target = view.rooms.firstOrNull { it.uid == row }
@@ -3006,6 +3007,15 @@ class PlaybackService : MediaSessionService() {
             SonosHome.log("sonos: $uid (or a room grouped with it) isn't allowed on this phone - refused")
             PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.ROOM_NOT_ALLOWED)
             publish()
+            return
+        }
+        // 2026-11-21: a room of another household than this Wi-Fi's is refused as an unreachable one ("Kan ikke spilles
+        // på Sonos") - before anything moves; the sheet looks again
+        if (withContext(Dispatchers.IO) { home.rooms.elsewhere(uid) }) {
+            SonosHome.log("sonos: $uid isn't in this Wi-Fi's household - refused")
+            PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.CANT_PLAY_ON_SONOS)
+            publish()
+            scope.launch(Dispatchers.IO) { home.rooms.refresh() }
             return
         }
         val name = withContext(Dispatchers.IO) { home.label(uid) }

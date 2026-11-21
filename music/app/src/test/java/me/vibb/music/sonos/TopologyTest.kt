@@ -72,7 +72,7 @@ class TopologyTest {
         c.applyTopology(Topology.parse(zoneGroupState("zgs_wrapped.xml"))!!)
         val asked = mutableListOf<String>()
         val rooms = RoomDirectory(
-            c, { ip, _, _ -> asked.add(ip); throw SpeakerUnreachable("down") }, { emptyList() }, { true },
+            c, { ip, _, _ -> asked.add(ip); throw SpeakerUnreachable("down") }, { emptyList() }, { HOME_LINK },
             CoroutineScope(Dispatchers.IO), { 0L },
         )
         try {
@@ -93,7 +93,7 @@ class TopologyTest {
         var now = 0L
         val budgets = mutableListOf<Long>()
         val rooms = RoomDirectory(
-            c, { _, _, timeout -> budgets.add(timeout); now += timeout; throw SpeakerUnreachable("timeout") }, { emptyList() }, { true },
+            c, { _, _, timeout -> budgets.add(timeout); now += timeout; throw SpeakerUnreachable("timeout") }, { emptyList() }, { HOME_LINK },
             CoroutineScope(Dispatchers.IO), { now },
         )
         try {
@@ -110,24 +110,27 @@ class TopologyTest {
         c.seed(listOf(Zone("RINCON_A", "10.0.0.1", 1400, "A"), Zone("RINCON_B", "10.0.0.2", 1401, "B")))
         val rooms = RoomDirectory(
             c, { ip, port, _ -> if (ip == "10.0.0.1") throw SpeakerUnreachable("down") else { assertEquals(1401, port); zoneGroupState("zgs_bare.xml") } },
-            { emptyList() }, { true }, CoroutineScope(Dispatchers.IO), { 0L },
+            { emptyList() }, { HOME_LINK }, CoroutineScope(Dispatchers.IO), { 0L },
         )
         val view = rooms.refresh()
         assertFalse(view.stale)
-        assertEquals(listOf("Stua + Kjøkken + Bad", "A", "B", "Barnerom"), view.rooms.map { it.label })
+        assertEquals("the session's view: every household's", listOf("Stua + Kjøkken + Bad", "A", "B", "Barnerom"), view.rooms.map { it.label })
+        assertEquals("the sheet: the household that answered on this network", listOf("Stua + Kjøkken + Bad", "Barnerom"), view.sheet.map { it.label })
     }
 
     @Test
-    fun `without Wi-Fi nothing is asked and nothing scans - the cabin case`() {
+    fun `without Wi-Fi nothing is asked, nothing scans and the sheet lists no room - the cabin case, ours`() {
         val c = cache()
         c.seed(listOf(Zone("RINCON_A", "10.0.0.1", 1400, "Stua")))
         var asked = 0
         var scans = 0
-        val rooms = RoomDirectory(c, { _, _, _ -> asked++; "" }, { scans++; emptyList() }, { false }, CoroutineScope(Dispatchers.IO), { 0L })
+        val rooms = RoomDirectory(c, { _, _, _ -> asked++; "" }, { scans++; emptyList() }, { null }, CoroutineScope(Dispatchers.IO), { 0L })
         val view = rooms.refresh()
         assertTrue(view.stale)
+        assertTrue(view.noAnswer)
         assertFalse(view.scanning)
-        assertEquals(listOf("Stua"), view.rooms.map { it.label })
+        assertEquals("the session still knows the room", listOf("Stua"), view.rooms.map { it.label })
+        assertEquals("vibb listed the home's rooms stale; the sheet lists none off Wi-Fi (2026-11-21)", emptyList<Room>(), view.sheet)
         assertEquals(0, asked)
         assertEquals(0, scans)
     }

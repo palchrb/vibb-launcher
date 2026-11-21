@@ -54,7 +54,7 @@ class SpeakerCacheTest {
                 gate.await(5, TimeUnit.SECONDS)
                 listOf(SsdpHit("192.168.1.17", 1400), SsdpHit("192.168.1.21", 1400))
             },
-            { true }, scope, System::currentTimeMillis,
+            { HOME_LINK }, scope, System::currentTimeMillis,
         )
 
         fun waitForRound() {
@@ -132,7 +132,7 @@ class SpeakerCacheTest {
         val dead = CoroutineScope(SupervisorJob() + Dispatchers.IO).apply { cancel() }
         val rooms = RoomDirectory(
             SpeakerCache(tmp.root.resolve("sonos.json")), { _, _, _ -> throw SpeakerUnreachable("down") },
-            { throw AssertionError("the round must not run in a cancelled scope") }, { true }, dead, System::currentTimeMillis,
+            { throw AssertionError("the round must not run in a cancelled scope") }, { HOME_LINK }, dead, System::currentTimeMillis,
         )
         assertTrue(rooms.rescanInBackground())
         repeat(50) { if (rooms.scanning) Thread.sleep(100) }
@@ -230,11 +230,12 @@ class SpeakerCacheTest {
                 ),
                 listOf(Group("RINCON_S", listOf("RINCON_S", "RINCON_K")), Group("RINCON_B", listOf("RINCON_B")), Group("RINCON_L", listOf("RINCON_L")), Group("RINCON_O", listOf("RINCON_O"))),
             ),
+            network = HOME_LINK.key,
         )
         val asked = java.util.concurrent.ConcurrentLinkedQueue<Pair<String, Long>>()
         val states = mapOf("192.168.1.20" to "PLAYING", "192.168.1.22" to "PLAYING", "192.168.1.23" to "STOPPED")
         val rooms = RoomDirectory(
-            cache, { _, _, _ -> "" }, { emptyList() }, { true }, scope, System::currentTimeMillis,
+            cache, { _, _, _ -> "" }, { emptyList() }, { HOME_LINK }, scope, System::currentTimeMillis,
             transportState = { ip, _, timeoutMs ->
                 asked += ip to timeoutMs
                 if (ip == "192.168.1.24") throw SpeakerUnreachable("off")

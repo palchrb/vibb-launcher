@@ -25,6 +25,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import me.vibb.music.bridge.Bridge
 import me.vibb.music.data.Store
 import me.vibb.music.logic.AT_END_LOOK_MS
@@ -479,6 +480,8 @@ internal class SonosRenderer(
     suspend fun probe(uri: String, share: ShareBaseline? = null, keep: (Fields) -> String?): Fields? {
         if (!home.awaitWifi(WIFI_WAIT_MS)) return null
         val target = uid
+        // 2026-11-21: a room of another household than this Wi-Fi's is never asked - no answer, the room stays recorded
+        if (withContext(Dispatchers.IO) { home.rooms.elsewhere(target) }) return null
         // design 54 §2.9: a share session's look classifies with the persisted baseline
         return actor.call({ transport.adoptLive(target, kindOfUri(uri), uri, SonosController.LIVE_BUDGET_MS, share = share, keep = keep) }) { }.getOrNull()
     }
