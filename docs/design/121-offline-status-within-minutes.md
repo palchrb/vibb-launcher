@@ -56,7 +56,10 @@ row with its (i), and a once-a-minute sweep over every phone that repeats the he
 its stream open reads orange "Ingen kontakt" from 35 min until its sync lands. It never goes grey with its stream still
 open: Offline only once the stream closes or 60 min after the last contact (`OPEN_STREAM_AWAY_MINUTES`, the old
 window design 95 sized for the 30-min alarm up to 1.75 × late; code QA M1, the coordinator's decision). If the orange
-shows in practice, the fix is the backstop's alarm, not the window.
+shows in practice, the fix is the backstop's alarm, not the window. **It showed** (2026-11-21, the Jelly Star on its
+charger, "No contact · last seen 39 min ago" with the stream open): the backstop is exact since then
+(`setExactAndAllowWhileIdle` with `USE_EXACT_ALARM`, inexact only as the fallback; `push/SyncSchedule.kt`'s
+`backstopArm`), so an idle phone's last contact is at most 30 min and a few seconds old, and the window stays 35.
 
 **Code QA fixes (2026-11-20, `docs/review/2026-11-20-offline-status-code-qa.md`, H2 M1 L7):** a successful turn-on no
 longer reconnects at once - the pool is evicted after the `going_on` report, and the stream opens again only on another
