@@ -380,7 +380,7 @@ class GuardsTest {
         // design 26a §5.5: the sheet lists only allowed rooms (a group only with every member allowed, RoomScopeTest)
         val publish = service.substringAfter("private fun publish() {").substringBefore("\n    }\n")
         // ... and our own row with the rooms the kids grouped into it by hand (design 53 §2.8, Q4)
-        assertTrue(publish.contains("rooms = allowedRooms(home.rooms.state.value, roomScope, sonos?.uid, sonos?.accepted.orEmpty()),"))
+        assertTrue(publish.contains("rooms = allowedRooms(home.rooms.state.value.forSheet(), roomScope, sonos?.uid, sonos?.accepted.orEmpty()),"))
         assertEquals("the sheet's rows in publish, the belt's groups, the join's and the leave's look", 4, Regex("""home\.rooms\.state\.value""").findAll(service).count())
         // OUTPUT to a room outside the scope (or grouped with one): refused with its own line before anything moves -
         // after the same-room shortcut (design 53 §2.8: a tap on our own row is the same-tile rule, whatever the kids grouped in)

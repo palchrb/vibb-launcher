@@ -2,6 +2,7 @@ package me.vibb.music.sonos
 
 import android.content.Context
 import android.net.ConnectivityManager
+import android.net.LinkProperties
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
@@ -13,12 +14,17 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import me.vibb.music.BuildConfig
 import me.vibb.music.logic.logName
 import me.vibb.music.logic.releaseLogLine
 import okhttp3.OkHttpClient
+import java.net.Inet4Address
 
 /*
  * The household as the player service sees it (design 26a §2.1, §6.4, §6.5): the Wi-Fi network
@@ -42,14 +48,32 @@ class SonosHome(context: Context) {
     val wifiNetwork: StateFlow<Network?> = wifiNet
     private var client: Pair<Network, OkHttpClient>? = null
 
+    /** The Wi-Fi network's identity ([SpeakerCache.networkKey], from its `LinkProperties`), set before [wifiNet]. */
+    private val wifiKey = MutableStateFlow<Pair<Network, String?>?>(null)
+
     private val callback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
+            wifiKey.value = network to keyOf(connectivity?.getLinkProperties(network))
             wifiNet.value = network
+        }
+
+        override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) {
+            if (wifiNet.value == network || wifiKey.value?.first == network) wifiKey.value = network to keyOf(linkProperties)
         }
 
         override fun onLost(network: Network) {
             wifiNet.compareAndSet(network, null)
         }
+    }
+
+    /**
+     * The Wi-Fi connection now (2026-11-21): this connection's `Network.getNetworkHandle()` (new at every reconnect:
+     * the sheet's fresh mark) and the LAN's key (the same after a reconnect: which household the sheet shows). No
+     * location permission - never the SSID or BSSID.
+     */
+    fun link(): WifiLink? {
+        val network = wifiNet.value ?: return null
+        return WifiLink(network.networkHandle, wifiKey.value?.takeIf { it.first == network }?.second)
     }
 
     /** Where the background SSDP round runs (RoomDirectory). */
@@ -100,7 +124,7 @@ class SonosHome(context: Context) {
             soap.call(ip, port, SonosService.ZONE_GROUP_TOPOLOGY, "GetZoneGroupState", emptyList(), timeoutMs)["ZoneGroupState"].orEmpty()
         },
         ssdp = { if (wifi != null) SsdpScanner(app).scan() else emptyList() },
-        onWifi = { wifi != null },
+        wifi = ::link,
         scope = scope,
         elapsedMs = SystemClock::elapsedRealtime,
         log = ::log,
@@ -108,8 +132,26 @@ class SonosHome(context: Context) {
         transportState = { ip, port, timeoutMs ->
             soap.call(ip, port, SonosService.AV_TRANSPORT, "GetTransportInfo", listOf("InstanceID" to "0"), timeoutMs)["CurrentTransportState"]
         },
+        scoped = { roomScope },
     )
     val speakers = CachedSpeakers(cache, soap)
+
+    /** The parent's room scope as the service last read it (null = every room): the cache's prune keeps those rooms. */
+    @Volatile var roomScope: List<String>? = null
+
+    init {
+        // the sheet follows the Wi-Fi network (2026-11-21): a known household at once on its network, none elsewhere -
+        // the rows published again, the cache read as it is (never a topology call: discovery is never on a timer)
+        scope.launch {
+            combine(wifiNet, wifiKey) { _, _ -> link() }.distinctUntilChanged().drop(1).collect {
+                try {
+                    rooms.view()
+                } catch (e: RuntimeException) {
+                    log("rooms: not published at a network change (${e.javaClass.simpleName})")
+                }
+            }
+        }
+    }
 
     /** The grouping verbs on other rooms (design 53 §2.6): one at a time, on IO, never in a room's actor. */
     val verbs = GroupVerbs(speakers, ::log)
@@ -142,6 +184,16 @@ class SonosHome(context: Context) {
 
     companion object {
         const val TAG = "VibbSonos"
+
+        /** The LAN's key from the Wi-Fi network's link: its IPv4 subnets and default gateways ([SpeakerCache.networkKey]). */
+        fun keyOf(lp: LinkProperties?): String? = lp?.let { p ->
+            SpeakerCache.networkKey(
+                WifiFacts(
+                    addresses = p.linkAddresses.filter { it.address is Inet4Address }.map { "${it.address.hostAddress}/${it.prefixLength}" },
+                    gateways = p.routes.filter { it.isDefaultRoute && it.gateway is Inet4Address }.mapNotNull { it.gateway?.hostAddress },
+                ),
+            )
+        }
 
         /** Every Sonos line: as it is in a debug build, through [releaseLogLine] in a release one (P-L1). */
         fun log(message: String) {

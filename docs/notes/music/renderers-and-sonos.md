@@ -188,8 +188,34 @@ Moved from music/CLAUDE.md on 2026-11-01.
   after a group change a STOPPED of ours near the end probes first (the old coordinator may keep its TrackURI) - the
   advance only when the probe's last try finds no coordinator carrying our stream (`Fields.probeMissed`) or the
   window closed.
+- **Only the current Wi-Fi's speakers in "Spill av på"** (2026-11-21, the user: "Vi bør jo bare vise høyttalere som
+  faktisk er på det aktuelle wifi"; ours - vibb lists every speaker it ever saw, 26a §9): every topology answer is
+  recorded with the Wi-Fi network it came on (`sonos.json`'s `networks`: key -> every household that answered there,
+  so two households on one LAN are both listed; an answer during a change of the handle or the key is recorded for
+  none), and the sheet lists those households' rooms while the phone is on that network - once a topology or SSDP
+  answer came on this very connection, only the households that answered on it (`SpeakerCache.sheetRooms`, kept per
+  `Network` handle in memory; a household answering later on it joins), before that the key's, stale-marked
+  (`SpeakerCache.roomsOn`, `RoomsView.sheet`/`forSheet()`); on another network, before any answer there and off Wi-Fi
+  no rooms - only "Se etter høyttalere" (the cabin case's stale home rooms are gone). The network's key is
+  `SpeakerCache.networkKey`: the link's IPv4 subnets and default gateways from `LinkProperties`, hashed - the same
+  after a reconnect or a new lease, no location permission (never the SSID/BSSID), no IPv6; two LANs with a router's
+  same defaults share it: the key keeps both for the next connection's first look, and the first answer on a
+  connection narrows the sheet to the LAN that answered (a household listed under the key is never refused for that). Freshness is per connection
+  (`Network.getNetworkHandle()`, `roomMarks`): a known household shows at once after a reconnect, `stale` (no
+  grouping) until the opening's refresh answers, "svarer ikke" (`noAnswer`) only once a look got none - no blink. The
+  refresh asks this network's household first. `RoomsView.rooms` stays every household's: the session's group, label,
+  scope and follow read it, so a live session on a room goes on whatever the sheet shows; `reportable`, the scope,
+  adopt and follow are unchanged. A switch to a room of another household than this network's (`elsewhere`) is
+  refused before anything moves ("Kan ikke spilles på Sonos"), and the startup look and every look before the phone
+  plays (`SonosRenderer.probe`) never ask it: no answer, renderer.json keeps the room. `elsewhere` holds only once a
+  topology answered on this very connection and the room is a known one of a household that never answered on this
+  key - never on an unconfirmed mapping (a shared key) and never for a uid the cache can't name: the speaker's own
+  answer decides. A household's topology replaces its own groups only; players not seen for 30 days (`PRUNE_AGE_S`)
+  leave at the next topology with their groups, and networks forget such households - never the parent's scoped rooms
+  and their household (`SonosHome.roomScope`, set with the service's `roomScope`) or the household of `played`
+  (P-L2's home, which `reportable` names). Tests: `CurrentHouseholdTest`.
 - **Discovery never on a timer**: a cache miss, the sheet's "Se etter høyttalere" row or a failed play; opening the
-  sheet is one topology refresh. Every URL is built with `HttpUrl.Builder` from an IP literal (no `Uri.parse("http`);
+  sheet is one topology refresh; a Wi-Fi network change republishes the cache's rows, never asks a speaker. Every URL is built with `HttpUrl.Builder` from an IP literal (no `Uri.parse("http`);
   SOAP is LAN control traffic and has no address guard, but the speaker-playable filter keeps a `publicOnly` entry's
   private-literal audio, a `lan` entry's tailnet-literal audio (100.64/10, fd7a:115c:a1e0::/48: no speaker reaches
   the tailnet), own files, withdrawn items and non-series HLS off the speaker.

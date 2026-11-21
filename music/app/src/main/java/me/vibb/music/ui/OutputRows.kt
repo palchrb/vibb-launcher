@@ -97,7 +97,9 @@ fun groupSheet(
     groupVolume: Int? = null,
 ): List<SheetItem> {
     if (!groupingOffered(view, ours, live)) {
-        val today = if (view.stale) RoomLine.STALE else RoomLine.SONOS
+        // "svarer ikke" once a look got no answer - not for a known household's rows before the opening's refresh answers
+        // (stale, no grouping, but the plain line: no blink after a reconnect; 2026-11-21)
+        val today = if (view.noAnswer) RoomLine.STALE else RoomLine.SONOS
         return view.rooms.map { r ->
             val away = ours != null && r.uid != ours && ours in r.members
             SheetItem.Speaker(r, if (away) RoomLine.GROUPED_AWAY else today, selected = ours != null && r.uid == ours)

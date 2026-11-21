@@ -30,6 +30,11 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Discovery runs on a cache miss, the picker's "Se etter høyttalere", or a failed play - never on a
  * timer. Players MERGE (a scan that misses a speaker never deletes the row the kid aimed at); groups
  * REPLACE (a group list is a snapshot of one instant). Never an ip in the UI.
+ *
+ * Ours, not vibb's (the user, 2026-11-21: "Vi bør jo bare vise høyttalere som faktisk er på det aktuelle wifi"):
+ * each topology is recorded with the Wi-Fi network it answered on ([networkKey]), and the sheet shows only that
+ * household's rooms while the phone is on that network ([roomsOn]); a household's groups replace its own groups
+ * only; players not seen for [PRUNE_AGE_S] go at the next topology, but never the household the phone last played on.
  */
 
 private val CACHE_JSON = Json { ignoreUnknownKeys = true; explicitNulls = false; encodeDefaults = true }
@@ -52,7 +57,18 @@ data class CachedPlayer(
 @Serializable
 data class CachedGroup(val coordinator: String, val members: List<String>)
 
-/** `sonos.json`: `{players: {uid: {ip, port, name, seen_at, household}}, groups: [...], fetched_at, topology_at, played}`. */
+/**
+ * A Wi-Fi network ([SpeakerCache.networkKey]): every household whose topology answered on it -> when it last did (two
+ * households on one LAN - an S1/S2 split, a shared building network - are both its).
+ */
+@Serializable
+data class CachedNetwork(val households: Map<String, Double> = emptyMap())
+
+/**
+ * `sonos.json`: `{players: {uid: {ip, port, name, seen_at, household}}, groups: [...], fetched_at, topology_at, played,
+ * networks: {key: {households: {household: seen_at}}}}`. [groups] are every household's last groups (each topology
+ * replaces its own).
+ */
 @Serializable
 data class SpeakerDoc(
     val players: Map<String, CachedPlayer> = emptyMap(),
@@ -61,6 +77,23 @@ data class SpeakerDoc(
     @SerialName("topology_at") val topologyAt: Double? = null,
     /** The room the phone last played on (renderer.json's uid when it was a room; P-L2's evidence of the home). */
     val played: String? = null,
+    /** The Wi-Fi networks a topology answered on, by [SpeakerCache.networkKey]: the sheet's households there. */
+    val networks: Map<String, CachedNetwork> = emptyMap(),
+)
+
+/**
+ * The Wi-Fi connection the phone is on: [handle] is this one connection's (`Network.getNetworkHandle()`: a reconnect
+ * is a new one - the rows' fresh mark), [key] the network's identity across reconnects ([SpeakerCache.networkKey];
+ * null when it has no IPv4 subnet - no household is ever shown or recorded there). Null as a whole: no Wi-Fi.
+ */
+data class WifiLink(val handle: Long, val key: String?)
+
+/** What [SpeakerCache.networkKey] reads of the Wi-Fi network's `LinkProperties` (no location permission needed). */
+data class WifiFacts(
+    /** The link's addresses as `address/prefixLength` (`LinkAddress.toString()`); only the IPv4 ones count. */
+    val addresses: List<String>,
+    /** The default routes' gateways (literals); only the IPv4 ones count. */
+    val gateways: List<String>,
 )
 
 /**
@@ -78,7 +111,24 @@ data class Room(val label: String, val uid: String, val names: List<Pair<String,
  * coordinators of other rows that play something else (design 53 §2.7, "Spiller noe annet": read when the sheet
  * opens and at a `groups` event while it is open, never on a timer).
  */
-data class RoomsView(val rooms: List<Room>, val stale: Boolean, val scanning: Boolean, val busy: Set<String> = emptySet())
+data class RoomsView(
+    /**
+     * Every household's rooms the cache knows - what the session reads (its group's members, the label, the scope's
+     * look); never what the sheet lists ([sheet]).
+     */
+    val rooms: List<Room>,
+    /** Not fresh: no topology answered on this Wi-Fi connection yet, or the last look got no answer; no grouping then. */
+    val stale: Boolean,
+    val scanning: Boolean,
+    val busy: Set<String> = emptySet(),
+    /** A look on this connection got no answer (or no Wi-Fi): the rows' "svarer ikke". Not before a look ran (no blink). */
+    val noAnswer: Boolean = stale,
+    /** "Spill av på"'s rooms: the households on the Wi-Fi the phone is on now ([SpeakerCache.sheetRooms]). */
+    val sheet: List<Room> = rooms,
+) {
+    /** The view the sheet and its belts read: the current network's rooms as [rooms]. */
+    fun forSheet(): RoomsView = copy(rooms = sheet)
+}
 
 /** The file (`noBackupFilesDir/sonos.json`, SonosFiles.kt), read and written whole, tmp + rename. */
 class SpeakerCache(private val file: File, private val wallS: () -> Double = { System.currentTimeMillis() / 1000.0 }) {
@@ -92,17 +142,29 @@ class SpeakerCache(private val file: File, private val wallS: () -> Double = { S
 
     /**
      * A topology (`refresh_topology`): its players merged in with fresh ip, port and name (DHCP moves
-     * and renames heal themselves), the groups replaced. [scanned]: it came from an SSDP round
-     * (`rescan` stamps `fetched_at`).
+     * and renames heal themselves), its household's groups replaced (another household's kept). [scanned]: it came
+     * from an SSDP round (`rescan` stamps `fetched_at`). [network]: the Wi-Fi network it answered on (null: not
+     * known for sure - the network changed during the call); this household is one of that network's from now on.
+     * Then the prune ([pruned]) - [scope] is the parent's room scope, kept whatever its age.
      */
-    fun applyTopology(household: Household, scanned: Boolean = false): SpeakerDoc = update { doc ->
+    fun applyTopology(household: Household, scanned: Boolean = false, network: String? = null, scope: List<String>? = null): SpeakerDoc = update { doc ->
         val now = wallS()
         val key = householdKey(doc, household.players.keys)
-        doc.copy(
-            players = doc.players + household.players.mapValues { (_, p) -> CachedPlayer(p.ip, p.port, p.name, now, key) },
-            groups = household.groups.map { CachedGroup(it.coordinator, it.members) },
-            topologyAt = now,
-            fetchedAt = if (scanned) now else doc.fetchedAt,
+        val others = doc.groups.filter { g -> g.coordinator !in household.players && doc.players[g.coordinator]?.household.let { it != null && it != key } }
+        pruned(
+            doc.copy(
+                players = doc.players + household.players.mapValues { (_, p) -> CachedPlayer(p.ip, p.port, p.name, now, key) },
+                groups = others + household.groups.map { CachedGroup(it.coordinator, it.members) },
+                topologyAt = now,
+                fetchedAt = if (scanned) now else doc.fetchedAt,
+                networks = if (network != null && key != null) {
+                    doc.networks + (network to CachedNetwork(doc.networks[network]?.households.orEmpty() + (key to now)))
+                } else {
+                    doc.networks
+                },
+            ),
+            now,
+            scope,
         )
     }
 
@@ -131,12 +193,127 @@ class SpeakerCache(private val file: File, private val wallS: () -> Double = { S
             fetchedAt = runCatching { root["fetched_at"]?.let { CACHE_JSON.decodeFromJsonElement<Double?>(it) } }.getOrNull(),
             topologyAt = runCatching { root["topology_at"]?.let { CACHE_JSON.decodeFromJsonElement<Double?>(it) } }.getOrNull(),
             played = runCatching { root["played"]?.let { CACHE_JSON.decodeFromJsonElement<String?>(it) } }.getOrNull(),
+            networks = (root["networks"] as? JsonObject).orEmpty()
+                .mapNotNull { (key, v) -> runCatching { key to CACHE_JSON.decodeFromJsonElement<CachedNetwork>(v) }.getOrNull() }.toMap(),
         )
     }
 
     companion object {
         /** P-L2: the window the home is counted in when the phone never played on a room (and, before any household key, what is reported). */
         const val REPORT_MAX_AGE_S = 30 * 86_400.0
+
+        /** A player not seen for this long leaves the cache at the next topology (2026-11-21), and a network not answered on. */
+        const val PRUNE_AGE_S = 30 * 86_400.0
+
+        /**
+         * The prune (2026-11-21): players not seen for [PRUNE_AGE_S] (or never stamped) go - except every room of the
+         * parent's [scope] and its household, and the household of the room the phone last played on
+         * ([SpeakerDoc.played]): P-L2's home, which [reportable] names however long the phone was away -, with the
+         * groups they coordinated; a network forgets a household with no player left or that hasn't answered on it for
+         * as long (a kept household's never), and a network with none left goes.
+         */
+        fun pruned(doc: SpeakerDoc, nowS: Double, scope: List<String>? = null): SpeakerDoc {
+            val scoped = scope.orEmpty().toSet()
+            val kept = (listOfNotNull(doc.played) + scoped).mapNotNull { doc.players[it]?.household }.toSet()
+            fun recent(seenAt: Double?) = seenAt != null && nowS - seenAt <= PRUNE_AGE_S
+            val players = doc.players.filter { (uid, p) -> uid in scoped || p.household in kept || recent(p.seenAt) }
+            val households = players.values.mapNotNull { it.household }.toSet()
+            return doc.copy(
+                players = players,
+                groups = doc.groups.filter { it.coordinator in players },
+                networks = doc.networks
+                    .mapValues { (_, n) -> CachedNetwork(n.households.filter { (h, at) -> h in households && (h in kept || recent(at)) }) }
+                    .filterValues { it.households.isNotEmpty() },
+            )
+        }
+
+        /**
+         * The Wi-Fi network's identity (2026-11-21): the link's IPv4 subnets (`a.b.c.0/len`, not the phone's own
+         * address, which a new lease may change) and its IPv4 default gateways, hashed - the same LAN after a
+         * reconnect gives the same key, where `Network.getNetworkHandle()` is new at every connection. No location
+         * permission (never the SSID or BSSID), and no IPv6 (a prefix the ISP may rotate, a router address that may
+         * come after the first look). Null without an IPv4 subnet. Two LANs with the same subnet and gateway (a
+         * router's defaults) share a key: the rows of the household that answered last there show, unconfirmed, until
+         * the sheet's refresh asks - and the household that answers takes the key.
+         */
+        fun networkKey(facts: WifiFacts): String? {
+            val subnets = facts.addresses.mapNotNull(::ipv4Subnet).toSortedSet()
+            if (subnets.isEmpty()) return null
+            val gateways = facts.gateways.mapNotNull { g -> ipv4Bytes(g)?.joinToString(".") { (it.toInt() and 0xff).toString() } }.toSortedSet()
+            val text = subnets.joinToString(",") + "|" + gateways.joinToString(",")
+            val digest = java.security.MessageDigest.getInstance("SHA-256").digest(text.toByteArray())
+            return "w" + digest.take(8).joinToString("") { "%02x".format(it) }
+        }
+
+        /** `192.168.1.23/24` -> `192.168.1.0/24`; null for IPv6 or anything else. */
+        internal fun ipv4Subnet(linkAddress: String): String? {
+            val parts = linkAddress.split('/')
+            if (parts.size != 2) return null
+            val bits = parts[1].toIntOrNull()?.takeIf { it in 0..32 } ?: return null
+            val bytes = ipv4Bytes(parts[0]) ?: return null
+            val mask = if (bits == 0) 0L else (0xffffffffL shl (32 - bits)) and 0xffffffffL
+            val value = bytes.fold(0L) { acc, b -> (acc shl 8) or (b.toLong() and 0xff) } and mask
+            return (3 downTo 0).joinToString(".") { ((value shr (it * 8)) and 0xff).toString() } + "/" + bits
+        }
+
+        /** An IPv4 literal's four bytes (a dotted quad only, never a name lookup), else null. */
+        private fun ipv4Bytes(literal: String): ByteArray? {
+            val parts = literal.trim().split('.')
+            if (parts.size != 4 || parts.any { p -> p.isEmpty() || p.length > 3 || !p.all(Char::isDigit) || p.toInt() > 255 }) return null
+            return ByteArray(4) { parts[it].toInt().toByte() }
+        }
+
+        /** The households whose topology answered on [network] (none: off Wi-Fi, no IPv4 key, or none answered there yet). */
+        fun householdsOn(doc: SpeakerDoc, network: String?): Set<String> = network?.let { doc.networks[it]?.households?.keys }.orEmpty()
+
+        /**
+         * "Spill av på"'s rooms on [network] (2026-11-21): [rooms] of its households' players and groups only. None off
+         * Wi-Fi and none on a network where no topology answered yet - the sheet's opening refresh and "Se etter
+         * høyttalere" find them; a friend's speakers never show at home, nor the home's anywhere else.
+         */
+        fun roomsOn(doc: SpeakerDoc, network: String?): List<Room> = roomsOf(doc, householdsOn(doc, network))
+
+        /** [rooms] of [households]' players and groups only. */
+        fun roomsOf(doc: SpeakerDoc, households: Set<String>): List<Room> {
+            if (households.isEmpty()) return emptyList()
+            val players = doc.players.filterValues { it.household in households }
+            return rooms(doc.copy(players = players, groups = doc.groups.filter { it.coordinator in players }))
+        }
+
+        /**
+         * The sheet's rooms on [link] (2026-11-21): none off Wi-Fi; once a topology or SSDP answer came on this very
+         * connection, only the households that answered on it ([heard]: a household answering later on it joins) - a
+         * household the key remembers from another LAN with the same key (a router's defaults) drops out; before any
+         * answer here, the key's households ([roomsOn], stale-marked) for a fast first look.
+         */
+        fun sheetRooms(doc: SpeakerDoc, link: WifiLink?, heard: Set<String>?): List<Room> = when {
+            link == null -> emptyList()
+            heard != null -> roomsOf(doc, heard)
+            else -> roomsOn(doc, link.key)
+        }
+
+        /**
+         * Is [uid] a room of another household than [network]'s (2026-11-21)? Then a switch to it is refused and the
+         * startup look never asks it - as an unreachable room. Only when [confirmed] (a topology answered on this very
+         * connection) and [uid] is a known room of a household that never answered on this network; never on an
+         * unconfirmed mapping (two LANs may share a key), off Wi-Fi or for a uid the cache can't name - the speaker's
+         * own answer decides then.
+         */
+        fun elsewhere(doc: SpeakerDoc, uid: String, network: String?, confirmed: Boolean): Boolean {
+            if (!confirmed) return false
+            val households = householdsOn(doc, network)
+            val household = doc.players[uid]?.household ?: return false
+            return households.isNotEmpty() && household !in households
+        }
+
+        /**
+         * The sheet's marks on [link] (2026-11-21) as (stale, noAnswer): fresh only once a topology answered on this
+         * very connection ([answeredOn], a `Network` handle) - a known household's rows show at once after a
+         * reconnect, stale (no grouping) until the opening's refresh answers; "svarer ikke" only once a look on this
+         * connection got no answer ([failedOn]). Off Wi-Fi both.
+         */
+        fun roomMarks(link: WifiLink?, answeredOn: Long?, failedOn: Long?): Pair<Boolean, Boolean> =
+            if (link == null) true to true else (answeredOn != link.handle) to (failedOn == link.handle)
 
         /** The household key for a topology of [uids]: the key most of them already have (ties: the smallest), else their smallest uid. */
         internal fun householdKey(doc: SpeakerDoc, uids: Collection<String>): String? {
@@ -176,6 +353,7 @@ class SpeakerCache(private val file: File, private val wallS: () -> Double = { S
          * solo rows; a group left with fewer than two known rooms, or whose coordinator is unknown,
          * gives no group row (its known rooms show alone). Every row's [Room.members] is the whole
          * group, unknown uids included, so the room scope sees them (§5.5; correction 2026-10-12).
+         * Every household's (the session's view); the sheet's is [roomsOn].
          */
         fun rooms(doc: SpeakerDoc): List<Room> {
             val players = doc.players.entries.sortedBy { it.value.name.orEmpty() }
@@ -201,9 +379,11 @@ class SpeakerCache(private val file: File, private val wallS: () -> Double = { S
 /**
  * The household behind the picker: one topology refresh when the sheet opens, the background SSDP
  * round when nobody answers (`pipewire`'s `rescan_in_background`: "the list fills itself"), at most
- * one round in flight. Only on Wi-Fi ([onWifi]); without it the cache is served stale and no round
- * starts (the cabin case, §6.4). [state] is what the sheet shows, published on every refresh and when
- * a round starts and ends ("the rows refresh when it ends", qa-26a-step1-code L3). Blocking: call
+ * one round in flight. Only on Wi-Fi ([wifi]); without it nothing is asked and no round starts, and the
+ * sheet lists no rooms (2026-11-21; vibb's cabin case listed the home's stale, §6.4). [state] is what the sheet
+ * shows, published on every refresh, when a round starts and ends ("the rows refresh when it ends",
+ * qa-26a-step1-code L3) and when the Wi-Fi network changes ([view]). Its [RoomsView.sheet] is the household that
+ * answered on the current network; every answer is recorded with the network it came on. Blocking: call
  * [refresh] and [refreshTopology] off the main thread.
  */
 class RoomDirectory(
@@ -212,13 +392,16 @@ class RoomDirectory(
     private val zoneGroupState: (ip: String, port: Int, timeoutMs: Long) -> String,
     /** One SSDP round on Wi-Fi (SsdpScanner). */
     private val ssdp: () -> List<SsdpHit>,
-    private val onWifi: () -> Boolean,
+    /** The Wi-Fi connection now, null without Wi-Fi (SonosHome's network callback). */
+    private val wifi: () -> WifiLink?,
     /** Where the background round runs (an IO scope of the caller's). */
     private val scope: CoroutineScope,
     private val elapsedMs: () -> Long,
     private val log: (String) -> Unit = {},
     /** A room's `CurrentTransportState` within a time budget (design 53 §2.7's busy look); null when it won't say. */
     private val transportState: (ip: String, port: Int, timeoutMs: Long) -> String? = { _, _, _ -> null },
+    /** The parent's room scope now (null = every room): the prune keeps its rooms and their households. */
+    private val scoped: () -> List<String>? = { null },
 ) {
     private val roundRunning = AtomicBoolean(false)
     private val views = MutableStateFlow(RoomsView(emptyList(), stale = false, scanning = false))
@@ -227,6 +410,19 @@ class RoomDirectory(
     val state: StateFlow<RoomsView> = views.asStateFlow()
 
     val scanning: Boolean get() = roundRunning.get()
+
+    /** The Wi-Fi connection ([WifiLink.handle]) a topology last answered on, and the one the sheet's last look got none on. */
+    @Volatile private var answeredOn: Long? = null
+
+    @Volatile private var failedOn: Long? = null
+
+    /** The households that answered on one connection (its handle): the sheet's once that connection has an answer. */
+    @Volatile private var heard: Pair<Long, Set<String>>? = null
+
+    /** The households that answered on [link]'s connection, or null before any answer on it. */
+    private fun heardOn(link: WifiLink?): Set<String>? = heard?.takeIf { link != null && it.first == link.handle }?.second
+
+    private fun onWifi(): Boolean = wifi() != null
 
     /**
      * One topology refresh and the rows published - never a discovery round, nothing published when
@@ -242,23 +438,66 @@ class RoomDirectory(
         false
     }
 
-    /** The cache as it is (a plain read), published. */
-    fun view(stale: Boolean = false): RoomsView =
-        RoomsView(SpeakerCache.rooms(cache.load()), stale, scanning, views.value.busy).also { views.value = it }
+    /**
+     * The cache as it is (a plain read), published: every room, and the sheet's ([SpeakerCache.sheetRooms]: the
+     * households that answered on this connection, before that the network key's) with its marks
+     * ([SpeakerCache.roomMarks]). Also at every change of the Wi-Fi network (SonosHome): a known household shows at
+     * once on its network, nothing on another.
+     */
+    fun view(): RoomsView = compose(scanning).also { views.value = it }
+
+    private fun compose(scanning: Boolean): RoomsView {
+        val link = wifi()
+        val doc = cache.load()
+        val (stale, noAnswer) = SpeakerCache.roomMarks(link, answeredOn, failedOn)
+        return RoomsView(SpeakerCache.rooms(doc), stale, scanning, views.value.busy, noAnswer, SpeakerCache.sheetRooms(doc, link, heardOn(link)))
+    }
+
+    /**
+     * Is [uid] a room of another household than the current Wi-Fi network's ([SpeakerCache.elsewhere]: only once a
+     * topology answered on this connection)? A switch to it is refused and the startup look doesn't ask it. Blocking
+     * (a file read).
+     */
+    fun elsewhere(uid: String): Boolean {
+        val link = wifi() ?: return false
+        return SpeakerCache.elsewhere(cache.load(), uid, link.key, confirmed = answeredOn == link.handle)
+    }
+
+    /**
+     * [household] answered while the phone was on [asked]: merged in, and recorded for that network only if the phone
+     * is still on that very connection with the same key (a network change during the call leaves it unattributed and
+     * not fresh).
+     */
+    private fun answered(asked: WifiLink, household: Household, scanned: Boolean): SpeakerDoc {
+        val same = wifi() == asked
+        val doc = cache.applyTopology(household, scanned, network = asked.key.takeIf { same }, scope = scoped())
+        if (same) {
+            answeredOn = asked.handle
+            failedOn = null
+            household.players.keys.firstNotNullOfOrNull { doc.players[it]?.household }?.let { hear(asked.handle, it) }
+        }
+        return doc
+    }
+
+    @Synchronized
+    private fun hear(handle: Long, household: String) {
+        heard = handle to (heard?.takeIf { it.first == handle }?.second.orEmpty() + household)
+    }
 
     /**
      * "Spiller noe annet" (design 53 §2.7): every other row's coordinator - not [ours], not a row holding it - is
      * asked its `GetTransportInfo` in parallel, [BUSY_PER_MS] each, at most [BUSY_MAX] rows; the PLAYING ones are
      * published as [RoomsView.busy] (a row that doesn't answer is not busy). Called when the sheet opens, after its
-     * topology refresh, and at a `groups` event while it is open - never on a timer. Only on Wi-Fi.
+     * topology refresh, and at a `groups` event while it is open - never on a timer. Only on Wi-Fi, only the sheet's rows.
      */
     suspend fun lookBusy(ours: String?): Set<String> {
-        if (!onWifi()) {
+        val link = wifi()
+        if (link == null) {
             clearBusy()
             return emptySet()
         }
         val doc = cache.load()
-        val rows = SpeakerCache.rooms(doc).filter { it.uid != ours && (ours == null || ours !in it.members) }.take(BUSY_MAX)
+        val rows = SpeakerCache.sheetRooms(doc, link, heardOn(link)).filter { it.uid != ours && (ours == null || ours !in it.members) }.take(BUSY_MAX)
         val found = ConcurrentHashMap.newKeySet<String>()
         withTimeoutOrNull(BUSY_TOTAL_MS) {
             coroutineScope {
@@ -284,20 +523,23 @@ class RoomDirectory(
     fun clearBusy() = views.update { it.copy(busy = emptySet()) }
 
     /**
-     * `refresh_topology`: GetZoneGroupState against the cached speakers in uid order until one
-     * answers, [PER_IP_MS] each and [TOTAL_MS] in all (QA M7). Throws when nobody answers.
+     * `refresh_topology`: GetZoneGroupState against the cached speakers - the current network's household first,
+     * then the rest, each in uid order - until one answers, [PER_IP_MS] each and [TOTAL_MS] in all (QA M7). The
+     * answer is this network's household from now on. Throws when nobody answers.
      */
     fun refreshTopology(): SpeakerDoc {
-        if (!onWifi()) throw SpeakerUnreachable("no Wi-Fi")
+        val link = wifi() ?: throw SpeakerUnreachable("no Wi-Fi")
         val start = elapsedMs()
         var last: Exception? = null
-        for ((_, rec) in cache.load().players.entries.sortedBy { it.key }) {
+        val doc = cache.load()
+        val here = SpeakerCache.householdsOn(doc, link.key)
+        for ((_, rec) in doc.players.entries.sortedWith(compareBy({ here.isNotEmpty() && it.value.household !in here }, { it.key }))) {
             val left = TOTAL_MS - (elapsedMs() - start)
             if (left <= 0) break
             try {
                 val household = Topology.parse(zoneGroupState(rec.ip, rec.port, minOf(PER_IP_MS, left)))
                     ?: throw SpeakerUnreachable("no topology from ${rec.ip}")
-                return cache.applyTopology(household)
+                return answered(link, household, scanned = false)
             } catch (e: IOException) {
                 last = e
             }
@@ -307,15 +549,17 @@ class RoomDirectory(
 
     /**
      * The sheet opening (`/players?fresh=1`): one topology refresh; nobody answering serves the
-     * cache marked stale at once and starts one background round (on Wi-Fi).
+     * cache marked stale ("svarer ikke") at once and starts one background round (on Wi-Fi).
      */
     fun refresh(): RoomsView = try {
         refreshTopology()
         view()
     } catch (e: IOException) {
         log("rooms: nobody answered (${e.javaClass.simpleName}) - the cache, stale")
+        answeredOn = null
+        failedOn = wifi()?.handle
         if (onWifi()) rescanInBackground()
-        view(stale = true)
+        view()
     }
 
     /**
@@ -333,8 +577,8 @@ class RoomDirectory(
                 log("background scan failed (${e.javaClass.simpleName})")
                 false
             }
-            // the new rows, still stale if no household answered; scanning ends below
-            views.value = RoomsView(SpeakerCache.rooms(cache.load()), stale = !answered && views.value.stale, scanning = true, busy = views.value.busy)
+            // the new rows, still stale if no household answered on this connection; scanning ends below
+            views.value = compose(scanning = true)
         }
         job.invokeOnCompletion {
             views.update { it.copy(scanning = false) }
@@ -348,10 +592,11 @@ class RoomDirectory(
      * topology answers (SSDP alone learns neither uids nor groups), merged into the cache. True when one did.
      */
     private fun round(): Boolean {
+        val link = wifi() ?: return false
         for (hit in ssdp()) {
             try {
                 val household = Topology.parse(zoneGroupState(hit.ip, hit.port, PER_IP_MS)) ?: continue
-                cache.applyTopology(household, scanned = true)
+                answered(link, household, scanned = true)
                 return true
             } catch (e: IOException) {
                 log("scan: ${e.javaClass.simpleName} from a speaker - trying the next")
