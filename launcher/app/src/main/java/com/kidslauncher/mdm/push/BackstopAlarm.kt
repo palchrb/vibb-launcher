@@ -17,12 +17,15 @@ private const val ACTION_BACKSTOP = "com.kidslauncher.mdm.action.BACKSTOP_SYNC"
 private const val REQUEST_CODE = 7
 
 /**
- * The backstop sync (handy step 7, design 07 §2): one inexact while-idle alarm on elapsed
- * realtime, [backstopDelayMs] ahead (30 min; 15 while the SSE stream is down; sooner when
- * the parent's interval location policy wants a fix). While-idle alarms fire in Doze (about once
- * per 9 minutes per app at most), unlike JobScheduler/WorkManager, which only run in maintenance
- * windows - WorkManager was removed for hours-long overnight gaps (v0.8.0). Re-armed after every
- * sync and whenever the anchor service starts (process start after unlock, boot, update).
+ * The backstop sync (handy step 7, design 07 §2): one while-idle alarm on elapsed realtime,
+ * [backstopDelayMs] ahead (30 min; 15 while the SSE stream is down; sooner when the parent's
+ * interval location policy wants a fix). Exact since 2026-11-21 ([backstopArm]: `USE_EXACT_ALARM`,
+ * as `TimeRuleAlarm`; inexact only if exact alarms are refused): an inexact one came up to 3/4 of
+ * the delay late, past the server's 35-min Online window, and the interval's fix with it.
+ * While-idle alarms fire in Doze (about once per 9 minutes per app at most), unlike
+ * JobScheduler/WorkManager, which only run in maintenance windows - WorkManager was removed for
+ * hours-long overnight gaps (v0.8.0). Re-armed after every sync and whenever the anchor service
+ * starts (process start after unlock, boot, update).
  */
 object BackstopAlarm {
     private fun pendingIntent(context: Context): PendingIntent = PendingIntent.getBroadcast(
@@ -61,8 +64,14 @@ object BackstopAlarm {
             val armed = armedAt
             if (!afterSync && armed > SystemClock.elapsedRealtime() && armed <= target) return
             armedAt = target
-            alarms.setAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, target, pendingIntent(context))
-            Log.i(LOG_TAG, "Next backstop sync in ${delay / 60_000} min")
+            val arm = backstopArm(alarms.canScheduleExactAlarms())
+            when (arm) {
+                BackstopArm.EXACT ->
+                    alarms.setExactAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, target, pendingIntent(context))
+                BackstopArm.INEXACT ->
+                    alarms.setAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, target, pendingIntent(context))
+            }
+            Log.i(LOG_TAG, "Next backstop sync in ${delay / 60_000} min (${arm.name.lowercase()})")
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Couldn't schedule the backstop sync", e)
         }

@@ -82,6 +82,38 @@ class SyncScheduleTest {
     }
 
     @Test
+    fun `the backstop is exact whenever Android allows it, inexact only as the fallback`() {
+        assertEquals(BackstopArm.EXACT, backstopArm(canScheduleExact = true))
+        assertEquals(BackstopArm.INEXACT, backstopArm(canScheduleExact = false))
+    }
+
+    @Test
+    fun `an exact backstop reaches the server inside its 35-minute Online window, an inexact one may not`() {
+        // The server's streams.rs ONLINE_WINDOW_MINUTES (design 121); nothing links the two at compile time.
+        val onlineWindowMs = 35 * 60_000L
+        assertEquals(BACKSTOP_INTERVAL_MS, backstopLatestMs(BACKSTOP_INTERVAL_MS, BackstopArm.EXACT))
+        assertTrue(backstopLatestMs(BACKSTOP_INTERVAL_MS, BackstopArm.EXACT) <= onlineWindowMs - 5 * 60_000L)
+        // The Jelly Star of 2026-11-21: "No contact · last seen 39 min ago" with its stream open.
+        assertEquals(52 * 60_000L + 30_000L, backstopLatestMs(BACKSTOP_INTERVAL_MS, BackstopArm.INEXACT))
+        assertTrue(backstopLatestMs(BACKSTOP_INTERVAL_MS, BackstopArm.INEXACT) > onlineWindowMs)
+    }
+
+    @Test
+    fun `an exact backstop for the interval's fix fires when the fix is due, not a moment before`() {
+        val every30 = LocationPolicy(mode = "interval", intervalMinutes = 30)
+        // The sync after the last fix re-arms a few seconds later: the alarm aims at the fix's due time.
+        for (sinceFix in listOf(0L, 4_000L, 20 * 60_000L)) {
+            val delay = backstopDelayMs(true, every30, sinceFix)
+            val firesAt = sinceFix + backstopLatestMs(delay, BackstopArm.EXACT)
+            assertEquals(
+                com.kidslauncher.mdm.server.LocationAction.FRESH,
+                com.kidslauncher.mdm.server.locationAction(every30, forced = false, sinceLastFreshMs = firesAt),
+            )
+            assertTrue(firesAt <= BACKSTOP_INTERVAL_MS)
+        }
+    }
+
+    @Test
     fun `a burst of requests costs at most one extra run`() {
         val c = SyncCoalescer()
         assertTrue(c.request("sse"))

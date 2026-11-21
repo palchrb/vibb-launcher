@@ -10,7 +10,7 @@ import com.kidslauncher.mdm.server.dto.LocationPolicy
  * Nudges over the SSE stream bring changes within seconds; the backstop alarm only catches what
  * a nudge missed. It is a while-idle alarm on elapsed realtime (`BackstopAlarm`), not a Handler
  * timer: uptime stops in deep sleep, which is why the old 5-minute timer only ran because the
- * 15 s SSE keepalive kept waking the phone.
+ * 15 s SSE keepalive kept waking the phone. Exact since 2026-11-21 ([backstopArm]).
  */
 
 /** The normal backstop period. */
@@ -19,7 +19,7 @@ const val BACKSTOP_INTERVAL_MS = 30 * 60 * 1000L
 /** While the stream is down, nothing else would bring a change. */
 const val BACKSTOP_SSE_DOWN_INTERVAL_MS = 15 * 60 * 1000L
 
-/** Android lets an app's while-idle alarms fire about once per 9 minutes in Doze; asking for
+/** Android lets an app's while-idle alarms fire about once per 9 minutes in Doze (exact ones too); asking for
  * less only bunches them up. */
 const val MIN_BACKSTOP_MS = 9 * 60 * 1000L
 
@@ -41,6 +41,29 @@ fun backstopDelayMs(
         delay = minOf(delay, untilDue)
     }
     return delay.coerceAtLeast(MIN_BACKSTOP_MS)
+}
+
+/** How [com.kidslauncher.mdm.push.BackstopAlarm] arms the backstop. */
+enum class BackstopArm { EXACT, INEXACT }
+
+/**
+ * Exact whenever Android allows it (2026-11-21, the Jelly Star on its charger read "No contact · last seen 39 min ago"
+ * with its stream open): `setExactAndAllowWhileIdle` with `USE_EXACT_ALARM` (granted at install, so
+ * `canScheduleExactAlarms()` - [canScheduleExact] - is true on Android 14-17), as `TimeRuleAlarm` does; else today's
+ * inexact `setAndAllowWhileIdle`. An inexact alarm may fire up to 3/4 of its delay late even outside Doze
+ * ([backstopLatestMs]), which the server's 35-min Online window (`streams.rs`, `ONLINE_WINDOW_MINUTES`) can't hold;
+ * an exact one fires on time and costs no extra sync and no extra byte - the same alarm, only not moved.
+ */
+fun backstopArm(canScheduleExact: Boolean): BackstopArm = if (canScheduleExact) BackstopArm.EXACT else BackstopArm.INEXACT
+
+/**
+ * The latest an armed backstop fires after [delayMs], outside Doze's while-idle quota (which a 30-min spacing never
+ * meets): exact on time; inexact up to 1.75 × (AlarmManager's window heuristic: 3/4 of the delay, for any delay over
+ * 10 s).
+ */
+fun backstopLatestMs(delayMs: Long, arm: BackstopArm): Long = when (arm) {
+    BackstopArm.EXACT -> delayMs
+    BackstopArm.INEXACT -> delayMs + delayMs * 3 / 4
 }
 
 /** The SSE stream's read timeout: the server sends a keepalive comment every `SSE_KEEPALIVE_SECS`
