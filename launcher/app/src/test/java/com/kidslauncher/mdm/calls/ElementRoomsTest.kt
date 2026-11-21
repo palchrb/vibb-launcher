@@ -172,8 +172,7 @@ class ElementRoomsTest {
         assertEquals(
             listOf(
                 "element://room/%21xrLg_-U0V0jULeIm_fvol9NEvBHNxqHrSP5K1R7BUpI?via=vibb.me",
-                "matrix:roomid/xrLg_-U0V0jULeIm_fvol9NEvBHNxqHrSP5K1R7BUpI?via=vibb.me&action=join",
-                "elementx://open/%40dockerbot%3Avibb.me/%21xrLg_-U0V0jULeIm_fvol9NEvBHNxqHrSP5K1R7BUpI",
+                "matrix:roomid/xrLg_-U0V0jULeIm_fvol9NEvBHNxqHrSP5K1R7BUpI?via=vibb.me",
             ),
             elementRoomUris(ElementRoom("@dockerbot:vibb.me", dmRoom)),
         )
@@ -181,8 +180,7 @@ class ElementRoomsTest {
         assertEquals(
             listOf(
                 "element://room/%21r%2Fs%2Bt%3Ax.org%3A8448?via=x.org%3A8448",
-                "matrix:roomid/r%2Fs%2Bt%3Ax.org%3A8448?via=x.org%3A8448&action=join",
-                "elementx://open/%40a%2Fb%2Bc%3Dd%3Ax.org%3A8448/%21r%2Fs%2Bt%3Ax.org%3A8448",
+                "matrix:roomid/r%2Fs%2Bt%3Ax.org%3A8448?via=x.org%3A8448",
             ),
             elementRoomUris(ElementRoom("@a/b+c=d:x.org:8448", "!r/s+t:x.org:8448")),
         )

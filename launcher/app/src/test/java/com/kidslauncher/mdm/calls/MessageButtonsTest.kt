@@ -78,8 +78,7 @@ class MessageButtonsTest {
         assertEquals(
             listOf(
                 "element://room/%21xrLg_-U0V0jULeIm_fvol9NEvBHNxqHrSP5K1R7BUpI?via=vibb.me",
-                "matrix:roomid/xrLg_-U0V0jULeIm_fvol9NEvBHNxqHrSP5K1R7BUpI?via=vibb.me&action=join",
-                "elementx://open/%40kid%3Avibb.me/%21xrLg_-U0V0jULeIm_fvol9NEvBHNxqHrSP5K1R7BUpI",
+                "matrix:roomid/xrLg_-U0V0jULeIm_fvol9NEvBHNxqHrSP5K1R7BUpI?via=vibb.me",
                 "matrix:u/mamma:matrix.org?action=chat",
                 "element://user/@mamma:matrix.org",
             ),

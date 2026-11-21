@@ -8,9 +8,8 @@ import kotlinx.serialization.json.Json
 /*
  * Element X: the Message button opens the DM, not the profile (design 15, the learned variant
  * after its QA review). Element X has no "open DM with this user" link - `matrix:u/…?action=chat`
- * opens the profile - but `element://room/<room>` (and, in older builds, `elementx://open/<session>/<room>`)
- * opens a room ([elementRoomUris]). The launcher learns the room from Element X's DM notifications: a notification
- * whose every sender is one phone-book contact names that contact's DM room (its tag) and the
+ * opens the profile - but `element://room/<room>` opens a room ([elementRoomUris]). The launcher
+ * learns the room from Element X's DM notifications: a notification whose every sender is one phone-book contact names that contact's DM room (its tag) and the
  * kid's own account (the messaging person). Pure, no Android imports - ElementRoomsTest. The glue
  * is badges/ElementDmReader (reads the notification) and ElementRoomStore (CE prefs).
  *
@@ -134,24 +133,27 @@ fun withLearnedRoom(stored: Map<String, ElementRoom>, learned: LearnedElementRoo
 
 /**
  * The links that open a learned DM room, in the order they are tried (each explicit to Element X,
- * moving on only when the start throws); empty for an invalid pair. Element X 26.11.1 has no
- * `elementx` scheme in its intent filters (the old notification link, `-91` on the user's phone,
- * 2026-11-20), but its `element://room/<id or alias>` link (the matrix.to website's hand-over,
- * `DefaultMatrixToConverter`, then `DefaultPermalinkParser`) takes a room ID with `?via=`, and so
- * does an MSC2312 `matrix:roomid/<id>` URI (`action=join` opens a room the account is already in).
- * Each segment is fully percent-encoded (the `!` too; a v12 room ID has no server part, so `via`
- * is the session's own server):
- * 1. `element://room/<room>?via=<server>`
- * 2. `matrix:roomid/<room without !>?via=<server>&action=join`
- * 3. `elementx://open/<session>/<room>` (older Element X builds).
+ * moving on only when the start throws); empty for an invalid pair. Read from Element X's source
+ * (v26.11.1 and the default branch of 2026-11-20):
+ * 1. `element://room/<room>?via=<server>` - MainActivity's own `element` filter (hosts `user`,
+ *    `room`), the matrix.to website's hand-over: `DefaultMatrixToConverter` makes it a matrix.to
+ *    link, `DefaultPermalinkParser` a `RoomLink` with the `via`s, `RootFlowNode` opens the room
+ *    (`attachRoom`, as a notification does; one account is used as is, several pick the one in
+ *    the room). A room ID is taken as well as an alias, a v12 one without a server part too.
+ * 2. `matrix:roomid/<room without !>?via=<server>` (MSC2312, MainActivity's `matrix` filter) -
+ *    the same `RoomLink`; Element X ignores `action`, so none is sent.
+ * The old `elementx://open/<session>/<room>` is gone: Element X 26.11.1 removed its filter (commit
+ * 612ca439ad, "Remove the elementx custom scheme intent-filter"; `-91` on the user's phone,
+ * 2026-11-20) - its notifications reach MainActivity by an explicit component. Each segment is
+ * fully percent-encoded (the `!` too); a v12 room ID has no server part, so `via` is the
+ * session's own server.
  */
 fun elementRoomUris(room: ElementRoom): List<String> {
     if (!isMatrixId(room.session) || !isElementRoomId(room.room)) return emptyList()
     val via = uriEncode(room.session.substringAfter(':'))
     return listOf(
         "element://room/${uriEncode(room.room)}?via=$via",
-        "matrix:roomid/${uriEncode(room.room.removePrefix("!"))}?via=$via&action=join",
-        "elementx://open/${uriEncode(room.session)}/${uriEncode(room.room)}",
+        "matrix:roomid/${uriEncode(room.room.removePrefix("!"))}?via=$via",
     )
 }
 
