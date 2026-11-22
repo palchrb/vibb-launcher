@@ -6,6 +6,7 @@
      14 dp gap under its drawn status row are Android's status bar here, so the contacts start
      right under the bar (emulator run 2026-10-06: the gap was too large). -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/home_container"
     android:layout_width="match_parent"
@@ -209,5 +210,54 @@
         android:paddingBottom="16dp"
         android:requiresFadingEdge="vertical"
         tools:listitem="@layout/item_kid_tile" />
+
+    <!-- The kid moves Home's tiles (2026-11-22): while a tile is lifted by "Flytt" (HomeGridAdapter.startMoving),
+         ◀ Ferdig ▶ under the grid - each arrow one step, stored at once. -->
+    <LinearLayout
+        android:id="@+id/home_move_bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="8dp"
+        android:accessibilityPaneTitle="@string/home_move"
+        android:background="@drawable/bg_home_move_bar"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:padding="4dp"
+        android:visibility="gone">
+
+        <ImageButton
+            android:id="@+id/home_move_left"
+            android:layout_width="64dp"
+            android:layout_height="48dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/home_move_left"
+            android:scaleX="-1"
+            android:src="@drawable/ic_kid_chevron"
+            android:scaleType="center"
+            app:tint="@color/kid_core" />
+
+        <TextView
+            android:id="@+id/home_move_done"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:background="?attr/selectableItemBackground"
+            android:fontFamily="@font/nunito_extrabold"
+            android:gravity="center"
+            android:minHeight="48dp"
+            android:text="@string/home_move_done"
+            android:textColor="@color/kid_core"
+            android:textSize="16sp" />
+
+        <ImageButton
+            android:id="@+id/home_move_right"
+            android:layout_width="64dp"
+            android:layout_height="48dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/home_move_right"
+            android:src="@drawable/ic_kid_chevron"
+            android:scaleType="center"
+            app:tint="@color/kid_core" />
+    </LinearLayout>
 
 </LinearLayout>

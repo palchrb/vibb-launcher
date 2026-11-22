@@ -241,8 +241,11 @@ class KidScreensEscapeTest {
     }
 
     @Test
-    fun `only app tiles have a long-press menu`() {
+    fun `only app tiles have the app menu, and Innstillinger has no long-press`() {
         val adapter = src("ui/home/HomeGridAdapter.kt").readText()
-        assertTrue(adapter.contains("as? GridTile.App ?: return@setOnLongClickListener false"))
+        assertTrue(adapter.contains("if (tile is GridTile.Settings) return@setOnLongClickListener false"))
+        // The other tiles' long-press only moves them (the kid's order of Home's tiles, 2026-11-22).
+        assertTrue(adapter.contains("val info = (tile as? GridTile.App)?.let { infos[it.app.key] }"))
+        assertTrue(adapter.contains("if (info == null) startMoving(id) else showAppContextMenu("))
     }
 }

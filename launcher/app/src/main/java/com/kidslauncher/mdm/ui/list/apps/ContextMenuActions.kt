@@ -75,13 +75,15 @@ fun AbstractDetailedAppInfo.showRenameDialog(context: Context): AlertDialog =
 /**
  * The long-press context menu shown for an app row, shared by the app drawer and the
  * home screen's minimal list. [onOverlay] gets a way to close the menu and, once opened, the
- * rename dialog: Home closes both when the PIN lock engages (design 16c, qa-16c-code #2).
+ * rename dialog: Home closes both when the PIN lock engages (design 16c, qa-16c-code #2). [onMove]: an extra
+ * "Move" item, shown only when given.
  */
 fun showAppContextMenu(
     activity: Activity,
     anchor: View,
     appInfo: AbstractDetailedAppInfo,
     onOverlay: (close: () -> Unit) -> Unit = {},
+    onMove: (() -> Unit)? = null,
 ) {
     val popup = PopupMenu(activity, anchor)
     popup.inflate(R.menu.menu_app)
@@ -90,6 +92,8 @@ fun showAppContextMenu(
     val packageName = (appInfo.getRawInfo() as? com.kidslauncher.mdm.apps.AppInfo)?.packageName
     popup.menu.findItem(R.id.app_menu_rename).isVisible =
         com.kidslauncher.mdm.appdisplay.kidMayRename(com.kidslauncher.mdm.appdisplay.AppDisplay.entry(packageName))
+
+    popup.menu.findItem(R.id.app_menu_move).isVisible = onMove != null
 
     if (LauncherPreferences.apps().hidden()?.contains(appInfo.getRawInfo()) == true) {
         popup.menu.findItem(R.id.app_menu_hidden).setTitle(R.string.list_app_hidden_remove)
@@ -104,6 +108,11 @@ fun showAppContextMenu(
             R.id.app_menu_rename -> {
                 val dialog = appInfo.showRenameDialog(activity)
                 onOverlay { dialog.dismiss() }
+                true
+            }
+
+            R.id.app_menu_move -> {
+                onMove?.invoke()
                 true
             }
 

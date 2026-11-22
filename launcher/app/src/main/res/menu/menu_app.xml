@@ -6,4 +6,9 @@
     <item
         android:id="@+id/app_menu_rename"
         android:title="@string/list_app_rename" />
+    <!-- Home only (the kid's order of Home's tiles, 2026-11-22): shown when the caller passes onMove. -->
+    <item
+        android:id="@+id/app_menu_move"
+        android:title="@string/home_move"
+        android:visible="false" />
 </menu>

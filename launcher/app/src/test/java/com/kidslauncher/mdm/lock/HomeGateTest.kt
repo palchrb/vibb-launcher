@@ -147,16 +147,37 @@ class HomeGateTest {
     @Test
     fun `Home closes its contact sheet, long-press menu and rename dialog when the lock engages`() {
         val home = code("java/com/kidslauncher/mdm/ui/HomeActivity.kt")
-        assertTrue(home.contains("HomeGridAdapter(this, ::trackOverlay)"))
+        assertTrue(home.contains("HomeGridAdapter(this, ::trackOverlay, ::renderMoveBar)"))
         assertTrue(body(home, "showContactSheet").contains("trackOverlay { sheet.dismiss() }"))
         assertTrue(body(home, "onDestroy").contains("closeOverlays()"))
         val adapter = code("java/com/kidslauncher/mdm/ui/home/HomeGridAdapter.kt")
-        assertTrue(adapter.contains("showAppContextMenu(activity, v, info, onOverlay)"))
+        assertTrue(adapter.contains("showAppContextMenu(activity, view, info, ::trackMenu)"))
+        assertTrue(body(adapter, "trackMenu").contains("onOverlay(close)"))
+        // The move bar too (the kid's order of Home's tiles, 2026-11-22).
+        assertTrue(adapter.contains("onOverlay { endMoving() }"))
         val menu = code("java/com/kidslauncher/mdm/ui/list/apps/ContextMenuActions.kt")
         val show = menu.substringAfter("fun showAppContextMenu(")
         assertTrue(show.contains("onOverlay { popup.dismiss() }"))
         assertTrue(show.contains("val dialog = appInfo.showRenameDialog(activity)"))
         assertTrue(show.contains("onOverlay { dialog.dismiss() }"))
+    }
+
+    @Test
+    fun `a held tile cancelled by the lock opens no menu or move bar, and Home's stop closes them`() {
+        // Code QA M1: the night ground's setContentView ends a held tile in a CANCEL after closeOverlays - the drop opens
+        // a menu only while Home's content is in front and resumed, and showNight clears contentShown first.
+        val home = code("java/com/kidslauncher/mdm/ui/HomeActivity.kt")
+        assertTrue(home.contains("HomeGridAdapter(this, ::trackOverlay, ::renderMoveBar) { contentShown && resumedNow }"))
+        val night = body(home, "showNight")
+        assertTrue(night.indexOf("closeOverlays()") in 0 until night.indexOf("contentShown = false"))
+        assertTrue(night.indexOf("contentShown = false") in 0 until night.indexOf("setContentView(ground.root)"))
+        assertTrue(body(home, "onPause").contains("resumedNow = false"))
+        assertTrue(body(home, "onStop").contains("gridAdapter.closeMenus()"))
+        val adapter = code("java/com/kidslauncher/mdm/ui/home/HomeGridAdapter.kt")
+        val dropped = body(adapter, "dropped")
+        assertTrue(dropped.indexOf("if (done.moved || !inFront()) return") in 0 until dropped.indexOf("openMenu("))
+        // A moved drag is stored whatever ended it.
+        assertTrue(dropped.indexOf("if (done.moved) storeShown()") in 0 until dropped.indexOf("inFront()"))
     }
 
     @Test

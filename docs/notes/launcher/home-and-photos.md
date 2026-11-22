@@ -159,3 +159,37 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
 - **No camera-policy lift** (design 25b stays as it is): an *on*-tap refused with `CAMERA_DISABLED` while the PIN lock is LOCKED sets `refusedOnLock` (`torchRefusedOnLock`; a refused off never does - a lit torch keeps its off button), which hides only the lock's button (`torchLockButton`); the next non-LOCKED mode clears it. Snarveier's item always shows (dimmed never: the camera policy is the lock's only).
 - **Home's tile went into Snarveier** (design 99 §7, 2026-11-15): `GridTile.Flashlight`, its adapter branches and Home's torch listener are gone. The torch is now Snarveier's `torch` item (the panel in the shade, `kid-settings.md` "Snarveier") and the lock's button. Lit is still a filled `kid_accent` peach disc with `torch_glyph_on` in `kid_ground` - no yellow, no animation. The glyph is Material Symbols `flashlight_on` (Apache-2.0) from `scripts/material-symbols.sh`'s `TORCH_GLYPHS`; `kid_torch_tile` stays (`kid_lock_alarm_row` uses it); the tile's strings `torch_title`/`torch_state_on`/`_off` went (no reader left, the lock has its own `lock_torch*`; code QA C99-L5).
 - Not device-tested: design 41 §4 (the Jelly Star; the emulator has no flash unit). `TorchRulesTest` also pins the glue by source: the call-edge listener only steps the rule, `act` cancels on CANCEL and re-arms after a failed off, `lockButtonShown`, and the only callers of `Torch.autoOff`/`toggle` (the receiver, Snarveier's `ShortcutsRuntime`, the lock's button in `lock/GlancePanel.kt`).
+
+## The kid moves Home's icons (2026-11-22, approved 2026-11-20; branch `home-move-tiles`)
+
+The user: "burde ikke press og hold på home screen gi barnet mulighet til å flytte på de ulike ikonene?" - with motion
+and buttons both. Launcher only; nothing goes to the server and the PWA doesn't show it.
+
+- **Order**: pure `ui/home/HomeOrder.kt` (`HomeOrderTest`). The kid's order is a list of tile ids (`tileOrderId`: an app as
+  `app:<package>:<user>`, so an update that renames its launcher activity keeps the place - code QA L4; two launcher
+  activities of one app share it and stay side by side; the rest by `gridTileId`, which stays the adapter's stable id) in
+  the preference `apps.home_order` (JSON, beside the kid's own names `apps.custom_names`; an unreadable one is no order - no
+  migration). `HomeGridAdapter.submit` takes `homeGrid`'s tiles and `arrangedTiles` puts them in that order: the named
+  tiles in order, then the unnamed ones (a new app; every tile before the first move) in `homeGrid`'s order, then
+  Innstillinger, which never moves, is never passed and never stored. `storedOrder` keeps every id not shown now (an app
+  a rule suspends or the parent takes off, one the kid hid, Dagen without a calendar) right after the id it followed, so
+  it comes back to its own place; nothing is dropped (an uninstalled app's id stays, a few bytes). An app never shown
+  since the first move goes last when it appears. The columns (3 or 4) don't matter: the order is one list.
+- **Motion**: a finger's long-press on any tile but Innstillinger lifts it (8 % larger, ItemTouchHelper's own
+  elevation; no wobble) through `ItemTouchHelper.startDrag` from the cell's own long-click (the helper's long-press is
+  off), only while a finger is down on the grid (`fingerDown`, the grid's own DOWN - not a D-pad's or TalkBack's
+  long-press). Moved past the touch slop, the drop stores the order; let go in place, an app shows the old menu (Skjul, Gi nytt
+  navn) with "Flytt", and the phone book, Meldinger and Dagen go straight to the move bar - a change to QA 08 #10, where only apps
+  answered a long-press (Innstillinger still doesn't). A `submit` during a
+  drag (a badge, a policy) is held and applied at the drop, so the grid never changes under the finger. Home's swipes
+  stand aside while a tile is lifted (`dragging`), and the drag ends in a CANCEL when the lock takes the content off the
+  window. ItemTouchHelper says IDLE for an UP and a CANCEL alike, so the drop opens a menu or the bar only while
+  Home's content is in front and resumed (`inFront`: `contentShown && resumedNow` - `showNight` clears `contentShown`
+  before its `setContentView` cancels the touch; code QA M1, `HomeGateTest`); a moved drag is stored either way. Home's
+  stop closes the menu, its rename dialog and the bar (`closeMenus`). The grid has no item animator: tiles step into place.
+- **Buttons**: "Flytt" lifts the tile and shows the bar under the grid (`home_move_bar`: ◀ Ferdig ▶); each arrow is one
+  step, stored at once, dimmed at its edge (`stepTarget`). Ferdig, Home's press, the lock (`closeOverlays`), Home's stop
+  and the tile leaving the grid end it. TalkBack: its long-press has no finger, so it opens the menu at once; the bar is a
+  pane ("Flytt"), TalkBack's focus goes to Ferdig (a Button for TalkBack) when the bar opens; the arrows say "Flytt til venstre/høyre" and the tile's place ("3 av 12") as their state.
+- The menu item is `menu_app.xml`'s `app_menu_move`, shown only when `showAppContextMenu` gets `onMove` (Home; the
+  drawer doesn't). Not device-tested at the build (no emulator round).

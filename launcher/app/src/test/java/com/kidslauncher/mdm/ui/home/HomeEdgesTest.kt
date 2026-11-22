@@ -84,14 +84,16 @@ class HomeEdgesTest {
         assertEquals("${CONTACTS_FADE_DP.toInt()}dp", row.attr("fadingEdgeLength"))
         // Home's top stays empty: no new view above the banner, the call card and the contacts - design 98 §4.2's one
         // "Flymodus er på" line under the banner (gone unless airplane mode is on) and design 102's "Wi-Fi-en vil at du
-        // logger på" (gone unless the Wi-Fi wants a sign-in) the only additions.
+        // logger på" (gone unless the Wi-Fi wants a sign-in) the only additions. Under the grid only the move bar (gone
+        // unless a tile moves by the buttons, 2026-11-22).
         val container = home.documentElement
         val firstIds = (0 until container.childNodes.length).map { container.childNodes.item(it) }
             .filterIsInstance<Element>().map { it.attr("id") }
         assertEquals(
-            listOf("@+id/home_window_banner", "@+id/home_airplane_line", "@+id/home_portal_line", "@+id/home_call_card", "@+id/home_contacts_scroll", "@+id/home_music_card", "@+id/home_grid"),
+            listOf("@+id/home_window_banner", "@+id/home_airplane_line", "@+id/home_portal_line", "@+id/home_call_card", "@+id/home_contacts_scroll", "@+id/home_music_card", "@+id/home_grid", "@+id/home_move_bar"),
             firstIds,
         )
+        assertEquals("gone", byId(home, "home_move_bar").attr("visibility"))
     }
 
     @Test

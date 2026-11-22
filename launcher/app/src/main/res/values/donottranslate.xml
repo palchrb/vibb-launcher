@@ -11,6 +11,7 @@
     <string name="settings_internal_version_code_key" translatable="false">internal.version_code</string>
     <string name="settings_apps_hidden_key" translatable="false">apps.hidden</string>
     <string name="settings_apps_custom_names_key" translatable="false">apps.custom_names</string>
+    <string name="settings_apps_home_order_key" translatable="false">apps.home_order</string>
 
     <!--
       -
