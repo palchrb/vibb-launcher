@@ -67,11 +67,26 @@ async fn every_allowed_app_has_a_page_with_only_its_groups() {
     let cookie = app.admin_cookie().await;
     let (id, _, _) = phone(&app).await;
 
+    // Code QA L4: the clock is kept off Home - a quiet part of its row.
+    sqlx::query(
+        "INSERT INTO device_app_display (device_id, package_name, color_key, on_home) VALUES (?, ?, 'auto', 0)",
+    )
+    .bind(id)
+    .bind(CLOCK)
+    .execute(&app.db)
+    .await
+    .unwrap();
     // The list: Element's name opens its page, its switch stays on the row behind the hairline, with its label.
     let list = app
         .get_page(&format!("/devices/{id}/apps"), &cookie)
         .await
         .text();
+    let clock = &list[list.find(&format!("id=\"app-{CLOCK}\"")).unwrap()..];
+    assert!(
+        clock[..clock.find("</a>").unwrap()]
+            .contains("<span class=\"row-sub\" data-off-home>Not on Home</span>"),
+        "{clock}"
+    );
     let row = &list[list.find(&format!("id=\"app-{ELEMENT}\"")).unwrap()..];
     let row = &row[..row.find("</form>").unwrap()];
     assert!(row.contains("<div class=\"row-split\">"), "{row}");
@@ -139,7 +154,12 @@ async fn every_allowed_app_has_a_page_with_only_its_groups() {
         "{access}"
     );
     assert!(!access.contains("tone-orange"), "{access}");
-    // The way to approve it is behind the ⓘ.
+    // The ⓘ: what off does first, then the way to approve the access.
+    let info = &access[access.find("info-panel").unwrap()..];
+    assert!(
+        info.find("Off: the app can&#39;t use it").unwrap() < info.find("Camera off").unwrap(),
+        "{info}"
+    );
     assert!(access.contains("App access › Element X: Full-screen notifications"));
     let lock = section(&html, "lock-screen");
     assert_eq!(
@@ -371,9 +391,36 @@ async fn the_pages_saves_land_on_their_groups() {
         .await
         .text();
     assert!(
-        section(&back, "app-head").contains("data-flash=\"app-head\">This app&#39;s permissions"),
+        section(&back, "app-head").contains("data-flash=\"app-head\">Not possible for this app."),
         "{back}"
     );
+
+    // Code QA L6: a camera deny only where the page offers the switch - never the preinstalled clock or Vibb music;
+    // an allow always.
+    for package in [CLOCK, MUSIC] {
+        let res = post(
+            format!("/devices/{id}/apps/permissions"),
+            vec![("package_name", package), ("camera", "deny")],
+        )
+        .await;
+        assert_redirect(
+            &res,
+            &format!("{}?notice=perms", page_of(id, package)),
+            Some("access"),
+        );
+        let res = post(
+            format!("/devices/{id}/apps/permissions"),
+            vec![("package_name", package), ("camera", "default")],
+        )
+        .await;
+        assert_redirect(&res, &page_of(id, package), Some("access"));
+    }
+    let denied: Vec<String> =
+        sqlx::query_scalar("SELECT package_name FROM device_app_permissions ORDER BY package_name")
+            .fetch_all(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(denied, [ELEMENT]);
 
     // Tillatt on lands on the page; off on the list at the row.
     let toggle = format!("/devices/{id}/apps/toggle");
@@ -534,6 +581,32 @@ async fn a_held_update_waits_on_the_page() {
             ],
         )
         .await;
+    assert_redirect(
+        &res,
+        &format!("/apps/tracked/{element}?held=declined"),
+        Some("update"),
+    );
+    // Code QA L2: from a phone where the app is no longer allowed, the answer still shows - on the catalog's group.
+    hold().await;
+    sqlx::query("UPDATE device_policy SET allowlist_json = ? WHERE device_id = ?")
+        .bind(json!([CLOCK]).to_string())
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/apps/tracked/{element}/held/decline"),
+            Some(&cookie),
+            &[
+                ("tag", "v7.25.0"),
+                ("asset_id", "4"),
+                ("back", &format!("device:{id}")),
+            ],
+        )
+        .await;
+    let res = app.get_page(res.location().unwrap(), &cookie).await;
     assert_redirect(
         &res,
         &format!("/apps/tracked/{element}?held=declined"),

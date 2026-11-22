@@ -318,6 +318,10 @@ impl AccessGroup {
         let shown = access.is_some();
         let access = access.unwrap_or(&none);
         let mut help = Vec::new();
+        // Design 127 §6: what any switch's off does, first, whenever a switch shows.
+        if access.camera.is_some() {
+            help.push(t(lang, "apps.access.closes").to_string());
+        }
         let camera = access.camera.map(|state| {
             help.push(words::camera_help(lang).to_string());
             AccessSwitch {
@@ -409,6 +413,7 @@ mod tests {
         assert_eq!(
             group.help,
             [
+                "Off: the app can't use it, and closes if it was running.",
                 "Camera off: video calls and QR scanning stop working.",
                 "On the phone: Settings (parent code) › Pause all restrictions › App access › Immich: Media \
                  management"
@@ -424,7 +429,7 @@ mod tests {
         let group = of(denied, true, false, None).unwrap();
         assert_eq!(group.camera.unwrap().sub, None);
         assert_eq!(group.specials, [("Media management", "Approved")]);
-        assert_eq!(group.help.len(), 1, "an approved access needs no way");
+        assert_eq!(group.help.len(), 2, "an approved access needs no way");
         assert!(
             of(asks(), false, false, None)
                 .unwrap()

@@ -162,8 +162,33 @@ pub(crate) async fn render(
         {
             row
         }
-        // No page: the list, at the row when it has one, with a refusal's reason under it.
+        // No page: Approve's or Keep's answer goes to the catalog app's update group, where it was about (the
+        // app isn't allowed on this phone); anything else to the list, at the row when it has one, with a refusal's
+        // reason under it.
         other => {
+            if let Some(word) = shown
+                .held
+                .as_deref()
+                .filter(|w| crate::handlers::tracked_apps::held_flash(lang, w).is_some())
+            {
+                let tid = match other.as_ref().and_then(|row| row.tracked_app_id) {
+                    Some(tid) => Some(tid),
+                    None => match sqlx::query_scalar::<_, i64>(
+                        "SELECT id FROM tracked_apps WHERE package_name = ? ORDER BY id LIMIT 1",
+                    )
+                    .bind(package)
+                    .fetch_optional(&state.db)
+                    .await
+                    {
+                        Ok(tid) => tid,
+                        Err(err) => return read_failed(lang, id, "the catalog app", err),
+                    },
+                };
+                if let Some(tid) = tid {
+                    return Redirect::to(&format!("/apps/tracked/{tid}?held={word}#update"))
+                        .into_response();
+                }
+            }
             let anchor = other
                 .map(|row| {
                     crate::handlers::devices::app_anchor(&row.package_name, row.tracked_app_id)

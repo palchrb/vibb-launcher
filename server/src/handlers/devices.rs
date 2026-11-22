@@ -1627,10 +1627,13 @@ pub async fn save_app_display(
 }
 
 /// `POST /devices/{id}/apps/permissions` (design 68 §4.1): one app's camera off (`camera` = `deny`, or the switch's
-/// field missing - an auto-saving checkbox) or back to the default (`default`). Saved: back to the app's Permissions,
-/// open (`?perms=<package>#perms-<package>`), and the phone nudged. Refused at the app's row (`?notice=perms`): Play's
-/// core or Vibb itself; `?notice=perms_full` past `app_permissions::MAX_ROWS_PER_DEVICE`. Another `camera` value or a
-/// package outside the grammar (no row has one) is a 400, an unknown phone a 404, a DB error a 500.
+/// field missing - an auto-saving checkbox) or back to the default (`default`). Saved: back to the app's own page at
+/// Tilgang (design 127, `/devices/{id}/apps/{package}#access`), and the phone nudged. Refused there
+/// (`?notice=perms`): Play's core or Vibb itself, and a deny for an app the page offers no camera switch for (design
+/// 127 §3.4: the last report doesn't have it installed, third-party and asking for the camera, or it is Vibb music) -
+/// an allow is always accepted, so any row can be cleared; `?notice=perms_full` past
+/// `app_permissions::MAX_ROWS_PER_DEVICE`. Another `camera` value or a package outside the grammar (no row has one) is
+/// a 400, an unknown phone a 404, a DB error a 500.
 pub async fn save_app_permissions(
     State(state): State<AppState>,
     lang: Lang,
@@ -1646,6 +1649,23 @@ pub async fn save_app_permissions(
         Ok(target) => target,
         Err(response) => return *response,
     };
+    if deny {
+        let installed = match latest_installed(&state, id).await {
+            Ok(installed) => installed,
+            Err(err) => return perms_save_failed(lang, id, err),
+        };
+        let offered = !crate::music::MUSIC_PACKAGES.contains(&target.package.as_str())
+            && installed.iter().any(|a| {
+                a.package_name == target.package
+                    && !a.preinstalled
+                    && a.access
+                        .as_ref()
+                        .is_some_and(|access| access.camera.is_some())
+            });
+        if !offered {
+            return target.refused("perms");
+        }
+    }
     match crate::app_permissions::set_camera(&state.db, id, &target.package, deny).await {
         Ok(true) => target.saved(&state),
         Ok(false) => target.refused("perms_full"),
@@ -2906,7 +2926,7 @@ pub(crate) fn toggle_refusal(lang: Lang, code: &str) -> Option<&'static str> {
         "perms" => Some(t(lang, "apps.perms.refused")),
         "perms_full" => Some(t(lang, "apps.perms.full")),
         "lock_media_full" => Some(t(lang, "apps.perms.lock_media_full")),
-        "lock_media" => Some(t(lang, "apps.perms.refused")),
+        "lock_media" => Some(t(lang, "apps.lock_screen.refused")),
         _ => None,
     }
 }

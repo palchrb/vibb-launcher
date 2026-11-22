@@ -216,10 +216,7 @@ async fn a_catalog_default_reaches_every_phone_and_a_phones_choice_replaces_it()
         .get_page(&format!("/apps/tracked/{element}"), &cookie)
         .await
         .text();
-    assert!(
-        page.contains(r#"name="label" maxlength="20" value="Chat""#),
-        "{page}"
-    );
+    assert!(page.contains(r#"name="label" value="Chat""#), "{page}");
     assert!(page.contains(r#"value="symbol" checked"#));
     assert!(page.contains(r#"value="chat" checked"#));
     assert_eq!(input_checked(&page, "color", "peach"), Some(true));
@@ -812,9 +809,11 @@ async fn refused_input_keeps_the_values_by_the_field() {
     .await
     .text();
     assert!(html.contains(r#"value="Chat""#), "the entered name is kept");
-    // Design 127 §2.4: the field has `maxlength="20"`; a refused save still shows the whole entered value (the
-    // attribute only stops typing).
-    assert!(html.contains(r#"id="display-label" name="label" maxlength="20" value="Chat""#));
+    // The browser doesn't cut the name (it would count UTF-16 units; we count characters, and a refused save keeps
+    // the value - qa-14-code #4): no `maxlength`, the server's 400 at the field says it.
+    assert!(html.contains(r#"id="display-label" name="label" value="Chat""#));
+    let partial = std::fs::read_to_string("templates/partials/app_display_group.html").unwrap();
+    assert!(!partial.contains("maxlength"));
     let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_app_display")
         .fetch_one(&app.db)
         .await

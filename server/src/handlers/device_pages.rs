@@ -2082,6 +2082,9 @@ pub struct AppView {
     /// Design 127 §2.2: the one thing on the list that waits for the parent - an update held for approval
     /// ("7.25.0 venter på deg", orange).
     pub waits: Option<String>,
+    /// Design 127 (code QA L4): an allowed app the parent keeps off Home - a quiet "Ikke på Hjem" on its row, never
+    /// orange (a parent's choice).
+    pub off_home: bool,
 }
 
 /// A tab of the bar (`partials/tab_bar.html`'s five), for the pages whose tab is a field rather than a literal
@@ -2519,6 +2522,7 @@ pub(crate) async fn render_apps(
                 refused,
                 dialer_note: None,
                 waits: None,
+                off_home: false,
                 icon: None,
                 anchor,
                 row: crate::handlers::devices::UnifiedAppRow {
@@ -2558,6 +2562,7 @@ pub(crate) async fn render_apps(
             refused,
             dialer_note: data.dialer_note(lang, row),
             waits,
+            off_home: row.checked && data.off_home.contains(&package),
             icon: display::icon_of(&data.own, &data.defaults, &package),
             anchor,
             row: row.clone(),
@@ -2588,6 +2593,7 @@ pub(crate) async fn render_apps(
                 refused: None,
                 dialer_note: None,
                 waits: None,
+                off_home: false,
                 icon: Some((glyph.to_string(), tile)),
                 anchor: format!("app-{key}"),
                 row,
@@ -2627,6 +2633,7 @@ pub(crate) async fn render_apps(
                 refused: None,
                 dialer_note: None,
                 waits: None,
+                off_home: false,
                 icon: Some((display::DAY_LOOK.glyph.to_string(), display::DAY_LOOK.tile)),
                 anchor: "app-calendar".to_string(),
                 row: crate::handlers::devices::UnifiedAppRow {

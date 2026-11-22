@@ -9,8 +9,11 @@
 //   own glyph on its own tile (`data-auto-glyph`, `data-auto-tile`).
 // - Logo: the app's real logo where a phone has sent it (design 87, the form's `data-logo`), else the word "Logo"
 //   (`data-w-own`) on the slate.
-// Every preview is drawn again after a refresh in place (`handy:swapped`, design 103). ES5. Tested with node
-// (jstest/app-display.test.js).
+// Every preview is drawn again after a refresh in place (`handy:swapped`, design 103).
+// Logo or Automatisk saves no symbol, so this viewer's last symbol and colour for the app are kept in localStorage
+// (a per-viewer convenience, code QA L1) and checked again when Symbol is chosen - on its `input`, before
+// autosave.js saves on `change`. Without storage (a private window, blocked site data) Symbol shows the server's
+// glyph, as before. ES5. Tested with node (jstest/app-display.test.js).
 (function (root) {
     "use strict";
 
@@ -68,18 +71,72 @@
         label.textContent = name || (input ? input.getAttribute("data-app-label") : "") || "";
     }
 
+    // This viewer's storage, or null where there is none or it throws.
+    function storageOf(root) {
+        try {
+            return root && root.localStorage ? root.localStorage : null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    // The form's own key: its app (the phone page's `package_name`), else its address (the catalog page).
+    function keyOf(form) {
+        var input = form.querySelector('input[name="package_name"]');
+        return "handy.vises-som." + ((input && input.value) || form.getAttribute("action") || "");
+    }
+
+    // Under Symbol: the checked symbol and colour, kept for this app.
+    function remember(form, storage) {
+        var mode = checked(form, "icon_mode");
+        var icon = checked(form, "icon");
+        var colour = checked(form, "color");
+        if (!storage || !mode || mode.value !== "symbol" || !icon) return;
+        try {
+            storage.setItem(keyOf(form), JSON.stringify({ icon: icon.value, color: colour ? colour.value : "auto" }));
+        } catch (e) { /* full or blocked: the page works without it */ }
+    }
+
+    // Symbol chosen again: the kept symbol and colour checked, where they still are choices.
+    function restore(form, storage) {
+        var kept = null;
+        try {
+            kept = storage ? JSON.parse(storage.getItem(keyOf(form)) || "null") : null;
+        } catch (e) {
+            kept = null;
+        }
+        if (!kept) return;
+        var pairs = [["icon", kept.icon], ["color", kept.color]];
+        for (var i = 0; i < pairs.length; i++) {
+            var radios = form.querySelectorAll('input[name="' + pairs[i][0] + '"]');
+            var found = false;
+            for (var j = 0; j < radios.length; j++) found = found || radios[j].value === pairs[i][1];
+            if (!found) continue;
+            for (var k = 0; k < radios.length; k++) radios[k].checked = radios[k].value === pairs[i][1];
+        }
+    }
+
     function formOf(el) {
         return el && el.closest ? el.closest("form.app-display-form") : null;
     }
 
-    function install(doc) {
+    function install(doc, storage) {
         function onEvent(e) {
             var form = formOf(e.target);
-            if (form) update(form);
+            if (!form) return;
+            var el = e.target;
+            if (e.type === "input" && el.name === "icon_mode" && el.value === "symbol" && el.checked) {
+                restore(form, storage);
+            }
+            update(form);
+            remember(form, storage);
         }
         function updateAll() {
             var forms = doc.querySelectorAll("form.app-display-form");
-            for (var i = 0; i < forms.length; i++) update(forms[i]);
+            for (var i = 0; i < forms.length; i++) {
+                update(forms[i]);
+                remember(forms[i], storage);
+            }
         }
         doc.addEventListener("input", onEvent);
         doc.addEventListener("change", onEvent);
@@ -96,6 +153,6 @@
     if (typeof module !== "undefined" && module.exports) {
         module.exports = api;
     } else if (root.document) {
-        install(root.document);
+        install(root.document, storageOf(root));
     }
 })(this);

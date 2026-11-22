@@ -521,7 +521,8 @@ and Låseskjerm (below); the rules here (the route, the cap, the pruning, the po
   visually hidden "{app} tillatt". Meldinger's row is a link to its page. The sub-line loses the Permissions line and
   gains one orange part, an update held for the parent ("7.25.0 venter på deg", `tracked_apps::held_versions`,
   `data-update-held`); a failed install is orange too (`tone-orange`, was red; Words in the UI). Nothing else on the
-  list is orange: a special access not approved, a refused switch and the parent's own choices show only on the page.
+  list is orange: a special access not approved, a refused switch and the parent's own choices show only on the page;
+  an app kept off Home says "Ikke på Hjem" quietly (`data-off-home`).
   The old `?perms=<package>` redirects to the page (`#access`).
 - **The head** (`#app-head`): the tile (logo over letter, else the glyph, else the letter; also the band's picture,
   `band::app` with `app_page::PageTile`), the app's own name, "Versjon {version_name}" from the last report, the
@@ -534,10 +535,11 @@ and Låseskjerm (below); the rules here (the route, the cap, the pruning, the po
   telefonene." and a link to the catalog page's `#update`), and Godkjenn / Behold posting the catalog's
   `/held/approve|decline` with `back=device:<id>` and `from`: `tracked_apps::held_back` lands on
   `/devices/{d}/apps/{package}?held=<word>&from=…#app-head` (the page shows `held_flash`) when the phone exists and
-  the catalog row's package is valid, else the catalog's own answer.
+  the catalog row's package is valid, else the catalog's own answer; when the app has no page on that phone (not allowed
+  there), the page's address sends the answer on to the catalog's `#update`.
 - **Vises som** (`#display`, `partials/app_display_group.html`, also the catalog app's page): one form, every control
-  saves on change (`data-autosave`; the name on change - blur or Enter -, `maxlength="20"` as the design says, the
-  server still counts characters), a `<noscript>` Save. The Home tile (`.home-peek`: a night tile with its label)
+  saves on change (`data-autosave`; the name on change - blur or Enter -, no `maxlength`: the browser would count
+  UTF-16 units, qa-14-code #4; the server counts characters and refuses at the field), a `<noscript>` Save. The Home tile (`.home-peek`: a night tile with its label)
   beside the name; Logo · Automatisk · Symbol are three radios (`icon_mode`) before the rows, so CSS marks the
   segment and shows the 16 symbols and the seven swatches (44 px hit areas, names visually hidden and in `title`)
   under Symbol only - with or without JS, no `:has()`. One glyph is always checked (`AppDisplayForm::picked_glyph`:
@@ -548,13 +550,19 @@ and Låseskjerm (below); the rules here (the route, the cap, the pruning, the po
   (Meldinger's last reason gone: the list's `#allowed`). "På Hjem" is a plain row; "Tilbakestill" a row button with
   the catalog's default under it; the ⓘ holds On Home's sentence. `static/app-display.js` (`?v=8`,
   `jstest/app-display.test.js`) only redraws the preview: the letter on slate for Automatisk (a built-in's own
-  look), the glyph on the colour for Symbol (and the symbols' `--pick`), the logo or "Logo" for Logo.
+  look), the glyph on the colour for Symbol (and the symbols' `--pick`), the logo or "Logo" for Logo. Logo and
+  Automatisk save no symbol, so the script keeps this viewer's last symbol and colour per app in localStorage
+  (`handy.vises-som.<package>`, every access in try/catch) and checks them again on Symbol's `input`, before
+  autosave.js saves on `change`. The symbol and colour choices are `.disp-choice` (never the PWA's `select.pick`).
 - **Tilgang** (`#access`, `partials/app_access_group.html`, `app_permissions::AccessGroup`): only when the last report
   has the app's `access` (third-party apps; never Vibb music): the camera switch (today's `camera=default` form, back to
   `#access`), its sub-line only while the state isn't as set ("Venter på telefonen", "På i pausen"), then each special
-  access as a quiet value ("Godkjent", "Ikke godkjent", "Ukjent") on an indigo tile; one ⓘ with the camera's line and
-  the way to approve each access that isn't. **Låseskjerm** (`#lock-screen`): "Mediespiller", back to `#lock-screen`.
-  A refusal lands on the page at its group (`?notice=perms|perms_full`, `lock_media|lock_media_full`), at the head
+  access as a quiet value ("Godkjent", "Ikke godkjent", "Ukjent") on an indigo tile; one ⓘ with what off does
+  (`apps.access.closes`, first whenever a switch shows), the camera's line and the way to approve each access that
+  isn't. The route takes a camera deny only where the page offers the switch (installed third-party, asking for the
+  camera, not Vibb music; else `?notice=perms`), an allow always. **Låseskjerm** (`#lock-screen`): "Mediespiller", back to `#lock-screen`.
+  A refusal lands on the page at its group (`?notice=perms|perms_full`, `lock_media|lock_media_full` - its own words,
+  `apps.lock_screen.refused`), at the head
   when that group isn't shown; the managed dialer's at its list row as before.
 - **The tab and Back**: the list's `?from=` through `AppsFrom::parse`, kept by every form; Back to the list at the
   row (`#app-<package>`), or with `from=app:<this app's catalog id>` straight to `/apps/tracked/{id}#phone-<device>`.

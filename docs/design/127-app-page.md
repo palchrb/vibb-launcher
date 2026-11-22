@@ -60,7 +60,8 @@ Device › Apps today puts everything inside the list **[code]** (`templates/par
     it on again from.
   - **No page**:
     - Vibb One: its row stays "Alltid på", and its versions are on its catalog page.
-    - Kalender: it stays a link to Device › Calendar.
+    - Kalender: a part of Vibb One with no package; its row stays a link to Device › Calendar (`#dagen`) with its
+      On Home value, and the phone reads no Vises som for it.
     - The managed dialer: it stays a link to Calls.
     - A catalog app with no package yet.
     - A not-allowed row: it stays a plain switch row.
@@ -134,7 +135,8 @@ goes. It is built on design 103's saves in place: a save keeps the place, never 
 
 - **The top**: the Home tile preview (`home-peek`: the tile at Home's size with its label under it) beside the Name
   field.
-  - `<input type="text" name="label" maxlength="20" data-autosave>`. A text field saves on change, i.e. on blur or
+  - `<input type="text" name="label" data-autosave>`, no `maxlength` (the browser counts UTF-16 units, the server
+    characters; qa-14-code #4 - corrected in step 1's code QA). A text field saves on change, i.e. on blur or
     Enter (precedent: `device_calendar_link.html`, `device_calls.html`).
   - `static/app-display.js` updates the preview while typing.
 - **The icon** is a segmented control (design 77's `.segmented`/`.segment`, **[code]** `style.css` §3640):
@@ -158,7 +160,7 @@ goes. It is built on design 103's saves in place: a save keeps the place, never 
   - `app_display::validate` runs unchanged.
 - **"På Hjem"**: a plain row in this group (`on_home_shown` as today).
 - **"Tilbakestill"**: a row button, shown only when `can_reset`, with design 113's catalog-default hint.
-- **A refused save** (a name over 20 characters past `maxlength`, the 200-row cap) renders this page as a 400. The
+- **A refused save** (a name over 20 characters, the 200-row cap) renders this page as a 400. The
   error sits at the field, with `aria-invalid`.
 - **The catalog app's page** (`tracked_app_detail.html`) moves to the same partial (`partials/app_display_group.html`)
   and the same script, so there is one look and one script. It has no "På Hjem", so it skips the `on_home` part.

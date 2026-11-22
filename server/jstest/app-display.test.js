@@ -22,6 +22,7 @@ class El {
         const props = {};
         this.style = { setProperty: (k, v) => { props[k] = v; }, get: (k) => props[k] };
     }
+    get name() { return this.attrs.name; }
     getAttribute(n) { return n in this.attrs ? String(this.attrs[n]) : null; }
     setAttribute(n, v) { this.attrs[n] = v; }
     removeAttribute(n) { delete this.attrs[n]; }
@@ -139,4 +140,35 @@ test("a change in the form redraws it; a swap redraws every form", () => {
     f.querySelectorAll("input").forEach((i) => { if (i.attrs.name === "icon_mode") i.checked = i.value === "auto"; });
     listeners["handy:swapped"]();
     assert.strictEqual(part(f, "data-preview-glyph").hidden, true);
+});
+
+test("Logo or Automatisk and back: the viewer's last symbol and colour are checked again", () => {
+    const listeners = {};
+    const kept = {};
+    const storage = { getItem: (k) => (k in kept ? kept[k] : null), setItem: (k, v) => { kept[k] = v; } };
+    const f = form({ mode: "symbol", glyph: "mail", colour: "sky" });
+    f.children.push(new El("input", { name: "package_name", value: "org.example.app" }));
+    f.children[f.children.length - 1].parent = f;
+    const doc = {
+        readyState: "complete",
+        addEventListener: (type, fn) => { listeners[type] = fn; },
+        querySelectorAll: () => [f],
+    };
+    install(doc, storage);
+    assert.deepStrictEqual(JSON.parse(kept["handy.vises-som.org.example.app"]), { icon: "mail", color: "sky" });
+    const radios = (name) => f.querySelectorAll("input").filter((i) => i.attrs.name === name);
+    const pick = (name, value) => radios(name).forEach((i) => { i.checked = i.value === value; });
+    // Automatisk saved: the server's page comes back with the first glyph and the app's tone.
+    pick("icon_mode", "auto"); pick("icon", "chat"); pick("color", "auto");
+    listeners.input({ type: "input", target: radios("icon_mode").find((i) => i.checked) });
+    pick("icon_mode", "symbol");
+    listeners.input({ type: "input", target: radios("icon_mode").find((i) => i.checked) });
+    assert.strictEqual(radios("icon").find((i) => i.checked).value, "mail");
+    assert.strictEqual(radios("color").find((i) => i.checked).value, "sky");
+    assert.strictEqual(part(f, "data-preview-glyph").getAttribute("src"), "/static/app-icons/mail.svg");
+    // No storage, or one that throws: nothing breaks.
+    const throwing = { getItem: () => { throw new Error("blocked"); }, setItem: () => { throw new Error("blocked"); } };
+    const g = form({ mode: "symbol" });
+    install({ readyState: "complete", addEventListener: () => {}, querySelectorAll: () => [g] }, throwing);
+    install({ readyState: "complete", addEventListener: () => {}, querySelectorAll: () => [g] }, null);
 });

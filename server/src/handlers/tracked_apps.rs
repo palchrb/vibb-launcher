@@ -3750,8 +3750,8 @@ struct DetailsForm {
     error_field: &'static str,
 }
 
-/// `?open=display|source`: a save returns with its `<details>` open (Name and icon, Source
-/// & Signing), so the form it came from is where the parent left it.
+/// `?open=source`: a save returns with Source & Signing open, so the form it came from is where the parent left it
+/// (Vises som is a section of its own since design 127: its save lands on `#display`).
 pub async fn view_tracked_app(
     State(state): State<AppState>,
     lang: Lang,

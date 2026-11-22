@@ -2527,7 +2527,15 @@ async fn the_lock_media_switch_returns_to_its_open_details() {
 async fn the_permissions_cap_refuses_the_201st_app() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
-    let (id, _) = app.enrolled_device("Anna").await;
+    let (id, token) = app.enrolled_device("Anna").await;
+    // Code QA L6: a deny only where the page offers the switch - installed third-party, asking for the camera.
+    app.post_status(
+        &token,
+        json!({ "installed_apps": (["org.example.new", "org.example.app7"]).iter().map(|p| json!({
+            "package_name": p, "label": p, "preinstalled": false, "access": { "camera": "requested" },
+        })).collect::<Vec<_>>() }),
+    )
+    .await;
     for n in 0..crate::app_permissions::MAX_ROWS_PER_DEVICE {
         sqlx::query(
             "INSERT INTO device_app_permissions (device_id, package_name, camera) VALUES (?, ?, 'deny')",

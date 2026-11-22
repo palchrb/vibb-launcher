@@ -3008,7 +3008,7 @@ input.row-input {
 }
 
 /* A symbol or a colour: a 44 x 44 hit area around its face; the radio is hidden but focusable and announced. */
-.pick {
+.disp-choice {
     position: relative;
     display: flex;
     align-items: center;
@@ -3020,7 +3020,7 @@ input.row-input {
     cursor: pointer;
 }
 
-.pick input {
+.disp-choice input {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -3028,7 +3028,7 @@ input.row-input {
     opacity: 0;
 }
 
-.pick-face {
+.disp-choice-face {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -3038,14 +3038,14 @@ input.row-input {
     background: var(--grey-bg);
 }
 
-.glyphs .pick-face img {
+.glyphs .disp-choice-face img {
     width: 20px;
     height: 20px;
     -webkit-filter: var(--glyph-on-chip);
     filter: var(--glyph-on-chip);
 }
 
-.swatches .pick-face {
+.swatches .disp-choice-face {
     width: 30px;
     height: 30px;
 }
@@ -3056,21 +3056,21 @@ input.row-input {
     background: transparent;
 }
 
-.pick input:checked + .pick-face {
+.disp-choice input:checked + .disp-choice-face {
     box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--tint);
 }
 
 /* The chosen symbol on the chosen colour (`--pick`, the fieldset's: the server's, then app-display.js's). */
-.glyphs .pick input:checked + .pick-face {
+.glyphs .disp-choice input:checked + .disp-choice-face {
     background: var(--pick, #606B80);
 }
 
-.glyphs .pick input:checked + .pick-face img {
+.glyphs .disp-choice input:checked + .disp-choice-face img {
     -webkit-filter: none;
     filter: none;
 }
 
-.pick input:focus-visible + .pick-face {
+.disp-choice input:focus-visible + .disp-choice-face {
     outline: 2px solid var(--tint);
     outline-offset: 4px;
 }

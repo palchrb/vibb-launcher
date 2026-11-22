@@ -26,7 +26,7 @@
         </span>
         <span class="disp-name">
             <label for="{{ form.anchor }}-label">{{ self.t("apps.display.label_field") }}</label>
-            <input type="text" id="{{ form.anchor }}-label" name="label" maxlength="20" value="{{ form.label }}" placeholder="{{ form.app_label }}" data-app-label="{{ form.app_label }}" autocomplete="off" data-autosave{% if form.error_field == "label" %} aria-invalid="true" aria-describedby="{{ form.anchor }}-error" autofocus{% endif %}>
+            <input type="text" id="{{ form.anchor }}-label" name="label" value="{{ form.label }}" placeholder="{{ form.app_label }}" data-app-label="{{ form.app_label }}" autocomplete="off" data-autosave{% if form.error_field == "label" %} aria-invalid="true" aria-describedby="{{ form.anchor }}-error" autofocus{% endif %}>
         </span>
     </div>
     {% if let Some(error) = form.error %}
@@ -45,14 +45,14 @@
         <fieldset class="glyphs" data-symbols style="--pick: {{ form.pick_tile() }}">
             <legend class="visually-hidden">{{ self.t("apps.display.mode.symbol") }}</legend>
             {% for choice in form.icons %}
-            <label class="pick" title="{{ choice.label }}"><input type="radio" name="icon" value="{{ choice.key }}"{% if choice.key == form.picked_glyph() %} checked{% endif %} data-autosave><span class="pick-face"><img src="/static/app-icons/{{ choice.key }}.svg" alt=""></span><span class="visually-hidden">{{ choice.label }}</span></label>
+            <label class="disp-choice" title="{{ choice.label }}"><input type="radio" name="icon" value="{{ choice.key }}"{% if choice.key == form.picked_glyph() %} checked{% endif %} data-autosave><span class="disp-choice-face"><img src="/static/app-icons/{{ choice.key }}.svg" alt=""></span><span class="visually-hidden">{{ choice.label }}</span></label>
             {% endfor %}
         </fieldset>
         <fieldset class="swatches" data-colours>
             <legend class="visually-hidden">{{ self.t("apps.display.colour") }}</legend>
-            <label class="pick" title="{{ self.t("apps.display.color.auto") }}"><input type="radio" name="color" value="auto" data-tile="{{ form.auto_tile() }}"{% if form.picked_color() == "auto" %} checked{% endif %} data-autosave><span class="pick-face swatch-auto"></span><span class="visually-hidden">{{ self.t("apps.display.color.auto") }}</span></label>
+            <label class="disp-choice" title="{{ self.t("apps.display.color.auto") }}"><input type="radio" name="color" value="auto" data-tile="{{ form.auto_tile() }}"{% if form.picked_color() == "auto" %} checked{% endif %} data-autosave><span class="disp-choice-face swatch-auto"></span><span class="visually-hidden">{{ self.t("apps.display.color.auto") }}</span></label>
             {% for choice in form.colors %}
-            <label class="pick" title="{{ choice.label }}"><input type="radio" name="color" value="{{ choice.key }}" data-tile="{{ choice.tile }}"{% if choice.key == form.picked_color() %} checked{% endif %} data-autosave><span class="pick-face" style="background: {{ choice.tile }}"></span><span class="visually-hidden">{{ choice.label }}</span></label>
+            <label class="disp-choice" title="{{ choice.label }}"><input type="radio" name="color" value="{{ choice.key }}" data-tile="{{ choice.tile }}"{% if choice.key == form.picked_color() %} checked{% endif %} data-autosave><span class="disp-choice-face" style="background: {{ choice.tile }}"></span><span class="visually-hidden">{{ choice.label }}</span></label>
             {% endfor %}
         </fieldset>
     </fieldset>
