@@ -1019,11 +1019,11 @@ It is **off for every phone** until the parent turns on "Wi-Fi lookup at Apple" 
   circuit of its own. With the setting present a call never goes direct: a proxy that is down or refuses is a failed
   call (cached answers still serve), and a setting that isn't a `socks5h://` address fails every call, is logged at
   start and shows "Apple lookups aren't working" at once (as does a key file the server can't read). With no setting the calls go from the server's own address and the Location page's ⓘ says so.
-  - **Tor in `compose.yaml`** (the default since server 0.89.0): the `tor` service, built from Debian's package on a
+  - **Tor in `compose.yaml`** (the default since server 0.89.0): the `tor` service, built from Alpine's package on a
     base image pinned by digest, listens on `127.0.0.1:9050` of the host, and `env.example` sets
     `WIFI_LOOKUP_PROXY=socks5h://127.0.0.1:9050`. An install from before 0.89.0: copy the new `compose.yaml`, add that
     line to `.env`, `docker compose up -d --build`. Tor's own updates come with `docker compose build --pull tor`
-    after the digest is moved on (`docker buildx imagetools inspect debian:trixie-slim`); Watchtower doesn't rebuild it.
+    after the digest is moved on (`docker buildx imagetools inspect alpine:3.24`); Watchtower doesn't rebuild it.
   - **A compose without host networking** (the server on the default bridge network with `ports:`): give the
     `tor` service no `network_mode` and no `ports:`, change its `--SocksPort` to `0.0.0.0:9050` (inside the
     container, so `handy` reaches it over the compose network; nothing is published outside it - Tor's warning about
