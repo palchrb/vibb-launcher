@@ -412,11 +412,53 @@ fn wire_entry(package_name: String, v: DisplayValues, on_home: bool) -> PolicyAp
 
 // ---- the form (device page and catalog page) ------------------------------------------------
 
-/// One icon radio.
+/// The glyph Symbol starts on when no glyph is chosen (design 127 §2.4): the first of the table.
+pub const FIRST_GLYPH: &str = "chat";
+
+/// The glyph a "Symbol" choice saves and shows when none is posted or stored (design 127 §2.4): `own`'s chosen glyph,
+/// else the catalog default's, else [FIRST_GLYPH]. One glyph is always checked, so Symbol is never half a choice.
+pub fn fallback_glyph(own: Option<&DisplayValues>, default: Option<&DisplayValues>) -> String {
+    [own, default]
+        .into_iter()
+        .flatten()
+        .filter_map(|values| values.icon.as_deref())
+        .find(|icon| icon_known(icon))
+        .unwrap_or(FIRST_GLYPH)
+        .to_string()
+}
+
+/// The icon a save means (design 127 §2.4), before [validate]: the segmented control's `icon_mode` wins over `icon` -
+/// `logo` is [OWN], `auto` empty (Vibb style), `symbol` the posted glyph (else `fallback`, [fallback_glyph]); a form
+/// without `icon_mode` (an older page) is read by `icon` as before. The second value: whether the posted colour
+/// applies (only with a glyph; Logo and Automatic save [AUTO]). Another mode is the icon's refusal.
+pub fn icon_of_form(
+    mode: Option<&str>,
+    icon: &str,
+    fallback: &str,
+) -> Result<(String, bool), FieldError> {
+    let refused = FieldError {
+        field: "icon",
+        key: "apps.display.error.icon",
+    };
+    match mode.map(str::trim) {
+        None => Ok((icon.to_string(), true)),
+        Some("logo") => Ok((OWN.to_string(), false)),
+        Some("auto") => Ok((String::new(), false)),
+        Some("symbol") => {
+            let icon = icon.trim();
+            Ok((
+                if icon_known(icon) { icon } else { fallback }.to_string(),
+                true,
+            ))
+        }
+        Some(_) => Err(refused),
+    }
+}
+
+/// One glyph radio.
 pub struct IconChoice {
     pub key: &'static str,
     pub label: String,
-    pub checked: bool,
 }
 
 /// One colour radio (`tile` is what the phone draws, `label` its name - [color_label], worded).
@@ -424,14 +466,15 @@ pub struct ColorChoice {
     pub key: &'static str,
     pub tile: &'static str,
     pub label: &'static str,
-    pub checked: bool,
 }
 
-/// The "Name and icon" form (`templates/partials/app_display_form.html`).
+/// "Vises som" (design 127 §2.4, `templates/partials/app_display_group.html`): the app's own page and the catalog
+/// app's page alike. Every control saves on change; Logo · Automatisk · Symbol is one segmented control, and the
+/// symbols and colours show under Symbol only.
 pub struct AppDisplayForm {
     /// Where it posts.
     pub action: String,
-    /// The element id the save returns to (`app-<package>` on the device page).
+    /// The fields' id prefix.
     pub anchor: String,
     /// The package (a hidden field on the device page; empty on the catalog page).
     pub package_name: String,
@@ -441,8 +484,8 @@ pub struct AppDisplayForm {
     /// Empty = Vibb style, [OWN] = the app's own logo, else a glyph key.
     pub icon: String,
     pub color: String,
-    /// What the phone shows now, for the summary line (in the page's language).
-    pub summary: String,
+    /// The glyph Symbol shows while no glyph is chosen ([fallback_glyph]).
+    pub fallback: String,
     /// Device page: the catalog default, if there is one.
     pub catalog_default: Option<String>,
     /// Device page: this phone has its own row (Reset deletes it; the phone then follows the
@@ -453,24 +496,18 @@ pub struct AppDisplayForm {
     /// The refused field ("label", "icon", "color") and why, in the page's language.
     pub error_field: String,
     pub error: Option<String>,
-    /// Shown open (after a refused save).
-    pub open: bool,
     pub icons: Vec<IconChoice>,
     pub colors: Vec<ColorChoice>,
-    /// The preview tile's colour.
-    pub preview_tile: String,
     /// Device › Apps opened from the Apps tab: its `from`, a hidden field the save keeps
     /// (`device_pages::AppsFrom`); `None` elsewhere.
     pub from: Option<String>,
     /// Device page: "On Home" (design 69 §4.4) - `None` on the catalog page, which has no such switch.
     pub on_home: Option<bool>,
-    /// The switch's label and its ⓘ text in the page's language (`i18n`), set with [Self::on_home].
-    pub on_home_words: Option<(&'static str, &'static str)>,
-    /// Design 82 D9: the form of a part of Vibb One ([Self::builtin]) - no "App logo", and "Automatic" is its own
+    /// Design 82 D9: the form of a part of Vibb One ([Self::builtin]) - no "Logo", and "Automatic" is its own
     /// look. `None` for an app.
     pub builtin: Option<BuiltinLook>,
-    /// Design 87 §8.2: the app's real logo (its URL), which the preview shows for "App logo"; "Automatic" keeps
-    /// "Vibb style" (R2-M6). `None` while no phone has sent one.
+    /// Design 87 §8.2: the app's real logo (its URL), which the preview shows for "Logo". `None` while no phone has
+    /// sent one.
     pub logo: Option<String>,
 }
 
@@ -483,8 +520,7 @@ pub struct Entered {
 }
 
 impl AppDisplayForm {
-    /// The form in `lang`: the summary, the icons' and colours' names and a refusal are worded
-    /// here, the rest by the template.
+    /// The form in `lang`: the icons' and colours' names and a refusal are worded here, the rest by the template.
     pub fn new(
         lang: Lang,
         action: String,
@@ -502,41 +538,19 @@ impl AppDisplayForm {
                 current.color.clone(),
             ),
         };
-        let color = if color.is_empty() {
-            AUTO.to_string()
+        let color = if color_known(color.trim()) {
+            color.trim().to_string()
         } else {
-            color
+            AUTO.to_string()
         };
-        let icons = ICONS
-            .iter()
-            .map(|(key, _)| IconChoice {
-                key,
-                label: icon_label(lang, key),
-                checked: icon == *key,
-            })
-            .collect();
-        let colors = COLORS
-            .iter()
-            .map(|(key, _, tile)| ColorChoice {
-                key,
-                tile,
-                label: t(lang, color_label(key)),
-                checked: color == *key,
-            })
-            .collect();
         AppDisplayForm {
             action,
             anchor,
             package_name,
-            summary: current.describe(lang),
             app_label,
-            preview_tile: if icon.trim().is_empty() || icon.trim() == OWN {
-                OWN_PREVIEW.to_string()
-            } else {
-                tile_of(&color).to_string()
-            },
+            fallback: fallback_glyph(Some(current), None),
             label,
-            icon,
+            icon: icon.trim().to_string(),
             color,
             catalog_default: None,
             own_row: false,
@@ -554,40 +568,93 @@ impl AppDisplayForm {
                     ],
                 )
             }),
-            open: entered.is_some(),
-            icons,
-            colors,
+            icons: ICONS
+                .iter()
+                .map(|(key, _)| IconChoice {
+                    key,
+                    label: icon_label(lang, key),
+                })
+                .collect(),
+            colors: COLORS
+                .iter()
+                .map(|(key, _, tile)| ColorChoice {
+                    key,
+                    tile,
+                    label: t(lang, color_label(key)),
+                })
+                .collect(),
             from: None,
             on_home: None,
-            on_home_words: None,
             builtin: None,
             logo: None,
         }
     }
 
-    /// The form of a part of Vibb One (design 82 D9): the preview is its own look until a glyph is chosen, and a
-    /// chosen glyph with the colour [AUTO] keeps its tile.
+    /// The form of a part of Vibb One (design 82 D9): no Logo, and Automatic is its own look.
     pub fn builtin(mut self, look: BuiltinLook) -> Self {
-        self.preview_tile = match self.glyph() {
-            Some(_) if color_known(&self.color) => tile_of(&self.color),
-            _ => look.tile,
-        }
-        .to_string();
         self.builtin = Some(look);
         self
     }
 
-    /// What the colour [AUTO] previews as behind a chosen glyph.
+    /// The segment that is checked: `logo` ([OWN]), `symbol` (a glyph) or `auto`.
+    pub fn mode(&self) -> &'static str {
+        if self.icon == OWN && self.builtin.is_none() {
+            "logo"
+        } else if self.glyph().is_some() {
+            "symbol"
+        } else {
+            "auto"
+        }
+    }
+
+    /// The glyph radio that is checked: the chosen glyph, else [Self::fallback].
+    pub fn picked_glyph(&self) -> &str {
+        self.glyph().unwrap_or(&self.fallback)
+    }
+
+    /// The glyph chosen, if one is.
+    pub fn glyph(&self) -> Option<&str> {
+        icon_known(&self.icon).then_some(self.icon.as_str())
+    }
+
+    /// The colour radio that is checked ([AUTO] or a key of [COLORS]).
+    pub fn picked_color(&self) -> &str {
+        &self.color
+    }
+
+    /// What the colour [AUTO] previews as behind a glyph: a built-in's own tile, else the slate.
     pub fn auto_tile(&self) -> &'static str {
         self.builtin.map_or(AUTO_PREVIEW, |look| look.tile)
     }
 
-    /// The glyph the preview draws: the chosen one, else a built-in's own.
-    pub fn preview_glyph(&self) -> Option<&str> {
-        self.glyph().or(self.builtin.map(|look| look.glyph))
+    /// The checked colour's tile behind the chosen symbol ([Self::auto_tile] for [AUTO]).
+    pub fn pick_tile(&self) -> &'static str {
+        if self.color == AUTO {
+            self.auto_tile()
+        } else {
+            tile_of(&self.color)
+        }
     }
 
-    /// The text field's preview text: the entered name, else the app's own.
+    /// The preview tile's colour for the checked mode (`static/app-display.js` draws the same).
+    pub fn preview_tile(&self) -> &'static str {
+        match (self.mode(), self.builtin) {
+            ("symbol", _) => self.pick_tile(),
+            ("auto", Some(look)) => look.tile,
+            _ => OWN_PREVIEW,
+        }
+    }
+
+    /// The glyph the preview draws: the chosen one, else a built-in's own under Automatic.
+    pub fn preview_glyph(&self) -> Option<&str> {
+        match self.mode() {
+            "symbol" => Some(self.picked_glyph()),
+            "auto" => self.builtin.map(|look| look.glyph),
+            _ => None,
+        }
+    }
+
+    /// The preview's name: the entered name, else the app's own.
     pub fn preview_label(&self) -> &str {
         if self.label.trim().is_empty() {
             &self.app_label
@@ -596,19 +663,9 @@ impl AppDisplayForm {
         }
     }
 
-    pub fn auto_checked(&self) -> bool {
-        self.color == AUTO
-    }
-
-    /// The Icon radio "The app's own logo" is the choice (the colours then don't apply).
-    pub fn own_checked(&self) -> bool {
-        self.icon.trim() == OWN
-    }
-
-    /// The glyph shown in the preview, if one is chosen.
-    pub fn glyph(&self) -> Option<&str> {
-        let icon = self.icon.trim();
-        (!icon.is_empty() && icon != OWN && icon_known(icon)).then_some(icon)
+    /// The preview tile's letter under Automatic (the app's name's first letter, as Home's tile reads).
+    pub fn letter(&self) -> String {
+        crate::handlers::devices::initial(&self.app_label)
     }
 
     /// Reset is offered only when there is something to reset: the phone's own row (device page),
@@ -618,15 +675,6 @@ impl AppDisplayForm {
             self.has_choice
         } else {
             self.own_row
-        }
-    }
-
-    /// The preview tile's text without a glyph, as a catalog key: "Automatic" or "Logo".
-    pub fn preview_text(&self) -> &'static str {
-        if self.own_checked() {
-            "apps.display.preview_own"
-        } else {
-            "apps.display.vibb_style"
         }
     }
 }
@@ -750,8 +798,8 @@ mod tests {
         )
         .unwrap();
         assert!(script.contains(OWN_PREVIEW) && script.contains(AUTO_PREVIEW));
-        // The state's words come from the page (`data-w-own`, `data-w-vibb`).
-        assert!(script.contains("\"own\"") && script.contains("\"vibb\""));
+        // Logo's word comes from the page (`data-w-own`).
+        assert!(script.contains("\"own\""));
     }
 
     /// Design 82 D9: a part of Vibb One keeps its own glyph and tile until a glyph is chosen; a colour applies only
@@ -977,10 +1025,10 @@ mod tests {
         }
     }
 
-    /// The form's three states: the preview text, the glyph, the radio.
+    /// Design 127 §2.4: the form's three modes - the segment, the glyph radio that is checked, the preview.
     #[test]
-    fn the_form_knows_the_three_states() {
-        let form = |icon: &str| {
+    fn the_form_knows_the_three_modes() {
+        let form = |icon: &str, color: &str| {
             AppDisplayForm::new(
                 Lang::En,
                 String::new(),
@@ -990,26 +1038,77 @@ mod tests {
                 &DisplayValues {
                     label: None,
                     icon: (!icon.is_empty()).then(|| icon.to_string()),
-                    color: AUTO.into(),
+                    color: color.into(),
                 },
                 None,
             )
         };
-        let vibb = form("");
+        let vibb = form("", AUTO);
         assert_eq!(
-            (vibb.preview_text(), vibb.glyph(), vibb.own_checked()),
-            ("apps.display.vibb_style", None, false)
+            (vibb.mode(), vibb.picked_glyph(), vibb.preview_glyph()),
+            ("auto", FIRST_GLYPH, None)
         );
-        assert_eq!(vibb.preview_tile, OWN_PREVIEW);
-        let own = form(OWN);
+        assert_eq!(vibb.preview_tile(), OWN_PREVIEW);
+        assert_eq!(vibb.letter(), "E");
+        let own = form(OWN, AUTO);
+        assert_eq!((own.mode(), own.preview_glyph()), ("logo", None));
+        assert_eq!(own.preview_tile(), OWN_PREVIEW);
+        let chat = form("mail", "plum");
         assert_eq!(
-            (own.preview_text(), own.glyph(), own.own_checked()),
-            ("apps.display.preview_own", None, true)
+            (chat.mode(), chat.picked_glyph(), chat.preview_glyph()),
+            ("symbol", "mail", Some("mail"))
         );
-        assert_eq!(own.preview_tile, OWN_PREVIEW);
-        assert!(own.icons.iter().all(|choice| !choice.checked));
-        let chat = form("chat");
-        assert_eq!((chat.glyph(), chat.own_checked()), (Some("chat"), false));
-        assert_eq!(chat.preview_tile, AUTO_PREVIEW);
+        assert_eq!(chat.preview_tile(), tile_of("plum"));
+        assert_eq!(form("chat", AUTO).preview_tile(), AUTO_PREVIEW);
+        // A part of Vibb One has no Logo: its own look under Automatic.
+        let messages = form("", AUTO).builtin(MESSAGES_LOOK);
+        assert_eq!(messages.preview_glyph(), Some(MESSAGES_LOOK.glyph));
+        assert_eq!(messages.preview_tile(), MESSAGES_LOOK.tile);
+        assert_eq!(form(OWN, AUTO).builtin(MESSAGES_LOOK).mode(), "auto");
+    }
+
+    /// Design 127 §2.4: `icon_mode` wins over `icon`; Symbol always saves a real glyph; no mode reads `icon` as before.
+    #[test]
+    fn the_mode_decides_the_icon() {
+        let values = |icon: Option<&str>| DisplayValues {
+            label: None,
+            icon: icon.map(str::to_string),
+            color: AUTO.into(),
+        };
+        assert_eq!(
+            icon_of_form(Some("logo"), "mail", "chat"),
+            Ok((OWN.to_string(), false))
+        );
+        assert_eq!(
+            icon_of_form(Some("auto"), "mail", "chat"),
+            Ok((String::new(), false))
+        );
+        assert_eq!(
+            icon_of_form(Some("symbol"), "mail", "chat"),
+            Ok(("mail".to_string(), true))
+        );
+        assert_eq!(
+            icon_of_form(Some("symbol"), "rocket", "star"),
+            Ok(("star".to_string(), true))
+        );
+        assert_eq!(
+            icon_of_form(None, "own", "chat"),
+            Ok(("own".to_string(), true))
+        );
+        assert_eq!(
+            icon_of_form(Some("glyph"), "mail", "chat")
+                .unwrap_err()
+                .field,
+            "icon"
+        );
+        assert_eq!(fallback_glyph(None, None), FIRST_GLYPH);
+        assert_eq!(
+            fallback_glyph(Some(&values(Some(OWN))), Some(&values(Some("map")))),
+            "map"
+        );
+        assert_eq!(
+            fallback_glyph(Some(&values(Some("star"))), Some(&values(Some("map")))),
+            "star"
+        );
     }
 }

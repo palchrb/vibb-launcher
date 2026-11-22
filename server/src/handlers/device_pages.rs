@@ -2054,7 +2054,7 @@ async fn lock_tiles(
 }
 
 /// One app on Device › Apps: the row `devices::app_rows` built, where it is (`devices::app_anchor`),
-/// its tile, its name-and-icon form and why a switch was refused.
+/// its tile, where its own page is and why a switch was refused.
 pub struct AppView {
     pub row: crate::handlers::devices::UnifiedAppRow,
     pub anchor: String,
@@ -2065,13 +2065,13 @@ pub struct AppView {
     /// mark) over the letter, which shows if it doesn't load - the row's tile whatever glyph was chosen.
     pub logo: Option<String>,
     pub letter: String,
-    /// Name and icon: every allowed app with a package name but Vibb (design 14).
-    pub display: Option<crate::app_display::AppDisplayForm>,
-    /// Design 82 D10: a part of Vibb One (Meldinger), not an app on the phone - no switch, no permissions, only its
-    /// row and Name and icon.
+    /// Design 127 §2.2: the app's own page (`/devices/{id}/apps/{package}`, with `from`) - every allowed app with a
+    /// package name but Vibb, Kalender and the managed dialer. The row's name opens it; its switch stays on the row.
+    pub page: Option<String>,
+    /// Design 82 D10: a part of Vibb One (Meldinger), not an app on the phone - no switch, only its row and its page.
     pub builtin: bool,
     /// A part of Vibb One whose settings live on a page of their own (Kalender, 2026-11-12: Device › Calendar): the
-    /// row is a link there, with its value (On Home or not) and no Name and icon.
+    /// row is a link there, with its value (On Home or not).
     pub link: Option<(String, &'static str)>,
     /// A refused switch, under the row (`toggle_app`'s `?notice=<code>&app=<row>`,
     /// `devices::toggle_refusal`).
@@ -2079,13 +2079,16 @@ pub struct AppView {
     /// Design 109: a line under the system Phone app's switch while calls are unmanaged - what off costs, and whether
     /// it is an alarm (`text-alarm`).
     pub dialer_note: Option<(&'static str, bool)>,
-    /// Design 68: an allowed app's Permissions - the row's second sub-line and the `<details>` - when the phone's
-    /// report says something about it, or it has the lock screen's media player switch (2026-11-04).
-    pub perms: Option<crate::app_permissions::PermsView>,
+    /// Design 127 §2.2: the one thing on the list that waits for the parent - an update held for approval
+    /// ("7.25.0 venter på deg", orange).
+    pub waits: Option<String>,
+    /// Design 127 (code QA L4): an allowed app the parent keeps off Home - a quiet "Ikke på Hjem" on its row, never
+    /// orange (a parent's choice).
+    pub off_home: bool,
 }
 
-/// A tab of the bar (`partials/tab_bar.html`'s five), for the one page whose tab is a field
-/// rather than a literal `{% let tab = "..." %}`: Device › Apps, opened from the Apps tab
+/// A tab of the bar (`partials/tab_bar.html`'s five), for the pages whose tab is a field rather than a literal
+/// `{% let tab = "..." %}`: Device › Apps and an app's own page (design 127), opened from the Apps tab
 /// (`shell::every_template_with_the_bar_sets_its_tab`). Only tab names can be set.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Tab {
@@ -2257,132 +2260,224 @@ struct AppsTemplate {
 }
 crate::i18n::words!(AppsTemplate);
 
-/// GET `/devices/{id}/apps`: Device › Apps (design 31 §3.2, step 6). The phone's apps and the
-/// catalog's in two groups, Allowed and Not allowed, each a switch (`/apps/toggle`, `back=apps`);
-/// an allowed app's Name and icon (`/apps/display`) in a `<details>` under its row; Download apps
-/// on Wi-Fi only (`/app-updates`) and the phone's network at the bottom. A switch and a name save
-/// return to the app's row (`#app-<package>`), the Wi-Fi switch to `#downloads`. While an app
-/// installs, the page reloads itself every 3 s. A phone not set up has the page too: a catalog app
-/// turned on installs with its first settings.
+/// GET `/devices/{id}/apps`: Device › Apps (design 31 §3.2, step 6; design 127 §2.2). The phone's apps and the
+/// catalog's in two groups, Allowed and Not allowed, each a switch (`/apps/toggle`, `back=apps`); an allowed app's
+/// name opens its own page (`app_page`), its switch stays on the row; Download apps on Wi-Fi only (`/app-updates`) and
+/// the phone's network at the bottom. A switch returns to the app's row (`#app-<package>`), the Wi-Fi switch to
+/// `#downloads`. While an app installs, the page reloads itself every 3 s. A phone not set up has the page too: a
+/// catalog app turned on installs with its first settings. The old `?perms=<package>` goes to the app's page.
 pub async fn view_apps(
     State(state): State<AppState>,
     lang: crate::i18n::Lang,
     Path(id): Path<i64>,
     Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> Response {
+    let from = query.get("from").and_then(|f| AppsFrom::parse(f));
+    // Design 127 §2.1: Permissions moved to the app's own page.
+    if let Some(package) = query
+        .get("perms")
+        .filter(|p| crate::app_display::valid_package_name(p))
+    {
+        return Redirect::to(&crate::handlers::app_page::page_url(
+            id, package, "", from, "access",
+        ))
+        .into_response();
+    }
     let refused = query.get("app").and_then(|row| {
         query
             .get("notice")
             .and_then(|code| crate::handlers::devices::toggle_refusal(lang, code))
             .map(|text| (row.as_str(), text))
     });
-    let from = query.get("from").and_then(|f| AppsFrom::parse(f));
-    // Design 68 §4.1: back from a Permissions save, that app's details open.
-    let perms = query.get("perms").map(String::as_str);
-    render_apps(&state, lang, id, refused, None, from, perms).await
+    render_apps(&state, lang, id, refused, from).await
 }
 
-/// Device › Apps; `refused` = the row whose switch was refused and why, `entered` = a refused Name
-/// and icon save (that app's form open with the entered values and the error), `from` = opened
-/// from the Apps tab (the tab, the back link and every form's hidden `from`).
+/// What Device › Apps and an app's own page (design 127) read for a phone, read once and the same way: a failed read
+/// is the page's 500, never every app shown as "its own" or every switch off.
+pub(crate) struct AppsData {
+    pub device: Device,
+    pub policy: DevicePolicy,
+    pub latest: Option<DeviceStatus>,
+    pub rows: crate::handlers::devices::AppRows,
+    pub defaults: std::collections::BTreeMap<String, crate::app_display::DisplayValues>,
+    pub own: std::collections::BTreeMap<String, crate::app_display::DisplayValues>,
+    pub off_home: std::collections::BTreeSet<String>,
+    /// Design 68: the parent's camera-off apps.
+    pub camera_off: Vec<String>,
+    /// 2026-11-04: the apps shown as media players on the lock screen.
+    pub lock_media: Vec<String>,
+    /// Design 87: the apps' logos this phone sent, and the catalog's for a ticked app not installed (2026-11-19).
+    pub logos: std::collections::HashMap<String, String>,
+    /// Design 82 W2: the phone still has threads to read.
+    pub messages_history: bool,
+    /// The phone's last report says restrictions are paused.
+    pub paused: bool,
+    /// Design 109: the phone's system dialer, from its last report.
+    pub dialer: Option<String>,
+}
+
+impl AppsData {
+    pub(crate) async fn load(state: &AppState, lang: Lang, id: i64) -> Result<Self, Box<Response>> {
+        let device = load_device(state, id)
+            .await
+            .map_err(|(status, key)| Box::new(crate::i18n::error(lang, status, key)))?;
+        let policy = load_policy(state, id)
+            .await
+            .map_err(|(status, key)| Box::new(crate::i18n::error(lang, status, key)))?;
+        let latest = load_latest(state, id)
+            .await
+            .map_err(|err| Box::new(read_failed(lang, id, "the last report", err)))?;
+        let rows = crate::handlers::devices::app_rows(state, id, &policy, latest.as_ref(), lang)
+            .await
+            .map_err(|err| Box::new(read_failed(lang, id, "the phone's apps", err)))?;
+        let defaults = crate::app_display::catalog_defaults(&state.db)
+            .await
+            .map_err(|err| Box::new(read_failed(lang, id, "the catalog's app names", err)))?;
+        let own = crate::app_display::device_rows(&state.db, id)
+            .await
+            .map_err(|err| Box::new(read_failed(lang, id, "the phone's app names", err)))?;
+        let off_home = crate::app_display::off_home(&state.db, id)
+            .await
+            .map_err(|err| Box::new(read_failed(lang, id, "the phone's apps off Home", err)))?;
+        let camera_off = crate::app_permissions::camera_denied(&state.db, id)
+            .await
+            .map_err(|err| Box::new(read_failed(lang, id, "the phone's app permissions", err)))?;
+        let lock_media = crate::app_permissions::lock_media_apps(&state.db, id)
+            .await
+            .map_err(|err| {
+                Box::new(read_failed(
+                    lang,
+                    id,
+                    "the phone's lock-screen media apps",
+                    err,
+                ))
+            })?;
+        let mut logos = crate::app_logos::phone_logos(state, id)
+            .await
+            .map_err(|err| Box::new(read_failed(lang, id, "the phone's app logos", err)))?;
+        // 2026-11-19: a catalog app ticked for this phone and not installed on it shows the catalog's logo (its kept
+        // one included); an installed app only ever its own (design 87 Q3). A failed catalog read is logged.
+        let missing: Vec<String> = rows
+            .apps
+            .iter()
+            .filter(|a| {
+                a.tracked_app_id.is_some()
+                    && !logos.contains_key(&a.package_name)
+                    && !rows
+                        .installed
+                        .iter()
+                        .any(|i| i.package_name == a.package_name)
+            })
+            .map(|a| a.package_name.clone())
+            .collect();
+        match crate::app_logos::catalog_logos_for(state, &missing).await {
+            Ok(catalog) => logos.extend(catalog),
+            Err(err) => tracing::error!(device_id = id, %err, "can't read the catalog's app logos"),
+        }
+        let messages_history = crate::sms::reported_history(&state.db, id)
+            .await
+            .map_err(|err| Box::new(read_failed(lang, id, "the phone's message state", err)))?;
+        let paused = latest
+            .as_ref()
+            .is_some_and(|s| s.paused_at(Utc::now().timestamp_millis()));
+        let dialer = crate::handlers::device_api::system_dialer(
+            latest
+                .as_ref()
+                .and_then(|s| s.call_state_json.as_deref())
+                .and_then(|json| serde_json::from_str::<serde_json::Value>(json).ok())
+                .as_ref(),
+        );
+        Ok(AppsData {
+            device,
+            policy,
+            latest,
+            rows,
+            defaults,
+            own,
+            off_home,
+            camera_off,
+            lock_media,
+            logos,
+            messages_history,
+            paused,
+            dialer,
+        })
+    }
+
+    /// Calls are managed and `package` is the system dialer: its row is a link to Calls, with no page (design 109).
+    pub(crate) fn managed_dialer(&self, package: &str) -> bool {
+        self.policy.calls_managed() && self.dialer.as_deref() == Some(package)
+    }
+
+    /// Meldinger is on the list (design 82 D10): SMS managed, a row of its own, or threads left to read.
+    pub(crate) fn messages_listed(&self) -> bool {
+        let key = crate::builtin::MESSAGES;
+        self.policy.sms_mode == "managed"
+            || self.own.contains_key(key)
+            || self.off_home.contains(key)
+            || self.messages_history
+    }
+
+    /// Design 109: the note under the system Phone app while calls are unmanaged - what off costs, and whether it is
+    /// an alarm.
+    pub(crate) fn dialer_note(
+        &self,
+        lang: Lang,
+        row: &crate::handlers::devices::UnifiedAppRow,
+    ) -> Option<(&'static str, bool)> {
+        if self.policy.calls_managed() || self.dialer.as_deref() != Some(row.package_name.as_str())
+        {
+            return None;
+        }
+        let readable = self.policy.allowlist_json.is_some() && !self.rows.allowlist_corrupt;
+        if !row.checked {
+            readable.then(|| (t(lang, "apps.dialer.not_allowed"), false))
+        } else if self.off_home.contains(&row.package_name) {
+            Some((t(lang, "apps.dialer.off_home"), true))
+        } else {
+            None
+        }
+    }
+}
+
+/// Device › Apps; `refused` = the row whose switch was refused and why, `from` = opened from the Apps tab (the tab,
+/// the back link and every form's hidden `from`).
 pub(crate) async fn render_apps(
     state: &AppState,
     lang: crate::i18n::Lang,
     id: i64,
     refused: Option<(&str, &'static str)>,
-    entered: Option<(String, crate::app_display::Entered)>,
     from: Option<AppsFrom>,
-    open_perms: Option<&str>,
 ) -> Response {
-    use crate::app_display::{self as display, AppDisplayForm, DisplayValues};
-    let device = match load_device(state, id).await {
-        Ok(device) => device,
-        Err((status, key)) => return crate::i18n::error(lang, status, key),
+    use crate::app_display as display;
+    let data = match AppsData::load(state, lang, id).await {
+        Ok(data) => data,
+        Err(response) => return *response,
     };
-    let policy = match load_policy(state, id).await {
-        Ok(policy) => policy,
-        Err((status, key)) => return crate::i18n::error(lang, status, key),
+    // Design 127 §2.2: an update held for the parent, the list's one orange part.
+    let held = match crate::handlers::tracked_apps::held_versions(state).await {
+        Ok(held) => held,
+        Err(err) => return read_failed(lang, id, "the held updates", err),
     };
-    let latest = match load_latest(state, id).await {
-        Ok(latest) => latest,
-        Err(err) => return read_failed(lang, id, "the last report", err),
-    };
-    let rows =
-        match crate::handlers::devices::app_rows(state, id, &policy, latest.as_ref(), lang).await {
-            Ok(rows) => rows,
-            Err(err) => return read_failed(lang, id, "the phone's apps", err),
+    let (nav_tab, back_href, back_label, from) =
+        match apps_nav(state, &data.device, from, lang).await {
+            Ok(nav) => nav,
+            Err(err) => return read_failed(lang, id, "the catalog app it came from", err),
         };
-    // Names and icons: a failed read must not show every app as "its own".
-    let defaults = match display::catalog_defaults(&state.db).await {
-        Ok(defaults) => defaults,
-        Err(err) => return read_failed(lang, id, "the catalog's app names", err),
-    };
-    let own = match display::device_rows(&state.db, id).await {
-        Ok(own) => own,
-        Err(err) => return read_failed(lang, id, "the phone's app names", err),
-    };
-    let off_home = match display::off_home(&state.db, id).await {
-        Ok(off) => off,
-        Err(err) => return read_failed(lang, id, "the phone's apps off Home", err),
-    };
-    // Design 68: the parent's camera-off apps (what the phone reports per app rides on the row, `access`).
-    let camera_off = match crate::app_permissions::camera_denied(&state.db, id).await {
-        Ok(denied) => denied,
-        Err(err) => return read_failed(lang, id, "the phone's app permissions", err),
-    };
-    // 2026-11-04: the apps shown as media players on the lock screen (a failed read must not show them all off).
-    let lock_media = match crate::app_permissions::lock_media_apps(&state.db, id).await {
-        Ok(apps) => apps,
-        Err(err) => return read_failed(lang, id, "the phone's lock-screen media apps", err),
-    };
-    // Design 87: the apps' logos this phone sent; a failed read is the page's read error, like the reads above.
-    let mut logos = match crate::app_logos::phone_logos(state, id).await {
-        Ok(logos) => logos,
-        Err(err) => return read_failed(lang, id, "the phone's app logos", err),
-    };
-    // 2026-11-19: a catalog app ticked for this phone and not installed on it shows the catalog's logo (its kept one
-    // included); an installed app only ever its own (design 87 Q3). A failed catalog read is logged, the page goes on.
-    let missing: Vec<String> = rows
-        .apps
-        .iter()
-        .filter(|a| {
-            a.tracked_app_id.is_some()
-                && !logos.contains_key(&a.package_name)
-                && !rows
-                    .installed
-                    .iter()
-                    .any(|i| i.package_name == a.package_name)
-        })
-        .map(|a| a.package_name.clone())
-        .collect();
-    match crate::app_logos::catalog_logos_for(state, &missing).await {
-        Ok(catalog) => logos.extend(catalog),
-        Err(err) => tracing::error!(device_id = id, %err, "can't read the catalog's app logos"),
-    }
-    // Design 82 W2: the phone still has threads to read, so Meldinger may be on Home while SMS is not managed.
-    let messages_history = match crate::sms::reported_history(&state.db, id).await {
-        Ok(history) => history,
-        Err(err) => return read_failed(lang, id, "the phone's message state", err),
-    };
-    let paused = latest
-        .as_ref()
-        .is_some_and(|s| s.paused_at(Utc::now().timestamp_millis()));
-    let (nav_tab, back_href, back_label, from) = match apps_nav(state, &device, from, lang).await {
-        Ok(nav) => nav,
-        Err(err) => return read_failed(lang, id, "the catalog app it came from", err),
-    };
+    let page_from = from;
     let from = from.map(AppsFrom::value);
     let zone = Zone::load(&state.db, lang).await;
     let now = Utc::now();
+    let latest = data.latest.as_ref();
+    let policy = &data.policy;
 
-    let network = rows
+    let network = data
+        .rows
         .downloads
         .as_ref()
         .and_then(|downloads| crate::app_downloads::network(lang, downloads))
         .map(|value| {
-            let at = latest
-                .as_ref()
-                .and_then(|s| crate::display_time::parse_db_utc(&s.reported_at));
+            let at = latest.and_then(|s| crate::display_time::parse_db_utc(&s.reported_at));
             Row::new(
                 "network",
                 t(lang, "device.about.network"),
@@ -2394,26 +2489,18 @@ pub(crate) async fn render_apps(
             .title(at.map(|t| zone.exact(t)))
             .detail(Some(t(lang, "device.apps.network_sub")))
         });
-    // A refused save is the answer to a POST: a reload would ask to send it again (L1).
-    let installing = entered.is_none() && rows.apps.iter().any(|a| a.is_installing);
+    let installing = data.rows.apps.iter().any(|a| a.is_installing);
     let (mut allowed, mut not_allowed) = (Vec::new(), Vec::new());
-    // Design 109: the phone's system dialer, from its last report.
-    let dialer = crate::handlers::device_api::system_dialer(
-        latest
-            .as_ref()
-            .and_then(|s| s.call_state_json.as_deref())
-            .and_then(|json| serde_json::from_str::<serde_json::Value>(json).ok())
-            .as_ref(),
-    );
-    let calls_managed = policy.calls_managed();
-    let allowlist_readable = policy.allowlist_json.is_some() && !rows.allowlist_corrupt;
     let mut dialer_view: Option<AppView> = None;
-    for row in rows.apps {
+    for row in data.rows.apps.iter() {
         let package = row.package_name.clone();
         let anchor = crate::handlers::devices::app_anchor(&package, row.tracked_app_id);
+        let refused = refused
+            .filter(|(row, _)| *row == anchor)
+            .map(|(_, text)| text);
         // Calls managed: the Phone app is a link to the Calls page, whatever the allowlist says (the launcher never
-        // shows it then); no switch, no Name and icon, no Permissions.
-        if calls_managed && dialer.as_deref() == Some(package.as_str()) {
+        // shows it then); no switch, no page.
+        if data.managed_dialer(&package) {
             let app_name = row.own_label.clone().unwrap_or_else(|| row.label.clone());
             let label =
                 crate::i18n::t_params(lang, "apps.dialer.managed_label", &[("app", &app_name)]);
@@ -2429,15 +2516,14 @@ pub(crate) async fn render_apps(
                         ""
                     },
                 )),
-                logo: logos.get(&package).cloned(),
-                perms: None,
+                logo: data.logos.get(&package).cloned(),
+                page: None,
                 letter: crate::handlers::devices::initial(&app_name),
-                refused: refused
-                    .filter(|(row, _)| *row == anchor)
-                    .map(|(_, text)| text),
+                refused,
                 dialer_note: None,
+                waits: None,
+                off_home: false,
                 icon: None,
-                display: None,
                 anchor,
                 row: crate::handlers::devices::UnifiedAppRow {
                     status_label: if off {
@@ -2448,108 +2534,38 @@ pub(crate) async fn render_apps(
                     own_label: None,
                     label,
                     checked: true,
-                    ..row
+                    ..row.clone()
                 },
             });
             continue;
         }
-        let dialer_note = (!calls_managed && dialer.as_deref() == Some(package.as_str()))
-            .then(|| {
-                if !row.checked {
-                    allowlist_readable.then(|| (t(lang, "apps.dialer.not_allowed"), false))
-                } else if off_home.contains(&package) {
-                    Some((t(lang, "apps.dialer.off_home"), true))
-                } else {
-                    None
-                }
-            })
-            .flatten();
-        let phone_row = own.get(&package);
-        let default = defaults.get(&package);
-        let current = phone_row.or(default);
-        let icon = display::icon_of(&own, &defaults, &package);
-        let display = (row.checked && !row.is_launcher && display::valid_package_name(&package))
-            .then(|| {
-                let mut form = AppDisplayForm::new(
-                    lang,
-                    format!("/devices/{id}/apps/display#{anchor}"),
-                    format!("display-{package}"),
-                    package.clone(),
-                    row.own_label.clone().unwrap_or_else(|| row.label.clone()),
-                    &current.cloned().unwrap_or_else(DisplayValues::empty),
-                    entered
-                        .as_ref()
-                        .filter(|(entered, _)| *entered == package)
-                        .map(|(_, e)| e),
-                );
-                form.logo = logos.get(&package).cloned();
-                form.own_row = phone_row.is_some() || off_home.contains(&package);
-                // Design 113: the catalog's default is said only beside Tilbakestill (the phone has its own value).
-                form.catalog_default = form
-                    .can_reset()
-                    .then(|| default.map(|values| values.describe(lang)))
-                    .flatten();
-                form.from = from.clone();
-                form.on_home = Some(!off_home.contains(&package));
-                form.on_home_words = Some((
-                    crate::i18n::t(lang, "apps.on_home"),
-                    crate::i18n::t(lang, "apps.on_home_sub"),
-                ));
-                if phone_row.is_none() && default.is_some() {
-                    form.summary = crate::i18n::t_params(
-                        lang,
-                        "apps.display.from_catalog",
-                        &[("summary", &form.summary)],
-                    );
-                }
-                if off_home.contains(&package) {
-                    form.summary = format!(
-                        "{} · {}",
-                        form.summary,
-                        crate::i18n::t(lang, "apps.not_on_home")
-                    );
-                }
-                form
+        let page = (row.checked && !row.is_launcher && display::valid_package_name(&package))
+            .then(|| crate::handlers::app_page::page_url(id, &package, "", page_from, ""));
+        let waits = row
+            .tracked_app_id
+            .filter(|_| row.checked && !row.is_launcher)
+            .and_then(|tid| held.get(&tid))
+            .map(|version| {
+                crate::i18n::t_params(lang, "apps.update.held_title", &[("version", version)])
             });
-        let perms = (row.checked && !row.is_launcher)
-            .then(|| {
-                crate::app_permissions::PermsView::of(
-                    lang,
-                    id,
-                    &package,
-                    &row.label,
-                    row.access.as_ref(),
-                    camera_off.contains(&package),
-                    paused,
-                    open_perms == Some(package.as_str()),
-                    crate::app_permissions::lock_media_offered(
-                        &package,
-                        row.is_launcher,
-                        row.third_party,
-                    )
-                    .then(|| lock_media.contains(&package)),
-                )
-            })
-            .flatten();
         let logo = if row.is_launcher {
             Some(crate::app_logos::VIBB_MARK.to_string())
         } else {
-            logos.get(&package).cloned()
+            data.logos.get(&package).cloned()
         };
         let view = AppView {
             builtin: false,
             link: None,
             logo,
-            perms,
+            page,
             letter: crate::handlers::devices::initial(&row.label),
-            refused: refused
-                .filter(|(row, _)| *row == anchor)
-                .map(|(_, text)| text),
-            dialer_note,
-            icon,
-            display,
+            refused,
+            dialer_note: data.dialer_note(lang, row),
+            waits,
+            off_home: row.checked && data.off_home.contains(&package),
+            icon: display::icon_of(&data.own, &data.defaults, &package),
             anchor,
-            row,
+            row: row.clone(),
         };
         if view.row.checked {
             allowed.push(view);
@@ -2557,56 +2573,12 @@ pub(crate) async fn render_apps(
             not_allowed.push(view);
         }
     }
-    // Design 82 D10: Meldinger's row, directly under Vibb One's.
-    let own_row =
-        own.contains_key(crate::builtin::MESSAGES) || off_home.contains(crate::builtin::MESSAGES);
-    if policy.sms_mode == "managed" || own_row || messages_history {
+    // Design 82 D10: Meldinger's row, directly under Vibb One's - a link to its page.
+    if data.messages_listed() {
         let key = crate::builtin::MESSAGES;
-        let anchor = format!("app-{key}");
-        let current = own.get(key);
+        let current = data.own.get(key);
         let (glyph, tile) = display::MESSAGES_LOOK.shown(current);
-        let name = t(lang, "device.sms.messages");
-        let mut form = AppDisplayForm::new(
-            lang,
-            format!("/devices/{id}/apps/display#{anchor}"),
-            format!("display-{key}"),
-            key.to_string(),
-            name.to_string(),
-            &current.cloned().unwrap_or_else(DisplayValues::empty),
-            entered
-                .as_ref()
-                .filter(|(entered, _)| entered == key)
-                .map(|(_, e)| e),
-        )
-        .builtin(display::MESSAGES_LOOK);
-        form.own_row = own_row;
-        form.from = from.clone();
-        let on_home = !off_home.contains(key);
-        form.on_home = Some(on_home);
-        form.on_home_words = Some((t(lang, "apps.on_home"), t(lang, "apps.builtin.on_home_sub")));
-        if !on_home {
-            form.summary = format!("{} · {}", form.summary, t(lang, "apps.not_on_home"));
-        }
-        let label = current.and_then(|values| values.label.clone());
-        let row = crate::handlers::devices::UnifiedAppRow {
-            // Design 113: a line only while SMS isn't managed.
-            status_label: if policy.sms_mode == "managed" {
-                String::new()
-            } else {
-                t(lang, "apps.builtin.sms_unmanaged").to_string()
-            },
-            own_label: label.is_some().then(|| name.to_string()),
-            label: label.unwrap_or_else(|| name.to_string()),
-            package_name: key.to_string(),
-            tracked_app_id: None,
-            is_launcher: false,
-            checked: true,
-            is_installing: false,
-            install_failed: false,
-            show_no_release_hint: false,
-            access: None,
-            third_party: false,
-        };
+        let row = messages_row(lang, policy, current);
         let at = usize::from(allowed.first().is_some_and(|app| app.row.is_launcher));
         allowed.insert(
             at,
@@ -2614,19 +2586,22 @@ pub(crate) async fn render_apps(
                 builtin: true,
                 link: None,
                 logo: None,
-                perms: None,
+                page: Some(crate::handlers::app_page::page_url(
+                    id, key, "", page_from, "",
+                )),
                 letter: crate::handlers::devices::initial(&row.label),
                 refused: None,
                 dialer_note: None,
+                waits: None,
+                off_home: false,
                 icon: Some((glyph.to_string(), tile)),
-                display: Some(form),
-                anchor,
+                anchor: format!("app-{key}"),
                 row,
             },
         );
     }
     // 2026-11-12: Kalender (Dagen, design 69), under Meldinger - whether it is on Home, and a link to Device › Calendar
-    // where that and the rest are set. It sends nothing new: no Name and icon (the phone reads none for Kalender).
+    // where that and the rest are set. It has no page of its own (the phone reads no Name and icon for it).
     {
         let on_home = match crate::calendar::switches(&state.db, id).await {
             Ok(switches) => switches.map_or(crate::calendar::default_switches().0, |s| s.0),
@@ -2653,12 +2628,13 @@ pub(crate) async fn render_apps(
                     ),
                 )),
                 logo: None,
-                perms: None,
+                page: None,
                 letter: crate::handlers::devices::initial(name),
                 refused: None,
                 dialer_note: None,
+                waits: None,
+                off_home: false,
                 icon: Some((display::DAY_LOOK.glyph.to_string(), display::DAY_LOOK.tile)),
-                display: None,
                 anchor: "app-calendar".to_string(),
                 row: crate::handlers::devices::UnifiedAppRow {
                     status_label: String::new(),
@@ -2706,7 +2682,7 @@ pub(crate) async fn render_apps(
         id,
         &names,
         &zone,
-        latest.as_ref().map(|st| st.reported_at.as_str()),
+        latest.map(|st| st.reported_at.as_str()),
     )
     .await
     {
@@ -2716,8 +2692,8 @@ pub(crate) async fn render_apps(
     // Design 114 §5.4: the page's warning lines, the map links' group's (`#map-links`) among them.
     let setup_warnings = crate::setup_status::page_warnings_app_push(
         lang,
-        &policy,
-        latest.as_ref(),
+        policy,
+        latest,
         &state.integrations.setup(state, id).await,
         "apps",
         app_push.on,
@@ -2730,6 +2706,13 @@ pub(crate) async fn render_apps(
         Ok(groups) => groups,
         Err(err) => return read_failed(lang, id, "the phone's integrations", err),
     };
+    let AppsData {
+        device,
+        policy,
+        latest,
+        rows,
+        ..
+    } = data;
     Html(
         AppsTemplate {
             lang,
@@ -2763,6 +2746,35 @@ pub(crate) async fn render_apps(
         .unwrap(),
     )
     .into_response()
+}
+
+/// Meldinger's row (design 82 D10): its name - the phone's own, else "Meldinger" - and, while SMS isn't managed, the
+/// line that says so (design 113).
+pub(crate) fn messages_row(
+    lang: Lang,
+    policy: &DevicePolicy,
+    current: Option<&crate::app_display::DisplayValues>,
+) -> crate::handlers::devices::UnifiedAppRow {
+    let name = t(lang, "device.sms.messages");
+    let label = current.and_then(|values| values.label.clone());
+    crate::handlers::devices::UnifiedAppRow {
+        status_label: if policy.sms_mode == "managed" {
+            String::new()
+        } else {
+            t(lang, "apps.builtin.sms_unmanaged").to_string()
+        },
+        own_label: label.is_some().then(|| name.to_string()),
+        label: label.unwrap_or_else(|| name.to_string()),
+        package_name: crate::builtin::MESSAGES.to_string(),
+        tracked_app_id: None,
+        is_launcher: false,
+        checked: true,
+        is_installing: false,
+        install_failed: false,
+        show_no_release_hint: false,
+        access: None,
+        third_party: false,
+    }
 }
 
 #[derive(Template)]

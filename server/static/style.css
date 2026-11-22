@@ -49,6 +49,8 @@
     --green-bg: #E7F6EB;
     --grey-text: #3A3A3C;
     --grey-bg: #E9E9EE;
+    /* Design 127: a white glyph (static/app-icons/) drawn dark on a light chip; at night it stays white. */
+    --glyph-on-chip: brightness(0) invert(0.23);
     --info-text: #1C2A3A;
     --info-bg: #EEF4FC;
     --lock-text: #3A36B8;
@@ -180,6 +182,7 @@
         --green-bg: #123019;
         --grey-text: #D1D1D6;
         --grey-bg: #2A2A3A;
+        --glyph-on-chip: none;
         --info-text: #CFE0F5;
         --info-bg: #1A2533;
         --lock-text: #C7C5FF;
@@ -1999,26 +2002,6 @@ th {
     overflow-wrap: anywhere;
 }
 
-/* "Name and icon" (design 14, partials/app_display_form.html). */
-.app-display {
-    border-top: 1px solid var(--sep-light);
-    padding: 10px 0;
-}
-
-.app-display summary {
-    cursor: pointer;
-}
-
-.app-preview {
-    display: flex;
-    align-items: center;
-    margin: 12px 0;
-}
-
-.app-preview > * + * {
-    margin-left: 12px;
-}
-
 .app-tile {
     display: inline-flex;
     align-items: center;
@@ -2048,12 +2031,6 @@ th {
     left: 0;
     width: 100%;
     height: 100%;
-}
-
-.app-tile-own {
-    font-size: 0.75rem;
-    text-align: center;
-    padding: 4px;
 }
 
 .app-tile-small {
@@ -2123,23 +2100,9 @@ th {
     border-radius: 50%;
 }
 
-.choice-text {
-    padding: 6px 12px;
-    border: 1px solid var(--sep);
-    border-radius: 16px;
-    font-size: 0.9375rem;
-}
-
 .glyph-choice input:checked + *,
 .color-choice input:checked + * {
     box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--tint);
-}
-
-.glyph-choice input:checked + .choice-text,
-.color-choice input:checked + .choice-text {
-    border-color: var(--tint);
-    box-shadow: inset 0 0 0 1px var(--tint);
-    color: var(--tint);
 }
 
 .glyph-choice input:focus + *,
@@ -2356,16 +2319,6 @@ details.section[open] > summary .section-chev {
 code.key {
     word-break: break-all;
     font-size: 0.8125rem;
-}
-
-/* Name and icon: the shared app_display_form partial as one row of a group. */
-.group-display > details.app-display {
-    border-top: 0;
-    padding: 0;
-}
-
-.group-display > details.app-display > form {
-    padding: 0 16px 16px;
 }
 
 /* Add App's source: three real radios before the rows, so CSS marks the chosen row and shows only
@@ -2805,47 +2758,336 @@ input.row-input {
 
 /* ---- Device › Apps (design 31 step 6) ---- */
 
-/* An allowed app's Name and icon: a line under its row, indented to the name (the row's 16px, the
-   36px tile and 12px); open, its form under it at the group's width. */
-.group-apps > .cell > details.app-display {
-    border-top: 0;
-    padding: 0 16px;
-}
-
-.group-apps > .cell > details.app-display > summary {
-    padding: 0 0 10px 48px;
-    font-size: 0.9375rem;
-}
-
-.group-apps > .cell > details.app-display > summary > .row-label {
-    color: var(--tint);
-}
-
-.group-apps > .cell > details.app-display > form {
-    padding: 0 0 16px;
-}
-
-/* An app's Permissions, open (the user's screenshot, 2026-11-19): its rows under the summary's words (48px in) and
-   their switches at the cell's edge, in line with the app's own switch above. */
-.group-apps > .cell > details.app-perms > form {
-    padding: 0;
-}
-
-.group-apps > .cell > details.app-perms > form > .row,
-.group-apps > .cell > details.app-perms > p.row,
-.group-apps > .cell > details.app-perms > details.info > summary.row {
-    padding-left: 48px;
-    padding-right: 0;
-}
-
-.group-apps > .cell > details.app-perms > details.info > .info-panel,
-.group-apps > .cell > details.app-perms > .group-footer {
-    margin-left: 48px;
-    margin-right: 0;
-}
-
 .group-apps > .cell > .flash {
     padding-left: 64px;
+}
+
+/* Design 127 §2.2: an allowed app's split row - the tile, the name and the sub-line are the link to the app's page
+   (with its chevron), the switch its own form behind a 1px hairline; the switch's hit area is the whole cell right
+   of the hairline, at least 44px wide. */
+.row-split {
+    display: flex;
+    align-items: stretch;
+}
+
+.row-split > a.row {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding-right: 12px;
+}
+
+.split-sw {
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    margin: 0;
+}
+
+.split-hit {
+    display: flex;
+    flex: 1 1 auto;
+    align-items: center;
+    position: relative;
+    min-width: 44px;
+    margin: 0;
+    padding: 0 16px 0 14px;
+    cursor: pointer;
+}
+
+/* The hairline, inset from the row's top and bottom; the hit area stays the whole cell. */
+.split-hit::before {
+    content: "";
+    position: absolute;
+    top: 10px;
+    bottom: 10px;
+    left: 0;
+    border-left: 1px solid var(--sep-light);
+    pointer-events: none;
+}
+
+.split-hit > .sw + .knob {
+    margin-left: -62px;
+    margin-right: 24px;
+}
+
+.split-sw .button-small {
+    margin: 0 16px 8px 14px;
+}
+
+/* ---- An app's own page (design 127) ---- */
+
+/* The head: the app's tile, its name and its version or install state. */
+.app-head {
+    display: flex;
+    align-items: center;
+    padding: 16px;
+}
+
+.app-head > * + * {
+    margin-left: 14px;
+}
+
+.app-head-tile {
+    font-size: 1.375rem;
+    font-weight: 700;
+    box-shadow: 0 0 0 1px var(--sep-light);
+}
+
+.app-head-text {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.app-head-name {
+    display: block;
+    font-family: var(--font-display);
+    font-weight: 800;
+    font-size: 1.3125rem;
+    line-height: 1.2;
+}
+
+.app-head-sub {
+    display: block;
+    margin-top: 2px;
+    font-size: 0.8125rem;
+    color: var(--label-2);
+    font-variant-numeric: tabular-nums;
+}
+
+/* Approve and Keep under the held update, on a row of their own (a form isn't allowed inside a <summary>). */
+.row-actions {
+    flex-wrap: wrap;
+    padding-top: 0;
+}
+
+.group > .row-actions::before {
+    display: none;
+}
+
+.row-actions > .row-form + .row-form {
+    margin-left: 8px;
+}
+
+/* Vises som: the Home tile as the kid's Home draws it (a night tile with its label), beside the name. */
+.disp-top {
+    display: flex;
+    align-items: center;
+    padding: 14px 16px;
+}
+
+.disp-top > * + * {
+    margin-left: 14px;
+}
+
+.home-peek {
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 78px;
+    padding: 10px 6px 8px;
+    border-radius: 14px;
+    background: var(--night);
+}
+
+.peek-tile {
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 46px;
+    height: 46px;
+    border-radius: 50%;
+    color: #FFFFFF;
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 1.25rem;
+    line-height: 1;
+}
+
+.peek-glyph {
+    width: 26px;
+    height: 26px;
+}
+
+/* The word "Logo" while no phone has sent the logo: smaller than the letter. */
+.peek-text[data-word] {
+    font-size: 0.75rem;
+}
+
+.peek-logo {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+}
+
+.peek-label {
+    max-width: 100%;
+    margin-top: 5px;
+    color: var(--night-text);
+    font-size: 0.75rem;
+    font-weight: 600;
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.disp-name {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.disp-name > label {
+    margin-bottom: 4px;
+    font-size: 0.8125rem;
+    font-weight: 400;
+    color: var(--label-2);
+}
+
+.disp-name > input[type="text"] {
+    margin-bottom: 0;
+}
+
+/* The icon: Logo · Automatisk · Symbol (design 77's segmented look). The three radios come before the rows, so the
+   checked one marks its segment and shows the symbols and the colours under Symbol only - no script, no :has(). */
+.disp-pick {
+    position: relative;
+    min-width: 0;
+    margin: 0;
+    padding: 0 12px 14px;
+    border: 0;
+}
+
+.disp-modes {
+    margin-top: 0;
+}
+
+.mode-logo:checked ~ .disp-modes .seg-logo .segment-face,
+.mode-auto:checked ~ .disp-modes .seg-auto .segment-face,
+.mode-symbol:checked ~ .disp-modes .seg-symbol .segment-face {
+    background: var(--surface);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+.mode-logo:focus-visible ~ .disp-modes .seg-logo .segment-face,
+.mode-auto:focus-visible ~ .disp-modes .seg-auto .segment-face,
+.mode-symbol:focus-visible ~ .disp-modes .seg-symbol .segment-face {
+    outline: 2px solid var(--tint);
+    outline-offset: -2px;
+}
+
+.glyphs,
+.swatches {
+    display: none;
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+
+/* A grid, so a short last line starts at the left (grid gaps work on the browser floor; flex gaps don't). */
+.mode-symbol:checked ~ .glyphs {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, 44px);
+    justify-content: space-between;
+    margin-top: 10px;
+}
+
+.mode-symbol:checked ~ .swatches {
+    display: flex;
+    flex-wrap: wrap;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--sep-light);
+}
+
+/* A symbol or a colour: a 44 x 44 hit area around its face; the radio is hidden but focusable and announced. */
+.disp-choice {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    margin: 0;
+    font-weight: 400;
+    cursor: pointer;
+}
+
+.disp-choice input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: 0;
+    opacity: 0;
+}
+
+.disp-choice-face {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    background: var(--grey-bg);
+}
+
+.glyphs .disp-choice-face img {
+    width: 20px;
+    height: 20px;
+    -webkit-filter: var(--glyph-on-chip);
+    filter: var(--glyph-on-chip);
+}
+
+.swatches .disp-choice-face {
+    width: 30px;
+    height: 30px;
+}
+
+/* "The app's tone": a dashed ring. */
+.swatch-auto {
+    border: 1.5px dashed var(--label-2);
+    background: transparent;
+}
+
+.disp-choice input:checked + .disp-choice-face {
+    box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--tint);
+}
+
+/* The chosen symbol on the chosen colour (`--pick`, the fieldset's: the server's, then app-display.js's). */
+.glyphs .disp-choice input:checked + .disp-choice-face {
+    background: var(--pick, #606B80);
+}
+
+.glyphs .disp-choice input:checked + .disp-choice-face img {
+    -webkit-filter: none;
+    filter: none;
+}
+
+.disp-choice input:focus-visible + .disp-choice-face {
+    outline: 2px solid var(--tint);
+    outline-offset: 4px;
+}
+
+/* Tilbakestill with the catalog's default under it. */
+.disp-reset {
+    flex-direction: column;
+}
+
+.disp-reset > .row-sub {
+    font-weight: 400;
+}
+
+/* A switch's tile on Tilgang: a glyph from static/app-icons/. */
+.tile img {
+    width: 17px;
+    height: 17px;
 }
 
 /* "On Home" in Name and icon: its ⓘ left of the switch (the row's 16px and the 64px switch), the
@@ -3329,25 +3571,6 @@ input[type="file"]::file-selector-button {
     font: inherit;
     font-weight: 600;
     cursor: pointer;
-}
-
-/* "Name and icon" (partials/app_display_form.html): a disclosure row with the chevron, as
-   Source & Signing, not the browser's triangle. */
-details.app-display > summary {
-    list-style: none;
-}
-
-details.app-display > summary::-webkit-details-marker {
-    display: none;
-}
-
-details.app-display > summary .row-sub::first-letter {
-    text-transform: uppercase;
-}
-
-details.app-display[open] > summary .section-chev {
-    -webkit-transform: rotate(90deg);
-    transform: rotate(90deg);
 }
 
 /* ---- Web Filter's DNS Server (design 36 §6): one line per phone in the group's footer ---- */

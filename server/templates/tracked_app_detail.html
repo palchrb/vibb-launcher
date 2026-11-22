@@ -100,15 +100,18 @@
     </div>
     {% endif %}
 
-    <div class="group group-display">
-        {% include "partials/app_display_form.html" %}
-    </div>
+    {#- Vises som (design 127 §2.4): the phone page's partial and script - the catalog's default, every control saving
+        at once, back to #display. -#}
+    <section id="display" aria-labelledby="display-title">
+    <h2 class="group-header" id="display-title">{{ self.t("apps.display.group") }}</h2>
+    {% include "partials/app_display_group.html" %}
     {% if app.package_name.is_empty() %}
     <p class="group-footer">{{ self.t("apps.app.display_no_package") }}</p>
     {% else %}
     <div class="group-footer"><details class="info"><summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("apps.app.display_footer") }}</p></div></details></div>
     {% endif %}
-    <script src="/static/app-display.js?v=7" defer data-swap-ready></script>
+    </section>
+    <script src="/static/app-display.js?v=9" defer data-swap-ready></script>
 
     <h2 class="group-header">{{ self.t("apps.on_phones") }}</h2>
     {#- The group is always rendered with its id: Install Now's answers land on `#phone-{id}` or,

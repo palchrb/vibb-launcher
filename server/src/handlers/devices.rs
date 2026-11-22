@@ -1041,6 +1041,7 @@ fn access_notice(lang: Lang, code: &str) -> Option<(&'static str, bool)> {
 /// `package_name` can be empty only for a manual-upload catalog app nobody's typed a package name
 /// for yet - it can never be matched against a real installed app by name, so it always shows as
 /// `NotInstalled` until an admin adds one (see `tracked_apps.rs`).
+#[derive(Clone)]
 pub(crate) struct UnifiedAppRow {
     pub(crate) package_name: String,
     /// The name the kid sees: this phone's own name, else the catalog's, else the app's own.
@@ -1391,11 +1392,10 @@ async fn messages_row_listed(db: &sqlx::SqlitePool, device_id: i64) -> bool {
 /// `action` "reset" = the phone's row goes (it follows the catalog default, else Vibb style;
 /// design 34 P1), "save" (or none) saves the fields, anything else is a 400 (Vibb
 /// style with no name on a phone with a catalog default keeps an empty row: Vibb style there). A
-/// choice equal to the catalog default, or nothing without a default, keeps no row. Refused input: 400,
-/// Device › Apps with that app's form open, the entered values and the error by the field, the
-/// field focused (the form posts to `…#app-<package>`, so the answer lands on the app's row, not
-/// the top). Saved: back to the app's row (`/devices/{id}/apps#app-<package>`; `#allowed` for Meldinger when the
-/// save left its row unlisted, [messages_row_listed]); nudges.
+/// choice equal to the catalog default, or nothing without a default, keeps no row. Design 127 §2.4: `icon_mode`
+/// (Logo · Automatisk · Symbol) wins over `icon`. Refused input: 400, the app's own page with the entered values and
+/// the error at the field. Saved: back to the app's page at Vises som (`/devices/{id}/apps/{package}#display`; the
+/// list's `#allowed` for Meldinger when the save left its row unlisted, [messages_row_listed]); nudges.
 pub async fn save_app_display(
     State(state): State<AppState>,
     lang: crate::i18n::Lang,
@@ -1457,27 +1457,69 @@ pub async fn save_app_display(
             );
         }
     }
+    let default = match crate::app_display::catalog_defaults(&state.db).await {
+        Ok(defaults) => defaults.get(&package).cloned(),
+        Err(err) => {
+            tracing::error!(device_id = id, %err, "couldn't read the catalog's app names");
+            return crate::i18n::error(
+                lang,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "error.save_failed",
+            );
+        }
+    };
+    let stored = match crate::app_display::device_rows(&state.db, id).await {
+        Ok(rows) => rows.get(&package).cloned(),
+        Err(err) => {
+            tracing::error!(device_id = id, %err, "couldn't read the phone's app names");
+            return crate::i18n::error(
+                lang,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "error.save_failed",
+            );
+        }
+    };
+    // Design 127 §2.4: the segmented control's `icon_mode` wins over `icon` (Symbol without a glyph is the stored one,
+    // else the catalog's, else the first); Logo and Automatic save no colour. A form without it reads `icon`.
+    let mode = form.get("icon_mode").map(String::as_str);
+    let fallback = crate::app_display::fallback_glyph(stored.as_ref(), default.as_ref());
+    let (icon, color, mode_refused) =
+        match crate::app_display::icon_of_form(mode, field("icon"), &fallback) {
+            Ok((icon, true)) => (icon, field("color").to_string(), None),
+            Ok((icon, false)) => (icon, String::new(), None),
+            Err(error) => (
+                field("icon").to_string(),
+                field("color").to_string(),
+                Some(error),
+            ),
+        };
     let refuse = |error: FieldError| {
         let entered = Entered {
             label: field("label").to_string(),
-            icon: field("icon").to_string(),
-            color: field("color").to_string(),
+            icon: icon.clone(),
+            color: color.clone(),
             error,
         };
         let state = state.clone();
         let package = package.clone();
         async move {
-            let mut response = crate::handlers::device_pages::render_apps(
+            let mut response = crate::handlers::app_page::render(
                 &state,
                 lang,
                 id,
-                None,
-                Some((package, entered)),
+                &package,
                 from,
-                None,
+                crate::handlers::app_page::Shown {
+                    entered: Some(entered),
+                    ..Default::default()
+                },
             )
             .await;
-            // The page, as a refusal; a page that failed to render keeps its own status.
+            // The page, as a refusal; a page that failed to render keeps its own status. An app with no page (not
+            // allowed or gone since) has nowhere to show the field: a plain refusal.
+            if response.status().is_redirection() {
+                return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.not_an_app");
+            }
             if response.status() == StatusCode::OK {
                 *response.status_mut() = StatusCode::BAD_REQUEST;
             }
@@ -1492,7 +1534,9 @@ pub async fn save_app_display(
     };
     let values = if reset {
         DisplayValues::empty()
-    } else if builtin && field("icon").trim() == crate::app_display::OWN {
+    } else if let Some(error) = mode_refused {
+        return refuse(error).await;
+    } else if builtin && icon.trim() == crate::app_display::OWN {
         // Design 82 D9: a part of Vibb One has no app logo to show.
         return refuse(FieldError {
             field: "icon",
@@ -1500,20 +1544,9 @@ pub async fn save_app_display(
         })
         .await;
     } else {
-        match crate::app_display::validate(field("label"), field("icon"), field("color")) {
+        match crate::app_display::validate(field("label"), &icon, &color) {
             Ok(values) => values,
             Err(error) => return refuse(error).await,
-        }
-    };
-    let default = match crate::app_display::catalog_defaults(&state.db).await {
-        Ok(defaults) => defaults.get(&package).cloned(),
-        Err(err) => {
-            tracing::error!(device_id = id, %err, "couldn't read the catalog's app names");
-            return crate::i18n::error(
-                lang,
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "error.save_failed",
-            );
         }
     };
     // Design 69 §4.4: "On Home" - only a page that shows the switch says so (`on_home_shown`); an older page keeps
@@ -1573,15 +1606,16 @@ pub async fn save_app_display(
         Ok(_) => {
             let _ = state.command_notify.send(id);
             // Design 82's code QA S1: Meldinger's row is listed only while there is a reason for it. A save that
-            // took the last one away (Reset, or On Home back on with nothing else chosen) lands on the group, which
-            // is always on the page - never on an anchor that is gone, which would be the top of the page.
-            let fragment = if builtin && !keep_row && !messages_row_listed(&state.db, id).await {
-                "allowed".to_string()
-            } else {
-                format!("app-{package}")
-            };
-            Redirect::to(&crate::handlers::device_pages::apps_url(
-                id, "", from, &fragment,
+            // took the last one away (Reset, or On Home back on with nothing else chosen) has no page to land on:
+            // it lands on the list's group, which is always there - never on an anchor that is gone.
+            if builtin && !keep_row && !messages_row_listed(&state.db, id).await {
+                return Redirect::to(&crate::handlers::device_pages::apps_url(
+                    id, "", from, "allowed",
+                ))
+                .into_response();
+            }
+            Redirect::to(&crate::handlers::app_page::page_url(
+                id, &package, "", from, "display",
             ))
             .into_response()
         }
@@ -1593,10 +1627,13 @@ pub async fn save_app_display(
 }
 
 /// `POST /devices/{id}/apps/permissions` (design 68 §4.1): one app's camera off (`camera` = `deny`, or the switch's
-/// field missing - an auto-saving checkbox) or back to the default (`default`). Saved: back to the app's Permissions,
-/// open (`?perms=<package>#perms-<package>`), and the phone nudged. Refused at the app's row (`?notice=perms`): Play's
-/// core or Vibb itself; `?notice=perms_full` past `app_permissions::MAX_ROWS_PER_DEVICE`. Another `camera` value or a
-/// package outside the grammar (no row has one) is a 400, an unknown phone a 404, a DB error a 500.
+/// field missing - an auto-saving checkbox) or back to the default (`default`). Saved: back to the app's own page at
+/// Tilgang (design 127, `/devices/{id}/apps/{package}#access`), and the phone nudged. Refused there
+/// (`?notice=perms`): Play's core or Vibb itself, and a deny for an app the page offers no camera switch for (design
+/// 127 §3.4: the last report doesn't have it installed, third-party and asking for the camera, or it is Vibb music) -
+/// an allow is always accepted, so any row can be cleared; `?notice=perms_full` past
+/// `app_permissions::MAX_ROWS_PER_DEVICE`. Another `camera` value or a package outside the grammar (no row has one) is
+/// a 400, an unknown phone a 404, a DB error a 500.
 pub async fn save_app_permissions(
     State(state): State<AppState>,
     lang: Lang,
@@ -1612,6 +1649,23 @@ pub async fn save_app_permissions(
         Ok(target) => target,
         Err(response) => return *response,
     };
+    if deny {
+        let installed = match latest_installed(&state, id).await {
+            Ok(installed) => installed,
+            Err(err) => return perms_save_failed(lang, id, err),
+        };
+        let offered = !crate::music::MUSIC_PACKAGES.contains(&target.package.as_str())
+            && installed.iter().any(|a| {
+                a.package_name == target.package
+                    && !a.preinstalled
+                    && a.access
+                        .as_ref()
+                        .is_some_and(|access| access.camera.is_some())
+            });
+        if !offered {
+            return target.refused("perms");
+        }
+    }
     match crate::app_permissions::set_camera(&state.db, id, &target.package, deny).await {
         Ok(true) => target.saved(&state),
         Ok(false) => target.refused("perms_full"),
@@ -1651,7 +1705,7 @@ pub async fn save_lock_media(
         Vec::new()
     };
     if on && !offered.contains(&target.package) {
-        return target.refused("perms");
+        return target.refused("lock_media");
     }
     match crate::app_permissions::set_lock_media(&state.db, id, &target.package, on, &offered).await
     {
@@ -1697,23 +1751,44 @@ struct PermsTarget {
     id: i64,
     package: String,
     from: Option<crate::handlers::device_pages::AppsFrom>,
+    /// The page's group the form is in (design 127): `access` (Tilgang) or `lock-screen` (Låseskjerm).
+    group: &'static str,
 }
 
 impl PermsTarget {
-    /// Back to the app's Permissions, open, with the phone nudged.
+    /// Back to the app's page at the form's group, with the phone nudged.
     fn saved(&self, state: &AppState) -> Response {
         let _ = state.command_notify.send(self.id);
-        Redirect::to(&crate::handlers::device_pages::apps_url(
+        Redirect::to(&crate::handlers::app_page::page_url(
             self.id,
-            &format!("perms={}", self.package),
+            &self.package,
+            "",
             self.from,
-            &format!("perms-{}", self.package),
+            self.group,
         ))
         .into_response()
     }
 
-    /// Refused at the app's row (`?notice=<code>&app=app-<package>`).
+    /// Refused at the form's group on the app's page (`?notice=<code>`; the list's row when the app has no page).
+    /// The lock screen's refusal of an app it can't change says so in its own group (`lock_media`).
     fn refused(&self, code: &str) -> Response {
+        let code = if self.group == "lock-screen" && code == "perms" {
+            "lock_media"
+        } else {
+            code
+        };
+        crate::settings_log::refused(Redirect::to(&crate::handlers::app_page::page_url(
+            self.id,
+            &self.package,
+            &format!("notice={code}"),
+            self.from,
+            self.group,
+        )))
+    }
+
+    /// Refused at the app's row on the list (`?notice=<code>&app=app-<package>`): an app with no page of its own (the
+    /// managed dialer).
+    fn refused_on_list(&self, code: &str) -> Response {
         let anchor = app_anchor(&self.package, None);
         crate::settings_log::refused(Redirect::to(&crate::handlers::device_pages::apps_url(
             self.id,
@@ -1779,7 +1854,17 @@ async fn perms_target(
         Ok(count) => count > 0 || package.starts_with("me.vibb.launcher"),
         Err(err) => return Err(Box::new(perms_save_failed(lang, id, err))),
     };
-    let target = PermsTarget { id, package, from };
+    let group = if music_refused {
+        "lock-screen"
+    } else {
+        "access"
+    };
+    let target = PermsTarget {
+        id,
+        package,
+        from,
+        group,
+    };
     let music = music_refused && crate::music::MUSIC_PACKAGES.contains(&target.package.as_str());
     if crate::play::is_play_core(&target.package) || vibb || music {
         return Err(Box::new(target.refused("perms")));
@@ -1787,7 +1872,7 @@ async fn perms_target(
     // Design 109: the managed dialer's row has no Permissions.
     match dialer_locked(state, id, &target.package).await {
         Ok(false) => {}
-        Ok(true) => return Err(Box::new(target.refused("dialer_managed"))),
+        Ok(true) => return Err(Box::new(target.refused_on_list("dialer_managed"))),
         Err(err) => return Err(Box::new(perms_save_failed(lang, id, err))),
     }
     Ok(target)
@@ -2841,6 +2926,7 @@ pub(crate) fn toggle_refusal(lang: Lang, code: &str) -> Option<&'static str> {
         "perms" => Some(t(lang, "apps.perms.refused")),
         "perms_full" => Some(t(lang, "apps.perms.full")),
         "lock_media_full" => Some(t(lang, "apps.perms.lock_media_full")),
+        "lock_media" => Some(t(lang, "apps.lock_screen.refused")),
         _ => None,
     }
 }
@@ -2859,9 +2945,10 @@ pub(crate) fn toggle_refusal(lang: Lang, code: &str) -> Option<&'static str> {
 /// preinstalled (a preinstalled app can only be hidden).
 ///
 /// Where it returns (§5.1): `back=music` to Device › Music (`/devices/{id}/music#music-app`, its group; a refusal
-/// to `?music_notice=<code>#music-app`, the reason in that group), anything else to the app's row
-/// on Device › Apps (`#app-<package>`): the row moves between Allowed and Not allowed, and the
-/// fragment finds it again, with or without JS.
+/// to `?music_notice=<code>#music-app`, the reason in that group); `back=app` (design 127 §2.3) to the app's own
+/// page at its head while it stays allowed, a refusal there too (`?notice=<code>#app-head`); anything else, and the
+/// page's Tillatt turned off, to the app's row on Device › Apps (`#app-<package>`): the row moves between Allowed and
+/// Not allowed, and the fragment finds it again, with or without JS.
 ///
 /// The package must be a package name (the status intake's rule; it goes into the allowlist), or
 /// exactly what the catalog row the post names stores - an older catalog's free text stays
@@ -2940,9 +3027,21 @@ pub async fn toggle_app(
     // Device › Music's switch (`back=music`) returns there: the page on a save, its group with the
     // reason on a refusal (design 31 step 7).
     let music = form.get("back").map(String::as_str) == Some("music");
+    // Design 127 §2.3: the app's own page's Tillatt (`back=app`) returns there, at its head - on a save that leaves it
+    // allowed, and with a refusal's reason; off lands on the list at the row (the page is gone).
+    let app_page = form.get("back").map(String::as_str) == Some("app")
+        && crate::app_display::valid_package_name(&package_name);
     let refused = |code: &str, anchor: &str| {
         crate::settings_log::refused(Redirect::to(&if music {
             format!("/devices/{id}/music?music_notice={code}#music-app")
+        } else if app_page {
+            crate::handlers::app_page::page_url(
+                id,
+                &package_name,
+                &format!("notice={code}"),
+                from,
+                "app-head",
+            )
         } else {
             page(&format!("notice={code}&app={anchor}"), anchor)
         }))
@@ -3096,6 +3195,16 @@ pub async fn toggle_app(
     let _ = state.command_notify.send(id);
     if music {
         return Redirect::to(&format!("/devices/{id}/music#music-app")).into_response();
+    }
+    if app_page && checked {
+        return Redirect::to(&crate::handlers::app_page::page_url(
+            id,
+            &package_name,
+            "",
+            from,
+            "app-head",
+        ))
+        .into_response();
     }
     Redirect::to(&page("", &anchor)).into_response()
 }

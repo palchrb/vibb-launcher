@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="{{ lang.code() }}">
+<head>
+{% include "partials/head.html" %}
+</head>
+<body>
+<div class="top-strip" aria-hidden="true"></div>
+{#- An app's own page on a phone (design 127, `app_page`): Device › Apps › <app>. Its tab is a field, as the list's
+    (`device_pages::Tab`): Apps when opened from the Apps tab (`?from=`), else Devices. -#}
+{% let tab = nav_tab.name() %}
+{% include "partials/tab_bar.html" %}
+{% import "partials/band.html" as band %}
+<main class="container">
+    {% call band::app(name, back_href, back_label, tile) %}{% endcall %}
+    <div class="sheet">
+
+    {#- The head (§2.3): the tile, the name, the version or the install state; Tillatt (`back=app`: on lands here,
+        off on the list - the app is removed or hidden); an update held for the parent, with Approve and Keep acting
+        on the catalog app (`back=device:<id>` lands here with the answer). -#}
+    <section id="app-head">
+        <div class="group">
+            {% if let Some(text) = refused %}<p class="flash flash-error" role="status" data-flash="app-head">{{ text }}</p>{% endif %}
+            {% if let Some((text, ok)) = held_flash %}<p class="flash{% if !ok %} flash-warn{% endif %}" role="status" data-flash="update">{{ text }}</p>{% endif %}
+            <div class="app-head" data-row="head">
+                {% if let Some(src) = tile.logo %}<span class="app-tile app-head-tile app-row-logo" aria-hidden="true">{{ tile.letter }}<img class="app-tile-logo" src="{{ src }}" alt="" decoding="async"></span>{% else if let Some((icon, colour)) = tile.icon %}<span class="app-tile app-head-tile" style="background: {{ colour }}" aria-hidden="true"><img src="/static/app-icons/{{ icon }}.svg" alt=""></span>{% else %}<span class="app-tile app-head-tile" aria-hidden="true">{{ tile.letter }}</span>{% endif %}
+                <span class="app-head-text">
+                    <span class="app-head-name">{{ name }}</span>
+                    {% for (text, orange) in subs %}<span class="app-head-sub{% if orange %} tone-orange{% endif %}"{% if loop.first %} data-head-sub{% endif %}>{{ text }}</span>{% endfor %}
+                    {% if let Some((note, alarm)) = dialer_note %}<span class="app-head-sub{% if alarm %} text-alarm{% endif %}" data-dialer-note>{{ note }}</span>{% endif %}
+                    {% if login_only %}<span class="app-head-sub" data-login-only><a href="/devices/{{ device.id }}/logins#logins-apps">{{ self.t("logins.apps.chrome_row") }}</a></span>{% endif %}
+                </span>
+            </div>
+            {% if let Some(sw) = allow %}
+            <form method="post" action="/devices/{{ device.id }}/apps/toggle#app-head" class="cell">
+                <input type="hidden" name="package_name" value="{{ sw.package_name }}">
+                {% if let Some(tracked_app_id) = sw.tracked_app_id %}
+                <input type="hidden" name="tracked_app_id" value="{{ tracked_app_id }}">
+                {% endif %}
+                <input type="hidden" name="back" value="app">
+                {% if let Some(from) = from %}<input type="hidden" name="from" value="{{ from }}">{% endif %}
+                <label class="row">
+                    <span class="row-label">{{ self.t("apps.page.allowed") }}</span>
+                    <input type="checkbox" role="switch" class="sw" name="selected" checked data-autosave><span class="knob" aria-hidden="true"></span>
+                </label>
+                <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
+            </form>
+            {% endif %}
+            {% if let Some(h) = held %}
+            <details class="info cell" data-update="held">
+                <summary class="row"><span class="row-label"><span class="tone-orange">{{ h.release.title }}</span><span class="row-sub">{{ h.sub }}</span></span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ h.about }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    {% for line in h.new_lines %}<p>{{ line }}</p>{% endfor %}
+                    <p>{{ h.keeps }}</p>
+                    <p>{{ self.t("apps.update.applies_all") }}{% if let Some(catalog) = catalog_id %} <a href="/apps/tracked/{{ catalog }}#update">{{ self.t("apps.update.catalog_link") }}</a>{% endif %}</p>
+                </div>
+            </details>
+            {% if let Some(tracked_app_id) = catalog_id %}
+            <div class="row row-actions" data-update="held-actions">
+                <form method="post" action="/apps/tracked/{{ tracked_app_id }}/held/approve#app-head" class="row-form">
+                    <input type="hidden" name="tag" value="{{ h.release.tag }}"><input type="hidden" name="asset_id" value="{{ h.release.asset_id }}"><input type="hidden" name="back" value="device:{{ device.id }}">{% if let Some(from) = from %}<input type="hidden" name="from" value="{{ from }}">{% endif %}
+                    <button type="submit" class="button-small">{{ self.t("apps.update.approve") }}</button>
+                </form>
+                <form method="post" action="/apps/tracked/{{ tracked_app_id }}/held/decline#app-head" class="row-form">
+                    <input type="hidden" name="tag" value="{{ h.release.tag }}"><input type="hidden" name="asset_id" value="{{ h.release.asset_id }}"><input type="hidden" name="back" value="device:{{ device.id }}">{% if let Some(from) = from %}<input type="hidden" name="from" value="{{ from }}">{% endif %}
+                    <button type="submit" class="button-small button-secondary">{{ h.keep }}</button>
+                </form>
+            </div>
+            {% endif %}
+            {% endif %}
+        </div>
+        {% if let Some(sw) = allow %}{% if sw.removable %}
+        <div class="group-footer">
+            <details class="info">
+                <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel"><p>{{ self.t("device.apps.footer") }}</p></div>
+            </details>
+        </div>
+        {% endif %}{% endif %}
+    </section>
+
+    {#- Vises som (§2.4): saves in place, back to #display. -#}
+    <section id="display" aria-labelledby="display-title">
+        <h2 class="group-header" id="display-title">{{ self.t("apps.display.group") }}</h2>
+        {% include "partials/app_display_group.html" %}
+        <div class="group-footer">
+            <details class="info">
+                <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel"><p>{{ on_home_help }}</p></div>
+            </details>
+        </div>
+    </section>
+    <script src="/static/app-display.js?v=9" defer data-swap-ready></script>
+
+    {% if let Some(group) = access %}
+    {% include "partials/app_access_group.html" %}
+    {% endif %}
+
+    {% if installing %}
+    <span hidden data-waits></span>
+    {% endif %}
+    </div>
+</main>
+</body>
+</html>

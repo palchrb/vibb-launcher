@@ -46,9 +46,9 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - **Wire**: `launcher_ui.app_display` - always a list (`policy_json_keys_snapshot`), `{package_name, label|null,
   icon|null, color}` resolved per phone (`app_display::policy_app_display`): unknown icons left out, unknown colours
   `auto`, entries with nothing left dropped; a failing query sends `[]` and logs (cosmetic, like wallpapers).
-- **Forms** (`partials/app_display_form.html`, `AppDisplayForm`): every allowed app with a valid package (not the
-  launcher) under its row on the phone's Apps page (`POST /devices/{id}/apps/display#app-<package>`, `action`
-  save/reset, any other a 400, back to `/devices/{id}/apps#app-<package>`, nudges) and the catalog page (`POST /apps/tracked/{id}/display`, back to `?open=display#display`, open, nudges every
+- **Forms** (`partials/app_display_group.html` since design 127, `AppDisplayForm`; `pwa.md`, "An app's own page"):
+  every allowed app with a valid package (not the launcher) on its own page (`POST /devices/{id}/apps/display#display`,
+  `action` save/reset, any other a 400, back to `/devices/{id}/apps/{package}#display`, nudges) and the catalog page (`POST /apps/tracked/{id}/display`, back to `?open=display#display`, open, nudges every
   phone). Validation (`app_display::validate`): label trimmed, 1-20 chars (`chars().count()`), no control chars;
   icon empty or known; colour `auto` or known; package per Android's grammar, never Play core. Refused: 400 with the
   phone's Apps page (the form's action carries `#app-<package>`, so the answer lands on the row) or the catalog page, that form open, the values kept, the error by the field and that field `autofocus`ed (the

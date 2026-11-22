@@ -119,10 +119,10 @@ fn every_template_with_the_bar_sets_its_tab() {
         with_bar += 1;
         let before = text[..at].trim_end();
         let line = before.lines().last().unwrap_or("").trim();
-        // Device › Apps alone sets it from a field (`device_pages::Tab`, only tab names): Apps when
-        // opened from the Apps tab (`?from=`), else Devices - still the template's choice, never
-        // the path's. Its rendered tabs are pinned by `device_pages::apps_from_the_apps_tab_*`.
-        if file == "device_apps.html" {
+        // Device › Apps and an app's own page (design 127) set it from a field (`device_pages::Tab`, only tab
+        // names): Apps when opened from the Apps tab (`?from=`), else Devices - still the template's choice, never
+        // the path's. Their rendered tabs are pinned by `device_pages::apps_from_the_apps_tab_*` and `app_page`.
+        if file == "device_apps.html" || file == "device_app.html" {
             assert_eq!(line, "{% let tab = nav_tab.name() %}", "{file}");
             for tab in [
                 crate::handlers::device_pages::Tab::Devices,

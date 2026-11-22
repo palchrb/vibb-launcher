@@ -14,10 +14,10 @@
     {% call band::phone(self.t("nav.apps"), back_href, back_label, who) %}{% endcall %}
     <div class="sheet">
 
-    {#- Where the forms return (§5.1): a switch and a Name and icon save to the app's row
-        (#app-<package>) - a switch moves the row to the other group, and the fragment finds it
-        again with or without JS -, "Download apps on Wi-Fi only" to its group at the bottom
-        (#downloads), so no save lands at the top of the list. No search field (§6.0). -#}
+    {#- Where the forms return (§5.1): a switch to the app's row (#app-<package>) - it moves the row to the other
+        group, and the fragment finds it again with or without JS -, "Download apps on Wi-Fi only" to its group at
+        the bottom (#downloads), so no save lands at the top of the list. An allowed app's name opens its own page
+        (design 127), where its Vises som, Tilgang and Låseskjerm are. No search field (§6.0). -#}
     {% if let Some(note) = corrupt %}
     {% include "partials/note_warning.html" %}
     {% endif %}
@@ -85,7 +85,6 @@
             </details>
         </div>
     </section>
-    <script src="/static/app-display.js?v=7" defer data-swap-ready></script>
 
     {% if installing %}
     <span hidden data-waits></span>

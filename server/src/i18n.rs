@@ -690,7 +690,9 @@ mod tests {
         "partials/budget_rows.html",
         "partials/rule_switch.html",
         "partials/device_app_row.html",
-        "partials/app_permissions_form.html",
+        // Design 127: an app's own page and its groups.
+        "device_app.html",
+        "partials/app_access_group.html",
         "partials/app_push_group.html",
         // Design 110: the map links integration's group on Device › Apps.
         "partials/map_links_group.html",
@@ -703,7 +705,7 @@ mod tests {
         "apps_list.html",
         "tracked_app_add.html",
         "tracked_app_detail.html",
-        "partials/app_display_form.html",
+        "partials/app_display_group.html",
         // 3c: Locate.
         "device_locate.html",
         "device_locations.html",
