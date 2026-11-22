@@ -741,7 +741,7 @@ object AppDownloads {
                 AppDownloadStore.remove(app, rec.appId, rec.tag)
                 TrackedAppUpdateState.recordFailed(app, rec.appId.toString(), rec.tag)
                 notifyAppInstallResult(app, rec.appId, rec.name, success = false)
-                reportFailure(api, rec.appId)
+                reportFailure(api, rec.appId, InstallFailureKind.DOWNLOAD_CORRUPT)
                 if (rec.isLauncher && InstallNow.active(app) != null) InstallNow.fail(app, INSTALL_NOW_DOWNLOAD_CORRUPT)
             } else {
                 // Not installed, no backoff: downloaded again at once (design 13 QA #2) - with the
@@ -801,7 +801,7 @@ object AppDownloads {
                 TrackedAppUpdateState.recordFailed(app, key, rec.tag)
                 AppDownloadStore.remove(app, rec.appId, rec.tag)
                 notifyAppInstallResult(app, rec.appId, rec.name, success = false)
-                reportFailure(api, rec.appId)
+                reportFailure(api, rec.appId, InstallFailureKind.NOT_STARTED)
                 Outcome.PROGRESS
             }
         }
@@ -841,7 +841,7 @@ object AppDownloads {
         AppDownloadStore.remove(app, rec.appId, rec.tag)
         AppDownloadStore.mutateRefusals(app) { withRefusal(it, CatalogRefusal(rec.appId, rec.tag, verdict.wire, System.currentTimeMillis())) }
         notifyAppInstallResult(app, rec.appId, rec.name, success = false)
-        reportFailure(api, rec.appId)
+        reportFailure(api, rec.appId, InstallFailureKind.APK_REFUSED)
     }
 
     /** Our own update: moved into `self_update/` and kept pending - the sync's last step commits it
@@ -902,9 +902,9 @@ object AppDownloads {
         SyncRunner.request(app, "download_release_changed")
     }
 
-    private suspend fun reportFailure(api: MdmApi, appId: Long) {
+    private suspend fun reportFailure(api: MdmApi, appId: Long, reason: String) {
         try {
-            api.reportInstallProgress(InstallProgressReport(appId, percent = 0, failed = true))
+            api.reportInstallProgress(InstallProgressReport(appId, percent = 0, failed = true, reason = reason))
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {

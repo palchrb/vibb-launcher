@@ -126,7 +126,7 @@ class AppInstallReceiver : BroadcastReceiver() {
                     Log.i(LOG_TAG, "Self-update failed after the kill (fence session: $fenceSession) - Home comes back")
                     Handler(Looper.getMainLooper()).post { SelfUpdate.bringHomeToFront(app, "a failed self-update") }
                 }
-                if (failed) appId?.let { reportInstallFailureToServer(app, it) }
+                if (failed) appId?.let { reportInstallFailureToServer(app, it, installFailureReason(status, message)) }
                 // Install Now (design 37): the tap was one attempt - any failed result is its
                 // answer (the ordinary path keeps its own backoff and record).
                 if (isLauncher && failed) {
@@ -145,21 +145,21 @@ class AppInstallReceiver : BroadcastReceiver() {
     }
 
     /**
-     * Best-effort report so the admin site shows "Install failed" instead of silence - previously
+     * Best-effort report so the admin site shows "Install failed", with Android's code as [reason], instead of silence - previously
      * a real `PackageInstaller` failure only ever produced a client-local, permanently-sticky
      * "don't retry this release" marker ([TrackedAppUpdateState.recordFailed]) with nothing
      * surfaced server-side, which looked from the admin's side exactly like the request never left
      * the device. `goAsync()` keeps this receiver's process alive long enough for the network call
      * to finish - same reasoning as [MdmDeviceAdminReceiver.onProfileProvisioningComplete].
      */
-    private suspend fun reportInstallFailureToServer(context: Context, trackedAppId: Long) {
+    private suspend fun reportInstallFailureToServer(context: Context, trackedAppId: Long, reason: String?) {
         val mdm = LauncherPreferences.mdm()
         val serverUrl = mdm.serverUrl()
         val deviceToken = DeviceToken.get()
         if (serverUrl.isNullOrBlank() || deviceToken.isNullOrBlank()) return
         try {
             createMdmApi(serverUrl, deviceToken)
-                .reportInstallProgress(InstallProgressReport(trackedAppId, percent = 0, failed = true))
+                .reportInstallProgress(InstallProgressReport(trackedAppId, percent = 0, failed = true, reason = reason))
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Failed to report install failure", e)
         }

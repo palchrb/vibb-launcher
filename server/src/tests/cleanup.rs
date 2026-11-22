@@ -893,6 +893,54 @@ async fn pruning_follows_what_each_row_describes() {
 /// Security review P1, the owner's decision on M1 of round S3: a phone's newest fix outlives the
 /// window while its location is on; an Off phone keeps none, and choosing Off erases every fix and
 /// the shutdown positions in its `phone_off`s at once.
+/// A failed install's row (with its reason, upstream review 2026-11-20) is kept a day
+/// (`retention::INSTALL_FAILED_HOURS`), past a running download's 10 minutes (code QA L9).
+#[tokio::test]
+async fn a_failed_installs_row_is_kept_a_day() {
+    let app = super::TestApp::new().await;
+    let db = &app.db;
+    let (id, _) = app.create_device("kid").await;
+    let mut apps = Vec::new();
+    for package in ["org.example.a", "org.example.b", "org.example.c"] {
+        let app_id: i64 = sqlx::query_scalar(
+            "INSERT INTO tracked_apps (name, package_name, github_repo) VALUES (?, ?, ?) RETURNING id",
+        )
+        .bind(package)
+        .bind(package)
+        .bind(format!("o/{package}"))
+        .fetch_one(db)
+        .await
+        .unwrap();
+        apps.push(app_id);
+    }
+    // (app, failed, age)
+    for (app_row, failed, age) in [
+        (apps[0], true, "-2 hours"),
+        (apps[1], true, "-25 hours"),
+        (apps[2], false, "-2 hours"),
+    ] {
+        sqlx::query(
+            "INSERT INTO device_install_progress \
+             (device_id, tracked_app_id, percent, failed, reason, updated_at) \
+             VALUES (?, ?, 0, ?, 'INSTALL_FAILED_OLDER_SDK', datetime('now', ?))",
+        )
+        .bind(id)
+        .bind(app_row)
+        .bind(failed)
+        .bind(age)
+        .execute(db)
+        .await
+        .unwrap();
+    }
+    let pruned = crate::retention::prune(db).await;
+    assert_eq!(pruned.install_progress, 2, "{pruned:?}");
+    let left: Vec<i64> = sqlx::query_scalar("SELECT tracked_app_id FROM device_install_progress")
+        .fetch_all(db)
+        .await
+        .unwrap();
+    assert_eq!(left, [apps[0]]);
+}
+
 #[tokio::test]
 async fn off_erases_every_fix_and_on_keeps_the_last_known() {
     use axum::http::Method;

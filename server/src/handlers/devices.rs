@@ -1898,6 +1898,16 @@ pub(crate) struct AppRows {
     pub(crate) downloads: Option<crate::app_downloads::AppDownloads>,
 }
 
+/// A phone's `device_install_progress` row for one app, as Device › Apps reads it.
+struct InstallRow {
+    percent: i64,
+    failed: bool,
+    /// The failure's code (`install_failure`), worded on the row.
+    reason: Option<String>,
+    /// Reported within `retention::INSTALL_PROGRESS_MINUTES`.
+    fresh: bool,
+}
+
 pub(crate) async fn app_rows(
     state: &AppState,
     id: i64,
@@ -1936,24 +1946,47 @@ pub(crate) async fn app_rows(
             .into_iter()
             .collect();
 
-    // Fresh (not stale) download-progress rows for this device - only ever meaningful for a
-    // NotInstalled row below, so this is the only place they're consulted. The 10-minute window
-    // matches the client's own in-flight-attempt timeout (TrackedAppUpdateState) for consistency -
-    // long enough to cover a slow download, short enough that an abandoned attempt's last-reported
-    // percentage doesn't linger looking "in progress" forever. Older rows are pruned
-    // (`retention::INSTALL_PROGRESS_MINUTES`).
-    let install_progress: std::collections::HashMap<i64, (i64, bool)> =
-        sqlx::query_as::<_, (i64, i64, bool)>(
-            "SELECT tracked_app_id, percent, failed FROM device_install_progress \
-             WHERE device_id = ? AND updated_at > datetime('now', '-' || ? || ' minutes')",
+    // Fresh (not stale) download-progress rows for this device. The 10-minute window matches the
+    // client's own in-flight-attempt timeout (TrackedAppUpdateState) for consistency - long enough
+    // to cover a slow download, short enough that an abandoned attempt's last-reported percentage
+    // doesn't linger looking "in progress" forever. A failed install's row, with its reason
+    // (upstream review 2026-11-20), is shown for a day: past the 10 minutes only when the phone
+    // reports nothing newer about the app. Older rows are pruned (`retention::INSTALL_PROGRESS_MINUTES`,
+    // `INSTALL_FAILED_HOURS`).
+    let install_progress: std::collections::HashMap<i64, InstallRow> =
+        sqlx::query_as::<_, (i64, i64, bool, Option<String>, bool)>(
+            "SELECT tracked_app_id, percent, failed, reason, \
+             updated_at > datetime('now', '-' || ? || ' minutes') FROM device_install_progress \
+             WHERE device_id = ? AND (updated_at > datetime('now', '-' || ? || ' minutes') \
+             OR (failed = 1 AND updated_at > datetime('now', '-' || ? || ' hours')))",
         )
+        .bind(crate::retention::INSTALL_PROGRESS_MINUTES)
         .bind(id)
         .bind(crate::retention::INSTALL_PROGRESS_MINUTES)
+        .bind(crate::retention::INSTALL_FAILED_HOURS)
         .fetch_all(&state.db)
         .await?
         .into_iter()
-        .map(|(tracked_app_id, percent, failed)| (tracked_app_id, (percent, failed)))
+        .map(|(tracked_app_id, percent, failed, reason, fresh)| {
+            (
+                tracked_app_id,
+                InstallRow {
+                    percent,
+                    failed,
+                    reason,
+                    fresh,
+                },
+            )
+        })
         .collect();
+    let failed_label = |row: &InstallRow| match row.reason.as_deref() {
+        Some(reason) => t_params(
+            lang,
+            "device.apps.install_failed_because",
+            &[("reason", &crate::install_failure::words(lang, reason))],
+        ),
+        None => crate::i18n::t(lang, "device.apps.install_failed").to_string(),
+    };
 
     // What the phone said about its downloads (design 13): waiting for Wi-Fi since when, how far.
     // A fresh progress row above still wins for the live percentage - but not over a release the
@@ -1967,7 +2000,10 @@ pub(crate) async fn app_rows(
             .as_ref()
             .and_then(|d| d.entry(tracked_app_id))
             .filter(|e| {
-                crate::app_downloads::refused(e) || !install_progress.contains_key(&tracked_app_id)
+                crate::app_downloads::refused(e)
+                    || !install_progress
+                        .get(&tracked_app_id)
+                        .is_some_and(|row| row.fresh)
             })
     };
 
@@ -2005,22 +2041,32 @@ pub(crate) async fn app_rows(
             .iter()
             .find(|t| !t.package_name.is_empty() && t.package_name == app.package_name);
         let update = tracked_match.and_then(|t| download_of(t.id));
+        let ours = !app.preinstalled && app.installer.as_deref() != Some(crate::play::PLAY_STORE);
+        // An update that failed to install (upstream review 2026-11-20): while the phone still has
+        // an older version than the catalog's release and reports nothing newer about it.
+        let failed_update = tracked_match
+            .filter(|_| ours && update.is_none())
+            .filter(|t| {
+                matches!((app.version_code, t.latest_release_version_code),
+                    (Some(have), Some(release)) if have < release)
+            })
+            .and_then(|t| install_progress.get(&t.id))
+            .filter(|row| row.failed);
         let (label, own_label) = shown(&app.package_name, None, &app.label);
         apps.push(UnifiedAppRow {
-            // Design 113: an installed app says nothing (preinstalled, from Play or plain); an update that waits or
-            // was refused keeps its line.
-            status_label: match update {
-                Some(update)
-                    if !app.preinstalled
-                        && app.installer.as_deref() != Some(crate::play::PLAY_STORE) =>
-                {
+            // Design 113: an installed app says nothing (preinstalled, from Play or plain); an update that waits,
+            // was refused or failed keeps its line.
+            status_label: match (failed_update, update) {
+                (Some(row), _) => failed_label(row),
+                (None, Some(update)) if ours => {
                     crate::app_downloads::update_label(update, &zone, now)
                 }
                 _ => String::new(),
             },
             is_installing: false,
             // An update the phone refused (security review M10) shows like a failed install.
-            install_failed: update.is_some_and(crate::app_downloads::refused),
+            install_failed: failed_update.is_some()
+                || update.is_some_and(crate::app_downloads::refused),
             checked: allowed.contains(&app.package_name),
             tracked_app_id: tracked_match.map(|t| t.id),
             show_no_release_hint: false,
@@ -2045,33 +2091,32 @@ pub(crate) async fn app_rows(
             continue;
         }
         let has_release = t.latest_release_tag.is_some();
-        let progress = install_progress.get(&t.id).copied();
+        let progress = install_progress.get(&t.id);
         let (status_label, is_installing, install_failed) = match (progress, download_of(t.id)) {
             (_, Some(download)) if crate::app_downloads::refused(download) => (
                 crate::app_downloads::new_app_label(download, &zone, now),
                 false,
                 true,
             ),
-            (Some((_, true)), _) => (
-                crate::i18n::t(lang, "device.apps.install_failed").to_string(),
-                false,
-                true,
-            ),
-            (Some((percent, false)), _) => (
+            // A failure past the 10 minutes only while the phone reports no download of the app.
+            (Some(row), download) if row.failed && (row.fresh || download.is_none()) => {
+                (failed_label(row), false, true)
+            }
+            (Some(row), _) if !row.failed => (
                 t_params(
                     lang,
                     "device.apps.installing",
-                    &[("percent", &percent.to_string())],
+                    &[("percent", &row.percent.to_string())],
                 ),
                 true,
                 false,
             ),
-            (None, Some(download)) => (
+            (_, Some(download)) => (
                 crate::app_downloads::new_app_label(download, &zone, now),
                 false,
                 false,
             ),
-            (None, None) => (
+            (_, None) => (
                 crate::i18n::t(lang, "device.apps.not_installed").to_string(),
                 false,
                 false,

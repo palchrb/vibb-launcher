@@ -2262,16 +2262,24 @@ pub async fn install_progress(
     Extension(AuthedDevice(device)): Extension<AuthedDevice>,
     Json(report): Json<InstallProgressReport>,
 ) -> impl IntoResponse {
+    // A failure's reason (upstream review 2026-11-20): a code, never Android's text; none on progress.
+    let reason = report
+        .failed
+        .then(|| crate::install_failure::clean(report.reason.as_ref()))
+        .flatten();
     sqlx::query(
-        "INSERT INTO device_install_progress (device_id, tracked_app_id, percent, failed, updated_at) \
-         VALUES (?, ?, ?, ?, datetime('now')) \
+        "INSERT INTO device_install_progress \
+         (device_id, tracked_app_id, percent, failed, reason, updated_at) \
+         VALUES (?, ?, ?, ?, ?, datetime('now')) \
          ON CONFLICT(device_id, tracked_app_id) DO UPDATE SET \
-         percent = excluded.percent, failed = excluded.failed, updated_at = excluded.updated_at",
+         percent = excluded.percent, failed = excluded.failed, reason = excluded.reason, \
+         updated_at = excluded.updated_at",
     )
     .bind(device.id)
     .bind(report.tracked_app_id)
     .bind(report.percent)
     .bind(report.failed)
+    .bind(reason)
     .execute(&state.db)
     .await
     .ok();

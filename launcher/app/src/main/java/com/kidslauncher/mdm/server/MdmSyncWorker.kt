@@ -1072,8 +1072,9 @@ private suspend fun checkForTrackedAppUpdates(context: Context, api: MdmApi) {
         val installedFrom = update.packageName.takeIf { it.isNotBlank() }
             ?.let { installerOf(context.packageManager, it) }
         if (catalogUpdateBlockedByPlay(installedFrom)) {
+            // Not an install failure (code QA L7 of the upstream fixes): reported on every sync it
+            // kept a failed row alive for good; the parent's row reads Installed (Play's copy).
             Log.w(LOG_TAG, "Skipping ${update.name}: the installed copy comes from Play")
-            reportInstallFailure(api, update.id)
             continue
         }
         val known = state[key]
@@ -1296,7 +1297,7 @@ private suspend fun commitPendingSelfUpdateIfDue(context: Context, api: MdmApi) 
             if (installNow) InstallNow.fail(context, check.installNowAnswer)
             appId?.let {
                 notifyAppInstallResult(context, it, pending.name, success = false)
-                reportInstallFailure(api, it)
+                reportInstallFailure(api, it, InstallFailureKind.APK_REFUSED)
             }
             return
         }
@@ -1374,13 +1375,12 @@ private fun waitForWindow(context: Context, pending: PendingSelfUpdate, decision
     if (recheck != null && (installNow || SelfUpdate.screenOffForMs(context) != null)) SelfUpdate.armAlarm(context, recheck)
 }
 
-/** Best-effort visibility for the admin site - a download-level failure here doesn't mark
- * [TrackedAppUpdateState.recordFailed] (a transient network hiccup should still retry next cycle,
- * see [TrackedAppUpdateState.clearAttempt]'s own doc comment), so this alone is what lets the
- * server show "Install failed" instead of the row just quietly staying "Not installed". */
-private suspend fun reportInstallFailure(api: MdmApi, trackedAppId: Long) {
+/** Best-effort visibility for the admin site: the launcher's own pending APK refused before
+ * installing, so the server shows "Install failed" with [reason] instead of the row just quietly
+ * staying as it was. */
+private suspend fun reportInstallFailure(api: MdmApi, trackedAppId: Long, reason: String) {
     try {
-        api.reportInstallProgress(InstallProgressReport(trackedAppId, percent = 0, failed = true))
+        api.reportInstallProgress(InstallProgressReport(trackedAppId, percent = 0, failed = true, reason = reason))
     } catch (e: Exception) {
         Log.w(LOG_TAG, "Failed to report install failure", e)
     }
