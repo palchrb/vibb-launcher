@@ -8,6 +8,7 @@ mod android_lock_page;
 mod app_display;
 mod app_lock;
 mod app_logos;
+mod app_page;
 mod app_updates;
 mod attention;
 mod avatars;

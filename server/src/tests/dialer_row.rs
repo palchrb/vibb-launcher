@@ -356,9 +356,10 @@ async fn a_managed_dialer_is_never_changed() {
             ],
         )
         .await;
+    // Design 127: a name lands on the app's own page.
     assert_eq!(
         res.location(),
-        Some(format!("/devices/{id}/apps#app-{OTHER}").as_str())
+        Some(format!("/devices/{id}/apps/{OTHER}#display").as_str())
     );
     set_policy(&app, id, Some(&[]), "unmanaged").await;
     let res = app

@@ -2959,14 +2959,13 @@ struct CatalogRow {
     tile: AppTile,
 }
 
-/// Where a phone's apps are listed: Device › Apps (design 31 step 6), at the app's row
-/// (`#app-<package>`) when there is one.
+/// Where a phone's apps are listed: the app's own page on the phone (design 127 §2.1,
+/// `/devices/{id}/apps/{package}`) when there is a package, else Device › Apps (design 31 step 6).
 fn phone_apps_href(device_id: i64, package: Option<&str>, from: AppsFrom) -> String {
-    let fragment = package
-        .filter(|p| crate::app_display::valid_package_name(p))
-        .map(|package| format!("app-{package}"))
-        .unwrap_or_default();
-    crate::handlers::device_pages::apps_url(device_id, "", Some(from), &fragment)
+    match package.filter(|p| crate::app_display::valid_package_name(p)) {
+        Some(package) => format!("/devices/{device_id}/apps/{package}?from={}", from.value()),
+        None => crate::handlers::device_pages::apps_url(device_id, "", Some(from), ""),
+    }
 }
 
 /// A release tag as a version: without the row's tag prefix and a leading "v" before a digit
@@ -3901,7 +3900,6 @@ async fn render_detail_full(
         &current,
         display.as_ref(),
     );
-    form.open |= open == Some("display");
     // Design 87 §8.2: "App logo" previews as the logo most phones sent, and design 101 §7's tile on the band reads the
     // same list, once (a failed read is logged: the words, and the glyph or the letter, as on the list).
     let logos = match crate::app_logos::catalog_logos(state).await {
@@ -4080,25 +4078,26 @@ struct UpdateGroup {
 }
 
 /// A release a form on the group names, and its words.
-struct ReleaseView {
-    tag: String,
-    asset_id: i64,
-    title: String,
+pub(crate) struct ReleaseView {
+    pub(crate) tag: String,
+    pub(crate) asset_id: i64,
+    pub(crate) title: String,
 }
 
-/// The held release: its row, the version the phones keep, and the ⓘ's lists.
-struct HeldView {
-    release: ReleaseView,
-    sub: String,
-    keep: String,
-    about: String,
+/// The held release: its row, the version the phones keep, and the ⓘ's lists. Also the app's own page on a phone
+/// (design 127 §2.3).
+pub(crate) struct HeldView {
+    pub(crate) release: ReleaseView,
+    pub(crate) sub: String,
+    pub(crate) keep: String,
+    pub(crate) about: String,
     /// A line per group it newly asks for ("Contacts - new"), then the sensitive ones it had
     /// already.
-    new_lines: Vec<String>,
-    had: Option<String>,
+    pub(crate) new_lines: Vec<String>,
+    pub(crate) had: Option<String>,
     /// Every permission it declares, as named.
-    names: Vec<String>,
-    keeps: String,
+    pub(crate) names: Vec<String>,
+    pub(crate) keeps: String,
 }
 
 /// The release that waits: its row and the sub-line.
@@ -4145,6 +4144,107 @@ fn asks_row(app: &TrackedApp, lang: Lang) -> Option<AsksRow> {
     Some(AsksRow { value, names })
 }
 
+/// The held release's words (design 90 §9.1): the catalog page's `#update` group and the app's page on a phone
+/// (design 127 §2.3).
+pub(crate) fn held_view(app: &TrackedApp, held: &HeldRelease, lang: Lang) -> HeldView {
+    let prefix = app.release_tag_prefix.as_deref();
+    let served = app
+        .latest_release_tag
+        .as_deref()
+        .map(|tag| version_of(tag, prefix))
+        .unwrap_or_default();
+    let version = version_of(&held.release_tag, prefix);
+    let new = crate::catalog_holds::read_names(Some(&held.new_permissions)).unwrap_or_default();
+    let new_groups = crate::catalog_holds::groups(&new);
+    let declared = crate::catalog_holds::read_names(held.permissions.as_deref());
+    let had_groups: Vec<&str> = declared
+        .as_deref()
+        .map(crate::catalog_holds::groups)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|group| !new_groups.contains(group))
+        .collect();
+    let in_words = |groups: &[&str]| {
+        groups
+            .iter()
+            .map(|group| crate::catalog_holds::group_in(lang, group))
+            .collect::<Vec<_>>()
+    };
+    let sub = match crate::catalog_holds::Reason::from_key(&held.reason) {
+        Some(crate::catalog_holds::Reason::Unreadable) => {
+            t(lang, "apps.update.unreadable").to_string()
+        }
+        Some(crate::catalog_holds::Reason::AlwaysAsk) => t(lang, "apps.update.always").to_string(),
+        _ => t_params(
+            lang,
+            "apps.update.asks",
+            &[(
+                "groups",
+                &crate::catalog_holds::groups_sentence(lang, &new_groups),
+            )],
+        ),
+    };
+    HeldView {
+        release: ReleaseView {
+            tag: held.release_tag.clone(),
+            asset_id: held.asset_id,
+            title: t_params(lang, "apps.update.held_title", &[("version", &version)]),
+        },
+        sub,
+        keep: t_params(lang, "apps.update.keep", &[("version", &served)]),
+        about: t_params(lang, "apps.update.held_about", &[("version", &version)]),
+        new_lines: new_groups
+            .iter()
+            .map(|group| {
+                t_params(
+                    lang,
+                    "apps.update.new_group",
+                    &[("group", &crate::catalog_holds::group_title(lang, group))],
+                )
+            })
+            .collect(),
+        had: (!had_groups.is_empty()).then(|| {
+            t_params(
+                lang,
+                "apps.update.had",
+                &[("groups", &in_words(&had_groups).join(", "))],
+            )
+        }),
+        names: declared.unwrap_or_default(),
+        keeps: t_params(lang, "apps.update.keeps_until", &[("version", &served)]),
+    }
+}
+
+/// The app's held release on a phone's page (design 127 §2.3): `None` when nothing is held (or the app is gone).
+pub(crate) async fn held_for_page(
+    state: &AppState,
+    id: i64,
+    lang: Lang,
+) -> Result<Option<HeldView>, sqlx::Error> {
+    let Some(held) = held_release(state, id).await? else {
+        return Ok(None);
+    };
+    let app: Option<TrackedApp> = sqlx::query_as("SELECT * FROM tracked_apps WHERE id = ?")
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await?;
+    Ok(app.map(|app| held_view(&app, &held, lang)))
+}
+
+/// Every held release's version, by catalog app (design 127 §2.2: the list's orange "7.25.0 venter på deg").
+pub(crate) async fn held_versions(state: &AppState) -> Result<HashMap<i64, String>, sqlx::Error> {
+    let rows: Vec<(i64, String, Option<String>)> = sqlx::query_as(
+        "SELECT h.tracked_app_id, h.release_tag, t.release_tag_prefix \
+         FROM tracked_app_held_releases h JOIN tracked_apps t ON t.id = h.tracked_app_id",
+    )
+    .fetch_all(&state.db)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, tag, prefix)| (id, version_of(&tag, prefix.as_deref())))
+        .collect())
+}
+
 /// The `#update` group's content; `None` when nothing is held, waiting or declined and no answer
 /// is shown - and always for an app with no wait and no hold (ours, a manual one).
 #[allow(clippy::too_many_arguments)]
@@ -4164,70 +4264,7 @@ fn update_group(
         .as_deref()
         .map(|tag| version_of(tag, prefix))
         .unwrap_or_default();
-    let held = held.map(|held| {
-        let version = version_of(&held.release_tag, prefix);
-        let new = crate::catalog_holds::read_names(Some(&held.new_permissions)).unwrap_or_default();
-        let new_groups = crate::catalog_holds::groups(&new);
-        let declared = crate::catalog_holds::read_names(held.permissions.as_deref());
-        let had_groups: Vec<&str> = declared
-            .as_deref()
-            .map(crate::catalog_holds::groups)
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|group| !new_groups.contains(group))
-            .collect();
-        let in_words = |groups: &[&str]| {
-            groups
-                .iter()
-                .map(|group| crate::catalog_holds::group_in(lang, group))
-                .collect::<Vec<_>>()
-        };
-        let sub = match crate::catalog_holds::Reason::from_key(&held.reason) {
-            Some(crate::catalog_holds::Reason::Unreadable) => {
-                t(lang, "apps.update.unreadable").to_string()
-            }
-            Some(crate::catalog_holds::Reason::AlwaysAsk) => {
-                t(lang, "apps.update.always").to_string()
-            }
-            _ => t_params(
-                lang,
-                "apps.update.asks",
-                &[(
-                    "groups",
-                    &crate::catalog_holds::groups_sentence(lang, &new_groups),
-                )],
-            ),
-        };
-        HeldView {
-            release: ReleaseView {
-                tag: held.release_tag.clone(),
-                asset_id: held.asset_id,
-                title: t_params(lang, "apps.update.held_title", &[("version", &version)]),
-            },
-            sub,
-            keep: t_params(lang, "apps.update.keep", &[("version", &served)]),
-            about: t_params(lang, "apps.update.held_about", &[("version", &version)]),
-            new_lines: new_groups
-                .iter()
-                .map(|group| {
-                    t_params(
-                        lang,
-                        "apps.update.new_group",
-                        &[("group", &crate::catalog_holds::group_title(lang, group))],
-                    )
-                })
-                .collect(),
-            had: (!had_groups.is_empty()).then(|| {
-                t_params(
-                    lang,
-                    "apps.update.had",
-                    &[("groups", &in_words(&had_groups).join(", "))],
-                )
-            }),
-            names: declared.unwrap_or_default(),
-            keeps: t_params(lang, "apps.update.keeps_until", &[("version", &served)]),
-        }
-    });
+    let held = held.map(|held| held_view(app, held, lang));
     let waiting = match (
         &app.waiting_release_tag,
         app.waiting_release_asset_id,
@@ -4717,8 +4754,8 @@ async fn upload_no_space(state: &AppState, id: i64, lang: Lang) -> Response {
 /// `POST /apps/tracked/{id}/display` (design 14): the catalog default for how the app shows on the
 /// kid's phones (by the row's package name; a phone's own choice replaces it); it may be any of
 /// design 34's three states. `action` "reset" clears it, "save" (or none) saves, anything else is a 400. Refused input: 400, the page with the entered values, the error by the field and
-/// that field focused. Saved: back to the card, open (`?open=display#display`: it doesn't fold up
-/// under the parent, the browser pass of 2026-10-14, 6f); nudges every phone (cosmetic, cheap).
+/// `aria-invalid`. Design 127 §2.4: `icon_mode` (Logo · Automatisk · Symbol) wins over `icon`. Saved: back to Vises
+/// som (`#display`); nudges every phone (cosmetic, cheap).
 pub async fn save_display(
     State(state): State<AppState>,
     lang: Lang,
@@ -4731,16 +4768,55 @@ pub async fn save_display(
         "" | "save" => false,
         _ => return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.out_of_date"),
     };
+    // Design 127 §2.4: the segmented control's `icon_mode` wins over `icon`; Symbol without a glyph is the catalog's
+    // own glyph, else the first.
+    let fallback: Option<Option<String>> =
+        match sqlx::query_scalar("SELECT display_icon FROM tracked_apps WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await
+        {
+            Ok(icon) => icon,
+            Err(err) => return page_read_failed(id, err, lang),
+        };
+    let fallback = crate::app_display::fallback_glyph(
+        Some(&crate::app_display::DisplayValues {
+            label: None,
+            icon: fallback.flatten(),
+            color: crate::app_display::AUTO.to_string(),
+        }),
+        None,
+    );
+    let chosen = crate::app_display::icon_of_form(
+        form.get("icon_mode").map(String::as_str),
+        field("icon"),
+        &fallback,
+    )
+    .map(|(icon, colour)| {
+        let color = if colour { field("color") } else { "" };
+        (icon, color.to_string())
+    });
+    let (icon, color, refused) = match chosen {
+        Ok((icon, color)) => (icon, color, None),
+        Err(error) => (
+            field("icon").to_string(),
+            field("color").to_string(),
+            Some(error),
+        ),
+    };
     let values = if reset {
         crate::app_display::DisplayValues::empty()
     } else {
-        match crate::app_display::validate(field("label"), field("icon"), field("color")) {
+        match refused.map_or_else(
+            || crate::app_display::validate(field("label"), &icon, &color),
+            Err,
+        ) {
             Ok(values) => values,
             Err(error) => {
                 let entered = crate::app_display::Entered {
                     label: field("label").to_string(),
-                    icon: field("icon").to_string(),
-                    color: field("color").to_string(),
+                    icon,
+                    color,
                     error,
                 };
                 let mut page = render_detail_full(
@@ -4785,7 +4861,7 @@ pub async fn save_display(
             for device in devices {
                 let _ = state.command_notify.send(device);
             }
-            Redirect::to(&format!("/apps/tracked/{id}?open=display#display")).into_response()
+            Redirect::to(&format!("/apps/tracked/{id}#display")).into_response()
         }
         Err(err) => {
             tracing::error!(app_id = id, %err, "couldn't save the app's name and icon");
@@ -5449,6 +5525,12 @@ pub async fn delete_tracked_app(
 pub struct ReleaseForm {
     tag: String,
     asset_id: i64,
+    /// Design 127 §2.3: `device:<id>` - the answer goes to the app's page on that phone, not the catalog's.
+    #[serde(default)]
+    back: Option<String>,
+    /// The phone page's `?from=` (`device_pages::AppsFrom`), kept with `back`.
+    #[serde(default)]
+    from: Option<String>,
 }
 
 /// Back to the app's update group with a form's answer (`?held=<word>`, [held_flash]).
@@ -5456,9 +5538,50 @@ fn held_answer(id: i64, word: &str) -> Response {
     Redirect::to(&format!("/apps/tracked/{id}?held={word}#update")).into_response()
 }
 
+/// Approve's and Keep's answer (design 127 §2.3): with `back=device:<id>` the app's page on that phone, at its head
+/// (`/devices/{d}/apps/{package}?held=<word>&from=…#app-head`) - only when the phone exists and the catalog row's
+/// package is a valid one; anything else is [held_answer].
+async fn held_back(state: &AppState, id: i64, word: &str, form: &ReleaseForm) -> Response {
+    let device = form
+        .back
+        .as_deref()
+        .and_then(|back| back.strip_prefix("device:"))
+        .filter(|d| !d.is_empty() && d.len() <= 18 && d.bytes().all(|b| b.is_ascii_digit()))
+        .and_then(|d| d.parse::<i64>().ok());
+    let Some(device) = device else {
+        return held_answer(id, word);
+    };
+    let found: Result<Option<(i64, String)>, sqlx::Error> = sqlx::query_as(
+        "SELECT d.id, t.package_name FROM devices d, tracked_apps t WHERE d.id = ? AND t.id = ?",
+    )
+    .bind(device)
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await;
+    match found {
+        Ok(Some((device, package))) if crate::app_display::valid_package_name(&package) => {
+            let from = form
+                .from
+                .as_deref()
+                .and_then(AppsFrom::parse)
+                .map(|from| format!("&from={}", from.value()))
+                .unwrap_or_default();
+            Redirect::to(&format!(
+                "/devices/{device}/apps/{package}?held={word}{from}#app-head"
+            ))
+            .into_response()
+        }
+        Ok(_) => held_answer(id, word),
+        Err(err) => {
+            tracing::error!(app_id = id, %err, "can't read the phone a held answer returns to");
+            held_answer(id, word)
+        }
+    }
+}
+
 /// A `?held=` word's flash in the update group, and whether it is good news; `None` for anything
 /// else.
-fn held_flash(lang: Lang, word: &str) -> Option<(String, bool)> {
+pub(crate) fn held_flash(lang: Lang, word: &str) -> Option<(String, bool)> {
     let (key, ok) = match word {
         "approved" => ("apps.update.flash.approved", true),
         "declined" => ("apps.update.flash.declined", true),
@@ -5488,17 +5611,17 @@ pub async fn approve_held(
     Form(form): Form<ReleaseForm>,
 ) -> Response {
     let Some(guard) = state.app_syncs.start(id) else {
-        return held_answer(id, "busy");
+        return held_back(&state, id, "busy", &form).await;
     };
     let (app, held) = match exact_held(&state, id, &form).await {
         Ok(Some(found)) => found,
-        Ok(None) => return held_answer(id, "stale"),
+        Ok(None) => return held_back(&state, id, "stale", &form).await,
         Err(err) => return page_read_failed(id, err, lang),
     };
     // Not ahead of the served release any more (an upload meanwhile): never a step back (QA L2);
     // Keep still answers it.
     if app.latest_release_tag.is_some() && !release_ahead(&app, &held.release_tag, held.asset_id) {
-        return held_answer(id, "stale");
+        return held_back(&state, id, "stale", &form).await;
     }
     match approve(&state, &app, &held).await {
         Ok(identity) => {
@@ -5533,13 +5656,13 @@ pub async fn approve_held(
             .await;
             store_pins(&state, &app, &identity).await;
             crate::handlers::device_api::nudge_phones_with_app(&state, id).await;
-            held_answer(id, "approved")
+            held_back(&state, id, "approved", &form).await
         }
         Err(failure) => {
             tracing::warn!(app_id = id, "the held release wasn't approved: {failure}");
             drop_held(&state, id, &held).await;
             guard.finish(&Err(failure));
-            held_answer(id, "refused")
+            held_back(&state, id, "refused", &form).await
         }
     }
 }
@@ -5656,11 +5779,11 @@ pub async fn decline_held(
     Form(form): Form<ReleaseForm>,
 ) -> Response {
     let Some(guard) = state.app_syncs.start(id) else {
-        return held_answer(id, "busy");
+        return held_back(&state, id, "busy", &form).await;
     };
     let (app, held) = match exact_held(&state, id, &form).await {
         Ok(Some(found)) => found,
-        Ok(None) => return held_answer(id, "stale"),
+        Ok(None) => return held_back(&state, id, "stale", &form).await,
         Err(err) => return page_read_failed(id, err, lang),
     };
     let declined = sqlx::query(
@@ -5699,7 +5822,7 @@ pub async fn decline_held(
         )),
     )
     .await;
-    held_answer(id, "declined")
+    held_back(&state, id, "declined", &form).await
 }
 
 /// `POST /apps/tracked/{id}/declined/ask-again` (design 90 §7): forgets the declined release the
@@ -5949,7 +6072,7 @@ mod tests {
         );
         assert_eq!(
             phone_apps_href(5, Some("io.element.android.x"), AppsFrom::App(9)),
-            "/devices/5/apps?from=app:9#app-io.element.android.x"
+            "/devices/5/apps/io.element.android.x?from=app:9"
         );
         assert_eq!(
             phone_apps_href(5, Some("not a package\"><b>"), AppsFrom::App(9)),
@@ -8285,6 +8408,8 @@ mod tests {
         let exact = ReleaseForm {
             tag: "v1.0.57".to_string(),
             asset_id: 57,
+            back: None,
+            from: None,
         };
         assert_eq!(
             update_now_sync(&app.state, id, &exact).await.unwrap(),
@@ -8299,12 +8424,16 @@ mod tests {
         let gone = ReleaseForm {
             tag: "v1.0.99".to_string(),
             asset_id: 99,
+            back: None,
+            from: None,
         };
         assert_eq!(update_now_sync(&app.state, id, &gone).await.unwrap(), None);
         // QA L3: a listed release behind the served one isn't sent.
         let back = ReleaseForm {
             tag: "v1.0.56".to_string(),
             asset_id: 56,
+            back: None,
+            from: None,
         };
         assert_eq!(
             update_now_sync(&app.state, id, &back).await.unwrap(),

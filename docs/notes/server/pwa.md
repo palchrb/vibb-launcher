@@ -370,6 +370,9 @@ family's one backup row (`backups::backup_state`, `#backup-warning`, to `/backup
 
 ## Device › Apps (design 31 step 6, `docs/design/31-pwa-redesign.md` §3.2, §8)
 
+Since design 127 step 1 (below, "An app's own page") an allowed app's Name and icon and Permissions are on its own
+page, not under its row; what this section says of them is history.
+
 - **The page** (`GET /devices/{id}/apps`, `device_pages::view_apps`/`render_apps`, `device_apps.html` with
   `partials/device_app_row.html`; the device page's row "Apps · 14 allowed", the count the Apps tab shows, "List
   unreadable" for a corrupt allowlist): **Allowed** (Vibb first, "Always on", no switch; then every app switched on)
@@ -445,6 +448,10 @@ family's one backup row (`backups::backup_state`, `#backup-warning`, to `/backup
 
 ## Device › Apps: Permissions (design 68, `docs/design/68-app-permissions.md` §4.1, migration `0102_app_permissions.sql`)
 
+Since design 127 step 1 the camera switch, the special accesses and the media player are the app's own page's Tilgang
+and Låseskjerm (below); the rules here (the route, the cap, the pruning, the policy) stand, the details and
+`?perms=` do not.
+
 - **What the parent sees**: an allowed app the phone reports something about (`installed_apps[].access`; third-party apps
   only, the phone reports none for a system app) gets a second sub-line under
   its row with only what needs a look - "Camera off" (a stored row and the report reads `admin_denied`; "Camera off ·
@@ -500,6 +507,60 @@ family's one backup row (`backups::backup_state`, `#backup-warning`, to `/backup
 - Tests: `device_pages::the_permissions_form_returns_to_its_open_details` (with the nudge and a signed-out POST),
   `device_pages::the_permissions_cap_refuses_the_201st_app`, `app_permissions::tests`,
   `device_api::policy_json_keys_snapshot`, `app_updates::the_installed_apps_contract_raises_app_updated`.
+
+## An app's own page (design 127 step 1, 2026-11-22, branch `app-page`, `docs/design/127-app-page.md` §2)
+
+- **The page**: `GET /devices/{id}/apps/{package}` (`handlers::app_page`, `device_app.html`). Every row of the phone's
+  list that is allowed, not Vibb One, not the managed dialer, with a valid package, and Meldinger while its row is
+  listed. Anything else (not allowed, unknown, Vibb One, Kalender) is a `303` to the list, at the row when there is one
+  (a refusal's `?notice=` goes along, `&app=<row>`), never a 404. The reads are Device › Apps' own
+  (`device_pages::AppsData::load`, shared with `render_apps`), so both say the same.
+- **The list's split row** (`partials/device_app_row.html`): an allowed app with a page is `.row-split` - an
+  `<a class="row">` (tile, name, sub-line, chevron) to the page with `from` kept, and the switch's own auto-saving
+  form `.split-sw` behind a 1 px hairline, the whole cell right of it the hit area (`.split-hit`, at least 44 px), a
+  visually hidden "{app} tillatt". Meldinger's row is a link to its page. The sub-line loses the Permissions line and
+  gains one orange part, an update held for the parent ("7.25.0 venter på deg", `tracked_apps::held_versions`,
+  `data-update-held`); a failed install is orange too (`tone-orange`, was red; Words in the UI). Nothing else on the
+  list is orange: a special access not approved, a refused switch and the parent's own choices show only on the page.
+  The old `?perms=<package>` redirects to the page (`#access`).
+- **The head** (`#app-head`): the tile (logo over letter, else the glyph, else the letter; also the band's picture,
+  `band::app` with `app_page::PageTile`), the app's own name, "Versjon {version_name}" from the last report, the
+  install state while there is one (orange when it failed; the page refreshes itself while installing,
+  `data-waits`), the dialer note and Chrome's login line. **Tillatt** posts `/apps/toggle` with `back=app`: on lands
+  on `#app-head`, off on the list at the row (the app is uninstalled or hidden, so its page is gone); a refusal's
+  reason shows at the head (`?notice=`). Its ⓘ (`device.apps.footer`) only for an app that isn't preinstalled.
+  **An update held for the parent** (`tracked_apps::held_for_page`, `held_view` shared with the catalog page): the
+  orange row with "Ber om tilgang til …", the ⓘ (the new groups, "Telefonene beholder …", "Gjelder appen på alle
+  telefonene." and a link to the catalog page's `#update`), and Godkjenn / Behold posting the catalog's
+  `/held/approve|decline` with `back=device:<id>` and `from`: `tracked_apps::held_back` lands on
+  `/devices/{d}/apps/{package}?held=<word>&from=…#app-head` (the page shows `held_flash`) when the phone exists and
+  the catalog row's package is valid, else the catalog's own answer.
+- **Vises som** (`#display`, `partials/app_display_group.html`, also the catalog app's page): one form, every control
+  saves on change (`data-autosave`; the name on change - blur or Enter -, `maxlength="20"` as the design says, the
+  server still counts characters), a `<noscript>` Save. The Home tile (`.home-peek`: a night tile with its label)
+  beside the name; Logo · Automatisk · Symbol are three radios (`icon_mode`) before the rows, so CSS marks the
+  segment and shows the 16 symbols and the seven swatches (44 px hit areas, names visually hidden and in `title`)
+  under Symbol only - with or without JS, no `:has()`. One glyph is always checked (`AppDisplayForm::picked_glyph`:
+  the chosen one, else `fallback_glyph` - the stored, else the catalog's, else `chat`). The server: `icon_mode` wins
+  over `icon` (`app_display::icon_of_form`: `logo` → `own`, `auto` → none, `symbol` → the posted glyph or the
+  fallback; Logo and Automatisk save the colour `auto`); a form without it reads `icon` as before. A refusal renders
+  the page as a 400 with the error under the field and `aria-invalid` (`#display-error`). Saved: back to `#display`
+  (Meldinger's last reason gone: the list's `#allowed`). "På Hjem" is a plain row; "Tilbakestill" a row button with
+  the catalog's default under it; the ⓘ holds On Home's sentence. `static/app-display.js` (`?v=8`,
+  `jstest/app-display.test.js`) only redraws the preview: the letter on slate for Automatisk (a built-in's own
+  look), the glyph on the colour for Symbol (and the symbols' `--pick`), the logo or "Logo" for Logo.
+- **Tilgang** (`#access`, `partials/app_access_group.html`, `app_permissions::AccessGroup`): only when the last report
+  has the app's `access` (third-party apps; never Vibb music): the camera switch (today's `camera=default` form, back to
+  `#access`), its sub-line only while the state isn't as set ("Venter på telefonen", "På i pausen"), then each special
+  access as a quiet value ("Godkjent", "Ikke godkjent", "Ukjent") on an indigo tile; one ⓘ with the camera's line and
+  the way to approve each access that isn't. **Låseskjerm** (`#lock-screen`): "Mediespiller", back to `#lock-screen`.
+  A refusal lands on the page at its group (`?notice=perms|perms_full`, `lock_media|lock_media_full`), at the head
+  when that group isn't shown; the managed dialer's at its list row as before.
+- **The tab and Back**: the list's `?from=` through `AppsFrom::parse`, kept by every form; Back to the list at the
+  row (`#app-<package>`), or with `from=app:<this app's catalog id>` straight to `/apps/tracked/{id}#phone-<device>`.
+  The catalog page's phone rows open this page (`tracked_apps::phone_apps_href`).
+- Tests: `tests::app_page` (who gets a page and its groups, the saves' landings, Back per `from`, the held update),
+  `device_pages::apps_*`, `app_display`, `app_permissions::tests`, `jstest/app-display.test.js`.
 
 ## Device › Music (design 31 step 7, `docs/design/31-pwa-redesign.md` §3.2, §8)
 

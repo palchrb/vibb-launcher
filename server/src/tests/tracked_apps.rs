@@ -1713,7 +1713,7 @@ async fn the_app_page_shows_its_phones_and_keeps_every_control() {
     let phone = row_of(&html, &format!(r#"data-phone="{anna}""#));
     assert!(
         phone.contains(&format!(
-            r#"href="/devices/{anna}/apps?from=app:{element}#app-io.element.android.x""#
+            r#"href="/devices/{anna}/apps/io.element.android.x?from=app:{element}""#
         )),
         "{phone}"
     );
@@ -1948,7 +1948,8 @@ async fn every_form_on_the_app_pages_returns_to_its_page() {
             // (the action's fragment = the group, the `?open=` the page comes back with)
             let (group, open) = match route {
                 "" => (Some("details"), Some("source")),
-                "/display" => (Some("display"), Some("display")),
+                // Design 127: Vises som is a section, no <details> to open.
+                "/display" => (Some("display"), None),
                 "/enabled"
                 | "/include-prereleases"
                 | "/is-launcher"

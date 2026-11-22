@@ -1181,6 +1181,12 @@ pub fn build_admin_router(
         // Step 6: Device › Apps (its forms: `/apps/toggle`, `/app-updates`, `/apps/display`,
         // `/apps/permissions`).
         .route("/devices/{id}/apps", get(handlers::device_pages::view_apps))
+        // Design 127: an app's own page. axum's router ranks the static POST routes (`/apps/toggle`, `/apps/display`,
+        // `/apps/permissions`, `/apps/lock-media`) above the capture, and a package always has a dot.
+        .route(
+            "/devices/{id}/apps/{package}",
+            get(handlers::app_page::view_app),
+        )
         // Step 5: Home Screen and Web Filter.
         .route("/devices/{id}/home", get(handlers::device_pages::view_home))
         // Design 75 §6: the weather's two rows are on Lock Screen & PINs.

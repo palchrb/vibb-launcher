@@ -61,6 +61,21 @@ async fn save(app: &TestApp, cookie: &str, device: i64, fields: &[(&str, &str)])
 
 const ELEMENT: &str = "io.element.android.x";
 
+/// An app's own page on a phone (design 127), where its Vises som is.
+async fn app_page(app: &TestApp, cookie: &str, device: i64, package: &str) -> String {
+    app.get_page(&format!("/devices/{device}/apps/{package}"), cookie)
+        .await
+        .text()
+}
+
+/// The page's Vises som form, up to its end.
+fn display_form(page: &str) -> &str {
+    let form = &page[page
+        .find(r#"class="group app-display-form""#)
+        .expect("Vises som")..];
+    &form[..form.find("</form>").unwrap()]
+}
+
 #[tokio::test]
 async fn a_catalog_default_reaches_every_phone_and_a_phones_choice_replaces_it() {
     let app = TestApp::new().await;
@@ -86,7 +101,7 @@ async fn a_catalog_default_reaches_every_phone_and_a_phones_choice_replaces_it()
         .await;
     assert_eq!(
         saved.location(),
-        Some(format!("/apps/tracked/{element}?open=display#display").as_str())
+        Some(format!("/apps/tracked/{element}#display").as_str())
     );
     assert!(nudges.try_recv().is_ok());
     let chat = serde_json::json!([
@@ -111,7 +126,7 @@ async fn a_catalog_default_reaches_every_phone_and_a_phones_choice_replaces_it()
     .await;
     assert_eq!(
         res.location(),
-        Some(format!("/devices/{a}/apps#app-{ELEMENT}").as_str())
+        Some(format!("/devices/{a}/apps/{ELEMENT}#display").as_str())
     );
     assert_eq!(
         app_display(&app, &token_a).await,
@@ -147,7 +162,7 @@ async fn a_catalog_default_reaches_every_phone_and_a_phones_choice_replaces_it()
     .await;
     assert_eq!(
         res.location(),
-        Some(format!("/devices/{a}/apps#app-{ELEMENT}").as_str())
+        Some(format!("/devices/{a}/apps/{ELEMENT}#display").as_str())
     );
     assert_eq!(app_display(&app, &token_a).await, chat);
     // Another action (an older page's "own" or "catalog") is refused and writes nothing.
@@ -201,8 +216,13 @@ async fn a_catalog_default_reaches_every_phone_and_a_phones_choice_replaces_it()
         .get_page(&format!("/apps/tracked/{element}"), &cookie)
         .await
         .text();
-    assert!(page.contains("Chat, with the chat icon on rose"), "{page}");
+    assert!(
+        page.contains(r#"name="label" maxlength="20" value="Chat""#),
+        "{page}"
+    );
+    assert!(page.contains(r#"value="symbol" checked"#));
     assert!(page.contains(r#"value="chat" checked"#));
+    assert_eq!(input_checked(&page, "color", "peach"), Some(true));
     assert!(page.contains(r#"<button type="submit" name="action" value="reset""#));
     assert!(!page.contains("Use the app's own") && !page.contains("Follow the catalog"));
     app.request_form(
@@ -266,24 +286,16 @@ async fn the_apps_own_logo_is_stored_sent_and_shown() {
     .unwrap();
     assert_eq!(stored, "auto");
 
-    // The phone's Apps page: the summary, the radio checked, the preview's words, Reset.
-    let page = app
-        .get_page(&device_page(a, Section::Apps), &cookie)
-        .await
-        .text();
-    let form = &page[page.find(r#"id="display-com.spotify.music""#).unwrap()..];
-    let form = &form[..form.find("</form>").unwrap()];
-    assert!(
-        form.contains("its own name, with the app&#39;s logo"),
-        "{form}"
-    );
-    assert!(form.contains(r#"value="own" checked"#), "{form}");
+    // The app's page: Logo checked, the preview's word, Reset; the colours are there for Symbol.
+    let page = app_page(&app, &cookie, a, "com.spotify.music").await;
+    let form = display_form(&page);
+    assert!(form.contains(r#"value="logo" checked"#), "{form}");
     assert!(form.contains("Logo"));
     assert!(form.contains(r#"<button type="submit" name="action" value="reset""#));
-    assert!(form.contains("data-colors"));
+    assert!(form.contains("data-colours"));
     // Element ("Chat") has the logo too.
-    let element = &page[page.find(&format!(r#"id="display-{ELEMENT}""#)).unwrap()..];
-    assert!(element[..element.find("</details>").unwrap()].contains(r#"value="own" checked"#));
+    let element = app_page(&app, &cookie, a, ELEMENT).await;
+    assert!(display_form(&element).contains(r#"value="logo" checked"#));
 
     // A catalog default may be the logo: every phone with the app gets it.
     let row = catalog_app(&app, "Element X", ELEMENT).await;
@@ -304,7 +316,7 @@ async fn the_apps_own_logo_is_stored_sent_and_shown() {
         .get_page(&format!("/apps/tracked/{row}"), &cookie)
         .await
         .text();
-    assert!(page.contains(r#"value="own" checked"#), "{page}");
+    assert!(page.contains(r#"value="logo" checked"#), "{page}");
 }
 
 /// Play apps and preinstalled apps the catalog doesn't know can be named per phone; Play core
@@ -320,19 +332,21 @@ async fn any_allowed_app_can_be_named_on_its_phone() {
         .get_page(&device_page(id, Section::Apps), &cookie)
         .await
         .text();
-    // Both allowed: both get a form, under their row, posting to the row.
+    // Both allowed: both rows open the app's page, whose Vises som posts back to it.
     for package in ["com.spotify.music", "org.example.clock"] {
         let row = &page[page.find(&format!(r#"id="app-{package}""#)).expect(package)..];
-        let row = &row[..row.find("</details>").unwrap()];
-        assert!(row.contains(&format!(r#"id="display-{package}""#)), "{row}");
+        let row = &row[..row.find("</a>").unwrap()];
         assert!(
-            row.contains(&format!(
-                r#"action="/devices/{id}/apps/display#app-{package}""#
-            )),
+            row.contains(&format!(r#"href="/devices/{id}/apps/{package}""#)),
             "{row}"
         );
+        let own = app_page(&app, &cookie, id, package).await;
+        assert!(
+            own.contains(&format!(r#"action="/devices/{id}/apps/display#display""#)),
+            "{own}"
+        );
+        assert!(own.contains("/static/app-display.js"));
     }
-    assert!(page.contains("/static/app-display.js"));
 
     save(
         &app,
@@ -352,19 +366,17 @@ async fn any_allowed_app_can_be_named_on_its_phone() {
             {"package_name": "com.spotify.music", "label": "Musikk", "icon": "music_note", "color": "sky"}
         ])
     );
+    let own = app_page(&app, &cookie, id, "com.spotify.music").await;
+    assert_eq!(input_checked(&own, "icon_mode", "symbol"), Some(true));
+    assert_eq!(input_checked(&own, "icon", "music_note"), Some(true));
+    assert_eq!(input_checked(&own, "color", "sky"), Some(true));
     let page = app
         .get_page(&device_page(id, Section::Apps), &cookie)
         .await
         .text();
-    assert!(
-        page.contains("Musikk, with the music note icon on blue"),
-        "{page}"
-    );
     // The row's tile shows the icon the phone shows.
     let row = &page[page.find(r#"id="app-com.spotify.music""#).unwrap()..];
-    assert!(
-        row[..row.find("</label>").unwrap()].contains(r#"src="/static/app-icons/music_note.svg""#)
-    );
+    assert!(row[..row.find("</a>").unwrap()].contains(r#"src="/static/app-icons/music_note.svg""#));
 
     for bad in ["com.android.vending", "chat", "a..b", ""] {
         let res = save(&app, &cookie, id, &[("package_name", bad), ("label", "X")]).await;
@@ -413,7 +425,7 @@ async fn an_apps_row_shows_the_name_the_kid_sees() {
         .text();
     let row = |package: &str| {
         let row = &page[page.find(&format!(r#"id="app-{package}""#)).expect(package)..];
-        row[..row.find("</label>").unwrap()].to_string()
+        row[..row.find("</a>").unwrap()].to_string()
     };
     assert!(
         row("com.spotify.music").contains(
@@ -439,21 +451,15 @@ async fn an_apps_row_shows_the_name_the_kid_sees() {
     assert!(
         at(ELEMENT) < at("org.example.clock") && at("org.example.clock") < at("com.spotify.music")
     );
-    assert!(page.contains(r#"placeholder="Label of com.spotify.music""#));
-    let on_home = &page[page.find(r#"class="on-home""#).unwrap()..];
-    let on_home = &on_home[..on_home.find("</details>").unwrap()];
+    // The app's page: the field's placeholder is the app's own name; On Home is a plain row, what Off means
+    // behind Vises som's ⓘ.
+    let own = app_page(&app, &cookie, id, "com.spotify.music").await;
+    assert!(own.contains(r#"placeholder="Label of com.spotify.music""#));
     assert!(
-        on_home.contains(r#"row-label">On Home</span>"#),
-        "{on_home}"
+        display_form(&own).contains(r#"row-label">On Home</span>"#),
+        "{own}"
     );
-    assert!(
-        on_home.contains(r#"aria-label="About On Home""#),
-        "{on_home}"
-    );
-    assert!(
-        on_home.contains("<p>Off: the app stays allowed"),
-        "{on_home}"
-    );
+    assert!(own.contains("<p>Off: the app stays allowed"), "{own}");
 }
 
 /// Design 69 §4.4: "On Home" off sends `on_home: false` (a sync app stays allowed but off Home); on again, or Reset,
@@ -464,10 +470,7 @@ async fn on_home_off_keeps_an_app_off_home() {
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
     report_installed(&app, &token, &["at.bitfire.icsdroid"]).await;
-    let page = app
-        .get_page(&device_page(id, Section::Apps), &cookie)
-        .await
-        .text();
+    let page = app_page(&app, &cookie, id, "at.bitfire.icsdroid").await;
     assert!(page.contains(r#"name="on_home_shown""#), "{page}");
     let off = save(
         &app,
@@ -481,19 +484,16 @@ async fn on_home_off_keeps_an_app_off_home() {
     .await;
     assert_redirect(
         &off,
-        &device_page(id, Section::Apps),
-        Some("app-at.bitfire.icsdroid"),
+        &format!("/devices/{id}/apps/at.bitfire.icsdroid"),
+        Some("display"),
     );
     assert_eq!(
         app_display(&app, &token).await,
         serde_json::json!([{"package_name": "at.bitfire.icsdroid", "label": null, "icon": null, "color": "auto",
                             "on_home": false}])
     );
-    let page = app
-        .get_page(&device_page(id, Section::Apps), &cookie)
-        .await
-        .text();
-    assert!(page.contains("· not on Home"), "{page}");
+    let page = app_page(&app, &cookie, id, "at.bitfire.icsdroid").await;
+    assert_eq!(input_checked(&page, "on_home", "on"), Some(false), "{page}");
     // An older page (no switch) keeps the app's state as on: the row goes.
     save(
         &app,
@@ -535,6 +535,7 @@ async fn meldinger_has_a_row_and_a_name_and_icon_of_its_own() {
     let (id, token) = app.enrolled_device("phone").await;
     let contract: serde_json::Value =
         serde_json::from_str(include_str!("../../testdata/sms_contract.json")).unwrap();
+    // Its row on the list (a link to its page, design 127), and its page.
     let cell = || async {
         let page = app
             .get_page(&device_page(id, Section::Apps), &cookie)
@@ -542,8 +543,9 @@ async fn meldinger_has_a_row_and_a_name_and_icon_of_its_own() {
             .text();
         let at = page.find(&format!(r#"id="app-{MESSAGES}""#))?;
         let cell = &page[at..];
-        Some(cell[..cell.find("</form>").expect("the form's end")].to_string())
+        Some(cell[..cell.find("</a>").expect("the row's end")].to_string())
     };
+    let own = || app_page(&app, &cookie, id, MESSAGES);
     // SMS not managed, nothing chosen, nothing reported: no row.
     assert_eq!(cell().await, None);
 
@@ -566,17 +568,23 @@ async fn meldinger_has_a_row_and_a_name_and_icon_of_its_own() {
     );
     assert!(!html.contains("data-display-note"), "{html}");
     assert!(
-        html.contains(r##"data-auto-glyph="sms" data-auto-tile="#347470""##),
+        html.contains(&format!(r#"href="/devices/{id}/apps/{MESSAGES}""#)),
         "{html}"
     );
     assert!(
         html.contains(r##"style="background: #347470" aria-hidden="true"><img src="/static/app-icons/sms.svg""##),
         "{html}"
     );
-    // No switch, no "App logo", no permissions; its own words for "On Home".
+    assert!(!html.contains("apps/toggle"), "no switch: {html}");
+    let html = own().await;
+    assert!(
+        html.contains(r##"data-auto-glyph="sms" data-auto-tile="#347470""##),
+        "{html}"
+    );
+    // No switch, no Logo, no permissions; its own words for "On Home".
     for absent in [
         "apps/toggle",
-        r#"value="own""#,
+        r#"value="logo""#,
         "apps/permissions",
         "the app stays allowed",
     ] {
@@ -625,8 +633,8 @@ async fn meldinger_has_a_row_and_a_name_and_icon_of_its_own() {
     .await;
     assert_redirect(
         &saved,
-        &device_page(id, Section::Apps),
-        Some(&format!("app-{MESSAGES}")),
+        &format!("/devices/{id}/apps/{MESSAGES}"),
+        Some("display"),
     );
     assert_eq!(
         app_display(&app, &token).await,
@@ -637,7 +645,7 @@ async fn meldinger_has_a_row_and_a_name_and_icon_of_its_own() {
         html.contains(r#"row-label">Tekst<span class="row-sub">Messages<"#),
         "{html}"
     );
-    assert!(html.contains("· not on Home"), "{html}");
+    assert_eq!(input_checked(&own().await, "on_home", "on"), Some(false));
     // W1: the lock screen's row has the name too.
     let lock = app
         .get_page(&device_page(id, Section::Lock), &cookie)
@@ -687,16 +695,8 @@ async fn meldinger_has_a_row_and_a_name_and_icon_of_its_own() {
     .await;
     assert_eq!(own.status, StatusCode::BAD_REQUEST);
     let page = own.text();
-    assert!(
-        page.contains(&format!(
-            r#"<details class="app-display" id="display-{MESSAGES}" open>"#
-        )),
-        "{page}"
-    );
-    assert!(
-        page.contains("Pick one of the icons or Automatic."),
-        "{page}"
-    );
+    assert!(page.contains(r#"aria-invalid="true""#), "{page}");
+    assert!(page.contains("Pick Automatic or a symbol."), "{page}");
     assert_eq!(app_display(&app, &token).await[0]["icon"], "mail");
     // Reset: back to its own look; the row stays while SMS is managed.
     save(
@@ -774,7 +774,7 @@ async fn refused_input_keeps_the_values_by_the_field() {
         (&[("label", "Ch\u{7}at")], "control characters"),
         (
             &[("label", "Chat"), ("icon", "rocket")],
-            "Pick one of the icons",
+            "Pick Logo, Automatic or a symbol",
         ),
         (
             &[("label", "Chat"), ("color", "green")],
@@ -788,16 +788,15 @@ async fn refused_input_keeps_the_values_by_the_field() {
         assert_eq!(res.status, StatusCode::BAD_REQUEST, "{message}");
         let html = res.text();
         assert!(html.contains(message), "{message}: {html}");
-        // Device › Apps, the app's form open under its row.
+        // The app's own page (design 127), the error at the field.
         assert!(
-            html.contains(r#"<h1 class="page-title">Apps</h1>"#),
+            html.contains(&format!(
+                r#"<h1 class="page-title">Label of {ELEMENT}</h1>"#
+            )),
             "{message}"
         );
-        assert!(
-            html.contains(&format!(r#"id="display-{ELEMENT}" open"#)),
-            "{message}"
-        );
-        assert!(html.contains("autofocus"), "{message}");
+        assert!(html.contains(r#"aria-invalid="true""#), "{message}");
+        assert!(html.contains(r#"id="display-error""#), "{message}");
         assert!(html.contains("/static/scroll-restore.js"));
     }
     let html = save(
@@ -813,14 +812,9 @@ async fn refused_input_keeps_the_values_by_the_field() {
     .await
     .text();
     assert!(html.contains(r#"value="Chat""#), "the entered name is kept");
-    // The browser doesn't cut the name (it would count UTF-16 units; we count characters, and a
-    // refused save keeps the value - qa-14-code #4).
-    assert!(html.contains(&format!(r#"id="display-{ELEMENT}-label" name="label""#)));
-    assert!(!html.contains(&format!(
-        r#"id="display-{ELEMENT}-label" name="label" value="Chat" maxlength"#
-    )));
-    let partial = std::fs::read_to_string("templates/partials/app_display_form.html").unwrap();
-    assert!(!partial.contains("maxlength"));
+    // Design 127 §2.4: the field has `maxlength="20"`; a refused save still shows the whole entered value (the
+    // attribute only stops typing).
+    assert!(html.contains(r#"id="display-label" name="label" maxlength="20" value="Chat""#));
     let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_app_display")
         .fetch_one(&app.db)
         .await
@@ -839,7 +833,7 @@ async fn refused_input_keeps_the_values_by_the_field() {
         .await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
     let html = res.text();
-    assert!(html.contains("At most 20 characters") && html.contains(r#"id="display" open"#));
+    assert!(html.contains("At most 20 characters") && html.contains(r#"aria-invalid="true""#));
     assert!(html.contains(&format!(r#"value="{}""#, "x".repeat(21))));
     let missing = app
         .request_form(

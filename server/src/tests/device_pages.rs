@@ -1981,15 +1981,22 @@ async fn apps_holds_the_moved_forms() {
         [true, true, false, false],
         "on in Allowed, off below"
     );
-    // Name and icon under each allowed app with a package, never for Vibb or one not allowed.
+    // Design 127: each allowed app with a package opens its own page, never Vibb or one not allowed.
     for package in ["com.android.deskclock", "io.element.android.x"] {
         assert!(
-            allowed.contains(&format!("id=\"display-{package}\"")),
+            allowed.contains(&format!(
+                "href=\"/devices/{id}/apps/{package}\" data-app-page"
+            )),
             "{package}"
         );
     }
-    assert!(!html.contains("id=\"display-org.example.game\""));
-    assert!(!html.contains("id=\"display-me.vibb.launcher\""));
+    for package in ["org.example.game", "me.vibb.launcher"] {
+        assert!(!html.contains(&format!("href=\"/devices/{id}/apps/{package}\"")));
+    }
+    assert!(
+        !html.contains("/apps/display"),
+        "Vises som is on the app's page"
+    );
     // Every row's id once; no search field (§6.0); the keyboard note behind the ⓘ.
     let mut ids: Vec<&str> = tags(&html, "div")
         .into_iter()
@@ -2037,11 +2044,50 @@ async fn apps_forms_return_to_their_rows() {
     let (emil, _) = app.enrolled_device("Emil").await;
     let page = device_page(id, Section::Apps);
     let html = app.get_page(&page, &cookie).await.text();
-    let (mut toggles, mut names, mut updates, mut lock_media) = (0, 0, 0, 0);
-    // The lock media switches first: a switch below turns its app off, and the Permissions with it.
-    let mut all = forms(&html);
-    all.sort_by_key(|(action, _)| !action.contains("/apps/lock-media"));
-    for (action, hidden) in all {
+    // Vises som, Tilgang and Låseskjerm are on each app's own page (design 127; `tests::app_page`).
+    let (mut names, mut lock_media) = (0, 0);
+    for package in ["com.android.deskclock", "io.element.android.x"] {
+        let own = app
+            .get_page(&format!("/devices/{id}/apps/{package}"), &cookie)
+            .await
+            .text();
+        for (action, hidden) in forms(&own) {
+            if action == format!("/devices/{id}/apps/display#display") {
+                names += 1;
+                let mut sent: Vec<(&str, &str)> = hidden
+                    .iter()
+                    .map(|(k, v)| (k.as_str(), v.as_str()))
+                    .collect();
+                sent.extend([
+                    ("label", "Mine"),
+                    ("icon_mode", "symbol"),
+                    ("icon", "chat"),
+                    ("color", "auto"),
+                    ("on_home", "on"),
+                ]);
+                let res = app
+                    .request_form(
+                        Method::POST,
+                        &format!("/devices/{id}/apps/display"),
+                        Some(&cookie),
+                        &sent,
+                    )
+                    .await;
+                assert_redirect(
+                    &res,
+                    &format!("/devices/{id}/apps/{package}"),
+                    Some("display"),
+                );
+                app.assert_lands(&res, &cookie).await;
+            }
+            lock_media += usize::from(action.contains("/apps/lock-media"));
+        }
+    }
+    assert_eq!(names, 2);
+    // No app here is allowed and installed third-party, so none has the lock media switch (its own test has one).
+    assert_eq!(lock_media, 0);
+    let (mut toggles, mut updates) = (0, 0);
+    for (action, hidden) in forms(&html) {
         let field = |name: &str| {
             hidden
                 .iter()
@@ -2075,25 +2121,6 @@ async fn apps_forms_return_to_their_rows() {
                 sent.push(("selected", "on"));
             }
             row
-        } else if target == format!("/devices/{id}/apps/display") {
-            names += 1;
-            sent.extend([("label", "Mine"), ("icon", "chat"), ("color", "auto")]);
-            let row = format!("app-{}", field("package_name").unwrap());
-            assert_eq!(action_fragment.as_deref(), Some(row.as_str()));
-            row
-        } else if target == format!("/devices/{id}/apps/lock-media") {
-            // 2026-11-04: the lock screen's media switch, back to its open Permissions.
-            lock_media += 1;
-            let package = field("package_name").unwrap();
-            let anchor = format!("perms-{package}");
-            assert_eq!(action_fragment.as_deref(), Some(anchor.as_str()));
-            assert!(html.contains(&format!("id=\"{anchor}\"")));
-            let res = app
-                .request_form(Method::POST, &target, Some(&cookie), &sent)
-                .await;
-            assert_redirect(&res, &format!("{page}?perms={package}"), Some(&anchor));
-            app.assert_lands(&res, &cookie).await;
-            continue;
         } else if target == format!("/devices/{id}/app-updates") {
             updates += 1;
             assert_eq!(action_fragment.as_deref(), Some("downloads"));
@@ -2115,9 +2142,7 @@ async fn apps_forms_return_to_their_rows() {
         assert_redirect(&res, &page, Some(&expected));
         app.assert_lands(&res, &cookie).await;
     }
-    assert_eq!((toggles, names, updates), (4, 2, 1));
-    // No app here is allowed and installed third-party, so none has the lock media switch (its own test has one).
-    assert_eq!(lock_media, 0);
+    assert_eq!((toggles, updates), (4, 1));
 
     // Each did what it says: the clock and Element X off, the game and Notes on; two names; the
     // Wi-Fi switch off. All on Anna.
@@ -2207,27 +2232,22 @@ async fn the_permissions_form_returns_to_its_open_details() {
         .execute(&app.db)
         .await
         .unwrap();
-    let page = device_page(id, Section::Apps);
+    // Design 127: Tilgang is on the app's own page.
+    let page = format!("/devices/{id}/apps/{element}");
     let html = app.get_page(&page, &cookie).await.text();
     assert!(!html.contains("data-row=\"update-note\""));
-    let anchor = format!("perms-{element}");
-    assert!(
-        html.contains(&format!(
-            "<details class=\"app-display app-perms\" id=\"{anchor}\">"
-        )),
-        "closed at first"
-    );
-    // Nothing reported: only the lock screen's media switch (2026-11-04), no camera.
-    let plain = html
-        .split("id=\"perms-org.example.plain\"")
-        .nth(1)
-        .and_then(|rest| rest.split("</details>").next())
-        .expect("the plain app's details");
+    let anchor = "access";
+    // Nothing reported: only the lock screen's media switch (2026-11-04), no camera, no Tilgang.
+    let plain = app
+        .get_page(&format!("/devices/{id}/apps/org.example.plain"), &cookie)
+        .await
+        .text();
     assert!(plain.contains("name=\"lock_media\"") && !plain.contains("name=\"camera\""));
-    // Design 113: an access not approved is an orange row, the way to approve it behind its ⓘ.
+    assert!(!plain.contains("id=\"access\""));
+    // Design 127 §2.5: an access not approved is a quiet value, the way to approve it behind the group's ⓘ.
     assert!(html.contains(
-        "<summary class=\"row\"><span class=\"row-label tone-orange\">Media management: not approved</span>"
-    ));
+        "<span class=\"row-label\">Media management</span>\n            <span class=\"row-value\">Not approved</span>"
+    ), "{html}");
     assert!(html.contains("App access › Element X: Media management"));
     let action = format!("/devices/{id}/apps/permissions#{anchor}");
     assert!(html.contains(&format!("action=\"{action}\"")));
@@ -2259,16 +2279,18 @@ async fn the_permissions_form_returns_to_its_open_details() {
             &[("package_name", element)],
         )
         .await;
-    let back = format!("{page}?perms={element}");
-    assert_redirect(&res, &back, Some(&anchor));
+    let back = page.clone();
+    assert_redirect(&res, &back, Some(anchor));
     assert_eq!(nudges.try_recv().ok(), Some(id));
     app.assert_lands(&res, &cookie).await;
     let html = app.get_page(&back, &cookie).await.text();
-    assert!(
-        html.contains(&format!("id=\"{anchor}\" open")),
-        "the details stay open"
-    );
-    assert!(html.contains("Camera off · waiting for the phone · Media management: not approved"));
+    assert!(html.contains("Waiting for the phone"), "{html}");
+    // The list says nothing of it: the parent's own choice (design 127 §2.2).
+    let list = app
+        .get_page(&device_page(id, Section::Apps), &cookie)
+        .await
+        .text();
+    assert!(!list.contains("Waiting for the phone") && !list.contains("Media management"));
     let policy = app
         .request(Method::GET, "/api/devices/policy", Some(&token), None)
         .await
@@ -2287,7 +2309,7 @@ async fn the_permissions_form_returns_to_its_open_details() {
             &[("package_name", element), ("camera", "default")],
         )
         .await;
-    assert_redirect(&res, &back, Some(&anchor));
+    assert_redirect(&res, &back, Some(anchor));
     let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_app_permissions")
         .fetch_one(&app.db)
         .await
@@ -2324,8 +2346,8 @@ async fn the_permissions_form_returns_to_its_open_details() {
             .await;
         assert_redirect(
             &res,
-            &format!("{page}?notice=perms&app=app-{package}"),
-            Some(&format!("app-{package}")),
+            &format!("/devices/{id}/apps/{package}?notice=perms"),
+            Some("access"),
         );
     }
     let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_app_permissions")
@@ -2364,19 +2386,23 @@ async fn the_lock_media_switch_returns_to_its_open_details() {
         .execute(&app.db)
         .await
         .unwrap();
-    let page = device_page(id, Section::Apps);
+    // Design 127 §2.6: Låseskjerm on the app's own page.
+    let app_page = |package: &str| format!("/devices/{id}/apps/{package}");
+    let page = app_page(pod);
     let html = app.get_page(&page, &cookie).await.text();
-    let anchor = format!("perms-{pod}");
-    assert!(html.contains(&format!(
-        "<details class=\"app-display app-perms\" id=\"{anchor}\">"
-    )));
-    assert!(html.contains("Media player on the lock screen"));
+    let anchor = "lock-screen";
+    assert!(html.contains("<section id=\"lock-screen\""));
+    assert!(html.contains("Media player"));
     assert!(html.contains("title and picture show on the lock screen"));
     assert!(html.contains(&format!(
         "action=\"/devices/{id}/apps/lock-media#{anchor}\""
     )));
+    let clock = app
+        .get_page(&app_page("com.android.deskclock"), &cookie)
+        .await
+        .text();
     assert!(
-        !html.contains("id=\"perms-com.android.deskclock\""),
+        !clock.contains("id=\"lock-screen\""),
         "preinstalled: no switch"
     );
 
@@ -2413,29 +2439,21 @@ async fn the_lock_media_switch_returns_to_its_open_details() {
         .unwrap();
     let mut nudges = app.state.command_notify.subscribe();
     let res = post(pod, Some("on")).await;
-    let back = format!("{page}?perms={pod}");
-    assert_redirect(&res, &back, Some(&anchor));
+    let back = page.clone();
+    assert_redirect(&res, &back, Some(anchor));
     assert_eq!(nudges.try_recv().ok(), Some(id));
     app.assert_lands(&res, &cookie).await;
     let html = app.get_page(&back, &cookie).await.text();
-    assert!(
-        html.contains(&format!("id=\"{anchor}\" open")),
-        "the details stay open"
-    );
     assert!(html.contains("name=\"lock_media\" value=\"on\" checked"));
     assert_eq!(policy().await, json!([pod]));
     assert_eq!(rows().await, 1, "the stale row pruned");
 
     // Off: the field missing (an auto-saving checkbox) - for any app, so a stale row can always be cleared.
     let res = post(pod, None).await;
-    assert_redirect(&res, &back, Some(&anchor));
+    assert_redirect(&res, &back, Some(anchor));
     assert_eq!(policy().await, json!([]));
     let res = post("org.example.gone", None).await;
-    assert_redirect(
-        &res,
-        &format!("{page}?perms=org.example.gone"),
-        Some("perms-org.example.gone"),
-    );
+    assert_redirect(&res, &app_page("org.example.gone"), Some(anchor));
     assert_eq!(post(pod, Some("yes")).await.status, StatusCode::BAD_REQUEST);
     assert_eq!(
         post("not a package", Some("on")).await.status,
@@ -2453,8 +2471,8 @@ async fn the_lock_media_switch_returns_to_its_open_details() {
         let res = post(package, Some("on")).await;
         assert_redirect(
             &res,
-            &format!("{page}?notice=perms&app=app-{package}"),
-            Some(&format!("app-{package}")),
+            &format!("{}?notice=lock_media", app_page(package)),
+            Some(anchor),
         );
     }
     assert_eq!(rows().await, 0);
@@ -2497,8 +2515,8 @@ async fn the_lock_media_switch_returns_to_its_open_details() {
         .await;
     assert_redirect(
         &res,
-        &format!("{page}?notice=lock_media_full&app=app-{last}"),
-        Some(&format!("app-{last}")),
+        &format!("{}?notice=lock_media_full", app_page(&last)),
+        Some(anchor),
     );
     assert_eq!(rows().await, max);
 }
@@ -2521,7 +2539,7 @@ async fn the_permissions_cap_refuses_the_201st_app() {
         .unwrap();
     }
     let target = format!("/devices/{id}/apps/permissions");
-    let page = device_page(id, Section::Apps);
+    let page = |package: &str| format!("/devices/{id}/apps/{package}");
     let res = app
         .request_form(
             Method::POST,
@@ -2532,8 +2550,8 @@ async fn the_permissions_cap_refuses_the_201st_app() {
         .await;
     assert_redirect(
         &res,
-        &format!("{page}?notice=perms_full&app=app-org.example.new"),
-        Some("app-org.example.new"),
+        &format!("{}?notice=perms_full", page("org.example.new")),
+        Some("access"),
     );
     let count = || async {
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM device_app_permissions")
@@ -2550,11 +2568,7 @@ async fn the_permissions_cap_refuses_the_201st_app() {
             &[("package_name", "org.example.app7")],
         )
         .await;
-    assert_redirect(
-        &res,
-        &format!("{page}?perms=org.example.app7"),
-        Some("perms-org.example.app7"),
-    );
+    assert_redirect(&res, &page("org.example.app7"), Some("access"));
     assert_eq!(count().await, crate::app_permissions::MAX_ROWS_PER_DEVICE);
 }
 
@@ -2731,20 +2745,27 @@ async fn a_refused_name_save_never_reloads() {
         .text();
     assert!(page.contains("Installing 40%"));
     assert!(page.contains("<span hidden data-waits></span>"));
+    // Design 127: the app's own page refreshes itself while it installs too - not as a refusal's answer.
+    let own = app
+        .get_page(&format!("/devices/{id}/apps/io.element.android.x"), &cookie)
+        .await
+        .text();
+    assert!(own.contains("Installing 40%") && own.contains("<span hidden data-waits></span>"));
     let res = app
         .request_form(
             Method::POST,
             &format!("/devices/{id}/apps/display"),
             Some(&cookie),
             &[
-                ("package_name", "com.android.deskclock"),
+                ("package_name", "io.element.android.x"),
                 ("label", "Twenty-one characters"),
             ],
         )
         .await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
     let html = res.text();
-    assert!(html.contains("id=\"display-com.android.deskclock\" open"));
+    assert!(html.contains("id=\"display-label\""));
+    assert!(html.contains("aria-invalid=\"true\""));
     assert!(!html.contains("data-waits"), "{html}");
 }
 
@@ -3500,13 +3521,23 @@ async fn apps_from_the_apps_tab_go_back_there() {
         Some(&row),
     );
     app.assert_lands(&res, &cookie).await;
+    // Every app is off by now: one back on, so it has its own page.
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/apps/toggle"),
+            Some(&cookie),
+            &[("package_name", "org.example.game"), ("selected", "on")],
+        )
+        .await;
+    assert!(res.status.is_redirection());
     let res = app
         .request_form(
             Method::POST,
             &format!("/devices/{id}/apps/display"),
             Some(&cookie),
             &[
-                ("package_name", "io.element.android.x"),
+                ("package_name", "org.example.game"),
                 ("label", "Mine"),
                 ("icon", "no-such-icon"),
                 ("color", "auto"),
@@ -3516,8 +3547,12 @@ async fn apps_from_the_apps_tab_go_back_there() {
         .await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
     let answer = res.text();
+    // Design 127: the answer is the app's own page, back to the list at its row, `from` kept.
     assert_eq!(nav_current(&answer), "apps");
-    assert_eq!(nav_back(&answer).0, format!("/apps#phone-{id}"));
+    assert_eq!(
+        nav_back(&answer).0,
+        format!("/devices/{id}/apps?from=apps#app-org.example.game")
+    );
     assert!(froms(&answer).iter().all(|f| f == "apps"));
     // A refusal's own address (`?notice=…&app=…`) with `from`: the reason under the row, the tab.
     let html = get("?notice=not_an_app&app=app-io.element.android.x&from=apps".to_string()).await;

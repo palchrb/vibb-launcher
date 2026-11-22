@@ -1,0 +1,69 @@
+{#- Vises som (design 127 §2.4; `app_display::AppDisplayForm`, as `form`): the app's own page and the catalog app's
+    page alike. One form, and every control saves on change (autosave.js) - the name on change (blur or Enter), the
+    segments, the symbols, the colours, På Hjem; Tilbakestill is a button; without JS a <noscript> Save. The Home tile
+    beside the name previews what the phone draws (static/app-display.js follows the fields; the server draws the
+    saved state). Logo · Automatisk · Symbol are three radios before the rows, so CSS marks the chosen segment and
+    shows the symbols and the colours under Symbol only - with or without JS, never a flash (no :has()). One glyph is
+    always checked (the chosen one, else the stored or the catalog's, else the first), so Symbol saves a real glyph at
+    once. A part of Vibb One (design 82 D9: Meldinger, `form.builtin`) has no Logo, and Automatic previews its own look.
+    A refusal sits at its field, the field `aria-invalid`. -#}
+<form method="post" action="{{ form.action }}" class="group app-display-form" data-letter="{{ form.letter() }}" data-w-own="{{ self.t("apps.display.preview_own") }}"{% if let Some(look) = form.builtin %} data-auto-glyph="{{ look.glyph }}" data-auto-tile="{{ look.tile }}"{% endif %}{% if let Some(src) = form.logo %} data-logo="{{ src }}"{% endif %}>
+    {% if !form.package_name.is_empty() %}
+    <input type="hidden" name="package_name" value="{{ form.package_name }}">
+    {% endif %}
+    {% if let Some(from) = form.from %}<input type="hidden" name="from" value="{{ from }}">{% endif %}
+    {% if form.on_home.is_some() %}<input type="hidden" name="on_home_shown" value="1">{% endif %}
+    {#- The form's default button: Enter in the name field saves - never Tilbakestill, the next submit button. -#}
+    <button type="submit" name="action" value="save" class="visually-hidden" tabindex="-1" aria-hidden="true">{{ self.t("common.save") }}</button>
+    <div class="disp-top">
+        <span class="home-peek" aria-hidden="true">
+            <span class="peek-tile" data-preview-tile style="background: {{ form.preview_tile() }}">
+                {%- if let Some(glyph) = form.preview_glyph() %}<img class="peek-glyph" data-preview-glyph src="/static/app-icons/{{ glyph }}.svg" alt="">{% else %}<img class="peek-glyph" data-preview-glyph alt="" hidden>{% endif -%}
+                <span class="peek-text" data-preview-text{% if form.mode() == "logo" %} data-word{% endif %}{% if form.preview_glyph().is_some() || (form.mode() == "logo" && form.logo.is_some()) %} hidden{% endif %}>{% if form.mode() == "logo" %}{{ self.t("apps.display.preview_own") }}{% else %}{{ form.letter() }}{% endif %}</span>
+                {%- if let Some(src) = form.logo %}<img class="peek-logo" data-preview-logo src="{{ src }}" alt="" decoding="async"{% if form.mode() != "logo" %} hidden{% endif %}>{% endif -%}
+            </span>
+            <span class="peek-label" data-preview-label>{{ form.preview_label() }}</span>
+        </span>
+        <span class="disp-name">
+            <label for="{{ form.anchor }}-label">{{ self.t("apps.display.label_field") }}</label>
+            <input type="text" id="{{ form.anchor }}-label" name="label" maxlength="20" value="{{ form.label }}" placeholder="{{ form.app_label }}" data-app-label="{{ form.app_label }}" autocomplete="off" data-autosave{% if form.error_field == "label" %} aria-invalid="true" aria-describedby="{{ form.anchor }}-error" autofocus{% endif %}>
+        </span>
+    </div>
+    {% if let Some(error) = form.error %}
+    <p class="flash flash-error" id="{{ form.anchor }}-error" role="alert" data-flash="{{ form.anchor }}">{{ error }}</p>
+    {% endif %}
+    <fieldset class="disp-pick"{% if form.error_field == "icon" || form.error_field == "color" %} aria-invalid="true" aria-describedby="{{ form.anchor }}-error"{% endif %}>
+        <legend class="visually-hidden">{{ self.t("apps.display.icon") }}</legend>
+        {% if form.builtin.is_none() %}<input type="radio" class="choice-radio mode-logo" id="{{ form.anchor }}-mode-logo" name="icon_mode" value="logo"{% if form.mode() == "logo" %} checked{% endif %} data-autosave>{% endif %}
+        <input type="radio" class="choice-radio mode-auto" id="{{ form.anchor }}-mode-auto" name="icon_mode" value="auto"{% if form.mode() == "auto" %} checked{% endif %} data-autosave>
+        <input type="radio" class="choice-radio mode-symbol" id="{{ form.anchor }}-mode-symbol" name="icon_mode" value="symbol"{% if form.mode() == "symbol" %} checked{% endif %} data-autosave>
+        <div class="segmented disp-modes">
+            {% if form.builtin.is_none() %}<label class="segment seg-logo" for="{{ form.anchor }}-mode-logo"><span class="segment-face">{{ self.t("apps.display.mode.logo") }}</span></label>{% endif %}
+            <label class="segment seg-auto" for="{{ form.anchor }}-mode-auto"><span class="segment-face">{{ self.t("apps.display.mode.auto") }}</span></label>
+            <label class="segment seg-symbol" for="{{ form.anchor }}-mode-symbol"><span class="segment-face">{{ self.t("apps.display.mode.symbol") }}</span></label>
+        </div>
+        <fieldset class="glyphs" data-symbols style="--pick: {{ form.pick_tile() }}">
+            <legend class="visually-hidden">{{ self.t("apps.display.mode.symbol") }}</legend>
+            {% for choice in form.icons %}
+            <label class="pick" title="{{ choice.label }}"><input type="radio" name="icon" value="{{ choice.key }}"{% if choice.key == form.picked_glyph() %} checked{% endif %} data-autosave><span class="pick-face"><img src="/static/app-icons/{{ choice.key }}.svg" alt=""></span><span class="visually-hidden">{{ choice.label }}</span></label>
+            {% endfor %}
+        </fieldset>
+        <fieldset class="swatches" data-colours>
+            <legend class="visually-hidden">{{ self.t("apps.display.colour") }}</legend>
+            <label class="pick" title="{{ self.t("apps.display.color.auto") }}"><input type="radio" name="color" value="auto" data-tile="{{ form.auto_tile() }}"{% if form.picked_color() == "auto" %} checked{% endif %} data-autosave><span class="pick-face swatch-auto"></span><span class="visually-hidden">{{ self.t("apps.display.color.auto") }}</span></label>
+            {% for choice in form.colors %}
+            <label class="pick" title="{{ choice.label }}"><input type="radio" name="color" value="{{ choice.key }}" data-tile="{{ choice.tile }}"{% if choice.key == form.picked_color() %} checked{% endif %} data-autosave><span class="pick-face" style="background: {{ choice.tile }}"></span><span class="visually-hidden">{{ choice.label }}</span></label>
+            {% endfor %}
+        </fieldset>
+    </fieldset>
+    {% if let Some(on_home) = form.on_home %}
+    <label class="row">
+        <span class="row-label">{{ self.t("apps.on_home") }}</span>
+        <input type="checkbox" role="switch" class="sw" name="on_home" value="on"{% if on_home %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+    </label>
+    {% endif %}
+    {% if form.can_reset() %}
+    <button type="submit" name="action" value="reset" class="row row-button disp-reset">{{ self.t("apps.display.reset") }}{% if let Some(default) = form.catalog_default %}<span class="row-sub">{{ self.tp("apps.display.catalog_default", [("default", default.as_str())]) }}</span>{% endif %}</button>
+    {% endif %}
+    <noscript><button type="submit" name="action" value="save" class="row row-button">{{ self.t("common.save") }}</button></noscript>
+</form>
