@@ -373,6 +373,56 @@ pub const STEPS: &[Step] = &[
         "setup.how.location_private",
         None
     ),
+    // Design 126 B1-B4: four of Google's switches the phone can't set or read, ticked by the parent; optional, so never
+    // counted, never orange.
+    step!(
+        "number_verification",
+        Optional,
+        Parent,
+        Always,
+        Count,
+        Action,
+        [],
+        "setup.step.number_verification",
+        "setup.how.number_verification",
+        None
+    ),
+    step!(
+        "ad_id",
+        Optional,
+        Parent,
+        Always,
+        Count,
+        Action,
+        [],
+        "setup.step.ad_id",
+        "setup.how.ad_id",
+        None
+    ),
+    step!(
+        "diagnostics",
+        Optional,
+        Parent,
+        Always,
+        Count,
+        Action,
+        [],
+        "setup.step.diagnostics",
+        "setup.how.diagnostics",
+        None
+    ),
+    step!(
+        "play_protect_upload",
+        Optional,
+        Parent,
+        Always,
+        Count,
+        Action,
+        [],
+        "setup.step.play_protect_upload",
+        "setup.how.play_protect_upload",
+        None
+    ),
     step!(
         "vibration",
         Optional,
@@ -1037,6 +1087,10 @@ fn row(input: &PageInput, step: &'static Step) -> Row {
         "call_filter" => Some(t(lang, "setup.why.call_filter").to_string()),
         "call_filter_early" => Some(t(lang, "setup.why.call_filter_early").to_string()),
         "location_private" => Some(t(lang, "setup.why.location_private").to_string()),
+        "number_verification" => Some(t(lang, "setup.why.number_verification").to_string()),
+        "ad_id" => Some(t(lang, "setup.why.ad_id").to_string()),
+        "diagnostics" => Some(t(lang, "setup.why.diagnostics").to_string()),
+        "play_protect_upload" => Some(t(lang, "setup.why.play_protect_upload").to_string()),
         "assistant" => Some(t(lang, "setup.why.assistant").to_string()),
         _ => None,
     };

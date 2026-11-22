@@ -443,6 +443,10 @@ class SetupFlowActivity : UIObjectActivity() {
                 return
             } catch (e: ActivityNotFoundException) {
                 Log.w(LOG_TAG, "No page for ${page.action}, trying the next")
+            } catch (e: SecurityException) {
+                // Design 126 code QA L3: a page that resolves but is guarded (a Play-services activity behind a
+                // permission) - the next one, Android's own, may open.
+                Log.w(LOG_TAG, "The page for ${page.action} is guarded, trying the next")
             } catch (e: Exception) {
                 Log.w(LOG_TAG, "Couldn't open the page for ${page.action}: ${e.javaClass.simpleName}")
                 // Code QA L3: no page is open, so the step's window ends (the map step's holders given back).

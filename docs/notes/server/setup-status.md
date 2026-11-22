@@ -23,6 +23,11 @@
   optional, `When::LocationInterval` (`location_mode` `interval`, the input `location_interval`), read from the
   report's `setup.location_private`. A quiet row under Valgfritt with its `setup.why.location_private` behind the ⓘ;
   never counted, never a line elsewhere.
+- **Google's four switches** (design 126 B1-B4: `number_verification`, `ad_id`, `diagnostics`, `play_protect_upload`,
+  after `location_private`): optional `parent` steps, `When::Always` - Play services' own state, which no public API
+  reads. Quiet rows under Valgfritt with a switch that ticks them, `setup.why.<key>` then `setup.how.<key>` behind the
+  ⓘ; never counted, never orange, nothing on any other page. They ride in the existing `setup.ticked` and the tick
+  routes; the contract's `needed` rows list them as missing unless ticked, and one row ticks all four.
 - **Storage** (migration 0157): `device_status.setup_json`, `setup_hold_until_ms` (`min(hold_until_ms, arrival +
   hold_left_ms)`), `device_setup_ticks` (the parent steps ticked, `by_phone`).
 - **The hold** (`models::DeviceStatus::paused_at`): a report with `setup_hold_until_ms` stays paused until it, never past

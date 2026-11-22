@@ -13,7 +13,7 @@
     <div class="sheet">
 
     {#- Design 95 rev. 3: Mobilnett, a page of the phone's own. Each group is one auto-saving form back to its anchor
-        (#mobile-data - the kid's switch is a form of its own there -, #abroad (design 97), #mobile-lock): with JS scroll-restore.js keeps the place, without JS the
+        (#mobile-data - the kid's switch is a form of its own there -, #abroad (design 97), #mobile-lock, #block-2g): with JS scroll-restore.js keeps the place, without JS the
         <noscript> Save lands on the group - a save never jumps to the top. The radios are the rows (a check marks the
         chosen one). The state lines under each group only when they say something (mobile_network::card): a wrong
         state one orange line above its group with its fix behind its ⓘ (design 113 D1 P1), a quiet one a grey row. No
@@ -117,6 +117,26 @@
         <div class="group-footer"><details class="info">
             <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
             <div class="info-panel"><p>{{ self.t("mobile.lock.footer") }}</p></div>
+        </details></div>
+    </section>
+
+    {#- Design 126 A5: "Blokker 2G", the same lift rule as the lock above. Its one line is quiet: "Av i utlandet" while the
+        phone lifted it abroad (the rule working, the parent's switch stays on). -#}
+    <section id="block-2g" aria-label="{{ self.t("mobile.block_2g.label") }}">
+        <form method="post" action="/devices/{{ device.id }}/mobile#block-2g" class="group">
+            <input type="hidden" name="group" value="block-2g">
+            <label class="row">
+                <span class="row-label">{{ self.t("mobile.block_2g.label") }}</span>
+                <input type="checkbox" role="switch" class="sw" name="on" value="on"{% if card.block_2g %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+            </label>
+            {% for line in card.block_2g_lines %}
+            <div class="row" data-mobile-line="{{ line.key }}"><span class="row-label">{{ line.title }}</span></div>
+            {% endfor %}
+            <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
+        </form>
+        <div class="group-footer"><details class="info">
+            <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+            <div class="info-panel"><p>{{ self.t("mobile.block_2g.info") }}</p></div>
         </details></div>
     </section>
 

@@ -261,7 +261,7 @@ The launcher's own rules - the grant plan, the network plan and the report's rea
 
 ### 3.4 The server's data
 
-- **Migration `0165_app_denials.sql`** (0164 is `upstream-fixes`' `0164_install_failure_reason.sql`):
+- **Migration `0166_app_denials.sql`** (0164 is `upstream-fixes`' `0164_install_failure_reason.sql`):
   - `device_app_denials (device_id REFERENCES devices ON DELETE CASCADE, package_name, permission TEXT CHECK
     (permission IN ('network','camera','location','microphone','contacts')), updated_at, PRIMARY KEY (device_id,
     package_name, permission))`.
@@ -548,7 +548,7 @@ The check against "Words in the UI":
   - Tests: `src/tests/app_page.rs` (new), `src/tests/device_pages.rs`.
   - `docs/notes/server/pwa.md`.
 - **Step 2 (both directories, one commit: the API)**:
-  - Server: `migrations/0165_app_denials.sql`; `app_permissions.rs` (four keys, policy, `AppAccess` values,
+  - Server: `migrations/0166_app_denials.sql`; `app_permissions.rs` (four keys, policy, `AppAccess` values,
     `set_denied`, `the_contract`); `src/tests/device_api.rs` (its table list: `device_app_permissions` becomes
     `device_app_denials`, design QA L8); `src/tests/device_pages.rs` (the camera rows' table); `handlers/devices.rs` (`save_app_permissions` by `key`/`allow`);
     `handlers/device_api.rs`; `models.rs`; the page's Tilgang with four switches; `intake_limits`;
@@ -667,5 +667,5 @@ How each design QA finding was handled:
 - **L7**: "Bare det appen ber om, står her" is dropped. The list counts no refusal; its only orange part is a held
   update (§2.2, §6).
 - **L8**: step 2 renames the table in `src/tests/device_api.rs` (§7).
-- **The migration number**: 0165, since 0164 is `upstream-fixes`' (§3.4, §7).
+- **The migration number**: 0166, since 0164 is `upstream-fixes`' and 0165 design 126's `block_2g` (§3.4, §7).
 - **Q1**: decided by the user's "1 ok", for all Tilgang switches (§5, §10).

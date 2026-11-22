@@ -294,3 +294,86 @@ fn every_feed_failure_is_classed() {
         assert_eq!(failure.class(), class, "{failure:?}");
     }
 }
+
+/// Design 126 C1: a phone made in the PWA gets "Ads & tracking" on by its own override while the list is off for every
+/// phone; an older phone keeps what it had, and Settings' hub counts the list in force on the new phone.
+#[tokio::test]
+async fn a_new_phone_gets_the_ads_list_on() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (older, _) = app.create_device("older").await;
+    let ads: i64 =
+        sqlx::query_scalar("SELECT id FROM dns_blocklists WHERE name = 'Ads & tracking'")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    sqlx::query("UPDATE dns_blocklists SET enabled = 0")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let hub = |app: &TestApp| {
+        let db = app.db.clone();
+        async move {
+            let zone = crate::display_time::Zone::from_setting("Europe/Oslo");
+            let dir = tempfile::tempdir().unwrap();
+            crate::handlers::settings_hub::hub_values(&db, dir.path(), &zone, chrono::Utc::now())
+                .await
+                .web_filter
+        }
+    };
+    assert_eq!(hub(&app).await.as_deref(), Some("No lists"));
+
+    let new_phone = |name: &'static str| {
+        let app = &app;
+        let cookie = cookie.clone();
+        async move {
+            let res = app
+                .request_form(
+                    Method::POST,
+                    "/devices/new",
+                    Some(&cookie),
+                    &[("name", name)],
+                )
+                .await;
+            assert!(res.status.is_redirection(), "{}", res.text());
+            let id: i64 = sqlx::query_scalar("SELECT id FROM devices WHERE name = ?")
+                .bind(name)
+                .fetch_one(&app.db)
+                .await
+                .unwrap();
+            let rows: Vec<(i64, bool)> = sqlx::query_as(
+                "SELECT blocklist_id, enabled FROM device_blocklist_overrides WHERE device_id = ?",
+            )
+            .bind(id)
+            .fetch_all(&app.db)
+            .await
+            .unwrap();
+            rows
+        }
+    };
+    assert_eq!(new_phone("Lily").await, [(ads, true)]);
+    let older_rows: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM device_blocklist_overrides WHERE device_id = ?")
+            .bind(older)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(older_rows, 0, "an older phone is untouched");
+    assert_eq!(hub(&app).await.as_deref(), Some("1 list"));
+
+    // On for every phone already: no override, which would pin the phone against a later change of the switch.
+    sqlx::query("UPDATE dns_blocklists SET enabled = 1 WHERE id = ?")
+        .bind(ads)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(new_phone("Max").await, []);
+
+    // The list removed: nothing written, the phone made all the same.
+    sqlx::query("DELETE FROM dns_blocklists WHERE id = ?")
+        .bind(ads)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(new_phone("Ola").await, []);
+}

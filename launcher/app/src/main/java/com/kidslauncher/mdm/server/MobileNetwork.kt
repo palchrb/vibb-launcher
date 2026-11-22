@@ -86,6 +86,59 @@ fun whereOf(
  * key (`null`) sets nothing. */
 fun mobileSettingsLocked(value: Boolean?, overrideActive: Boolean): Boolean = value == true && !overrideActive
 
+/**
+ * Design 126 A5 (option (b), §3.6.1): where the 2G rule counts the phone to be - [now] ([whereOf]) when it is `HOME` or
+ * `ABROAD`, the [last] kept answer on `UNKNOWN` (a 2G-only area with 2G blocked is itself out of service). Only a real
+ * registration moves it (code QA H1: no fallback on the cells' country without one - a fake foreign-coded cell could
+ * then lift the block it exists for).
+ */
+fun where2gKept(last: Where?, now: Where): Where? = if (now == Where.UNKNOWN) last else now
+
+/** Design 126 code QA L1: how long a re-block waits after an abroad lift, so a border flip-flop toggles the modem (and
+ * syncs) at most once in it. */
+const val REBLOCK_HOLD_MS = 120_000L
+
+/** Code QA L1: the wait before 2G may be blocked again - the rest of [REBLOCK_HOLD_MS] since the last abroad lift
+ * ([abroadLiftAtMs], elapsed-realtime ms; `null` none), 0 when it may be blocked now. */
+fun reblockWaitMs(abroadLiftAtMs: Long?, nowMs: Long): Long =
+    if (abroadLiftAtMs == null) 0 else (abroadLiftAtMs + REBLOCK_HOLD_MS - nowMs).coerceIn(0, REBLOCK_HOLD_MS)
+
+/**
+ * Design 126 A5, option (b) (§3.6, pending the user's answer to §11): 2G is lifted by itself while the phone is counted
+ * abroad ([where2gKept]; `null`, never read, counts as home). The one place the abroad lift lives: option (a), "on
+ * everywhere", is this function answering `false`.
+ */
+fun abroadLifts2g(kept: Where?): Boolean = kept == Where.ABROAD
+
+/** Design 126 A5 (§3.6.2): `DISALLOW_CELLULAR_2G` while the parent's "Blokker 2G" is on - lifted by the pause, "Åpne for
+ * oppsett" and the offline override ([overrideActive]), and abroad ([abroadLifts2g]). A missing key sets nothing. */
+fun cellular2gBlocked(value: Boolean?, overrideActive: Boolean, kept: Where?): Boolean =
+    value == true && !overrideActive && !abroadLifts2g(kept)
+
+/** Design 126 A5 (§3.6.4): the report's `mobile_data.cellular_2g` - what Vibb asked of Android, never whether the modem
+ * obeys. */
+enum class Cellular2g(val wire: String) {
+    /** The restriction set. */
+    BLOCKED("blocked"),
+
+    /** Lifted by itself abroad ([abroadLifts2g]). */
+    ABROAD("abroad"),
+
+    /** Lifted by a pause, the offline override or a setup window. */
+    LIFTED("lifted"),
+
+    /** The parent's switch off, or no policy. */
+    OFF("off"),
+}
+
+/** [Cellular2g] from the same inputs as [cellular2gBlocked]: the switch first, then a lift, then abroad. */
+fun cellular2gState(value: Boolean?, overrideActive: Boolean, kept: Where?): Cellular2g = when {
+    value != true -> Cellular2g.OFF
+    overrideActive -> Cellular2g.LIFTED
+    abroadLifts2g(kept) -> Cellular2g.ABROAD
+    else -> Cellular2g.BLOCKED
+}
+
 /** The parent's "Mobildata for apper: Bare Vibb" in force: `"vibb"`, and fail closed on a value this build doesn't
  * know; `"on"` and `null` don't. Lifted by the pause (D3). */
 fun parentSinkOn(appsMobile: String?, overrideActive: Boolean): Boolean = when (appsMobile) {
@@ -493,6 +546,8 @@ data class MobileDataReport(
     @SerialName("settings_locked") val settingsLocked: Boolean,
     /** Design 97 §3.2: the kid's own switch, `"on"` or `"off"`; `null` while its row is hidden. Always sent. */
     val kid: String?,
+    /** Design 126 A5: [Cellular2g.wire] - "Blokker 2G" as Vibb applies it now. Always sent. */
+    @SerialName("cellular_2g") val cellular2g: String,
 )
 
 /** Design 94 §5: `country` and `network` only while roaming or abroad ([away]: design 97 code QA M2, a foreign network

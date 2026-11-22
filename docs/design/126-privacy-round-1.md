@@ -151,7 +151,7 @@ obeys.
 
 ### 3.2 Policy, storage and the contract
 
-- Migration `0166_block_2g.sql` (0165 is design 127's; renumbered to the next free one at merge):
+- Migration `0165_block_2g.sql` (built first; design 127's `app_denials` moves to 0166):
   `ALTER TABLE device_policy ADD COLUMN block_2g INTEGER NOT NULL DEFAULT 1;` - on for every phone, existing ones too
   (the user: "on by default"; only emulators run Vibb, `CLAUDE.md` "No backwards compatibility").
 - Policy: a new top-level `block_2g: bool`, beside `mobile_settings_locked` - **not** inside `hardening`, whose launcher
@@ -165,8 +165,7 @@ obeys.
   - `cellular_2g_blocked` (new): `{value, override, kept, blocked}` - the rule of §3.6.2 row by row (`value` `true`/`false`
     /`null`, `override` the pause/override/"Åpne for oppsett", `kept` `home`/`abroad`/`null`); `MobileNetworkTest` runs
     each through `cellular2gBlocked`.
-  - `where_kept` (new): `{last, now, airplane, net_cc, sim_cc, kept}` - §3.6.1's stickiness and the border fallback,
-    run through `where2gKept`.
+  - `where_kept` (new): `{last, now, kept}` - §3.6.1's stickiness, run through `where2gKept`.
   - `report` gains `mobile_data.cellular_2g` (§3.6.4) and `clean_mobile` its rows (a known word kept, anything else
     dropped); the server's `tests::mobile_network` posts it and checks what is stored, `intake_limits` keeps the key.
   - CI: nothing new - the file is already in both workflows' path filters.
@@ -219,14 +218,14 @@ service. That is exactly the state of a phone abroad with 2G blocked in a 2G-onl
 `whereOf` alone - it would block again the moment the 2G-only area made the phone lose service. So the 2G rule keeps
 the last known answer:
 
-- `where2gKept(last: Where?, now: Where, airplane: Boolean, netCc: String?, simCc: String?): Where?` (pure):
-  `now` when it is `HOME` or `ABROAD`; otherwise `last` - **with one fallback**: not in airplane mode, both countries
-  known and different (`TelephonyManager.getNetworkCountryIso()`, which Android fills from the cells it can hear even
-  without registration - assumed from AOSP's `LocaleTracker`, checked at the gate) → `ABROAD`. The fallback is what lets
-  a phone that crosses the border straight into a 2G-only area lift the block: there is no registered network to call
-  it abroad, but the cells say the country.
+- `where2gKept(last: Where?, now: Where): Where?` (pure): `now` when it is `HOME` or `ABROAD`; otherwise `last`. Only
+  a real registration (home or roaming) moves it. **No border fallback** (code QA H1): revision 2 read the cells'
+  country without a registration (`getNetworkCountryIso()`) as abroad, but a fake foreign-coded LTE cell could then lift
+  the block - the very downgrade attack it exists for - and keep it lifted. The cost: a phone that crosses from home
+  straight into a 2G-only area abroad gets no ordinary calls until it registers on a non-2G network somewhere
+  (emergency calls still work; a pause on the phone lifts it).
 - The kept value lives in device-protected prefs (`block_2g_where`), so a reboot abroad keeps it; `null` (never read)
-  counts as home. It moves only on a `HOME`/`ABROAD` read or the fallback, never on `UNKNOWN`.
+  counts as home. It moves only on a `HOME`/`ABROAD` read, never on `UNKNOWN`.
 
 #### 3.6.2 The rule
 
@@ -237,10 +236,11 @@ value == true && !overrideActive && kept != Where.ABROAD`. A missing key sets no
 
 - In every `AppEnforcer` pass (the sync, policy changes, the 15-minute backstop), as now for the roaming lock.
 - On a change of service state: a `TelephonyCallback.ServiceStateListener` (API 31; Vibb holds READ_PHONE_STATE and
-  fine location, so the state isn't sanitised) registered while `block_2g` is on, which re-reads `whereNow` and the
-  network country and re-applies the restriction only when `cellular2gBlocked` changes (a `setRestriction` only on a
-  change, as the other restrictions). No listener exists in the launcher today (verified); this is the first. Android
-  14-17 alike.
+  fine location, so the state isn't sanitised) registered while `block_2g` is on, on the default data subscription
+  (registered again when that changes), which re-reads `whereNow` and re-applies the restriction only when
+  `cellular2gBlocked` changes (a `setRestriction` only on a change, as the other restrictions), under the one lock the
+  pass takes. A re-block within 2 min of an abroad lift waits out the 2 min (a border flip-flop). No listener exists in
+  the launcher today (verified); this is the first. Android 14-17 alike.
 
 #### 3.6.4 What each sees
 
@@ -457,7 +457,7 @@ snapshot and the setup contract, so they go one after the other on one branch.
 | 2. A7 | S | launcher | `L/server/QuickControls.kt` (`connectToWifiNetwork`, pure `joinMacSetting`), a test beside the Wi-Fi page's tests; `docs/notes/launcher/kid-settings.md` |
 | 3. A3 | S | launcher | `L/logins/LoginBrowser.kt` (`ChromePolicy` keys, `CHROME_PRIVACY`, `CHROME_PACKAGES`, `browserConfigPlan(managed)`), `L/server/BrowserConfig.kt` (passes `managed`), `login_rules.json` `bundles` rows (+ managed/unmanaged rows), `LoginBrowserTest`, `BrowserDohTest`; `docs/notes/launcher/logins.md` |
 | 4. C1 | S | server | `S/handlers/devices.rs` (`create`), `S/handlers/settings_hub.rs` (the count), `S/models.rs` (the seeded ads list's lookup), tests (`tests/dns_blocklist.rs`: a new phone gets the override, an existing one not, none when the switch is on; the hub's count); `docs/notes/server/dns.md` |
-| 5. A5 | M | both, one commit | migration `0166_block_2g.sql` (renumbered at merge), `S/models.rs` (policy field), `S/handlers/device_api.rs` (the policy), `S/handlers/mobile_page.rs` (`group=block-2g`, the `cellular_2g` value row), `T/device_mobile.html` (`#block-2g`), `S/mobile_network.rs` (`clean_mobile` keeps `cellular_2g`), `S/i18n/{nb,en}.json`, `S/tests/mobile_network.rs` (the contract's `policy` and `report` rows, the save, the quiet row only on `abroad`), `policy_json_keys_snapshot`; `server/testdata/mobile_network.json` + the launcher's copy; `L/server/dto/PolicyResponse.kt`, `L/server/MobileNetwork.kt` (`cellular2gBlocked`, `where2gKept`), `L/server/MobileNetworkRuntime.kt` (the kept where, the `ServiceStateListener`, the report's `cellular_2g`), `L/server/AppEnforcer.kt`, `MobileNetworkTest` (`cellular_2g_blocked`, `where_kept`, `report`), `PolicyResponseCompatTest`; `docs/notes/launcher/hardening.md` (the Mobilnett list), the server's Mobilnett note. With (a): without the listener, the kept where and `cellular_2g` - S-M |
+| 5. A5 | M | both, one commit | migration `0165_block_2g.sql`, `S/models.rs` (policy field), `S/handlers/device_api.rs` (the policy), `S/handlers/mobile_page.rs` (`group=block-2g`, the `cellular_2g` value row), `T/device_mobile.html` (`#block-2g`), `S/mobile_network.rs` (`clean_mobile` keeps `cellular_2g`), `S/i18n/{nb,en}.json`, `S/tests/mobile_network.rs` (the contract's `policy` and `report` rows, the save, the quiet row only on `abroad`), `policy_json_keys_snapshot`; `server/testdata/mobile_network.json` + the launcher's copy; `L/server/dto/PolicyResponse.kt`, `L/server/MobileNetwork.kt` (`cellular2gBlocked`, `where2gKept`), `L/server/MobileNetworkRuntime.kt` (the kept where, the `ServiceStateListener`, the report's `cellular_2g`), `L/server/AppEnforcer.kt`, `MobileNetworkTest` (`cellular_2g_blocked`, `where_kept`, `report`), `PolicyResponseCompatTest`; `docs/notes/launcher/hardening.md` (the Mobilnett list), the server's Mobilnett note. With (a): without the listener, the kept where and `cellular_2g` - S-M |
 | 6. B1-B4 | M | both, one commit | `server/testdata/setup_steps.json` + the launcher's copy, `S/setup_status.rs`, `S/i18n/{nb,en}.json`, `S/tests/setup_status.rs` (the four are listed under Valgfritt, never counted, tickable); `L/setup/SetupSteps.kt`, `L/setup/SetupPages.kt`, `L/res/values{,-nb}/strings.xml`, `SetupStepsTest`; `docs/notes/{server/setup-status,launcher/setup}.md`, `docs/setup/google-account.md`, `docs/testing/new-phone-model.md` |
 
 Steps 1-3 are one launcher branch (three commits); step 4 a server branch; steps 5 and 6 one branch after them. CI's
@@ -501,9 +501,7 @@ Emulator check (`docs/testing/emulator.md`, a new section; 34 and 37 images, a P
 
 Jelly Star check (before the release that carries it, on a test phone):
 - A5: "Allow 2G" greyed (the Mobilnett lock off for the look); **a call out and a call in on the kid's SIM with 2G
-  blocked** (VoLTE in use); with (b), whether `getNetworkCountryIso` answers with no registration (SIM in, airplane off,
-  a 2G-only network unreachable is hard to stage - at least: with the SIM's data and voice deregistered, it still reads
-  the country); a trip abroad if one comes first.
+  blocked** (VoLTE in use); a trip abroad if one comes first.
 - B: each path and Unihertz's nb labels; the copy table follows what the phone says.
 - A4: `dumpsys content_capture` names a service or none (whether it protects anything there).
 
@@ -517,7 +515,9 @@ emergency calls still work, and nothing tells the kid or the parent why a call f
   the phone only over data (Wi-Fi, or roaming data if "Roaming" allows it) - or starts a pause on the phone, which needs
   the parent there with the PIN. A failed call isn't shown as a 2G problem anywhere.
 - (b) **Lifted by itself abroad** (recommended, §3.6). Vibb already tells home from abroad (design 97); it keeps the last
-  answer while the phone has no network, so a 2G-only area abroad still gets calls. The kid sees nothing; the parent sees
+  answer while the phone has no network, so a 2G-only area abroad still gets calls once the phone has registered there
+  on a non-2G network; one that crosses from home straight into a 2G-only area gets no ordinary calls until it does
+  (emergency calls still work; a pause on the phone lifts it). The kid sees nothing; the parent sees
   a quiet "Av i utlandet" on Mobilnett while it is lifted. Cost: no 2G protection abroad.
 
 Built as (b) unless the user answers (a); (a) is (b) minus §3.6 and changes one line of copy.
@@ -534,7 +534,7 @@ The design QA's findings (0 H, 5 M, 9 L), each taken:
 
 | Finding | Handled |
 |---|---|
-| M1 migration number | `0166_block_2g.sql`, renumbered to the next free one at merge (§3.2, §9) |
+| M1 migration number | `0165_block_2g.sql`, the next free one on `main` when built (`migrations_from_73_in_order` allows no gap); design 127's moves to 0166 (§3.2, §9) |
 | M2 `mobile_settings_locked` has contract rows | `block_2g` goes into `mobile_network.json`'s `policy` rows, with new `cellular_2g_blocked` and `where_kept` row sets and the report's `cellular_2g`, both copies in one commit (§3.2) |
 | M3 the switch's page | Mobilnett, `#block-2g` after `#mobile-lock`, `group=block-2g` in `mobile_page::change`; Advanced unchanged (§3.3) |
 | M4 the (i) | the QA's nb text for (a), and its (b) form "Av i utlandet og under pause", en to match (§3.3) |
@@ -549,3 +549,7 @@ The design QA's findings (0 H, 5 M, 9 L), each taken:
 | L8 B1 with the SIM in, B4's claim, scam detection | B1 "Helst før SIM-kortet settes inn"; B4 says what the switch does, no claim about Vibb One; A4's possible loss of content protection on 15+ and its gate check (§1.4, §5.4, §10) |
 | L9 C1's silent breakage; A7's "per connection" | C1: Branch/AppsFlyer links, the parent sees nothing with the log off, Allowed Domains is the way out (§6.3); A7: §0 says when the address changes |
 
+Code QA of the build (2026-11-22, H1): the border fallback of §3.6.1 is dropped - a fake foreign-coded cell could lift
+the block. Only a real registration moves the kept where; a phone that crosses straight into a 2G-only area abroad gets no
+ordinary calls until it registers on a non-2G network (emergency calls still work; a pause lifts it). The build also holds
+a re-block for 2 min after an abroad lift (a border flip-flop toggles the modem once), and the migration is 0165.

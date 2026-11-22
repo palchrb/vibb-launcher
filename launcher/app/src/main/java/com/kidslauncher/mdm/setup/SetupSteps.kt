@@ -151,6 +151,28 @@ enum class SetupStep(
         emptyList(), listOf("android.settings.LOCATION_SOURCE_SETTINGS"),
         R.string.setup_step_location_private, R.string.setup_how_location_private,
     ),
+    // Design 126 B1-B4: four of Google's switches the phone can't set or read - optional, ticked by the parent. "Åpne"
+    // tries Play services' own page, then Android's.
+    NUMBER_VERIFICATION(
+        "number_verification", StepNeed.OPTIONAL, StepReadBy.PARENT, StepWhen.ALWAYS, StepSummary.COUNT, StepLevel.ACTION,
+        emptyList(), listOf("com.google.android.gms.settings.GOOGLE_SETTINGS", "android.settings.SETTINGS"),
+        R.string.setup_step_number_verification, R.string.setup_how_number_verification,
+    ),
+    AD_ID(
+        "ad_id", StepNeed.OPTIONAL, StepReadBy.PARENT, StepWhen.ALWAYS, StepSummary.COUNT, StepLevel.ACTION,
+        emptyList(), listOf("com.google.android.gms.settings.ADS_PRIVACY", "android.settings.PRIVACY_SETTINGS"),
+        R.string.setup_step_ad_id, R.string.setup_how_ad_id,
+    ),
+    DIAGNOSTICS(
+        "diagnostics", StepNeed.OPTIONAL, StepReadBy.PARENT, StepWhen.ALWAYS, StepSummary.COUNT, StepLevel.ACTION,
+        emptyList(), listOf("com.google.android.gms.settings.GOOGLE_SETTINGS", "android.settings.SETTINGS"),
+        R.string.setup_step_diagnostics, R.string.setup_how_diagnostics,
+    ),
+    PLAY_PROTECT_UPLOAD(
+        "play_protect_upload", StepNeed.OPTIONAL, StepReadBy.PARENT, StepWhen.ALWAYS, StepSummary.COUNT, StepLevel.ACTION,
+        emptyList(), listOf("com.google.android.gms.settings.VERIFY_APPS_SETTINGS", "android.settings.SECURITY_SETTINGS"),
+        R.string.setup_step_play_protect_upload, R.string.setup_how_play_protect_upload,
+    ),
     VIBRATION(
         "vibration", StepNeed.OPTIONAL, StepReadBy.PARENT, StepWhen.ALWAYS, StepSummary.COUNT, StepLevel.ACTION,
         emptyList(), listOf("android.settings.SOUND_SETTINGS"), R.string.setup_step_vibration, R.string.setup_how_vibration,

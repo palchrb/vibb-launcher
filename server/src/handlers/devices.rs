@@ -644,10 +644,39 @@ async fn insert_device_with_policy(state: &AppState, name: &str) -> Result<i64, 
     .execute(&mut *tx)
     .await?;
 
+    // Design 126 C1: "Ads & tracking" on for a new phone - its own override, written only while the list is off for
+    // every phone (an override equal to the switch would pin the phone against a later change of it). Phones created
+    // before keep what they have.
+    let ads: Option<(i64, bool)> = sqlx::query_as(
+        "SELECT id, enabled FROM dns_blocklists WHERE name = ? AND url = ? ORDER BY id LIMIT 1",
+    )
+    .bind(crate::models::SEEDED_ADS_LIST.0)
+    .bind(crate::models::SEEDED_ADS_LIST.1)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if let Some(list) = ads_default_override(ads) {
+        sqlx::query(
+            "INSERT INTO device_blocklist_overrides (device_id, blocklist_id, enabled) VALUES (?, ?, 1)",
+        )
+        .bind(id)
+        .bind(list)
+        .execute(&mut *tx)
+        .await?;
+    }
+
     // Design 108 (L10): every allowlist writer prunes - a new phone has no registrations, so nothing goes.
     crate::unified_push::prune_disallowed(&mut tx, id).await?;
     tx.commit().await?;
     Ok(id)
+}
+
+/// Design 126 C1: the blocklist a new phone gets switched on by its own override - the seeded ads list `(id,
+/// enabled)` when it exists and is off for every phone; none when it is missing or already on.
+pub(crate) fn ads_default_override(list: Option<(i64, bool)>) -> Option<i64> {
+    match list {
+        Some((id, false)) => Some(id),
+        _ => None,
+    }
 }
 
 #[derive(Template)]
@@ -4141,5 +4170,12 @@ mod tests {
         assert_eq!(initial("2 phones"), "2");
         assert_eq!(initial("🦄"), "?");
         assert_eq!(initial(""), "?");
+    }
+
+    #[test]
+    fn a_new_phone_gets_the_ads_list_only_while_it_is_off_for_every_phone() {
+        assert_eq!(ads_default_override(Some((3, false))), Some(3));
+        assert_eq!(ads_default_override(Some((3, true))), None);
+        assert_eq!(ads_default_override(None), None);
     }
 }

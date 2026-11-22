@@ -126,6 +126,9 @@ pub struct DevicePolicy {
     /// Design 95 rev. 3 item 3 (migration 0143): `DISALLOW_CONFIG_MOBILE_NETWORKS` on the phone, on by default.
     #[sqlx(default)]
     pub mobile_settings_locked: bool,
+    /// Design 126 A5 (migration 0165): "Blokker 2G" - `DISALLOW_CELLULAR_2G` on the phone, on by default.
+    #[sqlx(default)]
+    pub block_2g: bool,
     // `setup_card_hidden` (migration 0146, design 98's "Ikke nå") is a dead column since design 114 (§5.3).
     /// Design 102 (migration 0150): Wi-Fi sign-in on the phone (Part A, D1: on by default). Read through
     /// `logins::portal_policy`; a missing row reads as on (`load_policy`).
@@ -861,6 +864,10 @@ const SEEDED_BLOCKLISTS: [(&str, &str, &str); 4] = [
     ),
 ];
 
+/// The seeded "Ads & tracking" list's name and address ([SEEDED_BLOCKLISTS]'s first row): the list a new phone gets
+/// on (design 126 C1, `devices::ads_default_override`).
+pub const SEEDED_ADS_LIST: (&str, &str) = (SEEDED_BLOCKLISTS[0].0, SEEDED_BLOCKLISTS[0].1);
+
 /// A blocklist's name as a page shows it in `lang` ([SEEDED_BLOCKLISTS]).
 pub fn blocklist_name(lang: crate::i18n::Lang, name: &str, url: &str) -> String {
     SEEDED_BLOCKLISTS
@@ -1383,6 +1390,8 @@ pub struct PolicyResponse {
     pub apps_mobile: String,
     /// Design 95 rev. 3 item 3: Android's mobile-network settings locked on the phone, always sent.
     pub mobile_settings_locked: bool,
+    /// Design 126 A5: "Blokker 2G" (`DISALLOW_CELLULAR_2G`), lifted on the phone by the pause and abroad; always sent.
+    pub block_2g: bool,
     /// Design 95 §3.5 (step 95-T2): this server expands heartbeat reports (`status_heartbeat`), `true` unless
     /// `STATUS_HEARTBEAT=off` (`ForkConfig::status_heartbeat`). The
     /// launcher sends hashes and heartbeats only while it says so.

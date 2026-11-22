@@ -560,6 +560,7 @@ pub(crate) async fn build_policy(
         abroad: crate::mobile_network::abroad_choice(&policy.abroad).to_string(),
         apps_mobile: crate::mobile_network::apps_choice(&policy.apps_mobile).to_string(),
         mobile_settings_locked: policy.mobile_settings_locked,
+        block_2g: policy.block_2g,
         status_heartbeat: state.config.status_heartbeat,
         status_heartbeat_fields: crate::status_heartbeat::HEARTBEAT_FIELDS,
         status_gzip: true,
