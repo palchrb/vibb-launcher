@@ -1,0 +1,65 @@
+# A new phone model: the checklist
+
+What to check when Vibb One goes onto a phone model we haven't run before (the user asked 2026-11-21: "vil hver nye tlf
+modell kreve like mye jobb og feilsøking?"). Most of what the Jelly Star found in November 2026 was a wrong emulator
+assumption, fixed for every phone: an exact backstop alarm, Element X's new room link, MediaStore's delete dialog in
+lock task, the Credential Manager selector. What differs per model is mostly the OEM's background killing, the screen
+and font, and which system apps the model ships. This list checks those. It takes about an hour with the phone on adb
+over Wi-Fi (`adb pair`/`adb connect` from Developer options; turn it off afterwards).
+
+Run it with a signed release build (never a debug APK on a kid's phone), on the Android version the phone will run.
+
+## 1. Before setup
+
+- [ ] Note the model, Android version, security patch, density and font scale:
+  `adb shell getprop ro.product.model; adb shell getprop ro.build.version.release; adb shell wm density; adb shell settings get system font_scale`.
+- [ ] Factory reset, then the QR setup. The provisioning log shows "Admin policy compliance", and the setup page's steps
+  all reach done (Barne-PIN included).
+
+## 2. Staying in touch (the OEM's background killing)
+
+- [ ] Leave the phone on a charger and then off it for a day. The PWA never shows "No contact" while the phone is on.
+- [ ] `adb shell dumpsys alarm | grep -A3 BACKSTOP_SYNC`: `window=0` and an `exactAllowReason`. A non-zero window means
+  the exact alarm grant is missing.
+- [ ] `adb shell dumpsys deviceidle whitelist | grep vibb` and `adb shell am get-standby-bucket me.vibb.launcher`
+  (5 = exempt). Look for the OEM's own killer (`dumpsys activity | grep -i -E "duraspeed|powergenie|autostart"` and the
+  model's battery settings).
+- [ ] Location every 30 min indoors with no SIM: the PWA's age stays under ~31 min. If not:
+  `adb shell dumpsys location | grep -iE "network|fused|enabled"` (needs Google Location Accuracy / a network provider).
+- [ ] A reboot: the phone is back online and locked down without anyone opening it.
+
+## 3. Screen and font
+
+- [ ] Home in 3 and 4 columns at the phone's own font scale: every label on one line, the last row clear of the bottom fade.
+- [ ] Lock glance: "Nødsamtale" clear of the edge (with and without a nav bar).
+- [ ] Telefonbok, Meldinger, the shade's Snarveier, the music app's library and now-playing bar.
+
+## 4. System apps behind lock task
+
+The model's own packages can differ from AOSP/Pixel; a blocked one shows as BlockedAppActivity.
+`adb logcat -s ActivityTaskManager | grep -i -E "lock task|blocked"` while doing each:
+- [ ] Delete a photo from a media app with media rights (MediaStore's PermissionActivity).
+- [ ] The photo picker.
+- [ ] A passkey sign-in (the Credential Manager selector; with Bitwarden as provider).
+- [ ] Bluetooth pairing with headphones (the pairing dialog).
+- [ ] A phone call in and out, an emergency call from the lock glance, SMS and MMS.
+- [ ] The Wi-Fi sign-in window on a captive portal.
+- [ ] Camera, and the share sheet from it.
+
+## 5. Calls and links out
+
+- [ ] The chat button opens the contact's Element X DM (the installed Element X's schemes:
+  `adb shell dumpsys package io.element.android.x | grep -A20 "Schemes"`).
+- [ ] Map links open in the map app.
+- [ ] The music app plays to a Sonos room and on Bluetooth.
+
+## 6. Before handing it over
+
+- [ ] Re-enable "Blokker USB-feilsøking" and "Blokker tilbakestilling" in the PWA.
+- [ ] Turn off wireless debugging, and forget the paired computer.
+- [ ] Add what you found for this model to the end of this file.
+
+## Models checked
+
+- Unihertz Jelly Star, Android 16, 320×569 dp (density 1.5), font 1.3, no nav bar (November 2026): DuraSpeed not
+  present; standby bucket 5; the exact alarm needed the grant check (fixed for all phones).
