@@ -48,9 +48,9 @@ class HardeningTest {
         assertTrue(plan.isSet(HardeningRestriction.CONFIG_VPN))
 
         val allOff = HardeningPolicy(false, false, false, false, false, false, false, false, false, false)
-        // Every server switch off; the launcher-only wallpaper lock has no switch.
+        // Every server switch off; the launcher-only locks have no switch.
         assertEquals(
-            setOf(HardeningRestriction.SET_WALLPAPER),
+            launcherOnly,
             hardeningPlan(allOff, managed = true).restrictions.filterValues { it }.keys,
         )
 
@@ -113,6 +113,35 @@ class HardeningTest {
         for (policy in listOf(null, serverDefaults, HardeningPolicy(false, false, false, false, false, false, false, false, false))) {
             assertTrue(hardeningPlan(policy, managed = true).isSet(HardeningRestriction.SET_WALLPAPER))
             assertFalse(hardeningPlan(policy, managed = false).isSet(HardeningRestriction.SET_WALLPAPER))
+        }
+    }
+
+    private val launcherOnly = setOf(
+        HardeningRestriction.SET_WALLPAPER,
+        HardeningRestriction.CONTENT_CAPTURE,
+        HardeningRestriction.CONTENT_SUGGESTIONS,
+        HardeningRestriction.ASSIST_CONTENT,
+    )
+
+    @Test
+    fun `the screen-content locks are on whenever managed, whatever the server sends (design 126 A4)`() {
+        val allOff = HardeningPolicy(false, false, false, false, false, false, false, false, false, false, false)
+        val a4 = launcherOnly - HardeningRestriction.SET_WALLPAPER
+        for (policy in listOf(null, HardeningPolicy(), serverDefaults, allOff)) {
+            for (restriction in a4) {
+                assertTrue(hardeningPlan(policy, managed = true).isSet(restriction))
+                assertFalse(hardeningPlan(policy, managed = false).isSet(restriction))
+            }
+        }
+    }
+
+    @Test
+    fun `assist content exists from API 35, every other key on 34 too`() {
+        for (sdk in listOf(34, 35, 36, 37)) {
+            for (restriction in HardeningRestriction.entries) {
+                val expected = restriction != HardeningRestriction.ASSIST_CONTENT || sdk >= 35
+                assertEquals("$restriction on $sdk", expected, hardeningKeyApplies(restriction, sdk))
+            }
         }
     }
 

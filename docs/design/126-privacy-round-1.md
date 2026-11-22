@@ -475,7 +475,8 @@ Emulator check (`docs/testing/emulator.md`, a new section; 34 and 37 images, a P
 1. A4: after the first policy, `dumpsys user` lists `no_content_capture`, `no_content_suggestions`, and on 37
    `no_assist_content` (on 34 not, and no error in the log); a pause leaves them; unmanaging clears them. On 37 (a Play
    image), `dumpsys content_capture` before and after: whether the content-protection (scam detection) service stops
-   (§1.4) - written down either way.
+   (§1.4) - written down either way. On 37, Flymodus on and off through Vibb's assistant (design 98) still works with
+   the three restrictions set.
 2. A5: first switch the Mobilnett lock ("Lås mobilnett i Androids innstillinger") off for the phone, since
    `DISALLOW_CONFIG_MOBILE_NETWORKS` hides the SIM page; then Settings › Network › SIMs › "Allow 2G" greyed and off (if
    the emulator's modem doesn't support it, the switch is absent - note it; `dumpsys user` still lists `no_cellular_2g`,
@@ -486,7 +487,10 @@ Emulator check (`docs/testing/emulator.md`, a new section; 34 and 37 images, a P
    unregistered` (unknown) keeps it lifted; back to the home MCC → blocked again, the row gone; a reboot while abroad
    keeps it lifted.
 3. A7: join the emulator's open `AndroidWifi` from the kid's Wi-Fi page; `dumpsys wifi` shows that config with
-   `macRandomizationSetting` NON_PERSISTENT; a secured network added the same way keeps AUTO/PERSISTENT.
+   `macRandomizationSetting` NON_PERSISTENT; a secured network added the same way keeps AUTO/PERSISTENT. An open network
+   first saved in Android's Settings (during a window) reconnects from the kid's page through its saved id - not refused
+   as "admin updating their own network" - and keeps Android's setting. A secured network's Connect stays off while the
+   password field is empty (code QA L2).
 4. A3: in a pause, `chrome://policy` shows the six keys with status OK (`SafeBrowsingProtectionLevel` included, else
    it leaves the set); the role's login window opens a login and a captcha (design 119's gate rows) after it; a ticked
    Chrome shows the privacy keys only.

@@ -8,8 +8,9 @@ import com.kidslauncher.mdm.server.dto.HardeningPolicy
  * [HardeningRestriction] to its `UserManager` constant and applies the plan.
  */
 
-/** One server switch. [defaultOn] applies when the server doesn't send the switch. */
-enum class HardeningRestriction(val defaultOn: Boolean) {
+/** One server switch. [defaultOn] applies when the server doesn't send the switch. [minSdk]: the
+ * first API level that has the restriction ([hardeningKeyApplies]); below it AppEnforcer skips it. */
+enum class HardeningRestriction(val defaultOn: Boolean, val minSdk: Int = 0) {
     /** `DISALLOW_FACTORY_RESET` - Settings only; a recovery-mode wipe can't be blocked. */
     FACTORY_RESET(true),
     /** `DISALLOW_ADD_USER`. */
@@ -39,7 +40,21 @@ enum class HardeningRestriction(val defaultOn: Boolean) {
      * Our own language (`launcher_ui.language`, `LocaleManager.setApplicationLocales` for our
      * package) is per app. [needs device test: our per-app locale switch with this set] */
     CONFIG_LOCALE(true),
+    /** `DISALLOW_CONTENT_CAPTURE` (design 126 A4): no screen content to the content-capture service
+     * (Android System Intelligence, Google's on-device AI). Launcher-only, like [SET_WALLPAPER]: no
+     * server switch, on while managed; the override and the pause don't lift it. */
+    CONTENT_CAPTURE(true),
+    /** `DISALLOW_CONTENT_SUGGESTIONS` (design 126 A4): no suggestions from the screen's content
+     * (Overview's text and image actions, "ask about this screen"). Launcher-only, as [CONTENT_CAPTURE]. */
+    CONTENT_SUGGESTIONS(true),
+    /** `DISALLOW_ASSIST_CONTENT` (design 126 A4, API 35): no screenshot or app content to the assistant
+     * (Gemini, Google) on the whole device. Launcher-only, as [CONTENT_CAPTURE]; skipped on Android 14. */
+    ASSIST_CONTENT(true, minSdk = 35),
 }
+
+/** Whether [restriction] exists on API level [sdk] (design 126 §1.2): AppEnforcer sets or clears
+ * only those that do. */
+fun hardeningKeyApplies(restriction: HardeningRestriction, sdk: Int): Boolean = sdk >= restriction.minSdk
 
 data class HardeningPlan(
     /** Every [HardeningRestriction], set (`true`) or cleared (`false`). */
@@ -70,6 +85,10 @@ private fun HardeningPolicy?.value(restriction: HardeningRestriction): Boolean? 
     HardeningRestriction.AIRPLANE_MODE -> this?.disallowAirplaneMode
     HardeningRestriction.SET_WALLPAPER -> null
     HardeningRestriction.CONFIG_LOCALE -> this?.disallowConfigLocale
+    HardeningRestriction.CONTENT_CAPTURE,
+    HardeningRestriction.CONTENT_SUGGESTIONS,
+    HardeningRestriction.ASSIST_CONTENT,
+    -> null
 }
 
 /**

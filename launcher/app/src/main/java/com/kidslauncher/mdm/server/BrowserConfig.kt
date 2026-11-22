@@ -48,8 +48,9 @@ internal fun sameBundle(a: Bundle, b: Bundle): Boolean =
     a.keySet() == b.keySet() && a.keySet().all { a.get(it) == b.get(it) }
 
 /**
- * Design 102 §4.1: the browsers' managed config - design 67's secure DNS off with the filter, and Chrome's login role's
- * lockdown ([com.kidslauncher.mdm.logins.browserConfigPlan]) - the one owner of those bundles. From `AppEnforcer.applyHeld`
+ * Design 102 §4.1: the browsers' managed config - design 67's secure DNS off with the filter, Chrome's privacy keys while
+ * the phone is managed (design 126 A3), and Chrome's login role's lockdown
+ * ([com.kidslauncher.mdm.logins.browserConfigPlan]) - the one owner of those bundles. From `AppEnforcer.applyHeld`
  * **before** the plan and the hide/unhide loop: for the role's package it writes the bundle, reads it back typed, and
  * says the role is ready only on a match ([Result.ready]); a throw, a mismatch or Chrome absent leaves Chrome hidden and
  * unpinned (the plan isn't told), with `failed` and the reason. Each tightening hides Chrome (its process and tabs end,
@@ -75,6 +76,7 @@ object BrowserConfig {
         filterOn: Boolean,
         role: com.kidslauncher.mdm.logins.LoginRole,
         lockdownLifted: Boolean,
+        managed: Boolean,
     ): Result {
         // Only the device owner writes a managed config: nothing to do (and nothing to log) otherwise.
         if (!dpm.isDeviceOwnerApp(context.packageName)) return Result(false)
@@ -100,7 +102,7 @@ object BrowserConfig {
                 Log.w(LOG_TAG, "Couldn't hide Chrome before loosening its config: ${e.javaClass.simpleName}")
             }
         }
-        for ((pkg, values) in com.kidslauncher.mdm.logins.browserConfigPlan(filterOn, lockdown, installed)) {
+        for ((pkg, values) in com.kidslauncher.mdm.logins.browserConfigPlan(filterOn, lockdown, installed, managed)) {
             val chromeRole = pkg == com.kidslauncher.mdm.logins.CHROME_PACKAGE && roleOn
             try {
                 if (chromeRole && com.kidslauncher.mdm.logins.chromeClearDue(roleOn, prefs.getBoolean(KEY_CLEARED, false))) {

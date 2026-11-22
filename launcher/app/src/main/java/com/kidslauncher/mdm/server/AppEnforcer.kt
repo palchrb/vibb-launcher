@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.os.UserManager
 import android.provider.Settings
@@ -497,7 +498,9 @@ object AppEnforcer {
         // role is unhidden and pinned only once its lockdown is written and read back; the pause and the override lift
         // the lockdown (D9), whose end is a tightening.
         val loginRole = com.kidslauncher.mdm.logins.loginRoleOf(policy?.loginBrowser, allowlist)
-        val browser = BrowserConfig.apply(context, dpm, admin, vpnFilterEnabled, loginRole, lockdownLifted = overrideActive)
+        val browser = BrowserConfig.apply(
+            context, dpm, admin, vpnFilterEnabled, loginRole, lockdownLifted = overrideActive, managed = managedForHardening,
+        )
         // Design 119 §4.4: a window that is over ends here (stale, timeout, left), and one whose rule no longer holds -
         // a time rule, the role off or not ready, the gate off, Play's update window, a pause's start (code QA M2: its
         // hide before the loop unhides every app) or end - ends `rule`; then the plan reads it.
@@ -832,7 +835,7 @@ object AppEnforcer {
             ) {
                 com.kidslauncher.mdm.assistant.AirplaneRuntime.vibbEnding(com.kidslauncher.mdm.assistant.AirplaneBy.PARENT)
             }
-            if (set) setRestriction(dpm, admin, restriction.userManagerKey(), true)
+            if (set) restriction.userManagerKey()?.let { setRestriction(dpm, admin, it, true) }
         }
         if (plan.screenCaptureDisabled) syncScreenCapture(dpm, admin, true)
         clearHardening(context, dpm, admin, plan)
@@ -871,7 +874,7 @@ object AppEnforcer {
                         if (step.restriction == HardeningRestriction.SET_WALLPAPER && !wallpaperClean) {
                             Log.w(LOG_TAG, "Our wallpaper couldn't be reset - DISALLOW_SET_WALLPAPER stays for now")
                         } else {
-                            setRestriction(dpm, admin, step.restriction.userManagerKey(), false)
+                            step.restriction.userManagerKey()?.let { setRestriction(dpm, admin, it, false) }
                         }
                     }
                 }
@@ -881,18 +884,27 @@ object AppEnforcer {
         }
     }
 
-    private fun HardeningRestriction.userManagerKey(): String = when (this) {
-        HardeningRestriction.FACTORY_RESET -> UserManager.DISALLOW_FACTORY_RESET
-        HardeningRestriction.ADD_USER -> UserManager.DISALLOW_ADD_USER
-        HardeningRestriction.MODIFY_ACCOUNTS -> UserManager.DISALLOW_MODIFY_ACCOUNTS
-        HardeningRestriction.CONFIG_VPN -> UserManager.DISALLOW_CONFIG_VPN
-        HardeningRestriction.USB_FILE_TRANSFER -> UserManager.DISALLOW_USB_FILE_TRANSFER
-        HardeningRestriction.DEBUGGING_FEATURES -> UserManager.DISALLOW_DEBUGGING_FEATURES
-        HardeningRestriction.SAFE_BOOT -> UserManager.DISALLOW_SAFE_BOOT
-        HardeningRestriction.CONFIG_LOCATION -> UserManager.DISALLOW_CONFIG_LOCATION
-        HardeningRestriction.AIRPLANE_MODE -> UserManager.DISALLOW_AIRPLANE_MODE
-        HardeningRestriction.SET_WALLPAPER -> UserManager.DISALLOW_SET_WALLPAPER
-        HardeningRestriction.CONFIG_LOCALE -> UserManager.DISALLOW_CONFIG_LOCALE
+    /** `null` for a restriction this Android doesn't have ([hardeningKeyApplies]; design 126's
+     * `DISALLOW_ASSIST_CONTENT` on 14): neither set nor cleared. */
+    private fun HardeningRestriction.userManagerKey(): String? {
+        if (!hardeningKeyApplies(this, Build.VERSION.SDK_INT)) return null
+        return when (this) {
+            HardeningRestriction.FACTORY_RESET -> UserManager.DISALLOW_FACTORY_RESET
+            HardeningRestriction.ADD_USER -> UserManager.DISALLOW_ADD_USER
+            HardeningRestriction.MODIFY_ACCOUNTS -> UserManager.DISALLOW_MODIFY_ACCOUNTS
+            HardeningRestriction.CONFIG_VPN -> UserManager.DISALLOW_CONFIG_VPN
+            HardeningRestriction.USB_FILE_TRANSFER -> UserManager.DISALLOW_USB_FILE_TRANSFER
+            HardeningRestriction.DEBUGGING_FEATURES -> UserManager.DISALLOW_DEBUGGING_FEATURES
+            HardeningRestriction.SAFE_BOOT -> UserManager.DISALLOW_SAFE_BOOT
+            HardeningRestriction.CONFIG_LOCATION -> UserManager.DISALLOW_CONFIG_LOCATION
+            HardeningRestriction.AIRPLANE_MODE -> UserManager.DISALLOW_AIRPLANE_MODE
+            HardeningRestriction.SET_WALLPAPER -> UserManager.DISALLOW_SET_WALLPAPER
+            HardeningRestriction.CONFIG_LOCALE -> UserManager.DISALLOW_CONFIG_LOCALE
+            HardeningRestriction.CONTENT_CAPTURE -> UserManager.DISALLOW_CONTENT_CAPTURE
+            HardeningRestriction.CONTENT_SUGGESTIONS -> UserManager.DISALLOW_CONTENT_SUGGESTIONS
+            HardeningRestriction.ASSIST_CONTENT ->
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) UserManager.DISALLOW_ASSIST_CONTENT else null
+        }
     }
 
     /**

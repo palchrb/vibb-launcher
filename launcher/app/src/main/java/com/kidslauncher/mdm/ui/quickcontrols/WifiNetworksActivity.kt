@@ -11,6 +11,7 @@ import android.view.View
 import android.widget.EditText
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
+import androidx.core.widget.doAfterTextChanged
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.databinding.ActivityWifiNetworksBinding
@@ -22,6 +23,7 @@ import com.kidslauncher.mdm.server.QuickControls
 import com.kidslauncher.mdm.server.cachedPolicy
 import com.kidslauncher.mdm.server.hardeningManaged
 import com.kidslauncher.mdm.server.hardeningPlan
+import com.kidslauncher.mdm.server.joinAllowed
 import com.kidslauncher.mdm.server.locationStaysOn
 import com.kidslauncher.mdm.ui.kidsettings.SubPage
 import com.kidslauncher.mdm.ui.kidsettings.SubPageGuard
@@ -213,7 +215,7 @@ class WifiNetworksActivity : KidPageActivity() {
             hint = getString(R.string.wifi_networks_password_hint)
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
         }
-        AlertDialog.Builder(this)
+        val dialog = AlertDialog.Builder(this)
             .setTitle(R.string.wifi_networks_password_title)
             .setView(input)
             .setPositiveButton(R.string.wifi_networks_connect) { _, _ ->
@@ -221,6 +223,10 @@ class WifiNetworksActivity : KidPageActivity() {
             }
             .setNegativeButton(R.string.wifi_networks_cancel, null)
             .show()
+        // Design 126 code QA L2: no Connect without a password - an empty one would save an open profile.
+        val connectButton = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+        connectButton.isEnabled = false
+        input.doAfterTextChanged { connectButton.isEnabled = joinAllowed(network.secured, it?.toString()) }
     }
 
     /**
