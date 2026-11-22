@@ -15,6 +15,7 @@ import com.kidslauncher.mdm.server.ParentPinEntry
 import com.kidslauncher.mdm.server.currentPolicyDecision
 import com.kidslauncher.mdm.timerules.RULE_LIFT_MINUTES
 import com.kidslauncher.mdm.timerules.TimeRulesRuntime
+import com.kidslauncher.mdm.timerules.pauseTitleRules
 import com.kidslauncher.mdm.timerules.rulePausePlan
 import java.time.Instant
 import java.time.LocalDateTime
@@ -64,7 +65,7 @@ class RulePauseActivity : UIObjectActivity() {
         val lifts = TimeRulesRuntime.ruleLifts(this, snap.records, policy.lifts, snap.clocks)
         val plan = rulePausePlan(policy, at, snap.zone, lifts, budgetExhausted = false, minutes = null, nowMs = snap.clocks.wallMs)
         if (plan.offered.isEmpty()) return false
-        val names = snap.lock.rules.filter { it.id > 0 || it.copyOf == null }
+        val names = pauseTitleRules(snap.lock.rules)
             .map { LockActivity.labelText(this, ruleLabel(it.kind, it.name)) }.distinct()
         binding.rulePauseTitle.text = if (names.size >= 2) {
             getString(R.string.rule_pause_title_two, names[0], names[1])

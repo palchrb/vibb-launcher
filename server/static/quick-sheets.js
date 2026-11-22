@@ -1,8 +1,10 @@
 // The summary's Quick Actions sheets (design 93 §6.1, §6.2): a tile opens its sheet below the row in place - no
 // reload, the address unchanged -, a tap on the open tile or on Lukk closes it, and a tap on the other rule tile while
 // the Regler sheet is open only switches its mode. The focus moves to the sheet's head (back to the tile on Lukk)
-// without a scroll. In the Regler sheet: "Alle regler" is hidden in Slå på nå, the rule's mode line and warnings follow
-// the chosen rule (each <option>'s data-line / data-warn), a length fills Til and typing in Til clears the lengths,
+// without a scroll. In the Regler sheet the select holds only the mode's rules (design 123 §3.4: the options with
+// data-on in Slå på nå, with data-pause in Sett på pause - removed and put back, never `hidden`, which iOS Safari shows
+// greyed), the selection moving to the mode's default when it goes (data-on-default; "Alle regler"); the rule's mode
+// line and warnings follow the chosen rule (each <option>'s data-line / data-warn), a length fills Til and typing in Til clears the lengths,
 // and every button says its action as a full sentence. Without JS the tiles are links the server answers with the sheet
 // open (?open=), and the buttons say "Slå på" / "Sett på pause". The words come from #quick's data-w-*. A refresh in place
 // (design 103) reads the page's parts again and redraws the derived words (`handy:swapped`). ES5.
@@ -66,6 +68,8 @@
         // The page's parts, read again after a refresh in place (design 103: `handy:swapped`, static/swap.js), which
         // may bring new nodes and always brings the server's words and the sheets as the server draws them.
         var section, nowMinute, midnight, mOn, mPause, rulesForm, timeSheet, timeForm;
+        // Every <option> the server drew, in its order: the select holds the mode's ones.
+        var ruleOptions = [];
         var openedMode = null;
         var defaultLength = null;
         function bind() {
@@ -76,6 +80,10 @@
             mOn = doc.getElementById("m-on");
             mPause = doc.getElementById("m-pause");
             rulesForm = mOn ? mOn.form : null;
+            var select = rulesForm ? rulesForm.querySelector("select[data-qa-rule]") : null;
+            ruleOptions = [];
+            var drawn = select ? select.querySelectorAll("option") : [];
+            for (var o = 0; o < drawn.length; o++) ruleOptions.push(drawn[o]);
             timeSheet = doc.getElementById("time-sheet");
             timeForm = timeSheet ? timeSheet.querySelector("form") : null;
             openedMode = null;
@@ -126,31 +134,40 @@
             return clock(nowMinute + Number(length.value), midnight);
         }
 
+        // The select holds the options of the mode (`data-on` / `data-pause`), in the server's order; the chosen one
+        // stays when the mode has it, else the mode's default (`data-on-default`, "Alle regler" for a pause). Returns it.
+        function showOptions(select, wanted) {
+            var attr = wanted === "on" ? "data-on" : "data-pause";
+            var chosen = selectedOption(select);
+            var keep = [];
+            for (var i = 0; i < ruleOptions.length; i++) {
+                if (ruleOptions[i].hasAttribute(attr)) keep.push(ruleOptions[i]);
+            }
+            if (!keep.length) return chosen;
+            for (var r = 0; r < ruleOptions.length; r++) {
+                if (ruleOptions[r].parentNode === select) select.removeChild(ruleOptions[r]);
+                if (keep.indexOf(ruleOptions[r]) < 0) ruleOptions[r].selected = false;
+            }
+            var pick = null;
+            for (var k = 0; k < keep.length; k++) {
+                select.appendChild(keep[k]);
+                if (keep[k] === chosen) pick = chosen;
+            }
+            var mark = wanted === "on" ? "data-on-default" : "data-all";
+            for (var d = 0; d < keep.length && !pick; d++) {
+                if (keep[d].hasAttribute(mark)) pick = keep[d];
+            }
+            pick = pick || keep[0];
+            for (var n = 0; n < keep.length; n++) keep[n].selected = keep[n] === pick;
+            return pick;
+        }
+
         function updateRules() {
             if (!rulesForm) return;
             var select = rulesForm.querySelector("select[data-qa-rule]");
-            var options = select.querySelectorAll("option");
-            var all = options[0];
-            var chosen = selectedOption(select);
-            if (mode() === "on") {
-                all.hidden = true;
-                all.disabled = true;
-                if (chosen === all) {
-                    var pick = null;
-                    for (var i = 1; i < options.length && !pick; i++) {
-                        if (options[i].hasAttribute("data-school")) pick = options[i];
-                    }
-                    pick = pick || options[1];
-                    if (pick) {
-                        all.selected = false;
-                        pick.selected = true;
-                        chosen = pick;
-                    }
-                }
-            } else {
-                all.hidden = false;
-                all.disabled = false;
-            }
+            if (!select) return;
+            var chosen = showOptions(select, mode());
+            if (!chosen) return;
             var line = rulesForm.querySelector("[data-qa-line]");
             if (line && chosen.hasAttribute("data-line")) line.textContent = chosen.getAttribute("data-line");
             var old = rulesForm.querySelectorAll("[data-qa-warn]");
@@ -174,7 +191,7 @@
                     if (at) button.textContent = words(section.getAttribute("data-w-on"), { rule: name, at: at });
                 } else {
                     var duration = faceText(checkedOf(rulesForm, "pause_minutes"));
-                    button.textContent = chosen === all
+                    button.textContent = chosen.hasAttribute("data-all")
                         ? words(section.getAttribute("data-w-pause-all"), { duration: duration })
                         : words(section.getAttribute("data-w-pause"), { rule: name, duration: duration });
                 }

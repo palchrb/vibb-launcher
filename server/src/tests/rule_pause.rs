@@ -479,3 +479,75 @@ async fn a_pause_past_the_hourly_budget_is_still_told() {
     .unwrap();
     assert_eq!(told, n);
 }
+
+/// Design 123 §4 (QA L1): the parent code's pause of a rule turned on while switched off for the phone is stored on
+/// the rule (its `copy_of` merging into the copy's row) and served with the copy's twin; a copy's id is taken only
+/// for a lock that ran when the pause started, and a positive id the phone doesn't have in force stays unknown.
+#[tokio::test]
+async fn a_turned_on_rule_switched_off_for_the_phone_is_paused() {
+    let (app, id, token) = emma().await;
+    sqlx::query("INSERT INTO device_rule_off (device_id, rule_id) VALUES (?, 2)")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    // The switch-off ended lock 1 (0142) before the pause below; the parent turned Leggetid on again after it.
+    sqlx::query(
+        "UPDATE time_lock_now SET ended_early_at = datetime('now', '-10 minutes') WHERE id = 1",
+    )
+    .execute(&app.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO time_lock_now (id, device_id, rule_id, rule_name, zone, local_date, start_minute, \
+         end_minute, ends_at) VALUES (2, ?, 2, 'Leggetid', 'UTC', date('now'), 0, 1439, \
+         datetime('now', '+1 hour'))",
+    )
+    .bind(id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let now = chrono::Utc::now().timestamp_millis();
+    let until = now + 20 * 60_000;
+    let body = |key: &str, rules: Value| json!({"key": key, "minutes": 30, "started_at_ms": now - 60_000, "rules": rules});
+    let res = post(
+        &app,
+        &token,
+        body(
+            "00000000000000000000000000000001",
+            json!([{"rule_id": -1, "until_ms": until}, {"rule_id": 2, "until_ms": until}]),
+        ),
+    )
+    .await;
+    assert_eq!(
+        res.json(),
+        json!({"accepted": false, "reason": "unknown_rule"}),
+        "lock 1 had ended: no way in"
+    );
+    let res = post(
+        &app,
+        &token,
+        body(
+            "00000000000000000000000000000002",
+            json!([{"rule_id": 2, "until_ms": until}, {"rule_id": -2, "until_ms": until}]),
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    assert_eq!(res.json()["accepted"], true, "{}", res.text());
+    let stored = rows(&app).await;
+    assert_eq!(
+        stored.len(),
+        1,
+        "one row for the rule and its copy: {stored:?}"
+    );
+    assert_eq!(stored[0].1, Some(2));
+    let lifts = app.policy(&token).await["time_policy"]["lifts"].clone();
+    let rule_ids: Vec<i64> = lifts
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| l["rule_id"].as_i64().unwrap())
+        .collect();
+    assert_eq!(rule_ids, [2, -2], "{lifts}");
+}

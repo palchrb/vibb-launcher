@@ -239,7 +239,7 @@ async fn the_picture_opens_its_sheet() {
     // With a picture (Change picture, the remove form): `tests::avatars`.
 }
 
-/// §3.2 item 3, design 93: the three tiles (the rule tiles only with rules that apply), each a link
+/// §3.2 item 3, design 93: the three tiles (design 123: Slå på regel always, Pause regler with something to pause), each a link
 /// to its sheet; no Unlock (the Avansert page's row now) and no Locate (Finn has its own tab); no
 /// auto-saving form on the page but the header's picture (server round C).
 #[tokio::test]
@@ -253,7 +253,12 @@ async fn the_quick_actions_follow_the_phone() {
         .text();
     let quick = group(&html, "quick");
     assert!(quick.contains(">Screen time</span>"), "{quick}");
-    assert!(!quick.contains("open=rules"), "no rule applies: {quick}");
+    // Design 123: Slå på regel always (its sheet says "No rules"); Pause regler only with something to pause.
+    assert!(quick.contains("open=rules&amp;mode=on"), "{quick}");
+    assert!(
+        !quick.contains("open=rules&amp;mode=pause"),
+        "nothing to pause: {quick}"
+    );
     assert!(!quick.contains("start-pause"), "{quick}");
     assert!(!quick.contains("/devices/locate"), "{quick}");
     // The header's picture picker saves itself (server round C, `tests::avatars`); nothing else.

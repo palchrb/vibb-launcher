@@ -621,6 +621,29 @@ async fn a_silent_rules_own_do_not_disturb_is_no_row() {
     assert_eq!(rows(&app, &cookie, id).await, Vec::<String>::new());
     report(&app, &token, state(-7, "none")).await;
     assert_eq!(rows(&app, &cookie, id).await, dnd);
+    // Design 123 QA M1: the silent rule switched off for the phone, then turned on: the copy carries its `silent`.
+    sqlx::query("UPDATE time_lock_now SET ended_early_at = datetime('now')")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO device_rule_off (device_id, rule_id) VALUES (?, ?)")
+        .bind(id)
+        .bind(silent)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO time_lock_now (id, device_id, rule_id, rule_name, zone, local_date, \
+         start_minute, end_minute, ends_at) VALUES (8, ?, ?, 'Skole', 'Europe/Oslo', \
+         '2026-11-16', 720, 1080, '2099-01-01 00:00:00')",
+    )
+    .bind(id)
+    .bind(silent)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    report(&app, &token, state(-8, "priority")).await;
+    assert_eq!(rows(&app, &cookie, id).await, Vec::<String>::new());
 }
 
 /// Design 116 §2.3: an outside service's failure raises a row only on the phones whose features use it - an app on

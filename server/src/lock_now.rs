@@ -448,10 +448,16 @@ pub async fn served_rule_rows(
     let Some(lock) = running(db, device_id, now).await? else {
         return Ok(ServedRules { rows, lock: None });
     };
-    let copy = lock
-        .rule_id
-        .and_then(|id| rows.iter().find(|r| r.id == id))
-        .and_then(|rule| copy_row(&lock, rule));
+    // Design 123 §4: the rule is looked up in the phone's scope, so a rule switched off for the phone before it was
+    // turned on is served as its copy (its own row stays out). Switching it off while it runs ends the lock (0142).
+    let copy = match lock.rule_id {
+        Some(id) => crate::time_rules::phone_rule_rows(db, device_id)
+            .await?
+            .into_iter()
+            .find(|r| r.id == id)
+            .and_then(|rule| copy_row(&lock, &rule)),
+        None => None,
+    };
     let Some(copy) = copy else {
         return Ok(ServedRules { rows, lock: None });
     };
@@ -464,6 +470,45 @@ pub async fn served_rule_rows(
         rows,
         lock: Some(lock),
     })
+}
+
+/// The rules a parent may pause on the phone (design 123 §3.1, §3.3): the effective rows with at least one day, plus
+/// the running on-lock's rule (`lock_rule`) when it isn't among them - in the phone scope's order. Pure; `phone` is
+/// `time_rules::phone_rule_rows`, `effective` `time_rules::effective_rule_rows`.
+pub fn pausable(
+    phone: &[TimeRuleRow],
+    effective: &[TimeRuleRow],
+    lock_rule: Option<i64>,
+) -> Vec<TimeRuleRow> {
+    phone
+        .iter()
+        .filter(|rule| {
+            lock_rule == Some(rule.id)
+                || (crate::time_rules::has_days(rule) && effective.iter().any(|e| e.id == rule.id))
+        })
+        .cloned()
+        .collect()
+}
+
+/// Two of a phone's three sets of rules (design 123 §3.1; the third, the effective ones, is
+/// `time_rules::effective_rule_rows`): the phone scope (what a parent may turn on) and the pausable ones (what a
+/// parent may pause).
+pub struct RuleScopes {
+    pub phone: Vec<TimeRuleRow>,
+    pub pausable: Vec<TimeRuleRow>,
+}
+
+/// [RuleScopes] for the phone at `now` (its running on-lock's rule is pausable).
+pub async fn rule_scopes(
+    db: &SqlitePool,
+    device_id: i64,
+    now: DateTime<Utc>,
+) -> Result<RuleScopes, sqlx::Error> {
+    let effective = crate::time_rules::effective_rule_rows(db, device_id).await?;
+    let phone = crate::time_rules::phone_rule_rows(db, device_id).await?;
+    let lock_rule = running(db, device_id, now).await?.and_then(|l| l.rule_id);
+    let pausable = pausable(&phone, &effective, lock_rule);
+    Ok(RuleScopes { phone, pausable })
 }
 
 /// The rows the lock badge reads (§4.5): the served ones, so the badge names a copy by its rule
@@ -945,10 +990,22 @@ mod tests {
             )
             .unwrap();
         }
+        let (on_demand, off_rule) = on_demand_policies().await;
+        if std::env::var("LOCK_NOW_CONTRACT_WRITE").is_ok() {
+            contract["policy_on_demand"] = on_demand.clone();
+            contract["policy_off_rule"] = off_rule.clone();
+            std::fs::write(
+                path,
+                serde_json::to_string_pretty(&contract).unwrap() + "\n",
+            )
+            .unwrap();
+        }
         let changed =
             "the served policy changed - LOCK_NOW_CONTRACT_WRITE=1, then copy it to the launcher";
         assert_eq!(contract["policy"], policy, "{changed}");
         assert_eq!(contract["policy_end_locked"], end_locked, "{changed}");
+        assert_eq!(contract["policy_on_demand"], on_demand, "{changed}");
+        assert_eq!(contract["policy_off_rule"], off_rule, "{changed}");
         // Ended early or over: nothing is served for it.
         sqlx::query("UPDATE time_lock_now SET ended_early_at = '2026-11-16 11:30:00'")
             .execute(&db)
@@ -956,6 +1013,77 @@ mod tests {
             .unwrap();
         let ended = served_rule_rows(&db, device, now).await.unwrap();
         assert!(ended.lock.is_none() && ended.rows.iter().all(|r| r.id > 0));
+    }
+
+    /// Design 123 §5: `policy_on_demand` and `policy_off_rule`, served at a fixed now from seeded rows - everyone's
+    /// Skole (1), Skjermstopp without days (3, on for the phone) and Lekser (4, scheduled 17:00-18:00 on weekdays,
+    /// switched off for the phone), Emma's bedtime (2); Skjermstopp turned on 15:00-16:00 on Monday 16 November (Oslo,
+    /// lock 2), then, that lock ended, Lekser turned on for the same hour (lock 3): its copy is served, the rule not.
+    async fn on_demand_policies() -> (serde_json::Value, serde_json::Value) {
+        let dir = tempfile::tempdir().unwrap();
+        let db =
+            crate::connect_db(&format!("sqlite://{}", dir.path().join("t.db").display())).await;
+        let device: i64 =
+            sqlx::query_scalar("INSERT INTO devices (name) VALUES ('Emma') RETURNING id")
+                .fetch_one(&db)
+                .await
+                .unwrap();
+        let never = "[null,null,null,null,null,null,null]";
+        let lekser = r#"[{"start":1020,"end":1080},{"start":1020,"end":1080},{"start":1020,"end":1080},{"start":1020,"end":1080},{"start":1020,"end":1080},null,null]"#;
+        add_rules(
+            &db,
+            &[
+                (
+                    1,
+                    None,
+                    "Skole",
+                    "school",
+                    false,
+                    r#"["org.fossify.clock"]"#,
+                    SCHOOL,
+                ),
+                (2, Some(device), "Bedtime", "bedtime", true, "[]", NIGHTS),
+                (3, None, "Skjermstopp", "custom", true, "[]", never),
+                (4, None, "Lekser", "custom", false, "[]", lekser),
+            ],
+        )
+        .await;
+        sqlx::query("INSERT INTO device_rule_off (device_id, rule_id) VALUES (?, 4)")
+            .bind(device)
+            .execute(&db)
+            .await
+            .unwrap();
+        let lock = |id: i64, rule: i64, name: &str| {
+            sqlx::query(
+                "INSERT INTO time_lock_now (id, device_id, rule_id, rule_name, zone, local_date, \
+                 start_minute, end_minute, ends_at) VALUES (?, ?, ?, ?, 'Europe/Oslo', \
+                 '2026-11-16', 900, 960, '2026-11-16 15:00:00')",
+            )
+            .bind(id)
+            .bind(device)
+            .bind(rule)
+            .bind(name.to_string())
+        };
+        lock(2, 3, "Skjermstopp").execute(&db).await.unwrap();
+        let now = crate::display_time::parse_db_utc("2026-11-16 13:50:00").unwrap();
+        let served = |served: ServedRules| {
+            serde_json::to_value(crate::time_rules::TimePolicy {
+                rules: served.policy().unwrap(),
+                daily_budget_minutes: vec![None; 7],
+                lifts: served.with_twins(Vec::new()),
+                request_answers: true,
+                answer: None,
+            })
+            .unwrap()
+        };
+        let on_demand = served(served_rule_rows(&db, device, now).await.unwrap());
+        sqlx::query("UPDATE time_lock_now SET ended_early_at = '2026-11-16 13:55:00' WHERE id = 2")
+            .execute(&db)
+            .await
+            .unwrap();
+        lock(3, 4, "Lekser").execute(&db).await.unwrap();
+        let off_rule = served(served_rule_rows(&db, device, now).await.unwrap());
+        (on_demand, off_rule)
     }
 
     #[test]

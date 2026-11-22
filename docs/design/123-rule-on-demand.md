@@ -1,11 +1,21 @@
 # Design 123: A rule turned on with no schedule ("Slå på regel" always)
 
-Status: design, 2026-11-22. The user's request (2026-11-20): "om ingen rules er satt på på telefonen, så får man ikke
+Status: built (cut scope, below), 2026-11-22. The user's request (2026-11-20): "om ingen rules er satt på på telefonen, så får man ikke
 på den snarveien om å slå på og pause rules? ... kanskje man vil sette på en \"skjermstopp\" pause eller noe deromkring,
 selv om ikke denne er på en egen schedule?" The approved direction (2026-11-22, "Høres bra ut"): **Slå på regel** is
 always shown and its sheet lists every family rule, those off for this phone too; a rule may have **no days** ("Bare
 når du slår den på"), so a parent's own "Skjermstopp" is an ordinary rule; **Pause regler** stays hidden with nothing to
 pause. Not a fixed built-in Skjermstopp (declined).
+
+**Built in a cut scope (2026-11-22).** The user: "Trodde det bare var snakk om å få knappen til å dukke opp også på
+jelly uten at den har aktive regler slått på". Built: Slå på regel always, its sheet listing the phone's scope (§3.1,
+§3.2), "Ingen regler" and "Legg til regel" with no rule in the family, Pause regler hidden with nothing to pause (and
+shown while a pause still runs, QA L4), the server's lookups (§4) with the design QA's fixes (M1, L1-L3, L5, L7-L9),
+`pause_not_in_force`, and `lock_now.json`'s two policies and six cases. **Cut**: every word of §6 but the sheet's own
+("Ingen regler", "Legg til regel" - the existing `device.time.add_rule` - and the refusal `pause_not_in_force`); the
+rule editor and its words stay as they are (a rule with every day empty already saves and reads "Aldri"), and §10's
+Q1 explicit choice is not built. `on_gone` keeps its words ("Regelen gjelder ikke lenger"). Design QA L2 (the kid's
+pause title) is a launcher change and ships with the next launcher RC, the server first.
 
 Builds on design 93 (`docs/design/93-lock-now-quick-actions.md`: the tiles, the Regler sheet, `time_lock_now`, the
 copy with `id = -(lock id)`, `lock_now.json`) and design 98 §4.4 (the parent code's pause on the phone, which maps a

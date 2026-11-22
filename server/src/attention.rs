@@ -468,9 +468,11 @@ pub struct Sources<'a> {
 }
 
 /// Whether the reported Do Not Disturb is the launcher's own for a silent time rule: the report's
-/// `active_rule_id` names a rule whose `silent` is on (a "Slå på nå" copy, a negative id, by its
-/// original's `silent`) and the filter is `priority`, which is what that rule sets. Anything that
-/// can't be read is "no", so the row shows.
+/// `active_rule_id` names a rule whose `silent` is on and the filter is `priority`, which is what that
+/// rule sets. `rules` are the served rows (`lock_now::badge_rows`): a "Slå på nå" copy (a negative id)
+/// is among them with its rule's `silent` (design 123 QA M1: also when the rule is switched off for the
+/// phone); a copy no longer served is read by its original among them. Anything that can't be read is
+/// "no", so the row shows.
 pub async fn dnd_is_rules_own(
     db: &sqlx::SqlitePool,
     device_id: i64,
@@ -489,6 +491,9 @@ pub async fn dnd_is_rules_own(
     else {
         return false;
     };
+    if rules.iter().any(|rule| rule.id == active && rule.silent) {
+        return true;
+    }
     let original = if active < 0 {
         match sqlx::query_scalar::<_, Option<i64>>(
             "SELECT rule_id FROM time_lock_now WHERE id = ? AND device_id = ?",
@@ -569,10 +574,8 @@ pub async fn facts(state: &AppState, device: &Device, connection: ConnectionStat
             Vec::new()
         }
     };
-    // The Do Not Disturb row reads the rules.
-    let rules = crate::time_rules::effective_rule_rows(&state.db, id)
-        .await
-        .unwrap_or_default();
+    // The Do Not Disturb row reads the served rules (a rule turned on now among them).
+    let rules = crate::lock_now::badge_rows(&state.db, id, chrono::Utc::now()).await;
     let dnd_is_rules_own = dnd_is_rules_own(&state.db, id, latest, &rules).await;
     let music_ticked = crate::handlers::music::ticked_entries(&state.db, id)
         .await

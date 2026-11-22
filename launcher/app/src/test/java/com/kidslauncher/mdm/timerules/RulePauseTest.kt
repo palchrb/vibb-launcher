@@ -135,6 +135,16 @@ class RulePauseTest {
         assertEquals(setOf(3L), activeRuleLifts(records, lifts, clocks).ruleIds)
     }
 
+    /** Design 123 QA L2: a copy is named by its rule when that rule locks too, else by itself - next to another rule. */
+    @Test
+    fun `the title names a turned-on rule whose own rule isn't locking`() {
+        val leggetid = TimeRule(id = 2, name = "Leggetid")
+        val copyOfLeggetid = TimeRule(id = -1, name = "Leggetid", copyOf = 2)
+        val skjermstopp = TimeRule(id = -3, name = "Skjermstopp", copyOf = 3)
+        assertEquals(listOf(leggetid), pauseTitleRules(listOf(copyOfLeggetid, leggetid)))
+        assertEquals(listOf(skjermstopp, leggetid), pauseTitleRules(listOf(skjermstopp, leggetid)))
+    }
+
     @Test
     fun `the lengths`() {
         assertEquals(contract["lengths"]!!.jsonArray.map { it.jsonPrimitive.content.toInt() }, RULE_LIFT_MINUTES)

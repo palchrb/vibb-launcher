@@ -48,6 +48,11 @@ class LockNowTest {
         }
         assertEquals(listOf(-1L, 1L, 2L), policy.rules.map { it.id })
         assertEquals(listOf(-1L, 1L, 3L, 2L), policy("policy_end_locked").rules.map { it.id })
+        // Design 123: a rule without days is served as itself, its copy first; a rule switched off for the phone is
+        // served only as its copy.
+        assertEquals(listOf(-2L, 1L, 3L, 2L), policy("policy_on_demand").rules.map { it.id })
+        assertEquals(listOf(-3L, 1L, 3L, 2L), policy("policy_off_rule").rules.map { it.id })
+        assertEquals(listOf(3L, 4L), listOf("policy_on_demand", "policy_off_rule").map { policy(it).rules[0].copyOf })
         // The pause of the turned-on rule and its twin for the copy: the same minutes and expiry.
         val (pause, twin) = policy.lifts
         // Design 100 §14.2: who gave it and when ride along, the twin's the pause's.

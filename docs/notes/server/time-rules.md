@@ -194,6 +194,26 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `seen` isn't the stored end) and `/lock-now/{lock_id}/end`. Each writes `time_lock_now`, `time_lock_now_changed` or
   `time_lock_now_ended` to the security log and nudges; no inbox event, no push. A refusal returns
   `?done=<code>&open=rules&mode=..&rule=..#quick`; the flashes name the rule and its end (the newest row's).
+- **Three sets of rules** (design 123, `docs/design/123-rule-on-demand.md`, built in a cut scope 2026-11-22): the
+  **effective** rows (unchanged: the policy, the badge, counts, the schedule's lines), the **phone scope**
+  (`time_rules::phone_rule_rows`: everyone's and the phone's own **ignoring** `device_rule_off`, then its bedtime;
+  never another phone's own rules) and the **pausable** rows (`lock_now::pausable`: the effective rows with at least
+  one day, `time_rules::has_days`, plus the running on-lock's rule); `lock_now::rule_scopes` reads all three. Turning
+  on (`rules_now`), serving the copy (`served_rule_rows`) and the phone's parent-code pause of a copy look the rule up
+  in the phone scope, so a rule switched off for the phone, or one without days, is turned on as any other: its copy is
+  served, its own row stays out while it is off. Switching it off while it runs still ends it (0142's trigger).
+  `on_gone` is now only a deleted rule. A pause (`lifts::record_lift`, the PWA's and the sheet's) takes a pausable rule
+  only: a deleted one is `gone`, one the phone has that can't lock now `pause_not_in_force` ("{rule} gjelder ikke på
+  {name}", the sheet reopened in pause mode).
+- **The tiles and the sheet** (design 123 §2-§3): Slå på regel is always rendered; its sheet's select lists the phone
+  scope (`data-on`), the pausable ones `data-pause` too and "Alle regler" `data-pause` alone, the default
+  `data-on-default` (the first rule without days, never the bedtime, else the first school rule, else the first);
+  `quick-sheets.js` removes and puts back the options the mode lacks (never `hidden`: iOS Safari shows those greyed).
+  Pause regler is rendered while something can be paused or a pause still runs (`QuickActions::can_pause`); without
+  it the sheet is on mode only (no `m-pause`, no Hva), and when Slå på nå can't be chosen either its reason is a
+  row-note and no button. No rule in the phone's scope: "Ingen regler" and a "Legg til regel" row to
+  `/schedules/rules/new`. Tests: `tests::lock_now` (`a_rule_without_days_or_switched_off_is_turned_on`,
+  `an_on_only_sheet_says_why_it_cant_turn_on`), `jstest/quick-sheets.test.js`.
 
 ## The parent code's pause on the phone (design 98 §4.4, step 7, 2026-11-14, migration `0147_rule_pause.sql`)
 
@@ -202,7 +222,9 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   ([`check`]: 32 lowercase hex key, `RULE_LIFT_MINUTES`, the start within 5 min ahead and 7 days back, 1-8 rules, each
   end after the start and within start + minutes + 5 min) - a `400` otherwise. A rule the phone doesn't have is
   skipped; a design 93 copy's `-(time_lock_now.id)` is written as its rule's row (the twin serves the copy). None left:
-  `unknown_rule`.
+  `unknown_rule`. Since design 123 (QA L1) a positive id must be effective; a copy's id is taken only through a lock
+  that ran when the pause started (5 min slack), its rule looked up in the phone scope, and the copy's `copy_of` merges
+  into that row - so a rule switched off for the phone and turned on is paused, not `unknown_rule`.
 - One `time_lifts` row per rule, `created_by` NULL, `phone_key` the key, `created_at` the pause's start (bounded by
   now), `expires_at` the rule's own end. The key's rows are read first in one `BEGIN IMMEDIATE` and only the missing
   ones inserted (an `ON CONFLICT DO NOTHING` on SQLite's AUTOINCREMENT still uses up an id, which would move the next

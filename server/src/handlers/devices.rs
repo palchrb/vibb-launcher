@@ -2311,7 +2311,7 @@ async fn render_device(
         &state.db,
         id,
         latest.as_ref(),
-        time_rules.as_deref().unwrap_or(&[]),
+        &crate::lock_now::badge_rows(&state.db, id, now).await,
     )
     .await;
     let relock = crate::handlers::window_relock::card(
@@ -2553,16 +2553,32 @@ async fn render_device(
     } else {
         String::new()
     };
+    // Design 123 §3.1: the on-list is the phone's scope, the pause list the pausable rules.
+    let scopes = match crate::lock_now::rule_scopes(&state.db, id, now).await {
+        Ok(scopes) => scopes,
+        Err(err) => {
+            tracing::error!(device_id = id, %err, "can't read the phone's rules");
+            return crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.read_phone");
+        }
+    };
     let done = query
         .get("done")
         .and_then(|code| crate::handlers::lifts::done_flash(code))
         .map(|(group, key, refused)| {
-            let (rule, at) = newest_lock.as_ref().map_or_else(Default::default, |l| {
+            let (mut rule, at) = newest_lock.as_ref().map_or_else(Default::default, |l| {
                 (
                     crate::time_rules::shown_name(lang, &l.rule_name),
                     crate::lock_now::end_words(lang, l.end_minute),
                 )
             });
+            // Design 123 §3.4: a pause refused names the rule the sheet posted.
+            if key == "device.summary.flash.pause_not_in_force" {
+                rule = query
+                    .get("rule")
+                    .and_then(|r| scopes.phone.iter().find(|row| row.id.to_string() == *r))
+                    .map(|row| crate::time_rules::shown_name(lang, &row.name))
+                    .unwrap_or_default();
+            }
             let text = t_params(
                 lang,
                 key,
@@ -2586,6 +2602,8 @@ async fn render_device(
             device_id: id,
             latest: latest.as_ref(),
             rules: time_rules.as_deref().unwrap_or(&[]),
+            on_rules: &scopes.phone,
+            pause_rules: &scopes.pausable,
             query,
             // Design 101 §4.1: a fresh report that says no rule locks (the screen-time lock is none).
             // A rule list that couldn't be read says nothing (fail closed).

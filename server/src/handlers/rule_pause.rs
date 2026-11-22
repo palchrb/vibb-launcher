@@ -112,26 +112,70 @@ pub async fn intake(
         return StatusCode::BAD_REQUEST.into_response();
     }
     let result = async {
-        let rules = crate::time_rules::effective_rule_rows(&state.db, device.id).await?;
+        let effective = crate::time_rules::effective_rule_rows(&state.db, device.id).await?;
+        // A rule turned on now (design 93): its copy's id is -(time_lock_now.id), taken only for a lock that ran when
+        // the pause started (the clock slack either side). Its rule is looked up in the phone's scope (design 123: one
+        // switched off for the phone may be turned on), and the copy's `copy_of` row merges into it; every other
+        // positive id must be one of the effective rules.
+        let started_lo = crate::lock_now::db_time(
+            chrono::DateTime::from_timestamp_millis(
+                body.started_at_ms.saturating_sub(CLOCK_SLACK_MS),
+            )
+            .unwrap_or(now),
+        );
+        let started_hi = crate::lock_now::db_time(
+            chrono::DateTime::from_timestamp_millis(
+                body.started_at_ms.saturating_add(CLOCK_SLACK_MS),
+            )
+            .unwrap_or(now),
+        );
+        let mut through_lock: Vec<crate::time_rules::TimeRuleRow> = Vec::new();
+        let mut phone: Option<Vec<crate::time_rules::TimeRuleRow>> = None;
+        let mut resolved: Vec<(i64, i64)> = Vec::new();
+        for asked in body.rules.iter().filter(|r| r.rule_id < 0) {
+            let copied: Option<Option<i64>> = sqlx::query_scalar(
+                "SELECT rule_id FROM time_lock_now WHERE id = ? AND device_id = ? \
+                 AND created_at <= ? AND ends_at > ? \
+                 AND (ended_early_at IS NULL OR ended_early_at > ?)",
+            )
+            .bind(-asked.rule_id)
+            .bind(device.id)
+            .bind(&started_hi)
+            .bind(&started_lo)
+            .bind(&started_lo)
+            .fetch_optional(&state.db)
+            .await?;
+            let Some(rule_id) = copied.flatten() else {
+                continue;
+            };
+            if phone.is_none() {
+                phone = Some(crate::time_rules::phone_rule_rows(&state.db, device.id).await?);
+            }
+            if let Some(rule) = phone
+                .as_deref()
+                .unwrap_or_default()
+                .iter()
+                .find(|r| r.id == rule_id)
+            {
+                through_lock.push(rule.clone());
+                resolved.push((asked.rule_id, rule_id));
+            }
+        }
         let mut paused: Vec<Paused> = Vec::new();
         for asked in &body.rules {
             let rule_id = if asked.rule_id < 0 {
-                // A rule turned on now (design 93): its copy's id is -(time_lock_now.id).
-                let copied: Option<Option<i64>> = sqlx::query_scalar(
-                    "SELECT rule_id FROM time_lock_now WHERE id = ? AND device_id = ?",
-                )
-                .bind(-asked.rule_id)
-                .bind(device.id)
-                .fetch_optional(&state.db)
-                .await?;
-                match copied.flatten() {
-                    Some(id) => id,
+                match resolved.iter().find(|(copy, _)| *copy == asked.rule_id) {
+                    Some((_, rule_id)) => *rule_id,
                     None => continue,
                 }
             } else {
                 asked.rule_id
             };
-            let Some(rule) = rules.iter().find(|r| r.id == rule_id) else {
+            let Some(rule) = effective
+                .iter()
+                .chain(through_lock.iter())
+                .find(|r| r.id == rule_id)
+            else {
                 continue;
             };
             match paused.iter_mut().find(|p| p.rule_id == rule_id) {

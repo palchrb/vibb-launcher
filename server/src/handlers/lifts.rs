@@ -123,13 +123,21 @@ pub(crate) async fn record_lift(
                         "error.unknown_rule",
                     ));
                 };
-                let rules = match time_rules::effective_rule_rows(&state.db, id).await {
-                    Ok(rules) => rules,
-                    Err(err) => return Err(server_error(lang, err, "failed to read time rules")),
-                };
-                let Some(rule) = rules.into_iter().find(|r| r.id == rule_id) else {
-                    // Deleted, or switched off for the phone, since the page loaded.
-                    return Ok("gone");
+                let scopes =
+                    match crate::lock_now::rule_scopes(&state.db, id, chrono::Utc::now()).await {
+                        Ok(scopes) => scopes,
+                        Err(err) => {
+                            return Err(server_error(lang, err, "failed to read time rules"));
+                        }
+                    };
+                let Some(rule) = scopes.pausable.into_iter().find(|r| r.id == rule_id) else {
+                    // Design 123 §3.4: deleted since the page loaded is `gone`; a rule the phone has that can't
+                    // lock now (switched off for it, or without days and not turned on) is `pause_not_in_force`.
+                    return Ok(if scopes.phone.iter().any(|r| r.id == rule_id) {
+                        "pause_not_in_force"
+                    } else {
+                        "gone"
+                    });
                 };
                 (Some(rule.id), Some(rule.name))
             }
@@ -327,6 +335,8 @@ pub(crate) fn done_flash(code: &str) -> Option<(&'static str, &'static str, bool
         "extra" => ("extra", "device.summary.flash.extra", false),
         "pause" => ("pause", "device.summary.flash.pause", false),
         "gone" => ("pause", "device.summary.flash.gone", true),
+        // Design 123 §3.4: a rule the phone has that can't be paused (switched off, or without days and not on).
+        "pause_not_in_force" => ("pause", "device.summary.flash.pause_not_in_force", true),
         "ended" => ("lifts", "device.summary.flash.ended", false),
         "over" => ("lifts", "device.summary.flash.over", false),
         // Design 100 §14.4: the answer card's answers - "Nei" (the kid sees it on the phone), and a stale card's three

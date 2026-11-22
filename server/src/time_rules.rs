@@ -1006,18 +1006,43 @@ pub async fn effective_rule_rows(
     db: &SqlitePool,
     device_id: i64,
 ) -> Result<Vec<TimeRuleRow>, sqlx::Error> {
+    scoped_rule_rows(db, device_id, true).await
+}
+
+/// Every rule a parent may turn on for a phone (design 123 §3.1, "phone scope"): everyone's and its own **whether or
+/// not switched off for it**, then its bedtime, in [effective_rule_rows]' order. Never another phone's own rules. The
+/// on-list, turning a rule on, serving its copy and the phone's parent-code pause of a copy read it.
+pub async fn phone_rule_rows(
+    db: &SqlitePool,
+    device_id: i64,
+) -> Result<Vec<TimeRuleRow>, sqlx::Error> {
+    scoped_rule_rows(db, device_id, false).await
+}
+
+async fn scoped_rule_rows(
+    db: &SqlitePool,
+    device_id: i64,
+    effective: bool,
+) -> Result<Vec<TimeRuleRow>, sqlx::Error> {
     let mut rows = sqlx::query_as::<_, TimeRuleRow>(
         "SELECT r.* FROM time_rules r WHERE (r.device_id IS NULL OR r.device_id = ?) \
-         AND r.bedtime = 0 AND NOT EXISTS (SELECT 1 FROM device_rule_off o \
-         WHERE o.device_id = ? AND o.rule_id = r.id) \
+         AND r.bedtime = 0 AND (? = 0 OR NOT EXISTS (SELECT 1 FROM device_rule_off o \
+         WHERE o.device_id = ? AND o.rule_id = r.id)) \
          ORDER BY r.device_id IS NOT NULL, r.sort_order, r.id",
     )
     .bind(device_id)
+    .bind(effective)
     .bind(device_id)
     .fetch_all(db)
     .await?;
     rows.extend(bedtime_row(db, device_id).await?);
     Ok(rows)
+}
+
+/// A rule with at least one day's window (design 123: one without days locks only when turned on). Days that don't
+/// read count as days (the rule shows as broken elsewhere).
+pub fn has_days(rule: &TimeRuleRow) -> bool {
+    parse_days(&rule.days_json).map_or(true, |days| days.iter().any(Option::is_some))
 }
 
 /// The rules switched off for a phone (`device_rule_off`): everyone's and its own.

@@ -90,6 +90,14 @@ fun pausePolicyView(policy: TimePolicy?, getStartedMs: Long): PausePolicyView = 
     },
 )
 
+/**
+ * The rules the time-rule screen's title names, of those locking now: a design 93 copy is named by the rule it copies
+ * when that rule locks too (one name, not two), and by itself when it doesn't - a rule turned on that is switched off
+ * for the phone, or one without days (design 123 QA L2).
+ */
+fun pauseTitleRules(rules: List<TimeRule>): List<TimeRule> =
+    rules.filter { it.id > 0 || it.copyOf == null || rules.none { r -> r.id == it.copyOf } }
+
 /** §4.4.2: the offered lengths and, for a chosen length, each rule's own end. */
 data class RulePausePlan(val offered: List<Int>, val rules: List<RulePauseRuleBody>)
 
