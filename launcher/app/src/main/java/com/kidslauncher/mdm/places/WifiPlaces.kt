@@ -117,8 +117,8 @@ private const val CELL_WAIT_MS = 3_000L
 object WifiPlaces {
     /**
      * What a sync's attempt knows ([motion], [movedAtElapsedMs] - design 124's flags) and, for the heartbeat's 4-h cap
-     * try with `motion` `STILL`, the [vouched] fix a zone link may renew (D12); while `motion` is `STILL` or
-     * `STILL_SINCE_TRY`, the [stillVouch] an Apple fix may only renew (design 125 A9, H2). The attempt answers in
+     * try with `motion` `STILL`, the [vouched] fix a zone link may renew (D12); while `motion` is `STILL`
+     * ([appleStillMotion]), the [stillVouch] an Apple fix may only renew (design 125 A9, H2). The attempt answers in
      * [renewed] (the vouched fix re-sent with `still: true`) and [notFresh] (a 2-min fallback fix: reported, never fresh,
      * M2).
      */
@@ -785,7 +785,7 @@ object WifiPlaces {
                     if (!askApple(app, store, snap.await(), ask.movedAtElapsedMs)) return null
                     return open(app)?.let { lookup(app, it, snap.await(), ask.movedAtElapsedMs) }?.takeIf { standsAlone(it, movedSinceFresh) }
                 }
-                val still = ask.motion == Motion.STILL || ask.motion == Motion.STILL_SINCE_TRY
+                val still = appleStillMotion(ask.motion)
                 fun asLocation(fix: LearnedFix): Location? {
                     val vouch = ask.stillVouch?.let { Vouched(it.latitude, it.longitude, if (it.hasAccuracy()) it.accuracy.toDouble() else 0.0) }
                     return when (appleStill(fix, vouch, still)) {
