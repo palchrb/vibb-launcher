@@ -3,7 +3,7 @@ use askama::Template;
 use axum::Form;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::response::{Html, IntoResponse, Response};
+use axum::response::{Html, IntoResponse, Redirect, Response};
 use qrcode::QrCode;
 use qrcode::render::svg;
 use serde::{Deserialize, Serialize};
@@ -174,6 +174,12 @@ struct ProvisionQrTemplate {
     /// Design 114 §5.8: the phone has no Parent PIN - no QR and no setup code, one orange line to the PIN instead.
     no_parent_pin: bool,
     wifi_ssid: String,
+    /// The saved network's name (the user, 2026-11-22), and whether it has a password: an empty password field uses
+    /// it. Never the password itself.
+    saved_ssid: Option<String>,
+    saved_password: bool,
+    /// This server can seal a password (the music key loaded): "Remember" is offered.
+    can_save: bool,
     /// When the code in the QR expires (local, `Zone::until`), once it is made.
     until: Option<String>,
     /// Until when typed codes are paused (local), for the Code group's warning.
@@ -197,6 +203,7 @@ impl ProvisionQrTemplate {
         lang: Lang,
         device: Device,
         settings: &ProvisioningSettings,
+        saved: &Option<SavedWifiRow>,
         auto_reload: bool,
     ) -> Self {
         let zone = Zone::load(&state.db, lang).await;
@@ -225,7 +232,14 @@ impl ProvisionQrTemplate {
             missing_checksum: state.config.launcher_signature_checksum.is_none(),
             launcher_blocks: launcher.as_ref().is_some_and(|line| line.blocks_qr()),
             launcher,
-            wifi_ssid: String::new(),
+            wifi_ssid: saved.as_ref().map(|s| s.ssid.clone()).unwrap_or_default(),
+            saved_ssid: saved.as_ref().map(|s| s.ssid.clone()),
+            // Only a password this server can open is "Saved" (code QA L3).
+            saved_password: saved
+                .as_ref()
+                .and_then(|s| s.sealed.as_deref())
+                .is_some_and(|sealed| open_saved(state, sealed).is_some()),
+            can_save: state.music_key.is_some(),
             until: None,
             paused_until: state
                 .enrollment
@@ -258,11 +272,152 @@ pub struct ProvisionForm {
     wifi_ssid: String,
     #[serde(default)]
     wifi_password: String,
+    /// "Remember" ticked: the network the QR uses is saved, replacing any saved one.
+    #[serde(default)]
+    remember: Option<String>,
+}
+
+/// The saved Wi-Fi network's purpose and context for [MusicKey::seal_text](crate::music_secret::MusicKey::seal_text):
+/// one network for the family.
+const WIFI_PURPOSE: &str = "wifi-v1";
+const WIFI_CONTEXT: &str = "provisioning";
+
+/// The saved network as stored: its name and its password still sealed (`None`: an open network).
+pub(crate) struct SavedWifiRow {
+    ssid: String,
+    sealed: Option<String>,
+}
+
+pub(crate) async fn saved_wifi(db: &sqlx::SqlitePool) -> Result<Option<SavedWifiRow>, sqlx::Error> {
+    let row: Option<(Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT wifi_ssid, wifi_password_sealed FROM provisioning_settings WHERE id = 1",
+    )
+    .fetch_optional(db)
+    .await?;
+    Ok(row.and_then(|(ssid, sealed)| ssid.map(|ssid| SavedWifiRow { ssid, sealed })))
+}
+
+/// Saves `ssid` with `password` sealed (empty: an open network), replacing what was saved, and logs it (the name
+/// only). `Ok(false)` without a key - nothing is stored in the clear - or without the settings row.
+async fn save_wifi(
+    state: &AppState,
+    admin: &str,
+    ssid: &str,
+    password: &str,
+) -> Result<bool, sqlx::Error> {
+    let Some(key) = state.music_key.as_ref() else {
+        return Ok(false);
+    };
+    let sealed = (!password.is_empty())
+        .then(|| key.seal_text(WIFI_PURPOSE, WIFI_CONTEXT, password.as_bytes()));
+    let saved = sqlx::query(
+        "UPDATE provisioning_settings SET wifi_ssid = ?, wifi_password_sealed = ?, \
+         updated_at = datetime('now') WHERE id = 1",
+    )
+    .bind(ssid)
+    .bind(sealed)
+    .execute(&state.db)
+    .await?
+    .rows_affected()
+        > 0;
+    if saved {
+        crate::security::record_security_event(
+            &state.db,
+            "wifi_saved",
+            Some(admin),
+            None,
+            Some(crate::security::Detail::facts(ssid)),
+        )
+        .await;
+    }
+    Ok(saved)
+}
+
+/// The saved password, opened: `None` without a key, or when it was sealed with another key (a restore elsewhere, a
+/// new key file) or was changed.
+fn open_saved(state: &AppState, sealed: &str) -> Option<String> {
+    let key = state.music_key.as_ref()?;
+    key.open_text(WIFI_PURPOSE, WIFI_CONTEXT, sealed)
+        .and_then(|plain| String::from_utf8(plain).ok())
+}
+
+/// The password the QR carries for `ssid`: the typed one, or - left empty under the saved network's name - the saved
+/// one, opened for the QR. `None`: the saved one doesn't open ([open_saved]).
+pub(crate) fn qr_password(
+    state: &AppState,
+    saved: Option<&SavedWifiRow>,
+    ssid: &str,
+    typed: &str,
+) -> Option<String> {
+    let sealed = saved
+        .filter(|saved| typed.is_empty() && saved.ssid == ssid)
+        .and_then(|saved| saved.sealed.as_deref());
+    match sealed {
+        None => Some(typed.to_string()),
+        Some(sealed) => open_saved(state, sealed),
+    }
+}
+
+/// `POST /devices/{id}/provision/wifi/forget`: the saved network is deleted and logged (its name). Back to the QR
+/// group; an unknown phone is a 404, nothing deleted.
+pub async fn forget_wifi(
+    State(state): State<AppState>,
+    lang: Lang,
+    Path(id): Path<i64>,
+    axum::Extension(crate::security::CurrentAdmin(admin)): axum::Extension<
+        crate::security::CurrentAdmin,
+    >,
+) -> Response {
+    let forgot = async {
+        let device: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM devices WHERE id = ?)")
+            .bind(id)
+            .fetch_one(&state.db)
+            .await?;
+        if !device {
+            return Ok(None);
+        }
+        let ssid = saved_wifi(&state.db).await?.map(|saved| saved.ssid);
+        sqlx::query(
+            "UPDATE provisioning_settings SET wifi_ssid = NULL, wifi_password_sealed = NULL, \
+             updated_at = datetime('now') WHERE id = 1",
+        )
+        .execute(&state.db)
+        .await?;
+        Ok::<_, sqlx::Error>(Some(ssid))
+    }
+    .await;
+    match forgot {
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Ok(Some(ssid)) => {
+            if let Some(ssid) = ssid {
+                crate::security::record_security_event(
+                    &state.db,
+                    "wifi_forgotten",
+                    Some(&admin.username),
+                    None,
+                    Some(crate::security::Detail::facts(&ssid)),
+                )
+                .await;
+            }
+            Redirect::to(&format!("/devices/{id}/provision#qr")).into_response()
+        }
+        Err(err) => {
+            tracing::error!(%err, "couldn't forget the saved Wi-Fi network");
+            crate::i18n::error(
+                lang,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "error.save_failed_log",
+            )
+        }
+    }
 }
 
 /// The device and the provisioning settings: 404 for an unknown phone, 500 (logged) when either
 /// can't be read - never a page or a QR code built on made-up defaults.
-async fn load(state: &AppState, id: i64) -> Result<(Device, ProvisioningSettings), StatusCode> {
+async fn load(
+    state: &AppState,
+    id: i64,
+) -> Result<(Device, ProvisioningSettings, Option<SavedWifiRow>), StatusCode> {
     let failed = |err: sqlx::Error| {
         tracing::error!(device_id = id, %err, "couldn't read the Connect page's data");
         StatusCode::INTERNAL_SERVER_ERROR
@@ -280,7 +435,8 @@ async fn load(state: &AppState, id: i64) -> Result<(Device, ProvisioningSettings
     .await
     .map_err(failed)?
     .unwrap_or_default();
-    Ok((device, settings))
+    let saved = saved_wifi(&state.db).await.map_err(failed)?;
+    Ok((device, settings, saved))
 }
 
 /// `GET /devices/{id}/provision`: the two ways to connect. No code is made by looking at the page
@@ -291,11 +447,11 @@ pub async fn provision_form(
     lang: Lang,
     Path(id): Path<i64>,
 ) -> Response {
-    let (device, settings) = match load(&state, id).await {
+    let (device, settings, saved) = match load(&state, id).await {
         Ok(loaded) => loaded,
         Err(status) => return status.into_response(),
     };
-    ProvisionQrTemplate::new(&state, lang, device, &settings, true)
+    ProvisionQrTemplate::new(&state, lang, device, &settings, &saved, true)
         .await
         .page(StatusCode::OK)
 }
@@ -337,31 +493,66 @@ pub async fn provision_qr(
     State(state): State<AppState>,
     lang: Lang,
     Path(id): Path<i64>,
+    axum::Extension(crate::security::CurrentAdmin(admin)): axum::Extension<
+        crate::security::CurrentAdmin,
+    >,
     Form(form): Form<ProvisionForm>,
 ) -> Response {
-    let (device, settings) = match load(&state, id).await {
+    let (device, settings, saved) = match load(&state, id).await {
         Ok(loaded) => loaded,
         Err(status) => return status.into_response(),
     };
     let ssid = form.wifi_ssid.trim();
-    let password = form.wifi_password.trim();
-    let mut page = ProvisionQrTemplate::new(&state, lang, device, &settings, false).await;
+    let typed = form.wifi_password.trim();
+    let mut page = ProvisionQrTemplate::new(&state, lang, device, &settings, &saved, false).await;
 
-    if let Some((field, why)) = wifi_refusal(lang, ssid, password) {
+    if let Some((field, why)) = wifi_refusal(lang, ssid, typed) {
         page.error_field = field;
         page.error = Some(why);
-        page.password_dropped = !password.is_empty();
+        page.password_dropped = !typed.is_empty();
         // The name isn't a secret: typed back (escaped, cut to a sane length) to be shortened.
         page.wifi_ssid = ssid.chars().take(MAX_SSID_BYTES * 4).collect();
         return page.page(StatusCode::BAD_REQUEST);
     }
     page.wifi_ssid = ssid.to_string();
+    let Some(password) = qr_password(&state, saved.as_ref(), ssid, typed) else {
+        tracing::warn!("the saved Wi-Fi password doesn't open with this server's key");
+        page.error_field = "wifi_password";
+        page.error = Some(crate::i18n::t(lang, "devices.qr.password_again"));
+        return page.page(StatusCode::BAD_REQUEST);
+    };
+    // Code QA L3: a saved password that no longer opens is replaced by the one typed under its name.
+    let repair = saved.as_ref().is_some_and(|saved| {
+        saved.ssid == ssid
+            && !typed.is_empty()
+            && saved
+                .sealed
+                .as_deref()
+                .is_some_and(|sealed| open_saved(&state, sealed).is_none())
+    });
+    if (form.remember.is_some() || repair) && !ssid.is_empty() {
+        match save_wifi(&state, &admin.username, ssid, &password).await {
+            Ok(true) => {
+                page.saved_ssid = Some(ssid.to_string());
+                page.saved_password = !password.is_empty();
+            }
+            Ok(false) => {}
+            Err(err) => {
+                tracing::error!(%err, "couldn't save the Wi-Fi network");
+                return crate::i18n::error(
+                    lang,
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "error.save_failed_log",
+                );
+            }
+        }
+    }
     // No code at all without a checksum: there would be no QR code to carry it. Nor while the
     // launcher the QR names would be refused, or isn't checked yet (design 86).
     if page.missing_checksum || page.launcher_blocks || page.no_parent_pin {
         return page.page(StatusCode::OK);
     }
-    let wifi = (!ssid.is_empty()).then(|| (ssid.to_string(), password.to_string()));
+    let wifi = (!ssid.is_empty()).then(|| (ssid.to_string(), password));
     let payload_for = |code: String| setup_payload(&state.config, &settings, wifi.clone(), code);
     // The fit is checked before a code is made (qa-31-s15-code L1): an overflow must never
     // replace the phone's live code. A placeholder of the real length in the code's worst case

@@ -12,7 +12,6 @@
 
 use std::path::Path;
 
-use base64::Engine;
 use serde::Serialize;
 
 use crate::music_secret::MusicKey;
@@ -66,43 +65,18 @@ pub fn load(file: &Path) -> Result<MusicKey, String> {
         })
 }
 
-fn aad(fingerprint: &str, device_id: i64) -> Vec<u8> {
-    format!("kid-pin-v1:{fingerprint}:{device_id}").into_bytes()
-}
+/// The sealed values' purpose (`MusicKey::seal_text`): `kid-pin-v1:<fingerprint>:<device id>`.
+const PURPOSE: &str = "kid-pin-v1";
 
 /// `pin` sealed for `device_id`'s row.
 pub fn seal(key: &MusicKey, device_id: i64, pin: &KidPin) -> String {
-    let (ciphertext, nonce) =
-        key.seal_with(&aad(&key.fingerprint, device_id), pin.as_str().as_bytes());
-    let b64 = base64::engine::general_purpose::STANDARD;
-    format!(
-        "v1:{}:{}:{}",
-        key.fingerprint,
-        b64.encode(nonce),
-        b64.encode(ciphertext)
-    )
+    key.seal_text(PURPOSE, &device_id.to_string(), pin.as_str().as_bytes())
 }
 
 /// The PIN `sealed` holds for `device_id`, or `None`: another key, another phone's row, a changed
 /// byte, another format, or anything but a valid Child PIN inside.
 pub fn open(key: &MusicKey, device_id: i64, sealed: &str) -> Option<KidPin> {
-    let mut parts = sealed.split(':');
-    let (Some("v1"), Some(fingerprint), Some(nonce), Some(ciphertext), None) = (
-        parts.next(),
-        parts.next(),
-        parts.next(),
-        parts.next(),
-        parts.next(),
-    ) else {
-        return None;
-    };
-    let b64 = base64::engine::general_purpose::STANDARD;
-    let plain = key.open_with(
-        &aad(fingerprint, device_id),
-        &b64.decode(ciphertext).ok()?,
-        &b64.decode(nonce).ok()?,
-        fingerprint,
-    )?;
+    let plain = key.open_text(PURPOSE, &device_id.to_string(), sealed)?;
     String::from_utf8(plain)
         .ok()
         .filter(|pin| crate::kid_lock::valid_kid_pin(pin))
@@ -144,6 +118,17 @@ mod tests {
         // Only a Child PIN comes out, whatever was sealed.
         let odd = seal(&key, 7, &KidPin::new("12ab".to_string()));
         assert_eq!(open(&key, 7, &odd), None);
+    }
+
+    /// A Child PIN stored before `MusicKey::seal_text` took over the form keeps opening: this value was made outside
+    /// Rust (Python's `cryptography`, AES-256-GCM, key `[3; 32]`, nonce 0..12, associated data
+    /// `kid-pin-v1:<fingerprint>:7`). Frozen.
+    #[test]
+    fn a_pin_sealed_in_the_stored_form_still_opens() {
+        let key = MusicKey::from_bytes(&[3; 32]);
+        let sealed = "v1:43e62217e76ba150:AAECAwQFBgcICQoL:c4lEfe6nTAD4n0pTHFbCyrxr/L0=";
+        assert_eq!(open(&key, 7, sealed), Some(KidPin::new("4821".to_string())));
+        assert_eq!(open(&key, 8, sealed), None);
     }
 
     #[test]
