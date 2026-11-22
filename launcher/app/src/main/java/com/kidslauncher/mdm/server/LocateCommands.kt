@@ -26,6 +26,7 @@ import androidx.preference.PreferenceManager
 import com.kidslauncher.mdm.NOTIFICATION_CHANNEL_RING
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.RING_NOTIFICATION_ID
+import com.kidslauncher.mdm.places.WifiPlaces
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.zones.ZoneWatch
 import kotlin.coroutines.resume
@@ -89,7 +90,8 @@ object LocateCommands {
      * that had to switch Location on switches it back off afterwards, unless the policy needs it on
      * ([staysOn], [locationStaysOn]). P-L3: a cached or last-known fix older than [maxCachedAgeMs]
      * is never reported ([cachedFixMaxAgeMs]; `null` = any age). [explicit]: the parent's `locate` - a
-     * [LocationAction.FRESH] fix then takes [preciseFix]'s longer, fused-first path.
+     * [LocationAction.FRESH] fix then takes [preciseFix]'s longer, fused-first path. [places]: design 125's attempt
+     * with the `network` provider off (the Wi-Fi places, [WifiPlaces.attempt]); its answers come back in it.
      */
     suspend fun currentLocation(
         context: Context,
@@ -99,6 +101,7 @@ object LocateCommands {
         staysOn: Boolean,
         maxCachedAgeMs: Long?,
         explicit: Boolean = false,
+        places: WifiPlaces.Ask? = null,
     ): Location? {
         // Off: no permission grants, no Location toggle, no LocationManager - nothing at all.
         if (action == LocationAction.NONE) return null
@@ -124,6 +127,8 @@ object LocateCommands {
             admin,
             android.Manifest.permission.ACCESS_BACKGROUND_LOCATION,
         )
+        // Design 125 D17: the Wi-Fi scan's results, read with the fine location above (no neverForLocation any more).
+        QuickControls.selfGrantPermission(context, dpm, admin, android.Manifest.permission.NEARBY_WIFI_DEVICES)
 
         // Diagnostic - unlike every other permission self-granted in this app,
         // ACCESS_BACKGROUND_LOCATION hasn't been confirmed to actually work via Device-Owner
@@ -141,7 +146,7 @@ object LocateCommands {
             QuickControls.setLocationEnabled(dpm, admin, true)
         }
         try {
-            return freshOrLastKnown(context, action, explicit, ::reportable)
+            return freshOrLastKnown(context, action, explicit, ::reportable, places)
         } finally {
             if (locationBackOff(switchedOn, staysOn)) {
                 Log.i(LOG_TAG, "Location back off after the fix")
@@ -178,6 +183,7 @@ object LocateCommands {
         action: LocationAction,
         explicit: Boolean,
         reportable: (Location) -> Boolean,
+        places: WifiPlaces.Ask?,
     ): Location? {
         val lm = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
 
@@ -197,11 +203,19 @@ object LocateCommands {
         // Design 64 step 2, decision 14: a release build ignores a mock fix (`Location.isMock`)
         // and counts it - the fresh one and every last-known candidate; the debug build takes it.
         // Design 64 §4.4, design 124 D9: the heartbeat, a crossing's first fix and the low-battery
-        // fix take the balanced path ([balancedFirst]); the rest the precise one.
-        val requested = if (action == LocationAction.FRESH_BALANCED) {
-            balancedFirst(context, lm)
-        } else {
-            requestFreshFix(context, lm, preciseFix(explicit && action == LocationAction.FRESH))?.takeIf { ZoneWatch.accept(context, it) }
+        // fix take the balanced path ([balancedFirst]); the rest the precise one. Design 125 D14: with the network
+        // provider off (Google's location accuracy off) the Wi-Fi places' attempt instead - a scan beside GPS.
+        val requested = when {
+            places != null && WifiPlaces.networkOff(lm) -> {
+                val path = when {
+                    action == LocationAction.FRESH_BALANCED -> WifiPlaces.Path.HEARTBEAT
+                    explicit -> WifiPlaces.Path.LOCATE
+                    else -> WifiPlaces.Path.CONFIRM
+                }
+                WifiPlaces.attempt(context, lm, path, places) { ZoneWatch.accept(context, it) }
+            }
+            action == LocationAction.FRESH_BALANCED -> balancedFirst(context, lm)
+            else -> requestFreshFix(context, lm, preciseFix(explicit && action == LocationAction.FRESH))?.takeIf { ZoneWatch.accept(context, it) }
         }
         val fresh = requested ?: try {
             val providers = mutableListOf(LocationManager.NETWORK_PROVIDER, LocationManager.GPS_PROVIDER)
@@ -230,9 +244,11 @@ object LocateCommands {
     }
 
     /** Security review P-L3: location went "Off" - the cached (reported) fix and the kept one go, so nothing from
-     * before the switch is ever sent; design 124 D2: and nothing vouches for a fix across an Off. */
+     * before the switch is ever sent; design 124 D2: and nothing vouches for a fix across an Off; design 125 D19: and
+     * the learned Wi-Fi places go. */
     fun clearCachedFix(context: Context) {
         com.kidslauncher.mdm.zones.MotionGate.markMoved()
+        WifiPlaces.clear(context, "off")
         val prefs = PreferenceManager.getDefaultSharedPreferences(context)
         val key = LauncherPreferences.mdm().keys().cachedLocationJson()
         if (prefs.contains(key) || prefs.contains(KEPT_FIX_KEY)) prefs.edit().remove(key).remove(KEPT_FIX_KEY).commit()

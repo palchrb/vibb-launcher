@@ -283,7 +283,12 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   days on - `NO_SENSOR` meanwhile and `zone_watch.motion_sensor: false` (`ZoneWatch.motionTrusted`). Kept across a new
   enrollment: it is the hardware's.
 - **Unchanged**: `locate`, the low-battery fix, crossings, P-L3's age limit (a `still` re-send has none), no new
-  report field, no contract change. The server's weather counts a fix from its `resent_at` too (design 124 D13).
+  report field, no contract change. Since design 125 the fix paths with the network provider off are the Wi-Fi
+  places' (`docs/notes/launcher/wifi-places.md`): a learned fix counts as fresh (not from the 2-min fallback), D7
+  compares only a `gps`/`fused` vouch and never a learned fix, and a zone link may renew the still vouch at the 4-h
+  cap (`ZoneWatch.vouchRenewedMs`). On a GLA-off phone indoor zone arrivals depend on learned fixes of ~100 m or better
+  (design 125 L9). `MotionFlags.movedAtElapsedMs` is the last fire's time (no scan result from before it is used), and
+  the passive feed runs on every Regularly phone (it teaches; the kept slot stays zones-only). The server's weather counts a fix from its `resent_at` too (design 124 D13).
 - Tests: `ZonePlanTest` (the gates, `MotionFlags`' transitions with a fire during an attempt, the heartbeat with `QUIET`
   and D5's evenings beat by beat with the §1 cap gap as a regression row, the back-off, the contradiction rule, D9's
   provider choice and keep-the-better, the glue by source). Not device-tested: the note's §7 on the Jelly Star (our

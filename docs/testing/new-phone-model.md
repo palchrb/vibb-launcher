@@ -35,6 +35,20 @@ Run it with a signed release build (never a debug APK on a kid's phone), on the 
 - [ ] After at least an hour screen-off (deep Doze): a walk of a minute logs `Motion trigger fired`, and the next beat
   logs `Location heartbeat: FIX` with `Fresh fix path=...`. A still evening: the PWA's Locate says "Hasn't moved since",
   and overnight `dumpsys location` shows at most the 4-hour tries (`Location heartbeat: STILL|QUIET` between them).
+- [ ] Wi-Fi places (design 125 §8, a release build, Google Location Accuracy **off**, location Regularly):
+  1. `adb shell dumpsys location | grep -iE "network|satellites"`: the `network` provider disabled; a GPS fix's extras
+     carry `satellites` (no teaching without it, design 125 D1).
+  2. Airplane mode with Wi-Fi on, indoors: `locate` gets nothing from `fused` (then fused may teach, D1; until then it
+     never does).
+  3. A day on Regularly: `adb logcat -s WifiPlaces` shows `taught aps=...` lines; `adb shell dumpsys wifi | grep -A3
+     -i "scan request"` shows the launcher's uid's scans accepted, not throttled.
+  4. Days until the first `vibb_wifi` fix at home (the PWA's newest-fix title); its circle against a GPS fix at the
+     window; the day the zone link forms (`attempt path=renew` on a still night).
+  5. A still night: "Hasn't moved since" through it; the 4-h tries log `attempt path=wifi` or `path=renew`;
+     `loo 3+=... contradictions=...` counts (the leave-one-out check of the 68 % accuracy, D16).
+  6. Wi-Fi off with Location -> Wi-Fi scanning on, then off (no learned fix); location Off from the PWA:
+     `WifiPlaces: cleared (off)`.
+  7. `adb shell dumpsys batterystats me.vibb.launcher`: Wi-Fi scans and GPS time against design 124's day.
 - [ ] A reboot: the phone is back online and locked down without anyone opening it.
 
 ## 3. Screen and font

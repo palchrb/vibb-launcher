@@ -38,6 +38,7 @@ private const val KEY_MOCK_KEYS = "mock_keys_v1"
 private const val KEY_LAST_BEAT = "last_beat_ms"
 private const val KEY_LAST_TRY = "last_try_ms"
 private const val KEY_LAST_FRESH_FIX = "last_fresh_fix_ms"
+private const val KEY_RENEWED = "vouch_renewed_ms"
 private const val KEY_BUDGET = "series_budget_v1"
 private const val KEY_CONTRADICTIONS = "motion_contradictions_v1"
 private const val KEY_DISTRUST_UNTIL = "motion_distrust_until_ms"
@@ -104,20 +105,21 @@ object ZoneWatch {
     /**
      * The enforced policy's zone watch, after every sync's `apply()` (and so at the first sync of
      * every process start - decision 10): with the watch on ([zonesOn]) the fences, the passive
-     * feed and the motion sensor kept armed for the series; anything else turns the fences and the
-     * feed off and drops a kept fix (Q-2). The motion sensor follows the still rule ([stillOn],
-     * design 124 D2): armed on every Regularly phone - at every process's first sync -, stopped
-     * (and moved) only when not Regularly. The pause and the override change nothing (decision 12:
-     * locating isn't a restriction). Never throws.
+     * feed's kept slot and the motion sensor kept armed for the series; anything else turns the fences
+     * off and drops a kept fix (Q-2). The motion sensor and the passive feed follow the still rule
+     * ([stillOn], design 124 D2, design 125 D3): on for every Regularly phone - at every process's first
+     * sync -, stopped (and moved) only when not Regularly. The pause and the override change nothing
+     * (decision 12: locating isn't a restriction). Never throws.
      */
     fun apply(context: Context, policy: PolicyResponse?) {
         val app = context.applicationContext
         try {
             val on = zonesOn(app, policy)
+            val still = stillOn(app, policy)
             val zones = if (on) policy?.locationPolicy?.zones.orEmpty() else emptyList()
             ZoneFences.sync(app, zones, watching = on)
-            PassiveFixes.update(app, on = on)
-            if (stillOn(app, policy)) MotionGate.watch(app, zones = on) else MotionGate.stop(app)
+            PassiveFixes.update(app, on = still, keep = on)
+            if (still) MotionGate.watch(app, zones = on) else MotionGate.stop(app)
             if (!on) {
                 ZoneSeries.stop(app)
                 LocateCommands.clearKept(app)
@@ -130,8 +132,9 @@ object ZoneWatch {
     /**
      * Not managed any more, or a new enrollment (design 64 step 2, the coordinator's decision 3):
      * every fence of ours removed, the passive feed, the motion sensor and the series stopped, the
-     * queue and the kept fix emptied - nothing of the old setup keeps watching or waits to be sent.
-     * Cheap when there is nothing (no record, nothing running). Never throws.
+     * queue and the kept fix emptied, the learned Wi-Fi places cleared (design 125 D19) - nothing of the
+     * old setup keeps watching or waits to be sent. Cheap when there is nothing (no record, nothing
+     * running). Never throws.
      */
     fun release(context: Context) {
         val app = context.applicationContext
@@ -142,6 +145,7 @@ object ZoneWatch {
             ZoneSeries.stop(app)
             clearQueue(app)
             LocateCommands.clearKept(app)
+            com.kidslauncher.mdm.places.WifiPlaces.clear(app, "unenrol")
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Zone watch release failed", e)
         }
@@ -160,7 +164,7 @@ object ZoneWatch {
                 prefs(app).edit()
                     .remove(KEY_FENCES).remove(KEY_QUEUE).remove(KEY_LAST_BEAT)
                     .remove(KEY_MOCK_IGNORED).remove(KEY_MOCK_LAST).remove(KEY_MOCK_KEYS)
-                    .remove(KEY_LAST_FRESH_FIX).remove(KEY_LAST_TRY).remove(KEY_BUDGET)
+                    .remove(KEY_LAST_FRESH_FIX).remove(KEY_LAST_TRY).remove(KEY_BUDGET).remove(KEY_RENEWED)
                     .commit()
             }
         } catch (e: Exception) {
@@ -251,6 +255,14 @@ object ZoneWatch {
 
     fun stampFreshFix(context: Context, fixTimeMs: Long) {
         prefs(context).edit().putLong(KEY_LAST_FRESH_FIX, fixTimeMs).commit()
+    }
+
+    /** Wall time of the last zone-link renewal of the still vouch (design 125 D12; 0 = none): the still skip counts its
+     * 4 h from the later of it and [lastFreshFixMs] - the vouched fix itself stays the last fresh one. */
+    fun vouchRenewedMs(context: Context): Long = prefs(context).getLong(KEY_RENEWED, 0L)
+
+    fun stampVouchRenewed(context: Context, nowMs: Long) {
+        prefs(context).edit().putLong(KEY_RENEWED, nowMs).commit()
     }
 
     // --- A sensor that lies (design 124 D7) ---

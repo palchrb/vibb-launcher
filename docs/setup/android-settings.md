@@ -30,6 +30,14 @@ kid's Sound row is Android's vibrate mode: it vibrates as long as these are on. 
 still turn its vibration off - check the messaging apps the kid uses (Android Settings -> Apps -> the app ->
 Notifications), also during a pause.
 
+## Wi-Fi scanning stays on (design 125)
+
+Settings -> Location -> Location services -> **Wi-Fi scanning**: on (Android's default). With Google Location Accuracy
+off, Vibb learns its places from the Wi-Fi networks heard beside its own GPS fixes and finds them again indoors
+(`docs/notes/launcher/wifi-places.md`). Scans need this switch while Wi-Fi itself is off; a Device Owner can't set it
+(`WIFI_SCAN_ALWAYS_AVAILABLE` isn't among `setGlobalSetting`'s keys). Off: no learned fix while Wi-Fi is off, GPS as
+before. Check: `adb shell settings get global wifi_scan_always_enabled` -> `1`.
+
 ## "Modify system settings" for Vibb One
 
 Design 114's setup step `write_settings`: the phone's setup flow (after the QR, or parent Settings › Oppsett) opens Android's page for it.

@@ -163,6 +163,9 @@ class SealedPrefs(private val box: SecretBox, private val log: (String, Throwabl
 /** The sealed fields on this phone, under [SECRETS_KEY_ALIAS]. */
 object Secrets {
     val prefs = SealedPrefs(KeystoreSecretBox) { message, error -> Log.w("SealedPrefs", message, error) }
+
+    /** The same key for a sealed file (design 125 D18: the Wi-Fi places' table, sealed whole). */
+    val box: SecretBox get() = KeystoreSecretBox
 }
 
 /**

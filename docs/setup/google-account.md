@@ -24,7 +24,10 @@ for recovery and 2-Step Verification. The kid doesn't know the password.
 - **Google Location Accuracy** (on the phone: Settings -> Location -> Location services): the parent's choice, a
   privacy trade-off. On, Vibb's every-N-minutes fix asks Wi-Fi/cell first (design 124 D9: cheaper, and the only
   source indoors; Google's location service sees the Wi-Fi networks around the phone). Off, every fix is GPS, which
-  usually fails indoors and at night, and zones' fences hear only GPS fixes.
+  usually fails indoors and at night, and zones' fences hear only GPS fixes - until the phone has learned its places:
+  since design 125 Vibb then remembers the Wi-Fi networks heard beside its own good GPS fixes and finds them again
+  indoors (`vibb_wifi` on Locate), all on the phone, nothing to Google. It works only where the phone has had GPS
+  before, and needs Location -> Wi-Fi scanning on (`android-settings.md`).
 - **Payments**: no payment method (pay.google.com -> Payment methods: none). A paid app is bought
   with a Play gift card on this account, never with a card on file.
 

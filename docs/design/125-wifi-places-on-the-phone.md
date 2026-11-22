@@ -1,6 +1,11 @@
 # 125 - Wi-Fi places, learned on the phone
 
-Status: **revision 3 - ready to build**, 2026-11-22. Asked by the user: "kunne egentlig tenkt meg å kunne beholde
+Status: **revision 3; step 1 (L1) built** on branch `wifi-places-build`, 2026-11-22, awaiting code QA; step 2 not
+started. What the build settled (`docs/notes/launcher/wifi-places.md`): D9's range term is `0.25 x rangeMed`, tuned in
+the synthetic town (0.5 gave a median accuracy of 106 m against a median error of 15 m); a network's weight is shared
+by its devices (a moved mesh's nodes outvoted the town otherwise); every own GPS try of this design is a stream paired
+within a second (a passive fix +-30 s); `locate` with GLA off streams `gps` directly; the serving cell pairs within
+30 s with no 40 m cap. Asked by the user: "kunne egentlig tenkt meg å kunne beholde
 innendørs posisjon vha google, men finnes det noen foss alternativer eller noe annet vi kan gjøre for å sikre at vi ikke
 er identifiserbare for google?", then "Ja sett i gang et wifi selvlæringsdesign" and "vil den bare lære wifi eller også
 cell towers?". Revision 2 applies the user's answers (§11: Q1 yes, but "vi må jo passe på at vi ikke nå legger opp til
