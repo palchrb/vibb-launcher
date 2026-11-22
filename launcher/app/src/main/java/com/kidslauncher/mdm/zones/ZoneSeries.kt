@@ -135,10 +135,16 @@ object ZoneSeries {
         // fix at once.
         LocateCommands.keepFix(context, location)
         val fresh = freshOwnFix(location.time, requestedAt)
+        // The moving car (design 124): measured from the reported fix while it is the last fresh one;
+        // the checks come at most CHECK_MAX_DELAY_MS apart.
+        val lastFresh = previous?.takeIf { it.timeMs == ZoneWatch.lastFreshFixMs(context) }
         if (fresh) ZoneWatch.stampFreshFix(context, location.time)
         Log.i(LOG_TAG, "Series check: $verdict")
         if (verdict == CheckVerdict.KEEP) {
-            if (fresh) MotionGate.afterTry(context, firesAtStart, location.time, heartbeat = false, nowMs = requestedAt)
+            if (fresh) {
+                val moving = fixMoving(if (location.hasSpeed()) location.speed else null, fix, lastFresh, CHECK_MAX_DELAY_MS)
+                MotionGate.afterTry(context, firesAtStart, location.time, heartbeat = false, nowMs = requestedAt, moving = moving)
+            }
             return
         }
         // A side change is motion (F-3): no `still` until the confirm's fix arms the gate again.

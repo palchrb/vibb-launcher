@@ -278,40 +278,68 @@ fun reportStill(stillOn: Boolean, action: com.kidslauncher.mdm.server.LocationAc
  * [movedSinceTry]: since our last heartbeat try; [fires] counts every fire and mark, so an attempt
  * compares it with the count read before its LocationManager call (M1: a fire during the attempt is
  * never erased); [stillSinceMs]: when the phone last became still - a fresh fix's time, or the first
- * failed try after a move -, what [stillBackoffMs] counts from.
+ * failed try after a move -, what [stillBackoffMs] counts from; [movingAtFresh]: the last fresh fix
+ * says the phone was moving ([fixMoving]) - a car the sensor may not hear, so no `STILL` or `QUIET`
+ * until a fresh fix at rest.
  */
 data class MotionFlags(
     val movedSinceFresh: Boolean = true,
     val movedSinceTry: Boolean = true,
     val fires: Int = 0,
     val stillSinceMs: Long = 0,
+    val movingAtFresh: Boolean = false,
 ) {
     /** A fire, or other evidence of a move (a crossing, a side change, Off, the anchor gone). */
     fun moved(): MotionFlags = copy(movedSinceFresh = true, movedSinceTry = true, fires = fires + 1)
 
     /**
      * After one of our own attempts begun at [firesAtStart]: with a fire since, nothing clears. A
-     * genuinely fresh fix ([freshFixMs], its time; `null` = none) clears both, whatever asked for it.
-     * A failure clears [movedSinceTry] only after the heartbeat's own `FIX` ([heartbeat]; L7: a
-     * failed `locate`, low-battery or crossing fix clears nothing) - the phone still from [nowMs]
-     * when it had moved before.
+     * genuinely fresh fix ([freshFixMs], its time; `null` = none) clears both, whatever asked for it,
+     * and [moving] says whether it was taken on the move. A failure clears [movedSinceTry] only after
+     * the heartbeat's own `FIX` ([heartbeat]; L7: a failed `locate`, low-battery or crossing fix
+     * clears nothing) - the phone still from [nowMs] when it had moved before.
      */
-    fun afterTry(firesAtStart: Int, freshFixMs: Long?, heartbeat: Boolean, nowMs: Long): MotionFlags = when {
+    fun afterTry(firesAtStart: Int, freshFixMs: Long?, heartbeat: Boolean, nowMs: Long, moving: Boolean = false): MotionFlags = when {
         fires != firesAtStart -> this
-        freshFixMs != null -> copy(movedSinceFresh = false, movedSinceTry = false, stillSinceMs = freshFixMs)
+        freshFixMs != null -> copy(movedSinceFresh = false, movedSinceTry = false, stillSinceMs = freshFixMs, movingAtFresh = moving)
         !heartbeat || !movedSinceTry -> this
         else -> copy(movedSinceTry = false, stillSinceMs = nowMs)
     }
 
     /** The [Motion]: [sensor] - the phone has one and trusts it (D7); [anchor] - the anchor service
-     * runs, which keeps our UID out of the idle state the sensor service skips (D4, D8). */
+     * runs, which keeps our UID out of the idle state the sensor service skips (D4, D8). A last fresh
+     * fix on the move is `MOVED` whatever the trigger said: every due beat fixes. */
     fun motion(sensor: Boolean, anchor: Boolean): Motion = when {
         !sensor -> Motion.NO_SENSOR
-        !anchor || movedSinceTry -> Motion.MOVED
+        !anchor || movedSinceTry || movingAtFresh -> Motion.MOVED
         movedSinceFresh -> Motion.STILL_SINCE_TRY
         else -> Motion.STILL
     }
 }
+
+/** A fresh fix this fast is on the move (design 124, the moving car): walking pace is about 1.4 m/s. */
+const val MOVING_SPEED_MPS = 1.5f
+
+/** Without a speed, a fresh fix further than this and both accuracies from the last one is on the move. */
+const val MOVING_SLACK_M = 200.0
+
+/**
+ * Design 124, the moving car: Android counts "sitting in a moving car" as significant motion, but a
+ * vendor's sensor may miss a smooth drive once re-armed mid-trip, and `STILL` would then vouch for a
+ * fix on the road for up to 4 h. A genuinely fresh fix ([fix]) says the phone is moving when its speed
+ * ([speedMps], `null` = none) is over [MOVING_SPEED_MPS]; without a speed, when it lies further than
+ * [MOVING_SLACK_M] and both accuracies from the previous fresh fix ([previousFresh]) taken at most
+ * [windowMs] (the interval) before it.
+ */
+fun fixMoving(speedMps: Float?, fix: QueuedFix, previousFresh: QueuedFix?, windowMs: Long): Boolean {
+    if (speedMps != null && speedMps.isFinite()) return speedMps > MOVING_SPEED_MPS
+    val previous = previousFresh ?: return false
+    if (fix.timeMs - previous.timeMs !in 0..windowMs) return false
+    fun accuracy(q: QueuedFix) = q.accuracy?.takeIf { it.isFinite() && it >= 0f } ?: 0f
+    val slack = MOVING_SLACK_M + accuracy(previous) + accuracy(fix)
+    return distanceM(previous.latitude, previous.longitude, fix.latitude, fix.longitude) > slack
+}
+
 
 /** What an attempt reads before its LocationManager call, together (M1): the motion, the fire count
  * it compares after, and [MotionFlags.stillSinceMs] for the back-off. */

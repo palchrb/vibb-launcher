@@ -41,6 +41,7 @@ import com.kidslauncher.mdm.zones.extraLocations
 import com.kidslauncher.mdm.zones.Motion
 import com.kidslauncher.mdm.zones.freshOwnFix
 import com.kidslauncher.mdm.zones.heartbeatDue
+import com.kidslauncher.mdm.zones.fixMoving
 import com.kidslauncher.mdm.zones.motionContradiction
 import com.kidslauncher.mdm.zones.reportStill
 import com.kidslauncher.mdm.zones.syncLocationAction
@@ -929,8 +930,10 @@ private suspend fun currentLocationReport(
     }
     // P-L3: a cached fix older than the interval is never reported - but the still heartbeat's re-send (Q-3).
     val still = reportStill(stillOn, action, motion, now, lastFreshFix)
-    // D7: what a fix taken while the gate says STILL is checked against - the fix it vouched for (QA L2).
-    val vouched = if (motion == Motion.STILL && action.fresh) LocateCommands.cachedQueued()?.takeIf { it.timeMs == lastFreshFix } else null
+    // The last fresh fix, while it is the reported one (QA L2): what D7 checks a fix taken while the gate says STILL
+    // against, and what the moving-car rule measures a fix without a speed from.
+    val lastFreshQueued = if (motionNow != null && action.fresh) LocateCommands.cachedQueued()?.takeIf { it.timeMs == lastFreshFix } else null
+    val vouched = lastFreshQueued?.takeIf { motion == Motion.STILL }
     // The parent's `locate` waits up to EXPLICIT_FIX_BOUND_MS here, under the sync mutex: rare and asked for, and its
     // fix goes into this report; every other fix keeps its 15 s (preciseFix).
     val location = LocateCommands.currentLocation(
@@ -940,11 +943,17 @@ private suspend fun currentLocationReport(
         // A genuinely fresh fix of our own (not the cached or an old last-known fallback, Q-6).
         val fresh = location?.takeIf { freshOwnFix(it.time, now) }
         if (fresh != null) ZoneWatch.stampFreshFix(context, fresh.time)
+        // The moving car: a fix on the move vouches for nothing - every due beat fixes until one at rest.
+        val intervalMs = (policy ?: LocationPolicy()).intervalMinutes.coerceAtLeast(MIN_LOCATION_INTERVAL_MINUTES) * 60_000L
+        val moving = fresh != null &&
+            fixMoving(if (fresh.hasSpeed()) fresh.speed else null, fresh.toQueued(), lastFreshQueued, intervalMs)
         // Only the heartbeat's own try clears "moved since try" on a failure (L7).
-        val held = MotionGate.afterTry(context, motionNow.fires, fresh?.time, heartbeat = beat == Heartbeat.FIX, nowMs = now)
+        val held = MotionGate.afterTry(context, motionNow.fires, fresh?.time, heartbeat = beat == Heartbeat.FIX, nowMs = now, moving = moving)
         // A move during the attempt explains the distance: no contradiction then (QA L1).
         if (held && fresh != null && motionContradiction(vouched, fresh.toQueued())) ZoneWatch.noteContradiction(context, now)
-        if (beat == Heartbeat.FIX) Log.i(ZONE_LOG_TAG, "Location heartbeat: FIX result=${if (fresh != null) "fresh" else "none"}")
+        if (beat == Heartbeat.FIX || moving) {
+            Log.i(ZONE_LOG_TAG, "Location heartbeat: ${beat ?: "forced"} result=${if (fresh != null) "fresh" else "none"} moving=$moving")
+        }
     }
     location ?: return LocationOutcome(action, null, null, null)
     val accuracy = if (location.hasAccuracy()) location.accuracy else null

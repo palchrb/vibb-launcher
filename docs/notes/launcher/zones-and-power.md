@@ -259,8 +259,14 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   `MotionGate.afterTry`: with the count moved nothing clears; a genuinely fresh fix (any path) clears both; a failure
   clears `movedSinceTry` only after the heartbeat's own `FIX` (L7). The series check does the same around its fix.
 - **`motion`** (D4): `NO_SENSOR` without the sensor or while distrusted; `MOVED` while the anchor isn't running
-  (`CommandListenerService.isRunning`: our UID may go idle, and the sensor service skips idle UIDs) or `movedSinceTry`;
-  `STILL_SINCE_TRY` when only `movedSinceFresh`; else `STILL`.
+  (`CommandListenerService.isRunning`: our UID may go idle, and the sensor service skips idle UIDs), `movedSinceTry`
+  or `movingAtFresh`; `STILL_SINCE_TRY` when only `movedSinceFresh`; else `STILL`.
+- **The moving car** (the user's question before the merge): Android counts sitting in a moving car as significant
+  motion, but a vendor's sensor re-armed mid-trip may miss a smooth drive. A genuinely fresh fix on the move
+  (`fixMoving`: its speed over 1.5 m/s, `MOVING_SPEED_MPS`; without a speed, further than 200 m + both accuracies from
+  the last fresh fix taken within the interval - the series' checks: within `CHECK_MAX_DELAY_MS`) sets
+  `movingAtFresh`, so the gate stays `MOVED` - no `STILL`, no `QUIET`, every due beat fixes - until a fresh fix at
+  rest. Logged `Location heartbeat: ... moving=true`.
 - **The heartbeat** (D5): `NOT_DUE`; `KEPT`; `STILL` (no fix, `still: true`) while `STILL` and the last fresh fix is
   under 4 h old; `QUIET` (no fix, no `still`: the PWA shows the fix's own age) while `STILL`/`STILL_SINCE_TRY` and the
   last try is younger than `stillBackoffMs` = (last try - `stillSinceMs`) within the interval and 4 h; else `FIX`. The

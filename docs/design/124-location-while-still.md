@@ -128,6 +128,7 @@ only when `fences > 0`. One reader ignores `resent_at`: the weather's fix (`hand
 | A fire during the 15-60 s attempt | the counter keeps it moved | M1 |
 | Evening walk home, then the indoor try fails | `QUIET` with back-off, no vouch; the PWA shows the last good fix's age | ~6 tries a night instead of 18 |
 | In a car, phone "still" in a pocket | the walk to the car fires the one-shot; AOSP's HAL definition counts "sitting in a moving car, coach or train" | if missed: the cap and D7 |
+| Moving car, sensor silent (a vendor's sensor re-armed mid-trip misses a smooth drive) | a fresh fix on the move - speed over 1.5 m/s, or without a speed more than 200 m + both accuracies from the last fresh fix within the interval (`fixMoving`) - leaves the gate `MOVED`: no `STILL`, no `QUIET`, every due beat fixes | until a fresh fix at rest (added before the merge, the user's question) |
 | Phone left at a friend's | still: "Hasn't moved since" is true for 4 h, then the age | - |
 | Clock set back | negative ages count as due / old, as today | - |
 | Zones crossing | `markMoved`, fixes as today | - |
