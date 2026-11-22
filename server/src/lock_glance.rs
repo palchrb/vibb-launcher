@@ -15,8 +15,8 @@ use serde::Serialize;
 use sqlx::SqlitePool;
 
 /// Ticked for every phone by the migration and the `devices_get_lock_glance_default` trigger (the
-/// SQL spells it; the tests check the two agree).
-#[cfg(test)]
+/// SQL spells it; the tests check the two agree). Also the package "Add from the family" checks before the
+/// Message button follows the contact into Element X (`calls::element_x_follows`).
 pub const ELEMENT_X: &str = "io.element.android.x";
 
 /// `lock_glance.sms`'s three words (design 82 D3).
