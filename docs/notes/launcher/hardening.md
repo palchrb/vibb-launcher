@@ -77,18 +77,21 @@ them), all whether or not the phone is managed in hardening's sense (the parent'
   `DISALLOW_CONFIG_VPN` holds while any shape runs (`vpnConfigLocked`), so it is lifted with them.
 - `DISALLOW_CELLULAR_2G` while the policy's `block_2g` is true (design 126 A5, on by default; a missing key sets
   nothing): `MobileNetworkRuntime.applyCellular2g`, written only on a change, right after the settings lock. Lifted by
-  the standing rule (its failure is "no network", which only an on-phone lift can undo) and - option (b), pending the
-  user's answer to design 126 §11 - **abroad by itself**: `cellular2gBlocked(value, overrideActive, kept)`, the abroad
-  lift alone in `abroadLifts2g` (option (a) is that function answering `false`). `kept` is `where2gKept`: `whereOf`'s
+  the standing rule (its failure is "no network", which only an on-phone lift can undo) and - only while the policy's
+  `allow_2g_abroad` is true ("Tillat 2G i utlandet", off by default; the user's decision of 2026-11-22: 2G stays blocked
+  abroad too unless the parent opts in; a missing key is off) - **abroad by itself**:
+  `cellular2gBlocked(value, overrideActive, kept, allowAbroad)`, the abroad lift alone in `abroadLifts2g(kept,
+  allowAbroad)`. `kept` is `where2gKept`: `whereOf`'s
   answer when home or abroad, the last kept one through `unknown` (a 2G-only area with 2G blocked is out of service);
   only a real registration moves it - no fallback on the cells' country, which a fake foreign-coded cell could use to
   lift the block (code QA H1; the cost: a phone crossing straight into a 2G-only area abroad has no ordinary calls until
   it registers on a non-2G network). Stored in device-protected prefs (`mobile_network_2g`, `block_2g_where`), so a
-  reboot abroad keeps it. While the switch is on a `TelephonyCallback.ServiceStateListener` (the launcher's first) on
+  reboot abroad keeps it. While both switches are on (`listens2g`; with the abroad lift off nothing depends on where the
+  phone is) a `TelephonyCallback.ServiceStateListener` (the launcher's first) on
   the default data SIM - registered again when that changes, on every pass and on `ActiveDataSubscriptionIdListener`
   - re-checks between passes and asks for a sync when the restriction changed. The pass, the listener and the re-check
   decide and write under one lock (`lock2g`); a re-block within 2 min of an abroad lift waits out the 2 min
-  (`reblockWaitMs`, a border flip-flop). The report's `mobile_data.cellular_2g`: `blocked`, `abroad`, `lifted`, `off` -
+  (`reblockWaitMs`, a border flip-flop) - not when the parent turned the abroad lift off, which blocks at once. The report's `mobile_data.cellular_2g`: `blocked`, `abroad`, `lifted`, `off` -
   what the last decision applied (`cellular2gState`), never whether the modem obeys.
 
 The rules are pure (`MobileNetwork.kt`), pinned by `mobile_network.json` (`MobileNetworkTest`).

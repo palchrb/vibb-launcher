@@ -561,6 +561,7 @@ pub(crate) async fn build_policy(
         apps_mobile: crate::mobile_network::apps_choice(&policy.apps_mobile).to_string(),
         mobile_settings_locked: policy.mobile_settings_locked,
         block_2g: policy.block_2g,
+        allow_2g_abroad: policy.allow_2g_abroad,
         status_heartbeat: state.config.status_heartbeat,
         status_heartbeat_fields: crate::status_heartbeat::HEARTBEAT_FIELDS,
         status_gzip: true,

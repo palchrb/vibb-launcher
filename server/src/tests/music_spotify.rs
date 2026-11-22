@@ -206,7 +206,7 @@ async fn binding(app: &TestApp, device: i64) -> Option<i64> {
 /// level for Meldinger 0135. Design 83's MMS addresses 0137. Design 85's avatar tones 0138. The
 /// catalog release's versionCode 0139. Design 87's app logos 0140. Design 90's update holds 0141. Design 93's rule
 /// turned on now 0142. Mobilnett (designs 94/95) 0143. Design 95's heartbeat report 0144. Design 97's abroad 0145. Design 98's
-/// airplane mode 0146 and its parent-code rule pause 0147. Design 99's Snarveier 0148. Design 108's app push 0152. Design 108b's gateway mark and VAPID refusal stamp 0153. Design 108c's refusal cause, run starts, delivery samples 0154. The catalog's kept app logo 0155. Design 115's held app push 0156. Design 114's setup status 0157. The contact's Matrix ID 0161 and the saved Wi-Fi network 0162. Design 125's Apple Wi-Fi lookup 0163. An install failure's reason 0164 (upstream review 2026-11-20). Design 127 step 2's app denials 0166.
+/// airplane mode 0146 and its parent-code rule pause 0147. Design 99's Snarveier 0148. Design 108's app push 0152. Design 108b's gateway mark and VAPID refusal stamp 0153. Design 108c's refusal cause, run starts, delivery samples 0154. The catalog's kept app logo 0155. Design 115's held app push 0156. Design 114's setup status 0157. The contact's Matrix ID 0161 and the saved Wi-Fi network 0162. Design 125's Apple Wi-Fi lookup 0163. An install failure's reason 0164 (upstream review 2026-11-20). Design 127 step 2's app denials 0166. Design 126 A5's "Tillat 2G i utlandet" 0167.
 #[test]
 fn migrations_from_73_in_order() {
     let versions: Vec<(i64, String)> = crate::MIGRATOR
@@ -310,6 +310,7 @@ fn migrations_from_73_in_order() {
             (164, "install failure reason".to_string()),
             (165, "block 2g".to_string()),
             (166, "app denials".to_string()),
+            (167, "allow 2g abroad".to_string()),
         ],
         "0073 (design 30), 0074 (Spotify), 0075 (the clock format), 0076 (the softer \
          wallpapers), 0077 (Vibb One), 0078 (design 35), 0079 (the custom DNS server), 0080 \

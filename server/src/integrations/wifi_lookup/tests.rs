@@ -219,11 +219,19 @@ async fn the_route_answers_the_contract() {
                         third
                     }
                 );
-                assert_eq!(one.0, StatusCode::OK, "{case}: the first");
-                assert!(
-                    two.0 == StatusCode::OK || two.0 == StatusCode::TOO_MANY_REQUESTS,
-                    "{case}: the second {two:?}"
-                );
+                // Which of the two takes the gate first is the scheduler's (a slow runner let the second win,
+                // 2026-11-22): one of them is answered, the other answered or busy.
+                let answered = [&one.0, &two.0]
+                    .iter()
+                    .filter(|s| ***s == StatusCode::OK)
+                    .count();
+                assert!(answered >= 1, "{case}: neither answered {one:?} {two:?}");
+                for (n, s) in [("first", &one.0), ("second", &two.0)] {
+                    assert!(
+                        *s == StatusCode::OK || *s == StatusCode::TOO_MANY_REQUESTS,
+                        "{case}: the {n} {s:?}"
+                    );
+                }
                 three
             }
             "unavailable" => {

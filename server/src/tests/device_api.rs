@@ -327,6 +327,7 @@ async fn policy_json_keys_snapshot() {
         keys,
         [
             "abroad",
+            "allow_2g_abroad",
             "allowlist",
             "app_permissions",
             "app_updates_wifi_only",
@@ -381,6 +382,7 @@ async fn policy_json_keys_snapshot() {
         "apps_mobile",
         "mobile_settings_locked",
         "block_2g",
+        "allow_2g_abroad",
         "block_activity_start",
         "bluetooth_any_device",
         "calendar",

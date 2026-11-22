@@ -2471,9 +2471,12 @@ column allows `eea` for a later round, the page doesn't offer it), and "Lås mob
 (`mobile_settings_locked`, on by default). An unknown value or group is a 400 with nothing written; `settings_log`
 writes the line; each save nudges the phone. The radio rows are `.pick-row` (style.css v110). Design 126 A5 adds a
 fourth group after the lock, `#block-2g`: "Blokker 2G" (`block_2g`, migration 0165, on by default; `group=block-2g`), its
-why and cost behind the (i), and one quiet row, "Av i utlandet", only while the switch is on and the latest report's
-`mobile_data.cellular_2g` is `abroad` (`mobile_network::card`'s `block_2g_lines`; `clean_mobile` keeps a known word,
-drops anything else) - nothing on the summary, never orange.
+why and cost behind the (i). Under it in the same group, only while it is on, "Tillat 2G i utlandet" (`allow_2g_abroad`,
+migration 0167, off by default; `group=block-2g-abroad`, a form of its own answering on `#block-2g`; the user's decision
+of 2026-11-22: 2G stays blocked abroad unless the parent opts in), its one sentence of cost as a second paragraph behind
+the group's (i) - a parent's choice, never orange. One quiet row, "Av i utlandet", under it only while both switches
+are on and the latest report's `mobile_data.cellular_2g` is `abroad` (`mobile_network::card`'s `block_2g_lines`;
+`clean_mobile` keeps a known word, drops anything else) - nothing on the summary, never orange.
 
 The phone's state, worded by
 `mobile_network::card` from the report's cleaned `data_roaming` and `mobile_data`, sits under each group: design 94

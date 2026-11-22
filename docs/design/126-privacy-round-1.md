@@ -20,7 +20,8 @@ is, and each assumption has a line in the emulator or Jelly Star check (§10).
 | C1 | "Reklame og sporing" on for new phones | A per-phone list override written when the phone is created | the list on, on the new phone's Web Filter page | as the filter (yes) | S, server |
 
 One question for the user (§11): whether "Blokker 2G" stays on abroad (a) or lifts itself there (b, recommended, designed in
-§3.6 and built as the default unless the user picks (a)).
+§3.6 and built as the default unless the user picks (a)). **Answered 2026-11-22**: (a) by default, (b) as a per-phone
+opt-in, "Tillat 2G i utlandet" (§11).
 
 ## 1. A4 - no screen content for AI
 
@@ -210,6 +211,16 @@ as `DISALLOW_DATA_ROAMING` and `DISALLOW_CONFIG_MOBILE_NETWORKS` (the standing r
 - Nothing else: data on 2G is too slow to matter.
 
 ### 3.6 Abroad: lifted by itself (option (b), recommended, the default pending §11)
+
+**Decision (the user, 2026-11-22)**: 2G stays blocked abroad too by default. "Tillat 2G i utlandet" (en "Allow 2G
+abroad"), a per-phone switch under "Blokker 2G" on Mobilnett, shown only while it is on, off by default (migration
+0167, the policy's top-level `allow_2g_abroad: bool`, always sent; `group=block-2g-abroad`, saving on `#block-2g`),
+turns this section's lift on; off, the phone never lifts the block abroad (`abroadLifts2g(kept, allowAbroad)`; a missing
+key is off). The pause still lifts it as §3.4 says. Its cost behind the group's (i) only, never orange (a parent's
+choice): "Uten dette kan vanlige samtaler feile i noen land." / "Without it, ordinary calls may fail in some
+countries."; `mobile.block_2g.info` ends "Oppheves under pause." / "Lifted during a pause." The service-state listener
+runs only while both switches are on. Contract: `mobile_network.json`'s `policy` rows carry `allow_2g_abroad`, and
+every `cellular_2g_blocked` row an `allow_abroad`.
 
 #### 3.6.1 Where, kept through "unknown"
 
@@ -521,6 +532,8 @@ emergency calls still work, and nothing tells the kid or the parent why a call f
   a quiet "Av i utlandet" on Mobilnett while it is lifted. Cost: no 2G protection abroad.
 
 Built as (b) unless the user answers (a); (a) is (b) minus §3.6 and changes one line of copy.
+
+**Answer (2026-11-22)**: (a) by default; (b) as an opt-in per phone, "Tillat 2G i utlandet", off by default (§3.6).
 
 ## 12. Not in this design
 

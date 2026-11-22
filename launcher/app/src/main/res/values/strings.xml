@@ -1043,7 +1043,7 @@
     <string name="setup_how_wifi_airplane">Turn on Wi-Fi in the panel.</string>
     <string name="setup_how_call_filter">Choose Vibb One both times.</string>
     <string name="setup_how_call_filter_early">Needed if Vibb is to manage calls. Choose Vibb One both times.</string>
-    <string name="setup_how_location_private">Vibb learns places itself, without Google. Location services › Google Location Accuracy: off.</string>
+    <string name="setup_how_location_private">Vibb learns places itself, without Google. First in the parent app: Advanced › Restrictions › Keep location on: off. Then Location services › Google Location Accuracy › Improve Location Accuracy: off. Last, Keep location on: on again.</string>
     <string name="setup_how_number_verification">Google › All services › Phone number verification: off. Best before the SIM goes in.</string>
     <string name="setup_how_ad_id">Google › All services › Ads › Delete advertising ID.</string>
     <string name="setup_how_diagnostics">Google › ⋮ › Usage &amp; diagnostics: off.</string>

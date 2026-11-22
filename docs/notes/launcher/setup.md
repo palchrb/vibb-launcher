@@ -48,9 +48,11 @@
   off, or no network provider at all); `null` with Location off. It goes in the report's `setup`. "Åpne" opens
   `ACTION_LOCATION_SOURCE_SETTINGS` (Location), from where the parent goes to Location services › Google Location
   Accuracy - a setting of Play services that no Device Owner API sets; no Play-services intent is tried (none is a
-  public, stable action on 14-17). Open device check: whether `DISALLOW_CONFIG_LOCATION` (Advanced › "Hold posisjon
-  på", on by default, not lifted by the hold) greys that switch; if so, the parent turns "Hold posisjon på" off for the
-  change and on again. Why it is offered: `docs/setup/google-account.md` §2.
+  public, stable action on 14-17). `DISALLOW_CONFIG_LOCATION` (Advanced › Restrictions › "Hold posisjon på", on by
+  default, not lifted by the hold or the pause) greys Google's "Forbedre posisjonsnøyaktigheten" (Improve Location
+  Accuracy), so the how-text (2026-11-22, the PWA's `setup.how.location_private` and the launcher's string alike) says:
+  "Hold posisjon på" off in the PWA first, the switch off, Wi-Fi scanning left on (Bluetooth scanning may go off),
+  "Hold posisjon på" on again. Why it is offered: `docs/setup/google-account.md` §2.
 
 ## The setup hold
 
