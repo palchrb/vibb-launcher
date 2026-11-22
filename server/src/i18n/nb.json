@@ -4691,7 +4691,7 @@
   "setup.how.map_play_links": "Åpne som standard: velg «I nettleseren» (eller slå av Åpne støttede linker).",
   "setup.how.map_vibb_links": "Åpne som standard: velg «I appen» og legg til alle linkene (eller slå på Åpne støttede linker og kryss av alle).",
   "setup.how.fingerprint": "Legg til et fingeravtrykk.",
-  "setup.how.location_private": "Posisjonstjenester › Google-posisjonsnøyaktighet: av.",
+  "setup.how.location_private": "Først Avansert › Begrensninger › Hold posisjon på: av. Så på telefonen: Posisjonstjenester › Google-posisjonsnøyaktighet › Forbedre posisjonsnøyaktigheten: av. La Wi-Fi-skanning stå på; Bluetooth-søking kan slås av. Til slutt Hold posisjon på: på igjen.",
   "setup.how.number_verification": "Google › Alle tjenester › Bekreftelse av telefonnummer: av. Helst før SIM-kortet settes inn.",
   "setup.how.ad_id": "Google › Alle tjenester › Annonser › Slett annonse-ID.",
   "setup.how.diagnostics": "Google › ⋮ › Bruk og diagnostikk: av.",

@@ -4691,7 +4691,7 @@
   "setup.how.map_play_links": "Open by default: choose “In your browser” (or turn off Open supported links).",
   "setup.how.map_vibb_links": "Open by default: choose “In the app” and add every link (or turn on Open supported links and tick them all).",
   "setup.how.fingerprint": "Add a fingerprint.",
-  "setup.how.location_private": "Location services › Google Location Accuracy: off.",
+  "setup.how.location_private": "First Advanced › Restrictions › Keep location on: off. Then on the phone: Location services › Google Location Accuracy › Improve Location Accuracy: off. Leave Wi-Fi scanning on; Bluetooth scanning can go off. Last, Keep location on: on again.",
   "setup.how.number_verification": "Google › All services › Phone number verification: off. Best before the SIM goes in.",
   "setup.how.ad_id": "Google › All services › Ads › Delete advertising ID.",
   "setup.how.diagnostics": "Google › ⋮ › Usage & diagnostics: off.",

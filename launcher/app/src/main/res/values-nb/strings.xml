@@ -952,7 +952,7 @@
     <string name="setup_how_wifi_airplane">Slå på Wi-Fi i panelet.</string>
     <string name="setup_how_call_filter">Velg Vibb One begge gangene.</string>
     <string name="setup_how_call_filter_early">Trengs hvis Vibb skal styre samtaler. Velg Vibb One begge gangene.</string>
-    <string name="setup_how_location_private">Vibb lærer stedene selv, uten Google. Posisjonstjenester › Google-posisjonsnøyaktighet: av.</string>
+    <string name="setup_how_location_private">Vibb lærer stedene selv, uten Google. Først i foreldreappen: Avansert › Begrensninger › Hold posisjon på: av. Så Posisjonstjenester › Google-posisjonsnøyaktighet › Forbedre posisjonsnøyaktigheten: av. La Wi-Fi-skanning stå på; Bluetooth-søking kan slås av. Til slutt Hold posisjon på: på igjen.</string>
     <string name="setup_how_number_verification">Google › Alle tjenester › Bekreftelse av telefonnummer: av. Helst før SIM-kortet settes inn.</string>
     <string name="setup_how_ad_id">Google › Alle tjenester › Annonser › Slett annonse-ID.</string>
     <string name="setup_how_diagnostics">Google › ⋮ › Bruk og diagnostikk: av.</string>

@@ -22,7 +22,9 @@
 - **`location_private`** (2026-11-22, design 125: Google Location Accuracy off, so Vibb learns its Wi-Fi places itself):
   optional, `When::LocationInterval` (`location_mode` `interval`, the input `location_interval`), read from the
   report's `setup.location_private`. A quiet row under Valgfritt with its `setup.why.location_private` behind the ⓘ;
-  never counted, never a line elsewhere.
+  never counted, never a line elsewhere. Its `setup.how.location_private` (2026-11-22) names Advanced › Restrictions ›
+  "Hold posisjon på" off first (`DISALLOW_CONFIG_LOCATION` greys Google's "Forbedre posisjonsnøyaktigheten"), then the
+  switch on the phone, Wi-Fi scanning left on, and "Hold posisjon på" on again; the launcher's string says the same.
 - **Google's four switches** (design 126 B1-B4: `number_verification`, `ad_id`, `diagnostics`, `play_protect_upload`,
   after `location_private`): optional `parent` steps, `When::Always` - Play services' own state, which no public API
   reads. Quiet rows under Valgfritt with a switch that ticks them, `setup.why.<key>` then `setup.how.<key>` behind the
