@@ -87,18 +87,21 @@ fun whereOf(
 fun mobileSettingsLocked(value: Boolean?, overrideActive: Boolean): Boolean = value == true && !overrideActive
 
 /**
- * Design 126 A5 (option (b), §3.6.1): where the 2G rule counts the phone to be. [now] ([whereOf]) when it is `HOME` or
- * `ABROAD`; on `UNKNOWN` the [last] kept answer - except, not in airplane mode, with both the cells' country ([netCc],
- * which Android reads from the cells it hears without a registration) and the SIM's ([simCc]) known and different:
- * `ABROAD`, so a phone that crosses the border straight into a 2G-only area lifts the block. Kept through `UNKNOWN`, since
- * a 2G-only area with 2G blocked is itself out of service.
+ * Design 126 A5 (option (b), §3.6.1): where the 2G rule counts the phone to be - [now] ([whereOf]) when it is `HOME` or
+ * `ABROAD`, the [last] kept answer on `UNKNOWN` (a 2G-only area with 2G blocked is itself out of service). Only a real
+ * registration moves it (code QA H1: no fallback on the cells' country without one - a fake foreign-coded cell could
+ * then lift the block it exists for).
  */
-fun where2gKept(last: Where?, now: Where, airplane: Boolean, netCc: String?, simCc: String?): Where? {
-    if (now != Where.UNKNOWN) return now
-    val net = netCc?.lowercase()?.takeIf { it.isNotEmpty() }
-    val sim = simCc?.lowercase()?.takeIf { it.isNotEmpty() }
-    return if (!airplane && net != null && sim != null && net != sim) Where.ABROAD else last
-}
+fun where2gKept(last: Where?, now: Where): Where? = if (now == Where.UNKNOWN) last else now
+
+/** Design 126 code QA L1: how long a re-block waits after an abroad lift, so a border flip-flop toggles the modem (and
+ * syncs) at most once in it. */
+const val REBLOCK_HOLD_MS = 120_000L
+
+/** Code QA L1: the wait before 2G may be blocked again - the rest of [REBLOCK_HOLD_MS] since the last abroad lift
+ * ([abroadLiftAtMs], elapsed-realtime ms; `null` none), 0 when it may be blocked now. */
+fun reblockWaitMs(abroadLiftAtMs: Long?, nowMs: Long): Long =
+    if (abroadLiftAtMs == null) 0 else (abroadLiftAtMs + REBLOCK_HOLD_MS - nowMs).coerceIn(0, REBLOCK_HOLD_MS)
 
 /**
  * Design 126 A5, option (b) (§3.6, pending the user's answer to §11): 2G is lifted by itself while the phone is counted

@@ -40,9 +40,8 @@ crate::i18n::words!(SettingsHubTemplate);
 pub struct HubValues {
     /// Everyone's rules: "2 rules".
     pub time_rules: Option<String>,
-    /// Blocklists in force on at least one phone - switched on for every phone, or on by a phone's own override
-    /// (design 126 C1: a new phone's ads list): "3 lists", "No lists" (custom domains may still filter, so never
-    /// "Off").
+    /// Blocklists switched on for every phone, or on for some phone by its own override (design 126 C1: a new phone's
+    /// ads list): "3 lists", "No lists" (custom domains may still filter, so never "Off").
     pub web_filter: Option<String>,
     /// Blocked domains the phones reported today: "12 today".
     pub blocked_today: Option<String>,

@@ -10,6 +10,7 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.SystemClock
 import android.os.UserManager
 import android.telephony.ServiceState
 import android.telephony.SubscriptionManager
@@ -304,30 +305,35 @@ object MobileNetworkRuntime {
     private const val PREFS_2G = "mobile_network_2g"
     private const val KEY_2G_WHERE = "block_2g_where"
 
-    /** The parent's switch as the last `apply()` read it, for the service-state listener between passes. */
-    @Volatile private var block2gValue: Boolean? = null
-    private var serviceListener: Pair<TelephonyManager, TelephonyCallback>? = null
-    private val listenerExecutor by lazy { Executors.newSingleThreadExecutor() }
+    /** Code QA M1: the pass, the service-state listener and the hold-down's re-check read the switch and the lifts,
+     * decide and write under this one lock. */
+    private val lock2g = Any()
+
+    /** The parent's switch as the last pass read it. */
+    private var block2gValue: Boolean? = null
+
+    /** Code QA L2: what the last decision applied - the report's `cellular_2g`. */
+    private var applied2g: Cellular2g? = null
+
+    /** Code QA L1: when an abroad lift last cleared the restriction (elapsed realtime), for [reblockWaitMs]. */
+    private var abroadLiftAtMs: Long? = null
+    private var recheckScheduled = false
+
+    private class Listener2g(val tm: TelephonyManager, val callback: TelephonyCallback, val subId: Int)
+
+    private var serviceListener: Listener2g? = null
+    private var subWatcher: Pair<TelephonyManager, TelephonyCallback>? = null
+    private val executor2g by lazy { Executors.newSingleThreadScheduledExecutor() }
 
     private fun prefs2g(context: Context) =
         context.applicationContext.createDeviceProtectedStorageContext().getSharedPreferences(PREFS_2G, Context.MODE_PRIVATE)
 
     /** §3.6.1: the kept where ([where2gKept]) from a fresh read, stored in device-protected prefs (a reboot abroad keeps
      * it) only when it moved. `null` = never read (counts as home). Never throws. */
-    fun where2gNow(context: Context): Where? = try {
+    private fun where2gNow(context: Context): Where? = try {
         val prefs = prefs2g(context)
         val last = prefs.getString(KEY_2G_WHERE, null)?.let { wire -> Where.entries.firstOrNull { it.wire == wire } }
-        val tm = dataTelephony(context)
-        val airplane = android.provider.Settings.Global.getInt(
-            context.contentResolver, android.provider.Settings.Global.AIRPLANE_MODE_ON, 0,
-        ) != 0
-        val kept = where2gKept(
-            last = last,
-            now = whereNow(context, tm),
-            airplane = airplane,
-            netCc = runCatching { tm?.networkCountryIso }.getOrNull(),
-            simCc = runCatching { tm?.simCountryIso }.getOrNull(),
-        )
+        val kept = where2gKept(last, whereNow(context))
         if (kept != null && kept != last) prefs.edit().putString(KEY_2G_WHERE, kept.wire).apply()
         kept
     } catch (e: Exception) {
@@ -337,57 +343,118 @@ object MobileNetworkRuntime {
 
     /**
      * Design 126 A5: `DISALLOW_CELLULAR_2G` as [cellular2gBlocked] says - written only on a change - and the service-state
-     * listener (§3.6.3) registered while the parent's switch is on, so a crossing between two passes lifts or sets it.
-     * The parent's explicit per-phone switch, so whether or not the phone is managed in hardening's sense, as roaming.
+     * listener (§3.6.3) on the default data SIM while the parent's switch is on, so a crossing between two passes lifts or
+     * sets it. The parent's explicit per-phone switch, so whether or not the phone is managed in hardening's sense, as
+     * roaming.
      */
     fun applyCellular2g(context: Context, dpm: DevicePolicyManager, admin: ComponentName, value: Boolean?, overrideActive: Boolean) {
-        block2gValue = value
-        reapply2g(context, dpm, admin, value, overrideActive)
-        if (value == true) registerServiceListener(context) else unregisterServiceListener()
+        synchronized(lock2g) {
+            block2gValue = value
+            decide2g(context, dpm, admin, value, overrideActive)
+            if (value == true) registerServiceListener(context) else unregisterServiceListener()
+        }
     }
 
-    /** `true` when the restriction changed. */
-    private fun reapply2g(context: Context, dpm: DevicePolicyManager, admin: ComponentName, value: Boolean?, overrideActive: Boolean): Boolean {
-        val blocked = cellular2gBlocked(value, overrideActive, where2gNow(context))
-        if (restricted(context, UserManager.DISALLOW_CELLULAR_2G) == blocked) return false
-        setRestriction(dpm, admin, UserManager.DISALLOW_CELLULAR_2G, blocked)
-        Log.i(LOG_TAG, "2G ${if (blocked) "blocked" else "allowed"}")
+    /** Under [lock2g]. `true` when the restriction changed. A re-block within [REBLOCK_HOLD_MS] of an abroad lift waits
+     * (code QA L1): the report keeps saying `abroad` and a re-check runs when the hold is over. */
+    private fun decide2g(context: Context, dpm: DevicePolicyManager, admin: ComponentName, value: Boolean?, overrideActive: Boolean): Boolean {
+        val state = cellular2gState(value, overrideActive, where2gNow(context))
+        val wanted = state == Cellular2g.BLOCKED
+        val now = restricted(context, UserManager.DISALLOW_CELLULAR_2G)
+        val nowMs = SystemClock.elapsedRealtime()
+        if (wanted && !now) {
+            val wait = reblockWaitMs(abroadLiftAtMs, nowMs)
+            if (wait > 0) {
+                applied2g = Cellular2g.ABROAD
+                scheduleRecheck(context, wait)
+                return false
+            }
+        }
+        applied2g = state
+        if (wanted == now) return false
+        setRestriction(dpm, admin, UserManager.DISALLOW_CELLULAR_2G, wanted)
+        if (!wanted && state == Cellular2g.ABROAD) abroadLiftAtMs = nowMs
+        Log.i(LOG_TAG, "2G ${if (wanted) "blocked" else "allowed"} (${state.wire})")
         return true
     }
 
-    @Synchronized
-    private fun registerServiceListener(context: Context) {
-        if (serviceListener != null) return
+    /** Between passes (the listener, the hold's end, a new data SIM): the switch the last pass read, the lifts read now -
+     * all under [lock2g]. A change asks for a sync, whose report says why (`cellular_2g`, the page's "Av i utlandet"). */
+    private fun recheck2g(app: Context) {
+        try {
+            val dpm = app.getSystemService(DevicePolicyManager::class.java) ?: return
+            if (!dpm.isDeviceOwnerApp(app.packageName)) return
+            val admin = ComponentName(app, MdmDeviceAdminReceiver::class.java)
+            val changed = synchronized(lock2g) {
+                val lift = OfflineOverride.isActive() || RestrictionsPause.isActive()
+                decide2g(app, dpm, admin, block2gValue, lift)
+            }
+            if (changed) CommandListenerService.requestSync(app, "2g")
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "2G re-check failed: ${e.javaClass.simpleName}")
+        }
+    }
+
+    /** Under [lock2g]: one re-check at the hold's end. */
+    private fun scheduleRecheck(context: Context, waitMs: Long) {
+        if (recheckScheduled) return
+        recheckScheduled = true
         val app = context.applicationContext
-        val tm = dataTelephony(app) ?: return
-        val callback = object : TelephonyCallback(), TelephonyCallback.ServiceStateListener {
-            override fun onServiceStateChanged(serviceState: ServiceState) {
-                try {
-                    val dpm = app.getSystemService(DevicePolicyManager::class.java) ?: return
-                    if (!dpm.isDeviceOwnerApp(app.packageName)) return
-                    val admin = ComponentName(app, MdmDeviceAdminReceiver::class.java)
-                    val lift = OfflineOverride.isActive() || RestrictionsPause.isActive()
-                    // A change between two passes: a sync reports why (`cellular_2g`), for the page's "Av i utlandet".
-                    if (reapply2g(app, dpm, admin, block2gValue, lift)) CommandListenerService.requestSync(app, "2g")
-                } catch (e: Exception) {
-                    Log.w(LOG_TAG, "2G re-check failed: ${e.javaClass.simpleName}")
+        executor2g.schedule({
+            synchronized(lock2g) { recheckScheduled = false }
+            recheck2g(app)
+        }, waitMs + 500, TimeUnit.MILLISECONDS)
+    }
+
+    /** Under [lock2g]. Code QA M2: on the default data SIM, registered again when that changes (a SIM put in after
+     * setup, a swap, the data SIM switched) - checked every pass and on `ActiveDataSubscriptionIdListener`. */
+    private fun registerServiceListener(context: Context) {
+        val app = context.applicationContext
+        val subId = SubscriptionManager.getDefaultDataSubscriptionId()
+        val current = serviceListener
+        if (current != null && current.subId == subId) return
+        current?.let { runCatching { it.tm.unregisterTelephonyCallback(it.callback) } }
+        serviceListener = null
+        if (subWatcher == null) {
+            // The active data SIM changing (a SIM put in, a swap, the data SIM switched): listen on it instead.
+            val base = app.getSystemService(TelephonyManager::class.java)
+            val watcher = object : TelephonyCallback(), TelephonyCallback.ActiveDataSubscriptionIdListener {
+                override fun onActiveDataSubscriptionIdChanged(subId: Int) {
+                    synchronized(lock2g) { if (block2gValue == true) registerServiceListener(app) }
+                    recheck2g(app)
                 }
             }
+            try {
+                base?.registerTelephonyCallback(executor2g, watcher)
+                if (base != null) subWatcher = base to watcher
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "Couldn't watch the data SIM: ${e.javaClass.simpleName}")
+            }
+        }
+        val tm = dataTelephony(app) ?: return
+        val callback = object : TelephonyCallback(), TelephonyCallback.ServiceStateListener {
+            override fun onServiceStateChanged(serviceState: ServiceState) = recheck2g(app)
         }
         try {
-            tm.registerTelephonyCallback(listenerExecutor, callback)
-            serviceListener = tm to callback
+            tm.registerTelephonyCallback(executor2g, callback)
+            serviceListener = Listener2g(tm, callback, subId)
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Couldn't listen to the service state: ${e.javaClass.simpleName}")
         }
     }
 
-    @Synchronized
+    /** Under [lock2g]. */
     private fun unregisterServiceListener() {
-        val (tm, callback) = serviceListener ?: return
-        runCatching { tm.unregisterTelephonyCallback(callback) }
+        serviceListener?.let { runCatching { it.tm.unregisterTelephonyCallback(it.callback) } }
         serviceListener = null
+        subWatcher?.let { (tm, watcher) -> runCatching { tm.unregisterTelephonyCallback(watcher) } }
+        subWatcher = null
     }
+
+    /** Code QA L2: the report's `cellular_2g` - what the last decision applied; before any in this process, Android's
+     * restriction as it is (`blocked`) or `off`. */
+    private fun reported2g(context: Context): Cellular2g = synchronized(lock2g) { applied2g }
+        ?: if (restricted(context, UserManager.DISALLOW_CELLULAR_2G)) Cellular2g.BLOCKED else Cellular2g.OFF
 
     /** Each active SIM's `isDataRoamingEnabled`, from the slots - no permission needed (design 94 §2.4.2). */
     private fun roamingReadings(context: Context): Map<Int, Boolean?> {
@@ -481,10 +548,6 @@ object MobileNetworkRuntime {
         kid = (cachedPolicy() as? CachedPolicy.Ok)?.policy?.quickControlsMask
             ?.takeIf { it and QuickControlFeature.MOBILE_DATA != 0L }
             ?.let { if (runCatching { LauncherPreferences.mdm().kidMobileOff() }.getOrDefault(false)) "off" else "on" },
-        cellular2g = cellular2gState(
-            value = (cachedPolicy() as? CachedPolicy.Ok)?.policy?.block2g,
-            overrideActive = OfflineOverride.isActive() || RestrictionsPause.isActive(),
-            kept = where2gNow(context),
-        ).wire,
+        cellular2g = reported2g(context).wire,
     )
 }

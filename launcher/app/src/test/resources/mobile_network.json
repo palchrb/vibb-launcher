@@ -38,17 +38,12 @@
     {"value": null, "override": false, "kept": "home", "blocked": false, "state": "off"}
   ],
   "where_kept": [
-    {"last": null, "now": "home", "airplane": false, "net_cc": "no", "sim_cc": "no", "kept": "home"},
-    {"last": "home", "now": "abroad", "airplane": false, "net_cc": "se", "sim_cc": "no", "kept": "abroad"},
-    {"last": "abroad", "now": "home", "airplane": false, "net_cc": "no", "sim_cc": "no", "kept": "home"},
-    {"last": "abroad", "now": "unknown", "airplane": false, "net_cc": "", "sim_cc": "no", "kept": "abroad"},
-    {"last": "abroad", "now": "unknown", "airplane": true, "net_cc": "no", "sim_cc": "no", "kept": "abroad"},
-    {"last": "home", "now": "unknown", "airplane": false, "net_cc": null, "sim_cc": null, "kept": "home"},
-    {"last": null, "now": "unknown", "airplane": false, "net_cc": null, "sim_cc": "no", "kept": null},
-    {"last": "home", "now": "unknown", "airplane": false, "net_cc": "se", "sim_cc": "no", "kept": "abroad"},
-    {"last": "home", "now": "unknown", "airplane": false, "net_cc": "SE", "sim_cc": "no", "kept": "abroad"},
-    {"last": "home", "now": "unknown", "airplane": true, "net_cc": "se", "sim_cc": "no", "kept": "home"},
-    {"last": "abroad", "now": "unknown", "airplane": false, "net_cc": "no", "sim_cc": "no", "kept": "abroad"}
+    {"last": null, "now": "home", "kept": "home"},
+    {"last": "home", "now": "abroad", "kept": "abroad"},
+    {"last": "abroad", "now": "home", "kept": "home"},
+    {"last": "abroad", "now": "unknown", "kept": "abroad"},
+    {"last": "home", "now": "unknown", "kept": "home", "why": "out of service beside a foreign cell: only a registration moves it, else a fake cell lifts the block (design 126 code QA H1)"},
+    {"last": null, "now": "unknown", "kept": null}
   ],
   "where": [
     {"airplane": true, "roaming": true, "network": "24001", "sim_operator": "24201", "net_cc": "se", "sim_cc": "no", "where": "unknown"},

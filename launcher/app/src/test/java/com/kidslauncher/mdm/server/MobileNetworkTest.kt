@@ -104,19 +104,25 @@ class MobileNetworkTest {
         }
     }
 
-    /** Design 126 A5 (§3.6.1): the kept where through `unknown`, and the border fallback on the cells' country. */
+    /** Design 126 A5 (§3.6.1): the kept where through `unknown` - only a registration moves it (code QA H1). */
     @Test
     fun `the kept where follows every row`() {
         for (row in rows("where_kept")) {
-            val kept = where2gKept(
-                last = whereOrNull(row.str("last")),
-                now = whereOrNull(row.str("now"))!!,
-                airplane = row.bool("airplane")!!,
-                netCc = row.str("net_cc"),
-                simCc = row.str("sim_cc"),
-            )
+            val kept = where2gKept(last = whereOrNull(row.str("last")), now = whereOrNull(row.str("now"))!!)
             assertEquals("$row", row.str("kept"), kept?.wire)
         }
+    }
+
+    /** Design 126 code QA L1: a re-block waits out the rest of the 2 min after an abroad lift; none without one. */
+    @Test
+    fun `a re-block waits out the hold after an abroad lift`() {
+        assertEquals(0L, reblockWaitMs(null, 5_000))
+        assertEquals(REBLOCK_HOLD_MS, reblockWaitMs(10_000, 10_000))
+        assertEquals(30_000L, reblockWaitMs(10_000, 10_000 + REBLOCK_HOLD_MS - 30_000))
+        assertEquals(0L, reblockWaitMs(10_000, 10_000 + REBLOCK_HOLD_MS))
+        assertEquals(0L, reblockWaitMs(10_000, 10_000 + 10 * REBLOCK_HOLD_MS))
+        // A clock that went back (another boot's stamp) never waits longer than the hold.
+        assertEquals(REBLOCK_HOLD_MS, reblockWaitMs(10_000_000, 5_000))
     }
 
     /** Every shape row through the same rules `apply()` uses, and always-on's lockdown for it. The rows from before
