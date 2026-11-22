@@ -64,6 +64,17 @@ object QuickControlFeature {
  * [AppEnforcer.applyVpnRestrictions] for the concrete case - Tailscale's own Quick Settings tile
  * bypassing its managed-config restriction - that motivated this).
  */
+/**
+ * The MAC randomization a network Vibb adds gets (design 126 A7): an open one (no key)
+ * `RANDOMIZATION_NON_PERSISTENT` - a new random address after 4 h away, at the DHCP lease and at least daily, instead
+ * of Android's same random address on every visit; one with a key `null`, Android's persistent per-network address (a
+ * home or school network would see a new device every day). Only the network's creator may set it, which Vibb is for
+ * every network it adds ([QuickControls.connectToWifiNetwork]); API 33, below minSdk.
+ */
+@Suppress("DEPRECATION")
+fun joinMacSetting(secured: Boolean): Int? =
+    if (secured) null else android.net.wifi.WifiConfiguration.RANDOMIZATION_NON_PERSISTENT
+
 object QuickControls {
 
     /** The adapter via [BluetoothManager] (`BluetoothAdapter.getDefaultAdapter()` is deprecated). */
@@ -540,11 +551,14 @@ object QuickControls {
         savedNetworkId: Int?,
     ): Boolean {
         val wm = wifiManager(context)
+        val withKey = secured && !password.isNullOrEmpty()
         return try {
             val networkId = savedNetworkId ?: run {
                 val config = android.net.wifi.WifiConfiguration().apply {
                     SSID = "\"$ssid\""
-                    if (secured && !password.isNullOrEmpty()) {
+                    // Design 126 A7: a fresh address on an open network; Vibb adds it, so as its creator it may.
+                    joinMacSetting(withKey)?.let { macRandomizationSetting = it }
+                    if (withKey) {
                         allowedKeyManagement.set(android.net.wifi.WifiConfiguration.KeyMgmt.WPA_PSK)
                         allowedKeyManagement.set(android.net.wifi.WifiConfiguration.KeyMgmt.SAE)
                         preSharedKey = "\"$password\""

@@ -314,6 +314,14 @@ Meldinger, Kalender and the phone book do. The drawer and the parent's Settings 
   device, or the zone watch - a sync while the page was shown found it on and left it; code QA L4). Never a setting
   the parent had on or wants on. Residue as before: a process death with the page in front leaves
   Location on.
+- **A fresh MAC on open Wi-Fi** (design 126 A7, 2026-11-22). `QuickControls.connectToWifiNetwork` sets
+  `macRandomizationSetting` from the pure `joinMacSetting(secured)` (`JoinMacSettingTest`) before
+  `addNetworkPrivileged`: an open network (no key) `RANDOMIZATION_NON_PERSISTENT` - a new random address after 4 h
+  away, at the DHCP lease (30 min to 24 h) and at least daily, not on every connection; a network with a key `null`,
+  Android's persistent per-network address (a home or school network would see a new device daily). Android lets an
+  admin set it only on a network it created, so the networks the parent saves in Android's Settings during a window and
+  the setup QR's network keep Android's default, as do networks Vibb saved before this build. Cost: a café's sign-in
+  page may ask again after a night away.
 - **The Bluetooth page** stops discovery in `onStop` (a discovery cut short runs again at the next start, unless a pair
   or a connect runs then - `btStartScans`; a discovery that didn't start returns no receiver, so nothing waits for its
   end; code QA L3) and drops the
