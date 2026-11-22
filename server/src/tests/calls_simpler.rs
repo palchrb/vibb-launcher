@@ -1517,7 +1517,9 @@ async fn add_contact_has_every_option_and_saves_them() {
 }
 
 /// 2026-11-22: the Matrix ID is the contact's (one person, one ID): added on one phone, the contact brings it to the
-/// next; a save on any phone's page changes it on all of them, each phone's Message button its own.
+/// next; a save on any phone's page changes it on all of them and nudges each, and a stale page's other change never
+/// writes its old ID back. Each phone's Message button is its own - Element X comes along only to a phone where
+/// Element X is allowed and installed (the user, 2026-11-22).
 #[tokio::test]
 async fn the_matrix_id_is_the_contacts_on_every_phone() {
     let app = TestApp::new().await;
@@ -1576,9 +1578,12 @@ async fn the_matrix_id_is_the_contacts_on_every_phone() {
         (json!("sms"), json!("@kari:example.org")),
         "the ID came along, Ola's button its own"
     );
-    // A new ID saved on Ola's page is Anna's too; Anna's button stays Element X.
+    // A new ID saved on Ola's page is Anna's too, both phones nudged; Anna's button stays Element X.
+    let anna_action = format!("/devices/{anna}/contacts/{kari}");
+    let stale = page(&app, &cookie, &format!("/devices/{anna}/calls?open={kari}")).await;
     let action = format!("/devices/{ola}/contacts/{kari}");
     let html = page(&app, &cookie, &format!("/devices/{ola}/calls?open={kari}")).await;
+    let mut nudges = app.state.command_notify.subscribe();
     let res = post(
         &app,
         &cookie,
@@ -1591,12 +1596,59 @@ async fn the_matrix_id_is_the_contacts_on_every_phone() {
     )
     .await;
     assert!(res.status.is_redirection(), "{}", res.text());
+    let mut nudged = Vec::new();
+    while let Ok(device) = nudges.try_recv() {
+        nudged.push(device);
+    }
+    assert!(
+        nudged.contains(&anna) && nudged.contains(&ola),
+        "{nudged:?}"
+    );
     assert_eq!(
         button(&anna_token).await,
         (json!("element"), json!("@kari:other.org"))
     );
     let html = page(&app, &cookie, &format!("/devices/{anna}/calls?open={kari}")).await;
     assert!(contact_html(&html, kari).contains("value=\"@kari:other.org\""));
+    // Code QA M2: Anna's stale page (the old ID shown) saves another switch: the contact's new ID stays.
+    let res = post(
+        &app,
+        &cookie,
+        &anna_action,
+        &with(fields_of(&stale, &anna_action), "mms", None),
+    )
+    .await;
+    assert!(res.status.is_redirection(), "{}", res.text());
+    assert_eq!(button(&ola_token).await.1, json!("@kari:other.org"));
+
+    // A phone with Element X allowed and installed gets Kari's Element X button from the family.
+    let (eva, eva_token) = app.enrolled_device("Eva").await;
+    app.post_status(
+        &eva_token,
+        json!({"installed_apps": [{"package_name": "io.element.android.x", "label": "Element X"}]}),
+    )
+    .await;
+    sqlx::query(
+        "UPDATE device_policy SET calls_mode = 'managed', allowlist_json = '[\"io.element.android.x\"]' \
+         WHERE device_id = ?",
+    )
+    .bind(eva)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{eva}/contacts"),
+            Some(&cookie),
+            &[("contact_id", kari.to_string().as_str())],
+        )
+        .await;
+    assert!(res.status.is_redirection(), "{}", res.text());
+    assert_eq!(
+        button(&eva_token).await,
+        (json!("element"), json!("@kari:other.org"))
+    );
 }
 
 /// Migration 0161 on rows from before it: each contact takes the Matrix ID of the lowest phone id that has one, and

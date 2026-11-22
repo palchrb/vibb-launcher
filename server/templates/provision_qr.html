@@ -81,7 +81,7 @@
                 </div>
                 <div class="field">
                     <label class="field-label" for="wifi_password">{{ self.t("devices.qr.wifi_password") }}</label>
-                    <input type="password" id="wifi_password" name="wifi_password" value=""{% if saved_password %} placeholder="{{ self.t("devices.qr.saved") }}"{% endif %} autocomplete="off"{% if error_field == "wifi_password" %} aria-invalid="true" aria-describedby="wifi-error" autofocus{% endif %}>
+                    <input type="password" id="wifi_password" name="wifi_password" value=""{% if can_save && saved_password %} placeholder="{{ self.t("devices.qr.saved") }}"{% endif %} autocomplete="off"{% if error_field == "wifi_password" %} aria-invalid="true" aria-describedby="wifi-error" autofocus{% endif %}>
                     {% if error_field == "wifi_password" %}{% if let Some(why) = error %}<p class="field-error" id="wifi-error">{{ why }}</p>{% endif %}{% else if password_dropped %}<p class="field-error" id="wifi-password-error">{{ self.t("devices.qr.password_again") }}</p>{% endif %}
                 </div>
                 {% if can_save %}
@@ -89,6 +89,7 @@
                     <span class="row-label">{{ self.t("devices.qr.remember") }}</span>
                     <input type="checkbox" role="switch" class="sw" name="remember" value="on"><span class="knob" aria-hidden="true"></span>
                 </label>
+                <details class="info"><summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p data-row="remember-info">{{ self.t("devices.qr.remember_info") }}</p></div></details>
                 {% endif %}
                 <button type="submit" class="button-wide">{% if qr_svg.is_empty() %}{{ self.t("devices.qr.make") }}{% else %}{{ self.t("devices.qr.make_new") }}{% endif %}</button>
             </form>
@@ -103,7 +104,7 @@
             {% endif %}
         </div>
         <div class="group-footer">{{ self.t("devices.qr.footer") }}
-            <details class="info"><summary aria-label="{{ self.t("devices.qr.info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.tp("devices.qr.info", [("minutes", qr_minutes.to_string().as_str())]) }}</p>{% if can_save %}<p data-row="remember-info">{{ self.t("devices.qr.remember_info") }}</p>{% endif %}{% if !qr_svg.is_empty() && until.is_some() %}<p>{{ self.t("devices.qr.reload_info") }}</p>{% endif %}{% if let Some(launcher) = launcher %}{% if launcher.state == "works" %}{% if let Some(needs) = launcher.needs %}<p data-row="launcher-needs">{{ needs }}</p>{% endif %}{% endif %}{% endif %}</div></details>
+            <details class="info"><summary aria-label="{{ self.t("devices.qr.info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.tp("devices.qr.info", [("minutes", qr_minutes.to_string().as_str())]) }}</p>{% if !qr_svg.is_empty() && until.is_some() %}<p>{{ self.t("devices.qr.reload_info") }}</p>{% endif %}{% if let Some(launcher) = launcher %}{% if launcher.state == "works" %}{% if let Some(needs) = launcher.needs %}<p data-row="launcher-needs">{{ needs }}</p>{% endif %}{% endif %}{% endif %}</div></details>
         </div>
         {% endif %}
     </section>

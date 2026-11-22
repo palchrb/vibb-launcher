@@ -120,6 +120,17 @@ mod tests {
         assert_eq!(open(&key, 7, &odd), None);
     }
 
+    /// A Child PIN stored before `MusicKey::seal_text` took over the form keeps opening: this value was made outside
+    /// Rust (Python's `cryptography`, AES-256-GCM, key `[3; 32]`, nonce 0..12, associated data
+    /// `kid-pin-v1:<fingerprint>:7`). Frozen.
+    #[test]
+    fn a_pin_sealed_in_the_stored_form_still_opens() {
+        let key = MusicKey::from_bytes(&[3; 32]);
+        let sealed = "v1:43e62217e76ba150:AAECAwQFBgcICQoL:c4lEfe6nTAD4n0pTHFbCyrxr/L0=";
+        assert_eq!(open(&key, 7, sealed), Some(KidPin::new("4821".to_string())));
+        assert_eq!(open(&key, 8, sealed), None);
+    }
+
     #[test]
     fn debug_never_shows_the_digits_and_json_is_the_bare_string() {
         let pin = KidPin::new("4821".to_string());

@@ -823,7 +823,7 @@ async fn a_request_never_renames_a_family_contact() {
     );
     assert!(add.contains("Already a contact as «Mamma» - the name is kept. Anna called it «Dum»."));
     let request = format!("{:032x}", 1);
-    let save = |name: &'static str, number: &'static str| {
+    let save_with = |name: &'static str, number: &'static str, typed_id: &'static str| {
         let (app, cookie, request) = (&app, &cookie, &request);
         async move {
             app.request_form(
@@ -839,11 +839,13 @@ async fn a_request_never_renames_a_family_contact() {
                     ("outbound", "on"),
                     ("request", request),
                     ("use_matrix", "on"),
+                    ("message_address", typed_id),
                 ],
             )
             .await
         }
     };
+    let save = |name: &'static str, number: &'static str| save_with(name, number, "");
     // The kid's name typed back in: refused in place, the kept name in the field and why - never silently ignored.
     let refused = save("Dum", "+4790000001").await;
     assert_eq!(refused.status, StatusCode::BAD_REQUEST);
@@ -861,8 +863,27 @@ async fn a_request_never_renames_a_family_contact() {
     contact(&app, per, "Pappa", "+4790000002").await;
     let other = save("Dum", "+4790000002").await;
     assert!(other.text().contains(r#"value="Pappa""#));
-    // Saved under the kept name.
-    let res = save("Mamma", "+4790000001").await;
+    // Code QA M1: the family's own Matrix ID isn't replaced by the kid's on every phone - refused in place, the kept
+    // ID in the field and the tick kept; saving again (the field as shown) keeps it.
+    sqlx::query("UPDATE contacts SET message_address = '@mor:example.org' WHERE phone_number = '+4790000001'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let refused = save("Mamma", "+4790000001").await;
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST);
+    let html = refused.text();
+    let add = super::settings_pages::part(&html, "id=\"add-contact\"", "</form>");
+    assert!(add.contains(r#"value="@mor:example.org""#), "{add}");
+    assert!(
+        add.contains("Mamma has the Matrix ID @mor:example.org already"),
+        "{add}"
+    );
+    assert!(
+        add.contains(r#"name="use_matrix" value="on" checked"#),
+        "{add}"
+    );
+    // Saved under the kept name, with the kept ID.
+    let res = save_with("Mamma", "+4790000001", "@mor:example.org").await;
     assert!(res.status.is_redirection(), "{}", res.text());
     let name: String =
         sqlx::query_scalar("SELECT name FROM contacts WHERE phone_number = '+4790000001'")
@@ -882,8 +903,9 @@ async fn a_request_never_renames_a_family_contact() {
     .unwrap();
     assert_eq!(
         (app_col.as_deref(), address.as_deref()),
-        (Some("element"), Some("@mamma:example.org"))
+        (Some("element"), Some("@mor:example.org"))
     );
+    assert_eq!(per_policy[0]["message_address"], "@mor:example.org");
 }
 
 /// QA L1-L3 and the L4 gaps on the form: one prefill source wins; a retry is `accepted` before any check; a short

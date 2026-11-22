@@ -27,6 +27,7 @@ use crate::handlers::calls_form::{self, Subs, Way};
 use crate::handlers::device_api::device_contacts;
 use crate::handlers::device_pages::Note;
 use crate::i18n::{Lang, Words, t, t_params};
+use crate::lock_glance::ELEMENT_X;
 use crate::models::{CHANNEL_MODES, Device, DevicePolicy, MESSAGE_APPS};
 use crate::phone;
 use crate::photos;
@@ -114,6 +115,9 @@ struct ContactView {
     one_way: [String; 4],
     message_options: Vec<SelectOption>,
     message_address: String,
+    /// The Matrix ID as stored when the page was made (`message_address_shown`): a save sending it unchanged keeps
+    /// the contact's, whatever another page saved meanwhile.
+    address_shown: String,
     /// D2 (M6): the Matrix ID shows while the button opens Element X or one is stored, with its note: "Mangler
     /// Matrix-ID" (orange) or "Brukes når knappen åpner Element X".
     show_matrix: bool,
@@ -822,6 +826,7 @@ async fn load_page(
                     c.message_app.as_deref(),
                     Some(&policy.default_message_app),
                 ),
+                address_shown: c.message_address.clone().unwrap_or_default(),
                 message_address: c.message_address.unwrap_or_default(),
                 show_matrix: false,
                 matrix_note: None,
@@ -859,6 +864,9 @@ async fn load_page(
                     );
                     if let Some(address) = sent.get("message_address") {
                         view.message_address = address.trim().to_string();
+                    }
+                    if let Some(address) = sent.get("message_address_shown") {
+                        view.address_shown = address.trim().to_string();
                     }
                     more = more || sent.get("more").is_some_and(|m| m == "1");
                 }
@@ -2174,25 +2182,48 @@ pub async fn add_contact(
     // judged by the number this form saves, not the one the kid asked for. A different typed name is refused in place,
     // with the kept name in the field and why, never silently ignored; saving again adds the contact under it.
     if let Some(request) = form.get("request").map(|r| r.trim()) {
+        // The family contact's name and Matrix ID, and the ID the kid asked with.
         let kept = async {
-            if crate::handlers::contact_requests::prefill(&state.db, id, request)
-                .await?
-                .is_none()
-            {
+            let Some(asked) =
+                crate::handlers::contact_requests::prefill(&state.db, id, request).await?
+            else {
                 return Ok::<_, sqlx::Error>(None);
-            }
-            sqlx::query_scalar::<_, String>("SELECT name FROM contacts WHERE phone_number = ?")
-                .bind(&number)
-                .fetch_optional(&state.db)
-                .await
+            };
+            let family: Option<(String, Option<String>)> =
+                sqlx::query_as("SELECT name, message_address FROM contacts WHERE phone_number = ?")
+                    .bind(&number)
+                    .fetch_optional(&state.db)
+                    .await?;
+            Ok(family.map(|(kept, kept_id)| (kept, kept_id, asked.matrix_id)))
         }
         .await;
         match kept {
-            Ok(Some(kept)) if kept != name => {
+            Ok(Some((kept, _, _))) if kept != name => {
                 let why = t_params(lang, "device.requests.kept_refused", &[("contact", &kept)]);
                 let shown = Shown {
                     add: Some((kept.as_str(), raw_number, "name", why)),
                     add_sent: Some(form),
+                    ..Default::default()
+                };
+                return render(state, id, StatusCode::BAD_REQUEST, shown, lang).await;
+            }
+            // Code QA M1: neither does the kid's Matrix ID replace the family's on every phone - refused in place, the
+            // kept ID in the field and the tick kept; saving again keeps it, a typed one replaces it.
+            Ok(Some((kept, Some(kept_id), Some(asked))))
+                if typed_address.is_none()
+                    && form.contains_key("use_matrix")
+                    && kept_id != asked =>
+            {
+                let why = t_params(
+                    lang,
+                    "device.requests.matrix_kept",
+                    &[("contact", &kept), ("id", &kept_id)],
+                );
+                let mut sent = form.clone();
+                sent.insert("message_address".to_string(), kept_id);
+                let shown = Shown {
+                    add: Some((name, raw_number, "message_address", why)),
+                    add_sent: Some(&sent),
                     ..Default::default()
                 };
                 return render(state, id, StatusCode::BAD_REQUEST, shown, lang).await;
@@ -2267,17 +2298,13 @@ pub async fn add_contact(
         // parent ticked "Bruk Matrix-ID-en" (R2-M1), and then the Message button opens Element X with it (design 80
         // M6).
         crate::handlers::contact_requests::mark_added(&mut tx, id, &number, request).await?;
-        // A typed Matrix ID wins over the request's suggestion (ticked "Bruk Matrix-ID-en" or not).
-        let message_address = typed_address.map(str::to_string).or_else(|| {
-            from_request
-                .and_then(|r| r.matrix_id)
-                .filter(|_| form.contains_key("use_matrix"))
-        });
-        // As the edit form: the Message button is what the parent chose (none: the phone's default); only the kid's
-        // request's Matrix ID, taken with its switch, sets Element X.
-        let message_app = typed_app.or_else(|| {
-            (typed_address.is_none() && message_address.is_some()).then_some("element")
-        });
+        // The kid's request's Matrix ID, taken with its switch.
+        let asked = from_request
+            .and_then(|r| r.matrix_id)
+            .filter(|_| form.contains_key("use_matrix"));
+        // As the edit form: the Message button is what the parent chose (none: the phone's default); the kid's
+        // request's Matrix ID taken with its switch sets Element X.
+        let message_app = typed_app.or_else(|| asked.is_some().then_some("element"));
         let added = sqlx::query(
             "INSERT OR IGNORE INTO device_contacts (device_id, contact_id, sort_order, allow_inbound, \
              allow_outbound, show_on_home, sms_in, sms_out, mms, message_app) \
@@ -2298,11 +2325,22 @@ pub async fn add_contact(
         .await?
         .rows_affected()
             > 0;
-        // The Matrix ID is the contact's (migration 0161): a new one replaces it on every phone; none keeps the
-        // family's.
-        let address_changed = match &message_address {
-            Some(address) => set_contact_address(&mut tx, contact_id, Some(address.as_str())).await?,
-            None => false,
+        // The Matrix ID is the contact's (migration 0161): a typed one replaces it on every phone; the kid's only fills
+        // a contact without one (code QA M1 - one that differs was refused above); none keeps the family's.
+        let address_changed = match (typed_address, &asked) {
+            (Some(address), _) => set_contact_address(&mut tx, contact_id, Some(address)).await?,
+            (None, Some(address)) => {
+                sqlx::query(
+                    "UPDATE contacts SET message_address = ? WHERE id = ? AND message_address IS NULL",
+                )
+                .bind(address)
+                .bind(contact_id)
+                .execute(&mut *tx)
+                .await?
+                .rows_affected()
+                    > 0
+            }
+            (None, None) => false,
         };
         tx.commit().await?;
         Ok::<_, sqlx::Error>(Some((contact_id, added, address_changed)))
@@ -2409,6 +2447,16 @@ async fn add_family_contact(
                     .fetch_one(&mut *tx)
                     .await?;
             crate::handlers::contact_requests::mark_added(&mut tx, id, &number, None).await?;
+            // The user, 2026-11-22: the contact's Element X button comes along where Element X can open.
+            if element_x_follows(&mut tx, id, contact_id).await? {
+                sqlx::query(
+                    "UPDATE device_contacts SET message_app = 'element' WHERE device_id = ? AND contact_id = ?",
+                )
+                .bind(id)
+                .bind(contact_id)
+                .execute(&mut *tx)
+                .await?;
+            }
         }
         tx.commit().await?;
         Ok((true, true, added))
@@ -2501,9 +2549,12 @@ pub async fn update_contact(
         Some(_) => return bad_request(lang, "error.unknown_message_app"),
     };
     // Design 80 D2: the Matrix ID field is drawn only while it is used or stored, so a post without it keeps the
-    // stored one (`None`); an empty one removes it.
+    // stored one (`None`); an empty one removes it. The ID is the contact's on every phone (0161): sent as the page
+    // showed it (`message_address_shown`), it is kept too - a stale tab's other change never writes an old ID back.
+    let shown_address = form.get("message_address_shown").map(|s| s.trim());
     let message_address = match form.get("message_address").map(|s| s.trim()) {
         None => None,
+        Some(sent) if shown_address == Some(sent) => None,
         Some("") => Some(None),
         Some(mxid) if valid_matrix_id(mxid) => Some(Some(mxid)),
         Some(_) => {
@@ -2661,6 +2712,50 @@ async fn gone(state: &AppState, id: i64, contact_id: i64, said: bool, lang: Lang
         Ok(Some(_)) => crate::settings_log::refused(contacts_group(id, said)),
         Err(err) => db_error(lang, id, err),
     }
+}
+
+/// Whether a family contact added to phone `id` gets the Element X button (the user, 2026-11-22): its button opens
+/// Element X on another phone, and Element X is allowed on `id` and in its newest installed-apps report. A phone whose
+/// own default is Element X keeps following its default (no row of its own).
+async fn element_x_follows(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    id: i64,
+    contact_id: i64,
+) -> Result<bool, sqlx::Error> {
+    let elsewhere: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM device_contacts dc JOIN device_policy p ON p.device_id = dc.device_id \
+         WHERE dc.contact_id = ?2 AND dc.device_id != ?1 \
+         AND COALESCE(dc.message_app, p.default_message_app) = 'element')",
+    )
+    .bind(id)
+    .bind(contact_id)
+    .fetch_one(&mut **tx)
+    .await?;
+    if !elsewhere {
+        return Ok(false);
+    }
+    let (default_app, allowlist): (String, Option<String>) = sqlx::query_as(
+        "SELECT default_message_app, allowlist_json FROM device_policy WHERE device_id = ?",
+    )
+    .bind(id)
+    .fetch_one(&mut **tx)
+    .await?;
+    let allowed = allowlist
+        .and_then(|json| serde_json::from_str::<Vec<String>>(&json).ok())
+        .is_some_and(|apps| apps.iter().any(|app| app == ELEMENT_X));
+    if default_app == "element" || !allowed {
+        return Ok(false);
+    }
+    let report: Option<String> = sqlx::query_scalar(
+        "SELECT installed_apps_json FROM device_status WHERE device_id = ? \
+         AND installed_apps_json IS NOT NULL ORDER BY reported_at DESC, id DESC LIMIT 1",
+    )
+    .bind(id)
+    .fetch_optional(&mut **tx)
+    .await?;
+    Ok(report
+        .and_then(|json| serde_json::from_str::<Vec<crate::models::InstalledApp>>(&json).ok())
+        .is_some_and(|apps| apps.iter().any(|app| app.package_name == ELEMENT_X)))
 }
 
 /// Detaches a contact from this device, and deletes it from the address book once no device has

@@ -15,10 +15,25 @@ use crate::handlers::provisioning::{self, AdminExtras};
 
 /// The page after "Make QR code" (a POST since design 22).
 async fn provision_page(state: AppState, device_id: i64) -> String {
+    sqlx::query(
+        "INSERT OR IGNORE INTO admin_users (username, password_hash, must_change_password, totp_enabled) \
+         VALUES ('parent', 'x', 0, 1)",
+    )
+    .execute(&state.db)
+    .await
+    .unwrap();
+    let admin = sqlx::query_as(concat!(
+        crate::admin_select!(),
+        " WHERE username = 'parent'"
+    ))
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
     let response = provisioning::provision_qr(
         State(state),
         crate::i18n::Lang::En,
         Path(device_id),
+        axum::Extension(crate::security::CurrentAdmin(admin)),
         Form(Default::default()),
     )
     .await
@@ -1096,6 +1111,17 @@ async fn a_remembered_wifi_network_is_sealed_reused_and_forgotten() {
         sealed.starts_with("v1:") && !sealed.contains(password),
         "{sealed}"
     );
+    // Logged by its name, never the password.
+    let logged: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT event_type, detail FROM security_events WHERE event_type LIKE 'wifi_%' ORDER BY id",
+    )
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        logged,
+        [("wifi_saved".to_string(), Some("Hjemme".to_string()))]
+    );
 
     // The page says one is saved - its name, never the password.
     let html = app.get_page(&action, &cookie).await.text();
@@ -1132,6 +1158,30 @@ async fn a_remembered_wifi_network_is_sealed_reused_and_forgotten() {
         &[9; 32],
     )));
     assert_eq!(qr(&other, "Hjemme", ""), None);
+    // Code QA L3: a saved password that doesn't open isn't shown as "Saved", and the one typed under its name replaces
+    // it, without "Remember".
+    sqlx::query(
+        "UPDATE provisioning_settings SET wifi_password_sealed = 'v1:0:AA==:AA==' WHERE id = 1",
+    )
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let html = app.get_page(&action, &cookie).await.text();
+    assert!(!html.contains("placeholder=\"Saved\""));
+    let res = app
+        .request_form(
+            Method::POST,
+            &action,
+            Some(&cookie),
+            &[("wifi_ssid", "Hjemme"), ("wifi_password", "new-fake-pass")],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK);
+    let saved = provisioning::saved_wifi(&app.db).await.unwrap();
+    assert_eq!(
+        provisioning::qr_password(&app.state, saved.as_ref(), "Hjemme", "").as_deref(),
+        Some("new-fake-pass")
+    );
 
     // Forget: back to the QR group, nothing kept.
     let res = app
@@ -1144,6 +1194,23 @@ async fn a_remembered_wifi_network_is_sealed_reused_and_forgotten() {
         .await;
     assert_redirect(&res, &action, Some("qr"));
     assert!(provisioning::saved_wifi(&app.db).await.unwrap().is_none());
+    let forgotten: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM security_events WHERE event_type = 'wifi_forgotten' AND detail = 'Hjemme'",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(forgotten, 1);
+    // An unknown phone: 404.
+    let res = app
+        .request_form(
+            Method::POST,
+            "/devices/9999/provision/wifi/forget",
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND);
     let html = app.get_page(&action, &cookie).await.text();
     assert!(!html.contains("Forget Hjemme") && !html.contains("value=\"Hjemme\""));
 }

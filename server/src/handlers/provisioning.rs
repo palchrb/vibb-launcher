@@ -234,7 +234,11 @@ impl ProvisionQrTemplate {
             launcher,
             wifi_ssid: saved.as_ref().map(|s| s.ssid.clone()).unwrap_or_default(),
             saved_ssid: saved.as_ref().map(|s| s.ssid.clone()),
-            saved_password: saved.as_ref().is_some_and(|s| s.sealed.is_some()),
+            // Only a password this server can open is "Saved" (code QA L3).
+            saved_password: saved
+                .as_ref()
+                .and_then(|s| s.sealed.as_deref())
+                .is_some_and(|sealed| open_saved(state, sealed).is_some()),
             can_save: state.music_key.is_some(),
             until: None,
             paused_until: state
@@ -293,28 +297,52 @@ pub(crate) async fn saved_wifi(db: &sqlx::SqlitePool) -> Result<Option<SavedWifi
     Ok(row.and_then(|(ssid, sealed)| ssid.map(|ssid| SavedWifiRow { ssid, sealed })))
 }
 
-/// Saves `ssid` with `password` sealed (empty: an open network), replacing what was saved. `Ok(false)` without a key:
-/// nothing is stored in the clear.
-async fn save_wifi(state: &AppState, ssid: &str, password: &str) -> Result<bool, sqlx::Error> {
+/// Saves `ssid` with `password` sealed (empty: an open network), replacing what was saved, and logs it (the name
+/// only). `Ok(false)` without a key - nothing is stored in the clear - or without the settings row.
+async fn save_wifi(
+    state: &AppState,
+    admin: &str,
+    ssid: &str,
+    password: &str,
+) -> Result<bool, sqlx::Error> {
     let Some(key) = state.music_key.as_ref() else {
         return Ok(false);
     };
     let sealed = (!password.is_empty())
         .then(|| key.seal_text(WIFI_PURPOSE, WIFI_CONTEXT, password.as_bytes()));
-    sqlx::query(
+    let saved = sqlx::query(
         "UPDATE provisioning_settings SET wifi_ssid = ?, wifi_password_sealed = ?, \
          updated_at = datetime('now') WHERE id = 1",
     )
     .bind(ssid)
     .bind(sealed)
     .execute(&state.db)
-    .await?;
-    Ok(true)
+    .await?
+    .rows_affected()
+        > 0;
+    if saved {
+        crate::security::record_security_event(
+            &state.db,
+            "wifi_saved",
+            Some(admin),
+            None,
+            Some(crate::security::Detail::facts(ssid)),
+        )
+        .await;
+    }
+    Ok(saved)
+}
+
+/// The saved password, opened: `None` without a key, or when it was sealed with another key (a restore elsewhere, a
+/// new key file) or was changed.
+fn open_saved(state: &AppState, sealed: &str) -> Option<String> {
+    let key = state.music_key.as_ref()?;
+    key.open_text(WIFI_PURPOSE, WIFI_CONTEXT, sealed)
+        .and_then(|plain| String::from_utf8(plain).ok())
 }
 
 /// The password the QR carries for `ssid`: the typed one, or - left empty under the saved network's name - the saved
-/// one, opened here and nowhere else. `None`: the saved one doesn't open (sealed with another key - a restore
-/// elsewhere, a new key file - or changed).
+/// one, opened for the QR. `None`: the saved one doesn't open ([open_saved]).
 pub(crate) fn qr_password(
     state: &AppState,
     saved: Option<&SavedWifiRow>,
@@ -324,28 +352,55 @@ pub(crate) fn qr_password(
     let sealed = saved
         .filter(|saved| typed.is_empty() && saved.ssid == ssid)
         .and_then(|saved| saved.sealed.as_deref());
-    let Some(sealed) = sealed else {
-        return Some(typed.to_string());
-    };
-    let key = state.music_key.as_ref()?;
-    key.open_text(WIFI_PURPOSE, WIFI_CONTEXT, sealed)
-        .and_then(|plain| String::from_utf8(plain).ok())
+    match sealed {
+        None => Some(typed.to_string()),
+        Some(sealed) => open_saved(state, sealed),
+    }
 }
 
-/// `POST /devices/{id}/provision/wifi/forget`: the saved network is deleted. Back to the QR group.
+/// `POST /devices/{id}/provision/wifi/forget`: the saved network is deleted and logged (its name). Back to the QR
+/// group; an unknown phone is a 404, nothing deleted.
 pub async fn forget_wifi(
     State(state): State<AppState>,
     lang: Lang,
     Path(id): Path<i64>,
+    axum::Extension(crate::security::CurrentAdmin(admin)): axum::Extension<
+        crate::security::CurrentAdmin,
+    >,
 ) -> Response {
-    let forgot = sqlx::query(
-        "UPDATE provisioning_settings SET wifi_ssid = NULL, wifi_password_sealed = NULL, \
-         updated_at = datetime('now') WHERE id = 1",
-    )
-    .execute(&state.db)
+    let forgot = async {
+        let device: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM devices WHERE id = ?)")
+            .bind(id)
+            .fetch_one(&state.db)
+            .await?;
+        if !device {
+            return Ok(None);
+        }
+        let ssid = saved_wifi(&state.db).await?.map(|saved| saved.ssid);
+        sqlx::query(
+            "UPDATE provisioning_settings SET wifi_ssid = NULL, wifi_password_sealed = NULL, \
+             updated_at = datetime('now') WHERE id = 1",
+        )
+        .execute(&state.db)
+        .await?;
+        Ok::<_, sqlx::Error>(Some(ssid))
+    }
     .await;
     match forgot {
-        Ok(_) => Redirect::to(&format!("/devices/{id}/provision#qr")).into_response(),
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Ok(Some(ssid)) => {
+            if let Some(ssid) = ssid {
+                crate::security::record_security_event(
+                    &state.db,
+                    "wifi_forgotten",
+                    Some(&admin.username),
+                    None,
+                    Some(crate::security::Detail::facts(&ssid)),
+                )
+                .await;
+            }
+            Redirect::to(&format!("/devices/{id}/provision#qr")).into_response()
+        }
         Err(err) => {
             tracing::error!(%err, "couldn't forget the saved Wi-Fi network");
             crate::i18n::error(
@@ -438,6 +493,9 @@ pub async fn provision_qr(
     State(state): State<AppState>,
     lang: Lang,
     Path(id): Path<i64>,
+    axum::Extension(crate::security::CurrentAdmin(admin)): axum::Extension<
+        crate::security::CurrentAdmin,
+    >,
     Form(form): Form<ProvisionForm>,
 ) -> Response {
     let (device, settings, saved) = match load(&state, id).await {
@@ -463,8 +521,17 @@ pub async fn provision_qr(
         page.error = Some(crate::i18n::t(lang, "devices.qr.password_again"));
         return page.page(StatusCode::BAD_REQUEST);
     };
-    if form.remember.is_some() && !ssid.is_empty() {
-        match save_wifi(&state, ssid, &password).await {
+    // Code QA L3: a saved password that no longer opens is replaced by the one typed under its name.
+    let repair = saved.as_ref().is_some_and(|saved| {
+        saved.ssid == ssid
+            && !typed.is_empty()
+            && saved
+                .sealed
+                .as_deref()
+                .is_some_and(|sealed| open_saved(&state, sealed).is_none())
+    });
+    if (form.remember.is_some() || repair) && !ssid.is_empty() {
+        match save_wifi(&state, &admin.username, ssid, &password).await {
             Ok(true) => {
                 page.saved_ssid = Some(ssid.to_string());
                 page.saved_password = !password.is_empty();

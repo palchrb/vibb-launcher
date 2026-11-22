@@ -353,12 +353,15 @@
                                         </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
                                     </label>
                                     {#- D2 (M6): the Matrix ID while the button opens Element X or one is stored. Without
-                                        the field the save keeps what is stored. -#}
+                                        the field the save keeps what is stored; the ID is the contact's on every phone
+                                        (0161), written only when it differs from `message_address_shown`. -#}
                                     {% if contact.show_matrix %}
                                     <div class="field contact-field">
                                         <label class="field-label" for="matrix-{{ contact.id }}">{{ self.t("device.calls.matrix") }}</label>
                                         <input type="text" id="matrix-{{ contact.id }}" name="message_address" value="{{ contact.message_address }}" placeholder="{{ self.t("device.calls.matrix_example") }}" maxlength="255" autocomplete="off" autocapitalize="none" spellcheck="false" data-autosave{% if let Some((field, _)) = contact.error %}{% if *field == "message_address" %} aria-invalid="true" aria-describedby="matrix-{{ contact.id }}-error" autofocus{% endif %}{% endif %}>
+                                        <input type="hidden" name="message_address_shown" value="{{ contact.address_shown }}">
                                         {% if let Some((field, why)) = contact.error %}{% if *field == "message_address" %}<p class="field-error" id="matrix-{{ contact.id }}-error">{{ why }}</p>{% endif %}{% else if let Some((note, warn)) = contact.matrix_note %}<p class="field-hint{% if *warn %} tone-orange{% endif %}" data-matrix-note>{{ self.t(note) }}</p>{% endif %}
+                                        <details class="info"><summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("device.calls.matrix_shared") }}</p></div></details>
                                     </div>
                                     {% endif %}
                                 </div>
@@ -500,6 +503,7 @@
                                     <label class="field-label" for="contact_matrix">{{ self.t("device.calls.matrix") }}</label>
                                     <input type="text" id="contact_matrix" name="message_address" value="{{ add.message_address }}" placeholder="{{ self.t("device.calls.matrix_example") }}" maxlength="255" autocomplete="off" autocapitalize="none" spellcheck="false"{% if let Some((field, _)) = add_error %}{% if *field == "message_address" %} aria-invalid="true" aria-describedby="contact_matrix-error" autofocus{% endif %}{% endif %}>
                                     {% if let Some((field, why)) = add_error %}{% if *field == "message_address" %}<p class="field-error" id="contact_matrix-error">{{ why }}</p>{% endif %}{% endif %}
+                                    <details class="info"><summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("device.calls.matrix_shared") }}</p></div></details>
                                 </div>
                             </div>
                         </details>

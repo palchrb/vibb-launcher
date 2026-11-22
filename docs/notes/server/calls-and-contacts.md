@@ -519,10 +519,22 @@ which app its button opens (`device_contacts.message_app`, NULL = the phone's `d
   phones takes the one on the lowest device id (the rows carry no time) - and drops `device_contacts.message_address`.
 - **The policy is unchanged**: `call_policy.contacts[].message_address` is read from the contact
   (`device_api::device_contacts`); no launcher change, `policy_json_keys_snapshot` as before.
-- **The PWA**: the Matrix ID field (a contact's Avansert, Add Contact) edits the contact's ID
-  (`calls::set_contact_address`), so a save on one phone's page shows on every phone's; a post without the field keeps
-  it, an empty one clears it everywhere. Add Contact with a number the family has keeps the family's ID unless one is
-  typed (or the kid's request's is taken with "Bruk Matrix-ID-en"); "Add from the family" brings the ID along. A
-  change nudges every phone that has the contact (`calls::nudge_contact_phones`).
+- **The PWA**: the Matrix ID field (a contact's Avansert, Add Contact; "The same Matrix ID on every phone." behind its
+  (i)) edits the contact's ID (`calls::set_contact_address`), so a save on one phone's page shows on every phone's; a
+  post without the field keeps it, an empty one clears it everywhere. The contact's form carries
+  `message_address_shown` (the ID as the page showed it): a post sending the field unchanged keeps the stored ID, so a
+  stale tab's other change never writes an old ID back on every phone (code QA M2; a post without `_shown` is taken as
+  sent). Add Contact with a number the family has keeps the family's ID unless one is typed. From a kid's request with
+  "Bruk Matrix-ID-en" ticked, the kid's ID fills a contact without one; a family contact with another ID is refused in
+  place (`device.requests.matrix_kept`, the kept ID in the field, the tick kept - saving again keeps it, a typed one
+  replaces it; code QA M1), and the tick sets Element X on this phone. A change nudges every phone that has the contact
+  (`calls::nudge_contact_phones`).
+- **"Add from the family" brings the ID, and Element X where it can open** (the user, 2026-11-22): when the contact's
+  button opens Element X on another phone (its own choice or that phone's default), and Element X
+  (`lock_glance::ELEMENT_X`) is in the new phone's allowlist and its newest installed-apps report, the new row gets
+  `message_app = 'element'` (`calls::element_x_follows`); else the phone's default, as before. A phone whose default is
+  Element X keeps following its default.
 - **Tests**: `tests::calls_simpler::the_matrix_id_is_the_contacts_on_every_phone` (added on one phone, on the next
-  through "Add from the family", edited there, read in the first's policy), `the_migration_moves_the_matrix_id_to_the_contact`.
+  through "Add from the family", edited there - both phones nudged -, read in the first's policy, a stale page's save,
+  Element X to a phone that has it), `the_migration_moves_the_matrix_id_to_the_contact`,
+  `tests::contact_requests::a_request_never_renames_a_family_contact` (the kid's ID refused against the family's).
