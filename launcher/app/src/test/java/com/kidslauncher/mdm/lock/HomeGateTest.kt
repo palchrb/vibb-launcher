@@ -147,11 +147,13 @@ class HomeGateTest {
     @Test
     fun `Home closes its contact sheet, long-press menu and rename dialog when the lock engages`() {
         val home = code("java/com/kidslauncher/mdm/ui/HomeActivity.kt")
-        assertTrue(home.contains("HomeGridAdapter(this, ::trackOverlay)"))
+        assertTrue(home.contains("HomeGridAdapter(this, ::trackOverlay, ::renderMoveBar)"))
         assertTrue(body(home, "showContactSheet").contains("trackOverlay { sheet.dismiss() }"))
         assertTrue(body(home, "onDestroy").contains("closeOverlays()"))
         val adapter = code("java/com/kidslauncher/mdm/ui/home/HomeGridAdapter.kt")
-        assertTrue(adapter.contains("showAppContextMenu(activity, v, info, onOverlay)"))
+        assertTrue(adapter.contains("showAppContextMenu(activity, view, info, onOverlay)"))
+        // The move bar too (the kid's order of Home's tiles, 2026-11-22).
+        assertTrue(adapter.contains("onOverlay { endMoving() }"))
         val menu = code("java/com/kidslauncher/mdm/ui/list/apps/ContextMenuActions.kt")
         val show = menu.substringAfter("fun showAppContextMenu(")
         assertTrue(show.contains("onOverlay { popup.dismiss() }"))

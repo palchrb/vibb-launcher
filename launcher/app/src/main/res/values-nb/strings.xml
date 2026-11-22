@@ -505,6 +505,12 @@
     <string name="list_app_hidden_add">Skjul</string>
     <string name="list_app_hidden_remove">Vis</string>
     <string name="list_app_rename">Gi nytt navn</string>
+    <!-- The kid moves Home's tiles (2026-11-22): the long-press menu's item and the move bar. -->
+    <string name="home_move">Flytt</string>
+    <string name="home_move_left">Flytt til venstre</string>
+    <string name="home_move_right">Flytt til høyre</string>
+    <string name="home_move_done">Ferdig</string>
+    <string name="home_move_position">%1$d av %2$d</string>
     <string name="settings">Innstillinger</string>
     <string name="snackbar_app_hidden">Appen er skjult. Du kan vise den igjen i innstillingene.</string>
     <string name="undo">Angre</string>

@@ -27,6 +27,8 @@ import eu.jonahbauer.android.preference.annotations.Preferences;
                 @PreferenceGroup(name = "apps", prefix = "settings_apps_", suffix = "_key", value = {
                         @Preference(name = "hidden", type = Set.class, serializer = SetAbstractAppInfoPreferenceSerializer.class),
                         @Preference(name = "custom_names", type = HashMap.class, serializer = MapAbstractAppInfoStringPreferenceSerializer.class),
+                        // The kid's order of Home's tiles, a JSON list of tile ids (ui/home/HomeOrder.kt); phone only.
+                        @Preference(name = "home_order", type = String.class),
                 }),
                 @PreferenceGroup(name = "theme", prefix = "settings_theme_", suffix = "_key", value = {
                         @Preference(name = "color_theme", type = ColorTheme.class, defaultValue = "DEFAULT"),

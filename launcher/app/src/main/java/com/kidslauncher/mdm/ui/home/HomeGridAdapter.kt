@@ -14,10 +14,12 @@ import android.widget.ImageView
 import android.widget.TextView
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.GridLayoutManager
+import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.RecyclerView
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.apps.AbstractDetailedAppInfo
 import com.kidslauncher.mdm.calls.PhoneBookActivity
+import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.ui.kidsettings.KidSettingsActivity
 import com.kidslauncher.mdm.ui.list.apps.showAppContextMenu
 import com.kidslauncher.mdm.ui.wallpaper.InkChoice
@@ -30,16 +32,42 @@ import com.kidslauncher.mdm.ui.wallpaper.WallpaperStore
  * What is shown is decided by
  * [homeGrid], the sizes by [gridMetrics]. Icons arrive already rendered ([KidAvatars.renderAppIcon]
  * off the main thread); a missing one shows a grey circle until the next pass. Tapping an app
- * runs its normal launch action; long-press (apps only) shows the drawer's menu (hide/rename).
+ * runs its normal launch action. The kid's own order (2026-11-22, [arrangedTiles]): a long-press lifts any tile but
+ * Settings - dragged, it moves and the drop stores the order; let go in place, an app shows the drawer's menu
+ * (hide/rename) with "Flytt", any other tile goes straight to the move bar ([startMoving]: ◀ Ferdig ▶, Home's).
  */
 @SuppressLint("NotifyDataSetChanged")
 class HomeGridAdapter(
     private val activity: Activity,
-    /** Home keeps a way to close the long-press menu and its rename dialog (design 16c). */
+    /** Home keeps a way to close the long-press menu and its rename dialog (design 16c), and the move bar. */
     private val onOverlay: (close: () -> Unit) -> Unit = {},
+    /** The move bar's state while a tile moves by the buttons, `null` = hidden. */
+    private val onMoving: (MoveBar?) -> Unit = {},
 ) : RecyclerView.Adapter<HomeGridAdapter.ViewHolder>() {
 
+    /** The tiles as shown: [submit]'s, arranged by [order]. */
     private var tiles: List<GridTile> = emptyList()
+
+    /** The kid's order of tile ids ([storedOrder]), on the phone only, beside the kid's own names. */
+    private var order: List<String> = decodeOrder(LauncherPreferences.apps().homeOrder())
+
+    /** The tile a finger lifted, until it is let go ([dropped]); [Drag.moved]: it went past the touch slop. */
+    private class Drag(val id: String, var moved: Boolean = false)
+
+    private var drag: Drag? = null
+
+    /** A [submit] that came during a drag, applied at the drop: the grid never changes under a finger. */
+    private var pending: (() -> Unit)? = null
+
+    /** The tile the move bar moves ([gridTileId]), `null` = none. */
+    private var movingId: String? = null
+
+    private var recycler: RecyclerView? = null
+    private val touchHelper = ItemTouchHelper(DragCallback())
+    private val touchSlop = android.view.ViewConfiguration.get(activity).scaledTouchSlop
+
+    /** A tile is lifted by a finger: Home's swipes stand aside. */
+    val dragging: Boolean get() = drag != null
     private var infos: Map<String, AbstractDetailedAppInfo> = emptyMap()
     private var icons: Map<String, Bitmap> = emptyMap()
     private var metrics: GridMetrics = gridMetrics(MOCKUP_CONTENT_DP, 3)
@@ -95,6 +123,22 @@ class HomeGridAdapter(
      * so nothing moves.
      */
     fun submit(
+        tiles: List<GridTile>,
+        infos: Map<String, AbstractDetailedAppInfo>,
+        icons: Map<String, Bitmap>,
+        metrics: GridMetrics,
+        ink: InkChoice,
+    ) {
+        if (drag != null) {
+            pending = { submit(tiles, infos, icons, metrics, ink) }
+            return
+        }
+        show(arrangedTiles(tiles, order), infos, icons, metrics, ink)
+        // The moving tile left the grid (a rule, the parent): the bar goes with it.
+        if (movingId != null) reportMoving()
+    }
+
+    private fun show(
         tiles: List<GridTile>,
         infos: Map<String, AbstractDetailedAppInfo>,
         icons: Map<String, Bitmap>,
@@ -166,11 +210,17 @@ class HomeGridAdapter(
                     null -> {}
                 }
             }
-            // Apps only: the phone book and Settings tiles have no menu (QA 08 #10).
+            // Every tile but Settings (QA 08 #10: no menu). A finger's long-press (the cell is pressed) lifts the tile
+            // and the drop decides ([dropped]); TalkBack's long-press has no finger and opens the menu at once.
             view.setOnLongClickListener { v ->
-                val tile = tiles.getOrNull(bindingAdapterPosition) as? GridTile.App ?: return@setOnLongClickListener false
-                val info = infos[tile.app.key] ?: return@setOnLongClickListener false
-                showAppContextMenu(activity, v, info, onOverlay)
+                val tile = tiles.getOrNull(bindingAdapterPosition) ?: return@setOnLongClickListener false
+                if (tile is GridTile.Settings) return@setOnLongClickListener false
+                if (v.isPressed && drag == null && recycler?.scrollState == RecyclerView.SCROLL_STATE_IDLE) {
+                    endMoving()
+                    touchHelper.startDrag(this)
+                } else {
+                    openMenu(v, tile)
+                }
                 true
             }
         }
@@ -249,6 +299,7 @@ class HomeGridAdapter(
         KidInk.label(holder.label, ink)
         // Only the flashlight has a state; a recycled view starts without one.
         holder.itemView.stateDescription = null
+        lift(holder.itemView, gridTileId(tiles[position]) == movingId, smooth = false)
         when (val tile = tiles[position]) {
             GridTile.PhoneBook -> glyphTile(holder, R.color.kid_phone_book, R.drawable.ic_kid_phone_book, R.string.calls_phone_book)
             // Design 77 §6.7: the chat glyph on the teal tone, the unread total as its badge. Design 82 D9, W1: the
@@ -284,9 +335,164 @@ class HomeGridAdapter(
         }
     }
 
+    override fun onAttachedToRecyclerView(recyclerView: RecyclerView) {
+        recycler = recyclerView
+        touchHelper.attachToRecyclerView(recyclerView)
+    }
+
+    override fun onDetachedFromRecyclerView(recyclerView: RecyclerView) {
+        touchHelper.attachToRecyclerView(null)
+        recycler = null
+    }
+
+    /** A long-press let go in place, or TalkBack's: an app's menu with "Flytt", any other tile the move bar at once. */
+    private fun openMenu(view: View, tile: GridTile) {
+        val id = gridTileId(tile)
+        val info = (tile as? GridTile.App)?.let { infos[it.app.key] }
+        if (info == null) startMoving(id) else showAppContextMenu(activity, view, info, onOverlay) { startMoving(id) }
+    }
+
+    /** The move bar for the tile [id]: lifted until "Ferdig", Home's press, the lock or Home's stop ([endMoving]). */
+    private fun startMoving(id: String) {
+        endMoving()
+        val index = tiles.indexOfFirst { gridTileId(it) == id }
+        if (index < 0) return
+        movingId = id
+        liftShown(id, true)
+        recycler?.scrollToPosition(index)
+        onOverlay { endMoving() }
+        reportMoving()
+    }
+
+    /** ◀ ([step] -1) or ▶ (+1): one step for the moving tile, stored at once. */
+    fun stepMoving(step: Int) {
+        val from = tiles.indexOfFirst { gridTileId(it) == movingId }
+        val to = stepTarget(tiles, from, step) ?: return
+        moveTile(from, to)
+        storeShown()
+        recycler?.scrollToPosition(to)
+        reportMoving()
+    }
+
+    fun endMoving() {
+        val id = movingId ?: return
+        movingId = null
+        liftShown(id, false)
+        onMoving(null)
+    }
+
+    private fun reportMoving() {
+        val index = tiles.indexOfFirst { gridTileId(it) == movingId }
+        if (index < 0) endMoving() else onMoving(moveBar(tiles, index))
+    }
+
+    private fun moveTile(from: Int, to: Int) {
+        tiles = movedItem(tiles, from, to)
+        notifyItemMoved(from, to)
+        // A moved cell isn't rebound: its column's gaps (GridGapDecoration) are worked out again.
+        recycler?.invalidateItemDecorations()
+    }
+
+    private fun storeShown() {
+        order = storedOrder(order, tiles.map(::gridTileId))
+        LauncherPreferences.apps().homeOrder(encodeOrder(order))
+    }
+
+    /** The finger let go: a drag stores the order; a long-press let go in place opens [openMenu]. A [submit] held during
+     * the drag comes now. */
+    private fun dropped() {
+        val done = drag ?: return
+        drag = null
+        if (done.moved) storeShown()
+        pending?.also { pending = null }?.invoke()
+        if (done.moved) return
+        val position = tiles.indexOfFirst { gridTileId(it) == done.id }
+        val view = recycler?.findViewHolderForAdapterPosition(position)?.itemView ?: return
+        openMenu(view, tiles[position])
+    }
+
+    private fun liftShown(id: String, on: Boolean) {
+        val itemId = ids[id] ?: return
+        recycler?.findViewHolderForItemId(itemId)?.itemView?.let { lift(it, on, smooth = true) }
+    }
+
+    /** A lifted tile is a little larger - no wobble, no glow (calm, adult-but-for-kids). */
+    private fun lift(view: View, on: Boolean, smooth: Boolean) {
+        val scale = if (on) LIFT_SCALE else 1f
+        view.animate().cancel()
+        if (smooth) {
+            view.animate().scaleX(scale).scaleY(scale).setDuration(LIFT_MS).start()
+        } else {
+            view.scaleX = scale
+            view.scaleY = scale
+        }
+    }
+
+    /** The drag: started by the cell's own long-press ([ViewHolder]), never ItemTouchHelper's; Settings never moves and
+     * nothing is dropped on it. */
+    private inner class DragCallback : ItemTouchHelper.Callback() {
+        private fun movable(holder: RecyclerView.ViewHolder) =
+            tiles.getOrNull(holder.bindingAdapterPosition).let { it != null && it !is GridTile.Settings }
+
+        override fun isLongPressDragEnabled() = false
+        override fun isItemViewSwipeEnabled() = false
+
+        override fun getMovementFlags(recyclerView: RecyclerView, viewHolder: RecyclerView.ViewHolder): Int =
+            makeMovementFlags(if (movable(viewHolder)) ALL_DIRECTIONS else 0, 0)
+
+        override fun canDropOver(recyclerView: RecyclerView, current: RecyclerView.ViewHolder, target: RecyclerView.ViewHolder) =
+            movable(target)
+
+        override fun onMove(recyclerView: RecyclerView, viewHolder: RecyclerView.ViewHolder, target: RecyclerView.ViewHolder): Boolean {
+            val from = viewHolder.bindingAdapterPosition
+            val to = target.bindingAdapterPosition
+            if (from == RecyclerView.NO_POSITION || to == RecyclerView.NO_POSITION) return false
+            moveTile(from, to)
+            return true
+        }
+
+        override fun onSwiped(viewHolder: RecyclerView.ViewHolder, direction: Int) {}
+
+        override fun onChildDraw(
+            c: android.graphics.Canvas,
+            recyclerView: RecyclerView,
+            viewHolder: RecyclerView.ViewHolder,
+            dX: Float,
+            dY: Float,
+            actionState: Int,
+            isCurrentlyActive: Boolean,
+        ) {
+            super.onChildDraw(c, recyclerView, viewHolder, dX, dY, actionState, isCurrentlyActive)
+            if (isCurrentlyActive && kotlin.math.hypot(dX, dY) > touchSlop) drag?.moved = true
+        }
+
+        override fun onSelectedChanged(viewHolder: RecyclerView.ViewHolder?, actionState: Int) {
+            super.onSelectedChanged(viewHolder, actionState)
+            // The drag exists only once the helper took the tile, so a refused start can't hold the grid's updates.
+            val tile = viewHolder?.let { tiles.getOrNull(it.bindingAdapterPosition) }
+            when (actionState) {
+                ItemTouchHelper.ACTION_STATE_DRAG -> if (viewHolder != null && tile != null) {
+                    drag = Drag(gridTileId(tile))
+                    lift(viewHolder.itemView, true, smooth = true)
+                }
+                ItemTouchHelper.ACTION_STATE_IDLE -> dropped()
+            }
+        }
+
+        override fun clearView(recyclerView: RecyclerView, viewHolder: RecyclerView.ViewHolder) {
+            super.clearView(recyclerView, viewHolder)
+            val tile = tiles.getOrNull(viewHolder.bindingAdapterPosition)
+            lift(viewHolder.itemView, tile != null && gridTileId(tile) == movingId, smooth = true)
+        }
+    }
+
     private companion object {
         /** The payload of a badge-only change. */
         const val BADGE = "badge"
+
+        const val LIFT_SCALE = 1.08f
+        const val LIFT_MS = 120L
+        const val ALL_DIRECTIONS = ItemTouchHelper.UP or ItemTouchHelper.DOWN or ItemTouchHelper.START or ItemTouchHelper.END
     }
 }
 

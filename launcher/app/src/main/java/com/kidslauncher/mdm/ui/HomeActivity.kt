@@ -223,6 +223,8 @@ class HomeActivity : UIObjectActivity() {
         SharedPreferences.OnSharedPreferenceChangeListener { _, prefKey ->
             if (prefKey?.startsWith("display.") == true) {
                 recreate()
+            } else if (prefKey == LauncherPreferences.apps().keys().homeOrder()) {
+                // The kid's order of the tiles: stored by the grid, which already shows it.
             } else if (prefKey == LauncherPreferences.mdm().keys().lockReason()) {
                 redirectToLockScreenIfLocked()
             } else if (prefKey == LauncherPreferences.mdm().keys().kioskEnabled()) {
@@ -339,7 +341,11 @@ class HomeActivity : UIObjectActivity() {
         com.kidslauncher.mdm.ui.KidInsets.apply(binding.root)
 
         // No clock or date any more (design 08): the status bar shows the time.
-        gridAdapter = HomeGridAdapter(this, ::trackOverlay)
+        gridAdapter = HomeGridAdapter(this, ::trackOverlay, ::renderMoveBar)
+        // The kid moves a tile with buttons (2026-11-22): the bar under the grid, one step per arrow.
+        binding.homeMoveLeft.setOnClickListener { gridAdapter.stepMoving(-1) }
+        binding.homeMoveRight.setOnClickListener { gridAdapter.stepMoving(1) }
+        binding.homeMoveDone.setOnClickListener { gridAdapter.endMoving() }
         gridLayout = object : GridLayoutManager(this, gridColumns(null)) {
             // Every layout of the grid itself (new tiles, a new height), never a scroll or another view's layout.
             override fun onLayoutCompleted(state: RecyclerView.State?) {
@@ -392,7 +398,8 @@ class HomeActivity : UIObjectActivity() {
                 velocityX: Float,
                 velocityY: Float
             ): Boolean {
-                if (e1 == null) return false
+                // A tile lifted by a finger is being moved, not swiped.
+                if (e1 == null || gridAdapter.dragging) return false
                 val swipe = homeSwipe(
                     e1.x, e1.y, e2.x, e2.y, velocityX, velocityY,
                     start = downStart,
@@ -727,6 +734,8 @@ class HomeActivity : UIObjectActivity() {
         // Design 16e: something covers the mark - the boot's wait for it ends.
         PinLockRuntime.onHomeCovered(this, isChangingConfigurations, "Home stopped")
         started = false
+        // An app opened over Home ends the move bar's moving.
+        if (::gridAdapter.isInitialized) gridAdapter.endMoving()
         renderMusicCard()
         BadgeStore.removeListener(badgeListener)
         refreshHandler.removeCallbacks(badgeRender)
@@ -1114,6 +1123,19 @@ class HomeActivity : UIObjectActivity() {
             // scrolled by 24 dp and cut the third contact's badge).
             item.layoutParams = LinearLayout.LayoutParams(itemPx, LinearLayout.LayoutParams.WRAP_CONTENT)
             row.addView(item)
+        }
+    }
+
+    /** The move bar ([HomeGridAdapter.stepMoving]): shown while a tile moves, an arrow dimmed at its edge; TalkBack hears
+     * the tile's place on each arrow ("3 av 12"). */
+    private fun renderMoveBar(bar: com.kidslauncher.mdm.ui.home.MoveBar?) {
+        binding.homeMoveBar.visibility = if (bar == null) View.GONE else View.VISIBLE
+        if (bar == null) return
+        val place = getString(R.string.home_move_position, bar.place, bar.count)
+        for ((button, usable) in listOf(binding.homeMoveLeft to bar.left, binding.homeMoveRight to bar.right)) {
+            button.isEnabled = usable
+            button.alpha = if (usable) 1.0f else 0.3f
+            button.stateDescription = place
         }
     }
 

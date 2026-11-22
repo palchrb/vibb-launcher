@@ -580,6 +580,12 @@
     <string name="list_app_hidden_add">Hide</string>
     <string name="list_app_hidden_remove">Show</string>
     <string name="list_app_rename">Rename</string>
+    <!-- The kid moves Home's tiles (2026-11-22): the long-press menu's item and the move bar. -->
+    <string name="home_move">Move</string>
+    <string name="home_move_left">Move left</string>
+    <string name="home_move_right">Move right</string>
+    <string name="home_move_done">Done</string>
+    <string name="home_move_position">%1$d of %2$d</string>
 
     <string name="settings">Settings</string>
     <string name="snackbar_app_hidden">App hidden. You can make it visible again in settings.</string>

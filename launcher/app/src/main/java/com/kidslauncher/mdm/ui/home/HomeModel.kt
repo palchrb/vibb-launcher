@@ -244,7 +244,7 @@ fun gridTileId(tile: GridTile): String = when (tile) {
     GridTile.PhoneBook -> "phone_book"
     GridTile.Day -> "day"
     is GridTile.Messages -> "messages"
-    GridTile.Settings -> "settings"
+    GridTile.Settings -> SETTINGS_TILE_ID
     is GridTile.App -> "app:${tile.app.key}"
 }
 
