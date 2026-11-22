@@ -1,15 +1,15 @@
 # 125 - Wi-Fi places, learned on the phone
 
-Status: **revision 3 - ready to build**, 2026-11-22. Asked by the user: "kunne egentlig tenkt meg å kunne beholde innendørs
-posisjon vha google, men finnes det noen foss alternativer eller noe annet vi kan gjøre for å sikre at vi ikke er
-identifiserbare for google?", then "Ja sett i gang et wifi selvlæringsdesign" and "vil den bare lære wifi eller også
+Status: **revision 3 - ready to build**, 2026-11-22. Asked by the user: "kunne egentlig tenkt meg å kunne beholde
+innendørs posisjon vha google, men finnes det noen foss alternativer eller noe annet vi kan gjøre for å sikre at vi ikke
+er identifiserbare for google?", then "Ja sett i gang et wifi selvlæringsdesign" and "vil den bare lære wifi eller også
 cell towers?". Revision 2 applies the user's answers (§11: Q1 yes, but "vi må jo passe på at vi ikke nå legger opp til
-noe som blir veldig unøyaktig bare for å spare 0.5% batteri btw. Men privacy er en god grunn da"; Q2 a self-learned
-zone link; Q3 and Q4 in) and the design QA (H1-H2, M1-M5, L1-L10; §10); revision 3 the user's Q5 (the zone link only
-renews a still vouch), a 60-day block and what the research into microG, Local NLP Backend, Déjà Vu and GrapheneOS's
-NetworkLocation gave (§10). Launcher round; no server code, no contract
-file changes. Read against `main` b56676686 with design 124 revision 2 beside it (its step 1 is in build; this note
-builds on its D3 `MotionFlags`, D5 heartbeat and D9 provider choice).
+noe som blir veldig unøyaktig bare for å spare 0.5% batteri btw. Men privacy er en god grunn da"; Q2 a self-learned zone
+link; Q3 and Q4 in) and the design QA (H1-H2, M1-M5, L1-L10; §10); revision 3 the user's Q5 (the zone link only renews a
+still vouch), a 60-day block and what the research into microG, Local NLP Backend, Déjà Vu and GrapheneOS's
+NetworkLocation gave (§10). Launcher round; no server code, no contract file changes. Read against `main` b56676686 with
+design 124 revision 2 beside it (its step 1 is in build; this note builds on its D3 `MotionFlags`, D5 heartbeat and D9
+provider choice).
 
 ## 0. Short answer
 
@@ -51,13 +51,13 @@ Wi-Fi witness (§8 there) is dropped: past its 4-h cap a known place gives a rea
    Never: a `vibb_wifi`/`vibb_cell` fix (no feedback), a balanced fix, a fix with the `network` provider on (Google's
    Wi-Fi database, not ours - no bootstrap from Google-derived fixes), a last-known or cached fix.
 2. **Pairing a scan with the teacher.** While GPS runs for the teaching fix (D11), the first `FIX` after a move or a
-   `locate`, the attempt keeps the **GPS stream** (`requestLocationUpdates(gps, 1 s)` for the attempt's length, each
-   fix in a memory buffer) and pairs **each scan result with the stream fix nearest in elapsed time** (within ~1 s;
-   Local NLP Backend's way). Every other teacher (a passive fix, a single `getCurrentLocation`) pairs results whose
-   `timestamp` lies within **+-30 s** of its `elapsedRealtimeNanos`. When a teaching fix arrives and the newest scan is more than **15 s** old, one more scan is
-   taken (wait <= 8 s) - not with GLA on (D13). The pairing error goes into the weight: `accEff = acc + speed x |dt|`
-   (speed unknown: 1.5 m/s), and `accEff <= 40 m` or no teach. At most the **60** strongest usable APs per teach; the
-   serving cell (D10) pairs the same way by `CellInfo.getTimestampMillis()`.
+   `locate`, the attempt keeps the **GPS stream** (`requestLocationUpdates(gps, 1 s)` for the attempt's length, each fix
+   in a memory buffer) and pairs **each scan result with the stream fix nearest in elapsed time** (within ~1 s; Local
+   NLP Backend's way). Every other teacher (a passive fix, a single `getCurrentLocation`) pairs results whose
+   `timestamp` lies within **+-30 s** of its `elapsedRealtimeNanos`. When a teaching fix arrives and the newest scan is
+   more than **15 s** old, one more scan is taken (wait <= 8 s) - not with GLA on (D13). The pairing error goes into the
+   weight: `accEff = acc + speed x |dt|` (speed unknown: 1.5 m/s), and `accEff <= 40 m` or no teach. At most the **60**
+   strongest usable APs per teach; the serving cell (D10) pairs the same way by `CellInfo.getTimestampMillis()`.
 3. **The passive listener, every Regularly phone.** `PassiveFixes` registers on every Regularly phone (device owner,
    managed, mode `interval`), zones or not; a `gps` fix that passes D1 teaches - free, opportunistic (a maps app's
    navigation teaches a whole route). Zones phones keep today's kept-slot use on top. With GLA on it pairs only with
@@ -80,13 +80,13 @@ Wi-Fi witness (§8 there) is dropped: past its 4-h cap a known place gives a rea
    nodes and a router's bands are **one network**; `band` (2.4 / 5 / 6 GHz from `frequency`); `lat`, `lng`, `weight`,
    `rangeM`, `occasions` (teaches >= 30 min apart), `days` (distinct local days, capped), `lastTeach`, `lastSeen`,
    `moves`. No SSID, no BSSID, no signal history.
-6. **The estimate per row** (Déjà Vu's idea, simplified): a weighted centroid of its teach positions, sighting weight
-   `w = q(rssi) x a(accEff)`, `q = clamp((rssi + 100) / 40, 0.1, 1)`, `a = clamp(10 m / accEff, 0.25, 1)`;
+6. **The estimate per row** (Déjà Vu's idea, simplified): a weighted centroid of its teach positions, sighting
+   weight `w = q(rssi) x a(accEff)`, `q = clamp((rssi + 100) / 40, 0.1, 1)`, `a = clamp(10 m / accEff, 0.25, 1)`;
    `pos = (pos x W + teach x w) / (W + w)`, `W = min(W + w, 20)` (the newest ~20 sightings dominate, so a slow drift
-   follows). `rangeM` = max of (distance from the estimate + accEff), floored by band - **100 m at 2.4 GHz, 60 m at 5/6
-   GHz** (what a phone hears through walls, even when every teach was at the door) - and never capped: a sighting that would
-   push it past the band's reach is a move (D7). A device's
-   position is the weight-weighted mean of its rows, a network's of its devices.
+   follows). `rangeM` is the max of (distance from the estimate + accEff), floored by band - **100 m at 2.4 GHz, 60 m
+   at 5/6 GHz** (what a phone hears through walls, even when every teach was at the door) - and never capped: a sighting that would push it past
+   the band's reach is a move (D7). A device's position is the weight-weighted mean of its rows, a network's of its
+   devices.
 7. **Moves, per band.** A sighting whose `distance - accEff` from the row's estimate exceeds the band's reach -
    **300 m at 2.4 GHz, 150 m at 5/6 GHz** - is a move: the row restarts there (`occasions = 1`, `days = 1`) and
    `moves + 1`; **two moves within 60 days block it for 60 days** (a tombstone, never used or taught meanwhile; then it
@@ -109,7 +109,8 @@ Wi-Fi witness (§8 there) is dropped: past its 4-h cap a known place gives a rea
    - **Trusted rows**: not blocked, `occasions >= 2`. Rows group into devices, devices into **networks** - the witness
      unit. Consensus by **complete link** (Local NLP Backend's `locationCompatibleWithGroup`): the device with the most
      others within `rangeA + rangeB` seeds a cluster (tie: stronger signal), and a device joins only when it is within
-     `rangeA + rangeB` of **every** member; the cluster must hold **>= 2 distinct networks and more than half** of the trusted networks seen, else no fix.
+     `rangeA + rangeB` of **every** member; the cluster must hold **>= 2 distinct networks and more than half** of the
+     trusted networks seen, else no fix.
    - **Position**: the cluster's devices weighted by `q(best rssi) x min(occasions, 5) / 5`, the connected unmetered
      network x 2.
    - **Accuracy, a 68 % estimate, not a bound** (M1): `acc = sqrt(spread^2 + (0.5 x rangeMed)^2)`, `spread` the
@@ -120,11 +121,12 @@ Wi-Fi witness (§8 there) is dropped: past its 4-h cap a known place gives a rea
      somewhere else). Floor 30 m; over **200 m** no fix. The constants are tuned in the synthetic town (§8); the
      binding row: **a neighbour 120 m from home, hearing home's APs through walls, is never `d + a <= r` inside a
      150 m zone at home.**
-   - **Stands alone or not** (H2): after a motion fire, a learned fix from **fewer than 3 networks** never stands alone
-     - GPS runs in the same attempt (D14). **One network alone** (a lone router, a mesh) never gives a fix (no
+   - **Stands alone or not** (H2): after a motion fire, a learned fix from **fewer than 3 networks** never stands alone:
+     GPS runs in the same attempt (D14). **One network alone** (a lone router, a mesh) never gives a fix (no
      single-emitter fixes); only a zone-linked network extends a still vouch (D12).
-   - Time: the **oldest** used result's `timestamp` on the wall clock (GrapheneOS's `LocationReportingTask`). A fix from the 2-min fallback is reported but is
-     **not fresh** for `MotionFlags.afterTry` or the fresh-fix stamp (M2). The lookup changes nothing but `lastSeen`.
+   - Time: the **oldest** used result's `timestamp` on the wall clock (GrapheneOS's `LocationReportingTask`). A fix from
+     the 2-min fallback is reported but is **not fresh** for `MotionFlags.afterTry` or the fresh-fix stamp (M2). The
+     lookup changes nothing but `lastSeen`.
 10. **Cells** (Q4: in step 1, a no-op without a SIM). The serving cell from `TelephonyManager.getAllCellInfo()`, or one
     `requestCellInfoUpdate` (API 29) when the cached `getTimestampMillis()` is > 60 s off: `CellIdentityLte` (MCC,
     MNC, TAC, CI), `CellIdentityNr` (MCC, MNC, TAC, NCI), `Wcdma`/`Gsm` (LAC, CID); neighbours usually lack an
@@ -143,12 +145,12 @@ Wi-Fi witness (§8 there) is dropped: past its 4-h cap a known place gives a rea
     radius changes or it goes), the phone learns which **networks** are present when it is surely inside: a network
     becomes **linked** after being **connected** (unmetered) at >= 3 teaching fixes that are `d + a <= r` inside the
     zone, on >= 2 local days, and **never** heard at a teaching fix surely outside by 200 m (`d - a >= r + 200 m`). One
-    such sighting revokes the link; a second blocks it for 60 days (a cabin MiFi, a travel router).
-    **Use - it only renews a still vouch (Q5):** when 124's 4-h cap is reached while `motion()` says `STILL` since a
-    fix surely inside that zone, and the phone is connected to a network linked to it, the cap try re-sends the vouched
-    fix with `still: true` (a new 4-h step) instead of a new position; a motion fire ends it, and the daily refresh (D14)
-    still runs GPS. It never establishes a position after a move, and it never yields a fix of its own (design 64
-    decision 1: the server judges the zone on the fixes). Nothing about the link leaves the phone.
+    such sighting revokes the link; a second blocks it for 60 days (a cabin MiFi, a travel router). **Use - it only
+    renews a still vouch (Q5):** when 124's 4-h cap is reached while `motion()` says `STILL` since a fix surely inside
+    that zone, and the phone is connected to a network linked to it, the cap try re-sends the vouched fix with `still:
+    true` (a new 4-h step) instead of a new position; a motion fire ends it, and the daily refresh (D14) still runs GPS.
+    It never establishes a position after a move, and it never yields a fix of its own (design 64 decision 1: the server
+    judges the zone on the fixes). Nothing about the link leaves the phone.
 13. **Getting the scan** (`WifiPlaces.scan`), only with the `network` provider **off**: at the start of every
     fresh-fix attempt, inside `currentLocation`'s Location window - the cached `getScanResults()` when D9's fresh rule
     holds, else `startScan()` and `registerScanResultsCallback` (API 30; the broadcast only as a fallback) for up to
@@ -168,8 +170,8 @@ Wi-Fi witness (§8 there) is dropped: past its 4-h cap a known place gives a rea
     (a still weekend at home), the next heartbeat `FIX` runs GPS too, keeps the better and teaches.
 15. **Design 124's rules for a learned fix:** a fresh (not fallback) learned fix counts as fresh for `afterTry` - a
     still night at a known place renews "Hasn't moved since" at each 4-h cap try. 124's D7 compares only when the
-    **vouched** fix is `gps`/`fused`, and a learned fix is never the new side of a contradiction (a wrong Wi-Fi fix
-    must not distrust the sensor). A GPS fix more than 500 m from a learned fix of >= 3 networks taken within 10 min is a
+    **vouched** fix is `gps`/`fused`, and a learned fix is never the new side of a contradiction (a wrong Wi-Fi fix must
+    not distrust the sensor). A GPS fix more than 500 m from a learned fix of >= 3 networks taken within 10 min is a
     **learned contradiction**: logged and counted (CE prefs, last 30 days) for the Jelly Star's review (M5). `QUIET` is
     unchanged and does not scan. 124 §8's witness is **dropped**; only D12's zone link renews a vouch.
 16. **Leave-one-out accuracy counts.** Before a GPS fix teaches, `learnedFix` runs on the same scan against the table
@@ -252,10 +254,10 @@ software HMACs and one AES-GCM open/seal per attempt.
   `places/PlacesPlan.kt` (usable and the moving list, teach and stream pairing, row update, moves, prune, the stale
   guard, complete-link consensus, accuracy, stand-alone rules, zone links, cells, leave-one-out counts, the teach
   budget, the store codec), glue `places/WifiPlaces.kt` (scan, the GPS stream, cell read, connected network, the sealed
-  store, the key, the teaching alarm, the clears), the asset `places/moving_ssids.json`, hooks in `LocateCommands.freshOrLastKnown`/
-  `clearCachedFix`, `MotionFlags` (the fire's time), `PassiveFixes` (every Regularly phone), `ZoneWatch.release`/
-  `forget`, the manifest. GPL, not the MIT directories. **Server:** none (an optional test: a `vibb_wifi` fix stored
-  and titled). **No contract file changes.**
+  store, the key, the teaching alarm, the clears), the asset `places/moving_ssids.json`, hooks in
+  `LocateCommands.freshOrLastKnown`/ `clearCachedFix`, `MotionFlags` (the fire's time), `PassiveFixes` (every Regularly
+  phone), `ZoneWatch.release`/ `forget`, the manifest. GPL, not the MIT directories. **Server:** none (an optional test:
+  a `vibb_wifi` fix stored and titled). **No contract file changes.**
 - **Docs:** a `## Wi-Fi places` section in `docs/notes/launcher/zones-and-power.md` - including that on a GLA-off
   phone zone arrivals indoors depend on learned fixes of ~100 m or better (L9) -, `docs/setup/google-account.md`,
   `docs/setup/android-settings.md`, `new-phone-model.md` §2.
@@ -265,13 +267,14 @@ software HMACs and one AES-GCM open/seal per attempt.
   band, the second move blocks for 60 days and then restarts), `prune`, `lookup` (the fire rule, a partial scan, the
   stale guard, the connected AP added, a dead `WifiInfo`, complete vs single link, consensus by network, a 2-2 split, a
   false five-octet merge, no single-network fix, the fallback not fresh, the oldest time, every accuracy factor),
-  `zone_link` (learning, revoking, the 60-day block, a renewal only while still), `loo` (the counts per class),
-  `cells` (the veto, an empty list), `codec` (round trip, a new version dropped). **The synthetic town**: ~60 fake APs (RFC 7042's documentation block `00:00:5e:00:53:xx`) in houses and a
-  school, realistic reach (log-distance, exponent ~3.3, 6 dB shadowing, walls; 2.4 GHz heard ~100-150 m outdoors), walks
-  that teach; >= 68 % of indoor points within the reported accuracy, the neighbour row never inside, and the H2 rows: a
-  **moved mesh**, a **cabin MiFi**, a **moved lone router** - none gives a wrong standing fix. Test HMAC key
-  `test-key-not-a-secret`. Source checks: no `Log` in `places/` takes a BSSID, SSID, cell ID or key; no
-  `neverForLocation`; the clears are called; with the `network` provider on no `startScan` is reached.
+  `zone_link` (learning, revoking, the 60-day block, a renewal only while still), `loo` (the counts per class), `cells`
+  (the veto, an empty list), `codec` (round trip, a new version dropped). **The synthetic town**: ~60 fake APs (RFC
+  7042's documentation block `00:00:5e:00:53:xx`) in houses and a school, realistic reach (log-distance, exponent ~3.3,
+  6 dB shadowing, walls; 2.4 GHz heard ~100-150 m outdoors), walks that teach; >= 68 % of indoor points within the
+  reported accuracy, the neighbour row never inside, and the H2 rows: a **moved mesh**, a **cabin MiFi**, a **moved lone
+  router** - none gives a wrong standing fix. Test HMAC key `test-key-not-a-secret`. Source checks: no `Log` in
+  `places/` takes a BSSID, SSID, cell ID or key; no `neverForLocation`; the clears are called; with the `network`
+  provider on no `startScan` is reached.
 - **The Jelly Star** (release build; new lines in `new-phone-model.md` §2):
   1. `dumpsys location` with GLA off: `network` disabled; a teaching GPS fix's extras carry `satellites` (L1).
   2. GLA off, airplane mode with Wi-Fi on, indoors: `locate` returns nothing from `fused` - then fused may teach (L1).
@@ -289,8 +292,8 @@ system-only), sharing tables between phones, any learned-place word in the PWA.
 
 Later, each its own decision:
 - **An Apple Wi-Fi lookup through the family's own server** (the user, 2026-11-22): optional, **off by default**, per
-  family; only on a learned miss, the phone asks its own server, which asks Apple's Wi-Fi service for the area and caches
-  the batch; Apple sees the server's IP and the nearby BSSIDs, no identity. Not in this step.
+  family; only on a learned miss, the phone asks its own server, which asks Apple's Wi-Fi service for the area and
+  caches the batch; Apple sees the server's IP and the nearby BSSIDs, no identity. Not in this step.
 - Teaching by novelty (teach more where the table knows little), decay of rows expected but not heard, an OpenCellID
   import (Norway is sparse: 22,485 cells, Ice 1,393, NR 8, LTE ranges mostly the 1000 m default - wait for the SIM day
   test), distance from RSSI.
