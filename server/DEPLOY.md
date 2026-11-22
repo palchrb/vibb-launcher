@@ -1019,30 +1019,14 @@ It is **off for every phone** until the parent turns on "Wi-Fi lookup at Apple" 
   circuit of its own. With the setting present a call never goes direct: a proxy that is down or refuses is a failed
   call (cached answers still serve), and a setting that isn't a `socks5h://` address fails every call, is logged at
   start and shows "Apple lookups aren't working" at once (as does a key file the server can't read). With no setting the calls go from the server's own address and the Location page's ⓘ says so.
-  - **Tor on the host** (the simplest): `sudo apt install tor` - Debian's Tor listens on `127.0.0.1:9050` - and
-    `WIFI_LOOKUP_PROXY=socks5h://127.0.0.1:9050` (the container runs with `network_mode: host`, so it reaches it).
-  - **Tor as a sidecar** in `compose.yaml`, from Debian's package, its base image **pinned by digest** (as the
-    server's own image is): `docker buildx imagetools inspect debian:trixie-slim` prints the current one - put it in
-    place of `<digest>` and move it on deliberately:
-
-    ```yaml
-      tor:
-        build:
-          dockerfile_inline: |
-            FROM debian:trixie-slim@sha256:<digest>
-            RUN apt-get update && apt-get install -y --no-install-recommends tor && rm -rf /var/lib/apt/lists/*
-            USER debian-tor
-            CMD ["tor", "--SocksPort", "127.0.0.1:9050", "--DataDirectory", "/var/lib/tor"]
-        restart: unless-stopped
-        network_mode: host
-        cap_drop: [ALL]
-        security_opt: ["no-new-privileges:true"]
-        volumes:
-          - tor-data:/var/lib/tor
-    ```
-
-    with `tor-data: {}` under `volumes:` and the same `WIFI_LOOKUP_PROXY`. Any other SOCKS5 egress works too, such as
-    the family's own edge.
+  - **Tor in `compose.yaml`** (the default since server 0.89.0): the `tor` service, built from Debian's package on a
+    base image pinned by digest, listens on `127.0.0.1:9050` of the host, and `env.example` sets
+    `WIFI_LOOKUP_PROXY=socks5h://127.0.0.1:9050`. An install from before 0.89.0: copy the new `compose.yaml`, add that
+    line to `.env`, `docker compose up -d --build`. Tor's own updates come with `docker compose build --pull tor`
+    after the digest is moved on (`docker buildx imagetools inspect debian:trixie-slim`); Watchtower doesn't rebuild it.
+  - **Tor on the host** instead (a systemd install): `sudo apt install tor` - Debian's Tor listens on
+    `127.0.0.1:9050` - and the same `WIFI_LOOKUP_PROXY`. Don't run both: they would share the port.
+  - Any other SOCKS5 egress works too, such as the family's own edge.
 - **Check the route by hand** before turning a phone on: two locally administered BSSIDs, which belong to no network,
   through the proxy (`200` is a working route; drop `--proxy ...` to try direct):
 

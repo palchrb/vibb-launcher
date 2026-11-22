@@ -34,6 +34,27 @@ services:
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
 
+  # Tor for the Apple Wi-Fi lookup (design 125, off per phone until the parent turns it on; DEPLOY.md, "The Apple
+  # Wi-Fi lookup"): a SOCKS5 proxy on 127.0.0.1:9050 of the host, nothing else. .env's
+  # WIFI_LOOKUP_PROXY=socks5h://127.0.0.1:9050 sends every Apple call through it, each on a circuit of its own; set,
+  # a call never goes direct. Built here from Debian's package on a base image pinned by digest - move it on
+  # deliberately (`docker buildx imagetools inspect debian:trixie-slim`) and `docker compose build tor` for Tor's
+  # updates (Watchtower doesn't rebuild it). Not wanted: delete this service and the line in .env.
+  tor:
+    build:
+      dockerfile_inline: |
+        FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
+        RUN apt-get update && apt-get install -y --no-install-recommends tor && rm -rf /var/lib/apt/lists/*
+        USER debian-tor
+        CMD ["tor", "--SocksPort", "127.0.0.1:9050", "--DataDirectory", "/var/lib/tor"]
+    restart: unless-stopped
+    network_mode: host
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      - tor-data:/var/lib/tor
+
 volumes:
   handy-data: {}
   handy-keys: {}
+  tor-data: {}
