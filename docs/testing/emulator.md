@@ -5117,6 +5117,127 @@ and the top activity. Afterwards `jelly36` was restored (22 of 22 sums).
 **Not run:** a real bond and the real dialog (owed on the Jelly Star with the Jabra), a pause (the arm refuses then:
 `BtPairingPlanTest`), Android 14 and 17.
 
+## 6be. Design 127 step 0: the Nett probe (branch `nett-probe`, 2026-11-22)
+
+The question: does a per-app network cut hold for a Device Owner on Android 14, 16 and 17, in each VPN shape?
+- **V1**: `DevicePolicyManager.setPreferentialNetworkServiceConfigs` with one enabled config: the cut app's uid
+  included, `setFallbackToDefaultConnectionAllowed(false)`, `setShouldBlockNonMatchingNetworks(true)`,
+  `PREFERENTIAL_NETWORK_ID_5`. The app stays inside our VPN.
+- **V2**: V1, and the app also in the VPN's `addDisallowedApplication`.
+
+**Rig.** The branch's debug launcher as Device Owner, not enrolled (no server, no policy). Its debug-only
+`NettProbeReceiver` (guarded by DUMP) sets and clears the config, keeps packages outside the VPN, forces a VPN shape
+(`NettProbe`, read by `KidVpnService.wantedShape`/`establish`), and checks the launcher's own network (`self`). Two
+target apps, `probe.nett.cut` and `probe.nett.free`, are built without Gradle by `scripts/nett-probe/build.sh`. Each has
+one receiver, run with `am broadcast -f 32 -n <pkg>/probe.nett.Probe --es what <what>`:
+- `basic`: a TCP connect to `1.1.1.1:443`, a name (`example.org`) and an HTTPS fetch.
+- `bind`: `bindSocket`, `openConnection` and `bindProcessToNetwork` on every non-VPN network.
+- `dm`: a `DownloadManager` request, polled for 20 s. The app must be in the `active` standby bucket, or the download
+  job waits on its quota even uncut.
+- `hold`: a TLS connection held 12 s, then a request over it.
+
+`run-as <pkg> toybox nc` is also run, but on 16 a uid with no live process gets no network even uncut (background
+restriction), so the receiver is the check.
+
+```sh
+O=$SCRATCH/probeapp; scripts/nett-probe/build.sh $O       # the two APKs
+scripts/nett-probe/provision.sh <port> $O                  # wiped AVD -> DO, apps, the filter shape
+scripts/nett-probe/step.sh <port> cut --es pkgs probe.nett.cut        # V1 (clear: `clear`; read: `get`)
+scripts/nett-probe/step.sh <port> vpnout --es pkgs probe.nett.cut     # + V2 (`--es pkgs ,` = none)
+scripts/nett-probe/step.sh <port> shape --es shape filter|pass|sink|none
+scripts/nett-probe/matrix.sh <port> <version> <transport> filter pass sink none > m.txt
+scripts/nett-probe/summary.py m.txt                        # one line per row
+```
+
+The AVDs:
+- `jelly36` (16, BE2A.250530.026.D1, port 5580): Wi-Fi with airplane mode on, so the radio is off (see the storm
+  below); cellular with Wi-Fi off.
+- `compat34` (14, UE1A.230829.050, port 5582, `-wipe-data`): cellular only, because the image has no working Wi-Fi.
+- `compat372` (17.2, CP41.260831.015, port 5584): booted **without** `-wipe-data`, with 3-button navigation and no Home
+  start. system_server restarted once at boot, then held. Cellular only (no Wi-Fi network). No screencap was taken.
+
+### Results
+
+In every row the cut app failed all three `basic` checks. Its `bind` attempts got `EPERM` on Wi-Fi and cellular, and
+`bindProcessToNetwork` then failed to connect. Its `DownloadManager` request stayed at `STATUS_PENDING`.
+
+"free" is the uncut app, "launcher" is the launcher's `self` check. ok = the TCP connect, the name and HTTPS all
+worked; x = all three failed.
+
+| Android | Transport | Shape | V1 | V2 | free | launcher | Cleared |
+|---|---|---|---|---|---|---|---|
+| 14 | cellular | filter | cut | cut | ok | ok | restored at once |
+| 14 | cellular | pass | cut | cut | ok | ok | restored |
+| 14 | cellular | sink | cut | cut | x (the sink) | ok | the sink still cuts it, as expected |
+| 14 | cellular | none | cut | cut | ok | ok | restored |
+| 16 | Wi-Fi | filter | cut | cut | ok | ok | restored |
+| 16 | Wi-Fi | pass | cut | cut | ok | ok | restored |
+| 16 | Wi-Fi | sink | cut | cut | x (the sink) | ok | the sink |
+| 16 | Wi-Fi | none | cut | cut | ok | ok | restored |
+| 16 | cellular | filter, sink | cut | cut | see the storm | ok | late: see the storm |
+| 17 | cellular | filter | cut | cut | ok | ok | restored |
+| 17 | cellular | pass | cut | cut | ok | ok | restored |
+| 17 | cellular | sink | cut | cut | x (the sink) | ok | the sink |
+| 17 | cellular | none | cut | cut | ok | ok | restored |
+
+The other checks:
+- **Reboot.** V2 in the filter shape, then `adb reboot`, on 14, 16 and 17. DPMS applies the preference again early in
+  boot (`DevicePolicyManager: updateNetworkPreferenceForUser`), so the cut held on 16 and 17 and the VPN came back
+  without the app. On 14 the app was online after the reboot: see the enterprise network below.
+- **The launcher's process.** `am force-stop` of the Device Owner does nothing (the pid is unchanged).
+  `run-as me.vibb.launcher.debug kill -9`: the process and the VPN were back within a second, and the cut held
+  throughout (16).
+- **The VPN's question (design QA H1).** V1 alone holds in the filter and pass shapes. The block of non-matching
+  networks covers the VPN's network too: the cut app's `getActiveNetwork()` still names the VPN, but nothing connects.
+  V2 adds nothing measurable.
+- **Clearing.** `PreferentialNetworkServiceConfig.DEFAULT` is `@hide` (not in the SDK). A disabled config
+  (`Builder().setEnabled(false).build()`) or an empty list clears it. The app got its network back at once, except
+  during the storm.
+
+**V2 costs every other app its open connections.** `Vpn: Handover not possible due to changes to allowed/denied apps`:
+each change of the disallowed set registers a new VPN network. `hold` in the uncut app:
+- 16 (Wi-Fi) and 17 (cellular): `Software caused connection abort` across the V2 cut and across its lift.
+- The same connection survived the V1 cut alone (`HTTP/1.1 200 OK`).
+
+**Telephony tries to set up an enterprise network for as long as the config is set.** The config files an `ENTERPRISE`
+request (enterprise id 5) for the uid. Telephony answers with `SETUP_DATA_CALL` and a traffic descriptor
+`OsAppId ENTERPRISE, differentiator=5`, also with mobile data off (`Data allowed reason: RESTRICTED_REQUEST`). What
+happens next is the modem's answer:
+- **14**: the emulator's RIL grants it. A `MOBILE[HSPA]` network with `EnterpriseId: 5` comes up, and the cut app is
+  online over cellular, outside our VPN. It was the only app online in two cases: with mobile data off, and after the
+  reboot, when the enterprise network came up first and the image's single data call left no default network.
+  **A leak.**
+- **16**: the RIL answers `INVALID_ARGUMENTS` with `retry=0`, and telephony retries at once in a loop, thousands of
+  network agents a minute. `com.android.phone` was killed `Too many Binders sent to SYSTEM` every ~4 minutes, 4 times
+  in 12 minutes, and also on reboot (`bg anr`). ConnectivityService ran minutes behind:
+  - `dumpsys connectivity` timed out.
+  - A clear took effect only minutes later.
+  - The sink reached the uncut app about 3 minutes late.
+
+  Only the airplane mode stopped it.
+- **17**: the RIL answers error 44, and telephony retries every 10 s (`delay=10000ms`) for as long as the config is
+  set. No storm.
+
+These are emulator RILs. A real modem's answer, and whether a Norwegian SIM's network grants an enterprise traffic
+descriptor (a URSP rule, or a match-all rule), decide on a phone. That is not knowable here.
+
+### Verdict against the pass rule
+
+- The cut itself held in every shape on all three versions, V1 and V2 alike, with the uncut app and the launcher
+  untouched.
+- **The pass rule fails on 14** (the cut app online through the granted enterprise network) **and is unsafe on 16**
+  (the storm).
+- Both depend on the cellular modem, not on Android's version.
+- Before any build, check the Jelly Star with its SIM:
+  - `logcat -b radio | grep ENTERPRISE` for the setup's answer and its retry delay.
+  - `dumpsys connectivity` for an `EnterpriseId` network.
+  - The phone process stays up (`logcat | grep "Too many Binders"`).
+  - The cut app has no cellular network with mobile data on and off.
+- If Nett is built, V1 without V2: V2 measured no gain and drops every other app's connections at each change.
+
+Not run: Android 15, Wi-Fi on 14 and 17 (no Wi-Fi network on those images), the SDK sandbox uid, the camera, location,
+microphone and contacts denials of design 127's step 0, a real SIM.
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:

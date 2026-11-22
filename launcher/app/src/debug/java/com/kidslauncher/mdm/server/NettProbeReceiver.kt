@@ -55,7 +55,13 @@ class NettProbeReceiver : BroadcastReceiver() {
                     "shape" -> {
                         val wire = intent.getStringExtra("shape")?.takeIf { it != "auto" }
                         NettProbe.setShape(app, wire)
-                        KidVpnService.start(app)
+                        if (wire == "none") {
+                            // As apply() does for NONE: always-on (and lockdown) off, then the service stops.
+                            MobileNetworkRuntime.writeAlwaysOn(app, VpnShape.NONE)
+                            KidVpnService.stop(app)
+                        } else {
+                            KidVpnService.start(app)
+                        }
                         "shape=${NettProbe.forcedShape(app)}"
                     }
                     "self" -> netCheck(app)
