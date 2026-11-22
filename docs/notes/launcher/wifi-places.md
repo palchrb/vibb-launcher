@@ -145,7 +145,8 @@
   `vibb_apple` (`PlaceSource` `APPLE` or `MIXED`). The switch off drops every Apple row (`dropApple`) on every off
   policy - a no-op without any - and the waits are cleared only once the table is written (`save` returns whether
   the disk holds the change; the table in memory follows only a written one); the clears drop them with the table.
-- **Still means still** (H2, `appleStill`): while `motion` is `STILL` or `STILL_SINCE_TRY`, an Apple-sourced fix within
+- **Still means still** (H2, `appleStill`, `appleStillMotion`): while `motion` is `STILL` (not `STILL_SINCE_TRY` since
+  2026-11-22: moved since the vouch with only a failed try after it, the vouch is the old place), an Apple-sourced fix within
   `accOld + accNew` of the last fresh fix (`Ask.stillVouch`) re-sends that fix with `still: true` (`Ask.renewed`, a new
   4-h step; the sync logs "renewed by an Apple fix"); outside it is not reported and counts as an **Apple
   contradiction**; with no vouch it is withheld (`StillVerdict.WITHHOLD`: neither fresh nor reported).

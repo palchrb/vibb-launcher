@@ -829,6 +829,11 @@ class PlacesTest {
         assertEquals(StillVerdict.USE, appleStill(off.copy(source = PlaceSource.OWN), null, still = true))
         assertEquals(StillVerdict.USE, appleStill(off.copy(source = PlaceSource.OWN), vouch, still = true))
         assertEquals(StillVerdict.CONTRADICTS, appleStill(off.copy(source = PlaceSource.MIXED), vouch, still = true))
+        // Still means STILL alone: moved since the vouch with only a failed try after it, Apple may move the phone.
+        assertTrue(appleStillMotion(com.kidslauncher.mdm.zones.Motion.STILL))
+        assertFalse(appleStillMotion(com.kidslauncher.mdm.zones.Motion.STILL_SINCE_TRY))
+        assertFalse(appleStillMotion(com.kidslauncher.mdm.zones.Motion.MOVED))
+        assertFalse(appleStillMotion(com.kidslauncher.mdm.zones.Motion.NO_SENSOR))
         // The waits: until the time, a 409 until a policy says on, a wait past a day is a clock set back.
         assertTrue(appleMayAsk(1_000, 0, off = false))
         assertFalse(appleMayAsk(1_000, 2_000, off = false))

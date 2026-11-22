@@ -391,7 +391,9 @@ A9. **The phone's Apple rows** (kind 4 in D18's sealed table, keyed by the same 
     the ask until the server's negative ends (the start of the next UTC month). Apple rows are capped at 3000; the
     switch going off (every off policy; the waits cleared only once the table is written, code QA L1), or D19's
     clears, drop them all.
-    **Still means still** (H2): while `motion()` is `STILL` or `STILL_SINCE_TRY`, a `vibb_apple` fix only **renews** the
+    **Still means still** (H2): while `motion()` is `STILL` (2026-11-22: `STILL_SINCE_TRY` dropped - the phone moved
+    since the vouched fix and only a failed try came after, so the vouch was the old place and every Apple fix at the
+    new one was withheld or a contradiction; seen on the owner's phone indoors, the position hours old), a `vibb_apple` fix only **renews** the
     vouch when it lies within `accOld + accNew` of the vouched fix - the vouched fix is re-sent with `still: true`,
     never replaced. Outside that it is not fresh and not reported; it is counted as an **Apple contradiction** (CE
     prefs, counts only, 30 days). With no fresh fix to renew, an Apple-sourced fix of a still phone is neither fresh nor

@@ -2,6 +2,7 @@ package com.kidslauncher.mdm.places
 
 import com.kidslauncher.mdm.server.ServerJson
 import com.kidslauncher.mdm.server.dto.PolicyResponse
+import com.kidslauncher.mdm.zones.Motion
 import com.kidslauncher.mdm.zones.distanceM
 import java.time.Instant
 import java.time.ZoneOffset
@@ -223,6 +224,14 @@ fun chooseRow(h: Heard, own: PlaceRow?, apple: PlaceRow?, nowMin: Int): Pair<Pla
 
 /** H2 for Apple fixes: what a `vibb_apple` fix may do while the phone is still. */
 enum class StillVerdict { USE, RENEW, CONTRADICTS, WITHHOLD }
+
+/**
+ * A9 (H2): still means `STILL` alone - the sensor hasn't fired since the last fresh fix, so that fix is where the phone
+ * is. `STILL_SINCE_TRY` is not still here (2026-11-22, the owner's phone indoors at a new place): the phone moved since
+ * that fix and only a failed try came after, so the vouch is the old place - every Apple fix there contradicted it or
+ * was withheld, and the position stayed hours old. Apple may move it as after any move (`MOVED`).
+ */
+fun appleStillMotion(motion: Motion): Boolean = motion == Motion.STILL
 
 /**
  * A9 (H2): while `motion()` is still ([still]) a fix using Apple's positions only renews the [vouch] - re-sent with
