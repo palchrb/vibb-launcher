@@ -18,8 +18,9 @@ import kotlin.math.roundToInt
 /** Columns of the app grid: 4 only when the parent chose 4, anything else 3 (the default). */
 fun gridColumns(setting: Int?): Int = if (setting == 4) 4 else 3
 
-/** An app the grid may show, as AppFilter left it (allowed, not suspended, not hidden). */
-data class GridApp(val key: String, val label: String, val packageName: String?)
+/** An app the grid may show, as AppFilter left it (allowed, not suspended, not hidden); [user] its profile (the
+ * kid's order, [tileOrderId]). */
+data class GridApp(val key: String, val label: String, val packageName: String?, val user: Int = 0)
 
 sealed interface GridTile {
     /** The phone book, first whenever calls are managed (or their rules are unknown). */

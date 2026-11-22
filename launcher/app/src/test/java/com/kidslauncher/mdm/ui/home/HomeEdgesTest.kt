@@ -93,6 +93,7 @@ class HomeEdgesTest {
             listOf("@+id/home_window_banner", "@+id/home_airplane_line", "@+id/home_portal_line", "@+id/home_call_card", "@+id/home_contacts_scroll", "@+id/home_music_card", "@+id/home_grid", "@+id/home_move_bar"),
             firstIds,
         )
+        assertEquals("gone", byId(home, "home_move_bar").attr("visibility"))
     }
 
     @Test

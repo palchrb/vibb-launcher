@@ -165,8 +165,10 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
 The user: "burde ikke press og hold på home screen gi barnet mulighet til å flytte på de ulike ikonene?" - with motion
 and buttons both. Launcher only; nothing goes to the server and the PWA doesn't show it.
 
-- **Order**: pure `ui/home/HomeOrder.kt` (`HomeOrderTest`). The kid's order is a list of tile ids (`gridTileId`) in the
-  preference `apps.home_order` (JSON, beside the kid's own names `apps.custom_names`; an unreadable one is no order - no
+- **Order**: pure `ui/home/HomeOrder.kt` (`HomeOrderTest`). The kid's order is a list of tile ids (`tileOrderId`: an app as
+  `app:<package>:<user>`, so an update that renames its launcher activity keeps the place - code QA L4; two launcher
+  activities of one app share it and stay side by side; the rest by `gridTileId`, which stays the adapter's stable id) in
+  the preference `apps.home_order` (JSON, beside the kid's own names `apps.custom_names`; an unreadable one is no order - no
   migration). `HomeGridAdapter.submit` takes `homeGrid`'s tiles and `arrangedTiles` puts them in that order: the named
   tiles in order, then the unnamed ones (a new app; every tile before the first move) in `homeGrid`'s order, then
   Innstillinger, which never moves, is never passed and never stored. `storedOrder` keeps every id not shown now (an app
@@ -175,14 +177,19 @@ and buttons both. Launcher only; nothing goes to the server and the PWA doesn't 
   since the first move goes last when it appears. The columns (3 or 4) don't matter: the order is one list.
 - **Motion**: a finger's long-press on any tile but Innstillinger lifts it (8 % larger, ItemTouchHelper's own
   elevation; no wobble) through `ItemTouchHelper.startDrag` from the cell's own long-click (the helper's long-press is
-  off). Moved past the touch slop, the drop stores the order; let go in place, an app shows the old menu (Skjul, Gi nytt
-  navn) with "Flytt", and the phone book, Meldinger and Dagen (no menu) go straight to the move bar. A `submit` during a
+  off), only while a finger is down on the grid (`fingerDown`, the grid's own DOWN - not a D-pad's or TalkBack's
+  long-press). Moved past the touch slop, the drop stores the order; let go in place, an app shows the old menu (Skjul, Gi nytt
+  navn) with "Flytt", and the phone book, Meldinger and Dagen go straight to the move bar - a change to QA 08 #10, where only apps
+  answered a long-press (Innstillinger still doesn't). A `submit` during a
   drag (a badge, a policy) is held and applied at the drop, so the grid never changes under the finger. Home's swipes
   stand aside while a tile is lifted (`dragging`), and the drag ends in a CANCEL when the lock takes the content off the
-  window. The grid has no item animator: tiles step into place.
+  window. ItemTouchHelper says IDLE for an UP and a CANCEL alike, so the drop opens a menu or the bar only while
+  Home's content is in front and resumed (`inFront`: `contentShown && resumedNow` - `showNight` clears `contentShown`
+  before its `setContentView` cancels the touch; code QA M1, `HomeGateTest`); a moved drag is stored either way. Home's
+  stop closes the menu, its rename dialog and the bar (`closeMenus`). The grid has no item animator: tiles step into place.
 - **Buttons**: "Flytt" lifts the tile and shows the bar under the grid (`home_move_bar`: ◀ Ferdig ▶); each arrow is one
   step, stored at once, dimmed at its edge (`stepTarget`). Ferdig, Home's press, the lock (`closeOverlays`), Home's stop
-  and the tile leaving the grid end it. TalkBack: its long-press has no finger (the cell isn't pressed), so it opens the
-  menu at once; the arrows say "Flytt til venstre/høyre" and the tile's place ("3 av 12") as their state.
+  and the tile leaving the grid end it. TalkBack: its long-press has no finger, so it opens the menu at once; the bar is a
+  pane ("Flytt"), TalkBack's focus goes to Ferdig (a Button for TalkBack) when the bar opens; the arrows say "Flytt til venstre/høyre" and the tile's place ("3 av 12") as their state.
 - The menu item is `menu_app.xml`'s `app_menu_move`, shown only when `showAppContextMenu` gets `onMove` (Home; the
   drawer doesn't). Not device-tested at the build (no emulator round).

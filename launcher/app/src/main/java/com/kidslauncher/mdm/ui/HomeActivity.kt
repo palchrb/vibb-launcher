@@ -341,11 +341,20 @@ class HomeActivity : UIObjectActivity() {
         com.kidslauncher.mdm.ui.KidInsets.apply(binding.root)
 
         // No clock or date any more (design 08): the status bar shows the time.
-        gridAdapter = HomeGridAdapter(this, ::trackOverlay, ::renderMoveBar)
+        // A drop opens a menu only on Home's content in front and resumed (code QA M1): showNight clears contentShown
+        // before the night ground's setContentView cancels a held tile, onPause clears resumedNow.
+        gridAdapter = HomeGridAdapter(this, ::trackOverlay, ::renderMoveBar) { contentShown && resumedNow }
         // The kid moves a tile with buttons (2026-11-22): the bar under the grid, one step per arrow.
         binding.homeMoveLeft.setOnClickListener { gridAdapter.stepMoving(-1) }
         binding.homeMoveRight.setOnClickListener { gridAdapter.stepMoving(1) }
         binding.homeMoveDone.setOnClickListener { gridAdapter.endMoving() }
+        // Ferdig is a button for TalkBack (a TextView in the layout, as the banner's "Lock again").
+        binding.homeMoveDone.accessibilityDelegate = object : View.AccessibilityDelegate() {
+            override fun onInitializeAccessibilityNodeInfo(host: View, info: android.view.accessibility.AccessibilityNodeInfo) {
+                super.onInitializeAccessibilityNodeInfo(host, info)
+                info.className = android.widget.Button::class.java.name
+            }
+        }
         gridLayout = object : GridLayoutManager(this, gridColumns(null)) {
             // Every layout of the grid itself (new tiles, a new height), never a scroll or another view's layout.
             override fun onLayoutCompleted(state: RecyclerView.State?) {
@@ -734,8 +743,8 @@ class HomeActivity : UIObjectActivity() {
         // Design 16e: something covers the mark - the boot's wait for it ends.
         PinLockRuntime.onHomeCovered(this, isChangingConfigurations, "Home stopped")
         started = false
-        // An app opened over Home ends the move bar's moving.
-        if (::gridAdapter.isInitialized) gridAdapter.endMoving()
+        // An app opened over Home closes the long-press menu and ends the move bar's moving (code QA M1).
+        if (::gridAdapter.isInitialized) gridAdapter.closeMenus()
         renderMusicCard()
         BadgeStore.removeListener(badgeListener)
         refreshHandler.removeCallbacks(badgeRender)
@@ -895,7 +904,8 @@ class HomeActivity : UIObjectActivity() {
                 val visible = homeApps(context, all)
                 val infos = visible.associateBy { it.getRawInfo().serialize() }
                 val list = infos.map { (key, info) ->
-                    GridApp(key, info.getCustomLabel(context), (info.getRawInfo() as? AppInfo)?.packageName)
+                    val raw = info.getRawInfo() as? AppInfo
+                    GridApp(key, info.getCustomLabel(context), raw?.packageName, raw?.user ?: 0)
                 }
                 val columns = gridColumns((cachedPolicy() as? CachedPolicy.Ok)?.policy?.launcherUi?.homeColumns)
                 val metrics = gridMetrics(width, columns)
@@ -1129,8 +1139,15 @@ class HomeActivity : UIObjectActivity() {
     /** The move bar ([HomeGridAdapter.stepMoving]): shown while a tile moves, an arrow dimmed at its edge; TalkBack hears
      * the tile's place on each arrow ("3 av 12"). */
     private fun renderMoveBar(bar: com.kidslauncher.mdm.ui.home.MoveBar?) {
+        val appearing = bar != null && binding.homeMoveBar.visibility != View.VISIBLE
         binding.homeMoveBar.visibility = if (bar == null) View.GONE else View.VISIBLE
         if (bar == null) return
+        // Code QA L2: the bar is a pane (its title, home_move_bar's accessibilityPaneTitle), and TalkBack lands on Ferdig.
+        if (appearing && getSystemService(android.view.accessibility.AccessibilityManager::class.java)?.isTouchExplorationEnabled == true) {
+            binding.homeMoveDone.post {
+                binding.homeMoveDone.performAccessibilityAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null)
+            }
+        }
         val place = getString(R.string.home_move_position, bar.place, bar.count)
         for ((button, usable) in listOf(binding.homeMoveLeft to bar.left, binding.homeMoveRight to bar.right)) {
             button.isEnabled = usable

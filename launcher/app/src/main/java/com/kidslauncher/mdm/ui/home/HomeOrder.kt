@@ -6,10 +6,18 @@ import kotlinx.serialization.json.Json
 
 /*
  * The kid's own order of Home's tiles (the user, 2026-11-20: "burde ikke press og hold på home screen gi barnet mulighet
- * til å flytte på de ulike ikonene?") - pure, tested in HomeOrderTest. The order is a list of tile ids ([gridTileId])
- * kept on the phone only (`apps.home_order`, beside the kid's own names); HomeGridAdapter arranges, moves and stores.
+ * til å flytte på de ulike ikonene?") - pure, tested in HomeOrderTest. The order is a list of [tileOrderId]s kept on
+ * the phone only (`apps.home_order`, beside the kid's own names); HomeGridAdapter arranges, moves and stores.
  * Every tile moves but Innstillinger, which stays last and is never stored.
  */
+
+/**
+ * A tile's id in the stored order: an app by its package and profile (`app:<package>:<user>` - an update that renames
+ * its launcher activity keeps its place, code QA L4), the others by [gridTileId]. Two launcher activities of one app
+ * share it and stay side by side.
+ */
+fun tileOrderId(tile: GridTile): String =
+    (tile as? GridTile.App)?.app?.let { app -> app.packageName?.let { "app:$it:${app.user}" } } ?: gridTileId(tile)
 
 /**
  * [tiles] (in [homeGrid]'s order) arranged by the kid's [order]: the tiles it names in its order, then the ones it
@@ -19,7 +27,7 @@ fun arrangedTiles(tiles: List<GridTile>, order: List<String>): List<GridTile> {
     val rank = HashMap<String, Int>()
     order.forEachIndexed { index, id -> rank.putIfAbsent(id, index) }
     val (settings, movable) = tiles.partition { it is GridTile.Settings }
-    return movable.sortedBy { rank[gridTileId(it)] ?: Int.MAX_VALUE } + settings
+    return movable.sortedBy { rank[tileOrderId(it)] ?: Int.MAX_VALUE } + settings
 }
 
 /**

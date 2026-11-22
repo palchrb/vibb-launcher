@@ -75,8 +75,8 @@ fun AbstractDetailedAppInfo.showRenameDialog(context: Context): AlertDialog =
 /**
  * The long-press context menu shown for an app row, shared by the app drawer and the
  * home screen's minimal list. [onOverlay] gets a way to close the menu and, once opened, the
- * rename dialog: Home closes both when the PIN lock engages (design 16c, qa-16c-code #2). [onMove]: Home's "Move",
- * shown only when given.
+ * rename dialog: Home closes both when the PIN lock engages (design 16c, qa-16c-code #2). [onMove]: an extra
+ * "Move" item, shown only when given.
  */
 fun showAppContextMenu(
     activity: Activity,

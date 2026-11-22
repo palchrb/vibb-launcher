@@ -43,13 +43,32 @@ class HomeGridAdapter(
     private val onOverlay: (close: () -> Unit) -> Unit = {},
     /** The move bar's state while a tile moves by the buttons, `null` = hidden. */
     private val onMoving: (MoveBar?) -> Unit = {},
+    /** Home's content is in front and resumed: only then does a drop open a menu or the move bar (code QA M1 - the lock's
+     * night ground takes the content off the window, which ends a held tile in a CANCEL after Home's overlays closed). */
+    private val inFront: () -> Boolean = { true },
 ) : RecyclerView.Adapter<HomeGridAdapter.ViewHolder>() {
 
     /** The tiles as shown: [submit]'s, arranged by [order]. */
     private var tiles: List<GridTile> = emptyList()
 
-    /** The kid's order of tile ids ([storedOrder]), on the phone only, beside the kid's own names. */
+    /** The kid's order ([tileOrderId]s, [storedOrder]), on the phone only, beside the kid's own names. */
     private var order: List<String> = decodeOrder(LauncherPreferences.apps().homeOrder())
+
+    /** What the long-press menu opened (the menu, its rename dialog): closed again when Home stops ([closeMenus]). */
+    private val menuClosers = ArrayDeque<() -> Unit>()
+
+    /** A finger is down on the grid (its own DOWN, not a D-pad's or TalkBack's long-press): only then a long-press
+     * lifts the tile. Cleared at UP or CANCEL, or at the drop once the drag took the touch. */
+    private var fingerDown = false
+    private val fingerWatch = object : RecyclerView.SimpleOnItemTouchListener() {
+        override fun onInterceptTouchEvent(rv: RecyclerView, e: android.view.MotionEvent): Boolean {
+            when (e.actionMasked) {
+                android.view.MotionEvent.ACTION_DOWN -> fingerDown = true
+                android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> fingerDown = false
+            }
+            return false
+        }
+    }
 
     /** The tile a finger lifted, until it is let go ([dropped]); [Drag.moved]: it went past the touch slop. */
     private class Drag(val id: String, var moved: Boolean = false)
@@ -210,12 +229,12 @@ class HomeGridAdapter(
                     null -> {}
                 }
             }
-            // Every tile but Settings (QA 08 #10: no menu). A finger's long-press (the cell is pressed) lifts the tile
-            // and the drop decides ([dropped]); TalkBack's long-press has no finger and opens the menu at once.
+            // Every tile but Settings (QA 08 #10: no menu). A finger's long-press ([fingerDown]) lifts the tile and the
+            // drop decides ([dropped]); TalkBack's or a D-pad's long-press has no finger and opens the menu at once.
             view.setOnLongClickListener { v ->
                 val tile = tiles.getOrNull(bindingAdapterPosition) ?: return@setOnLongClickListener false
                 if (tile is GridTile.Settings) return@setOnLongClickListener false
-                if (v.isPressed && drag == null && recycler?.scrollState == RecyclerView.SCROLL_STATE_IDLE) {
+                if (fingerDown && drag == null && recycler?.scrollState == RecyclerView.SCROLL_STATE_IDLE) {
                     endMoving()
                     touchHelper.startDrag(this)
                 } else {
@@ -337,11 +356,13 @@ class HomeGridAdapter(
 
     override fun onAttachedToRecyclerView(recyclerView: RecyclerView) {
         recycler = recyclerView
+        recyclerView.addOnItemTouchListener(fingerWatch)
         touchHelper.attachToRecyclerView(recyclerView)
     }
 
     override fun onDetachedFromRecyclerView(recyclerView: RecyclerView) {
         touchHelper.attachToRecyclerView(null)
+        recyclerView.removeOnItemTouchListener(fingerWatch)
         recycler = null
     }
 
@@ -349,7 +370,27 @@ class HomeGridAdapter(
     private fun openMenu(view: View, tile: GridTile) {
         val id = gridTileId(tile)
         val info = (tile as? GridTile.App)?.let { infos[it.app.key] }
-        if (info == null) startMoving(id) else showAppContextMenu(activity, view, info, onOverlay) { startMoving(id) }
+        if (info == null) startMoving(id) else showAppContextMenu(activity, view, info, ::trackMenu) { startMoving(id) }
+    }
+
+    /** Home's overlays (closed at the lock, design 16c), and the menu's own list for [closeMenus]. */
+    private fun trackMenu(close: () -> Unit) {
+        onOverlay(close)
+        menuClosers.addLast(close)
+        while (menuClosers.size > MAX_MENU_CLOSERS) menuClosers.removeFirst()
+    }
+
+    /** Home stopped (an app over it): the long-press menu, its rename dialog and the move bar close. */
+    fun closeMenus() {
+        endMoving()
+        while (menuClosers.isNotEmpty()) {
+            val close = menuClosers.removeFirst()
+            try {
+                close()
+            } catch (e: Exception) {
+                android.util.Log.w("HomeGridAdapter", "Couldn't close the menu", e)
+            }
+        }
     }
 
     /** The move bar for the tile [id]: lifted until "Ferdig", Home's press, the lock or Home's stop ([endMoving]). */
@@ -394,21 +435,24 @@ class HomeGridAdapter(
     }
 
     private fun storeShown() {
-        order = storedOrder(order, tiles.map(::gridTileId))
+        order = storedOrder(order, tiles.map(::tileOrderId))
         LauncherPreferences.apps().homeOrder(encodeOrder(order))
     }
 
-    /** The finger let go: a drag stores the order; a long-press let go in place opens [openMenu]. A [submit] held during
-     * the drag comes now. */
+    /** The finger let go, or the touch was cancelled (ItemTouchHelper says IDLE for both): a drag stores the order; a
+     * long-press let go in place opens [openMenu] - only while Home's content is [inFront] (a CANCEL from the lock's
+     * night ground opens nothing, code QA M1). A [submit] held during the drag comes now. */
     private fun dropped() {
         val done = drag ?: return
         drag = null
+        fingerDown = false
         if (done.moved) storeShown()
         pending?.also { pending = null }?.invoke()
-        if (done.moved) return
-        val position = tiles.indexOfFirst { gridTileId(it) == done.id }
-        val view = recycler?.findViewHolderForAdapterPosition(position)?.itemView ?: return
-        openMenu(view, tiles[position])
+        if (done.moved || !inFront()) return
+        val tile = tiles.firstOrNull { gridTileId(it) == done.id } ?: return
+        // By item id: still found after a held update's notifyDataSetChanged (code QA L1).
+        val view = ids[done.id]?.let { recycler?.findViewHolderForItemId(it) }?.itemView ?: return
+        openMenu(view, tile)
     }
 
     private fun liftShown(id: String, on: Boolean) {
@@ -492,6 +536,7 @@ class HomeGridAdapter(
 
         const val LIFT_SCALE = 1.08f
         const val LIFT_MS = 120L
+        const val MAX_MENU_CLOSERS = 4
         const val ALL_DIRECTIONS = ItemTouchHelper.UP or ItemTouchHelper.DOWN or ItemTouchHelper.START or ItemTouchHelper.END
     }
 }

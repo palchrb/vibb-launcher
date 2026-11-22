@@ -218,6 +218,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginBottom="8dp"
+        android:accessibilityPaneTitle="@string/home_move"
         android:background="@drawable/bg_home_move_bar"
         android:gravity="center_vertical"
         android:orientation="horizontal"
