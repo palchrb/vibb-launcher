@@ -112,21 +112,74 @@ class PlacesTest {
         assertEquals(TEACH_APS_MAX, s.size)
         assertEquals(-40, s.maxOf { it.heard.rssi })
         assertEquals(-99, s.minOf { it.heard.rssi })
-        // The stale guard: a newer result at the very same level as before is suspect; more than two make it stale.
-        val first = hear(scan(1 to -50, 2 to -60, 3 to -70, at = 1_000), null, keys, moving, emptyMap(), 1_000)
-        val again = hear(scan(1 to -50, 2 to -61, 3 to -70, at = 5_000), null, keys, moving, first.readings, 5_000)
-        assertEquals(listOf(true, false, true), again.heard.map { it.suspect })
-        assertFalse(again.stale)
-        assertEquals(1, pairings(again, listOf(gps(5_000)), PAIR_STREAM_MS).size)
-        val stale = hear(scan(1 to -50, 2 to -60, 3 to -70, at = 5_000), null, keys, moving, first.readings, 5_000)
+        // The stale guard: a newer result at the very same level as before is suspect (never taught).
+        val six = (1..6).map { it to -40 - 5 * it }
+        val first = hear(scan(*six.toTypedArray(), at = 1_000), null, keys, moving, emptyMap(), 1_000)
+        val two = six.map { (i, rssi) -> i to if (i <= 2) rssi else rssi - 1 }
+        val again = hear(scan(*two.toTypedArray(), at = 5_000), null, keys, moving, first.readings, 5_000)
+        assertEquals(listOf(true, true, false, false, false, false), again.heard.map { it.suspect })
+        assertFalse("a few repeats are noise (code QA H1)", again.stale)
+        assertEquals(4, pairings(again, listOf(gps(5_000)), PAIR_STREAM_MS).size)
+        // Five of six repeated (>= 5 and >= 80 % of those heard before): stale, nothing taught.
+        val five = six.map { (i, rssi) -> i to if (i <= 5) rssi else rssi - 1 }
+        val stale = hear(scan(*five.toTypedArray(), at = 5_000), null, keys, moving, first.readings, 5_000)
         assertTrue(stale.stale)
         assertTrue(pairings(stale, listOf(gps(5_000)), PAIR_STREAM_MS).isEmpty())
         // The same list read twice is no repeat (its own time).
-        assertFalse(hear(scan(1 to -50, 2 to -60, 3 to -70, at = 1_000), null, keys, moving, first.readings, 9_000).stale)
+        assertFalse(hear(scan(*six.toTypedArray(), at = 1_000), null, keys, moving, first.readings, 9_000).stale)
+        // A still phone: two scans of 30 APs with 2 dB of noise on whole-number levels are not stale.
+        val rng = Random(3)
+        val levels = (1..30).map { it to -45 - it }
+        fun noisy(at: Long) = scan(*levels.map { (i, l) -> i to l + Math.round(rng.nextGaussian() * 2).toInt() }.toTypedArray(), at = at)
+        val a = hear(noisy(1_000), null, keys, moving, emptyMap(), 1_000)
+        val b = hear(noisy(31_000), null, keys, moving, a.readings, 31_000)
+        assertTrue(b.heard.count { it.suspect } <= 15)
+        assertFalse(b.stale)
         // The serving cell pairs within 30 s whatever the teacher, without the 40 m cap.
         val cell = Heard(keys.cell("242|01|1001|50001"), "c", "c", Band.CELL, 0, 20_000, kind = RowKind.CELL)
         val withCell = Hearing(listOf(cell), false, emptyMap())
         assertEquals(1, pairings(withCell, listOf(gps(1_000)), PAIR_STREAM_MS).size)
+    }
+
+    @Test
+    fun `the refusal's reason, a fix too fast, the results paired with the best teacher`() {
+        assertNull(teachRefusal(gps(0), release = true))
+        assertEquals("nosat", teachRefusal(gps(0).copy(satellites = null), true))
+        assertEquals("coarse", teachRefusal(gps(0, acc = 30f), true))
+        assertEquals("fast", teachRefusal(gps(0, speed = 4f), true))
+        assertEquals("mock", teachRefusal(gps(0).copy(mock = true), true))
+        assertEquals("provider", teachRefusal(gps(0).copy(provider = "fused"), true))
+        assertTrue(tooFastToTeach(gps(0, speed = 3.5f)))
+        assertFalse(tooFastToTeach(gps(0, speed = null)))
+        // Code QA M1: only results after the last fire and within the window of the best teacher.
+        val h = hear(scan(1 to -50, at = 9_500) + scan(2 to -55, at = 12_000) + scan(3 to -60, at = 4_000), null, keys, moving, emptyMap(), 13_000)
+        assertEquals(listOf(h.heard[0]), pairedWith(h.heard, gps(10_000), PAIR_STREAM_MS, 0))
+        assertEquals(listOf(h.heard[0], h.heard[1]), pairedWith(h.heard, gps(10_000), PAIR_SINGLE_MS, 5_000))
+        assertTrue(pairedWith(h.heard, gps(10_000), PAIR_SINGLE_MS, 12_500).isEmpty())
+    }
+
+    @Test
+    fun `the attempt's plan - D14's table`() {
+        val rows = listOf(
+            Triple(AttemptPath.HEARTBEAT, com.kidslauncher.mdm.zones.Motion.MOVED, false) to AttemptPlan.TOGETHER,
+            Triple(AttemptPath.HEARTBEAT, com.kidslauncher.mdm.zones.Motion.NO_SENSOR, false) to AttemptPlan.TOGETHER,
+            Triple(AttemptPath.HEARTBEAT, com.kidslauncher.mdm.zones.Motion.STILL_SINCE_TRY, false) to AttemptPlan.LEARNED_FIRST,
+            Triple(AttemptPath.HEARTBEAT, com.kidslauncher.mdm.zones.Motion.STILL, false) to AttemptPlan.LEARNED_FIRST,
+            Triple(AttemptPath.HEARTBEAT, com.kidslauncher.mdm.zones.Motion.STILL, true) to AttemptPlan.TOGETHER,
+            Triple(AttemptPath.CONFIRM, com.kidslauncher.mdm.zones.Motion.MOVED, false) to AttemptPlan.GPS_FIRST,
+            Triple(AttemptPath.CONFIRM, com.kidslauncher.mdm.zones.Motion.STILL, true) to AttemptPlan.GPS_FIRST,
+            Triple(AttemptPath.LOCATE, com.kidslauncher.mdm.zones.Motion.STILL, false) to AttemptPlan.LOCATE,
+            Triple(AttemptPath.LOCATE, com.kidslauncher.mdm.zones.Motion.MOVED, true) to AttemptPlan.LOCATE,
+        )
+        for ((input, plan) in rows) assertEquals("$input", plan, attemptPlan(input.first, input.second, input.third))
+    }
+
+    @Test
+    fun `lastSeen moves at most once a day, and an unchanged table is the same table`() {
+        val row = PlaceRow(RowKind.WIFI, "a", lastSeenMin = 1000)
+        val rows = listOf(row, row.copy(key = "b"))
+        assertTrue(touchSeen(rows, setOf("a"), 1000 + SEEN_STEP_MIN - 1) === rows)
+        assertEquals(listOf(1000 + SEEN_STEP_MIN, 1000), touchSeen(rows, setOf("a"), 1000 + SEEN_STEP_MIN).map { it.lastSeenMin })
     }
 
     @Test
@@ -507,12 +560,14 @@ class PlacesTest {
         }
     }
 
-    /** Walks along the streets on four occasions over three days, GPS within ~10 m, a scan every 10 m. */
-    private fun taught(town: Town): List<PlaceRow> {
+    /** Every street of the town: five east-west, five north-south. */
+    private val allStreets = listOf(-20.0, 20.0, 60.0, 100.0, 140.0).map { y -> (-40..340 step 10).map { it.toDouble() to y } } +
+        listOf(-20.0, 100.0, 220.0, 260.0, 340.0).map { x -> (-20..140 step 10).map { x to it.toDouble() } }
+
+    /** Walks along [streets] on four occasions over three days, GPS within ~10 m, a scan every 10 m. */
+    private fun taught(town: Town, streets: List<List<Pair<Double, Double>>> = allStreets): List<PlaceRow> {
         var table = emptyList<PlaceRow>()
         var elapsed = 0L
-        val streets = listOf(-20.0, 20.0, 60.0, 100.0, 140.0).map { y -> (-40..340 step 10).map { it.toDouble() to y } } +
-            listOf(-20.0, 100.0, 220.0, 260.0, 340.0).map { x -> (-20..140 step 10).map { x to it.toDouble() } }
         for ((walk, min) in listOf(0 to 600, 1 to 900, 2 to day + 600, 3 to 2 * day + 960)) {
             var previous = emptyMap<String, Reading>()
             for (street in streets) for ((x, y) in street) {
@@ -527,47 +582,66 @@ class PlacesTest {
         return table
     }
 
-    @Test
-    fun `the synthetic town - indoor fixes hold their 68 percent, the neighbour is never inside home's zone`() {
-        val town = Town(42)
-        val table = taught(town)
-        val now = 3 * day
-        var fixes = 0
-        var within = 0
-        var points = 0
-        val errors = mutableListOf<Double>()
-        val accs = mutableListOf<Double>()
+    /** Indoor fixes in every house: how many, how many within their accuracy, the median error and accuracy. */
+    private fun indoor(town: Town, table: List<PlaceRow>, now: Int): List<Pair<Double, Double>> {
+        val out = mutableListOf<Pair<Double, Double>>()
         for (h in town.houses.indices) repeat(4) {
-            points++
             val (hx, hy) = town.houses[h]
             val (x, y) = hx + town.rng.nextGaussian() * 4 to hy + town.rng.nextGaussian() * 4
             val v = scanView(hear(town.scan(x, y, h, 1_000), null, keys, moving, emptyMap(), 1_000), 1_000, 0) ?: return@repeat
             val fix = learnedFix(v, table, now) ?: return@repeat
-            fixes++
             val (lat, lng) = Town.ll(x, y)
-            val err = distanceM(fix.lat, fix.lng, lat, lng)
-            errors += err
-            accs += fix.accuracyM
-            if (err <= fix.accuracyM) within++
+            out += distanceM(fix.lat, fix.lng, lat, lng) to fix.accuracyM
         }
-        println("synthetic town: $fixes fixes at $points indoor points, $within within their accuracy; median error ${errors.sorted()[errors.size / 2].toInt()} m, median accuracy ${accs.sorted()[accs.size / 2].toInt()} m")
-        assertTrue("most indoor points give a fix", fixes >= points * 0.6)
-        assertTrue("68 %: $within of $fixes", within >= fixes * 0.68)
-        // L9: indoor zone arrivals need learned fixes of ~100 m or better.
-        assertTrue(accs.sorted()[accs.size / 2] <= 100)
-        // The binding row: the neighbour 120 m from home is never surely inside a 150 m zone at home.
-        val homeIdx = 7
-        val (homeX, homeY) = town.houses[homeIdx]
+        return out
+    }
+
+    /**
+     * The binding row (D9), at home (house 7): a point [dx], [dy] metres from it, indoors in a house with no router of
+     * its own and never taught there, whose scans hear home - every fix there is outside a zone of [radius] (smaller than
+     * the distance) by the server's rule, `d + a > r`. Returns how many fixes were checked.
+     */
+    private fun neverInside(town: Town, table: List<PlaceRow>, now: Int, dx: Double, dy: Double, radius: Int): Int {
+        val (homeX, homeY) = town.houses[7]
         val (zlat, zlng) = Town.ll(homeX, homeY)
-        val neighbour = homeIdx + 3
-        assertEquals(120.0, town.houses[neighbour].first - homeX, 0.0)
-        repeat(100) {
-            val (nx, ny) = town.houses[neighbour]
-            val (x, y) = nx + town.rng.nextGaussian() * 4 to ny + town.rng.nextGaussian() * 4
-            val v = scanView(hear(town.scan(x, y, neighbour, 1_000), null, keys, moving, emptyMap(), 1_000), 1_000, 0) ?: return@repeat
-            val fix = learnedFix(v, table, now) ?: return@repeat
-            assertTrue("the neighbour inside home's zone", distanceM(fix.lat, fix.lng, zlat, zlng) + fix.accuracyM > 150)
+        val homeAps = town.aps.filter { it.house == 7 }.map { it.bssid }.toSet()
+        var checked = 0
+        repeat(200) {
+            val (x, y) = homeX + dx + town.rng.nextGaussian() * 3 to homeY + dy + town.rng.nextGaussian() * 3
+            val results = town.scan(x, y, 99, 1_000)
+            if (results.none { it.bssid in homeAps }) return@repeat
+            val fix = learnedFix(scanView(hear(results, null, keys, moving, emptyMap(), 1_000), 1_000, 0) ?: return@repeat, table, now) ?: return@repeat
+            checked++
+            val d = distanceM(fix.lat, fix.lng, zlat, zlng)
+            assertTrue("($dx, $dy) inside a $radius m zone: d=${d.toInt()} a=${fix.accuracyM.toInt()}", d + fix.accuracyM > radius)
         }
+        return checked
+    }
+
+    private fun townRows(town: Town, table: List<PlaceRow>, label: String) {
+        val now = 3 * day
+        val fixes = indoor(town, table, now)
+        val within = fixes.count { (err, acc) -> err <= acc }
+        val median = { l: List<Double> -> l.sorted()[l.size / 2].toInt() }
+        println("synthetic town, $label: ${fixes.size} fixes at ${town.houses.size * 4} indoor points, $within within; median error ${median(fixes.map { it.first })} m, median accuracy ${median(fixes.map { it.second })} m")
+        assertTrue("$label: most indoor points give a fix", fixes.size >= town.houses.size * 4 * 0.5)
+        assertTrue("$label: 68 %: $within of ${fixes.size}", within >= fixes.size * 0.68)
+        // The neighbour 120 m from home is never surely inside a 150 m zone at home.
+        assertEquals(120.0, town.houses[10].first - town.houses[7].first, 0.0)
+        neverInside(town, table, now, 120.0, 0.0, 150)
+        // Code QA H2: houses 50 and 70 m from home that hear home's router, zones just smaller than the distance.
+        val near = neverInside(town, table, now, 50.0, 0.0, 45) + neverInside(town, table, now, 0.0, 70.0, 65) +
+            neverInside(town, table, now, -35.0, 35.0, 45)
+        println("synthetic town, $label: $near fixes near home checked")
+        assertTrue("$label: the near houses hear home and get fixes", near >= 50)
+    }
+
+    @Test
+    fun `the synthetic town - indoor fixes hold their 68 percent, a neighbour is never inside home's zone`() {
+        val town = Town(42)
+        townRows(town, taught(town), "every street")
+        // Taught from one street only (y = 20, past home): every row's position leans to that street.
+        townRows(town, taught(town, allStreets.take(2).drop(1)), "one street")
     }
 
     @Test
@@ -647,13 +721,17 @@ class PlacesTest {
         assertEquals(1, Regex("""wm\.startScan\(\)""").findAll(glue).count())
         assertEquals(3, Regex("""scanNow\(""").findAll(glue).count())
         assertTrue(glue.contains("if (snap.results.none { r -> streamMs.any { abs(it - r.elapsedMs) <= PAIR_STREAM_MS } } && networkOff(lm)) {"))
-        assertTrue(glue.contains("|| !networkOff(lm)) return@launch"))
+        assertTrue(glue.contains("ZoneWatch.stillOn(context, currentPolicyDecision().policy) && QuickControls.isLocationEnabled(context) && networkOff(lm)"))
+        assertEquals("armed and run only when allowed (L2)", 2, Regex("""if \(!teachAllowed\(app, lm\)""").findAll(glue).count())
         // The passive feed teaches against cached results only, never a scan of ours.
         val passive = Regex("""fun offerPassive\([\s\S]*?\n    }""").find(glue)!!.value
-        assertFalse(passive.contains("scanNow") || passive.contains("snapshot("))
-        // A broken key clears; a transient error skips.
-        assertTrue(glue.contains("if (Secrets.prefs.keyBroken()) clearLocked(context, \"keybroken\")"))
-        assertTrue(glue.contains("if (Secrets.box.keyBroken()) clearLocked(context, \"keybroken\") else Log.w(LOG_TAG, \"table unreadable now:"))
+        assertFalse(passive.contains("scanNow") || Regex("""[^.]snapshot\(""").containsMatchIn(passive))
+        // A blob a healthy key can't open is cleared (code QA M2), a broken key clears, the rest is transient.
+        assertTrue(glue.contains("e is AEADBadTagException || e is IllegalArgumentException -> clearLocked(context, \"unreadable\")"))
+        assertTrue(glue.contains("Secrets.box.keyBroken() -> clearLocked(context, \"keybroken\")"))
+        assertEquals(2, Regex("""notOpened\(context, e\)""").findAll(glue).count())
+        // A cancellation is never swallowed by the attempt.
+        assertTrue(glue.contains("} catch (e: CancellationException) {\n            throw e"))
         // The motion fire's time reaches the scan rule; a fire arms the teaching fix.
         assertEquals(5L, com.kidslauncher.mdm.zones.MotionFlags().moved(5).movedAtElapsedMs)
         assertTrue(source("zones/ZoneSensors.kt").contains("context?.let { com.kidslauncher.mdm.places.WifiPlaces.armTeach(it) }"))

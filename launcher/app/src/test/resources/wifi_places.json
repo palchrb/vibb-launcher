@@ -51,18 +51,18 @@
     {"why": "a cell fix", "provider": "vibb_cell", "accuracy": 500, "speed": null, "satellites": null, "mock": false, "release": true, "teaches": false}
   ],
   "accuracy": [
-    {"why": "three networks, strong", "spread": 30, "range_med": 160, "networks": 3, "median_occasions": 5, "rssi": -55, "band": "G24", "stronger_unknown": 0, "accuracy": 50},
-    {"why": "only two networks: x 1.5", "spread": 30, "range_med": 160, "networks": 2, "median_occasions": 5, "rssi": -55, "band": "G24", "stronger_unknown": 0, "accuracy": 75},
-    {"why": "few occasions: x 1.3", "spread": 30, "range_med": 160, "networks": 3, "median_occasions": 3, "rssi": -55, "band": "G24", "stronger_unknown": 0, "accuracy": 65},
-    {"why": "both", "spread": 30, "range_med": 160, "networks": 2, "median_occasions": 3, "rssi": -55, "band": "G24", "stronger_unknown": 0, "accuracy": 97.5},
-    {"why": "-70 dBm at 5 GHz: its band floor", "spread": 30, "range_med": 160, "networks": 3, "median_occasions": 5, "rssi": -70, "band": "G5", "stronger_unknown": 0, "accuracy": 60},
-    {"why": "-80 dBm at 2.4 GHz: 1.5 x the floor", "spread": 30, "range_med": 160, "networks": 3, "median_occasions": 5, "rssi": -80, "band": "G24", "stronger_unknown": 0, "accuracy": 150},
-    {"why": "weaker than -85: 150 m", "spread": 30, "range_med": 160, "networks": 3, "median_occasions": 5, "rssi": -90, "band": "G24", "stronger_unknown": 0, "accuracy": 150},
-    {"why": "two unknown networks stronger: x 2", "spread": 30, "range_med": 160, "networks": 3, "median_occasions": 5, "rssi": -55, "band": "G24", "stronger_unknown": 2, "accuracy": 100},
-    {"why": "one is not enough", "spread": 30, "range_med": 160, "networks": 3, "median_occasions": 5, "rssi": -55, "band": "G24", "stronger_unknown": 1, "accuracy": 50},
+    {"why": "three networks, strong", "spread": 30, "range_med": 80, "networks": 3, "median_occasions": 5, "rssi": -55, "band": "G24", "stronger_unknown": 0, "accuracy": 50},
+    {"why": "only two networks: x 1.5", "spread": 30, "range_med": 80, "networks": 2, "median_occasions": 5, "rssi": -55, "band": "G24", "stronger_unknown": 0, "accuracy": 75},
+    {"why": "few occasions: x 1.3", "spread": 30, "range_med": 80, "networks": 3, "median_occasions": 3, "rssi": -55, "band": "G24", "stronger_unknown": 0, "accuracy": 65},
+    {"why": "both", "spread": 30, "range_med": 80, "networks": 2, "median_occasions": 3, "rssi": -55, "band": "G24", "stronger_unknown": 0, "accuracy": 97.5},
+    {"why": "-70 dBm at 5 GHz: its band floor", "spread": 30, "range_med": 80, "networks": 3, "median_occasions": 5, "rssi": -70, "band": "G5", "stronger_unknown": 0, "accuracy": 60},
+    {"why": "-80 dBm at 2.4 GHz: 1.5 x the floor", "spread": 30, "range_med": 80, "networks": 3, "median_occasions": 5, "rssi": -80, "band": "G24", "stronger_unknown": 0, "accuracy": 150},
+    {"why": "weaker than -85: 150 m", "spread": 30, "range_med": 80, "networks": 3, "median_occasions": 5, "rssi": -90, "band": "G24", "stronger_unknown": 0, "accuracy": 150},
+    {"why": "two unknown networks stronger: x 2", "spread": 30, "range_med": 80, "networks": 3, "median_occasions": 5, "rssi": -55, "band": "G24", "stronger_unknown": 2, "accuracy": 100},
+    {"why": "one is not enough", "spread": 30, "range_med": 80, "networks": 3, "median_occasions": 5, "rssi": -55, "band": "G24", "stronger_unknown": 1, "accuracy": 50},
     {"why": "the 30 m floor", "spread": 0, "range_med": 40, "networks": 3, "median_occasions": 5, "rssi": -50, "band": "G5", "stronger_unknown": 0, "accuracy": 30},
-    {"why": "-60 dBm is strong: the 30 m floor", "spread": 5, "range_med": 60, "networks": 3, "median_occasions": 5, "rssi": -60, "band": "G5", "stronger_unknown": 0, "accuracy": 30},
+    {"why": "-60 dBm is strong: no floor", "spread": 5, "range_med": 60, "networks": 3, "median_occasions": 5, "rssi": -60, "band": "G5", "stronger_unknown": 0, "accuracy": 30.41},
     {"why": "-61 dBm at 6 GHz: the floor", "spread": 5, "range_med": 60, "networks": 3, "median_occasions": 5, "rssi": -61, "band": "G6", "stronger_unknown": 0, "accuracy": 60},
-    {"why": "over 200 m: no fix", "spread": 30, "range_med": 160, "networks": 2, "median_occasions": 3, "rssi": -80, "band": "G24", "stronger_unknown": 2, "accuracy": null}
+    {"why": "over 200 m: no fix", "spread": 30, "range_med": 80, "networks": 2, "median_occasions": 3, "rssi": -80, "band": "G24", "stronger_unknown": 2, "accuracy": null}
   ]
 }

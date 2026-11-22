@@ -104,8 +104,12 @@ const val SCAN_FALLBACK_MS = 120_000L
 /** A lookup needs at least this many usable results that fresh (D9, L8). */
 const val SCAN_RESULTS_MIN = 3
 
-/** More than this many repeated levels make a scan stale (D9). */
-const val STALE_REPEATS_MAX = 2
+/** A scan is stale only when at least this many results repeat their level ... */
+const val STALE_REPEATS_MIN = 5
+
+/** ... and they are at least this share of the results the previous scan heard too (code QA H1: a still phone repeats
+ * whole-number levels often - a few repeats are noise, only a whole repeated list is an old one). */
+const val STALE_SHARE = 0.8
 
 /** A learned fix is never better than this ... */
 const val LEARNED_ACCURACY_FLOOR_M = 30.0
@@ -113,10 +117,11 @@ const val LEARNED_ACCURACY_FLOOR_M = 30.0
 /** ... and over this there is none (D9). */
 const val LEARNED_ACCURACY_MAX_M = 200.0
 
-/** The share of the cluster's median range in the accuracy (D9's 0.5, tuned in the synthetic town: 0.5 gave a median
- * accuracy of 106 m against a median error of 15 m, every fix within; 0.25 gives 61 m, still every fix within and the
- * neighbour row holding). The Jelly Star's leave-one-out counts (D16) are the real check. */
-const val RANGE_SHARE = 0.25
+/** The share of the cluster's median range in the accuracy (D9's 0.5). The synthetic town: taught from every street,
+ * 0.5 gives a median accuracy of 106 m against a median error of 15 m (every fix within); taught from one street only,
+ * 70 m against 36 m (79 % within), where 0.25 held only 54 % (code QA H2). Kept until the Jelly Star's leave-one-out
+ * counts (D16) say otherwise. */
+const val RANGE_SHARE = 0.5
 
 /** A cell fix over this is none (D10). */
 const val CELL_FIX_MAX_M = 5_000.0
@@ -286,7 +291,8 @@ data class Hearing(val heard: List<Heard>, val stale: Boolean, val readings: Map
 /**
  * The scan's usable results by key (D4, D9): the connected AP only when unmetered (a metered one's results go - a
  * hotspot), and added when the results lack it (at [nowElapsedMs]); a result whose level equals the previous reading
- * of a newer result is suspect, and more than [STALE_REPEATS_MAX] of them make the scan stale.
+ * of a newer result is suspect (never taught, a quarter weight); the scan is stale only when at least
+ * [STALE_REPEATS_MIN] repeat and they are [STALE_SHARE] of the results the previous scan heard too.
  */
 fun hear(results: List<ScanAp>, connected: Connected?, keys: PlaceKeys, moving: MovingSsids, previous: Map<String, Reading>, nowElapsedMs: Long): Hearing {
     val connectedB = connectedBssid(connected?.bssid)
@@ -313,7 +319,10 @@ fun hear(results: List<ScanAp>, connected: Connected?, keys: PlaceKeys, moving: 
             connected = b == connectedB && connected?.unmetered == true,
         )
     }
-    return Hearing(heard, heard.count { it.suspect } > STALE_REPEATS_MAX, heard.associate { it.key to Reading(it.elapsedMs, it.rssi) })
+    val again = heard.count { h -> previous[h.key]?.let { h.elapsedMs > it.elapsedMs } == true }
+    val repeats = heard.count { it.suspect }
+    val stale = repeats >= STALE_REPEATS_MIN && repeats >= STALE_SHARE * again
+    return Hearing(heard, stale, heard.associate { it.key to Reading(it.elapsedMs, it.rssi) })
 }
 
 // --- D1, D2: the teacher and the pairing ---
@@ -335,15 +344,31 @@ data class TeachFix(
  * accuracy <= 25 m, speed unknown or <= 3 m/s. `fused` only after the Jelly Star's check (§8 step 2), so never yet;
  * never `network`, a balanced fix or our own `vibb_*` fixes.
  */
-fun teaches(fix: TeachFix, release: Boolean): Boolean {
-    if (fix.provider != "gps") return false
-    if (fix.mock && release) return false
-    val acc = fix.accuracyM?.takeIf { it.isFinite() && it >= 0f } ?: return false
-    if (acc > TEACH_ACCURACY_MAX_M) return false
-    if ((fix.satellites ?: 0) < TEACH_SATELLITES_MIN) return false
+fun teaches(fix: TeachFix, release: Boolean): Boolean = teachRefusal(fix, release) == null
+
+/** Why [fix] doesn't teach (D1, code QA M4's counts) - `provider`, `mock`, `coarse`, `nosat`, `fast` - or `null`. */
+fun teachRefusal(fix: TeachFix, release: Boolean): String? {
+    val acc = fix.accuracyM?.takeIf { it.isFinite() && it >= 0f }
     val speed = fix.speedMps?.takeIf { it.isFinite() }
-    return speed == null || speed <= TEACH_SPEED_MAX_MPS
+    return when {
+        fix.provider != "gps" -> "provider"
+        fix.mock && release -> "mock"
+        acc == null || acc > TEACH_ACCURACY_MAX_M -> "coarse"
+        (fix.satellites ?: 0) < TEACH_SATELLITES_MIN -> "nosat"
+        speed != null && speed > TEACH_SPEED_MAX_MPS -> "fast"
+        else -> null
+    }
 }
+
+/** A fix this fast ends a teaching wait early (code QA L1): it won't stop in the next seconds. */
+fun tooFastToTeach(fix: TeachFix): Boolean = fix.speedMps?.let { it.isFinite() && it > TEACH_SPEED_MAX_MPS } == true
+
+/**
+ * Code QA M1: the results a teach may use beyond its sightings - the LOO count, the zone links' strikes, D15's
+ * contradiction: heard after the last motion fire ([movedAtElapsedMs]) and within [windowMs] of the [best] teacher.
+ */
+fun pairedWith(heard: List<Heard>, best: TeachFix, windowMs: Long, movedAtElapsedMs: Long): List<Heard> =
+    heard.filter { it.elapsedMs > movedAtElapsedMs && abs(it.elapsedMs - best.elapsedMs) <= windowMs }
 
 /** Where a result was heard: the teacher's position and the pairing's error ([accEff], D2). */
 data class Sighting(val heard: Heard, val lat: Double, val lng: Double, val accEff: Double)
@@ -521,9 +546,15 @@ fun prune(rows: List<PlaceRow>, nowMin: Int): List<PlaceRow> {
     return if (kept.size <= ROWS_MAX) kept else kept.sortedByDescending { it.lastSeenMin }.take(ROWS_MAX)
 }
 
-/** The lookup changes nothing but `lastSeen` (D9, D8). */
-fun touchSeen(rows: List<PlaceRow>, keys: Set<String>, nowMin: Int): List<PlaceRow> =
-    if (keys.isEmpty()) rows else rows.map { if (it.kind != RowKind.LINK && it.key in keys) it.copy(lastSeenMin = nowMin) else it }
+/** The lookup changes nothing but `lastSeen` (D9, D8), at most once a day per row (code QA L4: no write for nothing);
+ * the same list when nothing changed. */
+fun touchSeen(rows: List<PlaceRow>, keys: Set<String>, nowMin: Int): List<PlaceRow> {
+    fun stale(r: PlaceRow) = r.kind != RowKind.LINK && r.key in keys && nowMin - r.lastSeenMin !in 0 until SEEN_STEP_MIN
+    return if (rows.none(::stale)) rows else rows.map { if (stale(it)) it.copy(lastSeenMin = nowMin) else it }
+}
+
+/** `lastSeen` moves at most this often (a day): the 180-day ageing needs no finer step. */
+const val SEEN_STEP_MIN = 24 * 60
 
 // --- D9: the lookup ---
 
@@ -663,6 +694,37 @@ fun learnedAccuracy(spread: Double, rangeMed: Double, networks: Int, medianOccas
     if (strongerUnknown >= 2) acc *= 2
     acc = maxOf(acc, LEARNED_ACCURACY_FLOOR_M)
     return acc.takeIf { it <= LEARNED_ACCURACY_MAX_M }
+}
+
+/** Which fresh-fix attempt (D14): the heartbeat's and a crossing's first fix and the low-battery fix; a crossing's
+ * confirm; the parent's `locate`. */
+enum class AttemptPath { HEARTBEAT, CONFIRM, LOCATE }
+
+/** How an attempt runs (D14). */
+enum class AttemptPlan {
+    /** Scan and GPS together, the better kept (the learned fix only when it stands alone). */
+    TOGETHER,
+
+    /** The learned fix when it stands alone, else the zone link's renewal, else GPS. */
+    LEARNED_FIRST,
+
+    /** GPS, then the learned fix. */
+    GPS_FIRST,
+
+    /** GPS for 60 s, 20 s with a good learned fix in hand; the better kept. */
+    LOCATE,
+}
+
+/** D14's table (code QA L7): the heartbeat's path after a move (`MOVED`, no sensor) or with the daily refresh due runs
+ * scan and GPS together, otherwise the learned fix first; a crossing's confirm GPS first; `locate` its own. */
+fun attemptPlan(path: AttemptPath, motion: com.kidslauncher.mdm.zones.Motion, refreshDue: Boolean): AttemptPlan = when (path) {
+    AttemptPath.CONFIRM -> AttemptPlan.GPS_FIRST
+    AttemptPath.LOCATE -> AttemptPlan.LOCATE
+    AttemptPath.HEARTBEAT -> if (refreshDue || motion == com.kidslauncher.mdm.zones.Motion.MOVED || motion == com.kidslauncher.mdm.zones.Motion.NO_SENSOR) {
+        AttemptPlan.TOGETHER
+    } else {
+        AttemptPlan.LEARNED_FIRST
+    }
 }
 
 /** H2: after a motion fire ([movedSinceFresh]) a learned fix from fewer than three networks never stands alone - GPS

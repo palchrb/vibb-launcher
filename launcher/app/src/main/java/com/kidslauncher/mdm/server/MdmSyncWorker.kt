@@ -978,7 +978,12 @@ private suspend fun currentLocationReport(
         val satellite = fresh?.provider in VOUCHING_PROVIDERS
         if (held && fresh != null && satellite && motionContradiction(vouched, fresh.toQueued())) ZoneWatch.noteContradiction(context, now)
         if (beat == Heartbeat.FIX || moving) {
-            Log.i(ZONE_LOG_TAG, "Location heartbeat: ${beat ?: "forced"} result=${if (fresh != null) "fresh" else "none"} moving=$moving")
+            val result = when {
+                places.renewed -> "renewed"
+                fresh != null -> "fresh"
+                else -> "none"
+            }
+            Log.i(ZONE_LOG_TAG, "Location heartbeat: ${beat ?: "forced"} result=$result moving=$moving")
         }
     }
     location ?: return LocationOutcome(action, null, null, null)

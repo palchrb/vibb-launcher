@@ -29,7 +29,7 @@
       "first_words": ["audi", "moto"]
     },
     "microg": {
-      "source": "microG GmsCore (f686900), play-services-location/core/provider/src/main/kotlin/org/microg/gms/location/network/wifi/MovingWifiHelper.kt, MOVING_WIFI_HOTSPOTS. Copyright 2023 microG Project Team. Apache-2.0.",
+      "source": "microG GmsCore (f686900), play-services-location/core/provider/src/main/kotlin/org/microg/gms/location/network/wifi/MovingWifiHelper.kt: MOVING_WIFI_HOTSPOTS (exact names) and PHONE_HOTSPOT_KEYWORDS (contained). Copyright 2023 microG Project Team. Apache-2.0.",
       "exact": [
         "OEBB", "Austrian FlyNet", "svciob", "THALYSNET", "Air Canada", "ACWiFi", "ACWiFi.com",
         "Shenzhen Airlines", "avianca", "avaincaonair.com", "CDWiFi", "_SNCF_WIFI_INOUI",
@@ -41,8 +41,9 @@
         "SBB-Free", "SBB-FREE", "SWISS Connect", "Edelweiss Entertainment", "LXCREW",
         "THAI Wireless IFE", "Avanti_Free_WiFi", "CrossCountryWiFi", "GWR WiFi",
         "LNR On Board Wi-Fi", "LOOP on train WiFi", "WMR On Board Wi-Fi", "EurostarTrainsWiFi",
-        "Amtrak_WiFi", "iPhone", "Galaxy", "AndroidAP"
-      ]
+        "Amtrak_WiFi"
+      ],
+      "contains": ["iPhone", "Galaxy", "AndroidAP"]
     },
     "vibb": {
       "source": "Vibb's own: Wi-Fi Direct groups (the spec's DIRECT- prefix; most also set the locally administered bit).",

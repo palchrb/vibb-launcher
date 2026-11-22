@@ -61,7 +61,8 @@ The rest of `push/up/` is written here under the GPL-3.0 (or later); the Unified
 The launcher's list of moving Wi-Fi networks (`launcher/app/src/main/assets/places/moving_ssids.json`, design 125 D4)
 takes its words, prefixes, suffixes and exact names from [Local NLP Backend](https://github.com/Helium314/Local-NLP-Backend)'s
 `RfEmitter.kt` (`ssidBlacklisted`) at commit `f052047`, Copyright (C) 2017 Tod Fitch, (C) 2023 Helium314, licensed under
-the GPL-3.0 (or later), and the transport list `MOVING_WIFI_HOTSPOTS` from [microG](https://github.com/microg/GmsCore)'s
+the GPL-3.0 (or later), and the transport list `MOVING_WIFI_HOTSPOTS` and the phone keywords `PHONE_HOTSPOT_KEYWORDS`
+from [microG](https://github.com/microg/GmsCore)'s
 `MovingWifiHelper.kt` at commit `f686900`, Copyright 2023 microG Project Team, licensed under the Apache License 2.0 -
 see [`launcher/app/src/main/assets/licenses/Apache-2.0.txt`](launcher/app/src/main/assets/licenses/Apache-2.0.txt).
 Each section of the file names its source; they are kept as data, lower-cased when matched. The rest of the Wi-Fi

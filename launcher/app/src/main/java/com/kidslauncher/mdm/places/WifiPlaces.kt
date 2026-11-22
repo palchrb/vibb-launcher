@@ -26,12 +26,12 @@ import android.util.Log
 import com.kidslauncher.mdm.BuildConfig
 import com.kidslauncher.mdm.server.LocateCommands
 import com.kidslauncher.mdm.server.QuickControls
-import com.kidslauncher.mdm.server.Sealed
 import com.kidslauncher.mdm.server.Secrets
 import com.kidslauncher.mdm.server.ServerJson
 import com.kidslauncher.mdm.server.currentPolicyDecision
 import com.kidslauncher.mdm.zones.CONFIRM_DELAY_MS
 import com.kidslauncher.mdm.zones.Motion
+import com.kidslauncher.mdm.zones.MotionGate
 import com.kidslauncher.mdm.zones.ZoneWatch
 import com.kidslauncher.mdm.zones.distanceM
 import java.io.File
@@ -40,6 +40,8 @@ import java.time.LocalDate
 import java.util.Base64
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
+import javax.crypto.AEADBadTagException
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.coroutines.resume
 import kotlin.math.abs
 import kotlinx.coroutines.CompletableDeferred
@@ -48,8 +50,8 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
@@ -79,6 +81,9 @@ private const val GPS_MS = 15_000L
 /** `locate`'s long wait (D14). */
 private const val LOCATE_MS = 60_000L
 
+/** After the first fix the stream waits at most this much longer for one that teaches (code QA M3). */
+private const val TEACH_WAIT_MS = 5_000L
+
 /** The teaching fix holds the CPU at most this long: a scan, 15 s of GPS, a re-scan. */
 private const val TEACH_WAKELOCK_MS = 45_000L
 
@@ -86,27 +91,20 @@ private const val TEACH_WAKELOCK_MS = 45_000L
 private const val CELL_STALE_MS = 60_000L
 private const val CELL_WAIT_MS = 3_000L
 
-/** A pairing of a passive fix (D2) - the only teacher without our stream. */
-private const val PASSIVE_PAIR_MS = PAIR_SINGLE_MS
-
 /**
  * Wi-Fi places, learned on the phone (design 125 step 1; rules in `PlacesPlan.kt`). With Google's location accuracy off
  * (the `network` provider off) a fresh-fix attempt scans Wi-Fi while GPS starts ([attempt], D13/D14): a learned fix
- * that stands alone is reported as `vibb_wifi`, every own GPS fix ([Path]) and every passive `gps` fix
- * ([offerPassive]) teaches the APs heard with it, and 2 min after a motion fire a teaching fix runs ([armTeach], D11).
- * With the `network` provider on nothing here scans or looks up (H1); only passive fixes teach, against the system's
- * own cached results.
+ * that stands alone is reported as `vibb_wifi`, every own GPS fix and every passive `gps` fix ([offerPassive]) teaches
+ * the APs heard with it, and 2 min after a motion fire a teaching fix runs ([armTeach], D11). With the `network`
+ * provider on nothing here scans or looks up (H1); only passive fixes teach, against the system's own cached results.
  *
  * Privacy (D18, D19): the table is one file in credential-encrypted storage, sealed whole under the secrets key
- * (`SecretBox`, AAD `wifi_places_v1`); rows are keyed by HMAC under a per-install key kept sealed in CE prefs
- * `wifi_places`; no SSID, BSSID or cell id is kept or logged. [clear] at location Off, unmanaged, a new enrollment and
- * a broken Keystore key. A transient Keystore error skips that lookup or teach and keeps the table.
+ * (`Secrets.box`, AAD `wifi_places_v1`); rows are keyed by HMAC under a per-install key, sealed under the same key in CE
+ * prefs `wifi_places`; no SSID, BSSID or cell id is kept or logged. [clear] at location Off, unmanaged, a new
+ * enrollment, a broken Keystore key and a table or key that doesn't open with a healthy one. A transient Keystore error
+ * skips that lookup or teach and keeps the table.
  */
 object WifiPlaces {
-    /** Which fresh-fix attempt (D14): the heartbeat's and a crossing's first fix and the low-battery fix; a crossing's
-     * confirm; the parent's `locate`. */
-    enum class Path { HEARTBEAT, CONFIRM, LOCATE }
-
     /**
      * What a sync's attempt knows ([motion], [movedAtElapsedMs] - design 124's flags) and, for the heartbeat's 4-h cap
      * try with `motion` `STILL`, the [vouched] fix a zone link may renew (D12). The attempt answers in [renewed] (the
@@ -131,8 +129,12 @@ object WifiPlaces {
     /** The last learned fix of >= 3 networks, for D15's contradiction. Memory only. */
     @Volatile private var lastLearned: LearnedFix? = null
 
-    /** Our own teaching attempts running: a passive fix then is ours, taught by the attempt itself. */
+    /** Our own attempts and teaching fixes running: a passive fix then is ours, taught by the attempt itself, and a
+     * teaching alarm waits for the next fire. */
     private val ownTeaching = AtomicInteger(0)
+
+    /** Scan refusals since the process started, by reason - counts only (code QA L6). Guarded by itself. */
+    private val refusals = sortedMapOf<String, Int>()
 
     @Volatile private var moving: MovingSsids? = null
 
@@ -167,21 +169,23 @@ object WifiPlaces {
         Store(r, k, generation)
     }
 
+    /** The install's HMAC key, sealed under the secrets key; a new one (and no table) when there is none. */
     private fun loadKey(context: Context): PlaceKeys? {
         val p = prefs(context)
-        return when (val sealed = Secrets.prefs.read(p, AAD_HMAC, KEY_HMAC)) {
-            is Sealed.Value -> PlaceKeys(Base64.getDecoder().decode(sealed.plain))
-            Sealed.Absent -> {
+        val stored = p.getString(KEY_HMAC, null)
+        return try {
+            if (stored != null) {
+                PlaceKeys(Secrets.box.open(AAD_HMAC, Base64.getDecoder().decode(stored)))
+            } else {
                 // A table without its key is noise: dropped before the first key is made.
                 file(context).delete()
                 val secret = ByteArray(32).also { SecureRandom().nextBytes(it) }
-                val saved = Secrets.prefs.edit(p) { it.putSealed(AAD_HMAC, KEY_HMAC, Base64.getEncoder().encodeToString(secret)) }
-                if (saved) PlaceKeys(secret) else null
+                val sealed = Base64.getEncoder().encodeToString(Secrets.box.seal(AAD_HMAC, secret))
+                if (p.edit().putString(KEY_HMAC, sealed).commit()) PlaceKeys(secret) else null
             }
-            Sealed.Unreadable -> {
-                if (Secrets.prefs.keyBroken()) clearLocked(context, "keybroken")
-                null
-            }
+        } catch (e: Exception) {
+            notOpened(context, e)
+            null
         }
     }
 
@@ -191,18 +195,28 @@ object WifiPlaces {
         return try {
             decodeTable(Secrets.box.open(AAD_TABLE, f.readFully())) ?: emptyList<PlaceRow>().also { Log.i(LOG_TAG, "table version dropped") }
         } catch (e: Exception) {
-            if (Secrets.box.keyBroken()) clearLocked(context, "keybroken") else Log.w(LOG_TAG, "table unreadable now: ${e.javaClass.simpleName}")
+            notOpened(context, e)
             null
         }
     }
 
-    /** The table after [change] on a store opened at [generation]; written sealed (AtomicFile), dropped when a clear
-     * came meanwhile. A failed seal keeps the table in memory (the next write tries again). */
+    /** D19 and code QA M2: a blob that can't be opened with a healthy key (a bad tag, a broken encoding) is cleared
+     * (`unreadable`), a broken key clears (`keybroken`), anything else is transient - skipped, kept. Under [lock]. */
+    private fun notOpened(context: Context, e: Exception) {
+        when {
+            e is AEADBadTagException || e is IllegalArgumentException -> clearLocked(context, "unreadable")
+            Secrets.box.keyBroken() -> clearLocked(context, "keybroken")
+            else -> Log.w(LOG_TAG, "table not opened now: ${e.javaClass.simpleName}")
+        }
+    }
+
+    /** The table after [change] on a store opened at [generation]; written sealed (AtomicFile) only when its contents
+     * changed (code QA L4), dropped when a clear came meanwhile. A failed seal keeps the table in memory. */
     private fun save(context: Context, generation: Int, change: (List<PlaceRow>) -> List<PlaceRow>): Unit = synchronized(lock) {
         val current = rows ?: return
         if (generation != this.generation) return
         val next = change(current)
-        if (next === current) return
+        if (next == current) return
         rows = next
         val f = file(context)
         val sealed = try {
@@ -228,7 +242,8 @@ object WifiPlaces {
 
     /**
      * D19: the table, its key and the counts go - location Off ([reason] `off`), unmanaged or a new enrollment
-     * (`unenrol`), a broken Keystore key (`keybroken`). No Keystore call; cheap when there is nothing.
+     * (`unenrol`), a broken Keystore key (`keybroken`), a blob a healthy key can't open (`unreadable`). No Keystore
+     * call; cheap when there is nothing.
      */
     fun clear(context: Context, reason: String) = synchronized(lock) { clearLocked(context, reason) }
 
@@ -254,9 +269,19 @@ object WifiPlaces {
 
     private fun wifi(context: Context) = context.applicationContext.getSystemService(WifiManager::class.java)
 
+    /** Code QA L6: a scan refused - counts only, by reason. */
+    private fun refused(reason: String) {
+        val line = synchronized(refusals) {
+            refusals[reason] = (refusals[reason] ?: 0) + 1
+            refusals.entries.joinToString(" ") { "${it.key}=${it.value}" }
+        }
+        Log.i(LOG_TAG, "scan refusals $line")
+    }
+
     private fun cached(context: Context): List<ScanAp> = try {
         wifi(context)?.scanResults.orEmpty().map(::scanAp)
     } catch (e: SecurityException) {
+        refused("permission")
         emptyList()
     } catch (e: Exception) {
         emptyList()
@@ -271,12 +296,14 @@ object WifiPlaces {
         elapsedMs = r.timestamp / 1000,
     )
 
-    /** D13: the cached results when D9's fresh rule holds (>= 3 within 30 s, after the last move); else one
-     * `startScan` and its results within [SCAN_WAIT_MS] - throttled or no answer: the cache (the 2-min fallback). */
+    /** D13: the cached results when D9's fresh rule holds (>= 3 usable within 30 s, after the last move); else one
+     * `startScan` and its results within [SCAN_WAIT_MS] - refused or no answer: the cache (the 2-min fallback). */
     private suspend fun scanNow(context: Context, movedAtElapsedMs: Long): List<ScanAp> {
         val now = SystemClock.elapsedRealtime()
         val before = cached(context)
-        if (before.count { now - it.elapsedMs in 0..SCAN_FRESH_MS && it.elapsedMs > movedAtElapsedMs } >= SCAN_RESULTS_MIN) return before
+        val list = moving(context)
+        val fresh = before.count { now - it.elapsedMs in 0..SCAN_FRESH_MS && it.elapsedMs > movedAtElapsedMs && usableAp(it.bssid, it.ssid, list) }
+        if (fresh >= SCAN_RESULTS_MIN) return before
         val wm = wifi(context) ?: return before
         val done = CompletableDeferred<Unit>()
         val callback = object : WifiManager.ScanResultsCallback() {
@@ -284,16 +311,20 @@ object WifiPlaces {
                 done.complete(Unit)
             }
         }
-        val got = try {
+        try {
             wm.registerScanResultsCallback(executor, callback)
             @Suppress("DEPRECATION")
-            wm.startScan() && withTimeoutOrNull(SCAN_WAIT_MS) { done.await() } != null
+            when {
+                !wm.startScan() -> refused(if (wm.isWifiEnabled) "throttled" else "wifioff")
+                withTimeoutOrNull(SCAN_WAIT_MS) { done.await() } == null -> refused("unanswered")
+            }
+        } catch (e: SecurityException) {
+            refused("permission")
         } catch (e: Exception) {
-            false
+            refused("failed")
         } finally {
             runCatching { wm.unregisterScanResultsCallback(callback) }
         }
-        if (!got) Log.i(LOG_TAG, "scan throttled or unanswered: the cached results")
         return cached(context)
     }
 
@@ -367,8 +398,8 @@ object WifiPlaces {
         }?.takeIf { it[0] != null && it[1] != null }?.joinToString("|")
     }
 
-    private suspend fun snapshot(context: Context, keys: PlaceKeys?, movedAtElapsedMs: Long): Snapshot = coroutineScope {
-        val cell = async { keys?.let { servingCell(context, it) } }
+    private suspend fun snapshot(context: Context, keys: PlaceKeys, movedAtElapsedMs: Long): Snapshot = coroutineScope {
+        val cell = async { servingCell(context, keys) }
         val results = scanNow(context, movedAtElapsedMs)
         Snapshot(results, connected(context), cell.await())
     }
@@ -393,11 +424,8 @@ object WifiPlaces {
         val fix = view?.let { learnedFix(it, store.rows, now) }?.takeUnless { cellVetoes(snap.cell, store.rows, it, now) }
         val table = store.rows.associateBy { it.id }
         val trusted = view?.heard.orEmpty().count { table[it.key]?.trusted(now) == true }
-        Log.i(
-            LOG_TAG,
-            "scan usable=${h.heard.size} trusted=$trusted networks=${fix?.networks ?: 0} acc=${fix?.accuracyM?.toInt() ?: "-"}" +
-                (if (view?.fresh == false) " fallback" else ""),
-        )
+        val line = "scan usable=${h.heard.size} trusted=$trusted networks=${fix?.networks ?: 0} acc=${fix?.accuracyM?.toInt() ?: "-"}"
+        Log.i(LOG_TAG, line + if (view?.fresh == false) " fallback" else "")
         if (fix != null) {
             if (fix.networks >= 3) lastLearned = fix
             save(context, store.generation) { touchSeen(it, fix.keys, now) }
@@ -434,43 +462,52 @@ object WifiPlaces {
         mock = l.isMock,
     )
 
-    private fun teaching(fixes: List<Location>): List<TeachFix> = fixes.map(::teachFix).filter { teaches(it, release = !BuildConfig.DEBUG) }
+    private val release = !BuildConfig.DEBUG
+
+    private fun teaching(fixes: List<Location>): List<TeachFix> = fixes.map(::teachFix).filter { teaches(it, release) }
 
     private fun linkZones(keys: PlaceKeys): List<LinkZone> = ZoneWatch.watchedZones().map { LinkZone(it, keys.zone(it)) }
 
     /**
-     * One teach (D2-D7, D12): the leave-one-out count and D15's contradiction first, against the table as it was; then
-     * the sightings paired within [windowMs] ([pairings]), the zone links at the best teacher, the table saved.
+     * One teach (D2-D7, D12, code QA M1): the sightings paired within [windowMs] ([pairings]) from results newer than the
+     * last motion fire ([movedAtElapsedMs]); nothing paired - nothing at all. The leave-one-out count, D15's
+     * contradiction and the zone links' strikes read only the results paired with the best teacher ([pairedWith]),
+     * against the table as it was; then the table and the links are saved. True when something was taught.
      */
-    private fun teachWith(context: Context, store: Store, snap: Snapshot, teachers: List<TeachFix>, windowMs: Long) {
-        if (teachers.isEmpty()) return
+    private fun teachWith(context: Context, store: Store, snap: Snapshot, teachers: List<TeachFix>, windowMs: Long, movedAtElapsedMs: Long): Boolean {
+        if (teachers.isEmpty()) return false
         val h = hearing(context, store, snap, remember = false)
+        val after = h.heard.filter { it.elapsedMs > movedAtElapsedMs }
+        val cell = snap.cell?.takeIf { it.elapsedMs > movedAtElapsedMs }
+        val sightings = pairings(Hearing(after + listOfNotNull(cell), h.stale, h.readings), teachers, windowMs)
+        if (sightings.isEmpty()) return false
         val best = teachers.minBy { it.accuracyM ?: Float.MAX_VALUE }
+        val paired = pairedWith(after, best, windowMs, movedAtElapsedMs)
         val now = nowMin()
         val today = today()
         val zones = linkZones(store.keys)
+        // The connected network is now's, whatever the pairing: the link's inside occasion.
         val connectedNet = h.heard.firstOrNull { it.connected }?.network
-        // D16: what the table as it was said for the same scan; a zone-link renewal's class by the connected network.
+        // D16: what the table as it was said for the same results; a zone-link renewal's class by the connected network.
         val counts = mutableListOf<(DayCounts) -> DayCounts>()
-        leaveOneOut(learnedFix(ScanView(h.heard, true), store.rows, now), best.lat, best.lng)?.let { (cls, hit) -> counts += { c -> c.loo(cls, hit) } }
+        leaveOneOut(learnedFix(ScanView(paired, true), store.rows, now), best.lat, best.lng)?.let { (cls, hit) -> counts += { c -> c.loo(cls, hit) } }
         zones.firstOrNull { z -> store.rows.any { it.key == z.key && it.network == connectedNet && it.linked(now) } }?.let { z ->
             val inside = distanceM(best.lat, best.lng, z.zone.latitude, z.zone.longitude) <= z.zone.radiusM
             counts += { c -> c.loo(LooClass.ZONE, inside) }
         }
-        if (learnedContradiction(lastLearned, best.lat, best.lng, best.elapsedMs)) {
+        if (paired.isNotEmpty() && learnedContradiction(lastLearned, best.lat, best.lng, best.elapsedMs)) {
             Log.w(LOG_TAG, "learned contradiction")
             counts += { c -> c.copy(contradictions = c.contradictions + 1) }
         }
         if (counts.isNotEmpty()) count(context, today) { counts.fold(it) { c, f -> f(c) } }
-        val heard = Hearing(h.heard + listOfNotNull(snap.cell), h.stale, h.readings)
-        val sightings = pairings(heard, teachers, windowMs)
         var outcome: TeachOutcome? = null
         save(context, store.generation) { rows ->
             val taught = teach(rows, sightings, now, today).also { outcome = it }
             val acc = (best.accuracyM ?: TEACH_ACCURACY_MAX_M).toDouble()
-            teachLinks(taught.rows, zones, best.lat, best.lng, acc, connectedNet, h.heard.map { it.network }.toSet(), now, today)
+            teachLinks(taught.rows, zones, best.lat, best.lng, acc, connectedNet, paired.map { it.network }.toSet(), now, today)
         }
-        outcome?.let { Log.i(LOG_TAG, "taught aps=${it.taught} new=${it.new} moved=${it.moved}" + if (h.stale) " stale" else "") }
+        outcome?.let { Log.i(LOG_TAG, "taught aps=${it.taught} new=${it.new} moved=${it.moved}") }
+        return true
     }
 
     private fun count(context: Context, today: Int, change: (DayCounts) -> DayCounts) = synchronized(lock) {
@@ -488,8 +525,8 @@ object WifiPlaces {
 
     /**
      * D3: a passive fix (any app's, ours too) that passes D1 teaches against the system's cached results within
-     * +-30 s - never a scan of ours. Skipped while one of our own attempts teaches (its stream teaches it). On the
-     * passive feed's executor; never throws.
+     * +-30 s, after the last motion fire - never a scan of ours. Skipped while one of our own attempts runs (it teaches
+     * its stream itself). On the passive feed's executor; never throws.
      */
     fun offerPassive(context: Context, location: Location) {
         try {
@@ -499,7 +536,7 @@ object WifiPlaces {
             val store = open(context) ?: return
             val results = cached(context)
             if (results.isEmpty()) return
-            teachWith(context, store, Snapshot(results, connected(context), null), fix, PASSIVE_PAIR_MS)
+            teachWith(context, store, Snapshot(results, connected(context), null), fix, PAIR_SINGLE_MS, MotionGate.snapshot(context).movedAtElapsedMs)
         } catch (e: Exception) {
             Log.w(LOG_TAG, "passive teach failed: ${e.javaClass.simpleName}")
         }
@@ -528,109 +565,123 @@ object WifiPlaces {
         }
 
         fun stop() = runCatching { lm.removeUpdates(this) }
+
+        fun all(): List<Location> = fixes.toList()
     }
+
+    /** A GPS try's best accepted fix and whether it taught. */
+    private class GpsTry(val fix: Location?, val taught: Boolean)
 
     /**
      * One GPS try of this design (D2, D11, D14): the stream within [boundMs] ([shortMs] first; [stopEarly] ends it
-     * there); at the first fix - or, [untilTeaches], the first that teaches - a teaching fix with no result of [first]
-     * within [PAIR_STREAM_MS] of the stream takes one more scan while the stream runs on (D2's re-scan), then teaches.
-     * The most accurate fix [accept] takes is returned.
+     * there). After the first fix - or, [untilTeaches], from the start - it runs on until a fix that teaches, at most
+     * [TEACH_WAIT_MS] past the first (code QA M3) and within the bound, ended early by a fix over 3 m/s (L1). A teaching
+     * fix with no result of [first] within [PAIR_STREAM_MS] of the stream takes one more scan while the stream runs on
+     * (D2's re-scan), then teaches. The most accurate fix [accept] takes is returned; the refusals are logged as counts.
      */
     private suspend fun gpsTry(
         context: Context,
         lm: LocationManager,
         store: Store?,
         first: Deferred<Snapshot>?,
+        movedAtElapsedMs: Long,
         boundMs: Long,
         accept: (Location) -> Boolean,
         shortMs: Long = boundMs,
         stopEarly: suspend () -> Boolean = { false },
         untilTeaches: Boolean = false,
-    ): Location? {
+    ): GpsTry {
         prefs(context).edit().putLong(KEY_LAST_GPS_TRY, System.currentTimeMillis()).commit()
         val stream = GpsStream(lm)
-        if (!stream.start(context, boundMs)) return null
+        if (!stream.start(context, boundMs)) return GpsTry(null, false)
+        val start = SystemClock.elapsedRealtime()
+        var taught = false
         try {
-            suspend fun waitFix(ms: Long): Boolean = withTimeoutOrNull(ms) {
-                if (untilTeaches) {
-                    while (teaching(stream.fixes.toList()).isEmpty()) delay(250)
-                } else {
-                    stream.first.await()
+            suspend fun teachingOrFast(ms: Long): Boolean = withTimeoutOrNull(ms) {
+                while (true) {
+                    val all = stream.all().map(::teachFix)
+                    if (all.any { teaches(it, release) } || all.any(::tooFastToTeach)) break
+                    delay(250)
                 }
             } != null
+            suspend fun waitFix(ms: Long): Boolean = if (untilTeaches) teachingOrFast(ms) else withTimeoutOrNull(ms) { stream.first.await() } != null
             val got = waitFix(shortMs) || (shortMs < boundMs && !stopEarly() && waitFix(boundMs - shortMs))
-            if (got && store != null && first != null && teaching(stream.fixes.toList()).isNotEmpty()) {
+            if (got && !untilTeaches && teaching(stream.all()).isEmpty()) {
+                teachingOrFast(minOf(TEACH_WAIT_MS, boundMs - (SystemClock.elapsedRealtime() - start)).coerceAtLeast(0))
+            }
+            if (store != null && first != null && teaching(stream.all()).isNotEmpty()) {
                 var snap = first.await()
-                val streamMs = stream.fixes.toList().map { it.elapsedRealtimeNanos / 1_000_000 }
+                val streamMs = stream.all().map { it.elapsedRealtimeNanos / 1_000_000 }
                 if (snap.results.none { r -> streamMs.any { abs(it - r.elapsedMs) <= PAIR_STREAM_MS } } && networkOff(lm)) {
                     // Every cached result counts as before the move: the platform scans now.
                     snap = Snapshot(scanNow(context, SystemClock.elapsedRealtime()), snap.connected, snap.cell)
                 }
-                teachWith(context, store, snap, teaching(stream.fixes.toList()), PAIR_STREAM_MS)
+                taught = teachWith(context, store, snap, teaching(stream.all()), PAIR_STREAM_MS, movedAtElapsedMs)
             }
         } finally {
             stream.stop()
         }
-        return stream.fixes.toList().filter(accept).minByOrNull { if (it.hasAccuracy()) it.accuracy else Float.MAX_VALUE }
+        val all = stream.all()
+        val refused = all.mapNotNull { teachRefusal(teachFix(it), release) }.groupingBy { it }.eachCount()
+        if (all.isNotEmpty()) Log.i(LOG_TAG, "gps fixes=${all.size} taught=$taught" + refused.entries.joinToString("") { (reason, n) -> " $reason=$n" })
+        return GpsTry(all.filter(accept).minByOrNull { if (it.hasAccuracy()) it.accuracy else Float.MAX_VALUE }, taught)
     }
 
     // --- The attempt (D13, D14) ---
 
     /**
-     * A fresh-fix attempt with the `network` provider off (D14), inside `currentLocation`'s Location window:
-     * - [Path.HEARTBEAT]: after a move (`MOVED`, no sensor) or with the daily refresh due, scan and GPS together, the
-     *   better kept (GPS at equal or better accuracy; the learned fix only when it stands alone); otherwise the learned
-     *   fix when it stands alone, else D12's renewal of a still vouch, else GPS;
-     * - [Path.CONFIRM]: GPS first, then the learned fix;
-     * - [Path.LOCATE]: GPS for 60 s, 20 s when a learned fix of >= 3 networks within 60 m is in hand; the better kept;
-     * then a cell fix. Every fix through [accept] (the mock rule). Never throws.
+     * A fresh-fix attempt with the `network` provider off (D14, [attemptPlan]), inside `currentLocation`'s Location
+     * window: [AttemptPlan.TOGETHER] scans and runs GPS together and keeps the better (GPS at equal or better accuracy;
+     * the learned fix only when it stands alone); [AttemptPlan.LEARNED_FIRST] the learned fix when it stands alone, else
+     * D12's renewal of a still vouch, else GPS; [AttemptPlan.GPS_FIRST] GPS, then the learned fix; [AttemptPlan.LOCATE]
+     * GPS for 60 s, 20 s when a learned fix of >= 3 networks within 60 m is in hand, the better kept; then a cell fix.
+     * Every fix through [accept] (the mock rule). Never throws but a cancellation.
      */
-    suspend fun attempt(context: Context, lm: LocationManager, path: Path, ask: Ask, accept: (Location) -> Boolean): Location? {
+    suspend fun attempt(context: Context, lm: LocationManager, path: AttemptPath, ask: Ask, accept: (Location) -> Boolean): Location? {
         val app = context.applicationContext
         ownTeaching.incrementAndGet()
         try {
-            val store = try {
-                open(app)
-            } catch (e: Exception) {
-                Log.w(LOG_TAG, "table not opened: ${e.javaClass.simpleName}")
-                null
-            }
+            val store = open(app)
             val movedSinceFresh = ask.motion != Motion.STILL
-            val afterMove = ask.motion == Motion.MOVED || ask.motion == Motion.NO_SENSOR
             val refresh = refreshDue(prefs(app).getLong(KEY_LAST_GPS_TRY, 0L), System.currentTimeMillis())
+            val plan = attemptPlan(path, ask.motion, refresh)
             return coroutineScope {
                 // Without the table (a Keystore error) nothing is scanned, used or taught: GPS as before.
                 val snap = async { if (store == null) Snapshot(emptyList(), null, null) else snapshot(app, store.keys, ask.movedAtElapsedMs) }
                 suspend fun learned(): LearnedFix? = store?.let { lookup(app, it, snap.await(), ask.movedAtElapsedMs) }
                     ?.takeIf { standsAlone(it, movedSinceFresh) }
+                suspend fun gps(boundMs: Long, shortMs: Long = boundMs, stopEarly: suspend () -> Boolean = { false }) =
+                    gpsTry(app, lm, store, snap, ask.movedAtElapsedMs, boundMs, accept, shortMs, stopEarly).fix
                 fun asLocation(fix: LearnedFix): Location? = location(fix).takeIf(accept)?.also { ask.notFresh = !fix.fresh }
                 fun better(gps: Location?, fix: LearnedFix?): Location? =
                     if (fix == null || (gps != null && gpsWins(fix.accuracyM, if (gps.hasAccuracy()) gps.accuracy else null))) gps else asLocation(fix) ?: gps
-                val (kept, how) = when (path) {
-                    Path.HEARTBEAT -> if (afterMove || refresh) {
-                        better(gpsTry(app, lm, store, snap, GPS_MS, accept), learned()) to "together"
-                    } else {
+                val kept = when (plan) {
+                    // The lookup runs on the first scan beside GPS (code QA L5): independent of what the GPS teaches.
+                    AttemptPlan.TOGETHER -> {
+                        val early = async { learned() }
+                        better(gps(GPS_MS), early.await())
+                    }
+                    AttemptPlan.LEARNED_FIRST -> {
                         val fix = learned()
                         when {
-                            fix != null -> asLocation(fix) to "wifi"
-                            renews(app, store, snap.await(), ask) -> ask.vouched.also { ask.renewed = true } to "renew"
-                            else -> gpsTry(app, lm, store, snap, GPS_MS, accept) to "gps"
+                            fix != null -> asLocation(fix)
+                            renews(app, store, snap.await(), ask) -> ask.vouched.also { ask.renewed = true }
+                            else -> gps(GPS_MS)
                         }
                     }
-                    Path.CONFIRM -> (gpsTry(app, lm, store, snap, GPS_MS, accept) ?: learned()?.let(::asLocation)) to "gps-first"
-                    Path.LOCATE -> {
+                    AttemptPlan.GPS_FIRST -> gps(GPS_MS) ?: learned()?.let(::asLocation)
+                    AttemptPlan.LOCATE -> {
                         val early = async { learned() }
-                        val gps = gpsTry(
-                            app, lm, store, snap, LOCATE_MS, accept, shortMs = LOCATE_SHORT_MS,
-                            stopEarly = { early.await()?.let { it.networks >= 3 && it.accuracyM <= LOCATE_SHORT_ACCURACY_M } == true },
-                        )
-                        better(gps, early.await()) to "locate"
+                        val fix = gps(LOCATE_MS, LOCATE_SHORT_MS) { early.await()?.let { it.networks >= 3 && it.accuracyM <= LOCATE_SHORT_ACCURACY_M } == true }
+                        better(fix, early.await())
                     }
                 }
                 val result = kept ?: cellOnly(app, store, snap.await())
-                Log.i(LOG_TAG, "attempt path=$how result=${result?.provider ?: "none"}")
+                Log.i(LOG_TAG, "attempt path=$plan result=${if (ask.renewed) "renewed" else result?.provider ?: "none"}")
                 result
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.w(LOG_TAG, "attempt failed: ${e.javaClass.simpleName}")
             return null
@@ -659,25 +710,40 @@ object WifiPlaces {
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
 
-    /** A motion fire: the teaching fix [CONFIRM_DELAY_MS] later (a later fire moves it on - it runs at the stop). */
+    /** The teaching fix may run: a Regularly phone, Location on and the `network` provider off (D11, code QA L2). */
+    private fun teachAllowed(context: Context, lm: LocationManager): Boolean =
+        ZoneWatch.stillOn(context, currentPolicyDecision().policy) && QuickControls.isLocationEnabled(context) && networkOff(lm)
+
+    /** A motion fire: the teaching fix [CONFIRM_DELAY_MS] later when it may run (a later fire moves it on - it runs at
+     * the stop). Off the sensor callback's thread: the check reads the policy. */
     fun armTeach(context: Context) {
-        try {
-            val alarms = context.getSystemService(AlarmManager::class.java) ?: return
-            val at = SystemClock.elapsedRealtime() + CONFIRM_DELAY_MS
-            if (alarms.canScheduleExactAlarms()) {
-                alarms.setExactAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, at, teachIntent(context))
-            } else {
-                alarms.setAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, at, teachIntent(context))
+        val app = context.applicationContext
+        scope.launch {
+            try {
+                val lm = app.getSystemService(LocationManager::class.java) ?: return@launch
+                if (!teachAllowed(app, lm)) return@launch
+                val alarms = app.getSystemService(AlarmManager::class.java) ?: return@launch
+                val at = SystemClock.elapsedRealtime() + CONFIRM_DELAY_MS
+                if (alarms.canScheduleExactAlarms()) {
+                    alarms.setExactAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, at, teachIntent(app))
+                } else {
+                    alarms.setAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, at, teachIntent(app))
+                }
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "teaching fix not armed: ${e.javaClass.simpleName}")
             }
-        } catch (e: Exception) {
-            Log.w(LOG_TAG, "teaching fix not armed: ${e.javaClass.simpleName}")
         }
     }
 
     /**
-     * D11's teaching fix: only on a Regularly phone (`ZoneWatch.stillOn`), with Location on and the `network` provider
-     * off, at most [TEACH_PER_DAY] a local day - a scan and 15 s of GPS that teach; on a zones phone the fix goes to the
-     * kept slot, otherwise it is not reported. Not a heartbeat try: design 124's flags don't hear it.
+     * D11's teaching fix: when it may run ([teachAllowed]), no attempt of ours runs (L3) and the day's budget isn't
+     * spent - a scan and the GPS stream until a fix teaches (or 15 s, or one over 3 m/s); a fix that taught spends one of
+     * [TEACH_PER_DAY] (L1). On a zones phone the fix goes to the kept slot, otherwise it is not reported. Not a heartbeat
+     * try: design 124's flags don't hear it.
+     *
+     * No `goAsync` (code QA L8): the work outlives the broadcast on our own scope, and that is safe here - the process is
+     * kept by the anchor's foreground service, and the partial wake lock (taken before the receiver returns) keeps the
+     * CPU for the scan and the GPS through Doze; a process death just loses this one teach.
      */
     internal fun onTeachAlarm(context: Context) {
         val app = context.applicationContext
@@ -689,20 +755,23 @@ object WifiPlaces {
         }
         scope.launch {
             try {
-                val policy = currentPolicyDecision().policy
                 val lm = app.getSystemService(LocationManager::class.java) ?: return@launch
-                if (!ZoneWatch.stillOn(app, policy) || !QuickControls.isLocationEnabled(app) || !networkOff(lm)) return@launch
-                if (!spendTeach(app)) return@launch
+                if (!teachAllowed(app, lm) || ownTeaching.get() > 0 || teachesLeft(budget(app), LocalDate.now().toString()) <= 0) return@launch
                 val store = open(app) ?: return@launch
                 ownTeaching.incrementAndGet()
                 try {
-                    val snap = scope.async { snapshot(app, store.keys, 0L) }
-                    val fix = gpsTry(app, lm, store, snap, GPS_MS, { ZoneWatch.accept(app, it) }, untilTeaches = true)
-                    Log.i(LOG_TAG, "teaching fix ${if (fix != null) "taken" else "none"}")
-                    if (fix != null && ZoneWatch.zonesOn(app, policy)) LocateCommands.keepFix(app, fix)
+                    val snap = async { snapshot(app, store.keys, 0L) }
+                    val moved = MotionGate.snapshot(app).movedAtElapsedMs
+                    val run = gpsTry(app, lm, store, snap, moved, GPS_MS, { ZoneWatch.accept(app, it) }, untilTeaches = true)
+                    snap.cancel()
+                    if (run.taught) spendTeach(app)
+                    Log.i(LOG_TAG, "teaching fix ${if (run.taught) "taught" else "none"}")
+                    if (run.fix != null && ZoneWatch.zonesOn(app, currentPolicyDecision().policy)) LocateCommands.keepFix(app, run.fix)
                 } finally {
                     ownTeaching.decrementAndGet()
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.w(LOG_TAG, "teaching fix failed: ${e.javaClass.simpleName}")
             } finally {
@@ -711,17 +780,15 @@ object WifiPlaces {
         }
     }
 
-    private fun spendTeach(context: Context): Boolean = synchronized(lock) {
-        val p = prefs(context)
-        val day = LocalDate.now().toString()
-        val budget = try {
-            p.getString(KEY_BUDGET, null)?.let { ServerJson.decodeFromString(TeachBudget.serializer(), it) }
-        } catch (e: Exception) {
-            null
-        }
-        if (teachesLeft(budget, day) <= 0) return false
-        p.edit().putString(KEY_BUDGET, ServerJson.encodeToString(TeachBudget.serializer(), budgetAfterTeach(budget, day))).commit()
-        true
+    private fun budget(context: Context): TeachBudget? = try {
+        prefs(context).getString(KEY_BUDGET, null)?.let { ServerJson.decodeFromString(TeachBudget.serializer(), it) }
+    } catch (e: Exception) {
+        null
+    }
+
+    private fun spendTeach(context: Context) = synchronized(lock) {
+        val after = budgetAfterTeach(budget(context), LocalDate.now().toString())
+        prefs(context).edit().putString(KEY_BUDGET, ServerJson.encodeToString(TeachBudget.serializer(), after)).commit()
     }
 }
 

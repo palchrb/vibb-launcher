@@ -1,11 +1,13 @@
 # 125 - Wi-Fi places, learned on the phone
 
-Status: **revision 3; step 1 (L1) built** on branch `wifi-places-build`, 2026-11-22, awaiting code QA; step 2 not
-started. What the build settled (`docs/notes/launcher/wifi-places.md`): D9's range term is `0.25 x rangeMed`, tuned in
-the synthetic town (0.5 gave a median accuracy of 106 m against a median error of 15 m); a network's weight is shared
-by its devices (a moved mesh's nodes outvoted the town otherwise); every own GPS try of this design is a stream paired
-within a second (a passive fix +-30 s); `locate` with GLA off streams `gps` directly; the serving cell pairs within
-30 s with no 40 m cap. Asked by the user: "kunne egentlig tenkt meg å kunne beholde
+Status: **revision 3; step 1 (L1) built** on branch `wifi-places-build`, 2026-11-22, with code QA's fix round; step 2
+in build on top. What the build settled (`docs/notes/launcher/wifi-places.md`): D9's range term stays `0.5 x rangeMed`
+(0.25 failed the synthetic town taught from one street; the Jelly Star's leave-one-out counts tune it); a network's
+weight is shared by its devices (a moved mesh's nodes outvoted the town otherwise); D9's whole-scan stale rule needs
+>= 5 repeats that are >= 80 % of the results heard before (a still phone repeats whole-number levels often); every own
+GPS try of this design is a stream paired within a second and runs on up to 5 s past its first fix for one that
+teaches (a passive fix +-30 s); `locate` with GLA off streams `gps` directly; the serving cell pairs within 30 s with no
+40 m cap. Asked by the user: "kunne egentlig tenkt meg å kunne beholde
 innendørs posisjon vha google, men finnes det noen foss alternativer eller noe annet vi kan gjøre for å sikre at vi ikke
 er identifiserbare for google?", then "Ja sett i gang et wifi selvlæringsdesign" and "vil den bare lære wifi eller også
 cell towers?". Revision 2 applies the user's answers (§11: Q1 yes, but "vi må jo passe på at vi ikke nå legger opp til
@@ -116,8 +118,9 @@ the family's own map.
      both cases **newer than the last motion fire** (`MotionFlags` keeps the fire's elapsed time, M2); at least **3**
      usable results that fresh, else no lookup (a partial cached list, L8).
    - **Stale-scan guard** (Local NLP Backend's `onWiFisChanged`): a result whose level equals that BSSID's level in the
-     previous scan is suspect - it never teaches and weighs a quarter; **more than 2** repeats and the scan is stale -
-     no teaching, and it counts as the 2-min fallback. The previous levels are in memory only.
+     previous scan is suspect - it never teaches and weighs a quarter; **at least 5** repeats that are **>= 80 %** of
+     the results the previous scan heard too and the scan is stale - no teaching, and it counts as the 2-min fallback
+     (code QA H1: "more than 2" made most of a still phone's scans stale). The previous levels are in memory only.
    - **The connected AP is always there** (microG's `WifiScannerSource`): the connected unmetered BSSID from `WifiInfo`
      is added when the results lack it; a `null` BSSID or `02:00:00:00:00:00` means not connected.
    - **Trusted rows**: not blocked, `occasions >= 2`. Rows group into devices, devices into **networks** - the witness

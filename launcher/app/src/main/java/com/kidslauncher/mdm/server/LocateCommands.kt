@@ -26,6 +26,7 @@ import androidx.preference.PreferenceManager
 import com.kidslauncher.mdm.NOTIFICATION_CHANNEL_RING
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.RING_NOTIFICATION_ID
+import com.kidslauncher.mdm.places.AttemptPath
 import com.kidslauncher.mdm.places.WifiPlaces
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.zones.ZoneWatch
@@ -208,9 +209,9 @@ object LocateCommands {
         val requested = when {
             places != null && WifiPlaces.networkOff(lm) -> {
                 val path = when {
-                    action == LocationAction.FRESH_BALANCED -> WifiPlaces.Path.HEARTBEAT
-                    explicit -> WifiPlaces.Path.LOCATE
-                    else -> WifiPlaces.Path.CONFIRM
+                    action == LocationAction.FRESH_BALANCED -> AttemptPath.HEARTBEAT
+                    explicit -> AttemptPath.LOCATE
+                    else -> AttemptPath.CONFIRM
                 }
                 WifiPlaces.attempt(context, lm, path, places) { ZoneWatch.accept(context, it) }
             }
