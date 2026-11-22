@@ -1577,7 +1577,7 @@
   "apps.perms.microphone_help": "Mikrofon av: samtaler og lydopptak i appen virker ikke.",
   "apps.perms.contacts_help": "Kontakter av: appen ser ikke kontaktene på telefonen.",
   "apps.access.title": "Tilgang",
-  "apps.access.closes": "Av: appen får ikke bruke det, og lukkes hvis den var i gang.",
+  "apps.access.closes": "Av: appen får ikke bruke det, og lukkes hvis den brukte det.",
   "apps.access.waiting": "Venter på telefonen",
   "apps.access.paused": "På i pausen",
   "apps.access.refused": "Telefonen kan ikke slå av dette",

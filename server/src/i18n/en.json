@@ -1577,7 +1577,7 @@
   "apps.perms.microphone_help": "Microphone off: calls and recordings in the app stop working.",
   "apps.perms.contacts_help": "Contacts off: the app can't see the phone's contacts.",
   "apps.access.title": "Access",
-  "apps.access.closes": "Off: the app can't use it, and closes if it was running.",
+  "apps.access.closes": "Off: the app can't use it, and closes if it was using it.",
   "apps.access.waiting": "Waiting for the phone",
   "apps.access.paused": "On during the pause",
   "apps.access.refused": "The phone can't turn this off",

@@ -560,7 +560,7 @@ mod tests {
         assert_eq!(
             group.help,
             [
-                "Off: the app can't use it, and closes if it was running.",
+                "Off: the app can't use it, and closes if it was using it.",
                 "Camera off: video calls and QR scanning stop working.",
                 "On the phone: Settings (parent code) › Pause all restrictions › App access › Immich: Media \
                  management"

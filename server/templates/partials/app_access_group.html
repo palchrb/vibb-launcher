@@ -17,9 +17,9 @@
             {% if let Some(from) = from %}<input type="hidden" name="from" value="{{ from }}">{% endif %}
             <label class="row">
                 {% match switch.key %}
-                {% when "location" %}<span class="tile tile-blue" aria-hidden="true"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><path fill-rule="evenodd" d="M8.5 1.6a5 5 0 0 0-5 5c0 3.7 5 8.8 5 8.8s5-5.1 5-8.8a5 5 0 0 0-5-5Zm0 3.2a1.9 1.9 0 1 1 0 3.8a1.9 1.9 0 1 1 0-3.8Z" fill="currentColor"/></svg></span>
-                {% when "microphone" %}<span class="tile tile-teal" aria-hidden="true"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><rect x="6" y="1.6" width="5" height="8.6" rx="2.5" fill="currentColor"/><path d="M3.8 8.1a4.7 4.7 0 0 0 9.4 0M8.5 12.8v2.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span>
-                {% when "contacts" %}<span class="tile tile-green" aria-hidden="true"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><circle cx="8.5" cy="5.3" r="3.1" fill="currentColor"/><path d="M2.6 15.3c0-3.3 2.6-5.3 5.9-5.3s5.9 2 5.9 5.3Z" fill="currentColor"/></svg></span>
+                {% when "location" %}<span class="tile tile-blue" aria-hidden="true"><img src="/static/app-icons/location_on.svg" alt=""></span>
+                {% when "microphone" %}<span class="tile tile-teal" aria-hidden="true"><img src="/static/app-icons/mic.svg" alt=""></span>
+                {% when "contacts" %}<span class="tile tile-green" aria-hidden="true"><img src="/static/app-icons/contacts.svg" alt=""></span>
                 {% else %}<span class="tile tile-graphite" aria-hidden="true"><img src="/static/app-icons/photo_camera.svg" alt=""></span>
                 {% endmatch %}
                 <span class="row-label">{{ switch.name }}{% if let Some((sub, orange)) = switch.sub %}<span class="row-sub{% if orange %} tone-orange{% endif %}">{{ sub }}</span>{% endif %}</span>
