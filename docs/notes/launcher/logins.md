@@ -147,8 +147,20 @@ Part B's link gate and login window are design 119 (`docs/design/119-chrome-only
   `dpm.clearApplicationUserData` first and on its own: the role waits (Chrome hidden) until the clear's callback reports
   success, which is recorded then (`cleared_ms` in the report) and asks for a sync; a failure is tried again (code QA L5). A pause needs no clear: its restored
   tabs reload through `URLBlocklist` (E9).
-- **A pause or the override** lifts the lockdown with everything else (D9): the bundle falls back to secure DNS only (or
-  empty), Chrome stays unlisted but reachable from apps; its end is a tightening.
+- **A pause or the override** lifts the lockdown with everything else (D9): the bundle falls back to the privacy keys
+  and secure DNS (below), Chrome stays unlisted but reachable from apps; its end is a tightening.
+- **Chrome's privacy keys** (design 126 A3, 2026-11-22): `CHROME_PRIVACY` (`MetricsReportingEnabled false`,
+  `UrlKeyedAnonymizedDataCollectionEnabled false`, `NetworkPredictionOptions 2`, `BrowserSignin 0`,
+  `SearchSuggestEnabled false`, `SafeBrowsingProtectionLevel 1`) in the bundle of each of Chrome's four packages
+  (`CHROME_PACKAGES`: stable, beta, dev, canary; the other listed browsers keep the DoH key alone) **whenever the phone
+  is managed** (`browserConfigPlan`'s `managed` = `hardeningManaged`): the role on or off, Chrome ticked, the lockdown in
+  force or lifted by a pause, the filter on or off. Unmanaged: gone with the rest of the bundle. `BrowserSignin` and
+  `SearchSuggestEnabled` hold the lockdown's values too, so the merge is plain and the role's read-back compares the
+  merged bundle. `BrowserSignin` and `MetricsReportingEnabled` take hold at Chrome's next cold start (the role's first
+  tightening hides Chrome, which stops it; a ticked Chrome waits for Android to end it, or a reboot). Not used:
+  `SyncDisabled` (not on Android), `BlockThirdPartyCookies` (a login's SSO or captcha frames can need them). The
+  `bundles` rows carry `managed` (unmanaged rows, a ticked Chrome on all four packages); `BrowserDohTest` checks no
+  other browser gets them. Owed: `chrome://policy` shows the six with status OK (design 126 §10 step 4).
 - **The redirect back** to the app needs no entry (M15): custom schemes and `intent://` reach the app before the
   blocklist; an https App Link callback's host must be on the list.
 - **The report**: `login_browser` (`BrowserConfig.report`: Chrome's package, `on`/`off`/`absent`/`failed` with the

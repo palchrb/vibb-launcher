@@ -1024,6 +1024,12 @@ It is **off for every phone** until the parent turns on "Wi-Fi lookup at Apple" 
     `WIFI_LOOKUP_PROXY=socks5h://127.0.0.1:9050`. An install from before 0.89.0: copy the new `compose.yaml`, add that
     line to `.env`, `docker compose up -d --build`. Tor's own updates come with `docker compose build --pull tor`
     after the digest is moved on (`docker buildx imagetools inspect debian:trixie-slim`); Watchtower doesn't rebuild it.
+  - **A compose without host networking** (the server on the default bridge network with `ports:`): give the
+    `tor` service no `network_mode` and no `ports:`, change its `--SocksPort` to `0.0.0.0:9050` (inside the
+    container, so `handy` reaches it over the compose network; nothing is published outside it - Tor's warning about
+    non-local SOCKS addresses is expected), and set `WIFI_LOOKUP_PROXY=socks5h://tor:9050`: the server resolves the
+    proxy's name as a private address on purpose. Check the route from a throwaway container on that network
+    (`docker run --rm --network <folder>_default ... curlimages/curl --proxy socks5h://tor:9050 ...`).
   - **Tor on the host** instead (a systemd install): `sudo apt install tor` - Debian's Tor listens on
     `127.0.0.1:9050` - and the same `WIFI_LOOKUP_PROXY`. Don't run both: they would share the port.
   - Any other SOCKS5 egress works too, such as the family's own edge.

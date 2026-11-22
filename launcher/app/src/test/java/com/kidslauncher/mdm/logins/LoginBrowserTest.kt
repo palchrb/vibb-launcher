@@ -44,10 +44,19 @@ class LoginBrowserTest {
                 filterOn = row.getValue("filter_on").jsonPrimitive.boolean,
                 lockdownHosts = strings(row["lockdown"]),
                 installed = strings(row["installed"])!!.toSet(),
+                managed = row.getValue("managed").jsonPrimitive.boolean,
             )
             val got = JsonObject(plan.mapValues { (_, values) -> JsonObject(values.mapValues { typed(it.value) }) })
             assertEquals(row.name(), row.getValue("expect"), got)
         }
+    }
+
+    @Test
+    fun `the privacy keys the lockdown also sets have the lockdown's values (design 126 A3)`() {
+        val lockdown = chromeLockdown(listOf())
+        val shared = CHROME_PRIVACY.keys intersect lockdown.keys
+        assertEquals(setOf(ChromePolicy.BROWSER_SIGNIN, ChromePolicy.SEARCH_SUGGEST), shared)
+        for (key in shared) assertEquals(key, lockdown[key], CHROME_PRIVACY[key])
     }
 
     @Test

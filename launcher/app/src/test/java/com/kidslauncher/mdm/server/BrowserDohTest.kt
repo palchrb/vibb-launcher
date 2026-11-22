@@ -22,4 +22,26 @@ class BrowserDohTest {
         assertEquals(emptyMap<String, Map<String, String>>(), browserDohPlan(true, setOf("org.example", "com.chrome.beta.fake")))
         assertEquals(BROWSER_DOH_PACKAGES.toSet(), browserDohPlan(true, BROWSER_DOH_PACKAGES.toSet()).keys)
     }
+
+    @Test
+    fun `while managed only Chrome's four packages get the privacy keys, every other browser exactly its DoH bundle`() {
+        val all = BROWSER_DOH_PACKAGES.toSet()
+        for (filterOn in listOf(true, false)) {
+            val doh = browserDohPlan(filterOn, all)
+            val plan = com.kidslauncher.mdm.logins.browserConfigPlan(filterOn, null, all, managed = true)
+            assertEquals(all, plan.keys)
+            for ((pkg, values) in plan) {
+                val expected = if (pkg in com.kidslauncher.mdm.logins.CHROME_PACKAGES) {
+                    com.kidslauncher.mdm.logins.CHROME_PRIVACY + doh.getValue(pkg)
+                } else {
+                    doh.getValue(pkg)
+                }
+                assertEquals(pkg, expected, values)
+            }
+            // Unmanaged: the DoH plan alone.
+            assertEquals(doh, com.kidslauncher.mdm.logins.browserConfigPlan(filterOn, null, all, managed = false))
+        }
+        assertEquals(listOf("com.android.chrome", "com.chrome.beta", "com.chrome.dev", "com.chrome.canary"), com.kidslauncher.mdm.logins.CHROME_PACKAGES)
+        org.junit.Assert.assertTrue(all.containsAll(com.kidslauncher.mdm.logins.CHROME_PACKAGES))
+    }
 }
