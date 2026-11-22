@@ -20,7 +20,8 @@
   manifest's `READ_BASIC_PHONE_STATE`), Data Saver (`restrictBackgroundStatus`), the battery exemption, design 107's
   orange rule (`channelsOrange`, the server's About rule, checked against 107's `pages` rows), full-screen intents,
   Modify system settings, the assistant role, Wi-Fi in airplane mode, the call filter's two roles, the moved default
-  apps (read live, `AssistantSetup.defaultAppsChanged`), the fingerprint (absent without a sensor). `report()` is the
+  apps (read live, `AssistantSetup.defaultAppsChanged`), the fingerprint (absent without a sensor), Google's location
+  accuracy (`location_private`, below). `report()` is the
   status report's `setup` (only the readings no other field carries, and the hold's `hold_until_ms`/`hold_left_ms`).
   `watch()` registers `ACTION_RESTRICT_BACKGROUND_CHANGED`; the listener's connect/disconnect asks for a sync too.
 - The moved default apps (§2.2.1): the pick window that moved a role keeps its snapshot (`assistant_moved_from`) while
@@ -34,6 +35,15 @@
   `MdmDeviceAdminReceiver.onPasswordChanged` asks for a sync. `call_filter_early` (optional, `calls_unmanaged`) is row
   13's two role requests in the same pick window, offered while calls aren't managed. Its `when` is the exact opposite
   of row 13's, and it reads the same roles.
+- `location_private` (2026-11-22, design 125: "Posisjon uten Google"): optional, `when` `location_interval` (the cached
+  policy's `location_policy.mode` is `interval`, `SetupInputs.locationInterval`). Done when Android's `network` provider
+  is off while Location is on (`LocationManager.isProviderEnabled(NETWORK_PROVIDER)` false - Google Location Accuracy
+  off, or no network provider at all); `null` with Location off. It goes in the report's `setup`. "Åpne" opens
+  `ACTION_LOCATION_SOURCE_SETTINGS` (Location), from where the parent goes to Location services › Google Location
+  Accuracy - a setting of Play services that no Device Owner API sets; no Play-services intent is tried (none is a
+  public, stable action on 14-17). Open device check: whether `DISALLOW_CONFIG_LOCATION` (Advanced › "Hold posisjon
+  på", on by default, not lifted by the hold) greys that switch; if so, the parent turns "Hold posisjon på" off for the
+  change and on again. Why it is offered: `docs/setup/google-account.md` §2.
 
 ## The setup hold
 

@@ -56,6 +56,8 @@ pub enum When {
     MapLinks,
     /// Design 119: Vibb One's link gate is on (the report's `login_browser.browser_role` isn't null).
     LinkGate,
+    /// Location is Regularly (`location_mode` `interval`): design 125's Wi-Fi places learn there.
+    LocationInterval,
 }
 
 /// In the summary's N, or its own Attention row (§2.1).
@@ -357,6 +359,20 @@ pub const STEPS: &[Step] = &[
         "setup.how.fingerprint",
         None
     ),
+    // Design 125: Google Location Accuracy off (Android's `network` provider off while Location is on), so Vibb learns
+    // its places itself and nothing goes to Google. Optional: a privacy trade-off, the parent's choice.
+    step!(
+        "location_private",
+        Optional,
+        Phone,
+        LocationInterval,
+        Count,
+        Action,
+        [],
+        "setup.step.location_private",
+        "setup.how.location_private",
+        None
+    ),
     step!(
         "vibration",
         Optional,
@@ -518,6 +534,8 @@ pub struct Inputs {
     pub map_app_installed: bool,
     /// Design 119: the phone's link gate is on - its report's `login_browser.browser_role` isn't null.
     pub link_gate: bool,
+    /// Design 125: location is Regularly (`location_mode` `interval`).
+    pub location_interval: bool,
 }
 
 /// The readings: step key to `Some(true)`/`Some(false)`, `None` unreadable; a key left out is absent (not on this
@@ -561,6 +579,7 @@ pub fn applies(step: &Step, inputs: &Inputs, readings: &Readings) -> bool {
         When::AndroidLock => inputs.android_lock,
         When::MapLinks => inputs.map_links_on && inputs.map_app_installed,
         When::LinkGate => inputs.link_gate,
+        When::LocationInterval => inputs.location_interval,
     }
 }
 
@@ -609,6 +628,7 @@ const REPORT_READINGS: &[&str] = &[
     "data_saver",
     "full_screen_intent",
     "fingerprint",
+    "location_private",
 ];
 
 /// The report's `setup`, cleaned field by field (the contract's `clean`): the readings kept as booleans or `null`,
@@ -698,6 +718,7 @@ pub fn inputs_of(policy: &DevicePolicy, latest: Option<&DeviceStatus>, part: &Se
         map_links_on: part.inputs.contains(&"map_links"),
         map_app_installed,
         link_gate: browser_role(latest).is_some(),
+        location_interval: policy.location_mode == "interval",
     }
 }
 
@@ -1015,6 +1036,7 @@ fn row(input: &PageInput, step: &'static Step) -> Row {
         "wifi_airplane" => Some(t(lang, "setup.why.wifi_airplane").to_string()),
         "call_filter" => Some(t(lang, "setup.why.call_filter").to_string()),
         "call_filter_early" => Some(t(lang, "setup.why.call_filter_early").to_string()),
+        "location_private" => Some(t(lang, "setup.why.location_private").to_string()),
         "assistant" => Some(t(lang, "setup.why.assistant").to_string()),
         _ => None,
     };
@@ -1319,6 +1341,7 @@ mod tests {
             When::AndroidLock => "android_lock",
             When::MapLinks => "map_links",
             When::LinkGate => "link_gate",
+            When::LocationInterval => "location_interval",
         }
     }
 
@@ -1398,6 +1421,7 @@ mod tests {
             map_links_on: row["map_links_on"].as_bool().unwrap(),
             map_app_installed: row["map_app_installed"].as_bool().unwrap(),
             link_gate: row["link_gate"].as_bool().unwrap(),
+            location_interval: row["location_interval"].as_bool().unwrap(),
         }
     }
 

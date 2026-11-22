@@ -15,7 +15,7 @@ enum class StepNeed { REQUIRED, OPTIONAL }
 enum class StepReadBy { PHONE, SERVER, PARENT }
 
 /** §2.3: when a step applies. */
-enum class StepWhen { ALWAYS, CALLS_MANAGED, CALLS_UNMANAGED, WRITE_SETTINGS_USED, AIRPLANE, AIRPLANE_ROLE, ANDROID_LOCK, MAP_LINKS, LINK_GATE }
+enum class StepWhen { ALWAYS, CALLS_MANAGED, CALLS_UNMANAGED, WRITE_SETTINGS_USED, AIRPLANE, AIRPLANE_ROLE, ANDROID_LOCK, MAP_LINKS, LINK_GATE, LOCATION_INTERVAL }
 
 enum class StepSummary { COUNT, OWN_ROW }
 
@@ -144,6 +144,13 @@ enum class SetupStep(
         // Code QA L8: no line - "Legg til et fingeravtrykk." only repeated the name; Åpne opens the enrolment itself.
         R.string.setup_step_fingerprint, null,
     ),
+    // Design 125: Google's location accuracy off (the `network` provider off while Location is on), so Vibb learns its
+    // places itself and nothing goes to Google. Optional: a privacy trade-off, the parent's choice.
+    LOCATION_PRIVATE(
+        "location_private", StepNeed.OPTIONAL, StepReadBy.PHONE, StepWhen.LOCATION_INTERVAL, StepSummary.COUNT, StepLevel.ACTION,
+        emptyList(), listOf("android.settings.LOCATION_SOURCE_SETTINGS"),
+        R.string.setup_step_location_private, R.string.setup_how_location_private,
+    ),
     VIBRATION(
         "vibration", StepNeed.OPTIONAL, StepReadBy.PARENT, StepWhen.ALWAYS, StepSummary.COUNT, StepLevel.ACTION,
         emptyList(), listOf("android.settings.SOUND_SETTINGS"), R.string.setup_step_vibration, R.string.setup_how_vibration,
@@ -205,6 +212,8 @@ data class SetupInputs(
     val mapAppInstalled: Boolean,
     /** Design 119: the link gate is on (the report's `login_browser.browser_role` isn't `null`). */
     val linkGate: Boolean = false,
+    /** Design 125: location is Regularly (the policy's `location_policy.mode` `interval`). */
+    val locationInterval: Boolean = false,
 ) {
     companion object {
         val NONE = SetupInputs(0, "system", callsManaged = false, androidLock = false, mapLinksOn = false, mapAppInstalled = false)
@@ -241,6 +250,7 @@ fun setupApplies(step: SetupStep, inputs: SetupInputs, readings: Map<String, Boo
     StepWhen.ANDROID_LOCK -> inputs.androidLock
     StepWhen.MAP_LINKS -> inputs.mapLinksOn && inputs.mapAppInstalled
     StepWhen.LINK_GATE -> inputs.linkGate
+    StepWhen.LOCATION_INTERVAL -> inputs.locationInterval
 }
 
 /**

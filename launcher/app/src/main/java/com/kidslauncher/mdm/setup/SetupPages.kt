@@ -76,8 +76,8 @@ object SetupPages {
             SetupStep.VIBB_BROWSER -> com.kidslauncher.mdm.logins.BrowserRoleStep.requestIntents(context)
             SetupStep.FINGERPRINT -> FingerprintEnrol.pageIntents(context)
             SetupStep.MEDIA_ON_LOCK -> MediaLockScreen.pageIntents(context)
-            SetupStep.DEFAULT_APPS, SetupStep.VIBRATION, SetupStep.TOUCH_FEEDBACK, SetupStep.LOCK_CLOCK,
-            SetupStep.MESSAGE_BANNERS,
+            SetupStep.DEFAULT_APPS, SetupStep.LOCATION_PRIVATE, SetupStep.VIBRATION, SetupStep.TOUCH_FEEDBACK,
+            SetupStep.LOCK_CLOCK, SetupStep.MESSAGE_BANNERS,
             -> listOfNotNull(page(context, Intent(actions[0])))
         }
     }

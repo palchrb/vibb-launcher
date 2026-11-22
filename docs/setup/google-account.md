@@ -27,7 +27,10 @@ for recovery and 2-Step Verification. The kid doesn't know the password.
   usually fails indoors and at night, and zones' fences hear only GPS fixes - until the phone has learned its places:
   since design 125 Vibb then remembers the Wi-Fi networks heard beside its own good GPS fixes and finds them again
   indoors (`vibb_wifi` on Locate), all on the phone, nothing to Google. It works only where the phone has had GPS
-  before, and needs Location -> Wi-Fi scanning on (`android-settings.md`).
+  before, and needs Location -> Wi-Fi scanning on (`android-settings.md`). Emergency calls still send the best
+  location through Android's emergency location service (Location services -> Emergency Location Service, on by
+  default). The phone's setup offers it as the optional step "Posisjon uten Google" / "Location without Google" while
+  location is Regularly (`location_private`, `docs/notes/launcher/setup.md`); Vibb can't switch it itself.
 - **Payments**: no payment method (pay.google.com -> Payment methods: none). A paid app is bought
   with a Play gift card on this account, never with a card on file.
 
