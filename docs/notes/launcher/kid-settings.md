@@ -321,7 +321,9 @@ Meldinger, Kalender and the phone book do. The drawer and the parent's Settings 
   Android's persistent per-network address (a home or school network would see a new device daily). Android lets an
   admin set it only on a network it created, so the networks the parent saves in Android's Settings during a window and
   the setup QR's network keep Android's default, as do networks Vibb saved before this build. Cost: a café's sign-in
-  page may ask again after a night away.
+  page may ask again after a night away. A secured network needs a password (pure `joinAllowed`, code QA L2): the
+  password dialog's Connect stays off while the field is empty, and `connectToWifiNetwork` refuses a new secured network
+  without one - it would otherwise save an open profile under that SSID that never connects and shadows it.
 - **The Bluetooth page** stops discovery in `onStop` (a discovery cut short runs again at the next start, unless a pair
   or a connect runs then - `btStartScans`; a discovery that didn't start returns no receiver, so nothing waits for its
   end; code QA L3) and drops the

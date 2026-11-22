@@ -57,14 +57,6 @@ object QuickControlFeature {
 }
 
 /**
- * Direct, silent Device-Owner API calls backing the Quick Controls screen - deliberately not
- * Android's own Quick Settings tiles or panel intents (`Settings.Panel.ACTION_WIFI` etc.), since
- * this whole screen exists specifically to give a kid safe toggle access without depending on any
- * Android UI surface a third-party app could also publish into (see
- * [AppEnforcer.applyVpnRestrictions] for the concrete case - Tailscale's own Quick Settings tile
- * bypassing its managed-config restriction - that motivated this).
- */
-/**
  * The MAC randomization a network Vibb adds gets (design 126 A7): an open one (no key)
  * `RANDOMIZATION_NON_PERSISTENT` - a new random address after 4 h away, at the DHCP lease and at least daily, instead
  * of Android's same random address on every visit; one with a key `null`, Android's persistent per-network address (a
@@ -75,6 +67,21 @@ object QuickControlFeature {
 fun joinMacSetting(secured: Boolean): Int? =
     if (secured) null else android.net.wifi.WifiConfiguration.RANDOMIZATION_NON_PERSISTENT
 
+/**
+ * Whether a join may go ahead (design 126 code QA L2): a secured network needs a password. Without one Vibb would add
+ * an open profile under that SSID (`KeyMgmt.NONE`), which never connects and shadows the network from then on - so the
+ * Wi-Fi page's Connect stays off until the field has text, and [QuickControls.connectToWifiNetwork] refuses it too.
+ */
+fun joinAllowed(secured: Boolean, password: String?): Boolean = !secured || !password.isNullOrEmpty()
+
+/**
+ * Direct, silent Device-Owner API calls backing the Quick Controls screen - deliberately not
+ * Android's own Quick Settings tiles or panel intents (`Settings.Panel.ACTION_WIFI` etc.), since
+ * this whole screen exists specifically to give a kid safe toggle access without depending on any
+ * Android UI surface a third-party app could also publish into (see
+ * [AppEnforcer.applyVpnRestrictions] for the concrete case - Tailscale's own Quick Settings tile
+ * bypassing its managed-config restriction - that motivated this).
+ */
 object QuickControls {
 
     /** The adapter via [BluetoothManager] (`BluetoothAdapter.getDefaultAdapter()` is deprecated). */
@@ -551,14 +558,17 @@ object QuickControls {
         savedNetworkId: Int?,
     ): Boolean {
         val wm = wifiManager(context)
-        val withKey = secured && !password.isNullOrEmpty()
+        if (savedNetworkId == null && !joinAllowed(secured, password)) {
+            Log.w(LOG_TAG, "A secured network without a password: not added")
+            return false
+        }
         return try {
             val networkId = savedNetworkId ?: run {
                 val config = android.net.wifi.WifiConfiguration().apply {
                     SSID = "\"$ssid\""
                     // Design 126 A7: a fresh address on an open network; Vibb adds it, so as its creator it may.
-                    joinMacSetting(withKey)?.let { macRandomizationSetting = it }
-                    if (withKey) {
+                    joinMacSetting(secured)?.let { macRandomizationSetting = it }
+                    if (secured) {
                         allowedKeyManagement.set(android.net.wifi.WifiConfiguration.KeyMgmt.WPA_PSK)
                         allowedKeyManagement.set(android.net.wifi.WifiConfiguration.KeyMgmt.SAE)
                         preSharedKey = "\"$password\""

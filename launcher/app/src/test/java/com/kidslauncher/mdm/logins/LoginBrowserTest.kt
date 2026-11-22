@@ -52,6 +52,14 @@ class LoginBrowserTest {
     }
 
     @Test
+    fun `the privacy keys the lockdown also sets have the lockdown's values (design 126 A3)`() {
+        val lockdown = chromeLockdown(listOf())
+        val shared = CHROME_PRIVACY.keys intersect lockdown.keys
+        assertEquals(setOf(ChromePolicy.BROWSER_SIGNIN, ChromePolicy.SEARCH_SUGGEST), shared)
+        for (key in shared) assertEquals(key, lockdown[key], CHROME_PRIVACY[key])
+    }
+
+    @Test
     fun `the plan's rows`() {
         val controllable = listOf("me.vibb.launcher", CHROME_PACKAGE, "org.example.game")
         for (row in rows("plans")) {
