@@ -77,7 +77,8 @@ fn clock(minute: i64) -> String {
 }
 
 /// `POST /devices/{id}/rules-now` (full auth): the Regler sheet's form. `mode=pause` is a rule
-/// pause (`lifts::record_lift`), `mode=on` turns a rule on now (§5.1).
+/// pause (`lifts::record_lift`: a pausable rule only, design 123 §3.3), `mode=on` turns a rule on
+/// now (§5.1): any rule in the phone's scope (`time_rules::phone_rule_rows`), `on_gone` a deleted one.
 pub async fn rules_now(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -109,7 +110,8 @@ pub async fn rules_now(
             )
             .await
             {
-                Ok("gone") => back(id, "gone", Some(("pause", rule))),
+                // A refusal reopens the sheet in pause mode with the rule posted (the flash names it).
+                Ok(code @ ("gone" | "pause_not_in_force")) => back(id, code, Some(("pause", rule))),
                 Ok(done) => back(id, done, None),
                 Err(refused) => refused,
             }
@@ -143,7 +145,9 @@ async fn turn_on(
     let Some(tz) = lock_now::phone_zone(latest.as_ref()) else {
         return refuse("on_no_zone");
     };
-    let rules = match crate::time_rules::effective_rule_rows(&state.db, id).await {
+    // Design 123 §4: any rule in the phone's scope - one switched off for it or without days too; `on_gone` is only a
+    // rule deleted since the page loaded.
+    let rules = match crate::time_rules::phone_rule_rows(&state.db, id).await {
         Ok(rules) => rules,
         Err(err) => return server_error(lang, err, "failed to read time rules"),
     };

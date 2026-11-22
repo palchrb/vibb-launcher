@@ -17,8 +17,11 @@ use crate::time_rules::TimeRuleRow;
 /// One rule in the Regler sheet's select, with what the sheet says of it when it is chosen.
 pub(crate) struct RuleOption {
     pub id: i64,
-    /// A school rule: Slå på nå's default.
-    pub school: bool,
+    /// Slå på nå's default (design 123 §3.2: the first rule without days, else the first school rule, else the
+    /// first): `data-on-default`, which `quick-sheets.js` picks when the selection must move.
+    pub on_default: bool,
+    /// The rule can be paused (design 123 §3.3, `lock_now::pausable`): `data-pause`. Every option can be turned on.
+    pub pause: bool,
     pub name: String,
     /// "Kalender og nødanrop virker." (§6.2 B5; design 113: the rule is the select's, not repeated).
     pub mode_line: String,
@@ -62,6 +65,12 @@ pub(crate) struct QuickActions {
     pub tile_on: bool,
     /// Why Slå på nå can't be chosen now (`m-on` disabled), if it can't.
     pub on_disabled: Option<String>,
+    /// The Pause regler tile is rendered (design 123 §3.3, QA L4): a rule can be paused, or a pause still runs.
+    pub pause_tile: bool,
+    /// The sheet's form has a pause mode (`m-pause`, the Hva segment, "Alle regler"): a rule can be paused. Without
+    /// it the form is in on mode only.
+    pub pause_form: bool,
+    /// The phone's scope: every rule a parent may turn on (design 123 §3.1); an empty one is "Ingen regler".
     pub rules: Vec<RuleOption>,
     /// The selected option: "all" or a rule id.
     pub selected: String,
@@ -159,7 +168,12 @@ pub(crate) fn mode_line(lang: Lang, rule: &TimeRuleRow, apps: &HashMap<String, S
 pub(crate) struct Inputs<'a> {
     pub device_id: i64,
     pub latest: Option<&'a DeviceStatus>,
+    /// The effective rules: the schedule's lines ("Neste", "Ingen regel nå").
     pub rules: &'a [TimeRuleRow],
+    /// The phone's scope (`time_rules::phone_rule_rows`): the on-list (design 123 §3.2).
+    pub on_rules: &'a [TimeRuleRow],
+    /// The pausable rules (`lock_now::pausable`), a subset of `on_rules` (§3.3).
+    pub pause_rules: &'a [TimeRuleRow],
     pub query: &'a HashMap<String, String>,
     /// The lock badge, while it isn't stale and a rule (not the screen time) locks: its name.
     pub rule_in_force: Option<String>,
@@ -419,8 +433,17 @@ pub(crate) async fn build(
                 .unwrap_or_default();
             t_params(lang, "device.summary.qa.warn_all_paused", &[("at", &at)])
         });
+    // Design 123 §3.2: the first rule without days (made to be turned on; never the bedtime), else the first school
+    // rule, else the first.
+    let on_default = input
+        .on_rules
+        .iter()
+        .find(|r| !r.bedtime && !crate::time_rules::has_days(r))
+        .or_else(|| input.on_rules.iter().find(|r| r.kind == "school"))
+        .or(input.on_rules.first())
+        .map(|r| r.id);
     let rules: Vec<RuleOption> = input
-        .rules
+        .on_rules
         .iter()
         .map(|rule| {
             let name = crate::time_rules::shown_name(lang, &rule.name);
@@ -452,7 +475,8 @@ pub(crate) async fn build(
             warnings.extend(all_paused.clone());
             RuleOption {
                 id: rule.id,
-                school: rule.kind == "school",
+                on_default: on_default == Some(rule.id),
+                pause: input.pause_rules.iter().any(|p| p.id == rule.id),
                 mode_line: mode_line(lang, rule, &apps),
                 name,
                 warnings,
@@ -463,7 +487,8 @@ pub(crate) async fn build(
     // What the address asks for (§6.1, §6.5); an unknown value is ignored.
     let open = match input.query.get("open").map(String::as_str) {
         Some("time") => Some("time"),
-        Some("rules") if !rules.is_empty() => Some("rules"),
+        // Design 123 §2: the Regler sheet opens with no rule too ("Ingen regler").
+        Some("rules") => Some("rules"),
         _ => None,
     };
     let on_disabled = if let Some(l) = &lock {
@@ -479,24 +504,32 @@ pub(crate) async fn build(
     } else {
         None
     };
-    let tile_on = input.query.get("mode").map(String::as_str) == Some("on");
+    // QA L4: the Pause regler tile stays while a pause still runs (its End now is in the sheet); the form pauses only
+    // a pausable rule.
+    let pause_form = !input.pause_rules.is_empty();
+    let pause_tile = pause_form || !pauses.is_empty();
+    // Without a pause mode the form is Slå på regel's alone.
+    let tile_on = input.query.get("mode").map(String::as_str) == Some("on") || !pause_form;
     let mode_on = on_disabled.is_none() && tile_on;
-    let default_rule = rules
-        .iter()
-        .zip(input.rules)
-        .find(|(_, row)| row.kind == "school")
-        .or(rules.iter().zip(input.rules).next())
-        .map(|(option, _)| option.id.to_string())
+    let default_rule = on_default
+        .map(|id| id.to_string())
         .unwrap_or_else(|| "all".into());
+    // A refusal's `rule=` wins while the mode offers it (any rule is turned on; a pausable one or "all" paused).
     let posted = input
         .query
         .get("rule")
-        .filter(|r| *r == "all" || rules.iter().any(|o| o.id.to_string() == **r))
+        .filter(|r| {
+            if mode_on || !pause_form {
+                rules.iter().any(|o| o.id.to_string() == **r)
+            } else {
+                *r == "all" || rules.iter().any(|o| o.pause && o.id.to_string() == **r)
+            }
+        })
         .cloned();
     let selected = match posted {
-        Some(rule) if !(mode_on && rule == "all") => rule,
-        _ if mode_on => default_rule,
-        _ => "all".to_string(),
+        Some(rule) => rule,
+        None if mode_on || !pause_form => default_rule,
+        None => "all".to_string(),
     };
     let lengths = lock_now::lengths_offered(now_minute);
     let length = match lengths {
@@ -522,6 +555,8 @@ pub(crate) async fn build(
         mode_on,
         tile_on,
         on_disabled,
+        pause_tile,
+        pause_form,
         rules,
         selected,
         lengths,

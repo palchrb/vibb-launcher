@@ -54,7 +54,8 @@ pub(crate) fn summary_group(_time_group: &str) -> &'static str {
 
 /// Form: `target` ("rule" or "budget"), `rule` ("all" or a rule id - only for "rule"), `minutes`
 /// (15/30/60/120 for a rule, 15/30/60 for screen time), `back` (ignored since 2026-11-01). The
-/// rule must be one of the device's effective rules (`time_rules::effective_rule_rows`).
+/// rule must be one the phone can pause (design 123 §3.3, `lock_now::pausable`); a refusal of a rule
+/// the phone has names it (`&rule=`).
 pub async fn create_lift(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -81,14 +82,24 @@ pub async fn create_lift(
         .unwrap_or(0);
     let rule = form.get("rule").map(|r| r.trim()).unwrap_or("all");
     match record_lift(&state, lang, id, &admin, target, rule, minutes).await {
+        // Design 123 §3.4: the flash names the rule refused.
+        Ok("pause_not_in_force") => Redirect::to(&format!(
+            "/devices/{id}?done=pause_not_in_force&rule={}#quick",
+            rule.parse::<i64>()
+                .map(|r| r.to_string())
+                .unwrap_or_default()
+        ))
+        .into_response(),
         Ok(done) => back_to(id, if target == "rule" { "pause" } else { "extra" }, done),
         Err(refused) => refused,
     }
 }
 
 /// [create_lift]'s core, shared with design 93's Regler sheet (`rules_now`, "Sett på pause"):
-/// checks the lift, writes its row, nudges the phone. `Ok` is the flash code (`pause`, `extra`, or
-/// `gone` for a rule no longer the phone's, with nothing written); `Err` is an error page. `rule`:
+/// checks the lift, writes its row, nudges the phone. `Ok` is the flash code (`pause`, `extra`,
+/// `gone` for a rule deleted since the page loaded, or `pause_not_in_force` for a rule of the phone
+/// that can't be paused now - switched off for it, or without days and not turned on -, both with
+/// nothing written); `Err` is an error page. `rule`:
 /// "all" (or empty) or a rule id, read only for a rule pause. Design 100 §14.4: one `BEGIN
 /// IMMEDIATE` transaction (QA R2-L6: it reads the open request it may answer, as the answer card's
 /// does), in which a lift that can unlock what locks answers the phone's open request for more time
@@ -123,13 +134,21 @@ pub(crate) async fn record_lift(
                         "error.unknown_rule",
                     ));
                 };
-                let rules = match time_rules::effective_rule_rows(&state.db, id).await {
-                    Ok(rules) => rules,
-                    Err(err) => return Err(server_error(lang, err, "failed to read time rules")),
-                };
-                let Some(rule) = rules.into_iter().find(|r| r.id == rule_id) else {
-                    // Deleted, or switched off for the phone, since the page loaded.
-                    return Ok("gone");
+                let scopes =
+                    match crate::lock_now::rule_scopes(&state.db, id, chrono::Utc::now()).await {
+                        Ok(scopes) => scopes,
+                        Err(err) => {
+                            return Err(server_error(lang, err, "failed to read time rules"));
+                        }
+                    };
+                let Some(rule) = scopes.pausable.into_iter().find(|r| r.id == rule_id) else {
+                    // Design 123 §3.4: deleted since the page loaded is `gone`; a rule the phone has that can't
+                    // lock now (switched off for it, or without days and not turned on) is `pause_not_in_force`.
+                    return Ok(if scopes.phone.iter().any(|r| r.id == rule_id) {
+                        "pause_not_in_force"
+                    } else {
+                        "gone"
+                    });
                 };
                 (Some(rule.id), Some(rule.name))
             }
@@ -327,6 +346,8 @@ pub(crate) fn done_flash(code: &str) -> Option<(&'static str, &'static str, bool
         "extra" => ("extra", "device.summary.flash.extra", false),
         "pause" => ("pause", "device.summary.flash.pause", false),
         "gone" => ("pause", "device.summary.flash.gone", true),
+        // Design 123 §3.4: a rule the phone has that can't be paused (switched off, or without days and not on).
+        "pause_not_in_force" => ("pause", "device.summary.flash.pause_not_in_force", true),
         "ended" => ("lifts", "device.summary.flash.ended", false),
         "over" => ("lifts", "device.summary.flash.over", false),
         // Design 100 §14.4: the answer card's answers - "Nei" (the kid sees it on the phone), and a stale card's three

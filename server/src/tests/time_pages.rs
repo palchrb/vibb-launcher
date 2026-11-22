@@ -1064,7 +1064,8 @@ async fn the_device_page_has_a_time_row() {
     assert!(!html.contains("/schedules/device/"));
     assert!(!html.contains("/schedules?device="));
     assert!(!html.contains("/time/rules/"));
-    // Skole switched off: one rule in force; Pause a rule… offers only it.
+    // Skole switched off: one rule in force; Pause offers only Fotball, while Slå på regel still
+    // offers Skole (design 123: every rule the phone may use can be turned on).
     sqlx::query("INSERT INTO device_rule_off (device_id, rule_id) VALUES (?, ?)")
         .bind(id)
         .bind(skole)
@@ -1077,8 +1078,14 @@ async fn the_device_page_has_a_time_row() {
         .text();
     assert!(row_of(&html).contains(">1 rule<"));
     let quick = &html[html.find("<section id=\"quick\"").unwrap()..];
-    assert!(quick.contains(">Fotball</option>"));
-    assert!(!quick.contains(">Skole</option>"));
+    let option = |name: &str| {
+        let end = quick.find(&format!(">{name}</option>")).expect(name);
+        let start = quick[..end].rfind("<option").unwrap();
+        quick[start..end].to_string()
+    };
+    assert!(option("Fotball").contains(" data-pause"));
+    assert!(option("Skole").contains(" data-on"));
+    assert!(!option("Skole").contains(" data-pause"));
 }
 
 /// The editor's Save stays in reach (on the band, which stays in place - design 84) and a save's

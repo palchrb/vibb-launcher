@@ -212,16 +212,16 @@
                 <span class="tile tile-teal"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><circle cx="8.5" cy="8.5" r="6.3" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8.5 5.4v6.2M5.4 8.5h6.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></span>
                 <span><span class="qa-label">{{ self.t("device.summary.qa.time") }}</span><span class="qa-sub">{% if let Some(line) = qa.time_line %}{{ line }}{% else %}&nbsp;{% endif %}</span></span>
             </a>
-            {% if !qa.rules.is_empty() %}
+            {% if qa.pause_tile %}
             <a class="qa{% if qa.open == Some("rules") && !qa.tile_on %} qa-chosen{% endif %}{% if qa.pause_line.is_some() && !qa.pauses.is_empty() %} qa-on{% endif %}" href="/devices/{{ device.id }}?open=rules&amp;mode=pause#quick" data-sheet="rules-sheet" data-mode="pause" aria-controls="rules-sheet" aria-expanded="{% if qa.open == Some("rules") && !qa.tile_on %}true{% else %}false{% endif %}">
                 <span class="tile tile-indigo"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><rect x="4" y="3.5" width="3" height="10" rx="1" fill="currentColor"/><rect x="10" y="3.5" width="3" height="10" rx="1" fill="currentColor"/></svg></span>
                 <span><span class="qa-label">{{ self.t("device.summary.qa.pause") }}</span><span class="qa-sub">{% if let Some(line) = qa.pause_line %}{{ line }}{% else %}&nbsp;{% endif %}</span></span>
             </a>
+            {% endif %}
             <a class="qa{% if qa.open == Some("rules") && qa.tile_on %} qa-chosen{% endif %}{% if qa.on_line.is_some() %} qa-on{% endif %}" href="/devices/{{ device.id }}?open=rules&amp;mode=on#quick" data-sheet="rules-sheet" data-mode="on" aria-controls="rules-sheet" aria-expanded="{% if qa.open == Some("rules") && qa.tile_on %}true{% else %}false{% endif %}">
                 <span class="tile tile-indigo"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><rect x="3" y="7.2" width="11" height="7.6" rx="1.7" fill="currentColor"/><path d="M5.4 7.2V5.3a3.1 3.1 0 0 1 6.2 0v1.9" fill="none" stroke="currentColor" stroke-width="1.7"/></svg></span>
                 <span><span class="qa-label">{{ self.t("device.summary.qa.on") }}</span><span class="qa-sub">{% if let Some(line) = qa.on_line %}{{ line }}{% else if let Some(line) = qa.next_line %}{{ line }}{% else %}&nbsp;{% endif %}</span></span>
             </a>
-            {% endif %}
         </div>
 
         {#- Skjermtid (§6.3): extra time for today, posted to /lifts as before. -#}
@@ -248,8 +248,9 @@
         </div>
 
         {#- Regler (§6.2): what runs, then one form for both rule tiles, its mode radios hoisted as the form's first
-            children so the panels switch with sibling selectors (no JS needed). -#}
-        {% if !qa.rules.is_empty() %}
+            children so the panels switch with sibling selectors (no JS needed). Design 123: the select lists every rule
+            the phone may use (data-on), the pausable ones data-pause too; with nothing to pause the form is on mode only
+            (no m-pause, no Hva), and with no rule at all the sheet says so and links to a new rule. -#}
         <div class="qa-sheet" id="rules-sheet" role="region" aria-labelledby="rules-sheet-title"{% if qa.open != Some("rules") %} hidden{% endif %}>
             {% let busy = qa.running.is_some() || !qa.pauses.is_empty() %}
             {% if busy %}
@@ -302,18 +303,23 @@
                     <a class="row-action" href="/devices/{{ device.id }}#quick" data-qa-close>{{ self.t("device.summary.qa.close") }}</a>
                 </div>
                 {% if !busy %}{% if let Some(text) = qa.sheet_flash %}<p class="flash flash-error" role="status" data-flash="rules-sheet">{{ text }}</p>{% endif %}{% endif %}
+                {% if qa.rules.is_empty() %}
+                <p class="row row-note" data-qa-no-rules>{{ self.t("device.summary.qa.no_rules") }}</p>
+                <a class="row row-button" href="/schedules/rules/new">{{ self.t("device.time.add_rule") }}</a>
+                {% else %}
                 <form method="post" action="/devices/{{ device.id }}/rules-now#quick" class="cell qa-form">
-                    <input type="radio" class="qa-mode" name="mode" value="on" id="m-on"{% if qa.mode_on %} checked{% endif %}{% if qa.on_disabled.is_some() %} disabled{% endif %}>
-                    <input type="radio" class="qa-mode" name="mode" value="pause" id="m-pause"{% if !qa.mode_on %} checked{% endif %}>
+                    <input type="radio" class="qa-mode" name="mode" value="on" id="m-on"{% if qa.mode_on || !qa.pause_form %} checked{% endif %}{% if qa.on_disabled.is_some() %} disabled{% endif %}>
+                    {% if qa.pause_form %}<input type="radio" class="qa-mode" name="mode" value="pause" id="m-pause"{% if !qa.mode_on %} checked{% endif %}>{% endif %}
                     <label class="row">
                         <span class="row-label">{{ self.t("device.summary.qa.rule") }}</span>
                         <select class="pick" name="rule" data-qa-rule>
-                            <option value="all" data-all{% if qa.selected == "all" %} selected{% endif %}>{{ self.t("device.summary.qa.all_rules") }}</option>
+                            {% if qa.pause_form %}<option value="all" data-all data-pause{% if qa.selected == "all" %} selected{% endif %}>{{ self.t("device.summary.qa.all_rules") }}</option>{% endif %}
                             {% for r in qa.rules %}
-                            <option value="{{ r.id }}"{% if r.school %} data-school{% endif %} data-line="{{ r.mode_line }}" data-warn="{{ r.warnings_joined() }}"{% if qa.selected_is(*r.id) %} selected{% endif %}>{{ r.name }}</option>
+                            <option value="{{ r.id }}" data-on{% if r.pause %} data-pause{% endif %}{% if r.on_default %} data-on-default{% endif %} data-line="{{ r.mode_line }}" data-warn="{{ r.warnings_joined() }}"{% if qa.selected_is(*r.id) %} selected{% endif %}>{{ r.name }}</option>
                             {% endfor %}
                         </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
                     </label>
+                    {% if qa.pause_form %}
                     <div class="row row-stacked qa-hva">
                         <span class="row-label" id="qa-hva">{{ self.t("device.summary.qa.what") }}</span>
                         <div class="segmented" role="radiogroup" aria-labelledby="qa-hva">
@@ -322,6 +328,11 @@
                         </div>
                         {% if let Some(why) = qa.on_disabled %}<span class="row-sub segmented-sub" data-qa-on-off>{{ why }}</span>{% endif %}
                     </div>
+                    {% else if let Some(why) = qa.on_disabled %}
+                    {#- QA L3: on mode only and Slå på nå can't be chosen now: the reason, no button. -#}
+                    <p class="row row-note" data-qa-on-off>{{ why }}</p>
+                    {% endif %}
+                    {% if qa.pause_form || qa.on_disabled.is_none() %}
                     <div class="row row-stacked when-on">
                         <span class="row-label" id="qa-len">{{ self.t("device.summary.qa.how_long") }}</span>
                         <div class="segmented" role="radiogroup" aria-labelledby="qa-len">
@@ -335,6 +346,8 @@
                         <span class="row-label">{{ self.t("device.summary.qa.until") }}</span>
                         <input type="time" class="row-time" name="til" data-qa-til>
                     </label>
+                    {% endif %}
+                    {% if qa.pause_form %}
                     <div class="row row-stacked when-pause">
                         <span class="row-label" id="qa-pause-len">{{ self.t("device.summary.qa.how_long") }}</span>
                         <div class="segmented" role="radiogroup" aria-labelledby="qa-pause-len">
@@ -343,14 +356,17 @@
                             {% endfor %}
                         </div>
                     </div>
+                    {% endif %}
+                    {% if qa.pause_form || qa.on_disabled.is_none() %}
                     <p class="row row-note when-on" data-qa-line>{{ qa.selected_mode_line() }}</p>
                     {% for w in qa.selected_warnings() %}<p class="row row-note qa-warn when-on" data-qa-warn>{{ w }}</p>{% endfor %}
                     <button type="submit" class="row row-button when-on" data-qa-button="on">{{ self.t("device.summary.qa.turn_on") }}</button>
-                    <button type="submit" class="row row-button when-pause" data-qa-button="pause">{{ self.t("device.summary.qa.pause_it") }}</button>
+                    {% endif %}
+                    {% if qa.pause_form %}<button type="submit" class="row row-button when-pause" data-qa-button="pause">{{ self.t("device.summary.qa.pause_it") }}</button>{% endif %}
                 </form>
+                {% endif %}
             </div>
         </div>
-        {% endif %}
 
         {#- Today's running pauses and the rule turned on now, with End now (back here, #quick), and the flash. -#}
         {% if !lifts.is_empty() || qa.running.is_some() || self.flash("quick").is_some() %}
@@ -595,7 +611,7 @@
     {% if relock.wait_for_phone %}
     <span hidden data-waits></span>
     {% endif %}
-    <script src="/static/quick-sheets.js?v=3" defer data-swap-ready></script>
+    <script src="/static/quick-sheets.js?v=4" defer data-swap-ready></script>
     </div>
 </main>
 {#- Pull down to refresh (2026-10-25): on the Devices list and a phone's summary only (static/pull-refresh.js), never a page with a map. -#}

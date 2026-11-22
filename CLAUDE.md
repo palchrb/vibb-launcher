@@ -301,8 +301,10 @@ A rule turned on now (design 93, "Slå på nå") is `server/testdata/lock_now.js
 Leggetid first - negative `id`, one weekday's window, `until_ms`, `card_first: true` -, a scheduled Skole and Leggetid
 with `until_ms: null` and `card_first: false`, a pause of Leggetid and its twin for the copy - every lift with design 100's
 `by` and `at_ms`, and the `time_policy`'s `request_answers: true`), `policy_end_locked` (the
-same with a Middag from the copy's end) and `cases` (`{policy, at, zone, locked, card_rule, card_until}`). The server's
-`lock_now::tests::the_contract` produces both policies from seeded rows at a fixed now (`LOCK_NOW_CONTRACT_WRITE=1`
+same with a Middag from the copy's end), design 123's `policy_on_demand` (a rule without days, Skjermstopp, turned on:
+its copy and the rule itself) and `policy_off_rule` (a rule switched off for the phone turned on: its copy alone) and
+`cases` (`{policy, at, zone, locked, card_rule, card_until}`). The server's
+`lock_now::tests::the_contract` produces the four policies from seeded rows at a fixed now (`LOCK_NOW_CONTRACT_WRITE=1`
 rewrites them); the launcher's `LockNowTest` decodes them and runs every case through `inForceAt`, `decideTimeLock`,
 `cardRule` and `lockEnd`; both compare the copies. Every rule's `until_ms` and `card_first` are pinned by
 `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTest`.

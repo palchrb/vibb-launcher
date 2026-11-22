@@ -1,5 +1,5 @@
 // Behaviour of static/quick-sheets.js (design 93 §6.1, §6.2): a tile opens its sheet in place and checks its mode,
-// Lukk closes it, the buttons say their sentences, a length fills Til, and "Alle regler" leaves in Slå på nå.
+// Lukk closes it, the buttons say their sentences, a length fills Til, and the select holds the mode's rules (design 123).
 // Run: node --test jstest/quick-sheets.test.js
 "use strict";
 const test = require("node:test");
@@ -80,9 +80,13 @@ function page() {
         timeForm,
     ]);
     const options = [
-        h("option", { value: "all", "data-all": "", selected: "", text: "Alle regler" }),
-        h("option", { value: "4", "data-school": "", "data-line": "Som i Skole", "data-warn": "W1\nW2", text: "Skole" }),
-        h("option", { value: "9", "data-line": "Som i Leggetid", "data-warn": "", text: "Leggetid" }),
+        h("option", { value: "all", "data-all": "", "data-pause": "", selected: "", text: "Alle regler" }),
+        h("option", {
+            value: "4", "data-on": "", "data-pause": "", "data-on-default": "", "data-line": "Som i Skole",
+            "data-warn": "W1\nW2", text: "Skole",
+        }),
+        h("option", { value: "9", "data-on": "", "data-pause": "", "data-line": "Som i Leggetid", "data-warn": "", text: "Leggetid" }),
+        h("option", { value: "3", "data-on": "", "data-line": "Som i Skjermstopp", "data-warn": "", text: "Skjermstopp" }),
     ];
     const rulesForm = h("form", { class: "qa-form" }, [
         h("input", { id: "m-on", name: "mode", value: "on" }),
@@ -121,8 +125,9 @@ function page() {
     const get = (id) => doc.getElementById(id);
     const button = (which) => rulesForm.querySelector(`button[data-qa-button=${which}]`);
     const warnings = () => rulesForm.querySelectorAll("[data-qa-warn]").map((p) => p.textContent);
+    const shown = () => rulesForm.querySelector("select").children.map((o) => o.getAttribute("value"));
     install(doc);
-    return { doc, tiles, timeSheet, rulesSheet, rulesForm, timeForm, options, fire, get, button, warnings };
+    return { doc, tiles, timeSheet, rulesSheet, rulesForm, timeForm, options, fire, get, button, warnings, shown };
 }
 
 test("a minute is a clock time, midnight a word", () => {
@@ -139,11 +144,12 @@ test("the buttons say their sentences from the start", () => {
 
 test("Slå på regel opens the Regler sheet in on mode, without Alle regler, and says the end", () => {
     const p = page();
+    assert.deepStrictEqual(p.shown(), ["all", "4", "9"], "a pause: the pausable rules");
     assert.ok(p.fire("click", p.tiles.on.children[0]));
     assert.strictEqual(p.rulesSheet.hidden, false);
     assert.strictEqual(p.get("m-on").checked, true);
-    assert.strictEqual(p.options[0].hidden, true);
-    assert.strictEqual(p.options[1].selected, true, "the school rule");
+    assert.deepStrictEqual(p.shown(), ["4", "9", "3"], "every rule the phone may use, none hidden");
+    assert.strictEqual(p.options[1].selected, true, "the server's default");
     assert.strictEqual(p.rulesForm.querySelector("[data-qa-line]").textContent, "Som i Skole");
     assert.deepStrictEqual(p.warnings(), ["W1", "W2"]);
     assert.strictEqual(p.button("on").textContent, "Slå på Skole til 18:30");
@@ -156,7 +162,7 @@ test("Slå på regel opens the Regler sheet in on mode, without Alle regler, and
     p.fire("click", p.tiles.pause);
     assert.strictEqual(p.rulesSheet.hidden, false);
     assert.strictEqual(p.get("m-pause").checked, true);
-    assert.strictEqual(p.options[0].hidden, false);
+    assert.deepStrictEqual(p.shown(), ["all", "4", "9"]);
     assert.ok(p.tiles.pause.classList.contains("qa-chosen"));
     assert.strictEqual(p.button("pause").textContent, "Sett Skole på pause i 1 t");
     p.fire("click", p.tiles.pause);
@@ -224,4 +230,23 @@ test("after handy:swapped the buttons say their sentences again", () => {
     p.fire("handy:swapped", null);
     assert.strictEqual(p.button("pause").textContent, "Sett alle regler på pause i 1 t");
     assert.strictEqual(p.timeForm.querySelector("button").textContent, "Gi 30 min ekstra");
+});
+
+// Design 123 §3.4: a rule that can only be turned on leaves in Sett på pause, the selection moving to "Alle regler";
+// back in Slå på nå it is there again, in the server's order, and the server's default is picked when "Alle" goes.
+test("switching the mode moves a selection the mode lacks", () => {
+    const p = page();
+    p.fire("click", p.tiles.on);
+    p.options[1].selected = false;
+    p.options[3].selected = true;
+    p.fire("change", p.rulesForm.querySelector("select"));
+    assert.strictEqual(p.button("on").textContent, "Slå på Skjermstopp til 18:30");
+    p.fire("click", p.tiles.pause);
+    assert.deepStrictEqual(p.shown(), ["all", "4", "9"]);
+    assert.strictEqual(p.options[0].selected, true);
+    assert.strictEqual(p.options[3].selected, false);
+    assert.strictEqual(p.button("pause").textContent, "Sett alle regler på pause i 1 t");
+    p.fire("click", p.tiles.on);
+    assert.deepStrictEqual(p.shown(), ["4", "9", "3"]);
+    assert.strictEqual(p.options[1].selected, true);
 });
