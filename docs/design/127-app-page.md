@@ -1,6 +1,7 @@
 # Design 127: An app's own page, and what each app may use
 
-Status: design, revision 1, 2026-11-22 (branch `design-127`, from main fe3e96c84). Server and launcher. The user
+Status: design, revision 2, 2026-11-22 (branch `design-127`, from main fe3e96c84): the design QA's findings are folded
+in (§11), and the user's answer to Q1 ("1 ok", 2026-11-22) is decided in §5. Server and launcher. The user
 approved the mockup (2026-11-22, "Appsiden ser bra ut, bare å implementere";
 https://claude.ai/artifact/LtUfDhmfvCKzY7No7cC1i3) with its four choices as proposed: name and icon save at once,
 approving an update acts on the catalog app and the page says so, the split list row, 44 px hit areas for the symbols.
@@ -8,7 +9,7 @@ Also approved earlier (the privacy round, A1): a per-app network switch on this 
 location, microphone and contacts like today's camera switch - never deny-by-default.
 
 Marks: **[code]** read in the code at fe3e96c84; **[sdk]** read in the Android SDK's `api-versions.xml` for API 37
-on this machine; **[assumed]** not verified, to be checked by step 0's probe or the emulator gate (§10).
+on this machine; **[assumed]** not verified, to be checked by step 0's probe or the emulator gate (§9).
 
 ## 0. Short answer
 
@@ -16,15 +17,19 @@ on this machine; **[assumed]** not verified, to be checked by step 0's probe or 
   app: the name opens the page, and the allow switch stays on the row behind a hairline.
 - The page has four groups: the head (logo, name, version, Tillatt, an update that waits for the parent), **Vises som**
   (the Home tile beside the name, Logo · Automatisk · Symbol, all saving at once), **Tilgang** (Nett, Kamera,
-  Posisjon, Mikrofon, Kontakter - only what the app asks for - and one orange line for the approvals it lacks), and
+  Posisjon, Mikrofon, Kontakter - only what the app asks for - with the special accesses as quiet values), and
   **Låseskjerm** (Mediespiller).
 - Kamera, Posisjon, Mikrofon and Kontakter use today's camera mechanism, widened: `setPermissionGrantState` DENIED per
   permission while the parent has it off, DEFAULT otherwise. We never GRANT.
 - **Nett uses `DevicePolicyManager.setPreferentialNetworkServiceConfigs`** with a config that includes the apps' uids,
   allows no fallback and blocks every non-matching network (§4.2). No network on a consumer phone carries the enterprise
   capability it asks for, so those uids get no network at all. It is the only device-owner tool that cuts one app's
-  network on Wi-Fi and mobile alike. It does not touch our VPN, Bare Vibb or the pause. It is built only if step 0's
-  probe shows it holds on Android 14, 16 and 17. If it fails, there is no Nett switch: no weaker DNS-only cut.
+  network on Wi-Fi and mobile alike.
+  - It needs one change in our VPN: a cut app also leaves the VPN (`addDisallowedApplication`) in every shape, so the
+    VPN can't become its way out (§4.2).
+  - Bare Vibb and the pause keep their rules.
+  - It is built only if step 0's probe shows one of its two variants holding on Android 14, 16 and 17. If neither
+    holds, there is no Nett switch: no weaker DNS-only cut.
 - All five lift in "pause all restrictions" and the offline override, like the camera. None of them is a hardening
   switch.
 
@@ -48,19 +53,22 @@ Device › Apps today puts everything inside the list **[code]** (`templates/par
   - axum 0.8 (matchit) ranks the static POST routes `/apps/toggle`, `/apps/display`, `/apps/permissions` and
     `/apps/lock-media` above the capture **[code]** (`Cargo.toml`: axum 0.8.9). A package always has a dot
     (`app_display::valid_package_name`), so it can never equal one of those words.
-- **Who gets a page**: every row of the phone's list with a valid package name that is allowed (`row.checked`), and
-  also an app that has just been turned off on its own page. That page then shows only its head, with Tillatt off, so
-  the parent can turn it on again in place.
+- **Who gets a page**: every row of the phone's list with a valid package name that is allowed (`row.checked`).
+  - **Tillatt off removes the app.** A not-preinstalled app is queued for uninstall
+    (`device_pending_uninstalls`, **[code]** `toggle_app`), and a preinstalled one is hidden. So turning it off on its
+    page lands on the list at its row (`#app-<package>`), now under "Not allowed". There is no head-only page to turn
+    it on again from.
   - **No page**:
     - Vibb One: its row stays "Alltid på", and its versions are on its catalog page.
     - Kalender: it stays a link to Device › Calendar.
     - The managed dialer: it stays a link to Calls.
     - A catalog app with no package yet.
     - A not-allowed row: it stays a plain switch row.
-- **An unknown package** (not in this phone's rows, e.g. uninstalled since): `303` to the list. Never a 404 page: a
-  page in the history must not become an error.
+- **An unknown or not-allowed package** (not among this phone's allowed rows, e.g. removed since): `303` to the list,
+  at its row when it has one. Never a 404 page: a page in the history must not become an error.
 - **The tab, the back link and `from`**:
-  - The page takes the list's `?from=` (`AppsFrom`): the same tab, and every form carries it.
+  - The page takes the list's `?from=`, read only through `AppsFrom::parse` **[code]** (`device_pages.rs`: `apps` or
+    `app:<digits>`, anything else ignored). It keeps the same tab, and every form carries it.
   - Back goes to Device › Apps at the app's row (`#app-<package>`), with `from` kept.
   - One exception: `from=app:<id>` where `<id>` is this very app's catalog row. Back then goes straight to that
     catalog page (`/apps/tracked/{id}#phone-<device>`).
@@ -79,14 +87,13 @@ Device › Apps today puts everything inside the list **[code]** (`templates/par
 - The switch's hit area is the whole cell right of the hairline, at least 44 px wide.
 
 **The row's sub-line** keeps today's parts: the own name, installing / failed, no release, the dialer note, Chrome
-for logins. It loses the permissions line and gains one orange part for what waits for the parent:
-- an update held for approval;
-- each special access not approved;
-- each switch the phone refused (§3.2).
+for logins. It loses the permissions line, and gains one orange part for an update held for approval ("7.25.0 venter
+på deg"). That is the only thing on the list that waits for the parent and that the parent can act on.
 
-One such item shows its own words ("7.25.0 venter på deg"). Two or more show the count ("2 ting venter på deg").
-
-A choice the parent made ("Nett av") is not on the list (Words in the UI: a choice is never a warning).
+Left off the list, on purpose:
+- A special access not approved is often the parent's own choice, and stays a quiet value on the page (§2.5).
+- A switch the phone refused has no fix the parent can make, and shows only on the page.
+- A choice the parent made ("Nett av") is never a warning (Words in the UI).
 
 ### 2.3 The head (`#app-head`)
 
@@ -97,8 +104,11 @@ A choice the parent made ("Nett av") is not on the list (Words in the UI: a choi
   - While the app installs, today's status label ("Installerer 42 %"); the page reloads itself as the list does
     (`data-waits`).
   - The dialer note and Chrome's login line, as in the list.
-- **"Tillatt"**: the allow switch, `/apps/toggle` with `back=app`. Saved, it lands on the page (`#app-head`). The
-  refusals' words show here as the list shows them under the row.
+- **"Tillatt"**: the allow switch, `/apps/toggle` with `back=app`.
+  - Saved on, it lands on the page (`#app-head`). Saved off, it lands on the list (§2.1).
+  - The refusals' words show here as the list shows them under the row.
+  - For a not-preinstalled app, its (i) says that off removes the app: today's `device.apps.footer`, "Slår du av en
+    app, skjules den, og den avinstalleres der det går".
 - **An update held for the parent** (design 90; a catalog app with a row in `tracked_app_held_releases`, read through
   `tracked_apps::held_release`):
   - An orange summary row "{version} venter på deg", with the sub-line "Ber om tilgang til {groups}".
@@ -163,14 +173,16 @@ The group shows only when the last report has the app's `access` (a third-party 
 - **A switch's sub-line**, only when the state isn't simply as set:
   - "Venter på telefonen": off here, but the report still says `requested` and no pause.
   - "På i pausen": off here, and the phone's last report says restrictions are paused.
-  - Orange "Telefonen kan ikke slå av dette": the report says `refused`.
-- **The special accesses not approved** (design 68's five) are **one** orange row at the group's end, with the
-  indigo tile:
-  - One missing: "{access} ikke godkjent". Two or more: "{n} tilganger ikke godkjent".
-  - The fix is behind its (i): design 68's way on the phone, one line per access (Alarmer og påminnelser keeps "and
-    open the app once").
-  - Approved ones and `unknown` ones show nothing. `unknown` is an op the launcher can't read on that phone
-    (design 68's probe), so an orange line there would never go away and would mean nothing the parent can fix.
+  - Orange "Telefonen kan ikke slå av dette": the report says `refused`. The parent's off isn't applied, which is
+    wrong. It is shown here only, never counted on the list (§2.2).
+- **The special accesses** (design 68's five) stay quiet values, as today **[code]** (`app_permissions.rs`,
+  `words::state`):
+  - One row per access the app declares, with the indigo tile, the access's name, and its value "Godkjent", "Ikke
+    godkjent" or "Ukjent", in plain text.
+  - The way to approve one on the phone is behind the group's (i), one line per access not approved (design 68's
+    words; Alarmer og påminnelser keeps "and open the app once").
+  - Not orange, and not counted on the list. Full-screen notifications are declared by most messengers and not granted
+    by default on Android 14+, so orange would be permanent noise. And not approving is often the parent's choice.
 - **One (i)** for the group, its paragraphs only for the rows shown (§6).
 
 ### 2.6 Låseskjerm (`#lock-screen`)
@@ -212,7 +224,7 @@ today's `apps.perms.lock_media_help`.
   - `refused`: this process's last pass tried to apply the parent's off and Android said no (`setPermissionGrantState`
     false or a throw; the network write threw). It is kept in memory per package and key, and cleared by a pass that
     succeeds.
-  - Since §4.2's step 3, `network` is reported only once the launcher applies it. The PWA shows the Nett switch only
+  - From step 3 (§9), `network` is reported only once the launcher applies it. The PWA shows the Nett switch only
     when the report has the key, so the server needs no flag.
 - **The server keeps known keys and values only** (`AppAccess::of`, lenient as today).
 
@@ -247,7 +259,7 @@ The launcher's own rules - the grant plan, the network plan and the report's rea
 
 ### 3.4 The server's data
 
-- **Migration `0164_app_denials.sql`**:
+- **Migration `0165_app_denials.sql`** (0164 is `upstream-fixes`' `0164_install_failure_reason.sql`):
   - `device_app_denials (device_id REFERENCES devices ON DELETE CASCADE, package_name, permission TEXT CHECK
     (permission IN ('network','camera','location','microphone','contacts')), updated_at, PRIMARY KEY (device_id,
     package_name, permission))`.
@@ -255,16 +267,20 @@ The launcher's own rules - the grant plan, the network plan and the report's rea
   - A key row table needs no NULL columns and no table rebuild per new key. The old table's `camera NOT NULL CHECK
     (camera = 'deny')` **[code]** can't be widened in place in SQLite.
 - **The cap**:
-  - At most 200 packages a phone (`MAX_ROWS_PER_DEVICE`, counted as distinct packages other than this one).
-  - A deny save first prunes the rows of packages that the last report doesn't list (an app removed since). This is
-    `set_lock_media`'s pattern **[code]**.
+  - At most 200 packages a phone (`MAX_ROWS_PER_DEVICE`, counted as distinct packages other than this one), as
+    `set_camera` today **[code]**.
+  - **No prune.** A removed app keeps its rows, so a catalog app turned off and on again (uninstalled, then
+    reinstalled) comes back with its denials before its first start. The cap bounds the table, and its refusal tells
+    the parent.
   - Allowing always deletes the one row.
 - **The save route** `POST /devices/{id}/apps/permissions` (`save_app_permissions`, widened):
   - `key` must be one of the five, else 400.
   - `allow=on` allows; its absence denies.
   - The target is checked as today (`perms_target`: the grammar, the phone, not Play's core, not Vibb). Vibb music
     is refused too.
-  - A key the app doesn't request in the last report is refused (`notice=perms`): a stale form.
+  - **A deny** of a key the app doesn't request in the last report is refused (`notice=perms`): a stale form.
+    **An allow is always accepted**, whatever the app is now, so any row can be cleared. This is `save_lock_media`'s
+    rule **[code]**.
   - Saved, it lands on the page (`#access`) and nudges the phone. Refused, the page shows the refusal at the group.
 
 ## 4. The launcher
@@ -282,7 +298,7 @@ Today's camera mechanism **[code]** (`EnforcementPlan.kt` `cameraGrants`, `AppEn
   - Writes happen only on a change (`grantWrite`). We never GRANT.
 - **Targets**: third-party apps but ours (and never the `never` list). A hidden app is skipped: the pass that unhides
   it comes first **[code]**.
-- **The call deferral now covers all four.** Revoking any granted runtime permission kills the app. So while a call is
+- **The call deferral now covers all four, and Nett (§4.2).** Revoking any granted runtime permission kills the app. So while a call is
   live (`WindowRelock.liveCall`), a denial for an app that holds that permission now (`checkPermission`) waits, and
   `accessDeferred` replaces `cameraDeferred`.
   - Element X in a call holds the microphone and maybe the camera. Kontakter or Posisjon off mid-call would also kill
@@ -304,7 +320,7 @@ without breaking our VPN, Bare Vibb, the mobile-data rules or the pause:
 
 | Option | Cuts Wi-Fi and mobile? | Bypassable by the app? | Fits our VPN? | Verdict |
 |---|---|---|---|---|
-| **A. `setPreferentialNetworkServiceConfigs`**: included uids, `setFallbackToDefaultConnectionAllowed(false)`, `setShouldBlockNonMatchingNetworks(true)` | yes [assumed], since no network matches | binding to another network is blocked by "block non-matching" [assumed] | the VPN is separate: [assumed] traffic outside the filter's one route falls through to the uid's own default, which is none | **chosen, behind step 0** |
+| **A. `setPreferentialNetworkServiceConfigs`**: included uids, `setFallbackToDefaultConnectionAllowed(false)`, `setShouldBlockNonMatchingNetworks(true)` | yes [assumed], since no network matches | binding to another network is blocked by "block non-matching" [assumed] | only with the cut app outside our VPN (variant A2 below): inside it, the VPN is a way out | **chosen, behind step 0** |
 | B. Our VPN refuses that app's DNS (`getConnectionOwnerUid` per query) | DNS only | yes: a literal IP, its own DoH, QUIC | yes | not a block |
 | C. Lockdown, with the app outside the VPN | yes | no | **no**: the filter shape has no default route, so lockdown cut every app **[code]** (`dns-and-vpn.md`, the live bug) | out |
 | D. A full-tunnel VPN that forwards everyone else in user space (tun2socks) | yes | no | replaces the filter, sink and pass shapes; heavy on battery | out |
@@ -325,15 +341,37 @@ The APIs:
 - A device owner may call it on a fully managed phone when the config names its uids **[assumed: DPMS's check and
   ConnectivityService's "profile must be managed unless uids are given", both to probe]**.
 
-**Our VPN and Bare Vibb:**
-- **[assumed, probed]** The VPN's uid ranges have the highest preference order, 0. In the filter shape it routes only
-  `192.0.2.2`, so a cut app's DNS still reaches our filter, while every other packet falls through to the uid's own
-  default network rule. That rule is the "no service" network, so the packet is unreachable.
-- The sink shape (lockdown) cuts the app anyway.
-- The pass shape has no routes, so the app's traffic meets only the preference.
-- The launcher's own uid is never included, and is outside the VPN as today, so the sync, SSE, tsnet and our
-  downloads are untouched.
-- Bare Vibb and the roaming lock are unchanged: two independent cuts, and an app is offline if either applies.
+**Our VPN: the cut app leaves it (design QA H1).** Every app but the launcher is inside our VPN today **[code]**
+(`KidVpnService.kt`: `addDisallowedApplication(packageName)` for ours alone). The filter shape routes only
+`192.0.2.2/32`, the pass shape routes nothing, and the filter is the shape whenever the filter is on
+(`MobileNetwork.kt`'s `vpnShape`). A cut app left inside the VPN very likely leaks:
+- The VPN's uid ranges outrank the enterprise preference, so the VPN becomes the cut uid's default network.
+- netd's fall-through for a packet the VPN doesn't route goes to the system default network, not the uid's
+  "no service" network.
+- The blocking allowlist is checked when the network is selected, and the VPN's netId passes first.
+
+So the design has two variants, and step 0 probes both:
+- **A1, the preference alone**: kept only to learn from, in case it does hold.
+- **A2, the preference and the cut app outside the VPN** (the design): every cut package also goes into
+  `addDisallowedApplication` in every shape, outside a window.
+  - Its default network is then decided by the preference alone: the "no service" network.
+  - Its DNS no longer reaches our filter, which it can't use anyway.
+  - In the sink shape, lockdown blocks it as well: an app outside the VPN gets nothing under lockdown, unless it is on
+    the lockdown allowlist, which it never is.
+
+**A2's costs:**
+- **Coupling**: `KidVpnService`'s `Builder` reads the cut set that `AppNetwork` stores (`app_net_cut`, sorted
+  packages), beside the `vpn_inputs` it reads today.
+- **Re-establish**: a change in the cut set re-establishes the tunnel (`switchTo` with the same shape). That is an
+  in-place handover: the same network, a new uid range, and other apps' sockets untouched **[assumed, probed]**. The
+  cut app's open sockets end, as they should.
+- **The order, so no moment leaves an app outside the VPN uncut**:
+  - Cutting: the preference first, then the tunnel without the app.
+  - Lifting: the tunnel with the app first, then the preference cleared.
+- **Probe both variants, the filter shape first**: it is the normal one, and where A1 would leak.
+- **Untouched**: the launcher's own uid is never included and is outside the VPN as today, so the sync, SSE, tsnet and
+  our downloads are untouched. Bare Vibb and the roaming lock keep their rules: two independent cuts, and an app is
+  offline if either applies.
 
 **The plan** (`AppNetwork.kt`, pure `networkUids`):
 - From the policy's `network` denials, the installed third-party packages that request `INTERNET` and their uids
@@ -341,15 +379,25 @@ The APIs:
 - A uid shared by several packages (`sharedUserId`) is included only when every package on it is denied. Otherwise
   each such package reports `refused`.
 - With `denied == null` (a Fallback): nothing changes, except that a window clears it.
-- **Hidden apps are included too**: the config is by uid and needs no unhide.
+- **The SDK Runtime**: on Android 15+ each cut uid's SDK sandbox uid is included too
+  (`Process.getSdkSandboxUidForAppUid`, API 35 **[sdk]**, behind `SDK_INT`). On 14 the sandbox uid has no public
+  API, and it is out of scope (§4.2, "What it does not cut").
+- **The call deferral (design QA L1)**: while `WindowRelock.liveCall` holds **[code]** (`WindowRelock.kt`: ours,
+  Telecom's, a VoIP call, the lock's emergency flow), uids the write would *add* wait. Removals go at once.
+  `accessDeferred` covers it, and `BootHome.callMayHaveEnded` applies again, as for the grant keys. Cutting Element X
+  mid-call would end the call.
 
 **The write**:
-- Only on a change against `getPreferentialNetworkServiceConfigs()`: one enabled config with the uids, or
-  `PreferentialNetworkServiceConfig.DEFAULT` (disabled) when none.
-- It runs at every `apply()` after the grant pass, and in `enforceAccessOnPackage`, so a reinstall's new uid is cut
-  before the app's first start, as for the camera.
-- The config is Android's to keep (DPMS persists it across reboots and launcher crashes), so the cut holds even
-  while our process is down. This is a fail-closed property the VPN can't give.
+- **Always the whole set (design QA L2)**: every `apply()` (after the grant pass) and every package event recomputes
+  all cut uids from the installed packages. The events are install, change and **removal** (`PACKAGE_REMOVED`
+  included, through `Application.onPackageChanged` and `enforceAccessOnPackage`).
+  - Android reuses a freed appId, so a removed cut app's uid must leave the config before another app can get it.
+  - A reinstall's new uid is cut before the app's first start, as for the camera.
+- **Written only on a change**: the sorted uids are compared with `getPreferentialNetworkServiceConfigs()`. The write
+  is one enabled config with the uids, or `PreferentialNetworkServiceConfig.DEFAULT` (disabled) when none. Then the
+  stored cut set goes to the VPN in A2's order.
+- **Persistence [assumed, probed]**: the config is Android's to keep (DPMS persists it across reboots and launcher
+  crashes), so the cut would hold while our process is down. Our VPN can't give that fail-closed property.
 
 **Vibb's app push** (design 108): a push for a cut app is acked and dropped, not delivered (`up_rules.json` row
 `net_off`, `UpDelivery.plan`):
@@ -358,8 +406,14 @@ The APIs:
 - When Nett is on again, the app syncs at its next start.
 - Google's push (FCM) still wakes the app. It can fetch nothing.
 
-**What it does not cut**: what the app hands to another app, such as a link opened in the browser or a share. That
-other app's network is its own switch.
+**What it does not cut** (design QA L5) - each runs under another uid:
+- What the app hands to another app: a link opened in the browser, a share.
+- A **Custom Tab** runs in the browser's uid, so an app can still show web pages through Chrome.
+- APIs that Google Play services proxies for the app (Firebase, Maps, fused location, Play Integrity) run in Play
+  services' uid.
+- The **SDK Runtime's** sandbox uid on Android 14 (it is covered on 15+, above).
+
+Each is another app's network, and not this switch's.
 
 ### 4.3 Android 14-17
 
@@ -368,7 +422,8 @@ other app's network is its own switch.
 | `setPermissionGrantState` DENIED for camera, location, microphone, contacts | works for a DO [camera: code, not yet device-run (design 68 §6v owed); the others: assumed] | no change known [assumed] | no change known [assumed] | [assumed; the gate runs it] |
 | a DO may not GRANT sensors (since 12) | we never grant | = | = | = |
 | revoke kills the app | yes; the call deferral | = | = | = |
-| preferential network, block non-matching | API present **[sdk]**; behaviour [probe] | [probe not needed if 14 and 16 agree; assumed] | [probe] | API present, not deprecated **[sdk]**; behaviour [probe] |
+| preferential network, block non-matching, with A2's VPN exclusion | API present **[sdk]**; behaviour [probe] | [probe not needed if 14 and 16 agree; assumed] | [probe] | API present, not deprecated **[sdk]**; behaviour [probe] |
+| SDK sandbox uid | no public API: out of scope | `getSdkSandboxUidForAppUid` **[sdk]** | = | = |
 
 Android 16/17's new local-network permission (`ACCESS_LOCAL_NETWORK`, nearby-devices group) is not part of this round.
 Nett off cuts the LAN too.
@@ -378,7 +433,7 @@ Nett off cuts the LAN too.
 **All five lift** in "pause all restrictions" and the offline override, the window that `apply()` and
 `enforceAccessOnPackage` compute today (`OfflineOverride.isActive() || RestrictionsPause.isActive()`) **[code]**:
 - Every DENIED target goes to DEFAULT. The app asks again, and the kid's dialog decides.
-- The network config is cleared.
+- The network config is cleared, and the cut apps go back into the VPN (lifting order, §4.2).
 - The relock's `apply()` denies and cuts again, through the call deferral.
 - The PWA says "På i pausen" under each switch that is off.
 
@@ -387,21 +442,21 @@ applies with no exception. The only exceptions remain the call rules, the harden
 
 ## 5. Edge cases
 
-- **A third-party app only** (decided):
-  - The `access` report, and so the Tilgang group, stays third-party, as design 68 decided **[code]**
+- **A third-party app only** (decided by the user, 2026-11-22: "1 ok"):
+  - **Every Tilgang switch** (Nett, Kamera, Posisjon, Mikrofon, Kontakter) is offered only for apps the parent
+    installed, not preinstalled ones. This is what design 68 decided for the camera **[code]**
     (`AppAccessReader.report`).
   - Preinstalled apps include the phone's own plumbing (Play services, the Phone and Messages apps, Settings), where
     a wrong cut breaks calls, Play or the setup.
-  - A preinstalled app the kid shouldn't use is better not allowed at all. Q1 asks only about Nett for preinstalled
-    apps.
+  - A preinstalled Camera, Maps or YouTube can only be switched off entirely (Tillatt).
 - **An app that later asks for a new permission**:
   - The report gains the key, and its switch appears, on.
   - A catalog release that newly asks for a sensitive group is already held for the parent (design 90). The head
     shows "Ber om tilgang til Mikrofon" with Godkjenn / Behold.
   - A denial row that is still stored from before applies at the update (`enforceAccessOnPackage`) before the first
     start.
-- **A row for a key the app no longer requests** is ignored by the launcher and not shown. It is pruned when the app
-  leaves the report (§3.4).
+- **A row for a key the app no longer requests**, or for an app removed since, is kept (§3.4). The launcher ignores
+  it, and the page doesn't show it. It applies again if the app asks for that key again, or is reinstalled.
 - **Vibb's own apps**:
   - Vibb One has no page.
   - Vibb music has a page with the head and Vises som only. It gets no Tilgang: it is in `never`, and its network is
@@ -425,10 +480,10 @@ applies with no exception. The only exceptions remain the call rules, the harden
 | Where | nb | en |
 |---|---|---|
 | list, the switch's hidden label | {app} tillatt | {app} allowed |
-| list, one thing waits (orange) | (that thing's own words) | (that thing's own words) |
-| list, several (orange) | {n} ting venter på deg | {n} things wait for you |
+| list, a held update (orange) | {version} venter på deg | {version} waits for you |
 | head sub-line | Versjon {version} | Version {version} |
 | head switch | Tillatt | Allowed |
+| head switch (i), not preinstalled, existing `device.apps.footer` | Slår du av en app, skjules den, og den avinstalleres der det går. | (existing) |
 | held (orange), existing `apps.update.held_title` | {version} venter på deg | {version} waits for you |
 | held sub, existing `apps.update.asks` | Ber om tilgang til {groups} | Asks for {groups} |
 | buttons, existing | Godkjenn · Behold {version} | Approve · Keep {version} |
@@ -445,9 +500,9 @@ applies with no exception. The only exceptions remain the call rules, the harden
 | a switch's sub | Venter på telefonen | Waiting for the phone |
 | a switch's sub | På i pausen | On during the pause |
 | a switch's sub (orange) | Telefonen kan ikke slå av dette | The phone can't turn this off |
-| approvals (orange), one | {access} ikke godkjent | {access} not approved |
-| approvals (orange), several | {n} tilganger ikke godkjent | {n} accesses not approved |
-| Tilgang (i), first line | Bare det appen ber om, står her. Av kamera, posisjon, mikrofon eller kontakter lukker appen hvis den var i gang. | Only what the app asks for is listed. Turning off camera, location, microphone or contacts closes the app if it was running. |
+| a special access, its value (quiet), existing `apps.perms.*` | Godkjent · Ikke godkjent · Ukjent | Approved · Not approved · Unknown |
+| Tilgang (i), first line | Av kamera, posisjon, mikrofon eller kontakter lukker appen hvis den var i gang. | Turning off camera, location, microphone or contacts closes the app if it was running. |
+| Tilgang (i), per access not approved, existing `apps.perms.how` / `how_alarm` | På telefonen: Innstillinger (foreldrekode) › … | (existing) |
 | (i), Nett | Nett av: appen virker bare uten nett og får ingen varsler gjennom Vibb. | Network off: the app works only offline and gets no notifications through Vibb. |
 | (i), Kamera (replaces `apps.perms.camera_help`) | Kamera av: videosamtaler og QR-skanning virker ikke. | Camera off: video calls and QR scanning stop working. |
 | (i), Posisjon | Posisjon av: appen ser ikke hvor telefonen er. | Location off: the app can't see where the phone is. |
@@ -461,12 +516,14 @@ The check against "Words in the UI":
 - No sub-line restates a choice: an off switch says nothing unless it isn't applied.
 - Explanations sit behind one (i) per group, with no "Om …" label. The ⓘs keep the existing aria labels (`common.more_info`,
   `common.how_to_fix`).
-- Orange is only for what needs the parent: a held update, a missing approval, a refusal.
+- Orange is only for what is really wrong: a held update, and on the page a switch the phone refused. A special
+  access not approved is a quiet value, as in design 68.
+- "Bare det appen ber om, står her" is dropped: the rows show it.
 - The parent's own choices (Nett av, Kamera av) are never orange and are not repeated on the list.
 - Dropped from the mockup: "Endringer lagres med en gang" (every switch in the PWA saves at once; saying it is
   over-explaining) and "Slik ser barnet appen på Hjem" (the preview says it).
-- The removed keys are `apps.perms.title`, `camera_off`, `camera_waiting`, `camera_paused`, `access_state`, `approved`
-  and `apps.display.title`. `i18n::tests` keeps both catalogs equal.
+- The removed keys are `apps.perms.title`, `camera_off`, `camera_waiting`, `camera_paused`, `access_state` and
+  `apps.display.title`. `i18n::tests` keeps both catalogs equal.
 - Nothing on the kid's phone changes words.
 
 ## 7. Files, by step
@@ -489,8 +546,9 @@ The check against "Words in the UI":
   - Tests: `src/tests/app_page.rs` (new), `src/tests/device_pages.rs`.
   - `docs/notes/server/pwa.md`.
 - **Step 2 (both directories, one commit: the API)**:
-  - Server: `migrations/0164_app_denials.sql`; `app_permissions.rs` (four keys, policy, `AppAccess` values,
-    `set_denied`, prune, `the_contract`); `handlers/devices.rs` (`save_app_permissions` by `key`/`allow`);
+  - Server: `migrations/0165_app_denials.sql`; `app_permissions.rs` (four keys, policy, `AppAccess` values,
+    `set_denied`, `the_contract`); `src/tests/device_api.rs` (its table list: `device_app_permissions` becomes
+    `device_app_denials`, design QA L8); `src/tests/device_pages.rs` (the camera rows' table); `handlers/devices.rs` (`save_app_permissions` by `key`/`allow`);
     `handlers/device_api.rs`; `models.rs`; the page's Tilgang with four switches; `intake_limits`;
     `policy_json_keys_snapshot`.
   - Contract: `server/testdata/app_access.json`, `launcher/app/src/test/resources/app_access.json`.
@@ -502,8 +560,10 @@ The check against "Words in the UI":
   - `.github/workflows/launcher.yml` and `server-ci.yml` (paths), root `CLAUDE.md`,
     `docs/notes/launcher/app-permissions.md`.
 - **Step 3 (Nett, after step 0 passes; both directories, one commit)**:
-  - Launcher: `server/AppNetwork.kt` (new: pure plan and writer); `AppEnforcer.kt` (the hook); `AppAccess.kt`
-    (`network`); `push/up/` delivery (`net_off`).
+  - Launcher: `server/AppNetwork.kt` (new: the pure plan, the writer, the stored cut set); `KidVpnService.kt` (the cut
+    set into `addDisallowedApplication` in every shape, a re-establish on its change, A2's order); `AppEnforcer.kt`
+    (the hook, the call deferral); `Application.kt` (package removal); `AppAccess.kt` (`network`); `push/up/`
+    delivery (`net_off`).
   - Launcher tests: `AppNetworkTest`, `UpDeliveryPlanTest`, `up_rules.json`.
   - The contract's `network` rows; server: `network` in `app_permissions.rs`'s table.
   - `docs/notes/launcher/app-permissions.md`, `dns-and-vpn.md` (one paragraph: the cut beside the shapes).
@@ -513,18 +573,22 @@ The check against "Words in the UI":
 - **Server**:
   - The page:
     - Every group shows only when it should: an app with nothing reported, a preinstalled app, Vibb music,
-      Meldinger, an app turned off on its page.
-    - The split row and the list's orange count (one item, two items).
+      Meldinger; Tillatt off on the page lands on the list; a not-allowed package's 303.
+    - The split row.
     - The `?perms=` redirect, and the unknown package's 303.
     - The back link per `from`, including a catalog `from` for this app versus another.
   - The display form: `icon_mode` per mode, the default glyph, the 400 at the field; the catalog page still saves.
   - A held update: shown, with Approve and Keep and `back=device:` landing on the page with the flash; a bad `back` is
     the catalog's redirect.
-  - `the_contract` (§3.3); the migration copies camera rows; the cap and the prune; a stale key refused.
+  - `the_contract` (§3.3); the migration copies camera rows; the cap; a deny of an unrequested key refused, an allow
+    always accepted.
+  - The list's orange part: a held update only (not a special access, not a refusal).
   - `nb_pages_have_no_english` covers the new page.
 - **Launcher**:
   - `accessGrants` rows: each key, the window, `null`, the call deferral per key, hidden skipped.
-  - `networkUids` rows: denied, the window, `null`, a shared uid, `never`.
+  - `networkUids` rows: denied, the window, `null`, a shared uid, `never`, a removed package's uid leaving, the
+    sandbox uid on 35+, a call deferring an addition but not a removal.
+  - The VPN builder's disallowed list from the stored cut set, per shape; the cut and lift orders.
   - The report's readings (`admin_denied` only when every requested permission is DENIED; `refused`).
   - The contract test; the `net_off` UP row.
 - **JS**: `app-display.test.js` (the segments show and hide the picks, the preview follows the name and the glyph).
@@ -543,16 +607,20 @@ The check against "Words in the UI":
 - A debug-only receiver in the debug launcher sets and clears the config for a package's uid.
 - The client is the debuggable `me.vibb.music.debug`, through `adb shell run-as … toybox nc -w 5 <ip> 443` and a
   name.
-- Pass means each of these holds on all three images:
+- **Both variants** are probed, A1 (the preference alone) and A2 (the preference and the app outside the VPN), the
+  filter shape first. The receiver also restarts the VPN with the package disallowed, for A2.
+- **Pass rule: one variant holds on Android 14, 16 and 17.** Holding means each of these is true:
   - The cut uid can't connect on Wi-Fi or on mobile, in each VPN shape (filter, sink, pass), and with the filter off.
   - A `bindProcessToNetwork`/`Network.openConnection` to Wi-Fi fails. This needs the probe receiver to try it as the
     music app, through its debug bridge; or the probe drops this check and the gate does it with a test APK.
   - A `DownloadManager` request for the cut uid doesn't run.
   - Every other app and the launcher (sync, SSE, tsnet) are unaffected.
   - Clearing the config restores the cut app's network.
-  - The cut survives a reboot.
+  - The cut survives a reboot (§4.2's persistence assumption).
+  - Under A2, another app's open connection survives the re-establish.
   - `dumpsys connectivity` shows the uid's request with no network.
-- One failure on any image: Nett is not built, and the user hears it.
+- If neither variant holds on all three images, Nett is not built, and the user hears it. If only A1 holds, the build
+  still uses A2 (it is the safer of the two), unless the probe shows A2 costing something A1 doesn't.
 - The probe also denies location, microphone and contacts for a test app on 14 and 17 (`dumpsys package`: granted
   false, `POLICY_FIXED`), and checks that DEFAULT clears the fix.
 
@@ -568,10 +636,34 @@ eye):
 
 ## 10. Questions for the user
 
-**Q1 - Nett for preinstalled apps.** The Tilgang switches (Nett included) are offered only for apps that weren't on
-the phone from the factory, as the camera switch is today. So Google's preinstalled apps, such as YouTube or Chrome
-where they came with the phone, get no Nett switch. They can still be blocked entirely with Tillatt.
-- **Recommendation: keep it so.** Among the preinstalled apps are the ones the phone needs to work, and cutting the
-  wrong one breaks calls or Play.
-- If you want Nett for preinstalled apps too, it can be offered for them, with Google Play services, the Phone and
-  Messages apps, Settings and Vibb left out.
+None open. Q1 (Tilgang for preinstalled apps) was answered by the user on 2026-11-22 with "1 ok": the switches are
+offered only for apps the parent installed (§5).
+
+## 11. QA revision 2
+
+How each design QA finding was handled:
+
+- **H1** (Nett leaks through the VPN in the filter and pass shapes): taken. §4.2 adds variant A2: every cut package
+  goes into `addDisallowedApplication` in every shape, outside a window.
+  - The costs are named: the coupling to `KidVpnService` and a re-establish when the cut set changes.
+  - The cut and lift orders are set.
+  - Step 0 probes A1 and A2, the filter shape first. Its pass rule is "one variant holds on 14, 16 and 17".
+  - §0's "does not touch our VPN" is reworded.
+- **M1** (special accesses): a special access not approved stays a quiet value, as in design 68. The way to approve
+  is behind the (i), and it isn't counted on the list (§2.5, §2.2, §6).
+- **M2** (Tillatt off uninstalls): §2.1 and §2.3 say that off removes the app and lands on the list. The head-only
+  page is dropped. The prune is dropped (§3.4), so a re-ticked catalog app comes back with its denials. "Hidden apps
+  are included too" is removed.
+- **L1**: the network write defers additions while `WindowRelock.liveCall` holds (§4.2).
+- **L2**: every install, change and removal recomputes the whole uid set. The sorted uids are compared with the
+  config. Freed appIds are named (§4.2).
+- **L3**: persistence across reboots and crashes is marked [assumed, probed] and is in the probe.
+- **L4**: only a deny of an unrequested key is refused; an allow is always accepted (§3.4).
+- **L5**: Custom Tabs, Play services' proxied APIs and the SDK Runtime are listed. The sandbox uid is included on
+  15+, and is out of scope on 14 (§4.2, §4.3).
+- **L6**: `from` goes through `AppsFrom::parse` (§2.1).
+- **L7**: "Bare det appen ber om, står her" is dropped. The list counts no refusal; its only orange part is a held
+  update (§2.2, §6).
+- **L8**: step 2 renames the table in `src/tests/device_api.rs` (§7).
+- **The migration number**: 0165, since 0164 is `upstream-fixes`' (§3.4, §7).
+- **Q1**: decided by the user's "1 ok", for all Tilgang switches (§5, §10).
