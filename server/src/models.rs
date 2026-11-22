@@ -1990,6 +1990,10 @@ pub struct InstallProgressReport {
     pub percent: i64,
     #[serde(default)]
     pub failed: bool,
+    /// Why it failed (upstream review 2026-11-20): kept only as `install_failure::clean` allows,
+    /// any JSON here - a sentence, a number - is no reason, never a refused report.
+    #[serde(default)]
+    pub reason: Option<serde_json::Value>,
 }
 
 /// One blocked-domain event as reported by the device - see

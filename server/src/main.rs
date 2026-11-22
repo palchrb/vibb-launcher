@@ -28,6 +28,7 @@ mod gate;
 mod handlers;
 mod i18n;
 mod ics;
+mod install_failure;
 mod install_now;
 mod integration_health;
 mod integrations;
@@ -1463,8 +1464,9 @@ pub fn build_admin_router(
         )
         .route(
             "/apps/tracked/{id}/upload",
-            post(handlers::tracked_apps::upload_tracked_app_release)
-                .layer(DefaultBodyLimit::max(200 * 1024 * 1024)),
+            post(handlers::tracked_apps::upload_tracked_app_release).layer(DefaultBodyLimit::max(
+                handlers::tracked_apps::UPLOAD_BODY_LIMIT,
+            )),
         )
         .route(
             "/apps/tracked/{id}/check",

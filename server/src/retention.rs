@@ -41,6 +41,9 @@ pub const LIFT_DAYS: i64 = crate::parent_events::EVENT_DAYS;
 /// A download's progress (`device_install_progress`) is shown this long after the phone's last
 /// word (`devices::view_device`), then pruned (security review P6).
 pub const INSTALL_PROGRESS_MINUTES: i64 = 10;
+/// A failed install's row (with its reason, upstream review 2026-11-20) is shown and kept this long instead: the
+/// parent learns of it later than of a running download.
+pub const INSTALL_FAILED_HOURS: i64 = 24;
 /// Web Push deliveries (design 35 §2.4).
 pub const PUSH_DAYS: i64 = 30;
 /// A subscription a push service ended (`gone`, 404/410 or another server key) stays this long - shown on Devices
@@ -228,7 +231,7 @@ fn rows(
 ///   (the policy's pop, `device_api::build_policy`). A delivered one is long past its re-delivery
 ///   window; an acknowledged or cancelled one is done (design 48 §1.6);
 /// - extra-time grants [LIFT_DAYS] after they ended (and the answers to requests for more time, design 100), IP
-///   bans once they expired, a download's progress after [INSTALL_PROGRESS_MINUTES] (nothing reads them later; security review P6);
+///   bans once they expired, a download's progress after [INSTALL_PROGRESS_MINUTES] (a failed install's after [INSTALL_FAILED_HOURS]; nothing reads them later; security review P6);
 /// - a weather cell no phone asked for in `weather_cache::CELL_HOURS` (or the longest `location_retention_days` of any
 ///   phone, when that is shorter: code QA L3; design 75 §3.1; by age only - Location Off's erase is
 ///   `update_location_policy`'s);
@@ -506,9 +509,11 @@ pub async fn prune(db: &SqlitePool) -> Pruned {
         "device_install_progress",
         sqlx::query(
             "DELETE FROM device_install_progress \
-             WHERE updated_at <= datetime('now', '-' || ? || ' minutes')",
+             WHERE (failed = 0 AND updated_at <= datetime('now', '-' || ? || ' minutes')) \
+             OR updated_at <= datetime('now', '-' || ? || ' hours')",
         )
         .bind(INSTALL_PROGRESS_MINUTES)
+        .bind(INSTALL_FAILED_HOURS)
         .execute(db)
         .await,
     );

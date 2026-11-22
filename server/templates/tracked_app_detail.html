@@ -338,7 +338,7 @@
             </div>
             <div class="field">
                 <label class="field-label" for="apk">{{ self.t("apps.app.apk_file") }}</label>
-                <input type="file" id="apk" name="apk" accept=".apk" required>
+                <input type="file" id="apk" name="apk" accept=".apk" required data-max-bytes="{{ self.upload_max_bytes() }}" data-w-too-big="{{ self.upload_too_big() }}">
             </div>
             {% if let Some(flash) = upload_note %}
             {% let flash_at = "upload" %}{% let flash_class = "form-flash" %}{% let flash_about = self.t("apps.app.upload_refused_about") %}
@@ -346,6 +346,7 @@
             {% endif %}
             <button type="submit" class="button-wide">{{ self.t("apps.app.upload") }}</button>
         </form>
+        <script src="/static/apk-upload.js?v=1" defer data-swap-ready></script>
         {% endif %}
     </details>
 

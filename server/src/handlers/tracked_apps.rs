@@ -35,6 +35,13 @@ pub const TRACKED_APPS_DIR: &str = "data/tracked_apps";
 /// The largest asset a sync downloads: one GitHub lists as bigger is refused before downloading,
 /// one without a listed size is stopped once it gets there.
 const MAX_ASSET_BYTES: u64 = 1_000_000_000;
+/// A manual upload's largest APK (upstream review 2026-11-20): twice a GitHub or F-Droid
+/// release's [MAX_ASSET_BYTES]. The upload is the parent's own file in hand and the one way in for
+/// a big game (upstream's was 1.2 GB), while the hourly sync's unattended download keeps the
+/// smaller cap. Under 2^31 bytes, so the size fits a 32-bit int wherever it travels.
+pub(crate) const MAX_UPLOAD_BYTES: u64 = 2_000_000_000;
+/// The upload route's body limit (`main.rs`): the APK plus the label and the multipart framing.
+pub(crate) const UPLOAD_BODY_LIMIT: usize = MAX_UPLOAD_BYTES as usize + 1_000_000;
 /// A download that delivers no data for this long fails...
 pub(crate) const DOWNLOAD_STALL_TIMEOUT: Duration = Duration::from_secs(60);
 /// ...and so does one still running after this, however steadily it trickles.
@@ -408,6 +415,22 @@ impl ChunkSource for reqwest::Response {
     }
 }
 
+/// A manual upload's file field as a [ChunkSource]; `too_big` once the route's body limit
+/// ([UPLOAD_BODY_LIMIT]) stopped it, which the answer words as its own message.
+struct UploadField<'a> {
+    field: axum::extract::multipart::Field<'a>,
+    too_big: bool,
+}
+
+impl ChunkSource for UploadField<'_> {
+    async fn next_chunk(&mut self) -> Result<Option<Bytes>, String> {
+        self.field.chunk().await.map_err(|err| {
+            self.too_big |= err.status() == StatusCode::PAYLOAD_TOO_LARGE;
+            err.body_text()
+        })
+    }
+}
+
 /// A download's temp file, deleted when this is dropped unless [TempDownload::keep] ran - so an
 /// error return, a timeout and a future dropped half-way (a "Check now" whose request went away,
 /// a shutdown) all remove it.
@@ -462,6 +485,26 @@ pub(crate) async fn stream_to_file(
     expected_sha256: Option<&str>,
     stall: Duration,
 ) -> Result<Downloaded, Failure> {
+    stream_capped(
+        source,
+        final_path,
+        expected_size,
+        expected_sha256,
+        stall,
+        MAX_ASSET_BYTES,
+    )
+    .await
+}
+
+/// [stream_to_file] with its own cap: a manual upload's is [MAX_UPLOAD_BYTES].
+async fn stream_capped(
+    source: &mut impl ChunkSource,
+    final_path: &str,
+    expected_size: u64,
+    expected_sha256: Option<&str>,
+    stall: Duration,
+    max_bytes: u64,
+) -> Result<Downloaded, Failure> {
     use SyncProblem::{Download, Server, TooBig};
     let temp = TempDownload {
         path: format!("{final_path}.{}.part", random_label()),
@@ -485,13 +528,13 @@ pub(crate) async fn stream_to_file(
             .map_err(|e| Failure::new(Download, e))?;
         let Some(chunk) = chunk else { break };
         written += chunk.len() as u64;
-        if written > MAX_ASSET_BYTES {
+        if written > max_bytes {
             return Err(Failure::new(
                 TooBig,
                 format!(
                     "download stopped at {} MB, over the {} limit",
                     written / 1_000_000,
-                    size_limit_text()
+                    gb_text(max_bytes)
                 ),
             ));
         }
@@ -541,7 +584,12 @@ pub(crate) async fn stream_to_file(
 
 /// "1 GB", for the messages about [MAX_ASSET_BYTES].
 fn size_limit_text() -> String {
-    format!("{} GB", MAX_ASSET_BYTES / 1_000_000_000)
+    gb_text(MAX_ASSET_BYTES)
+}
+
+/// A whole number of gigabytes: "2 GB".
+fn gb_text(bytes: u64) -> String {
+    format!("{} GB", bytes / 1_000_000_000)
 }
 
 /// Downloads `asset` to `final_path` (see [stream_to_file]): refused up front when GitHub lists it
@@ -3533,6 +3581,22 @@ struct TrackedAppDetailTemplate {
     asks: Option<AsksRow>,
     wait: Option<WaitField>,
 }
+
+impl TrackedAppDetailTemplate {
+    /// The upload field's limit, which `static/apk-upload.js` checks before the file is sent.
+    fn upload_max_bytes(&self) -> u64 {
+        MAX_UPLOAD_BYTES
+    }
+
+    /// The upload's too-big message, as the server's own answer words it.
+    fn upload_too_big(&self) -> String {
+        t_params(
+            self.lang,
+            "apps.app.upload_too_big",
+            &[("limit", &gb_text(MAX_UPLOAD_BYTES))],
+        )
+    }
+}
 crate::i18n::words!(TrackedAppDetailTemplate);
 
 /// A local time on a page: "2 h ago" and the exact time for `title=` and ⓘ panels.
@@ -4282,53 +4346,6 @@ pub async fn upload_tracked_app_release(
         return page;
     }
 
-    let mut release_label: Option<String> = None;
-    let mut apk_bytes: Option<Vec<u8>> = None;
-    let mut apk_name: Option<String> = None;
-
-    while let Ok(Some(field)) = multipart.next_field().await {
-        let name = field.name().unwrap_or("").to_string();
-        match name.as_str() {
-            "release_label" => {
-                release_label = field.text().await.ok().map(|s| s.trim().to_string());
-            }
-            "apk" => {
-                apk_name = field
-                    .file_name()
-                    .map(|n| n.trim().chars().take(200).collect::<String>())
-                    .filter(|n| !n.is_empty());
-                apk_bytes = field.bytes().await.ok().map(|b| b.to_vec());
-            }
-            _ => {}
-        }
-    }
-
-    let (Some(release_label), Some(apk_bytes)) = (release_label, apk_bytes) else {
-        return render_detail(
-            &state,
-            id,
-            Some(Note::Upload(Flash::title(t(
-                lang,
-                "apps.app.upload_missing",
-            )))),
-            lang,
-        )
-        .await;
-    };
-
-    if release_label.is_empty() || apk_bytes.is_empty() {
-        return render_detail(
-            &state,
-            id,
-            Some(Note::Upload(Flash::title(t(
-                lang,
-                "apps.app.upload_missing",
-            )))),
-            lang,
-        )
-        .await;
-    }
-
     let app_dir = state.tracked_apps_dir.join(id.to_string());
     if tokio::fs::create_dir_all(&app_dir).await.is_err() {
         return render_detail(
@@ -4346,18 +4363,131 @@ pub async fn upload_tracked_app_release(
         .join(format!("{}.apk", random_label()))
         .to_string_lossy()
         .into_owned();
-    if tokio::fs::write(&file_path, &apk_bytes).await.is_err() {
+    // Removed on every answer but the stored release's (`keep` below).
+    let placed = TempDownload::new(file_path.clone());
+
+    // The APK is streamed to its file and hashed on the way (upstream review 2026-11-20: it was
+    // read whole into memory under a 200 MB body limit, and a bigger one read as a missing file).
+    let mut release_label: Option<String> = None;
+    let mut upload: Option<Result<Downloaded, Failure>> = None;
+    let mut apk_name: Option<String> = None;
+    let mut too_big = false;
+    loop {
+        let field = match multipart.next_field().await {
+            Ok(Some(field)) => field,
+            Ok(None) => break,
+            Err(err) => {
+                too_big |= err.status() == StatusCode::PAYLOAD_TOO_LARGE;
+                break;
+            }
+        };
+        let name = field.name().unwrap_or("").to_string();
+        match name.as_str() {
+            "release_label" => {
+                release_label = field.text().await.ok().map(|s| s.trim().to_string());
+            }
+            // A browser sends an empty file field when none was chosen: missing, as no field.
+            "apk"
+                if upload.is_none() && field.file_name().is_some_and(|n| !n.trim().is_empty()) =>
+            {
+                apk_name = field
+                    .file_name()
+                    .map(|n| n.trim().chars().take(200).collect::<String>())
+                    .filter(|n| !n.is_empty());
+                let mut source = UploadField {
+                    field,
+                    too_big: false,
+                };
+                let result = stream_capped(
+                    &mut source,
+                    &file_path,
+                    0,
+                    None,
+                    DOWNLOAD_STALL_TIMEOUT,
+                    MAX_UPLOAD_BYTES,
+                )
+                .await;
+                too_big |= source.too_big
+                    || matches!(&result, Err(failure) if failure.problem == SyncProblem::TooBig);
+                upload = Some(result);
+                if too_big {
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if too_big {
+        let mut page = render_detail(
+            &state,
+            id,
+            Some(Note::Upload(Flash::title(&t_params(
+                lang,
+                "apps.app.upload_too_big",
+                &[("limit", &gb_text(MAX_UPLOAD_BYTES))],
+            )))),
+            lang,
+        )
+        .await;
+        if page.status() == StatusCode::OK {
+            *page.status_mut() = StatusCode::PAYLOAD_TOO_LARGE;
+        }
+        return page;
+    }
+    let (Some(release_label), Some(upload)) = (release_label, upload) else {
         return render_detail(
             &state,
             id,
             Some(Note::Upload(Flash::title(t(
                 lang,
-                "apps.app.upload_failed",
+                "apps.app.upload_missing",
+            )))),
+            lang,
+        )
+        .await;
+    };
+    if release_label.is_empty() {
+        return render_detail(
+            &state,
+            id,
+            Some(Note::Upload(Flash::title(t(
+                lang,
+                "apps.app.upload_missing",
             )))),
             lang,
         )
         .await;
     }
+    let uploaded = match upload {
+        Ok(uploaded) => uploaded,
+        // Not a ZIP (an empty file included): the APK can't be read, as `apk_identity` says.
+        Err(failure) if failure.detail == NOT_A_ZIP => {
+            return render_detail(
+                &state,
+                id,
+                Some(Note::Upload(Flash::failed(
+                    Failure::new(SyncProblem::Unreadable, failure.detail),
+                    lang,
+                ))),
+                lang,
+            )
+            .await;
+        }
+        Err(failure) => {
+            tracing::warn!(app_id = id, "upload not stored: {}", failure.detail);
+            return render_detail(
+                &state,
+                id,
+                Some(Note::Upload(Flash::title(t(
+                    lang,
+                    "apps.app.upload_failed",
+                )))),
+                lang,
+            )
+            .await;
+        }
+    };
 
     let identity = match apk_identity(&file_path)
         .await
@@ -4387,7 +4517,7 @@ pub async fn upload_tracked_app_release(
         .await;
     }
 
-    let sha256 = hex_digest(Sha256::digest(&apk_bytes));
+    let sha256 = uploaded.sha256;
     // Design 90 §5: an upload is the parent's own act with the file in hand - never waited for or
     // held, and what it asks for is added to the set the parent accepted. A release held meanwhile
     // stays held until answered (§17.3 L8).
@@ -4405,7 +4535,7 @@ pub async fn upload_tracked_app_release(
     .bind(&release_label)
     .bind(&file_path)
     .bind(&apk_name)
-    .bind(apk_bytes.len() as i64)
+    .bind(uploaded.size as i64)
     .bind(&sha256)
     .bind(identity.version_code)
     .bind(
@@ -4432,6 +4562,7 @@ pub async fn upload_tracked_app_release(
         )
         .await;
     }
+    placed.keep();
     store_pins(&state, &app, &identity).await;
     crate::handlers::device_api::nudge_phones_with_app(&state, id).await;
 
@@ -6093,6 +6224,28 @@ mod tests {
                 files_in(dir.path())
             );
         }
+    }
+
+    /// A manual upload streams through the same path with its own cap (upstream review
+    /// 2026-11-20): over it is `TooBig`, worded with that cap, and nothing is kept.
+    #[tokio::test]
+    async fn an_upload_over_its_cap_is_too_big_and_leaves_no_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("x.apk");
+        let target = target.to_str().unwrap();
+        let mut source = Canned::new([Step::Data(b"PK\x03\x04abc"), Step::Data(b"defgh")]);
+        let err = stream_capped(&mut source, target, 0, None, STALL, 10)
+            .await
+            .unwrap_err();
+        assert_eq!(err.problem, SyncProblem::TooBig, "{err}");
+        assert!(files_in(dir.path()).is_empty());
+        let mut source = Canned::new([Step::Data(b"PK\x03\x04abc"), Step::Data(b"def")]);
+        let kept = stream_capped(&mut source, target, 0, None, STALL, 10)
+            .await
+            .unwrap();
+        assert_eq!(kept.size, 10);
+        assert_eq!(gb_text(MAX_UPLOAD_BYTES), "2 GB");
+        assert!(UPLOAD_BODY_LIMIT as u64 > MAX_UPLOAD_BYTES && MAX_UPLOAD_BYTES < 1 << 31);
     }
 
     /// A temp file this server can't write (a full SD card, a missing directory) is its own
