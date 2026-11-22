@@ -140,10 +140,15 @@ object MotionGate {
     }
 
     /** After one of our own attempts ([MotionFlags.afterTry]): a genuinely fresh fix ([freshFixMs])
-     * or the heartbeat's try ([heartbeat]) arms the trigger again. One monitor with [fired]'s. */
-    fun afterTry(context: Context, firesAtStart: Int, freshFixMs: Long?, heartbeat: Boolean, nowMs: Long) {
-        synchronized(this) { flags = flags.afterTry(firesAtStart, freshFixMs, heartbeat, nowMs) }
+     * or the heartbeat's try ([heartbeat]) arms the trigger again. One monitor with [fired]'s. True
+     * when no fire came during the attempt (the count held). */
+    fun afterTry(context: Context, firesAtStart: Int, freshFixMs: Long?, heartbeat: Boolean, nowMs: Long): Boolean {
+        val held = synchronized(this) {
+            flags = flags.afterTry(firesAtStart, freshFixMs, heartbeat, nowMs)
+            flags.fires == firesAtStart
+        }
         if (freshFixMs != null || heartbeat) ensureArmed(context, if (freshFixMs != null) "fresh" else "try")
+        return held
     }
 
     @Synchronized
@@ -201,6 +206,16 @@ object MotionGate {
     @Synchronized
     fun stop(context: Context) {
         keepArmed = false
+        disarm(context)
+    }
+
+    /** The anchor service stopped (D4, QA L3): our UID may go idle and the registration may never
+     * deliver - disarmed and moved; the next sync's [watch] registers it again. */
+    @Synchronized
+    fun anchorStopped(context: Context) = disarm(context)
+
+    @Synchronized
+    private fun disarm(context: Context) {
         val l = listener
         listener = null
         flags = flags.moved()

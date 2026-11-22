@@ -155,7 +155,7 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
 - **The paths** (design 64 §4.4, `LocationAction`): `FRESH` - today's precise path, GPS first, 15 s - only for
   `locate` (not `ring` since security review P-L2) and a crossing's confirming fix; `FRESH_BALANCED` - since design 124
   D9 `LocateCommands.balancedFirst`: `getCurrentLocation(FUSED_PROVIDER, QUALITY_BALANCED_POWER_ACCURACY, 15 s)` only
-  while the network provider is on (else GPS directly), GPS once more when the fused fix is missing or worse than 200 m
+  while the network provider is on and fused is there (else GPS directly, `path=gps`), GPS once more when the fused fix is missing or worse than 200 m
   (`balancedEnough`), the more accurate of the two kept (`gpsBetter`), logged `Fresh fix path=balanced|gps|balanced+gps
   result=fresh|none` under `ZoneWatch` - for the heartbeat, a crossing's first fix and the low-battery fix; the
   series' checks the balanced fix alone (`LocateCommands.seriesFix`, no GPS, no grant, no Location switch).
@@ -253,7 +253,8 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   (`Motion trigger refused`).
 - **The flags** (D3, pure `MotionFlags` in `ZonePlan.kt`, in memory under `MotionGate`'s monitor): `movedSinceFresh`,
   `movedSinceTry`, a `fires` counter, `stillSinceMs`. A fire and `markMoved` (a crossing, a side change,
-  `LocateCommands.clearCachedFix` - Off -, the anchor's `onDestroy`) set both and count. The sync reads the motion, the
+  `LocateCommands.clearCachedFix` - Off -, and the anchor's `onDestroy` through `MotionGate.anchorStopped`, which also
+  drops the registration for the next sync's `watch` to make again) set both and count. The sync reads the motion, the
   count and `stillSinceMs` together before any fix (`MotionGate.snapshot`, M1) and hands the outcome to
   `MotionGate.afterTry`: with the count moved nothing clears; a genuinely fresh fix (any path) clears both; a failure
   clears `movedSinceTry` only after the heartbeat's own `FIX` (L7). The series check does the same around its fix.
@@ -262,13 +263,16 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   `STILL_SINCE_TRY` when only `movedSinceFresh`; else `STILL`.
 - **The heartbeat** (D5): `NOT_DUE`; `KEPT`; `STILL` (no fix, `still: true`) while `STILL` and the last fresh fix is
   under 4 h old; `QUIET` (no fix, no `still`: the PWA shows the fix's own age) while `STILL`/`STILL_SINCE_TRY` and the
-  last try (`lastActiveLocationFetchAtMs`, every attempt) is younger than `stillBackoffMs` = (last try - `stillSinceMs`)
-  within the interval and 4 h; else `FIX`. A failed evening try indoors gives ~6 tries a night instead of 18; after a
-  good fix, one try per 4 h. Logged under `ZoneWatch`: `Location heartbeat: STILL|QUIET|KEPT backoff=N min`, and
-  `Fresh fix path=...` then `Location heartbeat: FIX result=fresh|none`.
+  last try is younger than `stillBackoffMs` = (last try - `stillSinceMs`) within the interval and 4 h; else `FIX`. The
+  last try is `ZoneWatch.lastTryMs` (CE prefs `zone_watch` `last_try_ms`), stamped by every sync that takes a fix with
+  the beat's own `now` in the beat's write (`stampBeat(.., tried)`) - not LocationManager's later stamp, which made a
+  beat one interval on `QUIET` by a few ms (code QA M1). A failed evening try indoors gives ~6 tries a night instead of
+  18; after a good fix, one try per 4 h. Logged under `ZoneWatch`: `Location heartbeat: QUIET backoff=N min`,
+  `Location heartbeat: STILL|KEPT`, and `Fresh fix path=...` then `Location heartbeat: FIX result=fresh|none`.
 - **A sensor that lies** (D7): a genuinely fresh fix taken while `motion` was `STILL` (a cap try, a `locate`, a
-  low-battery fix) further from the vouched (reported) fix than both accuracies + 200 m, both known and <= 100 m
-  (`motionContradiction`), is a contradiction (`ZoneWatch.noteContradiction`, CE prefs `zone_watch`
+  low-battery fix) further from the vouched fix (the reported one, only while it is the last fresh fix - QA L2) than
+  both accuracies + 200 m, both known and <= 100 m (`motionContradiction`), with no fire during the attempt
+  (`afterTry`'s answer, QA L1), is a contradiction (`ZoneWatch.noteContradiction`, CE prefs `zone_watch`
   `motion_contradictions_v1`); the second within 7 days (`trustAfterContradiction`) sets `motion_distrust_until_ms` 7
   days on - `NO_SENSOR` meanwhile and `zone_watch.motion_sensor: false` (`ZoneWatch.motionTrusted`). Kept across a new
   enrollment: it is the hardware's.

@@ -281,25 +281,28 @@ object LocateCommands {
     }
 
     /**
-     * Design 124 D9: the fused fix at balanced power first only while the network provider is on (off - Location
-     * Accuracy off on a GMS phone - fused could only wait for GPS); worse than 200 m
+     * Design 124 D9, for every `FRESH_BALANCED` fix (the heartbeat, a crossing's first fix, the low-battery fix): the
+     * fused fix at balanced power first only while the network provider is on and fused is there (off - Location
+     * Accuracy off on a GMS phone - fused could only wait for GPS; logged `path=gps`); worse than 200 m
      * ([com.kidslauncher.mdm.zones.balancedEnough]) or none -> GPS once ([preciseFix]), the better of the two kept
      * ([com.kidslauncher.mdm.zones.gpsBetter]). Every fix through the mock rule. Logged under `ZoneWatch` with the path
      * and the result, so a phone's nights can be read with `adb logcat -s ZoneWatch`.
      */
     private suspend fun balancedFirst(context: Context, lm: LocationManager): Location? {
         fun accuracy(fix: Location?) = fix?.takeIf { it.hasAccuracy() }?.accuracy
-        val networkOn = try {
-            lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
+        // The network provider on and the fused provider there to ask.
+        val balancedOn = try {
+            lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER) &&
+                lm.hasProvider(LocationManager.FUSED_PROVIDER) && lm.isProviderEnabled(LocationManager.FUSED_PROVIDER)
         } catch (e: Exception) {
             false
         }
-        val balanced = if (networkOn) requestBalancedFix(context, lm)?.takeIf { ZoneWatch.accept(context, it) } else null
+        val balanced = if (balancedOn) requestBalancedFix(context, lm)?.takeIf { ZoneWatch.accept(context, it) } else null
         val askGps = !com.kidslauncher.mdm.zones.balancedEnough(accuracy(balanced))
         val gps = if (askGps) requestFreshFix(context, lm, preciseFix(false))?.takeIf { ZoneWatch.accept(context, it) } else null
         val kept = if (balanced == null || com.kidslauncher.mdm.zones.gpsBetter(accuracy(balanced), accuracy(gps))) gps else balanced
         val path = when {
-            !networkOn -> "gps"
+            !balancedOn -> "gps"
             askGps -> "balanced+gps"
             else -> "balanced"
         }

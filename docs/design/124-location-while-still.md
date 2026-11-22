@@ -61,8 +61,9 @@ only when `fences > 0`. One reader ignores `resent_at`: the weather's fix (`hand
    zones the kept slot is empty, so `KEPT` never happens. `ZonePlanTest:168` ("without zones the location step is
    exactly today's") becomes "not Regularly, not owner or not managed = `locationAction`".
 2. **The sensor without zones: one-shot.** `ZoneWatch.apply`: zones -> `watch(zones = true)` (kept armed for the
-   series, as today); Regularly without zones -> `watch(zones = false)`: armed now if not armed (M3: at every process
-   start, so a new process catches a move from its first sync) and after every heartbeat try, not re-armed at a fire;
+   series, as today); Regularly without zones -> `watch(zones = false)`: armed at every sync if not armed (M3: so at
+   every process start a new process catches a move from its first sync) and after every heartbeat try, not re-armed
+   at a fire;
    `MotionGate.stop` (which resets to moved) only when not Regularly. `LocateCommands.clearCachedFix` (mode Off) also
    calls `markMoved`, so nothing vouches across an Off.
 3. **The flags as a pure class** (`MotionFlags` in `ZonePlan.kt`, rows in `ZonePlanTest`; `MotionGate` holds one
@@ -100,9 +101,12 @@ only when `fences > 0`. One reader ignores `resent_at`: the weather's fix (`hand
    (`PASSIVE_ACCURACY_FLOOR_M`; a rural cell fix can be km) -> GPS once and keep the better; nothing -> GPS. Network
    off -> GPS directly (today's no-zones path; no 15-s wait on a fused call that can't answer). The series' checks
    stay balanced only; `locate` keeps its own path (fused high accuracy, 60 s). In `freshOrLastKnown`, with a log line
-   naming the path and the result (D11).
-10. **Unchanged:** `locate` (always fresh), the low-battery fix (one balanced fix per episode), crossings
-    (`markMoved`), "Only when asked", Off, the pause, P-L3's age limit (a `still` re-send has none, as today).
+   naming the path and the result (D11). Decided at the code QA (L4): the same path for every `FRESH_BALANCED` fix -
+   a crossing's first fix and the low-battery fix too (`LocateCommands.balancedFirst`); fused not there counts as
+   network off (`path=gps`).
+10. **Unchanged:** `locate` (always fresh), the low-battery fix (one balanced fix per episode, by D9's path), crossings
+    (`markMoved`; the first fix by D9's path), "Only when asked", Off, the pause, P-L3's age limit (a `still` re-send
+    has none, as today).
 11. **What is visible, no new data.** Log lines under `ZoneWatch`: `Motion trigger armed (start|fresh|try)`,
     `Motion trigger fired`, `Motion trigger refused`, `Location heartbeat: STILL|QUIET|FIX path=balanced|gps|balanced+gps
     result=fresh|none backoff=..`, `Motion contradiction`, `Motion sensor distrusted until ...`. No new report field:

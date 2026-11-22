@@ -319,7 +319,19 @@ async fn a_still_re_send_keeps_an_old_fix_the_position() {
     resend(Duration::hours(7)).await.unwrap();
     assert_eq!(weather(&app, &token).await["status"], "no_position");
     resend(Duration::minutes(20)).await.unwrap();
+    // A newer fix by its own time, never re-sent: the one re-sent 20 min ago is still the newest vouched.
+    fix(&app, id, 63.4305, 10.3951, Duration::hours(2), None).await;
     assert_eq!(weather(&app, &token).await["status"], "ok");
+    let trondheim =
+        "https://api.met.no/weatherapi/locationforecast/2.0/complete?lat=63.44&lon=10.40";
+    assert!(
+        !app.fetch
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|u| u == trondheim)
+    );
 }
 
 /// D7: past `Expires` the fetch is conditional on the stored `Last-Modified`, a 304 moves `checked_at`; the next fetch

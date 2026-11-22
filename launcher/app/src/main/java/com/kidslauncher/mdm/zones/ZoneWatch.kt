@@ -36,6 +36,7 @@ private const val KEY_MOCK_IGNORED = "mock_ignored"
 private const val KEY_MOCK_LAST = "mock_last_time_ms"
 private const val KEY_MOCK_KEYS = "mock_keys_v1"
 private const val KEY_LAST_BEAT = "last_beat_ms"
+private const val KEY_LAST_TRY = "last_try_ms"
 private const val KEY_LAST_FRESH_FIX = "last_fresh_fix_ms"
 private const val KEY_BUDGET = "series_budget_v1"
 private const val KEY_CONTRADICTIONS = "motion_contradictions_v1"
@@ -159,7 +160,7 @@ object ZoneWatch {
                 prefs(app).edit()
                     .remove(KEY_FENCES).remove(KEY_QUEUE).remove(KEY_LAST_BEAT)
                     .remove(KEY_MOCK_IGNORED).remove(KEY_MOCK_LAST).remove(KEY_MOCK_KEYS)
-                    .remove(KEY_LAST_FRESH_FIX).remove(KEY_BUDGET)
+                    .remove(KEY_LAST_FRESH_FIX).remove(KEY_LAST_TRY).remove(KEY_BUDGET)
                     .commit()
             }
         } catch (e: Exception) {
@@ -232,8 +233,16 @@ object ZoneWatch {
      * backstop alarm counts the next one from here. */
     fun lastBeatMs(context: Context): Long = prefs(context).getLong(KEY_LAST_BEAT, 0L)
 
-    fun stampBeat(context: Context, nowMs: Long) {
-        prefs(context).edit().putLong(KEY_LAST_BEAT, nowMs).commit()
+    /** Wall time of the last attempt the sync made (0 = none yet) - what the heartbeat's back-off
+     * counts from (design 124 D5). Stamped with the beat's own `now` ([stampBeat]), never with
+     * LocationManager's later stamp: a beat one interval on is then never `QUIET` by a few ms (QA M1). */
+    fun lastTryMs(context: Context): Long = prefs(context).getLong(KEY_LAST_TRY, 0L)
+
+    /** The beat at [nowMs]; with [tried] (the sync takes a fix) the last try at the same instant. */
+    fun stampBeat(context: Context, nowMs: Long, tried: Boolean) {
+        val edit = prefs(context).edit().putLong(KEY_LAST_BEAT, nowMs)
+        if (tried) edit.putLong(KEY_LAST_TRY, nowMs)
+        edit.commit()
     }
 
     /** Wall time of our last **genuinely fresh** own fix (`freshOwnFix`; 0 = none) - what the
