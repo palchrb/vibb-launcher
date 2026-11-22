@@ -498,7 +498,9 @@ object AppEnforcer {
         // role is unhidden and pinned only once its lockdown is written and read back; the pause and the override lift
         // the lockdown (D9), whose end is a tightening.
         val loginRole = com.kidslauncher.mdm.logins.loginRoleOf(policy?.loginBrowser, allowlist)
-        val browser = BrowserConfig.apply(context, dpm, admin, vpnFilterEnabled, loginRole, lockdownLifted = overrideActive)
+        val browser = BrowserConfig.apply(
+            context, dpm, admin, vpnFilterEnabled, loginRole, lockdownLifted = overrideActive, managed = managedForHardening,
+        )
         // Design 119 §4.4: a window that is over ends here (stale, timeout, left), and one whose rule no longer holds -
         // a time rule, the role off or not ready, the gate off, Play's update window, a pause's start (code QA M2: its
         // hide before the loop unhides every app) or end - ends `rule`; then the plan reads it.

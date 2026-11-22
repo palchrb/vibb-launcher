@@ -28,7 +28,35 @@ object ChromePolicy {
     const val SAFE_SEARCH = "ForceGoogleSafeSearch"
     const val YOUTUBE_RESTRICT = "ForceYouTubeRestrict"
     const val DEV_TOOLS = "DeveloperToolsAvailability"
+
+    // Design 126 A3: Chrome's privacy keys, beside BROWSER_SIGNIN and SEARCH_SUGGEST above.
+    const val METRICS = "MetricsReportingEnabled"
+    const val URL_KEYED_DATA = "UrlKeyedAnonymizedDataCollectionEnabled"
+    const val NETWORK_PREDICTION = "NetworkPredictionOptions"
+    const val SAFE_BROWSING_LEVEL = "SafeBrowsingProtectionLevel"
 }
+
+/** Chrome's four packages (design 126 §2.3): each reads [ChromePolicy]'s names. The other listed browsers have their own
+ * policy names and get only design 67's secure-DNS key. */
+val CHROME_PACKAGES: List<String> = listOf(CHROME_PACKAGE, "com.chrome.beta", "com.chrome.dev", "com.chrome.canary")
+
+/**
+ * Design 126 A3: what Chrome sends Google, off on every managed phone - the role on or off, its lockdown in force or
+ * lifted, the filter on or off; a pause keeps them (they restrict nothing anyone uses). No metrics or crash reports, no
+ * visited URLs for "Make searches and browsing better", no preloading ahead of a tap, no Chrome sign-in (and with it no
+ * Sync: the phone's Google account is the family's Play account; Google *sites* still sign in), no keystrokes from the
+ * address bar, Safe Browsing's Standard level (never Enhanced, which sends the URLs visited). [BROWSER_SIGNIN] and
+ * [SEARCH_SUGGEST] have the lockdown's values, so the two maps merge plainly. `BrowserSignin` and `MetricsReportingEnabled`
+ * take hold at Chrome's next cold start.
+ */
+val CHROME_PRIVACY: Map<String, Any> = linkedMapOf(
+    ChromePolicy.METRICS to false,
+    ChromePolicy.URL_KEYED_DATA to false,
+    ChromePolicy.NETWORK_PREDICTION to 2,
+    ChromePolicy.BROWSER_SIGNIN to 0,
+    ChromePolicy.SEARCH_SUGGEST to false,
+    ChromePolicy.SAFE_BROWSING_LEVEL to 1,
+)
 
 /** `chrome://` is exempt from `*` since Chrome 147, so it is listed itself. */
 val CHROME_BLOCKLIST: List<String> = listOf("*", "chrome://*")
@@ -101,13 +129,22 @@ fun chromeLockdown(hosts: List<String>): Map<String, Any> = linkedMapOf(
 )
 
 /**
- * Each installed listed browser's managed config (design 67's `DnsOverHttpsMode` while the filter is on), and for
- * Chrome while the role's lockdown is in force ([lockdownHosts] not `null`: the role on, no pause or override) the
- * lockdown over it. Pure; `LoginBrowserTest`'s `bundles` rows and `BrowserDohTest`.
+ * Each installed listed browser's managed config: design 67's `DnsOverHttpsMode` while the filter is on; for Chrome's
+ * four packages ([CHROME_PACKAGES]) [CHROME_PRIVACY] while the phone is [managed] (`hardeningManaged`, design 126 A3);
+ * and for Chrome while the role's lockdown is in force ([lockdownHosts] not `null`: the role on, no pause or override)
+ * the lockdown. An unmanaged phone's bundles hold the DoH key at most. Pure; `LoginBrowserTest`'s `bundles` rows and
+ * `BrowserDohTest`.
  */
-fun browserConfigPlan(filterOn: Boolean, lockdownHosts: List<String>?, installed: Set<String>): Map<String, Map<String, Any>> =
+fun browserConfigPlan(
+    filterOn: Boolean,
+    lockdownHosts: List<String>?,
+    installed: Set<String>,
+    managed: Boolean,
+): Map<String, Map<String, Any>> =
     com.kidslauncher.mdm.server.browserDohPlan(filterOn, installed).mapValues { (pkg, doh) ->
-        if (pkg == CHROME_PACKAGE && lockdownHosts != null) chromeLockdown(lockdownHosts) + doh else doh
+        val privacy = if (managed && pkg in CHROME_PACKAGES) CHROME_PRIVACY else emptyMap()
+        val lockdown = if (pkg == CHROME_PACKAGE && lockdownHosts != null) chromeLockdown(lockdownHosts) else emptyMap()
+        privacy + lockdown + doh
     }
 
 /** The role as the policy and the allowlist give it: off (no role, an unmanaged phone, Chrome ticked), refused for another

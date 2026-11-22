@@ -44,6 +44,7 @@ class LoginBrowserTest {
                 filterOn = row.getValue("filter_on").jsonPrimitive.boolean,
                 lockdownHosts = strings(row["lockdown"]),
                 installed = strings(row["installed"])!!.toSet(),
+                managed = row.getValue("managed").jsonPrimitive.boolean,
             )
             val got = JsonObject(plan.mapValues { (_, values) -> JsonObject(values.mapValues { typed(it.value) }) })
             assertEquals(row.name(), row.getValue("expect"), got)
