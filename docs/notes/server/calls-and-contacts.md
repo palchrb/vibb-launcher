@@ -509,3 +509,20 @@ two sources, and nothing else lets an address in:
   the nb page (`tests::i18n_pages::nb_pages_have_no_english`).
 - **Not shown by any of this:** what an operator's notification really names, and which network the platform fetches
   on - design 77's step 0, on a real SIM. Until then "MMS works" means "the gate and the allow work".
+
+## The Matrix ID belongs to the contact (2026-11-22, migration 0161)
+
+The user: "når jeg kopierte over min kontakt fra emu kontakten, så tok den ikke med matrix id". One person, one ID:
+`contacts.message_address` is the Matrix ID every phone's Message button opens Element X with; each phone keeps only
+which app its button opens (`device_contacts.message_app`, NULL = the phone's `default_message_app`).
+- **Migration 0161** adds the column, fills it from the per-phone rows - a contact with different IDs on different
+  phones takes the one on the lowest device id (the rows carry no time) - and drops `device_contacts.message_address`.
+- **The policy is unchanged**: `call_policy.contacts[].message_address` is read from the contact
+  (`device_api::device_contacts`); no launcher change, `policy_json_keys_snapshot` as before.
+- **The PWA**: the Matrix ID field (a contact's Avansert, Add Contact) edits the contact's ID
+  (`calls::set_contact_address`), so a save on one phone's page shows on every phone's; a post without the field keeps
+  it, an empty one clears it everywhere. Add Contact with a number the family has keeps the family's ID unless one is
+  typed (or the kid's request's is taken with "Bruk Matrix-ID-en"); "Add from the family" brings the ID along. A
+  change nudges every phone that has the contact (`calls::nudge_contact_phones`).
+- **Tests**: `tests::calls_simpler::the_matrix_id_is_the_contacts_on_every_phone` (added on one phone, on the next
+  through "Add from the family", edited there, read in the first's policy), `the_migration_moves_the_matrix_id_to_the_contact`.

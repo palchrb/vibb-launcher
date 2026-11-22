@@ -45,7 +45,8 @@
     {% if let Some(launcher) = launcher %}{% if launcher.state != "works" %}{% include "partials/launcher_check.html" %}{% else %}<section id="launcher"></section>{% endif %}{% else %}<section id="launcher"></section>{% endif %}
 
     {#- The QR code renders in the POST's answer, in this group: the form posts to #qr, so the
-        answer lands on it with or without JS. The Wi-Fi password is never stored or shown again. -#}
+        answer lands on it with or without JS. The Wi-Fi password is never shown again: kept only sealed when
+        "Remember" is ticked (2026-11-22), and an empty field under the saved name uses it. -#}
     <section id="qr" aria-labelledby="qr-title">
         <h2 class="choice-title" id="qr-title">{{ self.t("devices.qr.qr") }}</h2>
         {#- Design 114 §5.8: no QR and no setup code without the phone's Parent PIN - one orange line to it; the save
@@ -80,18 +81,29 @@
                 </div>
                 <div class="field">
                     <label class="field-label" for="wifi_password">{{ self.t("devices.qr.wifi_password") }}</label>
-                    <input type="password" id="wifi_password" name="wifi_password" value="" autocomplete="off"{% if error_field == "wifi_password" %} aria-invalid="true" aria-describedby="wifi-error" autofocus{% endif %}>
-                    {% if error_field == "wifi_password" %}{% if let Some(why) = error %}<p class="field-error" id="wifi-error">{{ why }}</p>{% endif %}{% else if password_dropped %}<p class="field-error" id="wifi-password-error">{{ self.t("devices.qr.password_again") }}</p>{% else %}<p class="field-hint">{{ self.t("devices.qr.password_hint") }}</p>{% endif %}
+                    <input type="password" id="wifi_password" name="wifi_password" value=""{% if saved_password %} placeholder="{{ self.t("devices.qr.saved") }}"{% endif %} autocomplete="off"{% if error_field == "wifi_password" %} aria-invalid="true" aria-describedby="wifi-error" autofocus{% endif %}>
+                    {% if error_field == "wifi_password" %}{% if let Some(why) = error %}<p class="field-error" id="wifi-error">{{ why }}</p>{% endif %}{% else if password_dropped %}<p class="field-error" id="wifi-password-error">{{ self.t("devices.qr.password_again") }}</p>{% endif %}
                 </div>
+                {% if can_save %}
+                <label class="row field-switch" data-row="remember">
+                    <span class="row-label">{{ self.t("devices.qr.remember") }}</span>
+                    <input type="checkbox" role="switch" class="sw" name="remember" value="on"><span class="knob" aria-hidden="true"></span>
+                </label>
+                {% endif %}
                 <button type="submit" class="button-wide">{% if qr_svg.is_empty() %}{{ self.t("devices.qr.make") }}{% else %}{{ self.t("devices.qr.make_new") }}{% endif %}</button>
             </form>
+            {% if let Some(ssid) = saved_ssid %}
+            <form method="post" action="/devices/{{ device.id }}/provision/wifi/forget#qr" class="cell" data-row="forget-wifi">
+                <button type="submit" class="row row-button">{{ self.tp("devices.qr.forget", [("ssid", ssid.as_str())]) }}</button>
+            </form>
+            {% endif %}
             {% if !qr_svg.is_empty() && !enrolled %}
             <a class="row row-button" href="/devices/{{ device.id }}" data-row="done">{{ self.t("devices.code.done") }}</a>
             {% endif %}
             {% endif %}
         </div>
         <div class="group-footer">{{ self.t("devices.qr.footer") }}
-            <details class="info"><summary aria-label="{{ self.t("devices.qr.info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.tp("devices.qr.info", [("minutes", qr_minutes.to_string().as_str())]) }}</p>{% if !qr_svg.is_empty() && until.is_some() %}<p>{{ self.t("devices.qr.reload_info") }}</p>{% endif %}{% if let Some(launcher) = launcher %}{% if launcher.state == "works" %}{% if let Some(needs) = launcher.needs %}<p data-row="launcher-needs">{{ needs }}</p>{% endif %}{% endif %}{% endif %}</div></details>
+            <details class="info"><summary aria-label="{{ self.t("devices.qr.info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.tp("devices.qr.info", [("minutes", qr_minutes.to_string().as_str())]) }}</p>{% if can_save %}<p data-row="remember-info">{{ self.t("devices.qr.remember_info") }}</p>{% endif %}{% if !qr_svg.is_empty() && until.is_some() %}<p>{{ self.t("devices.qr.reload_info") }}</p>{% endif %}{% if let Some(launcher) = launcher %}{% if launcher.state == "works" %}{% if let Some(needs) = launcher.needs %}<p data-row="launcher-needs">{{ needs }}</p>{% endif %}{% endif %}{% endif %}</div></details>
         </div>
         {% endif %}
     </section>

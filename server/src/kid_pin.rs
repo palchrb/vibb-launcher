@@ -12,7 +12,6 @@
 
 use std::path::Path;
 
-use base64::Engine;
 use serde::Serialize;
 
 use crate::music_secret::MusicKey;
@@ -66,43 +65,18 @@ pub fn load(file: &Path) -> Result<MusicKey, String> {
         })
 }
 
-fn aad(fingerprint: &str, device_id: i64) -> Vec<u8> {
-    format!("kid-pin-v1:{fingerprint}:{device_id}").into_bytes()
-}
+/// The sealed values' purpose (`MusicKey::seal_text`): `kid-pin-v1:<fingerprint>:<device id>`.
+const PURPOSE: &str = "kid-pin-v1";
 
 /// `pin` sealed for `device_id`'s row.
 pub fn seal(key: &MusicKey, device_id: i64, pin: &KidPin) -> String {
-    let (ciphertext, nonce) =
-        key.seal_with(&aad(&key.fingerprint, device_id), pin.as_str().as_bytes());
-    let b64 = base64::engine::general_purpose::STANDARD;
-    format!(
-        "v1:{}:{}:{}",
-        key.fingerprint,
-        b64.encode(nonce),
-        b64.encode(ciphertext)
-    )
+    key.seal_text(PURPOSE, &device_id.to_string(), pin.as_str().as_bytes())
 }
 
 /// The PIN `sealed` holds for `device_id`, or `None`: another key, another phone's row, a changed
 /// byte, another format, or anything but a valid Child PIN inside.
 pub fn open(key: &MusicKey, device_id: i64, sealed: &str) -> Option<KidPin> {
-    let mut parts = sealed.split(':');
-    let (Some("v1"), Some(fingerprint), Some(nonce), Some(ciphertext), None) = (
-        parts.next(),
-        parts.next(),
-        parts.next(),
-        parts.next(),
-        parts.next(),
-    ) else {
-        return None;
-    };
-    let b64 = base64::engine::general_purpose::STANDARD;
-    let plain = key.open_with(
-        &aad(fingerprint, device_id),
-        &b64.decode(ciphertext).ok()?,
-        &b64.decode(nonce).ok()?,
-        fingerprint,
-    )?;
+    let plain = key.open_text(PURPOSE, &device_id.to_string(), sealed)?;
     String::from_utf8(plain)
         .ok()
         .filter(|pin| crate::kid_lock::valid_kid_pin(pin))

@@ -1134,6 +1134,11 @@ pub fn build_admin_router(
             "/devices/{id}/provision",
             get(handlers::provisioning::provision_form).post(handlers::provisioning::provision_qr),
         )
+        // 2026-11-22: the saved Wi-Fi network deleted.
+        .route(
+            "/devices/{id}/provision/wifi/forget",
+            post(handlers::provisioning::forget_wifi),
+        )
         .route("/devices/{id}", get(handlers::devices::view_device))
         // 2026-11-13: the phone's Activity, one row on the summary since.
         .route("/devices/{id}/activity", get(handlers::activity::view))

@@ -1060,3 +1060,90 @@ async fn check_again_comes_back_to_the_row() {
         read_response(crate::launcher_check::check_again(State(state), Form(form)).await).await;
     assert_redirect(&res, "/devices/7/provision", Some("launcher"));
 }
+
+/// 2026-11-22: "Remember network" keeps the Wi-Fi network for the next QR, its password sealed - never in the
+/// database or a page in the clear; an empty field under the saved name uses it, and Forget deletes it.
+#[tokio::test]
+async fn a_remembered_wifi_network_is_sealed_reused_and_forgotten() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.create_device("Anna").await;
+    app.set_parent_pin(id).await;
+    let action = format!("/devices/{id}/provision");
+    let password = "fake-wifi-pass";
+    let res = app
+        .request_form(
+            Method::POST,
+            &action,
+            Some(&cookie),
+            &[
+                ("wifi_ssid", "Hjemme"),
+                ("wifi_password", password),
+                ("remember", "on"),
+            ],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK);
+    assert!(res.text().contains("data-row=\"qr\""));
+    let (ssid, sealed): (String, String) = sqlx::query_as(
+        "SELECT wifi_ssid, wifi_password_sealed FROM provisioning_settings WHERE id = 1",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(ssid, "Hjemme");
+    assert!(
+        sealed.starts_with("v1:") && !sealed.contains(password),
+        "{sealed}"
+    );
+
+    // The page says one is saved - its name, never the password.
+    let html = app.get_page(&action, &cookie).await.text();
+    assert!(html.contains("value=\"Hjemme\""), "{html}");
+    assert!(html.contains("placeholder=\"Saved\""));
+    assert!(html.contains("Forget Hjemme"));
+    assert!(!html.contains(password) && !html.contains(&sealed));
+    // An empty field under the saved name: the QR gets the saved password (opened only for it); another name or a
+    // typed password: what was typed.
+    let saved = provisioning::saved_wifi(&app.db).await.unwrap();
+    let qr = |state: &AppState, ssid: &str, typed: &str| {
+        provisioning::qr_password(state, saved.as_ref(), ssid, typed)
+    };
+    assert_eq!(qr(&app.state, "Hjemme", "").as_deref(), Some(password));
+    assert_eq!(qr(&app.state, "Hytta", "").as_deref(), Some(""));
+    assert_eq!(
+        qr(&app.state, "Hjemme", "other-fake-pass").as_deref(),
+        Some("other-fake-pass")
+    );
+    let res = app
+        .request_form(
+            Method::POST,
+            &action,
+            Some(&cookie),
+            &[("wifi_ssid", "Hjemme")],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK);
+    let text = res.text();
+    assert!(text.contains("data-row=\"qr\"") && !text.contains(password));
+    // Sealed with another key (a restore elsewhere): no password comes out.
+    let mut other = app.state.clone();
+    other.music_key = Some(Arc::new(crate::music_secret::MusicKey::from_bytes(
+        &[9; 32],
+    )));
+    assert_eq!(qr(&other, "Hjemme", ""), None);
+
+    // Forget: back to the QR group, nothing kept.
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("{action}/wifi/forget"),
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    assert_redirect(&res, &action, Some("qr"));
+    assert!(provisioning::saved_wifi(&app.db).await.unwrap().is_none());
+    let html = app.get_page(&action, &cookie).await.text();
+    assert!(!html.contains("Forget Hjemme") && !html.contains("value=\"Hjemme\""));
+}

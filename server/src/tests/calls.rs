@@ -77,14 +77,16 @@ async fn managed_policy_lists_contacts_with_flags_in_order() {
     set_managed(&app, id, true, false).await;
     let pappa = attach(&app, id, "Pappa", "+4790000002", [true, false, false], 1).await;
     let mamma = attach(&app, id, "Mamma", "+4790000001", [true, true, true], 0).await;
-    sqlx::query(
-        "UPDATE device_contacts SET message_app = 'element', message_address = '@mamma:example.org' \
-         WHERE contact_id = ?",
-    )
-    .bind(mamma)
-    .execute(&app.db)
-    .await
-    .unwrap();
+    sqlx::query("UPDATE device_contacts SET message_app = 'element' WHERE contact_id = ?")
+        .bind(mamma)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE contacts SET message_address = '@mamma:example.org' WHERE id = ?")
+        .bind(mamma)
+        .execute(&app.db)
+        .await
+        .unwrap();
 
     let call_policy = app.policy(&token).await["call_policy"].clone();
     assert_eq!(call_policy["calls_mode"], json!("managed"));
@@ -397,8 +399,9 @@ async fn contact_flags_are_scoped_to_the_device() {
         Some(&format!("contact-{contact}")),
     );
     let row: (bool, bool, bool, Option<String>, Option<String>) = sqlx::query_as(
-        "SELECT allow_inbound, allow_outbound, show_on_home, message_app, message_address \
-         FROM device_contacts WHERE device_id = ? AND contact_id = ?",
+        "SELECT dc.allow_inbound, dc.allow_outbound, dc.show_on_home, dc.message_app, c.message_address \
+         FROM device_contacts dc JOIN contacts c ON c.id = dc.contact_id \
+         WHERE dc.device_id = ? AND dc.contact_id = ?",
     )
     .bind(b)
     .bind(contact)
@@ -456,14 +459,12 @@ async fn contact_flags_are_scoped_to_the_device() {
     assert_eq!(super::input_checked(row, "outbound", "on"), Some(true));
     assert!(row.contains("<option value=\"element\" selected>"), "{row}");
     assert!(!html.contains("data-waits"));
-    let address: Option<String> = sqlx::query_scalar(
-        "SELECT message_address FROM device_contacts WHERE device_id = ? AND contact_id = ?",
-    )
-    .bind(b)
-    .bind(contact)
-    .fetch_one(&app.db)
-    .await
-    .unwrap();
+    let address: Option<String> =
+        sqlx::query_scalar("SELECT message_address FROM contacts WHERE id = ?")
+            .bind(contact)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
     assert_eq!(address.as_deref(), Some("@mormor:matrix.org"));
 }
 
@@ -1346,13 +1347,11 @@ async fn the_calls_page_escapes_what_it_shows() {
         0,
     )
     .await;
-    sqlx::query(
-        "UPDATE device_contacts SET message_address = '\"><script>x</script>' WHERE contact_id = ?",
-    )
-    .bind(c)
-    .execute(&app.db)
-    .await
-    .unwrap();
+    sqlx::query("UPDATE contacts SET message_address = '\"><script>x</script>' WHERE id = ?")
+        .bind(c)
+        .execute(&app.db)
+        .await
+        .unwrap();
     let mut call_state = good_call_state();
     call_state["last_error"] = json!("<img src=x onerror=alert(1)>");
     app.post_status(&token, json!({ "call_state": call_state }))

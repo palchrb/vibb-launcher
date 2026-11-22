@@ -350,12 +350,14 @@ async fn a_refusal_is_redrawn_from_the_resolved_pairs() {
     let cookie = app.admin_cookie().await;
     let (id, _) = managed_phone(&app).await;
     let c = contact(&app, id, "Mamma", "+4790000001", [true; 6]).await;
-    sqlx::query(
-        "UPDATE device_contacts SET message_app = 'element', message_address = '@m:example.org'",
-    )
-    .execute(&app.db)
-    .await
-    .unwrap();
+    sqlx::query("UPDATE device_contacts SET message_app = 'element'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE contacts SET message_address = '@m:example.org'")
+        .execute(&app.db)
+        .await
+        .unwrap();
     let action = format!("/devices/{id}/contacts/{c}");
     let html = page(&app, &cookie, &format!("/devices/{id}/calls?open={c}")).await;
     let sent = with(fields_of(&html, &action), "calls", None);
@@ -394,15 +396,18 @@ async fn the_avansert_row_says_what_it_hides() {
         (stored, None, Some("@stein:example.org")),
         (missing, Some("element"), None),
     ] {
-        sqlx::query(
-            "UPDATE device_contacts SET message_app = ?, message_address = ? WHERE contact_id = ?",
-        )
-        .bind(app_col)
-        .bind(address)
-        .bind(c)
-        .execute(&app.db)
-        .await
-        .unwrap();
+        sqlx::query("UPDATE device_contacts SET message_app = ? WHERE contact_id = ?")
+            .bind(app_col)
+            .bind(c)
+            .execute(&app.db)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE contacts SET message_address = ? WHERE id = ?")
+            .bind(address)
+            .bind(c)
+            .execute(&app.db)
+            .await
+            .unwrap();
     }
     let html = page(&app, &cookie, &format!("/devices/{id}/calls")).await;
     let row = contact_html(&html, signal);
@@ -424,13 +429,11 @@ async fn the_avansert_row_says_what_it_hides() {
     assert!(row.contains("<details class=\"adv\" data-adv open>"));
     // The field drawn: kept by every save; not drawn: kept too.
     let action = format!("/devices/{id}/contacts/{signal}");
-    sqlx::query(
-        "UPDATE device_contacts SET message_address = '@s:example.org' WHERE contact_id = ?",
-    )
-    .bind(signal)
-    .execute(&app.db)
-    .await
-    .unwrap();
+    sqlx::query("UPDATE contacts SET message_address = '@s:example.org' WHERE id = ?")
+        .bind(signal)
+        .execute(&app.db)
+        .await
+        .unwrap();
     post(
         &app,
         &cookie,
@@ -439,7 +442,7 @@ async fn the_avansert_row_says_what_it_hides() {
     )
     .await;
     let kept: Option<String> =
-        sqlx::query_scalar("SELECT message_address FROM device_contacts WHERE contact_id = ?")
+        sqlx::query_scalar("SELECT message_address FROM contacts WHERE id = ?")
             .bind(signal)
             .fetch_one(&app.db)
             .await
@@ -1499,7 +1502,7 @@ async fn add_contact_has_every_option_and_saves_them() {
         .await;
     assert!(res.status.is_redirection(), "{}", res.text());
     let stored: (Option<String>, Option<String>) = sqlx::query_as(
-        "SELECT dc.message_app, dc.message_address FROM device_contacts dc \
+        "SELECT dc.message_app, c.message_address FROM device_contacts dc \
          JOIN contacts c ON c.id = dc.contact_id WHERE dc.device_id = ? AND c.phone_number = '+4790000055'",
     )
     .bind(id)
@@ -1511,6 +1514,169 @@ async fn add_contact_has_every_option_and_saves_them() {
         (Some("element".into()), Some("@kari:example.org".into()))
     );
     let _ = token;
+}
+
+/// 2026-11-22: the Matrix ID is the contact's (one person, one ID): added on one phone, the contact brings it to the
+/// next; a save on any phone's page changes it on all of them, each phone's Message button its own.
+#[tokio::test]
+async fn the_matrix_id_is_the_contacts_on_every_phone() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (anna, anna_token) = managed_phone(&app).await;
+    let (ola, ola_token) = app.enrolled_device("Ola").await;
+    sqlx::query("UPDATE device_policy SET calls_mode = 'managed' WHERE device_id = ?")
+        .bind(ola)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{anna}/contacts"),
+            Some(&cookie),
+            &[
+                ("name", "Kari"),
+                ("number", "+4790000055"),
+                ("switches", "on"),
+                ("calls_shown", "custom"),
+                ("texts_shown", "custom"),
+                ("message_app", "element"),
+                ("message_address", "@kari:example.org"),
+            ],
+        )
+        .await;
+    assert!(res.status.is_redirection(), "{}", res.text());
+    let kari: i64 =
+        sqlx::query_scalar("SELECT id FROM contacts WHERE phone_number = '+4790000055'")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{ola}/contacts"),
+            Some(&cookie),
+            &[("contact_id", kari.to_string().as_str())],
+        )
+        .await;
+    assert!(res.status.is_redirection(), "{}", res.text());
+    let button = |token: &str| {
+        let token = token.to_string();
+        let app = &app;
+        async move {
+            let contact = app.policy(&token).await["call_policy"]["contacts"][0].clone();
+            (
+                contact["message_app"].clone(),
+                contact["message_address"].clone(),
+            )
+        }
+    };
+    assert_eq!(
+        button(&ola_token).await,
+        (json!("sms"), json!("@kari:example.org")),
+        "the ID came along, Ola's button its own"
+    );
+    // A new ID saved on Ola's page is Anna's too; Anna's button stays Element X.
+    let action = format!("/devices/{ola}/contacts/{kari}");
+    let html = page(&app, &cookie, &format!("/devices/{ola}/calls?open={kari}")).await;
+    let res = post(
+        &app,
+        &cookie,
+        &action,
+        &with(
+            fields_of(&html, &action),
+            "message_address",
+            Some("@kari:other.org"),
+        ),
+    )
+    .await;
+    assert!(res.status.is_redirection(), "{}", res.text());
+    assert_eq!(
+        button(&anna_token).await,
+        (json!("element"), json!("@kari:other.org"))
+    );
+    let html = page(&app, &cookie, &format!("/devices/{anna}/calls?open={kari}")).await;
+    assert!(contact_html(&html, kari).contains("value=\"@kari:other.org\""));
+}
+
+/// Migration 0161 on rows from before it: each contact takes the Matrix ID of the lowest phone id that has one, and
+/// the per-phone column is gone.
+#[tokio::test]
+async fn the_migration_moves_the_matrix_id_to_the_contact() {
+    let dir = tempfile::tempdir().unwrap();
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(dir.path().join("old.db"))
+        .create_if_missing(true)
+        .foreign_keys(true);
+    let db = sqlx::SqlitePool::connect_with(options).await.unwrap();
+    let full = sqlx::migrate!("./migrations");
+    let mut old = sqlx::migrate!("./migrations");
+    old.migrations = full
+        .migrations
+        .iter()
+        .filter(|m| m.version < 161)
+        .cloned()
+        .collect::<Vec<_>>()
+        .into();
+    old.run(&db).await.unwrap();
+    let mut phones = Vec::new();
+    for _ in 0..3 {
+        let id: i64 = sqlx::query_scalar("INSERT INTO devices (name) VALUES ('old') RETURNING id")
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        phones.push(id);
+    }
+    let mut contacts = Vec::new();
+    for (name, number) in [("Kari", "+4790000001"), ("Per", "+4790000002")] {
+        let id: i64 = sqlx::query_scalar(
+            "INSERT INTO contacts (name, phone_number) VALUES (?, ?) RETURNING id",
+        )
+        .bind(name)
+        .bind(number)
+        .fetch_one(&db)
+        .await
+        .unwrap();
+        contacts.push(id);
+    }
+    // Kari: none on the first phone, two different IDs on the others; Per: none anywhere.
+    for (phone, contact, address) in [
+        (phones[2], contacts[0], Some("@kari:three.org")),
+        (phones[1], contacts[0], Some("@kari:two.org")),
+        (phones[0], contacts[0], None),
+        (phones[0], contacts[1], None),
+    ] {
+        sqlx::query(
+            "INSERT INTO device_contacts (device_id, contact_id, message_app, message_address) \
+             VALUES (?, ?, 'element', ?)",
+        )
+        .bind(phone)
+        .bind(contact)
+        .bind(address)
+        .execute(&db)
+        .await
+        .unwrap();
+    }
+    full.run(&db).await.unwrap();
+    let ids: Vec<Option<String>> =
+        sqlx::query_scalar("SELECT message_address FROM contacts ORDER BY id")
+            .fetch_all(&db)
+            .await
+            .unwrap();
+    assert_eq!(ids, [Some("@kari:two.org".to_string()), None]);
+    let apps: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM device_contacts WHERE message_app = 'element'")
+            .fetch_one(&db)
+            .await
+            .unwrap();
+    assert_eq!(apps, 4, "each phone keeps its button");
+    let column: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('device_contacts') WHERE name = 'message_address'",
+    )
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    assert_eq!(column, 0);
 }
 
 /// 2026-11-19: a contact's letter avatar is the launcher's colour for `contact id mod 6` (`HomeModel.kt`'s

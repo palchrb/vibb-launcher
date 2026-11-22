@@ -104,6 +104,43 @@ impl MusicKey {
             )
             .ok()
     }
+
+    /// `plaintext` sealed into one text, `v1:<fingerprint>:<nonce b64>:<ciphertext b64>`, under the associated data
+    /// `<purpose>:<fingerprint>:<context>`: a value of one purpose (`kid-pin-v1`, `wifi-v1`) or row (`context`)
+    /// doesn't open as another's. The Child PIN's form (design 59 §2.1), shared with the saved Wi-Fi password.
+    pub fn seal_text(&self, purpose: &str, context: &str, plaintext: &[u8]) -> String {
+        let aad = format!("{purpose}:{}:{context}", self.fingerprint);
+        let (ciphertext, nonce) = self.seal_with(aad.as_bytes(), plaintext);
+        let b64 = base64::engine::general_purpose::STANDARD;
+        format!(
+            "v1:{}:{}:{}",
+            self.fingerprint,
+            b64.encode(nonce),
+            b64.encode(ciphertext)
+        )
+    }
+
+    /// What [MusicKey::seal_text] sealed for `purpose` and `context`, or `None`: another key, purpose or context, a
+    /// changed byte or another format.
+    pub fn open_text(&self, purpose: &str, context: &str, sealed: &str) -> Option<Vec<u8>> {
+        let mut parts = sealed.split(':');
+        let (Some("v1"), Some(fingerprint), Some(nonce), Some(ciphertext), None) = (
+            parts.next(),
+            parts.next(),
+            parts.next(),
+            parts.next(),
+            parts.next(),
+        ) else {
+            return None;
+        };
+        let b64 = base64::engine::general_purpose::STANDARD;
+        self.open_with(
+            format!("{purpose}:{fingerprint}:{context}").as_bytes(),
+            &b64.decode(ciphertext).ok()?,
+            &b64.decode(nonce).ok()?,
+            fingerprint,
+        )
+    }
 }
 
 /// A key file's text: 32 bytes of base64 (surrounding whitespace ignored). Shared with the Child
@@ -189,6 +226,37 @@ mod tests {
         );
         // A fresh nonce every time.
         assert_ne!(key.seal(b"secret").1, nonce);
+    }
+
+    /// The one-text form is the Child PIN's (design 59 §2.1, stored rows): `v1:<fingerprint>:..` under
+    /// `<purpose>:<fingerprint>:<context>`, and it opens only for that purpose and context.
+    #[test]
+    fn sealed_text_keeps_the_child_pins_form() {
+        let key = MusicKey::from_bytes(&[7; 32]);
+        let sealed = key.seal_text("wifi-v1", "provisioning", b"FAKE-PASSWORD");
+        let parts: Vec<&str> = sealed.split(':').collect();
+        assert_eq!(parts[..2], ["v1", key.fingerprint.as_str()]);
+        let b64 = base64::engine::general_purpose::STANDARD;
+        let aad = format!("wifi-v1:{}:provisioning", key.fingerprint);
+        assert_eq!(
+            key.open_with(
+                aad.as_bytes(),
+                &b64.decode(parts[3]).unwrap(),
+                &b64.decode(parts[2]).unwrap(),
+                &key.fingerprint
+            )
+            .as_deref(),
+            Some(&b"FAKE-PASSWORD"[..])
+        );
+        assert_eq!(
+            key.open_text("wifi-v1", "provisioning", &sealed).as_deref(),
+            Some(&b"FAKE-PASSWORD"[..])
+        );
+        assert!(
+            key.open_text("kid-pin-v1", "provisioning", &sealed)
+                .is_none()
+        );
+        assert!(key.open_text("wifi-v1", "1", &sealed).is_none());
     }
 
     /// Design 26c §2.2: a sealed value opens only with the associated data it was sealed with,

@@ -733,7 +733,7 @@ pub(crate) async fn device_contacts(
 ) -> Result<Vec<DeviceContactRow>, sqlx::Error> {
     sqlx::query_as::<_, DeviceContactRow>(
         "SELECT c.id AS contact_id, c.name, c.phone_number, dc.allow_inbound, dc.allow_outbound, \
-         dc.show_on_home, dc.message_app, dc.message_address, c.photo_hash, \
+         dc.show_on_home, dc.message_app, c.message_address, c.photo_hash, \
          dc.sms_in, dc.sms_out, dc.mms \
          FROM device_contacts dc JOIN contacts c ON c.id = dc.contact_id \
          WHERE dc.device_id = ? ORDER BY dc.sort_order, c.name",

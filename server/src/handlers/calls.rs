@@ -2280,9 +2280,9 @@ pub async fn add_contact(
         });
         let added = sqlx::query(
             "INSERT OR IGNORE INTO device_contacts (device_id, contact_id, sort_order, allow_inbound, \
-             allow_outbound, show_on_home, sms_in, sms_out, mms, message_address, message_app) \
+             allow_outbound, show_on_home, sms_in, sms_out, mms, message_app) \
              VALUES (?, ?, (SELECT COALESCE(MAX(sort_order) + 1, 0) FROM device_contacts \
-                            WHERE device_id = ?), ?, ?, ?, ?, ?, ?, ?, ?)",
+                            WHERE device_id = ?), ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(id)
         .bind(contact_id)
@@ -2293,21 +2293,29 @@ pub async fn add_contact(
         .bind(sms_in && !emergency::is_emergency(&number, &cc))
         .bind(sms_out)
         .bind(mms)
-        .bind(message_address)
         .bind(message_app)
         .execute(&mut *tx)
         .await?
         .rows_affected()
             > 0;
+        // The Matrix ID is the contact's (migration 0161): a new one replaces it on every phone; none keeps the
+        // family's.
+        let address_changed = match &message_address {
+            Some(address) => set_contact_address(&mut tx, contact_id, Some(address.as_str())).await?,
+            None => false,
+        };
         tx.commit().await?;
-        Ok::<_, sqlx::Error>(Some((contact_id, added)))
+        Ok::<_, sqlx::Error>(Some((contact_id, added, address_changed)))
     }
     .await;
     match result {
         Ok(None) => not_found(lang),
-        Ok(Some((contact_id, added))) => {
+        Ok(Some((contact_id, added, address_changed))) => {
             if added {
                 contact_added_event(state, id, &admin, contact_id).await;
+            }
+            if address_changed {
+                nudge_contact_phones(state, contact_id).await;
             }
             // An answered request's picture no contact took goes.
             photos::prune(state).await;
@@ -2475,7 +2483,8 @@ pub(crate) fn valid_matrix_id(value: &str) -> bool {
     value.len() <= 255 && local_ok && host_ok && port_ok
 }
 
-/// Saves one contact's flags and Message button, scoped to this device. Back to its row, open;
+/// Saves one contact's flags and Message button, scoped to this device, and its Matrix ID, the contact's on every phone
+/// (migration 0161). Back to its row, open;
 /// a Matrix ID that isn't one renders the page (400) with the row open, what was sent and the
 /// reason under the field; a contact that isn't on this phone (removed meanwhile) returns to
 /// `#contacts` saying nothing was saved; a `*_shown` the page sends that is missing or unknown is a
@@ -2523,7 +2532,7 @@ pub async fn update_contact(
     let result = async {
         let mut tx = state.db.begin().await?;
         let Some(stored) = stored_channels(&mut *tx, id, contact_id).await? else {
-            return Ok(Some(0));
+            return Ok(Some((0, false)));
         };
         // Design 80 D3: each channel's pair from its two-way switch, its one-way switches and what the page showed
         // (the stale-page guard keeps a split made meanwhile); "Kan sende melding til" is never stored for an
@@ -2536,8 +2545,7 @@ pub async fn update_contact(
         };
         let updated = sqlx::query(
             "UPDATE device_contacts SET allow_inbound = ?, allow_outbound = ?, show_on_home = ?, \
-             sms_in = ?, sms_out = ?, mms = ?, message_app = ?, \
-             message_address = CASE WHEN ? THEN ? ELSE message_address END \
+             sms_in = ?, sms_out = ?, mms = ?, message_app = ? \
              WHERE device_id = ? AND contact_id = ?",
         )
         .bind(inbound)
@@ -2547,26 +2555,63 @@ pub async fn update_contact(
         .bind(sms_out)
         .bind(form.contains_key("mms"))
         .bind(message_app)
-        .bind(message_address.is_some())
-        .bind(message_address.flatten())
         .bind(id)
         .bind(contact_id)
         .execute(&mut *tx)
         .await?
         .rows_affected();
+        // The Matrix ID is the contact's (migration 0161): this save changes it on every phone that has the contact.
+        let address_changed = match message_address {
+            Some(address) => set_contact_address(&mut tx, contact_id, address).await?,
+            None => false,
+        };
         tx.commit().await?;
-        Ok::<_, sqlx::Error>(Some(updated))
+        Ok::<_, sqlx::Error>(Some((updated, address_changed)))
     }
     .await;
     match result {
         Ok(None) => bad_request(lang, "error.out_of_date"),
-        Ok(Some(0)) => gone(&state, id, contact_id, true, lang).await,
+        Ok(Some((0, _))) => gone(&state, id, contact_id, true, lang).await,
         // D9: back to the row, its Avansert as it was (`more`, kept in step by static/contact-form.js).
-        Ok(Some(_)) => {
+        Ok(Some((_, address_changed))) => {
+            if address_changed {
+                nudge_contact_phones(&state, contact_id).await;
+            }
             let more = form.get("more").is_some_and(|m| m == "1");
             saved(&state, id, contact_return(id, contact_id, more))
         }
         Err(err) => db_error(lang, id, err),
+    }
+}
+
+/// Sets (or, with `None`, clears) the contact's Matrix ID, the one every phone's Message button uses (migration
+/// 0161). `true` when it changed.
+async fn set_contact_address(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    contact_id: i64,
+    address: Option<&str>,
+) -> Result<bool, sqlx::Error> {
+    Ok(sqlx::query(
+        "UPDATE contacts SET message_address = ?1 WHERE id = ?2 AND message_address IS NOT ?1",
+    )
+    .bind(address)
+    .bind(contact_id)
+    .execute(&mut **tx)
+    .await?
+    .rows_affected()
+        > 0)
+}
+
+/// Nudges every phone that has the contact: its policy changed with the contact's own data (the Matrix ID).
+async fn nudge_contact_phones(state: &AppState, contact_id: i64) {
+    match devices_with_contact(state, contact_id).await {
+        Ok(devices) => {
+            for device in devices {
+                let _ = state.command_notify.send(device);
+            }
+        }
+        // They pick it up at their next poll.
+        Err(err) => tracing::warn!(contact_id, %err, "couldn't list the contact's phones to nudge"),
     }
 }
 

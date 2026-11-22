@@ -447,6 +447,7 @@ pub struct DeviceContactRow {
     pub show_on_home: bool,
     /// `None` = the device's `default_message_app`.
     pub message_app: Option<String>,
+    /// The contact's Matrix ID (`contacts.message_address`, migration 0161): one per person, on every phone.
     pub message_address: Option<String>,
     pub photo_hash: Option<String>,
     /// Design 77 D3: the contact may text the kid, the kid may text the contact, pictures both ways.

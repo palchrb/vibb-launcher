@@ -413,7 +413,7 @@ async fn add_from_a_request() {
     assert!(res.status.is_redirection());
     assert!(res.location().unwrap().contains("#contact-"));
     let address: Option<String> = sqlx::query_scalar(
-        "SELECT dc.message_address FROM device_contacts dc JOIN contacts c ON c.id = dc.contact_id \
+        "SELECT c.message_address FROM device_contacts dc JOIN contacts c ON c.id = dc.contact_id \
          WHERE dc.device_id = ? AND c.phone_number = '+4791234567'",
     )
     .bind(id)
@@ -457,7 +457,7 @@ async fn add_from_a_request() {
     )
     .await;
     let forged: Option<String> = sqlx::query_scalar(
-        "SELECT dc.message_address FROM device_contacts dc JOIN contacts c ON c.id = dc.contact_id \
+        "SELECT c.message_address FROM device_contacts dc JOIN contacts c ON c.id = dc.contact_id \
          WHERE dc.device_id = ? AND c.phone_number = '+4791234598'",
     )
     .bind(id)
@@ -488,7 +488,7 @@ async fn add_from_a_request() {
     )
     .await;
     let kept: Option<String> = sqlx::query_scalar(
-        "SELECT dc.message_address FROM device_contacts dc JOIN contacts c ON c.id = dc.contact_id \
+        "SELECT c.message_address FROM device_contacts dc JOIN contacts c ON c.id = dc.contact_id \
          WHERE dc.device_id = ? AND c.phone_number = '+4791234580'",
     )
     .bind(id)
@@ -873,7 +873,7 @@ async fn a_request_never_renames_a_family_contact() {
     let per_policy = app.policy(&per_token).await["call_policy"]["contacts"].clone();
     assert_eq!(per_policy[0]["name"], "Mamma");
     let (app_col, address): (Option<String>, Option<String>) = sqlx::query_as(
-        "SELECT dc.message_app, dc.message_address FROM device_contacts dc JOIN contacts c ON c.id = dc.contact_id \
+        "SELECT dc.message_app, c.message_address FROM device_contacts dc JOIN contacts c ON c.id = dc.contact_id \
          WHERE dc.device_id = ? AND c.phone_number = '+4790000001'",
     )
     .bind(anna)

@@ -561,3 +561,17 @@ one row per phone, no row = `watching`):
   the phone (the tailnet path is never pinned), then "Turn off the certificate check" here if the server stays outside
   the set (DEPLOY.md, "Tailnet recovery address": something must answer the phones' API on plain http at the box's
   tailnet IP - nothing does in the loopback setups by default).
+
+## The saved Wi-Fi network (2026-11-22, migration 0162)
+
+The user: "skal vi tillate lagring av wifi passord på serveren vår? Kan det gjøres trygt?" - yes, sealed. Connect's QR
+form (`templates/provision_qr.html`) has "Remember network" (`remember`, drawn only while the music key is loaded): the
+QR's network is saved for the family, replacing any saved one - `provisioning_settings.wifi_ssid` in the clear (shown
+on the page), `wifi_password_sealed` sealed with the music key (`MusicKey::seal_text`, the Child PIN's one-text form
+`v1:<fingerprint>:<nonce>:<ciphertext>`, associated data `wifi-v1:<fingerprint>:provisioning`; NULL = an open
+network). Opened only in `provisioning::qr_password`, to build the QR: an empty password field under the saved name
+uses it, anything typed wins. The page shows the saved name in the field, "Saved" as the password's placeholder and
+"Forget <name>" (`POST /devices/{id}/provision/wifi/forget`, back to `#qr`); the password is never in the HTML, a log
+line, a flash or an error. A backup holds it sealed and no backup holds the key: a restore elsewhere reads it as
+"type the password again" (`devices.qr.password_again`, no QR). Test:
+`tests::provisioning::a_remembered_wifi_network_is_sealed_reused_and_forgotten`.
