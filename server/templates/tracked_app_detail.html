@@ -334,7 +334,7 @@
         <form method="post" action="/apps/tracked/{{ app.id }}/upload#upload" enctype="multipart/form-data" class="group form-group" id="upload">
             <div class="field">
                 <label class="field-label" for="release_label">{{ self.t("apps.app.version") }}</label>
-                <input type="text" id="release_label" name="release_label" placeholder="{{ self.t("apps.app.version_example") }}" required>
+                <input type="text" id="release_label" name="release_label" placeholder="{{ self.t("apps.app.version_example") }}" maxlength="{{ self.label_max_chars() }}" required>
             </div>
             <div class="field">
                 <label class="field-label" for="apk">{{ self.t("apps.app.apk_file") }}</label>

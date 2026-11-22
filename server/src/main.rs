@@ -157,6 +157,9 @@ pub struct AppState {
     /// Which catalog apps are syncing and how each one's last sync ended - one sync per app at a
     /// time (`handlers::tracked_apps::AppSyncs`).
     pub app_syncs: std::sync::Arc<handlers::tracked_apps::AppSyncs>,
+    /// One manual APK upload at a time, across all catalog apps (code QA M1 of the upstream fixes):
+    /// `handlers::tracked_apps::upload_tracked_app_release`.
+    pub apk_upload: std::sync::Arc<tokio::sync::Semaphore>,
     /// Where catalog apps' cached APKs are stored (`data/tracked_apps/<app id>/`; a temp dir in
     /// tests) - see `handlers::tracked_apps`.
     pub tracked_apps_dir: std::sync::Arc<std::path::PathBuf>,
@@ -509,6 +512,7 @@ async fn main() {
         app_logos: Default::default(),
         command_streams: Default::default(),
         app_syncs: Default::default(),
+        apk_upload: std::sync::Arc::new(tokio::sync::Semaphore::new(1)),
         tracked_apps_dir: std::sync::Arc::new(std::path::PathBuf::from(
             handlers::tracked_apps::TRACKED_APPS_DIR,
         )),

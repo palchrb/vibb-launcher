@@ -240,6 +240,7 @@ impl TestApp {
             app_logos: Default::default(),
             command_streams: Default::default(),
             app_syncs: Default::default(),
+            apk_upload: std::sync::Arc::new(tokio::sync::Semaphore::new(1)),
             tracked_apps_dir: std::sync::Arc::new(dir.path().join("tracked_apps")),
             music_files_dir: std::sync::Arc::new(dir.path().join("music_files")),
             music_cover_dir: std::sync::Arc::new(dir.path().join("music_covers")),

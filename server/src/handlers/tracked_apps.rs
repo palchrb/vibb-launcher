@@ -25,8 +25,10 @@ use tokio::io::AsyncWriteExt;
 use crate::AppState;
 use crate::config::{MUSIC_RELEASE_TAG_PREFIX, SERVER_RELEASE_TAG_PREFIX};
 use crate::handlers::device_pages::AppsFrom;
+use crate::handlers::music::DiskGuard;
 use crate::i18n::{Lang, Words, t, t_count, t_params};
 use crate::models::TrackedApp;
+use crate::music::MIN_FREE_BYTES;
 use crate::security::{CurrentAdmin, generate_device_token};
 
 /// Where cached APKs live, one directory per app (`AppState.tracked_apps_dir`; a temp dir in tests).
@@ -42,6 +44,12 @@ const MAX_ASSET_BYTES: u64 = 1_000_000_000;
 pub(crate) const MAX_UPLOAD_BYTES: u64 = 2_000_000_000;
 /// The upload route's body limit (`main.rs`): the APK plus the label and the multipart framing.
 pub(crate) const UPLOAD_BODY_LIMIT: usize = MAX_UPLOAD_BYTES as usize + 1_000_000;
+/// The longest release label an upload keeps; its field's `maxlength` (code QA M2).
+pub(crate) const MAX_LABEL_CHARS: usize = 100;
+/// A new release stored (an upload, a sync, an approved held one): the phones' failed installs of
+/// the release before say nothing about it any more (code QA L8).
+const CLEAR_FAILED_INSTALLS: &str =
+    "DELETE FROM device_install_progress WHERE tracked_app_id = ? AND failed = 1";
 /// A download that delivers no data for this long fails...
 pub(crate) const DOWNLOAD_STALL_TIMEOUT: Duration = Duration::from_secs(60);
 /// ...and so does one still running after this, however steadily it trickles.
@@ -416,19 +424,52 @@ impl ChunkSource for reqwest::Response {
 }
 
 /// A manual upload's file field as a [ChunkSource]; `too_big` once the route's body limit
-/// ([UPLOAD_BODY_LIMIT]) stopped it, which the answer words as its own message.
-struct UploadField<'a> {
+/// ([UPLOAD_BODY_LIMIT]) stopped it, `no_space` once the data disk would get below the music
+/// upload's floor (`music::MIN_FREE_BYTES`, its [DiskGuard] looking every 64 MB; code QA M1) - each
+/// worded as its own message.
+struct UploadField<'a, 'd> {
     field: axum::extract::multipart::Field<'a>,
+    guard: DiskGuard<'d>,
+    received: u64,
     too_big: bool,
+    no_space: bool,
 }
 
-impl ChunkSource for UploadField<'_> {
+impl ChunkSource for UploadField<'_, '_> {
     async fn next_chunk(&mut self) -> Result<Option<Bytes>, String> {
-        self.field.chunk().await.map_err(|err| {
+        let chunk = self.field.chunk().await.map_err(|err| {
             self.too_big |= err.status() == StatusCode::PAYLOAD_TOO_LARGE;
             err.body_text()
-        })
+        })?;
+        if let Some(chunk) = &chunk {
+            self.received += chunk.len() as u64;
+            if self.guard.check(self.received).is_err() {
+                self.no_space = true;
+                return Err("the server's disk would get below its free-space floor".to_string());
+            }
+        }
+        Ok(chunk)
     }
+}
+
+/// The release label's field read a chunk at a time, at most [MAX_LABEL_CHARS] characters kept and
+/// nothing past them read into memory (code QA M2: `text()` read it whole, up to the body limit).
+async fn read_label(mut field: axum::extract::multipart::Field<'_>) -> Option<String> {
+    // UTF-8: no character is longer than four bytes.
+    let cap = MAX_LABEL_CHARS * 4;
+    let mut bytes = Vec::new();
+    while bytes.len() < cap {
+        let Some(chunk) = field.chunk().await.ok()? else {
+            break;
+        };
+        bytes.extend_from_slice(&chunk[..chunk.len().min(cap - bytes.len())]);
+    }
+    let label: String = String::from_utf8_lossy(&bytes)
+        .trim()
+        .chars()
+        .take(MAX_LABEL_CHARS)
+        .collect();
+    Some(label.trim_end().to_string())
 }
 
 /// A download's temp file, deleted when this is dropped unless [TempDownload::keep] ran - so an
@@ -2253,6 +2294,11 @@ async fn sync_release(
             "the app was removed during the download",
         ));
     }
+    sqlx::query(CLEAR_FAILED_INSTALLS)
+        .bind(app.id)
+        .execute(&state.db)
+        .await
+        .ok();
     store_pins(state, app, &identity).await;
     // Stored: a refusal remembered before (a mismatch "Check Now" got past) no longer holds.
     state.app_syncs.set_refused(app.id, None);
@@ -3588,6 +3634,11 @@ impl TrackedAppDetailTemplate {
         MAX_UPLOAD_BYTES
     }
 
+    /// The release label field's `maxlength`.
+    fn label_max_chars(&self) -> usize {
+        MAX_LABEL_CHARS
+    }
+
     /// The upload's too-big message, as the server's own answer words it.
     fn upload_too_big(&self) -> String {
         t_params(
@@ -4314,6 +4365,7 @@ pub async fn upload_tracked_app_release(
     State(state): State<AppState>,
     lang: Lang,
     Path(id): Path<i64>,
+    headers: axum::http::HeaderMap,
     mut multipart: Multipart,
 ) -> impl IntoResponse {
     let app = sqlx::query_as::<_, TrackedApp>("SELECT * FROM tracked_apps WHERE id = ?")
@@ -4345,6 +4397,24 @@ pub async fn upload_tracked_app_release(
         }
         return page;
     }
+    // A body the route's limit will stop anyway is answered before a byte of it is read (code QA L5).
+    let length = headers
+        .get(axum::http::header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok()?.parse::<u64>().ok());
+    if length.is_some_and(|length| length > UPLOAD_BODY_LIMIT as u64) {
+        return upload_too_big(&state, id, lang).await;
+    }
+    // One upload at a time (code QA M1): two 2 GB files at once would race the free-space check.
+    let Ok(_permit) = state.apk_upload.try_acquire() else {
+        return upload_answer(
+            &state,
+            id,
+            Flash::title(t(lang, "apps.app.upload_busy")),
+            StatusCode::CONFLICT,
+            lang,
+        )
+        .await;
+    };
 
     let app_dir = state.tracked_apps_dir.join(id.to_string());
     if tokio::fs::create_dir_all(&app_dir).await.is_err() {
@@ -4365,6 +4435,13 @@ pub async fn upload_tracked_app_release(
         .into_owned();
     // Removed on every answer but the stored release's (`keep` below).
     let placed = TempDownload::new(file_path.clone());
+    // The data disk keeps the music upload's floor (`music::MIN_FREE_BYTES`, 1 GB) under the file
+    // (code QA M1): refused up front when the body's size and the floor don't fit, and stopped
+    // while streaming once the floor is reached (a body without a length, the disk filling).
+    let free = crate::music::free_bytes(&app_dir);
+    if free.is_none_or(|free| free < MIN_FREE_BYTES.saturating_add(length.unwrap_or(0))) {
+        return upload_no_space(&state, id, lang).await;
+    }
 
     // The APK is streamed to its file and hashed on the way (upstream review 2026-11-20: it was
     // read whole into memory under a 200 MB body limit, and a bigger one read as a missing file).
@@ -4372,6 +4449,7 @@ pub async fn upload_tracked_app_release(
     let mut upload: Option<Result<Downloaded, Failure>> = None;
     let mut apk_name: Option<String> = None;
     let mut too_big = false;
+    let mut no_space = false;
     loop {
         let field = match multipart.next_field().await {
             Ok(Some(field)) => field,
@@ -4384,7 +4462,7 @@ pub async fn upload_tracked_app_release(
         let name = field.name().unwrap_or("").to_string();
         match name.as_str() {
             "release_label" => {
-                release_label = field.text().await.ok().map(|s| s.trim().to_string());
+                release_label = read_label(field).await;
             }
             // A browser sends an empty file field when none was chosen: missing, as no field.
             "apk"
@@ -4396,7 +4474,10 @@ pub async fn upload_tracked_app_release(
                     .filter(|n| !n.is_empty());
                 let mut source = UploadField {
                     field,
+                    guard: DiskGuard::new(&app_dir, MIN_FREE_BYTES),
+                    received: 0,
                     too_big: false,
+                    no_space: false,
                 };
                 let result = stream_capped(
                     &mut source,
@@ -4409,8 +4490,9 @@ pub async fn upload_tracked_app_release(
                 .await;
                 too_big |= source.too_big
                     || matches!(&result, Err(failure) if failure.problem == SyncProblem::TooBig);
+                no_space |= source.no_space;
                 upload = Some(result);
-                if too_big {
+                if too_big || no_space {
                     break;
                 }
             }
@@ -4419,21 +4501,10 @@ pub async fn upload_tracked_app_release(
     }
 
     if too_big {
-        let mut page = render_detail(
-            &state,
-            id,
-            Some(Note::Upload(Flash::title(&t_params(
-                lang,
-                "apps.app.upload_too_big",
-                &[("limit", &gb_text(MAX_UPLOAD_BYTES))],
-            )))),
-            lang,
-        )
-        .await;
-        if page.status() == StatusCode::OK {
-            *page.status_mut() = StatusCode::PAYLOAD_TOO_LARGE;
-        }
-        return page;
+        return upload_too_big(&state, id, lang).await;
+    }
+    if no_space {
+        return upload_no_space(&state, id, lang).await;
     }
     let (Some(release_label), Some(upload)) = (release_label, upload) else {
         return render_detail(
@@ -4461,15 +4532,17 @@ pub async fn upload_tracked_app_release(
     }
     let uploaded = match upload {
         Ok(uploaded) => uploaded,
-        // Not a ZIP (an empty file included): the APK can't be read, as `apk_identity` says.
+        // Not a ZIP (an empty file included): the APK can't be read, as `apk_identity` says -
+        // worded for a file the parent chose, not a download (code QA L10).
         Err(failure) if failure.detail == NOT_A_ZIP => {
             return render_detail(
                 &state,
                 id,
-                Some(Note::Upload(Flash::failed(
-                    Failure::new(SyncProblem::Unreadable, failure.detail),
-                    lang,
-                ))),
+                Some(Note::Upload(Flash {
+                    title: SyncProblem::Unreadable.title(lang).to_string(),
+                    detail: Some(t(lang, "apps.app.upload_not_apk").to_string()),
+                    ok: false,
+                })),
                 lang,
             )
             .await;
@@ -4525,31 +4598,56 @@ pub async fn upload_tracked_app_release(
         crate::catalog_holds::read_names(app.accepted_permissions.as_deref()).as_deref(),
         identity.permissions.as_deref().unwrap_or_default(),
     );
-    let stored = sqlx::query(
-        "UPDATE tracked_apps SET latest_release_tag = ?, latest_release_asset_id = NULL, \
-         latest_release_file_path = ?, latest_release_asset_name = ?, \
-         latest_release_asset_size = ?, latest_release_sha256 = ?, \
-         latest_release_version_code = ?, latest_release_permissions = ?, \
-         accepted_permissions = ?, last_checked_at = datetime('now') WHERE id = ?",
-    )
-    .bind(&release_label)
-    .bind(&file_path)
-    .bind(&apk_name)
-    .bind(uploaded.size as i64)
-    .bind(&sha256)
-    .bind(identity.version_code)
-    .bind(
-        identity
-            .permissions
-            .as_deref()
-            .map(crate::catalog_holds::names_json),
-    )
-    .bind(&accepted)
-    .bind(id)
-    .execute(&state.db)
-    .await
-    .is_ok_and(|result| result.rows_affected() > 0);
-    replace_cached_file(stored, &file_path, app.latest_release_file_path.as_deref()).await;
+    // From here the file is the row's or `replace_cached_file`'s to remove, also when the request
+    // goes away mid-UPDATE (code QA L4).
+    placed.keep();
+    // The old file is the one the row names at the UPDATE, read in its transaction - not the one
+    // read at the start, which a store meanwhile replaced (code QA L3).
+    let stored: Result<Option<Option<String>>, sqlx::Error> = async {
+        let mut tx = state.db.begin().await?;
+        let old: Option<Option<String>> =
+            sqlx::query_scalar("SELECT latest_release_file_path FROM tracked_apps WHERE id = ?")
+                .bind(id)
+                .fetch_optional(&mut *tx)
+                .await?;
+        let updated = sqlx::query(
+            "UPDATE tracked_apps SET latest_release_tag = ?, latest_release_asset_id = NULL, \
+             latest_release_file_path = ?, latest_release_asset_name = ?, \
+             latest_release_asset_size = ?, latest_release_sha256 = ?, \
+             latest_release_version_code = ?, latest_release_permissions = ?, \
+             accepted_permissions = ?, last_checked_at = datetime('now') WHERE id = ?",
+        )
+        .bind(&release_label)
+        .bind(&file_path)
+        .bind(&apk_name)
+        .bind(uploaded.size as i64)
+        .bind(&sha256)
+        .bind(identity.version_code)
+        .bind(
+            identity
+                .permissions
+                .as_deref()
+                .map(crate::catalog_holds::names_json),
+        )
+        .bind(&accepted)
+        .bind(id)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected()
+            > 0;
+        sqlx::query(CLEAR_FAILED_INSTALLS)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(old.filter(|_| updated))
+    }
+    .await;
+    let (stored, old_path) = match stored {
+        Ok(Some(old_path)) => (true, old_path),
+        _ => (false, None),
+    };
+    replace_cached_file(stored, &file_path, old_path.as_deref()).await;
     if !stored {
         return render_detail(
             &state,
@@ -4562,13 +4660,58 @@ pub async fn upload_tracked_app_release(
         )
         .await;
     }
-    placed.keep();
     store_pins(&state, &app, &identity).await;
     crate::handlers::device_api::nudge_phones_with_app(&state, id).await;
 
     // Back to the app's page at the Upload group, with the result there (a reload doesn't post
     // the file again; [Note]).
     Redirect::to(&format!("/apps/tracked/{id}?notice=uploaded#upload")).into_response()
+}
+
+/// The app's page with an upload's answer in the Upload group, under `status`.
+async fn upload_answer(
+    state: &AppState,
+    id: i64,
+    flash: Flash,
+    status: StatusCode,
+    lang: Lang,
+) -> Response {
+    let mut page = render_detail(state, id, Some(Note::Upload(flash)), lang).await;
+    if page.status() == StatusCode::OK {
+        *page.status_mut() = status;
+    }
+    page
+}
+
+/// An upload over [MAX_UPLOAD_BYTES] (413).
+async fn upload_too_big(state: &AppState, id: i64, lang: Lang) -> Response {
+    let title = t_params(
+        lang,
+        "apps.app.upload_too_big",
+        &[("limit", &gb_text(MAX_UPLOAD_BYTES))],
+    );
+    upload_answer(
+        state,
+        id,
+        Flash::title(&title),
+        StatusCode::PAYLOAD_TOO_LARGE,
+        lang,
+    )
+    .await
+}
+
+/// An upload that would take the data disk below `music::MIN_FREE_BYTES` (507).
+async fn upload_no_space(state: &AppState, id: i64, lang: Lang) -> Response {
+    let flash = Flash {
+        title: t(lang, "apps.app.upload_no_space").to_string(),
+        detail: Some(t_params(
+            lang,
+            "apps.app.upload_no_space_detail",
+            &[("gb", &(MIN_FREE_BYTES / 1_000_000_000).to_string())],
+        )),
+        ok: false,
+    };
+    upload_answer(state, id, flash, StatusCode::INSUFFICIENT_STORAGE, lang).await
 }
 
 /// `POST /apps/tracked/{id}/display` (design 14): the catalog default for how the app shows on the
@@ -5478,6 +5621,11 @@ async fn approve(
     .rows_affected()
         > 0;
     sqlx::query("DELETE FROM tracked_app_held_releases WHERE tracked_app_id = ?")
+        .bind(app.id)
+        .execute(&mut *tx)
+        .await
+        .map_err(server)?;
+    sqlx::query(CLEAR_FAILED_INSTALLS)
         .bind(app.id)
         .execute(&mut *tx)
         .await

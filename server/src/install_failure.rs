@@ -1,6 +1,6 @@
 //! Why a catalog install failed on a phone (upstream review 2026-11-20, `docs/review/2026-11-20-upstream-review.md`):
 //! the launcher's `POST /api/devices/apps/progress` failure carries a short code - Android's own `INSTALL_FAILED_*`
-//! (or `INSTALL_PARSE_FAILED_*`) name read from the front of its status message, else the `STATUS_FAILURE_*` name of
+//! (or `INSTALL_PARSE_FAILED_*`) name, the first such upper-case token anywhere in its status message, else the `STATUS_FAILURE_*` name of
 //! the session's status, else one of the launcher's own [KINDS] - never Android's free text (paths, package names).
 //! Kept only in that form ([clean]); Device › Apps words it ([words]). The contract is
 //! `testdata/install_failure.json`, byte-identical in the launcher's test resources (`InstallFailureTest`).

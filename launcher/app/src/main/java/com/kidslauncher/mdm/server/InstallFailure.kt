@@ -38,7 +38,8 @@ private val STATUS_NAMES = mapOf(
 
 /**
  * A `PackageInstaller` result's reason: Android's `INSTALL_FAILED_*`/`INSTALL_PARSE_FAILED_*` code
- * name from its status message (`EXTRA_STATUS_MESSAGE`, "INSTALL_FAILED_OLDER_SDK: Requires ..."), else
+ * name, the first such upper-case token anywhere in its status message (`EXTRA_STATUS_MESSAGE`,
+ * "INSTALL_FAILED_OLDER_SDK: Requires ..."), else
  * the status's `STATUS_FAILURE_*` name, else none (the plain `STATUS_FAILURE`, a user action).
  */
 fun installFailureReason(status: Int, message: String?): String? {

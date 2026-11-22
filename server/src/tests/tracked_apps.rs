@@ -704,12 +704,37 @@ async fn a_refused_upload_leaves_no_file_and_the_field_knows_the_limit() {
 
     let html = app.send(upload("page.apk", b"<!DOCTYPE html>")).await;
     assert_eq!(html.status, StatusCode::OK);
-    assert!(
-        html.text().contains("Couldn&#39;t read the APK"),
-        "{}",
-        html.text()
-    );
+    let text = html.text();
+    assert!(text.contains("Couldn&#39;t read the APK"), "{text}");
+    // Worded for the parent's own file, never a download (code QA L10).
+    let group = &text[text.find(r#"id="upload""#).unwrap()..];
+    let group = &group[..group.find("</form>").unwrap()];
+    assert!(group.contains("The file isn&#39;t an APK."), "{group}");
+    assert!(!group.contains("download"), "{group}");
     assert_eq!(files(), 0);
+
+    // A body over the route's limit is answered from its length, before any of it is read (code QA L5).
+    let mut oversized = upload("big.apk", b"PK\x03\x04");
+    oversized.headers_mut().insert(
+        header::CONTENT_LENGTH,
+        (crate::handlers::tracked_apps::UPLOAD_BODY_LIMIT + 1).into(),
+    );
+    let big = app.send(oversized).await;
+    assert_eq!(big.status, StatusCode::PAYLOAD_TOO_LARGE);
+    let text = big.text();
+    let group = &text[text.find(r#"id="upload""#).unwrap()..];
+    assert!(group.contains("The file is over 2 GB"), "{group}");
+    assert_eq!(files(), 0);
+
+    // One upload at a time (code QA M1): a second one is told so in the Upload group.
+    let running = app.state.apk_upload.try_acquire().unwrap();
+    let busy = app.send(upload("a.apk", b"PK\x03\x04")).await;
+    assert_eq!(busy.status, StatusCode::CONFLICT);
+    let text = busy.text();
+    let group = &text[text.find(r#"id="upload""#).unwrap()..];
+    assert!(group.contains("An upload is already running"), "{group}");
+    assert_eq!(files(), 0);
+    drop(running);
     let none = app.send(upload("", b"")).await;
     assert!(
         none.text().contains("Add a version and a file"),
@@ -734,6 +759,80 @@ async fn a_refused_upload_leaves_no_file_and_the_field_knows_the_limit() {
         "{page}"
     );
     assert!(page.contains("/static/apk-upload.js"));
+}
+
+/// A stored upload clears the phones' failed installs of the app's release before (code QA L8), and
+/// its label is kept to [MAX_LABEL_CHARS] (code QA M2), the field's `maxlength`.
+#[tokio::test]
+async fn an_upload_clears_failed_installs_and_keeps_a_short_label() {
+    use crate::handlers::tracked_apps::MAX_LABEL_CHARS;
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (device, _) = app.enrolled_device("phone").await;
+    let id: i64 = sqlx::query_scalar(
+        "INSERT INTO tracked_apps (name, package_name, github_repo, source_type) \
+         VALUES ('Notes', '', '', 'manual') RETURNING id",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO device_install_progress (device_id, tracked_app_id, percent, failed, reason) \
+         VALUES (?, ?, 0, 1, 'INSTALL_FAILED_OLDER_SDK')",
+    )
+    .bind(device)
+    .bind(id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let page = app
+        .get_page(&format!("/apps/tracked/{id}"), &cookie)
+        .await
+        .text();
+    assert!(
+        page.contains(&format!(r#"maxlength="{MAX_LABEL_CHARS}""#)),
+        "{page}"
+    );
+
+    let label = "v".repeat(MAX_LABEL_CHARS + 50);
+    let boundary = "XBOUNDARYX";
+    let mut body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"release_label\"\r\n\r\n\
+         {label}\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"apk\"; \
+         filename=\"notes.apk\"\r\nContent-Type: application/octet-stream\r\n\r\n"
+    )
+    .into_bytes();
+    body.extend_from_slice(&std::fs::read("testdata/apk/fixture-key1.apk").unwrap());
+    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+    let res = app
+        .send(
+            Request::builder()
+                .method(Method::POST)
+                .uri(format!("/apps/tracked/{id}/upload"))
+                .header(header::COOKIE, &cookie)
+                .header(
+                    header::CONTENT_TYPE,
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await;
+    assert!(res.status.is_redirection(), "{}", res.text());
+    let tag: String =
+        sqlx::query_scalar("SELECT latest_release_tag FROM tracked_apps WHERE id = ?")
+            .bind(id)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(tag, "v".repeat(MAX_LABEL_CHARS));
+    let failed: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM device_install_progress WHERE tracked_app_id = ?")
+            .bind(id)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(failed, 0);
 }
 
 /// Design 13 §5: the download resumes. 200 with `Content-Length`, a strong `ETag` and the release

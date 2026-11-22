@@ -82,12 +82,21 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   "Couldn't read the APK", no chosen file as missing.
 - **Why an install failed** (upstream review 2026-11-20, `src/install_failure.rs`): the launcher's failure report
   (`POST /api/devices/apps/progress`, `failed: true`) carries `reason` - Android's `INSTALL_FAILED_*`/
-  `INSTALL_PARSE_FAILED_*` name from the status message's front, else the `STATUS_FAILURE_*` name, else the launcher's
+  `INSTALL_PARSE_FAILED_*` name (the first such upper-case token anywhere in the status message), else the
+  `STATUS_FAILURE_*` name, else the launcher's
   own `apk_refused`/`download_corrupt`/`not_started` - never Android's text. Stored in `device_install_progress.reason`
   only in that form (`clean`); Device › Apps shows "Install failed · <words>" (`words`; an unworded code as Android
   named it) on a not-installed app, and on an installed one whose update the phone still lacks (its `version_code`
   below the release's). A failed row shows and is kept a day (`retention::INSTALL_FAILED_HOURS`), past the 10 minutes
-  only while the phone reports no download of the app. Contract: `testdata/install_failure.json` (root CLAUDE.md).
+  only while the phone reports no download of the app, and goes once a new release of the app is stored (an upload,
+  a sync, an approved held release). The launcher reports no failure for a catalog app Play installed (Play's to
+  update; its row reads Installed). Contract: `testdata/install_failure.json` (root CLAUDE.md).
+- **Manual APK upload** (upstream review 2026-11-20, code QA of the fixes): streamed to its file through
+  `stream_capped` (at most `MAX_UPLOAD_BYTES`, 2 GB), one upload at a time (`AppState.apk_upload`; a second is told
+  "An upload is already running", 409), the data disk kept at the music upload's floor (`music::MIN_FREE_BYTES`, 1 GB):
+  refused up front when the body's `Content-Length` and the floor don't fit, stopped while streaming by music's
+  `DiskGuard` (507). A `Content-Length` over the route's limit is a 413 before the body is read. The label is read a
+  chunk at a time and kept to `MAX_LABEL_CHARS` (100, the field's `maxlength`).
 - **Device API** `GET /api/devices/apps/{id}/download`: since design 13 scoped and resumable - see "App downloads"
   below.
 - New devices start with Kid Settings (Quick Controls) Wi-Fi, Bluetooth, brightness and (design 18) sound on

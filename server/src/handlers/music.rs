@@ -2979,15 +2979,26 @@ const DISK_CHECK_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Stops an upload before it takes the data disk below `floor` (qa-21-step1-code #5): the free
 /// space is looked at before the first byte and again every [DISK_CHECK_BYTES], so two uploads at
-/// once or a file bigger than what's left stop too - the SQLite database shares that disk.
-struct DiskGuard<'a> {
+/// once or a file bigger than what's left stop too - the SQLite database shares that disk. A catalog
+/// app's manual upload streams through it too (`tracked_apps::upload_tracked_app_release`).
+pub(crate) struct DiskGuard<'a> {
     dir: &'a FsPath,
     floor: u64,
     next_check: u64,
 }
 
+/// [DiskGuard::check]'s answer when the disk would get below its floor.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct NoSpace;
+
+impl From<NoSpace> for ReceiveError {
+    fn from(_: NoSpace) -> Self {
+        ReceiveError::NoSpace
+    }
+}
+
 impl<'a> DiskGuard<'a> {
-    fn new(dir: &'a FsPath, floor: u64) -> Self {
+    pub(crate) fn new(dir: &'a FsPath, floor: u64) -> Self {
         DiskGuard {
             dir,
             floor,
@@ -2996,14 +3007,14 @@ impl<'a> DiskGuard<'a> {
     }
 
     /// `written` = bytes of this file written so far.
-    fn check(&mut self, written: u64) -> Result<(), ReceiveError> {
+    pub(crate) fn check(&mut self, written: u64) -> Result<(), NoSpace> {
         if written < self.next_check {
             return Ok(());
         }
         self.next_check = written + DISK_CHECK_BYTES;
         match music::free_bytes(self.dir) {
             Some(free) if free >= self.floor => Ok(()),
-            _ => Err(ReceiveError::NoSpace),
+            _ => Err(NoSpace),
         }
     }
 }
@@ -5721,16 +5732,13 @@ mod fix_tests {
     fn the_disk_guard_stops_below_the_floor() {
         let dir = tempfile::tempdir().unwrap();
         let mut guard = DiskGuard::new(dir.path(), u64::MAX);
-        assert!(matches!(guard.check(0), Err(ReceiveError::NoSpace)));
+        assert_eq!(guard.check(0), Err(NoSpace));
         let mut guard = DiskGuard::new(dir.path(), 0);
         assert!(guard.check(0).is_ok());
         // Not looked at again before the next 64 MB (a floor that can't be met would show it).
         guard.floor = u64::MAX;
         assert!(guard.check(DISK_CHECK_BYTES - 1).is_ok());
-        assert!(matches!(
-            guard.check(DISK_CHECK_BYTES),
-            Err(ReceiveError::NoSpace)
-        ));
+        assert_eq!(guard.check(DISK_CHECK_BYTES), Err(NoSpace));
     }
 
     /// Test gap: an entry deleted while one of its uploads is on its way - the file goes, nothing
