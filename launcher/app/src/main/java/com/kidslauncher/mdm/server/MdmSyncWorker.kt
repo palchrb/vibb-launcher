@@ -963,7 +963,7 @@ private suspend fun currentLocationReport(
     val still = stillBeat || places.renewed
     if (places.renewed) {
         ZoneWatch.stampVouchRenewed(context, now)
-        Log.i(ZONE_LOG_TAG, "Location heartbeat: STILL renewed by a zone link")
+        Log.i(ZONE_LOG_TAG, "Location heartbeat: STILL renewed by " + if (places.renewedByApple) "an Apple fix" else "a zone link")
     }
     if (motionNow != null && action.fresh) {
         // A genuinely fresh fix of our own (not the cached or an old last-known fallback, Q-6; not a learned fix from

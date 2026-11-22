@@ -45,25 +45,6 @@ fn this_month() -> i64 {
     cache::month_of(chrono::Utc::now())
 }
 
-/// The contract's months: `2026-11` is this month, `2026-07` four months before it.
-fn contract_months(mut body: Value) -> Value {
-    let now = cache::month_text(this_month());
-    let stale = cache::month_text(this_month() - 4);
-    if let Some(rows) = body.get_mut("aps").and_then(Value::as_array_mut) {
-        for row in rows {
-            let month = row["month"].as_str().unwrap().to_string();
-            row["month"] = json!(if month == now {
-                "2026-11".to_string()
-            } else if month == stale {
-                "2026-07".to_string()
-            } else {
-                month
-            });
-        }
-    }
-    body
-}
-
 async fn phone_on(app: &TestApp) -> (i64, String) {
     let (id, token) = app.enrolled_device("phone").await;
     assert!(super::set_on(&app.state, id, true).await.unwrap());
@@ -167,6 +148,12 @@ async fn the_route_answers_the_contract() {
         let first = &contract["request"];
         let (status, body) = match case {
             "fresh" => lookup(&app, &token, request).await,
+            "cached" => {
+                assert_eq!(lookup(&app, &token, first).await.0, StatusCode::OK);
+                let answer = lookup(&app, &token, request).await;
+                assert_eq!(app.fetch.count(), 1, "{case}: Apple asked again");
+                answer
+            }
             "stale_while_paused" => {
                 assert_eq!(lookup(&app, &token, first).await.0, StatusCode::OK);
                 sqlx::query(
@@ -203,6 +190,23 @@ async fn the_route_answers_the_contract() {
                 assert_eq!(app.fetch.count(), 1);
                 lookup(&app, &token, request).await
             }
+            "busy_partly_cached" => {
+                assert_eq!(lookup(&app, &token, first).await.0, StatusCode::OK);
+                app.fetch.hold();
+                let six = json!({"bssids": ["00:00:5e:00:53:06"]});
+                let seven = json!({"bssids": ["00:00:5e:00:53:07"]});
+                let (_, _, three) = tokio::join!(
+                    lookup(&app, &token, &six),
+                    lookup(&app, &token, &seven),
+                    async {
+                        app.fetch.wait_in_flight().await;
+                        let third = lookup(&app, &token, request).await;
+                        app.fetch.release();
+                        third
+                    }
+                );
+                three
+            }
             "busy" => {
                 app.fetch.hold();
                 let (one, two, three) = tokio::join!(
@@ -237,7 +241,7 @@ async fn the_route_answers_the_contract() {
             row["status"].as_u64().unwrap(),
             "{case}: {body}"
         );
-        assert_eq!(contract_months(body), row["body"], "{case}");
+        assert_eq!(body, row["body"], "{case}");
     }
 }
 
@@ -468,13 +472,19 @@ async fn the_cache_is_sealed_and_refreshed_after_three_months() {
     let (_, body) = lookup(&app, &token, &request).await;
     assert_eq!(app.fetch.count(), 1);
     assert_eq!(body["aps"].as_array().unwrap().len(), 2);
-    // Two months on: still the cache's (the negative ran out: 03 is asked alone).
+    assert_eq!(body["unknown"], json!(["00:00:5e:00:53:03"]));
+    // The surrounding APs are cached, and answered only when asked for.
+    let (_, body) = lookup(&app, &token, &json!({"bssids": ["00:00:5e:00:53:04"]})).await;
+    assert_eq!(app.fetch.count(), 1);
+    assert_eq!(body["aps"][0]["fresh_months_left"], 3);
+    // Two months on: still the cache's, one month left (the negative ran out: 03 is asked alone).
     sqlx::query("UPDATE wifi_lookup_aps SET fetched_month = fetched_month - 2")
         .execute(&app.db)
         .await
         .unwrap();
     app.fetch.clear_calls();
-    lookup(&app, &token, &request).await;
+    let (_, body) = lookup(&app, &token, &request).await;
+    assert_eq!(body["aps"][0]["fresh_months_left"], 1);
     let asked = app.fetch.requests.lock().unwrap()[0].body.clone().unwrap();
     assert_eq!(
         asked,
@@ -493,7 +503,7 @@ async fn the_cache_is_sealed_and_refreshed_after_three_months() {
             .as_array()
             .unwrap()
             .iter()
-            .all(|r| r["month"] == cache::month_text(this_month()))
+            .all(|r| r["fresh_months_left"] == cache::FRESH_MONTHS)
     );
 }
 
@@ -522,13 +532,23 @@ async fn a_new_key_empties_the_cache() {
     let fresh = WifiLookup::for_tests(app.fetch.clone());
     fresh.key(&app.state).await.unwrap();
     assert_eq!(count().await, 0);
-    // A mangled key is refused, never replaced.
+    // A mangled key is refused, never replaced - and raises the orange line at once (code QA L6).
     std::fs::write(&file, "not a key").unwrap();
+    let mangled = WifiLookup::for_tests(app.fetch.clone());
+    assert!(mangled.key(&app.state).await.is_err());
+    let wanted = ["00:00:5e:00:53:01".to_string()];
+    assert_eq!(
+        mangled.lookup(&app.state, &wanted).await,
+        Err(route::PAUSE_STEPS[1])
+    );
+    assert_eq!(mangled.health().last_error.map(|(_, c)| c), Some("key"));
+    let (device, _) = app.enrolled_device("other").await;
+    assert!(super::set_on(&app.state, device, true).await.unwrap());
     assert!(
-        WifiLookup::for_tests(app.fetch.clone())
-            .key(&app.state)
+        integration_health::for_device(&app.db, device, chrono::Utc::now())
             .await
-            .is_err()
+            .unwrap()
+            .contains(&(Title::WifiLookup, 1))
     );
     assert_eq!(std::fs::read_to_string(&file).unwrap(), "not a key");
 }
@@ -621,9 +641,14 @@ async fn a_big_answer_throttles_the_next_call() {
     app.fetch.answer(APPLE_URL, 200, apple("throttle"));
     let first = json!({"bssids": ["00:00:5e:00:53:14"]});
     let (_, body) = lookup(&app, &token, &first).await;
-    // The asked one, then the surrounding (16).
-    assert_eq!(body["aps"].as_array().unwrap().len(), 17);
+    // Only the asked one (code QA M3); the 16 surrounding are cached.
+    assert_eq!(body["aps"].as_array().unwrap().len(), 1);
     assert_eq!(body["aps"][0]["bssid"], "00:00:5e:00:53:14");
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM wifi_lookup_aps")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(rows, 17);
     let second = json!({"bssids": ["00:00:5e:00:53:01"]});
     lookup(&app, &token, &second).await;
     let requests = app.fetch.requests.lock().unwrap().clone();
@@ -671,7 +696,7 @@ fn the_proxy_setting() {
 }
 
 /// A7: with a proxy set every call carries it, and a proxy failure is a failure - never a second, direct call; an
-/// unreadable setting sends nothing at all.
+/// unreadable setting sends nothing at all and raises the orange line at once (code QA L6).
 #[tokio::test]
 async fn a_proxy_failure_is_never_a_direct_call() {
     let app = TestApp::new().await;
@@ -688,15 +713,27 @@ async fn a_proxy_failure_is_never_a_direct_call() {
             std::time::Duration::from_millis(300),
         );
         let answer = wifi.lookup(&app.state, &wanted).await;
-        assert_eq!(answer, Err(route::PAUSE_STEPS[0]), "{proxy:?}");
-        assert_eq!(wifi.health().last_error.map(|(_, c)| c), Some("proxy"));
+        let row = integration_health::row(&app.db, super::NAME, "")
+            .await
+            .unwrap()
+            .unwrap();
         let requests = app.fetch.requests.lock().unwrap().clone();
         match proxy {
             Proxy::Socks(url) => {
+                assert_eq!(answer, Err(route::PAUSE_STEPS[0]));
+                assert_eq!(wifi.health().last_error.map(|(_, c)| c), Some("proxy"));
                 assert_eq!(requests.len(), 1);
                 assert_eq!(requests[0].proxy.as_deref(), Some(url.as_str()));
             }
-            _ => assert!(requests.is_empty()),
+            _ => {
+                assert_eq!(answer, Err(route::PAUSE_STEPS[1]));
+                assert_eq!(
+                    wifi.health().last_error.map(|(_, c)| c),
+                    Some("proxy_setting")
+                );
+                assert_eq!(row.error.as_deref(), Some("proxy_setting"));
+                assert!(requests.is_empty());
+            }
         }
     }
 }

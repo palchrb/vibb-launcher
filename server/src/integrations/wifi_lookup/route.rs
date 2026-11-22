@@ -3,13 +3,21 @@
 //! - **Request**: `{"bssids": [...]}` (4 KB at most), checked by hand: only that key, 1..40 entries, each lowercase
 //!   `xx:xx:xx:xx:xx:xx`, unicast with the locally administered bit clear (never all zeros); duplicates dropped. One
 //!   bad entry is a 400; no input is ever echoed.
-//! - **Answers**: 200 `{"aps": [{bssid, lat, lng, acc_m, month}]}` - every asked BSSID the cache holds (a stale one too
-//!   while Apple can't be asked) and the surrounding APs of this call's Apple batch, at most [ANSWER_MAX]; 409 `off`;
-//!   429 `limit` (this phone's 30 an hour) or `busy` (a third lookup at once, or the Apple call not free within the
-//!   gate's wait); 503 `unavailable` with `retry_after_s` only when no asked BSSID is cached and Apple can't be asked
-//!   (paused, over the server-wide limit, or this call failed); 400 a bad body.
+//! - **Answers**: 200 `{"aps": [{bssid, lat, lng, acc_m, fresh_months_left}], "unknown": [bssid],
+//!   "retry_after_s"?}` - only asked BSSIDs (code QA M3): each one the cache holds a position for, with the whole
+//!   calendar months (UTC) its row stays fresh (0-3; 0 = a stale row served while Apple can't be asked - never the
+//!   month Apple answered), and each one Apple doesn't know (a negative, until the month ends: M2); `retry_after_s`
+//!   when Apple was needed for some of them and couldn't be asked (M1); 409 `off`; 429 `limit` (this phone's 30 an
+//!   hour) or `busy` (a third lookup at once, or the Apple call not free within the gate's wait) when the cache
+//!   answered none of them; 503 `unavailable` with `retry_after_s` when the cache answered none and Apple can't be
+//!   asked (paused, over the server-wide limit, or this call failed); 400 a bad body.
+//! - **What a token holder still learns** (A6): whether a BSSID it names is in the cache, and roughly how fresh -
+//!   never when it was asked or by which phone. The surrounding APs Apple sends are cached, never answered.
 //! - **Apple**: asked only for BSSIDs the cache lacks or fetched three months ago or more, all in one call with 100
-//!   surrounding (8 while GrapheneOS's throttle holds); one call at a time; 60 an hour and 10 in any 10 minutes.
+//!   surrounding (8 while GrapheneOS's throttle holds); one call at a time, the cache read again once the call is ours
+//!   (a lookup that waited may find its BSSIDs fetched); 60 an hour and 10 in any 10 minutes.
+//! - **Logs** (L9): each lookup at debug, counts only; an hourly line of the hour's counts at info (the sweep).
+//! - The request's form, the headers and the URL are GrapheneOS's (MIT, its notice in [codec]).
 //! - **Pauses** (L5): a transient failure (timeout, connect, proxy) pauses 5 minutes the first time, then 1 h doubling
 //!   to 24 h; a non-200 or an answer that doesn't read goes to 1 h at once; a 200 resets. Each step logs one line.
 
@@ -34,7 +42,6 @@ use crate::security::AuthedDevice;
 
 pub const BODY_LIMIT: usize = 4096;
 pub const MAX_BSSIDS: usize = 40;
-pub const ANSWER_MAX: usize = 140;
 pub const PHONE_LOOKUPS_AN_HOUR: usize = 30;
 pub const CALLS_AN_HOUR: usize = 60;
 pub const BURST_CALLS: usize = 10;
@@ -56,7 +63,10 @@ pub const PAUSE_STEPS: [Duration; 7] = [
     Duration::from_secs(24 * 3600),
 ];
 
-/// Apple's Wi-Fi location service: a fixed URL, never from a request.
+/// How long a partly answered lookup tells the phone to wait when Apple was busy with another lookup.
+pub const BUSY_WAIT: Duration = Duration::from_secs(900);
+
+/// Apple's Wi-Fi location service: a fixed URL, never from a request (GrapheneOS's, MIT - see [codec]).
 pub const APPLE_URL: &str = "https://gs-loc.apple.com/clls/wloc";
 /// GrapheneOS's headers: macOS's `locationd`.
 const USER_AGENT: &str = "locationd/2960.0.57 CFNetwork/3826.500.111.1.1 Darwin/24.4.0";
@@ -74,6 +84,8 @@ pub enum Failure {
     Http,
     /// A 200 that doesn't read (short, cut off, not the protobuf).
     Format,
+    /// `WIFI_LOOKUP_PROXY` is set but isn't a `socks5h://` address: only the server's operator mends it (`stop`).
+    ProxySetting,
 }
 
 impl Failure {
@@ -85,12 +97,21 @@ impl Failure {
             Failure::Blocked => "blocked",
             Failure::Http => "http",
             Failure::Format => "format",
+            Failure::ProxySetting => "proxy_setting",
         }
     }
 
-    /// A non-200 or an unreadable answer goes to an hour's pause at once.
+    /// A non-200, an unreadable answer or a bad setting goes to an hour's pause at once.
     fn hard(self) -> bool {
-        matches!(self, Failure::Blocked | Failure::Http | Failure::Format)
+        matches!(
+            self,
+            Failure::Blocked | Failure::Http | Failure::Format | Failure::ProxySetting
+        )
+    }
+
+    /// Nothing but the operator mends it: `integration_health`'s `stop` at once (code QA L6).
+    fn stops(self) -> bool {
+        self == Failure::ProxySetting
     }
 }
 
@@ -191,17 +212,27 @@ pub struct Row {
     pub lat: f64,
     pub lng: f64,
     pub acc_m: u16,
-    pub month: String,
+    /// The whole calendar months (UTC) the row stays fresh: 0-[cache::FRESH_MONTHS].
+    pub fresh_months_left: i64,
 }
 
-fn row(bssid: &str, position: &Position, month: i64) -> Row {
+fn row(bssid: &str, position: &Position, fetched_month: i64, now_month: i64) -> Row {
     Row {
         bssid: bssid.to_string(),
         lat: position.lat,
         lng: position.lng,
         acc_m: position.acc_m,
-        month: cache::month_text(month),
+        fresh_months_left: (cache::FRESH_MONTHS - (now_month - fetched_month))
+            .clamp(0, cache::FRESH_MONTHS),
     }
+}
+
+/// A lookup's 200: the rows, the unknowns, and the wait when Apple was needed and not asked.
+#[derive(Debug, PartialEq)]
+pub struct Answer {
+    pub aps: Vec<Row>,
+    pub unknown: Vec<String>,
+    pub retry_after: Option<Duration>,
 }
 
 fn refusal(status: StatusCode, code: &str) -> Response {
@@ -246,23 +277,30 @@ pub async fn route(
         return refusal(StatusCode::TOO_MANY_REQUESTS, "limit");
     }
     match lookup.lookup(&state, &bssids).await {
-        Ok(Some(rows)) => (StatusCode::OK, axum::Json(json!({ "aps": rows }))).into_response(),
+        Ok(Some(answer)) => {
+            let mut body = json!({ "aps": answer.aps, "unknown": answer.unknown });
+            if let Some(wait) = answer.retry_after {
+                body["retry_after_s"] = json!(seconds(wait));
+            }
+            (StatusCode::OK, axum::Json(body)).into_response()
+        }
         Ok(None) => refusal(StatusCode::TOO_MANY_REQUESTS, "busy"),
         Err(wait) => unavailable(wait),
     }
 }
 
 impl WifiLookup {
-    /// The answer's rows; `Ok(None)` = busy; `Err(wait)` = nothing cached and Apple can't be asked.
+    /// The answer; `Ok(None)` = busy; `Err(wait)` = the cache answered none of them and Apple can't be asked.
     pub(crate) async fn lookup(
         &self,
         state: &AppState,
         bssids: &[String],
-    ) -> Result<Option<Vec<Row>>, Duration> {
+    ) -> Result<Option<Answer>, Duration> {
         let key = match self.key(state).await {
             Ok(key) => key,
             Err(err) => {
                 tracing::error!("wifi_lookup: no cache key: {err}");
+                self.key_failed(state).await;
                 return Err(PAUSE_STEPS[1]);
             }
         };
@@ -280,82 +318,83 @@ impl WifiLookup {
             .filter(|(_, c)| c.wanted(month))
             .map(|(b, _)| b.clone())
             .collect();
-        let mut surrounding: Vec<(String, Position)> = Vec::new();
         let mut not_asked = None;
         if !wanted.is_empty() {
-            match self.fetch(state, &wanted).await {
-                Ok(aps) => {
-                    let known: Vec<(String, Position)> = aps
-                        .iter()
-                        .filter_map(|(b, p)| p.map(|p| (b.clone(), p)))
-                        .collect();
-                    let unknown: Vec<String> = wanted
-                        .iter()
-                        .filter(|w| !known.iter().any(|(b, _)| b == *w))
-                        .cloned()
-                        .collect();
-                    if let Err(err) = cache::store(&state.db, &key, &known, &unknown, month).await {
-                        tracing::error!(%err, "wifi_lookup: couldn't keep Apple's answer");
-                    }
+            match self.fetch(state, &key, &wanted, month).await {
+                Ok(fetched) => {
                     for (bssid, c) in bssids.iter().zip(cached.iter_mut()) {
-                        if wanted.contains(bssid) {
-                            *c = known.iter().find(|(b, _)| b == bssid).map_or(
-                                Cached::Unknown,
-                                |(_, position)| Cached::Known {
-                                    position: *position,
-                                    fetched_month: month,
-                                },
-                            );
+                        if let Some(at) = wanted.iter().position(|w| w == bssid) {
+                            *c = fetched[at];
                         }
                     }
-                    surrounding = known
-                        .into_iter()
-                        .filter(|(b, _)| !bssids.contains(b))
-                        .collect();
                 }
                 Err(why) => not_asked = Some(why),
             }
         }
-        let mut rows: Vec<Row> = bssids
+        let aps: Vec<Row> = bssids
             .iter()
             .zip(&cached)
             .filter_map(|(bssid, c)| match c {
                 Cached::Known {
                     position,
                     fetched_month,
-                } => Some(row(bssid, position, *fetched_month)),
+                } => Some(row(bssid, position, *fetched_month, month)),
                 _ => None,
             })
             .collect();
-        let from_cache = rows.len();
-        rows.extend(surrounding.iter().map(|(b, p)| row(b, p, month)));
-        rows.truncate(ANSWER_MAX);
+        let unknown: Vec<String> = bssids
+            .iter()
+            .zip(&cached)
+            .filter(|(_, c)| **c == Cached::Unknown)
+            .map(|(b, _)| b.clone())
+            .collect();
         let asked = bssids.len();
-        tracing::info!(
+        let unanswered = asked - aps.len() - unknown.len();
+        self.counts
+            .add(asked, wanted.len(), not_asked.is_none(), unanswered);
+        tracing::debug!(
             asked,
-            cached = asked - wanted.len(),
-            fetched = if not_asked.is_none() { wanted.len() } else { 0 },
-            surrounding = surrounding.len(),
+            wanted = wanted.len(),
+            known = aps.len(),
+            unknown = unknown.len(),
+            unanswered,
             "wifi_lookup: lookup"
         );
-        match not_asked {
-            Some(NotAsked::Busy) => return Ok(None),
-            Some(NotAsked::Wait(wait)) if from_cache == 0 => return Err(wait),
-            _ => {}
-        }
-        let used: Vec<&str> = rows.iter().map(|r| r.bssid.as_str()).collect();
+        let answered_none = aps.is_empty() && unknown.is_empty();
+        let retry_after = match not_asked {
+            // Code QA L4: busy, or the 503, only when the cache answered none of them.
+            Some(NotAsked::Busy) if answered_none => return Ok(None),
+            Some(NotAsked::Wait(wait)) if answered_none => return Err(wait),
+            Some(NotAsked::Busy) => Some(BUSY_WAIT),
+            Some(NotAsked::Wait(wait)) => Some(wait),
+            None => None,
+        };
+        let used: Vec<&str> = aps.iter().map(|r| r.bssid.as_str()).collect();
         if let Err(err) = cache::touch(&state.db, &key, &used, month).await {
             tracing::error!(%err, "wifi_lookup: couldn't mark the rows used");
         }
-        Ok(Some(rows))
+        Ok(Some(Answer {
+            aps,
+            unknown,
+            retry_after,
+        }))
     }
 
-    /// Apple asked for `wanted`, behind the gate, the pauses and the limits.
+    /// A key file the server can't read: `stop` at once (code QA L6); no pause - the next lookup reads the file again.
+    async fn key_failed(&self, state: &AppState) {
+        self.health.error(chrono::Utc::now(), "key");
+        crate::integration_health::failed(&state.db, NAME, "", "key", Class::Stop).await;
+    }
+
+    /// Apple asked, behind the gate, the pauses and the limits, for what of `wanted` the cache still lacks once the
+    /// call is ours: the cache's answer for each of `wanted` (in order) after it.
     async fn fetch(
         &self,
         state: &AppState,
+        key: &cache::CacheKey,
         wanted: &[String],
-    ) -> Result<Vec<(String, Option<Position>)>, NotAsked> {
+        month: i64,
+    ) -> Result<Vec<Cached>, NotAsked> {
         if let Some(left) = self.paused(Instant::now()) {
             return Err(NotAsked::Wait(left));
         }
@@ -365,10 +404,25 @@ impl WifiLookup {
         let Ok(_one) = tokio::time::timeout(self.gate_wait, self.apple.lock()).await else {
             return Err(NotAsked::Busy);
         };
-        // The call before this one may have started a pause.
+        // The call before this one may have started a pause, or fetched these (code QA L5).
         let now = Instant::now();
         if let Some(left) = self.paused(now) {
             return Err(NotAsked::Wait(left));
+        }
+        let again = cache::read(&state.db, key, wanted, month)
+            .await
+            .map_err(|err| {
+                tracing::error!(%err, "wifi_lookup: couldn't read the cache");
+                NotAsked::Wait(PAUSE_STEPS[0])
+            })?;
+        let still: Vec<String> = wanted
+            .iter()
+            .zip(&again)
+            .filter(|(_, c)| c.wanted(month))
+            .map(|(b, _)| b.clone())
+            .collect();
+        if still.is_empty() {
+            return Ok(again);
         }
         let slot = self.burst.wait(now).max(self.outbound.wait(now));
         if !slot.is_zero() {
@@ -386,21 +440,48 @@ impl WifiLookup {
         } else {
             SURROUNDING
         };
-        match self.ask_apple(wanted, surrounding).await {
-            Ok(aps) => {
-                if aps.len() >= THROTTLE_AT {
-                    *self
-                        .throttled_until
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner()) = Some(Instant::now() + THROTTLE_FOR);
-                }
-                self.pauses.lock().unwrap_or_else(|e| e.into_inner()).ok();
-                self.health.ok(chrono::Utc::now());
-                crate::integration_health::ok(&state.db, NAME, "").await;
-                Ok(aps)
-            }
-            Err(failure) => Err(NotAsked::Wait(self.failed(state, failure).await)),
+        let aps = match self.ask_apple(&still, surrounding).await {
+            Ok(aps) => aps,
+            Err(failure) => return Err(NotAsked::Wait(self.failed(state, failure).await)),
+        };
+        if aps.len() >= THROTTLE_AT {
+            *self
+                .throttled_until
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = Some(Instant::now() + THROTTLE_FOR);
         }
+        self.pauses.lock().unwrap_or_else(|e| e.into_inner()).ok();
+        self.health.ok(chrono::Utc::now());
+        crate::integration_health::ok(&state.db, NAME, "").await;
+        // Every AP Apple placed is kept (the surrounding ones for later lookups); only asked ones are answered.
+        let known: Vec<(String, Position)> = aps
+            .iter()
+            .filter_map(|(b, p)| p.map(|p| (b.clone(), p)))
+            .collect();
+        let unknown: Vec<String> = still
+            .iter()
+            .filter(|w| !known.iter().any(|(b, _)| b == *w))
+            .cloned()
+            .collect();
+        if let Err(err) = cache::store(&state.db, key, &known, &unknown, month).await {
+            tracing::error!(%err, "wifi_lookup: couldn't keep Apple's answer");
+        }
+        Ok(wanted
+            .iter()
+            .zip(again)
+            .map(|(bssid, before)| {
+                if !still.contains(bssid) {
+                    return before;
+                }
+                known
+                    .iter()
+                    .find(|(b, _)| b == bssid)
+                    .map_or(Cached::Unknown, |(_, position)| Cached::Known {
+                        position: *position,
+                        fetched_month: month,
+                    })
+            })
+            .collect())
     }
 
     fn paused(&self, now: Instant) -> Option<Duration> {
@@ -423,7 +504,11 @@ impl WifiLookup {
             failure.code()
         );
         self.health.error(chrono::Utc::now(), failure.code());
-        let class = if day { Class::Stop } else { Class::Transient };
+        let class = if day || failure.stops() {
+            Class::Stop
+        } else {
+            Class::Transient
+        };
         crate::integration_health::failed(&state.db, NAME, "", failure.code(), class).await;
         pause
     }
@@ -435,7 +520,7 @@ impl WifiLookup {
         surrounding: u32,
     ) -> Result<Vec<(String, Option<Position>)>, Failure> {
         let proxy = match &self.proxy {
-            Proxy::Invalid => return Err(Failure::Proxy),
+            Proxy::Invalid => return Err(Failure::ProxySetting),
             Proxy::Socks(url) => Some(url.clone()),
             Proxy::Direct => None,
         };
@@ -462,7 +547,7 @@ impl WifiLookup {
             _ if proxied => Failure::Proxy,
             _ => Failure::Connect,
         })?;
-        tracing::info!(status = answer.status, "wifi_lookup: Apple answered");
+        tracing::debug!(status = answer.status, "wifi_lookup: Apple answered");
         match answer.status {
             200 if answer.truncated => Err(Failure::Format),
             200 => codec::answer(&answer.body).map_err(|_| Failure::Format),

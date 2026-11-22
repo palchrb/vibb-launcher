@@ -444,14 +444,17 @@ stay each side's. The policy's `map_links` is pinned by `policy_json_keys_snapsh
 
 The Apple Wi-Fi lookup (design 125 step 2, an integration behind design 110's boundary:
 `server/src/integrations/wifi_lookup/`, the Cargo feature `wifi_lookup`) has its own contract folder:
-`server/testdata/wifi_lookup/contract.json`, byte-identical in `launcher/app/src/test/resources/wifi_lookup/`: `policy`
+`server/testdata/wifi_lookup/contract.json`, byte-identical in `launcher/app/src/test/resources/wifi_lookup/`: `rules`
+(the server's cache months - `fresh_months`, `negative_months` - and the phone's `stale_grace_h`), `policy`
 (`wifi_lookup: {on}`, `off` and `on`), `request` (the exact `POST /api/devices/wifi-lookup` body), `answers` (each case
-the route answers - fresh, stale rows while Apple is paused, the cache alone over the server-wide limit, `off`, `limit`,
-`busy`, `unavailable` with `retry_after_s`, a 400 per bad form; a month `2026-11` is the run's month) and
-`phone_answers` (each status and body to the phone's action: use, a wait in seconds, or off until a policy says on).
-The server's `integrations::wifi_lookup::tests` produces every `answers` row through the real route and compares the
-copies; the launcher's `WifiLookupContractTest` encodes `request`, decodes `policy` and maps every row through
-`appleStep`. The server's own rows (`server/testdata/wifi_lookup/server.json`, written by
+the route answers - only asked BSSIDs with `fresh_months_left` and the `unknown` ones: fresh, cached, stale rows while
+Apple is paused with their wait, the cache alone over the server-wide limit or busy with its wait, `off`, `limit`,
+`busy`, `unavailable` with `retry_after_s`, a 400 per bad form), `phone_answers` (each status and body to the phone's
+action: use with a wait or none, a wait in seconds, or off until a policy says on) and `phone_rows` (what the phone
+keeps from a 200 at a given instant, and until when). The server's `integrations::wifi_lookup::tests` produces every
+`answers` row through the real route and compares the copies; the launcher's `WifiLookupContractTest` checks `rules`
+against its constants, encodes `request`, decodes `policy`, maps every row through `appleStep` and runs `phone_rows`
+through `storeApple`. The server's own rows (`server/testdata/wifi_lookup/server.json`, written by
 `scripts/wifi-lookup-fixtures.py`) and the launcher's Apple rules (`PlacesTest`) stay each side's. The policy's
 `wifi_lookup` is pinned by `policy_json_keys_snapshot` and `PolicyResponseCompatTest`.
 

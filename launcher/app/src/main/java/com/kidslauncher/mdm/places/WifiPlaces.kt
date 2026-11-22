@@ -125,6 +125,9 @@ object WifiPlaces {
     class Ask(val motion: Motion, val movedAtElapsedMs: Long, val vouched: Location? = null, val stillVouch: Location? = null) {
         @Volatile var renewed = false
 
+        /** The renewal came from an Apple fix within the vouch, not a zone link (A9). */
+        @Volatile var renewedByApple = false
+
         @Volatile var notFresh = false
     }
 
@@ -223,32 +226,35 @@ object WifiPlaces {
     }
 
     /** The table after [change] on a store opened at [generation]; written sealed (AtomicFile) only when its contents
-     * changed (code QA L4), dropped when a clear came meanwhile. A failed seal keeps the table in memory. */
-    private fun save(context: Context, generation: Int, change: (List<PlaceRow>) -> List<PlaceRow>): Unit = synchronized(lock) {
-        val current = rows ?: return
-        if (generation != this.generation) return
+     * changed (code QA L4), dropped when a clear came meanwhile. The table in memory follows only a written one, so a
+     * failed write is tried again by the next save. `true` when the table on disk holds the change (or needed none). */
+    private fun save(context: Context, generation: Int, change: (List<PlaceRow>) -> List<PlaceRow>): Boolean = synchronized(lock) {
+        val current = rows ?: return false
+        if (generation != this.generation) return false
         val next = change(current)
-        if (next == current) return
-        rows = next
+        if (next == current) return true
         val f = file(context)
         val sealed = try {
             Secrets.box.seal(AAD_TABLE, encodeTable(next))
         } catch (e: Exception) {
             Log.w(LOG_TAG, "table not sealed now: ${e.javaClass.simpleName}")
-            return
+            return false
         }
         val out = try {
             f.startWrite()
         } catch (e: Exception) {
             Log.w(LOG_TAG, "table not written: ${e.javaClass.simpleName}")
-            return
+            return false
         }
         try {
             out.write(sealed)
             f.finishWrite(out)
+            rows = next
+            true
         } catch (e: Exception) {
             f.failWrite(out)
             Log.w(LOG_TAG, "table not written: ${e.javaClass.simpleName}")
+            false
         }
     }
 
@@ -456,22 +462,26 @@ object WifiPlaces {
     // --- The Apple lookup through the family's server (design 125 step 2, A3, A4, A9) ---
 
     /**
-     * Each fresh policy's switch (the sync, after it is stored): off drops every Apple row and the waits; on ends a
-     * 409's "no ask until a policy says on". Never throws.
+     * Each fresh policy's switch (the sync, after it is stored): on ends a 409's "no ask until a policy says on"; off
+     * stops the asks at once and drops every Apple row on every off policy (no write when there are none), the waits
+     * cleared only once the table is written (code QA L1). Never throws.
      */
     fun policyAccepted(context: Context, on: Boolean) {
         try {
             val p = prefs(context)
-            val wasOn = p.getBoolean(KEY_APPLE_ON, false)
             if (on) {
-                if (!wasOn || p.contains(KEY_APPLE_OFF)) p.edit().putBoolean(KEY_APPLE_ON, true).remove(KEY_APPLE_OFF).commit()
+                if (!p.getBoolean(KEY_APPLE_ON, false) || p.contains(KEY_APPLE_OFF)) {
+                    p.edit().putBoolean(KEY_APPLE_ON, true).remove(KEY_APPLE_OFF).commit()
+                }
                 return
             }
-            if (!wasOn) return
-            p.edit().remove(KEY_APPLE_ON).remove(KEY_APPLE_OFF).remove(KEY_APPLE_WAIT).commit()
+            if (p.getBoolean(KEY_APPLE_ON, false)) p.edit().putBoolean(KEY_APPLE_ON, false).commit()
             val store = open(context) ?: return
-            save(context, store.generation, ::dropApple)
-            Log.i(LOG_TAG, "apple rows dropped (switch off)")
+            if (!save(context, store.generation, ::dropApple)) return
+            if (p.contains(KEY_APPLE_ON) || p.contains(KEY_APPLE_OFF) || p.contains(KEY_APPLE_WAIT)) {
+                p.edit().remove(KEY_APPLE_ON).remove(KEY_APPLE_OFF).remove(KEY_APPLE_WAIT).commit()
+                Log.i(LOG_TAG, "apple rows dropped (switch off)")
+            }
         } catch (e: Exception) {
             Log.w(LOG_TAG, "apple switch not applied: ${e.javaClass.simpleName}")
         }
@@ -502,12 +512,17 @@ object WifiPlaces {
         val (status, body) = withTimeoutOrNull(APPLE_TIMEOUT_MS) { postLookup(asking) } ?: (0 to null)
         val p = prefs(context)
         val step = appleStep(status, body)
-        val outcome = if (step is AppleStep.Use) "got=${step.aps.size}" else "step=${step.javaClass.simpleName}"
+        val outcome = if (step is AppleStep.Use) "got=${step.aps.size} unknown=${step.unknown.size}" else "step=${step.javaClass.simpleName}"
         Log.i(LOG_TAG, "apple asked=${asking.size} status=$status $outcome")
         when (step) {
             is AppleStep.Use -> {
-                p.edit().remove(KEY_APPLE_WAIT).commit()
-                save(context, store.generation) { storeApple(it, step.aps, store.keys, now) }
+                // A partial answer's wait (code QA M1): the server couldn't ask Apple for the rest.
+                if (step.waitMs > 0) {
+                    p.edit().putLong(KEY_APPLE_WAIT, System.currentTimeMillis() + step.waitMs).commit()
+                } else {
+                    p.edit().remove(KEY_APPLE_WAIT).commit()
+                }
+                save(context, store.generation) { storeApple(it, step.aps, step.unknown, store.keys, now) }
                 return step.aps.isNotEmpty()
             }
             is AppleStep.Wait -> p.edit().putLong(KEY_APPLE_WAIT, System.currentTimeMillis() + step.ms).commit()
@@ -615,15 +630,11 @@ object WifiPlaces {
         return true
     }
 
-    /** A9 (H2): a still phone's Apple fix against its vouch - the `apple` leave-one-out class, and outside it an Apple
-     * contradiction. */
-    private fun stillCount(context: Context, fix: LearnedFix, vouch: Vouched?, hit: Boolean) {
-        vouch ?: return
-        val err = distanceM(fix.lat, fix.lng, vouch.lat, vouch.lng)
-        if (!hit) Log.w(LOG_TAG, "apple contradiction")
-        count(context, today()) { c ->
-            c.looSource(fix.source, hit, err).let { if (hit) it else it.copy(appleContradictions = it.appleContradictions + 1) }
-        }
+    /** A9 (H2): a still phone's Apple fix outside its vouch - an Apple contradiction (the by-source counts are
+     * teachWith's alone, on the paired results: code QA L2). */
+    private fun appleContradiction(context: Context) {
+        Log.w(LOG_TAG, "apple contradiction")
+        count(context, today()) { c -> c.copy(appleContradictions = c.appleContradictions + 1) }
     }
 
     private fun count(context: Context, today: Int, change: (DayCounts) -> DayCounts) = synchronized(lock) {
@@ -780,14 +791,16 @@ object WifiPlaces {
                     return when (appleStill(fix, vouch, still)) {
                         StillVerdict.USE -> location(fix).takeIf(accept)?.also { ask.notFresh = !fix.fresh }
                         // A9 (H2): still means still - the vouch renewed, never replaced.
-                        StillVerdict.RENEW -> {
-                            stillCount(app, fix, vouch, hit = true)
-                            ask.stillVouch.also { ask.renewed = true }
+                        StillVerdict.RENEW -> ask.stillVouch.also {
+                            ask.renewed = true
+                            ask.renewedByApple = true
                         }
                         StillVerdict.CONTRADICTS -> {
-                            stillCount(app, fix, vouch, hit = false)
+                            appleContradiction(app)
                             null
                         }
+                        // Still with nothing to renew: Apple's position alone moves nothing (code QA L3).
+                        StillVerdict.WITHHOLD -> null
                     }
                 }
                 fun better(gps: Location?, fix: LearnedFix?): Location? =

@@ -27,9 +27,9 @@
 //! - **Answer**: a 10-byte header skipped (shorter: a format failure), then `ALSLocationResponse.wireless_aps 2 ->
 //!   WirelessAP {mac_id 1, location 2} -> ALSLocation {latitude 1, longitude 2, accuracy 3}`. Varints at most 10 bytes,
 //!   lengths checked, unknown fields of wire types 0, 1, 2 and 5 skipped, groups (3, 4) refused. A latitude of
-//!   -18000000000, a missing location or latitude, or a position out of range is unknown (never 0,0). Apple drops
-//!   leading zeros in `mac_id` (GrapheneOS's `normalizeBssid`); a non-hex one is left out; the first of duplicates wins;
-//!   at most [MAX_ANSWER_APS] are read.
+//!   -18000000000, a missing location, latitude or longitude, or a position out of range is unknown (never 0,0).
+//!   Apple drops leading zeros in `mac_id` (GrapheneOS's `normalizeBssid`); a non-hex one is left out; the first of
+//!   duplicates wins; at most [MAX_ANSWER_APS] are read.
 
 /// The answer's header before the protobuf message.
 pub const ANSWER_HEADER: usize = 10;
@@ -214,18 +214,19 @@ pub fn normal_mac(raw: &str) -> Option<String> {
 /// `ALSLocation`'s position, `None` when unknown or out of range.
 fn position(bytes: &[u8]) -> Result<Option<Position>, Malformed> {
     let mut reader = Reader::new(bytes);
-    let (mut lat, mut lng, mut acc) = (None, 0i64, 0i64);
+    let (mut lat, mut lng, mut acc) = (None, None, 0i64);
     while let Some((number, value)) = reader.field()? {
         match (number, value) {
             (1, Value::Varint(n)) => lat = Some(n as i64),
-            (2, Value::Varint(n)) => lng = n as i64,
+            (2, Value::Varint(n)) => lng = Some(n as i64),
             // int32: a negative one arrives sign-extended to 64 bits.
             (3, Value::Varint(n)) => acc = n as i64,
             (1..=3, _) => return Err(Malformed),
             _ => {}
         }
     }
-    let Some(lat) = lat.filter(|lat| *lat != UNKNOWN_LATITUDE) else {
+    // A missing latitude or longitude is unknown, never 0 (code QA L7).
+    let (Some(lat), Some(lng)) = (lat.filter(|lat| *lat != UNKNOWN_LATITUDE), lng) else {
         return Ok(None);
     };
     // 1e-8 degrees from Apple, kept to 1e-7 (a centimetre) as the cache seals it.

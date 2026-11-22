@@ -76,7 +76,8 @@ def location(lat=None, lng=0, acc=None, extra=b""):
     body = b""
     if lat is not None:
         body += vi(1, lat)
-    body += vi(2, lng)
+    if lng is not None:
+        body += vi(2, lng)
     if acc is not None:
         body += vi(3, acc)
     return body + extra
@@ -166,9 +167,10 @@ def apple_rows():
             ap(mac(1)),
             ap(mac(2), location(None, H[1], 20)),
             ap(mac(3), location(UNKNOWN, 0, 0)),
+            ap(mac(4), location(H[0], None, 20)),
         ),
-        [[mac(1), None], [mac(2), None], [mac(3), None]],
-        "no location, no latitude, Apple's -18000000000",
+        [[mac(1), None], [mac(2), None], [mac(3), None], [mac(4), None]],
+        "no location, no latitude, Apple's -18000000000, no longitude",
     )
     row(
         "out_of_range",

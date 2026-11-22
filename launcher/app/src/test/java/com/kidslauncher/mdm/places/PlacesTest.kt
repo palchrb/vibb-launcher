@@ -696,7 +696,7 @@ class PlacesTest {
 
     /** Apple's position for AP [i] at metres east/north, stored at [now] (the month of the epoch's start). */
     private fun appleRows(vararg aps: Triple<Int, Pair<Double, Double>, Int>, now: Int = 0, rows: List<PlaceRow> = emptyList()): List<PlaceRow> =
-        storeApple(rows, aps.map { (i, at, acc) -> Town.ll(at.first, at.second).let { (lat, lng) -> AppleAp(mac(i), lat, lng, acc, "1970-01") } }, keys, now)
+        storeApple(rows, aps.map { (i, at, acc) -> Town.ll(at.first, at.second).let { (lat, lng) -> AppleAp(mac(i), lat, lng, acc, APPLE_FRESH_MONTHS) } }, emptyList(), keys, now)
 
     private fun ap(i: Int, east: Double, north: Double, acc: Int = 30) = Triple(i, east to north, acc)
 
@@ -717,25 +717,42 @@ class PlacesTest {
 
     @Test
     fun `apple - the rows stored, a tombstone kept, the cap, the switch off`() {
+        val tenth = 60 * 24 * 9
         val rows = storeApple(
             emptyList(),
             listOf(
-                AppleAp(mac(1), 59.9, 10.75, 30, "1970-01"),
-                AppleAp("02:00:5e:00:53:02", 59.9, 10.75, 30, "1970-01"),
-                AppleAp(mac(3), 59.9, 10.75, 0, "1970-01"),
-                AppleAp(mac(4), 91.0, 10.75, 30, "1970-01"),
-                AppleAp(mac(5), 59.9, 10.75, 30, "1970-13"),
-                AppleAp(mac(6), 59.9, 10.75, 30, "nope"),
-                // A month ahead counts as now; one more than 90 days back is no row.
-                AppleAp(mac(7), 59.9, 10.75, 30, "2100-01"),
-                AppleAp(mac(8), 59.9, 10.75, 30, "1969-09"),
+                AppleAp(mac(1), 59.9, 10.75, 30, 3),
+                AppleAp("02:00:5e:00:53:02", 59.9, 10.75, 30, 3),
+                AppleAp(mac(3), 59.9, 10.75, 0, 3),
+                AppleAp(mac(4), 91.0, 10.75, 30, 3),
+                // More months than the server's rule, or fewer than none: no row.
+                AppleAp(mac(5), 59.9, 10.75, 30, 4),
+                AppleAp(mac(6), 59.9, 10.75, 30, -1),
+                // Stale (served while Apple couldn't be asked): a day's grace (code QA M1).
+                AppleAp(mac(7), 59.9, 10.75, 30, 0),
             ),
+            listOf(mac(8), "02:00:5e:00:53:09"),
             keys,
-            60 * 24 * 10,
+            tenth,
         )
-        assertEquals(setOf(keys.ap(mac(1)), keys.ap(mac(7))), rows.map { it.key }.toSet())
-        assertTrue(rows.all { it.kind == RowKind.APPLE && it.appleLive(60 * 24 * 10) && it.rangeM == 30f })
-        assertEquals(60 * 24 * 10, rows.first { it.key == keys.ap(mac(7)) }.lastTeachMin)
+        val live = rows.filter { it.appleLive(tenth) }
+        assertEquals(setOf(keys.ap(mac(1)), keys.ap(mac(7))), live.map { it.key }.toSet())
+        assertTrue(live.all { it.kind == RowKind.APPLE && it.rangeM == 30f })
+        // Three months left on 1970-01-10: until 1970-04-01 (the server asks Apple again that month).
+        assertEquals(monthStartMin(tenth, 3), live.first { it.key == keys.ap(mac(1)) }.lastTeachMin)
+        assertEquals(90 * 24 * 60, monthStartMin(tenth, 3))
+        assertEquals(tenth + APPLE_STALE_GRACE_MIN, live.first { it.key == keys.ap(mac(7)) }.lastTeachMin)
+        assertFalse(live.first { it.key == keys.ap(mac(7)) }.appleLive(tenth + APPLE_STALE_GRACE_MIN))
+        // A negative (code QA M2): no position, blocks the ask until the month ends - then asked again.
+        val negative = rows.single { it.key == keys.ap(mac(8)) }
+        assertFalse(negative.appleLive(tenth))
+        assertEquals(monthStartMin(tenth, 1), negative.blockedUntilMin)
+        val heard8 = hear(scan(8 to -50), null, keys, moving, emptyMap(), 0).heard
+        assertEquals(emptyList<String>(), appleAsk(heard8, rows, tenth))
+        assertEquals(listOf(mac(8)), appleAsk(heard8, rows, monthStartMin(tenth, 1)))
+        assertEquals(3, rows.size)
+        // A clock set back far behind a row's end: not live.
+        assertFalse(live.first().appleLive(live.first().lastTeachMin - APPLE_LIVE_MAX_MIN - 1))
         // A tombstone stays one while it blocks; a live row is replaced.
         val stone = reconcileApple(listOf(learned(1, 0.0, 0.0)) + appleRows(ap(1, 900.0, 0.0)), 0)
         assertEquals(0.0, stone.first { it.kind == RowKind.APPLE }.lat, 0.0)
@@ -745,7 +762,7 @@ class PlacesTest {
         assertEquals(listOf(50f), replaced.filter { it.kind == RowKind.APPLE }.map { it.rangeM })
         // Expired rows go, a tombstone after its block too; at most 3000, the least recently seen out.
         assertTrue(prune(again, APPLE_ROW_MIN).none { it.kind == RowKind.APPLE })
-        val crowd = (0 until APPLE_ROWS_MAX + 5).map { PlaceRow(RowKind.APPLE, "k$it", lat = 1.0, lng = 1.0, rangeM = 30f, lastSeenMin = it) }
+        val crowd = (0 until APPLE_ROWS_MAX + 5).map { PlaceRow(RowKind.APPLE, "k$it", lat = 1.0, lng = 1.0, rangeM = 30f, lastTeachMin = 60 * 24, lastSeenMin = it) }
         val kept = prune(crowd, 0)
         assertEquals(APPLE_ROWS_MAX, kept.size)
         assertTrue(kept.none { it.lastSeenMin < 5 })
@@ -807,7 +824,9 @@ class PlacesTest {
         assertEquals(StillVerdict.RENEW, appleStill(fix, vouch, still = true))
         assertEquals(StillVerdict.CONTRADICTS, appleStill(off, vouch, still = true))
         assertEquals(StillVerdict.USE, appleStill(off, vouch, still = false))
-        assertEquals(StillVerdict.USE, appleStill(off, null, still = true))
+        // Still with no vouch: an Apple position alone is withheld (code QA L3); an own one is used.
+        assertEquals(StillVerdict.WITHHOLD, appleStill(off, null, still = true))
+        assertEquals(StillVerdict.USE, appleStill(off.copy(source = PlaceSource.OWN), null, still = true))
         assertEquals(StillVerdict.USE, appleStill(off.copy(source = PlaceSource.OWN), vouch, still = true))
         assertEquals(StillVerdict.CONTRADICTS, appleStill(off.copy(source = PlaceSource.MIXED), vouch, still = true))
         // The waits: until the time, a 409 until a policy says on, a wait past a day is a clock set back.
@@ -830,7 +849,7 @@ class PlacesTest {
         val positions = town.aps.map { a ->
             Triple(a.bssid, a.x + rng.nextGaussian() * 15 to a.y + rng.nextGaussian() * 15, 20 + rng.nextInt(60))
         }
-        fun apple(rows: List<PlaceRow>) = storeApple(rows, positions.map { (bssid, at, acc) -> Town.ll(at.first, at.second).let { (lat, lng) -> AppleAp(bssid, lat, lng, acc, "1970-01") } }, keys, now)
+        fun apple(rows: List<PlaceRow>) = storeApple(rows, positions.map { (bssid, at, acc) -> Town.ll(at.first, at.second).let { (lat, lng) -> AppleAp(bssid, lat, lng, acc, APPLE_FRESH_MONTHS) } }, emptyList(), keys, now)
         townRows(town, apple(emptyList()), "Apple alone")
         townRows(town, apple(taught(town, allStreets.take(2).drop(1))), "Apple and one street")
         // Every fix from Apple's rows names it.

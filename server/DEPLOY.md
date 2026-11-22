@@ -1012,20 +1012,24 @@ It is **off for every phone** until the parent turns on "Wi-Fi lookup at Apple" 
 - **Apple sees** the nearby networks' hardware addresses (BSSIDs) and the address the call comes from - never the
   phone, a name or an account. Through a proxy that address is the proxy's.
 - **Use a proxy.** A server at home shares its address with the family's Apple devices: without a proxy Apple could tie
-  the lookups to them. Set `WIFI_LOOKUP_PROXY` in `.env` to a SOCKS5 proxy with remote DNS, `socks5h://host:port`. Each
+  the lookups to them. Set `WIFI_LOOKUP_PROXY` to a SOCKS5 proxy with remote DNS, `socks5h://host:port` - in the
+  `.env` next to `compose.yaml` (Docker), or in `/opt/kid-phone-server/.env` (the systemd install: its unit's
+  `EnvironmentFile`; `sudo systemctl restart kid-phone-server` after). Each
   call uses its own random SOCKS user name and password, so Tor (whose `IsolateSOCKSAuth` is on by default) builds it a
   circuit of its own. With the setting present a call never goes direct: a proxy that is down or refuses is a failed
-  call (cached answers still serve), and a setting that isn't a `socks5h://` address fails every call and is logged at
-  start. With no setting the calls go from the server's own address and the Location page's ⓘ says so.
+  call (cached answers still serve), and a setting that isn't a `socks5h://` address fails every call, is logged at
+  start and shows "Apple lookups aren't working" at once (as does a key file the server can't read). With no setting the calls go from the server's own address and the Location page's ⓘ says so.
   - **Tor on the host** (the simplest): `sudo apt install tor` - Debian's Tor listens on `127.0.0.1:9050` - and
     `WIFI_LOOKUP_PROXY=socks5h://127.0.0.1:9050` (the container runs with `network_mode: host`, so it reaches it).
-  - **Tor as a sidecar** in `compose.yaml`, from Debian's package:
+  - **Tor as a sidecar** in `compose.yaml`, from Debian's package, its base image **pinned by digest** (as the
+    server's own image is): `docker buildx imagetools inspect debian:trixie-slim` prints the current one - put it in
+    place of `<digest>` and move it on deliberately:
 
     ```yaml
       tor:
         build:
           dockerfile_inline: |
-            FROM debian:trixie-slim
+            FROM debian:trixie-slim@sha256:<digest>
             RUN apt-get update && apt-get install -y --no-install-recommends tor && rm -rf /var/lib/apt/lists/*
             USER debian-tor
             CMD ["tor", "--SocksPort", "127.0.0.1:9050", "--DataDirectory", "/var/lib/tor"]
@@ -1051,22 +1055,33 @@ It is **off for every phone** until the parent turns on "Wi-Fi lookup at Apple" 
   ```
 
   Then one real lookup: a test phone with the switch on, Google's location service off, at a place it hasn't learned;
-  the log shows `wifi_lookup: lookup` and `wifi_lookup: Apple answered status=200`.
+  at the next hourly sweep the log shows `wifi_lookup: since the last sweep lookups=1 ... calls=1 unanswered=0`
+  (each lookup's own line, and Apple's status, are at `RUST_LOG=kid_phone_server=debug`).
+- **Before the first release with this** (design 125 §8, by hand - the build machine has no `protoc` and the build
+  never calls Apple): (1) run the `protoc --encode` check in `scripts/wifi-lookup-fixtures.py`'s docstring against
+  GrapheneOS's `apple_wps.proto` at `474472e` and compare its bytes with `server/testdata/wifi_lookup/server.json`'s
+  golden hex after the 47-byte header; (2) the probe above with a BSSID Apple places - an AP of your own that has been
+  up for months, never a neighbour's - in place of the two made-up ones, through the proxy: `200` and a body longer
+  than the 10-byte header; then the test phone's lookup.
 - **What the server keeps**: Apple's answers in `wifi_lookup_aps`, sealed - each row's id is a keyed hash of the BSSID
   and its position is encrypted under the key in `data/keys/wifi_lookup` (made on the first lookup, 0600, never in a
   backup: `/app/data/keys` is its own volume in Docker). The database and its backups alone reveal no BSSID and no
-  place; whoever has both the database and the key can open the row of a BSSID they already know. The rows carry only
-  the month Apple answered and the month they were last used - no phone, no time of a lookup, no history. A row unused
+  place; whoever has both the database and the key can open the row of a BSSID they already know (no lookup, no key:
+  a server whose phones never turn the switch on has none). The rows carry only the
+  month Apple answered and the month they were last used - no phone, no time of a lookup, no history; a phone is told
+  only whether the BSSIDs it asks for are known and for how many more months, so a phone's token can tell whether a
+  BSSID is cached, never when or by whom it was asked. A row unused
   for two years goes; the whole table goes when the last phone with the switch on is deleted; a restore or a lost key
   starts it empty (the phones ask again). Even sealed, the cache shows which areas the family's phones have been near,
   to whoever holds both.
 - **Your reverse proxy's access log** records each phone's `POST /api/devices/wifi-lookup` with its time (the server
-  itself logs counts only): turn the access log off for that path if you keep one (Caddy: `log_skip
+  itself logs counts only): turn the access log off for that path if you keep one (Caddy 2.8 or later: `log_skip
   /api/devices/wifi-lookup`; nginx: a `location = /api/devices/wifi-lookup { access_log off; proxy_pass ...; }`).
 - **When Apple stops answering** (the service closed, the exit blocked, the proxy down): the calls pause - 5 minutes
   after the first transient failure, then an hour doubling to a day - with one log line per step (`wifi_lookup: paused
   4h class=proxy failures=3`); after 24 hours without a success, or at the day-long step, the phone's Location page and
-  Attention show "Apple lookups aren't working". The phones carry on with their own learning and GPS.
+  Attention show "Apple lookups aren't working". A lookup the cache can partly answer still gets those rows, with a
+  wait for the rest. The phones carry on with their own learning and GPS.
 - **Limits**: 30 lookups per phone an hour; 60 calls to Apple an hour and 10 in any 10 minutes, one at a time.
 - **Apple's terms**: GrapheneOS asks Apple without a cache; this server keeps answers for months and presents itself
   as macOS's `locationd`, which Apple's terms probably don't allow. The likely risk is Apple blocking or changing the

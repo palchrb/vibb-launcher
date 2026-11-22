@@ -1,14 +1,17 @@
 //! The Apple answers kept on the server, sealed (design 125 A5): `wifi_lookup_aps` (migration 0163, `WITHOUT ROWID`).
 //!
-//! - **The key** `K` is 32 random bytes in `data/keys/wifi_lookup` (made at the first use, 0600, `keys::load_or_create`;
+//! - **The key** `K` is 32 random bytes in `data/keys/wifi_lookup` (made at the first lookup, not at start - a server
+//!   whose phones never turn the switch on has none; 0600, `keys::load_or_create`;
 //!   no backup copies `data/keys/`). A new key empties the table: rows sealed under a lost one open for nobody.
-//! - **A row's id** is HMAC-SHA256(K, BSSID); **its position** (`{lat, lng, acc_m}`, 1e-7 degrees) is AES-256-GCM under
-//!   a key derived from (K, BSSID) by HKDF-SHA256, the BSSID as the AAD too. The database and its backups alone reveal
+//! - **A row's id** is HMAC-SHA256 of the BSSID under a key expanded from K (label `id`); **its position** (`{lat, lng,
+//!   acc_m}`, 1e-7 degrees) is AES-256-GCM under a key expanded per BSSID from a second PRK (label `seal`), the BSSID
+//!   as the AAD too - HKDF-SHA256 throughout, K itself never a key. The database and its backups alone reveal
 //!   no BSSID and no position; whoever holds K and a BSSID can open that BSSID's row.
 //! - **Months, not days or instants**: `fetched_month` (when Apple answered) and `used_month` (the last answer that
 //!   used it), as `year * 12 + month - 1`.
-//! - **Negatives**: an asked BSSID Apple doesn't know is a row with `negative = 1` and no seal, kept for the month it
-//!   was asked in; capped on their own ([NEGATIVE_CAP]). Positives at [POSITIVE_CAP], the least recently used out first.
+//! - **Negatives**: an asked BSSID Apple doesn't know is a row with `negative = 1` and no seal; it answers "unknown"
+//!   until the calendar month it was asked in ends (UTC; a negative asked on the 30th lasts a day) and is then asked
+//!   again; capped on their own ([NEGATIVE_CAP]). Positives at [POSITIVE_CAP], the least recently used out first.
 //! - **Lifetime** ([CACHE_LIFETIME_MONTHS], the user's Q6: "2 years unused, sealed"): [prune] drops a row unused that
 //!   long; the table is emptied when a phone is deleted and no phone has the switch on.
 
@@ -31,6 +34,9 @@ pub const NEGATIVE_CAP: i64 = 20_000;
 
 /// The HKDF salt: this table's rows, this version.
 const SEAL_SALT: &[u8] = b"vibb wifi_lookup row v1";
+/// The labels the two keys are expanded under from `K` (code QA nit: `K` itself is never a key).
+const ID_LABEL: &[u8] = b"id";
+const SEAL_LABEL: &[u8] = b"seal";
 const NONCE_LEN: usize = 12;
 /// `lat`, `lng` as 1e-7 degree i32, `acc_m` as u16.
 const PLAIN_LEN: usize = 10;
@@ -40,15 +46,6 @@ pub fn month_of(at: chrono::DateTime<chrono::Utc>) -> i64 {
     i64::from(at.year()) * 12 + i64::from(at.month0())
 }
 
-/// A month as the phone reads it: `YYYY-MM`.
-pub fn month_text(month: i64) -> String {
-    format!(
-        "{:04}-{:02}",
-        month.div_euclid(12),
-        month.rem_euclid(12) + 1
-    )
-}
-
 /// The cache's key in memory.
 pub struct CacheKey {
     id: hmac::Key,
@@ -56,10 +53,18 @@ pub struct CacheKey {
 }
 
 impl CacheKey {
+    /// The id key and the seal PRK, each expanded from `K` by HKDF-SHA256 under its own label.
     pub fn from_bytes(bytes: &[u8; 32]) -> Self {
+        let prk = hkdf::Salt::new(hkdf::HKDF_SHA256, SEAL_SALT).extract(bytes);
+        let id = prk
+            .expand(&[ID_LABEL], hmac::HMAC_SHA256)
+            .expect("one HMAC key is within HKDF's length");
+        let seal = prk
+            .expand(&[SEAL_LABEL], hkdf::HKDF_SHA256)
+            .expect("one PRK is within HKDF's length");
         CacheKey {
-            id: hmac::Key::new(hmac::HMAC_SHA256, bytes),
-            seal: hkdf::Salt::new(hkdf::HKDF_SHA256, SEAL_SALT).extract(bytes),
+            id: hmac::Key::from(id),
+            seal: hkdf::Prk::from(seal),
         }
     }
 
@@ -346,7 +351,5 @@ mod tests {
             .unwrap()
             .with_timezone(&chrono::Utc);
         assert_eq!(month_of(at), 2026 * 12 + 10);
-        assert_eq!(month_text(month_of(at)), "2026-11");
-        assert_eq!(month_text(2027 * 12), "2027-01");
     }
 }

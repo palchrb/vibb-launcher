@@ -21,6 +21,7 @@ pub mod route;
 mod tests;
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use axum::Router;
@@ -73,6 +74,43 @@ impl Proxy {
     }
 }
 
+/// The hour's counts for the sweep's one info line (code QA L9): no phone, no BSSID, no time.
+#[derive(Debug, Default)]
+pub struct Counts {
+    lookups: AtomicU64,
+    asked: AtomicU64,
+    wanted: AtomicU64,
+    fetched: AtomicU64,
+    unanswered: AtomicU64,
+}
+
+impl Counts {
+    /// One lookup: the BSSIDs it named, those the cache couldn't answer, whether Apple was asked or the cache
+    /// sufficed after all, and those left unanswered.
+    pub fn add(&self, asked: usize, wanted: usize, fetched: bool, unanswered: usize) {
+        self.lookups.fetch_add(1, Ordering::Relaxed);
+        self.asked.fetch_add(asked as u64, Ordering::Relaxed);
+        self.wanted.fetch_add(wanted as u64, Ordering::Relaxed);
+        if fetched && wanted > 0 {
+            self.fetched.fetch_add(1, Ordering::Relaxed);
+        }
+        self.unanswered
+            .fetch_add(unanswered as u64, Ordering::Relaxed);
+    }
+
+    /// The counts since the last take, and back to zero: (lookups, named, not cached, Apple calls, unanswered).
+    pub fn take(&self) -> [u64; 5] {
+        [
+            &self.lookups,
+            &self.asked,
+            &self.wanted,
+            &self.fetched,
+            &self.unanswered,
+        ]
+        .map(|n| n.swap(0, Ordering::Relaxed))
+    }
+}
+
 /// The integration's state: the client, the proxy, the limits, the pauses, the key and the health.
 pub struct WifiLookup {
     pub(crate) source: Arc<dyn Source>,
@@ -94,6 +132,7 @@ pub struct WifiLookup {
     /// `K`, loaded at the first use.
     pub(crate) key: tokio::sync::OnceCell<Arc<cache::CacheKey>>,
     pub(crate) health: HealthCell,
+    pub(crate) counts: Counts,
 }
 
 impl WifiLookup {
@@ -110,7 +149,8 @@ impl WifiLookup {
                  is fixed (never a direct call)"
             ),
         }
-        Self::with(source, proxy, Duration::from_secs(5))
+        // The gate's wait and Apple's 10 s stay within the phone's 15 s (code QA L5).
+        Self::with(source, proxy, Duration::from_secs(3))
     }
 
     pub fn with(source: Arc<dyn Source>, proxy: Proxy, gate_wait: Duration) -> Self {
@@ -127,6 +167,7 @@ impl WifiLookup {
             throttled_until: Default::default(),
             key: Default::default(),
             health: Default::default(),
+            counts: Default::default(),
         }
     }
 
@@ -192,6 +233,19 @@ impl Integration for WifiLookup {
 
     fn prune<'a>(&'a self, state: &'a AppState, why: Prune) -> BoxFut<'a, ()> {
         Box::pin(async move {
+            if why == Prune::Sweep {
+                let [lookups, named, uncached, calls, unanswered] = self.counts.take();
+                if lookups > 0 {
+                    tracing::info!(
+                        lookups,
+                        named,
+                        uncached,
+                        calls,
+                        unanswered,
+                        "wifi_lookup: since the last sweep"
+                    );
+                }
+            }
             let result = match why {
                 Prune::Sweep => cache::prune(&state.db, cache::month_of(chrono::Utc::now())).await,
                 Prune::DeviceDeleted => cache::empty_unless_used(&state.db).await,
