@@ -861,6 +861,10 @@ const SEEDED_BLOCKLISTS: [(&str, &str, &str); 4] = [
     ),
 ];
 
+/// The seeded "Ads & tracking" list's name and address ([SEEDED_BLOCKLISTS]'s first row): the list a new phone gets
+/// on (design 126 C1, `devices::ads_default_override`).
+pub const SEEDED_ADS_LIST: (&str, &str) = (SEEDED_BLOCKLISTS[0].0, SEEDED_BLOCKLISTS[0].1);
+
 /// A blocklist's name as a page shows it in `lang` ([SEEDED_BLOCKLISTS]).
 pub fn blocklist_name(lang: crate::i18n::Lang, name: &str, url: &str) -> String {
     SEEDED_BLOCKLISTS

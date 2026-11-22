@@ -77,7 +77,12 @@ The server runs no DNS listener: each phone filters on-device (the launcher's `K
   so each list row's line says it from the phones whose own setting differs from the switch, by name
   (`dns_filter::list_scope`, `data-scope`): "On for every phone", "On for every phone except Testtelefon", "Off for
   every phone", "Off · on for Testtelefon" (`settings.web_filter.*`; an own setting equal to the switch isn't named);
-  the footer starts "A phone's own Web Filter page can set a list otherwise for that phone." Test
+  the footer starts "A phone's own Web Filter page can set a list otherwise for that phone." **A new phone gets "Ads &
+  tracking" on** (design 126 C1): `devices::insert_device_with_policy` writes the phone's own override
+  (`ads_default_override`) in the create's transaction when the seeded list (`models::SEEDED_ADS_LIST`, name and
+  address) exists and is off for every phone - none when it is on for every phone, so the phone follows a later change
+  of the switch; phones made before keep what they had. Settings' hub counts the lists in force on at least one phone
+  (the switch on, or an own override on), so its "No lists" is never wrong; test `dns_blocklist::a_new_phone_gets_the_ads_list_on`. Test
   `device_pages::web_filter_holds_the_phones_parts`. The Each Phone group's footer has lines only where something
   is owed, only while that phone's filter is on (`dns_filter::bypass_lines`, `data-bypass-phone`): a line for each browser of
   `DOH_IGNORING_BROWSERS` (server only) on its allowlist - Cromite ("set its Secure DNS to Off on the phone, or it
