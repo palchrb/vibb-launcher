@@ -74,23 +74,33 @@ async fn the_contract() {
             "apps_mobile": p["apps_mobile"],
             "mobile_settings_locked": p["mobile_settings_locked"],
             "block_2g": p["block_2g"],
+            "allow_2g_abroad": p["allow_2g_abroad"],
         })
     };
     assert_eq!(pick(&policy(&app, &token).await), rows[0]);
-    for (group, fields) in [
-        ("abroad", vec![("abroad", "home")]),
-        ("mobile-data", vec![("apps_mobile", "vibb")]),
-        ("mobile-lock", vec![]),
-        ("block-2g", vec![]),
+    // Each save answers on its group's anchor; "Tillat 2G i utlandet" on "Blokker 2G"'s.
+    for (group, fields, anchor) in [
+        ("abroad", vec![("abroad", "home")], "abroad"),
+        ("mobile-data", vec![("apps_mobile", "vibb")], "mobile-data"),
+        ("mobile-lock", vec![], "mobile-lock"),
+        ("block-2g-abroad", vec![("on", "on")], "block-2g"),
     ] {
         let mut sent = vec![("group", group)];
         sent.extend(fields);
         let res = save(&app, &cookie, id, &sent).await;
-        assert_redirect(&res, &format!("/devices/{id}/mobile"), Some(group));
+        assert_redirect(&res, &format!("/devices/{id}/mobile"), Some(anchor));
     }
     assert_eq!(pick(&policy(&app, &token).await), rows[1]);
-    let res = save(&app, &cookie, id, &[("group", "abroad"), ("abroad", "off")]).await;
-    assert_redirect(&res, &format!("/devices/{id}/mobile"), Some("abroad"));
+    for (group, fields, anchor) in [
+        ("abroad", vec![("abroad", "off")], "abroad"),
+        ("block-2g", vec![], "block-2g"),
+        ("block-2g-abroad", vec![], "block-2g"),
+    ] {
+        let mut sent = vec![("group", group)];
+        sent.extend(fields);
+        let res = save(&app, &cookie, id, &sent).await;
+        assert_redirect(&res, &format!("/devices/{id}/mobile"), Some(anchor));
+    }
     assert_eq!(pick(&policy(&app, &token).await), rows[2]);
 
     report(&app, &token, contract["report"].clone()).await;
@@ -513,9 +523,10 @@ async fn a_crossing_raises_the_roaming_notice_once() {
     assert_eq!(place.as_deref(), Some("se"));
 }
 
-/// Design 126 A5: "Blokker 2G" saves on its own anchor (`#block-2g`, never the top) and is served; its one line is the
-/// quiet "Av i utlandet", only while the switch is on and the latest report says the phone lifted it abroad - never
-/// orange, nothing on the summary.
+/// Design 126 A5: "Blokker 2G" saves on its own anchor (`#block-2g`, never the top) and is served; under it, only while
+/// it is on, "Tillat 2G i utlandet" (off by default, the user's decision of 2026-11-22), saving on the same anchor. The
+/// one line is the quiet "Av i utlandet", only while both are on and the latest report says the phone lifted it
+/// abroad - never orange, nothing on the summary.
 #[tokio::test]
 async fn block_2g_saves_on_its_anchor_and_says_off_abroad_quietly() {
     let app = TestApp::new().await;
@@ -527,14 +538,42 @@ async fn block_2g_saves_on_its_anchor_and_says_off_abroad_quietly() {
     assert!(html.contains("<section id=\"block-2g\""), "{html}");
     assert!(html.contains(&format!("action=\"/devices/{id}/mobile#block-2g\"")));
 
+    assert_eq!(policy(&app, &token).await["allow_2g_abroad"], false);
+    assert!(html.contains("data-allow-2g-abroad"), "{html}");
+    let en = app
+        .get_page(&format!("{page}?lang=en"), &cookie)
+        .await
+        .text();
+    assert!(en.contains("Allow 2G abroad"), "{en}");
+    assert!(en.contains("Without it, ordinary calls may fail in some countries."));
+
     let res = save(&app, &cookie, id, &[("group", "block-2g")]).await;
     assert_redirect(&res, &page, Some("block-2g"));
     assert_eq!(policy(&app, &token).await["block_2g"], false);
+    // "Tillat 2G i utlandet" means nothing with "Blokker 2G" off: not shown.
+    let html = app.get_page(&page, &cookie).await.text();
+    assert!(!html.contains("data-allow-2g-abroad"));
     let res = save(&app, &cookie, id, &[("group", "block-2g"), ("on", "on")]).await;
     assert_redirect(&res, &page, Some("block-2g"));
     assert_eq!(policy(&app, &token).await["block_2g"], true);
 
     let mobile = |word: &str| json!({"mobile_data": {"enabled": true, "sink": "off", "settings_locked": true, "cellular_2g": word}});
+    // With the abroad lift off, a stale "abroad" report shows nothing.
+    report(&app, &token, mobile("abroad")).await;
+    let html = app
+        .get_page(&format!("{page}?lang=nb"), &cookie)
+        .await
+        .text();
+    assert!(!html.contains("data-mobile-line=\"abroad-2g\""));
+    let res = save(
+        &app,
+        &cookie,
+        id,
+        &[("group", "block-2g-abroad"), ("on", "on")],
+    )
+    .await;
+    assert_redirect(&res, &page, Some("block-2g"));
+    assert_eq!(policy(&app, &token).await["allow_2g_abroad"], true);
     for (word, shown) in [
         ("blocked", false),
         ("lifted", false),
@@ -566,7 +605,19 @@ async fn block_2g_saves_on_its_anchor_and_says_off_abroad_quietly() {
             .text();
         assert!(!summary.contains("abroad-2g"), "{word}");
     }
+    // "Tillat 2G i utlandet" off: the line goes with it.
+    save(&app, &cookie, id, &[("group", "block-2g-abroad")]).await;
+    assert_eq!(policy(&app, &token).await["allow_2g_abroad"], false);
+    let html = app.get_page(&page, &cookie).await.text();
+    assert!(!html.contains("data-mobile-line=\"abroad-2g\""));
     // The switch off: the line goes with it.
+    save(
+        &app,
+        &cookie,
+        id,
+        &[("group", "block-2g-abroad"), ("on", "on")],
+    )
+    .await;
     save(&app, &cookie, id, &[("group", "block-2g")]).await;
     let html = app.get_page(&page, &cookie).await.text();
     assert!(!html.contains("data-mobile-line=\"abroad-2g\""));

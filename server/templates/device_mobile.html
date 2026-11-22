@@ -120,23 +120,40 @@
         </details></div>
     </section>
 
-    {#- Design 126 A5: "Blokker 2G", the same lift rule as the lock above. Its one line is quiet: "Av i utlandet" while the
-        phone lifted it abroad (the rule working, the parent's switch stays on). -#}
+    {#- Design 126 A5: "Blokker 2G", the same lift rule as the lock above. Under it, only while it is on, "Tillat 2G i
+        utlandet" (the user, 2026-11-22: off by default, 2G stays blocked abroad unless the parent opts in) - a form of
+        its own in the same group, answering on #block-2g. Its one line is quiet: "Av i utlandet" while the phone lifted
+        it abroad (the rule working). Both explanations behind the group's ⓘ, never orange: a parent's choice. -#}
     <section id="block-2g" aria-label="{{ self.t("mobile.block_2g.label") }}">
-        <form method="post" action="/devices/{{ device.id }}/mobile#block-2g" class="group">
-            <input type="hidden" name="group" value="block-2g">
-            <label class="row">
-                <span class="row-label">{{ self.t("mobile.block_2g.label") }}</span>
-                <input type="checkbox" role="switch" class="sw" name="on" value="on"{% if card.block_2g %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
-            </label>
-            {% for line in card.block_2g_lines %}
-            <div class="row" data-mobile-line="{{ line.key }}"><span class="row-label">{{ line.title }}</span></div>
-            {% endfor %}
-            <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
-        </form>
+        <div class="group">
+            <form method="post" action="/devices/{{ device.id }}/mobile#block-2g" class="cell">
+                <input type="hidden" name="group" value="block-2g">
+                <label class="row">
+                    <span class="row-label">{{ self.t("mobile.block_2g.label") }}</span>
+                    <input type="checkbox" role="switch" class="sw" name="on" value="on"{% if card.block_2g %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                </label>
+                <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
+            </form>
+            {% if card.block_2g %}
+            <form method="post" action="/devices/{{ device.id }}/mobile#block-2g" class="cell cell-rows" data-allow-2g-abroad>
+                <input type="hidden" name="group" value="block-2g-abroad">
+                <label class="row">
+                    <span class="row-label">{{ self.t("mobile.block_2g.allow_abroad") }}</span>
+                    <input type="checkbox" role="switch" class="sw" name="on" value="on"{% if card.allow_2g_abroad %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                </label>
+                {% for line in card.block_2g_lines %}
+                <div class="row" data-mobile-line="{{ line.key }}"><span class="row-label">{{ line.title }}</span></div>
+                {% endfor %}
+                <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
+            </form>
+            {% endif %}
+        </div>
         <div class="group-footer"><details class="info">
             <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
-            <div class="info-panel"><p>{{ self.t("mobile.block_2g.info") }}</p></div>
+            <div class="info-panel">
+                <p>{{ self.t("mobile.block_2g.info") }}</p>
+                {% if card.block_2g %}<p>{{ self.t("mobile.block_2g.allow_abroad_info") }}</p>{% endif %}
+            </div>
         </details></div>
     </section>
 

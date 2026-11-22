@@ -735,8 +735,9 @@ object AppEnforcer {
         // mobile data the parent turned off in Android stays off; lifted by the override and the pause.
         MobileNetworkRuntime.applyMobileSettingsLock(dpm, admin, mobileSettingsLocked(policy?.mobileSettingsLocked, overrideActive))
         // Design 126 A5: "Blokker 2G" (the parent's switch, on by default), lifted by the override and the pause - its
-        // failure is "no network", which only an on-phone lift can undo - and, option (b), abroad by itself.
-        MobileNetworkRuntime.applyCellular2g(context, dpm, admin, policy?.block2g, overrideActive)
+        // failure is "no network", which only an on-phone lift can undo - and abroad by itself only when the parent
+        // turned on "Tillat 2G i utlandet" (off by default, the user's decision of 2026-11-22).
+        MobileNetworkRuntime.applyCellular2g(context, dpm, admin, policy?.block2g, policy?.allow2gAbroad, overrideActive)
 
         // Same "fully open" treatment as everything else while an override is active - confirmed
         // live this needs to include the VPN filter too: the whole point of the offline-override PIN

@@ -35,8 +35,10 @@ class MobileNetworkTest {
         assertEquals(AbroadChoice.HOME, abroadChoice(home))
         assertEquals(Pair("vibb", false), Pair(home.appsMobile, home.mobileSettingsLocked))
         assertEquals(AbroadChoice.OFF, abroadChoice(off))
-        // Design 126 A5: "Blokker 2G" on for a new phone, off once saved off.
-        assertEquals(listOf(true, false, false), listOf(fresh, home, off).map { it.block2g })
+        // Design 126 A5: "Blokker 2G" on for a new phone, off once saved off; "Tillat 2G i utlandet" (2026-11-22) off
+        // for a new phone, on once saved on, off once saved off.
+        assertEquals(listOf(true, true, false), listOf(fresh, home, off).map { it.block2g })
+        assertEquals(listOf(false, true, false), listOf(fresh, home, off).map { it.allow2gAbroad })
     }
 
     @Test
@@ -94,13 +96,16 @@ class MobileNetworkTest {
 
     private fun whereOrNull(wire: String?): Where? = wire?.let { w -> Where.entries.first { it.wire == w } }
 
-    /** Design 126 A5 (§3.6.2, §3.6.4): the 2G rule and the report's word, row by row. */
+    /** Design 126 A5 (§3.6.2, §3.6.4): the 2G rule and the report's word, row by row - the abroad lift only with
+     * "Tillat 2G i utlandet" on (`allow_abroad`, the user's decision of 2026-11-22). */
     @Test
     fun `the 2G block follows every row`() {
         for (row in rows("cellular_2g_blocked")) {
             val kept = whereOrNull(row.str("kept"))
-            assertEquals("$row", row.bool("blocked"), cellular2gBlocked(row.bool("value"), row.bool("override")!!, kept))
-            assertEquals("$row", row.str("state"), cellular2gState(row.bool("value"), row.bool("override")!!, kept).wire)
+            val allow = row.bool("allow_abroad")
+            val override = row.bool("override")!!
+            assertEquals("$row", row.bool("blocked"), cellular2gBlocked(row.bool("value"), override, kept, allow))
+            assertEquals("$row", row.str("state"), cellular2gState(row.bool("value"), override, kept, allow).wire)
         }
     }
 
@@ -446,9 +451,10 @@ class MobileNetworkTest {
     /** Design 94 §3: a fallback keeps the parent's choices; an older record fails closed. */
     @Test
     fun `the last enforced plan keeps the choices, an older record locks`() {
-        val policy = PolicyResponse(abroad = "home", appsMobile = "vibb", mobileSettingsLocked = false)
+        val policy = PolicyResponse(abroad = "home", appsMobile = "vibb", mobileSettingsLocked = false, allow2gAbroad = true)
         val kept = LastEnforcedPlan.decode(ServerJson.encodeToString(LastEnforcedPlan.serializer(), LastEnforcedPlan.of(policy)))!!.toPolicy()
         assertEquals(Pair("vibb", false), Pair(kept.appsMobile, kept.mobileSettingsLocked))
+        assertEquals(true, kept.allow2gAbroad)
         assertEquals(AbroadChoice.HOME, abroadChoice(kept))
         // Design 97 code QA L3: the kid's Mobildata bit survives a fallback; an older record has none.
         val withKid = PolicyResponse(quickControlsMask = 1L or QuickControlFeature.MOBILE_DATA)
@@ -456,6 +462,8 @@ class MobileNetworkTest {
         val old = LastEnforcedPlan.decode("{}")!!.toPolicy()
         assertEquals(0L, old.quickControlsMask)
         assertEquals(Pair(null, true), Pair(old.appsMobile, old.mobileSettingsLocked))
+        // Design 126 A5 (2026-11-22): an older record keeps 2G blocked abroad.
+        assertEquals(Pair(true, false), Pair(old.block2g, old.allow2gAbroad))
         assertEquals(AbroadChoice.OFF, abroadChoice(old))
     }
 

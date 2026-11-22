@@ -163,6 +163,8 @@ data class LastEnforcedPlan(
     val mobileSettingsLocked: Boolean? = true,
     /** Design 126 A5: "Blokker 2G"; missing reads blocked (fail closed). */
     @kotlinx.serialization.SerialName("block_2g") val block2g: Boolean? = true,
+    /** Design 126 A5 (2026-11-22): "Tillat 2G i utlandet"; missing reads off (no abroad lift, fail closed). */
+    @kotlinx.serialization.SerialName("allow_2g_abroad") val allow2gAbroad: Boolean? = false,
     /** Design 97 code QA L3: the Home Screen's switches, so a fallback keeps the kid's own Mobildata Off (bit 32); an
      * older record reads none. */
     val quickControlsMask: Long = 0,
@@ -184,6 +186,7 @@ data class LastEnforcedPlan(
         appsMobile = appsMobile,
         mobileSettingsLocked = mobileSettingsLocked,
         block2g = block2g,
+        allow2gAbroad = allow2gAbroad,
         quickControlsMask = quickControlsMask,
         locationPolicy = locationPolicy,
     )
@@ -202,6 +205,7 @@ data class LastEnforcedPlan(
             appsMobile = policy.appsMobile,
             mobileSettingsLocked = policy.mobileSettingsLocked,
             block2g = policy.block2g,
+            allow2gAbroad = policy.allow2gAbroad,
             quickControlsMask = policy.quickControlsMask,
             locationPolicy = policy.locationPolicy,
         )

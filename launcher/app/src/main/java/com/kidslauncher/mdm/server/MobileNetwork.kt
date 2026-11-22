@@ -104,16 +104,18 @@ fun reblockWaitMs(abroadLiftAtMs: Long?, nowMs: Long): Long =
     if (abroadLiftAtMs == null) 0 else (abroadLiftAtMs + REBLOCK_HOLD_MS - nowMs).coerceIn(0, REBLOCK_HOLD_MS)
 
 /**
- * Design 126 A5, option (b) (§3.6, pending the user's answer to §11): 2G is lifted by itself while the phone is counted
- * abroad ([where2gKept]; `null`, never read, counts as home). The one place the abroad lift lives: option (a), "on
- * everywhere", is this function answering `false`.
+ * Design 126 A5 (§3.6; the user's decision of 2026-11-22): 2G stays blocked abroad too, unless the parent turned on
+ * "Tillat 2G i utlandet" ([allowAbroad], the policy's `allow_2g_abroad`; missing = off) - then it is lifted by itself
+ * while the phone is counted abroad ([where2gKept]; `null`, never read, counts as home). The one place the abroad lift
+ * lives.
  */
-fun abroadLifts2g(kept: Where?): Boolean = kept == Where.ABROAD
+fun abroadLifts2g(kept: Where?, allowAbroad: Boolean?): Boolean = allowAbroad == true && kept == Where.ABROAD
 
 /** Design 126 A5 (§3.6.2): `DISALLOW_CELLULAR_2G` while the parent's "Blokker 2G" is on - lifted by the pause, "Åpne for
- * oppsett" and the offline override ([overrideActive]), and abroad ([abroadLifts2g]). A missing key sets nothing. */
-fun cellular2gBlocked(value: Boolean?, overrideActive: Boolean, kept: Where?): Boolean =
-    value == true && !overrideActive && !abroadLifts2g(kept)
+ * oppsett" and the offline override ([overrideActive]), and abroad when the parent allows it ([abroadLifts2g]). A
+ * missing key sets nothing. */
+fun cellular2gBlocked(value: Boolean?, overrideActive: Boolean, kept: Where?, allowAbroad: Boolean?): Boolean =
+    value == true && !overrideActive && !abroadLifts2g(kept, allowAbroad)
 
 /** Design 126 A5 (§3.6.4): the report's `mobile_data.cellular_2g` - what Vibb asked of Android, never whether the modem
  * obeys. */
@@ -132,10 +134,10 @@ enum class Cellular2g(val wire: String) {
 }
 
 /** [Cellular2g] from the same inputs as [cellular2gBlocked]: the switch first, then a lift, then abroad. */
-fun cellular2gState(value: Boolean?, overrideActive: Boolean, kept: Where?): Cellular2g = when {
+fun cellular2gState(value: Boolean?, overrideActive: Boolean, kept: Where?, allowAbroad: Boolean?): Cellular2g = when {
     value != true -> Cellular2g.OFF
     overrideActive -> Cellular2g.LIFTED
-    abroadLifts2g(kept) -> Cellular2g.ABROAD
+    abroadLifts2g(kept, allowAbroad) -> Cellular2g.ABROAD
     else -> Cellular2g.BLOCKED
 }
 

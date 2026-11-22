@@ -99,19 +99,21 @@ class PolicyResponseCompatTest {
     fun `the Mobilnett keys decode, and a missing abroad locks`() {
         val policy = ServerJson.decodeFromString(
             PolicyResponse.serializer(),
-            """{"abroad": "vibb", "apps_mobile": "vibb", "mobile_settings_locked": true, "block_2g": true}""",
+            """{"abroad": "vibb", "apps_mobile": "vibb", "mobile_settings_locked": true, "block_2g": true, "allow_2g_abroad": true}""",
         )
         assertEquals(AbroadChoice.VIBB, abroadChoice(policy))
         assertEquals("vibb", policy.appsMobile)
         assertEquals(true, policy.mobileSettingsLocked)
         assertEquals(true, policy.block2g)
+        assertEquals(true, policy.allow2gAbroad)
         val older = decodeCached(serverResponse).let { (it as CachedPolicy.Ok).policy }
         assertEquals(AbroadChoice.OFF, abroadChoice(older))
         assertTrue(roamingLocked(abroadChoice(older), lift = false))
         assertFalse(parentSinkOn(older.appsMobile, overrideActive = false))
         assertFalse(mobileSettingsLocked(older.mobileSettingsLocked, overrideActive = false))
-        // Design 126 A5: a policy without `block_2g` sets nothing.
-        assertFalse(cellular2gBlocked(older.block2g, overrideActive = false, kept = null))
+        // Design 126 A5: a policy without `block_2g` sets nothing; without `allow_2g_abroad` there is no abroad lift.
+        assertFalse(cellular2gBlocked(older.block2g, overrideActive = false, kept = null, allowAbroad = older.allow2gAbroad))
+        assertTrue(cellular2gBlocked(true, overrideActive = false, kept = Where.ABROAD, allowAbroad = older.allow2gAbroad))
     }
 
     /** Design 68 §3.1, design 127 §3.2: `app_permissions` (the server's `policy_json_keys_snapshot` literal) - read

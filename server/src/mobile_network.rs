@@ -527,9 +527,11 @@ pub struct Card {
     pub data_lines: Vec<Line>,
     pub abroad_lines: Vec<Line>,
     pub lock_lines: Vec<Line>,
-    /// Design 126 A5: "Blokker 2G" on, and its one quiet line - "Av i utlandet" while the latest report says the phone
-    /// lifted it abroad (the rule working, never orange).
+    /// Design 126 A5: "Blokker 2G" on, "Tillat 2G i utlandet" on (the user's decision of 2026-11-22: off by default, 2G
+    /// stays blocked abroad), and the one quiet line - "Av i utlandet" while both are on and the latest report says the
+    /// phone lifted it abroad (the rule working, never orange).
     pub block_2g: bool,
+    pub allow_2g_abroad: bool,
     pub block_2g_lines: Vec<Line>,
 }
 
@@ -676,6 +678,7 @@ pub fn card(lang: Lang, name: &str, policy: &DevicePolicy, latest: Option<&Devic
 
     let mut block_2g_lines = Vec::new();
     if policy.block_2g
+        && policy.allow_2g_abroad
         && mobile
             .as_ref()
             .is_some_and(|m| m.cellular_2g.as_deref() == Some("abroad"))
@@ -694,6 +697,7 @@ pub fn card(lang: Lang, name: &str, policy: &DevicePolicy, latest: Option<&Devic
         abroad,
         settings_locked: policy.mobile_settings_locked,
         block_2g: policy.block_2g,
+        allow_2g_abroad: policy.allow_2g_abroad,
         block_2g_lines,
         kid_shown: policy.quick_controls_mask & crate::handlers::devices::QUICK_CONTROL_MOBILE_DATA
             != 0,

@@ -1,8 +1,8 @@
 {
   "policy": [
-    {"abroad": "vibb", "apps_mobile": "on", "mobile_settings_locked": true, "block_2g": true},
-    {"abroad": "home", "apps_mobile": "vibb", "mobile_settings_locked": false, "block_2g": false},
-    {"abroad": "off", "apps_mobile": "vibb", "mobile_settings_locked": false, "block_2g": false}
+    {"abroad": "vibb", "apps_mobile": "on", "mobile_settings_locked": true, "block_2g": true, "allow_2g_abroad": false},
+    {"abroad": "home", "apps_mobile": "vibb", "mobile_settings_locked": false, "block_2g": true, "allow_2g_abroad": true},
+    {"abroad": "off", "apps_mobile": "vibb", "mobile_settings_locked": false, "block_2g": false, "allow_2g_abroad": false}
   ],
   "abroad_choice": [
     {"abroad": "off", "choice": "off"},
@@ -27,15 +27,21 @@
     {"value": null, "override": false, "locked": false}
   ],
   "cellular_2g_blocked": [
-    {"value": true, "override": false, "kept": "home", "blocked": true, "state": "blocked"},
-    {"value": true, "override": false, "kept": null, "blocked": true, "state": "blocked"},
-    {"value": true, "override": false, "kept": "unknown", "blocked": true, "state": "blocked"},
-    {"value": true, "override": false, "kept": "abroad", "blocked": false, "state": "abroad"},
-    {"value": true, "override": true, "kept": "home", "blocked": false, "state": "lifted"},
-    {"value": true, "override": true, "kept": "abroad", "blocked": false, "state": "lifted"},
-    {"value": false, "override": false, "kept": "home", "blocked": false, "state": "off"},
-    {"value": false, "override": false, "kept": "abroad", "blocked": false, "state": "off"},
-    {"value": null, "override": false, "kept": "home", "blocked": false, "state": "off"}
+    {"value": true, "override": false, "kept": "home", "allow_abroad": false, "blocked": true, "state": "blocked"},
+    {"value": true, "override": false, "kept": "home", "allow_abroad": true, "blocked": true, "state": "blocked"},
+    {"value": true, "override": false, "kept": null, "allow_abroad": true, "blocked": true, "state": "blocked"},
+    {"value": true, "override": false, "kept": "unknown", "allow_abroad": false, "blocked": true, "state": "blocked"},
+    {"value": true, "override": false, "kept": "unknown", "allow_abroad": true, "blocked": true, "state": "blocked"},
+    {"value": true, "override": false, "kept": "abroad", "allow_abroad": false, "blocked": true, "state": "blocked", "why": "2G stays blocked abroad unless the parent allows it (the user, 2026-11-22)"},
+    {"value": true, "override": false, "kept": "abroad", "allow_abroad": null, "blocked": true, "state": "blocked"},
+    {"value": true, "override": false, "kept": "abroad", "allow_abroad": true, "blocked": false, "state": "abroad"},
+    {"value": true, "override": true, "kept": "home", "allow_abroad": false, "blocked": false, "state": "lifted"},
+    {"value": true, "override": true, "kept": "unknown", "allow_abroad": false, "blocked": false, "state": "lifted"},
+    {"value": true, "override": true, "kept": "abroad", "allow_abroad": false, "blocked": false, "state": "lifted"},
+    {"value": true, "override": true, "kept": "abroad", "allow_abroad": true, "blocked": false, "state": "lifted"},
+    {"value": false, "override": false, "kept": "home", "allow_abroad": false, "blocked": false, "state": "off"},
+    {"value": false, "override": false, "kept": "abroad", "allow_abroad": true, "blocked": false, "state": "off"},
+    {"value": null, "override": false, "kept": "home", "allow_abroad": null, "blocked": false, "state": "off"}
   ],
   "where_kept": [
     {"last": null, "now": "home", "kept": "home"},

@@ -159,6 +159,10 @@ data class PolicyResponse(
     /** Design 126 A5: "Blokker 2G" (`DISALLOW_CELLULAR_2G`, [com.kidslauncher.mdm.server.cellular2gBlocked]); missing =
      * not set. Kept by [com.kidslauncher.mdm.server.LastEnforcedPlan]. */
     @SerialName("block_2g") val block2g: Boolean? = null,
+    /** Design 126 A5 (2026-11-22): "Tillat 2G i utlandet" - "Blokker 2G" lifted by itself abroad
+     * ([com.kidslauncher.mdm.server.abroadLifts2g]); missing = off (2G stays blocked abroad). Kept by
+     * [com.kidslauncher.mdm.server.LastEnforcedPlan]. */
+    @SerialName("allow_2g_abroad") val allow2gAbroad: Boolean? = null,
     /** Design 95 §3.5 (step 95-T2): the server expands heartbeat reports ([StatusReports]); missing = never
      * send one. */
     val statusHeartbeat: Boolean = false,
