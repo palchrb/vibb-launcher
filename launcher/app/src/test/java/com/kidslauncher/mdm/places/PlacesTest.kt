@@ -487,8 +487,8 @@ class PlacesTest {
         days = countsWith(days, 20000) { it.loo(LooClass.THREE, false) }
         days = countsWith(days, 20010) { it.loo(LooClass.TWO, true).loo(LooClass.ZONE, true) }
         days = countsWith(days, 20010) { it.copy(contradictions = it.contradictions + 1) }
-        assertEquals("loo 3+=1/2 2=1/1 zone=1/1 contradictions=1", countsLine(days))
-        assertEquals("loo 3+=0/0 2=1/1 zone=1/1 contradictions=1", countsLine(countsWith(days, 20030) { it }))
+        assertEquals("loo 3+=1/2 2=1/1 zone=1/1 own=0/0 apple=0/0 mixed=0/0 err own=- apple=- mixed=- contradictions=1 apple_contradictions=0", countsLine(days))
+        assertEquals("loo 3+=0/0 2=1/1 zone=1/1 own=0/0 apple=0/0 mixed=0/0 err own=- apple=- mixed=- contradictions=1 apple_contradictions=0", countsLine(countsWith(days, 20030) { it }))
         assertTrue(learnedContradiction(fix3, north(600.0), lng0, 1_000 + 9 * 60_000))
         assertFalse("within 500 m", learnedContradiction(fix3, north(400.0), lng0, 1_000))
         assertFalse("more than 10 min", learnedContradiction(fix3, north(600.0), lng0, 1_000 + 11 * 60_000))
@@ -690,6 +690,190 @@ class PlacesTest {
         val far = Town.ll(2_000.0, 0.0)
         val moved = teachRow(lone, Sighting(Heard(lone.key, lone.device, lone.network, lone.band, -40, 0), far.first, far.second, 8.0), now, 20003)
         assertEquals(RowChange.MOVED, moved.second)
+    }
+
+    // --- Design 125 step 2: the Apple rows (A3, A9) ---
+
+    /** Apple's position for AP [i] at metres east/north, stored at [now] (the month of the epoch's start). */
+    private fun appleRows(vararg aps: Triple<Int, Pair<Double, Double>, Int>, now: Int = 0, rows: List<PlaceRow> = emptyList()): List<PlaceRow> =
+        storeApple(rows, aps.map { (i, at, acc) -> Town.ll(at.first, at.second).let { (lat, lng) -> AppleAp(mac(i), lat, lng, acc, APPLE_FRESH_MONTHS) } }, emptyList(), keys, now)
+
+    private fun ap(i: Int, east: Double, north: Double, acc: Int = 30) = Triple(i, east to north, acc)
+
+    @Test
+    fun `apple - asked only for what the phone lacks, strongest first, at most 40`() {
+        val untrusted = learned(2, 0.0, 0.0, occasions = 1)
+        val table = listOf(learned(1, 0.0, 0.0), untrusted) + appleRows(ap(3, 0.0, 0.0)) +
+            // 4 a tombstone (its own row disagrees).
+            reconcileApple(listOf(learned(4, 0.0, 0.0)) + appleRows(ap(4, 900.0, 0.0)), 0).filter { it.kind == RowKind.APPLE }
+        val heard = view(1 to -40, 2 to -70, 3 to -45, 4 to -50, 6 to -60, 7 to -55).heard
+        // 1 trusted, 3 live, 4 a tombstone: left out; 2 (an untrusted own row), 6 and 7 asked.
+        assertEquals(listOf(mac(7), mac(6), mac(2)), appleAsk(heard, table, 0))
+        // 90 days on: the Apple row and the tombstone have run out - asked again.
+        assertEquals(listOf(mac(3), mac(4), mac(7), mac(6), mac(2)), appleAsk(heard, table, APPLE_ROW_MIN))
+        val many = view(*(1..60).map { it to -30 - it }.toTypedArray()).heard
+        assertEquals((1..40).map(::mac), appleAsk(many, emptyList(), 0))
+    }
+
+    @Test
+    fun `apple - the rows stored, a tombstone kept, the cap, the switch off`() {
+        val tenth = 60 * 24 * 9
+        val rows = storeApple(
+            emptyList(),
+            listOf(
+                AppleAp(mac(1), 59.9, 10.75, 30, 3),
+                AppleAp("02:00:5e:00:53:02", 59.9, 10.75, 30, 3),
+                AppleAp(mac(3), 59.9, 10.75, 0, 3),
+                AppleAp(mac(4), 91.0, 10.75, 30, 3),
+                // More months than the server's rule, or fewer than none: no row.
+                AppleAp(mac(5), 59.9, 10.75, 30, 4),
+                AppleAp(mac(6), 59.9, 10.75, 30, -1),
+                // Stale (served while Apple couldn't be asked): a day's grace (code QA M1).
+                AppleAp(mac(7), 59.9, 10.75, 30, 0),
+            ),
+            listOf(mac(8), "02:00:5e:00:53:09"),
+            keys,
+            tenth,
+        )
+        val live = rows.filter { it.appleLive(tenth) }
+        assertEquals(setOf(keys.ap(mac(1)), keys.ap(mac(7))), live.map { it.key }.toSet())
+        assertTrue(live.all { it.kind == RowKind.APPLE && it.rangeM == 30f })
+        // Three months left on 1970-01-10: until 1970-04-01 (the server asks Apple again that month).
+        assertEquals(monthStartMin(tenth, 3), live.first { it.key == keys.ap(mac(1)) }.lastTeachMin)
+        assertEquals(90 * 24 * 60, monthStartMin(tenth, 3))
+        assertEquals(tenth + APPLE_STALE_GRACE_MIN, live.first { it.key == keys.ap(mac(7)) }.lastTeachMin)
+        assertFalse(live.first { it.key == keys.ap(mac(7)) }.appleLive(tenth + APPLE_STALE_GRACE_MIN))
+        // A negative (code QA M2): no position, blocks the ask until the month ends - then asked again.
+        val negative = rows.single { it.key == keys.ap(mac(8)) }
+        assertFalse(negative.appleLive(tenth))
+        assertEquals(monthStartMin(tenth, 1), negative.blockedUntilMin)
+        val heard8 = hear(scan(8 to -50), null, keys, moving, emptyMap(), 0).heard
+        assertEquals(emptyList<String>(), appleAsk(heard8, rows, tenth))
+        assertEquals(listOf(mac(8)), appleAsk(heard8, rows, monthStartMin(tenth, 1)))
+        assertEquals(3, rows.size)
+        // A clock set back far behind a row's end: not live.
+        assertFalse(live.first().appleLive(live.first().lastTeachMin - APPLE_LIVE_MAX_MIN - 1))
+        // A tombstone stays one while it blocks; a live row is replaced.
+        val stone = reconcileApple(listOf(learned(1, 0.0, 0.0)) + appleRows(ap(1, 900.0, 0.0)), 0)
+        assertEquals(0.0, stone.first { it.kind == RowKind.APPLE }.lat, 0.0)
+        val again = appleRows(ap(1, 0.0, 0.0), rows = stone)
+        assertTrue(again.first { it.kind == RowKind.APPLE }.blocked(0))
+        val replaced = appleRows(ap(9, 0.0, 0.0, acc = 50), rows = appleRows(ap(9, 0.0, 0.0, acc = 30)))
+        assertEquals(listOf(50f), replaced.filter { it.kind == RowKind.APPLE }.map { it.rangeM })
+        // Expired rows go, a tombstone after its block too; at most 3000, the least recently seen out.
+        assertTrue(prune(again, APPLE_ROW_MIN).none { it.kind == RowKind.APPLE })
+        val crowd = (0 until APPLE_ROWS_MAX + 5).map { PlaceRow(RowKind.APPLE, "k$it", lat = 1.0, lng = 1.0, rangeM = 30f, lastTeachMin = 60 * 24, lastSeenMin = it) }
+        val kept = prune(crowd, 0)
+        assertEquals(APPLE_ROWS_MAX, kept.size)
+        assertTrue(kept.none { it.lastSeenMin < 5 })
+        // The switch off drops every Apple row, nothing else.
+        assertEquals(listOf(RowKind.WIFI), dropApple(stone).map { it.kind })
+        // The store keeps them.
+        assertEquals(rows, decodeTable(encodeTable(rows)))
+    }
+
+    @Test
+    fun `apple - own and Apple rows by trust and agreement`() {
+        val now = 0
+        val own = listOf(learned(1, 0.0, 0.0, range = 100f), learned(2, 60.0, 0.0), learned(3, 0.0, 60.0))
+        val v = view(1 to -50, 2 to -55, 3 to -60)
+        val ownFix = learnedFix(v, own, now)!!
+        assertEquals(PlaceSource.OWN, ownFix.source)
+        assertEquals(PROVIDER_WIFI, ownFix.provider)
+        // An untrusted own row doesn't block Apple: Apple's row is used (and asked for while it has none).
+        val untrusted = listOf(learned(1, 0.0, 0.0, occasions = 1), learned(2, 60.0, 0.0), learned(3, 0.0, 60.0))
+        assertEquals(listOf(mac(1)), appleAsk(v.heard, untrusted, now))
+        val mixed = learnedFix(v, untrusted + appleRows(ap(1, 5.0, 5.0)), now)!!
+        assertEquals(PlaceSource.MIXED, mixed.source)
+        assertEquals(PROVIDER_APPLE, mixed.provider)
+        assertEquals(3, mixed.networks)
+        // Apple alone.
+        val apple = learnedFix(v, appleRows(ap(1, 0.0, 0.0), ap(2, 60.0, 0.0), ap(3, 0.0, 60.0)), now)!!
+        assertEquals(PlaceSource.APPLE, apple.source)
+        // Trusted and agreeing: the smaller range gives the position (a 100 m own row against Apple's 2.4 GHz floor,
+        // 100 m: a tie - the own row).
+        val h1 = v.heard.first { it.key == keys.ap(mac(1)) }
+        val appleNear = appleRows(ap(1, 40.0, 0.0, acc = 30)).single()
+        assertEquals(false, chooseRow(h1, own[0], appleNear, now)!!.second)
+        val h5 = hear(scan(1 to -50, freq = 5180), null, keys, moving, emptyMap(), 0).heard.single()
+        val own5 = learned(1, 0.0, 0.0, range = 150f, freq = 5180)
+        assertEquals(true, chooseRow(h5, own5, appleNear, now)!!.second)
+        assertEquals(60f, chooseRow(h5, own5, appleNear, now)!!.first.rangeM)
+        // Disagreeing: the own row, and the Apple row a tombstone; an agreeing one never.
+        val far = appleRows(ap(1, 400.0, 0.0)).single()
+        assertEquals(false, chooseRow(h1, own[0], far, now)!!.second)
+        val reconciled = reconcileApple(own + far, now)
+        assertTrue(reconciled.first { it.kind == RowKind.APPLE }.blocked(now))
+        assertEquals(appleNear, reconcileApple(own + appleNear, now).first { it.kind == RowKind.APPLE })
+        // An untrusted own row against it: no tombstone (only ground truth makes one).
+        assertEquals(far, reconcileApple(untrusted + far, now).first { it.kind == RowKind.APPLE })
+        // An own teach beyond the Apple row's band reach (300 m at 2.4 GHz past the error): a tombstone.
+        val (lat, lng) = Town.ll(500.0, 0.0)
+        val s = Sighting(h1, lat, lng, 10.0)
+        assertTrue(appleTaught(listOf(appleNear), listOf(s), now).single().blocked(now))
+        val (nlat, nlng) = Town.ll(200.0, 0.0)
+        assertEquals(appleNear, appleTaught(listOf(appleNear), listOf(Sighting(h1, nlat, nlng, 10.0)), now).single())
+    }
+
+    @Test
+    fun `apple - still means still, the waits, the counts by source`() {
+        val vouch = Vouched(59.9, 10.75, 20.0)
+        val fix = LearnedFix(59.9, 10.75, 50.0, 3, 0, true, emptySet(), PROVIDER_APPLE, PlaceSource.APPLE)
+        val (flat, flng) = Town.ll(60.0, 0.0)
+        val off = fix.copy(lat = flat, lng = flng, accuracyM = 30.0)
+        assertEquals(StillVerdict.RENEW, appleStill(fix, vouch, still = true))
+        assertEquals(StillVerdict.CONTRADICTS, appleStill(off, vouch, still = true))
+        assertEquals(StillVerdict.USE, appleStill(off, vouch, still = false))
+        // Still with no vouch: an Apple position alone is withheld (code QA L3); an own one is used.
+        assertEquals(StillVerdict.WITHHOLD, appleStill(off, null, still = true))
+        assertEquals(StillVerdict.USE, appleStill(off.copy(source = PlaceSource.OWN), null, still = true))
+        assertEquals(StillVerdict.USE, appleStill(off.copy(source = PlaceSource.OWN), vouch, still = true))
+        assertEquals(StillVerdict.CONTRADICTS, appleStill(off.copy(source = PlaceSource.MIXED), vouch, still = true))
+        // The waits: until the time, a 409 until a policy says on, a wait past a day is a clock set back.
+        assertTrue(appleMayAsk(1_000, 0, off = false))
+        assertFalse(appleMayAsk(1_000, 2_000, off = false))
+        assertFalse(appleMayAsk(1_000, 0, off = true))
+        assertTrue(appleMayAsk(1_000, 1_000 + APPLE_WAIT_MAX_MS + 1, off = false))
+        // D16 by source, the mean error per source.
+        val days = countsWith(emptyList(), 5) { it.looSource(PlaceSource.APPLE, true, 30.0).looSource(PlaceSource.APPLE, false, 90.0).looSource(PlaceSource.OWN, true, 12.0) }
+        val line = countsLine(days)
+        assertTrue(line, line.contains("own=1/1 apple=1/2 mixed=0/0 err own=12 apple=60 mixed=-"))
+    }
+
+    @Test
+    fun `the synthetic town with Apple's rows - alone and mixed, a neighbour never inside`() {
+        val town = Town(42)
+        val now = 3 * day
+        // Apple's crowd-sourced positions: off by ~15 m, accuracies 20-80 m.
+        val rng = java.util.Random(5)
+        val positions = town.aps.map { a ->
+            Triple(a.bssid, a.x + rng.nextGaussian() * 15 to a.y + rng.nextGaussian() * 15, 20 + rng.nextInt(60))
+        }
+        fun apple(rows: List<PlaceRow>) = storeApple(rows, positions.map { (bssid, at, acc) -> Town.ll(at.first, at.second).let { (lat, lng) -> AppleAp(bssid, lat, lng, acc, APPLE_FRESH_MONTHS) } }, emptyList(), keys, now)
+        townRows(town, apple(emptyList()), "Apple alone")
+        townRows(town, apple(taught(town, allStreets.take(2).drop(1))), "Apple and one street")
+        // Every fix from Apple's rows names it.
+        val appleOnly = apple(emptyList())
+        val providers = town.houses.indices.mapNotNull { h ->
+            val (x, y) = town.houses[h]
+            scanView(hear(town.scan(x, y, h, 1_000), null, keys, moving, emptyMap(), 1_000), 1_000, 0)?.let { learnedFix(it, appleOnly, now) }?.provider
+        }
+        assertEquals(setOf(PROVIDER_APPLE), providers.toSet())
+    }
+
+    @Test
+    fun `source - the Apple ask only on a learned miss with the switch on, the switch from each fresh policy`() {
+        val glue = source("places/WifiPlaces.kt")
+        // The one ask, behind the switch, the waits and a network (A3); never from the teaching fix or a passive fix.
+        assertEquals(1, Regex("""askApple\(app, """).findAll(glue).count())
+        assertTrue(glue.contains("if (store == null || !appleAllowed(app)) return null"))
+        assertTrue(Regex("""learned\(\) \?: appleFix\(\)""").findAll(glue).count() == 3)
+        val teachAlarm = Regex("""internal fun onTeachAlarm\([\s\S]*?\n    }""").find(glue)!!.value
+        assertFalse(teachAlarm.contains("apple", ignoreCase = true))
+        // The attempt runs only with the network provider off (H1), so the ask does too.
+        assertTrue(source("server/LocateCommands.kt").contains("places != null && WifiPlaces.networkOff(lm) ->"))
+        assertTrue(source("server/MdmSyncWorker.kt").contains("WifiPlaces.policyAccepted(context, com.kidslauncher.mdm.places.wifiLookupOn(freshPolicy))"))
+        assertFalse(source("places/ApplePlan.kt").contains("Log."))
     }
 
     // --- By source: the glue's load-bearing lines ---

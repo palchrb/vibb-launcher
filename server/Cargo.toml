@@ -7,9 +7,11 @@ license = "GPL-3.0-or-later"
 # Integrations behind one boundary (src/integrations/, docs/notes/server/integrations.md): each one a feature, on by
 # default, so a build can leave one out with `--no-default-features --features ...`.
 [features]
-default = ["map_links"]
+default = ["map_links", "wifi_lookup"]
 # Design 110: Google Maps and Apple Maps links opened in Organic Maps, short links and places resolved here.
 map_links = []
+# Design 125 step 2: the Apple Wi-Fi lookup for the phones, through a SOCKS5 proxy, its answers sealed here.
+wifi_lookup = []
 
 [dependencies]
 # Vibb music (design 26b): Storytel's login password is AES-128-CBC with a public key (CBC and the
@@ -49,7 +51,9 @@ quick-xml = "0.42"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 # Tracked apps (handlers/tracked_apps.rs): an asset filter starting with "^" is a regular expression.
 regex = "1"
-reqwest = { version = "0.13.4", default-features = false, features = ["rustls-no-provider", "json", "gzip"] }
+# "socks" (design 125 A7): the Apple Wi-Fi lookup through a SOCKS5 proxy (Tor); in 0.13 it is hyper-util's own SOCKS
+# client, no new crate.
+reqwest = { version = "0.13.4", default-features = false, features = ["rustls-no-provider", "json", "gzip", "socks"] }
 # Free space before an own-file upload (statvfs, safe API), and the uid in the "data/ not writable"
 # error (design 22); already in the tree through tempfile.
 rustix = { version = "1", features = ["fs", "net", "process"] }

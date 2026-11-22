@@ -83,7 +83,7 @@ pub struct Row {
 pub fn grace(key: &str) -> Duration {
     match key {
         "met" | "caldav_write" => Duration::hours(6),
-        "music_feed" => Duration::hours(24),
+        "music_feed" | "wifi_lookup" => Duration::hours(24),
         // github, fdroid, calendar_link, caldav, storytel, spotify, blocklist, and any boundary integration.
         _ => Duration::hours(12),
     }
@@ -289,6 +289,8 @@ pub enum Title {
     SpotifyDown,
     /// Both problems, counted.
     Blocklist,
+    /// Both problems (design 125 A7: over 24 h of failed Apple calls, or the pause at its day).
+    WifiLookup,
 }
 
 impl Title {
@@ -308,6 +310,7 @@ impl Title {
             ("storytel", _) => Title::StorytelDown,
             ("spotify", _) => Title::SpotifyDown,
             ("blocklist", _) => Title::Blocklist,
+            ("wifi_lookup", _) => Title::WifiLookup,
             _ => return None,
         })
     }
@@ -328,6 +331,7 @@ impl Title {
             Title::StorytelDown => "device.attention.integration.storytel_down",
             Title::SpotifyDown => "device.attention.integration.spotify_down",
             Title::Blocklist => "device.attention.integration.blocklist",
+            Title::WifiLookup => "device.attention.integration.wifi_lookup",
         }
     }
 
@@ -355,6 +359,7 @@ impl Title {
             Title::StorytelDown => "integration-storytel-down",
             Title::SpotifyDown => "integration-spotify-down",
             Title::Blocklist => "integration-blocklist",
+            Title::WifiLookup => "integration-wifi-lookup",
         }
     }
 
@@ -371,6 +376,9 @@ impl Title {
             Title::StorytelDown => "/music/settings#storytel".to_string(),
             Title::SpotifyDown => format!("/devices/{device_id}/music#music-spotify"),
             Title::Blocklist => "/dns".to_string(),
+            Title::WifiLookup => {
+                format!("/devices/{device_id}/location-settings?from=device#wifi-lookup")
+            }
         }
     }
 }
@@ -405,6 +413,8 @@ const FOR_DEVICE: &str = "SELECT h.key, h.scope, h.ok_at, h.error_at, h.error, h
         JOIN device_policy p ON p.device_id = ?1 AND p.vpn_filter_enabled = 1 \
         LEFT JOIN device_blocklist_overrides o ON o.blocklist_id = b.id AND o.device_id = ?1 \
         WHERE h.scope = 'feed:' || b.id AND COALESCE(o.enabled, b.enabled) = 1)) \
+    OR (h.key = 'wifi_lookup' AND h.scope = '' AND EXISTS (SELECT 1 FROM wifi_lookup_devices w \
+        WHERE w.device_id = ?1 AND w.is_on = 1)) \
     )";
 
 /// The phone's `Integration` rows (§2.3): every failing row that maps to it and is [raised], grouped by [Title] with
@@ -564,6 +574,7 @@ mod tests {
         assert_eq!(grace("met"), Duration::hours(6));
         assert_eq!(grace("caldav_write"), Duration::hours(6));
         assert_eq!(grace("music_feed"), Duration::hours(24));
+        assert_eq!(grace("wifi_lookup"), Duration::hours(24));
         for key in [
             "github",
             "fdroid",

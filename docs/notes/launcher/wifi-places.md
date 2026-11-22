@@ -113,3 +113,47 @@
   scans with Wi-Fi off (`docs/setup/android-settings.md`).
 - Not device-tested: design 125 §8's Jelly Star list (`docs/testing/new-phone-model.md` §2) and the emulator wiring
   run (14 and 17).
+
+## The Apple lookup (design 125 step 2, §4a)
+
+- **What it is**: with the parent's switch on (the policy's `wifi_lookup: {on}`, `wifiLookupOn`), a learned miss - no
+  fix that stands alone - asks the server where the heard Wi-Fi networks are (`POST /api/devices/wifi-lookup`), the
+  server asks Apple through its proxy, and the phone stores the answer as **Apple rows** (kind 4 in the sealed table)
+  and looks up again. Pure rules in `places/ApplePlan.kt` (`PlacesTest`, `WifiLookupContractTest` over the shared
+  `wifi_lookup/contract.json`); glue in `WifiPlaces` (`askApple`, `postLookup`, `policyAccepted`).
+- **When** (A3): inside the attempt - so only with the network provider off and Location on -, with the switch on, no
+  wait or 409 in force and a network with internet (offline: nothing asked, nothing changed); `learned() ?: appleFix()`
+  runs beside GPS in every plan (in `LEARNED_FIRST` only after the own lookup and the zone link's renewal gave nothing).
+  Never from the teaching fix or a passive fix, never periodic. The BSSIDs: the scan view's usable results, strongest
+  first, at most 40, none with a trusted own row, a live Apple row, a negative or an Apple tombstone (`appleAsk`). The call has
+  15 s.
+- **The answers** (A4, `appleStep`): 200 the rows and the negatives stored, and its `retry_after_s` kept as the wait
+  when the server couldn't ask Apple for the rest (code QA M1); 409 no ask until a fresh policy says on (`apple_off`,
+  cleared by `policyAccepted`; a sync is asked for at once); 503 no ask for `retry_after_s` (at most a day; a wait past a day
+  is a clock set back); anything else, a transport failure or the timeout 15 min (`apple_wait_until_ms`). CE prefs
+  `wifi_places`, cleared with the table.
+- **Apple rows** (A9, `storeApple`): keyed by the same HMAC as the own rows, Apple's position and accuracy (`rangeM`),
+  and for kind 4 `lastTeachMin` holds the row's end: the start of the UTC month `fresh_months_left` on (the month the
+  server asks Apple again, `monthStartMin`), a stale row (0 left) a day (`APPLE_STALE_GRACE_MIN`); at most 3000 (the
+  least recently seen out); a BSSID that isn't usable, a position out of range or a month count past the contract's
+  `fresh_months` is left out. **Negatives** (code QA M2): an `unknown` BSSID is a positionless kind-4 row blocked until
+  the start of the next UTC month (the server's negative), so `appleAsk` leaves it out until then. In the lookup
+  (`chooseRow`) an Apple row is a trusted row of 3 occasions, weight 1, its range at least the band's floor; an untrusted own row
+  doesn't block it; a trusted own row and an agreeing Apple row - the smaller range gives the position (a tie: own);
+  disagreeing - the own row, and `reconcileApple` makes the Apple row a 90-day **tombstone**, as does an own teach that
+  puts the BSSID beyond its band reach (`appleTaught`, in every teach). A fix whose cluster uses any Apple position is
+  `vibb_apple` (`PlaceSource` `APPLE` or `MIXED`). The switch off drops every Apple row (`dropApple`) on every off
+  policy - a no-op without any - and the waits are cleared only once the table is written (`save` returns whether
+  the disk holds the change; the table in memory follows only a written one); the clears drop them with the table.
+- **Still means still** (H2, `appleStill`): while `motion` is `STILL` or `STILL_SINCE_TRY`, an Apple-sourced fix within
+  `accOld + accNew` of the last fresh fix (`Ask.stillVouch`) re-sends that fix with `still: true` (`Ask.renewed`, a new
+  4-h step; the sync logs "renewed by an Apple fix"); outside it is not reported and counts as an **Apple
+  contradiction**; with no vouch it is withheld (`StillVerdict.WITHHOLD`: neither fresh nor reported).
+- **Counts by source** (D16): the leave-one-out count runs on the results paired with the best teacher (code QA M1),
+  per class and per source with the summed error, logged
+  `loo 3+=.. 2=.. zone=.. own=38/47 apple=7/11 mixed=5/8 err own=12 apple=40 mixed=20 contradictions=0 apple_contradictions=0`.
+- **The synthetic town** with Apple's rows (positions off by ~15 m, accuracies 20-80 m): Apple alone 87 of 87 indoor
+  fixes within their accuracy (median error 16 m, accuracy 85 m), Apple and one street 91 of 91; the neighbours never
+  inside home's zone.
+- Logs carry counts only (`apple asked=12 status=200 got=9 unknown=2`, `apple contradiction`) - no BSSID ever leaves the phone
+  but in the ask's body.

@@ -177,6 +177,8 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         // Design 98 §4.4.4: the parent code's pauses read this policy (an ack, or ended in the PWA after the ack).
         com.kidslauncher.mdm.timerules.PhonePauses.policyAccepted(context, freshPolicy.timePolicy, policyGetStartedMs)
         com.kidslauncher.mdm.setup.SetupTicks.policyAccepted(context, freshPolicy.setup)
+        // Design 125 A9: the Apple lookup's switch - off drops the Apple rows, on ends a 409's wait.
+        com.kidslauncher.mdm.places.WifiPlaces.policyAccepted(context, com.kidslauncher.mdm.places.wifiLookupOn(freshPolicy))
         // Design 108 §2.3, §5.5: app push's reconcile (`regs` by the request's start, the race rule), the origin's
         // rewrite, the queued DELETEs, then a pull while UP is on - on UP's own executor, never blocking the sync.
         com.kidslauncher.mdm.push.up.UpRuntime.policyAccepted(context, freshPolicy, policyGetStartedMs)
@@ -944,14 +946,15 @@ private suspend fun currentLocationReport(
     // Design 125 D12: the heartbeat's 4-h cap try (motion STILL, so a fix is due only because the cap ran out) may renew
     // the vouch through a zone link instead of a new position.
     val renewable = if (zonesOn && beat == Heartbeat.FIX && motion == Motion.STILL) lastFreshQueued else null
-    val places = WifiPlaces.Ask(motion, motionNow?.movedAtElapsedMs ?: 0L, renewable?.let { q ->
-        android.location.Location(q.provider ?: "cached").apply {
-            latitude = q.latitude
-            longitude = q.longitude
-            q.accuracy?.let { accuracy = it }
-            time = q.timeMs
-        }
-    })
+    fun asLocation(q: QueuedFix) = android.location.Location(q.provider ?: "cached").apply {
+        latitude = q.latitude
+        longitude = q.longitude
+        q.accuracy?.let { accuracy = it }
+        time = q.timeMs
+    }
+    // Design 125 A9 (H2): while the phone is still, an Apple fix may only renew this vouch.
+    val stillVouch = lastFreshQueued?.takeIf { motion == Motion.STILL || motion == Motion.STILL_SINCE_TRY }
+    val places = WifiPlaces.Ask(motion, motionNow?.movedAtElapsedMs ?: 0L, renewable?.let(::asLocation), stillVouch?.let(::asLocation))
     // The parent's `locate` waits up to EXPLICIT_FIX_BOUND_MS here, under the sync mutex: rare and asked for, and its
     // fix goes into this report; every other fix keeps its 15 s (preciseFix).
     val location = LocateCommands.currentLocation(
@@ -960,7 +963,7 @@ private suspend fun currentLocationReport(
     val still = stillBeat || places.renewed
     if (places.renewed) {
         ZoneWatch.stampVouchRenewed(context, now)
-        Log.i(ZONE_LOG_TAG, "Location heartbeat: STILL renewed by a zone link")
+        Log.i(ZONE_LOG_TAG, "Location heartbeat: STILL renewed by " + if (places.renewedByApple) "an Apple fix" else "a zone link")
     }
     if (motionNow != null && action.fresh) {
         // A genuinely fresh fix of our own (not the cached or an old last-known fallback, Q-6; not a learned fix from

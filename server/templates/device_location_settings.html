@@ -58,6 +58,8 @@
             <div class="info-panel"><p>{{ self.t("locate.settings.footer") }}</p><p data-note="last-position">{{ self.t("locate.settings.last_position") }}</p></div>
         </details></div>
     </section>
+    {#- Design 125 A1: the integrations' groups (the Apple Wi-Fi lookup), each rendered by its integration. -#}
+    {% for group in integration_groups %}{{ group|safe }}{% endfor %}
 
     </div>
 </main>

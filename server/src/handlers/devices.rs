@@ -3934,6 +3934,11 @@ pub async fn delete_device(
         .prune(&state.db, &state.avatar_dir)
         .await;
     crate::app_logos::prune_hashes(&state, &logos).await;
+    // Design 125 A5: the Apple cache goes when no phone left has its switch on.
+    state
+        .integrations
+        .prune(&state, crate::integrations::Prune::DeviceDeleted)
+        .await;
 
     Redirect::to("/devices")
 }

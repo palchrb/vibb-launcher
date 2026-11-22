@@ -12,7 +12,10 @@
 //! what they need. Every hook but the name, the routes and the health has a do-nothing default.
 
 // A build without any integration (`--no-default-features`) keeps the boundary's pieces unused.
-#![cfg_attr(not(feature = "map_links"), allow(dead_code, unused_imports))]
+#![cfg_attr(
+    not(any(feature = "map_links", feature = "wifi_lookup")),
+    allow(dead_code, unused_imports)
+)]
 
 use std::sync::Arc;
 
@@ -26,6 +29,8 @@ use crate::music_net::BoxFut;
 
 #[cfg(feature = "map_links")]
 pub mod map_links;
+#[cfg(feature = "wifi_lookup")]
+pub mod wifi_lookup;
 
 /// The last success and the last failure of an integration's calls out (C2, design 116, reads it for its generic
 /// health rows). In memory: a restart starts it empty.
@@ -62,6 +67,15 @@ impl HealthCell {
 pub struct SetupPart {
     pub inputs: Vec<&'static str>,
     pub readings: Vec<(&'static str, Option<bool>)>,
+}
+
+/// Why [Integration::prune] runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Prune {
+    /// The server's sweep (`retention::run_pruning`, at the start and every hour).
+    Sweep,
+    /// A phone was deleted (its own rows went with it by `ON DELETE CASCADE`).
+    DeviceDeleted,
 }
 
 /// One integration, as the core sees it.
@@ -111,6 +125,23 @@ pub trait Integration: Send + Sync {
         Box::pin(async { Ok(None) })
     }
 
+    /// Its group on the phone's Location page, rendered (`None`: nothing to show). `from_device`: the page was opened
+    /// from the phone's page, for the group's forms.
+    fn location_group<'a>(
+        &'a self,
+        _state: &'a AppState,
+        _lang: Lang,
+        _device_id: i64,
+        _from_device: bool,
+    ) -> BoxFut<'a, Result<Option<String>, sqlx::Error>> {
+        Box::pin(async { Ok(None) })
+    }
+
+    /// Drops what it keeps past its time. Never fails: an error is logged.
+    fn prune<'a>(&'a self, _state: &'a AppState, _why: Prune) -> BoxFut<'a, ()> {
+        Box::pin(async {})
+    }
+
     /// Its part of this phone's setup steps (design 114). A read error leaves its part out (logged by the caller).
     fn setup<'a>(
         &'a self,
@@ -126,16 +157,21 @@ pub trait Integration: Send + Sync {
 pub struct Integrations {
     #[cfg(feature = "map_links")]
     pub map_links: Arc<map_links::MapLinks>,
+    #[cfg(feature = "wifi_lookup")]
+    pub wifi_lookup: Arc<wifi_lookup::WifiLookup>,
 }
 
 impl Integrations {
     /// The real ones: each with its own client to the outside.
     pub fn new() -> Self {
+        #[allow(unused_variables)]
+        let source: Arc<dyn crate::music_net::Source> =
+            Arc::new(crate::music_net::HttpSource::new());
         Integrations {
             #[cfg(feature = "map_links")]
-            map_links: Arc::new(map_links::MapLinks::new(Arc::new(
-                crate::music_net::HttpSource::new(),
-            ))),
+            map_links: Arc::new(map_links::MapLinks::new(source.clone())),
+            #[cfg(feature = "wifi_lookup")]
+            wifi_lookup: Arc::new(wifi_lookup::WifiLookup::from_env(source.clone())),
         }
     }
 
@@ -145,7 +181,9 @@ impl Integrations {
         let _ = &source;
         Integrations {
             #[cfg(feature = "map_links")]
-            map_links: Arc::new(map_links::MapLinks::for_tests(source)),
+            map_links: Arc::new(map_links::MapLinks::for_tests(source.clone())),
+            #[cfg(feature = "wifi_lookup")]
+            wifi_lookup: Arc::new(wifi_lookup::WifiLookup::for_tests(source.clone())),
         }
     }
 
@@ -156,6 +194,8 @@ impl Integrations {
         let mut all: Vec<&dyn Integration> = Vec::new();
         #[cfg(feature = "map_links")]
         all.push(self.map_links.as_ref());
+        #[cfg(feature = "wifi_lookup")]
+        all.push(self.wifi_lookup.as_ref());
         all
     }
 
@@ -222,6 +262,33 @@ impl Integrations {
             }
         }
         Ok(groups)
+    }
+
+    /// Every integration's group on the phone's Location page, rendered, in order.
+    pub async fn location_groups(
+        &self,
+        state: &AppState,
+        lang: Lang,
+        device_id: i64,
+        from_device: bool,
+    ) -> Result<Vec<String>, sqlx::Error> {
+        let mut groups = Vec::new();
+        for one in self.all() {
+            if let Some(group) = one
+                .location_group(state, lang, device_id, from_device)
+                .await?
+            {
+                groups.push(group);
+            }
+        }
+        Ok(groups)
+    }
+
+    /// Every integration's prune.
+    pub async fn prune(&self, state: &AppState, why: Prune) {
+        for one in self.all() {
+            one.prune(state, why).await;
+        }
     }
 
     /// Every integration's part of this phone's setup steps, joined. Never fails: an integration whose read fails is

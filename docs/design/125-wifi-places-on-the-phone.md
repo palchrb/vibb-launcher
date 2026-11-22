@@ -1,7 +1,14 @@
 # 125 - Wi-Fi places, learned on the phone
 
 Status: **revision 3; step 1 (L1) built** on branch `wifi-places-build`, 2026-11-22, with code QA's fix round; step 2
-in build on top. What the build settled (`docs/notes/launcher/wifi-places.md`): D9's range term stays `0.5 x rangeMed`
+(§4a, S2 + L2) **built** on top, branch `wifi-apple-build`, with code QA's fix round (M1-M3, L1-L9) - what it settled: reqwest 0.13's `socks`
+feature is hyper-util's own SOCKS client (no `tokio-socks`, no new crate); the golden request hex comes from
+`scripts/wifi-lookup-fixtures.py`'s own encoder (no `protoc` on the build machine - the script's docstring has the
+one-line `protoc --encode` check); the proxy's connect has the call's 10 s (a Tor circuit is built at connect); a
+negative row answers for the month it was asked in; the Attention row is `integration_health`'s (`Transient` past a
+24-h grace, `Stop` at the day-long pause step); the Apple rows in the synthetic town held every indoor fix within its
+accuracy, alone and mixed (`docs/notes/launcher/wifi-places.md`, "The Apple lookup"). What step 1's build settled
+(`docs/notes/launcher/wifi-places.md`): D9's range term stays `0.5 x rangeMed`
 (0.25 failed the synthetic town taught from one street; the Jelly Star's leave-one-out counts tune it); a network's
 weight is shared by its devices (a moved mesh's nodes outvoted the town otherwise); D9's whole-scan stale rule needs
 >= 5 repeats that are >= 80 % of the results heard before (a still phone repeats whole-number levels often); every own
@@ -38,10 +45,10 @@ Wi-Fi witness (§8 there) is dropped: past its 4-h cap a known place gives a rea
 
 **Step 2, the Apple lookup** (§4a, off by default, a parent switch per phone): on a learned miss with GLA off, the phone
 sends the scan's usable BSSIDs to the family's own server - the one place BSSIDs leave the phone -, the server answers
-from its long-lived cache or asks Apple's Wi-Fi service (the way GrapheneOS's NetworkLocation does) for them and the
-~100 around them, and the phone estimates with its own estimator (`vibb_apple`). Apple sees the server's IP and the
-nearby BSSIDs, no identity; the phone never talks to Apple. Over time the server's cache and the phones' learning are
-the family's own map.
+from its sealed cache or asks Apple's Wi-Fi service (the way GrapheneOS's NetworkLocation does) **through a SOCKS5
+proxy** (a Tor sidecar or the family's own edge), never from the home line, and the phone estimates with its own
+estimator (`vibb_apple`). Apple sees a proxy's address and the nearby BSSIDs, not the phone or any name. Over time the
+server's cache and the phones' learning are the family's own map.
 
 ## 1. What the phone has today (read in the code)
 
@@ -61,11 +68,11 @@ the family's own map.
 
 1. **Who teaches.** Only our own satellite fixes, whatever path took them - the heartbeat, `locate`, a crossing's
    confirm, the low-battery fix, the teaching fix (D11) - and a **passive `gps` fix** from any app (D3). A fix teaches
-   when its provider is `gps` with `satellites >= 5` in its extras (dropped as a condition if the Jelly Star doesn't
-   set the extra - §8 check), not mock in a release build, accuracy <= **25 m**, speed unknown or <= **3 m/s**. `fused`
+   when its provider is `gps` with `satellites >= 5` in its extras (dropped as a condition if the Jelly Star doesn't set
+   the extra - §8 check), not mock in a release build, accuracy <= **25 m**, speed unknown or <= **3 m/s**. `fused`
    teaches **only after** the Jelly Star shows GMS's fused has no Wi-Fi path with GLA off (§8 step 2); until then never.
-   Never: a `vibb_wifi`/`vibb_cell` fix (no feedback), a balanced fix, a fix with the `network` provider on (Google's
-   Wi-Fi database, not ours - no bootstrap from Google-derived fixes), a last-known or cached fix.
+   Never: a `vibb_wifi`/`vibb_cell`/`vibb_apple` fix (no feedback), a balanced fix, a fix with the `network` provider on
+   (Google's Wi-Fi database, not ours - no bootstrap from Google-derived fixes), a last-known or cached fix.
 2. **Pairing a scan with the teacher.** While GPS runs for the teaching fix (D11), the first `FIX` after a move or a
    `locate`, the attempt keeps the **GPS stream** (`requestLocationUpdates(gps, 1 s)` for the attempt's length, each fix
    in a memory buffer) and pairs **each scan result with the stream fix nearest in elapsed time** (within ~1 s; Local
@@ -193,8 +200,10 @@ the family's own map.
     unchanged and does not scan. 124 §8's witness is **dropped**; only D12's zone link renews a vouch.
 16. **Leave-one-out accuracy counts.** Before a GPS fix teaches, `learnedFix` runs on the same scan against the table
     as it was; whether the GPS fix lies inside the reported accuracy is counted per class (>= 3 networks, 2 networks,
-    a zone-link renewal) over 30 days (CE prefs `wifi_places` `loo_v1`), logged as counts only
-    (`WifiPlaces: loo 3+=41/52 2=9/14`). It is how the Jelly Star tells whether "68 %" holds.
+    a zone-link renewal) and per source of the cluster's positions (**own**, **apple**, **mixed** - step 2) over 30
+    days (CE prefs `wifi_places` `loo_v1`), logged as counts only (`WifiPlaces: loo 3+=41/52 2=9/14 own=38/47
+    apple=7/11 mixed=5/8`), with the mean error per source. It is how the Jelly Star tells whether "68 %" holds and
+    which source is better; A9's own-versus-Apple rule is tuned from these counts.
 17. **The manifest's `neverForLocation` goes** (it would now be false); the scan reads rely on `ACCESS_FINE_LOCATION`
     and Location on, which the fix window holds; `NEARBY_WIFI_DEVICES` is self-granted beside the location
     permissions (L2), the manifest comment says why. The connected BSSID and metering come from
@@ -228,73 +237,168 @@ the family's own map.
 
 The user (2026-11-22): "Legg inn apple biten som noe vi implementerer med en gang, at vi plukker den fra graphene? Og
 vet ikke om man da bør cache for evig omtrent, men at man av og til ber om ny data? Over tid bygger vi vel vårt eget
-kart utifra det?". Borrowed from GrapheneOS NetworkLocation (MIT, branch 17, 474472e; attribution in the files and
-`NOTICE.md`): the request and answer format (`apple_wps.proto`, `ApplePositioningService.kt`,
+kart utifra det?". Borrowed from GrapheneOS NetworkLocation (MIT, Copyright (c) 2024-2025 GrapheneOS, branch 17,
+474472e): the request and answer format (`apple_wps.proto`, `ApplePositioningService.kt`,
 `AppleWifiPositioningService.kt`: 40 BSSIDs asked at most, up to 100 surrounding APs, 8 while throttled, a latitude of
--18000000000 = unknown, coordinates x 1e-8), the cache shape (`WifiPositioningServiceCache.kt`) and, as an idea for
-later, the RANSAC over multilateration in its Rust `position-estimation` (majority inliers within 2 sigma).
+-18000000000 = unknown, coordinates x 1e-8, `normalizeBssid`) and the cache's shape (`WifiPositioningServiceCache.kt`).
+The copyright line and the full MIT permission notice go into `NOTICE.md` and the head of every ported file. **This goes
+beyond what GrapheneOS ships**: a long-lived cache and requests that present themselves as macOS's `locationd` are
+probably against Apple's terms; the realistic risk is that Apple blocks or changes the service, and step 1 then carries
+on alone.
 
-A1. **The switch: per phone, off by default.** On the phone's Location page (`device_location_settings.html`):
-    "Wi-Fi-oppslag hos Apple" / "Wi-Fi lookup at Apple": "På"/"Av" ("On"/"Off"), and one (i): "Når Googles
-    posisjonstjeneste er av på telefonen og telefonen ikke kjenner stedet selv, spør serveren Apple hvor Wi-Fi-nettene
-    rundt den står. Apple ser serverens IP-adresse og Wi-Fi-nettene i nærheten - ikke hvem dere er. Svarene lagres på
-    serveren." / "When Google's location service is off on the phone and the phone doesn't know the place itself, the
-    server asks Apple where the Wi-Fi networks around it are. Apple sees the server's IP address and the nearby
-    networks - not who you are. The answers are kept on the server." No line otherwise (a choice is never a warning);
-    nothing for the kid. The save keeps the page where it is. Per phone like map links (a parent may want it for one
-    child); the cache is shared by the family's phones.
-A2. **An integration** (design 110's boundary, `docs/notes/server/integrations.md`):
-    `server/src/integrations/wifi_lookup/` behind the Cargo feature `wifi_lookup` (in `default`), its own migration
-    (`wifi_lookup_devices` for the switch, `wifi_lookup_aps` for the cache), the policy key `wifi_lookup: {on}` from its
-    `policy()` hook, its device route from `device_routes()`, its group on the Location page, `health()` for C2. No
-    column on a core table.
-A3. **When the phone asks.** Only with the switch on, the `network` provider off (GLA off), Location on and the phone
-    online; only on a **learned miss** - D9 gave no fix that stands alone - in any fresh-fix attempt (the heartbeat,
-    `locate`, a crossing, the low-battery fix), **beside** the GPS try, not instead: the request goes out at once, the
-    GPS keeps running, and the better of the two is kept (GPS at equal or better accuracy). It sends the scan's
+The user's setup (2026-11-22): the server runs at home on the same line as the family's Apple devices; the phones reach
+it through an edge in Sweden (inbound only). A direct call to Apple would come from the home address and be linkable to
+the family's Apple IDs. A probe with two random locally administered BSSIDs got 200 both direct (0.38 s) and through
+Tor (`socks5h`, 0.81 s).
+
+A1. **The switch: per phone, off by default.** On the phone's Location page (`device_location_settings.html`), drawn by
+    the integration's `location_group` hook (A2): "Wi-Fi-oppslag hos Apple" / "Wi-Fi lookup at Apple": "På"/"Av"
+    ("On"/"Off"), and one (i): "Når Googles posisjonstjeneste er av og telefonen ikke kjenner stedet selv, spør serveren
+    Apple hvor Wi-Fi-nettene rundt står. Apple ser Wi-Fi-nettene i nærheten - ikke telefonen eller navn. Svarene lagres
+    på serveren og viser omtrent hvor telefonene har vært." / "When Google's location service is off and the phone
+    doesn't know the place itself, the server asks Apple where the Wi-Fi networks around it are. Apple sees the nearby
+    networks - not the phone or any name. The answers are kept on the server and show roughly where the phones have
+    been." **With no proxy configured** (A7) the (i) adds: "Oppslagene går fra serverens egen adresse." / "The lookups
+    come from the server's own address." Nothing else on the page, nothing for the kid; the save keeps the page where it
+    is. Per phone like map links; the cache is shared by the family's phones.
+A2. **An integration** (design 110's boundary): `server/src/integrations/wifi_lookup/` behind the Cargo feature
+    `wifi_lookup` (in `default`; the module's `cfg_attr` becomes `not(any(feature = "map_links", feature =
+    "wifi_lookup"))`), migration **0163** (`wifi_lookup_devices`, `wifi_lookup_aps`), the policy key `wifi_lookup:
+    {on}` from `policy()`, the route from `device_routes()`, and **two new hooks** with do-nothing defaults:
+    `location_group()` (its group on the Location page, as `apps_group()` is on Apps) and `prune()` (called by the
+    server's hourly sweep, `retention::run_pruning`). `health()` and `integration_health` with scope `""`: it keeps the last call's time and
+    class, nothing else (A6). No column on a core table.
+A3. **When the phone asks.** Only with the switch on, the `network` provider off (GLA off), Location on and a network up
+    (offline: no ask, no state change); only on a **learned miss** - D9 gave no fix that stands alone - in any fresh-fix
+    attempt (the heartbeat, `locate`, a crossing, the low-battery fix), **beside** the GPS try: the request goes out at
+    once, GPS keeps running, the better of the two is kept (GPS at equal or better accuracy). It sends the scan's
     **usable** BSSIDs (D4: never a `_nomap`/`_optout`, moving-SSID, locally administered or hotspot one; never an SSID,
-    a level or a position), strongest first, at most **40**, leaving out those it already holds an own trusted row or a
-    fresh Apple row for. Never with GLA on, never periodic, never from the teaching fix.
-A4. **The route** `POST /api/devices/wifi-lookup` (the device token): body `{"bssids": ["00:00:5e:00:53:01", ...]}` -
-    1..40 entries, each lowercase `xx:xx:xx:xx:xx:xx`, unicast and the local bit clear (checked again), the body <= 4
-    KB. Answers: `200 {"aps": [{"bssid", "lat", "lng", "acc_m"}]}` - the asked BSSIDs the cache knows **and** the
-    surrounding rows that came with this call's Apple batch (<= 140), so the next scans nearby are answered on the
-    phone; `409 {"error": "off"}` (the switch is off); `429 {"error": "limit"}` / `{"error": "busy"}`; `503 {"error":
-    "unavailable"}` (Apple refused, failed or paused); `400` for a bad body. **The phone's action** per answer (the
-    contract's `phone_answers`): 200 -> use and store; 409 -> no ask until a policy says on; 429 -> no ask for 15 min;
-    503 or no answer -> no ask for 1 h, doubling to 24 h, reset by a 200. Every failure degrades silently to step 1's
-    paths.
-A5. **The server's cache** (`wifi_lookup_aps`: `bssid` primary key, `lat`, `lng`, `acc_m`, `fetched_day`, `used_day`;
-    days, not instants): a lookup answers from the cache; it asks Apple only for asked BSSIDs it lacks or whose row was
-    fetched more than **90 days** ago (the refresh on use - "av og til ber om ny data"), all in one call with 100
-    surrounding (8 while throttled: a big answer within 10 s throttles, as GrapheneOS), and stores every row Apple
-    returns, asked or surrounding. Apple's "unknown" for an asked BSSID deletes its row and keeps a negative row (no
-    position) for 30 days so it isn't asked again at once. A row unused for **2 years** goes (a daily sweep) - "nearly
-    forever" otherwise. Rows are capped at 200,000 (least recently used out first; ~20 MB).
-A6. **No lookup log.** The server stores no device id, no lookup time and no query history - only the rows with their
-    two days. Logs carry counts (`wifi_lookup: asked=12 cached=9 fetched=3 surrounding=88`) and Apple's status, never a
-    BSSID or a coordinate. Said plainly in the server notes: **the cache still shows which areas the family's phones
-    have been near, and on which days** (`used_day`), to anyone who reads the server's database or its backups.
-A7. **Apple's side.** `https://gs-loc.apple.com/clls/wloc`, a fixed URL (no SSRF: nothing of the request picks the
-    host), HTTPS with Apple's certificate validated normally (the server's own trust store, design 76's rules
-    untouched), the protobuf body behind the small binary header GrapheneOS writes, its macOS `locationd` user agent and
-    meta - no Apple account, no device identifier, no IP of the phone. The service is **not a public API** (a grey
-    zone; GrapheneOS ships it): Apple can block or change it, so every failure is a 503 to the phone and a back-off on
-    the server - a non-200, a parse failure or a timeout (5 s) pauses all calls for 1 h, doubling to 24 h. The protobuf
-    is encoded and decoded by hand (two messages, a few fields; bounds-checked varints and lengths, the answer read up
-    to 256 KB) - no new crate. GrapheneOS's own proxy is not used (it serves GrapheneOS's users).
-A8. **Limits** (map links' shape): per phone **30 lookups an hour**; Apple calls **60 an hour, 10 in any 10 minutes**
-    server-wide; one call to Apple at a time (a second waits up to 5 s, a third is `busy`); answers clamped - latitude
-    within +-90, longitude +-180, accuracy 1..5000 m, else the row is dropped.
-A9. **The phone's Apple rows** (kind 4 in D18's sealed table, keyed by the same HMAC, Apple's accuracy kept, the
-    fetch day): **separate from its own rows and never overriding them** - where both exist the own trusted row is the
-    one used; an Apple row enters D9's cluster like a trusted device with `rangeM = max(band floor, acc_m)`, the
-    networks counted from the scan's SSIDs at that moment, the same stand-alone rules (>= 3 networks after a move) and
-    accuracy. A fix using any Apple row is `vibb_apple`. An own GPS teach that puts an Apple row's BSSID beyond its band
-    reach (D7) drops that Apple row on the phone. Apple rows live 90 days from their fetch and are capped at 3000; the
-    switch going off, or D19's clears, drop them all. Leave-one-out counts (D16) get an `apple` class.
-A10. **Not now:** the server feeding a phone the cache's rows near its learned places ahead of time (the batch per
-    lookup already seeds the phone; decide after the counts), Apple's cell lookup, the RANSAC estimator.
+    a level or a position), strongest first, at most **40**, leaving out every BSSID the phone holds a **trusted** own
+    row for, a live Apple row, a negative or an Apple tombstone (A9); an untrusted own row doesn't stop the ask.
+    Its request timeout is **15 s**. Never with GLA on, never periodic, never from the teaching fix.
+A4. **The route** `POST /api/devices/wifi-lookup` (the device token; `DefaultBodyLimit` 4 KB). The body is parsed by
+    hand from the bytes (no serde echo of input): `{"bssids": [...]}`, 1..40 entries, each lowercase
+    `xx:xx:xx:xx:xx:xx`, unicast, the local bit clear, not all-zero or all-ones; duplicates removed; **one bad entry =
+    400**. Answers:
+    - `200 {"aps": [{"bssid", "lat", "lng", "acc_m", "fresh_months_left"}], "unknown": [bssid], "retry_after_s"?}` -
+      **only asked BSSIDs** (code QA M3: Apple's surrounding APs are cached, never answered): each one the cache holds
+      a position for, with the whole calendar months (UTC, 0-3) its server row stays fresh - 0 is a stale row served
+      while Apple can't be asked (M3 of the design QA) - and never the month Apple answered; `unknown` the asked ones
+      Apple doesn't know (the server's negatives, code QA M2); `retry_after_s` when Apple was needed for some of them
+      and couldn't be asked (paused, over the limit, busy: 15 min), so the phone doesn't ask again at once (code QA M1).
+    - `409 {"error": "off"}` - the switch is off.
+    - `429 {"error": "limit"}` (this phone's 30 an hour) or `{"error": "busy"}` (a third concurrent call, or the Apple
+      call not ours within the gate's 3 s) - `busy` only when the cache answered none of them (code QA L4).
+    - `503 {"error": "unavailable", "retry_after_s": N}` - **only when none** of the asked BSSIDs is cached and Apple
+      can't be asked: paused (N = the pause left), over the server-wide limit (N = until a slot frees), or this call
+      failed (N = the pause it started).
+    - `400` - a bad body.
+    **The phone's action** (the contract's `phone_answers`): 200 -> store the rows and the negatives (A9), and no ask
+    for `retry_after_s` when it is there; 409 -> no ask until a policy says on; 429 -> no ask for 15 min; 503 -> no ask
+    for exactly `retry_after_s` (capped at 24 h); a transport failure or timeout -> no ask for 15 min (fixed, no
+    doubling). Every failure degrades silently to step 1's paths.
+A5. **The cache is sealed** (H1). `wifi_lookup_aps` is a `WITHOUT ROWID` table: `id` = HMAC-SHA256(K, BSSID) - K a
+    random 32-byte key in `data/keys/wifi_lookup` (created at the first lookup, not at start - a server whose phones
+    never turn the switch on has none; 0600; `data/keys/` is never in a backup, DEPLOY.md says so) -, the HMAC key
+    and the sealing PRK each expanded from K by HKDF under its own label (`id`, `seal`), `sealed` = AES-GCM of `{lat,
+    lng, acc_m}` under a key expanded per BSSID (the BSSID is the AAD too), `fetched_month`, `used_month` (months, not days or instants), `negative` (0/1), indexed on
+    `used_month` for eviction. Without K (a restored backup, a lost key) every row is unreadable and the table is
+    emptied at start; the phones simply ask again. A lookup answers from the cache and asks Apple only for asked BSSIDs
+    it lacks or whose row was fetched more than **90 days** (three months) ago; all in one call with 100 surrounding
+    (8 while throttled), storing every row Apple returns; a surrounding row's `used_month` is set at insert. Apple's
+    "unknown" for an asked BSSID deletes its row and keeps a **negative row** (no seal) that answers "unknown" until
+    the **calendar month** (UTC) it was asked in ends - a negative asked on the 30th lasts a day, one on the 1st a
+    month (months, not days, by H1); negatives have their own cap (**20,000**) and are evicted first. Positive rows are capped at 200,000 (least recently used out
+    first; ~25 MB).
+    **The lifetime is one constant, `CACHE_LIFETIME`, the user's choice (Q6):** the recommended default **"2 years
+    unused, sealed"** (the hourly `prune()` drops rows whose `used_month` is older) / the alternative **"dropped when no
+    phone has the switch on"** (`prune()` and every switch save empty the table when no row of `wifi_lookup_devices`
+    is on). Either way the table is emptied when the last phone with the switch on is deleted (`DELETE` of a device
+    calls the integration's prune).
+    **Who can open it:** the server process holds K - it must, to answer -, so the server's owner with shell access to
+    `data/keys/` can open the row of any BSSID they already know, or find rows by trying every BSSID of a vendor prefix
+    (2^24 each); the database and its backups alone reveal nothing; the phones never hold K.
+A6. **No lookup log.** No device id, no lookup time, no query history: only the sealed rows with their months, and
+    `integration_health` (scope `""`): the last success's time and the last failure's time and class. The per-phone
+    limit's counts live in memory only (lost at a restart - acceptable). Logs carry counts - each lookup at debug, one
+    line of the hour's counts at info from the sweep (`wifi_lookup: since the last sweep lookups=40 named=410
+    uncached=35 calls=6 unanswered=0`, code QA L9) - and the pause steps, never a BSSID, a coordinate or a device id
+    (a source test checks every `wifi_lookup` tracing line). **What a device token still learns** (code QA M3): the
+    route answers only the BSSIDs it is asked for and only how many months their rows stay fresh, so a token holder -
+    one of the family's phones, or someone who took its token - can learn whether a BSSID it names is in the cache and
+    roughly how fresh, never when or by which phone it was asked. DEPLOY.md: a reverse proxy's access log records the
+    route's calls per phone - the edge's own logging is the operator's. Said plainly in the server notes: **the cache -
+    sealed or not - shows which areas the family's phones have been near, and in which months**, to whoever holds both
+    the database and the key; and Apple's batches, though not linkable to the family through a proxy, are linkable to
+    each other through the same exit over time.
+A7. **Apple's side, through a proxy.** `https://gs-loc.apple.com/clls/wloc`, a fixed URL (no SSRF), HTTPS with
+    Apple's certificate validated normally, GrapheneOS's binary header and its macOS `locationd` user agent and meta -
+    no Apple account, no device identifier. **The server setting `WIFI_LOOKUP_PROXY`** (e.g.
+    `socks5h://tor:9050`) sends every call through a SOCKS5 proxy with remote DNS: DEPLOY.md adds an optional Tor
+    sidecar to the compose file (or any SOCKS egress, such as the family's own edge). Each call uses random SOCKS
+    credentials, so Tor's default `IsolateSOCKSAuth` gives it its own circuit. **No silent fallback:** with the setting
+    present, a proxy failure is a transport failure (cached rows still answer, A4), never a direct call; with no setting
+    the calls go direct and the PWA's (i) says so (A1); a setting that isn't a `socks5h://` address, and a key file the
+    server can't read, raise the orange line at once (`stop`, codes `proxy_setting` and `key`, code QA L6). The call
+    is a new `music_net::Kind` (`AppleWps`: 256 KB, 3 s to connect and 5 s in all direct, 10 s to connect and in all
+    through the proxy), reqwest's `socks` feature (built: hyper-util's own SOCKS client in reqwest 0.13 - no new
+    crate); its TLS hello is checked against what Apple accepts in the §8 check. DEPLOY.md
+    also keeps the user's probe as a manual check (two random locally administered BSSIDs, one `curl` through the
+    proxy; no script, no selftest).
+    **Pauses** (L5): the first transient failure (timeout, connect, proxy) pauses calls 5 min, later ones 1 h doubling
+    to 24 h; a non-200 or a parse failure goes straight to 1 h; a 200 resets. Each pause step writes one server log
+    line (`wifi_lookup: paused 4h class=blocked failures=7` - counts and class only, no BSSID, no device).
+    **Telling the parent** (the user: if Apple shuts it, parents should know): when Apple calls have failed (blocked,
+    non-200, parse failure, proxy failure) for **more than 24 h with no success**, or the pause has reached its 24-h
+    step, one short orange line shows in the Location page's group of every phone with the switch on, and on the
+    Attention list (it is something wrong, not a parent's choice): "Apple-oppslag virker ikke" / "Apple lookups aren't
+    working", with one (i): "Apple kan ha stengt tjenesten. Telefonene bruker egen læring og GPS imens. Sjekk proxyen
+    (Tor) på serveren." / "Apple may have closed the service. The phones use their own learning and GPS meanwhile.
+    Check the proxy (Tor) on the server." Read from `integration_health` through C2's `health()`; it clears at the next
+    successful call. Nothing on the kid's phone. GrapheneOS's own throttle: an answer of
+    17 or more APs makes the next 10 s ask for 8 surrounding. **Limits**: per phone 30 lookups an hour; Apple calls 60
+    an hour and 10 in any 10 minutes server-wide - over it, a lookup answers from the cache alone (A4's 200 with the
+    slot's wait, or 503); one Apple call at a time (a second waits up to 3 s - Apple's 10 s and the gate stay within
+    the phone's 15 s - and reads the cache again once the call is its own; a third is `busy`).
+A8. **The codec** (by hand, no new protobuf crate; M5). Request: GrapheneOS's header (`short 1`, the locale, the
+    identifier, the version as length-prefixed strings, `int 1`, the message length) and `ALSLocationRequest`
+    {`wireless_aps` 2: `WirelessAP{mac_id 1}`, `number_of_surrounding_wifis` 4, `surrounding_wifi_bands` 31 (1, 2),
+    `wifi_altitude_scale` 32 (2), `meta` 33 {1, 2}}, pinned against a **golden hex** made once with `protoc` from
+    GrapheneOS's `.proto` (its origin noted beside it in `server.json`). Answer: a **10-byte header** skipped (shorter
+    = parse failure), read at most 256 KB, then one fixed path - `ALSLocationResponse.wireless_aps` (2) ->
+    `WirelessAP{mac_id 1, location 2}` -> `ALSLocation{latitude 1, longitude 2, accuracy 3}`. Negative int64/int32 are
+    plain (non-zigzag) varints of 10 bytes; a varint over 10 bytes is refused; length arithmetic is checked; unknown
+    fields of wire types 0, 1, 2 and 5 are skipped, 3 and 4 refused. A missing location, latitude or longitude, or
+    -18000000000, is **unknown** (never 0,0; code QA L7); `mac_id` is normalised (Apple drops leading zeros - GrapheneOS's `normalizeBssid`),
+    non-hex refused, the first of duplicates wins; at most 200 APs are taken from an answer. Coordinates clamped:
+    latitude +-90, longitude +-180, accuracy 1..5000 m, else the row is dropped.
+A9. **The phone's Apple rows** (kind 4 in D18's sealed table, keyed by the same HMAC, Apple's accuracy, live until
+    the server's row stops being fresh).
+    In D9 an Apple row counts like a trusted device with `occasions = 3`, weight 1, `rangeM = max(band floor, acc_m)`;
+    networks are counted from the scan's SSIDs at that moment; the same stand-alone rules (>= 3 networks after a move)
+    and accuracy. **Own and Apple rows for one BSSID** (the user: the best quality between the two - Apple's position
+    is usually crowd-sourced from many devices near the AP, ours is biased towards where the kid walks):
+    - an **untrusted** own row (`occasions < 2`) doesn't block Apple: the Apple row is used, and asked for, until the
+      own row is trusted;
+    - a **trusted** own row and an Apple row that **agree** (centre distance <= own `rangeM` + Apple's `rangeM`): the
+      row with the **smaller `rangeM`** gives that device's position and range (a tie: the own row);
+    - they **disagree**: the own row wins (newer ground truth from our GPS) and the Apple row becomes a **kind-4
+      tombstone** (no position) for 90 days - a tombstone comes only from such a contradiction, never from a mere own
+      row; an own GPS teach that puts the BSSID beyond the Apple row's band reach (D7) does the same.
+    A fix whose cluster uses any Apple-sourced position is `vibb_apple`. **An Apple row lives as long as the server's**
+    (code QA M1): until the start of the UTC month `fresh_months_left` on (the month the server asks Apple again); a
+    stale row (0 left) a day. **A negative** (an `unknown` BSSID, code QA M2) is a positionless kind-4 row that blocks
+    the ask until the server's negative ends (the start of the next UTC month). Apple rows are capped at 3000; the
+    switch going off (every off policy; the waits cleared only once the table is written, code QA L1), or D19's
+    clears, drop them all.
+    **Still means still** (H2): while `motion()` is `STILL` or `STILL_SINCE_TRY`, a `vibb_apple` fix only **renews** the
+    vouch when it lies within `accOld + accNew` of the vouched fix - the vouched fix is re-sent with `still: true`,
+    never replaced. Outside that it is not fresh and not reported; it is counted as an **Apple contradiction** (CE
+    prefs, counts only, 30 days). With no fresh fix to renew, an Apple-sourced fix of a still phone is neither fresh nor
+    reported (code QA L3). The `apple` and `mixed` leave-one-out classes (D16) come from the teaching fixes alone, on
+    the results paired with the best teacher (code QA L2).
+A10. **Not now:** the server feeding a phone cache rows near its learned places ahead of time (since code QA M3 the
+    phone gets only the BSSIDs it asked for; decide after the counts), Apple's cell lookup, GrapheneOS's RANSAC estimator.
 
 ## 5. Android 14-17 and the Jelly Star
 
@@ -337,8 +441,11 @@ software HMACs and one AES-GCM open/seal per attempt.
 | Someone clones known BSSIDs | needs 3 networks to stand alone after a move; GPS after moves catches it | low risk; the provider word names it |
 | Scan throttled, partial or stale; Wi-Fi and scanning off | the 2-min fallback (not fresh) or nothing | today's paths |
 | Keystore error | that lookup skipped; a broken key clears the table | L6 |
-| Apple blocks, changes or throttles the service | 503 to the phone, the server pauses 1-24 h; step 1 goes on | A4, A7 |
-| Apple has a moved AP at its old place | outvoted in the cluster; an own GPS teach drops the Apple row | A9 |
+| Apple blocks, changes or throttles the service | cached rows still answer; else 503 with the pause; step 1 goes on | A4, A7 |
+| The proxy (Tor) is down | a transport failure: cached rows or 503, never a direct call | A7 |
+| Apple has a moved AP at its old place | outvoted in the cluster; an own GPS teach leaves a 90-day tombstone | A9 |
+| An Apple fix far from a still phone's vouched fix | not reported; an Apple contradiction counted | A9 |
+| The server's key is lost or a backup is restored without it | the cache is emptied; phones ask again | A5 |
 
 ## 8. Size, steps, tests, the Jelly Star check
 
@@ -375,24 +482,43 @@ software HMACs and one AES-GCM open/seal per attempt.
   5. A still night: "Hasn't moved since" through it; the cap tries log `path=wifi`; the learned contradictions count.
   6. Wi-Fi off with scanning on / off; Location Off from the PWA: `cleared (off)`.
   7. `dumpsys batterystats me.vibb.launcher`: scans, GPS time, against 124's measurement.
-- **Step 2 (S2 + L2, one commit, right after L1: server ~450-550 lines + ~300 of tests, launcher ~200 + ~150):** the
-  integration (A2: route, cache, sweep, the Apple client and hand-rolled protobuf, limits, back-off, page, migration,
-  policy), the phone's client, back-off and Apple rows (A3, A4, A9). **Contract** `server/testdata/wifi_lookup/` (design
-  110's shape): `contract.json` byte-identical in `launcher/app/src/test/resources/wifi_lookup/` - `policy` (`off`,
-  `on`), `request` (the exact body), `answers` (200 with asked and surrounding rows, 409, 429 `limit`/`busy`, 503, 400)
-  and `phone_answers` (each status to use / stop / wait 15 min / back off); `server.json` the server's alone -
-  **recorded-shape Apple answers made by `scripts/wifi-lookup-fixtures.py`** (standard library, `--selftest`, an
-  independent protobuf encoder; documentation MACs `00:00:5e:00:53:xx`, made-up coordinates, an unknown row, an
-  out-of-range row, a truncated and an oversized answer; no real Apple capture is ever committed). Both CI workflows'
-  path filters name the folder; `server-ci.yml`'s changes job runs the script's `--selftest`.
-  `policy_json_keys_snapshot` and `PolicyResponseCompatTest` pin `wifi_lookup`. Tests: the route's every answer, the
-  cache (hit, stale refresh, unknown -> negative row, the sweep, the cap), the limits and the back-off, no BSSID in any
-  log line, the featureless build compiles; the launcher's client maps every answer, the Apple rows never override own
-  rows.
-- **Security review points for step 2:** SSRF none (a fixed host); input caps (40 BSSIDs, their form, 4 KB); a
-  bounded decoder for an untrusted answer (lengths, varints, 256 KB, coordinate clamps); per-phone and server-wide
-  limits; the switch checked on every call; the cache table as location-revealing data (A6), in the database's
-  backups; the device token as for every device route.
+- **Step 2 (S2 + L2, one commit, right after L1: server ~600-750 lines + ~300 of tests, launcher ~300, the fixtures
+  script ~150):** the integration (A2: route, sealed cache, `prune`, the codec, the Apple client and its `Kind`, the
+  proxy, limits, pauses, `location_group`, migration 0163, policy), the phone's client, waits and Apple rows (A3, A4,
+  A9). **Contract** `server/testdata/wifi_lookup/` (design 110's shape): `contract.json` byte-identical in
+  `launcher/app/src/test/resources/wifi_lookup/` - `policy` (`off`, `on`), `request` (the exact body), `answers` (200
+  fresh, 200 with stale rows while paused, 200 over the server-wide limit, 409, 429 `limit`/`busy`, 503 with
+  `retry_after_s`, 400 for each bad form) and `phone_answers` (each status and a transport failure to its wait);
+  `server.json` the server's alone - the golden request hex (with its `protoc` origin) and **fake Apple answers made by
+  `scripts/wifi-lookup-fixtures.py`** (standard library, `--selftest`, an independent protobuf encoder; documentation
+  MACs `00:00:5e:00:53:xx`, made-up coordinates; an unknown row, a missing location, an out-of-range row, Apple's short
+  `mac_id`s, duplicates, a 10-byte varint, a too-long varint, a group wire type, a short header, a truncated and an
+  oversized answer, 17+ APs; no real Apple capture is ever committed) and the **health rows** (failure histories to the
+  orange line or none: 23 h of failures, 25 h, the 24-h pause step, a success clearing it, the switch off on every
+  phone). Root `CLAUDE.md` gets the contract paragraph and the script's entry; both CI workflows' path filters name the
+  folder; `server-ci.yml`'s changes job runs the script's `--selftest`. `policy_json_keys_snapshot` and
+  `PolicyResponseCompatTest` pin `wifi_lookup`. Tests: every answer; the cache (sealed round trip, a wrong key empties
+  it, stale refresh, unknown -> negative, the two caps and eviction order, `prune` under both lifetimes, a device
+  delete); the limits, the pauses, their log lines and the proxy-failure path (no direct call); the orange line and the
+  Attention row from `server.json`'s health rows; no BSSID, coordinate or `device_id` in a log line; the featureless
+  build compiles. The launcher: every `phone_answers` row, the source rows (an untrusted own row + Apple -> Apple used
+  and asked; trusted and agreeing -> the smaller range wins; disagreeing -> own wins and a tombstone; no tombstone from
+  an agreeing own row), the still rule (renew / contradiction), and Apple-only and mixed rows in the synthetic town, the
+  neighbour row included.
+- **Before step 2's first release - by hand, open until done** (code QA L8; the build machine has no `protoc` and the
+  build never calls Apple): (1) run the `protoc --encode` check in `scripts/wifi-lookup-fixtures.py`'s docstring
+  against GrapheneOS's `apple_wps.proto` at `474472e` and compare its bytes with `server.json`'s golden hex after the
+  47-byte header; (2) one real lookup through the proxy of a BSSID Apple places (a public AP of the operator's own,
+  never a neighbour's): `server/DEPLOY.md`'s probe with that BSSID, then a test phone with the switch on - `200`, a
+  position near the AP, the log's `wifi_lookup: since the last sweep ... calls=1`. Both are in DEPLOY.md's "Before the
+  first release" list; this item stays open in PLAN.md until they are done.
+- **Security review points for step 2:** SSRF none (a fixed host); the proxy setting is the operator's (env), never
+  from a request; input caps (40 BSSIDs, their form, 4 KB, hand parsing); a bounded decoder for an untrusted answer
+  (A8); per-phone and server-wide limits; the switch checked on every call; the cache sealed under a key outside the
+  backups (A5) and still location-revealing to whoever holds both; no silent direct call when a proxy is set; the
+  device token as for every device route.
+- **Before the phone step:** the server reaches Apple through the proxy (the DEPLOY probe, then one real lookup from
+  the PWA's test phone), and the TLS hello is accepted.
 - Order: design QA of this revision, L1, code QA, S2 + L2, code QA, the emulator wiring run (14 and 17, the user's OK),
   §8 on the phone (with step 2: the switch on, a learned miss at a new place gives `vibb_apple`; the Apple call's
   answer time).
@@ -428,6 +554,15 @@ present and the dead `WifiInfo` guard (D9), the moving-SSID list as data (D4), t
 grouping (D9). Not copied: single-emitter fixes, microG's 14-day quarantine, GrapheneOS's per-axis 1-sigma accuracy,
 any online source - the Apple lookup is the user's own choice, step 2 (§4a).
 
+**§4a's QA round.** H1: the cache sealed under a key outside the backups, months, the lifetime as one constant and Q6
+(A5, A6), the (i) says what the answers show (A1). H2: still means still for Apple fixes (A9). M1: the (i)'s wording,
+linkability through one exit (A1, A6). M2: beyond GrapheneOS, Apple's terms, the MIT notice (§4a). M3: stale cached rows
+answer while Apple can't be asked (A4, A7). M4: `retry_after_s`, a fixed 15 min after a transport failure, 15 s timeout
+(A3, A4). M5: the codec (A8). M6: the tombstone, `occasions = 3`, own-versus-Apple by trust and agreement (A3, A9;
+changed after the QA on the user's "best possible quality"). M7: the hooks, `cfg_attr`, the `Kind`, migration 0163, the
+docs and CI (A2, A7, §8). L1-L7: A4-A7, A9, D1, §8. The user: Apple calls through a SOCKS5 proxy, no silent direct call,
+the (i) when none is set (A1, A7).
+
 ## 11. Questions for the user
 
 All answered on 2026-11-22: Q1 the learned fix at known places with GLA off - yes, accuracy before 0.5 % battery, so
@@ -435,4 +570,5 @@ GPS after every move (D14); Q2 no "hjemme" field, a self-learned zone link inste
 move - in (D11); Q4 cells in step 1 (D10); Q5 the zone link only renews a still vouch, never establishes a position
 after a move (D12) - a one-router home shows the fix's age after arriving until GPS works there; the Apple lookup is
 step 2 (§4a), per phone, off by default, the cache refreshed after 90 days in use and dropped after 2 years unused.
-Nothing is left open.
+Q6 (how long the server keeps the Apple cache, A5) is answered: **2 years unused, sealed**
+(`CACHE_LIFETIME_MONTHS`; the table still goes when the last phone with the switch on is deleted).

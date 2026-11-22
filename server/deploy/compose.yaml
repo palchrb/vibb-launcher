@@ -26,7 +26,8 @@ services:
       # The backups (zips, pre-migration and pre-restore copies) in a folder on the host, so the host's own backup
       # takes them. It must belong to uid 65532: mkdir -p backups && sudo chown 65532:65532 backups && sudo chmod 700 backups
       - ./backups:/app/data/backups
-      # The Storytel, Web Push and Child PIN keys: their own volume, never in the data volume or the backups folder.
+      # The Storytel, Web Push, Child PIN and Apple cache keys: their own volume, never in the data volume or the backups
+      # folder.
       - handy-keys:/app/data/keys
     read_only: true
     tmpfs: [/tmp]

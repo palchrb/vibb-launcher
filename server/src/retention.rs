@@ -634,6 +634,11 @@ pub async fn run_pruning(state: AppState) {
     loop {
         interval.tick().await;
         let pruned = prune(&state.db).await;
+        // The integrations' own (design 125 A5: the Apple cache's rows unused two years).
+        state
+            .integrations
+            .prune(&state, crate::integrations::Prune::Sweep)
+            .await;
         // Design 87: every app logo no phone names, and a crash's stray temp file.
         crate::app_logos::prune_all(&state).await;
         // A request's picture forgotten (or its row deleted): the files nobody names.

@@ -1,0 +1,31 @@
+{#- Design 125 A1, A7: the Location page's "Wi-Fi lookup at Apple" group (`integrations::wifi_lookup::page`), rendered
+    by the integration and placed after the location settings (the page knows only "integration groups"). The switch
+    is an auto-saving form back to #wifi-lookup (in place). One orange line only while Apple lookups have stopped
+    working and the switch is on, its how-to behind its ⓘ; what the switch does is the footer's ⓘ. -#}
+<section id="wifi-lookup" aria-label="{{ self.t("wifi_lookup.switch") }}">
+    {% if broken %}
+    <div class="attention attention-action" data-warning="wifi-lookup">
+        <div class="attention-text">{{ self.t("wifi_lookup.broken") }}<div class="attention-sub">
+            <details class="info">
+                <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel"><p>{{ self.t("wifi_lookup.broken_info") }}</p></div>
+            </details></div></div>
+    </div>
+    {% endif %}
+    <div class="group group-small">
+        <form method="post" action="/devices/{{ device_id }}/wifi-lookup#wifi-lookup" class="cell">
+            {% if from_device %}<input type="hidden" name="from" value="device">{% endif %}
+            <label class="row" data-row="wifi-lookup-switch">
+                <span class="row-label">{{ self.t("wifi_lookup.switch") }}</span>
+                <input type="checkbox" role="switch" class="sw" name="on" value="on" data-autosave{% if on %} checked{% endif %}><span class="knob" aria-hidden="true"></span>
+            </label>
+            <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
+        </form>
+    </div>
+    <div class="group-footer">
+        <details class="info">
+            <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+            <div class="info-panel"><p>{{ self.t("wifi_lookup.info") }}</p>{% if direct %}<p data-note="direct">{{ self.t("wifi_lookup.direct") }}</p>{% endif %}</div>
+        </details>
+    </div>
+</section>

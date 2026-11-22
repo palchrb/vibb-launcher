@@ -213,6 +213,8 @@ class SealedPrefsTest {
                 "push/up/UpRuntime.kt" to 1,
                 // Design 110: the map links' resolve call.
                 "map/MapLinkActivity.kt" to 1,
+                // Design 125 step 2: the Apple Wi-Fi lookup's ask.
+                "places/WifiPlaces.kt" to 1,
             ),
             sites,
         )

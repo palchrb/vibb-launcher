@@ -370,6 +370,7 @@ async fn policy_json_keys_snapshot() {
             "unified_push",
             "update_fence",
             "vpn_filter_enabled",
+            "wifi_lookup",
         ]
     );
 
@@ -409,6 +410,7 @@ async fn policy_json_keys_snapshot() {
         "unified_push",
         "update_fence",
         "vpn_filter_enabled",
+        "wifi_lookup",
     ] {
         assert!(!object[non_null].is_null(), "{non_null} is null");
     }
@@ -440,6 +442,9 @@ async fn policy_json_keys_snapshot() {
     // Design 110 §7.5: `map_links`, `{on}`, off for a new phone; every row in `integrations::map_links::tests`
     // (`map_links/contract.json`'s `policy`).
     assert_eq!(object["map_links"], serde_json::json!({"on": false}));
+    // Design 125 A2: `wifi_lookup`, `{on}`, off for a new phone; every row in `integrations::wifi_lookup::tests`
+    // (`wifi_lookup/contract.json`'s `policy`).
+    assert_eq!(object["wifi_lookup"], serde_json::json!({"on": false}));
 
     // The launcher's CallPolicy DTO: every key present and non-null, also when unmanaged.
     let call_policy = object["call_policy"].as_object().unwrap();

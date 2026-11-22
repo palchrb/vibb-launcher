@@ -11,7 +11,8 @@ reads it. The design is `docs/design/116-failures-visible.md` §2; the register 
   upsert each; a write error is logged and never fails the call. `ok` writes only when the row is failing or its
   `ok_at` is over 10 minutes old, so a per-request caller (Spotify, Storytel) costs nothing.
 - `key` is the integration's name (`github`, `fdroid`, `met`, `caldav`, `caldav_write`, `calendar_link`,
-  `music_feed`, `storytel`, `spotify`, `blocklist`, `backup`); `scope` is `''` (family-wide) or `app:<id>`,
+  `music_feed`, `storytel`, `spotify`, `blocklist`, `backup`, `wifi_lookup` - design 125, a 24-h grace, `stop` at its
+  day-long pause step); `scope` is `''` (family-wide) or `app:<id>`,
   `account:<id>`, `source:<id>`, `device:<id>`, `entry:<id>`, `feed:<id>`, `file:<name>`.
 - `class` is the call site's: `transient` (the other side is away), `parent` (the parent can mend it), `stop` (it
   stopped itself). Each site maps its codes in one `class_of`; `None` = not recorded (our own state, our own waits).

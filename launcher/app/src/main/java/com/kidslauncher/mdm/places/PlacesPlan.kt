@@ -217,13 +217,18 @@ fun connectedBssid(raw: String?): String? = normalBssid(raw)?.takeIf { it != "02
  * an SSID without `_nomap` or `_optout` (any case), and not a moving SSID. A hidden SSID is kept.
  */
 fun usableAp(bssid: String?, ssid: String?, moving: MovingSsids): Boolean {
-    val b = normalBssid(bssid) ?: return false
-    val first = b.substring(0, 2).toInt(16)
-    if (first and 0x01 != 0 || first and 0x02 != 0 || b == "00:00:00:00:00:00") return false
+    val b = usableBssid(bssid) ?: return false
     val s = ssid.orEmpty()
     val lc = s.lowercase()
     if ("_nomap" in lc || "_optout" in lc) return false
     return s.isEmpty() || !moving.moving(s, b)
+}
+
+/** D4's BSSID half: normalised, unicast, the locally administered bit clear, not all zero - or `null`. */
+fun usableBssid(bssid: String?): String? {
+    val b = normalBssid(bssid) ?: return null
+    val first = b.substring(0, 2).toInt(16)
+    return b.takeUnless { first and 0x03 != 0 || it == "00:00:00:00:00:00" }
 }
 
 // --- D5: keys ---
@@ -269,7 +274,8 @@ data class ScanAp(val bssid: String, val ssid: String?, val mld: String?, val fr
 /** The connected network (`WifiInfo` with the active network's `NOT_METERED`); never stored. */
 data class Connected(val bssid: String?, val ssid: String?, val rssi: Int, val frequencyMhz: Int, val unmetered: Boolean)
 
-/** A usable result by its keys; [suspect]: its level repeats the previous scan's (D9's stale guard). */
+/** A usable result by its keys; [suspect]: its level repeats the previous scan's (D9's stale guard). [bssid] is held in
+ * memory for design 125 step 2's ask alone - never stored or logged. */
 data class Heard(
     val key: String,
     val device: String,
@@ -280,6 +286,7 @@ data class Heard(
     val suspect: Boolean = false,
     val connected: Boolean = false,
     val kind: RowKind = RowKind.WIFI,
+    val bssid: String = "",
 )
 
 /** A result's level and time as the previous scan heard it - memory only, by key. */
@@ -317,6 +324,7 @@ fun hear(results: List<ScanAp>, connected: Connected?, keys: PlaceKeys, moving: 
             elapsedMs = r.elapsedMs,
             suspect = before != null && r.elapsedMs > before.elapsedMs && r.rssi == before.rssi,
             connected = b == connectedB && connected?.unmetered == true,
+            bssid = b,
         )
     }
     val again = heard.count { h -> previous[h.key]?.let { h.elapsedMs > it.elapsedMs } == true }
@@ -397,11 +405,12 @@ fun pairings(hearing: Hearing, teachers: List<TeachFix>, windowMs: Long): List<S
 
 // --- D5-D8: the rows ---
 
-/** A row's kind (D18): an AP, a cell, a zone link. */
+/** A row's kind (D18): an AP, a cell, a zone link, an AP's position from Apple (design 125 A9). */
 enum class RowKind(val code: Int) {
     WIFI(1),
     CELL(2),
     LINK(3),
+    APPLE(4),
     ;
 
     companion object {
@@ -438,7 +447,11 @@ data class PlaceRow(
     /** D9: a trusted row - not blocked, taught on two occasions. */
     fun trusted(nowMin: Int): Boolean = !blocked(nowMin) && occasions >= 2
 
-    val id: String get() = if (kind == RowKind.LINK) "$key/$network" else key
+    val id: String get() = when (kind) {
+        RowKind.LINK -> "$key/$network"
+        RowKind.APPLE -> "a/$key"
+        else -> key
+    }
 }
 
 /** D6: a sighting's weight - the signal and the pairing's error. */
@@ -540,10 +553,13 @@ fun teach(rows: List<PlaceRow>, sightings: List<Sighting>, nowMin: Int, today: I
 }
 
 /** D8: rows unseen for [ROW_UNSEEN_MIN] go (a blocked row stays while blocked); above [ROWS_MAX] the least recently
- * seen go first, tombstones included. */
+ * seen go first, tombstones included. Apple rows (A9) on their own: live ones and tombstones while they block, at most
+ * [APPLE_ROWS_MAX]. */
 fun prune(rows: List<PlaceRow>, nowMin: Int): List<PlaceRow> {
-    val kept = rows.filter { it.blocked(nowMin) || nowMin - it.lastSeenMin < ROW_UNSEEN_MIN }
-    return if (kept.size <= ROWS_MAX) kept else kept.sortedByDescending { it.lastSeenMin }.take(ROWS_MAX)
+    val (apple, own) = rows.partition { it.kind == RowKind.APPLE }
+    fun capped(kept: List<PlaceRow>, max: Int) = if (kept.size <= max) kept else kept.sortedByDescending { it.lastSeenMin }.take(max)
+    return capped(own.filter { it.blocked(nowMin) || nowMin - it.lastSeenMin < ROW_UNSEEN_MIN }, ROWS_MAX) +
+        capped(apple.filter { it.blocked(nowMin) || it.appleLive(nowMin) }, APPLE_ROWS_MAX)
 }
 
 /** The lookup changes nothing but `lastSeen` (D9, D8), at most once a day per row (code QA L4: no write for nothing);
@@ -574,7 +590,8 @@ fun scanView(hearing: Hearing, nowElapsedMs: Long, movedAtElapsedMs: Long): Scan
     return if (fallback.size >= SCAN_RESULTS_MIN) ScanView(fallback, false) else null
 }
 
-/** A learned fix: [elapsedMs] the oldest used result's, [networks] the distinct networks in it, [keys] the rows used. */
+/** A learned fix: [elapsedMs] the oldest used result's, [networks] the distinct networks in it, [keys] the rows used,
+ * [source] whose positions (design 125 A9: any Apple position makes it `vibb_apple`). */
 data class LearnedFix(
     val lat: Double,
     val lng: Double,
@@ -584,6 +601,7 @@ data class LearnedFix(
     val fresh: Boolean,
     val keys: Set<String>,
     val provider: String = PROVIDER_WIFI,
+    val source: PlaceSource = PlaceSource.OWN,
 )
 
 const val PROVIDER_WIFI = "vibb_wifi"
@@ -602,17 +620,22 @@ private data class Device(
     val weight: Double,
     val oldestMs: Long,
     val keys: Set<String>,
+    val apple: Boolean,
 )
 
 /**
  * D9: the learned fix from [view] against [rows]. Trusted rows group into devices (weight-weighted), devices into
  * networks. Complete link: the device with the most others within `rangeA + rangeB` seeds the cluster (tie: the
  * stronger signal), and a device joins only within that of every member; the cluster must hold >= 2 networks and more
- * than half of the trusted networks heard. Position and accuracy by [learnedAccuracy]. `null` = no fix.
+ * than half of the trusted networks heard. Position and accuracy by [learnedAccuracy]. `null` = no fix. Design 125 A9:
+ * a result's row is a trusted own row or a live Apple row by [chooseRow].
  */
 fun learnedFix(view: ScanView, rows: List<PlaceRow>, nowMin: Int): LearnedFix? {
     val table = rows.asSequence().filter { it.kind == RowKind.WIFI }.associateBy { it.key }
-    val trustedHeard = view.heard.mapNotNull { h -> table[h.key]?.takeIf { it.trusted(nowMin) }?.let { h to it } }
+    val apple = rows.asSequence().filter { it.kind == RowKind.APPLE }.associateBy { it.key }
+    val chosen = view.heard.filter { it.kind == RowKind.WIFI }.mapNotNull { h -> chooseRow(h, table[h.key], apple[h.key], nowMin)?.let { h to it } }
+    val trustedHeard = chosen.map { (h, row) -> h to row.first }
+    val fromApple = chosen.filter { it.second.second }.map { it.first.key }.toSet()
     val connectedNetworks = view.heard.filter { it.connected }.map { it.network }.toSet()
     val devices = trustedHeard.groupBy { it.first.device }.map { (device, pairs) ->
         val w = pairs.sumOf { it.second.weight.toDouble() }.coerceAtLeast(1e-6)
@@ -633,6 +656,7 @@ fun learnedFix(view: ScanView, rows: List<PlaceRow>, nowMin: Int): LearnedFix? {
             weight = q * minOf(occasions, 5) / 5.0 * suspect * (if (network in connectedNetworks) 2.0 else 1.0),
             oldestMs = pairs.minOf { it.first.elapsedMs },
             keys = pairs.map { it.first.key }.toSet(),
+            apple = pairs.any { it.first.key in fromApple },
         )
     }
     if (devices.isEmpty()) return null
@@ -657,7 +681,13 @@ fun learnedFix(view: ScanView, rows: List<PlaceRow>, nowMin: Int): LearnedFix? {
     val trustedNetworks = devices.map { it.network }.toSet()
     val strongerUnknown = view.heard.filter { it.network !in trustedNetworks && it.rssi > strongest.rssi }.map { it.network }.toSet().size
     val acc = learnedAccuracy(spread, rangeMed, networks, occMed, strongest.rssi, strongest.band, strongerUnknown) ?: return null
-    return LearnedFix(lat, lng, acc, networks, cluster.minOf { it.oldestMs }, view.fresh, cluster.flatMap { it.keys }.toSet())
+    val source = when {
+        cluster.none { it.apple } -> PlaceSource.OWN
+        cluster.all { it.apple } -> PlaceSource.APPLE
+        else -> PlaceSource.MIXED
+    }
+    val provider = if (source == PlaceSource.OWN) PROVIDER_WIFI else PROVIDER_APPLE
+    return LearnedFix(lat, lng, acc, networks, cluster.minOf { it.oldestMs }, view.fresh, cluster.flatMap { it.keys }.toSet(), provider, source)
 }
 
 private fun weightedMedian(values: List<Pair<Double, Double>>): Double {
@@ -841,6 +871,18 @@ data class DayCounts(
     val hitZone: Int = 0,
     val nZone: Int = 0,
     val contradictions: Int = 0,
+    // Design 125 D16: by the source of the positions, with the summed error in metres.
+    val hitOwn: Int = 0,
+    val nOwn: Int = 0,
+    val errOwn: Long = 0,
+    val hitApple: Int = 0,
+    val nApple: Int = 0,
+    val errApple: Long = 0,
+    val hitMixed: Int = 0,
+    val nMixed: Int = 0,
+    val errMixed: Long = 0,
+    /** A9: a still phone's Apple fix outside its vouch. */
+    val appleContradictions: Int = 0,
 )
 
 /** The counts of the last [COUNT_DAYS] local days with one more observation on [today]. */
@@ -859,10 +901,31 @@ fun DayCounts.loo(cls: LooClass, hit: Boolean): DayCounts {
     }
 }
 
-/** The log line's counts (D16): `loo 3+=41/52 2=9/14 zone=3/3 contradictions=0`. */
-fun countsLine(days: List<DayCounts>): String =
-    "loo 3+=${days.sumOf { it.hit3 }}/${days.sumOf { it.n3 }} 2=${days.sumOf { it.hit2 }}/${days.sumOf { it.n2 }} " +
-        "zone=${days.sumOf { it.hitZone }}/${days.sumOf { it.nZone }} contradictions=${days.sumOf { it.contradictions }}"
+/** D16 by source (design 125): whether the GPS fix lay inside, and how far off the learned one was. */
+fun DayCounts.looSource(source: PlaceSource, hit: Boolean, errorM: Double): DayCounts {
+    val h = if (hit) 1 else 0
+    val e = errorM.toLong().coerceAtLeast(0)
+    return when (source) {
+        PlaceSource.OWN -> copy(hitOwn = hitOwn + h, nOwn = nOwn + 1, errOwn = errOwn + e)
+        PlaceSource.APPLE -> copy(hitApple = hitApple + h, nApple = nApple + 1, errApple = errApple + e)
+        PlaceSource.MIXED -> copy(hitMixed = hitMixed + h, nMixed = nMixed + 1, errMixed = errMixed + e)
+    }
+}
+
+/** The log line's counts (D16): `loo 3+=41/52 2=9/14 zone=3/3 own=38/47 apple=7/11 mixed=5/8 err own=12 apple=40
+ * mixed=20 contradictions=0 apple_contradictions=0` - the mean error per source in metres. */
+fun countsLine(days: List<DayCounts>): String {
+    fun mean(err: Long, n: Int) = if (n == 0) "-" else (err / n).toString()
+    val nOwn = days.sumOf { it.nOwn }
+    val nApple = days.sumOf { it.nApple }
+    val nMixed = days.sumOf { it.nMixed }
+    return "loo 3+=${days.sumOf { it.hit3 }}/${days.sumOf { it.n3 }} 2=${days.sumOf { it.hit2 }}/${days.sumOf { it.n2 }} " +
+        "zone=${days.sumOf { it.hitZone }}/${days.sumOf { it.nZone }} " +
+        "own=${days.sumOf { it.hitOwn }}/$nOwn apple=${days.sumOf { it.hitApple }}/$nApple mixed=${days.sumOf { it.hitMixed }}/$nMixed " +
+        "err own=${mean(days.sumOf { it.errOwn }, nOwn)} apple=${mean(days.sumOf { it.errApple }, nApple)} " +
+        "mixed=${mean(days.sumOf { it.errMixed }, nMixed)} contradictions=${days.sumOf { it.contradictions }} " +
+        "apple_contradictions=${days.sumOf { it.appleContradictions }}"
+}
 
 /** D16: before a GPS fix ([gpsLat], [gpsLng]) teaches, the learned fix the same scan gave against the table as it was:
  * its class and whether the GPS fix lies inside its reported accuracy; `null` when there was none. */
@@ -923,8 +986,8 @@ fun decodeTable(bytes: ByteArray): List<PlaceRow>? {
         PlaceRow(
             kind = kind,
             key = key,
-            device = if (kind == RowKind.LINK) "" else device,
-            network = network,
+            device = if (kind == RowKind.LINK || kind == RowKind.APPLE) "" else device,
+            network = if (kind == RowKind.APPLE) "" else network,
             band = Band.of(buf.get().toInt()),
             lat = buf.int / 1e7,
             lng = buf.int / 1e7,

@@ -13,7 +13,7 @@
 //!   call that got no answer not at all. At most 500 entries; in memory only.
 //! - **The log** has the host and the outcome only: no id, no text, no point.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::time::Duration;
 
 use axum::Extension;
@@ -66,38 +66,7 @@ impl Gate {
     }
 }
 
-/// A rolling count of calls out: at most `limit` in `window`.
-pub struct Window {
-    limit: usize,
-    window: Duration,
-    times: std::sync::Mutex<VecDeque<Instant>>,
-}
-
-impl Window {
-    pub fn new(limit: usize, window: Duration) -> Self {
-        Window {
-            limit,
-            window,
-            times: Default::default(),
-        }
-    }
-
-    /// One call at `now`: `true` (and counted) within the limit.
-    pub fn take(&self, now: Instant) -> bool {
-        let mut times = self.times.lock().unwrap_or_else(|e| e.into_inner());
-        while times
-            .front()
-            .is_some_and(|t| now.saturating_duration_since(*t) >= self.window)
-        {
-            times.pop_front();
-        }
-        if times.len() >= self.limit {
-            return false;
-        }
-        times.push_back(now);
-        true
-    }
-}
+pub use crate::music_net::Window;
 
 /// What the cache keeps: a short link's long link, or a lookup's place (or none).
 #[derive(Clone, Debug)]

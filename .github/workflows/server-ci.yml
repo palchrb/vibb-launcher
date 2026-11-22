@@ -72,10 +72,12 @@ jobs:
           # notification_channels.json; tests::notification_channels compares it); and app push (design 108,
           # unified_push.json; tests::unified_push compares it); and the map links' contract folder (design 110,
           # map_links/contract.json; integrations::map_links::tests compares it); and the setup steps (design 114,
-          # setup_steps.json; setup_status::tests compares it); and the MMS
+          # setup_steps.json; setup_status::tests compares it); and the Apple Wi-Fi lookup's contract folder (design
+          # 125, wifi_lookup/contract.json; integrations::wifi_lookup::tests compares it) and its fixtures script
+          # (scripts/wifi-lookup-fixtures.py, which wrote server/testdata/wifi_lookup/server.json); and the MMS
           # servers' generator and
           # its sample (design 83, scripts/mmsc-hosts.py; its output server/testdata/mmsc_hosts.txt is compiled in).
-          if grep -qE '^(server/|\.github/workflows/server-ci\.yml$|(launcher|music)/app/src/test/resources/spotify_hosts\.json$|launcher/app/src/test/resources/(time_status_report|dns_upstream_status|power_report|zone_status_report|launcher_tag_codes|time_request|installed_apps_report|calendar_title_rules|calendar_status_report|calendar_feeds|emergency_numbers|calendar_kid_events|weather|leave_tailnet|server_url_vectors|restrictions_pause|server_tls_report|sms_contract|contact_request|app_logos|lock_now|mobile_network|status_heartbeat|airplane_mode|rule_pause|shortcuts|login_windows|notification_channels|unified_push|setup_steps)\.json$|launcher/app/src/test/resources/map_links/|(launcher|music)/app/src/test/resources/storytel_token_answers\.json$|launcher/app/src/main/assets/dns/doh_hosts\.txt$|launcher/app/src/main/java/com/kidslauncher/mdm/ui/home/HomeModel\.kt$|scripts/mmsc-hosts(\.py|-sample\.xml)$)' <<<"$files"; then
+          if grep -qE '^(server/|\.github/workflows/server-ci\.yml$|(launcher|music)/app/src/test/resources/spotify_hosts\.json$|launcher/app/src/test/resources/(time_status_report|dns_upstream_status|power_report|zone_status_report|launcher_tag_codes|time_request|installed_apps_report|calendar_title_rules|calendar_status_report|calendar_feeds|emergency_numbers|calendar_kid_events|weather|leave_tailnet|server_url_vectors|restrictions_pause|server_tls_report|sms_contract|contact_request|app_logos|lock_now|mobile_network|status_heartbeat|airplane_mode|rule_pause|shortcuts|login_windows|notification_channels|unified_push|setup_steps)\.json$|launcher/app/src/test/resources/(map_links|wifi_lookup)/|(launcher|music)/app/src/test/resources/storytel_token_answers\.json$|launcher/app/src/main/assets/dns/doh_hosts\.txt$|launcher/app/src/main/java/com/kidslauncher/mdm/ui/home/HomeModel\.kt$|scripts/mmsc-hosts(\.py|-sample\.xml)$|scripts/wifi-lookup-fixtures\.py$)' <<<"$files"; then
             changed=true
           else
             changed=false
@@ -94,6 +96,11 @@ jobs:
       # Cheap and always run: scripts/mmsc-hosts.py (design 83 §3) made server/testdata/mmsc_hosts.txt; a hand edit
       # of the list, or a converter that no longer gives the sample's lines, fails here. No network.
       run: python3 -I scripts/mmsc-hosts.py --selftest
+    - name: The Apple Wi-Fi lookup's fixtures self-test
+      # Cheap and always run: scripts/wifi-lookup-fixtures.py (design 125 step 2) wrote
+      # server/testdata/wifi_lookup/server.json (the golden request, fake Apple answers, health rows); a hand edit of
+      # the file fails here. No network, never Apple.
+      run: python3 -I scripts/wifi-lookup-fixtures.py --selftest
     - name: The fake homeserver's self-test
       # Cheap and always run: scripts/fake-homeserver.py (design 108's emulator gate, docs/testing/emulator.md §6ay)
       # against a loopback recorder. No network.
