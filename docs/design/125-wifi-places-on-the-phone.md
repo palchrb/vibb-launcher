@@ -16,8 +16,8 @@ points (APs) heard at that moment and where they must be; later, indoors, a Wi-F
 gives a position computed on the phone. The table never leaves the phone; the server gets only the fix it already
 gets, with the provider word `vibb_wifi` and an honest accuracy (40-200 m). It works only at places the phone has seen
 with GPS before; elsewhere everything is as today. It also makes design 124's deferred Wi-Fi witness (§8 there)
-unnecessary: past the 4-h cap a known place gives a real fresh fix instead of a vouch. Cell towers can be learned
-the same way as a coarse fallback (§8a): decided as a **later step**, after a device check, not in this round.
+unnecessary: past the 4-h cap a known place gives a real fresh fix instead of a vouch. Cell towers could be learned
+the same way as a coarse fallback (§8a), but the SIM-less Jelly Star reports no cells: a later, optional step.
 
 ## 1. What the phone has today (read in the code)
 
@@ -220,8 +220,10 @@ system-only), sharing tables between phones. Cell towers: §8a.
 
 ## 8a. Cell towers (the user, 2026-11-22: "vil den bare lære wifi eller også cell towers?")
 
-**Decision: the same learning for cells is a later step (L2), not in L1.** It fits the design, but on the Jelly Star
-(no SIM) it may see nothing, and where it works it says "this part of town", not "this house".
+**Decision: cells are a later, optional step (L2), not in L1.** Measured on the Jelly Star without a SIM (2026-11-22):
+`dumpsys telephony.registry` shows `mCellInfo=[]` on both slots - a SIM-less phone reports no cell, so L2 would be a
+no-op there today. With a SIM it would work, and it fits this design; where it works it says "this part of town", not
+"this house".
 
 - **How it would work.** The same teach rule (D1: our own GPS fix <= 25 m, slow) records the **serving cell** from
   `TelephonyManager.getAllCellInfo()` (the cached list, no radio work) - or `requestCellInfoUpdate` (API 29, one modem
@@ -239,15 +241,15 @@ system-only), sharing tables between phones. Cell towers: §8a.
 - **Permissions:** `getAllCellInfo` and `requestCellInfoUpdate` need `ACCESS_FINE_LOCATION` and Location on (target
   29+), not `READ_PHONE_STATE`; background reads need background location - all already held. Android 14-17: no
   change named for these calls [17 read at build]; with no SIM the default `TelephonyManager` reads slot 0 [check].
-- **Without a SIM** (the Jelly Star today): a modem usually still camps on some network's cell for emergency calls and
-  may report it (`isRegistered` false), but nothing guarantees it, and MediaTek may report nothing. The check, before
-  L2 is designed further: `adb shell dumpsys telephony.registry | grep -i -m5 cellinfo` - an `mCellInfo` with a
-  `CellIdentityLte`/`Nr` and a real `mCi`/`mNci` means it would work; `null` or `[]` means the code waits for a SIM.
+- **Without a SIM** (the Jelly Star, measured): `mCellInfo=[]` on both slots - no serving or neighbour cell
+  reported, so nothing to learn. If L2 is built anyway, an empty list is an ordinary miss: no row, no fix, nothing
+  logged beyond a count. Recheck with a SIM: `adb shell dumpsys telephony.registry | grep -i -m5 cellinfo` - a
+  `CellIdentityLte`/`Nr` with a real `mCi`/`mNci` means it works.
 - **Cost:** reading the cached list is free; `requestCellInfoUpdate` is one modem query (~0 mAh) per fix attempt. No
   network data. The privacy rules are D13-D15 unchanged (keyed hash, on the phone, cleared with the Wi-Fi rows).
 - **Size:** L2 ~120 lines of code (a second identity kind in `WifiPlacesPlan`'s store, the cell read, the order row)
-  plus vector rows. **When:** after the dumpsys check shows cells without a SIM, or once the phone has one, and after
-  L1's Jelly Star days show where Wi-Fi alone leaves gaps (Q4).
+  plus vector rows. **When:** only once the kid's phone has a SIM and the recheck above shows its cells, and L1's days
+  show where Wi-Fi alone leaves gaps (Q4). Until then L1 leaves the store's row kind open (a `kind` byte), nothing more.
 
 ## 9. Questions for the user (defaults in bold)
 
@@ -260,5 +262,5 @@ system-only), sharing tables between phones. Cell towers: §8a.
 - **Q3** (after the Jelly Star's days-to-learn) A teaching GPS fix ~3 min after the phone starts moving, to learn the
   street outside home and school faster: at most 6 a day, ~1.5-2.5 mAh and the location dot that many more times:
   **decided after the measurement** / now.
-- **Q4** Cell towers as a coarse fallback (±0.5-5 km, `vibb_cell`): **a later step, after the `dumpsys
-  telephony.registry` check and L1's measurement** / in L1 now (~120 lines more, possibly nothing seen without a SIM).
+- **Q4** Cell towers as a coarse fallback (±0.5-5 km, `vibb_cell`): **a later, optional step once the phone has a
+  SIM** (the Jelly Star without one reports no cells) / in L1 now (~120 lines that do nothing until a SIM is in).
