@@ -68,14 +68,30 @@ fun readAccess(kind: SpecialAccess, read: () -> AccessReading): AccessState = tr
     AccessState.UNKNOWN
 }
 
-/** `access.camera` for a camera target ([cameraGrants]): the grant state DENIED is `admin_denied`. */
-fun cameraReport(grantState: Int): String = if (grantState == GRANT_STATE_DENIED) "admin_denied" else "requested"
+/**
+ * A grant key's value in the report (design 127 §3.2) from the grant states of the key's requested permissions
+ * ([states]): `refused` when this process's last pass couldn't apply the parent's off ([refused]), `admin_denied` when
+ * every one is DENIED, else `requested`.
+ */
+fun grantReport(states: List<Int>, refused: Boolean): String = when {
+    refused -> "refused"
+    states.isNotEmpty() && states.all { it == GRANT_STATE_DENIED } -> "admin_denied"
+    else -> "requested"
+}
 
-/** `installed_apps[].access` (§3.3): `camera` (only for the denial's targets), then each declared access; `null` when
- * there is nothing to say. */
-fun appAccessReport(camera: String?, states: List<Pair<SpecialAccess, AccessState>>): Map<String, String>? {
+/** The grant keys of an [accessTarget] app (§3.2), in [AccessKey]'s order: each key it asks for ([requested]) with
+ * [grantReport] of its permissions' states ([state]) and [refused]. */
+fun accessReports(requested: Collection<String>, state: (String) -> Int, refused: Set<AccessKey>): List<Pair<AccessKey, String>> =
+    AccessKey.entries.mapNotNull { key ->
+        val asked = key.permissions.filter { it in requested }
+        if (asked.isEmpty()) null else key to grantReport(asked.map(state), key in refused)
+    }
+
+/** `installed_apps[].access` (§3.3): the grant keys ([accessReports], only for the denial's targets), then each
+ * declared access; `null` when there is nothing to say. */
+fun appAccessReport(grants: List<Pair<AccessKey, String>>, states: List<Pair<SpecialAccess, AccessState>>): Map<String, String>? {
     val report = LinkedHashMap<String, String>()
-    camera?.let { report["camera"] = it }
+    for ((key, value) in grants) report[key.key] = value
     for ((kind, state) in states) report[kind.key] = state.wire
     return report.takeIf { it.isNotEmpty() }
 }
@@ -180,25 +196,31 @@ object AppAccessReader {
     }
 
     /** [info]'s `installed_apps[].access`, for a third-party app but ours only (a system app's privileged grants say
-     * nothing a parent can change - the code QA's L2): `camera` when it requests it (unreadable grant state:
-     * `requested`), then [states]. */
+     * nothing a parent can change - the code QA's L2): the grant keys it asks for ([accessReports]; an unreadable grant
+     * state reads DEFAULT; none for [ACCESS_NEVER]), then [states]. */
     fun report(context: Context, info: PackageInfo): Map<String, String>? {
-        val requested = info.requestedPermissions.orEmpty()
+        val requested = info.requestedPermissions.orEmpty().toList()
         val thirdParty = (info.applicationInfo?.flags ?: 0) and ApplicationInfo.FLAG_SYSTEM == 0
         if (!thirdParty || info.packageName == context.packageName) return null
-        val camera = if (CAMERA_PERMISSION in requested) {
-            cameraReport(
-                try {
-                    val dpm = context.getSystemService(DevicePolicyManager::class.java)!!
-                    dpm.getPermissionGrantState(ComponentName(context, MdmDeviceAdminReceiver::class.java), info.packageName, CAMERA_PERMISSION)
-                } catch (e: Exception) {
-                    GRANT_STATE_DEFAULT
+        val grants = if (accessTarget(info.packageName, context.packageName)) {
+            val dpm = context.getSystemService(DevicePolicyManager::class.java)
+            val admin = ComponentName(context, MdmDeviceAdminReceiver::class.java)
+            val refused = AppEnforcer.accessRefused.filter { it.packageName == info.packageName }.mapTo(mutableSetOf()) { it.key }
+            accessReports(
+                requested,
+                { permission ->
+                    try {
+                        dpm!!.getPermissionGrantState(admin, info.packageName, permission)
+                    } catch (e: Exception) {
+                        GRANT_STATE_DEFAULT
+                    }
                 },
+                refused,
             )
         } else {
-            null
+            emptyList()
         }
-        return appAccessReport(camera, states(context, info))
+        return appAccessReport(grants, states(context, info))
     }
 
     /** A row as shown: its access read now, its pages, whether they open ([systemPageAccess]). */

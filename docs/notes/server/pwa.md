@@ -450,7 +450,8 @@ page, not under its row; what this section says of them is history.
 
 Since design 127 step 1 the camera switch, the special accesses and the media player are the app's own page's Tilgang
 and Låseskjerm (below); the rules here (the route, the cap, the pruning, the policy) stand, the details and
-`?perms=` do not.
+`?perms=` do not. Since step 2 the form, the table and the policy are the four keys' (below, "An app's own page",
+Tilgang): the "camera" words here are history.
 
 - **What the parent sees**: an allowed app the phone reports something about (`installed_apps[].access`; third-party apps
   only, the phone reports none for a system app) gets a second sub-line under
@@ -555,12 +556,19 @@ and Låseskjerm (below); the rules here (the route, the cap, the pruning, the po
   (`handy.vises-som.<package>`, every access in try/catch) and checks them again on Symbol's `input`, before
   autosave.js saves on `change`. The symbol and colour choices are `.disp-choice` (never the PWA's `select.pick`).
 - **Tilgang** (`#access`, `partials/app_access_group.html`, `app_permissions::AccessGroup`): only when the last report
-  has the app's `access` (third-party apps; never Vibb music): the camera switch (today's `camera=default` form, back to
-  `#access`), its sub-line only while the state isn't as set ("Venter på telefonen", "På i pausen"), then each special
-  access as a quiet value ("Godkjent", "Ikke godkjent", "Ukjent") on an indigo tile; one ⓘ with what off does
-  (`apps.access.closes`, first whenever a switch shows), the camera's line and the way to approve each access that
-  isn't. The route takes a camera deny only where the page offers the switch (installed third-party, asking for the
-  camera, not Vibb music; else `?notice=perms`), an allow always. **Låseskjerm** (`#lock-screen`): "Mediespiller", back to `#lock-screen`.
+  has the app's `access` (third-party apps; never Vibb music): since step 2 (migration `0166_app_denials.sql`) a switch
+  per key the report says the app asks for - Kamera, Posisjon, Mikrofon, Kontakter (`app_permissions::GRANT_KEYS`, in
+  that order; each its own auto-saving form `POST /devices/{id}/apps/permissions` with `package_name`, `key` and the
+  checkbox `allow=on`, back to `#access`; a missing or unknown `key` or another `allow` a 400 `error.not_access_key`) -,
+  its sub-line only while it is off and the state isn't as set ("På i pausen", orange "Telefonen kan ikke slå av dette"
+  for the report's `refused`, "Venter på telefonen" for `requested`), then each special access as a quiet value
+  ("Godkjent", "Ikke godkjent", "Ukjent") on an indigo tile; one ⓘ with what off does (`apps.access.closes`, first
+  whenever a switch shows), each shown switch's line and the way to approve each access that isn't. The route takes a
+  deny only where the page offers that switch (installed third-party, asking for the key, not Vibb music; else
+  `?notice=perms`), an allow always. The rows are `device_app_denials` (one per phone, package and key; 0102's camera
+  rows copied; at most 200 packages a phone, `?notice=perms_full`; no prune - a removed app keeps its rows), the policy's
+  `app_permissions` `[{package_name, camera?, location?, microphone?, contacts?}]` (each `"deny"`; the shared contract
+  `testdata/app_access.json`, `app_permissions::tests::the_contract`). **Låseskjerm** (`#lock-screen`): "Mediespiller", back to `#lock-screen`.
   A refusal lands on the page at its group (`?notice=perms|perms_full`, `lock_media|lock_media_full` - its own words,
   `apps.lock_screen.refused`), at the head
   when that group isn't shown; the managed dialer's at its list row as before.

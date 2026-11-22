@@ -381,7 +381,7 @@ pub(crate) async fn build_policy(
                 crate::lock_glance::LockGlancePolicy::unreadable()
             });
     let call_policy = build_call_policy(state, &policy).await?;
-    // Design 68: fail closed - a failing query is a 500, never `[]`, which would hand every camera back.
+    // Design 68, 127: fail closed - a failing query is a 500, never `[]`, which would hand every permission back.
     let app_permissions =
         crate::app_permissions::policy_app_permissions(&state.db, device_id).await?;
     // 2026-11-04: losing the list only hides a tile on the lock, so a failed read sends none (the launcher reads a

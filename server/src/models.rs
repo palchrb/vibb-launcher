@@ -1249,7 +1249,8 @@ pub struct InstalledApp {
         deserialize_with = "lenient_text"
     )]
     pub version_name: Option<String>,
-    /// The app's camera and special accesses as the phone reads them (design 68 §3.3): only the keys the app
+    /// The app's grant keys (camera, location, microphone, contacts; design 127 §3.2) and special accesses as the phone
+    /// reads them (design 68 §3.3): only the keys the app
     /// declares, known keys and values only (`app_permissions::AppAccess::of`) - a newer launcher's key is dropped,
     /// never a refused report. Absent for an app with nothing to say.
     #[serde(
@@ -1376,9 +1377,10 @@ pub struct PolicyResponse {
     /// Dagen (design 69 §4.1), always sent: the phone-wide switches, the parent's choices per calendar and the title
     /// rules (`calendar::CalendarPolicy`). A DB error is a 500 (a missing hide rule would show what the parent hid).
     pub calendar: crate::calendar::CalendarPolicy,
-    /// Per-app permissions (design 68), always a list: `[{package_name, camera: "deny"}]` - the packages the parent
-    /// switched away from the default on this phone. A failing query is a 500 for the whole policy (fail closed): a
-    /// lost list would hand the camera back.
+    /// Per-app permissions (design 68, design 127 §3.2), always a list sorted by package:
+    /// `[{package_name, camera?, location?, microphone?, contacts?}]`, each key `"deny"` or absent, an entry only with
+    /// at least one - the keys the parent switched off on this phone. A failing query is a 500 for the whole policy
+    /// (fail closed): a lost list would hand every permission back.
     pub app_permissions: Vec<crate::app_permissions::AppPermission>,
     /// "Media player on the lock screen" (2026-11-04), always a list of package names, sorted: the apps the
     /// parent switched on on this phone, which the lock's media tile then shows as it does a music, video or browser

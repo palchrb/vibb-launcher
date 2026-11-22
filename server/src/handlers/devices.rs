@@ -1655,24 +1655,32 @@ pub async fn save_app_display(
     }
 }
 
-/// `POST /devices/{id}/apps/permissions` (design 68 §4.1): one app's camera off (`camera` = `deny`, or the switch's
-/// field missing - an auto-saving checkbox) or back to the default (`default`). Saved: back to the app's own page at
-/// Tilgang (design 127, `/devices/{id}/apps/{package}#access`), and the phone nudged. Refused there
-/// (`?notice=perms`): Play's core or Vibb itself, and a deny for an app the page offers no camera switch for (design
-/// 127 §3.4: the last report doesn't have it installed, third-party and asking for the camera, or it is Vibb music) -
-/// an allow is always accepted, so any row can be cleared; `?notice=perms_full` past
-/// `app_permissions::MAX_ROWS_PER_DEVICE`. Another `camera` value or a package outside the grammar (no row has one) is
-/// a 400, an unknown phone a 404, a DB error a 500.
+/// `POST /devices/{id}/apps/permissions` (design 68 §4.1, design 127 §3.4): one key of one app's Tilgang - `key` one of
+/// `app_permissions::GRANT_KEYS` (`camera`, `location`, `microphone`, `contacts`), `allow=on` allows (an auto-saving
+/// switch), its absence denies. Saved: back to the app's own page at Tilgang (`/devices/{id}/apps/{package}#access`),
+/// and the phone nudged. Refused there (`?notice=perms`): Play's core or Vibb itself, and a deny the page doesn't offer
+/// (the last report doesn't have the app installed, third-party and asking for the key, or it is Vibb music) - an allow
+/// is always accepted, so any row can be cleared; `?notice=perms_full` past `app_permissions::MAX_ROWS_PER_DEVICE`. A
+/// missing or unknown `key`, another `allow` value or a package outside the grammar (no row has one) is a 400, an
+/// unknown phone a 404, a DB error a 500.
 pub async fn save_app_permissions(
     State(state): State<AppState>,
     lang: Lang,
     Path(id): Path<i64>,
     Form(form): Form<std::collections::HashMap<String, String>>,
 ) -> Response {
-    let deny = match form.get("camera").map(String::as_str) {
-        None | Some("deny") => true,
-        Some("default") => false,
-        Some(_) => return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.not_camera"),
+    let Some(key) = form
+        .get("key")
+        .and_then(|k| crate::app_permissions::grant_key(k))
+    else {
+        return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.not_access_key");
+    };
+    let deny = match form.get("allow").map(String::as_str) {
+        None => true,
+        Some("on") => false,
+        Some(_) => {
+            return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.not_access_key");
+        }
     };
     let target = match perms_target(&state, lang, id, &form, false).await {
         Ok(target) => target,
@@ -1689,13 +1697,13 @@ pub async fn save_app_permissions(
                     && !a.preinstalled
                     && a.access
                         .as_ref()
-                        .is_some_and(|access| access.camera.is_some())
+                        .is_some_and(|access| access.grant(key).is_some())
             });
         if !offered {
             return target.refused("perms");
         }
     }
-    match crate::app_permissions::set_camera(&state.db, id, &target.package, deny).await {
+    match crate::app_permissions::set_denied(&state.db, id, &target.package, key, deny).await {
         Ok(true) => target.saved(&state),
         Ok(false) => target.refused("perms_full"),
         Err(err) => perms_save_failed(lang, id, err),

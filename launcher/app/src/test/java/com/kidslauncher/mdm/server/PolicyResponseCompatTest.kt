@@ -114,26 +114,35 @@ class PolicyResponseCompatTest {
         assertFalse(cellular2gBlocked(older.block2g, overrideActive = false, kept = null))
     }
 
-    /** Design 68 §3.1: `app_permissions` (the server's `policy_json_keys_snapshot` literal) - read field by field by
-     * `appPermissionsOf`, so nothing in it fails the policy; missing or not a list = touch nothing (`null`). */
+    /** Design 68 §3.1, design 127 §3.2: `app_permissions` (the server's `policy_json_keys_snapshot` literal) - read
+     * field by field by `appPermissionsOf`, so nothing in it fails the policy; missing or not a list = touch nothing
+     * (`null`). */
     @Test
     fun `app_permissions decodes, never fails the policy, and missing means touch nothing`() {
         fun policy(value: String) = ServerJson.decodeFromString(PolicyResponse.serializer(), """{"app_permissions": $value}""")
         assertEquals(
-            setOf("com.whatsapp"),
-            appPermissionsOf(policy("""[{"package_name": "com.whatsapp", "camera": "deny"}]""").appPermissions),
-        )
-        // A bad package, another camera value, a wrong type, a newer key: dropped, the rest kept.
-        assertEquals(
-            setOf("io.element.android.x"),
+            mapOf(
+                "com.whatsapp" to setOf(AccessKey.CAMERA),
+                "org.example.all" to setOf(AccessKey.CAMERA, AccessKey.LOCATION, AccessKey.MICROPHONE, AccessKey.CONTACTS),
+            ),
             appPermissionsOf(
                 policy(
-                    """[{"package_name": "not a package", "camera": "deny"}, {"package_name": "com.whatsapp", "camera": "allow"},
-                       {"package_name": "io.element.android.x", "camera": "deny", "microphone": "deny"}, 7, null]""",
+                    """[{"package_name": "com.whatsapp", "camera": "deny"}, {"package_name": "org.example.all",
+                       "camera": "deny", "location": "deny", "microphone": "deny", "contacts": "deny"}]""",
                 ).appPermissions,
             ),
         )
-        assertEquals(emptySet<String>(), appPermissionsOf(policy("[]").appPermissions))
+        // A bad package, another value, a wrong type, a newer key, an entry with nothing off: dropped, the rest kept.
+        assertEquals(
+            mapOf("io.element.android.x" to setOf(AccessKey.MICROPHONE)),
+            appPermissionsOf(
+                policy(
+                    """[{"package_name": "not a package", "camera": "deny"}, {"package_name": "com.whatsapp", "camera": "allow"},
+                       {"package_name": "io.element.android.x", "camera": 1, "microphone": "deny", "network": "deny"}, 7, null]""",
+                ).appPermissions,
+            ),
+        )
+        assertEquals(emptyMap<String, Set<AccessKey>>(), appPermissionsOf(policy("[]").appPermissions))
         assertNull(appPermissionsOf(policy("null").appPermissions))
         assertNull(appPermissionsOf(policy("{}").appPermissions))
         assertNull(appPermissionsOf(ServerJson.decodeFromString(PolicyResponse.serializer(), "{}").appPermissions))

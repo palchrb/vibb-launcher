@@ -479,6 +479,20 @@ the tick exactly, decodes the policy and runs the rows. `restrictions_pause.json
 (`setup_hold_max_ms`: `models::SETUP_HOLD_MAX_MS`, the launcher's `SETUP_HOLD_DURATION_MS`). The policy's `setup` is
 pinned by `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTest`.
 
+What each app may use (design 127 step 2: Kamera, Posisjon, Mikrofon, Kontakter on the app's own page) is
+`server/testdata/app_access.json`, byte-identical in `launcher/app/src/test/resources/`: `keys` (each key with the
+Android permissions it covers, in display order), `policy` (`none` and `seeded`: the exact `app_permissions` -
+`[{package_name, camera?, location?, microphone?, contacts?}]`, each `"deny"` - after the page's saves), `report` (the
+exact `installed_apps[]` with each key's `requested`/`admin_denied`/`refused` beside the special accesses), `clean` (the
+server's `AppAccess::of`) and `never` (Vibb One and Vibb music, either build). The server's
+`app_permissions::tests::the_contract` saves through `POST /devices/{id}/apps/permissions` (`key`, `allow=on`) and
+produces `seeded`, posts `report` and checks what is stored and what the page shows, runs `clean` and refuses `never`;
+`intake_limits` keeps the report's keys; the launcher's `AppAccessContractTest` checks `AccessKey` against `keys`,
+decodes both policies, encodes `report` exactly from `accessReports`/`appAccessReport` and runs `never`; both compare
+the copies. The launcher's own rules (the grant plan, the report's readings, the refusals kept) stay its alone, in
+`launcher/app/src/test/resources/app_access_rules.json` (`AppAccessRulesTest`). The policy's `app_permissions` is
+pinned by `policy_json_keys_snapshot` and `PolicyResponseCompatTest`. `network` (Nett) joins in step 3.
+
 ## CI and releases
 
 - `.github/workflows/launcher.yml`, `server-ci.yml` and `music.yml` run on every push/PR, but their build job
@@ -486,7 +500,7 @@ pinned by `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTe
   (`launcher.yml` also on `.github/actions/build-tsnet/` and the music files its tests read: the bridge, the
   shared snapshots, the three `spotify_hosts.json`, `server/testdata/time_status_report.json`,
   `dns_upstream_status.json`, `power_report.json`, `zone_status_report.json`, `launcher_tag_codes.json`,
-  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json`, `server_url_vectors.json`, `restrictions_pause.json`, `server_tls_report.json`, `sms_contract.json`, `contact_request.json`, `app_logos.json`, `lock_now.json`, `mobile_network.json`, `status_heartbeat.json`, `airplane_mode.json`, `rule_pause.json`, `shortcuts.json`, `login_windows.json`, `notification_channels.json`, `unified_push.json`, `setup_steps.json` and `install_failure.json`, `server/testdata/map_links/contract.json` and
+  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json`, `server_url_vectors.json`, `restrictions_pause.json`, `server_tls_report.json`, `sms_contract.json`, `contact_request.json`, `app_logos.json`, `lock_now.json`, `mobile_network.json`, `status_heartbeat.json`, `airplane_mode.json`, `rule_pause.json`, `shortcuts.json`, `login_windows.json`, `notification_channels.json`, `unified_push.json`, `setup_steps.json`, `install_failure.json` and `app_access.json`, `server/testdata/map_links/contract.json` and
   `server/testdata/wifi_lookup/contract.json`, `music/gradle/` and `music.yml`, and the server's and music's `storytel_token_answers.json`, and `server/testdata/doh_hosts.txt`, and `scripts/yr-symbols.py` with its vendored `yr-symbols-11.svg` and `scripts/fake-portal.py` (the changes job runs both `--selftest`s always); `music.yml` also on the shared
   `server/testdata/music_*.json` and `spotify_hosts.json`, the launcher's copy of the bridge AIDL,
   `bridge_contract.json` and `spotify_hosts.json`, `server/testdata/spotify/`, `scripts/fake-sonos.py`,
@@ -497,7 +511,7 @@ pinned by `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTe
   `server-ci.yml`'s build job also on the apps' `spotify_hosts.json` and `storytel_token_answers.json` copies and
   the launcher's `time_status_report.json`,
   `dns_upstream_status.json`, `power_report.json`, `zone_status_report.json`, `launcher_tag_codes.json`,
-  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json`, `server_url_vectors.json`, `restrictions_pause.json`, `server_tls_report.json`, `sms_contract.json`, `contact_request.json`, `app_logos.json`, `lock_now.json`, `mobile_network.json`, `status_heartbeat.json`, `airplane_mode.json`, `rule_pause.json`, `shortcuts.json`, `login_windows.json`, `notification_channels.json`, `unified_push.json`, `setup_steps.json` and `install_failure.json`, the launcher's `map_links/` and `wifi_lookup/` folders, and the launcher's `assets/dns/doh_hosts.txt` and `ui/home/HomeModel.kt` (the avatar palette the PWA mirrors), and `scripts/wifi-lookup-fixtures.py` (the changes job runs its `--selftest` always), and
+  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json`, `server_url_vectors.json`, `restrictions_pause.json`, `server_tls_report.json`, `sms_contract.json`, `contact_request.json`, `app_logos.json`, `lock_now.json`, `mobile_network.json`, `status_heartbeat.json`, `airplane_mode.json`, `rule_pause.json`, `shortcuts.json`, `login_windows.json`, `notification_channels.json`, `unified_push.json`, `setup_steps.json`, `install_failure.json` and `app_access.json`, the launcher's `map_links/` and `wifi_lookup/` folders, and the launcher's `assets/dns/doh_hosts.txt` and `ui/home/HomeModel.kt` (the avatar palette the PWA mirrors), and `scripts/wifi-lookup-fixtures.py` (the changes job runs its `--selftest` always), and
   `scripts/mmsc-hosts.py` with its `scripts/mmsc-hosts-sample.xml` (the changes job runs its `--selftest` always, and `server/deploy/update-image.sh --selftest`: the image update's release pick and version rules, DEPLOY.md "Automatic, verified updates", with `deploy/handy-update.service`/`.timer`);
   `server-ci.yml`'s
   `server-image` job only when `server/Dockerfile`, `server/.dockerignore`, `server/deploy/image-smoke.sh`, `server/deploy/distrusted-roots.txt` or

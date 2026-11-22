@@ -145,7 +145,7 @@ async fn every_allowed_app_has_a_page_with_only_its_groups() {
     // Tilgang: the camera switch; the special access a quiet value, not orange.
     let access = section(&html, "access");
     assert_eq!(
-        form_action_of(access, "camera"),
+        form_action_of(access, "allow"),
         Some(format!("/devices/{id}/apps/permissions#access").as_str())
     );
     assert!(access.contains("Full-screen notifications"), "{access}");
@@ -355,7 +355,11 @@ async fn the_pages_saves_land_on_their_groups() {
     // The camera and the media player land on their groups.
     let res = post(
         format!("/devices/{id}/apps/permissions"),
-        vec![("package_name", ELEMENT), ("from", "apps")],
+        vec![
+            ("package_name", ELEMENT),
+            ("key", "camera"),
+            ("from", "apps"),
+        ],
     )
     .await;
     assert_redirect(&res, &format!("{page}?from=apps"), Some("access"));
@@ -363,7 +367,7 @@ async fn the_pages_saves_land_on_their_groups() {
         .get_page(&format!("{page}?from=apps"), &cookie)
         .await
         .text();
-    assert_eq!(input_checked(&html, "camera", "default"), Some(false));
+    assert_eq!(input_checked(&html, "allow", "on"), Some(false));
     assert!(section(&html, "access").contains("Waiting for the phone"));
     let res = post(
         format!("/devices/{id}/apps/lock-media"),
@@ -400,7 +404,7 @@ async fn the_pages_saves_land_on_their_groups() {
     for package in [CLOCK, MUSIC] {
         let res = post(
             format!("/devices/{id}/apps/permissions"),
-            vec![("package_name", package), ("camera", "deny")],
+            vec![("package_name", package), ("key", "camera")],
         )
         .await;
         assert_redirect(
@@ -410,13 +414,17 @@ async fn the_pages_saves_land_on_their_groups() {
         );
         let res = post(
             format!("/devices/{id}/apps/permissions"),
-            vec![("package_name", package), ("camera", "default")],
+            vec![
+                ("package_name", package),
+                ("key", "camera"),
+                ("allow", "on"),
+            ],
         )
         .await;
         assert_redirect(&res, &page_of(id, package), Some("access"));
     }
     let denied: Vec<String> =
-        sqlx::query_scalar("SELECT package_name FROM device_app_permissions ORDER BY package_name")
+        sqlx::query_scalar("SELECT package_name FROM device_app_denials ORDER BY package_name")
             .fetch_all(&app.db)
             .await
             .unwrap();

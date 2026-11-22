@@ -188,8 +188,8 @@ async fn db_error_is_500_not_default() {
         "dns_filter_settings",
         "global_schedule",
         "device_pending_uninstalls",
-        // Design 68: a lost list would hand the camera back.
-        "device_app_permissions",
+        // Design 68, 127: a lost list would hand the camera, location, microphone and contacts back.
+        "device_app_denials",
         // Design 69: a lost hide rule would show what the parent hid.
         "device_calendar_rules",
         "device_calendars",
@@ -663,10 +663,13 @@ async fn policy_json_keys_snapshot() {
         })
     );
 
-    // Design 68: always a list (`[]` for a fresh phone), each entry the launcher's `appPermissionsOf` shape.
+    // Design 68, 127 §3.2: always a list (`[]` for a fresh phone), each entry the launcher's `appPermissionsOf` shape:
+    // a key per denial, the others left out.
     assert_eq!(object["app_permissions"], serde_json::json!([]));
     sqlx::query(
-        "INSERT INTO device_app_permissions (device_id, package_name, camera) VALUES (?, 'com.whatsapp', 'deny')",
+        "INSERT INTO device_app_denials (device_id, package_name, permission) VALUES (?1, 'com.whatsapp', 'camera'), \
+         (?1, 'org.example.all', 'camera'), (?1, 'org.example.all', 'location'), \
+         (?1, 'org.example.all', 'microphone'), (?1, 'org.example.all', 'contacts')",
     )
     .bind(device_id)
     .execute(&app.db)
@@ -678,7 +681,11 @@ async fn policy_json_keys_snapshot() {
         .json();
     assert_eq!(
         denied["app_permissions"],
-        serde_json::json!([{"package_name": "com.whatsapp", "camera": "deny"}])
+        serde_json::json!([
+            {"package_name": "com.whatsapp", "camera": "deny"},
+            {"package_name": "org.example.all", "camera": "deny", "location": "deny",
+             "microphone": "deny", "contacts": "deny"},
+        ])
     );
 
     // 2026-11-04: always a list of package names (`[]` for a fresh phone), the launcher's `lockMediaAppsOf` shape.

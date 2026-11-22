@@ -32,6 +32,23 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   install callback at a window's edge can't land between the window's DEFAULT and the next apply. A hidden target is
   skipped (Android can't grant-state a hidden package; the pass that unhides it comes first). The call-end wake's
   decision is the pure `deferredCameraApplyDue`.
+- **Kamera, Posisjon, Mikrofon, Kontakter** (design 127 step 2, `docs/design/127-app-page.md` §4.1; the camera
+  mechanism above, widened - its rules all stand, renamed): `AccessKey` (`server/EnforcementPlan.kt`; `CAMERA`,
+  `LOCATION` - fine, coarse, background -, `MICROPHONE`, `CONTACTS` - read and write; an app asks for a key when it
+  requests any of its permissions, and each requested one is denied). `appPermissionsOf` is now
+  `Map<String, Set<AccessKey>>?` (`[{package_name, camera?, location?, microphone?, contacts?}]`, each `"deny"`; an entry
+  with nothing known off dropped; `null` still touches nothing). The pure `accessGrants` works per (package,
+  permission) (`Grant`) over `accessTargets`: third-party apps but ours and never `ACCESS_NEVER` (Vibb One and Vibb
+  music, either build); DENIED while the key is off outside a window, else DEFAULT, **never GRANT**, only on a change;
+  while a call is live a permission the app holds waits (`AccessPlan.waiting` -> `AppEnforcer.accessDeferred`,
+  `BootHome.callMayHaveEnded` through `deferredAccessApplyDue`). `AppEnforcer.accessPass` (after the loop, hidden apps
+  skipped) and `enforceAccessOnPackage` (every install and package change, under `apply`'s lock) replace the camera's.
+  A DENIED write's `false` or throw is recorded per (package, key) in memory (`AppEnforcer.accessRefused`,
+  `accessRefusedAfter`: a pass that works on the key and doesn't leave it waiting clears it). The report
+  (`AppAccessReader.report`, `accessReports`/`grantReport`): each key the app asks for, `refused`, else `admin_denied`
+  when every requested permission is DENIED, else `requested`; none for `ACCESS_NEVER`. The pause and the override
+  lift all four (the standing rule). Contract `app_access.json` (`AppAccessContractTest`), the launcher's own rows
+  `app_access_rules.json` (`AppAccessRulesTest`). Not device-tested: design 127's step 0 probe and step 4 gate.
 - **The special accesses** (§2.2-§2.3, `server/AppAccess.kt`, `AppAccessTest`): `manage_media`, `exact_alarm`,
   `write_settings`, `usage_access`, `full_screen` (`SpecialAccess`: permission and app-op) - app-ops a device owner
   can't grant, approved only on Android's page for the app. `declaredAccesses` (only what the manifest declares; no
@@ -44,8 +61,9 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   data" / "Data om appbruk".
 - **Status** (§3.3): `InstalledApp.access` (`Map<String, String>?`, `collectInstalledApps` reads with
   `GET_PERMISSIONS`; `AppAccessReader.report`), for third-party apps but ours only (a system app's privileged grants
-  say nothing a parent can change; the code QA's L2): `camera` (`requested` | `admin_denied` - the grant state DENIED)
-  when it requests it, then each declared access; left out when empty. Contract
+  say nothing a parent can change; the code QA's L2): the grant keys it asks for (since design 127 step 2: `camera`,
+  `location`, `microphone`, `contacts`, each `requested` | `admin_denied` | `refused`), then each declared access; left
+  out when empty. Contract
   `installed_apps_report.json` (`SyncScheduleTest`).
 - **"App access" in the PIN-gated Settings** (§4.2, `SettingsFragmentLauncher.updateAccessRows`): the
   `PreferenceCategory` `settings_mdm_app_access` ("App access" / "Tilgang for apper"), last in `preferences.xml` (after

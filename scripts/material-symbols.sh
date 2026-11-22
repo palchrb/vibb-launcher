@@ -8,7 +8,8 @@
 #   launcher/app/src/main/java/com/kidslauncher/mdm/appdisplay/AppGlyphs.kt   (the launcher's table)
 #   launcher/app/src/main/assets/licenses/Apache-2.0.txt
 #   launcher/app/src/test/resources/app_icons.json   (copy of the server's)
-#   server/static/app-icons/<key>.svg and LICENSE.txt   (the PWA's preview)
+#   server/static/app-icons/<key>.svg and LICENSE.txt   (the PWA's preview; also Meldinger's sms and the Tilgang
+#   switches' location_on, mic and contacts, design 127 step 2 - ACCESS_GLYPHS below)
 #   server/src/app_icons.rs   (the server's table)
 #   server/static/music-icons/<key>.svg and LICENSE.txt, server/src/music_icons.rs   (music categories)
 #   music/app/src/main/res/drawable/music_glyph_<key>.xml, music/.../ui/MusicGlyphs.kt,
@@ -91,6 +92,8 @@ network_wifi_1_bar 613d5a7506a7a7318ef5680ff09d40f3e0660822b966d3adc1cd65204cb4b
 network_wifi_2_bar a5d650e375ba34d43a9447f19575b39257a63492a36375249993ba6ebb9f70fc
 network_wifi_3_bar e19e989d39db0059a1ab970779607bb423312dc4325bcfd5d52620b75aa17a39
 signal_wifi_4_bar 43bd8546ddc738ecf7bf66451f4af07fa188991e85177c3f63608364d1807ec4
+location_on 2817b43e6e82faf9520126c4f61e2deb7de24bf177927f245f3125d0299e9574
+contacts 19e3aece73c5b9af250f52c3d57cf2cc4fbe2be0edec182faa8667f9b0167f85
 HASHES
 
 while read -r name sha; do
@@ -172,6 +175,11 @@ BUILTIN_GLYPHS = {"phone_book": "call", "settings": "settings", "sms": "sms"}
 WIFI_SIGNAL_GLYPHS = {"0": "signal_wifi_0_bar", "1": "network_wifi_1_bar", "2": "network_wifi_2_bar",
                       "3": "network_wifi_3_bar", "4": "signal_wifi_4_bar"}
 write_web_svg("server/static/app-icons", "sms", "sms")
+# An app's Tilgang switches on its own page (design 127 step 2; the camera's is photo_camera, an app icon above): not a
+# parent choice, so not in app_icons.json, and the PWA's alone.
+ACCESS_GLYPHS = {"location_on": "location_on", "mic": "mic", "contacts": "contacts"}
+for key, name in ACCESS_GLYPHS.items():
+    write_web_svg("server/static/app-icons", key, name)
 for prefix, glyphs in (("lock_glyph", LOCK_GLYPHS), ("torch_glyph", TORCH_GLYPHS), ("clock_glyph", CLOCK_GLYPHS),
                        ("shortcut_glyph", SHORTCUT_GLYPHS), ("ic_kid_call", CALL_GLYPHS), ("ic_kid", BUILTIN_GLYPHS),
                        ("ic_wifi_signal", WIFI_SIGNAL_GLYPHS)):

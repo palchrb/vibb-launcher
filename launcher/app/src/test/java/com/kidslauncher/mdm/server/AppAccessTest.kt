@@ -52,12 +52,13 @@ class AppAccessTest {
     }
 
     @Test
-    fun `the report - camera first, declared accesses, nothing is null`() {
-        assertEquals("admin_denied", cameraReport(GRANT_STATE_DENIED))
-        assertEquals("requested", cameraReport(GRANT_STATE_DEFAULT))
-        val report = appAccessReport("requested", listOf(SpecialAccess.EXACT_ALARM to AccessState.UNKNOWN))
+    fun `the report - grant keys first, declared accesses, nothing is null`() {
+        assertEquals("admin_denied", grantReport(listOf(GRANT_STATE_DENIED), refused = false))
+        assertEquals("requested", grantReport(listOf(GRANT_STATE_DENIED, GRANT_STATE_DEFAULT), refused = false))
+        assertEquals("refused", grantReport(listOf(GRANT_STATE_DEFAULT), refused = true))
+        val report = appAccessReport(listOf(AccessKey.CAMERA to "requested"), listOf(SpecialAccess.EXACT_ALARM to AccessState.UNKNOWN))
         assertEquals(listOf("camera" to "requested", "exact_alarm" to "unknown"), report!!.toList())
-        assertNull(appAccessReport(null, emptyList()))
+        assertNull(appAccessReport(emptyList(), emptyList()))
         // The server's keys (`app_permissions::ACCESSES`).
         assertEquals(
             listOf("manage_media", "exact_alarm", "write_settings", "usage_access", "full_screen"),
