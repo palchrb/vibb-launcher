@@ -1020,6 +1020,10 @@
     <string name="setup_step_map_vibb_links">Vibb One\'s links</string>
     <string name="setup_step_fingerprint">Fingerprint</string>
     <string name="setup_step_location_private">Location without Google</string>
+    <string name="setup_step_number_verification">Number verification</string>
+    <string name="setup_step_ad_id">Advertising ID</string>
+    <string name="setup_step_diagnostics">Usage &amp; diagnostics</string>
+    <string name="setup_step_play_protect_upload">Play Protect sharing</string>
     <string name="setup_step_vibration">Vibration</string>
     <string name="setup_step_touch_feedback">Touch feedback</string>
     <string name="setup_step_lock_clock">One-line clock</string>
@@ -1040,6 +1044,10 @@
     <string name="setup_how_call_filter">Choose Vibb One both times.</string>
     <string name="setup_how_call_filter_early">Needed if Vibb is to manage calls. Choose Vibb One both times.</string>
     <string name="setup_how_location_private">Vibb learns places itself, without Google. Location services › Google Location Accuracy: off.</string>
+    <string name="setup_how_number_verification">Google › All services › Phone number verification: off. Best before the SIM goes in.</string>
+    <string name="setup_how_ad_id">Google › All services › Ads › Delete advertising ID.</string>
+    <string name="setup_how_diagnostics">Google › ⋮ › Usage &amp; diagnostics: off.</string>
+    <string name="setup_how_play_protect_upload">Play Store › profile picture › Play Protect › ⚙ › Improve harmful app detection: off.</string>
     <string name="setup_how_vibb_browser">Choose Vibb One.</string>
     <string name="setup_how_default_apps">Choose them back.</string>
     <string name="setup_how_map_play_links">Open by default: turn off Open supported links.</string>

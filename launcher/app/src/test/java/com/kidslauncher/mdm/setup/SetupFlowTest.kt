@@ -37,7 +37,7 @@ class SetupFlowTest {
             listOf(
                 "location", "notification_access", "mobile_data", "data_saver", "background", "vibb_notifications",
                 "full_screen_intent", "write_settings", "assistant", "call_filter", "default_apps", "fingerprint",
-                "vibration", "touch_feedback", "lock_clock", "media_on_lock", "message_banners", "end",
+                "number_verification", "ad_id", "diagnostics", "play_protect_upload", "vibration", "touch_feedback", "lock_clock", "media_on_lock", "message_banners", "end",
             ),
             keys(screens),
         )

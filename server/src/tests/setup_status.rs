@@ -689,3 +689,61 @@ async fn location_without_google_is_optional() {
         assert!(!html.contains("id=\"step-location_private\""), "{html}");
     }
 }
+
+/// Design 126 B1-B4: Google's four switches are quiet optional rows under Valgfritt, each with its why and how behind
+/// the ⓘ and a switch that ticks it (to its own anchor) - never counted, never on the summary; ticked, they move to
+/// Avkrysset.
+#[tokio::test]
+async fn googles_four_switches_are_quiet_optional_ticks() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("Testtelefon").await;
+    let page = format!("/devices/{id}/setup");
+    app.post_status(&token, json!({"setup": {"device_owner": true}}))
+        .await;
+    let html = app
+        .get_page(&format!("{page}?lang=nb"), &cookie)
+        .await
+        .text();
+    let optional = html
+        .split("<section id=\"optional\"")
+        .nth(1)
+        .unwrap_or_default();
+    for (key, words) in [
+        ("number_verification", "Helst før SIM-kortet settes inn"),
+        ("ad_id", "Slett annonse-ID"),
+        ("diagnostics", "Bruk og diagnostikk: av"),
+        ("play_protect_upload", "Skanningen blir på"),
+    ] {
+        assert!(
+            optional.contains(&format!("id=\"step-{key}\"")),
+            "{key}: {html}"
+        );
+        assert!(optional.contains(words), "{key}");
+    }
+    let summary = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(!summary.contains("Nummerbekreftelse"), "{summary}");
+
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/setup/ticks"),
+            Some(&cookie),
+            &[("step", "ad_id"), ("on", "on")],
+        )
+        .await;
+    super::assert_redirect(&res, &page, Some("step-ad_id"));
+    let html = app.get_page(&page, &cookie).await.text();
+    let optional = html
+        .split("<section id=\"optional\"")
+        .nth(1)
+        .unwrap_or_default()
+        .split("<section")
+        .next()
+        .unwrap_or_default();
+    assert!(!optional.contains("id=\"step-ad_id\""), "{html}");
+    assert!(html.contains("id=\"step-ad_id\""), "{html}");
+}

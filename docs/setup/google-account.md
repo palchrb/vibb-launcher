@@ -91,7 +91,17 @@ Open before enrolling.
   from handy's catalog and the launcher. Before launcher design 13 handy's VPN made the whole phone
   "metered", so Play's Wi-Fi-only updates (and other apps' unmetered jobs) never ran behind it; the
   VPN now takes its meteredness from the network below (section 10).
-- Profile icon -> **Play Protect** -> settings: "Scan apps with Play Protect" on.
+- Profile icon -> **Play Protect** -> settings: "Scan apps with Play Protect" on; "Improve harmful app detection"
+  **off** (the setup step "Play Protect-deling").
+
+**Google's switches (design 126, optional setup steps under Device › Oppsett › Valgfritt; tick each there when done):**
+
+1. **Before the SIM goes in:** Settings -> Google -> All services -> **Phone number verification** off
+   ("Nummerbekreftelse").
+2. Settings -> Google -> All services -> Ads -> **Delete advertising ID** ("Annonse-ID").
+3. Settings -> Google -> ⋮ -> **Usage & diagnostics** off ("Bruk og diagnostikk").
+4. Play Store -> profile picture -> Play Protect -> ⚙ -> **Improve harmful app detection** off ("Play
+   Protect-deling"; scanning stays on).
 
 ## 5. Turn off the account's own sync
 

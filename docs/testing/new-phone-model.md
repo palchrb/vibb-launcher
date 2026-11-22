@@ -53,6 +53,9 @@ Run it with a signed release build (never a debug APK on a kid's phone), on the 
   **Emergency Location Service** is on (the model's name for it may differ; it sends the best position with an
   emergency call whatever GLA is), and the setup step reads done (`adb shell dumpsys location | grep -i network`: the
   provider disabled). Note whether GLA's switch was greyed by Advanced › "Hold posisjon på" (`DISALLOW_CONFIG_LOCATION`).
+- [ ] Google's four switches (design 126 B1-B4, optional setup steps): each "Åpne" in the setup flow opens its page
+  (Play services' own, else Android's), and the path in its line is the model's - Phone number verification, Delete
+  advertising ID, Usage & diagnostics, Play Protect's "Improve harmful app detection"; note the model's nb labels.
 - [ ] A reboot: the phone is back online and locked down without anyone opening it.
 
 ## 3. Screen and font

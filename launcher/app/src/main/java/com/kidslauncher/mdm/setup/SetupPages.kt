@@ -76,6 +76,9 @@ object SetupPages {
             SetupStep.VIBB_BROWSER -> com.kidslauncher.mdm.logins.BrowserRoleStep.requestIntents(context)
             SetupStep.FINGERPRINT -> FingerprintEnrol.pageIntents(context)
             SetupStep.MEDIA_ON_LOCK -> MediaLockScreen.pageIntents(context)
+            // Design 126 B1-B4: Play services' page when it resolves to an unsuspended system package, then Android's.
+            SetupStep.NUMBER_VERIFICATION, SetupStep.AD_ID, SetupStep.DIAGNOSTICS, SetupStep.PLAY_PROTECT_UPLOAD ->
+                actions.mapNotNull { page(context, Intent(it)) }
             SetupStep.DEFAULT_APPS, SetupStep.LOCATION_PRIVATE, SetupStep.VIBRATION, SetupStep.TOUCH_FEEDBACK,
             SetupStep.LOCK_CLOCK, SetupStep.MESSAGE_BANNERS,
             -> listOfNotNull(page(context, Intent(actions[0])))

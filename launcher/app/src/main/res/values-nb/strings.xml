@@ -929,6 +929,10 @@
     <string name="setup_step_map_vibb_links">Vibb Ones lenker</string>
     <string name="setup_step_fingerprint">Fingeravtrykk</string>
     <string name="setup_step_location_private">Posisjon uten Google</string>
+    <string name="setup_step_number_verification">Nummerbekreftelse</string>
+    <string name="setup_step_ad_id">Annonse-ID</string>
+    <string name="setup_step_diagnostics">Bruk og diagnostikk</string>
+    <string name="setup_step_play_protect_upload">Play Protect-deling</string>
     <string name="setup_step_vibration">Vibrasjon</string>
     <string name="setup_step_touch_feedback">Vibrasjon ved trykk</string>
     <string name="setup_step_lock_clock">Klokke på én linje</string>
@@ -949,6 +953,10 @@
     <string name="setup_how_call_filter">Velg Vibb One begge gangene.</string>
     <string name="setup_how_call_filter_early">Trengs hvis Vibb skal styre samtaler. Velg Vibb One begge gangene.</string>
     <string name="setup_how_location_private">Vibb lærer stedene selv, uten Google. Posisjonstjenester › Google-posisjonsnøyaktighet: av.</string>
+    <string name="setup_how_number_verification">Google › Alle tjenester › Bekreftelse av telefonnummer: av. Helst før SIM-kortet settes inn.</string>
+    <string name="setup_how_ad_id">Google › Alle tjenester › Annonser › Slett annonse-ID.</string>
+    <string name="setup_how_diagnostics">Google › ⋮ › Bruk og diagnostikk: av.</string>
+    <string name="setup_how_play_protect_upload">Play Butikk › profilbildet › Play Protect › ⚙ › Forbedre gjenkjenning av skadelige apper: av.</string>
     <string name="setup_how_vibb_browser">Velg Vibb One.</string>
     <string name="setup_how_default_apps">Velg dem tilbake.</string>
     <string name="setup_how_map_play_links">Åpne som standard: slå av Åpne støttede linker.</string>

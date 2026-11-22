@@ -35,6 +35,13 @@
   `MdmDeviceAdminReceiver.onPasswordChanged` asks for a sync. `call_filter_early` (optional, `calls_unmanaged`) is row
   13's two role requests in the same pick window, offered while calls aren't managed. Its `when` is the exact opposite
   of row 13's, and it reads the same roles.
+- Google's four switches (design 126 B1-B4: `NUMBER_VERIFICATION`, `AD_ID`, `DIAGNOSTICS`, `PLAY_PROTECT_UPLOAD`):
+  optional parent steps the phone can't read (Play services' own state), so "Gjort"/"Hopp over" as every parent step.
+  "Åpne" tries each `phone_page` action in order through `systemPageIntent` - Play services' own settings action first
+  (`com.google.android.gms.settings.GOOGLE_SETTINGS`, `.ADS_PRIVACY`, `.VERIFY_APPS_SETTINGS`), then Android's public
+  page. The Play-services actions are **not yet verified** on a Play image (design 126 §5.2's "[verify]"): the emulator
+  gate keeps only those that resolve to an exported activity of `com.google.android.gms`, and the paths in
+  `setup_how_*` follow what the gate and the Jelly Star show.
 - `location_private` (2026-11-22, design 125: "Posisjon uten Google"): optional, `when` `location_interval` (the cached
   policy's `location_policy.mode` is `interval`, `SetupInputs.locationInterval`). Done when Android's `network` provider
   is off while Location is on (`LocationManager.isProviderEnabled(NETWORK_PROVIDER)` false - Google Location Accuracy
