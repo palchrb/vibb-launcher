@@ -1,266 +1,284 @@
 # 125 - Wi-Fi places, learned on the phone
 
-Status: **revision 1 - proposal**, 2026-11-22. Asked by the user: "kunne egentlig tenkt meg å kunne beholde innendørs
+Status: **revision 2 - proposal**, 2026-11-22. Asked by the user: "kunne egentlig tenkt meg å kunne beholde innendørs
 posisjon vha google, men finnes det noen foss alternativer eller noe annet vi kan gjøre for å sikre at vi ikke er
-identifiserbare for google?", then "Ja sett i gang et wifi selvlæringsdesign"; §8a (cell towers) on "vil den bare lære
-wifi eller også cell towers?" the same day. Launcher round; no server code, no contract file changes. Read against
-`main` b56676686 with design 124 revision 2 beside it (its step 1 is in build; this note builds on its D5 heartbeat and
-D9 provider choice).
+identifiserbare for google?", then "Ja sett i gang et wifi selvlæringsdesign" and "vil den bare lære wifi eller også
+cell towers?". Revision 2 applies the user's answers (§11: Q1 yes, but "vi må jo passe på at vi ikke nå legger opp til
+noe som blir veldig unøyaktig bare for å spare 0.5% batteri btw. Men privacy er en god grunn da"; Q2 a self-learned
+zone link; Q3 and Q4 in) and the design QA (H1-H2, M1-M5, L1-L10; §10). Launcher round; no server code, no contract
+file changes. Read against `main` b56676686 with design 124 revision 2 beside it (its step 1 is in build; this note
+builds on its D3 `MotionFlags`, D5 heartbeat and D9 provider choice).
 
 ## 0. Short answer
 
 With Google Location Accuracy (GLA) off, Android's `network` provider is gone and indoor GPS rarely answers, so the
 phone has no indoor fix. microG and Déjà Vu need a ROM without Play services (the Jelly Star has them) and BeaconDB
-gives no export, so **Vibb learns places itself**: whenever its own GPS fix is good, it remembers the Wi-Fi access
-points (APs) heard at that moment and where they must be; later, indoors, a Wi-Fi scan matched against the learned APs
-gives a position computed on the phone. The table never leaves the phone; the server gets only the fix it already
-gets, with the provider word `vibb_wifi` and an honest accuracy (40-200 m). It works only at places the phone has seen
-with GPS before; elsewhere everything is as today. It also makes design 124's deferred Wi-Fi witness (§8 there)
-unnecessary: past the 4-h cap a known place gives a real fresh fix instead of a vouch. Cell towers could be learned
-the same way as a coarse fallback (§8a), but the SIM-less Jelly Star reports no cells: a later, optional step.
+gives no export, so **Vibb learns places itself**: whenever its own satellite fix is good, it remembers the Wi-Fi
+access points (APs) and the serving cell heard at that moment and where they must be; later, indoors, a scan matched
+against the table gives a position computed on the phone. The table never leaves the phone; the server gets only the
+fix it already gets, with the provider word `vibb_wifi` (or `vibb_cell`) and an honest 68 % accuracy.
+
+**Accuracy before battery, privacy before accuracy** (the user's rule): the learned fix is used because it keeps Google
+out, not to save GPS starts - so GPS still runs after every move, a teaching fix follows a move, and a learned fix
+stands alone only when enough independent networks agree. It works only at places seen with GPS before; elsewhere
+everything is as today. **Learning starts when GLA is switched off**: with GLA on, Vibb never scans and never uses the
+table (GMS answers indoors anyway); only a free passive GPS listener teaches, which is little. Design 124's deferred
+Wi-Fi witness (§8 there) is dropped: past its 4-h cap a known place gives a real fresh fix instead of a vouch.
 
 ## 1. What the phone has today (read in the code)
 
 - Fixes: `LocateCommands.freshOrLastKnown` - balanced fused, then GPS (`preciseFix`), then `getLastKnownLocation`, then
-  the cached fix. With GLA off the fused provider is GMS's but GPS-only, `network` is disabled; design 124 D9 then goes
-  to GPS directly. GNSS also loses its network-assisted seed, so cold starts indoors fail more often.
+  the cached fix. With GLA off the fused provider is GMS's but GNSS-only, `network` is disabled; design 124 D9 then
+  goes to GPS directly. GNSS also loses its network-assisted seed, so indoor cold starts fail more often.
 - Wi-Fi: the manifest has `ACCESS_WIFI_STATE`, `CHANGE_WIFI_STATE`, fine/coarse/background location (self-granted in
-  `currentLocation`) and `NEARBY_WIFI_DEVICES` **with `neverForLocation`** (the Quick Controls network picker,
-  `QuickControls.scanWifiNetworks`: `startScan` + `SCAN_RESULTS_AVAILABLE_ACTION`). Scans need system Location on
-  whatever permission is held (`QuickControls.isLocationEnabled`'s note); `currentLocation` already switches Location
-  on for the fix and back off unless `locationStaysOn` (P-L2).
-- Keys at rest: `SealedPrefs` (AES-GCM in the AndroidKeyStore) for small secrets; `allowBackup="false"`.
-- The server stores any provider word of 1-16 `[a-z0-9_-]` (`models::location_provider`) and shows it only in the
-  Locate page's newest-fix title (`locate::fix_title`); `vibb_wifi` passes as is.
+  `currentLocation`) and `NEARBY_WIFI_DEVICES` **with `neverForLocation`** (the Quick Controls picker). Scans need
+  system Location on whatever is held; `currentLocation` already switches Location on for a fix and back off unless
+  `locationStaysOn` (P-L2). `PassiveFixes` (the passive provider, 60 s) runs only on zones phones.
+- Keys at rest: `SealedPrefs`' `SecretBox` (AES-GCM in the AndroidKeyStore, `seal`/`open` with an AAD, `keyBroken`).
+- The server stores any provider word of 1-16 `[a-z0-9_-]` (`models::location_provider`), shows it only in the Locate
+  page's newest-fix title, and judges zones by `d + a <= r` (inside) / `d - a >= r` (outside) on the stored fixes.
+- Cells: the Jelly Star without a SIM shows `mCellInfo=[]` on both slots (`dumpsys telephony.registry`, 2026-11-22).
 
-## 2. Decisions
+## 2. Decisions - learning
 
-### Learning (who teaches, what is kept)
-
-1. **Only our own good satellite fixes teach.** A fix teaches when it is ours and fresh (`freshOwnFix`), its provider
-   is `gps` - or `fused` while `NETWORK_PROVIDER` is disabled (GLA off: GMS's fused can then only be GNSS [inferred,
-   Jelly Star check]) -, not mock in a release build, accuracy <= **25 m**, and speed unknown or <= **3 m/s** (a bus or
-   car smears positions and carries its own APs). Never a `vibb_wifi` fix (no feedback loop), never a balanced fix
-   with GLA on (that is Google's Wi-Fi database, not ours), never a last-known or cached one. Teaching runs whether GLA
-   is on or off, so the table is ready the day the user switches GLA off. Every path that takes a GPS fix teaches: the
-   heartbeat, `locate`, a crossing's confirm, the low-battery fix; on zones phones also a passive `gps` fix from
-   another app (`PassiveFixes`), free.
-2. **The scan that teaches** is one whose results' `timestamp` lies within **+-30 s** of the fix's
-   `elapsedRealtimeNanos`. Every fresh-fix path starts a scan at its beginning (D9), so a GPS fix of 5-60 s finds one;
-   else the system's cached results are used if they are that close. At most the **60** strongest usable APs per teach.
-3. **Which APs are usable** (pure `usableAp`, the same filter for teaching and for lookup):
-   - a parseable unicast BSSID with the **locally administered bit clear** (first octet & 0x02): Android and iOS
-     hotspots, Wi-Fi Direct groups and most virtual/guest BSSIDs use random local addresses. Cost: a router's
-     secondary guest BSSID is skipped; its primary isn't.
-   - an SSID that does not contain **`_nomap`** (the Google/Mozilla opt-out) or **`_optout`** (Microsoft's), any case.
-   - an SSID that doesn't look like a phone or Wi-Fi Direct: starts with `DIRECT-`, `AndroidAP`, `AndroidShare`,
-     `Pixel`, `Galaxy`, or contains `iPhone`/`iPad` (rows in the vectors, easy to extend). Hidden SSIDs are kept.
-   - the network the phone is **connected** to only when unmetered (`NET_CAPABILITY_NOT_METERED`): a hotspot the
-     phone rides on is metered.
-   The real guard against things that move is D6; the name list only removes the obvious.
-4. **Per AP the phone keeps** (one row, ~70 bytes): `key` = HMAC-SHA256(install key, BSSID) cut to 12 bytes;
-   `device` = HMAC(install key, the first five octets) cut to 8 bytes (one router's 2.4/5/6 GHz and MLO links usually
-   share them - H2/L2 of design 124: several BSSIDs count as **one device** in D8); `lat`, `lng` (the estimate),
-   `weight` (capped), `rangeM`, `sightings`, `occasions` (teaches at least 30 min apart), `lastTeachMs`, `lastSeenMs`,
+1. **Who teaches.** Only our own satellite fixes, whatever path took them - the heartbeat, `locate`, a crossing's
+   confirm, the low-battery fix, the teaching fix (D11) - and a **passive `gps` fix** from any app (D3). A fix teaches
+   when its provider is `gps` with `satellites >= 5` in its extras (dropped as a condition if the Jelly Star doesn't
+   set the extra - §8 check), not mock in a release build, accuracy <= **25 m**, speed unknown or <= **3 m/s**. `fused`
+   teaches **only after** the Jelly Star shows GMS's fused has no Wi-Fi path with GLA off (§8 step 2); until then never.
+   Never: a `vibb_wifi`/`vibb_cell` fix (no feedback), a balanced fix, a fix with the `network` provider on (Google's
+   Wi-Fi database, not ours - no bootstrap from Google-derived fixes), a last-known or cached fix.
+2. **Pairing a scan with the teacher.** A result teaches when its own `timestamp` lies within **+-30 s** of the fix's
+   `elapsedRealtimeNanos`. When a teaching fix arrives and the newest scan is more than **15 s** old, one more scan is
+   taken (wait <= 8 s) - not with GLA on (D13). The pairing error goes into the weight: `accEff = acc + speed x |dt|`
+   (speed unknown: 1.5 m/s), and `accEff <= 40 m` or no teach. At most the **60** strongest usable APs per teach; the
+   serving cell (D10) pairs the same way by `CellInfo.getTimestampMillis()`.
+3. **The passive listener, every Regularly phone.** `PassiveFixes` registers on every Regularly phone (device owner,
+   managed, mode `interval`), zones or not; a `gps` fix that passes D1 teaches - free, opportunistic (a maps app's
+   navigation teaches a whole route). Zones phones keep today's kept-slot use on top. With GLA on it pairs only with
+   the system's own cached results (Vibb scans nothing then, H1). Whether the passive request lights the location
+   indicator is design 64 §9's open check.
+4. **Which APs are usable** (pure `usableAp`, the same for teaching and lookup): a parseable unicast BSSID with the
+   **locally administered bit clear** (Android/iOS hotspots, Wi-Fi Direct, most virtual BSSIDs); an SSID without
+   **`_nomap`** (Google/Mozilla's opt-out) or **`_optout`** (Microsoft's), any case; not a phone or Wi-Fi Direct name
+   (`DIRECT-`, `AndroidAP`, `AndroidShare`, `Pixel`, `Galaxy`, `iPhone`, `iPad`; rows in the vectors); the connected
+   network only when unmetered. Hidden SSIDs are kept. The real guards against moving APs are D7 and D9.
+5. **Per AP one row** (~64 bytes, D17's format): `key` = HMAC(install key, BSSID) cut to 12 bytes; `device` =
+   HMAC(the MLO address from `ScanResult.getApMldMacAddress()` when set, else the first five octets) cut to 8 bytes -
+   one router's bands and links are **one device** (a false merge of two same-vendor neighbours is harmless: they are
+   still one network each, D9); `network` = HMAC(SSID) cut to 8 bytes, or the device key for a hidden SSID - a mesh's
+   nodes and a router's bands are **one network**; `band` (2.4 / 5 / 6 GHz from `frequency`); `lat`, `lng`, `weight`,
+   `rangeM`, `occasions` (teaches >= 30 min apart), `days` (distinct local days, capped), `lastTeach`, `lastSeen`,
    `moves`. No SSID, no BSSID, no signal history.
-5. **The estimate** (Déjà Vu's idea, simplified): a weighted centroid of the teach positions. A sighting's weight
-   `w = q(rssi) x a(acc)`, `q = clamp((rssi + 100) / 40, 0.1, 1)` (heard at -60 dBm or stronger = 1: near the AP),
-   `a = clamp(10 m / acc, 0.4, 1)`. Update `pos = (pos x W + teach x w) / (W + w)`, `W = min(W + w, 20)`: once
-   saturated the newest ~20 sightings dominate, so a slow drift follows. `rangeM` = max over sightings of (distance
-   from the estimate + the fix's accuracy), within **40..250 m** (40 m: an AP is heard at least that far indoors, even
-   when every teach was at its door). Plain lat/lng arithmetic is exact enough within an AP's reach.
-6. **APs that move.** A sighting more than **500 m** from the estimate (beyond any phone-heard reach) is a move: the
-   row restarts at the new point (`sightings = 1`, `occasions = 1`) and `moves + 1`. **Two moves** block the row for
-   good: it is kept as a tombstone, never used, never taught again (a bus or train AP, a parent's travel router). One
-   move (a family moving house with its router) relearns. Smaller moves (a neighbour within 500 m) drift away through
-   D5's cap.
-7. **Ageing and size.** A row unseen (`lastSeenMs`, also touched by a lookup that uses it) for **180 days** goes; above
-   **4000 rows** the least recently seen go first (tombstones included). ~280 KB at the cap; a kid's places and routes
-   are likely 500-3000 APs.
+6. **The estimate per row** (Déjà Vu's idea, simplified): a weighted centroid of its teach positions, sighting weight
+   `w = q(rssi) x a(accEff)`, `q = clamp((rssi + 100) / 40, 0.1, 1)`, `a = clamp(10 m / accEff, 0.25, 1)`;
+   `pos = (pos x W + teach x w) / (W + w)`, `W = min(W + w, 20)` (the newest ~20 sightings dominate, so a slow drift
+   follows). `rangeM` = max of (distance from the estimate + accEff), floored by band - **100 m at 2.4 GHz, 60 m at 5/6
+   GHz** (what a phone hears through walls, even when every teach was at the door) -, capped at 250 m. A device's
+   position is the weight-weighted mean of its rows, a network's of its devices.
+7. **Moves.** A sighting more than **500 m** from the row's estimate is a move: the row restarts there (`occasions =
+   1`, `days = 1`) and `moves + 1`; **two moves** block it for good (a tombstone, never used or taught: a bus AP, a
+   travel router, a cabin MiFi). A network whose devices all moved together (a mesh taken to a new house) moves as one.
+8. **Ageing and size.** A row unseen for **180 days** goes (`lastSeen` is also touched by a lookup that uses it); above
+   **4000 rows** the least recently seen go first, tombstones included. ~260 KB at the cap.
 
-### Using it
+## 3. Decisions - using it
 
-8. **The lookup** (pure `wifiFix(scan, table, connected, now)`): usable APs from a scan **<= 2 min old**, found by key,
-   not blocked, **trusted** (`occasions >= 2`). Grouped into devices (D4). Consensus: the device with the most others
-   within `rangeA + rangeB` of it seeds the cluster (a tie: the stronger signal); the fix needs **at least 2 devices and
-   more than half** of the trusted devices seen - else none (two that disagree give no fix). Position: the mean of the
-   cluster's estimates weighted by `q(rssi) x min(occasions, 5) / 5`, the connected unmetered AP x 2 (the user's
-   "home Wi-Fi" signal - a weight, never a place by itself). Accuracy: `min over the cluster of (distance(fix, AP) +
-   rangeM)` - the phone hears every one of them, so it is within that of the fix whenever the ranges hold; over
-   **200 m** gives no fix (design 64's `PASSIVE_ACCURACY_FLOOR_M`). Time: the newest used result's `timestamp` on the
-   wall clock. **One device alone** gives a fix only when it is the connected unmetered network, `occasions >= 3`,
-   taught within 7 days and no other trusted device is seen (a lone rural router). A lookup changes nothing in the table
-   but `lastSeenMs`.
-9. **Getting the scan** (`WifiPlaces.scan`): at the start of every fresh-fix attempt, inside `currentLocation`'s
-   Location window: if the cached `getScanResults()` hold results <= 30 s old (the system's or another app's scan), use
-   them; else `startScan()` and wait for `SCAN_RESULTS_AVAILABLE_ACTION` (`EXTRA_RESULTS_UPDATED`) up to **8 s**
-   (meanwhile GPS starts where the path wants it); `false` (throttled) or no answer -> the cached results if <= 2 min
-   old, else no scan. Never a scan outside a fix attempt: no `QUIET` or `STILL` beat scans (the phone hasn't moved, the
-   answer would be the same), no periodic scanning, no `requestLocationUpdates`-style feed.
-10. **Where it sits** (in `freshOrLastKnown`; a learned fix is accepted, cached and reported like any fix, provider
-    `vibb_wifi`):
+9. **The lookup** (pure `learnedFix(scan, table, connected, motion, now)`):
+   - **The scan**: results whose own `timestamp` is <= 30 s old (a fresh scan) or, as a fallback, <= 2 min old - and in
+     both cases **newer than the last motion fire** (`MotionFlags` keeps the fire's elapsed time, M2); at least **3**
+     usable results that fresh, else no lookup (a partial cached list, L8).
+   - **Trusted rows**: not blocked, `occasions >= 2`. Rows group into devices, devices into **networks** - the witness
+     unit. Consensus: the device with the most others within `rangeA + rangeB` seeds a cluster (tie: stronger signal);
+     the cluster must hold **>= 2 distinct networks and more than half** of the trusted networks seen, else no fix.
+   - **Position**: the cluster's devices weighted by `q(best rssi) x min(occasions, 5) / 5`, the connected unmetered
+     network x 2.
+   - **Accuracy, a 68 % estimate, not a bound** (M1): `acc = sqrt(spread^2 + (0.5 x rangeMed)^2)`, `spread` the
+     weighted RMS distance of the cluster's devices from the fix, `rangeMed` their weighted median range; then **x 1.5**
+     with only 2 networks, **x 1.3** when the median `occasions` < 4; a **weak-signal floor** from the strongest
+     cluster member - >= -60 dBm none, -60..-75 its band floor, -75..-85 1.5 x the band floor, weaker 150 m; **x 2**
+     when two or more unknown usable networks are heard stronger than every cluster member (the phone is nearer
+     somewhere else). Floor 30 m; over **200 m** no fix. The constants are tuned in the synthetic town (§8); the
+     binding row: **a neighbour 120 m from home, hearing home's APs through walls, is never `d + a <= r` inside a
+     150 m zone at home.**
+   - **Stands alone or not** (H2): after a motion fire, a learned fix from **fewer than 3 networks** never stands alone
+     - GPS runs in the same attempt (D10). **One network alone** (a lone router, a mesh) never establishes a position
+     after a move; it only renews a still vouch (`motion()` `STILL`/`STILL_SINCE_TRY` since a fix at that place) - the
+     one exception is D12's zone link.
+   - Time: the newest used result's `timestamp` on the wall clock. A fix from the 2-min fallback is reported but is
+     **not fresh** for `MotionFlags.afterTry` or the fresh-fix stamp (M2). The lookup changes nothing but `lastSeen`.
+10. **Cells** (Q4: in step 1, a no-op without a SIM). The serving cell from `TelephonyManager.getAllCellInfo()`, or one
+    `requestCellInfoUpdate` (API 29) when the cached `getTimestampMillis()` is > 60 s off: `CellIdentityLte` (MCC,
+    MNC, TAC, CI), `CellIdentityNr` (MCC, MNC, TAC, NCI), `Wcdma`/`Gsm` (LAC, CID); neighbours usually lack an
+    identity and are skipped. A row of kind `cell`: `key` = HMAC("mcc|mnc|area|cid"), D6's centroid with `rangeM`
+    **500 m..10 km**, a move at **20 km**. Used only after GPS and Wi-Fi gave nothing (`vibb_cell`, `occasions >= 3`,
+    accuracy its `rangeM`, over 5 km none) and as a **veto**: a learned serving cell whose estimate lies more than its
+    range + 2 km from a Wi-Fi fix rejects that fix. An empty list (no SIM: the Jelly Star today) is an ordinary miss.
+    Needs `ACCESS_FINE_LOCATION` and Location on, not `READ_PHONE_STATE`; with no SIM the default `TelephonyManager`
+    reads slot 0 [check with a SIM: `adb shell dumpsys telephony.registry | grep -i -m5 cellinfo`].
+11. **The teaching fix** (Q3, in): **2 min** after a motion fire (`CONFIRM_DELAY_MS`, the crossing confirm's exact
+    while-idle alarm, its own request code), one GPS fix (15 s) with a scan, **at most 6 a local day** (CE prefs
+    `wifi_places` `teach_budget_v1`), only on a Regularly phone with GLA off and Location on. It teaches; on a zones
+    phone it also goes to the kept slot (design 64's `keepFix`), otherwise it is not reported (the trail stays at the
+    parent's interval). It isn't a heartbeat try for 124's flags.
+12. **The zone link** (Q2: no "hjemme" field, but learned). Per policy zone (by id; dropped when the zone's centre or
+    radius changes or it goes), the phone learns which **networks** are present when it is surely inside: a network
+    becomes **linked** after being **connected** (unmetered) at >= 3 teaching fixes that are `d + a <= r` inside the
+    zone, on >= 2 local days, and **never** heard at a teaching fix surely outside by 200 m (`d - a >= r + 200 m`). One
+    such sighting revokes the link; a second blocks it for good (a cabin MiFi, a travel router; with D7 a moved router).
+    **Use:** while connected to a linked network, that one network may stand alone - D9's position and accuracy from
+    its own rows, so the server still judges the zone (design 64 decision 1: the phone sends a fix, never a verdict).
+    After a move it stands alone only when (a) this attempt's GPS ran and found nothing, (b) no other trusted network in
+    the scan lies more than 500 m from it, (c) the learned serving cell doesn't veto (D10), and (d) the newest genuinely
+    fresh own fix is reachable - its distance over the time since <= 40 m/s. Nothing about the link leaves the phone.
+13. **Getting the scan** (`WifiPlaces.scan`), only with the `network` provider **off**: at the start of every
+    fresh-fix attempt, inside `currentLocation`'s Location window - the cached `getScanResults()` when D9's fresh rule
+    holds, else `startScan()` and `registerScanResultsCallback` (API 30; the broadcast only as a fallback) for up to
+    **8 s** while GPS starts where the path wants it; `false` (throttled) or no answer -> the 2-min fallback. Never on a
+    `QUIET` or `STILL` beat, never periodic. With the `network` provider **on**: no `startScan`, no lookup, no teaching
+    scan (H1: each would hand GMS another scan-with-position).
+14. **Where it sits** (in `freshOrLastKnown`; a learned fix is accepted, cached and reported like any fix):
 
-    | Path | `network` provider on (GLA on) | `network` off (GLA off) |
+    | Path | `network` on (GLA on) | `network` off (GLA off) |
     |---|---|---|
-    | Heartbeat `FIX`, a crossing's first fix, the low-battery fix (`FRESH_BALANCED`) | 124 D9: balanced, GPS if worse than 200 m or none; **then the learned fix** before last-known | **the learned fix first**; none -> GPS 15 s |
-    | A crossing's confirm (`FRESH`, precise) | GPS, then the learned fix | the same |
-    | `locate` (fused high accuracy, 60 s) | as today, then the learned fix | GPS waits **20 s** when a learned fix is in hand, else 60 s; then the learned fix |
-    | The zones series' checks | unchanged (balanced only) | unchanged |
+    | Heartbeat `FIX`, a crossing's first fix, the low-battery fix | 124 D9, unchanged - no learned path | the **first `FIX` after a motion fire**: scan + GPS 15 s together, keep the better (GPS wins at equal or better accuracy), GPS teaches; **other tries**: the learned fix if it stands alone (D9/D12), else GPS 15 s; then a cell fix, then last-known |
+    | A crossing's confirm (precise) | unchanged | GPS first, then the learned fix, then a cell fix |
+    | `locate` (fused high accuracy) | unchanged | 60 s; **20 s** only when a learned fix with >= 3 networks and acc <= 60 m is in hand (L5); then the learned fix, then a cell fix |
+    | The zones series' checks | unchanged | unchanged (balanced only) |
 
-    **The daily refresh:** a heartbeat that got a learned fix still runs GPS (15 s, keep the better) when no GPS fix
-    has taught for **24 h** - so known places are re-checked and a moved router meets D6. One extra GPS start a day.
-11. **Design 124's rules for a learned fix:** it counts as fresh for `MotionFlags.afterTry` (it is an independent
-    observation: a still night at a known place renews "Hasn't moved since" at each 4-h cap try, all night); it is
-    **never** a D7 contradiction (only GPS/fused fixes judge the sensor - a wrong Wi-Fi fix must not distrust it); the
-    back-off (`QUIET`) is unchanged and does not scan. 124 §8's witness is **dropped**: a learned fix is a better answer
-    to the same question.
-12. **The manifest's `neverForLocation` goes.** It asserts Vibb never derives location from Wi-Fi scans; with this
-    design that is false. Vibb's scan reads rely on `ACCESS_FINE_LOCATION` (self-granted) and Location on, which the
-    fix window already holds; the Quick Controls picker switches Location on itself and self-grants fine location too
-    (added there if missing - build check).
+    **The daily refresh** (M3): `lastRefreshTryMs` stamped at every GPS try of this design; when 24 h pass without one
+    (a still weekend at home), the next heartbeat `FIX` runs GPS too, keeps the better and teaches.
+15. **Design 124's rules for a learned fix:** a fresh (not fallback) learned fix counts as fresh for `afterTry` - a
+    still night at a known place renews "Hasn't moved since" at each 4-h cap try. 124's D7 compares only when the
+    **vouched** fix is `gps`/`fused`, and a learned fix is never the new side of a contradiction (a wrong Wi-Fi fix
+    must not distrust the sensor). A GPS fix more than 500 m from a learned fix of >= 3 networks taken within 10 min is a
+    **learned contradiction**: logged and counted (CE prefs, last 30 days) for the Jelly Star's review (M5). `QUIET` is
+    unchanged and does not scan. 124 §8's witness is **dropped**.
+16. **The manifest's `neverForLocation` goes** (it would now be false); the scan reads rely on `ACCESS_FINE_LOCATION`
+    and Location on, which the fix window holds; `NEARBY_WIFI_DEVICES` is self-granted beside the location
+    permissions (L2), the manifest comment says why. The connected BSSID and metering come from
+    `WifiManager.getConnectionInfo()` (with fine location, inside the window) and
+    `ConnectivityManager.getNetworkCapabilities` (`NOT_METERED`); a `NetworkCallback` with `FLAG_INCLUDE_LOCATION_INFO`
+    (API 31) if 17 drops the first (L3). Scans and cell reads note a location access: Vibb shows in the privacy
+    dashboard as it does for its fixes.
 
-### Privacy and what the parent sees
+## 4. Privacy and what the parent sees
 
-13. **Everything stays on the phone.** The table is a file in credential-encrypted app storage
-    (`noBackupFilesDir/wifi_places_v1`, written through `AtomicFile`), never in a report, a log, a backup or a command
-    answer. The 32-byte install key is random, kept in `SealedPrefs` (Keystore-sealed), so the file alone can't be
-    reversed by trying the small BSSID space (124 L3). Logs carry counts and accuracies only - never a BSSID, SSID, key
-    or the table's coordinates (`WifiPlaces: scan aps=23 usable=17 trusted=9 cluster=7 acc=55`, `taught aps=14 new=3
-    moved=1 blocked=0`, `cleared (off|unenrol|unreadable)`).
-14. **Cleared** with the key: when the parent sets location **Off** (`LocateCommands.clearCachedFix`, P-L3's rule), in
-    `ZoneWatch.release` (no longer managed) and `ZoneWatch.forget` (a new enrollment), at a wipe by nature. "Only when
-    asked" keeps it: it learns only from the `locate` fixes the parent asked for, and `locate` indoors is its best use.
-    An unreadable file or key (a Keystore reset) is dropped and started again (no migration, the no-compat rule).
-15. **Google:** Vibb sends Google nothing in any mode. With GLA on, GMS scans and reports Wi-Fi itself whatever Vibb
-    does; with GLA off, Google states it collects none, and Vibb's own scans only refill the system's cache. A-GPS help
-    (SUPL/PSDS downloads by the GNSS stack) is the chipset's and unchanged [not checked on the Jelly Star].
-16. **What the parent sees:** the fix on Locate with its circle (40-200 m) and `vibb_wifi` in the newest fix's title
-    beside today's `gps`/`fused`; "Hasn't moved since" through whole nights at known places; zones judge it by the
-    server's two-fix rule like any fix. No new report field, no PWA line, no table data.
+17. **Everything stays on the phone.** The table - Wi-Fi rows, cell rows, zone links - is one file in
+    credential-encrypted storage (`noBackupFilesDir/wifi_places_v1`, `AtomicFile`), **sealed whole** with AES-GCM
+    through `SecretBox` (AAD `wifi_places_v1`; L7). The 32-byte HMAC key is random, kept in `SealedPrefs`, and cached in
+    memory for the process (L6). Format, before sealing: magic `VWP`, a version byte, the row count; rows each a `kind`
+    byte (1 Wi-Fi, 2 cell, 3 zone link), fixed-width fields (positions as 1e-7 degree ints, times in minutes). A new
+    version drops the old file (the no-compat rule). Logs carry counts and accuracies only - never a BSSID, SSID, cell
+    ID, key or a table coordinate (`WifiPlaces: scan usable=17 trusted=9 networks=4 acc=55 path=wifi`, `taught aps=14
+    new=3 moved=1`, `learned contradiction`, `cleared (off|unenrol|keybroken)`).
+18. **Cleared** (`WifiPlaces.clear`: delete the file and the key's pref, no Keystore call): location **Off**
+    (`LocateCommands.clearCachedFix`, P-L3), `ZoneWatch.release` (no longer managed), `ZoneWatch.forget` (a new
+    enrollment), and when `keyBroken()` says the Keystore key is gone. A transient Keystore error or an unreadable read
+    skips that one lookup or teach and keeps the table (L6). "Only when asked" keeps the table: it learns from the
+    `locate` fixes the parent asked for, and `locate` indoors is its best use.
+19. **Google:** Vibb sends Google nothing in any mode, and with GLA on it scans nothing (D13). A-GPS help (SUPL/PSDS
+    downloads by the GNSS stack) is the chipset's, unchanged [not checked on the Jelly Star].
+20. **What the parent sees:** the fix on Locate with its circle and `vibb_wifi`/`vibb_cell` in the newest fix's title;
+    "Hasn't moved since" through still nights at known places; zone arrivals judged as for any fix. No new report
+    field, no PWA line, nothing of the table or the links.
 
-## 3. Android 14-17 and the Jelly Star
+## 5. Android 14-17 and the Jelly Star
 
-- `startScan()` (deprecated in 9, working on 14-17) is throttled by `ScanRequestProxy`: an app at importance
-  `FOREGROUND_SERVICE` or better may scan **4 times per 2 min**; background apps together **once per 30 min**. Vibb's
-  anchor (`specialUse` FGS) keeps it in the first class [inferred from AOSP, device check]; without the anchor a scan
-  may be refused and the cached results decide. A Device Owner can't lift the throttle or set "Wi-Fi scanning"
+- `startScan()` (deprecated in 9, working on 14-17) is throttled by `ScanRequestProxy`: importance `FOREGROUND_SERVICE`
+  or better 4 scans per 2 min, background apps together once per 30 min; Vibb's anchor (`specialUse` FGS) should put it
+  in the first class [inferred from AOSP, device check]. A Device Owner can't lift the throttle or set "Wi-Fi scanning"
   (`WIFI_SCAN_ALWAYS_AVAILABLE` isn't in `setGlobalSetting`'s list).
-- `getScanResults()`: `ACCESS_FINE_LOCATION` and Location on (a `SecurityException` or an empty list otherwise, both
-  caught); background reads need background location (self-granted, `zone_watch.background_location` reports it).
-  `ScanResult.wifiSsid` (33), `timestamp` (us since boot), `level`; Wi-Fi 7 links are separate entries (D4 groups).
-- Wi-Fi off: scans need **Location › Wi-Fi scanning** on (a user setting; off -> no learned fix, GPS as today, logged).
-  Goes into `docs/setup/android-settings.md` with GLA's own switch in `docs/setup/google-account.md`.
-- Doze: the heartbeat runs from our while-idle alarm on the power-save allowlist; whether the Wi-Fi HAL scans in deep
-  Doze on MediaTek is a device check. 14-16's behaviour-change lists name nothing for scans; 17's is read at build time.
-- The emulator has one virtual AP (`AndroidWifi`): wiring only (scan read on 14 and 17, the throttle's answer, the
-  clear at Off, the manifest); the estimator is proven by the unit vectors and the Jelly Star.
+- `getScanResults()`: fine location and Location on (a `SecurityException` or an empty list, both caught); background
+  needs background location (self-granted, `zone_watch.background_location`). `registerScanResultsCallback` (30),
+  `ScanResult.wifiSsid` (33), `getApMldMacAddress` (33), `timestamp` in us since boot - all under minSdk 34.
+- Wi-Fi off: scans need **Location › Wi-Fi scanning** on (off -> no learned fix, GPS as today, logged); into
+  `docs/setup/android-settings.md`, GLA's switch into `docs/setup/google-account.md`.
+- Doze: the heartbeat and the teaching fix run from while-idle alarms on the power-save allowlist; whether MediaTek's
+  Wi-Fi HAL scans in deep Doze is a device check. 14-16's behaviour-change lists name nothing for scans or cell info;
+  17's is read at build time.
+- The emulator has one virtual AP (`AndroidWifi`) and a fake cell: wiring only (scan and cell reads on 14 and 17, the
+  throttle's answer, the clear at Off, the manifest); the estimator is proven by the vectors and the Jelly Star.
 
-## 4. Battery, data, storage (estimates)
+## 6. Battery, data, storage (estimates)
 
-A full scan is ~2-4 s of Wi-Fi radio: ~0.02-0.1 mAh [estimate; batterystats measures it], a GPS try 0.25-0.4 mAh
-(design 64 §5). GLA off, 30-min interval, after 124 step 1: ~12-20 tries a day, today all GPS (3-8 mAh, most indoor
-ones failing). With learned places: one scan per try (0.3-2 mAh) and GPS only at unknown places, on a miss and the
-daily refresh (~1-3 mAh): **about the same or less, 1.5-5 mAh a day**. The gain is indoor fixes without Google, not
-battery. No network data at all (the fix rides on the report). Storage <= ~300 KB; CPU: a few hundred software HMACs a
-day.
+A full scan ~0.02-0.1 mAh [estimate], a GPS try 0.25-0.4 mAh (design 64 §5). GLA off, 30-min interval, after 124 step 1,
+~12-20 heartbeat tries a day: scans 0.3-2 mAh; GPS after each move (~5-8: 1.3-3.2 mAh), teaching fixes (<= 6: <= 2.4
+mAh), unknown places and the refresh (~1-2 mAh): **~3-9 mAh a day (0.15-0.45 %)** - about 124's figure with GPS
+alone, by design: the gain is indoor fixes without Google. No network data. Storage <= ~300 KB; CPU a few hundred
+software HMACs and one AES-GCM open/seal per attempt.
 
-## 5. Failure modes
+## 7. Failure modes
 
 | Case | What happens | Bound |
 |---|---|---|
-| A place never seen with GPS (a friend's flat) | no trusted APs -> GPS -> often none; the age shows | as today |
-| The first days, or after an Off | empty table; learns from outdoor fixes; home needs a good fix where its APs are heard | the Jelly Star measures days-to-learn (§7, Q3) |
-| A moved router (family moved) | lone at the new place: no fix (no consensus) -> GPS teaches -> one move, relearns | D6, the daily refresh |
-| A bus, train or car AP | taught only at a stop (speed <= 3 m/s), not trusted until 2 occasions; outvoted by street APs; blocked after 2 moves | D3, D6, D8 |
-| A parent's hotspot | random local address or a phone name: never used | D3 |
-| An apartment block, a school | APs on every floor share a 2-D position: fine; interior APs never heard outside stay unknown | no fix deep inside |
-| Two clusters disagree | no fix | D8 |
-| Someone clones two known BSSIDs | a false fix until GPS teaches or the refresh contradicts it | low risk; `vibb_wifi` is named |
-| Scan throttled / Wi-Fi and scanning off | cached results <= 2 min, else no learned fix | today's paths |
-| Key or file unreadable, direct boot | no learned fix; a new table | logged |
+| A place never seen with GPS | no trusted networks -> GPS -> often none; the age shows | as today |
+| The first days, or after an Off | empty table; GPS after moves, teaching fixes and passive GPS fill it | the Jelly Star's days-to-learn (§8) |
+| A moved lone router or mesh (house move) | one network never establishes after a move (D9) -> GPS teaches -> the network moves (D7) | at the first GPS fix there |
+| A cabin MiFi linked to Home | connected at the cabin after the drive: needs GPS to fail, no other network elsewhere, no cell veto, a reachable last fix (D12); any good fix at the cabin revokes the link | residual: a whole trip without one good fix and no SIM |
+| A bus, train or car AP | taught only at a stop, untrusted until 2 occasions, outvoted by street networks, blocked after 2 moves | D1, D7, D9 |
+| A neighbour hearing home's APs | weak-signal floor and stronger unknown networks inflate the accuracy | never "inside" (D9's binding row) |
+| Two clusters disagree | no fix | D9 |
+| Someone clones known BSSIDs | needs 3 networks to stand alone after a move; GPS after moves catches it | low risk; the provider word names it |
+| Scan throttled, partial or stale; Wi-Fi and scanning off | the 2-min fallback (not fresh) or nothing | today's paths |
+| Keystore error | that lookup skipped; a broken key clears the table | L6 |
 
-## 6. Size and steps
+## 8. Size, steps, tests, the Jelly Star check
 
-- **L1 (launcher, M, one commit, after 124 L1 is merged):** pure `places/WifiPlacesPlan.kt` (filters, teach, update,
-  moves, prune, consensus, estimate; ~250 lines), glue `places/WifiPlaces.kt` + the store (scan, `AtomicFile`, the
-  sealed key, the clears; ~200 lines), hooks in `LocateCommands.freshOrLastKnown`/`clearCachedFix`,
-  `ZoneWatch.release`/`forget`, `PassiveFixes` (teach), the manifest. GPL, not the MIT directories.
-- **Server:** none. One test row (optional, ~10 lines): a report with provider `vibb_wifi` is stored and titled.
-- **No contract file changes:** the provider is a free word in `zone_status_report.json`'s shape; the rules are the
-  phone's alone.
-- **Docs:** a `## Wi-Fi places` section in `docs/notes/launcher/zones-and-power.md`, `docs/setup/google-account.md`
-  (GLA off, a conscious choice), `docs/setup/android-settings.md` (Wi-Fi scanning on), `new-phone-model.md` §2.
-- Order: design QA, L1, code QA, the emulator wiring run (14 and 17, the user's OK), then §7 on the Jelly Star.
+- **L1 (launcher, after 124 L1 is merged, one commit; ~600-700 lines of code + ~400 of tests):** pure
+  `places/PlacesPlan.kt` (usable, teach and pairing, row update, moves, prune, consensus, accuracy, stand-alone rules,
+  zone links, cells, the teach budget, the store codec), glue `places/WifiPlaces.kt` (scan, cell read, connected
+  network, the sealed store, the key, the teaching alarm, the clears), hooks in `LocateCommands.freshOrLastKnown`/
+  `clearCachedFix`, `MotionFlags` (the fire's time), `PassiveFixes` (every Regularly phone), `ZoneWatch.release`/
+  `forget`, the manifest. GPL, not the MIT directories. **Server:** none (an optional test: a `vibb_wifi` fix stored
+  and titled). **No contract file changes.**
+- **Docs:** a `## Wi-Fi places` section in `docs/notes/launcher/zones-and-power.md` - including that on a GLA-off
+  phone zone arrivals indoors depend on learned fixes of ~100 m or better (L9) -, `docs/setup/google-account.md`,
+  `docs/setup/android-settings.md`, `new-phone-model.md` §2.
+- **Tests:** `PlacesTest` over `launcher/app/src/test/resources/wifi_places.json` (the launcher's alone): `usable`,
+  `teach` (provider x GLA x accuracy x speed x satellites x mock x pairing, `accEff`), `update` (centroid, cap, band
+  floors, a move, the second move blocks), `prune`, `lookup` (the fire rule, a partial scan, consensus by network, a
+  2-2 split, a false five-octet merge, the stand-alone rules, the fallback not fresh, every accuracy factor), `zone_link`
+  (learning, revoking, blocking, (a)-(d)), `cells` (the veto, an empty list), `codec` (round trip, a new version
+  dropped). **The synthetic town**: ~60 fake APs (RFC 7042's documentation block `00:00:5e:00:53:xx`) in houses and a
+  school, realistic reach (log-distance, exponent ~3.3, 6 dB shadowing, walls; 2.4 GHz heard ~100-150 m outdoors), walks
+  that teach; >= 68 % of indoor points within the reported accuracy, the neighbour row never inside, and the H2 rows: a
+  **moved mesh**, a **cabin MiFi**, a **moved lone router** - none gives a wrong standing fix. Test HMAC key
+  `test-key-not-a-secret`. Source checks: no `Log` in `places/` takes a BSSID, SSID, cell ID or key; no
+  `neverForLocation`; the clears are called; with the `network` provider on no `startScan` is reached.
+- **The Jelly Star** (release build; new lines in `new-phone-model.md` §2):
+  1. `dumpsys location` with GLA off: `network` disabled; a teaching GPS fix's extras carry `satellites` (L1).
+  2. GLA off, airplane mode with Wi-Fi on, indoors: `locate` returns nothing from `fused` - then fused may teach (L1).
+  3. A day on Regularly: `adb logcat -s WifiPlaces` counts teaches; `dumpsys wifi` shows uid 10232's scans accepted.
+  4. Days until the first `vibb_wifi` fix at home; its circle against a GPS fix at the window; the zone link's day.
+  5. A still night: "Hasn't moved since" through it; the cap tries log `path=wifi`; the learned contradictions count.
+  6. Wi-Fi off with scanning on / off; Location Off from the PWA: `cleared (off)`.
+  7. `dumpsys batterystats me.vibb.launcher`: scans, GPS time, against 124's measurement.
+- Order: design QA of this revision, L1, code QA, the emulator wiring run (14 and 17, the user's OK), §8 on the phone.
 
-## 7. Tests and the Jelly Star check
+## 9. Not in this design
 
-- **`WifiPlacesTest`** over `launcher/app/src/test/resources/wifi_places.json` (the launcher's alone): `usable` rows
-  (local bit, multicast, `_nomap`/`_optout` in any case, each phone name, metered connected); `teach` rows (provider x
-  GLA x accuracy x speed x mock x the +-30 s window); `update` vectors (centroid, weight cap, range clamp, a 500 m move,
-  the second move blocks); `prune` (age, the cap, tombstones); `lookup` rows (consensus, devices grouping, a 2-2 split,
-  the lone connected router, a stale scan, the 200 m limit, the accuracy bound). Plus a **synthetic town**: 40 fake APs
-  with BSSIDs from RFC 7042's documentation block `00:00:5e:00:53:xx`, a seeded log-distance signal model, walks that
-  teach, a bus AP that moves; 100 indoor points: the true point inside the reported accuracy in >= 90 %, never a fix
-  with fewer than 2 trusted devices. The HMAC key in tests is `test-key-not-a-secret`.
-- Source checks: no `Log` call in `places/` takes a BSSID, SSID or key; the manifest has no `neverForLocation`;
-  `clearCachedFix`, `release` and `forget` call `WifiPlaces.clear`; a `vibb_wifi` fix never reaches teach or D7.
-- **The Jelly Star** (release build; GLA off, Wi-Fi scanning on; new lines in `new-phone-model.md` §2):
-  1. `dumpsys location`: `network` disabled. A day on Regularly: `adb logcat -s WifiPlaces` counts teaches;
-     `dumpsys wifi | grep -i -A3 "scan"` shows uid 10232's requests accepted, not throttled.
-  2. Days until the first `vibb_wifi` fix at home, and how far its circle is from a GPS fix at the window.
-  3. A still night: "Hasn't moved since" through it; the cap tries log `path=wifi result=fresh`.
-  4. Wi-Fi off with scanning on: a learned fix; scanning off: none, logged.
-  5. Location Off from the PWA: `cleared (off)`; back on: the table starts empty.
-  6. `dumpsys batterystats me.vibb.launcher`: Wi-Fi scan count and time, GPS time, against 124's measurement.
+Wi-Fi RTT (few APs answer it), Bluetooth beacons, GNSS seeding from a learned fix (`injectLocation` is system-only),
+sharing tables between phones, any learned-place word in the PWA.
 
-## 8. Not in this design
+## 10. Revision 2 - the design QA and the user's answers
 
-Wi-Fi RTT (few APs answer it), Bluetooth beacons, GNSS seeding from the learned fix (`injectLocation` is
-system-only), sharing tables between phones. Cell towers: §8a.
+H1: learning starts at GLA off, no scans or lookups with the `network` provider on, the passive listener on every
+Regularly phone, no bootstrap from Google-derived fixes (§0, D1, D3, D13). H2: networks as witnesses (D5, D9), GPS
+after a fire (D14), one network never establishes after a move (D9), the H2 vectors (§8), §7 made consistent. M1: the
+68 % accuracy with band floors and inflations, the neighbour row (D6, D9). M2: the fire rule and the fallback not fresh
+(D9). M3: the refresh stamp (D14). M4: the re-scan and `accEff` (D2). M5: D7 and learned contradictions (D15). L1:
+`satellites`, fused after the check (D1). L2, L3: D16. L4: MLO and false merges (D5). L5: `locate`'s 20 s (D14). L6,
+L7: D17, D18. L8: D9, D13. L9: §8 docs. L10: §8 size, D17's format, D6's device position, the step order. The user:
+Q1 yes with GPS after moves; Q2 the zone link (D12); Q3 the teaching fix (D11); Q4 cells in step 1 (D10).
 
-## 8a. Cell towers (the user, 2026-11-22: "vil den bare lære wifi eller også cell towers?")
+## 11. Questions for the user (defaults in bold)
 
-**Decision: cells are a later, optional step (L2), not in L1.** Measured on the Jelly Star without a SIM (2026-11-22):
-`dumpsys telephony.registry` shows `mCellInfo=[]` on both slots - a SIM-less phone reports no cell, so L2 would be a
-no-op there today. With a SIM it would work, and it fits this design; where it works it says "this part of town", not
-"this house".
+Answered on 2026-11-22: Q1 the learned fix at known places with GLA off - yes, accuracy before 0.5 % battery; Q2 no
+"hjemme" field, a self-learned link instead (D12); Q3 the teaching fix after a move - in (D11); Q4 cells in step 1
+(D10). One left:
 
-- **How it would work.** The same teach rule (D1: our own GPS fix <= 25 m, slow) records the **serving cell** from
-  `TelephonyManager.getAllCellInfo()` (the cached list, no radio work) - or `requestCellInfoUpdate` (API 29, one modem
-  query) when the cached `CellInfo.getTimestampMillis()` (API 30, elapsed realtime) is more than 60 s from the fix.
-  The identity is `CellIdentityLte` (MCC, MNC, TAC, CI), `CellIdentityNr` (MCC, MNC, TAC, NCI), `CellIdentityWcdma`/
-  `Gsm` (LAC, CID); neighbour cells usually carry only PCI/EARFCN and are skipped, so a lookup has **one cell**. Kept
-  in the same store as a row of kind `cell`: `key` = HMAC(install key, "mcc|mnc|area|cid"), the D5 centroid, `rangeM`
-  clamped **500 m..10 km**, a move at **20 km** (operators re-plan IDs), the same ageing and cap (cells are few: a kid's
-  life is maybe 50-200).
-- **Use:** only after GPS and learned Wi-Fi gave nothing, before last-known, never instead of GPS; provider
-  `vibb_cell`; trusted at `occasions >= 3`; accuracy the cell's `rangeM` (honestly 500 m-several km: the PWA's circle
-  shows it); over **5 km** no fix. With GLA on there is no point: GMS's `network` provider already answers by cell.
-  The zones' two-fix rule rarely calls a km-wide fix "inside" a small zone, so it cannot fake an arrival; the weather
-  and "which town" on a trip are its use.
-- **Permissions:** `getAllCellInfo` and `requestCellInfoUpdate` need `ACCESS_FINE_LOCATION` and Location on (target
-  29+), not `READ_PHONE_STATE`; background reads need background location - all already held. Android 14-17: no
-  change named for these calls [17 read at build]; with no SIM the default `TelephonyManager` reads slot 0 [check].
-- **Without a SIM** (the Jelly Star, measured): `mCellInfo=[]` on both slots - no serving or neighbour cell
-  reported, so nothing to learn. If L2 is built anyway, an empty list is an ordinary miss: no row, no fix, nothing
-  logged beyond a count. Recheck with a SIM: `adb shell dumpsys telephony.registry | grep -i -m5 cellinfo` - a
-  `CellIdentityLte`/`Nr` with a real `mCi`/`mNci` means it works.
-- **Cost:** reading the cached list is free; `requestCellInfoUpdate` is one modem query (~0 mAh) per fix attempt. No
-  network data. The privacy rules are D13-D15 unchanged (keyed hash, on the phone, cleared with the Wi-Fi rows).
-- **Size:** L2 ~120 lines of code (a second identity kind in `WifiPlacesPlan`'s store, the cell read, the order row)
-  plus vector rows. **When:** only once the kid's phone has a SIM and the recheck above shows its cells, and L1's days
-  show where Wi-Fi alone leaves gaps (Q4). Until then L1 leaves the store's row kind open (a `kind` byte), nothing more.
-
-## 9. Questions for the user (defaults in bold)
-
-- **Q1** GLA off: at a known place the learned Wi-Fi fix is taken **instead of** GPS (the trail there ±40-150 m, not
-  ±5-15 m, GPS once a day and wherever Wi-Fi knows nothing): **yes** / GPS first every time (better outdoors, but a
-  failed 15-s GPS start at every indoor try).
-- **Q2** "Connected to the home Wi-Fi" shown as its own "hjemme" in the PWA: **no** - a zone named Hjemme already says
-  "at Home" for the fix, and the connected network only weighs more on the phone / yes (a new report field and a PWA
-  line).
-- **Q3** (after the Jelly Star's days-to-learn) A teaching GPS fix ~3 min after the phone starts moving, to learn the
-  street outside home and school faster: at most 6 a day, ~1.5-2.5 mAh and the location dot that many more times:
-  **decided after the measurement** / now.
-- **Q4** Cell towers as a coarse fallback (±0.5-5 km, `vibb_cell`): **a later, optional step once the phone has a
-  SIM** (the Jelly Star without one reports no cells) / in L1 now (~120 lines that do nothing until a SIM is in).
+- **Q5** The zone link after a move (D12): on a GLA-off phone with no SIM, a whole trip to a cabin whose MiFi was
+  learned at home, with no good GPS fix anywhere on the way or at the cabin, could show "at Home" until the next good
+  fix. **Allow the link after a move under (a)-(d)** (a rural home with one router shows "home" on arrival) / the link
+  only renews a still vouch (no such risk; a one-router home shows the fix's age after arriving until GPS works).
