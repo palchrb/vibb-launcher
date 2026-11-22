@@ -113,34 +113,32 @@ pub async fn intake(
     }
     let result = async {
         let effective = crate::time_rules::effective_rule_rows(&state.db, device.id).await?;
-        // A rule turned on now (design 93): its copy's id is -(time_lock_now.id), taken only for a lock that ran when
-        // the pause started (the clock slack either side). Its rule is looked up in the phone's scope (design 123: one
+        // A rule turned on now (design 93): its copy's id is -(time_lock_now.id), taken only for a lock that hadn't
+        // ended when the pause started. Its rule is looked up in the phone's scope (design 123: one
         // switched off for the phone may be turned on), and the copy's `copy_of` row merges into it; every other
         // positive id must be one of the effective rules.
+        // The lock had not ended before the pause started (the clock slack): a copy's id names only this phone's
+        // lock, and `check` caps every end, so no bound on its start (a phone's clock may be behind).
         let started_lo = crate::lock_now::db_time(
             chrono::DateTime::from_timestamp_millis(
                 body.started_at_ms.saturating_sub(CLOCK_SLACK_MS),
             )
             .unwrap_or(now),
         );
-        let started_hi = crate::lock_now::db_time(
-            chrono::DateTime::from_timestamp_millis(
-                body.started_at_ms.saturating_add(CLOCK_SLACK_MS),
-            )
-            .unwrap_or(now),
-        );
+        let phone = if body.rules.iter().any(|r| r.rule_id < 0) {
+            crate::time_rules::phone_rule_rows(&state.db, device.id).await?
+        } else {
+            Vec::new()
+        };
         let mut through_lock: Vec<crate::time_rules::TimeRuleRow> = Vec::new();
-        let mut phone: Option<Vec<crate::time_rules::TimeRuleRow>> = None;
         let mut resolved: Vec<(i64, i64)> = Vec::new();
         for asked in body.rules.iter().filter(|r| r.rule_id < 0) {
             let copied: Option<Option<i64>> = sqlx::query_scalar(
                 "SELECT rule_id FROM time_lock_now WHERE id = ? AND device_id = ? \
-                 AND created_at <= ? AND ends_at > ? \
-                 AND (ended_early_at IS NULL OR ended_early_at > ?)",
+                 AND ends_at > ? AND (ended_early_at IS NULL OR ended_early_at > ?)",
             )
             .bind(-asked.rule_id)
             .bind(device.id)
-            .bind(&started_hi)
             .bind(&started_lo)
             .bind(&started_lo)
             .fetch_optional(&state.db)
@@ -148,15 +146,7 @@ pub async fn intake(
             let Some(rule_id) = copied.flatten() else {
                 continue;
             };
-            if phone.is_none() {
-                phone = Some(crate::time_rules::phone_rule_rows(&state.db, device.id).await?);
-            }
-            if let Some(rule) = phone
-                .as_deref()
-                .unwrap_or_default()
-                .iter()
-                .find(|r| r.id == rule_id)
-            {
+            if let Some(rule) = phone.iter().find(|r| r.id == rule_id) {
                 through_lock.push(rule.clone());
                 resolved.push((asked.rule_id, rule_id));
             }

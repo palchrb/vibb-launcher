@@ -54,7 +54,8 @@ pub(crate) fn summary_group(_time_group: &str) -> &'static str {
 
 /// Form: `target` ("rule" or "budget"), `rule` ("all" or a rule id - only for "rule"), `minutes`
 /// (15/30/60/120 for a rule, 15/30/60 for screen time), `back` (ignored since 2026-11-01). The
-/// rule must be one of the device's effective rules (`time_rules::effective_rule_rows`).
+/// rule must be one the phone can pause (design 123 §3.3, `lock_now::pausable`); a refusal of a rule
+/// the phone has names it (`&rule=`).
 pub async fn create_lift(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -81,14 +82,24 @@ pub async fn create_lift(
         .unwrap_or(0);
     let rule = form.get("rule").map(|r| r.trim()).unwrap_or("all");
     match record_lift(&state, lang, id, &admin, target, rule, minutes).await {
+        // Design 123 §3.4: the flash names the rule refused.
+        Ok("pause_not_in_force") => Redirect::to(&format!(
+            "/devices/{id}?done=pause_not_in_force&rule={}#quick",
+            rule.parse::<i64>()
+                .map(|r| r.to_string())
+                .unwrap_or_default()
+        ))
+        .into_response(),
         Ok(done) => back_to(id, if target == "rule" { "pause" } else { "extra" }, done),
         Err(refused) => refused,
     }
 }
 
 /// [create_lift]'s core, shared with design 93's Regler sheet (`rules_now`, "Sett på pause"):
-/// checks the lift, writes its row, nudges the phone. `Ok` is the flash code (`pause`, `extra`, or
-/// `gone` for a rule no longer the phone's, with nothing written); `Err` is an error page. `rule`:
+/// checks the lift, writes its row, nudges the phone. `Ok` is the flash code (`pause`, `extra`,
+/// `gone` for a rule deleted since the page loaded, or `pause_not_in_force` for a rule of the phone
+/// that can't be paused now - switched off for it, or without days and not turned on -, both with
+/// nothing written); `Err` is an error page. `rule`:
 /// "all" (or empty) or a rule id, read only for a rule pause. Design 100 §14.4: one `BEGIN
 /// IMMEDIATE` transaction (QA R2-L6: it reads the open request it may answer, as the answer card's
 /// does), in which a lift that can unlock what locks answers the phone's open request for more time

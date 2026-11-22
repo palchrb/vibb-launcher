@@ -65,9 +65,11 @@ pub(crate) struct QuickActions {
     pub tile_on: bool,
     /// Why Slå på nå can't be chosen now (`m-on` disabled), if it can't.
     pub on_disabled: Option<String>,
-    /// Pause regler is offered (design 123 §3.3): a rule can be paused, or a pause still runs. Without it the tile
-    /// isn't rendered and the Regler sheet is in on mode only (no Hva segment, no `m-pause`).
-    pub can_pause: bool,
+    /// The Pause regler tile is rendered (design 123 §3.3, QA L4): a rule can be paused, or a pause still runs.
+    pub pause_tile: bool,
+    /// The sheet's form has a pause mode (`m-pause`, the Hva segment, "Alle regler"): a rule can be paused. Without
+    /// it the form is in on mode only.
+    pub pause_form: bool,
     /// The phone's scope: every rule a parent may turn on (design 123 §3.1); an empty one is "Ingen regler".
     pub rules: Vec<RuleOption>,
     /// The selected option: "all" or a rule id.
@@ -502,10 +504,12 @@ pub(crate) async fn build(
     } else {
         None
     };
-    // QA L4: Pause regler stays while a pause still runs (its End now is in the sheet).
-    let can_pause = !input.pause_rules.is_empty() || !pauses.is_empty();
-    // Without a pause the sheet is Slå på regel's alone.
-    let tile_on = input.query.get("mode").map(String::as_str) == Some("on") || !can_pause;
+    // QA L4: the Pause regler tile stays while a pause still runs (its End now is in the sheet); the form pauses only
+    // a pausable rule.
+    let pause_form = !input.pause_rules.is_empty();
+    let pause_tile = pause_form || !pauses.is_empty();
+    // Without a pause mode the form is Slå på regel's alone.
+    let tile_on = input.query.get("mode").map(String::as_str) == Some("on") || !pause_form;
     let mode_on = on_disabled.is_none() && tile_on;
     let default_rule = on_default
         .map(|id| id.to_string())
@@ -515,7 +519,7 @@ pub(crate) async fn build(
         .query
         .get("rule")
         .filter(|r| {
-            if mode_on || !can_pause {
+            if mode_on || !pause_form {
                 rules.iter().any(|o| o.id.to_string() == **r)
             } else {
                 *r == "all" || rules.iter().any(|o| o.pause && o.id.to_string() == **r)
@@ -524,7 +528,7 @@ pub(crate) async fn build(
         .cloned();
     let selected = match posted {
         Some(rule) => rule,
-        None if mode_on || !can_pause => default_rule,
+        None if mode_on || !pause_form => default_rule,
         None => "all".to_string(),
     };
     let lengths = lock_now::lengths_offered(now_minute);
@@ -551,7 +555,8 @@ pub(crate) async fn build(
         mode_on,
         tile_on,
         on_disabled,
-        can_pause,
+        pause_tile,
+        pause_form,
         rules,
         selected,
         lengths,

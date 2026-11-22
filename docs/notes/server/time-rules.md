@@ -223,7 +223,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   end after the start and within start + minutes + 5 min) - a `400` otherwise. A rule the phone doesn't have is
   skipped; a design 93 copy's `-(time_lock_now.id)` is written as its rule's row (the twin serves the copy). None left:
   `unknown_rule`. Since design 123 (QA L1) a positive id must be effective; a copy's id is taken only through a lock
-  that ran when the pause started (5 min slack), its rule looked up in the phone scope, and the copy's `copy_of` merges
+  that hadn't ended when the pause started (5 min slack; no bound on its start - a phone's clock may be behind), its rule looked up in the phone scope, and the copy's `copy_of` merges
   into that row - so a rule switched off for the phone and turned on is paused, not `unknown_rule`.
 - One `time_lifts` row per rule, `created_by` NULL, `phone_key` the key, `created_at` the pause's start (bounded by
   now), `expires_at` the rule's own end. The key's rows are read first in one `BEGIN IMMEDIATE` and only the missing

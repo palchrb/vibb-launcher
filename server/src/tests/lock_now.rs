@@ -70,37 +70,7 @@ async fn copies(app: &TestApp, token: &str) -> Vec<Value> {
 #[tokio::test]
 async fn turning_a_rule_on_serves_a_copy_and_ends_what_would_lift_it() {
     let (app, cookie, id, token, skole) = emma(json!({"restrictions_paused": true})).await;
-    // Design 123 §3.3: Skole has no days and isn't on: nothing to pause, nothing written.
-    let res = post(
-        &app,
-        &cookie,
-        &format!("/devices/{id}/rules-now"),
-        &[
-            ("mode", "pause"),
-            ("rule", &skole.to_string()),
-            ("pause_minutes", "30"),
-        ],
-    )
-    .await;
-    assert_redirect(
-        &res,
-        &format!("/devices/{id}?done=pause_not_in_force&open=rules&mode=pause&rule={skole}"),
-        Some("quick"),
-    );
-    assert_eq!(count(&app, "SELECT COUNT(*) FROM time_lifts").await, 0);
-    let page = app
-        .get_page(
-            &format!("/devices/{id}?done=pause_not_in_force&open=rules&mode=pause&rule={skole}"),
-            &cookie,
-        )
-        .await;
-    assert!(
-        page.text().contains("Skole isn&#x27;t in use on Emma")
-            || page.text().contains("Skole isn't in use on Emma"),
-        "{}",
-        page.text()
-    );
-    // With a day (Sunday 00:00-00:01) it can be paused.
+    // Skole with a day (Sunday 00:00-00:01), so it can be paused (design 123 §3.3).
     sqlx::query(
         "UPDATE time_rules SET days_json = \
          '[null,null,null,null,null,null,{\"start\":0,\"end\":1}]' WHERE id = ?",
@@ -733,10 +703,38 @@ async fn a_rule_without_days_or_switched_off_is_turned_on() {
     .await;
     assert_redirect(
         &res,
-        &format!("/devices/{id}?done=pause_not_in_force"),
+        &format!("/devices/{id}?done=pause_not_in_force&rule={skole}"),
         Some("quick"),
     );
     assert_eq!(count(&app, "SELECT COUNT(*) FROM time_lifts").await, 1);
+    let page = app
+        .get_page(
+            &format!("/devices/{id}?done=pause_not_in_force&rule={skole}"),
+            &cookie,
+        )
+        .await
+        .text();
+    assert!(
+        page.contains("Skole isn&#39;t in use on Emma"),
+        "the flash names the rule: {page}"
+    );
+    // From the sheet: reopened in pause mode with the rule posted.
+    let res = post(
+        &app,
+        &cookie,
+        &format!("/devices/{id}/rules-now"),
+        &[
+            ("mode", "pause"),
+            ("rule", &skole.to_string()),
+            ("pause_minutes", "30"),
+        ],
+    )
+    .await;
+    assert_redirect(
+        &res,
+        &format!("/devices/{id}?done=pause_not_in_force&open=rules&mode=pause&rule={skole}"),
+        Some("quick"),
+    );
     let lifts = app.policy(&token).await["time_policy"]["lifts"].clone();
     assert_eq!(
         lifts.as_array().unwrap().len(),

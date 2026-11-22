@@ -2303,7 +2303,8 @@ async fn render_device(
         .ok()
         .flatten();
 
-    // The phone's effective rules: the Time row, Pause a rule…, the badge and the Do Not Disturb row.
+    // The phone's effective rules: the Time row and the schedule's lines in Quick Actions (the on- and pause lists
+    // are design 123's scopes, below; the badge and the Do Not Disturb row read the served rows).
     let time_rules = crate::time_rules::effective_rule_rows(&state.db, id)
         .await
         .map_err(|err| tracing::error!(device_id = id, %err, "can't read the phone's rules"));
@@ -2554,13 +2555,16 @@ async fn render_device(
         String::new()
     };
     // Design 123 §3.1: the on-list is the phone's scope, the pause list the pausable rules.
-    let scopes = match crate::lock_now::rule_scopes(&state.db, id, now).await {
-        Ok(scopes) => scopes,
-        Err(err) => {
+    // A read that fails leaves both lists empty (logged): the sheet then says "Ingen regler", the page still shows.
+    let scopes = crate::lock_now::rule_scopes(&state.db, id, now)
+        .await
+        .unwrap_or_else(|err| {
             tracing::error!(device_id = id, %err, "can't read the phone's rules");
-            return crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.read_phone");
-        }
-    };
+            crate::lock_now::RuleScopes {
+                phone: Vec::new(),
+                pausable: Vec::new(),
+            }
+        });
     let done = query
         .get("done")
         .and_then(|code| crate::handlers::lifts::done_flash(code))
