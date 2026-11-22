@@ -41,6 +41,8 @@ import com.kidslauncher.mdm.zones.extraLocations
 import com.kidslauncher.mdm.zones.Motion
 import com.kidslauncher.mdm.zones.freshOwnFix
 import com.kidslauncher.mdm.zones.heartbeatDue
+import com.kidslauncher.mdm.zones.fixMoving
+import com.kidslauncher.mdm.zones.motionContradiction
 import com.kidslauncher.mdm.zones.reportStill
 import com.kidslauncher.mdm.zones.syncLocationAction
 import com.kidslauncher.mdm.zones.toQueued
@@ -301,9 +303,10 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     // Design 64 step 2: a zone fence's crossing and its confirming alarm ask for a fresh fix too.
     // Design 64 §4.4: which path - the parent's "locate now" and a crossing's confirming fix are
     // the precise one (GPS first), a crossing's first fix the balanced one.
-    // Everything new of step 2 hangs on the zone watch being on (qa-design-64-step2-code Q-2):
-    // without zones the location step is exactly today's.
+    // The fences, the series and the queue hang on the zone watch (qa-design-64-step2-code Q-2); the
+    // heartbeat and the motion gate on the still rule, every Regularly phone (design 124 D1).
     val zonesOn = ZoneWatch.zonesOn(context, decision.policy)
+    val stillOn = ZoneWatch.stillOn(context, decision.policy)
     val zoneFix = ZoneWatch.takeFreshWanted()?.takeIf { zonesOn }
     // Security review P-L2: only `locate` asks where the phone is - a `ring` is no request for the location.
     val commandFix = ranCommand?.command == "locate"
@@ -329,7 +332,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         ownFixAgeMs = LocateCommands.cachedQueued()?.let { System.currentTimeMillis() - it.timeMs },
     )
     val location = currentLocationReport(
-        context, dpm, admin, forceFreshLocation, preciseFix, zoneFix != null, zonesOn, locationPolicy, lowBatteryFix,
+        context, dpm, admin, forceFreshLocation, preciseFix, zoneFix != null, zonesOn, stillOn, locationPolicy, lowBatteryFix,
         staysOn = locationStaysOn(locationPolicy, hardeningForcesOn, zonesOn),
         explicit = commandFix,
     )
@@ -865,18 +868,18 @@ private class LocationOutcome(
 
 /**
  * [policy] `null` = no policy (a never-managed phone): the old behaviour. The action is the pure
- * [syncLocationAction]: **without zones** ([zonesOn] false) exactly today's `locationAction` - no
- * heartbeat, no kept fix, no motion gate, the precise path for every fresh fix
- * (qa-design-64-step2-code Q-2). With zones (design 64 step 2): Regularly without a command is the
- * heartbeat ([heartbeatDue]) - a fresh fix only when due, no kept fix not yet reported is younger
- * than the interval and the motion sensor doesn't say the phone stayed put (at most 4 h of that),
- * else the cached fix, no LocationManager call; every due call and fresh fix stamps the beat. A
- * crossing's sync ([crossing], [forceFresh] through `ZoneWatch.takeFreshWanted`) and
- * `locate` always fix - [precise] (`locate`, a crossing's confirm) GPS first, a
- * crossing's first fix and the heartbeat `FRESH_BALANCED`; [explicit] (`locate` alone) the fused
- * provider first, up to a minute ([preciseFix]). The kept slot becomes the reported fix
- * only at a due `KEPT` or a crossing's sync (Q-1); the motion gate arms only after a genuinely
- * fresh fix (Q-6).
+ * [syncLocationAction]: without the still rule ([stillOn] false - not Regularly, not owner or not
+ * managed) exactly `locationAction`. On a Regularly phone (design 64 step 2, design 124 D1), zones or
+ * not, no command is the heartbeat ([heartbeatDue]): a fresh fix only when due, no kept fix (zones
+ * only) is younger than the interval and the motion gate doesn't say the phone stayed put since the
+ * last fresh fix (`STILL`, at most 4 h) or since a failed try within its back-off (`QUIET`); every due
+ * call and fresh fix stamps the beat. A crossing's sync ([crossing], [forceFresh] through
+ * `ZoneWatch.takeFreshWanted`) and `locate` always fix - [precise] (`locate`, a crossing's confirm)
+ * GPS first, a crossing's first fix and the heartbeat `FRESH_BALANCED`; [explicit] (`locate` alone)
+ * the fused provider first, up to a minute ([preciseFix]). The kept slot becomes the reported fix
+ * only at a due `KEPT` or a crossing's sync (Q-1). After any attempt the motion flags hear it
+ * ([MotionGate.afterTry], against the fire count read before it, M1); a genuinely fresh fix taken
+ * while the gate said `STILL` is checked against the vouched one (D7).
  */
 private suspend fun currentLocationReport(
     context: Context,
@@ -886,6 +889,7 @@ private suspend fun currentLocationReport(
     precise: Boolean,
     crossing: Boolean,
     zonesOn: Boolean,
+    stillOn: Boolean,
     policy: LocationPolicy?,
     lowBatteryFix: LowFix,
     staysOn: Boolean,
@@ -895,44 +899,63 @@ private suspend fun currentLocationReport(
     LocateCommands.restoreAfterDeadFix(context, dpm, admin, staysOn)
     val now = System.currentTimeMillis()
     val lastOwnFix = LauncherPreferences.mdm().lastActiveLocationFetchAtMs()
-    val motion = if (zonesOn) MotionGate.motion(context) else Motion.NO_SENSOR
+    // The motion, the fire count and since when the phone is still, read together before any fix (M1).
+    val motionNow = if (stillOn) MotionGate.snapshot(context) else null
+    val motion = motionNow?.motion ?: Motion.NO_SENSOR
     val kept = if (zonesOn) LocateCommands.keptUnreported() else null
     // The still skip and `still` count from the last genuinely fresh own fix (F-3).
-    val lastFreshFix = if (zonesOn) ZoneWatch.lastFreshFixMs(context) else lastOwnFix
+    val lastFreshFix = if (stillOn) ZoneWatch.lastFreshFixMs(context) else lastOwnFix
     val sync = syncLocationAction(
         policy = policy,
-        zonesOn = zonesOn,
+        stillOn = stillOn,
         forced = forceFresh,
         precise = precise,
         nowMs = now,
-        lastOwnFixMs = lastOwnFix,
-        lastBeatMs = if (zonesOn) ZoneWatch.lastBeatMs(context) else 0L,
+        // The back-off counts from the last try as the sync stamped it - with the beat's own `now` (QA M1).
+        lastOwnFixMs = if (stillOn) ZoneWatch.lastTryMs(context) else lastOwnFix,
+        lastBeatMs = if (stillOn) ZoneWatch.lastBeatMs(context) else 0L,
         motion = motion,
         keptFixAgeMs = kept?.let { now - it.timeMs },
         lastFreshFixMs = lastFreshFix,
+        stillSinceMs = motionNow?.stillSinceMs ?: 0L,
     )
     val action = withLowBatteryFix(sync.action, lowBatteryFix)
-    if (zonesOn) {
-        val beat = sync.beat
-        if (beat != null && beat != Heartbeat.NOT_DUE) Log.i(LOG_TAG, "Location heartbeat: $beat")
-        if (action.fresh || (beat != null && beat != Heartbeat.NOT_DUE)) ZoneWatch.stampBeat(context, now)
+    val beat = sync.beat
+    if (stillOn) {
+        if (beat == Heartbeat.QUIET) Log.i(ZONE_LOG_TAG, "Location heartbeat: QUIET backoff=${sync.backoffMs / 60_000} min")
+        if (beat == Heartbeat.STILL || beat == Heartbeat.KEPT) Log.i(ZONE_LOG_TAG, "Location heartbeat: $beat")
+        if (action.fresh || (beat != null && beat != Heartbeat.NOT_DUE)) ZoneWatch.stampBeat(context, now, tried = action.fresh)
         // The kept fix (passive, a series check's) becomes the reported one only here (Q-1).
         if (beat == Heartbeat.KEPT || crossing) LocateCommands.promoteKept(context)
     }
     // P-L3: a cached fix older than the interval is never reported - but the still heartbeat's re-send (Q-3).
-    val still = reportStill(zonesOn, action, motion, now, lastFreshFix)
+    val still = reportStill(stillOn, action, motion, now, lastFreshFix)
+    // The last fresh fix, while it is the reported one (QA L2): what D7 checks a fix taken while the gate says STILL
+    // against, and what the moving-car rule measures a fix without a speed from.
+    val lastFreshQueued = if (motionNow != null && action.fresh) LocateCommands.cachedQueued()?.takeIf { it.timeMs == lastFreshFix } else null
+    val vouched = lastFreshQueued?.takeIf { motion == Motion.STILL }
     // The parent's `locate` waits up to EXPLICIT_FIX_BOUND_MS here, under the sync mutex: rare and asked for, and its
     // fix goes into this report; every other fix keeps its 15 s (preciseFix).
     val location = LocateCommands.currentLocation(
         context, dpm, admin, action, staysOn, cachedFixMaxAgeMs(policy, still), explicit = explicit,
     )
-        ?: return LocationOutcome(action, null, null, null)
-    // A genuinely fresh fix of our own (not the cached or an old last-known fallback): the motion
-    // sensor counts "moved" from here (Q-6).
-    if (zonesOn && action.fresh && freshOwnFix(location.time, now)) {
-        ZoneWatch.stampFreshFix(context, location.time)
-        MotionGate.arm(context)
+    if (motionNow != null && action.fresh) {
+        // A genuinely fresh fix of our own (not the cached or an old last-known fallback, Q-6).
+        val fresh = location?.takeIf { freshOwnFix(it.time, now) }
+        if (fresh != null) ZoneWatch.stampFreshFix(context, fresh.time)
+        // The moving car: a fix on the move vouches for nothing - every due beat fixes until one at rest.
+        val intervalMs = (policy ?: LocationPolicy()).intervalMinutes.coerceAtLeast(MIN_LOCATION_INTERVAL_MINUTES) * 60_000L
+        val moving = fresh != null &&
+            fixMoving(if (fresh.hasSpeed()) fresh.speed else null, fresh.toQueued(), lastFreshQueued, intervalMs)
+        // Only the heartbeat's own try clears "moved since try" on a failure (L7).
+        val held = MotionGate.afterTry(context, motionNow.fires, fresh?.time, heartbeat = beat == Heartbeat.FIX, nowMs = now, moving = moving)
+        // A move during the attempt explains the distance: no contradiction then (QA L1).
+        if (held && fresh != null && motionContradiction(vouched, fresh.toQueued())) ZoneWatch.noteContradiction(context, now)
+        if (beat == Heartbeat.FIX || moving) {
+            Log.i(ZONE_LOG_TAG, "Location heartbeat: ${beat ?: "forced"} result=${if (fresh != null) "fresh" else "none"} moving=$moving")
+        }
     }
+    location ?: return LocationOutcome(action, null, null, null)
     val accuracy = if (location.hasAccuracy()) location.accuracy else null
     return LocationOutcome(
         action,
@@ -942,6 +965,9 @@ private suspend fun currentLocationReport(
         still = still,
     )
 }
+
+/** The heartbeat's lines go with the zone watch's (design 124 D11: `adb logcat -s ZoneWatch`). */
+private const val ZONE_LOG_TAG = "ZoneWatch"
 
 /**
  * The list of apps tracked server-side (see kid-phone-server's `handlers::tracked_apps`) that are

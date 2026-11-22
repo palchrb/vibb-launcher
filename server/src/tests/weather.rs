@@ -301,6 +301,39 @@ async fn the_position_comes_from_a_fresh_real_fix_else_the_zone() {
     );
 }
 
+/// Design 124 D13: a fix counts from when the phone last vouched for it - a still re-send (`resent_at`) within 6 h makes
+/// an older fix the position, one older than 6 h doesn't.
+#[tokio::test]
+async fn a_still_re_send_keeps_an_old_fix_the_position() {
+    let app = TestApp::new().await;
+    app.state.weather.set_now(now());
+    outside(&app);
+    let (id, token) = phone(&app, "p", true, "interval").await;
+    fix(&app, id, 59.9412, 10.7598, Duration::hours(9), None).await;
+    let resend = |ago: Duration| {
+        sqlx::query("UPDATE device_locations SET resent_at = ? WHERE device_id = ?")
+            .bind((now() - ago).to_rfc3339_opts(SecondsFormat::Millis, true))
+            .bind(id)
+            .execute(&app.db)
+    };
+    resend(Duration::hours(7)).await.unwrap();
+    assert_eq!(weather(&app, &token).await["status"], "no_position");
+    resend(Duration::minutes(20)).await.unwrap();
+    // A newer fix by its own time, never re-sent: the one re-sent 20 min ago is still the newest vouched.
+    fix(&app, id, 63.4305, 10.3951, Duration::hours(2), None).await;
+    assert_eq!(weather(&app, &token).await["status"], "ok");
+    let trondheim =
+        "https://api.met.no/weatherapi/locationforecast/2.0/complete?lat=63.44&lon=10.40";
+    assert!(
+        !app.fetch
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|u| u == trondheim)
+    );
+}
+
 /// D7: past `Expires` the fetch is conditional on the stored `Last-Modified`, a 304 moves `checked_at`; the next fetch
 /// is `Expires − Date` from now (a skewed `Date` changes nothing), never before 30 min; a 203 is served.
 #[tokio::test]

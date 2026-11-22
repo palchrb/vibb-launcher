@@ -2,7 +2,8 @@
 //! pulled about hourly) and `GET /api/devices/weather/now` (the card's nowcast line, at an opening). Both answer
 //! `Cache-Control: no-store` JSON, gzip'd when asked; neither returns coordinates or the cell.
 //!
-//! The position is D5's, in order: the phone's newest real fix (`COALESCE(mock, 0) = 0`) at most 6 h old and not in
+//! The position is D5's, in order: the phone's newest real fix (`COALESCE(mock, 0) = 0`) at most 6 h old - since its own
+//! time or its last still re-send (`resent_at`, design 124 D13) - and not in
 //! the future while its Location is Regularly; else the zone the parent chose on Device › Weather; else none. The
 //! words and hours are in the phone's own zone (`device_api::phone_zone`).
 
@@ -12,12 +13,13 @@ use axum::Extension;
 use axum::extract::State;
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use chrono::{DateTime, Duration, SecondsFormat, Utc};
+use chrono::{DateTime, Duration, Utc};
 
 use crate::AppState;
 use crate::security::AuthedDevice;
 use crate::weather::{self, Cell};
 use crate::weather_cache;
+use crate::zones::instant;
 
 /// A fix older than this isn't the phone's position for the weather (D5: the longest interval with one missed
 /// report).
@@ -52,14 +54,18 @@ async fn cell_of(
     now: DateTime<Utc>,
 ) -> Result<Option<Cell>, sqlx::Error> {
     if settings.location_mode == "interval" {
+        // Design 124 D13: a fix counts from when the phone last vouched for it - its own time, or a
+        // still re-send's (`resent_at`, design 64 Q-3), as Locate's "Hasn't moved since" does.
         let fix: Option<(f64, f64)> = sqlx::query_as(
             "SELECT latitude, longitude FROM device_locations \
-             WHERE device_id = ? AND COALESCE(mock, 0) = 0 AND captured_at >= ? AND captured_at <= ? \
-             ORDER BY captured_at DESC, id DESC LIMIT 1",
+             WHERE device_id = ? AND COALESCE(mock, 0) = 0 AND captured_at <= ? \
+             AND MAX(captured_at, COALESCE(resent_at, captured_at)) >= ? \
+             ORDER BY MAX(captured_at, COALESCE(resent_at, captured_at)) DESC, captured_at DESC, id DESC \
+             LIMIT 1",
         )
         .bind(device_id)
-        .bind(fix_stamp(now - Duration::hours(FRESH_FIX_HOURS)))
-        .bind(fix_stamp(now))
+        .bind(instant(now))
+        .bind(instant(now - Duration::hours(FRESH_FIX_HOURS)))
         .fetch_optional(&state.db)
         .await?;
         if let Some(cell) = fix.and_then(|(lat, lon)| Cell::of(lat, lon)) {
@@ -77,11 +83,6 @@ async fn cell_of(
     .fetch_optional(&state.db)
     .await?;
     Ok(zone.and_then(|(lat, lon)| Cell::of(lat, lon)))
-}
-
-/// `device_locations.captured_at`'s form (`models::checked_location`): UTC with milliseconds.
-fn fix_stamp(t: DateTime<Utc>) -> String {
-    t.to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 
 /// The phone's own zone: its newest report's `time_state.zone`, else Phone Setup's.

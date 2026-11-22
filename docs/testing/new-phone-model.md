@@ -25,7 +25,16 @@ Run it with a signed release build (never a debug APK on a kid's phone), on the 
   (5 = exempt). Look for the OEM's own killer (`dumpsys activity | grep -i -E "duraspeed|powergenie|autostart"` and the
   model's battery settings).
 - [ ] Location every 30 min indoors with no SIM: the PWA's age stays under ~31 min. If not:
-  `adb shell dumpsys location | grep -iE "network|fused|enabled"` (needs Google Location Accuracy / a network provider).
+  `adb shell dumpsys location | grep -iE "network|fused|enabled"` (needs Google Location Accuracy / a network provider;
+  whether it is on is the parent's choice, a privacy trade-off - `docs/setup/google-account.md` §2).
+- [ ] The significant-motion trigger (design 124, location while the phone lies still), location Regularly: after the
+  first sync and a fix, `adb logcat -s ZoneWatch` shows `Motion trigger armed (start)` (or `(fresh)`), and
+  `adb shell dumpsys sensorservice | grep -i -B1 -A3 significant` lists a registration by the uid of
+  `me.vibb.launcher` (`adb shell dumpsys package me.vibb.launcher | grep userId`). No significant-motion sensor in the
+  list: the phone fixes at every due beat (today's behaviour) and `zone_watch.motion_sensor` is false.
+- [ ] After at least an hour screen-off (deep Doze): a walk of a minute logs `Motion trigger fired`, and the next beat
+  logs `Location heartbeat: FIX` with `Fresh fix path=...`. A still evening: the PWA's Locate says "Hasn't moved since",
+  and overnight `dumpsys location` shows at most the 4-hour tries (`Location heartbeat: STILL|QUIET` between them).
 - [ ] A reboot: the phone is back online and locked down without anyone opening it.
 
 ## 3. Screen and font

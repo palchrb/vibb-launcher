@@ -91,22 +91,25 @@ object PassiveFixes {
 }
 
 /**
- * The significant-motion sensor (decision 11, §4.5): a one-shot wake-up trigger in the sensor hub
- * that needs no permission. It fires once the phone moves and disarms itself.
- * Only while the zone watch is on (`ZoneWatch.zonesOn`, qa-design-64-step2-code Q-2).
- * - **The heartbeat's flag**: armed after each **genuinely fresh** fix of our own ([arm]; never
- *   after a fallback to the cached or an old last-known fix, Q-6); the heartbeat skips its fix
- *   while it hasn't fired ([motion] = STILL; at most 4 h in a row, `heartbeatDue`). A new process
- *   doesn't know, so it counts as moved until its first fix.
+ * The significant-motion sensor (design 64 decision 11 §4.5, design 124 D2-D4, D7-D8): a one-shot
+ * wake-up trigger in the sensor hub that needs no permission. It fires once the phone moves and
+ * disarms itself. On every Regularly phone as device owner (`ZoneWatch.stillOn`), zones or not.
+ * - **The heartbeat's flags** ([MotionFlags], under this object's monitor): armed at the first sync
+ *   of every process ([watch]), after each genuinely fresh fix of ours and after every heartbeat try
+ *   ([afterTry]); the heartbeat skips its fix while it hasn't fired (`STILL`, at most 4 h after the
+ *   last fresh fix) and backs off after a failed try while it hasn't (`QUIET`). A new process, a
+ *   refused registration, a stopped anchor and Off count as moved.
  * - **The moving series**: while the policy has zones ([watch] with `zones`) the trigger is kept
- *   armed - re-armed at every fire - and each fire starts or feeds [ZoneSeries].
- * No sensor (the emulator) = [Motion.NO_SENSOR]: the heartbeat always fixes, today's behaviour,
- * and there is no series. The sensor service delivers one-shot sensors only to a UID that isn't
- * idle: the anchor's foreground service keeps ours active.
+ *   armed - re-armed at every fire - and each fire starts or feeds [ZoneSeries]. Without zones a
+ *   fire only marks the flags; the next try arms it again.
+ * No sensor (the emulator) or one distrusted (D7, `ZoneWatch.motionTrusted`) = [Motion.NO_SENSOR]:
+ * the heartbeat always fixes, today's behaviour, and there is no series. The sensor service
+ * delivers one-shot sensors only to a UID that isn't idle: the anchor's foreground service keeps
+ * ours active, and without it [snapshot] says `MOVED` (D4).
  */
 object MotionGate {
-    @Volatile
-    private var moved = true
+    /** Guarded by this object's monitor. */
+    private var flags = MotionFlags()
 
     @Volatile
     private var keepArmed = false
@@ -114,35 +117,43 @@ object MotionGate {
     @Volatile
     private var app: Context? = null
     private var listener: TriggerEventListener? = null
+    private var armedHere = false
 
     private fun sensor(context: Context): Sensor? =
         context.getSystemService(SensorManager::class.java)?.getDefaultSensor(Sensor.TYPE_SIGNIFICANT_MOTION)
 
     fun hasSensor(context: Context): Boolean = sensor(context) != null
 
-    fun motion(context: Context): Motion = when {
-        sensor(context) == null -> Motion.NO_SENSOR
-        moved -> Motion.MOVED
-        else -> Motion.STILL
+    /** What an attempt reads before its LocationManager call, in one go (M1). */
+    @Synchronized
+    fun snapshot(context: Context): MotionSnapshot {
+        val trusted = hasSensor(context) && ZoneWatch.motionTrusted(context)
+        val motion = flags.motion(trusted, com.kidslauncher.mdm.server.CommandListenerService.isRunning)
+        return MotionSnapshot(motion, flags.fires, flags.stillSinceMs)
     }
 
-    /** Regularly as device owner: with [zones] the trigger stays armed for the series. */
+    /** Regularly as device owner (D2): armed now if it isn't - at every process's first sync -, and
+     * with [zones] kept armed for the series. */
     fun watch(context: Context, zones: Boolean) {
         keepArmed = zones
-        if (zones) ensureArmed(context)
+        ensureArmed(context, if (armedHere) "sync" else "start")
     }
 
-    /** After a fresh fix of our own with zones: still from here until the trigger fires. One
-     * monitor with [fired]'s, so a fire can't land between `moved = false` and the arm (Q-6). */
-    @Synchronized
-    fun arm(context: Context) {
-        if (sensor(context) == null) return
-        moved = false
-        ensureArmed(context)
+    /** After one of our own attempts ([MotionFlags.afterTry]): a genuinely fresh fix ([freshFixMs])
+     * or the heartbeat's try ([heartbeat]) arms the trigger again. One monitor with [fired]'s. True
+     * when no fire came during the attempt (the count held). [moving]: the fresh fix was on the move
+     * ([fixMoving]) - no `STILL` or `QUIET` until one at rest. */
+    fun afterTry(context: Context, firesAtStart: Int, freshFixMs: Long?, heartbeat: Boolean, nowMs: Long, moving: Boolean): Boolean {
+        val held = synchronized(this) {
+            flags = flags.afterTry(firesAtStart, freshFixMs, heartbeat, nowMs, moving)
+            flags.fires == firesAtStart
+        }
+        if (freshFixMs != null || heartbeat) ensureArmed(context, if (freshFixMs != null) "fresh" else "try")
+        return held
     }
 
     @Synchronized
-    private fun ensureArmed(context: Context) {
+    private fun ensureArmed(context: Context, reason: String) {
         val manager = context.getSystemService(SensorManager::class.java) ?: return
         val sensor = sensor(context) ?: return
         app = context.applicationContext
@@ -156,39 +167,59 @@ object MotionGate {
             Log.w(LOG_TAG, "Couldn't arm the motion sensor: ${e.javaClass.simpleName}")
             false
         }
-        if (armed) listener = l else moved = true
+        armedHere = true
+        if (armed) {
+            listener = l
+            Log.i(LOG_TAG, "Motion trigger armed ($reason)")
+        } else {
+            // Nothing watches: nothing may vouch.
+            flags = flags.moved()
+            Log.w(LOG_TAG, "Motion trigger refused")
+        }
     }
 
     /** The trigger fired (it disarmed itself): moved; with zones the series hears it and the
      * trigger is armed again. */
     private fun fired() {
         val context = synchronized(this) {
-            moved = true
+            flags = flags.moved()
             listener = null
             app
-        } ?: return
-        if (!keepArmed) return
+        }
+        Log.i(LOG_TAG, "Motion trigger fired")
+        if (context == null || !keepArmed) return
         // Off the sensor callback's main thread (F-4): the series reads the policy and prefs.
         ZoneSeries.launch {
             ZoneSeries.onMotion(context)
-            ensureArmed(context)
+            ensureArmed(context, "series")
         }
     }
 
     /** Evidence the phone moved that the sensor may have missed - a fence crossing, a series' side
-     * change (qa-design-64-step2-code F-3): no `still` until the next fresh fix arms again. */
+     * change (F-3) - or that nothing watched: Off, the anchor stopped (D2, D4). No `still` until the
+     * next fresh fix. */
     @Synchronized
     fun markMoved() {
-        moved = true
+        flags = flags.moved()
     }
 
-    /** Regularly ended: disarmed, and unknown again. */
+    /** Regularly ended: disarmed, and moved. */
     @Synchronized
     fun stop(context: Context) {
         keepArmed = false
+        disarm(context)
+    }
+
+    /** The anchor service stopped (D4, QA L3): our UID may go idle and the registration may never
+     * deliver - disarmed and moved; the next sync's [watch] registers it again. */
+    @Synchronized
+    fun anchorStopped(context: Context) = disarm(context)
+
+    @Synchronized
+    private fun disarm(context: Context) {
         val l = listener
         listener = null
-        moved = true
+        flags = flags.moved()
         if (l == null) return
         try {
             val manager = context.getSystemService(SensorManager::class.java)

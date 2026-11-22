@@ -128,12 +128,13 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   (`PolicyZone(id, latitude, longitude, radiusM)` - never a name; missing = none), `StatusReportRequest.extraLocations`
   and `zoneWatch` (`ZoneWatchReport`), `LocationReport.provider`/`mock`; contract `zone_status_report.json`
   (`ZoneReportTest`).
-- **One gate** (qa-design-64-step2-code Q-2, the coordinator's decision): everything below - the fences, the passive
-  feed, the motion gate, the heartbeat, the backstop counting from the beat, the series, the balanced path, the queue
-  - runs only while `zoneWatchActive` (device owner, managed, Regularly **with zones**; `ZoneWatch.zonesOn`). Without
-  zones the sync's location step is `syncLocationAction`'s first line, today's `locationAction` exactly (`ZonePlanTest`
-  runs every input), the backstop counts from our last own fix (`backstopAnchorMs`), and nothing else of step 2 runs;
-  only the mock rule applies to every phone.
+- **Two gates** (qa-design-64-step2-code Q-2; design 124 D1 split it): the fences, the passive feed, the series and
+  the queue run only while `zoneWatchActive` (device owner, managed, Regularly **with zones**; `ZoneWatch.zonesOn`);
+  the heartbeat, the motion gate, `still`, the backstop counting from the beat and the balanced path while
+  `stillWatchActive` (device owner, managed, Regularly, zones or not; `ZoneWatch.stillOn`) - see "Location while the
+  phone lies still" below. Otherwise the sync's location step is `syncLocationAction`'s first line, `locationAction`
+  exactly (`ZonePlanTest` runs every input), and the backstop counts from our last own fix (`backstopAnchorMs`); the
+  mock rule applies to every phone.
 - **The fences** (`ZoneFences.sync`, from `ZoneWatch.apply` right after every sync's `AppEnforcer.apply`): one
   `LocationManager.addProximityAlert(lat, lng, radius, -1, pi)` per zone (AOSP's `GeofenceManager`, no Play services, no
   cap; the system polls a hidden balanced fused fix at most every 30 min and judges every fused fix any app causes;
@@ -152,9 +153,12 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   takes the flag (`takeFreshWanted`, a `FreshKind`; the stronger ask wins) as a `locate` would, never answering a
   command: the first fix `BALANCED`, the confirm `PRECISE`.
 - **The paths** (design 64 §4.4, `LocationAction`): `FRESH` - today's precise path, GPS first, 15 s - only for
-  `locate` (not `ring` since security review P-L2) and a crossing's confirming fix; `FRESH_BALANCED` - `getCurrentLocation(FUSED_PROVIDER,
-  QUALITY_BALANCED_POWER_ACCURACY, 15 s)`, GPS only when fused gives nothing - for the heartbeat and a crossing's first
-  fix; the series' checks the balanced fix alone (`LocateCommands.seriesFix`, no GPS, no grant, no Location switch).
+  `locate` (not `ring` since security review P-L2) and a crossing's confirming fix; `FRESH_BALANCED` - since design 124
+  D9 `LocateCommands.balancedFirst`: `getCurrentLocation(FUSED_PROVIDER, QUALITY_BALANCED_POWER_ACCURACY, 15 s)` only
+  while the network provider is on and fused is there (else GPS directly, `path=gps`), GPS once more when the fused fix is missing or worse than 200 m
+  (`balancedEnough`), the more accurate of the two kept (`gpsBetter`), logged `Fresh fix path=balanced|gps|balanced+gps
+  result=fresh|none` under `ZoneWatch` - for the heartbeat, a crossing's first fix and the low-battery fix; the
+  series' checks the balanced fix alone (`LocateCommands.seriesFix`, no GPS, no grant, no Location switch).
 - **`locate`'s own fix** (ported from upstream siesta5787/kids-launcher-mdm 619f2bfab6 + 395a926122, 2026-11-12;
   pure `preciseFix`, `LocationPolicyTest`): the parent's `locate` (the sync's `commandFix`, `explicit`) takes the
   precise path with the fused provider first at `QUALITY_HIGH_ACCURACY`, then GPS, then network, as a one-update
@@ -203,13 +207,13 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   `freshOwnFix`, never a failed attempt; F-3), else takes a fresh fix (`FIX`); every due call and every fresh fix stamps the beat, and
   `BackstopAlarm` counts from it (a skip waits a whole interval, not the 9-minute floor). A report that re-sends the
   cached fix while the sensor says still (`reportStill`) sends `zone_watch.still: true`, so the server's "Here now"
-  counts from it (Q-3). With zones on a watching phone the server serves at least 30 min (decision 3). `MotionGate`:
-  `TYPE_SIGNIFICANT_MOTION` via `requestTriggerSensor`, armed only after a **genuinely fresh** own fix (`freshOwnFix`:
-  taken at the request, less 60 s - never after a fallback to the cached or an old last-known fix, Q-6; `arm` and the
-  fire share one monitor) and kept armed while the watch is on, for the series; one-shot (disarms itself when it
-  fires); a new process counts as moved; a fence crossing and a series' side change mark it moved too
-  (`MotionGate.markMoved`, F-3: the sensor may miss a smooth ride); **no sensor (the emulator) = always fix**, and no
-  series.
+  counts from it (Q-3). With zones on a watching phone the server serves at least 30 min (decision 3). Since design 124
+  the heartbeat runs on every Regularly phone and has a fifth answer, `QUIET` - see the next section. `MotionGate`:
+  `TYPE_SIGNIFICANT_MOTION` via `requestTriggerSensor`; "still" only from a **genuinely fresh** own fix (`freshOwnFix`:
+  taken at the request, less 60 s - never after a fallback to the cached or an old last-known fix, Q-6); with zones
+  kept armed (re-armed at each fire) for the series; one-shot (disarms itself when it fires); a new process counts as
+  moved; a fence crossing and a series' side change mark it moved too (`MotionGate.markMoved`, F-3: the sensor may miss
+  a smooth ride); **no sensor (the emulator) = always fix**, and no series.
 - **The mock rule** (decision 14): `ZoneWatch.accept` on every fix the phone takes or keeps - the fresh one, each
   last-known candidate, each passive fix: a release build ignores a `Location.isMock()` fix and counts it once per fix
   (`countMock`, CE prefs `mock_ignored`, a running count - `zone_watch.mock_ignored`), the debug build takes it (the
@@ -235,3 +239,53 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
 - Not device-tested: `docs/testing/emulator.md` §6t (the emulator) and design 64 §9 (the Jelly Star: the background
   app op, the sensor armed in the background, whether the passive feed shows the location indicator, a walk home, the
   battery run, a mock-location app).
+
+## Location while the phone lies still (design 124 step 1, `docs/design/124-location-while-still.md`)
+
+- **Every Regularly phone** (D1): `stillWatchActive` (owner, managed, mode `interval`, zones or not; `ZoneWatch.stillOn`)
+  carries the heartbeat (`heartbeatDue` through `syncLocationAction`), the beat's stamp and `BackstopAlarm` counting
+  from it (`backstopAnchorMs`), `MotionGate`, `lastFreshFixMs`, `reportStill` and the balanced path. The kept slot is
+  zones-only, so without zones `KEPT` never happens. "Only when asked", Off and an unmanaged phone keep `locationAction`.
+- **The sensor** (D2, D8): `ZoneWatch.apply` calls `MotionGate.watch(zones = on)` on every Regularly phone - armed if it
+  isn't, so at the first sync of every process (`Motion trigger armed (start)`); with zones kept armed for the series,
+  without zones not re-armed at a fire but after every heartbeat try (`(try)`) and every fresh fix (`(fresh)`), or at a
+  later sync (`(sync)`). `MotionGate.stop` (moved) only when not Regularly. A refused registration marks moved
+  (`Motion trigger refused`).
+- **The flags** (D3, pure `MotionFlags` in `ZonePlan.kt`, in memory under `MotionGate`'s monitor): `movedSinceFresh`,
+  `movedSinceTry`, a `fires` counter, `stillSinceMs`. A fire and `markMoved` (a crossing, a side change,
+  `LocateCommands.clearCachedFix` - Off -, and the anchor's `onDestroy` through `MotionGate.anchorStopped`, which also
+  drops the registration for the next sync's `watch` to make again) set both and count. The sync reads the motion, the
+  count and `stillSinceMs` together before any fix (`MotionGate.snapshot`, M1) and hands the outcome to
+  `MotionGate.afterTry`: with the count moved nothing clears; a genuinely fresh fix (any path) clears both; a failure
+  clears `movedSinceTry` only after the heartbeat's own `FIX` (L7). The series check does the same around its fix.
+- **`motion`** (D4): `NO_SENSOR` without the sensor or while distrusted; `MOVED` while the anchor isn't running
+  (`CommandListenerService.isRunning`: our UID may go idle, and the sensor service skips idle UIDs), `movedSinceTry`
+  or `movingAtFresh`; `STILL_SINCE_TRY` when only `movedSinceFresh`; else `STILL`.
+- **The moving car** (the user's question before the merge): Android counts sitting in a moving car as significant
+  motion, but a vendor's sensor re-armed mid-trip may miss a smooth drive. A genuinely fresh fix on the move
+  (`fixMoving`: its speed over 1.5 m/s, `MOVING_SPEED_MPS`; without a speed, further than 200 m + both accuracies from
+  the last fresh fix taken within the interval - the series' checks: within `CHECK_MAX_DELAY_MS`) sets
+  `movingAtFresh`, so the gate stays `MOVED` - no `STILL`, no `QUIET`, every due beat fixes - until a fresh fix at
+  rest. Logged `Location heartbeat: ... moving=true`.
+- **The heartbeat** (D5): `NOT_DUE`; `KEPT`; `STILL` (no fix, `still: true`) while `STILL` and the last fresh fix is
+  under 4 h old; `QUIET` (no fix, no `still`: the PWA shows the fix's own age) while `STILL`/`STILL_SINCE_TRY` and the
+  last try is younger than `stillBackoffMs` = (last try - `stillSinceMs`) within the interval and 4 h; else `FIX`. The
+  last try is `ZoneWatch.lastTryMs` (CE prefs `zone_watch` `last_try_ms`), stamped by every sync that takes a fix with
+  the beat's own `now` in the beat's write (`stampBeat(.., tried)`) - not LocationManager's later stamp, which made a
+  beat one interval on `QUIET` by a few ms (code QA M1). A failed evening try indoors gives ~6 tries a night instead of
+  18; after a good fix, one try per 4 h. Logged under `ZoneWatch`: `Location heartbeat: QUIET backoff=N min`,
+  `Location heartbeat: STILL|KEPT`, and `Fresh fix path=...` then `Location heartbeat: FIX result=fresh|none`.
+- **A sensor that lies** (D7): a genuinely fresh fix taken while `motion` was `STILL` (a cap try, a `locate`, a
+  low-battery fix) further from the vouched fix (the reported one, only while it is the last fresh fix - QA L2) than
+  both accuracies + 200 m, both known and <= 100 m (`motionContradiction`), with no fire during the attempt
+  (`afterTry`'s answer, QA L1), is a contradiction (`ZoneWatch.noteContradiction`, CE prefs `zone_watch`
+  `motion_contradictions_v1`); the second within 7 days (`trustAfterContradiction`) sets `motion_distrust_until_ms` 7
+  days on - `NO_SENSOR` meanwhile and `zone_watch.motion_sensor: false` (`ZoneWatch.motionTrusted`). Kept across a new
+  enrollment: it is the hardware's.
+- **Unchanged**: `locate`, the low-battery fix, crossings, P-L3's age limit (a `still` re-send has none), no new
+  report field, no contract change. The server's weather counts a fix from its `resent_at` too (design 124 D13).
+- Tests: `ZonePlanTest` (the gates, `MotionFlags`' transitions with a fire during an attempt, the heartbeat with `QUIET`
+  and D5's evenings beat by beat with the §1 cap gap as a regression row, the back-off, the contradiction rule, D9's
+  provider choice and keep-the-better, the glue by source). Not device-tested: the note's §7 on the Jelly Star (our
+  uid's registration in `dumpsys sensorservice`, a fire after deep Doze, a still evening's "Hasn't moved since";
+  `docs/testing/new-phone-model.md` §2).

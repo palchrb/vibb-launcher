@@ -393,6 +393,44 @@ async fn here_now_counts_the_served_interval_and_a_still_re_send() {
     assert_eq!(fresh_now().await, (true, 30));
 }
 
+/// Design 124 D1/D13: a Regularly phone without zones re-sends its fix as still too - Locate says "Hasn't moved
+/// since", the fix's own time stays and the parent's interval is served unchanged (no fences, no floor).
+#[tokio::test]
+async fn a_still_re_send_without_zones_shows_hasnt_moved_since() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("Anna").await;
+    set_location(&app, id, "interval", 15).await;
+    let home = fix(NEAR, &at(180));
+    post(
+        &app,
+        &token,
+        json!({"location": home.clone(), "zone_watch": watch(0, 0)}),
+    )
+    .await;
+    let page = || async {
+        app.get_page(&format!("/devices/locate?device={id}"), &cookie)
+            .await
+            .text()
+    };
+    assert!(!page().await.contains("data-fix-still"));
+    let mut still = watch(0, 0);
+    still["still"] = json!(true);
+    post(&app, &token, json!({"location": home, "zone_watch": still})).await;
+    let html = page().await;
+    assert!(
+        html.contains(" data-fix-still=\"Hasn&#39;t moved since "),
+        "{html}"
+    );
+    assert!(html.contains(" data-fix-seen=\"Recent\""), "{html}");
+    assert_eq!(count(&app, "SELECT COUNT(*) FROM device_zones").await, 0);
+    assert_eq!(
+        count(&app, "SELECT COUNT(*) FROM device_locations").await,
+        1
+    );
+    assert_eq!(location_policy(&app, &token).await["interval_minutes"], 15);
+}
+
 /// Code QA N-4: every extra fix is stored before the zones are judged, once, in time order -
 /// a pair sent out of order in one report confirms at the earlier fix; more than 20 keeps the
 /// newest 20; an invalid entry is dropped, never the report.

@@ -196,10 +196,14 @@ object LocateCommands {
         saveLastActiveFetchAt(context, System.currentTimeMillis())
         // Design 64 step 2, decision 14: a release build ignores a mock fix (`Location.isMock`)
         // and counts it - the fresh one and every last-known candidate; the debug build takes it.
-        // Design 64 §4.4: the heartbeat and a crossing's first fix ask the fused provider at
-        // balanced power first (Wi-Fi/cell, no GPS on a GMS phone); GPS when it gives nothing.
-        val balanced = if (action == LocationAction.FRESH_BALANCED) requestBalancedFix(context, lm)?.takeIf { ZoneWatch.accept(context, it) } else null
-        val fresh = balanced ?: requestFreshFix(context, lm, preciseFix(explicit && action == LocationAction.FRESH))?.takeIf { ZoneWatch.accept(context, it) } ?: try {
+        // Design 64 §4.4, design 124 D9: the heartbeat, a crossing's first fix and the low-battery
+        // fix take the balanced path ([balancedFirst]); the rest the precise one.
+        val requested = if (action == LocationAction.FRESH_BALANCED) {
+            balancedFirst(context, lm)
+        } else {
+            requestFreshFix(context, lm, preciseFix(explicit && action == LocationAction.FRESH))?.takeIf { ZoneWatch.accept(context, it) }
+        }
+        val fresh = requested ?: try {
             val providers = mutableListOf(LocationManager.NETWORK_PROVIDER, LocationManager.GPS_PROVIDER)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 providers.add(LocationManager.FUSED_PROVIDER)
@@ -226,8 +230,9 @@ object LocateCommands {
     }
 
     /** Security review P-L3: location went "Off" - the cached (reported) fix and the kept one go, so nothing from
-     * before the switch is ever sent. */
+     * before the switch is ever sent; design 124 D2: and nothing vouches for a fix across an Off. */
     fun clearCachedFix(context: Context) {
+        com.kidslauncher.mdm.zones.MotionGate.markMoved()
         val prefs = PreferenceManager.getDefaultSharedPreferences(context)
         val key = LauncherPreferences.mdm().keys().cachedLocationJson()
         if (prefs.contains(key) || prefs.contains(KEPT_FIX_KEY)) prefs.edit().remove(key).remove(KEPT_FIX_KEY).commit()
@@ -273,6 +278,36 @@ object LocateCommands {
         val fix = requestBalancedFix(context, lm)?.takeIf { ZoneWatch.accept(context, it) } ?: return null
         saveLastActiveFetchAt(context, System.currentTimeMillis())
         return fix
+    }
+
+    /**
+     * Design 124 D9, for every `FRESH_BALANCED` fix (the heartbeat, a crossing's first fix, the low-battery fix): the
+     * fused fix at balanced power first only while the network provider is on and fused is there (off - Location
+     * Accuracy off on a GMS phone - fused could only wait for GPS; logged `path=gps`); worse than 200 m
+     * ([com.kidslauncher.mdm.zones.balancedEnough]) or none -> GPS once ([preciseFix]), the better of the two kept
+     * ([com.kidslauncher.mdm.zones.gpsBetter]). Every fix through the mock rule. Logged under `ZoneWatch` with the path
+     * and the result, so a phone's nights can be read with `adb logcat -s ZoneWatch`.
+     */
+    private suspend fun balancedFirst(context: Context, lm: LocationManager): Location? {
+        fun accuracy(fix: Location?) = fix?.takeIf { it.hasAccuracy() }?.accuracy
+        // The network provider on and the fused provider there to ask.
+        val balancedOn = try {
+            lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER) &&
+                lm.hasProvider(LocationManager.FUSED_PROVIDER) && lm.isProviderEnabled(LocationManager.FUSED_PROVIDER)
+        } catch (e: Exception) {
+            false
+        }
+        val balanced = if (balancedOn) requestBalancedFix(context, lm)?.takeIf { ZoneWatch.accept(context, it) } else null
+        val askGps = !com.kidslauncher.mdm.zones.balancedEnough(accuracy(balanced))
+        val gps = if (askGps) requestFreshFix(context, lm, preciseFix(false))?.takeIf { ZoneWatch.accept(context, it) } else null
+        val kept = if (balanced == null || com.kidslauncher.mdm.zones.gpsBetter(accuracy(balanced), accuracy(gps))) gps else balanced
+        val path = when {
+            !balancedOn -> "gps"
+            askGps -> "balanced+gps"
+            else -> "balanced"
+        }
+        Log.i("ZoneWatch", "Fresh fix path=$path result=${if (kept != null) "fresh" else "none"}")
+        return kept
     }
 
     /** A one-shot fused fix at balanced power, bounded like [requestFreshFix]; `null` without the
