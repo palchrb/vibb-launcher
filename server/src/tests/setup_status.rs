@@ -650,3 +650,42 @@ async fn the_call_filter_offered_early() {
     let html = app.get_page(&page, &cookie).await.text();
     assert!(!html.contains("id=\"step-call_filter"), "{html}");
 }
+
+/// Design 125: Google Location Accuracy off is a quiet optional row while location is Regularly - never counted, never
+/// a line elsewhere; not Regularly, or done, or unreadable (Location off), it isn't listed.
+#[tokio::test]
+async fn location_without_google_is_optional() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("Testtelefon").await;
+    let page = format!("/devices/{id}/setup");
+    let report =
+        |reading: Value| json!({"setup": {"device_owner": true, "location_private": reading}});
+    app.post_status(&token, report(json!(false))).await;
+    let html = app.get_page(&page, &cookie).await.text();
+    assert!(!html.contains("id=\"step-location_private\""), "{html}");
+
+    sqlx::query("UPDATE device_policy SET location_mode = 'interval' WHERE device_id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let html = app.get_page(&page, &cookie).await.text();
+    let optional = html
+        .split("<section id=\"optional\"")
+        .nth(1)
+        .unwrap_or_default();
+    assert!(optional.contains("id=\"step-location_private\""), "{html}");
+    assert!(optional.contains("nothing goes to Google"), "{html}");
+    let summary = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(!summary.contains("data-attention=\"setup\""), "{summary}");
+
+    for reading in [json!(true), Value::Null] {
+        app.post_status(&token, report(reading)).await;
+        let html = app.get_page(&page, &cookie).await.text();
+        assert!(!html.contains("id=\"step-location_private\""), "{html}");
+    }
+}

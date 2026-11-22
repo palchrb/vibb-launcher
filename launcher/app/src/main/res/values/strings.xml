@@ -1019,6 +1019,7 @@
     <string name="setup_step_map_play_links">Play services\' links</string>
     <string name="setup_step_map_vibb_links">Vibb One\'s links</string>
     <string name="setup_step_fingerprint">Fingerprint</string>
+    <string name="setup_step_location_private">Location without Google</string>
     <string name="setup_step_vibration">Vibration</string>
     <string name="setup_step_touch_feedback">Touch feedback</string>
     <string name="setup_step_lock_clock">One-line clock</string>
@@ -1038,6 +1039,7 @@
     <string name="setup_how_wifi_airplane">Turn on Wi-Fi in the panel.</string>
     <string name="setup_how_call_filter">Choose Vibb One both times.</string>
     <string name="setup_how_call_filter_early">Needed if Vibb is to manage calls. Choose Vibb One both times.</string>
+    <string name="setup_how_location_private">Vibb learns places itself, without Google. Location services › Google Location Accuracy: off.</string>
     <string name="setup_how_vibb_browser">Choose Vibb One.</string>
     <string name="setup_how_default_apps">Choose them back.</string>
     <string name="setup_how_map_play_links">Open by default: turn off Open supported links.</string>

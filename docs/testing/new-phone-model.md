@@ -49,6 +49,10 @@ Run it with a signed release build (never a debug APK on a kid's phone), on the 
   6. Wi-Fi off with Location -> Wi-Fi scanning on, then off (no learned fix); location Off from the PWA:
      `WifiPlaces: cleared (off)`.
   7. `adb shell dumpsys batterystats me.vibb.launcher`: Wi-Fi scans and GPS time against design 124's day.
+- [ ] Google Location Accuracy off (the setup step `location_private`): Settings -> Location -> Location services ->
+  **Emergency Location Service** is on (the model's name for it may differ; it sends the best position with an
+  emergency call whatever GLA is), and the setup step reads done (`adb shell dumpsys location | grep -i network`: the
+  provider disabled). Note whether GLA's switch was greyed by Advanced › "Hold posisjon på" (`DISALLOW_CONFIG_LOCATION`).
 - [ ] A reboot: the phone is back online and locked down without anyone opening it.
 
 ## 3. Screen and font

@@ -5,6 +5,7 @@ import android.app.NotificationManager
 import android.app.admin.DevicePolicyManager
 import android.content.Context
 import android.content.pm.PackageManager
+import android.location.LocationManager
 import android.net.ConnectivityManager
 import android.telephony.SubscriptionManager
 import android.telephony.TelephonyManager
@@ -34,7 +35,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 
 /** The report's readings, in the contract's key order. */
-private val REPORT_KEYS = listOf("device_owner", "child_pin", "mobile_data", "location", "data_saver", "full_screen_intent", "fingerprint")
+private val REPORT_KEYS = listOf("device_owner", "child_pin", "mobile_data", "location", "data_saver", "full_screen_intent", "fingerprint", "location_private")
 
 /**
  * Design 114 §4.1: the status report's `setup` - only the readings no other field carries ([readings], each `true`,
@@ -99,6 +100,14 @@ object SetupReadings {
         into["fingerprint"] = FingerprintEnrol.enrolled(context)
     }
 
+    /** Design 125: Google's location accuracy off - Android's `network` provider off while Location is on (no network
+     * provider at all counts as off). `null` with Location off: nothing to read then. */
+    private fun locationPrivate(context: Context): Boolean? {
+        val lm = context.getSystemService(LocationManager::class.java) ?: return null
+        if (!lm.isLocationEnabled) return null
+        return !lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
+    }
+
     /** The readings only the `setup` report carries (§4.1). */
     private fun ownReadings(context: Context): Map<String, Boolean?> = buildMap {
         put("device_owner", deviceOwner(context))
@@ -112,6 +121,7 @@ object SetupReadings {
         })
         put("full_screen_intent", read { context.getSystemService(NotificationManager::class.java)?.canUseFullScreenIntent() })
         fingerprint(context, this)
+        put("location_private", read { locationPrivate(context) })
     }
 
     /** The report's `setup` (§4.1). */
@@ -160,6 +170,7 @@ object SetupReadings {
             mapLinksOn = mapLinksOn(policy),
             mapAppInstalled = mapAppInstalled(reportedPackages(context)),
             linkGate = com.kidslauncher.mdm.logins.LinkGateRuntime.enabled(context),
+            locationInterval = policy.locationPolicy?.mode == "interval",
         )
     }
 
