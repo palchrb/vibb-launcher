@@ -1,0 +1,514 @@
+{
+ "_doc": "Design 125 step 2 (§4a A3, A4), the Apple Wi-Fi lookup's shared contract: byte-identical in launcher/app/src/test/resources/wifi_lookup/contract.json. policy: the policy's wifi_lookup. request: the exact body of POST /api/devices/wifi-lookup. answers: each case the server's tests produce (a month 2026-11 is the month of the run, 2026-07 four months before it). phone_answers: the phone's action for each status and body (wait_s: no ask for that long; off: none until a policy says on; use: the rows stored).",
+ "policy": {
+  "off": {
+   "on": false
+  },
+  "on": {
+   "on": true
+  }
+ },
+ "request": {
+  "bssids": [
+   "00:00:5e:00:53:01",
+   "00:00:5e:00:53:02",
+   "00:00:5e:00:53:03"
+  ]
+ },
+ "answers": [
+  {
+   "case": "fresh",
+   "request": {
+    "bssids": [
+     "00:00:5e:00:53:01",
+     "00:00:5e:00:53:02",
+     "00:00:5e:00:53:03"
+    ]
+   },
+   "status": 200,
+   "body": {
+    "aps": [
+     {
+      "bssid": "00:00:5e:00:53:01",
+      "lat": 59.91,
+      "lng": 10.75,
+      "acc_m": 25,
+      "month": "2026-11"
+     },
+     {
+      "bssid": "00:00:5e:00:53:02",
+      "lat": 59.91015,
+      "lng": 10.75023,
+      "acc_m": 40,
+      "month": "2026-11"
+     },
+     {
+      "bssid": "00:00:5e:00:53:04",
+      "lat": 59.9103,
+      "lng": 10.7498,
+      "acc_m": 30,
+      "month": "2026-11"
+     },
+     {
+      "bssid": "00:00:5e:00:53:05",
+      "lat": 59.9098,
+      "lng": 10.7505,
+      "acc_m": 60,
+      "month": "2026-11"
+     }
+    ]
+   },
+   "note": "01 and 02 from Apple, 03 unknown to Apple (left out), 04 and 05 surrounding"
+  },
+  {
+   "case": "stale_while_paused",
+   "request": {
+    "bssids": [
+     "00:00:5e:00:53:01",
+     "00:00:5e:00:53:02",
+     "00:00:5e:00:53:03"
+    ]
+   },
+   "status": 200,
+   "body": {
+    "aps": [
+     {
+      "bssid": "00:00:5e:00:53:01",
+      "lat": 59.91,
+      "lng": 10.75,
+      "acc_m": 25,
+      "month": "2026-07"
+     },
+     {
+      "bssid": "00:00:5e:00:53:02",
+      "lat": 59.91015,
+      "lng": 10.75023,
+      "acc_m": 40,
+      "month": "2026-07"
+     }
+    ]
+   },
+   "note": "fetched four months ago, Apple paused: the stale rows answer"
+  },
+  {
+   "case": "over_limit",
+   "request": {
+    "bssids": [
+     "00:00:5e:00:53:01",
+     "00:00:5e:00:53:06"
+    ]
+   },
+   "status": 200,
+   "body": {
+    "aps": [
+     {
+      "bssid": "00:00:5e:00:53:01",
+      "lat": 59.91,
+      "lng": 10.75,
+      "acc_m": 25,
+      "month": "2026-11"
+     }
+    ]
+   },
+   "note": "06 not cached and the server-wide limit full: the cache alone"
+  },
+  {
+   "case": "off",
+   "request": {
+    "bssids": [
+     "00:00:5e:00:53:01",
+     "00:00:5e:00:53:02",
+     "00:00:5e:00:53:03"
+    ]
+   },
+   "status": 409,
+   "body": {
+    "error": "off"
+   }
+  },
+  {
+   "case": "limit",
+   "request": {
+    "bssids": [
+     "00:00:5e:00:53:01",
+     "00:00:5e:00:53:02",
+     "00:00:5e:00:53:03"
+    ]
+   },
+   "status": 429,
+   "body": {
+    "error": "limit"
+   },
+   "note": "this phone's 31st lookup in an hour"
+  },
+  {
+   "case": "busy",
+   "request": {
+    "bssids": [
+     "00:00:5e:00:53:01",
+     "00:00:5e:00:53:02",
+     "00:00:5e:00:53:03"
+    ]
+   },
+   "status": 429,
+   "body": {
+    "error": "busy"
+   },
+   "note": "a third lookup while two wait for Apple"
+  },
+  {
+   "case": "unavailable",
+   "request": {
+    "bssids": [
+     "00:00:5e:00:53:01",
+     "00:00:5e:00:53:02",
+     "00:00:5e:00:53:03"
+    ]
+   },
+   "status": 503,
+   "body": {
+    "error": "unavailable",
+    "retry_after_s": 300
+   },
+   "note": "nothing cached and Apple not reached: the first transient failure's 5-minute pause"
+  },
+  {
+   "case": "bad_not_json",
+   "request": "{\"bssids\": [",
+   "status": 400,
+   "body": {
+    "error": "invalid"
+   }
+  },
+  {
+   "case": "bad_no_list",
+   "request": {
+    "macs": [
+     "00:00:5e:00:53:01"
+    ]
+   },
+   "status": 400,
+   "body": {
+    "error": "invalid"
+   }
+  },
+  {
+   "case": "bad_another_key",
+   "request": {
+    "bssids": [
+     "00:00:5e:00:53:01"
+    ],
+    "ssid": "x"
+   },
+   "status": 400,
+   "body": {
+    "error": "invalid"
+   }
+  },
+  {
+   "case": "bad_empty",
+   "request": {
+    "bssids": []
+   },
+   "status": 400,
+   "body": {
+    "error": "invalid"
+   }
+  },
+  {
+   "case": "bad_too_many",
+   "request": {
+    "bssids": [
+     "00:00:5e:00:00:01",
+     "00:00:5e:00:00:02",
+     "00:00:5e:00:00:03",
+     "00:00:5e:00:00:04",
+     "00:00:5e:00:00:05",
+     "00:00:5e:00:00:06",
+     "00:00:5e:00:00:07",
+     "00:00:5e:00:00:08",
+     "00:00:5e:00:00:09",
+     "00:00:5e:00:00:0a",
+     "00:00:5e:00:00:0b",
+     "00:00:5e:00:00:0c",
+     "00:00:5e:00:00:0d",
+     "00:00:5e:00:00:0e",
+     "00:00:5e:00:00:0f",
+     "00:00:5e:00:00:10",
+     "00:00:5e:00:00:11",
+     "00:00:5e:00:00:12",
+     "00:00:5e:00:00:13",
+     "00:00:5e:00:00:14",
+     "00:00:5e:00:00:15",
+     "00:00:5e:00:00:16",
+     "00:00:5e:00:00:17",
+     "00:00:5e:00:00:18",
+     "00:00:5e:00:00:19",
+     "00:00:5e:00:00:1a",
+     "00:00:5e:00:00:1b",
+     "00:00:5e:00:00:1c",
+     "00:00:5e:00:00:1d",
+     "00:00:5e:00:00:1e",
+     "00:00:5e:00:00:1f",
+     "00:00:5e:00:00:20",
+     "00:00:5e:00:00:21",
+     "00:00:5e:00:00:22",
+     "00:00:5e:00:00:23",
+     "00:00:5e:00:00:24",
+     "00:00:5e:00:00:25",
+     "00:00:5e:00:00:26",
+     "00:00:5e:00:00:27",
+     "00:00:5e:00:00:28",
+     "00:00:5e:00:00:29"
+    ]
+   },
+   "status": 400,
+   "body": {
+    "error": "invalid"
+   }
+  },
+  {
+   "case": "bad_upper_case",
+   "request": {
+    "bssids": [
+     "00:00:5E:00:53:01"
+    ]
+   },
+   "status": 400,
+   "body": {
+    "error": "invalid"
+   }
+  },
+  {
+   "case": "bad_short_groups",
+   "request": {
+    "bssids": [
+     "0:0:5e:0:53:1"
+    ]
+   },
+   "status": 400,
+   "body": {
+    "error": "invalid"
+   }
+  },
+  {
+   "case": "bad_multicast",
+   "request": {
+    "bssids": [
+     "01:00:5e:00:53:01"
+    ]
+   },
+   "status": 400,
+   "body": {
+    "error": "invalid"
+   }
+  },
+  {
+   "case": "bad_locally_administered",
+   "request": {
+    "bssids": [
+     "02:00:5e:00:53:01"
+    ]
+   },
+   "status": 400,
+   "body": {
+    "error": "invalid"
+   }
+  },
+  {
+   "case": "bad_all_zero",
+   "request": {
+    "bssids": [
+     "00:00:00:00:00:00"
+    ]
+   },
+   "status": 400,
+   "body": {
+    "error": "invalid"
+   }
+  },
+  {
+   "case": "bad_all_ones",
+   "request": {
+    "bssids": [
+     "ff:ff:ff:ff:ff:ff"
+    ]
+   },
+   "status": 400,
+   "body": {
+    "error": "invalid"
+   }
+  },
+  {
+   "case": "bad_dashes",
+   "request": {
+    "bssids": [
+     "00-00-5e-00-53-01"
+    ]
+   },
+   "status": 400,
+   "body": {
+    "error": "invalid"
+   }
+  },
+  {
+   "case": "bad_a_number",
+   "request": {
+    "bssids": [
+     5
+    ]
+   },
+   "status": 400,
+   "body": {
+    "error": "invalid"
+   }
+  },
+  {
+   "case": "bad_one_bad_of_two",
+   "request": {
+    "bssids": [
+     "00:00:5e:00:53:01",
+     "00:00:5e:00:53"
+    ]
+   },
+   "status": 400,
+   "body": {
+    "error": "invalid"
+   }
+  }
+ ],
+ "phone_answers": [
+  {
+   "case": "use",
+   "status": 200,
+   "body": {
+    "aps": [
+     {
+      "bssid": "00:00:5e:00:53:01",
+      "lat": 59.91,
+      "lng": 10.75,
+      "acc_m": 25,
+      "month": "2026-11"
+     },
+     {
+      "bssid": "00:00:5e:00:53:02",
+      "lat": 59.91015,
+      "lng": 10.75023,
+      "acc_m": 40,
+      "month": "2026-11"
+     },
+     {
+      "bssid": "00:00:5e:00:53:04",
+      "lat": 59.9103,
+      "lng": 10.7498,
+      "acc_m": 30,
+      "month": "2026-11"
+     },
+     {
+      "bssid": "00:00:5e:00:53:05",
+      "lat": 59.9098,
+      "lng": 10.7505,
+      "acc_m": 60,
+      "month": "2026-11"
+     }
+    ]
+   },
+   "action": "use"
+  },
+  {
+   "case": "empty",
+   "status": 200,
+   "body": {
+    "aps": []
+   },
+   "action": "use"
+  },
+  {
+   "case": "off",
+   "status": 409,
+   "body": {
+    "error": "off"
+   },
+   "action": "off"
+  },
+  {
+   "case": "limit",
+   "status": 429,
+   "body": {
+    "error": "limit"
+   },
+   "action": "wait",
+   "wait_s": 900
+  },
+  {
+   "case": "busy",
+   "status": 429,
+   "body": {
+    "error": "busy"
+   },
+   "action": "wait",
+   "wait_s": 900
+  },
+  {
+   "case": "unavailable",
+   "status": 503,
+   "body": {
+    "error": "unavailable",
+    "retry_after_s": 300
+   },
+   "action": "wait",
+   "wait_s": 300
+  },
+  {
+   "case": "unavailable_long",
+   "status": 503,
+   "body": {
+    "error": "unavailable",
+    "retry_after_s": 172800
+   },
+   "action": "wait",
+   "wait_s": 86400
+  },
+  {
+   "case": "unavailable_without_wait",
+   "status": 503,
+   "body": {
+    "error": "unavailable"
+   },
+   "action": "wait",
+   "wait_s": 900
+  },
+  {
+   "case": "transport",
+   "status": 0,
+   "body": null,
+   "action": "wait",
+   "wait_s": 900
+  },
+  {
+   "case": "bad_request",
+   "status": 400,
+   "body": {
+    "error": "invalid"
+   },
+   "action": "wait",
+   "wait_s": 900
+  },
+  {
+   "case": "server_error",
+   "status": 500,
+   "body": null,
+   "action": "wait",
+   "wait_s": 900
+  },
+  {
+   "case": "unreadable_200",
+   "status": 200,
+   "body": {
+    "aps": "x"
+   },
+   "action": "wait",
+   "wait_s": 900
+  }
+ ]
+}

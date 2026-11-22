@@ -450,6 +450,7 @@ mod tests {
             "src/handlers",
             "src/integrations",
             "src/integrations/map_links",
+            "src/integrations/wifi_lookup",
         ] {
             for entry in std::fs::read_dir(dir).unwrap() {
                 let path = entry.unwrap().path();
@@ -693,6 +694,8 @@ mod tests {
         "partials/app_push_group.html",
         // Design 110: the map links integration's group on Device › Apps.
         "partials/map_links_group.html",
+        // Design 125 A1: the Apple Wi-Fi lookup's group on the Location page.
+        "partials/wifi_lookup_group.html",
         "partials/status_line.html",
         "partials/push_offer.html",
         "partials/confirm_cancel.html",
@@ -922,6 +925,7 @@ mod tests {
             "src/handlers",
             "src/integrations",
             "src/integrations/map_links",
+            "src/integrations/wifi_lookup",
         ] {
             for entry in std::fs::read_dir(dir).unwrap() {
                 let path = entry.unwrap().path();

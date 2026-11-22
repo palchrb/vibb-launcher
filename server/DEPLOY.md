@@ -1002,6 +1002,76 @@ nothing about a push is logged.
   against its own clock: with the clock badly off, signed pushes are refused with `503` and `Retry-After: 300` (which
   keeps the sender's subscription) until it is fixed (design 108b §4.8).
 
+## The Apple Wi-Fi lookup (design 125 step 2, migration 0163)
+
+With Google's location service off on a kid's phone (`docs/setup/google-account.md`), the phone learns places from its
+own GPS fixes; at a place it doesn't know yet it can ask this server where the Wi-Fi networks it hears are, and the
+server asks Apple's Wi-Fi location service (`gs-loc.apple.com`, HTTPS 443) the way GrapheneOS's NetworkLocation does.
+It is **off for every phone** until the parent turns on "Wi-Fi lookup at Apple" on the phone's Location page.
+
+- **Apple sees** the nearby networks' hardware addresses (BSSIDs) and the address the call comes from - never the
+  phone, a name or an account. Through a proxy that address is the proxy's.
+- **Use a proxy.** A server at home shares its address with the family's Apple devices: without a proxy Apple could tie
+  the lookups to them. Set `WIFI_LOOKUP_PROXY` in `.env` to a SOCKS5 proxy with remote DNS, `socks5h://host:port`. Each
+  call uses its own random SOCKS user name and password, so Tor (whose `IsolateSOCKSAuth` is on by default) builds it a
+  circuit of its own. With the setting present a call never goes direct: a proxy that is down or refuses is a failed
+  call (cached answers still serve), and a setting that isn't a `socks5h://` address fails every call and is logged at
+  start. With no setting the calls go from the server's own address and the Location page's ⓘ says so.
+  - **Tor on the host** (the simplest): `sudo apt install tor` - Debian's Tor listens on `127.0.0.1:9050` - and
+    `WIFI_LOOKUP_PROXY=socks5h://127.0.0.1:9050` (the container runs with `network_mode: host`, so it reaches it).
+  - **Tor as a sidecar** in `compose.yaml`, from Debian's package:
+
+    ```yaml
+      tor:
+        build:
+          dockerfile_inline: |
+            FROM debian:trixie-slim
+            RUN apt-get update && apt-get install -y --no-install-recommends tor && rm -rf /var/lib/apt/lists/*
+            USER debian-tor
+            CMD ["tor", "--SocksPort", "127.0.0.1:9050", "--DataDirectory", "/var/lib/tor"]
+        restart: unless-stopped
+        network_mode: host
+        cap_drop: [ALL]
+        security_opt: ["no-new-privileges:true"]
+        volumes:
+          - tor-data:/var/lib/tor
+    ```
+
+    with `tor-data: {}` under `volumes:` and the same `WIFI_LOOKUP_PROXY`. Any other SOCKS5 egress works too, such as
+    the family's own edge.
+- **Check the route by hand** before turning a phone on: two locally administered BSSIDs, which belong to no network,
+  through the proxy (`200` is a working route; drop `--proxy ...` to try direct):
+
+  ```sh
+  printf '\x00\x01\x00\x08en-US_US\x00\x13com.apple.locationd\x00\x0b15.4.24E248\x00\x00\x00\x01\x00\x00\x00\x50\x12\x13\x0a\x1102:00:5e:00:53:01\x12\x13\x0a\x1102:00:5e:00:53:02\x20\x01\xfa\x01\x02\x01\x02\x80\x02\x02\x8a\x02\x19\x0a\x10macOS15.4/24E248\x12\x05arm64' > /tmp/wloc.bin
+  curl --proxy socks5h://127.0.0.1:9050 -sS -o /dev/null -w '%{http_code} %{time_total}s\n' \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    -H 'User-Agent: locationd/2960.0.57 CFNetwork/3826.500.111.1.1 Darwin/24.4.0' \
+    --data-binary @/tmp/wloc.bin https://gs-loc.apple.com/clls/wloc
+  ```
+
+  Then one real lookup: a test phone with the switch on, Google's location service off, at a place it hasn't learned;
+  the log shows `wifi_lookup: lookup` and `wifi_lookup: Apple answered status=200`.
+- **What the server keeps**: Apple's answers in `wifi_lookup_aps`, sealed - each row's id is a keyed hash of the BSSID
+  and its position is encrypted under the key in `data/keys/wifi_lookup` (made on the first lookup, 0600, never in a
+  backup: `/app/data/keys` is its own volume in Docker). The database and its backups alone reveal no BSSID and no
+  place; whoever has both the database and the key can open the row of a BSSID they already know. The rows carry only
+  the month Apple answered and the month they were last used - no phone, no time of a lookup, no history. A row unused
+  for two years goes; the whole table goes when the last phone with the switch on is deleted; a restore or a lost key
+  starts it empty (the phones ask again). Even sealed, the cache shows which areas the family's phones have been near,
+  to whoever holds both.
+- **Your reverse proxy's access log** records each phone's `POST /api/devices/wifi-lookup` with its time (the server
+  itself logs counts only): turn the access log off for that path if you keep one (Caddy: `log_skip
+  /api/devices/wifi-lookup`; nginx: a `location = /api/devices/wifi-lookup { access_log off; proxy_pass ...; }`).
+- **When Apple stops answering** (the service closed, the exit blocked, the proxy down): the calls pause - 5 minutes
+  after the first transient failure, then an hour doubling to a day - with one log line per step (`wifi_lookup: paused
+  4h class=proxy failures=3`); after 24 hours without a success, or at the day-long step, the phone's Location page and
+  Attention show "Apple lookups aren't working". The phones carry on with their own learning and GPS.
+- **Limits**: 30 lookups per phone an hour; 60 calls to Apple an hour and 10 in any 10 minutes, one at a time.
+- **Apple's terms**: GrapheneOS asks Apple without a cache; this server keeps answers for months and presents itself
+  as macOS's `locationd`, which Apple's terms probably don't allow. The likely risk is Apple blocking or changing the
+  service; the phones' own learning goes on without it.
+
 ## Useful commands on the Pi
 
 - Check it's running: `systemctl status kid-phone-server`

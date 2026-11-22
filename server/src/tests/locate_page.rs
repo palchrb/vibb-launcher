@@ -142,7 +142,7 @@ async fn every_form_on_the_locate_pages_returns_to_its_group() {
     let settings = format!("/devices/{id}/location-settings");
     // (action as rendered, the fields a parent sends, the expected Location).
     type Row<'a> = (String, &'a [(&'a str, &'a str)], (String, Option<&'a str>));
-    let table: [Row; 9] = [
+    let table: [Row; 10] = [
         (
             format!("/devices/{id}/command/locate#update-location"),
             &[],
@@ -188,6 +188,12 @@ async fn every_form_on_the_locate_pages_returns_to_its_group() {
             format!("/devices/{id}/location-retention#location-settings"),
             &[("days", "14")],
             (settings.clone(), Some("location-settings")),
+        ),
+        // Design 125 A1: the Apple Wi-Fi lookup's switch.
+        (
+            format!("/devices/{id}/wifi-lookup#wifi-lookup"),
+            &[("on", "on")],
+            (settings.clone(), Some("wifi-lookup")),
         ),
     ];
     assert!(
@@ -2071,7 +2077,8 @@ async fn location_settings_goes_back_to_where_it_was_opened_from() {
         .text();
     assert!(!from.contains("/devices/locate?device="), "{from}");
     assert!(from.contains(&format!("href=\"/devices/{id}\"")));
-    assert_eq!(from.matches("name=\"from\" value=\"device\"").count(), 2);
+    // The two settings forms and design 125's "Wi-Fi lookup at Apple".
+    assert_eq!(from.matches("name=\"from\" value=\"device\"").count(), 3);
     let device_page = app
         .get_page(&format!("/devices/{id}"), &cookie)
         .await

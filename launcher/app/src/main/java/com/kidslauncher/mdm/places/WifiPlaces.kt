@@ -24,10 +24,13 @@ import android.telephony.TelephonyManager
 import android.util.AtomicFile
 import android.util.Log
 import com.kidslauncher.mdm.BuildConfig
+import com.kidslauncher.mdm.preferences.LauncherPreferences
+import com.kidslauncher.mdm.server.DeviceToken
 import com.kidslauncher.mdm.server.LocateCommands
 import com.kidslauncher.mdm.server.QuickControls
 import com.kidslauncher.mdm.server.Secrets
 import com.kidslauncher.mdm.server.ServerJson
+import com.kidslauncher.mdm.server.createMdmApi
 import com.kidslauncher.mdm.server.currentPolicyDecision
 import com.kidslauncher.mdm.zones.CONFIRM_DELAY_MS
 import com.kidslauncher.mdm.zones.Motion
@@ -56,6 +59,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.builtins.ListSerializer
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 
 private const val LOG_TAG = "WifiPlaces"
 private const val PREFS = "wifi_places"
@@ -64,6 +69,11 @@ private const val AAD_HMAC = "wifi_places/hmac_key_v1"
 private const val KEY_BUDGET = "teach_budget_v1"
 private const val KEY_COUNTS = "loo_v1"
 private const val KEY_LAST_GPS_TRY = "last_gps_try_ms"
+
+/** Design 125 step 2: the policy's switch as the last fresh policy said, the wait after an answer, a 409's "off". */
+private const val KEY_APPLE_ON = "apple_on"
+private const val KEY_APPLE_WAIT = "apple_wait_until_ms"
+private const val KEY_APPLE_OFF = "apple_off"
 private const val FILE = "wifi_places_v1"
 private const val AAD_TABLE = "wifi_places_v1"
 private const val ACTION_TEACH = "com.kidslauncher.mdm.action.WIFI_PLACES_TEACH"
@@ -107,10 +117,12 @@ private const val CELL_WAIT_MS = 3_000L
 object WifiPlaces {
     /**
      * What a sync's attempt knows ([motion], [movedAtElapsedMs] - design 124's flags) and, for the heartbeat's 4-h cap
-     * try with `motion` `STILL`, the [vouched] fix a zone link may renew (D12). The attempt answers in [renewed] (the
-     * vouched fix re-sent with `still: true`) and [notFresh] (a 2-min fallback fix: reported, never fresh, M2).
+     * try with `motion` `STILL`, the [vouched] fix a zone link may renew (D12); while `motion` is `STILL` or
+     * `STILL_SINCE_TRY`, the [stillVouch] an Apple fix may only renew (design 125 A9, H2). The attempt answers in
+     * [renewed] (the vouched fix re-sent with `still: true`) and [notFresh] (a 2-min fallback fix: reported, never fresh,
+     * M2).
      */
-    class Ask(val motion: Motion, val movedAtElapsedMs: Long, val vouched: Location? = null) {
+    class Ask(val motion: Motion, val movedAtElapsedMs: Long, val vouched: Location? = null, val stillVouch: Location? = null) {
         @Volatile var renewed = false
 
         @Volatile var notFresh = false
@@ -441,6 +453,91 @@ object WifiPlaces {
         return location(fix)
     }
 
+    // --- The Apple lookup through the family's server (design 125 step 2, A3, A4, A9) ---
+
+    /**
+     * Each fresh policy's switch (the sync, after it is stored): off drops every Apple row and the waits; on ends a
+     * 409's "no ask until a policy says on". Never throws.
+     */
+    fun policyAccepted(context: Context, on: Boolean) {
+        try {
+            val p = prefs(context)
+            val wasOn = p.getBoolean(KEY_APPLE_ON, false)
+            if (on) {
+                if (!wasOn || p.contains(KEY_APPLE_OFF)) p.edit().putBoolean(KEY_APPLE_ON, true).remove(KEY_APPLE_OFF).commit()
+                return
+            }
+            if (!wasOn) return
+            p.edit().remove(KEY_APPLE_ON).remove(KEY_APPLE_OFF).remove(KEY_APPLE_WAIT).commit()
+            val store = open(context) ?: return
+            save(context, store.generation, ::dropApple)
+            Log.i(LOG_TAG, "apple rows dropped (switch off)")
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "apple switch not applied: ${e.javaClass.simpleName}")
+        }
+    }
+
+    /** A3: the switch on, no wait or 409 in force, and a network up (offline: no ask and nothing changed). */
+    private fun appleAllowed(context: Context): Boolean {
+        val p = prefs(context)
+        if (!p.getBoolean(KEY_APPLE_ON, false)) return false
+        if (!appleMayAsk(System.currentTimeMillis(), p.getLong(KEY_APPLE_WAIT, 0L), p.getBoolean(KEY_APPLE_OFF, false))) return false
+        return try {
+            val cm = context.getSystemService(ConnectivityManager::class.java)
+            cm?.activeNetwork?.let { cm.getNetworkCapabilities(it) }?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /**
+     * A3, A4: a learned miss's usable BSSIDs (none with a trusted own row, a live Apple row or a tombstone) asked of
+     * the server, at most 15 s; the answer's rows stored (A9), its wait or "off" kept. `true` when rows were stored.
+     */
+    private suspend fun askApple(context: Context, store: Store, snap: Snapshot, movedAtElapsedMs: Long): Boolean {
+        val view = scanView(hearing(context, store, snap, remember = false), SystemClock.elapsedRealtime(), movedAtElapsedMs) ?: return false
+        val now = nowMin()
+        val asking = appleAsk(view.heard, store.rows, now)
+        if (asking.isEmpty()) return false
+        val (status, body) = withTimeoutOrNull(APPLE_TIMEOUT_MS) { postLookup(asking) } ?: (0 to null)
+        val p = prefs(context)
+        val step = appleStep(status, body)
+        val outcome = if (step is AppleStep.Use) "got=${step.aps.size}" else "step=${step.javaClass.simpleName}"
+        Log.i(LOG_TAG, "apple asked=${asking.size} status=$status $outcome")
+        when (step) {
+            is AppleStep.Use -> {
+                p.edit().remove(KEY_APPLE_WAIT).commit()
+                save(context, store.generation) { storeApple(it, step.aps, store.keys, now) }
+                return step.aps.isNotEmpty()
+            }
+            is AppleStep.Wait -> p.edit().putLong(KEY_APPLE_WAIT, System.currentTimeMillis() + step.ms).commit()
+            AppleStep.Off -> {
+                p.edit().putBoolean(KEY_APPLE_OFF, true).commit()
+                com.kidslauncher.mdm.push.SyncRunner.request(context.applicationContext, "wifi_lookup_off")
+            }
+        }
+        return false
+    }
+
+    /** The server's answer: its status and body (0 = no answer). */
+    private suspend fun postLookup(asking: List<String>): Pair<Int, String?> = try {
+        val url = LauncherPreferences.mdm().serverUrl()
+        val token = DeviceToken.get()
+        if (url.isNullOrBlank() || token.isNullOrBlank()) {
+            0 to null
+        } else {
+            val body = ServerJson.encodeToString(WifiLookupRequest.serializer(), WifiLookupRequest(asking))
+                .toRequestBody("application/json".toMediaType())
+            val response = createMdmApi(url, token, callTimeoutMs = APPLE_TIMEOUT_MS).wifiLookup(body)
+            response.code() to (if (response.isSuccessful) response.body() else response.errorBody())?.use { it.string() }
+        }
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "apple ask failed: ${e.javaClass.simpleName}")
+        0 to null
+    }
+
     private fun location(fix: LearnedFix): Location = Location(fix.provider).apply {
         latitude = fix.lat
         longitude = fix.lng
@@ -490,7 +587,13 @@ object WifiPlaces {
         val connectedNet = h.heard.firstOrNull { it.connected }?.network
         // D16: what the table as it was said for the same results; a zone-link renewal's class by the connected network.
         val counts = mutableListOf<(DayCounts) -> DayCounts>()
-        leaveOneOut(learnedFix(ScanView(paired, true), store.rows, now), best.lat, best.lng)?.let { (cls, hit) -> counts += { c -> c.loo(cls, hit) } }
+        // D16 by class, and design 125's by source with the error: the same paired results, the table as it was.
+        val before = learnedFix(ScanView(paired, true), store.rows, now)
+        leaveOneOut(before, best.lat, best.lng)?.let { (cls, hit) -> counts += { c -> c.loo(cls, hit) } }
+        before?.let { fix ->
+            val err = distanceM(fix.lat, fix.lng, best.lat, best.lng)
+            counts += { c -> c.looSource(fix.source, err <= fix.accuracyM, err) }
+        }
         zones.firstOrNull { z -> store.rows.any { it.key == z.key && it.network == connectedNet && it.linked(now) } }?.let { z ->
             val inside = distanceM(best.lat, best.lng, z.zone.latitude, z.zone.longitude) <= z.zone.radiusM
             counts += { c -> c.loo(LooClass.ZONE, inside) }
@@ -504,10 +607,23 @@ object WifiPlaces {
         save(context, store.generation) { rows ->
             val taught = teach(rows, sightings, now, today).also { outcome = it }
             val acc = (best.accuracyM ?: TEACH_ACCURACY_MAX_M).toDouble()
-            teachLinks(taught.rows, zones, best.lat, best.lng, acc, connectedNet, paired.map { it.network }.toSet(), now, today)
+            // Design 125 A9: an own teach beyond an Apple row's reach, or a trusted own row against it, tombstones it.
+            val apple = reconcileApple(appleTaught(taught.rows, sightings, now), now)
+            teachLinks(apple, zones, best.lat, best.lng, acc, connectedNet, paired.map { it.network }.toSet(), now, today)
         }
         outcome?.let { Log.i(LOG_TAG, "taught aps=${it.taught} new=${it.new} moved=${it.moved}") }
         return true
+    }
+
+    /** A9 (H2): a still phone's Apple fix against its vouch - the `apple` leave-one-out class, and outside it an Apple
+     * contradiction. */
+    private fun stillCount(context: Context, fix: LearnedFix, vouch: Vouched?, hit: Boolean) {
+        vouch ?: return
+        val err = distanceM(fix.lat, fix.lng, vouch.lat, vouch.lng)
+        if (!hit) Log.w(LOG_TAG, "apple contradiction")
+        count(context, today()) { c ->
+            c.looSource(fix.source, hit, err).let { if (hit) it else it.copy(appleContradictions = it.appleContradictions + 1) }
+        }
     }
 
     private fun count(context: Context, today: Int, change: (DayCounts) -> DayCounts) = synchronized(lock) {
@@ -652,13 +768,34 @@ object WifiPlaces {
                     ?.takeIf { standsAlone(it, movedSinceFresh) }
                 suspend fun gps(boundMs: Long, shortMs: Long = boundMs, stopEarly: suspend () -> Boolean = { false }) =
                     gpsTry(app, lm, store, snap, ask.movedAtElapsedMs, boundMs, accept, shortMs, stopEarly).fix
-                fun asLocation(fix: LearnedFix): Location? = location(fix).takeIf(accept)?.also { ask.notFresh = !fix.fresh }
+                // Design 125 A3: on a learned miss, the Apple lookup beside GPS - then the table, with its answer, again.
+                suspend fun appleFix(): LearnedFix? {
+                    if (store == null || !appleAllowed(app)) return null
+                    if (!askApple(app, store, snap.await(), ask.movedAtElapsedMs)) return null
+                    return open(app)?.let { lookup(app, it, snap.await(), ask.movedAtElapsedMs) }?.takeIf { standsAlone(it, movedSinceFresh) }
+                }
+                val still = ask.motion == Motion.STILL || ask.motion == Motion.STILL_SINCE_TRY
+                fun asLocation(fix: LearnedFix): Location? {
+                    val vouch = ask.stillVouch?.let { Vouched(it.latitude, it.longitude, if (it.hasAccuracy()) it.accuracy.toDouble() else 0.0) }
+                    return when (appleStill(fix, vouch, still)) {
+                        StillVerdict.USE -> location(fix).takeIf(accept)?.also { ask.notFresh = !fix.fresh }
+                        // A9 (H2): still means still - the vouch renewed, never replaced.
+                        StillVerdict.RENEW -> {
+                            stillCount(app, fix, vouch, hit = true)
+                            ask.stillVouch.also { ask.renewed = true }
+                        }
+                        StillVerdict.CONTRADICTS -> {
+                            stillCount(app, fix, vouch, hit = false)
+                            null
+                        }
+                    }
+                }
                 fun better(gps: Location?, fix: LearnedFix?): Location? =
                     if (fix == null || (gps != null && gpsWins(fix.accuracyM, if (gps.hasAccuracy()) gps.accuracy else null))) gps else asLocation(fix) ?: gps
                 val kept = when (plan) {
                     // The lookup runs on the first scan beside GPS (code QA L5): independent of what the GPS teaches.
                     AttemptPlan.TOGETHER -> {
-                        val early = async { learned() }
+                        val early = async { learned() ?: appleFix() }
                         better(gps(GPS_MS), early.await())
                     }
                     AttemptPlan.LEARNED_FIRST -> {
@@ -666,12 +803,18 @@ object WifiPlaces {
                         when {
                             fix != null -> asLocation(fix)
                             renews(app, store, snap.await(), ask) -> ask.vouched.also { ask.renewed = true }
-                            else -> gps(GPS_MS)
+                            else -> {
+                                val early = async { appleFix() }
+                                better(gps(GPS_MS), early.await())
+                            }
                         }
                     }
-                    AttemptPlan.GPS_FIRST -> gps(GPS_MS) ?: learned()?.let(::asLocation)
+                    AttemptPlan.GPS_FIRST -> {
+                        val early = async { learned() ?: appleFix() }
+                        gps(GPS_MS) ?: early.await()?.let(::asLocation)
+                    }
                     AttemptPlan.LOCATE -> {
-                        val early = async { learned() }
+                        val early = async { learned() ?: appleFix() }
                         val fix = gps(LOCATE_MS, LOCATE_SHORT_MS) { early.await()?.let { it.networks >= 3 && it.accuracyM <= LOCATE_SHORT_ACCURACY_M } == true }
                         better(fix, early.await())
                     }

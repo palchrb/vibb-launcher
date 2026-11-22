@@ -71,6 +71,17 @@ class PolicyResponseCompatTest {
         assertFalse(com.kidslauncher.mdm.map.mapLinksOn((decodeCached(serverResponse) as CachedPolicy.Ok).policy))
     }
 
+    /** Design 125 A2: `wifi_lookup` (the server's `policy_json_keys_snapshot` literal, `{"on": false}` for a new phone)
+     * decodes; missing is off (every row in `WifiLookupContractTest`). */
+    @Test
+    fun `wifi_lookup decodes, and missing is off`() {
+        val off = decodeFresh(serverResponse.replace("\"allowlist\":", "\"wifi_lookup\": {\"on\": false}, \"allowlist\":"))
+        assertEquals(false, ((off as FreshDecode.Ok).policy).wifiLookup?.on)
+        val on = decodeFresh(serverResponse.replace("\"allowlist\":", "\"wifi_lookup\": {\"on\": true}, \"allowlist\":"))
+        assertEquals(true, com.kidslauncher.mdm.places.wifiLookupOn((on as FreshDecode.Ok).policy))
+        assertFalse(com.kidslauncher.mdm.places.wifiLookupOn((decodeCached(serverResponse) as CachedPolicy.Ok).policy))
+    }
+
     /** Design 114 §4.3: the policy's `setup` (the server's `policy_json_keys_snapshot` literal); missing means none
      * ticked, and a bad value never fails the policy's other keys' decode. */
     @Test

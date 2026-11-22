@@ -184,6 +184,11 @@ interface MdmApi {
     @POST("api/devices/map-links/resolve")
     suspend fun resolveMapLink(@Body body: okhttp3.RequestBody): Response<ResponseBody>
 
+    /** Design 125 A4: the BSSIDs a learned miss heard - the raw answer (`{aps}`, `{error}` or `{error, retry_after_s}`),
+     * read by [com.kidslauncher.mdm.places.appleStep]. */
+    @POST("api/devices/wifi-lookup")
+    suspend fun wifiLookup(@Body body: okhttp3.RequestBody): Response<ResponseBody>
+
     /** Design 114 §4.4: the flow's "Gjort" on a parent step - `204`, or `400 {"error": "not_a_parent_step"}`; the
      * status read by [com.kidslauncher.mdm.setup.tickAction]. */
     @POST("api/devices/setup/ticks")

@@ -173,6 +173,8 @@ struct LocationSettingsTemplate {
     tab_name: &'static str,
     back_href: String,
     back_label: String,
+    /// The integrations' groups (design 125 A1: the Apple Wi-Fi lookup), rendered by each.
+    integration_groups: Vec<String>,
 }
 crate::i18n::words!(LocationSettingsTemplate);
 
@@ -2073,9 +2075,13 @@ pub async fn show_location_settings(
     let read = async {
         let policy = location_policy(&state, id).await?;
         let zones = phone_zones(&state, id, &policy).await?;
-        Ok::<_, sqlx::Error>((policy, zones.served_interval))
+        let groups = state
+            .integrations
+            .location_groups(&state, lang, id, from_device)
+            .await?;
+        Ok::<_, sqlx::Error>((policy, zones.served_interval, groups))
     };
-    let (policy, served_interval) = match read.await {
+    let (policy, served_interval, integration_groups) = match read.await {
         Ok(read) => read,
         Err(err) => return db_error(id, err, lang),
     };
@@ -2121,6 +2127,7 @@ pub async fn show_location_settings(
                 t(lang, "nav.locate").to_string()
             },
             device,
+            integration_groups,
         }
         .render()
         .unwrap(),

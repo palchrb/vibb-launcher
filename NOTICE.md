@@ -69,6 +69,31 @@ Each section of the file names its source; they are kept as data, lower-cased wh
 places (`launcher/app/src/main/java/com/kidslauncher/mdm/places/`) is written here under the GPL-3.0 (or later),
 following ideas from those projects, Déjà Vu and GrapheneOS's NetworkLocation (design 125 §10); no code is copied.
 
+The server's Apple Wi-Fi lookup (`server/src/integrations/wifi_lookup/codec.rs`, design 125 §4a A8) ports the request
+and answer format of Apple's Wi-Fi location service - the binary header, `ALSLocationRequest`/`ALSLocationResponse`, the
+macOS `locationd` meta and headers, the leading-zero `mac_id` normalisation and the unknown latitude - from
+[GrapheneOS NetworkLocation](https://github.com/GrapheneOS/platform_packages_apps_NetworkLocation) (branch 17, commit
+`474472e`: `proto/apple_wps.proto`, `ApplePositioningService.kt`, `AppleWifiPositioningService.kt`), and
+`scripts/wifi-lookup-fixtures.py` encodes the same request independently. Both files carry this notice:
+
+> Copyright © 2024-2025 GrapheneOS
+>
+> Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
+> documentation files (the "Software"), to deal in the Software without restriction, including without limitation the
+> rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit
+> persons to whom the Software is furnished to do so, subject to the following conditions:
+>
+> The above copyright notice and this permission notice shall be included in all copies or substantial portions of the
+> Software.
+>
+> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
+> WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+> COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+> OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+The port is written in Rust by hand (no protobuf code is copied) and is distributed with the rest of the server under
+the GPL-3.0 (or later), which the MIT license permits.
+
 The server's list of MMS servers (`server/testdata/mmsc_hosts.txt`, made by `scripts/mmsc-hosts.py`, design 83) is
 extracted from AOSP's APN list, [`device/sample`](https://android.googlesource.com/device/sample)'s
 `etc/apns-full-conf.xml` at commit `73f904fbeb872f5675cb5f18cd9dfb15856425a6`, Copyright 2006, The Android Open Source

@@ -54,3 +54,38 @@ server does with an outside service for the phones - lives inside one boundary f
   again on the next tap (code QA M2).
 - Not built here: the Settings hub's 7-day counts by outcome (§8.4) - the counter is there for C2's generic health
   page to show.
+
+## The Apple Wi-Fi lookup (design 125 step 2)
+
+The second integration: `src/integrations/wifi_lookup/`, the feature `wifi_lookup`, migration 0163
+(`wifi_lookup_devices`, `wifi_lookup_aps`), the contract folder `testdata/wifi_lookup/` (`server.json` written by
+`scripts/wifi-lookup-fixtures.py`). It added two hooks to the trait, both with do-nothing defaults:
+`location_group()` (its group on the phone's Location page, `handlers::locate::show_location_settings` prints
+`integration_groups` after the location settings) and `prune()` (`Prune::Sweep` from `retention::run_pruning`,
+`Prune::DeviceDeleted` from `devices::delete_device`). `music_net::Window` (the server-wide rolling count) moved out of
+map links for both to use.
+
+- `codec.rs`: the request and the answer by hand (A8) - GrapheneOS's format (MIT, its notice in the file and
+  `NOTICE.md`), pinned by `server.json`'s golden hex; the answer read along one path with bounded varints, checked
+  lengths, groups refused, at most 200 APs and 256 KB, unknown and out-of-range positions as unknown.
+- `cache.rs`: the sealed cache (A5) - HMAC-SHA256 ids and AES-256-GCM rows under HKDF keys from `K`
+  (`data/keys/wifi_lookup`, made at the first use; a new key empties the table), months only, a positive row asked
+  again after three months, a negative for the month it was asked in, the caps (200,000 / 20,000, the least recently
+  used out), the lifetime `CACHE_LIFETIME_MONTHS` (24, the user's Q6) and the emptying when no phone with the switch
+  on is left.
+- `route.rs`: `POST /api/devices/wifi-lookup` (A4) - the body checked by hand, the switch, 30 lookups per phone an hour
+  (in memory), the answers (`200 {aps}`, `409 off`, `429 limit|busy`, `503 unavailable` with `retry_after_s` only when
+  no asked BSSID is cached), one Apple call at a time (a second waits 5 s, a third is busy), 60 calls an hour and 10
+  in any 10 minutes, GrapheneOS's throttle (8 surrounding after an answer of 17), the pauses (5 min, then 1 h doubling
+  to 24 h; a non-200 or an unreadable answer starts at the hour; a 200 resets) and their log line.
+- **The proxy** (`WIFI_LOOKUP_PROXY`, `Proxy::parse`: `socks5h://host:port` only): `SourceRequest::proxy` makes
+  `HttpSource` build a one-off client with only that proxy, fresh random SOCKS credentials and `music_net::PROXIED`
+  (10 s) to connect and in all; a failure there is the call's (class `proxy`), never a direct call. reqwest's `socks`
+  feature is hyper-util's own SOCKS client in 0.13: no new crate.
+- `page.rs`: the Location page's group (A1) - the switch, the ⓘ (and "The lookups come from the server's own
+  address." while no proxy is set), the orange "Apple lookups aren't working" while `integration_health` raises its row
+  (key `wifi_lookup`, scope `""`: `Transient` failures past a 24-h grace, or `Stop` at the day-long pause step) and the
+  switch is on. The Attention row is `Title::WifiLookup`, mapped to the phones with the switch on (`FOR_DEVICE`).
+- **No lookup log** (A6): no device id, BSSID or coordinate in a log line (a source test reads every tracing call in
+  the folder), no time or phone in the table; the per-phone counts live in memory.
+- Not built (A10): rows sent to a phone ahead of time, Apple's cell lookup, GrapheneOS's RANSAC estimator.

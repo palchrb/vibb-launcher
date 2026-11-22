@@ -53,6 +53,9 @@ pub enum Kind {
     ShortLink,
     /// Google's place lookup (design 110 §8.3): the answer was 24 KB, cut at 256 KB; 3 s to connect, 4 s in all.
     PlacePreview,
+    /// Apple's Wi-Fi location service (design 125 A7): cut at 256 KB (an answer past it doesn't read); 3 s to connect
+    /// and 5 s in all direct, [PROXIED] through a proxy.
+    AppleWps,
 }
 
 impl Kind {
@@ -69,6 +72,7 @@ impl Kind {
             Kind::Weather => 1_000_000,
             Kind::ShortLink => 16_000,
             Kind::PlacePreview => 256_000,
+            Kind::AppleWps => 256_000,
         }
     }
 
@@ -85,6 +89,7 @@ impl Kind {
             Kind::Weather => 10,
             Kind::ShortLink => 5,
             Kind::PlacePreview => 4,
+            Kind::AppleWps => 5,
         })
     }
 
@@ -92,7 +97,7 @@ impl Kind {
     /// after 6 s).
     pub fn connect(self) -> Duration {
         match self {
-            Kind::ShortLink | Kind::PlacePreview => QUICK_CONNECT,
+            Kind::ShortLink | Kind::PlacePreview | Kind::AppleWps => QUICK_CONNECT,
             _ => Duration::from_secs(10),
         }
     }
@@ -107,6 +112,10 @@ impl Kind {
 
 /// [Kind::connect]'s short connect timeout.
 const QUICK_CONNECT: Duration = Duration::from_secs(3);
+
+/// A request through a proxy ([SourceRequest::proxy], design 125 A7): connecting (the proxy's handshake and a Tor
+/// circuit with it) and the whole call within this.
+pub const PROXIED: Duration = Duration::from_secs(10);
 
 /// Which addresses a request may reach.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -141,6 +150,10 @@ pub struct SourceRequest {
     /// rebind between the judgement and the fetch) and follows a redirect only to the same host
     /// and port. Empty: the [Reach]'s own resolver and redirect rule.
     pub pinned: Vec<IpAddr>,
+    /// A SOCKS5 proxy with remote DNS (`socks5h://host:port`, the operator's setting, never a request's; design 125
+    /// A7): the request goes through it with its own random credentials - Tor's `IsolateSOCKSAuth` gives it its own
+    /// circuit - and never direct when the proxy fails. No redirects are followed.
+    pub proxy: Option<String>,
 }
 
 impl SourceRequest {
@@ -156,6 +169,7 @@ impl SourceRequest {
             body: None,
             follow: true,
             pinned: Vec::new(),
+            proxy: None,
         }
     }
 
@@ -461,6 +475,31 @@ fn pinned_client(
         .map_err(|err| FetchError::Network(err.without_url().to_string()))
 }
 
+/// A client for one request through `proxy` (`socks5h://host:port`): fresh random SOCKS credentials, so Tor gives the
+/// request its own circuit; no redirects; nothing but the proxy - a failure there is the request's failure, never a
+/// direct connection. The proxy's host is resolved as any (a compose service name is private); the target's name by
+/// the proxy (socks5h).
+fn proxied_client(proxy: &str) -> Result<reqwest::Client, FetchError> {
+    use ring::rand::SecureRandom;
+    let mut random = [0u8; 16];
+    ring::rand::SystemRandom::new()
+        .fill(&mut random)
+        .map_err(|_| FetchError::Network("no random credentials for the proxy".to_string()))?;
+    let (user, pass) = random.split_at(8);
+    let proxy = reqwest::Proxy::all(proxy)
+        .map_err(|_| FetchError::Refused("not a proxy address".to_string()))?
+        .basic_auth(&hex::encode(user), &hex::encode(pass));
+    reqwest::Client::builder()
+        .user_agent(crate::net::USER_AGENT)
+        .no_proxy()
+        .proxy(proxy)
+        .connect_timeout(PROXIED)
+        .redirect(reqwest::redirect::Policy::none())
+        .referer(false)
+        .build()
+        .map_err(|err| FetchError::Network(err.without_url().to_string()))
+}
+
 /// The real client: four reqwest clients, one per [Reach] and redirect rule.
 pub struct HttpSource {
     public: reqwest::Client,
@@ -569,7 +608,12 @@ impl Source for HttpSource {
                 ));
             }
             let pinned;
+            let proxied;
             let client = match (request.reach, request.follow) {
+                _ if request.proxy.is_some() => {
+                    proxied = proxied_client(request.proxy.as_deref().unwrap_or_default())?;
+                    &proxied
+                }
                 (Reach::Any, follow) if !request.pinned.is_empty() => {
                     let parsed = reqwest::Url::parse(&request.url)
                         .map_err(|_| FetchError::Refused("not a link".to_string()))?;
@@ -587,9 +631,14 @@ impl Source for HttpSource {
                 (Reach::Public, false) => &self.public_once,
                 (Reach::Any, false) => &self.any_once,
             };
+            let overall = if request.proxy.is_some() {
+                PROXIED
+            } else {
+                request.kind.overall()
+            };
             let mut builder = client
                 .request(request.method.clone(), &request.url)
-                .timeout(request.kind.overall());
+                .timeout(overall);
             for (name, value) in &request.headers {
                 builder = builder.header(name, value);
             }
@@ -691,6 +740,67 @@ impl Source for Gated {
 
     fn resolve<'a>(&'a self, host: &'a str) -> BoxFut<'a, Result<Vec<IpAddr>, FetchError>> {
         self.inner.resolve(host)
+    }
+}
+
+/// A rolling count of calls out, server-wide: at most `limit` in `window` (design 110's limits, design 125's).
+#[cfg_attr(
+    not(any(feature = "map_links", feature = "wifi_lookup")),
+    allow(dead_code)
+)]
+pub struct Window {
+    limit: usize,
+    window: Duration,
+    times: std::sync::Mutex<std::collections::VecDeque<tokio::time::Instant>>,
+}
+
+#[cfg_attr(
+    not(any(feature = "map_links", feature = "wifi_lookup")),
+    allow(dead_code)
+)]
+impl Window {
+    pub fn new(limit: usize, window: Duration) -> Self {
+        Window {
+            limit,
+            window,
+            times: Default::default(),
+        }
+    }
+
+    fn prune(
+        &self,
+        times: &mut std::collections::VecDeque<tokio::time::Instant>,
+        now: tokio::time::Instant,
+    ) {
+        while times
+            .front()
+            .is_some_and(|t| now.saturating_duration_since(*t) >= self.window)
+        {
+            times.pop_front();
+        }
+    }
+
+    /// One call at `now`: `true` (and counted) within the limit.
+    pub fn take(&self, now: tokio::time::Instant) -> bool {
+        let mut times = self.times.lock().unwrap_or_else(|e| e.into_inner());
+        self.prune(&mut times, now);
+        if times.len() >= self.limit {
+            return false;
+        }
+        times.push_back(now);
+        true
+    }
+
+    /// How long until a call may go at `now` (zero: now). Counts nothing.
+    pub fn wait(&self, now: tokio::time::Instant) -> Duration {
+        let mut times = self.times.lock().unwrap_or_else(|e| e.into_inner());
+        self.prune(&mut times, now);
+        if times.len() < self.limit {
+            return Duration::ZERO;
+        }
+        let oldest = times.front().copied().unwrap_or(now);
+        self.window
+            .saturating_sub(now.saturating_duration_since(oldest))
     }
 }
 

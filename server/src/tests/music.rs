@@ -54,6 +54,8 @@ pub struct Recorded {
     pub follow: bool,
     /// The request's `If-Modified-Since` (design 75 D7).
     pub last_modified: Option<String>,
+    /// The request's proxy (design 125 A7).
+    pub proxy: Option<String>,
 }
 
 impl Recorded {
@@ -314,6 +316,7 @@ impl crate::music_net::Source for CannedFetch {
                 body: request.body.clone(),
                 follow: request.follow,
                 last_modified: request.last_modified.clone(),
+                proxy: request.proxy.clone(),
             });
             self.conditional
                 .lock()

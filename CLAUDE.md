@@ -63,6 +63,10 @@ admin server it talks to. Old commit hashes in the docs still resolve.
   discovery, Synapse-shaped `event_id_only` notifies, Web-Push-like bytes to `/up/` with TTL/Urgency/Topic, `--burst`;
   every request to the phone listener with the endpoint's host as `Host`; standard library, `--selftest` against a
   loopback recorder, run by `server-ci.yml`'s always-run changes job; `docs/testing/emulator.md` §6ay),
+  `wifi-lookup-fixtures.py` (design 125 step 2: the server's `server/testdata/wifi_lookup/server.json` - the golden
+  request for Apple's Wi-Fi location service, fake Apple answers with what the server must read from each, the failure
+  histories behind the orange line - from its own protobuf encoder; documentation MACs, made-up coordinates, never a
+  real capture; standard library, `--write`, `--selftest` run by `server-ci.yml`'s always-run changes job),
   `mmsc-hosts.py` (the server's `server/testdata/mmsc_hosts.txt`, design 83 §3: each operator's MMS server hosts from
   AOSP's `apns-full-conf.xml` at a pinned commit and SHA-256, in two classes - unasked and hints; its `UNASKED` stays
   `"none"` until design 77's step 0; `--selftest`, no network, converts `scripts/mmsc-hosts-sample.xml` and checks the
@@ -438,6 +442,19 @@ hops, the place lookup's answers cut down to the paths it reads, the PWA's lines
 (`launcher/app/src/test/resources/map_link_rules.json`, `MapLinksTest`: every link form to its pin, search or note)
 stay each side's. The policy's `map_links` is pinned by `policy_json_keys_snapshot` and `PolicyResponseCompatTest`.
 
+The Apple Wi-Fi lookup (design 125 step 2, an integration behind design 110's boundary:
+`server/src/integrations/wifi_lookup/`, the Cargo feature `wifi_lookup`) has its own contract folder:
+`server/testdata/wifi_lookup/contract.json`, byte-identical in `launcher/app/src/test/resources/wifi_lookup/`: `policy`
+(`wifi_lookup: {on}`, `off` and `on`), `request` (the exact `POST /api/devices/wifi-lookup` body), `answers` (each case
+the route answers - fresh, stale rows while Apple is paused, the cache alone over the server-wide limit, `off`, `limit`,
+`busy`, `unavailable` with `retry_after_s`, a 400 per bad form; a month `2026-11` is the run's month) and
+`phone_answers` (each status and body to the phone's action: use, a wait in seconds, or off until a policy says on).
+The server's `integrations::wifi_lookup::tests` produces every `answers` row through the real route and compares the
+copies; the launcher's `WifiLookupContractTest` encodes `request`, decodes `policy` and maps every row through
+`appleStep`. The server's own rows (`server/testdata/wifi_lookup/server.json`, written by
+`scripts/wifi-lookup-fixtures.py`) and the launcher's Apple rules (`PlacesTest`) stay each side's. The policy's
+`wifi_lookup` is pinned by `policy_json_keys_snapshot` and `PolicyResponseCompatTest`.
+
 The phone setup status (design 114) is `server/testdata/setup_steps.json`, byte-identical in
 `launcher/app/src/test/resources/`: `steps` (the one step table in display order: `key`, `need`, `read_by`, `when`,
 `summary`, `level`, `features`, `phone_page`, `names`), `features` (each PWA choice a step stops and its page and
@@ -458,7 +475,8 @@ pinned by `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTe
   (`launcher.yml` also on `.github/actions/build-tsnet/` and the music files its tests read: the bridge, the
   shared snapshots, the three `spotify_hosts.json`, `server/testdata/time_status_report.json`,
   `dns_upstream_status.json`, `power_report.json`, `zone_status_report.json`, `launcher_tag_codes.json`,
-  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json`, `server_url_vectors.json`, `restrictions_pause.json`, `server_tls_report.json`, `sms_contract.json`, `contact_request.json`, `app_logos.json`, `lock_now.json`, `mobile_network.json`, `status_heartbeat.json`, `airplane_mode.json`, `rule_pause.json`, `shortcuts.json`, `login_windows.json`, `notification_channels.json`, `unified_push.json` and `setup_steps.json`, `server/testdata/map_links/contract.json`, `music/gradle/` and `music.yml`, and the server's and music's `storytel_token_answers.json`, and `server/testdata/doh_hosts.txt`, and `scripts/yr-symbols.py` with its vendored `yr-symbols-11.svg` and `scripts/fake-portal.py` (the changes job runs both `--selftest`s always); `music.yml` also on the shared
+  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json`, `server_url_vectors.json`, `restrictions_pause.json`, `server_tls_report.json`, `sms_contract.json`, `contact_request.json`, `app_logos.json`, `lock_now.json`, `mobile_network.json`, `status_heartbeat.json`, `airplane_mode.json`, `rule_pause.json`, `shortcuts.json`, `login_windows.json`, `notification_channels.json`, `unified_push.json` and `setup_steps.json`, `server/testdata/map_links/contract.json` and
+  `server/testdata/wifi_lookup/contract.json`, `music/gradle/` and `music.yml`, and the server's and music's `storytel_token_answers.json`, and `server/testdata/doh_hosts.txt`, and `scripts/yr-symbols.py` with its vendored `yr-symbols-11.svg` and `scripts/fake-portal.py` (the changes job runs both `--selftest`s always); `music.yml` also on the shared
   `server/testdata/music_*.json` and `spotify_hosts.json`, the launcher's copy of the bridge AIDL,
   `bridge_contract.json` and `spotify_hosts.json`, `server/testdata/spotify/`, `scripts/fake-sonos.py`,
   `scripts/fake-storytel.py`, `scripts/fake-spotify.py`, `scripts/fake-audio.py`, `scripts/music-splash.py`
@@ -468,7 +486,8 @@ pinned by `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTe
   `server-ci.yml`'s build job also on the apps' `spotify_hosts.json` and `storytel_token_answers.json` copies and
   the launcher's `time_status_report.json`,
   `dns_upstream_status.json`, `power_report.json`, `zone_status_report.json`, `launcher_tag_codes.json`,
-  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json`, `server_url_vectors.json`, `restrictions_pause.json`, `server_tls_report.json`, `sms_contract.json`, `contact_request.json`, `app_logos.json`, `lock_now.json`, `mobile_network.json`, `status_heartbeat.json`, `airplane_mode.json`, `rule_pause.json`, `shortcuts.json`, `login_windows.json`, `notification_channels.json`, `unified_push.json` and `setup_steps.json`, the launcher's `map_links/` folder, and the launcher's `assets/dns/doh_hosts.txt` and `ui/home/HomeModel.kt` (the avatar palette the PWA mirrors), and `scripts/mmsc-hosts.py` with its `scripts/mmsc-hosts-sample.xml` (the changes job runs its `--selftest` always, and `server/deploy/update-image.sh --selftest`: the image update's release pick and version rules, DEPLOY.md "Automatic, verified updates", with `deploy/handy-update.service`/`.timer`);
+  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json`, `server_url_vectors.json`, `restrictions_pause.json`, `server_tls_report.json`, `sms_contract.json`, `contact_request.json`, `app_logos.json`, `lock_now.json`, `mobile_network.json`, `status_heartbeat.json`, `airplane_mode.json`, `rule_pause.json`, `shortcuts.json`, `login_windows.json`, `notification_channels.json`, `unified_push.json` and `setup_steps.json`, the launcher's `map_links/` and `wifi_lookup/` folders, and the launcher's `assets/dns/doh_hosts.txt` and `ui/home/HomeModel.kt` (the avatar palette the PWA mirrors), and `scripts/wifi-lookup-fixtures.py` (the changes job runs its `--selftest` always), and
+  `scripts/mmsc-hosts.py` with its `scripts/mmsc-hosts-sample.xml` (the changes job runs its `--selftest` always, and `server/deploy/update-image.sh --selftest`: the image update's release pick and version rules, DEPLOY.md "Automatic, verified updates", with `deploy/handy-update.service`/`.timer`);
   `server-ci.yml`'s
   `server-image` job only when `server/Dockerfile`, `server/.dockerignore`, `server/deploy/image-smoke.sh`, `server/deploy/distrusted-roots.txt` or
   the workflow changed). The server's Rust (`toolchain: 1.99.0`) is pinned in `server-ci.yml` and
