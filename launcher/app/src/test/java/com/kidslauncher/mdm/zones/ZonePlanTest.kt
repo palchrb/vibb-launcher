@@ -162,7 +162,7 @@ class ZonePlanTest {
         val base = 1_800_000_000_000L
         fun at(hhmm: Int) = base + ((hhmm / 100 + if (hhmm < 1200) 24 else 0) * 60 + hhmm % 100) * minute
         // Still at 18:00 (a good fix), moved at 20:10 - the walk home.
-        var flags = MotionFlags().afterTry(0, at(1800), heartbeat = true, nowMs = at(1800)).moved()
+        var flags = MotionFlags().afterTry(0, at(1800), heartbeat = true, nowMs = at(1800)).moved(0)
         var lastBeat = at(2000)
         var lastTry = at(1800)
         var lastFresh = at(1800)
@@ -170,7 +170,7 @@ class ZonePlanTest {
         val beats = (20 * 60 + 30..30 * 60 step 30).map { m -> (m / 60 % 24) * 100 + m % 60 }
         for (hhmm in beats) {
             val t = at(hhmm)
-            if (hhmm in fireAt) flags = flags.moved()
+            if (hhmm in fireAt) flags = flags.moved(0)
             val motion = flags.motion(sensor = true, anchor = true)
             val fires = flags.fires
             val beat = heartbeatDue(t, lastBeat, interval, motion, lastFresh, null, lastTry, flags.stillSinceMs)
@@ -228,7 +228,7 @@ class ZonePlanTest {
         assertEquals(Motion.STILL, still.motion(sensor = true, anchor = true))
         assertEquals(Motion.MOVED, still.motion(sensor = true, anchor = false))
         // A fire (or a mark): moved, counted.
-        val moved = still.moved()
+        val moved = still.moved(0)
         assertEquals(MotionFlags(true, true, 1, t), moved)
         // L7: a failed locate, low-battery or crossing fix clears nothing.
         assertEquals(moved, moved.afterTry(1, freshFixMs = null, heartbeat = false, nowMs = t + minute))
@@ -238,7 +238,7 @@ class ZonePlanTest {
         assertEquals(Motion.STILL_SINCE_TRY, tried.motion(sensor = true, anchor = true))
         assertEquals(tried, tried.afterTry(1, freshFixMs = null, heartbeat = true, nowMs = t + 30 * minute))
         // M1: a fire during the attempt (the count moved past the snapshot) - neither a fix nor a failure clears it.
-        val firedDuring = tried.moved()
+        val firedDuring = tried.moved(0)
         assertEquals(firedDuring, firedDuring.afterTry(1, freshFixMs = t + 2 * minute, heartbeat = true, nowMs = t + 2 * minute))
         assertEquals(firedDuring, firedDuring.afterTry(1, freshFixMs = null, heartbeat = true, nowMs = t + 2 * minute))
         assertEquals(Motion.MOVED, firedDuring.motion(sensor = true, anchor = true))
@@ -613,10 +613,12 @@ class ZonePlanTest {
         assertTrue(watch.contains("fun zonesOn(context: Context, policy: PolicyResponse?): Boolean = gate(context, policy, ::zoneWatchActive)"))
         assertTrue(watch.contains("fun stillOn(context: Context, policy: PolicyResponse?): Boolean = gate(context, policy, ::stillWatchActive)"))
         assertTrue(watch.contains("rule(owner, managed, policy?.locationPolicy)"))
-        assertTrue(watch.contains("PassiveFixes.update(app, on = on)"))
+        // Design 125 D3: the passive feed on every Regularly phone (it teaches), its kept slot with zones only.
+        assertTrue(watch.contains("val still = stillOn(app, policy)"))
+        assertTrue(watch.contains("PassiveFixes.update(app, on = still, keep = on)"))
         // D2: the sensor on every Regularly phone (kept armed for the series with zones), stopped
         // - and so moved - only when not Regularly.
-        assertTrue(watch.contains("if (stillOn(app, policy)) MotionGate.watch(app, zones = on) else MotionGate.stop(app)"))
+        assertTrue(watch.contains("if (still) MotionGate.watch(app, zones = on) else MotionGate.stop(app)"))
         assertTrue(watch.contains("ZoneFences.sync(app, zones, watching = on)"))
         // G7: a fence's zones only from a Regularly policy.
         assertTrue(watch.contains("currentPolicyDecision().policy?.locationPolicy?.takeIf { it.mode == \"interval\" }?.zones.orEmpty()"))
@@ -647,26 +649,31 @@ class ZonePlanTest {
         assertTrue(Regex("""if \(verdict != FenceVerdict\.CROSSING\) return[\s\S]{0,300}MotionGate\.markMoved\(\)""").containsMatchIn(source("zones/ZoneWatch.kt")))
         assertTrue(Regex("""MotionGate\.markMoved\(\)\s+LocateCommands\.promoteKept\(context\)""").containsMatchIn(seriesSource))
         assertTrue(seriesSource.contains("if (fresh) ZoneWatch.stampFreshFix(context, location.time)"))
-        assertTrue(sync.contains("val fresh = location?.takeIf { freshOwnFix(it.time, now) }\n        if (fresh != null) ZoneWatch.stampFreshFix(context, fresh.time)"))
+        // Design 125 M2: a learned fix from the 2-min fallback and a renewed vouch are no fresh fix.
+        assertTrue(sync.contains("val fresh = location?.takeIf { freshOwnFix(it.time, now) && !places.notFresh && !places.renewed }\n        if (fresh != null) ZoneWatch.stampFreshFix(context, fresh.time)"))
         assertTrue(sync.contains("val lastFreshFix = if (stillOn) ZoneWatch.lastFreshFixMs(context) else lastOwnFix"))
-        assertTrue(sync.contains("lastFreshFixMs = lastFreshFix,"))
+        // Design 125 D12: the still skip counts from the later of the fresh fix and a zone link's renewal.
+        assertTrue(sync.contains("val stillFrom = if (stillOn) maxOf(lastFreshFix, ZoneWatch.vouchRenewedMs(context)) else lastOwnFix"))
+        assertTrue(sync.contains("lastFreshFixMs = stillFrom,"))
         assertEquals(1, Regex("""stampFreshFix\(""").findAll(sync).count())
         // D7: a fresh fix while the gate said STILL is checked against the fix it vouched for (QA L2),
         // and only when no fire came during the attempt (QA L1).
         assertTrue(sync.contains("val lastFreshQueued = if (motionNow != null && action.fresh) LocateCommands.cachedQueued()?.takeIf { it.timeMs == lastFreshFix } else null"))
-        assertTrue(sync.contains("val vouched = lastFreshQueued?.takeIf { motion == Motion.STILL }"))
-        assertTrue(sync.contains("if (held && fresh != null && motionContradiction(vouched, fresh.toQueued())) ZoneWatch.noteContradiction(context, now)"))
+        // Design 125 D15: only a satellite fix vouches, and a learned fix never contradicts.
+        assertTrue(sync.contains("val vouched = lastFreshQueued?.takeIf { motion == Motion.STILL && it.provider in VOUCHING_PROVIDERS }"))
+        assertTrue(sync.contains("if (held && fresh != null && satellite && motionContradiction(vouched, fresh.toQueued())) ZoneWatch.noteContradiction(context, now)"))
+        assertTrue(sync.contains("private val VOUCHING_PROVIDERS = setOf(\"gps\", \"fused\")"))
         assertTrue(watch.contains("motionSensor = MotionGate.hasSensor(app) && motionTrusted(app),"))
         // D4: no anchor is moved; the anchor's end disarms and marks it (QA L3), and Off marks it.
         val sensorsSource = source("zones/ZoneSensors.kt")
         assertTrue(sensorsSource.contains("flags.motion(trusted, com.kidslauncher.mdm.server.CommandListenerService.isRunning)"))
         assertTrue(sensorsSource.contains("val trusted = hasSensor(context) && ZoneWatch.motionTrusted(context)"))
         assertTrue(Regex("""fun anchorStopped\(context: Context\) = disarm\(context\)""").containsMatchIn(sensorsSource))
-        assertTrue(Regex("""private fun disarm\(context: Context\) \{\s+val l = listener\s+listener = null\s+flags = flags\.moved\(\)""").containsMatchIn(sensorsSource))
+        assertTrue(Regex("""private fun disarm\(context: Context\) \{\s+val l = listener\s+listener = null\s+flags = flags\.moved\(SystemClock\.elapsedRealtime\(\)\)""").containsMatchIn(sensorsSource))
         assertTrue(Regex("""override fun onDestroy\(\) \{[\s\S]*MotionGate\.anchorStopped\(applicationContext\)[\s\S]*super\.onDestroy\(\)""").containsMatchIn(source("server/CommandListenerService.kt")))
         assertTrue(Regex("""fun clearCachedFix\(context: Context\) \{\s+com\.kidslauncher\.mdm\.zones\.MotionGate\.markMoved\(\)""").containsMatchIn(source("server/LocateCommands.kt")))
         // A refused registration marks moved: nothing watches, nothing may vouch.
-        assertTrue(Regex("""if \(armed\) \{[\s\S]{0,200}\} else \{[\s\S]{0,80}flags = flags\.moved\(\)\s+Log\.w\(LOG_TAG, "Motion trigger refused"\)""").containsMatchIn(sensorsSource))
+        assertTrue(Regex("""if \(armed\) \{[\s\S]{0,200}\} else \{[\s\S]{0,80}flags = flags\.moved\(SystemClock\.elapsedRealtime\(\)\)\s+Log\.w\(LOG_TAG, "Motion trigger refused"\)""").containsMatchIn(sensorsSource))
         // D9: balanced first only with the network provider on (and fused there), GPS when it isn't good enough.
         val balancedFirst = Regex("""private suspend fun balancedFirst\([\s\S]*?\n    }""").find(source("server/LocateCommands.kt"))!!.value
         assertTrue(balancedFirst.contains("val balanced = if (balancedOn) requestBalancedFix(context, lm)?.takeIf { ZoneWatch.accept(context, it) } else null"))
@@ -687,7 +694,8 @@ class ZonePlanTest {
         assertEquals(1, Regex("""promoteKept\(""").findAll(sync).count())
         // Q-3: the still flag rides the report.
         assertTrue(sync.contains("zoneWatch = ZoneWatch.report(context, still = location.still),"))
-        assertTrue(sync.contains("val still = reportStill(stillOn, action, motion, now, lastFreshFix)"))
+        assertTrue(sync.contains("val stillBeat = reportStill(stillOn, action, motion, now, stillFrom)"))
+        assertTrue(sync.contains("val still = stillBeat || places.renewed"))
         assertTrue(sync.contains("still = still,"))
         // Q-5: Off (and no zones) clears the queue before the report and sends no extras.
         assertTrue(sync.contains("if (queueOff) ZoneWatch.clearQueue(context)"))
@@ -725,7 +733,7 @@ class ZonePlanTest {
         assertTrue(sensors.contains("FixVerdict.MOCK -> ZoneWatch.countMock(context, location)"))
         // Q-6: the trigger's fire and the arm share one monitor.
         assertTrue(Regex("""fun afterTry\(context: Context, firesAtStart: Int, freshFixMs: Long\?, heartbeat: Boolean, nowMs: Long, moving: Boolean\): Boolean \{\s+val held = synchronized\(this\) \{\s+flags = flags\.afterTry\(firesAtStart, freshFixMs, heartbeat, nowMs, moving\)\s+flags\.fires == firesAtStart""").containsMatchIn(sensors))
-        assertTrue(Regex("""synchronized\(this\) \{\s+flags = flags\.moved\(\)\s+listener = null""").containsMatchIn(sensors))
+        assertTrue(Regex("""synchronized\(this\) \{\s+flags = flags\.moved\(SystemClock\.elapsedRealtime\(\)\)\s+listener = null""").containsMatchIn(sensors))
         // The mock rule on our own fixes too, fresh and last-known.
         val locate = source("server/LocateCommands.kt")
         val keep = Regex("""fun keepFix\([\s\S]*?\n    }""").find(locate)!!.value

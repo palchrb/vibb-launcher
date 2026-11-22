@@ -15,10 +15,10 @@
          BluetoothAdapter.enable()/disable() from the Quick Controls screen on Android 12+. -->
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <!-- Same self-grant pattern, required for BluetoothAdapter.startDiscovery() on Android 12+,
-         used by the Quick Controls "manage devices" screen. neverForLocation for the same reason
-         as NEARBY_WIFI_DEVICES below - we only need device identity, never physical position -
-         and without it Android additionally requires the phone's system-wide Location toggle to
-         be on before discovery returns any results at all, independent of this permission grant. -->
+         used by the Quick Controls "manage devices" screen. neverForLocation: we only need device
+         identity, never physical position - and without it Android additionally requires the phone's
+         system-wide Location toggle to be on before discovery returns any results at all,
+         independent of this permission grant. -->
     <uses-permission
         android:name="android.permission.BLUETOOTH_SCAN"
         android:usesPermissionFlags="neverForLocation" />
@@ -41,12 +41,12 @@
          "registered" from "not registered" (code QA Q-1). A normal permission, granted at install. -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
-    <!-- Self-granted, required for WifiManager.startScan()/getScanResults() on Android 13+ -
-         replaces the old ACCESS_FINE_LOCATION scanning requirement. neverForLocation since the
-         Quick Controls "manage networks" screen only needs SSIDs, never physical position. -->
-    <uses-permission
-        android:name="android.permission.NEARBY_WIFI_DEVICES"
-        android:usesPermissionFlags="neverForLocation" />
+    <!-- Self-granted, required for WifiManager.startScan()/getScanResults() on Android 13+. No
+         neverForLocation since design 125 (Wi-Fi places, learned on the phone): the scans are used
+         for location - the phone's own fix from the access points it has heard beside its GPS - so
+         the flag would be false. The reads rely on ACCESS_FINE_LOCATION and Location on, which every
+         fix window (LocateCommands) and the Quick Controls "manage networks" screen hold. -->
+    <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- Self-granted, for Find My Device's location trail (LocateCommands.kt). Plain
@@ -847,6 +847,10 @@
             android:exported="false" />
         <receiver
             android:name=".zones.ZoneCheckReceiver"
+            android:exported="false" />
+        <!-- Design 125 D11: the teaching fix 2 min after a motion fire - our own explicit PendingIntent only. -->
+        <receiver
+            android:name=".places.WifiPlacesTeachReceiver"
             android:exported="false" />
         <!-- Handy step 11: the update fence's backstop check and the self-update window's wake-up -
              our own explicit PendingIntents only. -->

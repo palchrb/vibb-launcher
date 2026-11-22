@@ -1,0 +1,57 @@
+{
+  "about": "Design 125 D4: SSIDs of access points that move (phones and tethering, cars, coaches, trains, dashcams, in-flight). Matched lowercase: `words` against the SSID split at every non-letter, `prefixes`/`suffixes`/`exact`/`contains` against the whole SSID, `first_words` against its first word. A car's default SSID (the BSSID's last three octets) is a rule in PlacesPlan.kt. Never stored, never logged.",
+  "sections": {
+    "localnlp": {
+      "source": "Local NLP Backend (Helium314/Local-NLP-Backend f052047), app/src/main/java/org/fitchfamily/android/dejavu/RfEmitter.kt, ssidBlacklisted(). Copyright (C) 2017 Tod Fitch, (C) 2023 Helium314. GPL-3.0-or-later.",
+      "words": [
+        "android", "ipad", "iphone", "phone", "motorola", "huawei", "nokia", "redmi", "realme",
+        "honor", "oppo", "galaxy", "oneplus", "mobile",
+        "deinbus", "ecolines", "eurolines", "fernbus", "flixbus", "muenchenlinie",
+        "postbus", "skanetrafiken", "oresundstag", "regiojet", "hotspotarriva",
+        "uconnect", "chevy", "silverado", "myvolvo", "bmw", "skoda", "seat", "vw"
+      ],
+      "exact": [
+        "amtrak", "amtrakconnect", "cdwifi", "megabus", "westlan", "wifi in de trein",
+        "svciob", "oebb", "oebb-postbus", "dpmbfree", "telekom_ice", "db ic bus",
+        "gkbgast", "mavstart-wifi", "wifionice", "wifi@db", "crosscountrywifi",
+        "gwr wifi", "thalysnet", "_sncf_wifi_inoui", "_sncf_wifi_intercities",
+        "normandietrainconnecte", "keolis nederland", "ouifi", "raillan", "vorwlan",
+        "zssk wifi", "wifi zssk", "raaberbahn", "hotspot ic", "vmobil"
+      ],
+      "prefixes": [
+        "moto ", "lg aristo", "androidap", "vivo ", "mi ", "cellspot", "verizon",
+        "wifi hotspot ", "mb wlan ", "mb hotspot", "direct-mb hotspot",
+        "westbahn ", "buswifi", "coachamerica", "disneylandresortexpress",
+        "taxilinq", "transitwirelesswifi", "yicarcam"
+      ],
+      "suffixes": ["corvette", "truck", "suburban", "terrain", "sierra", "gmc wifi"],
+      "contains": ["admin@ms", "guest@ms", "contiki-wifi", "nsb_interakti", "nvram warning"],
+      "first_words": ["audi", "moto"]
+    },
+    "microg": {
+      "source": "microG GmsCore (f686900), play-services-location/core/provider/src/main/kotlin/org/microg/gms/location/network/wifi/MovingWifiHelper.kt: MOVING_WIFI_HOTSPOTS (exact names) and PHONE_HOTSPOT_KEYWORDS (contained). Copyright 2023 microG Project Team. Apache-2.0.",
+      "exact": [
+        "OEBB", "Austrian FlyNet", "svciob", "THALYSNET", "Air Canada", "ACWiFi", "ACWiFi.com",
+        "Shenzhen Airlines", "avianca", "avaincaonair.com", "CDWiFi", "_SNCF_WIFI_INOUI",
+        "_SNCF_WIFI_INTERCITES", "_WIFI_LYRIA", "OUIFI", "NormandieTrainConnecte", "WIFIonICE",
+        "WIFI@DB", "WiFi@DB", "RRX Hotspot", "FlixBux", "FlixBus Wi-Fi", "FlixTrain Wi-Fi", "FlyNet",
+        "Telekom_FlyNet", "Vestische WLAN", "agilis-Wifi", "freeWIFIahead!", "metronom free WLAN",
+        "Wings Connect", "AegeanWiFi", "Cathay Pacific", "MAVSTART-WIFI", "KEOLIS Nederland",
+        "AirNZ_InflightWiFi", "Bluebridge WiFi", "TAP Air Portugal", "KrisWorld", "SJ", "saswifi",
+        "SBB-Free", "SBB-FREE", "SWISS Connect", "Edelweiss Entertainment", "LXCREW",
+        "THAI Wireless IFE", "Avanti_Free_WiFi", "CrossCountryWiFi", "GWR WiFi",
+        "LNR On Board Wi-Fi", "LOOP on train WiFi", "WMR On Board Wi-Fi", "EurostarTrainsWiFi",
+        "Amtrak_WiFi"
+      ],
+      "contains": ["iPhone", "Galaxy", "AndroidAP"]
+    },
+    "vibb": {
+      "source": "Vibb's own: Wi-Fi Direct groups (the spec's DIRECT- prefix; most also set the locally administered bit).",
+      "prefixes": ["direct-"]
+    },
+    "norwegian": {
+      "source": "Marked slot (design 125 D4): Vy, Ruter, Skyss, AtB, Flytoget and the ferries - each SSID added only after it is seen in the field, never guessed.",
+      "exact": []
+    }
+  }
+}

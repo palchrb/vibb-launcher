@@ -280,7 +280,8 @@ fun reportStill(stillOn: Boolean, action: com.kidslauncher.mdm.server.LocationAc
  * never erased); [stillSinceMs]: when the phone last became still - a fresh fix's time, or the first
  * failed try after a move -, what [stillBackoffMs] counts from; [movingAtFresh]: the last fresh fix
  * says the phone was moving ([fixMoving]) - a car the sensor may not hear, so no `STILL` or `QUIET`
- * until a fresh fix at rest.
+ * until a fresh fix at rest; [movedAtElapsedMs]: when (elapsed realtime) the last fire or mark came - design 125 D9
+ * uses no scan result from before it.
  */
 data class MotionFlags(
     val movedSinceFresh: Boolean = true,
@@ -288,9 +289,11 @@ data class MotionFlags(
     val fires: Int = 0,
     val stillSinceMs: Long = 0,
     val movingAtFresh: Boolean = false,
+    val movedAtElapsedMs: Long = 0,
 ) {
-    /** A fire, or other evidence of a move (a crossing, a side change, Off, the anchor gone). */
-    fun moved(): MotionFlags = copy(movedSinceFresh = true, movedSinceTry = true, fires = fires + 1)
+    /** A fire, or other evidence of a move (a crossing, a side change, Off, the anchor gone), at [atElapsedMs]. */
+    fun moved(atElapsedMs: Long): MotionFlags =
+        copy(movedSinceFresh = true, movedSinceTry = true, fires = fires + 1, movedAtElapsedMs = atElapsedMs)
 
     /**
      * After one of our own attempts begun at [firesAtStart]: with a fire since, nothing clears. A
@@ -342,8 +345,9 @@ fun fixMoving(speedMps: Float?, fix: QueuedFix, previousFresh: QueuedFix?, windo
 
 
 /** What an attempt reads before its LocationManager call, together (M1): the motion, the fire count
- * it compares after, and [MotionFlags.stillSinceMs] for the back-off. */
-data class MotionSnapshot(val motion: Motion, val fires: Int, val stillSinceMs: Long)
+ * it compares after, [MotionFlags.stillSinceMs] for the back-off and [MotionFlags.movedAtElapsedMs] for design 125's
+ * scan rule. */
+data class MotionSnapshot(val motion: Motion, val fires: Int, val stillSinceMs: Long, val movedAtElapsedMs: Long = 0)
 
 /** A sensor caught lying is distrusted this long, and two contradictions count within it (D7). */
 const val MOTION_DISTRUST_MS = 7 * 24 * 60 * 60_000L

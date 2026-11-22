@@ -58,6 +58,17 @@ was changed here (no message is ever dropped: a failed bind sends at once, every
 message is acknowledged only after its broadcast was sent); its header keeps the attribution and lists every change.
 The rest of `push/up/` is written here under the GPL-3.0 (or later); the UnifiedPush connector is not a dependency.
 
+The launcher's list of moving Wi-Fi networks (`launcher/app/src/main/assets/places/moving_ssids.json`, design 125 D4)
+takes its words, prefixes, suffixes and exact names from [Local NLP Backend](https://github.com/Helium314/Local-NLP-Backend)'s
+`RfEmitter.kt` (`ssidBlacklisted`) at commit `f052047`, Copyright (C) 2017 Tod Fitch, (C) 2023 Helium314, licensed under
+the GPL-3.0 (or later), and the transport list `MOVING_WIFI_HOTSPOTS` and the phone keywords `PHONE_HOTSPOT_KEYWORDS`
+from [microG](https://github.com/microg/GmsCore)'s
+`MovingWifiHelper.kt` at commit `f686900`, Copyright 2023 microG Project Team, licensed under the Apache License 2.0 -
+see [`launcher/app/src/main/assets/licenses/Apache-2.0.txt`](launcher/app/src/main/assets/licenses/Apache-2.0.txt).
+Each section of the file names its source; they are kept as data, lower-cased when matched. The rest of the Wi-Fi
+places (`launcher/app/src/main/java/com/kidslauncher/mdm/places/`) is written here under the GPL-3.0 (or later),
+following ideas from those projects, Déjà Vu and GrapheneOS's NetworkLocation (design 125 §10); no code is copied.
+
 The server's list of MMS servers (`server/testdata/mmsc_hosts.txt`, made by `scripts/mmsc-hosts.py`, design 83) is
 extracted from AOSP's APN list, [`device/sample`](https://android.googlesource.com/device/sample)'s
 `etc/apns-full-conf.xml` at commit `73f904fbeb872f5675cb5f18cd9dfb15856425a6`, Copyright 2006, The Android Open Source

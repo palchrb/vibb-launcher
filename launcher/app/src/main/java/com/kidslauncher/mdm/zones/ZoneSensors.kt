@@ -9,6 +9,7 @@ import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.location.LocationRequest
+import android.os.SystemClock
 import android.util.Log
 import com.kidslauncher.mdm.BuildConfig
 import com.kidslauncher.mdm.server.LocateCommands
@@ -20,22 +21,26 @@ private const val LOG_TAG = "ZoneWatch"
 private const val PASSIVE_INTERVAL_MS = 60_000L
 
 /**
- * The passive provider's fixes (design 64 §4.3): while the zone watch is on (Regularly with zones,
- * as device owner - `ZoneWatch.zonesOn`), every fix someone else made - the fence's own poll, Maps,
- * the system - reaches us for free (it wakes nothing and turns on no radio). [passiveFixWorth]
- * decides: not a mock fix in a release build (counted), accuracy 200 m or better, newer than the
- * newest fix the phone knows - then it goes to the **kept slot** (`LocateCommands.keepFix`), never
- * the cached (reported) fix (qa-design-64-step2-code Q-1). A sync between heartbeats re-sends the
- * reported fix as before; only a due heartbeat (`Heartbeat.KEPT`) or a crossing's sync promotes the
- * kept one, so the trail stays as dense as the parent's interval. Registered from [ZoneWatch.apply],
- * removed when the watch ends and when the anchor service stops.
+ * The passive provider's fixes (design 64 §4.3, design 125 D3): every fix someone else made - the fence's own poll,
+ * Maps, the system - reaches us for free (it wakes nothing and turns on no radio). On every Regularly phone as device
+ * owner (`ZoneWatch.stillOn`, design 125 D3): a `gps` fix that passes design 125's D1 teaches the Wi-Fi places
+ * ([com.kidslauncher.mdm.places.WifiPlaces.offerPassive]). With zones ([keep], `ZoneWatch.zonesOn`) also
+ * [passiveFixWorth]: not a mock fix in a release build (counted), accuracy 200 m or better, newer than the newest fix
+ * the phone knows - then it goes to the **kept slot** (`LocateCommands.keepFix`), never the cached (reported) fix
+ * (qa-design-64-step2-code Q-1). A sync between heartbeats re-sends the reported fix as before; only a due heartbeat
+ * (`Heartbeat.KEPT`) or a crossing's sync promotes the kept one, so the trail stays as dense as the parent's interval.
+ * Registered from [ZoneWatch.apply], removed when the still rule ends and when the anchor service stops.
  */
 object PassiveFixes {
     private val executor = Executors.newSingleThreadExecutor()
     private var listener: LocationListener? = null
 
+    @Volatile
+    private var keep = false
+
     @Synchronized
-    fun update(context: Context, on: Boolean) {
+    fun update(context: Context, on: Boolean, keep: Boolean = false) {
+        this.keep = on && keep
         val lm = context.getSystemService(LocationManager::class.java) ?: return
         if (!on) {
             listener?.let { l ->
@@ -71,6 +76,8 @@ object PassiveFixes {
     fun stop(context: Context) = update(context, on = false)
 
     private fun offer(context: Context, location: Location) {
+        com.kidslauncher.mdm.places.WifiPlaces.offerPassive(context, location)
+        if (!keep) return
         try {
             val verdict = passiveFixWorth(
                 cachedTimeMs = LocateCommands.newestKnown()?.timeMs,
@@ -109,7 +116,7 @@ object PassiveFixes {
  */
 object MotionGate {
     /** Guarded by this object's monitor. */
-    private var flags = MotionFlags()
+    private var flags = MotionFlags(movedAtElapsedMs = SystemClock.elapsedRealtime())
 
     @Volatile
     private var keepArmed = false
@@ -129,7 +136,7 @@ object MotionGate {
     fun snapshot(context: Context): MotionSnapshot {
         val trusted = hasSensor(context) && ZoneWatch.motionTrusted(context)
         val motion = flags.motion(trusted, com.kidslauncher.mdm.server.CommandListenerService.isRunning)
-        return MotionSnapshot(motion, flags.fires, flags.stillSinceMs)
+        return MotionSnapshot(motion, flags.fires, flags.stillSinceMs, flags.movedAtElapsedMs)
     }
 
     /** Regularly as device owner (D2): armed now if it isn't - at every process's first sync -, and
@@ -173,7 +180,7 @@ object MotionGate {
             Log.i(LOG_TAG, "Motion trigger armed ($reason)")
         } else {
             // Nothing watches: nothing may vouch.
-            flags = flags.moved()
+            flags = flags.moved(SystemClock.elapsedRealtime())
             Log.w(LOG_TAG, "Motion trigger refused")
         }
     }
@@ -182,11 +189,13 @@ object MotionGate {
      * trigger is armed again. */
     private fun fired() {
         val context = synchronized(this) {
-            flags = flags.moved()
+            flags = flags.moved(SystemClock.elapsedRealtime())
             listener = null
             app
         }
         Log.i(LOG_TAG, "Motion trigger fired")
+        // Design 125 D11: the teaching fix 2 min after a fire (its own conditions are checked when it runs).
+        context?.let { com.kidslauncher.mdm.places.WifiPlaces.armTeach(it) }
         if (context == null || !keepArmed) return
         // Off the sensor callback's main thread (F-4): the series reads the policy and prefs.
         ZoneSeries.launch {
@@ -200,7 +209,7 @@ object MotionGate {
      * next fresh fix. */
     @Synchronized
     fun markMoved() {
-        flags = flags.moved()
+        flags = flags.moved(SystemClock.elapsedRealtime())
     }
 
     /** Regularly ended: disarmed, and moved. */
@@ -219,7 +228,7 @@ object MotionGate {
     private fun disarm(context: Context) {
         val l = listener
         listener = null
-        flags = flags.moved()
+        flags = flags.moved(SystemClock.elapsedRealtime())
         if (l == null) return
         try {
             val manager = context.getSystemService(SensorManager::class.java)

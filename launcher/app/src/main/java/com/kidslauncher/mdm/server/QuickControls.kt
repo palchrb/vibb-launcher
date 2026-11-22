@@ -366,9 +366,9 @@ object QuickControls {
     /**
      * WifiManager's scan/connect/configured-network APIs all hard-require system-wide Location to
      * be on - confirmed live via `WifiService`'s own `SecurityException("Location mode is disabled
-     * for the device")`, thrown regardless of any app permission held (including
-     * NEARBY_WIFI_DEVICES with neverForLocation, which only covers the runtime-permission side of
-     * this, not this separate unconditional platform check). [WifiNetworksActivity] uses these to
+     * for the device")`, thrown regardless of any app permission held (NEARBY_WIFI_DEVICES, which
+     * had neverForLocation until design 125, only covered the runtime-permission side of this, not
+     * this separate unconditional platform check). [WifiNetworksActivity] uses these to
      * silently flip Location on for the duration of that screen only (via the dedicated
      * Device-Owner API, no Settings/dialog involved) and restore whatever it was on exit - not a
      * permanent change to the phone's Location setting.
@@ -406,7 +406,8 @@ object QuickControls {
      * - not a live/repeating callback. Self-grants `NEARBY_WIFI_DEVICES` first: on Android 13+
      * that's what [WifiManager.startScan]/[WifiManager.scanResults] need instead of the old
      * location-permission requirement, and Device Owner can flip it on with no dialog same as
-     * every other permission in this file.
+     * every other permission in this file. Since design 125 the manifest has no `neverForLocation`
+     * (the scans are used for location), so the scan reads need the fine location permission too.
      */
     fun scanWifiNetworks(
         context: Context,
@@ -415,6 +416,7 @@ object QuickControls {
         onResult: (List<WifiNetworkInfo>) -> Unit,
     ) {
         selfGrantPermission(context, dpm, admin, android.Manifest.permission.NEARBY_WIFI_DEVICES)
+        selfGrantPermission(context, dpm, admin, android.Manifest.permission.ACCESS_FINE_LOCATION)
         val appContext = context.applicationContext
         val wm = wifiManager(appContext)
         val granted = androidx.core.content.ContextCompat.checkSelfPermission(

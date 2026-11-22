@@ -28,6 +28,7 @@ import com.kidslauncher.mdm.server.dto.PendingCommand
 import com.kidslauncher.mdm.server.dto.PolicyResponse
 import com.kidslauncher.mdm.server.dto.StatusReportRequest
 import com.kidslauncher.mdm.server.dto.TrackedAppUpdate
+import com.kidslauncher.mdm.places.WifiPlaces
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.calls.OngoingCalls
 import com.kidslauncher.mdm.server.dto.LocationPolicy
@@ -879,7 +880,10 @@ private class LocationOutcome(
  * the fused provider first, up to a minute ([preciseFix]). The kept slot becomes the reported fix
  * only at a due `KEPT` or a crossing's sync (Q-1). After any attempt the motion flags hear it
  * ([MotionGate.afterTry], against the fire count read before it, M1); a genuinely fresh fix taken
- * while the gate said `STILL` is checked against the vouched one (D7).
+ * while the gate said `STILL` is checked against the vouched one (D7). Design 125: with the network provider off the
+ * attempt is the Wi-Fi places' ([WifiPlaces.Ask]) - a learned fix from the 2-min fallback is reported but not fresh,
+ * and the 4-h cap try may renew the still vouch through a zone link (D12: `still: true`, a new 4-h step from
+ * `ZoneWatch.vouchRenewedMs`); a learned fix never contradicts the sensor and is never the vouched side (D15).
  */
 private suspend fun currentLocationReport(
     context: Context,
@@ -903,8 +907,10 @@ private suspend fun currentLocationReport(
     val motionNow = if (stillOn) MotionGate.snapshot(context) else null
     val motion = motionNow?.motion ?: Motion.NO_SENSOR
     val kept = if (zonesOn) LocateCommands.keptUnreported() else null
-    // The still skip and `still` count from the last genuinely fresh own fix (F-3).
+    // The still skip and `still` count from the last genuinely fresh own fix (F-3), or a zone link's later renewal of
+    // its vouch (design 125 D12).
     val lastFreshFix = if (stillOn) ZoneWatch.lastFreshFixMs(context) else lastOwnFix
+    val stillFrom = if (stillOn) maxOf(lastFreshFix, ZoneWatch.vouchRenewedMs(context)) else lastOwnFix
     val sync = syncLocationAction(
         policy = policy,
         stillOn = stillOn,
@@ -916,7 +922,7 @@ private suspend fun currentLocationReport(
         lastBeatMs = if (stillOn) ZoneWatch.lastBeatMs(context) else 0L,
         motion = motion,
         keptFixAgeMs = kept?.let { now - it.timeMs },
-        lastFreshFixMs = lastFreshFix,
+        lastFreshFixMs = stillFrom,
         stillSinceMs = motionNow?.stillSinceMs ?: 0L,
     )
     val action = withLowBatteryFix(sync.action, lowBatteryFix)
@@ -929,19 +935,37 @@ private suspend fun currentLocationReport(
         if (beat == Heartbeat.KEPT || crossing) LocateCommands.promoteKept(context)
     }
     // P-L3: a cached fix older than the interval is never reported - but the still heartbeat's re-send (Q-3).
-    val still = reportStill(stillOn, action, motion, now, lastFreshFix)
+    val stillBeat = reportStill(stillOn, action, motion, now, stillFrom)
     // The last fresh fix, while it is the reported one (QA L2): what D7 checks a fix taken while the gate says STILL
     // against, and what the moving-car rule measures a fix without a speed from.
     val lastFreshQueued = if (motionNow != null && action.fresh) LocateCommands.cachedQueued()?.takeIf { it.timeMs == lastFreshFix } else null
-    val vouched = lastFreshQueued?.takeIf { motion == Motion.STILL }
+    // Design 125 D15: only a satellite fix is a vouch D7 compares with.
+    val vouched = lastFreshQueued?.takeIf { motion == Motion.STILL && it.provider in VOUCHING_PROVIDERS }
+    // Design 125 D12: the heartbeat's 4-h cap try (motion STILL, so a fix is due only because the cap ran out) may renew
+    // the vouch through a zone link instead of a new position.
+    val renewable = if (zonesOn && beat == Heartbeat.FIX && motion == Motion.STILL) lastFreshQueued else null
+    val places = WifiPlaces.Ask(motion, motionNow?.movedAtElapsedMs ?: 0L, renewable?.let { q ->
+        android.location.Location(q.provider ?: "cached").apply {
+            latitude = q.latitude
+            longitude = q.longitude
+            q.accuracy?.let { accuracy = it }
+            time = q.timeMs
+        }
+    })
     // The parent's `locate` waits up to EXPLICIT_FIX_BOUND_MS here, under the sync mutex: rare and asked for, and its
     // fix goes into this report; every other fix keeps its 15 s (preciseFix).
     val location = LocateCommands.currentLocation(
-        context, dpm, admin, action, staysOn, cachedFixMaxAgeMs(policy, still), explicit = explicit,
+        context, dpm, admin, action, staysOn, cachedFixMaxAgeMs(policy, stillBeat), explicit = explicit, places = places,
     )
+    val still = stillBeat || places.renewed
+    if (places.renewed) {
+        ZoneWatch.stampVouchRenewed(context, now)
+        Log.i(ZONE_LOG_TAG, "Location heartbeat: STILL renewed by a zone link")
+    }
     if (motionNow != null && action.fresh) {
-        // A genuinely fresh fix of our own (not the cached or an old last-known fallback, Q-6).
-        val fresh = location?.takeIf { freshOwnFix(it.time, now) }
+        // A genuinely fresh fix of our own (not the cached or an old last-known fallback, Q-6; not a learned fix from
+        // the 2-min fallback or a renewed vouch, design 125 M2).
+        val fresh = location?.takeIf { freshOwnFix(it.time, now) && !places.notFresh && !places.renewed }
         if (fresh != null) ZoneWatch.stampFreshFix(context, fresh.time)
         // The moving car: a fix on the move vouches for nothing - every due beat fixes until one at rest.
         val intervalMs = (policy ?: LocationPolicy()).intervalMinutes.coerceAtLeast(MIN_LOCATION_INTERVAL_MINUTES) * 60_000L
@@ -949,10 +973,17 @@ private suspend fun currentLocationReport(
             fixMoving(if (fresh.hasSpeed()) fresh.speed else null, fresh.toQueued(), lastFreshQueued, intervalMs)
         // Only the heartbeat's own try clears "moved since try" on a failure (L7).
         val held = MotionGate.afterTry(context, motionNow.fires, fresh?.time, heartbeat = beat == Heartbeat.FIX, nowMs = now, moving = moving)
-        // A move during the attempt explains the distance: no contradiction then (QA L1).
-        if (held && fresh != null && motionContradiction(vouched, fresh.toQueued())) ZoneWatch.noteContradiction(context, now)
+        // A move during the attempt explains the distance: no contradiction then (QA L1); a learned fix is never the
+        // new side of one (design 125 D15: a wrong Wi-Fi fix must not distrust the sensor).
+        val satellite = fresh?.provider in VOUCHING_PROVIDERS
+        if (held && fresh != null && satellite && motionContradiction(vouched, fresh.toQueued())) ZoneWatch.noteContradiction(context, now)
         if (beat == Heartbeat.FIX || moving) {
-            Log.i(ZONE_LOG_TAG, "Location heartbeat: ${beat ?: "forced"} result=${if (fresh != null) "fresh" else "none"} moving=$moving")
+            val result = when {
+                places.renewed -> "renewed"
+                fresh != null -> "fresh"
+                else -> "none"
+            }
+            Log.i(ZONE_LOG_TAG, "Location heartbeat: ${beat ?: "forced"} result=$result moving=$moving")
         }
     }
     location ?: return LocationOutcome(action, null, null, null)
@@ -968,6 +999,9 @@ private suspend fun currentLocationReport(
 
 /** The heartbeat's lines go with the zone watch's (design 124 D11: `adb logcat -s ZoneWatch`). */
 private const val ZONE_LOG_TAG = "ZoneWatch"
+
+/** Design 125 D15: the providers whose fixes vouch for, and contradict, the motion sensor (D7) - never `vibb_*`. */
+private val VOUCHING_PROVIDERS = setOf("gps", "fused")
 
 /**
  * The list of apps tracked server-side (see kid-phone-server's `handlers::tracked_apps`) that are
