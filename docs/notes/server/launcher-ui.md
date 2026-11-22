@@ -148,7 +148,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `answer`, shared with the launcher); `GET /api/devices/weather/now` - `none` or `ok` with the nowcast line or null.
   20 and 60 asks a rolling hour per phone (429 with `Retry-After`), `no-store`, gzip when asked.
 - **The position** (D5): the newest real fix (`COALESCE(mock, 0) = 0`) at most 6 h old and not in the future while
-  Location is Regularly; else the weather zone's centre (Location On request or Off too); else none. Snapped to a cell
+  Location is Regularly - its age from its last still re-send when that is newer (`resent_at`, design 124 D13; a phone
+  lying still keeps its position); else the weather zone's centre (Location On request or Off too); else none. Snapped to a cell
   of 0.02° x 0.04° (`weather::Cell`): what MET and the cache see.
 - **The pure part** (`weather.rs`): MET's hourly entries as `Hour`s, `merge` (24 h back), the words (D3-D4's window and
   rule table, the forms), the periods, the dusk (NOAA, the end of civil twilight after solar noon), the four entries
