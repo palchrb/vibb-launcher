@@ -71,7 +71,7 @@ pub fn clean_roaming(value: &Value) -> Option<String> {
 
 /// Design 95 rev. 3: the report's `mobile_data`, re-serialised: `enabled` a boolean or `null`, `sink` one of the known
 /// words (else `off`), `settings_locked` a boolean (else `false`); design 97's `kid` `on`, `off` or `null` (the row
-/// hidden).
+/// hidden); design 126's `cellular_2g` one of [CELLULAR_2G_WORDS], anything else left out.
 pub fn clean_mobile(value: &Value) -> Option<String> {
     let object = value.as_object()?;
     let sink = object
@@ -79,19 +79,28 @@ pub fn clean_mobile(value: &Value) -> Option<String> {
         .and_then(Value::as_str)
         .filter(|s| matches!(*s, "off" | "parent" | "abroad" | "roaming" | "kid"))
         .unwrap_or("off");
-    Some(
-        json!({
-            "enabled": object.get("enabled").and_then(Value::as_bool),
-            "sink": sink,
-            "settings_locked": object.get("settings_locked").and_then(Value::as_bool).unwrap_or(false),
-            "kid": object
-                .get("kid")
-                .and_then(Value::as_str)
-                .filter(|k| matches!(*k, "on" | "off")),
-        })
-        .to_string(),
-    )
+    let mut clean = json!({
+        "enabled": object.get("enabled").and_then(Value::as_bool),
+        "sink": sink,
+        "settings_locked": object.get("settings_locked").and_then(Value::as_bool).unwrap_or(false),
+        "kid": object
+            .get("kid")
+            .and_then(Value::as_str)
+            .filter(|k| matches!(*k, "on" | "off")),
+    });
+    if let Some(word) = object
+        .get("cellular_2g")
+        .and_then(Value::as_str)
+        .filter(|w| CELLULAR_2G_WORDS.contains(w))
+    {
+        clean["cellular_2g"] = json!(word);
+    }
+    Some(clean.to_string())
 }
+
+/// Design 126 A5 (§3.6.4): the report's `mobile_data.cellular_2g` - `blocked` (the restriction set), `abroad` (lifted by
+/// itself abroad), `lifted` (a pause, the override or a setup window), `off` (the switch off or no policy).
+pub const CELLULAR_2G_WORDS: &[&str] = &["blocked", "abroad", "lifted", "off"];
 
 /// Design 116 §3.5: how long the phone's filter is down before the server raises "Web filter is down" - the contract's
 /// `vpn_filter.report_after_ms`, the launcher's `VPN_REPORT_AFTER_MS`.
@@ -241,6 +250,9 @@ pub struct MobileReport {
     /// Design 97 §3.2: the kid's own switch, `on` or `off`; `None` while the row is hidden.
     #[serde(default)]
     pub kid: Option<String>,
+    /// Design 126 A5: "Blokker 2G" as the phone applies it ([CELLULAR_2G_WORDS]); `None` from a launcher without it.
+    #[serde(default)]
+    pub cellular_2g: Option<String>,
 }
 
 /// The latest report's `data_roaming`.
@@ -515,6 +527,10 @@ pub struct Card {
     pub data_lines: Vec<Line>,
     pub abroad_lines: Vec<Line>,
     pub lock_lines: Vec<Line>,
+    /// Design 126 A5: "Blokker 2G" on, and its one quiet line - "Av i utlandet" while the latest report says the phone
+    /// lifted it abroad (the rule working, never orange).
+    pub block_2g: bool,
+    pub block_2g_lines: Vec<Line>,
 }
 
 /// Whether Android's roaming switch, read off, is what keeps the phone off mobile data now: Android counts the network
@@ -658,10 +674,27 @@ pub fn card(lang: Lang, name: &str, policy: &DevicePolicy, latest: Option<&Devic
         });
     }
 
+    let mut block_2g_lines = Vec::new();
+    if policy.block_2g
+        && mobile
+            .as_ref()
+            .is_some_and(|m| m.cellular_2g.as_deref() == Some("abroad"))
+    {
+        block_2g_lines.push(Line::new(
+            lang,
+            "abroad-2g",
+            "mobile.block_2g.abroad",
+            None,
+            false,
+        ));
+    }
+
     Card {
         apps_mobile,
         abroad,
         settings_locked: policy.mobile_settings_locked,
+        block_2g: policy.block_2g,
+        block_2g_lines,
         kid_shown: policy.quick_controls_mask & crate::handlers::devices::QUICK_CONTROL_MOBILE_DATA
             != 0,
         data_lines,

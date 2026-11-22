@@ -1,8 +1,8 @@
 {
   "policy": [
-    {"abroad": "vibb", "apps_mobile": "on", "mobile_settings_locked": true},
-    {"abroad": "home", "apps_mobile": "vibb", "mobile_settings_locked": false},
-    {"abroad": "off", "apps_mobile": "vibb", "mobile_settings_locked": false}
+    {"abroad": "vibb", "apps_mobile": "on", "mobile_settings_locked": true, "block_2g": true},
+    {"abroad": "home", "apps_mobile": "vibb", "mobile_settings_locked": false, "block_2g": false},
+    {"abroad": "off", "apps_mobile": "vibb", "mobile_settings_locked": false, "block_2g": false}
   ],
   "abroad_choice": [
     {"abroad": "off", "choice": "off"},
@@ -25,6 +25,30 @@
     {"value": true, "override": true, "locked": false},
     {"value": false, "override": false, "locked": false},
     {"value": null, "override": false, "locked": false}
+  ],
+  "cellular_2g_blocked": [
+    {"value": true, "override": false, "kept": "home", "blocked": true, "state": "blocked"},
+    {"value": true, "override": false, "kept": null, "blocked": true, "state": "blocked"},
+    {"value": true, "override": false, "kept": "unknown", "blocked": true, "state": "blocked"},
+    {"value": true, "override": false, "kept": "abroad", "blocked": false, "state": "abroad"},
+    {"value": true, "override": true, "kept": "home", "blocked": false, "state": "lifted"},
+    {"value": true, "override": true, "kept": "abroad", "blocked": false, "state": "lifted"},
+    {"value": false, "override": false, "kept": "home", "blocked": false, "state": "off"},
+    {"value": false, "override": false, "kept": "abroad", "blocked": false, "state": "off"},
+    {"value": null, "override": false, "kept": "home", "blocked": false, "state": "off"}
+  ],
+  "where_kept": [
+    {"last": null, "now": "home", "airplane": false, "net_cc": "no", "sim_cc": "no", "kept": "home"},
+    {"last": "home", "now": "abroad", "airplane": false, "net_cc": "se", "sim_cc": "no", "kept": "abroad"},
+    {"last": "abroad", "now": "home", "airplane": false, "net_cc": "no", "sim_cc": "no", "kept": "home"},
+    {"last": "abroad", "now": "unknown", "airplane": false, "net_cc": "", "sim_cc": "no", "kept": "abroad"},
+    {"last": "abroad", "now": "unknown", "airplane": true, "net_cc": "no", "sim_cc": "no", "kept": "abroad"},
+    {"last": "home", "now": "unknown", "airplane": false, "net_cc": null, "sim_cc": null, "kept": "home"},
+    {"last": null, "now": "unknown", "airplane": false, "net_cc": null, "sim_cc": "no", "kept": null},
+    {"last": "home", "now": "unknown", "airplane": false, "net_cc": "se", "sim_cc": "no", "kept": "abroad"},
+    {"last": "home", "now": "unknown", "airplane": false, "net_cc": "SE", "sim_cc": "no", "kept": "abroad"},
+    {"last": "home", "now": "unknown", "airplane": true, "net_cc": "se", "sim_cc": "no", "kept": "home"},
+    {"last": "abroad", "now": "unknown", "airplane": false, "net_cc": "no", "sim_cc": "no", "kept": "abroad"}
   ],
   "where": [
     {"airplane": true, "roaming": true, "network": "24001", "sim_operator": "24201", "net_cc": "se", "sim_cc": "no", "where": "unknown"},
@@ -100,7 +124,7 @@
   ],
   "report": {
     "data_roaming": {"locked": false, "roaming": true, "country": "se", "network": "24001", "enabled": true, "data_active": true, "modems": 2, "where": "abroad"},
-    "mobile_data": {"enabled": true, "sink": "abroad", "settings_locked": true, "kid": "off"}
+    "mobile_data": {"enabled": true, "sink": "abroad", "settings_locked": true, "kid": "off", "cellular_2g": "abroad"}
   },
   "clean": [
     {"in": {"locked": true, "roaming": true, "country": "SE1", "network": "9011", "enabled": "yes", "data_active": false, "modems": 99, "where": "elsewhere"},
@@ -118,7 +142,15 @@
     {"in": {"enabled": true, "sink": "kid", "settings_locked": true, "kid": "off"},
      "stored": {"enabled": true, "sink": "kid", "settings_locked": true, "kid": "off"}},
     {"in": {"enabled": true, "sink": "abroad", "settings_locked": false, "kid": "maybe"},
-     "stored": {"enabled": true, "sink": "abroad", "settings_locked": false, "kid": null}}
+     "stored": {"enabled": true, "sink": "abroad", "settings_locked": false, "kid": null}},
+    {"in": {"enabled": true, "sink": "off", "settings_locked": true, "kid": null, "cellular_2g": "abroad"},
+     "stored": {"enabled": true, "sink": "off", "settings_locked": true, "kid": null, "cellular_2g": "abroad"}},
+    {"in": {"enabled": true, "sink": "off", "settings_locked": true, "cellular_2g": "blocked"},
+     "stored": {"enabled": true, "sink": "off", "settings_locked": true, "kid": null, "cellular_2g": "blocked"}},
+    {"in": {"enabled": true, "sink": "off", "settings_locked": true, "cellular_2g": "elsewhere"},
+     "stored": {"enabled": true, "sink": "off", "settings_locked": true, "kid": null}},
+    {"in": {"enabled": true, "sink": "off", "settings_locked": true, "cellular_2g": true},
+     "stored": {"enabled": true, "sink": "off", "settings_locked": true, "kid": null}}
   ],
   "vpn_filter": {
     "report_after_ms": 600000,

@@ -126,6 +126,9 @@ pub struct DevicePolicy {
     /// Design 95 rev. 3 item 3 (migration 0143): `DISALLOW_CONFIG_MOBILE_NETWORKS` on the phone, on by default.
     #[sqlx(default)]
     pub mobile_settings_locked: bool,
+    /// Design 126 A5 (migration 0165): "Blokker 2G" - `DISALLOW_CELLULAR_2G` on the phone, on by default.
+    #[sqlx(default)]
+    pub block_2g: bool,
     // `setup_card_hidden` (migration 0146, design 98's "Ikke nå") is a dead column since design 114 (§5.3).
     /// Design 102 (migration 0150): Wi-Fi sign-in on the phone (Part A, D1: on by default). Read through
     /// `logins::portal_policy`; a missing row reads as on (`load_policy`).
@@ -1387,6 +1390,8 @@ pub struct PolicyResponse {
     pub apps_mobile: String,
     /// Design 95 rev. 3 item 3: Android's mobile-network settings locked on the phone, always sent.
     pub mobile_settings_locked: bool,
+    /// Design 126 A5: "Blokker 2G" (`DISALLOW_CELLULAR_2G`), lifted on the phone by the pause and abroad; always sent.
+    pub block_2g: bool,
     /// Design 95 §3.5 (step 95-T2): this server expands heartbeat reports (`status_heartbeat`), `true` unless
     /// `STATUS_HEARTBEAT=off` (`ForkConfig::status_heartbeat`). The
     /// launcher sends hashes and heartbeats only while it says so.

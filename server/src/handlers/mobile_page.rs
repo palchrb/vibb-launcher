@@ -6,7 +6,8 @@
 //!   with the kid's own Mobildata switch (design 97 §5, `group=kid-mobile`: `quick_controls_mask` bit 32 alone);
 //! - `#abroad`: "Roaming" (design 113; "I utlandet" before) - På / Av / Bare Vibb (`abroad`, design 97; it replaced
 //!   design 94's `#data-roaming`, which nothing linked to);
-//! - `#mobile-lock`: "Lås mobilnett i Androids innstillinger" (`mobile_settings_locked`).
+//! - `#mobile-lock`: "Lås mobilnett i Androids innstillinger" (`mobile_settings_locked`);
+//! - `#block-2g`: "Blokker 2G" (`block_2g`, design 126 A5), with its quiet "Av i utlandet" while the phone lifted it.
 //!
 //! One route, `POST /devices/{id}/mobile`, with the group in `group`: an unknown value is a 400 with nothing written,
 //! an unknown phone a 404. Every save nudges the phone; `settings_log` writes the security log's line. The words come
@@ -109,6 +110,12 @@ fn change(form: &HashMap<String, String>) -> Option<(&'static str, ChangeValue, 
             "mobile_settings_locked",
             ChangeValue::Flag(form.contains_key("on")),
             "mobile-lock",
+        )),
+        // Design 126 A5. A switch: missing = off.
+        "block-2g" => Some((
+            "block_2g",
+            ChangeValue::Flag(form.contains_key("on")),
+            "block-2g",
         )),
         _ => None,
     }

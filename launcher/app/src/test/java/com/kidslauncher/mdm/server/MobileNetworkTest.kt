@@ -35,6 +35,8 @@ class MobileNetworkTest {
         assertEquals(AbroadChoice.HOME, abroadChoice(home))
         assertEquals(Pair("vibb", false), Pair(home.appsMobile, home.mobileSettingsLocked))
         assertEquals(AbroadChoice.OFF, abroadChoice(off))
+        // Design 126 A5: "Blokker 2G" on for a new phone, off once saved off.
+        assertEquals(listOf(true, false, false), listOf(fresh, home, off).map { it.block2g })
     }
 
     @Test
@@ -87,6 +89,33 @@ class MobileNetworkTest {
         }
         for (row in rows("settings_locked")) {
             assertEquals("$row", row.bool("locked"), mobileSettingsLocked(row.bool("value"), row.bool("override")!!))
+        }
+    }
+
+    private fun whereOrNull(wire: String?): Where? = wire?.let { w -> Where.entries.first { it.wire == w } }
+
+    /** Design 126 A5 (§3.6.2, §3.6.4): the 2G rule and the report's word, row by row. */
+    @Test
+    fun `the 2G block follows every row`() {
+        for (row in rows("cellular_2g_blocked")) {
+            val kept = whereOrNull(row.str("kept"))
+            assertEquals("$row", row.bool("blocked"), cellular2gBlocked(row.bool("value"), row.bool("override")!!, kept))
+            assertEquals("$row", row.str("state"), cellular2gState(row.bool("value"), row.bool("override")!!, kept).wire)
+        }
+    }
+
+    /** Design 126 A5 (§3.6.1): the kept where through `unknown`, and the border fallback on the cells' country. */
+    @Test
+    fun `the kept where follows every row`() {
+        for (row in rows("where_kept")) {
+            val kept = where2gKept(
+                last = whereOrNull(row.str("last")),
+                now = whereOrNull(row.str("now"))!!,
+                airplane = row.bool("airplane")!!,
+                netCc = row.str("net_cc"),
+                simCc = row.str("sim_cc"),
+            )
+            assertEquals("$row", row.str("kept"), kept?.wire)
         }
     }
 
@@ -396,7 +425,9 @@ class MobileNetworkTest {
             locked = false, roaming = true, country = "se", network = "24001", enabled = true, dataActive = true, modems = 2,
             whereIs = Where.ABROAD.wire,
         )
-        val mobile = MobileDataReport(enabled = true, sink = SinkReason.ABROAD.wire, settingsLocked = true, kid = "off")
+        val mobile = MobileDataReport(
+            enabled = true, sink = SinkReason.ABROAD.wire, settingsLocked = true, kid = "off", cellular2g = Cellular2g.ABROAD.wire,
+        )
         assertEquals(report["data_roaming"], ServerJson.encodeToJsonElement(DataRoamingReport.serializer(), roaming))
         assertEquals(report["mobile_data"], ServerJson.encodeToJsonElement(MobileDataReport.serializer(), mobile))
         // No home location leaves the phone; a 901 network is named even when it counts as home.

@@ -2461,7 +2461,11 @@ anchor (`#mobile-data`, `#data-roaming`, `#mobile-lock`), so a save never jumps 
 / Bare Vibb with their subtitles, `apps_mobile`), "Dataroaming" (Av (låst) / Telefonens valg, `data_roaming`; the
 column allows `eea` for a later round, the page doesn't offer it), and "Lås mobilnett-innstillingene"
 (`mobile_settings_locked`, on by default). An unknown value or group is a 400 with nothing written; `settings_log`
-writes the line; each save nudges the phone. The radio rows are `.pick-row` (style.css v110).
+writes the line; each save nudges the phone. The radio rows are `.pick-row` (style.css v110). Design 126 A5 adds a
+fourth group after the lock, `#block-2g`: "Blokker 2G" (`block_2g`, migration 0165, on by default; `group=block-2g`), its
+why and cost behind the (i), and one quiet row, "Av i utlandet", only while the switch is on and the latest report's
+`mobile_data.cellular_2g` is `abroad` (`mobile_network::card`'s `block_2g_lines`; `clean_mobile` keeps a known word,
+drops anything else) - nothing on the summary, never orange.
 
 The phone's state, worded by
 `mobile_network::card` from the report's cleaned `data_roaming` and `mobile_data`, sits under each group: design 94

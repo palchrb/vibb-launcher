@@ -73,6 +73,7 @@ async fn the_contract() {
             "abroad": p["abroad"],
             "apps_mobile": p["apps_mobile"],
             "mobile_settings_locked": p["mobile_settings_locked"],
+            "block_2g": p["block_2g"],
         })
     };
     assert_eq!(pick(&policy(&app, &token).await), rows[0]);
@@ -80,6 +81,7 @@ async fn the_contract() {
         ("abroad", vec![("abroad", "home")]),
         ("mobile-data", vec![("apps_mobile", "vibb")]),
         ("mobile-lock", vec![]),
+        ("block-2g", vec![]),
     ] {
         let mut sent = vec![("group", group)];
         sent.extend(fields);
@@ -509,4 +511,63 @@ async fn a_crossing_raises_the_roaming_notice_once() {
             .await
             .unwrap();
     assert_eq!(place.as_deref(), Some("se"));
+}
+
+/// Design 126 A5: "Blokker 2G" saves on its own anchor (`#block-2g`, never the top) and is served; its one line is the
+/// quiet "Av i utlandet", only while the switch is on and the latest report says the phone lifted it abroad - never
+/// orange, nothing on the summary.
+#[tokio::test]
+async fn block_2g_saves_on_its_anchor_and_says_off_abroad_quietly() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("Emma").await;
+    let page = format!("/devices/{id}/mobile");
+    assert_eq!(policy(&app, &token).await["block_2g"], true);
+    let html = app.get_page(&page, &cookie).await.text();
+    assert!(html.contains("<section id=\"block-2g\""), "{html}");
+    assert!(html.contains(&format!("action=\"/devices/{id}/mobile#block-2g\"")));
+
+    let res = save(&app, &cookie, id, &[("group", "block-2g")]).await;
+    assert_redirect(&res, &page, Some("block-2g"));
+    assert_eq!(policy(&app, &token).await["block_2g"], false);
+    let res = save(&app, &cookie, id, &[("group", "block-2g"), ("on", "on")]).await;
+    assert_redirect(&res, &page, Some("block-2g"));
+    assert_eq!(policy(&app, &token).await["block_2g"], true);
+
+    let mobile = |word: &str| json!({"mobile_data": {"enabled": true, "sink": "off", "settings_locked": true, "cellular_2g": word}});
+    for (word, shown) in [
+        ("blocked", false),
+        ("lifted", false),
+        ("off", false),
+        ("abroad", true),
+    ] {
+        report(&app, &token, mobile(word)).await;
+        let html = app
+            .get_page(&format!("{page}?lang=nb"), &cookie)
+            .await
+            .text();
+        assert_eq!(
+            html.contains("data-mobile-line=\"abroad-2g\""),
+            shown,
+            "{word}"
+        );
+        assert_eq!(
+            html.contains("<span class=\"row-label\">Av i utlandet</span>"),
+            shown,
+            "{word}"
+        );
+        assert!(
+            !html.contains("attention-action\" data-mobile-line=\"abroad-2g"),
+            "{word}"
+        );
+        let summary = app
+            .get_page(&format!("/devices/{id}?lang=nb"), &cookie)
+            .await
+            .text();
+        assert!(!summary.contains("abroad-2g"), "{word}");
+    }
+    // The switch off: the line goes with it.
+    save(&app, &cookie, id, &[("group", "block-2g")]).await;
+    let html = app.get_page(&page, &cookie).await.text();
+    assert!(!html.contains("data-mobile-line=\"abroad-2g\""));
 }

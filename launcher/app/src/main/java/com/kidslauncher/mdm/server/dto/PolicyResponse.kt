@@ -1,6 +1,7 @@
 package com.kidslauncher.mdm.server.dto
 
 import com.kidslauncher.mdm.timerules.TimePolicy
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 /**
@@ -154,6 +155,9 @@ data class PolicyResponse(
     /** Design 95 rev. 3 item 3: Android's mobile-network settings locked (`DISALLOW_CONFIG_MOBILE_NETWORKS`); missing =
      * not set. Kept by [com.kidslauncher.mdm.server.LastEnforcedPlan]. */
     val mobileSettingsLocked: Boolean? = null,
+    /** Design 126 A5: "Blokker 2G" (`DISALLOW_CELLULAR_2G`, [com.kidslauncher.mdm.server.cellular2gBlocked]); missing =
+     * not set. Kept by [com.kidslauncher.mdm.server.LastEnforcedPlan]. */
+    @SerialName("block_2g") val block2g: Boolean? = null,
     /** Design 95 §3.5 (step 95-T2): the server expands heartbeat reports ([StatusReports]); missing = never
      * send one. */
     val statusHeartbeat: Boolean = false,

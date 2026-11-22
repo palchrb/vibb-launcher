@@ -65,6 +65,17 @@ them), all whether or not the phone is managed in hardening's sense (the parent'
   `mobile_data.enabled` shows it.
 - Bare Vibb (`apps_mobile: "vibb"`): the VPN's sink shape on cellular - see `dns-and-vpn.md`, "Three shapes".
   `DISALLOW_CONFIG_VPN` holds while any shape runs (`vpnConfigLocked`), so it is lifted with them.
+- `DISALLOW_CELLULAR_2G` while the policy's `block_2g` is true (design 126 A5, on by default; a missing key sets
+  nothing): `MobileNetworkRuntime.applyCellular2g`, written only on a change, right after the settings lock. Lifted by
+  the standing rule (its failure is "no network", which only an on-phone lift can undo) and - option (b), pending the
+  user's answer to design 126 §11 - **abroad by itself**: `cellular2gBlocked(value, overrideActive, kept)`, the abroad
+  lift alone in `abroadLifts2g` (option (a) is that function answering `false`). `kept` is `where2gKept`: `whereOf`'s
+  answer when home or abroad, the last kept one through `unknown` (a 2G-only area with 2G blocked is out of service),
+  with the border fallback - not in airplane mode, the cells' country and the SIM's known and different - to abroad;
+  stored in device-protected prefs (`mobile_network_2g`, `block_2g_where`), so a reboot abroad keeps it. While the
+  switch is on a `TelephonyCallback.ServiceStateListener` (the launcher's first) re-reads it between passes and asks
+  for a sync when the restriction changed. The report's `mobile_data.cellular_2g`: `blocked`, `abroad`, `lifted`,
+  `off` (`cellular2gState`) - what Vibb asked of Android, never whether the modem obeys.
 
 The rules are pure (`MobileNetwork.kt`), pinned by `mobile_network.json` (`MobileNetworkTest`).
 
