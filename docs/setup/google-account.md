@@ -21,6 +21,10 @@ for recovery and 2-Step Verification. The kid doesn't know the password.
 
 - **Data & privacy**: Web & App Activity off; Timeline (location history) off; YouTube History
   (watch and search) off; Personalised ads off (My Ad Center).
+- **Google Location Accuracy** (on the phone: Settings -> Location -> Location services): the parent's choice, a
+  privacy trade-off. On, Vibb's every-N-minutes fix asks Wi-Fi/cell first (design 124 D9: cheaper, and the only
+  source indoors; Google's location service sees the Wi-Fi networks around the phone). Off, every fix is GPS, which
+  usually fails indoors and at night, and zones' fences hear only GPS fixes.
 - **Payments**: no payment method (pay.google.com -> Payment methods: none). A paid app is bought
   with a Play gift card on this account, never with a card on file.
 

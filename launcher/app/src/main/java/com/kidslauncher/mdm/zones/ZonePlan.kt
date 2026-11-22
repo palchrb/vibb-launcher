@@ -81,28 +81,37 @@ fun fenceVerdict(zoneId: Long, policyZones: List<PolicyZone>, entering: Boolean,
 
 /**
  * The zone watch is on (qa-design-64-step2-code Q-2, the coordinator's decision): device owner,
- * managed, Regularly **with zones**. Everything new of step 2 - the passive feed, the motion gate,
- * the heartbeat's skips, the backstop counting from the beat, the series, the balanced path -
- * hangs on this; without zones the phone does exactly what it did before ([syncLocationAction]).
+ * managed, Regularly **with zones**. The fences, the passive feed, the series and the queue hang
+ * on this; the heartbeat and the motion gate on [stillWatchActive].
  */
 fun zoneWatchActive(owner: Boolean, managed: Boolean, policy: com.kidslauncher.mdm.server.dto.LocationPolicy?): Boolean =
-    owner && managed && policy != null && policy.mode == "interval" && policy.zones.isNotEmpty()
-
-/** The location step's action and, with zones, the heartbeat's verdict (`null` = no heartbeat ran). */
-data class SyncLocation(val action: com.kidslauncher.mdm.server.LocationAction, val beat: Heartbeat?)
+    stillWatchActive(owner, managed, policy) && policy?.zones.orEmpty().isNotEmpty()
 
 /**
- * The sync's location action (§4.4). **Without zones** ([zonesOn] false) it is exactly today's
- * `locationAction(policy, forced, now - lastOwnFix)` ([lastOwnFixMs]: the last attempt, as today) -
- * nothing of step 2 changes it; the heartbeat's still skip counts from [lastFreshFixMs], the last
- * genuinely fresh own fix (F-3). With zones: a
- * forced fix is the precise path for [precise] (`locate`, a crossing's confirm) and the
- * balanced one for a crossing's first fix; else [heartbeatDue] decides, a `FIX` taking the
- * balanced path.
+ * Design 124 D1: the still rule is on - device owner, managed, Regularly, zones or not. The heartbeat
+ * ([heartbeatDue]), the beat's stamp and the backstop counting from it ([backstopAnchorMs]), the
+ * motion gate, `still` ([reportStill]) and the balanced path hang on this; without it the location
+ * step is today's `locationAction` ([syncLocationAction]).
+ */
+fun stillWatchActive(owner: Boolean, managed: Boolean, policy: com.kidslauncher.mdm.server.dto.LocationPolicy?): Boolean =
+    owner && managed && policy?.mode == "interval"
+
+/** The location step's action and, on a Regularly phone, the heartbeat's verdict (`null` = no
+ * heartbeat ran) and the back-off it counted with (for the log line). */
+data class SyncLocation(val action: com.kidslauncher.mdm.server.LocationAction, val beat: Heartbeat?, val backoffMs: Long = 0)
+
+/**
+ * The sync's location action (design 64 §4.4, design 124 D1). Without the still rule ([stillOn]
+ * false: not Regularly, not owner or not managed) it is exactly `locationAction(policy, forced,
+ * now - lastOwnFix)`. Regularly: a forced fix is the precise path for [precise] (`locate`, a
+ * crossing's confirm) and the balanced one for a crossing's first fix; else [heartbeatDue] decides,
+ * a `FIX` taking the balanced path. [lastOwnFixMs] is our last attempt (the back-off's last try),
+ * [lastFreshFixMs] our last genuinely fresh fix (the still skip's 4 h, F-3), [stillSinceMs]
+ * [MotionFlags.stillSinceMs].
  */
 fun syncLocationAction(
     policy: com.kidslauncher.mdm.server.dto.LocationPolicy?,
-    zonesOn: Boolean,
+    stillOn: Boolean,
     forced: Boolean,
     precise: Boolean,
     nowMs: Long,
@@ -111,24 +120,23 @@ fun syncLocationAction(
     motion: Motion,
     keptFixAgeMs: Long?,
     lastFreshFixMs: Long,
+    stillSinceMs: Long = 0,
 ): SyncLocation {
     val today = com.kidslauncher.mdm.server.locationAction(policy, forced, nowMs - lastOwnFixMs)
-    if (!zonesOn || policy == null || policy.mode != "interval") return SyncLocation(today, null)
-    val p = policy
+    if (!stillOn || policy == null || policy.mode != "interval") return SyncLocation(today, null)
     if (forced) {
         val fresh = if (precise) com.kidslauncher.mdm.server.LocationAction.FRESH else com.kidslauncher.mdm.server.LocationAction.FRESH_BALANCED
         return SyncLocation(fresh, null)
     }
-    val intervalMs = p.intervalMinutes.coerceAtLeast(com.kidslauncher.mdm.server.MIN_LOCATION_INTERVAL_MINUTES) * 60_000L
-    // STILL counts from the last genuinely fresh own fix, never a failed attempt (F-3).
-    val beat = heartbeatDue(nowMs, lastBeatMs, intervalMs, motion, lastFreshFixMs, keptFixAgeMs)
+    val intervalMs = policy.intervalMinutes.coerceAtLeast(com.kidslauncher.mdm.server.MIN_LOCATION_INTERVAL_MINUTES) * 60_000L
+    val beat = heartbeatDue(nowMs, lastBeatMs, intervalMs, motion, lastFreshFixMs, keptFixAgeMs, lastOwnFixMs, stillSinceMs)
     val action = if (beat == Heartbeat.FIX) com.kidslauncher.mdm.server.LocationAction.FRESH_BALANCED else com.kidslauncher.mdm.server.LocationAction.CACHED
-    return SyncLocation(action, beat)
+    return SyncLocation(action, beat, stillBackoffMs(intervalMs, lastOwnFixMs, stillSinceMs))
 }
 
-/** What the backstop counts the next fix from: the beat with zones (a skip waits a whole
- * interval), our last own fix without - today's. */
-fun backstopAnchorMs(zonesOn: Boolean, lastBeatMs: Long, lastOwnFixMs: Long): Long = if (zonesOn) lastBeatMs else lastOwnFixMs
+/** What the backstop counts the next fix from: the beat on a Regularly phone (a skip waits a whole
+ * interval), our last own fix otherwise. */
+fun backstopAnchorMs(stillOn: Boolean, lastBeatMs: Long, lastOwnFixMs: Long): Long = if (stillOn) lastBeatMs else lastOwnFixMs
 
 /** A fix younger than this at the request is one LocationManager just made, not an older
  * last-known or cached one (Q-6). */
@@ -181,10 +189,12 @@ fun queueAfterReport(queue: List<QueuedFix>, sent: List<QueuedFix>, location: Qu
     else -> queue
 }
 
-/** What the significant-motion sensor says since our last own fix (§4.5): the one-shot trigger
- * fired ([MOVED]; also "don't know", e.g. a new process), it hasn't ([STILL]), or the phone has
- * none ([NO_SENSOR]: the heartbeat always fixes, today's behaviour). */
-enum class Motion { MOVED, STILL, NO_SENSOR }
+/** What the significant-motion sensor says (§4.5, design 124 D4): it fired since our last own fix
+ * attempt, or we don't know (a new process, no anchor, a refused registration) - [MOVED]; it hasn't
+ * since the last attempt but has since the last genuinely fresh fix, which that attempt didn't
+ * replace - [STILL_SINCE_TRY]; it hasn't since the last fresh fix - [STILL]; the phone has none or
+ * distrusts it (D7) - [NO_SENSOR]: the heartbeat always fixes, today's behaviour. */
+enum class Motion { MOVED, STILL_SINCE_TRY, STILL, NO_SENSOR }
 
 /** The heartbeat's call at a sync (§4.4). */
 enum class Heartbeat {
@@ -198,42 +208,158 @@ enum class Heartbeat {
      * no LocationManager call. */
     KEPT,
 
-    /** Due, the phone hasn't moved since our last fix and that was under 4 h ago: report the
-     * cached fix, no LocationManager call. */
+    /** Due, the phone hasn't moved since our last fresh fix and that was under 4 h ago: report the
+     * cached fix as still current, no LocationManager call. */
     STILL,
+
+    /** Due, the phone hasn't moved since our last try (which failed, or the 4 h ran out) and the
+     * back-off ([stillBackoffMs]) hasn't passed: the cached fix with its own age - no `still`, no
+     * LocationManager call (design 124 D5). */
+    QUIET,
 }
 
 /**
- * The Regularly heartbeat with zones (decision 11, §4.4): due when [intervalMs] passed since the
- * last heartbeat ([lastBeatMs], wall clock; the clock set back counts as due). Due, it takes no fix
- * when a kept fix **not yet reported** is younger than the interval ([keptFixAgeMs]: the kept slot's
- * fix - a passive fix or a series check's -, `null` when there is none or it isn't newer than the
- * reported one; our own reported fixes never count, Q-4) or when [motion] says the
- * phone hasn't moved and our last own fix ([lastOwnFixMs]) is under [STILL_SKIP_MAX_MS] old. Each due
- * call counts as a heartbeat (the caller stamps it), so a skip waits a whole interval, never the
- * backstop's 9-minute floor.
+ * The Regularly heartbeat (design 64 decision 11, design 124 D5): due when [intervalMs] passed since
+ * the last heartbeat ([lastBeatMs], wall clock; the clock set back counts as due). Due, it takes no
+ * fix when a kept fix **not yet reported** is younger than the interval ([keptFixAgeMs]: the kept
+ * slot's fix, zones only; our own reported fixes never count, Q-4) - `KEPT`; when [motion] says the
+ * phone hasn't moved since our last genuinely fresh fix ([lastFreshFixMs]) and that is under
+ * [STILL_SKIP_MAX_MS] old - `STILL`; when it hasn't moved since our last try ([lastTryMs]) and the
+ * back-off ([stillBackoffMs] from [stillSinceMs]) hasn't passed since it - `QUIET`. Each due call
+ * counts as a heartbeat (the caller stamps it), so a skip waits a whole interval, never the
+ * backstop's 9-minute floor. A move (a fire) always gives a try at the next due beat.
  */
-fun heartbeatDue(nowMs: Long, lastBeatMs: Long, intervalMs: Long, motion: Motion, lastOwnFixMs: Long, keptFixAgeMs: Long?): Heartbeat {
+fun heartbeatDue(
+    nowMs: Long,
+    lastBeatMs: Long,
+    intervalMs: Long,
+    motion: Motion,
+    lastFreshFixMs: Long,
+    keptFixAgeMs: Long?,
+    lastTryMs: Long,
+    stillSinceMs: Long,
+): Heartbeat {
     val since = nowMs - lastBeatMs
     if (since in 0 until intervalMs) return Heartbeat.NOT_DUE
     if (keptFixAgeMs != null && keptFixAgeMs in 0 until intervalMs) return Heartbeat.KEPT
-    if (stillSinceOwnFix(motion, nowMs, lastOwnFixMs)) return Heartbeat.STILL
+    if (stillSinceOwnFix(motion, nowMs, lastFreshFixMs)) return Heartbeat.STILL
+    val stillSinceTry = motion == Motion.STILL || motion == Motion.STILL_SINCE_TRY
+    if (stillSinceTry && nowMs - lastTryMs in 0 until stillBackoffMs(intervalMs, lastTryMs, stillSinceMs)) return Heartbeat.QUIET
     return Heartbeat.FIX
 }
 
-/** The motion sensor hasn't fired since our last own fix ([lastOwnFixMs]), and that fix is under
- * [STILL_SKIP_MAX_MS] old: the phone is still where the reported fix says. */
-fun stillSinceOwnFix(motion: Motion, nowMs: Long, lastOwnFixMs: Long): Boolean =
-    motion == Motion.STILL && nowMs - lastOwnFixMs in 0 until STILL_SKIP_MAX_MS
+/**
+ * Design 124 D5: how long the heartbeat waits after a try while the phone hasn't moved - as long as
+ * it had already been still at that try ([lastTryMs] - [stillSinceMs]), at least the interval, at
+ * most [STILL_SKIP_MAX_MS]. Failures from 20:30 try at 20:30, 21:00, 21:30, 22:30, 00:30, 04:30;
+ * after a good fix at 20:30, `STILL` to 00:30, then one try per 4 h.
+ */
+fun stillBackoffMs(intervalMs: Long, lastTryMs: Long, stillSinceMs: Long): Long =
+    (lastTryMs - stillSinceMs).coerceAtMost(STILL_SKIP_MAX_MS).coerceAtLeast(intervalMs)
+
+/** The motion sensor hasn't fired since our last genuinely fresh fix ([lastFreshFixMs]), and that
+ * fix is under [STILL_SKIP_MAX_MS] old: the phone is still where the reported fix says. */
+fun stillSinceOwnFix(motion: Motion, nowMs: Long, lastFreshFixMs: Long): Boolean =
+    motion == Motion.STILL && nowMs - lastFreshFixMs in 0 until STILL_SKIP_MAX_MS
 
 /**
- * The report's `zone_watch.still` (qa-design-64-step2-code Q-3): with zones, a sync that re-sends
- * the cached fix ([action] `CACHED`) while [stillSinceOwnFix] says the phone hasn't moved tells the
- * server the fix is still current, so "Here now" counts from this report, not from the fix's own
- * time - the fix's time is never rewritten. A fresh fix is current anyway; without zones never.
+ * The report's `zone_watch.still` (qa-design-64-step2-code Q-3, design 124 D1): on a Regularly phone,
+ * zones or not, a sync that re-sends the cached fix ([action] `CACHED`) while [stillSinceOwnFix] says
+ * the phone hasn't moved tells the server the fix is still current, so "Here now" and "Hasn't moved
+ * since" count from this report - the fix's own time is never rewritten. A fresh fix is current
+ * anyway; never without the still rule ([stillOn]).
  */
-fun reportStill(zonesOn: Boolean, action: com.kidslauncher.mdm.server.LocationAction, motion: Motion, nowMs: Long, lastOwnFixMs: Long): Boolean =
-    zonesOn && action == com.kidslauncher.mdm.server.LocationAction.CACHED && stillSinceOwnFix(motion, nowMs, lastOwnFixMs)
+fun reportStill(stillOn: Boolean, action: com.kidslauncher.mdm.server.LocationAction, motion: Motion, nowMs: Long, lastFreshFixMs: Long): Boolean =
+    stillOn && action == com.kidslauncher.mdm.server.LocationAction.CACHED && stillSinceOwnFix(motion, nowMs, lastFreshFixMs)
+
+/**
+ * The motion gate's state (design 124 D3), in memory only: a new process starts moved.
+ * [movedSinceFresh]: the trigger fired (or we don't know) since our last genuinely fresh fix;
+ * [movedSinceTry]: since our last heartbeat try; [fires] counts every fire and mark, so an attempt
+ * compares it with the count read before its LocationManager call (M1: a fire during the attempt is
+ * never erased); [stillSinceMs]: when the phone last became still - a fresh fix's time, or the first
+ * failed try after a move -, what [stillBackoffMs] counts from.
+ */
+data class MotionFlags(
+    val movedSinceFresh: Boolean = true,
+    val movedSinceTry: Boolean = true,
+    val fires: Int = 0,
+    val stillSinceMs: Long = 0,
+) {
+    /** A fire, or other evidence of a move (a crossing, a side change, Off, the anchor gone). */
+    fun moved(): MotionFlags = copy(movedSinceFresh = true, movedSinceTry = true, fires = fires + 1)
+
+    /**
+     * After one of our own attempts begun at [firesAtStart]: with a fire since, nothing clears. A
+     * genuinely fresh fix ([freshFixMs], its time; `null` = none) clears both, whatever asked for it.
+     * A failure clears [movedSinceTry] only after the heartbeat's own `FIX` ([heartbeat]; L7: a
+     * failed `locate`, low-battery or crossing fix clears nothing) - the phone still from [nowMs]
+     * when it had moved before.
+     */
+    fun afterTry(firesAtStart: Int, freshFixMs: Long?, heartbeat: Boolean, nowMs: Long): MotionFlags = when {
+        fires != firesAtStart -> this
+        freshFixMs != null -> copy(movedSinceFresh = false, movedSinceTry = false, stillSinceMs = freshFixMs)
+        !heartbeat || !movedSinceTry -> this
+        else -> copy(movedSinceTry = false, stillSinceMs = nowMs)
+    }
+
+    /** The [Motion]: [sensor] - the phone has one and trusts it (D7); [anchor] - the anchor service
+     * runs, which keeps our UID out of the idle state the sensor service skips (D4, D8). */
+    fun motion(sensor: Boolean, anchor: Boolean): Motion = when {
+        !sensor -> Motion.NO_SENSOR
+        !anchor || movedSinceTry -> Motion.MOVED
+        movedSinceFresh -> Motion.STILL_SINCE_TRY
+        else -> Motion.STILL
+    }
+}
+
+/** What an attempt reads before its LocationManager call, together (M1): the motion, the fire count
+ * it compares after, and [MotionFlags.stillSinceMs] for the back-off. */
+data class MotionSnapshot(val motion: Motion, val fires: Int, val stillSinceMs: Long)
+
+/** A sensor caught lying is distrusted this long, and two contradictions count within it (D7). */
+const val MOTION_DISTRUST_MS = 7 * 24 * 60 * 60_000L
+
+/** A contradiction needs both fixes at least this accurate (D7): a cell fix proves nothing. */
+const val CONTRADICTION_ACCURACY_MAX_M = 100f
+
+/** ... and them further apart than both accuracies and this. */
+const val CONTRADICTION_SLACK_M = 200.0
+
+/**
+ * Design 124 D7: a genuinely fresh own fix ([fresh]) taken while the gate said `STILL` contradicts
+ * the sensor when it lies further from the vouched fix ([vouched], the reported one) than both
+ * accuracies and [CONTRADICTION_SLACK_M], both accuracies known and within
+ * [CONTRADICTION_ACCURACY_MAX_M].
+ */
+fun motionContradiction(vouched: QueuedFix?, fresh: QueuedFix): Boolean {
+    fun good(accuracy: Float?) = accuracy?.takeIf { it.isFinite() && it >= 0f && it <= CONTRADICTION_ACCURACY_MAX_M }
+    val old = vouched ?: return false
+    val a = good(old.accuracy) ?: return false
+    val b = good(fresh.accuracy) ?: return false
+    return distanceM(old.latitude, old.longitude, fresh.latitude, fresh.longitude) > a + b + CONTRADICTION_SLACK_M
+}
+
+/** The sensor's record after a contradiction (D7): the instants of the last 7 days', and at the
+ * second the distrust's end ([distrustUntilMs]; 0 = none) - the list then starts over. */
+data class MotionTrust(val contradictions: List<Long>, val distrustUntilMs: Long)
+
+fun trustAfterContradiction(recent: List<Long>, nowMs: Long): MotionTrust {
+    val kept = recent.filter { nowMs - it in 0 until MOTION_DISTRUST_MS } + nowMs
+    return if (kept.size >= 2) MotionTrust(emptyList(), nowMs + MOTION_DISTRUST_MS) else MotionTrust(kept, 0)
+}
+
+/** Distrusted until [untilMs] - never longer than [MOTION_DISTRUST_MS] from now, whatever the clock did. */
+fun motionDistrusted(untilMs: Long, nowMs: Long): Boolean = untilMs - nowMs in 1..MOTION_DISTRUST_MS
+
+/** Design 124 D9: the balanced fix is enough - its accuracy known and within
+ * [PASSIVE_ACCURACY_FLOOR_M] (a rural cell fix can be kilometres); else GPS is asked once. */
+fun balancedEnough(accuracyM: Float?): Boolean = accuracyM != null && accuracyM.isFinite() && accuracyM <= PASSIVE_ACCURACY_FLOOR_M
+
+/** D9's keep-the-better: the GPS fix ([gpsM]) replaces the balanced one ([balancedM]) only with an
+ * accuracy of its own better than the balanced one's (a missing accuracy is the worst). */
+fun gpsBetter(balancedM: Float?, gpsM: Float?): Boolean =
+    gpsM != null && gpsM.isFinite() && (balancedM == null || !balancedM.isFinite() || gpsM < balancedM)
 
 /** A mock fix's key for the count (Q-9): its time and place, so the same fix read again through
  * another provider or the passive feed counts once. */

@@ -1,6 +1,7 @@
 # 124 - Location while the phone lies still
 
-Status: **revision 2 - proposal, step 1 scope**, 2026-11-22. Asked by the user: "hva tror vi om å be om location hver
+Status: **revision 2 - step 1 approved 2026-11-22 ("Ja") and built (L1 + S1, branch `location-still-build`), awaiting
+code QA and the Jelly Star's §6-§7; step 2 not built**, 2026-11-22. Asked by the user: "hva tror vi om å be om location hver
 30 minutt slik vi gjør nå, hvor mye batteri vil det kreve? ... nå kjører den jo på med hvert 30 minutt hele natten mens
 man er hjemme ... Har vi gjort dette på en optimal måte?", then "Jeg er interessert i forbedringene du kommer med, når
 det ikke er bevegelse etc i telefonen. Men tenk gjerne nøye gjennom det", then "da må vi jo sikre at vi klarer å hente

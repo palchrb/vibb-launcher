@@ -38,6 +38,8 @@ private const val KEY_MOCK_KEYS = "mock_keys_v1"
 private const val KEY_LAST_BEAT = "last_beat_ms"
 private const val KEY_LAST_FRESH_FIX = "last_fresh_fix_ms"
 private const val KEY_BUDGET = "series_budget_v1"
+private const val KEY_CONTRADICTIONS = "motion_contradictions_v1"
+private const val KEY_DISTRUST_UNTIL = "motion_distrust_until_ms"
 private const val ACTION_CONFIRM = "com.kidslauncher.mdm.action.ZONE_CONFIRM"
 
 /** The crossing's confirming fix (§4.5); not BackstopAlarm's 7, the update fence's 11, the
@@ -73,17 +75,26 @@ object ZoneWatch {
 
     private fun prefs(context: Context) = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
-    /**
-     * Whether the zone watch is on for [policy] ([zoneWatchActive]: device owner, managed,
-     * Regularly with zones) - the one gate of everything new in step 2 (qa-design-64-step2-code
-     * Q-2): without it the phone does exactly what it did before. False on any error.
-     */
-    fun zonesOn(context: Context, policy: PolicyResponse?): Boolean = try {
+    /** Whether the zone watch is on for [policy] ([zoneWatchActive]: device owner, managed,
+     * Regularly with zones) - the fences, the passive feed, the series and the queue
+     * (qa-design-64-step2-code Q-2). False on any error. */
+    fun zonesOn(context: Context, policy: PolicyResponse?): Boolean = gate(context, policy, ::zoneWatchActive)
+
+    /** Whether the still rule is on for [policy] ([stillWatchActive]: device owner, managed,
+     * Regularly, zones or not; design 124 D1) - the heartbeat, the motion gate and the backstop
+     * counting from the beat. False on any error. */
+    fun stillOn(context: Context, policy: PolicyResponse?): Boolean = gate(context, policy, ::stillWatchActive)
+
+    private fun gate(
+        context: Context,
+        policy: PolicyResponse?,
+        rule: (Boolean, Boolean, com.kidslauncher.mdm.server.dto.LocationPolicy?) -> Boolean,
+    ): Boolean = try {
         val app = context.applicationContext
         val owner = app.getSystemService(DevicePolicyManager::class.java)?.isDeviceOwnerApp(app.packageName) == true
         CallPolicyStore.ensureLoaded(app)
         val managed = hardeningManaged(policy?.allowlist, CallPolicyStore.state.managed)
-        zoneWatchActive(owner, managed, policy?.locationPolicy)
+        rule(owner, managed, policy?.locationPolicy)
     } catch (e: Exception) {
         Log.w(LOG_TAG, "Zone watch gate failed: ${e.javaClass.simpleName}")
         false
@@ -92,9 +103,11 @@ object ZoneWatch {
     /**
      * The enforced policy's zone watch, after every sync's `apply()` (and so at the first sync of
      * every process start - decision 10): with the watch on ([zonesOn]) the fences, the passive
-     * feed and the motion sensor (kept armed for the series); anything else turns all of it off
-     * and drops a kept fix - a phone without zones has none of it (Q-2). The pause and the
-     * override change nothing (decision 12: locating isn't a restriction). Never throws.
+     * feed and the motion sensor kept armed for the series; anything else turns the fences and the
+     * feed off and drops a kept fix (Q-2). The motion sensor follows the still rule ([stillOn],
+     * design 124 D2): armed on every Regularly phone - at every process's first sync -, stopped
+     * (and moved) only when not Regularly. The pause and the override change nothing (decision 12:
+     * locating isn't a restriction). Never throws.
      */
     fun apply(context: Context, policy: PolicyResponse?) {
         val app = context.applicationContext
@@ -103,7 +116,7 @@ object ZoneWatch {
             val zones = if (on) policy?.locationPolicy?.zones.orEmpty() else emptyList()
             ZoneFences.sync(app, zones, watching = on)
             PassiveFixes.update(app, on = on)
-            if (on) MotionGate.watch(app, zones = true) else MotionGate.stop(app)
+            if (stillOn(app, policy)) MotionGate.watch(app, zones = on) else MotionGate.stop(app)
             if (!on) {
                 ZoneSeries.stop(app)
                 LocateCommands.clearKept(app)
@@ -231,6 +244,36 @@ object ZoneWatch {
         prefs(context).edit().putLong(KEY_LAST_FRESH_FIX, fixTimeMs).commit()
     }
 
+    // --- A sensor that lies (design 124 D7) ---
+
+    /** The motion sensor isn't distrusted ([motionDistrusted]); true on any error. */
+    fun motionTrusted(context: Context): Boolean = try {
+        !motionDistrusted(prefs(context).getLong(KEY_DISTRUST_UNTIL, 0L), System.currentTimeMillis())
+    } catch (e: Exception) {
+        true
+    }
+
+    /** A fresh fix contradicted the sensor ([motionContradiction]): kept with the last 7 days', and
+     * at the second the sensor is distrusted for 7 days ([trustAfterContradiction]) - `motion_sensor:
+     * false` in the report, every due beat fixes. Kept across a new enrollment: it is the hardware's. */
+    @Synchronized
+    fun noteContradiction(context: Context, nowMs: Long) {
+        val p = prefs(context)
+        val recent = try {
+            p.getString(KEY_CONTRADICTIONS, null)?.let { ServerJson.decodeFromString(instantsSerializer, it) }.orEmpty()
+        } catch (e: Exception) {
+            emptyList()
+        }
+        val trust = trustAfterContradiction(recent, nowMs)
+        val edit = p.edit().putString(KEY_CONTRADICTIONS, ServerJson.encodeToString(instantsSerializer, trust.contradictions))
+        if (trust.distrustUntilMs != 0L) edit.putLong(KEY_DISTRUST_UNTIL, trust.distrustUntilMs)
+        edit.commit()
+        Log.w(LOG_TAG, "Motion contradiction")
+        if (trust.distrustUntilMs != 0L) Log.w(LOG_TAG, "Motion sensor distrusted until ${Instant.ofEpochMilli(trust.distrustUntilMs)}")
+    }
+
+    private val instantsSerializer = ListSerializer(Long.serializer())
+
     // --- The series' daily budget (F-2) ---
 
     private fun today(): String = java.time.LocalDate.now().toString()
@@ -353,7 +396,8 @@ object ZoneWatch {
         } else {
             ZoneWatchReport(
                 fences = fenceRecord(app)?.ids?.size ?: 0,
-                motionSensor = MotionGate.hasSensor(app),
+                // Design 124 D7: a distrusted sensor reads as none.
+                motionSensor = MotionGate.hasSensor(app) && motionTrusted(app),
                 locationOn = QuickControls.isLocationEnabled(app),
                 backgroundLocation = ContextCompat.checkSelfPermission(app, android.Manifest.permission.ACCESS_BACKGROUND_LOCATION) ==
                     PackageManager.PERMISSION_GRANTED,

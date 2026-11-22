@@ -127,6 +127,7 @@ object ZoneSeries {
         // Compared with the reported fix: the server knows that one's side.
         val previous = LocateCommands.cachedQueued()
         val requestedAt = System.currentTimeMillis()
+        val firesAtStart = MotionGate.snapshot(context).fires
         val location = LocateCommands.seriesFix(context) ?: return
         val fix = location.toQueued(LocateCommands.providerOf(location))
         val verdict = checkVerdict(previous, fix, zones)
@@ -137,7 +138,7 @@ object ZoneSeries {
         if (fresh) ZoneWatch.stampFreshFix(context, location.time)
         Log.i(LOG_TAG, "Series check: $verdict")
         if (verdict == CheckVerdict.KEEP) {
-            if (fresh) MotionGate.arm(context)
+            if (fresh) MotionGate.afterTry(context, firesAtStart, location.time, heartbeat = false, nowMs = requestedAt)
             return
         }
         // A side change is motion (F-3): no `still` until the confirm's fix arms the gate again.

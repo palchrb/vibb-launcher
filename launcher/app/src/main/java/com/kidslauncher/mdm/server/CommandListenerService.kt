@@ -198,6 +198,8 @@ class CommandListenerService : Service() {
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Couldn't stop the passive feed", e)
         }
+        // Design 124 D4: without the anchor our UID may go idle and miss the trigger - nothing vouches.
+        com.kidslauncher.mdm.zones.MotionGate.markMoved()
         super.onDestroy()
     }
 
