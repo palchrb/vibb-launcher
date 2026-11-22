@@ -345,7 +345,7 @@ pub(crate) async fn render(
                 package,
                 &row.label,
                 row.access.as_ref().filter(|_| !music),
-                data.camera_off.iter().any(|p| p == package),
+                data.denials.iter().find(|d| d.package_name == package),
                 data.paused,
                 crate::app_permissions::lock_media_offered(
                     package,

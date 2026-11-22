@@ -368,68 +368,133 @@ fun phoneStateGrants(
         }
 }
 
-/** The runtime permission [cameraGrants] denies (design 68 §2.1). */
-const val CAMERA_PERMISSION = "android.permission.CAMERA"
+/**
+ * The keys the parent switches off per app on its page (design 127 §3.1; design 68 for the camera), each with the
+ * runtime permissions it covers - an app asks for the key when it requests any of them, and each one it requests is
+ * denied. In display order; the shared contract `app_access.json`'s `keys` (AppAccessContractTest). `network` (Nett)
+ * joins in step 3. `GET_ACCOUNTS` stays out: since Android 8 it shows only the app's own accounts.
+ */
+enum class AccessKey(val key: String, val permissions: List<String>) {
+    CAMERA("camera", listOf("android.permission.CAMERA")),
+    LOCATION(
+        "location",
+        listOf(
+            "android.permission.ACCESS_FINE_LOCATION",
+            "android.permission.ACCESS_COARSE_LOCATION",
+            "android.permission.ACCESS_BACKGROUND_LOCATION",
+        ),
+    ),
+    MICROPHONE("microphone", listOf("android.permission.RECORD_AUDIO")),
+    CONTACTS("contacts", listOf("android.permission.READ_CONTACTS", "android.permission.WRITE_CONTACTS")),
+    ;
 
-/** [cameraGrants]' answer: the grant states to write (only where they differ), and whether a denial waits for a call's end. */
-data class CameraPlan(val writes: Map<String, Int>, val deferred: Boolean)
+    companion object {
+        fun of(key: String): AccessKey? = entries.firstOrNull { it.key == key }
+
+        /** The key a runtime [permission] belongs to, `null` for none of them. */
+        fun ofPermission(permission: String): AccessKey? = entries.firstOrNull { permission in it.permissions }
+    }
+}
+
+/** The packages no [AccessKey] is ever applied or reported for (design 127 §3.3 `never`): Vibb One and Vibb music, in
+ * either build - our own package is left out besides. */
+val ACCESS_NEVER = setOf("me.vibb.launcher", "me.vibb.launcher.debug", "me.vibb.music", "me.vibb.music.debug")
+
+/** Whether [pkg] (a third-party app: the caller's filter) gets the parent's [AccessKey]s: never ours or [ACCESS_NEVER]. */
+fun accessTarget(pkg: String, ownPackage: String): Boolean = pkg != ownPackage && pkg !in ACCESS_NEVER
+
+/** One runtime permission of one package. */
+data class Grant(val packageName: String, val permission: String)
+
+/** One [AccessKey] of one package (the report's `refused`, [AppEnforcer.accessRefused]). */
+data class AppKey(val packageName: String, val key: AccessKey)
+
+/** Every (package, permission) [accessGrants] works on, with its key: each [accessTarget] in [requested] (third-party
+ * only, mapped to their requested permissions) and each of its requested permissions an [AccessKey] covers. */
+fun accessTargets(requested: Map<String, Collection<String>>, ownPackage: String): Map<Grant, AccessKey> {
+    val out = LinkedHashMap<Grant, AccessKey>()
+    for ((pkg, perms) in requested) {
+        if (!accessTarget(pkg, ownPackage)) continue
+        for (key in AccessKey.entries) for (permission in key.permissions) {
+            if (permission in perms) out[Grant(pkg, permission)] = key
+        }
+    }
+    return out
+}
+
+/** [accessGrants]' answer: the grant states to write (only where they differ), and the denials that wait for a call's
+ * end ([waiting]). */
+data class AccessPlan(val writes: Map<Grant, Int>, val waiting: Set<Grant>) {
+    val deferred: Boolean get() = waiting.isNotEmpty()
+}
 
 /**
- * Design 68 §3.2: "camera off" per app. Targets: every package in [requested] (third-party only, mapped to their requested
- * permissions) but ours that requests [CAMERA_PERMISSION]. Each is [GRANT_STATE_DENIED] when in [denied] and no window is open
- * ([windowOpen]: the pause or the override lift it, the relock's apply denies again), else [GRANT_STATE_DEFAULT] - the policy
- * fix cleared, the kid's dialog decides; we never GRANT a sensor. Revoking a granted permission kills the app, so while
- * [callLive] a target going to DENIED from another state that holds the camera now ([held]) is left out and the plan is
- * [CameraPlan.deferred]; one that doesn't hold it is denied at once. [denied] `null` (no `app_permissions`, a
- * `Fallback`) writes nothing, except in a window: every target reading DENIED goes to DEFAULT (we are the only admin, so a
- * `Fallback` phone's pause still lifts it). [current] is each target's grant state now; writes only where it differs ([grantWrite]).
+ * Design 127 §4.1 (design 68 §3.2 widened): the parent's Kamera, Posisjon, Mikrofon and Kontakter off per app. Targets:
+ * [accessTargets]. Each is [GRANT_STATE_DENIED] when its package's key is in [denied] and no window is open
+ * ([windowOpen]: the pause or the override lift it, the relock's apply denies again), else [GRANT_STATE_DEFAULT] - the
+ * policy fix cleared, the kid's dialog decides; **we never GRANT**. Revoking a granted permission kills the app, so
+ * while [callLive] a target going to DENIED from another state that the app holds now ([held]) is left out and
+ * [AccessPlan.waiting]; one it doesn't hold is denied at once. [denied] `null` (no `app_permissions`, a `Fallback`)
+ * writes nothing, except in a window: every target reading DENIED goes to DEFAULT (we are the only admin, so a
+ * `Fallback` phone's pause still lifts it). [current] is each target's grant state now; writes only where it differs
+ * ([grantWrite]).
  */
-fun cameraGrants(
+fun accessGrants(
     requested: Map<String, Collection<String>>,
     ownPackage: String,
-    denied: Set<String>?,
+    denied: Map<String, Set<AccessKey>>?,
     windowOpen: Boolean,
     callLive: Boolean,
-    held: Set<String>,
-    current: Map<String, Int>,
-): CameraPlan {
-    val writes = LinkedHashMap<String, Int>()
-    var deferred = false
-    for ((pkg, perms) in requested) {
-        if (pkg == ownPackage || CAMERA_PERMISSION !in perms) continue
-        val now = current[pkg] ?: GRANT_STATE_DEFAULT
+    held: Set<Grant>,
+    current: Map<Grant, Int>,
+): AccessPlan {
+    val writes = LinkedHashMap<Grant, Int>()
+    val waiting = LinkedHashSet<Grant>()
+    for ((grant, key) in accessTargets(requested, ownPackage)) {
+        val now = current[grant] ?: GRANT_STATE_DEFAULT
         val wanted = when {
             denied == null -> if (windowOpen && now == GRANT_STATE_DENIED) GRANT_STATE_DEFAULT else continue
-            pkg in denied && !windowOpen -> GRANT_STATE_DENIED
+            key in denied[grant.packageName].orEmpty() && !windowOpen -> GRANT_STATE_DENIED
             else -> GRANT_STATE_DEFAULT
         }
-        if (wanted == GRANT_STATE_DENIED && now != GRANT_STATE_DENIED && callLive && pkg in held) {
-            deferred = true
+        if (wanted == GRANT_STATE_DENIED && now != GRANT_STATE_DENIED && callLive && grant in held) {
+            waiting += grant
             continue
         }
-        grantWrite(now, wanted)?.let { writes[pkg] = it }
+        grantWrite(now, wanted)?.let { writes[grant] = it }
     }
-    return CameraPlan(writes, deferred)
+    return AccessPlan(writes, waiting)
 }
+
+/**
+ * Design 127 §3.2's `refused` after a pass: every (package, key) the pass worked on ([evaluated]) and didn't leave
+ * waiting ([waiting]) is refused exactly when one of its DENIED writes failed ([failed]: `setPermissionGrantState`'s
+ * `false` or a throw); the rest keep [before]. So a pass that succeeds - or the parent's on - clears it.
+ */
+fun accessRefusedAfter(before: Set<AppKey>, evaluated: Set<AppKey>, waiting: Set<AppKey>, failed: Set<AppKey>): Set<AppKey> =
+    before.filterTo(LinkedHashSet()) { it !in evaluated || it in waiting } + failed
 
 /** Design 68 §3.2: the call-end wake applies again only when a denial waits ([deferred]) and no call is live now -
  * [callLive] is read only then (a Telecom binder call). */
-fun deferredCameraApplyDue(deferred: Boolean, callLive: () -> Boolean): Boolean = deferred && !callLive()
+fun deferredAccessApplyDue(deferred: Boolean, callLive: () -> Boolean): Boolean = deferred && !callLive()
 
 /**
- * The policy's `app_permissions` (design 68 §3.1), read field by field: the packages whose camera the parent switched
- * off on this phone. An entry without a valid package is dropped; any `camera` but `"deny"` is the default. `null` -
- * the key missing or not a list (a `Fallback`'s plan) - means "touch nothing" ([cameraGrants]).
+ * The policy's `app_permissions` (design 127 §3.2), read field by field: the keys the parent switched off per package
+ * on this phone (`[{package_name, camera?, location?, microphone?, contacts?}]`, each `"deny"`). An entry without a
+ * valid package or without a known key at `"deny"` is dropped; any other value is the default. `null` - the key
+ * missing or not a list (a `Fallback`'s plan) - means "touch nothing" ([accessGrants]).
  */
-fun appPermissionsOf(element: kotlinx.serialization.json.JsonElement?): Set<String>? {
+fun appPermissionsOf(element: kotlinx.serialization.json.JsonElement?): Map<String, Set<AccessKey>>? {
     val list = element as? kotlinx.serialization.json.JsonArray ?: return null
-    return list.mapNotNull { item ->
-        val entry = item as? kotlinx.serialization.json.JsonObject ?: return@mapNotNull null
+    val out = LinkedHashMap<String, MutableSet<AccessKey>>()
+    for (item in list) {
+        val entry = item as? kotlinx.serialization.json.JsonObject ?: continue
         fun string(key: String) = (entry[key] as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { it.isString }?.content
-        string("package_name")?.takeIf {
-            com.kidslauncher.mdm.appdisplay.isValidPackageName(it) && string("camera") == "deny"
-        }
-    }.toSet()
+        val pkg = string("package_name")?.takeIf { com.kidslauncher.mdm.appdisplay.isValidPackageName(it) } ?: continue
+        val keys = AccessKey.entries.filter { string(it.key) == "deny" }
+        if (keys.isNotEmpty()) out.getOrPut(pkg) { LinkedHashSet() } += keys
+    }
+    return out
 }
 
 /**

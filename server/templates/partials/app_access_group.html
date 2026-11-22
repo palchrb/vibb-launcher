@@ -1,6 +1,7 @@
 {#- An app's Tilgang and Låseskjerm on its own page (design 127 §2.5, §2.6; `app_permissions::AccessGroup`, as `group`).
-    Tilgang shows when the phone's last report has the app's `access`: a switch for what the app asks for (today the
-    camera; on = allowed), its own auto-saving form back to `#access`, its sub-line only while the state isn't as set;
+    Tilgang shows when the phone's last report has the app's `access`: a switch per key the app asks for (Kamera,
+    Posisjon, Mikrofon, Kontakter - design 127 step 2; on = allowed, `key` and `allow=on`), its own auto-saving form
+    back to `#access`, its sub-line only while the state isn't as set;
     then the special accesses the app declares (design 68) as quiet values - not orange, not counted on the list. One ⓘ
     for the group: a line per switch shown and the way to approve each special access that isn't. Låseskjerm's
     Mediespiller (2026-11-04) where it is offered, back to `#lock-screen`. A refused save says so at its group. -#}
@@ -9,18 +10,24 @@
     <h2 class="group-header" id="access-title">{{ self.t("apps.access.title") }}</h2>
     <div class="group group-icons">
         {% if let Some(text) = access_refused %}<p class="flash flash-error" role="status" data-flash="access">{{ text }}</p>{% endif %}
-        {% if let Some(camera) = group.camera %}
-        <form method="post" action="{{ group.action }}" class="cell" data-access="{{ camera.key }}">
+        {% for switch in group.switches %}
+        <form method="post" action="{{ group.action }}" class="cell" data-access="{{ switch.key }}">
             <input type="hidden" name="package_name" value="{{ group.package_name }}">
+            <input type="hidden" name="key" value="{{ switch.key }}">
             {% if let Some(from) = from %}<input type="hidden" name="from" value="{{ from }}">{% endif %}
             <label class="row">
-                <span class="tile tile-graphite" aria-hidden="true"><img src="/static/app-icons/photo_camera.svg" alt=""></span>
-                <span class="row-label">{{ camera.name }}{% if let Some((sub, orange)) = camera.sub %}<span class="row-sub{% if orange %} tone-orange{% endif %}">{{ sub }}</span>{% endif %}</span>
-                <input type="checkbox" role="switch" class="sw" name="camera" value="default"{% if camera.on %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                {% match switch.key %}
+                {% when "location" %}<span class="tile tile-blue" aria-hidden="true"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><path fill-rule="evenodd" d="M8.5 1.6a5 5 0 0 0-5 5c0 3.7 5 8.8 5 8.8s5-5.1 5-8.8a5 5 0 0 0-5-5Zm0 3.2a1.9 1.9 0 1 1 0 3.8a1.9 1.9 0 1 1 0-3.8Z" fill="currentColor"/></svg></span>
+                {% when "microphone" %}<span class="tile tile-teal" aria-hidden="true"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><rect x="6" y="1.6" width="5" height="8.6" rx="2.5" fill="currentColor"/><path d="M3.8 8.1a4.7 4.7 0 0 0 9.4 0M8.5 12.8v2.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span>
+                {% when "contacts" %}<span class="tile tile-green" aria-hidden="true"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><circle cx="8.5" cy="5.3" r="3.1" fill="currentColor"/><path d="M2.6 15.3c0-3.3 2.6-5.3 5.9-5.3s5.9 2 5.9 5.3Z" fill="currentColor"/></svg></span>
+                {% else %}<span class="tile tile-graphite" aria-hidden="true"><img src="/static/app-icons/photo_camera.svg" alt=""></span>
+                {% endmatch %}
+                <span class="row-label">{{ switch.name }}{% if let Some((sub, orange)) = switch.sub %}<span class="row-sub{% if orange %} tone-orange{% endif %}">{{ sub }}</span>{% endif %}</span>
+                <input type="checkbox" role="switch" class="sw" name="allow" value="on"{% if switch.on %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
             </label>
             <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
         </form>
-        {% endif %}
+        {% endfor %}
         {% for (name, value) in group.specials %}
         <div class="row" data-special>
             <span class="tile tile-indigo" aria-hidden="true"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><rect x="3" y="7.2" width="11" height="7.6" rx="1.7" fill="currentColor"/><path d="M5.4 7.2V5.3a3.1 3.1 0 0 1 6.2 0v1.9" fill="none" stroke="currentColor" stroke-width="1.7"/></svg></span>

@@ -2302,8 +2302,8 @@ pub(crate) struct AppsData {
     pub defaults: std::collections::BTreeMap<String, crate::app_display::DisplayValues>,
     pub own: std::collections::BTreeMap<String, crate::app_display::DisplayValues>,
     pub off_home: std::collections::BTreeSet<String>,
-    /// Design 68: the parent's camera-off apps.
-    pub camera_off: Vec<String>,
+    /// Design 127 §3.4: the keys the parent switched off per app (the policy's `app_permissions`).
+    pub denials: Vec<crate::app_permissions::AppPermission>,
     /// 2026-11-04: the apps shown as media players on the lock screen.
     pub lock_media: Vec<String>,
     /// Design 87: the apps' logos this phone sent, and the catalog's for a ticked app not installed (2026-11-19).
@@ -2339,7 +2339,7 @@ impl AppsData {
         let off_home = crate::app_display::off_home(&state.db, id)
             .await
             .map_err(|err| Box::new(read_failed(lang, id, "the phone's apps off Home", err)))?;
-        let camera_off = crate::app_permissions::camera_denied(&state.db, id)
+        let denials = crate::app_permissions::policy_app_permissions(&state.db, id)
             .await
             .map_err(|err| Box::new(read_failed(lang, id, "the phone's app permissions", err)))?;
         let lock_media = crate::app_permissions::lock_media_apps(&state.db, id)
@@ -2395,7 +2395,7 @@ impl AppsData {
             defaults,
             own,
             off_home,
-            camera_off,
+            denials,
             lock_media,
             logos,
             messages_history,

@@ -2242,7 +2242,7 @@ async fn the_permissions_form_returns_to_its_open_details() {
         .get_page(&format!("/devices/{id}/apps/org.example.plain"), &cookie)
         .await
         .text();
-    assert!(plain.contains("name=\"lock_media\"") && !plain.contains("name=\"camera\""));
+    assert!(plain.contains("name=\"lock_media\"") && !plain.contains("name=\"allow\""));
     assert!(!plain.contains("id=\"access\""));
     // Design 127 §2.5: an access not approved is a quiet value, the way to approve it behind the group's ⓘ.
     assert!(html.contains(
@@ -2255,7 +2255,12 @@ async fn the_permissions_form_returns_to_its_open_details() {
     // Signed out: sent to sign in, nothing written (the route is behind the session and 2FA).
     let target = format!("/devices/{id}/apps/permissions");
     let res = app
-        .request_form(Method::POST, &target, None, &[("package_name", element)])
+        .request_form(
+            Method::POST,
+            &target,
+            None,
+            &[("package_name", element), ("key", "camera")],
+        )
         .await;
     assert!(res.status.is_redirection(), "{}", res.status);
     assert!(
@@ -2263,7 +2268,7 @@ async fn the_permissions_form_returns_to_its_open_details() {
         "{:?}",
         res.location()
     );
-    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_app_permissions")
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_app_denials")
         .fetch_one(&app.db)
         .await
         .unwrap();
@@ -2276,7 +2281,7 @@ async fn the_permissions_form_returns_to_its_open_details() {
             Method::POST,
             &target,
             Some(&cookie),
-            &[("package_name", element)],
+            &[("package_name", element), ("key", "camera")],
         )
         .await;
     let back = page.clone();
@@ -2306,11 +2311,15 @@ async fn the_permissions_form_returns_to_its_open_details() {
             Method::POST,
             &target,
             Some(&cookie),
-            &[("package_name", element), ("camera", "default")],
+            &[
+                ("package_name", element),
+                ("key", "camera"),
+                ("allow", "on"),
+            ],
         )
         .await;
     assert_redirect(&res, &back, Some(anchor));
-    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_app_permissions")
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_app_denials")
         .fetch_one(&app.db)
         .await
         .unwrap();
@@ -2322,16 +2331,31 @@ async fn the_permissions_form_returns_to_its_open_details() {
             Method::POST,
             &target,
             Some(&cookie),
-            &[("package_name", element), ("camera", "allow")],
+            &[
+                ("package_name", element),
+                ("key", "camera"),
+                ("allow", "yes"),
+            ],
         )
         .await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    // No key, an unknown key, and Nett before step 3: a 400.
+    for key in [None, Some("bluetooth"), Some("network")] {
+        let mut sent = vec![("package_name", element)];
+        if let Some(key) = key {
+            sent.push(("key", key));
+        }
+        let res = app
+            .request_form(Method::POST, &target, Some(&cookie), &sent)
+            .await;
+        assert_eq!(res.status, StatusCode::BAD_REQUEST, "{key:?}");
+    }
     let res = app
         .request_form(
             Method::POST,
             &target,
             Some(&cookie),
-            &[("package_name", "not a package")],
+            &[("package_name", "not a package"), ("key", "camera")],
         )
         .await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
@@ -2341,7 +2365,7 @@ async fn the_permissions_form_returns_to_its_open_details() {
                 Method::POST,
                 &target,
                 Some(&cookie),
-                &[("package_name", package)],
+                &[("package_name", package), ("key", "camera")],
             )
             .await;
         assert_redirect(
@@ -2350,7 +2374,7 @@ async fn the_permissions_form_returns_to_its_open_details() {
             Some("access"),
         );
     }
-    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_app_permissions")
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_app_denials")
         .fetch_one(&app.db)
         .await
         .unwrap();
@@ -2538,7 +2562,7 @@ async fn the_permissions_cap_refuses_the_201st_app() {
     .await;
     for n in 0..crate::app_permissions::MAX_ROWS_PER_DEVICE {
         sqlx::query(
-            "INSERT INTO device_app_permissions (device_id, package_name, camera) VALUES (?, ?, 'deny')",
+            "INSERT INTO device_app_denials (device_id, package_name, permission) VALUES (?, ?, 'camera')",
         )
         .bind(id)
         .bind(format!("org.example.app{n}"))
@@ -2553,7 +2577,7 @@ async fn the_permissions_cap_refuses_the_201st_app() {
             Method::POST,
             &target,
             Some(&cookie),
-            &[("package_name", "org.example.new")],
+            &[("package_name", "org.example.new"), ("key", "camera")],
         )
         .await;
     assert_redirect(
@@ -2562,7 +2586,7 @@ async fn the_permissions_cap_refuses_the_201st_app() {
         Some("access"),
     );
     let count = || async {
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM device_app_permissions")
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM device_app_denials")
             .fetch_one(&app.db)
             .await
             .unwrap()
@@ -2573,11 +2597,33 @@ async fn the_permissions_cap_refuses_the_201st_app() {
             Method::POST,
             &target,
             Some(&cookie),
-            &[("package_name", "org.example.app7")],
+            &[("package_name", "org.example.app7"), ("key", "camera")],
         )
         .await;
     assert_redirect(&res, &page("org.example.app7"), Some("access"));
     assert_eq!(count().await, crate::app_permissions::MAX_ROWS_PER_DEVICE);
+    // Design 127 §3.4: the cap counts packages, so a stored app's second key is still saved.
+    app.post_status(
+        &token,
+        json!({ "installed_apps": [json!({
+            "package_name": "org.example.app7", "label": "app7", "preinstalled": false,
+            "access": { "camera": "requested", "microphone": "requested" },
+        })] }),
+    )
+    .await;
+    let res = app
+        .request_form(
+            Method::POST,
+            &target,
+            Some(&cookie),
+            &[("package_name", "org.example.app7"), ("key", "microphone")],
+        )
+        .await;
+    assert_redirect(&res, &page("org.example.app7"), Some("access"));
+    assert_eq!(
+        count().await,
+        crate::app_permissions::MAX_ROWS_PER_DEVICE + 1
+    );
 }
 
 /// A switch that can't be what it says changes nothing: not a package name, nothing at all, Play's

@@ -100,12 +100,12 @@ object BootHome {
      * so the start is still due; a Home that came up meanwhile is MARK_DONE. Main thread.
      */
     fun callMayHaveEnded(context: Context) {
-        // Design 68 §3.2: a camera denial that waited for this call is written now (the apply's own rule decides).
-        if (com.kidslauncher.mdm.server.deferredCameraApplyDue(com.kidslauncher.mdm.server.AppEnforcer.cameraDeferred) {
+        // Design 68 §3.2, design 127 §4.1: a denial that waited for this call is written now (the apply's own rule decides).
+        if (com.kidslauncher.mdm.server.deferredAccessApplyDue(com.kidslauncher.mdm.server.AppEnforcer.accessDeferred) {
                 com.kidslauncher.mdm.server.WindowRelock.liveCall(context)
             }
         ) {
-            com.kidslauncher.mdm.server.AppEnforcer.cameraDeferred = false
+            com.kidslauncher.mdm.server.AppEnforcer.accessDeferred = false
             val app = context.applicationContext
             kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
                 try {

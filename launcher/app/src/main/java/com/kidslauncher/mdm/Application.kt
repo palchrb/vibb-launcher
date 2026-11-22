@@ -105,8 +105,9 @@ class Application : android.app.Application() {
             p0?.let { packageName ->
                 CoroutineScope(Dispatchers.IO).launch {
                     try {
-                        // Design 68: an update that adds CAMERA, or a camera-off app reinstalled, is denied before its start.
-                        AppEnforcer.enforceCameraOnPackage(this@Application, packageName)
+                        // Design 68, 127: an update that adds a permission the parent switched off, or such an app
+                        // reinstalled, is denied before its start.
+                        AppEnforcer.enforceAccessOnPackage(this@Application, packageName)
                         // The music app updated (a catalog install, Play, adb): it syncs and reports now.
                         com.kidslauncher.mdm.music.musicNudgeOnChange(packageName) { com.kidslauncher.mdm.music.MusicTrust.trusted(this@Application, it) }?.let {
                             com.kidslauncher.mdm.music.MusicSync.nudge(this@Application, it)

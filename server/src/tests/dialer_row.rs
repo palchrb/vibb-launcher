@@ -219,8 +219,8 @@ async fn rows_of(app: &TestApp, id: i64) -> String {
     for query in [
         "SELECT json_group_array(json_array(package_name, label, icon_key, color_key, on_home, updated_at)) \
          FROM (SELECT * FROM device_app_display WHERE device_id = ?1 ORDER BY package_name)",
-        "SELECT json_group_array(json_array(package_name, camera, updated_at)) \
-         FROM (SELECT * FROM device_app_permissions WHERE device_id = ?1 ORDER BY package_name)",
+        "SELECT json_group_array(json_array(package_name, permission, updated_at)) \
+         FROM (SELECT * FROM device_app_denials WHERE device_id = ?1 ORDER BY package_name, permission)",
         "SELECT json_group_array(json_array(package_name, updated_at)) \
          FROM (SELECT * FROM device_lock_media_apps WHERE device_id = ?1 ORDER BY package_name)",
     ] {
@@ -270,7 +270,7 @@ async fn a_managed_dialer_is_never_changed() {
         ),
         (
             "permissions",
-            vec![("package_name", DIALER), ("camera", "deny")],
+            vec![("package_name", DIALER), ("key", "camera")],
         ),
         (
             "lock-media",

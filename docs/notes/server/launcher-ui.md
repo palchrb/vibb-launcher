@@ -100,9 +100,10 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 
 ## Per-app permissions (design 68, `docs/design/68-app-permissions.md`, migration `0102_app_permissions.sql`)
 
-- **The policy's `app_permissions`** (`app_permissions::policy_app_permissions`, from `device_app_permissions`): one
-  `{package_name, camera: "deny"}` per app the parent switched the camera off for on this phone; always a list, a
-  failing read a 500 (fail closed - a lost list would hand the camera back). The launcher denies such an app's
+- **The policy's `app_permissions`** (`app_permissions::policy_app_permissions`, from `device_app_denials` since design
+  127 step 2, migration 0166): one `{package_name, camera?, location?, microphone?, contacts?}` (each `"deny"`) per app
+  the parent switched a key off for on this phone; always a list, a failing read a 500 (fail closed - a lost list would
+  hand the permissions back). The launcher denies such an app's
   `CAMERA` (`setPermissionGrantState` DENIED, never GRANTED) outside the pause and the override, waits for a call's
   end when the app holds the camera, and works out the special accesses each app wants from its own manifest - the
   server sends none of them.
