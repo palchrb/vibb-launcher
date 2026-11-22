@@ -40,5 +40,10 @@
             android:name="com.kidslauncher.mdm.server.BtPairingDebugReceiver"
             android:exported="true"
             android:permission="android.permission.DUMP" />
+        <!-- Design 127 step 0 (throwaway branch nett-probe): the per-app network cut's probe. -->
+        <receiver
+            android:name="com.kidslauncher.mdm.server.NettProbeReceiver"
+            android:exported="true"
+            android:permission="android.permission.DUMP" />
     </application>
 </manifest>

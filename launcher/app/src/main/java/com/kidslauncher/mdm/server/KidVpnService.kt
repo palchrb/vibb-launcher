@@ -188,6 +188,7 @@ class KidVpnService : VpnService() {
     /** [serviceShape]: `apply()`'s rule, with this service's view of the network - never lockdown off on a doubt. The
      * sink's reason is held for the report (code QA L1). */
     private fun wantedShape(): VpnShape {
+        NettProbe.forcedShape(this)?.let { return it }
         val inputs = MobileNetworkRuntime.storedInputs()
         val watched = lastBest
         val live = if (watched == null) MobileNetworkRuntime.bestNet(this) else null
@@ -263,6 +264,13 @@ class KidVpnService : VpnService() {
                 // (VpnMeteredInvariantTest).
                 .setMetered(false)
             builder.addDisallowedApplication(packageName)
+            NettProbe.extraDisallowed(this).forEach {
+                try {
+                    builder.addDisallowedApplication(it)
+                } catch (e: Exception) {
+                    Log.w(LOG_TAG, "Nett probe: can't keep $it outside the VPN: ${e.javaClass.simpleName}")
+                }
+            }
             when (wanted) {
                 VpnShape.FILTER -> builder.addDnsServer(FAKE_DNS_SERVER).addRoute(FAKE_DNS_SERVER, 32)
                 VpnShape.SINK -> builder
@@ -320,7 +328,7 @@ class KidVpnService : VpnService() {
             settleForeground()
             return
         }
-        if (wanted == shape) {
+        if (wanted == shape && !NettProbe.takeReestablish()) {
             // The same tunnel; apply() may have written another decision from its own view of the network.
             MobileNetworkRuntime.writeAlwaysOn(this, wanted)
             return
