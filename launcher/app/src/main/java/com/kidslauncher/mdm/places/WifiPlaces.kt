@@ -576,6 +576,17 @@ object WifiPlaces {
 
     private val release = !BuildConfig.DEBUG
 
+    /**
+     * A GPS fix's signal for the log, `satellites/maxCn0/meanCn0@accuracy` from the platform's extras ("-" when absent;
+     * never the coordinates): the Jelly's real values indoors and out before a C/N0 floor for teaching is set
+     * (2026-11-23, an indoor fix of 5 satellites at 25/22 dB-Hz taught APs 30-40 m off).
+     */
+    fun signal(l: Location): String {
+        fun extra(key: String) = l.extras?.getInt(key, -1)?.takeIf { it >= 0 }?.toString() ?: "-"
+        val acc = if (l.hasAccuracy()) l.accuracy.toInt().toString() else "-"
+        return "${extra("satellites")}/${extra("maxCn0")}/${extra("meanCn0")}@$acc"
+    }
+
     private fun teaching(fixes: List<Location>): List<TeachFix> = fixes.map(::teachFix).filter { teaches(it, release) }
 
     private fun linkZones(keys: PlaceKeys): List<LinkZone> = ZoneWatch.watchedZones().map { LinkZone(it, keys.zone(it)) }
@@ -663,6 +674,7 @@ object WifiPlaces {
             val store = open(context) ?: return
             val results = cached(context)
             if (results.isEmpty()) return
+            Log.i(LOG_TAG, "passive teach sig=${signal(location)}")
             teachWith(context, store, Snapshot(results, connected(context), null), fix, PAIR_SINGLE_MS, MotionGate.snapshot(context).movedAtElapsedMs)
         } catch (e: Exception) {
             Log.w(LOG_TAG, "passive teach failed: ${e.javaClass.simpleName}")
@@ -750,7 +762,13 @@ object WifiPlaces {
         }
         val all = stream.all()
         val refused = all.mapNotNull { teachRefusal(teachFix(it), release) }.groupingBy { it }.eachCount()
-        if (all.isNotEmpty()) Log.i(LOG_TAG, "gps fixes=${all.size} taught=$taught" + refused.entries.joinToString("") { (reason, n) -> " $reason=$n" })
+        if (all.isNotEmpty()) {
+            Log.i(
+                LOG_TAG,
+                "gps fixes=${all.size} taught=$taught" + refused.entries.joinToString("") { (reason, n) -> " $reason=$n" } +
+                    " sig=" + all.takeLast(SIGNAL_LOG_FIXES).joinToString(",", transform = ::signal),
+            )
+        }
         return GpsTry(all.filter(accept).minByOrNull { if (it.hasAccuracy()) it.accuracy else Float.MAX_VALUE }, taught)
     }
 

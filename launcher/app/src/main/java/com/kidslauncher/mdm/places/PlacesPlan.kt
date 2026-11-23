@@ -34,6 +34,9 @@ const val TEACH_SPEED_MAX_MPS = 3f
 /** ... from at least this many satellites (the fix's `satellites` extra; missing = no teach, design 125 §8 check 1). */
 const val TEACH_SATELLITES_MIN = 5
 
+/** The GPS try's log names the signal of at most this many of its last fixes (2026-11-23). */
+const val SIGNAL_LOG_FIXES = 10
+
 /** A stream fix pairs with a scan result this close in elapsed time (D2, Local NLP Backend's way). */
 const val PAIR_STREAM_MS = 1_000L
 
