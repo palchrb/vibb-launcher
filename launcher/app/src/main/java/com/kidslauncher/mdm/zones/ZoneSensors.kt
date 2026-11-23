@@ -95,8 +95,8 @@ object PassiveFixes {
             // never the coordinates.
             if (verdict == FixVerdict.KEEP) {
                 val ageS = (SystemClock.elapsedRealtimeNanos() - location.elapsedRealtimeNanos) / 1_000_000_000
-                val acc = if (location.hasAccuracy()) location.accuracy.toInt().toString() else "-"
-                Log.i(LOG_TAG, "Passive fix kept provider=${location.provider ?: "-"} acc=$acc age=${ageS}s")
+                val sig = com.kidslauncher.mdm.places.WifiPlaces.signal(location)
+                Log.i(LOG_TAG, "Passive fix kept provider=${location.provider ?: "-"} sig=$sig age=${ageS}s")
             }
         } catch (e: Exception) {
             Log.w(LOG_TAG, "A passive fix failed: ${e.javaClass.simpleName}")

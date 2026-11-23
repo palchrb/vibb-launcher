@@ -197,7 +197,7 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   slot** (`LocateCommands.keepFix`, default prefs `zone_kept_fix`), **never the cached (reported) fix** (Q-1): every
   sync between beats re-sends the reported fix as before; only a due heartbeat's `KEPT` or a crossing's sync
   (`LocateCommands.promoteKept`) makes it the reported fix, so the trail stays as dense as the parent's interval (design
-  64 §4.3). A kept fix logs `ZoneWatch: Passive fix kept provider= acc= age=` (no coordinates; 2026-11-23).
+  64 §4.3). A kept fix logs `ZoneWatch: Passive fix kept provider= sig= age=` (`sig` = `WifiPlaces.signal`; no coordinates; 2026-11-23).
 - **The heartbeat** (`heartbeatDue` through `syncLocationAction`, in `currentLocationReport` with zones and no
   command): due when the served interval passed since the last heartbeat (`ZoneWatch.lastBeatMs`, CE prefs
   `last_beat_ms`; the clock set back counts as due); due, it reports the kept slot's fix when it is not yet reported and

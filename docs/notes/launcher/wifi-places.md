@@ -18,7 +18,7 @@
   accepted fix is reported; a passive fix pairs with the system's cached results within +-30 s. Only results heard
   after the last motion fire teach; the leave-one-out count, the zone links' strikes and D15's contradiction read only
   the results paired with the best teacher (`pairedWith`); nothing paired - no count, no link, no write. Each GPS try
-  logs its refusals as counts (`gps fixes=9 taught=false coarse=7 nosat=2`). `accEff = acc + speed x |dt|` (1.5 m/s unknown) <= 40 m; the 60
+  logs its refusals as counts and the last 10 fixes' signal (`gps fixes=9 taught=false coarse=7 nosat=2 sig=5/25/22@8,...` - `satellites/maxCn0/meanCn0@accuracy` from the fix's extras, `WifiPlaces.signal`; a passive GPS fix that may teach logs `passive teach sig=`; 2026-11-23, data for a C/N0 floor for teaching). `accEff = acc + speed x |dt|` (1.5 m/s unknown) <= 40 m; the 60
   strongest APs. A passive fix is skipped while one of our own attempts teaches (it teaches its stream itself). The
   passive feed runs on **every Regularly phone** (`PassiveFixes.update(on = stillOn, keep = zonesOn)`); with GLA on it
   is the only teacher and pairs only with the system's own results - Vibb scans nothing then (H1).
