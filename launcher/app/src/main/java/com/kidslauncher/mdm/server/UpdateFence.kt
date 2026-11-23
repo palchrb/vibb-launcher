@@ -388,10 +388,11 @@ object UpdateFence {
         val controllable = controllablePackages(pm).toSet()
         if ((suspendedHomes - controllable).isEmpty()) return
         val admin = ComponentName(app, MdmDeviceAdminReceiver::class.java)
+        val protected = protectedPackages(app, dpm, admin)
         val targets = orphanFenceTargets(
-            candidates, app.packageName, protectedPackages(app, dpm, admin), controllable, suspendedHomes,
+            candidates, app.packageName, protected, controllable, suspendedHomes,
             recentsPackage = AppEnforcer.systemRecentsPackage(app),
-        )
+        ) - enforcedHomes(app, candidates, controllable, protected)
         if (targets.isEmpty()) return
         val refused = try {
             dpm.setPackagesSuspended(admin, targets.toTypedArray(), false).orEmpty().toSet()
@@ -435,7 +436,9 @@ object UpdateFence {
 
     // ---- what the phone says ------------------------------------------------------------------
 
-    private fun homeCandidates(pm: PackageManager): List<HomeCandidate> =
+    /** Every package with an enabled MAIN + HOME activity (a suspended one too) - the fence's and enforcement's
+     * ([otherHomes]) view of the phone's Homes. */
+    internal fun homeCandidates(pm: PackageManager): List<HomeCandidate> =
         pm.queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), PackageManager.ResolveInfoFlags.of(0))
             .mapNotNull { info ->
                 val activity = info.activityInfo ?: return@mapNotNull null
@@ -449,6 +452,15 @@ object UpdateFence {
             }
 
     /** qa-11-design.md #6: everything a fence must leave alone on this phone. */
+    /** The other Home apps enforcement owns ([otherHomes]: it suspends them while apps are managed and releases them
+     * otherwise) - never swept, or the sweep and `apply()` would undo each other on every pass. */
+    private fun enforcedHomes(
+        app: Context,
+        candidates: List<HomeCandidate>,
+        controllable: Set<String>,
+        protected: Set<String>,
+    ): Set<String> = otherHomes(candidates, app.packageName, controllable, protected + setOfNotNull(AppEnforcer.systemRecentsPackage(app)))
+
     private fun protectedPackages(app: Context, dpm: DevicePolicyManager, admin: ComponentName): Set<String> {
         val pm = app.packageManager
         val settings = try {

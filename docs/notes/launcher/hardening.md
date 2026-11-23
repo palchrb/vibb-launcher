@@ -187,3 +187,23 @@ the pause. Android 17 (`google_apis`, API 37.2) only in part (§6ar): there the 
 ("Platform refused to hide com.android.settings"), so the gear and Manage reach Settings, which lock task blocks with
 Android's "App is not available" - no crash, but not the quiet sink either; Settings' filters sit at priority 1 above the
 sink there too. Whether Settings can be hidden on the Jelly Star's own Android 17 is owed.
+
+## Android Auto, the other Home apps, the notification listeners (2026-11-23)
+
+- **Android Auto** (`ANDROID_AUTO`, `server/SystemReaders.kt`) is hidden (and suspended) while apps are managed, unless
+  the policy's `allow_android_auto` is on (Advanced › Android Auto on the server; missing = hidden, also in the
+  `LastEnforcedPlan`). It has no launcher icon on current Android, so `controllablePackages` never reached it. Allowed,
+  the allowlist doesn't hide it either; a time-rule lock still suspends it only if it is controllable.
+- **The other Home apps** (`otherHomes`): every HOME candidate (`UpdateFence.homeCandidates`) but ours, `FENCE_NEVER`
+  (Settings' FallbackHome among them), persistent apps, a negative-priority fallback, controllable packages and the
+  plan's never-restrict set plus the kiosk helpers - the **recents provider stays**: the stock gestures run in it, so a
+  vendor launcher that is also the recents provider is left as it is (no gesture removed). Suspended, never hidden,
+  while apps are managed; the pause and the override lift both.
+- `computeEnforcementPlan`'s `extraPackages` (the two above, outside the controllable set) are visited by `apply()`'s
+  loop too, so a lift is undone. The fence's orphan sweep leaves the enforced Homes alone (`enforcedHomes`), or the
+  sweep and `apply()` would undo each other; the fence itself skips them as already suspended.
+- **The report's `notification_listeners`** (`NotificationListenersReader`, pure `notificationListenersReport`):
+  Android's enabled listeners but Vibb One, each `off` while Vibb has the package hidden or suspended. Contract
+  `notification_listeners.json` (root `CLAUDE.md`).
+- **Not device-tested** (emulator gate owed): a suspended Home at a reboot (BFU and after the unlock), whether a hidden or
+  suspended listener is unbound (`dumpsys notification`), and which package is the Jelly Star's recents provider.

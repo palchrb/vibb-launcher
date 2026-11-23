@@ -133,6 +133,10 @@ pub struct DevicePolicy {
     /// "Blokker 2G" while it is registered abroad; off by default (2G stays blocked abroad too).
     #[sqlx(default)]
     pub allow_2g_abroad: bool,
+    /// Migration 0170: Advanced › Android Auto - the phone leaves Android Auto visible while its apps are managed;
+    /// off by default (hidden).
+    #[sqlx(default)]
+    pub allow_android_auto: bool,
     // `setup_card_hidden` (migration 0146, design 98's "Ikke nå") is a dead column since design 114 (§5.3).
     /// Design 102 (migration 0150): Wi-Fi sign-in on the phone (Part A, D1: on by default). Read through
     /// `logins::portal_policy`; a missing row reads as on (`load_policy`).
@@ -580,6 +584,10 @@ pub struct DeviceStatus {
     /// read through `notification_channels::report`.
     #[sqlx(default)]
     pub notification_channels_json: Option<String>,
+    /// Migration 0170: the report's `notification_listeners`, cleaned (`notification_listeners::clean`); read through
+    /// `notification_listeners::report`.
+    #[sqlx(default)]
+    pub notification_listeners_json: Option<String>,
     /// The report's `call_state` (migrations/0022_calls.sql), its known keys (`device_api::CALL_STATE_FIELDS`). Read
     /// by handlers::calls::call_report on its own; design 98's Oppsett card reads the screening roles from it here.
     #[sqlx(default)]
@@ -1410,6 +1418,9 @@ pub struct PolicyResponse {
     /// Design 126 A5 (2026-11-22): "Tillat 2G i utlandet" - the phone also lifts "Blokker 2G" while registered abroad;
     /// always sent.
     pub allow_2g_abroad: bool,
+    /// Advanced › Android Auto: the phone leaves Android Auto visible while its apps are managed (missing = hidden);
+    /// always sent.
+    pub allow_android_auto: bool,
     /// Design 95 §3.5 (step 95-T2): this server expands heartbeat reports (`status_heartbeat`), `true` unless
     /// `STATUS_HEARTBEAT=off` (`ForkConfig::status_heartbeat`). The
     /// launcher sends hashes and heartbeats only while it says so.
@@ -1705,6 +1716,10 @@ pub struct StatusReportRequest {
     /// `notification_channels::clean`. A full-report field, not a heartbeat field.
     #[serde(default)]
     pub notification_channels: Option<serde_json::Value>,
+    /// `[{package, off}]`: the apps with notification access besides Vibb One, `off` while Vibb has the app hidden or
+    /// suspended; raw - cleaned by `notification_listeners::clean`. A full-report field, not a heartbeat field.
+    #[serde(default)]
+    pub notification_listeners: Option<serde_json::Value>,
     /// Design 115 §2.8: `{held}` - why the phone holds its app-push queue (`no_network`) or `none`; raw, cleaned by
     /// `unified_push::clean_report` into `device_status.up_held`. A full-report field, sent while UP is on.
     #[serde(default)]

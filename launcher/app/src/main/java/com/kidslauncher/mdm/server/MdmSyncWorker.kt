@@ -628,6 +628,8 @@ private fun statusReportOf(
         loginBrowser = BrowserConfig.report(context),
         // Design 107 §2: the channels turned off, read now (a block-state broadcast only asked for this sync sooner).
         notificationChannels = com.kidslauncher.mdm.notify.NotificationChannelsReader.read(context),
+        // The apps with notification access, read now (the PWA names one the parent didn't give in orange).
+        notificationListeners = NotificationListenersReader.read(context),
         // Design 115 §2.8: whether app push is held for the apps' network (the Attention guard on the server reads it).
         unifiedPush = com.kidslauncher.mdm.push.up.UpRuntime.report(context),
         // Design 110 §7.5: the map links' target and the steps (the server keeps the reach of a report outside a pause).

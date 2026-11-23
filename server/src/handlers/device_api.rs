@@ -562,6 +562,7 @@ pub(crate) async fn build_policy(
         mobile_settings_locked: policy.mobile_settings_locked,
         block_2g: policy.block_2g,
         allow_2g_abroad: policy.allow_2g_abroad,
+        allow_android_auto: policy.allow_android_auto,
         status_heartbeat: state.config.status_heartbeat,
         status_heartbeat_fields: crate::status_heartbeat::HEARTBEAT_FIELDS,
         status_gzip: true,
@@ -1531,6 +1532,12 @@ async fn status_intake(
         .as_ref()
         .and_then(crate::notification_channels::clean)
         .map(|value| value.to_string());
+    // The apps with notification access besides Vibb One, cleaned (package names only, at most a few dozen).
+    let notification_listeners_json = report
+        .notification_listeners
+        .as_ref()
+        .and_then(crate::notification_listeners::clean)
+        .map(|value| value.to_string());
     // Design 115 §2.8: why the phone holds its app-push queue (`None`: it doesn't, or the report doesn't say).
     let up_held = report
         .unified_push
@@ -1577,8 +1584,9 @@ async fn status_intake(
           relock_blocks_total, clock_format_applied, battery_level, battery_charging, dns_upstream_json, \
           write_settings_granted, zone_watch_json, tailnet_joined, sms_state_json, data_roaming_json, \
           mobile_data_json, airplane_mode_json, shortcuts_json, captive_portal_json, login_browser_json, \
-          notification_channels_json, up_held, setup_json, setup_hold_until_ms, vpn_filter_json) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          notification_channels_json, up_held, setup_json, setup_hold_until_ms, vpn_filter_json, \
+          notification_listeners_json) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(device.id)
     .bind(&report.lock_reason)
@@ -1647,6 +1655,7 @@ async fn status_intake(
     .bind(&setup_json)
     .bind(setup_hold_until_ms)
     .bind(&vpn_filter_json)
+    .bind(&notification_listeners_json)
     .execute(&state.db)
     .await
     .ok();

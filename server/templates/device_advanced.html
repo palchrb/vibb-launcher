@@ -235,6 +235,29 @@
         </div>
     </section>
 
+    {#- Android Auto (migration 0170): hidden on the phone while its apps are managed, unless allowed here. Its own form,
+        answered back at #android-auto - a save never jumps to the top. -#}
+    <section id="android-auto" aria-labelledby="android-auto-title">
+        <h2 class="group-header" id="android-auto-title">{{ self.t("device.advanced.android_auto") }}</h2>
+        <div class="group">
+            <form method="post" action="/devices/{{ device.id }}/android-auto#android-auto" class="cell">
+                <label class="row">
+                    <span class="row-label">{{ self.t("device.advanced.android_auto_allow") }}</span>
+                    <input type="checkbox" role="switch" class="sw" name="allow_android_auto" value="on" {% if allow_android_auto %}checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                </label>
+                <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
+            </form>
+        </div>
+        <div class="group-footer">
+            <details class="info">
+                <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    <p>{{ self.t("device.advanced.android_auto_info") }}</p>
+                </div>
+            </details>
+        </div>
+    </section>
+
     <section id="updates" aria-labelledby="updates-title">
         <h2 class="group-header" id="updates-title">{{ self.t("device.advanced.updates") }}</h2>
         {% for line in setup_warnings.at("updates") %}{% include "partials/setup_warning.html" %}{% endfor %}

@@ -1,0 +1,26 @@
+{
+  "android_auto": "com.google.android.projection.gearhead",
+  "policy": {"off": {"allow_android_auto": false}, "on": {"allow_android_auto": true}},
+  "report": [
+    {"package": "com.example.watch", "off": false},
+    {"package": "com.google.android.projection.gearhead", "off": true}
+  ],
+  "report_none": [],
+  "read": [
+    {"case": "Vibb One left out, sorted, the off ones marked", "own": "me.vibb.launcher", "enabled": ["me.vibb.launcher", "com.google.android.projection.gearhead", "com.example.watch"], "off": ["com.google.android.projection.gearhead"], "report": [{"package": "com.example.watch", "off": false}, {"package": "com.google.android.projection.gearhead", "off": true}]},
+    {"case": "the other build left out too, each once", "own": "me.vibb.launcher.debug", "enabled": ["me.vibb.launcher", "me.vibb.launcher.debug", "com.example.watch", "com.example.watch"], "off": [], "report": [{"package": "com.example.watch", "off": false}]},
+    {"case": "only Vibb One", "own": "me.vibb.launcher", "enabled": ["me.vibb.launcher"], "off": [], "report": []}
+  ],
+  "clean": [
+    {"case": "the report as it is", "in": [{"package": "com.example.watch", "off": false}], "out": [{"package": "com.example.watch", "off": false}]},
+    {"case": "off missing or not a boolean", "in": [{"package": "com.example.a"}, {"package": "com.example.b", "off": "yes"}], "out": [{"package": "com.example.a", "off": false}, {"package": "com.example.b", "off": false}]},
+    {"case": "not a package name, not an object, duplicates dropped", "in": [{"package": "<b>x</b>"}, "com.example.a", {"package": "com.example.c", "off": true}, {"package": "com.example.c", "off": false}], "out": [{"package": "com.example.c", "off": true}]},
+    {"case": "extra keys dropped", "in": [{"package": "com.example.a", "off": false, "label": "A"}], "out": [{"package": "com.example.a", "off": false}]},
+    {"case": "not a list", "in": {"package": "com.example.a"}, "out": null}
+  ],
+  "unknown": [
+    {"case": "a reader the parent didn't give", "report": [{"package": "com.example.watch", "off": false}], "known": [], "unknown": ["com.example.watch"]},
+    {"case": "a catalog or allowed app", "report": [{"package": "com.example.watch", "off": false}], "known": ["com.example.watch"], "unknown": []},
+    {"case": "one Vibb turned off", "report": [{"package": "com.google.android.projection.gearhead", "off": true}], "known": [], "unknown": []}
+  ]
+}
