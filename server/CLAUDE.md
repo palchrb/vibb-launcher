@@ -104,7 +104,8 @@ No prior programming experience - build features directly rather than explaining
   allowlists only `device_api::SAFE_DEFAULT_APPS` it has (clock, calculator, camera, Vibb music; the user's choice,
   2026-10-11) plus its phone and SMS apps - `CALL_AND_TEXT_APPS` (Google's and AOSP's) and the `system_dialer` /
   `default_sms_package` its `call_state` names (`call_and_text_roles`), since while calls are unmanaged the launcher
-  restricts outgoing calls unless the system dialer is allowed and hides an SMS app that isn't (QA Medium 3) - never
+  restricts outgoing calls unless the system dialer is allowed and hides an SMS app that isn't (QA Medium 3); the SMS
+  apps are left out while SMS is managed (a new phone's default since 2026-11-23, `NEW_PHONE_CHANNEL_MODE`) - never
   everything installed. `calls::call_report` warns when the allowlist leaves either out. Fixtures: `testdata/apk/` (aapt2 + apksigner, throwaway keys, no code).
 - **A catalog release that asks for more waits for the parent (design 90).** `apk::read_identity` reads the declared
   permissions all or nothing (by resource id only, the whole document, else `None`); `catalog_holds::judge` holds a
