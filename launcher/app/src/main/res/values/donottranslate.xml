@@ -120,7 +120,7 @@
     <!-- Followed by assets/licenses/BSD-3-Clause-tsnet.txt (LegalInfoActivity). -->
     <string name="legal_info_tailnet"><![CDATA[
         <h2>Tailscale</h2>
-        The phone's own tailnet connection: Tailscale's tsnet, with wlynxg/anet, built with Go.
+        The embedded tailnet connection: tsnet from Tailscale, with wlynxg/anet, built with Go.
         <p><a href=\"https://github.com/tailscale/tailscale\">github.com/tailscale/tailscale</a></p>
         <p>BSD 3-Clause License</p>
     ]]></string>
