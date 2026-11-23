@@ -168,11 +168,16 @@ No prior programming experience - build features directly rather than explaining
 - **Root takes only signed release files (security review M5).** `verify_signed FILE NAME TAG` (the same text in
   install.sh and update.sh, with the pinned `SERVER_SIGNING_PUBKEY`) needs `FILE.minisig` to verify with minisign and
   its trusted comment to be `NAME TAG`; `download_release` checks the tarball before unpacking it.
-  `server-release.yml`'s `server-release-sign` job (the `release` environment, before the image job) signs both
-  tarballs and `update.sh` (an old install's watcher takes `update.sh` from the release assets and checks it - the way
-  in to the release that removes the watcher) with that environment's `SERVER_MINISIGN_KEY` and checks them against
-  the key pinned in `deploy/update.sh` - no secret or no pinned key, nothing is pushed or published. `"not-set"` (the
-  state until the owner pins a key) refuses everything. `tests::deploy_scripts` keeps the two key lines and the two
+  `server-release.yml`'s `server-release-sign` job (the `release-server` environment, after the untagged image legs
+  and the keyless index job, before the merge tags anything; no docker, no checkout, no repo script) signs both
+  tarballs, `update.sh` (an old install's watcher takes `update.sh` from the release assets and checks it - the way
+  in to the release that removes the watcher), `update-image.sh` and the image statement `handy-server-image.txt` (one
+  line `ghcr.io/<owner>/handy-server@sha256:<index digest> server-vX.Y.Z`, trusted comment `handy-server-image.txt
+  server-vX.Y.Z`) with that environment's `SERVER_MINISIGN_KEY` and checks them against the key pinned in
+  `deploy/update-image.sh` - no secret or no pinned key, nothing is tagged or published. The merge job checks the
+  statement with `update-image.sh --verify-statement` and the index's digest before tagging; `update-image.sh` checks
+  it before `gh attestation verify` (DEPLOY.md, "Docker"). `"not-set"` (the
+  state until the owner pins a key) refuses everything. `tests::deploy_scripts` keeps the three key lines and the two
   `verify_signed` equal, and install.sh's and update.sh's `case "$(uname -m)"` (`aarch64`/`arm64`,
   `x86_64`/`amd64`, anything else refused) equal and matching the release's two tarballs
   (`the_scripts_pick_the_tarball_for_the_machine`).
@@ -217,7 +222,7 @@ this file or the design doc; a dev database that ran an earlier text needs a fre
 Every migration follows the one before it: sqlx applies them in number order, and `migrations_from_73_in_order` checks
 every file from 0073 on. The pairs a server must get in that order (the hazard above): 0070 before 0071 before 0072,
 0073 before 0074, 0078 before 0079, 0122 before 0123. What a file adds is its name and its header comment; the tables
-below name the migration of the columns they list. The next free number is 0169 (0158 is design 116's, 0159 design
+below name the migration of the columns they list. The next free number is 0170 (0169 Software Updates' `dismissed_notices`, 0158 is design 116's, 0159 design
 110's map links, 0160 the contact request's picture, 0161 the contact's Matrix ID, 0162 the saved Wi-Fi network, 0163
 design 125's Apple Wi-Fi lookup - `wifi_lookup_devices`, `wifi_lookup_aps`, `docs/notes/server/integrations.md` -,
 0164 the install failure's reason, 0165 design 126's `device_policy.block_2g`, 0166 design 127's `app_denials`, 0167
