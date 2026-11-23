@@ -91,6 +91,13 @@ object PassiveFixes {
                 FixVerdict.KEEP -> LocateCommands.keepFix(context, location)
                 FixVerdict.INACCURATE, FixVerdict.NOT_NEWER -> {}
             }
+            // Another app's fix taken in silence left the PWA's newest position unexplained in the log (2026-11-23);
+            // never the coordinates.
+            if (verdict == FixVerdict.KEEP) {
+                val ageS = (SystemClock.elapsedRealtimeNanos() - location.elapsedRealtimeNanos) / 1_000_000_000
+                val acc = if (location.hasAccuracy()) location.accuracy.toInt().toString() else "-"
+                Log.i(LOG_TAG, "Passive fix kept provider=${location.provider ?: "-"} acc=$acc age=${ageS}s")
+            }
         } catch (e: Exception) {
             Log.w(LOG_TAG, "A passive fix failed: ${e.javaClass.simpleName}")
         }
