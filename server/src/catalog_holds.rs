@@ -218,6 +218,24 @@ pub fn group_of(permission: &str) -> Option<&'static str> {
         .map(|(_, group)| *group)
 }
 
+/// The accepted set as Android granted it: `accepted` with the split permissions
+/// ([crate::apk::with_split_permissions]) that the accepted names a served release declares
+/// (`served`, read with its splits) bring at its target SDK; sorted. An accepted set stored before
+/// the reader added splits gets them this way, so an unchanged update isn't held for them.
+pub fn with_splits(accepted: &[String], served: &[String], target: i64) -> Vec<String> {
+    let mut granted: Vec<String> = accepted
+        .iter()
+        .filter(|name| served.contains(name))
+        .cloned()
+        .collect();
+    crate::apk::with_split_permissions(&mut granted, target);
+    let mut names = accepted.to_vec();
+    names.extend(sensitive(&granted));
+    names.sort();
+    names.dedup();
+    names
+}
+
 /// The sensitive names of a declared list, sorted.
 pub fn sensitive(permissions: &[String]) -> Vec<String> {
     let mut names: Vec<String> = permissions

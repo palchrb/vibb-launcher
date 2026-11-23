@@ -50,6 +50,9 @@ pub struct ApkIdentity {
     /// ([SPLIT_PERMISSIONS]); sorted, deduplicated. `None` when it can't be read whole - never
     /// "none".
     pub permissions: Option<Vec<String>>,
+    /// The target SDK the split permissions were added for (`<uses-sdk>`'s, [target_sdk]); `None`
+    /// when `permissions` is.
+    pub split_target: Option<i64>,
 }
 
 /// Reads the facts; a file that isn't a zip at all is an error, a part that can't be read is
@@ -81,6 +84,7 @@ pub fn read_identity(path: &Path) -> Result<ApkIdentity, String> {
         min_sdk: manifest.min_sdk,
         signer_sha256,
         permissions: manifest.permissions,
+        split_target: manifest.split_target,
     })
 }
 
@@ -285,7 +289,7 @@ const ANDROID_PERMISSION: &str = "android.permission.";
 
 /// `names` with every permission Android adds for an app targeting `target` ([SPLIT_PERMISSIONS]),
 /// until none is added (Android's one pass in table order adds no more than this).
-fn with_split_permissions(names: &mut Vec<String>, target: i64) {
+pub fn with_split_permissions(names: &mut Vec<String>, target: i64) {
     loop {
         let mut added = false;
         for (old, new, below) in SPLIT_PERMISSIONS {
@@ -315,6 +319,8 @@ struct Manifest {
     min_sdk: Option<u32>,
     /// [ApkIdentity::permissions].
     permissions: Option<Vec<String>>,
+    /// [ApkIdentity::split_target].
+    split_target: Option<i64>,
 }
 
 /// The `package`, `android:versionCode`, `android:versionName` and `android:versionCodeMajor` attributes of the binary
@@ -328,13 +334,15 @@ fn read_manifest(xml: &[u8]) -> Option<Manifest> {
     let whole = walk_manifest(xml, &mut found, &mut permissions, &mut target).is_some()
         && u32_at(xml, 4).is_some_and(|size| size as usize == xml.len());
     let mut manifest = found?;
+    // No `<uses-sdk>`: Android's target is 0, below every split.
+    let target = target.unwrap_or(0);
     manifest.permissions = permissions.filter(|_| whole).map(|mut names| {
-        // No `<uses-sdk>`: Android's target is 0, below every split.
-        with_split_permissions(&mut names, target.unwrap_or(0));
+        with_split_permissions(&mut names, target);
         names.sort();
         names.dedup();
         names
     });
+    manifest.split_target = manifest.permissions.is_some().then_some(target);
     Some(manifest)
 }
 
@@ -736,6 +744,7 @@ mod tests {
                 min_sdk: Some(26),
                 signer_sha256: Some(KEY1.to_string()),
                 permissions: Some(Vec::new()),
+                split_target: Some(36),
             }
         );
         assert_eq!(read("fixture-key1-v2.apk").version_code, Some(2));
@@ -765,6 +774,7 @@ mod tests {
                 min_sdk: Some(26),
                 signer_sha256: None,
                 permissions: Some(Vec::new()),
+                split_target: Some(36),
             }
         );
     }
@@ -908,6 +918,7 @@ mod tests {
                 version_name: None,
                 min_sdk: None,
                 permissions: Some(Vec::new()),
+                split_target: Some(0),
             })
         );
         assert_eq!(
@@ -918,6 +929,7 @@ mod tests {
                 version_name: None,
                 min_sdk: None,
                 permissions: Some(Vec::new()),
+                split_target: Some(0),
             }),
             "a versionCode outside the android namespace isn't the code"
         );
@@ -1200,6 +1212,37 @@ mod tests {
         assert_eq!(
             crate::catalog_holds::judge(false, Some(&now), Some(&accepted), false),
             crate::catalog_holds::Verdict::Serve
+        );
+        // An accepted set stored without splits ([FINE]), widened by the served release at its
+        // target: an unchanged update at the same target isn't held; a lowered target still is.
+        let stored = names(&["ACCESS_FINE_LOCATION"]);
+        let judge = |update: &[String], accepted: &[String]| {
+            crate::catalog_holds::judge(false, Some(update), Some(accepted), false)
+        };
+        assert!(matches!(
+            judge(&now, &stored),
+            crate::catalog_holds::Verdict::Hold(..)
+        ));
+        let widened = crate::catalog_holds::with_splits(&stored, &now, 34);
+        assert_eq!(widened, now);
+        assert_eq!(judge(&now, &widened), crate::catalog_holds::Verdict::Serve);
+        let widened_old = crate::catalog_holds::with_splits(&stored, &old, 28);
+        assert_eq!(widened_old, old);
+        assert_eq!(
+            judge(&old, &widened_old),
+            crate::catalog_holds::Verdict::Serve
+        );
+        assert_eq!(
+            judge(&old, &widened),
+            crate::catalog_holds::Verdict::Hold(
+                crate::catalog_holds::Reason::Permissions,
+                names(&["ACCESS_BACKGROUND_LOCATION"])
+            )
+        );
+        // Only what the accepted names bring: a split of a name not accepted isn't added.
+        assert_eq!(
+            crate::catalog_holds::with_splits(&[], &old, 28),
+            Vec::<String>::new()
         );
     }
 

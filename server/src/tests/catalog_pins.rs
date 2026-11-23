@@ -437,6 +437,7 @@ async fn a_pinned_app_refuses_what_it_cant_check() {
         min_sdk: None,
         signer_sha256: Some(KEY1.to_string()),
         permissions: None,
+        split_target: None,
     };
     let refused = crate::handlers::tracked_apps::check_pins(&pinned, &unreadable).unwrap_err();
     assert_eq!(
