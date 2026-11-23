@@ -37,12 +37,19 @@ class LegalInfoActivity : UIObjectActivity() {
         } catch (e: java.io.IOException) {
             CC_BY_ASSET
         }
+        // And the embedded tailnet's (Tailscale's tsnet, anet and Go: BSD 3-Clause, condition 2 - a binary carries the notice).
+        binding.legalInfoBsd.text = try {
+            assets.open(BSD_ASSET).bufferedReader().use { it.readText() }
+        } catch (e: java.io.IOException) {
+            BSD_ASSET
+        }
     }
 
     companion object {
         const val OFL_ASSET = "licenses/OFL.txt"
         const val APACHE_ASSET = "licenses/Apache-2.0.txt"
         const val CC_BY_ASSET = "licenses/CC-BY-4.0.txt"
+        const val BSD_ASSET = "licenses/BSD-3-Clause-tsnet.txt"
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
