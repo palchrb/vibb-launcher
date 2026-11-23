@@ -202,7 +202,9 @@ downloads will feel.
 
 In every setup that gives phones a Tailscale key (tailnet only, or a phone listener with the tailnet as a second
 path): a **one-time** (not reusable), **tagged** (`tag:kid`), pre-approved, non-ephemeral key, and a tailnet policy
-that lets `tag:kid` reach only the phones' port (`8444` above) on this box (security review M12).
+that lets `tag:kid` reach only the phones' port (`8444` above) on this box (security review M12). A new tailnet's
+default lets every node reach every port: [`docs/setup/quick-start.md`](../docs/setup/quick-start.md), step 5, has a
+policy to paste, with a test that refuses a save letting `tag:kid` reach more.
 
 One-time means one key per phone setup. Settings > Phone Setup holds a single key, and every setup QR carries it:
 before setting up a phone (or setting one up again), make a new key in the Tailscale admin console and paste it

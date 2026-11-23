@@ -82,9 +82,40 @@ In the Tailscale admin console, make an auth key for the phone. It should be:
 - not ephemeral;
 - tagged `tag:kid`.
 
-Paste it in the web app under *Settings › Phone Setup*. Each key sets up one phone. Your tailnet policy should let
-`tag:kid` reach only port 8444 on this machine ([`server/DEPLOY.md`](../../server/DEPLOY.md), "Tailscale keys for the
-phones").
+Paste it in the web app under *Settings › Phone Setup*. Each key sets up one phone.
+
+A new tailnet lets every device reach every other device. The phone needs only port 8444 on this machine, so give it
+only that. In the admin console, open *Access controls* and replace the default rule with this, putting this machine's
+Tailscale IP in `hosts`:
+
+```
+{
+  "tagOwners": { "tag:kid": ["autogroup:admin"] },
+  "hosts": { "vibb": "100.x.y.z" },
+  "grants": [
+    // Your own devices keep reaching everything, as before.
+    { "src": ["autogroup:member"], "dst": ["*"], "ip": ["*"] },
+    // The phones reach only the phones' port on this machine.
+    { "src": ["tag:kid"], "dst": ["vibb"], "ip": ["tcp:8444"] }
+  ],
+  // Checked on every save: a policy that lets a phone reach more is refused.
+  "tests": [
+    { "src": "tag:kid", "accept": ["vibb:8444"], "deny": ["vibb:443", "vibb:22"] }
+  ]
+}
+```
+
+If your policy already has other rules, keep them and add the `tag:kid` lines instead.
+
+Then add your own Tailscale login to `.env`, so the parents' web app also needs a signed-in person, not only a
+tailnet address, and restart with `docker compose up -d`:
+
+```
+ADMIN_TAILSCALE_USERS=you@example.com
+```
+
+Several logins are separated by commas. More in [`server/DEPLOY.md`](../../server/DEPLOY.md), "Tailscale keys for the
+phones".
 
 ## 6. Add the phone
 
