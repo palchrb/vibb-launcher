@@ -132,7 +132,7 @@ pub fn about(
         return AboutRow {
             value: names.join(", "),
             orange: true,
-            detail: Some(t(lang, "device.about.listeners_unknown_info")),
+            detail: Some(t(lang, "device.about.listeners_unknown_info").to_string()),
         };
     }
     let reading: Vec<String> = listeners
@@ -142,7 +142,7 @@ pub fn about(
         .collect();
     if reading.is_empty() {
         AboutRow {
-            value: t(lang, "device.about.listeners_only_vibb"),
+            value: t(lang, "device.about.listeners_only_vibb").to_string(),
             orange: false,
             detail: None,
         }
@@ -150,7 +150,7 @@ pub fn about(
         AboutRow {
             value: reading.join(", "),
             orange: false,
-            detail: Some(t(lang, "device.about.listeners_info")),
+            detail: Some(t(lang, "device.about.listeners_info").to_string()),
         }
     }
 }
