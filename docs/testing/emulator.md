@@ -5137,10 +5137,10 @@ device owner and enrolled with a typed setup code (on 16 the Connect screen's fi
 
 ```sh
 A="adb -s emulator-5556"
-# The action goes to Vibb's gate while managed (the dialer's "Blocked numbers" row fires it):
+# The action goes to Vibb's gate while managed:
 $A shell cmd package resolve-activity -a android.telecom.action.MANAGE_BLOCKED_NUMBERS | grep -m1 name=
 $A shell am start -W -a android.telecom.action.MANAGE_BLOCKED_NUMBERS | grep Activity     # BlockedNumbersGate
-# Telecom's page started explicitly (what the gate can't stop): Add a number, type it, hide the keyboard (BACK), Block.
+# Telecom's page started explicitly (not affected by the gate): Add a number, type it, hide the keyboard (BACK), Block.
 $A shell am start -W -n com.android.server.telecom/.settings.BlockedNumbersActivity
 $A logcat -d | grep -E "VibbBlockedNumbers|SyncRunner: Sync for \[blocked_numbers\]"
 # The server: one security-log line per class, the number never.
@@ -5155,6 +5155,10 @@ sqlite3 data/kidphone.db "SELECT created_at, detail, params FROM security_events
 | Another number (`99887766`) | - | **Pass.** Cleared 19 ms after the insert (`number=1`); the line `blocked_cleared.number` in the same second |
 | The PWA | **Pass.** Calls: "Blokkert nummer fjernet" in orange with "23:01 · nå nettopp", the sentence behind the ⓘ; the summary's Attention row; the security log "Block removed: 1 contact number" | not looked at (the same server) |
 | Calls and SMS set unmanaged | - | **Pass.** The gate disabled, the action resolves to Telecom's page; the dialer role back with Google's dialer |
+| The gate from `TelecomManager.createManageBlockedNumbersIntent()` (a test app calling it) | **Owed** | **Owed** |
+| The gate from the Google Dialer's Settings › Blocked numbers row (calls unmanaged, the dialer allowed; then managed) | **Owed** | **Owed** |
+| The observer after a process restart (`am kill` or a crash, then a number blocked before any sync) | **Owed** | **Owed** |
+| The initial sweep: numbers blocked while unmanaged, then calls set managed - `blocked_cleared_initial` rises, no line, no orange | **Owed** | **Owed** |
 
 The phones were in the fresh enrolment's setup hold (no lock task): the clearing ran there too, as it does in a pause.
 Android 17 (`compat372`, 37.2) was tried: system_server restarted during `set-device-owner` (the image's known graphics

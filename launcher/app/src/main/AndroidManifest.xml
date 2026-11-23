@@ -727,7 +727,7 @@
                 <action android:name="org.unifiedpush.android.distributor.MESSAGE_ACK" />
             </intent-filter>
         </receiver>
-        <!-- Android's Blocked numbers page while the phone is managed: closes at once (calls/BlockedNumbersGate). Enabled
+        <!-- The handler of the Blocked numbers action while the phone is managed: closes at once (calls/BlockedNumbersGate). Enabled
              only while managed; AppEnforcer always sets its persistent preferred activity. -->
         <activity
             android:name=".calls.BlockedNumbersGate"

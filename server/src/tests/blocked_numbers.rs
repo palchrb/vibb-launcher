@@ -193,3 +193,43 @@ async fn numbers_left_are_orange_only_while_managed() {
     let page = calls_page(&app, &cookie, id).await;
     assert!(!page.contains("Numbers blocked on the phone"), "{page}");
 }
+
+/// The first sweep after the phone became managed (the parent's switch) is counted apart: no line, no orange, no
+/// Attention, however much it cleared.
+#[tokio::test]
+async fn the_initial_clearing_is_quiet() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    set_modes(&app, id, "managed", "managed").await;
+    let contract = contract();
+    app.post_status(
+        &token,
+        json!({"call_state": call_state(&contract["call_state_unreadable"])}),
+    )
+    .await;
+    let mut report = contract["call_state_unreadable"].clone();
+    report["blocked_readable"] = json!(true);
+    report["blocked_left"] = json!(0);
+    report["blocked_cleared_initial"] = json!(5);
+    app.post_status(&token, json!({"call_state": call_state(&report)}))
+        .await;
+    let stored: String = sqlx::query_scalar(
+        "SELECT call_state_json FROM device_status WHERE device_id = ? ORDER BY id DESC LIMIT 1",
+    )
+    .bind(id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    let stored: Value = serde_json::from_str(&stored).unwrap();
+    assert_eq!(stored["blocked_cleared_initial"], json!(5));
+    assert!(lines(&app).await.is_empty());
+    let page = calls_page(&app, &cookie, id).await;
+    assert!(!page.contains("Blocked number removed"), "{page}");
+    assert!(!page.contains("Numbers blocked on the phone"), "{page}");
+    let summary = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(!summary.contains("Blocked number removed"), "{summary}");
+}

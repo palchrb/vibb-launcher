@@ -1297,6 +1297,8 @@ pub(crate) const CALL_STATE_FIELDS: &[(&str, Field)] = &[
     ("blocked_cleared_short", Field::Int),
     ("blocked_cleared_other", Field::Int),
     ("blocked_cleared_at", Field::Word(64)),
+    // The first sweep after the phone became managed (the parent's switch): counted apart, never a line or a warning.
+    ("blocked_cleared_initial", Field::Int),
 ];
 
 /// A phone's JSON object through `fields` (security review L10): each known key kept only with a

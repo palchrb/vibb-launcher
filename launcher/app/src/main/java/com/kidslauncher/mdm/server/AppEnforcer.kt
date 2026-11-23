@@ -2024,8 +2024,7 @@ object AppEnforcer {
     /**
      * `android.telecom.action.MANAGE_BLOCKED_NUMBERS` goes to [com.kidslauncher.mdm.calls.BlockedNumbersGate] - set on
      * every [apply] and in `HomePin`'s re-seat with the other PPAs of ours (the eighth; it shares no filter with them).
-     * Telecom is a lock-task helper (its call screens), so its Blocked numbers page would open in the kiosk; while
-     * managed the gate is enabled and closes at once. Disabled while unmanaged: Android skips the pin.
+     * While managed the gate is enabled and closes at once; disabled while unmanaged, Android skips the pin.
      */
     private fun enforceBlockedNumbersPin(dpm: DevicePolicyManager, admin: ComponentName, context: Context) {
         try {

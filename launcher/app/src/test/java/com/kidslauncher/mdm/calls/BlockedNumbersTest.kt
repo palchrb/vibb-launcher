@@ -52,11 +52,27 @@ class BlockedNumbersTest {
     @Test
     fun `managed every row is cleared with its class and unmanaged none`() {
         val list = rows.mapIndexed { i, row -> BlockedRow(i.toLong() + 10, row.number) }
-        val managed = blockedNumbersPlan(list, managed = true, rules = rules)
+        val managed = blockedNumbersPlan(list, managed = true, wasManaged = true, rules = rules)
         assertEquals(list.map { it.id }, managed.delete.map { it.first })
         assertEquals(rows.map { it.expected }, managed.delete.map { it.second })
-        assertEquals(BlockedPlan(emptyList()), blockedNumbersPlan(list, managed = false, rules = rules))
-        assertEquals(BlockedPlan(emptyList()), blockedNumbersPlan(emptyList(), managed = true, rules = rules))
+        assertEquals(false, managed.initial)
+        for (was in listOf(true, false)) {
+            assertEquals(BlockedPlan(emptyList()), blockedNumbersPlan(list, managed = false, wasManaged = was, rules = rules))
+        }
+        assertEquals(BlockedPlan(emptyList()), blockedNumbersPlan(emptyList(), managed = true, wasManaged = true, rules = rules))
+    }
+
+    /** The first sweep after the phone becomes managed clears what was there before - the parent's switch, not the
+     * kid's doing - and is counted apart, even when the list is empty. */
+    @Test
+    fun `the first managed sweep is the initial one`() {
+        val list = listOf(BlockedRow(1, "+4791234567"), BlockedRow(2, "2222"))
+        val first = blockedNumbersPlan(list, managed = true, wasManaged = false, rules = rules)
+        assertEquals(listOf(1L, 2L), first.delete.map { it.first })
+        assertEquals(true, first.initial)
+        assertEquals(true, blockedNumbersPlan(emptyList(), managed = true, wasManaged = false, rules = rules).initial)
+        assertEquals(false, blockedNumbersPlan(list, managed = true, wasManaged = true, rules = rules).initial)
+        assertEquals(false, blockedNumbersPlan(list, managed = false, wasManaged = false, rules = rules).initial)
     }
 
     @Test
@@ -82,7 +98,7 @@ class BlockedNumbersTest {
     @Test
     fun `the report encodes exactly the contract's keys`() {
         val cleared = mapOf(BlockedClass.CONTACT to 1, BlockedClass.NUMBER to 2, BlockedClass.SHORT to 0, BlockedClass.OTHER to 0)
-        val read = BlockedReport(true, 0, cleared, java.time.Instant.parse("2026-11-23T20:15:00Z").toEpochMilli())
+        val read = BlockedReport(true, 0, cleared, java.time.Instant.parse("2026-11-23T20:15:00Z").toEpochMilli(), clearedInitial = 2)
         assertEquals(contract["call_state"], blockedKeys(base.withBlocked(read)))
         val unread = BlockedReport(false, null, BlockedClass.entries.associateWith { 0 }, null)
         assertEquals(contract["call_state_unreadable"], blockedKeys(base.withBlocked(unread)))
@@ -104,5 +120,9 @@ class BlockedNumbersTest {
         assertTrue(entry.contains("android.telecom.action.MANAGE_BLOCKED_NUMBERS"))
         val runtime = File(main, "java/com/kidslauncher/mdm/calls/BlockedNumbersRuntime.kt").readText()
         assertTrue(runtime.contains("setGateEnabled(context, state.managed)"))
+        // The initial sweep never moves the clearing time the server's warning reads.
+        val initial = runtime.substringAfter("if (plan.initial) {").substringBefore("return")
+        assertTrue(initial.contains("KEY_WAS_MANAGED, true"))
+        assertTrue(!initial.contains("KEY_LAST"))
     }
 }

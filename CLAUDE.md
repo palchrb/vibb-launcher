@@ -498,8 +498,9 @@ pinned by `policy_json_keys_snapshot` and `PolicyResponseCompatTest`. `network` 
 Android's blocked-numbers list, cleared while managed, is `server/testdata/blocked_numbers.json`, byte-identical in
 `launcher/app/src/test/resources/`: `classes` (a cleared entry's class: `contact`, `number`, `short`, `other` - never the
 number), `call_state` and `call_state_unreadable` (the exact `blocked_*` keys of a status report's `call_state`: readable,
-the rows left, the counts per class since the install, the last clearing) and `lines` (the previous and this report's
-counts to the security-log lines, one per class that rose). The server's `blocked_numbers::tests` runs the rows and
+the rows left, the counts per class since the install, the last clearing, and `blocked_cleared_initial` - the first
+sweep after the phone became managed, counted apart and never worded as a warning) and `lines` (the previous and this
+report's counts to the security-log lines, one per class that rose). The server's `blocked_numbers::tests` runs the rows and
 `tests::blocked_numbers` posts the reports (the `phone_blocked_cleared` lines, the Calls page's orange lines); the
 launcher's `BlockedNumbersTest` encodes both reports exactly from `withBlocked` and checks its classes; both compare the
 copies. The plan (`blockedNumbersPlan`: every row cleared while managed) stays the launcher's. No policy key.

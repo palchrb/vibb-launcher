@@ -488,6 +488,8 @@ data class CallState(
     val blockedClearedShort: Int? = null,
     val blockedClearedOther: Int? = null,
     val blockedClearedAt: String? = null,
+    /** Cleared by the first sweep after the phone became managed (the parent's switch): counted apart, never logged. */
+    val blockedClearedInitial: Int? = null,
 )
 
 /** [CallState] with [report]'s `blocked_*` keys. */
@@ -499,4 +501,5 @@ fun CallState.withBlocked(report: com.kidslauncher.mdm.calls.BlockedReport): Cal
     blockedClearedShort = report.cleared[com.kidslauncher.mdm.calls.BlockedClass.SHORT] ?: 0,
     blockedClearedOther = report.cleared[com.kidslauncher.mdm.calls.BlockedClass.OTHER] ?: 0,
     blockedClearedAt = report.lastClearedMs?.let { java.time.Instant.ofEpochMilli(it).toString() },
+    blockedClearedInitial = report.clearedInitial,
 )

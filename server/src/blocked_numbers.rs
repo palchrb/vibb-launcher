@@ -2,8 +2,9 @@
 //! Vibb One sees them. While calls or SMS are managed the launcher clears the list and counts what it cleared, by the
 //! number's class only (never the number), in its `call_state`: `blocked_cleared_<class>` (counts since its install),
 //! `blocked_cleared_at` (the last clearing, RFC 3339), `blocked_readable` and `blocked_left` (what it couldn't clear).
-//! The flat keys go through `device_api::CALL_STATE_FIELDS`. Each rise against the previous report is a security-log
-//! line per class ([lines], `phone_blocked_cleared`); the Calls page words the rest (`calls::Finding::BlockedCleared`,
+//! The first sweep after the phone became managed (the parent's switch) is `blocked_cleared_initial` alone: stored, never
+//! a line or a warning. The flat keys go through `device_api::CALL_STATE_FIELDS`. Each class's rise against the previous
+//! report is a security-log line ([log_lines], `phone_blocked_cleared`); the Calls page words the rest (`calls::Finding::BlockedCleared`,
 //! `BlockedLeft`). The shapes are `testdata/blocked_numbers.json`, shared with the launcher.
 
 /// The classes the launcher sorts a cleared entry into, in the contract's order.

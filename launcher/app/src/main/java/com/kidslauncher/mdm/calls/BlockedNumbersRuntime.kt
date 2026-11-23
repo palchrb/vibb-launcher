@@ -18,7 +18,8 @@ private const val LOG_TAG = "VibbBlockedNumbers"
 /**
  * Android's side of [blockedNumbersPlan]: reads and clears `BlockedNumberContract` after every `AppEnforcer.apply()`
  * and whenever the list changes (a [ContentObserver], once per process), counts what it cleared in its own prefs
- * (`commit()`), and asks for a sync after a clearing so the server's security-log line follows within seconds.
+ * (`commit()`), and asks for a sync after a clearing so the server's security-log line follows within seconds. The
+ * first sweep after the phone becomes managed is counted apart (`cleared_initial`, no sync of its own).
  *
  * Who may read and write the list (`BlockedNumberProvider`, the same on Android 14 to 17): the system and phone
  * processes, the default dialer, the default SMS app and carrier-privileged apps - never a device owner as such. Vibb One
@@ -27,11 +28,14 @@ private const val LOG_TAG = "VibbBlockedNumbers"
  * the offline override (the call rules never are): a number blocked during a pause is cleared at once too.
  *
  * Also switches [BlockedNumbersGate], the handler of `MANAGE_BLOCKED_NUMBERS` that AppEnforcer pins as a persistent
- * preferred activity: enabled while managed, so Android's Blocked numbers page doesn't open from the kiosk.
+ * preferred activity: enabled while managed, so the page's action goes to the gate, which closes.
  */
 object BlockedNumbersRuntime {
     private const val PREFS = "blocked_numbers"
     private const val KEY_LAST = "last_cleared_ms"
+    /** A sweep has read the list while managed since the phone was last unmanaged (or ever). */
+    private const val KEY_WAS_MANAGED = "was_managed"
+    private const val KEY_INITIAL = "cleared_initial"
     private val worker = Executors.newSingleThreadExecutor()
 
     @Volatile
@@ -59,6 +63,7 @@ object BlockedNumbersRuntime {
             left = if (readable) left else null,
             cleared = BlockedClass.entries.associateWith { prefs.getInt(it.wire, 0) },
             lastClearedMs = prefs.getLong(KEY_LAST, 0L).takeIf { it > 0L },
+            clearedInitial = prefs.getInt(KEY_INITIAL, 0),
         )
     }
 
@@ -88,6 +93,11 @@ object BlockedNumbersRuntime {
             CallPolicyStore.ensureLoaded(context)
             val state = CallPolicyStore.state
             setGateEnabled(context, state.managed)
+            val prefs = prefs(context)
+            // Unmanaged: the next managed sweep is the initial one again.
+            if (!state.managed && prefs.getBoolean(KEY_WAS_MANAGED, false)) {
+                prefs.edit().putBoolean(KEY_WAS_MANAGED, false).commit()
+            }
             val rows = read(context)
             if (rows == null) {
                 readable = false
@@ -95,7 +105,9 @@ object BlockedNumbersRuntime {
                 return
             }
             readable = true
-            val plan = blockedNumbersPlan(rows, state.managed, (state as? CallPolicyState.Managed)?.rules)
+            val plan = blockedNumbersPlan(
+                rows, state.managed, prefs.getBoolean(KEY_WAS_MANAGED, false), (state as? CallPolicyState.Managed)?.rules,
+            )
             val cleared = mutableMapOf<BlockedClass, Int>()
             for ((id, kind) in plan.delete) {
                 val gone = try {
@@ -107,8 +119,16 @@ object BlockedNumbersRuntime {
                 if (gone) cleared[kind] = (cleared[kind] ?: 0) + 1
             }
             left = rows.size - cleared.values.sum()
+            if (plan.initial) {
+                // The first sweep since the phone became managed: counted apart, no clearing time, no sync of its own.
+                prefs.edit().apply {
+                    putBoolean(KEY_WAS_MANAGED, true)
+                    putInt(KEY_INITIAL, prefs.getInt(KEY_INITIAL, 0) + cleared.values.sum())
+                }.commit()
+                if (cleared.isNotEmpty()) Log.i(LOG_TAG, "Cleared blocked numbers on becoming managed: ${cleared.values.sum()}")
+                return
+            }
             if (cleared.isEmpty()) return
-            val prefs = prefs(context)
             prefs.edit().apply {
                 for ((kind, n) in cleared) putInt(kind.wire, prefs.getInt(kind.wire, 0) + n)
                 putLong(KEY_LAST, System.currentTimeMillis())
