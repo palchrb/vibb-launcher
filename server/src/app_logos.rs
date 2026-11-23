@@ -743,13 +743,15 @@ pub async fn phone_logos(
     Ok(logos)
 }
 
-/// Design 87b: the Automatic tile "Vises som" previews for `package` on this phone - its own row's tile; for an app
-/// this phone has no row of (a ticked catalog app not installed here) the tile most phones name ([catalog_tile]).
-/// `None` (the letter) when there is none or its file isn't stored.
+/// Design 87b: the Automatic tile "Vises som" previews for `package` on this phone - its own row's tile; only for a
+/// catalog app ticked for this phone and not installed on it (`catalog_fallback`, the logo's rule, design 87 Q3) the
+/// tile most phones name ([catalog_tile]). An installed app never shows another phone's tile. `None` (the letter)
+/// when there is none or its file isn't stored.
 pub async fn phone_tile(
     state: &AppState,
     device_id: i64,
     package: &str,
+    catalog_fallback: bool,
 ) -> Result<Option<String>, sqlx::Error> {
     let row: Option<Option<String>> = sqlx::query_scalar(
         "SELECT tile_hash FROM device_app_logos WHERE device_id = ? AND package_name = ?",
@@ -760,7 +762,8 @@ pub async fn phone_tile(
     .await?;
     match row {
         Some(tile) => Ok(stored_src(state, tile.as_deref()).await),
-        None => catalog_tile(state, package).await,
+        None if catalog_fallback => catalog_tile(state, package).await,
+        None => Ok(None),
     }
 }
 

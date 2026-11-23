@@ -21,7 +21,8 @@ re-encode, same store.
 `KidAvatars.drawVibbMono` - Home's own function for `IconRender.VibbMono`, with Home's `toneOf` - at design 87's
 `size_px` (128), from the drawable the logo is drawn from (the fixed light configuration at 640 dpi, design 87
 R2-M3). The state is `iconRender(null, hasMonochrome)`: the parent's choice is never applied (the tile is what
-Automatic would draw).
+Automatic would draw). It matches Home's tone except while the phone is in dark mode and the app's adaptive background
+uses night-qualified colours: the tile is drawn from the light configuration at 640 dpi, Home from the live one.
 
 **An app without a monochrome layer** draws `drawOwnLogo` on Home's Automatic, i.e. exactly the logo. The launcher
 then reports **`auto_tile` equal to `logo`** - the logo's bytes reused, nothing drawn twice -, so the server stores

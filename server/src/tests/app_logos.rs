@@ -935,6 +935,33 @@ async fn the_automatic_tile_is_kept_shown_and_pruned() {
         "{catalog_page}"
     );
 
+    // Another phone with the app installed and no tile of its own (its logo failed or is queued): the letter, never
+    // Emma's tile - another phone's only for a catalog app not installed there (the logo's rule, design 87 Q3).
+    let (lily, lily_token) = app.enrolled_device("Lily").await;
+    let res = report(
+        &app,
+        &lily_token,
+        status_body(json!([app_row(package, "Drawing", None)])),
+    )
+    .await;
+    assert!(res.status.is_success(), "{}", res.text());
+    sqlx::query("UPDATE device_policy SET allowlist_json = ? WHERE device_id = ?")
+        .bind(format!(r#"["{package}"]"#))
+        .bind(lily)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let lily_page = app
+        .get_page(&format!("/devices/{lily}/apps/{package}"), &cookie)
+        .await;
+    assert_eq!(lily_page.status, StatusCode::OK);
+    let lily_page = lily_page.text();
+    assert!(!lily_page.contains("data-preview-auto"), "{lily_page}");
+    assert!(
+        !lily_page.contains("data-preview-text hidden>"),
+        "{lily_page}"
+    );
+
     // A new tile replaces the old, whose file goes; the new one is wanted.
     let apps = json!([tile_row(package, &sha(&logo), json!(sha(&second)))]);
     assert_eq!(
