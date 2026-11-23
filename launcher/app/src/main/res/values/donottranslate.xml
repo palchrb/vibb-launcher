@@ -117,6 +117,13 @@
         <p>Weather data: MET Norway (<a href=\"https://api.met.no/doc/License\">api.met.no</a>). Fetched by the server, never by the phone.</p>
         <p>Creative Commons Attribution 4.0 International (CC BY 4.0)</p>
     ]]></string>
+    <!-- Followed by assets/licenses/BSD-3-Clause-tsnet.txt (LegalInfoActivity). -->
+    <string name="legal_info_tailnet"><![CDATA[
+        <h2>Tailscale</h2>
+        The embedded tailnet connection: tsnet from Tailscale, with wlynxg/anet, built with Go.
+        <p><a href=\"https://github.com/tailscale/tailscale\">github.com/tailscale/tailscale</a></p>
+        <p>BSD 3-Clause License</p>
+    ]]></string>
     <!-- Followed by assets/licenses/OFL.txt (LegalInfoActivity). -->
     <string name="legal_info_nunito"><![CDATA[
         <h2>Nunito</h2>

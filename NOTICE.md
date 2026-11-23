@@ -58,6 +58,20 @@ was changed here (no message is ever dropped: a failed bind sends at once, every
 message is acknowledged only after its broadcast was sent); its header keeps the attribution and lists every change.
 The rest of `push/up/` is written here under the GPL-3.0 (or later); the UnifiedPush connector is not a dependency.
 
+The launcher's release build embeds Tailscale's [tsnet](https://github.com/tailscale/tailscale) (`tailscale.com`
+v1.104.0, Copyright (c) 2020 Tailscale Inc & contributors) and [wlynxg/anet](https://github.com/wlynxg/anet) (v0.0.5,
+Copyright (c) 2023, wlynxg), both under the BSD 3-Clause License, built with Go (Copyright 2009 The Go Authors, BSD
+3-Clause) into `launcher/app/libs/tsnet.aar` by `.github/actions/build-tsnet/` from `launcher/mobile/go.mod`. The three
+notices are [`launcher/app/src/main/assets/licenses/BSD-3-Clause-tsnet.txt`](launcher/app/src/main/assets/licenses/BSD-3-Clause-tsnet.txt),
+shown on the app's Open Source Licenses page. The Go modules tsnet depends on, pinned in `launcher/mobile/go.mod` and
+`go.sum`, are compiled in under their own licences. The wrapper package `launcher/mobile/tsembed/` is part of this
+repository, under the GPL-3.0 (or later).
+
+The launcher's on-device DNS filter (`launcher/app/src/main/java/com/kidslauncher/mdm/server/KidVpnService.kt`) follows
+the architecture of [DNS66](https://github.com/julian-klode/dns66) by Julian Andres Klode (GPL-3.0 or later): a VPN that
+routes only a fake DNS server's address from a documentation-only range, so every other packet stays on the real
+network. No code is copied; the service is written here under the GPL-3.0 (or later).
+
 The launcher's list of moving Wi-Fi networks (`launcher/app/src/main/assets/places/moving_ssids.json`, design 125 D4)
 takes its words, prefixes, suffixes and exact names from [Local NLP Backend](https://github.com/Helium314/Local-NLP-Backend)'s
 `RfEmitter.kt` (`ssidBlacklisted`) at commit `f052047`, Copyright (C) 2017 Tod Fitch, (C) 2023 Helium314, licensed under
