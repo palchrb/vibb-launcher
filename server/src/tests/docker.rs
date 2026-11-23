@@ -471,6 +471,7 @@ fn the_updates_page_says_how_to_update() {
     let page = |docker: bool, latest: &str, newer: bool| {
         updates::page(
             docker,
+            false,
             app_data(Some(latest), newer),
             "someone/vibb-launcher",
             crate::i18n::Lang::En,
@@ -515,6 +516,7 @@ fn the_updates_page_says_how_to_update() {
     );
     let own = updates::page(
         false,
+        true,
         app_data(Some("v0.24.0"), true),
         crate::config::DEFAULT_SERVER_RELEASE_REPO,
         crate::i18n::Lang::En,
@@ -523,6 +525,8 @@ fn the_updates_page_says_how_to_update() {
     let (_, own_panel) = how(&own);
     assert!(own_panel.contains(project));
     assert!(!own.contains("data-repo=\"other\""));
+    // The update-image.sh line is a Docker install's only.
+    assert!(!own.contains("data-row=\"image-script\""), "{own}");
     // Security review L10: downloaded to a file, never piped into a root shell.
     assert!(!panel.contains("| sudo"));
     assert!(!pi.contains("HANDY_VERSION"));
@@ -543,6 +547,61 @@ fn the_updates_page_says_how_to_update() {
         }
     }
     super::settings_pages::check_forms("/updates", &pi);
+}
+
+/// The image is now signed with the release key and only the new update-image.sh checks it: a Docker install's Software
+/// Updates shows one orange line, the step behind its ⓘ, until the parent's Done - which lands back on the group,
+/// never the top of the page, and hides it for good. A systemd install never shows it.
+#[tokio::test]
+async fn docker_shows_the_update_image_line_until_done() {
+    let app = TestApp::with_env(&[("DEPLOY_KIND", "docker")]).await;
+    let cookie = app.admin_cookie().await;
+    let page = app.get_page("/updates", &cookie).await.text();
+    let line = &page[page
+        .find("data-row=\"image-script\"")
+        .expect("the line on a Docker install")..];
+    let line = &line[..line.find("</details>").unwrap()];
+    let (summary, panel) = line.split_once("</summary>").unwrap();
+    assert!(
+        summary.contains("tone-orange\">update-image.sh needs replacing once</span>"),
+        "{summary}"
+    );
+    assert!(panel.contains("Replace yours once"), "{panel}");
+    assert!(
+        panel.contains("action=\"/updates/image-script/done#app\""),
+        "{panel}"
+    );
+    super::settings_pages::check_forms("/updates", &page);
+    let nb = app.get_page("/updates?lang=nb", &cookie).await.text();
+    assert!(nb.contains("update-image.sh må byttes én gang"), "{nb}");
+
+    let res = app
+        .request_form(
+            Method::POST,
+            "/updates/image-script/done",
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    super::assert_redirect(&res, "/updates", Some("app"));
+    let page = app.get_page("/updates", &cookie).await.text();
+    assert!(!page.contains("data-row=\"image-script\""), "{page}");
+    assert!(!page.contains("<form"), "{page}");
+    // Done twice (another tab) is still Done.
+    let res = app
+        .request_form(
+            Method::POST,
+            "/updates/image-script/done",
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    super::assert_redirect(&res, "/updates", Some("app"));
+
+    let pi = TestApp::new().await;
+    let cookie = pi.admin_cookie().await;
+    let page = pi.get_page("/updates", &cookie).await.text();
+    assert!(!page.contains("data-row=\"image-script\""), "{page}");
 }
 
 /// Nothing the server could ask of its host is left (the user, 2026-11-04): the old routes are

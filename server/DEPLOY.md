@@ -449,18 +449,41 @@ initial-admin-password`. Sign in as `admin` and change it - the server deletes i
   server stops with "data/ is not writable by uid 65532" (or "data/backups/ ...").
 - **Updating**, either way (privacy review 2026-11-17 H1; the user's choice, 2026-11-18: both are supported):
   - **Watchtower** ([containrrr.dev/watchtower](https://containrrr.dev/watchtower/)) with `HANDY_VERSION=latest`:
-    automatic. Nothing checks who built the image, so whoever can push to the package runs code on the server - the
-    operator's own risk.
-  - **Verified**: `./update-image.sh X.Y.Z` (from `server/deploy/`, next to `compose.yaml`). It runs `gh attestation
-    verify` on the release's image digest, pinned to `--repo palchrb/vibb-launcher`, `--signer-workflow
-    .../server-release.yml`, `--source-ref refs/tags/server-vX.Y.Z` and `--deny-self-hosted-runners` - a pass means
-    the project's release workflow, on GitHub's own runners, built exactly that image for that tag - and only then
-    pulls the image by that digest, writes `HANDY_VERSION` and `HANDY_DIGEST=@sha256:...` into `.env` (one atomic
-    replace) and runs `docker compose up -d --wait handy`. What runs is what was verified; a refused check or a failed
-    pull changes nothing. It needs `docker` with buildx, `jq`, `flock` and `gh` 2.68 or later signed in (`gh auth
-    login`, any account: it only reads; distributions often ship an older `gh` without `gh attestation`, so take it from
-    GitHub's apt repository, [cli.github.com/packages](https://cli.github.com/packages) - the script says when yours is
-    too old). Back to Watchtower: `HANDY_VERSION=latest` and an empty `HANDY_DIGEST`.
+    automatic, unchecked - it trusts the GitHub account and the registry. Nothing checks who built the image, so
+    whoever can push to the package runs code on the server - the operator's own risk. `update-image.sh` (below) is the
+    way with the key check.
+  - **Verified**: `./update-image.sh X.Y.Z` (from `server/deploy/`, next to `compose.yaml`). Since server 0.92.0 the
+    image is signed with the release key, like the tarballs: each release carries `handy-server-image.txt`, one line
+    naming the image's multi-arch digest and the tag (`ghcr.io/palchrb/handy-server@sha256:<64 hex> server-vX.Y.Z`),
+    and its `.minisig` ("Release signing" below). The script downloads both, verifies them with the key pinned in
+    the script (`SERVER_SIGNING_PUBKEY`, the same line as `install.sh` and `update.sh`; the trusted comment must be
+    `handy-server-image.txt server-vX.Y.Z`) and from then on uses only the signed digest: the registry's `X.Y.Z` tag
+    must name the same digest (a moved tag fails the run), and `gh attestation verify` must pass on it as a second
+    check, pinned to `--repo palchrb/vibb-launcher`, `--signer-workflow .../server-release.yml`, `--source-ref
+    refs/tags/server-vX.Y.Z` and `--deny-self-hosted-runners`. Only then does it pull the image by that digest, write
+    `HANDY_VERSION` and `HANDY_DIGEST=@sha256:...` into `.env` (one atomic replace) and run `docker compose up -d
+    --wait handy`. A pass means: the release key signed this exact image for this tag, and GitHub's attestation
+    agrees. What runs is what was verified; a release without a valid signed statement ("server-vX.Y.Z has no valid
+    signed image statement: nothing changed"), a refused check or a failed pull changes nothing. It needs `minisign`
+    (`apt install minisign`; without it the script stops with exit 2 and checks nothing), `docker` with buildx, `jq`,
+    `flock` and `gh` 2.68 or later signed in (`gh auth login`, any account: it only reads; distributions often ship an
+    older `gh` without `gh attestation`, so take it from GitHub's apt repository,
+    [cli.github.com/packages](https://cli.github.com/packages) - the script says when yours is too old). Back to
+    Watchtower: `HANDY_VERSION=latest` and an empty `HANDY_DIGEST`.
+  - **Replace `update-image.sh` once** (from server 0.92.0): the image is now signed with the release key; replace
+    `update-image.sh` once with the one from this release. Download the
+    release's `update-image.sh` and `update-image.sh.minisig`, check it with the key, install it as root and run it
+    once by hand:
+
+    ```
+    gh release download server-v0.92.0 --repo palchrb/vibb-launcher -p 'update-image.sh*'
+    minisign -V -P RWQp6olF7G4WFeRgDWSWwq2/qOkClyqqXEzDBrPPf2EUrdZlAUQATU5g -m update-image.sh
+    # the trusted comment must read: update-image.sh server-v0.92.0
+    sudo install -m 755 -o root -g root update-image.sh /opt/handy/update-image.sh
+    ```
+
+    then "Running it by hand" below. Settings › Software Updates shows "update-image.sh needs replacing once" on a
+    Docker install until you tap Done (the server can't see the host's script); with Watchtower, ignore it.
   - **Automatic, verified**: `./update-image.sh --auto` on a daily systemd timer - the verified path above for each new
     release, by itself ("Automatic, verified updates" below).
 
@@ -478,9 +501,11 @@ initial-admin-password`. Sign in as `admin` and change it - the server deletes i
   ./update-image.sh <the old X.Y.Z>
   ```
 
-  With the timer installed, run the last line with its token as "Running it by hand" below shows. Without the script:
-  `HANDY_VERSION=<the old X.Y.Z>` and an empty `HANDY_DIGEST` in `.env`, then `docker compose up -d` - unverified then
-  (the old digest left in place would run the newer image: a digest wins over the tag).
+  With the timer installed, run the last line with its token as "Running it by hand" below shows. The script takes
+  only a release with a signed image statement, the first being server 0.92.0: going back below it is by hand and
+  unverified. Without the script: `HANDY_VERSION=<the old X.Y.Z>` and an empty `HANDY_DIGEST` in `.env`, then `docker
+  compose up -d` - unverified then (the old digest left in place would run the newer image: a digest wins over the
+  tag).
 
   (The volume's name may carry the compose project's prefix: `docker volume ls`.)
 - **Restoring a backup** from the Backups page works in the container too: the server stops, swaps in the backup at
@@ -527,12 +552,15 @@ runner before the two are joined and get a version tag, and publishes the GitHub
 
 ### Automatic, verified updates
 
-`update-image.sh --auto` looks up the highest stable `server-vX.Y.Z` release (never a draft or a prerelease; Software
-Updates and `update.sh` take the first one listed, the same release unless a lower version was published later). Newer
-than `HANDY_VERSION` in `.env`: it takes exactly the verified path above (attestation, a pull by the digest, the digest
-pinned in `.env`, `docker compose up -d --wait`). The same: nothing - unless the container doesn't run `.env`'s
-`HANDY_DIGEST` (a pull or start that failed the night before), then it checks that digest again and starts it; never
-with an empty `HANDY_DIGEST`. Older: a warning in the journal, nothing changed - it never goes back.
+`update-image.sh --auto` looks up the stable `server-vX.Y.Z` releases (never a draft or a prerelease; Software Updates
+and `update.sh` take the first one listed, the same release unless a lower version was published later). When the
+highest is newer than `HANDY_VERSION` in `.env`, it tries the newer ones highest first and takes the first whose signed
+image statement verifies, at most 5 (each one passed over gets a journal line "skipped server-vX.Y.Z: <reason>"; none
+verifies: nothing changed, the unit fails), then exactly the verified path above (the registry's tag, the attestation,
+a pull by the signed digest, the digest pinned in `.env`, `docker compose up -d --wait`). The same: nothing - unless
+the container doesn't run `.env`'s `HANDY_DIGEST` (a pull or start that failed the night before), then it checks that
+release's statement again, `.env`'s digest must be the signed one, and it starts it; never with an empty
+`HANDY_DIGEST`. Older: a warning in the journal, nothing changed - it never goes back.
 `HANDY_VERSION=latest` is Watchtower's mode: it refuses to move and says so. A check that fails changes nothing and
 exits non-zero, so the unit shows failed; a run that finds another one running leaves it to that one. There is no
 backup step of its own: the new server copies the database to `backups/pre-migrate-<from>-<to>.db` before it migrates
@@ -551,7 +579,7 @@ digest). Either remove Watchtower, if it watches nothing else, or give the servi
 Then `docker compose up -d`.
 
 **Install** (as root; the folder is the one with `compose.yaml` and `.env`, `/opt/handy` below - use yours).
-`docker` with buildx, `jq`, `flock` and `gh` 2.68 or later must be on root's path (`gh` from GitHub's apt repository,
+`minisign`, `docker` with buildx, `jq`, `flock` and `gh` 2.68 or later must be on root's path (`gh` from GitHub's apt repository,
 above, not a copy in a user's home).
 
 1. A token for `gh`: GitHub › Settings › Developer settings › Fine-grained tokens › Generate new token, Repository
@@ -592,7 +620,7 @@ file stays root's: systemd reads it).
 
 **Check**: `systemctl list-timers handy-update.timer` (the next and the last run), `journalctl -u handy-update` (what
 each run did: nothing, "checking it" and "Running ...:X.Y.Z@sha256:...", or why it stopped), `systemctl status
-handy-update.service` (failed = a refused check, a lookup or pull that failed, `latest` in `.env`, a `gh` too old,
+handy-update.service` (failed = no newer release with a valid signed statement, a refused check, a lookup or pull that failed, `latest` in `.env`, a `gh` too old,
 or an expired token - the journal says which; the server keeps running what it ran; a failed pull or start is tried
 again the next night). When the token expires, make a new one and replace the line.
 Off again: `sudo systemctl disable --now handy-update.timer`.
@@ -627,40 +655,76 @@ Updates calls an older release "You have the latest version"). To go back on pur
 
 Root on the Pi installs and runs only release files signed with the project's [minisign](https://jedisct1.github.io/minisign/)
 key (security review M5): `install.sh` and `update.sh` check the tarball for their machine (each of the two has its
-own `.minisig`). `update.sh` itself is signed too. The public key is pinned in the scripts themselves (`SERVER_SIGNING_PUBKEY`), and each signature's
+own `.minisig`). `update.sh` and `update-image.sh` are signed too, and since server 0.92.0 so is the Docker image:
+`handy-server-image.txt` names the image's multi-arch digest and the tag, and `update-image.sh` checks its signature
+before it runs an image ("Docker", "Updating"). The public key is pinned in the scripts themselves
+(`SERVER_SIGNING_PUBKEY`, the same line in `install.sh`, `update.sh` and `update-image.sh`), and each signature's
 trusted comment names the file and the release tag, so a signed file can't be passed off under another name or as
-another release. `server-release.yml` signs both tarballs and `update.sh` in its `server-release-sign` job, with the `SERVER_MINISIGN_KEY`
-secret of the protected `release` environment, before any image is pushed or tagged: without the secret, or when it
-doesn't match the pinned key, the run stops there and nothing is pushed or published.
+another release.
 
-**One-time setup by the repo owner, before the first `server-v0.24.0` tag:**
+`server-release.yml`, in order: the tests and both tarballs; the two image legs, each pushed by digest only (untagged)
+and smoke-tested; `server-release-index`, without secrets, plans the multi-arch index from the two digests; then
+`server-release-sign`, in the protected `release-server` environment with its `SERVER_MINISIGN_KEY` secret, checks
+that the index names exactly the two tested digests, writes the statement from the index's digest, and signs both
+tarballs, `update.sh`, `update-image.sh` and the statement. It runs no docker and no script from the repo, and checks
+every signature against the pinned key. Only then does `server-release-image-merge` (no key) check the signed
+statement with `update-image.sh --verify-statement` and compute the index's digest again; when both match it pushes
+exactly those bytes by digest, reads them back from the registry (a third match), and only then tags `X.Y.Z` (and
+`latest`) and attests it. The scripts the key signs come from a checkout-only job that runs no toolchain. The release is published last, with the
+statement and every `.minisig`. Without the secret, or when it doesn't match the pinned key, the run stops at the
+signing job: nothing is tagged or published. The two untagged leg images it leaves in the package are named by
+nothing.
+
+**One-time setup by the repo owner** (first done before `server-v0.24.0`; the environment moved to `release-server`
+with 0.92.0):
 1. On your own computer (not the Pi, not CI), with minisign installed (`apt install minisign`, `brew install minisign`):
    `minisign -G -W -p handy-server.pub -s handy-server.key`. `-W` leaves the secret key without a password, since CI
    signs unattended; the GitHub secret is what protects it. Keep `handy-server.key` somewhere safe offline (a password
    manager) and never in the repo.
-2. GitHub > the repo > Settings > Environments > `release` (the environment the launcher and music releases already
-   sign in):
+2. GitHub > the repo > Settings > Environments > New environment `release-server` (the server's alone; `release` stays
+   the launcher's and music's):
    - **Environment secrets** > Add: name `SERVER_MINISIGN_KEY`, value the whole content of `handy-server.key` (both
      lines). Not a repository secret: the release reads it only from this environment, so a workflow pushed to some
      branch can't.
-   - **Deployment branches and tags**: add a tag rule `server-v*` next to `launcher-v*` and `music-v*`, or the release
-     job can't enter the environment.
-3. Pin the public key, the second line of `handy-server.pub` (it starts with `RW`), in both scripts:
-   `KEY='RW...'; sed -i "s|^SERVER_SIGNING_PUBKEY=.*|SERVER_SIGNING_PUBKEY=\"$KEY\"|" server/deploy/install.sh server/deploy/update.sh`,
+   - **Deployment branches and tags**: Selected, one tag rule `server-v*`, no branch rule.
+   - The rest under "Recommended settings" below.
+3. Pin the public key, the second line of `handy-server.pub` (it starts with `RW`), in the three scripts:
+   `KEY='RW...'; sed -i "s|^SERVER_SIGNING_PUBKEY=.*|SERVER_SIGNING_PUBKEY=\"$KEY\"|" server/deploy/install.sh server/deploy/update.sh server/deploy/update-image.sh`,
    then `cargo test deploy_scripts` (from `server/`) and commit.
-4. Optional, as the review suggests: turn on immutable releases (Settings > General > Releases). The `release`
-   environment's required reviewer, if it has one, then approves each server release too.
+
+**Recommended settings** (GitHub, by the owner, before the next `server-v*` tag):
+- **Environments**: `release-server` - required reviewer the owner, "Allow administrators to bypass configured
+  protection rules" off, deployment tags `server-v*` only, environment secrets only (`SERVER_MINISIGN_KEY`).
+  `release` - the same reviewer and bypass setting, deployment tags `launcher-v*` and `music-v*` only, no branch
+  rule. Moving the key: re-enter `SERVER_MINISIGN_KEY` in `release-server` from the password manager, then delete it
+  from `release` and drop `server-v*` from `release`'s tag rules. `RELEASE_CERT_SHA256` stays a repository variable.
+- **Tag ruleset**: Settings > Rules > Rulesets > New tag ruleset, Active, targeting `server-v*`, `launcher-v*` and
+  `music-v*`, with Restrict creations, Restrict updates and Restrict deletions. Bypass list: the Repository admin role
+  only - no deploy key, GitHub App or integration. Release tags are pushed by hand; keep no long-lived token with
+  admin or classic `repo` scope.
+- **Branch ruleset** on `main`: block force pushes and deletion.
+- **Immutable releases** (Settings > General > Releases): on, once the first release under this scheme is out.
+
+**The reviewer's checklist**, before approving a run's wait for `release-server` (or `release`):
+- the run's workflow is the tag's own: "Server release", `.github/workflows/server-release.yml` (for an app release,
+  `launcher.yml` or `music.yml`);
+- the actor who pushed the tag is the owner;
+- the tag's commit is on `main`: `git fetch origin && git merge-base --is-ancestor <sha> origin/main && echo on main`.
+Anything else: reject the run.
 
 The tarballs carry no build attestation (`server-release.yml` attests only the Docker image), so `gh attestation
 verify` has nothing to check on this path: the minisign signature is its check.
 
 Until the key is pinned, the scripts refuse every release ("No release signing key is pinned"). A `server-v*` tag
-pushed before steps 2-3 stops at the signing job, with nothing pushed or published: delete the tag, finish the setup,
+pushed before steps 2-3 stops at the signing job, with nothing tagged or published: delete the tag, finish the setup,
 and tag again.
 
-- A fresh install from `main` refuses releases older than 0.24.0 (they aren't signed).
+- A fresh install from `main` refuses releases older than 0.24.0 (they aren't signed). `update-image.sh` refuses
+  images older than 0.92.0, which have no signed statement: going back below it is by hand and unverified ("Rolling
+  back" under "Docker").
 - **A new key** (lost or leaked): make a new pair, replace the secret and the pinned key, release, and run the new
-  `update.sh` from `main` on every server - the scripts refuse anything the old key didn't sign, by design.
+  `update.sh` from `main` on every server and replace `update-image.sh` on every Docker host - the scripts refuse
+  anything the old key didn't sign, by design.
 
 ### Rolling back the server
 

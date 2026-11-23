@@ -99,9 +99,11 @@ privacy steps and the rest. Follow it, then choose the phone's apps, contacts an
 
 ## Updating
 
-- **Automatic:** [Watchtower](https://containrrr.dev/watchtower/), with `HANDY_VERSION=latest`.
-- **Verified:** `./update-image.sh`, which checks each release's build attestation before it runs it. Download it the
-  same way as `compose.yaml`, from `server/deploy/update-image.sh`.
+- **Automatic, unchecked:** [Watchtower](https://containrrr.dev/watchtower/), with `HANDY_VERSION=latest`. It trusts
+  the GitHub account and the registry.
+- **Verified:** `./update-image.sh`, which checks each release's image signature (the release key, like the tarballs)
+  and build attestation before it runs it. It needs `minisign`. Download it the same way as `compose.yaml`, from
+  `server/deploy/update-image.sh`.
 
 Update the server before the phones: a new Vibb One can need the newer server.
 [`server/DEPLOY.md`](../../server/DEPLOY.md), "Updating", explains both.

@@ -1806,6 +1806,10 @@ pub fn build_admin_router(
             post(handlers::backups::save_backup_schedule),
         )
         .route("/updates", get(handlers::updates::show_updates_page))
+        .route(
+            "/updates/image-script/done",
+            post(handlers::updates::dismiss_image_script_notice),
+        )
         .route("/security", get(handlers::admin::security_log))
         .route("/security/unban", post(handlers::admin::unban_ip))
         // Design 35: the inbox and, since design 45, its settings page.

@@ -514,7 +514,7 @@ pinned by `policy_json_keys_snapshot` and `PolicyResponseCompatTest`. `network` 
   the launcher's `time_status_report.json`,
   `dns_upstream_status.json`, `power_report.json`, `zone_status_report.json`, `launcher_tag_codes.json`,
   `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json`, `server_url_vectors.json`, `restrictions_pause.json`, `server_tls_report.json`, `sms_contract.json`, `contact_request.json`, `app_logos.json`, `lock_now.json`, `mobile_network.json`, `status_heartbeat.json`, `airplane_mode.json`, `rule_pause.json`, `shortcuts.json`, `login_windows.json`, `notification_channels.json`, `unified_push.json`, `setup_steps.json`, `install_failure.json` and `app_access.json`, the launcher's `map_links/` and `wifi_lookup/` folders, and the launcher's `assets/dns/doh_hosts.txt` and `ui/home/HomeModel.kt` (the avatar palette the PWA mirrors), and `scripts/wifi-lookup-fixtures.py` (the changes job runs its `--selftest` always), and
-  `scripts/mmsc-hosts.py` with its `scripts/mmsc-hosts-sample.xml` (the changes job runs its `--selftest` always, and `server/deploy/update-image.sh --selftest`: the image update's release pick and version rules, DEPLOY.md "Automatic, verified updates", with `deploy/handy-update.service`/`.timer`);
+  `scripts/mmsc-hosts.py` with its `scripts/mmsc-hosts-sample.xml` (the changes job runs its `--selftest` always, and `server/deploy/update-image.sh --selftest`, after a bounded `apt-get install minisign`: the signed image statement's checks with a throwaway key, the image update's release pick and version rules, DEPLOY.md "Automatic, verified updates", with `deploy/handy-update.service`/`.timer`);
   `server-ci.yml`'s
   `server-image` job only when `server/Dockerfile`, `server/.dockerignore`, `server/deploy/image-smoke.sh`, `server/deploy/distrusted-roots.txt` or
   the workflow changed). The server's Rust (`toolchain: 1.99.0`) is pinned in `server-ci.yml` and
@@ -537,14 +537,17 @@ pinned by `policy_json_keys_snapshot` and `PolicyResponseCompatTest`. `network` 
   catalog row (0.21.0+) before the first stable `music-v*` (design 21 QA #11).
 - `server-vX.Y.Z` (must equal `server/Cargo.toml`'s version) on a `main` commit -> fmt + tests,
   then the aarch64 and x86_64 tarballs and their `.sha256`, never "latest". Since 0.24.0 the tarballs and `update.sh` are signed
-  with minisign before any image is pushed (`server-release-sign`, in the `release` environment, whose deployment
-  rule must allow `server-v*` tags too; its `SERVER_MINISIGN_KEY` secret; the public key pinned in
+  with minisign, since 0.92.0 also `update-image.sh` and the image statement `handy-server-image.txt` (the index's
+  digest and the tag; `update-image.sh` checks it before an image runs), all before any image is tagged
+  (`server-release-sign`, in the `release-server` environment - the server's alone, tag rule `server-v*`; `release`
+  stays the launcher's and music's -, its `SERVER_MINISIGN_KEY` secret; the public key pinned in
   `server/deploy/*.sh`; server/DEPLOY.md, "Release signing") - no secret, no release. The server's update check and `install.sh`/`update.sh` find it by tag
   (the scripts take the tarball for `uname -m`; the update check reads only the tag).
   Since 0.23.0 (design 22) the same run builds the multi-arch image `ghcr.io/<owner>/handy-server`,
   each architecture natively on its own runner (`ubuntu-24.04`, `ubuntu-24.04-arm`; no QEMU) from that architecture's
-  tarball, pushes it by digest,
-  smoke-tests it there, then joins the two digests and tags `X.Y.Z`, and `latest` when it is
+  tarball, pushes it by digest (untagged),
+  smoke-tests it there; a keyless job plans the index, the sign job signs its digest, and the merge job checks the
+  signed statement and the digest before it tags `X.Y.Z`, and `latest` when it is
   the highest `server-v*` tag; the GitHub release is published last. The GHCR package must be made public once by
   the owner (server/DEPLOY.md, "Docker"). `workflow_dispatch` is always a dry run, on a tag ref too.
 

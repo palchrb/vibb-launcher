@@ -911,8 +911,10 @@ Tilgang): the "camera" words here are history.
   version (with "(Docker image)" in the container), the newest stable `server-v*` release from the in-memory cache
   (`system_update::ServerRelease`, read at start and in the background when an hour old - "Checking…", "Couldn't
   check", "Version X is out" or "You have the latest version", nb "Du har nyeste versjon" - E9 L5), and How to Update behind its ⓘ: in Docker Watchtower (unchecked) or `./update-image.sh` with the
-  newer version (`X.Y.Z` when none; the host script checks the image's attestation first, privacy review 2026-11-17
-  H1), on a systemd
+  newer version (`X.Y.Z` when none; the host script checks the release key's signed image statement, then the
+  image's attestation, privacy review 2026-11-17 H1; since 0.92.0 a Docker install also shows one orange line,
+  "update-image.sh needs replacing once", its step behind the ⓘ, until Done - `POST /updates/image-script/done`
+  back to `#app`, stored in `dismissed_notices`, 0169, `tests::docker::docker_shows_the_update_image_line_until_done`), on a systemd
   install the project's `update.sh` command (`settings.updates.update_command`, always `palchrb/vibb-launcher`; a
   `SERVER_RELEASE_REPO` that differs is named in a line under it, never put in the command - `.env` is the service
   user's, security QA L1). A backup's systemd restore command is shown only for a plain

@@ -7,6 +7,7 @@ use super::TestApp;
 
 const INSTALL: &str = include_str!("../../deploy/install.sh");
 const UPDATE: &str = include_str!("../../deploy/update.sh");
+const UPDATE_IMAGE: &str = include_str!("../../deploy/update-image.sh");
 
 /// The text from `start` up to the first line that is exactly `end` (inclusive).
 fn block<'a>(script: &'a str, start: &str, end: &str) -> &'a str {
@@ -58,7 +59,7 @@ fn no_host_helper_is_installed() {
 #[test]
 fn root_takes_only_signed_release_files() {
     let places = [INSTALL, UPDATE];
-    let key_lines: Vec<&str> = places
+    let key_lines: Vec<&str> = [INSTALL, UPDATE, UPDATE_IMAGE]
         .iter()
         .flat_map(|script| {
             script
@@ -66,8 +67,9 @@ fn root_takes_only_signed_release_files() {
                 .filter(|line| line.starts_with("SERVER_SIGNING_PUBKEY="))
         })
         .collect();
-    assert_eq!(key_lines.len(), 2, "{key_lines:?}");
+    assert_eq!(key_lines.len(), 3, "{key_lines:?}");
     assert_eq!(key_lines[0], key_lines[1]);
+    assert_eq!(key_lines[0], key_lines[2]);
     let verify = block(INSTALL, "verify_signed() {", "}");
     assert_eq!(block(UPDATE, "verify_signed() {", "}"), verify);
     assert!(verify.contains("[ \"$comment\" != \"$name $tag\" ]"));
@@ -87,10 +89,12 @@ fn root_takes_only_signed_release_files() {
     assert!(release.contains(r#"minisign -S -s "$key" -m "$file" -t "$file $TAG""#));
     assert!(release.contains(
         "for file in kid-phone-server-aarch64-unknown-linux-musl.tar.gz \
-         kid-phone-server-x86_64-unknown-linux-musl.tar.gz update.sh; do"
+         kid-phone-server-x86_64-unknown-linux-musl.tar.gz update.sh update-image.sh \
+         handy-server-image.txt; do"
     ));
     assert!(release.contains(
-        "kid-phone-server-x86_64-unknown-linux-musl.tar.gz.minisig,update.sh,update.sh.minisig\""
+        "kid-phone-server-x86_64-unknown-linux-musl.tar.gz.minisig,update.sh,update.sh.minisig,\
+         update-image.sh,update-image.sh.minisig,handy-server-image.txt,handy-server-image.txt.minisig\""
     ));
 }
 
@@ -189,7 +193,8 @@ fn the_scripts_pick_the_tarball_for_the_machine() {
             );
         }
     }
-    assert_eq!(published.len(), 8, "{published:?}");
+    // The tarballs, update.sh, update-image.sh and the image statement, each with its signature.
+    assert_eq!(published.len(), 12, "{published:?}");
 }
 
 /// Security review H1: the backup schedule's time is exactly HH:MM or nothing is written.
@@ -287,11 +292,13 @@ fn root_never_creates_files_in_data() {
     ));
 }
 
-/// QA of the security wave, Low 6: the release is signed - with the key only the protected
-/// `release` environment holds - before any image is pushed or tagged, and published from the
-/// signed files.
+/// QA of the security wave, Low 6, and the signed image statement: the release is signed with the
+/// key only the protected `release-server` environment holds, in a job that runs no docker, no
+/// checkout and no repo script; the images are pushed untagged before it and tagged only after a
+/// keyless job has checked the signed statement against the planned index; the release is
+/// published from the signed files.
 #[test]
-fn the_release_signs_first_and_in_the_release_environment() {
+fn the_release_signs_the_image_before_any_tag_in_release_server() {
     let release = include_str!("../../../.github/workflows/server-release.yml");
     let job = |name: &str| {
         let start = release
@@ -303,24 +310,139 @@ fn the_release_signs_first_and_in_the_release_environment() {
             .map_or(rest.len(), |at| at + 2);
         &rest[..end]
     };
+    let tag_only = "    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/server-v') }}\n";
+
     let sign = job("server-release-sign");
-    assert!(sign.contains("    environment: release\n"), "{sign}");
+    assert!(sign.contains("    environment: release-server\n"), "{sign}");
+    assert!(!release.contains("environment: release\n"));
     assert!(sign.contains("secrets.SERVER_MINISIGN_KEY"));
     assert_eq!(release.matches("secrets.SERVER_MINISIGN_KEY").count(), 1);
-    assert!(sign.contains("needs: [ server-release-test, server-release-build ]"));
+    assert!(
+        sign.contains("needs: [ server-release-test, server-release-scripts, server-release-build, server-release-index ]")
+    );
+    assert!(sign.contains(tag_only));
     assert!(sign.contains("pattern: server-tarball-*"));
+    assert!(sign.contains("name: server-deploy-scripts"));
+    assert!(sign.contains("signed/update-image.sh | head -n 1)"));
+    // Only the download and upload actions; no docker, no checkout, nothing run from the repo.
+    for line in sign.lines().filter(|line| line.contains("uses:")) {
+        assert!(
+            line.contains("actions/download-artifact@")
+                || line.contains("actions/upload-artifact@"),
+            "{line}"
+        );
+    }
+    for never in ["docker", "bash server/", "./server/", "checkout@"] {
+        assert!(!sign.contains(never), "{never}: {sign}");
+    }
+    assert!(sign.contains(
+        r#"printf '%s@%s %s\n' "$image" "$index_digest" "$TAG" > signed/handy-server-image.txt"#
+    ));
+    assert!(sign.contains(r#"index_digest="sha256:$(sha256sum "$index" | cut -c1-64)""#));
+    assert!(sign.contains("(.manifests | length) == 2"));
+
     let image = job("server-release-image");
+    assert!(image.contains("needs: [ server-release-test, server-release-build ]\n"));
+    assert!(image.contains("push-by-digest=true"));
+    assert!(!image.contains("needs.server-release-sign"));
+
+    let index = job("server-release-index");
+    assert!(index.contains(tag_only), "skipped in a dry run: {index}");
+    assert!(!index.contains("secrets.SERVER"));
+    assert!(index.contains("      packages: read\n"));
+    assert!(!index.contains("packages: write"));
     assert!(
-        image.contains("needs: [ server-release-test, server-release-build, server-release-sign ]")
+        index.contains(r#"head -c -1 "$RUNNER_TEMP/index/raw" > "$RUNNER_TEMP/index/index.json""#)
     );
-    assert!(
-        image.contains(
-            "needs.server-release-sign.result == 'success' || github.event_name != 'push'"
-        )
-    );
+
+    let merge = job("server-release-image-merge");
+    assert!(!merge.contains("environment:"));
+    assert!(merge.contains("needs.server-release-sign.result == 'success'"));
+    let verified = merge
+        .find("bash server/deploy/update-image.sh --verify-statement")
+        .expect("the merge checks the statement");
+    let compared = merge
+        .find(r#"[ "$planned" = "$SIGNED" ]"#)
+        .expect("the planned digest is compared");
+    // Pushed by the signed digest, read back from the registry, and only then tagged.
+    let by_digest = merge
+        .find(r#"pushed="$(put_index "$SIGNED")""#)
+        .expect("the index pushed by digest");
+    let read_back = merge
+        .find(r#"[ "$digest" = "$SIGNED" ]"#)
+        .expect("the third compare");
+    let tagged = merge
+        .find(r#"pushed="$(put_index "$tag")""#)
+        .expect("the tags");
+    assert!(verified < compared && compared < by_digest);
+    assert!(by_digest < read_back && read_back < tagged);
+    assert!(!merge.contains(r#"imagetools create "${tags[@]}""#));
+    assert!(!merge.contains("imagetools create -t"));
+
+    // The scripts the key signs come from a job that checks out and uploads, nothing else.
+    let scripts = job("server-release-scripts");
+    let code: Vec<&str> = scripts
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .collect();
+    for never in ["cargo", "rust-toolchain", "run:", "needs:"] {
+        assert!(
+            !code.iter().any(|line| line.contains(never)),
+            "{never}: {scripts}"
+        );
+    }
+    assert!(scripts.contains("name: server-deploy-scripts"));
+    assert!(sign.contains("server-release-scripts"));
+    assert!(!job("server-release-test").contains("server-deploy-scripts"));
+    // Nothing from the keyless jobs is printed in the key's job.
+    assert!(!sign.contains(r#"cat "$index""#));
+
     let publish = job("server-release-publish");
     assert!(publish.contains("name: server-release-signed"));
-    assert!(publish.contains("server-release-sign, server-release-image"));
+    assert!(publish.contains("server-release-sign, server-release-image-merge ]"));
+}
+
+/// update-image.sh takes an image only once the release key's signed statement names it: the
+/// statement is checked before `gh attestation verify` in both modes, the registry's tag and .env's
+/// digest are compared with the signed one, and minisign is required - never installed or skipped.
+#[test]
+fn update_image_checks_the_signed_statement_first() {
+    let main_flow = &UPDATE_IMAGE[UPDATE_IMAGE
+        .find("\narg=\"${1:-}\"\n")
+        .expect("the main flow")..];
+    let attestation = main_flow
+        .find("gh attestation verify \"oci://")
+        .expect("the attestation check");
+    for check in [
+        r#"if ! picked="$(pick_signed "$current" <<<"$versions")"; then"#,
+        "    version=\"$arg\"\n    echo \"Checking the signed image statement of server-v$version ...\"\n    if ! digest=\"$(signed_digest \"$version\")\"; then",
+        r#"decision="$(digest_decision "$digest" "${pinned#@}")""#,
+        r#"decision="$(digest_decision "$digest" "$tagged")""#,
+        "need_minisign\nfor tool in docker gh jq flock; do",
+    ] {
+        let at = main_flow
+            .find(check)
+            .unwrap_or_else(|| panic!("no {check}"));
+        assert!(at < attestation, "{check}");
+    }
+    assert!(UPDATE_IMAGE.contains(
+        "echo \"minisign is not installed (apt install minisign): the image signature can't be checked\" >&2\n        exit 2"
+    ));
+    assert!(!UPDATE_IMAGE.contains("apt-get"));
+    assert!(UPDATE_IMAGE.contains("\nMAX_TRIES=5\n"));
+    assert!(UPDATE_IMAGE.contains("\nSTATEMENT=\"handy-server-image.txt\"\n"));
+    assert!(UPDATE_IMAGE.contains("\nIMAGE=\"ghcr.io/palchrb/handy-server\"\n"));
+    // DEPLOY.md's one-time check of the new script names the pinned key.
+    let key = UPDATE_IMAGE
+        .lines()
+        .find_map(|line| line.strip_prefix("SERVER_SIGNING_PUBKEY=\""))
+        .and_then(|rest| rest.strip_suffix('"'))
+        .expect("the pinned key");
+    let deploy = include_str!("../../DEPLOY.md");
+    assert!(
+        deploy.contains(&format!("minisign -V -P {key} -m update-image.sh")),
+        "DEPLOY.md's replace-once step"
+    );
 }
 
 /// QA of the security wave, Low 7: without a pinned key the scripts say so before doing
