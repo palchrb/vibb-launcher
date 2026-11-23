@@ -406,7 +406,7 @@ fun accessTarget(pkg: String, ownPackage: String, sameSigner: (String) -> Boolea
     pkg != ownPackage && !(pkg in ACCESS_NEVER && sameSigner(pkg))
 
 /** An [ACCESS_NEVER] name with another signer: it gets every [AccessKey] denied, whatever the policy says. */
-private fun impostor(pkg: String): Boolean = pkg in ACCESS_NEVER
+private fun otherSigner(pkg: String): Boolean = pkg in ACCESS_NEVER
 
 /** One runtime permission of one package. */
 data class Grant(val packageName: String, val permission: String)
@@ -463,11 +463,11 @@ fun accessGrants(
     val waiting = LinkedHashSet<Grant>()
     for ((grant, key) in accessTargets(requested, ownPackage, sameSigner)) {
         val now = current[grant] ?: GRANT_STATE_DEFAULT
-        val impostor = impostor(grant.packageName)
+        val fromOtherSigner = otherSigner(grant.packageName)
         val wanted = when {
-            denied == null && !impostor ->
+            denied == null && !fromOtherSigner ->
                 if (windowOpen && now == GRANT_STATE_DENIED) GRANT_STATE_DEFAULT else continue
-            (impostor || key in denied?.get(grant.packageName).orEmpty()) && !windowOpen -> GRANT_STATE_DENIED
+            (fromOtherSigner || key in denied?.get(grant.packageName).orEmpty()) && !windowOpen -> GRANT_STATE_DENIED
             else -> GRANT_STATE_DEFAULT
         }
         if (wanted == GRANT_STATE_DENIED && now != GRANT_STATE_DENIED && callLive && grant in held) {
