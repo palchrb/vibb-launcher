@@ -966,6 +966,9 @@ pub(crate) const CALL_AND_TEXT_APPS: [&str; 4] = [
     "com.android.messaging",
 ];
 
+/// The SMS apps among [CALL_AND_TEXT_APPS]: left out of a new phone's list while SMS is managed.
+const TEXT_APPS: [&str; 2] = ["com.google.android.apps.messaging", "com.android.messaging"];
+
 /// The phone's system dialer and default SMS app as its launcher reports them in `call_state`
 /// (`TelecomManager.getSystemDialerPackage()`, the SMS role holder): what it needs for calls and
 /// texts, whatever its maker named them. Real package names only, never Settings or Play's core.
@@ -976,6 +979,32 @@ pub(crate) fn call_and_text_roles(call_state: Option<&serde_json::Value>) -> Vec
     ["system_dialer", "default_sms_package"]
         .iter()
         .filter_map(|key| role_package(call_state, key))
+        .collect()
+}
+
+/// The SMS apps a phone gets back when SMS goes from managed (or off) to unmanaged - what its first report's list left
+/// out while SMS was managed (the counterpart of design 109's dialer): the installed [TEXT_APPS], and the SMS role's
+/// holder its last report names unless it is Vibb One itself. `installed` is the last report's `installed_apps_json`.
+pub(crate) fn sms_apps_to_restore(
+    state: &AppState,
+    call_state: Option<&serde_json::Value>,
+    installed: Option<&serde_json::Value>,
+) -> Vec<String> {
+    let installed: Vec<&str> = installed
+        .and_then(serde_json::Value::as_array)
+        .map(|apps| {
+            apps.iter()
+                .filter_map(|app| app.get("package_name")?.as_str())
+                .collect()
+        })
+        .unwrap_or_default();
+    let role = call_state
+        .and_then(|call_state| role_package(call_state, "default_sms_package"))
+        .filter(|package| !installed_by_launcher(state, Some(package)));
+    installed
+        .into_iter()
+        .filter(|package| TEXT_APPS.contains(package) || role.as_deref() == Some(*package))
+        .map(str::to_string)
         .collect()
 }
 
@@ -1870,11 +1899,31 @@ async fn status_intake(
         .as_ref()
         .filter(|apps| !apps.is_empty())
     {
+        // While SMS is managed the launcher suspends every SMS app but its own, and the Calls page counts an allowed
+        // one against it: the phone's SMS apps are left out then (a new phone's default since 2026-11-23). A failed
+        // read leaves them out too - the parent can still allow one.
+        let sms_unmanaged: bool = sqlx::query_scalar(
+            "SELECT sms_mode = 'unmanaged' FROM device_policy WHERE device_id = ?",
+        )
+        .bind(device.id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or(false);
         let roles = call_and_text_roles(report.call_state.as_ref());
+        let sms_role = report
+            .call_state
+            .as_ref()
+            .and_then(|call_state| role_package(call_state, "default_sms_package"));
         let package_names: Vec<&str> = installed
             .iter()
             .map(|a| a.package_name.as_str())
             .filter(|p| {
+                let text_app = TEXT_APPS.contains(p) || sms_role.as_deref() == Some(*p);
+                if text_app && !sms_unmanaged {
+                    return false;
+                }
                 SAFE_DEFAULT_APPS.contains(p)
                     || CALL_AND_TEXT_APPS.contains(p)
                     || roles.iter().any(|role| role == p)

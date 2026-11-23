@@ -1073,6 +1073,8 @@ async fn the_pools_and_the_findings() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = managed_phone(&app).await;
+    // Someone may text in: no "No one can text the phone yet" among the findings.
+    contact(&app, id, "Mamma", "+4791234567", true).await;
     post_held(
         &app,
         &token,

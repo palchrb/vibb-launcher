@@ -190,29 +190,177 @@ async fn every_mode_is_sent_with_every_sms_key() {
     }
 }
 
-/// Code QA M2: a phone created from now on starts with both channels "Ikke styrt": no contacts sent, nothing
-/// restricted, its calls left alone.
+/// 2026-11-23 (the user: "jeg er ok med at default er bare kontakter"): a phone added on the Devices tab starts with
+/// both channels "Styrt" - no contacts yet, the emergency menu as always - and its first report allows its phone app but
+/// no SMS app, which the launcher suspends while SMS is managed. A phone made before (the column defaults) keeps its
+/// modes.
 #[tokio::test]
-async fn a_new_phone_starts_with_both_channels_unmanaged() {
+async fn a_new_phone_starts_with_both_channels_managed() {
     let app = TestApp::new().await;
-    let (id, token) = app.enrolled_device("phone").await;
+    let (old, _) = app.create_device("old phone").await;
+    let cookie = app.admin_cookie().await;
+    let res = app
+        .request_form(
+            Method::POST,
+            "/devices/new",
+            Some(&cookie),
+            &[("name", "Emma")],
+        )
+        .await;
+    assert!(res.status.is_redirection(), "{}", res.text());
+    let id: i64 = sqlx::query_scalar("SELECT id FROM devices WHERE name = 'Emma'")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        stored_modes(&app, id).await,
+        ("managed".into(), "managed".into())
+    );
+    assert_eq!(
+        stored_modes(&app, old).await,
+        ("unmanaged".into(), "unmanaged".into())
+    );
+
+    app.set_parent_pin(id).await;
+    let code = app.new_code(id, crate::enrollment::Kind::Qr).await;
+    let res = app
+        .request(
+            Method::POST,
+            "/api/devices/enroll",
+            None,
+            Some(json!({ "enrollment_code": code })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK);
+    let token = res.json()["device_token"].as_str().unwrap().to_string();
+    let policy = app.policy(&token).await["call_policy"].clone();
+    assert_eq!(policy["calls_mode"], "managed");
+    assert_eq!(policy["sms_mode"], "managed");
+    assert_eq!(policy["contacts"], json!([]));
+    assert_eq!(policy["emergency_menu"][0]["number"], "112", "{policy}");
+
+    app.post_status(
+        &token,
+        json!({
+            "installed_apps": [
+                { "package_name": "com.google.android.dialer", "label": "Phone", "preinstalled": true },
+                { "package_name": "com.google.android.apps.messaging", "label": "Messages", "preinstalled": true },
+                { "package_name": "com.maker.sms", "label": "SMS", "preinstalled": true },
+                { "package_name": "com.google.android.deskclock", "label": "Clock", "preinstalled": true },
+            ],
+            "call_state": { "system_dialer": "com.google.android.dialer", "default_sms_package": "com.maker.sms" },
+        }),
+    )
+    .await;
+    let allowlist: String =
+        sqlx::query_scalar("SELECT allowlist_json FROM device_policy WHERE device_id = ?")
+            .bind(id)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(
+        serde_json::from_str::<Vec<String>>(&allowlist).unwrap(),
+        ["com.google.android.dialer", "com.google.android.deskclock"]
+    );
+
+    // No contact yet: one orange line on the Calls page and in the Devices list's Attention, calls first.
+    let page = app
+        .get_page(&format!("/devices/{id}/calls"), &cookie)
+        .await
+        .text();
+    assert!(page.contains("No one can call the phone yet"), "{page}");
+    assert!(!page.contains("No one can text the phone yet"));
+    assert!(page.contains("Add contacts under Calls &#38; Contacts."));
+    let summary = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(
+        summary.contains("No one can call the phone yet"),
+        "{summary}"
+    );
+    let list = app.get_page("/devices", &cookie).await.text();
+    let row = &list[list.find(&format!("data-device=\"{id}\"")).unwrap()..];
+    assert!(row[..row.find("</a>").unwrap()].contains("data-attention-count"));
+
+    // A contact who may text but not call: the calls line stays. One who may call: the texts line, if none may text.
     contact(
         &app,
         id,
         ("Mamma", "+4791234567"),
-        [true, true, true],
+        [false, true, true],
         None,
         [true, true, true],
         0,
     )
     .await;
-    let policy = app.policy(&token).await["call_policy"].clone();
-    assert_eq!(policy["calls_mode"], "unmanaged");
-    assert_eq!(policy["sms_mode"], "unmanaged");
-    assert_eq!(policy["contacts"], json!([]));
+    let page = app
+        .get_page(&format!("/devices/{id}/calls"), &cookie)
+        .await
+        .text();
+    assert!(page.contains("No one can call the phone yet"));
+    sqlx::query("UPDATE device_contacts SET allow_inbound = 1, sms_in = 0 WHERE device_id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let page = app
+        .get_page(&format!("/devices/{id}/calls"), &cookie)
+        .await
+        .text();
+    assert!(!page.contains("No one can call the phone yet"));
+    assert!(page.contains("No one can text the phone yet"), "{page}");
+    sqlx::query("UPDATE device_contacts SET sms_in = 1 WHERE device_id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let page = app
+        .get_page(&format!("/devices/{id}/calls"), &cookie)
+        .await
+        .text();
+    assert!(!page.contains("can call the phone yet") && !page.contains("can text the phone yet"));
+
+    // SMS to "Ikke styrt": the SMS apps the first list left out come back (Vibb One, the role's holder now, never).
+    app.post_status(
+        &token,
+        json!({
+            "installed_apps": [
+                { "package_name": "com.google.android.dialer", "label": "Phone", "preinstalled": true },
+                { "package_name": "com.google.android.apps.messaging", "label": "Messages", "preinstalled": true },
+                { "package_name": "com.maker.sms", "label": "SMS", "preinstalled": true },
+                { "package_name": "com.google.android.deskclock", "label": "Clock", "preinstalled": true },
+            ],
+            "call_state": { "system_dialer": "com.google.android.dialer", "default_sms_package": "me.vibb.launcher" },
+        }),
+    )
+    .await;
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/calls/settings"),
+            Some(&cookie),
+            &[
+                ("section", "channels"),
+                ("calls_mode", "managed"),
+                ("sms_mode", "unmanaged"),
+            ],
+        )
+        .await;
+    assert!(res.status.is_redirection());
+    let allowlist: String =
+        sqlx::query_scalar("SELECT allowlist_json FROM device_policy WHERE device_id = ?")
+            .bind(id)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
     assert_eq!(
-        stored_modes(&app, id).await,
-        ("unmanaged".into(), "unmanaged".into())
+        serde_json::from_str::<Vec<String>>(&allowlist).unwrap(),
+        [
+            "com.google.android.dialer",
+            "com.google.android.deskclock",
+            "com.google.android.apps.messaging"
+        ]
     );
 }
 

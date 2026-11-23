@@ -97,9 +97,13 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
 - **Two channels, three states each (D2, migration 0130).** `device_policy.calls_mode`/`sms_mode` (`off` / `managed` /
   `unmanaged`, `models::CHANNEL_MODES`) replace `calls_managed`/`calls_enabled`/`sms_enabled`, which are no longer
   written or read. The migration maps every phone to what it did (D2's table, `tests::sms`'s
-  `the_migration_keeps_every_phone_as_it_was`; no phone goes to SMS `managed`); a phone created since starts as before 0130, both
-  channels `unmanaged`. The parent picks
-  "Styrt av Vibb". `DevicePolicy::any_channel_managed()` is
+  `the_migration_keeps_every_phone_as_it_was`; no phone goes to SMS `managed`). Since 2026-11-23 a phone added on the
+  Devices tab starts with both channels `managed`, contacts only (`devices::NEW_PHONE_CHANNEL_MODE`, set in its
+  `INSERT`; the column defaults stay `unmanaged`, so phones made before keep theirs), and its first report's allowlist
+  leaves the SMS apps out while SMS is managed (`tests::sms::a_new_phone_starts_with_both_channels_managed`). SMS
+  set to unmanaged later puts them back (`device_api::sms_apps_to_restore`, beside design 109's dialer). A managed
+  channel no contact can reach is the call report's `NoCallers` (or, with callers, `NoTexters`): one orange line on
+  the Calls page and an Attention row, how to fix it behind the (i). `DevicePolicy::any_channel_managed()` is
   either channel not `unmanaged`; `calls_managed()` and `sms_managed()` are each channel alone. The
   readers that mean the calls channel use `calls_managed()`: the call report's role/screening/call-log findings and the
   B1 "waiting" rule's early return (a launcher with the engine reports `call_state.state` for calls alone), "Dialer not

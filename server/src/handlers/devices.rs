@@ -632,15 +632,20 @@ async fn insert_device_with_policy(state: &AppState, name: &str) -> Result<i64, 
     // new phone gets (2026-11-16, the user: "vi bruker ikke noe annet enn androids pin lås"): it
     // takes effect when the Child PIN is set - until then `kid_lock` is null, no lock at all, as
     // with Vibb One's - and phones created before keep their stored choice (0085's column default
-    // `own` is not changed, so no migration).
+    // `own` is not changed, so no migration). Calls and SMS start "Styrt" (2026-11-23, the user: "jeg er ok med at
+    // default er bare kontakter"): only the contacts the parent adds, the emergency menu always; phones created before
+    // keep their modes (0130's column defaults `unmanaged` are not changed, so no migration).
     sqlx::query(
         "INSERT INTO device_policy (device_id, kiosk_desired, lock_task_features, \
-         quick_controls_mask, notification_auto_cancel, kid_keyguard) VALUES (?, 1, ?, ?, 1, ?)",
+         quick_controls_mask, notification_auto_cancel, kid_keyguard, calls_mode, sms_mode) \
+         VALUES (?, 1, ?, ?, 1, ?, ?, ?)",
     )
     .bind(id)
     .bind(DEFAULT_LOCK_TASK_FEATURES)
     .bind(DEFAULT_QUICK_CONTROLS)
     .bind(crate::kid_lock::KEYGUARD_ANDROID)
+    .bind(NEW_PHONE_CHANNEL_MODE)
+    .bind(NEW_PHONE_CHANNEL_MODE)
     .execute(&mut *tx)
     .await?;
 
@@ -669,6 +674,9 @@ async fn insert_device_with_policy(state: &AppState, name: &str) -> Result<i64, 
     tx.commit().await?;
     Ok(id)
 }
+
+/// A new phone's `calls_mode` and `sms_mode` ([insert_device_with_policy]): "managed", contacts only.
+pub(crate) const NEW_PHONE_CHANNEL_MODE: &str = "managed";
 
 /// Design 126 C1: the blocklist a new phone gets switched on by its own override - the seeded ads list `(id,
 /// enabled)` when it exists and is off for every phone; none when it is missing or already on.

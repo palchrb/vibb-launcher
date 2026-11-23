@@ -20,6 +20,19 @@ async fn set_managed(app: &TestApp, device_id: i64, calls: bool, sms: bool) {
         .unwrap();
 }
 
+/// Someone may call in, so the Calls page has no "No one can call the phone yet" of its own.
+async fn someone_may_call(app: &TestApp, device_id: i64) {
+    attach(
+        app,
+        device_id,
+        "Mormor",
+        "+4799999901",
+        [true, true, false],
+        0,
+    )
+    .await;
+}
+
 /// Inserts a contact (already normalised) and attaches it to a device.
 async fn attach(
     app: &TestApp,
@@ -801,6 +814,7 @@ async fn calls_page_needs_no_capability() {
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
     set_managed(&app, id, true, true).await;
+    someone_may_call(&app, id).await;
     for report in [json!({}), json!({ "call_state": good_call_state() })] {
         app.post_status(&token, report).await;
         let page = calls_page(&app, &cookie, id).await;
@@ -824,6 +838,7 @@ async fn calls_page_shows_role_problems_and_fail_closed() {
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
     set_managed(&app, id, true, true).await;
+    someone_may_call(&app, id).await;
     let mut call_state = good_call_state();
     call_state["state"] = json!("fail_closed");
     call_state["dialer_role_held"] = json!(false);
@@ -905,6 +920,7 @@ async fn calls_page_says_whether_incoming_calls_are_filtered() {
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
     set_managed(&app, id, true, true).await;
+    someone_may_call(&app, id).await;
     let anyone = "Anyone can call this phone";
     let not_phone_app = "Vibb One isn&#39;t the phone app";
     // Design 114: the screening role missing while Vibb is the phone app is the setup step `call_filter`.
@@ -1007,6 +1023,7 @@ async fn emergency_call_is_shown_on_the_device_page() {
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
     set_managed(&app, id, true, true).await;
+    someone_may_call(&app, id).await;
     sqlx::query("UPDATE provisioning_settings SET time_zone = 'Europe/Oslo'")
         .execute(&app.db)
         .await
