@@ -760,7 +760,7 @@ service after editing: `sudo systemctl restart kid-phone-server`):
 |---|---|
 | `LAUNCHER_ADMIN_COMPONENT` | `me.vibb.launcher/com.kidslauncher.mdm.server.MdmDeviceAdminReceiver` |
 | `LAUNCHER_APK_URL` | `https://github.com/palchrb/vibb-launcher/releases/latest/download/kids-launcher-mdm.apk` (only launcher releases are ever "latest") |
-| `LAUNCHER_SIGNATURE_CHECKSUM` | none - required for the provisioning QR code |
+| `LAUNCHER_SIGNATURE_CHECKSUM` | none - required for the provisioning QR code and for Vibb One's and Vibb music's updates |
 | `PHONE_SERVER_URL` | none - the phones' server address in the setup QR while Settings > Phone Setup has none saved; an address saved there wins, and the page says which one is used. `https://`, or `http://` to a Tailscale IP address (100.64.0.0/10, `fd7a:115c:a1e0::/48`) - taken with a warning in the log, on Phone Setup and on the Connect page (Tailscale encrypts the way, but only https proves the server to the phone; prefer `https://<name>.ts.net` from `tailscale serve`); any other `http://` (a LAN address, a `*.ts.net` name) is ignored with a log line, and Phone Setup refuses it the same way. The phones apply the same rule to the address they store (launcher security review S-M1): a phone set up earlier with a plain-http LAN address stops reaching the server once Vibb One is updated, until the https address is typed in its Settings (Server URL, behind the parent code) |
 | `PHONE_RECOVERY_URL` | none - the tailnet recovery address for a phone whose certificate check refuses this server (design 76; "Tailnet recovery address" above): plain `http://` to a Tailscale IP only, e.g. `http://100.101.102.103:3101`; anything else is ignored with a log line. Unset: the setup QR's address when it is one, else this box's tailnet address on a listener that answers it, when the server can tell |
 | `SERVER_RELEASE_REPO` | `palchrb/vibb-launcher` (where the Updates page looks for new server versions - only `server-vX.Y.Z` releases count) |
@@ -768,7 +768,10 @@ service after editing: `sudo systemctl restart kid-phone-server`):
 | `PWA_DEFAULT_LANG` | none - `en` or `nb`: the admin pages' language for sign-in pages and for an account's first signed-in request (stored once as that account's language), ahead of the browser's `Accept-Language`; unset = the browser's language, else English. `?lang=` and an account's own choice (Settings > Account > Language) always win; any other value is ignored with a log line |
 
 `LAUNCHER_SIGNATURE_CHECKSUM` is the SHA-256 of the launcher's **signing certificate** (not of the APK file),
-base64url-encoded without padding: 43 characters. Until it is set, Devices > Provision shows a warning and no QR code.
+base64url-encoded without padding: 43 characters. Until it is set, Devices > Provision shows a warning and no QR code,
+and no new release of Vibb One or Vibb music is taken: the catalog takes our own two apps only when they are signed
+with this certificate (any other signer is refused and never reaches a phone; the app's page says why). What the
+phones have already keeps working.
 Compute it either from the release keystore or from a release APK; both must print the same value:
 
 ```

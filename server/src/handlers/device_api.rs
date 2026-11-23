@@ -2402,7 +2402,8 @@ pub async fn commands_stream(
 
 /// The tracked apps this device may get: enabled, with a cached release, and either the launcher
 /// itself (`is_launcher`, always included - see migrations/0013's doc comment) or selected for this
-/// device (`device_tracked_apps`). One query for the list and the download (design 13 QA #4), so a
+/// device (`device_tracked_apps`), and one of ours only with its release key pinned
+/// (`tracked_apps::servable`). One query for the list and the download (design 13 QA #4), so a
 /// device token can only fetch what its own list advertises; `only` narrows it to one app.
 async fn scoped_apps(
     state: &AppState,
@@ -2422,6 +2423,11 @@ async fn scoped_apps(
     .bind(only)
     .fetch_all(&state.db)
     .await
+    .map(|apps| {
+        apps.into_iter()
+            .filter(|app| crate::handlers::tracked_apps::servable(state, app))
+            .collect()
+    })
 }
 
 /// Nudges every enrolled phone whose app list carries catalog app `app_id` - [scoped_apps]' own

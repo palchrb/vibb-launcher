@@ -15,7 +15,8 @@ import org.junit.Test
  * Design 127 §3.3: the shared contract `app_access.json`, byte-identical with the server's `testdata/` copy (the
  * server's `app_permissions::tests::the_contract` saves through the page and posts the report): [AccessKey]'s
  * permissions against `keys`, both policies decoded, `report` encoded exactly from the pure report functions, `never`
- * never a target.
+ * never a target while signed with our own certificate (another signer is denied),
+ * the name alone exempting nothing.
  */
 class AppAccessContractTest {
     private val text = javaClass.classLoader!!.getResource("app_access.json")!!.readText()
@@ -84,12 +85,14 @@ class AppAccessContractTest {
     fun `never is never a target`() {
         for (pkg in contract["never"]!!.jsonArray.map { it.jsonPrimitive.content }) {
             assertTrue(pkg, pkg in ACCESS_NEVER)
-            assertFalse(pkg, accessTarget(pkg, "me.vibb.launcher"))
-            val plan = accessGrants(
+            assertFalse(pkg, accessTarget(pkg, "me.vibb.launcher") { true })
+            fun plan(ours: Boolean) = accessGrants(
                 mapOf(pkg to listOf("android.permission.CAMERA")), "org.example.other", mapOf(pkg to setOf(AccessKey.CAMERA)),
                 windowOpen = false, callLive = false, held = emptySet(), current = emptyMap(),
-            )
-            assertEquals(pkg, emptyMap<Grant, Int>(), plan.writes)
+            ) { ours }
+            assertEquals(pkg, emptyMap<Grant, Int>(), plan(ours = true).writes)
+            // The name alone exempts nothing: signed by another key, it is denied.
+            assertEquals(pkg, mapOf(Grant(pkg, "android.permission.CAMERA") to GRANT_STATE_DENIED), plan(ours = false).writes)
         }
         assertEquals(contract["never"]!!.jsonArray.map { it.jsonPrimitive.content }.toSet(), ACCESS_NEVER)
     }

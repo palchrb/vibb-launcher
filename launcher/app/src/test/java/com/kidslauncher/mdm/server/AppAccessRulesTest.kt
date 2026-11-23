@@ -34,13 +34,15 @@ class AppAccessRulesTest {
     fun `every grant row`() {
         val own = rules["own"]!!.jsonPrimitive.content
         val requested = rules["requested"]!!.jsonObject.mapValues { strings(it.value) }
+        val ourSigner = strings(rules["same_signer"]).toSet()
         for (row in rules["grants"]!!.jsonArray.map { it.jsonObject }) {
             val name = row["name"]!!.jsonPrimitive.content
             val denied = row["denied"].takeUnless { it == null || it is JsonNull }?.jsonObject
                 ?.mapValues { (_, keys) -> strings(keys).mapTo(mutableSetOf()) { AccessKey.of(it)!! } }
+            val signed = row["same_signer"]?.let { strings(it).toSet() } ?: ourSigner
             val plan = accessGrants(
                 requested, own, denied, flag(row, "window"), flag(row, "call"), grants(row["held"]), grantStates(row["current"]),
-            )
+            ) { it in signed }
             assertEquals(name, grantStates(row["writes"]), plan.writes)
             assertEquals(name, grants(row["waiting"]), plan.waiting)
             assertEquals(name, plan.waiting.isNotEmpty(), plan.deferred)

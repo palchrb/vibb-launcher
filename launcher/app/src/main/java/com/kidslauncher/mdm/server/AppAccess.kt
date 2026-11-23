@@ -197,12 +197,12 @@ object AppAccessReader {
 
     /** [info]'s `installed_apps[].access`, for a third-party app but ours only (a system app's privileged grants say
      * nothing a parent can change - the code QA's L2): the grant keys it asks for ([accessReports]; an unreadable grant
-     * state reads DEFAULT; none for [ACCESS_NEVER]), then [states]. */
+     * state reads DEFAULT; none for [ACCESS_NEVER] with our signer), then [states]. */
     fun report(context: Context, info: PackageInfo): Map<String, String>? {
         val requested = info.requestedPermissions.orEmpty().toList()
         val thirdParty = (info.applicationInfo?.flags ?: 0) and ApplicationInfo.FLAG_SYSTEM == 0
         if (!thirdParty || info.packageName == context.packageName) return null
-        val grants = if (accessTarget(info.packageName, context.packageName)) {
+        val grants = if (accessTarget(info.packageName, context.packageName) { com.kidslauncher.mdm.music.MusicTrust.sameSigner(context, it) }) {
             val dpm = context.getSystemService(DevicePolicyManager::class.java)
             val admin = ComponentName(context, MdmDeviceAdminReceiver::class.java)
             val refused = AppEnforcer.accessRefused.filter { it.packageName == info.packageName }.mapTo(mutableSetOf()) { it.key }

@@ -196,6 +196,11 @@ impl TestApp {
         Self::with_net_config(crate::net::NetConfig::from_vars(&vars), config, passkeys).await
     }
 
+    /// A test app with `config` (the default listeners).
+    pub async fn with_config(config: ForkConfig) -> Self {
+        Self::with_net_config(crate::net::NetConfig::default(), config, Default::default()).await
+    }
+
     pub async fn with_net(net: crate::net::NetConfig) -> Self {
         Self::with_net_config(net, ForkConfig::for_tests(), Default::default()).await
     }

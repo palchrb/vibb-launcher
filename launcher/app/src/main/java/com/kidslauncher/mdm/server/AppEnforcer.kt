@@ -1006,13 +1006,14 @@ object AppEnforcer {
         val visible = requested.filter { (pkg, perms) ->
             perms.none { AccessKey.ofPermission(it) != null } || !isHidden(dpm, admin, pkg)
         }
-        val targets = accessTargets(visible, context.packageName)
+        val sameSigner = { pkg: String -> com.kidslauncher.mdm.music.MusicTrust.sameSigner(context, pkg) }
+        val targets = accessTargets(visible, context.packageName, sameSigner)
         val denied = appPermissionsOf(policy?.appPermissions)
         val current = targets.keys.associateWith { dpm.getPermissionGrantState(admin, it.packageName, it.permission) }
         val held = targets.filterTo(LinkedHashMap()) { (grant, key) -> key in denied?.get(grant.packageName).orEmpty() }
             .keys.filterTo(mutableSetOf()) { pm.checkPermission(it.permission, it.packageName) == PackageManager.PERMISSION_GRANTED }
         val callLive = !windowOpen && held.isNotEmpty() && WindowRelock.liveCall(context)
-        val plan = accessGrants(visible, context.packageName, denied, windowOpen, callLive, held, current)
+        val plan = accessGrants(visible, context.packageName, denied, windowOpen, callLive, held, current, sameSigner)
         val failed = mutableSetOf<AppKey>()
         for ((grant, state) in plan.writes) {
             val written = try {
@@ -1058,7 +1059,7 @@ object AppEnforcer {
     fun enforceAccessOnPackage(context: Context, packageName: String) {
         try {
             val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
-            if (!dpm.isDeviceOwnerApp(context.packageName) || !accessTarget(packageName, context.packageName)) return
+            if (!dpm.isDeviceOwnerApp(context.packageName) || !accessTarget(packageName, context.packageName) { com.kidslauncher.mdm.music.MusicTrust.sameSigner(context, it) }) return
             val info = context.packageManager.getPackageInfo(
                 packageName, PackageManager.PackageInfoFlags.of(PackageManager.GET_PERMISSIONS.toLong())
             )

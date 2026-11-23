@@ -386,7 +386,7 @@ class EnforcementPlanTest {
         val el = Grant("io.element.android.x", "android.permission.CAMERA")
         fun denied(vararg pkgs: String) = pkgs.associateWith { setOf(AccessKey.CAMERA) }
         fun plan(denied: Map<String, Set<AccessKey>>?, window: Boolean = false, call: Boolean = false, held: Set<Grant> = emptySet(), current: Map<Grant, Int> = emptyMap()) =
-            accessGrants(requested, OWN, denied, window, call, held, current)
+            accessGrants(requested, OWN, denied, window, call, held, current) { false }
         assertEquals(AccessPlan(mapOf(wa to GRANT_STATE_DENIED), emptySet()), plan(denied("com.whatsapp")))
         val wasDenied = mapOf(wa to GRANT_STATE_DENIED)
         assertEquals(AccessPlan(mapOf(wa to GRANT_STATE_DEFAULT), emptySet()), plan(emptyMap(), current = wasDenied))

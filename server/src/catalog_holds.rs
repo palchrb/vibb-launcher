@@ -372,12 +372,14 @@ pub fn judge(
     Verdict::Serve
 }
 
-/// Ours (§2, QA L4), by the row: the launcher's row, or the music app's - pinned to its package,
-/// taking `music-v*` releases from one of `our_repos` (this server's configured release repos);
-/// a row named after the music app's package on another repo is not ours.
+/// Ours (§2, QA L4), by the row: the launcher's row, or the music app's - its package, or none
+/// yet (after "Forget Package and Key"), taking `music-v*` releases from one of `our_repos` (this
+/// server's configured release repos); a row named after the music app's package on another repo
+/// is not ours. Ours are signed with the release key (`tracked_apps::KeyRule::Ours`).
 pub fn ours(app: &TrackedApp, our_repos: &[String]) -> bool {
     app.is_launcher
-        || (crate::music::MUSIC_PACKAGES.contains(&app.package_name.as_str())
+        || ((app.package_name.is_empty()
+            || crate::music::MUSIC_PACKAGES.contains(&app.package_name.as_str()))
             && app.source_type == "github"
             && app.release_tag_prefix.as_deref() == Some(crate::config::MUSIC_RELEASE_TAG_PREFIX)
             && our_repos.contains(&app.github_repo))
