@@ -46,8 +46,13 @@ pub struct ApkIdentity {
     /// `<uses-permission-sdk-23>` and `<uses-permission-sdk-m>` anywhere (one whose
     /// `android:maxSdkVersion` is below [crate::catalog_holds::PHONE_MIN_SDK] left out), and the
     /// `android:permission` of any element that is one of [BIND_PERMISSIONS], as
-    /// `bind:<name>`; sorted, deduplicated. `None` when it can't be read whole - never "none".
+    /// `bind:<name>`, and every permission Android adds to those for the app's target SDK
+    /// ([SPLIT_PERMISSIONS]); sorted, deduplicated. `None` when it can't be read whole - never
+    /// "none".
     pub permissions: Option<Vec<String>>,
+    /// The target SDK the split permissions were added for (`<uses-sdk>`'s, [target_sdk]); `None`
+    /// when `permissions` is.
+    pub split_target: Option<i64>,
 }
 
 /// Reads the facts; a file that isn't a zip at all is an error, a part that can't be read is
@@ -79,6 +84,7 @@ pub fn read_identity(path: &Path) -> Result<ApkIdentity, String> {
         min_sdk: manifest.min_sdk,
         signer_sha256,
         permissions: manifest.permissions,
+        split_target: manifest.split_target,
     })
 }
 
@@ -187,8 +193,9 @@ const TYPE_INT_HEX: u8 = 0x11;
 /// `android.R.attr.versionCode`, `versionName` and `versionCodeMajor`.
 const ATTR_VERSION_CODE: u32 = 0x0101_021b;
 const ATTR_VERSION_NAME: u32 = 0x0101_021c;
-/// `android.R.attr.minSdkVersion`, on `<uses-sdk>`.
+/// `android.R.attr.minSdkVersion` and `targetSdkVersion`, on `<uses-sdk>`.
 const ATTR_MIN_SDK_VERSION: u32 = 0x0101_020c;
+const ATTR_TARGET_SDK_VERSION: u32 = 0x0101_0270;
 const ATTR_VERSION_CODE_MAJOR: u32 = 0x0101_0576;
 /// `android.R.attr.name`, `permission` and `maxSdkVersion` (design 90 §4).
 const ATTR_NAME: u32 = 0x0101_0003;
@@ -219,6 +226,89 @@ pub const BIND_PERMISSIONS: [&str; 7] = [
 /// The prefix a component's bind permission is stored under.
 pub const BIND_PREFIX: &str = "bind:";
 
+/// A split's `targetSdk` when `platform.xml` gives none: every app (`CUR_DEVELOPMENT + 1`).
+const EVERY_TARGET: i64 = 10_001;
+/// Android's split permissions (`frameworks/base/data/etc/platform.xml`, `<split-permission>`,
+/// the same in Android 14 to 17 but for the two `health` rows 16 added): an app whose target SDK
+/// is below a row's asks for its new permission too whenever it asks for the old one. Each row is
+/// `(old, new, targetSdk)`; a feature-flagged row counts as on.
+const SPLIT_PERMISSIONS: &[(&str, &str, i64)] = &[
+    (
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        EVERY_TARGET,
+    ),
+    (
+        "WRITE_EXTERNAL_STORAGE",
+        "READ_EXTERNAL_STORAGE",
+        EVERY_TARGET,
+    ),
+    ("READ_CONTACTS", "READ_CALL_LOG", 16),
+    ("WRITE_CONTACTS", "WRITE_CALL_LOG", 16),
+    ("ACCESS_FINE_LOCATION", "ACCESS_BACKGROUND_LOCATION", 29),
+    ("ACCESS_COARSE_LOCATION", "ACCESS_BACKGROUND_LOCATION", 29),
+    ("READ_EXTERNAL_STORAGE", "ACCESS_MEDIA_LOCATION", 29),
+    ("WRITE_EXTERNAL_STORAGE", "ACCESS_MEDIA_LOCATION", 29),
+    ("BLUETOOTH", "BLUETOOTH_SCAN", 31),
+    ("BLUETOOTH", "BLUETOOTH_CONNECT", 31),
+    ("BLUETOOTH", "BLUETOOTH_ADVERTISE", 31),
+    ("BLUETOOTH_ADMIN", "BLUETOOTH_SCAN", 31),
+    ("BLUETOOTH_ADMIN", "BLUETOOTH_CONNECT", 31),
+    ("BLUETOOTH_ADMIN", "BLUETOOTH_ADVERTISE", 31),
+    ("BODY_SENSORS", "BODY_SENSORS_BACKGROUND", 33),
+    ("BODY_SENSORS", "health.READ_HEART_RATE", 36),
+    (
+        "BODY_SENSORS_BACKGROUND",
+        "health.READ_HEALTH_DATA_IN_BACKGROUND",
+        36,
+    ),
+    ("READ_EXTERNAL_STORAGE", "READ_MEDIA_AUDIO", 33),
+    ("READ_EXTERNAL_STORAGE", "READ_MEDIA_VIDEO", 33),
+    ("READ_EXTERNAL_STORAGE", "READ_MEDIA_IMAGES", 33),
+    ("WRITE_EXTERNAL_STORAGE", "READ_MEDIA_AUDIO", 33),
+    ("WRITE_EXTERNAL_STORAGE", "READ_MEDIA_VIDEO", 33),
+    ("WRITE_EXTERNAL_STORAGE", "READ_MEDIA_IMAGES", 33),
+    (
+        "READ_MEDIA_IMAGES",
+        "READ_MEDIA_VISUAL_USER_SELECTED",
+        EVERY_TARGET,
+    ),
+    (
+        "READ_MEDIA_VIDEO",
+        "READ_MEDIA_VISUAL_USER_SELECTED",
+        EVERY_TARGET,
+    ),
+    (
+        "ACCESS_MEDIA_LOCATION",
+        "READ_MEDIA_VISUAL_USER_SELECTED",
+        EVERY_TARGET,
+    ),
+];
+/// The prefix of every [SPLIT_PERMISSIONS] name.
+const ANDROID_PERMISSION: &str = "android.permission.";
+
+/// `names` with every permission Android adds for an app targeting `target` ([SPLIT_PERMISSIONS]),
+/// until none is added (Android's one pass in table order adds no more than this).
+pub fn with_split_permissions(names: &mut Vec<String>, target: i64) {
+    loop {
+        let mut added = false;
+        for (old, new, below) in SPLIT_PERMISSIONS {
+            if target >= *below {
+                continue;
+            }
+            let old = format!("{ANDROID_PERMISSION}{old}");
+            let new = format!("{ANDROID_PERMISSION}{new}");
+            if names.contains(&old) && !names.contains(&new) {
+                names.push(new);
+                added = true;
+            }
+        }
+        if !added {
+            return;
+        }
+    }
+}
+
 /// What the binary manifest's first element (`<manifest>`) says.
 #[derive(Debug, Default, PartialEq, Eq)]
 struct Manifest {
@@ -229,6 +319,8 @@ struct Manifest {
     min_sdk: Option<u32>,
     /// [ApkIdentity::permissions].
     permissions: Option<Vec<String>>,
+    /// [ApkIdentity::split_target].
+    split_target: Option<i64>,
 }
 
 /// The `package`, `android:versionCode`, `android:versionName` and `android:versionCodeMajor` attributes of the binary
@@ -238,26 +330,33 @@ struct Manifest {
 fn read_manifest(xml: &[u8]) -> Option<Manifest> {
     let mut found = None;
     let mut permissions = Some(Vec::new());
-    let whole = walk_manifest(xml, &mut found, &mut permissions).is_some()
+    let mut target = None;
+    let whole = walk_manifest(xml, &mut found, &mut permissions, &mut target).is_some()
         && u32_at(xml, 4).is_some_and(|size| size as usize == xml.len());
     let mut manifest = found?;
+    // No `<uses-sdk>`: Android's target is 0, below every split.
+    let target = target.unwrap_or(0);
     manifest.permissions = permissions.filter(|_| whole).map(|mut names| {
+        with_split_permissions(&mut names, target);
         names.sort();
         names.dedup();
         names
     });
+    manifest.split_target = manifest.permissions.is_some().then_some(target);
     Some(manifest)
 }
 
 /// [read_manifest]'s walk to the document's end: `found` is the `<manifest>` element once read,
 /// and its `<uses-sdk>`'s `android:minSdkVersion` is added when that element follows; every later
 /// element's declared permission goes to `permissions` ([permission_of]), which turns `None` at
-/// the first that can't be read. A damaged chunk after `<manifest>` ends the walk (`None`); what
-/// was read of the package stays.
+/// the first that can't be read. `target` is the lowest target SDK of any `<uses-sdk>`
+/// ([target_sdk]). A damaged chunk after `<manifest>` ends the walk (`None`); what was read of the
+/// package stays.
 fn walk_manifest(
     xml: &[u8],
     found: &mut Option<Manifest>,
     permissions: &mut Option<Vec<String>>,
+    target: &mut Option<i64>,
 ) -> Option<()> {
     if u16_at(xml, 0)? != RES_XML_TYPE {
         return None;
@@ -300,9 +399,21 @@ fn walk_manifest(
                         "minSdkVersion",
                     );
                 }
+                if element == "uses-sdk" {
+                    match target_sdk(resource_ids, ext) {
+                        Some(sdk) => *target = Some(target.map_or(sdk, |low| low.min(sdk))),
+                        None => *permissions = None,
+                    }
+                }
                 // Android's string reader stops at a NUL: a name with one (or any control
                 // character) may read differently there - unreadable (QA H2).
                 if element.chars().any(char::is_control) {
+                    *permissions = None;
+                }
+                // Android finds an element's attributes by walking them in resource-id order: one
+                // it can't reach that way, or an id it might map to another, it never reads - so
+                // a list that relied on it would not be the one Android grants.
+                if !in_android_order(resource_ids, ext) {
                     *permissions = None;
                 }
                 if let Some(names) = permissions {
@@ -433,6 +544,61 @@ fn by_id<'a>(resource_ids: Option<&[u8]>, ext: &'a [u8], attr: u32) -> Option<Op
         }
     }
     Some(found)
+}
+
+/// Whether Android's attribute lookup sees a start element's attributes as this reader does.
+/// `AttributeResolution`'s `RetrieveAttributes` (what `obtainAttributes` runs while the package is
+/// parsed) walks the element's attributes and the wanted ids together, both taken as sorted: an
+/// attribute after one with a higher id is never found. An attribute with no id (none in the
+/// resource map, or 0) is never wanted and is skipped wherever it is. An id outside the android
+/// package (`0x01`) may be rewritten by the APK's own dynamic-reference table before that walk,
+/// so its order there can't be known. True when every id is 0 or an android id and those rise
+/// strictly; false otherwise or when the attributes can't be read.
+fn in_android_order(resource_ids: Option<&[u8]>, ext: &[u8]) -> bool {
+    let ordered = || -> Option<bool> {
+        let attribute_start = usize::from(u16_at(ext, 8)?);
+        let attribute_size = usize::from(u16_at(ext, 10)?);
+        let count = usize::from(u16_at(ext, 12)?);
+        if attribute_size < 20 {
+            return None;
+        }
+        let mut last = 0u32;
+        for index in 0..count {
+            let start = attribute_start.checked_add(index.checked_mul(attribute_size)?)?;
+            let attribute = ext.get(start..start.checked_add(attribute_size)?)?;
+            let name_index = u32_at(attribute, 4)?;
+            let id = resource_ids
+                .and_then(|ids| u32_at(ids, (name_index as usize).checked_mul(4)?))
+                .unwrap_or(0);
+            if id == 0 {
+                continue;
+            }
+            if id >> 24 != 0x01 || id <= last {
+                return Some(false);
+            }
+            last = id;
+        }
+        Some(true)
+    };
+    ordered() == Some(true)
+}
+
+/// A `<uses-sdk>`'s target SDK as Android's parser takes it for the split permissions, by resource
+/// id only: `android:targetSdkVersion`, else `android:minSdkVersion`, else 1. A value that isn't a
+/// plain number (a codename, a reference) counts as 1, below every split - never a higher target
+/// than Android's. `None` when an attribute is there twice or can't be read.
+fn target_sdk(resource_ids: Option<&[u8]>, ext: &[u8]) -> Option<i64> {
+    let attribute = match by_id(resource_ids, ext, ATTR_TARGET_SDK_VERSION)? {
+        Some(attribute) => Some(attribute),
+        None => by_id(resource_ids, ext, ATTR_MIN_SDK_VERSION)?,
+    };
+    let Some(attribute) = attribute else {
+        return Some(1);
+    };
+    Some(match *attribute.get(15)? {
+        TYPE_INT_DEC | TYPE_INT_HEX => i64::from(u32_at(attribute, 16)? as i32),
+        _ => 1,
+    })
 }
 
 /// A permission attribute's string: the typed string, which the raw value must equal when both are
@@ -578,6 +744,7 @@ mod tests {
                 min_sdk: Some(26),
                 signer_sha256: Some(KEY1.to_string()),
                 permissions: Some(Vec::new()),
+                split_target: Some(36),
             }
         );
         assert_eq!(read("fixture-key1-v2.apk").version_code, Some(2));
@@ -607,6 +774,7 @@ mod tests {
                 min_sdk: Some(26),
                 signer_sha256: None,
                 permissions: Some(Vec::new()),
+                split_target: Some(36),
             }
         );
     }
@@ -750,6 +918,7 @@ mod tests {
                 version_name: None,
                 min_sdk: None,
                 permissions: Some(Vec::new()),
+                split_target: Some(0),
             })
         );
         assert_eq!(
@@ -760,6 +929,7 @@ mod tests {
                 version_name: None,
                 min_sdk: None,
                 permissions: Some(Vec::new()),
+                split_target: Some(0),
             }),
             "a versionCode outside the android namespace isn't the code"
         );
@@ -779,6 +949,7 @@ mod tests {
             read("perms-key3-v2.apk").permissions,
             Some(
                 [
+                    "android.permission.ACCESS_COARSE_LOCATION",
                     "android.permission.ACCESS_FINE_LOCATION",
                     "android.permission.INTERNET",
                     "android.permission.READ_CONTACTS",
@@ -832,7 +1003,11 @@ mod tests {
         };
         assert_eq!(
             read(&ids, vec![uses(vec![name])]).permissions,
-            Some(vec!["android.permission.READ_CONTACTS".to_string()])
+            Some(vec![
+                // No `<uses-sdk>`: below every split's target.
+                "android.permission.READ_CALL_LOG".to_string(),
+                "android.permission.READ_CONTACTS".to_string()
+            ])
         );
         assert_eq!(
             read(
@@ -894,6 +1069,183 @@ mod tests {
         assert_eq!(read_manifest(&xml).unwrap().permissions, None);
     }
 
+    /// Android reads an element's attributes by walking them in resource-id order: attributes out
+    /// of that order, or an id outside the android package (which the APK's own tables may map to
+    /// another), are unreadable - a `maxSdkVersion` Android never sees must not drop a permission.
+    /// An attribute without an id is skipped wherever it is.
+    #[test]
+    fn attributes_out_of_androids_order_are_unreadable() {
+        const STRINGS: [&str; 8] = [
+            "name",
+            "maxSdkVersion",
+            "label",
+            "manifest",
+            "package",
+            "me.vibb.testfixture",
+            "uses-permission",
+            "android.permission.ACCESS_FINE_LOCATION",
+        ];
+        let ns = 9;
+        let manifest = (3, vec![[NO_INDEX, 4, 5, u32::from(TYPE_STRING), 5]], 1);
+        let uses = |attributes: Vec<[u32; 5]>| (6, attributes.clone(), attributes.len() as u16);
+        let name = [ns, 0, 7, u32::from(TYPE_STRING), 7];
+        let capped = [ns, 1, NO_INDEX, u32::from(TYPE_INT_DEC), 32];
+        let no_id = [NO_INDEX, 3, NO_INDEX, u32::from(TYPE_INT_DEC), 1];
+        let read = |ids: &[u32], attributes: Vec<[u32; 5]>| {
+            read_manifest(&xml_doc(
+                &STRINGS,
+                ids,
+                &[manifest.clone(), uses(attributes)],
+            ))
+            .unwrap()
+        };
+        let ids = [ATTR_NAME, ATTR_MAX_SDK_VERSION];
+        assert_eq!(
+            read(&ids, vec![name, capped]).permissions,
+            Some(Vec::new()),
+            "in order: capped below Android 14, left out"
+        );
+        assert_eq!(
+            read(&ids, vec![no_id, name, no_id, capped, no_id]).permissions,
+            Some(Vec::new()),
+            "attributes without an id anywhere"
+        );
+        let swapped = read(&ids, vec![capped, name]);
+        assert_eq!(swapped.permissions, None, "maxSdkVersion before the name");
+        assert_eq!(swapped.package.as_deref(), Some("me.vibb.testfixture"));
+        // An id outside the android package, here before the name.
+        let ids = [ATTR_NAME, ATTR_MAX_SDK_VERSION, 0x0501_0001];
+        let label = [ns, 2, 7, u32::from(TYPE_STRING), 7];
+        assert_eq!(read(&ids, vec![label, name]).permissions, None);
+        assert_eq!(read(&ids, vec![name, label]).permissions, None);
+        // The order matters on every element, not only `<uses-permission>`.
+        let ids = [ATTR_NAME, ATTR_PERMISSION];
+        let other = read_manifest(&xml_doc(
+            &STRINGS,
+            &ids,
+            &[
+                manifest.clone(),
+                uses(vec![name]),
+                (2, vec![[ns, 1, 7, u32::from(TYPE_STRING), 7], name], 2),
+            ],
+        ))
+        .unwrap();
+        assert_eq!(other.permissions, None);
+    }
+
+    /// Android adds split permissions for a low target SDK (`targetSdkVersion`, else
+    /// `minSdkVersion`, else none at all): an update that lowers it with fine location asks for
+    /// background location too, and is held for it.
+    #[test]
+    fn a_lower_target_sdk_adds_the_split_permissions() {
+        const USES_SDK: [&str; 9] = [
+            "name",
+            "minSdkVersion",
+            "targetSdkVersion",
+            "manifest",
+            "package",
+            "me.vibb.testfixture",
+            "uses-permission",
+            "android.permission.ACCESS_FINE_LOCATION",
+            "uses-sdk",
+        ];
+        let ids = [ATTR_NAME, ATTR_MIN_SDK_VERSION, ATTR_TARGET_SDK_VERSION];
+        let ns = 9;
+        let manifest = (3, vec![[NO_INDEX, 4, 5, u32::from(TYPE_STRING), 5]], 1);
+        let fine = (6, vec![[ns, 0, 7, u32::from(TYPE_STRING), 7]], 1);
+        let int = |name: u32, value: u32| [ns, name, NO_INDEX, u32::from(TYPE_INT_DEC), value];
+        let sdk = |attributes: Vec<[u32; 5]>| (8, attributes.clone(), attributes.len() as u16);
+        let read = |uses_sdk: Option<Vec<[u32; 5]>>| {
+            let mut elements = vec![manifest.clone()];
+            elements.extend(uses_sdk.map(sdk));
+            elements.push(fine.clone());
+            read_manifest(&xml_doc(&USES_SDK, &ids, &elements))
+                .unwrap()
+                .permissions
+        };
+        let names = |list: &[&str]| -> Vec<String> {
+            list.iter()
+                .map(|name| format!("android.permission.{name}"))
+                .collect()
+        };
+        let now = names(&["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION"]);
+        let old = names(&[
+            "ACCESS_BACKGROUND_LOCATION",
+            "ACCESS_COARSE_LOCATION",
+            "ACCESS_FINE_LOCATION",
+        ]);
+        assert_eq!(read(Some(vec![int(1, 26), int(2, 34)])), Some(now.clone()));
+        assert_eq!(read(Some(vec![int(1, 26), int(2, 29)])), Some(now.clone()));
+        assert_eq!(read(Some(vec![int(1, 26), int(2, 28)])), Some(old.clone()));
+        assert_eq!(
+            read(Some(vec![int(1, 28)])),
+            Some(old.clone()),
+            "no target: the min"
+        );
+        assert_eq!(
+            read(Some(vec![int(1, 34)])),
+            Some(now.clone()),
+            "no target: the min"
+        );
+        assert_eq!(read(Some(vec![])), Some(old.clone()), "neither: 1");
+        assert_eq!(read(None), Some(old.clone()), "no <uses-sdk>: 0");
+        let codename = [ns, 2, 7, u32::from(TYPE_STRING), 7];
+        assert_eq!(
+            read(Some(vec![codename])),
+            Some(old.clone()),
+            "a codename: 1"
+        );
+        assert_eq!(
+            read(Some(vec![int(2, 34), int(2, 34)])),
+            None,
+            "a target twice"
+        );
+        // The update that lowers the target is held for background location alone.
+        let accepted = crate::catalog_holds::sensitive(&now);
+        assert_eq!(
+            crate::catalog_holds::judge(false, Some(&old), Some(&accepted), false),
+            crate::catalog_holds::Verdict::Hold(
+                crate::catalog_holds::Reason::Permissions,
+                names(&["ACCESS_BACKGROUND_LOCATION"])
+            )
+        );
+        assert_eq!(
+            crate::catalog_holds::judge(false, Some(&now), Some(&accepted), false),
+            crate::catalog_holds::Verdict::Serve
+        );
+        // An accepted set stored without splits ([FINE]), widened by the served release at its
+        // target: an unchanged update at the same target isn't held; a lowered target still is.
+        let stored = names(&["ACCESS_FINE_LOCATION"]);
+        let judge = |update: &[String], accepted: &[String]| {
+            crate::catalog_holds::judge(false, Some(update), Some(accepted), false)
+        };
+        assert!(matches!(
+            judge(&now, &stored),
+            crate::catalog_holds::Verdict::Hold(..)
+        ));
+        let widened = crate::catalog_holds::with_splits(&stored, &now, 34);
+        assert_eq!(widened, now);
+        assert_eq!(judge(&now, &widened), crate::catalog_holds::Verdict::Serve);
+        let widened_old = crate::catalog_holds::with_splits(&stored, &old, 28);
+        assert_eq!(widened_old, old);
+        assert_eq!(
+            judge(&old, &widened_old),
+            crate::catalog_holds::Verdict::Serve
+        );
+        assert_eq!(
+            judge(&old, &widened),
+            crate::catalog_holds::Verdict::Hold(
+                crate::catalog_holds::Reason::Permissions,
+                names(&["ACCESS_BACKGROUND_LOCATION"])
+            )
+        );
+        // Only what the accepted names bring: a split of a name not accepted isn't added.
+        assert_eq!(
+            crate::catalog_holds::with_splits(&[], &old, 28),
+            Vec::<String>::new()
+        );
+    }
+
     /// Design 90 QA H1, H2, L5: Android takes the string pool and resource map only before the
     /// first node, so a later one makes the list unreadable and never renames the package; a NUL
     /// or control character in an element's name or a permission is unreadable; `-sdk-23` counts;
@@ -925,7 +1277,11 @@ mod tests {
         sdk23.push(uses(6, 5));
         assert_eq!(
             read(sdk23).permissions,
-            Some(vec!["android.permission.READ_CONTACTS".to_string()])
+            Some(vec![
+                // No `<uses-sdk>`: below every split's target.
+                "android.permission.READ_CALL_LOG".to_string(),
+                "android.permission.READ_CONTACTS".to_string()
+            ])
         );
         // A second pool (or map) after the first node: Android ignores it, we can't follow.
         for late in [pool_chunk(&strings), map_chunk(&ids)] {

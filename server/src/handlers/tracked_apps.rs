@@ -811,6 +811,7 @@ pub async fn backfill_release_hashes(state: AppState) {
     backfill_pins(&state).await;
     backfill_version_codes(&state).await;
     backfill_release_permissions(&state).await;
+    backfill_split_permissions(&state).await;
 }
 
 /// SHA-256 (lower-case hex) of a file, read in 64 KiB pieces. Blocking.
@@ -1163,6 +1164,63 @@ async fn backfill_release_permissions(state: &AppState) {
         .await
         {
             tracing::warn!(app_id = id, %err, "can't store the cached APK's permissions");
+        }
+    }
+}
+
+/// Reads each served release's permissions again with the split permissions Android adds for
+/// its target SDK, and adds those its accepted names bring to the accepted set
+/// ([crate::catalog_holds::with_splits]): a set stored before the reader added them would
+/// otherwise hold the next unchanged update once. Idempotent; run at every startup after the
+/// permissions backfill; a row is only updated while it still names the read file and set.
+/// Best-effort.
+async fn backfill_split_permissions(state: &AppState) {
+    let rows: Vec<(i64, String, String, Option<String>)> = match sqlx::query_as(
+        "SELECT id, latest_release_file_path, accepted_permissions, latest_release_permissions \
+         FROM tracked_apps WHERE latest_release_file_path IS NOT NULL \
+         AND accepted_permissions IS NOT NULL",
+    )
+    .fetch_all(&state.db)
+    .await
+    {
+        Ok(rows) => rows,
+        Err(err) => {
+            tracing::warn!(%err, "can't list the served files to read the split permissions of");
+            return;
+        }
+    };
+    for (id, path, accepted_json, served_json) in rows {
+        let Some(accepted) = crate::catalog_holds::read_names(Some(&accepted_json)) else {
+            continue;
+        };
+        let identity = match apk_identity(&path).await {
+            Ok(identity) => identity,
+            Err(err) => {
+                tracing::warn!(app_id = id, %err, "can't read the cached APK");
+                continue;
+            }
+        };
+        let (Some(served), Some(target)) = (identity.permissions, identity.split_target) else {
+            continue;
+        };
+        let widened = crate::catalog_holds::with_splits(&accepted, &served, target);
+        let served_now = crate::catalog_holds::names_json(&served);
+        if widened == accepted && served_json.as_deref() == Some(served_now.as_str()) {
+            continue;
+        }
+        if let Err(err) = sqlx::query(
+            "UPDATE tracked_apps SET accepted_permissions = ?, latest_release_permissions = ? \
+             WHERE id = ? AND latest_release_file_path = ? AND accepted_permissions = ?",
+        )
+        .bind(crate::catalog_holds::names_json(&widened))
+        .bind(&served_now)
+        .bind(id)
+        .bind(&path)
+        .bind(&accepted_json)
+        .execute(&state.db)
+        .await
+        {
+            tracing::warn!(app_id = id, %err, "can't store the split permissions");
         }
     }
 }
@@ -8611,7 +8669,7 @@ mod tests {
         );
         assert_eq!(
             held.new_permissions,
-            r#"["android.permission.ACCESS_FINE_LOCATION","android.permission.READ_CONTACTS","bind:android.permission.BIND_ACCESSIBILITY_SERVICE","bind:android.permission.BIND_DEVICE_ADMIN"]"#
+            r#"["android.permission.ACCESS_COARSE_LOCATION","android.permission.ACCESS_FINE_LOCATION","android.permission.READ_CONTACTS","bind:android.permission.BIND_ACCESSIBILITY_SERVICE","bind:android.permission.BIND_DEVICE_ADMIN"]"#
         );
         let events = held_events().await;
         assert_eq!(events.len(), 1, "{events:?}");
