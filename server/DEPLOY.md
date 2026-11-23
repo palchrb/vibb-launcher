@@ -668,8 +668,9 @@ and smoke-tested; `server-release-index`, without secrets, plans the multi-arch 
 that the index names exactly the two tested digests, writes the statement from the index's digest, and signs both
 tarballs, `update.sh`, `update-image.sh` and the statement. It runs no docker and no script from the repo, and checks
 every signature against the pinned key. Only then does `server-release-image-merge` (no key) check the signed
-statement with `update-image.sh --verify-statement`, compute the index's digest again, and tag `X.Y.Z` (and `latest`)
-when both match; it compares the tagged digest a third time and attests it. The release is published last, with the
+statement with `update-image.sh --verify-statement` and compute the index's digest again; when both match it pushes
+exactly those bytes by digest, reads them back from the registry (a third match), and only then tags `X.Y.Z` (and
+`latest`) and attests it. The scripts the key signs come from a checkout-only job that runs no toolchain. The release is published last, with the
 statement and every `.minisig`. Without the secret, or when it doesn't match the pinned key, the run stops at the
 signing job: nothing is tagged or published. The two untagged leg images it leaves in the package are named by
 nothing.

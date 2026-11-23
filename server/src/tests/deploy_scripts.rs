@@ -318,7 +318,7 @@ fn the_release_signs_the_image_before_any_tag_in_release_server() {
     assert!(sign.contains("secrets.SERVER_MINISIGN_KEY"));
     assert_eq!(release.matches("secrets.SERVER_MINISIGN_KEY").count(), 1);
     assert!(
-        sign.contains("needs: [ server-release-test, server-release-build, server-release-index ]")
+        sign.contains("needs: [ server-release-test, server-release-scripts, server-release-build, server-release-index ]")
     );
     assert!(sign.contains(tag_only));
     assert!(sign.contains("pattern: server-tarball-*"));
@@ -364,11 +364,38 @@ fn the_release_signs_the_image_before_any_tag_in_release_server() {
     let compared = merge
         .find(r#"[ "$planned" = "$SIGNED" ]"#)
         .expect("the planned digest is compared");
+    // Pushed by the signed digest, read back from the registry, and only then tagged.
+    let by_digest = merge
+        .find(r#"pushed="$(put_index "$SIGNED")""#)
+        .expect("the index pushed by digest");
+    let read_back = merge
+        .find(r#"[ "$digest" = "$SIGNED" ]"#)
+        .expect("the third compare");
     let tagged = merge
-        .find(r#"docker buildx imagetools create "${tags[@]}""#)
+        .find(r#"pushed="$(put_index "$tag")""#)
         .expect("the tags");
-    assert!(verified < compared && compared < tagged);
-    assert!(merge[tagged..].contains(r#"[ "$digest" = "$SIGNED" ]"#));
+    assert!(verified < compared && compared < by_digest);
+    assert!(by_digest < read_back && read_back < tagged);
+    assert!(!merge.contains(r#"imagetools create "${tags[@]}""#));
+    assert!(!merge.contains("imagetools create -t"));
+
+    // The scripts the key signs come from a job that checks out and uploads, nothing else.
+    let scripts = job("server-release-scripts");
+    let code: Vec<&str> = scripts
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .collect();
+    for never in ["cargo", "rust-toolchain", "run:", "needs:"] {
+        assert!(
+            !code.iter().any(|line| line.contains(never)),
+            "{never}: {scripts}"
+        );
+    }
+    assert!(scripts.contains("name: server-deploy-scripts"));
+    assert!(sign.contains("server-release-scripts"));
+    assert!(!job("server-release-test").contains("server-deploy-scripts"));
+    // Nothing from the keyless jobs is printed in the key's job.
+    assert!(!sign.contains(r#"cat "$index""#));
 
     let publish = job("server-release-publish");
     assert!(publish.contains("name: server-release-signed"));

@@ -15,7 +15,8 @@ name: Server release
 #    newline the dry run prints is stripped), as the artifact index.json.
 # 4. server-release-sign, in the protected "release-server" environment (its deployment rule allows
 #    server-v* tags only; the SERVER_MINISIGN_KEY secret lives there, not in the repo): signs both
-#    tarballs, update.sh and update-image.sh with minisign (security review M5; the trusted comment
+#    tarballs, update.sh and update-image.sh (uploaded by server-release-scripts, a checkout-only job
+#    that runs no toolchain) with minisign (security review M5; the trusted comment
 #    is "<file> <tag>"), and the image statement handy-server-image.txt - one line
 #    "ghcr.io/<owner>/handy-server@sha256:<the index's digest> <tag>" - after checking that the
 #    index names exactly the two tested digests. Every signature is checked against the public key
@@ -23,10 +24,10 @@ name: Server release
 #    download/upload-artifact. No secret, or no pinned key: the run stops here, before any image is
 #    tagged or anything is published (server/DEPLOY.md, "Release signing").
 # 5. server-release-image-merge (no key) checks the signed statement with update-image.sh
-#    --verify-statement and the index's digest again, then joins the two digests into the multi-arch
-#    image ghcr.io/<owner>/handy-server, tagged X.Y.Z (and latest, if X.Y.Z is the highest
-#    server-v* tag - a patch on an older line doesn't take it), compares the tagged digest a third
-#    time, and attests its build provenance.
+#    --verify-statement and the index's digest again, pushes exactly those index bytes by digest,
+#    reads them back (a third match), and only then tags the multi-arch image
+#    ghcr.io/<owner>/handy-server X.Y.Z (and latest, if X.Y.Z is the highest server-v* tag - a
+#    patch on an older line doesn't take it) and attests its build provenance.
 # 6. server-release-publish, last: the GitHub release with both tarballs, their .sha256, update.sh,
 #    update-image.sh, the image statement and their signatures, as signed in step 4.
 #    server/deploy/install.sh
@@ -134,8 +135,20 @@ jobs:
           cargo fmt --check
           cargo test --locked
 
-      # The two root scripts the sign job signs, from this tagged checkout: the sign job itself checks
-      # nothing out and runs nothing from the repo.
+  # The two root scripts the sign job signs, straight from a checkout of the tag: a job of their own
+  # that runs no toolchain, cargo or build script, so nothing the build runs can touch them. The sign
+  # job itself checks nothing out and runs nothing from the repo.
+  server-release-scripts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+          sparse-checkout: server/deploy
+
       - name: Upload the deploy scripts
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
@@ -429,7 +442,7 @@ jobs:
   # tarballs, update-image.sh the image statement). Only this job sees the key, and it runs no docker,
   # no repo script and no action but download/upload-artifact (no checkout).
   server-release-sign:
-    needs: [ server-release-test, server-release-build, server-release-index ]
+    needs: [ server-release-test, server-release-scripts, server-release-build, server-release-index ]
     if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/server-v') }}
     runs-on: ubuntu-24.04
     # It takes under a minute; a hung step (2026-11-10: `apt-get update`, 51 minutes until cancelled by hand) ends the job.
@@ -499,8 +512,8 @@ jobs:
           jq -e --arg amd64 "$amd64" --arg arm64 "$arm64" '
             (.manifests | length) == 2
             and ([.manifests[] | "\(.platform.os)/\(.platform.architecture)=\(.digest)"] | sort)
-              == (["linux/amd64=\($amd64)", "linux/arm64=\($arm64)"] | sort)' "$index" >/dev/null || {
-            echo "the index doesn't name exactly the two tested images:" >&2; cat "$index" >&2; exit 1; }
+              == (["linux/amd64=\($amd64)", "linux/arm64=\($arm64)"] | sort)' "$index" >/dev/null 2>&1 || {
+            echo "the index doesn't name exactly the two tested images" >&2; exit 1; }
           # The statement: one line, the index's digest over exactly those bytes, and the tag.
           image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/handy-server"
           index_digest="sha256:$(sha256sum "$index" | cut -c1-64)"
@@ -532,7 +545,8 @@ jobs:
 
   # Tags the image only once the signed statement names it: update-image.sh --verify-statement checks
   # the statement with the pinned key, the dry run's digest is computed again the same way, and the
-  # two must match before any tag goes on; the tagged digest is compared a third time. No key here.
+  # two must match; then exactly those bytes are pushed by digest, read back from the registry (the
+  # third match), and only then do the tags go on. No key here.
   server-release-image-merge:
     needs: [ server-release-test, server-release-build, server-release-image, server-release-index, server-release-sign ]
     if: ${{ !cancelled() && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/server-v') && needs.server-release-test.result == 'success' && needs.server-release-build.result == 'success' && needs.server-release-image.result == 'success' && needs.server-release-index.result == 'success' && needs.server-release-sign.result == 'success' }}
@@ -599,6 +613,7 @@ jobs:
         env:
           IMAGE: ${{ steps.name.outputs.image }}
           SIGNED: ${{ steps.statement.outputs.digest }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           [[ "$SIGNED" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "no signed digest: '$SIGNED'" >&2; exit 1; }
@@ -621,16 +636,41 @@ jobs:
           [ "$planned" = "$SIGNED" ] || { echo "the index would be $planned, the statement signs $SIGNED" >&2; exit 1; }
           echo "digest match 1: the statement verifies with the pinned key: $SIGNED"
           echo "digest match 2: the planned index: $planned"
-          tags=(-t "$IMAGE:$VERSION")
+          # Exactly those bytes go to the registry, first by digest only (no tag moves), through its API: a
+          # short-lived push token for this one repository, never on a command line.
+          index="$RUNNER_TEMP/index.json"
+          head -c -1 "$RUNNER_TEMP/raw" > "$index"
+          media_type="$(jq -r '.mediaType' "$index")"
+          [[ "$media_type" =~ ^application/vnd\.(oci\.image\.index\.v1|docker\.distribution\.manifest\.list\.v2)\+json$ ]] || {
+            echo "the index's media type is '$media_type'" >&2; exit 1; }
+          repo="${IMAGE#ghcr.io/}"
+          token="$(printf 'user = "%s:%s"\n' "$GITHUB_ACTOR" "$GH_TOKEN" \
+            | curl -fsS -K - "https://ghcr.io/token?service=ghcr.io&scope=repository:$repo:pull,push" | jq -r '.token')"
+          [ -n "$token" ] && [ "$token" != null ] || { echo "no push token from ghcr.io" >&2; exit 1; }
+          echo "::add-mask::$token"
+          put_index() {
+            printf 'header = "Authorization: Bearer %s"\n' "$token" \
+              | curl -fsS -K - -X PUT -H "Content-Type: $media_type" --data-binary "@$index" \
+                -o /dev/null -D - "https://ghcr.io/v2/$repo/manifests/$1" \
+              | tr -d '\r' | sed -n 's/^[Dd]ocker-[Cc]ontent-[Dd]igest: *//p'
+          }
+          pushed="$(put_index "$SIGNED")"
+          [ "$pushed" = "$SIGNED" ] || { echo "the registry stored $pushed, the statement signs $SIGNED" >&2; exit 1; }
+          # The third match, before any tag: what the registry serves under the signed digest.
+          digest="$(docker buildx imagetools inspect "$IMAGE@$SIGNED" --format '{{json .Manifest}}' | jq -r '.digest')"
+          [ "$digest" = "$SIGNED" ] || { echo "$IMAGE@$SIGNED reads as $digest" >&2; exit 1; }
+          echo "digest match 3: the registry holds $IMAGE@$digest"
+          # Only now the tags, each the same bytes.
+          tags=("$VERSION")
           if [ "$LATEST" = true ]; then
-            tags+=(-t "$IMAGE:latest")
+            tags+=(latest)
           fi
-          docker buildx imagetools create "${tags[@]}" "${sources[@]}"
-          # The index's digest, for the attestation: the signed one, a third time.
-          digest="$(docker buildx imagetools inspect "$IMAGE:$VERSION" --format '{{json .Manifest}}' | jq -r '.digest')"
-          [ "$digest" = "$SIGNED" ] || { echo "$IMAGE:$VERSION is $digest, the statement signs $SIGNED" >&2; exit 1; }
-          echo "digest match 3: $IMAGE:$VERSION is $digest"
-          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          for tag in "${tags[@]}"; do
+            pushed="$(put_index "$tag")"
+            [ "$pushed" = "$SIGNED" ] || { echo "$IMAGE:$tag was stored as $pushed, not $SIGNED" >&2; exit 1; }
+            echo "tagged $IMAGE:$tag"
+          done
+          echo "digest=$SIGNED" >> "$GITHUB_OUTPUT"
 
       - name: Attest build provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
