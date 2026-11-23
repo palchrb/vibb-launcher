@@ -23,6 +23,10 @@
 //!   with the app sends it again.
 //! - **Served** ([view], `GET /app-logos/{hash}`) behind the parent's session, only a hash some row names (a phone's or
 //!   the catalog's).
+//! - **The Automatic tile** (design 87b, migration 0168, `device_app_logos.tile_hash`): the tile the phone draws for the
+//!   app's Automatic look, reported beside the logo (`installed_apps[].auto_tile`; the logo's own hash for an app
+//!   without a monochrome layer) and handled as a logo everywhere - wanted, uploaded, counted, named, pruned. The
+//!   catalog keeps no tile; the PWA's "Vises som" preview shows it under Automatisk ([phone_tile], [catalog_tile]).
 
 use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
@@ -52,10 +56,11 @@ pub const MAX_BYTES: usize = 80 * 1024;
 /// The most hashes one answer asks for.
 pub const MAX_WANTED: usize = 40;
 /// The store's caps: past either, nothing more is wanted (`app_logos_full`).
-pub const MAX_LOGO_FILES: usize = 4_000;
+pub const MAX_LOGO_FILES: usize = 8_000;
 pub const MAX_LOGO_BYTES: u64 = 64 * 1024 * 1024;
-/// One phone's caps (R2-M2): the files its rows name, shared ones counted for every phone naming them.
-pub const MAX_LOGOS_PER_PHONE: usize = 300;
+/// One phone's caps (R2-M2): the files its rows name, shared ones counted for every phone naming them. Two a phone's
+/// app since design 87b (the logo and the Automatic tile); the byte caps are unchanged.
+pub const MAX_LOGOS_PER_PHONE: usize = 600;
 pub const MAX_LOGO_BYTES_PER_PHONE: u64 = 12 * 1024 * 1024;
 /// Uploads a phone may make in a day, charged before the decode (a refused one counts too).
 pub const UPLOADS_A_DAY: u32 = 300;
@@ -170,26 +175,37 @@ pub fn src_of(hash: &str) -> String {
     format!("{ROUTE}/{hash}")
 }
 
-/// The report's `(package, logo)` pairs, taken out of the apps (the intake has checked each logo): the logos go
-/// to `device_app_logos`, never into the stored snapshot.
-pub fn take_logos(apps: Option<&mut Vec<InstalledApp>>) -> Vec<(String, String)> {
+/// One app's logo as a report names it: the package, the logo's hash and the Automatic tile's (design 87b).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Reported {
+    pub package: String,
+    pub logo: String,
+    pub tile: Option<String>,
+}
+
+/// The report's logos, taken out of the apps (the intake has checked each logo and tile): they go to
+/// `device_app_logos`, never into the stored snapshot.
+pub fn take_logos(apps: Option<&mut Vec<InstalledApp>>) -> Vec<Reported> {
     apps.map(|apps| {
         apps.iter_mut()
-            .filter_map(|app| app.logo.take().map(|logo| (app.package_name.clone(), logo)))
+            .filter_map(|app| {
+                let tile = app.auto_tile.take();
+                app.logo.take().map(|logo| Reported {
+                    package: app.package_name.clone(),
+                    logo,
+                    tile,
+                })
+            })
             .collect()
     })
     .unwrap_or_default()
 }
 
-/// A report's apps move this phone's rows: `logos` (the report's pairs) upsert the rows whose hash changed, a
-/// package not in `apps` loses its row, the rest stay. The files only the removed or replaced rows named are
-/// deleted after the commit. Best effort: a failure is logged.
-pub async fn intake(
-    state: &AppState,
-    device_id: i64,
-    apps: &[InstalledApp],
-    logos: &[(String, String)],
-) {
+/// A report's apps move this phone's rows: `logos` (the report's) upsert the rows whose logo or tile changed - a
+/// reported logo sets the row's pair to exactly what the report says -, a package not in `apps` loses its row, the
+/// rest stay. The files only the removed or replaced rows named are deleted after the commit. Best effort: a failure
+/// is logged.
+pub async fn intake(state: &AppState, device_id: i64, apps: &[InstalledApp], logos: &[Reported]) {
     let lost = match apply_rows(&state.db, device_id, apps, logos).await {
         Ok(lost) => lost,
         Err(err) => {
@@ -206,23 +222,24 @@ async fn apply_rows(
     db: &sqlx::SqlitePool,
     device_id: i64,
     apps: &[InstalledApp],
-    logos: &[(String, String)],
+    logos: &[Reported],
 ) -> Result<Vec<String>, sqlx::Error> {
     let installed: HashSet<&str> = apps.iter().map(|app| app.package_name.as_str()).collect();
-    let reported: HashMap<&str, &str> = logos
+    let reported: HashMap<&str, &Reported> = logos
         .iter()
-        .map(|(package, hash)| (package.as_str(), hash.as_str()))
+        .map(|logo| (logo.package.as_str(), logo))
         .collect();
     let mut tx = db.begin().await?;
-    let rows: Vec<(String, String)> =
-        sqlx::query_as("SELECT package_name, logo_hash FROM device_app_logos WHERE device_id = ?")
-            .bind(device_id)
-            .fetch_all(&mut *tx)
-            .await?;
+    let rows: Vec<(String, String, Option<String>)> = sqlx::query_as(
+        "SELECT package_name, logo_hash, tile_hash FROM device_app_logos WHERE device_id = ?",
+    )
+    .bind(device_id)
+    .fetch_all(&mut *tx)
+    .await?;
     let mut lost = Vec::new();
-    // The packages whose row is new or changed: their logo replaces the catalog's kept one.
+    // The packages whose logo is new or changed: their logo replaces the catalog's kept one.
     let mut changed: HashSet<&str> = HashSet::new();
-    for (package, hash) in &rows {
+    for (package, hash, tile) in &rows {
         if !installed.contains(package.as_str()) {
             sqlx::query("DELETE FROM device_app_logos WHERE device_id = ? AND package_name = ?")
                 .bind(device_id)
@@ -230,35 +247,46 @@ async fn apply_rows(
                 .execute(&mut *tx)
                 .await?;
             lost.push(hash.clone());
+            lost.extend(tile.clone());
         } else if let Some(new) = reported.get(package.as_str()).copied()
-            && new != hash.as_str()
+            && (new.logo != *hash || new.tile != *tile)
         {
             sqlx::query(
-                "UPDATE device_app_logos SET logo_hash = ?, updated_at = datetime('now') \
+                "UPDATE device_app_logos SET logo_hash = ?, tile_hash = ?, updated_at = datetime('now') \
                  WHERE device_id = ? AND package_name = ?",
             )
-            .bind(new)
+            .bind(&new.logo)
+            .bind(&new.tile)
             .bind(device_id)
             .bind(package)
             .execute(&mut *tx)
             .await?;
-            lost.push(hash.clone());
-            changed.insert(package.as_str());
+            if new.logo != *hash {
+                lost.push(hash.clone());
+                changed.insert(package.as_str());
+            }
+            if new.tile != *tile {
+                lost.extend(tile.clone());
+            }
         }
     }
-    let known: HashSet<&str> = rows.iter().map(|(package, _)| package.as_str()).collect();
-    for (package, hash) in logos {
-        if !known.contains(package.as_str()) {
+    let known: HashSet<&str> = rows
+        .iter()
+        .map(|(package, _, _)| package.as_str())
+        .collect();
+    for logo in logos {
+        if !known.contains(logo.package.as_str()) {
             sqlx::query(
-                "INSERT INTO device_app_logos (device_id, package_name, logo_hash, updated_at) \
-                 VALUES (?, ?, ?, datetime('now'))",
+                "INSERT INTO device_app_logos (device_id, package_name, logo_hash, tile_hash, updated_at) \
+                 VALUES (?, ?, ?, ?, datetime('now'))",
             )
             .bind(device_id)
-            .bind(package)
-            .bind(hash)
+            .bind(&logo.package)
+            .bind(&logo.logo)
+            .bind(&logo.tile)
             .execute(&mut *tx)
             .await?;
-            changed.insert(package.as_str());
+            changed.insert(logo.package.as_str());
         }
     }
     let catalog: Vec<(i64, String, Option<String>)> = sqlx::query_as(
@@ -267,7 +295,10 @@ async fn apply_rows(
     .fetch_all(&mut *tx)
     .await?;
     for (id, package, kept) in catalog {
-        let Some(new) = reported.get(package.as_str()).copied() else {
+        let Some(new) = reported
+            .get(package.as_str())
+            .map(|logo| logo.logo.as_str())
+        else {
             continue;
         };
         if kept.as_deref() == Some(new) || (kept.is_some() && !changed.contains(package.as_str())) {
@@ -285,7 +316,7 @@ async fn apply_rows(
 }
 
 /// The answer to a status report: the wanted list, or `204` when it wants none.
-pub async fn answer(state: &AppState, device_id: i64, logos: &[(String, String)]) -> Response {
+pub async fn answer(state: &AppState, device_id: i64, logos: &[Reported]) -> Response {
     let wanted_logos = wanted(state, device_id, logos).await;
     if wanted_logos.is_empty() {
         return StatusCode::NO_CONTENT.into_response();
@@ -293,8 +324,9 @@ pub async fn answer(state: &AppState, device_id: i64, logos: &[(String, String)]
     Json(serde_json::json!({ "wanted_logos": wanted_logos })).into_response()
 }
 
-/// The hashes of `logos` to ask this phone for (design 87 §4.2), allowed apps first, then by package name.
-async fn wanted(state: &AppState, device_id: i64, logos: &[(String, String)]) -> Vec<String> {
+/// The hashes of `logos` to ask this phone for (design 87 §4.2), allowed apps first, then by package name; each
+/// app's logo, then its Automatic tile (design 87b).
+async fn wanted(state: &AppState, device_id: i64, logos: &[Reported]) -> Vec<String> {
     let now = Instant::now();
     let allowlist: Option<String> =
         sqlx::query_scalar("SELECT allowlist_json FROM device_policy WHERE device_id = ?")
@@ -310,11 +342,19 @@ async fn wanted(state: &AppState, device_id: i64, logos: &[(String, String)]) ->
         .unwrap_or_default()
         .into_iter()
         .collect();
-    let mut ordered: Vec<&(String, String)> = logos.iter().collect();
-    ordered.sort_by(|a, b| (!allowed.contains(&a.0), &a.0).cmp(&(!allowed.contains(&b.0), &b.0)));
+    let mut ordered: Vec<&Reported> = logos.iter().collect();
+    ordered.sort_by(|a, b| {
+        (!allowed.contains(&a.package), &a.package)
+            .cmp(&(!allowed.contains(&b.package), &b.package))
+    });
     let mut seen = HashSet::new();
     let mut candidates = Vec::new();
-    for (_, hash) in ordered {
+    let mut hashes: Vec<&String> = Vec::new();
+    for logo in ordered {
+        hashes.push(&logo.logo);
+        hashes.extend(logo.tile.as_ref());
+    }
+    for hash in hashes {
         if !seen.insert(hash.as_str()) || state.app_logos.is_refused(hash, now) {
             continue;
         }
@@ -400,11 +440,7 @@ async fn store_usage(dir: &Path) -> Option<(usize, u64)> {
 
 /// The stored files this phone's rows name: how many and their bytes.
 async fn phone_usage(state: &AppState, device_id: i64) -> Result<(usize, u64), sqlx::Error> {
-    let hashes: Vec<String> =
-        sqlx::query_scalar("SELECT DISTINCT logo_hash FROM device_app_logos WHERE device_id = ?")
-            .bind(device_id)
-            .fetch_all(&state.db)
-            .await?;
+    let hashes = named_by(&state.db, device_id).await?;
     let (mut files, mut bytes) = (0, 0);
     for hash in hashes {
         if let Some(path) = path_for(&state.app_logo_dir, &hash)
@@ -417,14 +453,26 @@ async fn phone_usage(state: &AppState, device_id: i64) -> Result<(usize, u64), s
     Ok((files, bytes))
 }
 
-/// Whether one of `device_id`'s rows names `hash`.
+/// Whether one of `device_id`'s rows names `hash`, as a logo or an Automatic tile.
 async fn names(db: &sqlx::SqlitePool, device_id: i64, hash: &str) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM device_app_logos WHERE device_id = ? AND logo_hash = ?)",
+        "SELECT EXISTS (SELECT 1 FROM device_app_logos \
+         WHERE device_id = ?1 AND (logo_hash = ?2 OR tile_hash = ?2))",
     )
     .bind(device_id)
     .bind(hash)
     .fetch_one(db)
+    .await
+}
+
+/// Every distinct hash `device_id`'s rows name, logos and Automatic tiles.
+async fn named_by(db: &sqlx::SqlitePool, device_id: i64) -> Result<Vec<String>, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT logo_hash FROM device_app_logos WHERE device_id = ?1 \
+         UNION SELECT tile_hash FROM device_app_logos WHERE device_id = ?1 AND tile_hash IS NOT NULL",
+    )
+    .bind(device_id)
+    .fetch_all(db)
     .await
 }
 
@@ -559,13 +607,13 @@ fn decode_limits() -> Limits {
     limits
 }
 
-/// Whether a phone's row or a catalog row names `hash`.
+/// Whether a phone's row (its logo or its Automatic tile) or a catalog row names `hash`.
 async fn is_named(db: &sqlx::SqlitePool, hash: &str) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM device_app_logos WHERE logo_hash = ?) \
-         OR EXISTS (SELECT 1 FROM tracked_apps WHERE logo_hash = ?)",
+        "SELECT EXISTS (SELECT 1 FROM device_app_logos WHERE logo_hash = ?1) \
+         OR EXISTS (SELECT 1 FROM device_app_logos WHERE tile_hash = ?1) \
+         OR EXISTS (SELECT 1 FROM tracked_apps WHERE logo_hash = ?1)",
     )
-    .bind(hash)
     .bind(hash)
     .fetch_one(db)
     .await
@@ -595,6 +643,7 @@ pub async fn prune_all(state: &AppState) {
     let _files = APP_LOGO_FILES.lock().await;
     let named: HashSet<String> = match sqlx::query_scalar(
         "SELECT logo_hash FROM device_app_logos \
+         UNION SELECT tile_hash FROM device_app_logos WHERE tile_hash IS NOT NULL \
          UNION SELECT logo_hash FROM tracked_apps WHERE logo_hash IS NOT NULL",
     )
     .fetch_all(&state.db)
@@ -640,14 +689,10 @@ async fn remove(path: &Path) {
 /// The hashes `device_id`'s rows name, read before its delete (the rows go with the phone): [prune_hashes] then
 /// deletes the files no other phone names.
 pub async fn hashes_of(db: &sqlx::SqlitePool, device_id: i64) -> Vec<String> {
-    sqlx::query_scalar("SELECT DISTINCT logo_hash FROM device_app_logos WHERE device_id = ?")
-        .bind(device_id)
-        .fetch_all(db)
-        .await
-        .unwrap_or_else(|err| {
-            tracing::warn!(device_id, %err, "can't list the phone's app logos");
-            Vec::new()
-        })
+    named_by(db, device_id).await.unwrap_or_else(|err| {
+        tracing::warn!(device_id, %err, "can't list the phone's app logos");
+        Vec::new()
+    })
 }
 
 /// `GET /app-logos/{hash}`, behind the parent's session: only a valid hash some row (a phone's or the catalog's) names
@@ -696,6 +741,52 @@ pub async fn phone_logos(
         }
     }
     Ok(logos)
+}
+
+/// Design 87b: the Automatic tile "Vises som" previews for `package` on this phone - its own row's tile; for an app
+/// this phone has no row of (a ticked catalog app not installed here) the tile most phones name ([catalog_tile]).
+/// `None` (the letter) when there is none or its file isn't stored.
+pub async fn phone_tile(
+    state: &AppState,
+    device_id: i64,
+    package: &str,
+) -> Result<Option<String>, sqlx::Error> {
+    let row: Option<Option<String>> = sqlx::query_scalar(
+        "SELECT tile_hash FROM device_app_logos WHERE device_id = ? AND package_name = ?",
+    )
+    .bind(device_id)
+    .bind(package)
+    .fetch_optional(&state.db)
+    .await?;
+    match row {
+        Some(tile) => Ok(stored_src(state, tile.as_deref()).await),
+        None => catalog_tile(state, package).await,
+    }
+}
+
+/// Design 87b: the catalog app's Automatic tile - the one most phone rows name for `package`, a tie to the most
+/// recently updated, whose file is stored; `None` (the letter) else. The catalog keeps no tile of its own.
+pub async fn catalog_tile(state: &AppState, package: &str) -> Result<Option<String>, sqlx::Error> {
+    let tiles: Vec<String> = sqlx::query_scalar(
+        "SELECT tile_hash FROM device_app_logos WHERE package_name = ? AND tile_hash IS NOT NULL \
+         GROUP BY tile_hash ORDER BY COUNT(*) DESC, MAX(updated_at) DESC, tile_hash",
+    )
+    .bind(package)
+    .fetch_all(&state.db)
+    .await?;
+    for hash in tiles {
+        if let Some(src) = stored_src(state, Some(&hash)).await {
+            return Ok(Some(src));
+        }
+    }
+    Ok(None)
+}
+
+/// The URL of a stored file's `hash`, `None` for none, an invalid hash or a file not stored.
+async fn stored_src(state: &AppState, hash: Option<&str>) -> Option<String> {
+    let hash = hash?;
+    let path = path_for(&state.app_logo_dir, hash)?;
+    is_stored(&path).await.then(|| src_of(hash))
 }
 
 /// The catalog rows' logos (§8.1, R2-L4): per package the hash most phone rows name, a tie to the most recently

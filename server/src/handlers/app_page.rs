@@ -318,6 +318,15 @@ pub(crate) async fn render(
         form = form.builtin(display::MESSAGES_LOOK);
     }
     form.logo = logo;
+    // Design 87b: Automatisk previews the tile this phone drew (a failed read is logged: the letter, as before).
+    if !builtin {
+        form.auto_src = crate::app_logos::phone_tile(state, id, package)
+            .await
+            .unwrap_or_else(|err| {
+                tracing::error!(device_id = id, %err, "can't read the app's Automatic tile");
+                None
+            });
+    }
     form.own_row = current.is_some() || data.off_home.contains(package);
     // Design 113: the catalog's default is said only beside Tilbakestill (the phone has its own value).
     form.catalog_default = form

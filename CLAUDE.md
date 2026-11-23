@@ -293,7 +293,9 @@ compare the copies. The policy's
 The apps' real logos (design 87) are `server/testdata/app_logos.json`, byte-identical in
 `launcher/app/src/test/resources/`: the limits (`size_px`, `max_bytes`, `max_per_phone`,
 `max_wanted`), a test PNG (`png_base64`, a disc with a text chunk the server's re-encode drops) and its `png_sha256`,
-`report` (the exact status body with `installed_apps[].logo`), `answer` (the report's `200 {"wanted_logos"}`), `upload`
+design 87b's Automatic tile (`tile_png_base64`, `tile_png_sha256`), `report` (the exact status body with
+`installed_apps[].logo` and `auto_tile` - an app without a monochrome layer names its logo as its tile), `answer` (the
+report's `200 {"wanted_logos"}`), `upload`
 (`POST /api/devices/app-logos/{hash}`, `image/png`) and `answers` (each upload case's status). The server's
 `tests::app_logos::the_contract` posts `report`, uploads the PNG and makes every `answers` row; `intake_limits` keeps
 `report`'s keys; the launcher's `AppLogosTest` encodes `report` exactly from `InstalledApp`, decodes `answer` into

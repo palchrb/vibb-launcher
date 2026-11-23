@@ -5,6 +5,7 @@ import android.content.pm.ApplicationInfo
 import android.content.pm.LauncherApps
 import android.content.res.Configuration
 import android.graphics.Bitmap
+import android.graphics.drawable.AdaptiveIconDrawable
 import android.graphics.drawable.Drawable
 import android.os.Build
 import android.os.Process
@@ -25,7 +26,9 @@ import java.io.File
 /**
  * Design 87 step 2: each installed app's own logo, drawn by the phone as "App logo" draws it
  * ([KidAvatars.drawOwnLogo], [APP_LOGO_SIZE_PX] px PNG), its hash in the status report (`installed_apps[].logo`) and
- * the file uploaded when the server's answer asks for it. The rules are the pure [AppLogoPlan.kt]; this file loads,
+ * the file uploaded when the server's answer asks for it. Design 87b: beside it the tile Home draws for Automatic
+ * ([KidAvatars.drawVibbMono], `installed_apps[].auto_tile`), uploaded the same way - the logo itself for an app
+ * without a monochrome layer. The rules are the pure [AppLogoPlan.kt]; this file loads,
  * draws, stores and posts. The cache is `noBackupFilesDir/app_logos/` (`<hash>.png` and [LOGO_INDEX_FILE]). Nothing
  * here throws into the sync.
  */
@@ -45,9 +48,9 @@ object AppLogos {
     /**
      * Just before the status report (§3): drops the packages no longer in [sources], draws those whose key changed -
      * at most [LOGO_DRAW_BUDGET_MS] of drawing; the rest at the next sync - writes the index, deletes the files no
-     * entry names, and returns package -> hash for the report. Any failure: what was cached before, or nothing.
+     * entry names, and returns package -> hashes for the report. Any failure: what was cached before, or nothing.
      */
-    fun refresh(context: Context, sources: List<Source>): Map<String, String> = try {
+    fun refresh(context: Context, sources: List<Source>): Map<String, ReportedLogo> = try {
         synchronized(lock) {
             val dir = dir(context)
             val indexFile = File(dir, LOGO_INDEX_FILE)
@@ -61,7 +64,8 @@ object AppLogos {
             val apps = plan.index.apps.toMutableMap()
             val drawn = runWithin(plan.toDraw, LOGO_DRAW_BUDGET_MS, SystemClock::elapsedRealtime) { pkg ->
                 val source = bySource.getValue(pkg)
-                apps[pkg] = AppLogoEntry(current.getValue(pkg), draw(context, source, dir).hash)
+                val made = draw(context, source, dir)
+                apps[pkg] = AppLogoEntry(current.getValue(pkg), made.hash, made.tile)
             }
             val index = AppLogoIndex(apps)
             if (index != before) writeReplacing(indexFile) { it.write(encodeLogoIndex(index).toByteArray()) }
@@ -74,11 +78,13 @@ object AppLogos {
         emptyMap()
     }
 
-    /** A drawn logo's outcome: its [hash], `null` for a failed draw or a PNG over the limit. */
-    private class Drawn(val hash: String?)
+    /** A drawn logo's outcome: its [hash], `null` for a failed draw or a PNG over the limit; the Automatic [tile]'s
+     * (design 87b), `null` the same way - and always without a logo. */
+    private class Drawn(val hash: String?, val tile: String? = null)
 
-    /** Draws [source]'s logo and stores its file: [Drawn] with the hash, or without one when the draw failed or the
-     * PNG is too large (that key isn't drawn again). */
+    /** Draws [source]'s logo and its Automatic tile and stores their files: [Drawn] with the hashes, or without one
+     * when its draw failed or the PNG is too large (that key isn't drawn again). One drawable for both, so the tile of
+     * an app without a monochrome layer is the logo's own bytes. */
     private fun draw(context: Context, source: Source, dir: File): Drawn {
         val drawable = try {
             iconOf(context, source) ?: return Drawn(null)
@@ -88,28 +94,57 @@ object AppLogos {
         }
         return try {
             val png = try {
-                val bitmap = KidAvatars.drawOwnLogo(context, drawable, APP_LOGO_SIZE_PX)
-                ByteArrayOutputStream().use { out ->
-                    bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
-                    out.toByteArray()
-                }.also { bitmap.recycle() }
+                pngOf(KidAvatars.drawOwnLogo(context, drawable, APP_LOGO_SIZE_PX))
             } catch (e: OutOfMemoryError) {
                 // A drawable too large to draw: no logo for this key, the sync goes on.
                 Log.w(LOG_TAG, "The logo of ${source.packageName} ran out of memory")
                 return Drawn(null)
             }
-            val hash = logoHashOf(png)
-            if (hash == null) {
-                Log.i(LOG_TAG, "The logo of ${source.packageName} is ${png.size} bytes, over $APP_LOGO_MAX_BYTES")
-            } else {
-                val file = File(dir, "$hash.png")
-                if (!file.isFile) writeReplacing(file) { it.write(png) }
-            }
-            Drawn(hash)
+            val hash = store(dir, png, "logo", source.packageName) ?: return Drawn(null)
+            Drawn(hash, autoTile(drawable, source, dir, hash))
         } catch (e: Exception) {
             Log.w(LOG_TAG, "The logo of ${source.packageName} didn't draw: ${e.javaClass.simpleName}")
             Drawn(null)
         }
+    }
+
+    /**
+     * Design 87b: the Automatic tile as Home draws it ([KidAvatars.renderAppIcon]'s Vibb style for no parent choice,
+     * [com.kidslauncher.mdm.ui.home.iconRender]): the monochrome layer in white on the app's tone
+     * ([KidAvatars.drawVibbMono]); without one the logo itself, [logoHash], nothing drawn twice. `null` when it didn't
+     * draw or is over the limit; the logo stands either way.
+     */
+    private fun autoTile(drawable: Drawable, source: Source, dir: File, logoHash: String): String? {
+        val monochrome = (drawable as? AdaptiveIconDrawable)?.monochrome ?: return logoHash
+        return try {
+            val png = pngOf(KidAvatars.drawVibbMono(drawable, monochrome, source.packageName, APP_LOGO_SIZE_PX))
+            store(dir, png, "tile", source.packageName)
+        } catch (e: OutOfMemoryError) {
+            Log.w(LOG_TAG, "The tile of ${source.packageName} ran out of memory")
+            null
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "The tile of ${source.packageName} didn't draw: ${e.javaClass.simpleName}")
+            null
+        }
+    }
+
+    /** [bitmap] as PNG bytes; the bitmap is recycled. */
+    private fun pngOf(bitmap: Bitmap): ByteArray =
+        ByteArrayOutputStream().use { out ->
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+            out.toByteArray()
+        }.also { bitmap.recycle() }
+
+    /** Stores [png] as `<hash>.png` and returns the hash, or `null` (logged) when it is over the upload limit. */
+    private fun store(dir: File, png: ByteArray, what: String, packageName: String): String? {
+        val hash = logoHashOf(png)
+        if (hash == null) {
+            Log.i(LOG_TAG, "The $what of $packageName is ${png.size} bytes, over $APP_LOGO_MAX_BYTES")
+        } else {
+            val file = File(dir, "$hash.png")
+            if (!file.isFile) writeReplacing(file) { it.write(png) }
+        }
+        return hash
     }
 
     /**

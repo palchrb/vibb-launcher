@@ -1430,7 +1430,8 @@ private fun collectInstalledApps(context: Context): List<InstalledApp> {
             }
         }
         .distinctBy { it.packageName }
-    // Design 87 §3: each app's logo hash, drawn just before the report (at most 1.5 s; never throws).
+    // Design 87 §3: each app's logo and Automatic tile (87b) hashes, drawn just before the report (at most 1.5 s; never
+    // throws).
     return withLogos(apps, com.kidslauncher.mdm.appdisplay.AppLogos.refresh(context, logoSources.distinctBy { it.packageName }))
 }
 

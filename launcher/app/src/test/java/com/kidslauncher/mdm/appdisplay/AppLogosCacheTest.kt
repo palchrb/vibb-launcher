@@ -67,12 +67,48 @@ class AppLogosCacheTest {
             "org.example.stale" to key.copy(versionCode = 9), "org.example.failed" to key,
         )
         val logos = reportedLogos(index, current, setOf(h1))
-        assertEquals(mapOf("org.example.drawing" to h1), logos)
+        assertEquals(mapOf("org.example.drawing" to ReportedLogo(h1)), logos)
         val apps = withLogos(
             listOf(InstalledApp("org.example.drawing", "Drawing", false), InstalledApp("org.example.notes", "Notes", true)),
             logos,
         )
         assertEquals(listOf(h1, null), apps.map { it.logo })
+    }
+
+    /** Design 87b: the Automatic tile rides with its logo - reported only with its file, its missing file draws the
+     * app again, and its file is kept while an entry names it. */
+    @Test
+    fun `the tile is reported, drawn again and kept with its logo`() {
+        val h3 = "%064x".format(3)
+        val index = AppLogoIndex(
+            mapOf(
+                "org.example.drawing" to AppLogoEntry(key, h1, h3),
+                "org.example.plain" to AppLogoEntry(key, h2, h2),
+                "org.example.untiled" to AppLogoEntry(key, h2),
+            ),
+        )
+        val current = index.apps.mapValues { key }
+        assertEquals(
+            mapOf(
+                "org.example.drawing" to ReportedLogo(h1, h3),
+                "org.example.plain" to ReportedLogo(h2, h2),
+                "org.example.untiled" to ReportedLogo(h2),
+            ),
+            reportedLogos(index, current, setOf(h1, h2, h3)),
+        )
+        // The tile's file gone: the logo alone is reported, and the app is drawn again.
+        assertEquals(ReportedLogo(h1), reportedLogos(index, current, setOf(h1, h2))["org.example.drawing"])
+        assertEquals(listOf("org.example.drawing"), logoRefreshPlan(index, current, setOf(h1, h2)).toDraw)
+        assertEquals(emptyList<String>(), logoRefreshPlan(index, current, setOf(h1, h2, h3)).toDraw)
+        assertEquals(
+            listOf("x.png"),
+            unnamedLogoFiles(index, listOf("$h1.png", "$h2.png", "$h3.png", "x.png", LOGO_INDEX_FILE)),
+        )
+        val apps = withLogos(
+            listOf(InstalledApp("org.example.drawing", "Drawing", false), InstalledApp("org.example.untiled", "U", false)),
+            reportedLogos(index, current, setOf(h1, h2, h3)),
+        )
+        assertEquals(listOf(h1 to h3, h2 to null), apps.map { it.logo to it.autoTile })
     }
 
     @Test

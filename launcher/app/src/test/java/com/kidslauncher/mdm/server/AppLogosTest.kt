@@ -51,14 +51,24 @@ class AppLogosTest {
     }
 
     @Test
-    fun `the report encodes exactly the contract's, logo only where drawn`() {
+    fun `the tile png's hash is the contract's`() {
+        val png = Base64.getDecoder().decode(contract["tile_png_base64"]!!.jsonPrimitive.content)
+        assertEquals(contract["tile_png_sha256"]!!.jsonPrimitive.content, logoHashOf(png))
+    }
+
+    /** Design 87b: the Automatic tile beside the logo - its own hash where the app has a monochrome layer, the logo's
+     * where it has none. */
+    @Test
+    fun `the report encodes exactly the contract's, logo and tile only where drawn`() {
         val hash = contract["png_sha256"]!!.jsonPrimitive.content
+        val tile = contract["tile_png_sha256"]!!.jsonPrimitive.content
         val report = StatusReportRequest(
             lockReason = "NONE",
             kioskEngaged = true,
             installedApps = listOf(
-                InstalledApp("org.example.drawing", "Drawing", false, logo = hash),
+                InstalledApp("org.example.drawing", "Drawing", false, logo = hash, autoTile = tile),
                 InstalledApp("org.example.notes", "Notes", true),
+                InstalledApp("org.example.plain", "Plain", false, logo = hash, autoTile = hash),
             ),
         )
         assertEquals(contract["report"], ServerJson.encodeToJsonElement(StatusReportRequest.serializer(), report))
@@ -67,7 +77,8 @@ class AppLogosTest {
     @Test
     fun `the answer decodes, and an empty body is nothing wanted`() {
         val answer = ServerJson.decodeFromJsonElement(WantedLogos.serializer(), contract["answer"]!!)
-        assertEquals(WantedLogos(listOf(contract["png_sha256"]!!.jsonPrimitive.content)), answer)
+        val wanted = listOf(contract["png_sha256"]!!.jsonPrimitive.content, contract["tile_png_sha256"]!!.jsonPrimitive.content)
+        assertEquals(WantedLogos(wanted), answer)
         assertEquals(WantedLogos(), ServerJson.decodeFromString(WantedLogos.serializer(), "{}"))
         // A newer server's key is ignored.
         assertEquals(
@@ -87,7 +98,7 @@ class AppLogosTest {
         }
         assertEquals(
             mapOf(
-                "stored" to 204, "bad_hash" to 400, "mismatch" to 400, "type" to 415, "too_large" to 413,
+                "stored" to 204, "tile_stored" to 204, "bad_hash" to 400, "mismatch" to 400, "type" to 415, "too_large" to 413,
                 "not_reported" to 409, "wrong_size" to 422, "not_png" to 422,
             ),
             answers,
@@ -99,7 +110,10 @@ class AppLogosTest {
     @Test
     fun `the answer is read as the server sent it, else nothing is wanted`() {
         val answer = contract["answer"]!!.toString().toByteArray()
-        assertEquals(listOf(contract["png_sha256"]!!.jsonPrimitive.content), wantedLogosOf(200, answer))
+        assertEquals(
+            listOf(contract["png_sha256"]!!.jsonPrimitive.content, contract["tile_png_sha256"]!!.jsonPrimitive.content),
+            wantedLogosOf(200, answer),
+        )
         // A 204 (an older server, or no capability), an empty or unreadable body, another code: nothing.
         assertEquals(emptyList<String>(), wantedLogosOf(204, null))
         assertEquals(emptyList<String>(), wantedLogosOf(200, null))

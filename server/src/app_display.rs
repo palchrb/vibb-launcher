@@ -509,6 +509,9 @@ pub struct AppDisplayForm {
     /// Design 87 §8.2: the app's real logo (its URL), which the preview shows for "Logo". `None` while no phone has
     /// sent one.
     pub logo: Option<String>,
+    /// Design 87b: the tile the phone draws for "Automatic" (its URL), which the preview shows for Automatisk. `None`
+    /// while no phone has sent one (the letter), and for a part of Vibb One (its own look).
+    pub auto_src: Option<String>,
 }
 
 /// What a refused save sends back to the form: the entered values and the error.
@@ -587,6 +590,7 @@ impl AppDisplayForm {
             on_home: None,
             builtin: None,
             logo: None,
+            auto_src: None,
         }
     }
 

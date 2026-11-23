@@ -3911,6 +3911,13 @@ async fn render_detail_full(
     };
     if !app.package_name.is_empty() {
         form.logo = logos.get(&app.package_name).cloned();
+        // Design 87b: Automatisk previews the tile most phones drew (a failed read is logged: the letter).
+        form.auto_src = crate::app_logos::catalog_tile(state, &app.package_name)
+            .await
+            .unwrap_or_else(|err| {
+                tracing::error!(app_id = id, %err, "can't read the app's Automatic tile");
+                None
+            });
     }
     let label = app
         .display_label

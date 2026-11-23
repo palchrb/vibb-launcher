@@ -2294,7 +2294,11 @@ pointer here.
   now (`.app-row-tile`, `border-radius: 50%`, Q2).
 - **The Name and icon preview** (Device › Apps and an app's page): with a logo known, the form carries `data-logo` and
   the tile an `<img data-preview-logo>` shown only for "App logo" (`static/app-display.js` `?v=6`; server-rendered for
-  a page without JS); "Automatic" keeps "Vibb style" (R2-M6). No new words, no new form or save (nothing can move the
+  a page without JS); "Automatic" kept "Vibb style" (R2-M6) until design 87b (2026-11-23): the phone now uploads the
+  tile it draws for Automatic (`installed_apps[].auto_tile`, `device_app_logos.tile_hash`, 0168) and "Vises som"
+  shows it under Automatisk (`<img data-preview-auto>`, `AppDisplayForm.auto_src`: this phone's tile, for an app it
+  hasn't installed and on the catalog app's page the tile most phones name - `app_logos::phone_tile`/`catalog_tile`;
+  `static/app-display.js` `?v=10`), the letter only while no phone has sent one. No new words, no new form or save (nothing can move the
   page), the header untouched.
 - **Notifications** (2026-11-19): a catalog event's row (`app_update_available`, waiting or held) shows the app's
   logo in its round avatar by the tile's rule (`tracked_apps::tile_logo`, `tile_icon`, `avatars_by_id`: the logo with

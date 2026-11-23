@@ -344,8 +344,9 @@ object KidAvatars {
         return bmp
     }
 
-    /** Vibb style: the monochrome layer in white on the app's tone. */
-    private fun drawVibbMono(drawable: Drawable, monochrome: Drawable, packageName: String?, sizePx: Int): Bitmap {
+    /** Vibb style: the monochrome layer in white on the app's tone. Also the Automatic tile the status report names and
+     * uploads (design 87b, [com.kidslauncher.mdm.appdisplay.AppLogos]) - one drawing, not a second. */
+    internal fun drawVibbMono(drawable: Drawable, monochrome: Drawable, packageName: String?, sizePx: Int): Bitmap {
         val bmp = createBitmap(sizePx, sizePx)
         val canvas = Canvas(bmp)
         val circle = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = toneOf(drawable, packageName) }

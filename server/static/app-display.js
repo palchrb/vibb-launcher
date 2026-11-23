@@ -5,7 +5,8 @@
 // is CSS's, from the radios before them - no script needed.
 // - Symbol: the chosen glyph on the chosen colour's tile (`data-tile`; "the app's tone" previews as slate, a part of
 //   Vibb One's own tile, the form's `data-auto-tile`); the symbols' `--pick` is that colour too.
-// - Automatisk: the app's letter on the darker slate (`data-letter`); a part of Vibb One (design 82 D9: Meldinger) its
+// - Automatisk: the tile the phone drew for it (design 87b, the `[data-preview-auto]` image) where a phone has sent
+//   one, else the app's letter on the darker slate (`data-letter`); a part of Vibb One (design 82 D9: Meldinger) its
 //   own glyph on its own tile (`data-auto-glyph`, `data-auto-tile`).
 // - Logo: the app's real logo where a phone has sent it (design 87, the form's `data-logo`), else the word "Logo"
 //   (`data-w-own`) on the slate.
@@ -35,6 +36,7 @@
         var glyph = form.querySelector("[data-preview-glyph]");
         var text = form.querySelector("[data-preview-text]");
         var logo = form.querySelector("[data-preview-logo]");
+        var auto = form.querySelector("[data-preview-auto]");
         var label = form.querySelector("[data-preview-label]");
         if (!tile || !glyph || !text || !label) return;
         var modeInput = checked(form, "icon_mode");
@@ -48,6 +50,7 @@
         if (symbols && symbols.style && symbols.style.setProperty) symbols.style.setProperty("--pick", pick);
 
         var showLogo = mode === "logo" && !!logo && !!form.getAttribute("data-logo");
+        var showAuto = mode === "auto" && !autoGlyph && !!auto;
         var key = null;
         if (mode === "symbol" && icon) {
             key = icon.value;
@@ -63,8 +66,9 @@
         }
         if (key) glyph.setAttribute("src", "/static/app-icons/" + key + ".svg");
         glyph.hidden = !key;
-        text.hidden = !!key || showLogo;
+        text.hidden = !!key || showLogo || showAuto;
         if (logo) logo.hidden = !showLogo;
+        if (auto) auto.hidden = !showAuto;
 
         var input = form.querySelector('input[name="label"]');
         var name = input ? String(input.value).replace(/^\s+|\s+$/g, "") : "";

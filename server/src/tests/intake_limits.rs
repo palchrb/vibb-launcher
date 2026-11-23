@@ -419,7 +419,8 @@ fn the_field_tables_keep_every_contract_key() {
             );
             checked += 1;
         }
-        // Design 87: a report's installed apps (`app_logos.json`'s `report`, with `logo`), every key kept.
+        // Design 87: a report's installed apps (`app_logos.json`'s `report`, with `logo` and 87b's `auto_tile`), every key
+        // kept.
         if let Some(apps) = json.get("report").and_then(|r| r.get("installed_apps")) {
             let parsed: Vec<crate::models::InstalledApp> =
                 serde_json::from_value(apps.clone()).unwrap();

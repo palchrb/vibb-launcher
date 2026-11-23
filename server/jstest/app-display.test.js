@@ -46,7 +46,7 @@ class El {
     }
 }
 
-function form({ mode = "auto", glyph = "chat", colour = "auto", name = "", logo = false, builtin = false } = {}) {
+function form({ mode = "auto", glyph = "chat", colour = "auto", name = "", logo = false, auto = false, builtin = false } = {}) {
     const radio = (n, v, tile) =>
         new El("input", Object.assign({ name: n, value: v, checked: v === ({ icon_mode: mode, icon: glyph, color: colour })[n] },
             tile ? { "data-tile": tile } : {}));
@@ -58,6 +58,7 @@ function form({ mode = "auto", glyph = "chat", colour = "auto", name = "", logo 
             new El("img", { "data-preview-glyph": "", hidden: true }),
             new El("span", { "data-preview-text": "" }),
             ...(logo ? [new El("img", { "data-preview-logo": "", hidden: true })] : []),
+            ...(auto ? [new El("img", { "data-preview-auto": "", hidden: true })] : []),
         ]),
         new El("span", { "data-preview-label": "" }),
         new El("input", { name: "label", value: name, "data-app-label": "Signal" }),
@@ -171,4 +172,26 @@ test("Logo or Automatisk and back: the viewer's last symbol and colour are check
     const g = form({ mode: "symbol" });
     install({ readyState: "complete", addEventListener: () => {}, querySelectorAll: () => [g] }, throwing);
     install({ readyState: "complete", addEventListener: () => {}, querySelectorAll: () => [g] }, null);
+});
+
+test("Automatisk: the tile the phone drew, and the segments switch it with the logo (design 87b)", () => {
+    const f = form({ mode: "auto", logo: true, auto: true });
+    update(f);
+    assert.strictEqual(part(f, "data-preview-auto").hidden, false);
+    assert.strictEqual(part(f, "data-preview-logo").hidden, true);
+    assert.strictEqual(part(f, "data-preview-text").hidden, true);
+    assert.strictEqual(part(f, "data-preview-glyph").hidden, true);
+    f.querySelectorAll('input[name="icon_mode"]').forEach((r) => { r.checked = r.value === "logo"; });
+    update(f);
+    assert.strictEqual(part(f, "data-preview-auto").hidden, true);
+    assert.strictEqual(part(f, "data-preview-logo").hidden, false);
+    f.querySelectorAll('input[name="icon_mode"]').forEach((r) => { r.checked = r.value === "symbol"; });
+    update(f);
+    assert.strictEqual(part(f, "data-preview-auto").hidden, true);
+    assert.strictEqual(part(f, "data-preview-glyph").hidden, false);
+    // Without a tile from any phone: the letter, as before.
+    const plain = form({ mode: "auto" });
+    update(plain);
+    assert.strictEqual(part(plain, "data-preview-text").hidden, false);
+    assert.strictEqual(part(plain, "data-preview-text").textContent, "S");
 });
