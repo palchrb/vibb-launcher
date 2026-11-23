@@ -8611,7 +8611,7 @@ mod tests {
         );
         assert_eq!(
             held.new_permissions,
-            r#"["android.permission.ACCESS_FINE_LOCATION","android.permission.READ_CONTACTS","bind:android.permission.BIND_ACCESSIBILITY_SERVICE","bind:android.permission.BIND_DEVICE_ADMIN"]"#
+            r#"["android.permission.ACCESS_COARSE_LOCATION","android.permission.ACCESS_FINE_LOCATION","android.permission.READ_CONTACTS","bind:android.permission.BIND_ACCESSIBILITY_SERVICE","bind:android.permission.BIND_DEVICE_ADMIN"]"#
         );
         let events = held_events().await;
         assert_eq!(events.len(), 1, "{events:?}");

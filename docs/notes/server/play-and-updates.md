@@ -428,7 +428,11 @@ Install Now), so a held or waiting release never reaches them and no contract ch
   in Android's order (`apk::in_android_order`): `obtainAttributes` walks the element's attributes and the wanted ids
   together, both taken as sorted, so an attribute after a higher id is never seen there; the ids must rise strictly,
   an attribute without an id is skipped wherever it is, and an id outside the android package (`0x01`), which the
-  APK's own dynamic-reference table may rewrite, makes it `None` too. aapt2 always writes them sorted. Anything else is `None` - never "no permissions". Fixtures `testdata/apk/perms-key3-v1.apk` (INTERNET,
+  APK's own dynamic-reference table may rewrite, makes it `None` too. aapt2 always writes them sorted. The list also carries
+  the permissions Android adds for the app's target SDK (`apk::SPLIT_PERMISSIONS`, platform.xml's `<split-permission>`
+  rows): the target is `<uses-sdk android:targetSdkVersion>` by resource id, else its `minSdkVersion`, else 1 (no
+  `<uses-sdk>` 0; a codename or a reference 1; the lowest of several), so an update that lowers it with location asks
+  for background location too. Anything else is `None` - never "no permissions". Fixtures `testdata/apk/perms-key3-v1.apk` (INTERNET,
   POST_NOTIFICATIONS) and `perms-key3-v2.apk` (READ_CONTACTS, a `maxSdkVersion="32"` WRITE_EXTERNAL_STORAGE, an sdk-23
   ACCESS_FINE_LOCATION, another app's permission, a service with BIND_ACCESSIBILITY_SERVICE, a receiver with
   BIND_DEVICE_ADMIN): aapt2 + apksigner (v2+v3) with a third throwaway key, made 2026-11-12 and discarded.

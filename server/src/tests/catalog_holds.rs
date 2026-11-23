@@ -127,7 +127,7 @@ async fn approve_serves_the_exact_held_release() {
     assert_eq!(
         row.2.as_deref(),
         Some(
-            r#"["android.permission.ACCESS_FINE_LOCATION","android.permission.INTERNET","android.permission.READ_CONTACTS","bind:android.permission.BIND_ACCESSIBILITY_SERVICE","bind:android.permission.BIND_DEVICE_ADMIN"]"#
+            r#"["android.permission.ACCESS_COARSE_LOCATION","android.permission.ACCESS_FINE_LOCATION","android.permission.INTERNET","android.permission.READ_CONTACTS","bind:android.permission.BIND_ACCESSIBILITY_SERVICE","bind:android.permission.BIND_DEVICE_ADMIN"]"#
         )
     );
     assert_eq!(row.3, Some(2));

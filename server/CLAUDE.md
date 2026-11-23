@@ -107,7 +107,7 @@ No prior programming experience - build features directly rather than explaining
   restricts outgoing calls unless the system dialer is allowed and hides an SMS app that isn't (QA Medium 3) - never
   everything installed. `calls::call_report` warns when the allowlist leaves either out. Fixtures: `testdata/apk/` (aapt2 + apksigner, throwaway keys, no code).
 - **A catalog release that asks for more waits for the parent (design 90).** `apk::read_identity` reads the declared
-  permissions all or nothing (by resource id only, the whole document, else `None`); `catalog_holds::judge` holds a
+  permissions all or nothing, with the split permissions Android adds for the app's target SDK (by resource id only, the whole document, else `None`); `catalog_holds::judge` holds a
   GitHub or F-Droid release (never the first, never Vibb One's or Vibb music's) whose list can't be read or that asks
   for a sensitive permission (`catalog_holds::SENSITIVE`) outside the set the parent accepted
   (`accepted_permissions`, NULL = none: a cached release whose file can't be read leaves it unknown, so the next
