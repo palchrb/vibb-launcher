@@ -77,6 +77,29 @@ class SystemReadersTest {
         assertEquals(emptySet<String>(), otherHomes(twice, own, controllable.toSet(), setOf(recents)))
     }
 
+    /** The gesture rule: with no recents provider known, no other Home is suspended - a vendor launcher may carry the
+     * gestures. They are still visited, so an earlier suspension is undone. */
+    @Test
+    fun `no recents provider known suspends no other Home`() {
+        val unknown = computeEnforcementPlan(
+            listOf("org.example.game"), true, 0, false, controllable, own, null,
+            recentsPackage = null, homeCandidates = homes, androidAutoInstalled = true,
+        )
+        assertFalse("com.android.launcher3" in unknown.suspend)
+        assertTrue("com.android.launcher3" in unknown.extraPackages)
+        assertTrue(ANDROID_AUTO in unknown.hide)
+    }
+
+    /** The fence's orphan sweep leaves the Homes enforcement owns alone, but still sweeps the recents provider. */
+    @Test
+    fun `the orphan sweep leaves the enforced Homes to enforcement`() {
+        val suspended = setOf("com.android.launcher3", recents)
+        val targets = orphanSweepTargets(homes, own, emptySet(), controllable.toSet(), suspended, recents)
+        assertEquals(setOf(recents), targets)
+        // Without the enforced set the sweep would have taken both.
+        assertEquals(suspended, orphanFenceTargets(homes, own, emptySet(), controllable.toSet(), suspended, recents))
+    }
+
     @Test
     fun `the policy key decodes and a missing one hides`() {
         val on = ServerJson.decodeFromString(PolicyResponse.serializer(), contract.getValue("policy").jsonObject.getValue("on").toString())
@@ -91,8 +114,11 @@ class SystemReadersTest {
     fun `the read rows`() {
         for (row in contract.getValue("read").jsonArray.map { it.jsonObject }) {
             val enabled = row.getValue("enabled").jsonArray.map { it.jsonPrimitive.content }
-            val off = row.getValue("off").jsonArray.map { it.jsonPrimitive.content }.toSet()
-            val report = notificationListenersReport(enabled, row.getValue("own").jsonPrimitive.content) { it in off }
+            val hidden = row.getValue("hidden").jsonArray.map { it.jsonPrimitive.content }.toSet()
+            val system = row.getValue("system").jsonArray.map { it.jsonPrimitive.content }.toSet()
+            val report = notificationListenersReport(
+                enabled, row.getValue("own").jsonPrimitive.content, hidden = { it in hidden }, system = { it in system },
+            )
             assertEquals(
                 row.getValue("case").jsonPrimitive.content,
                 row.getValue("report"),

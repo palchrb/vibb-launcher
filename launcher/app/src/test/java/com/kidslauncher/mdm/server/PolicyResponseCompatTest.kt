@@ -116,6 +116,17 @@ class PolicyResponseCompatTest {
         assertTrue(cellular2gBlocked(true, overrideActive = false, kept = Where.ABROAD, allowAbroad = older.allow2gAbroad))
     }
 
+    /** Advanced › Android Auto: `allow_android_auto` (the server's `policy_json_keys_snapshot` literal) decodes; a policy
+     * without it reads hidden, and the last-enforced plan keeps it. */
+    @Test
+    fun `allow_android_auto decodes, and a missing one hides`() {
+        val policy = ServerJson.decodeFromString(PolicyResponse.serializer(), """{"allow_android_auto": true}""")
+        assertTrue(policy.allowAndroidAuto)
+        assertTrue(LastEnforcedPlan.of(policy).toPolicy().allowAndroidAuto)
+        val older = decodeCached(serverResponse).let { (it as CachedPolicy.Ok).policy }
+        assertFalse(older.allowAndroidAuto)
+    }
+
     /** Design 68 §3.1, design 127 §3.2: `app_permissions` (the server's `policy_json_keys_snapshot` literal) - read
      * field by field by `appPermissionsOf`, so nothing in it fails the policy; missing or not a list = touch nothing
      * (`null`). */

@@ -47,21 +47,40 @@ fun otherHomes(
     return homes - excluded
 }
 
-/** One app with notification access in the status report: [off] while Vibb has it hidden or suspended. */
+/** One app with notification access in the status report: [off] while Vibb has it hidden (a suspension isn't counted:
+ * Android may keep a suspended listener bound - the emulator gate checks), [system] when it came with the phone. */
 @Serializable
 data class NotificationListenerReport(
     @SerialName("package") val packageName: String,
     val off: Boolean,
+    val system: Boolean,
 )
 
 /** The report's `notification_listeners` from Android's enabled listeners: Vibb One (either build) left out, each
- * package once, sorted, at most [MAX_LISTENERS], each marked [NotificationListenerReport.off] by [off]. */
+ * package once, sorted, at most [MAX_LISTENERS], each marked off by [hidden] and system by [system]. */
 fun notificationListenersReport(
     enabled: Collection<String>,
     ownPackage: String,
-    off: (String) -> Boolean,
+    hidden: (String) -> Boolean,
+    system: (String) -> Boolean,
 ): List<NotificationListenerReport> {
     val own = ownPackageFamily(ownPackage)
     return enabled.filter { it !in own }.distinct().sorted().take(MAX_LISTENERS)
-        .map { NotificationListenerReport(it, off(it)) }
+        .map { NotificationListenerReport(it, hidden(it), system(it)) }
 }
+
+/**
+ * The fence's orphan sweep without the Homes enforcement owns ([otherHomes]: suspended while apps are managed, released
+ * otherwise): the sweep never unsuspends them, or it and `apply()` would undo each other on every pass. [protected]
+ * and [recentsPackage] are the sweep's own; the recents provider is kept out of the enforced set, so it is still swept.
+ */
+fun orphanSweepTargets(
+    homeCandidates: Collection<HomeCandidate>,
+    ownPackage: String,
+    protected: Set<String>,
+    controllable: Set<String>,
+    suspendedNow: Set<String>,
+    recentsPackage: String?,
+): Set<String> =
+    orphanFenceTargets(homeCandidates, ownPackage, protected, controllable, suspendedNow, recentsPackage = recentsPackage) -
+        otherHomes(homeCandidates, ownPackage, controllable, protected + setOfNotNull(recentsPackage))

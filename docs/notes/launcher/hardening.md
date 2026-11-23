@@ -198,12 +198,18 @@ sink there too. Whether Settings can be hidden on the Jelly Star's own Android 1
   (Settings' FallbackHome among them), persistent apps, a negative-priority fallback, controllable packages and the
   plan's never-restrict set plus the kiosk helpers - the **recents provider stays**: the stock gestures run in it, so a
   vendor launcher that is also the recents provider is left as it is (no gesture removed). Suspended, never hidden,
-  while apps are managed; the pause and the override lift both.
+  while apps are managed; the pause and the override lift both. With no recents provider known
+  (`systemRecentsPackage()` null or not trusted) none is suspended (the gesture rule), only visited.
 - `computeEnforcementPlan`'s `extraPackages` (the two above, outside the controllable set) are visited by `apply()`'s
-  loop too, so a lift is undone. The fence's orphan sweep leaves the enforced Homes alone (`enforcedHomes`), or the
-  sweep and `apply()` would undo each other; the fence itself skips them as already suspended.
+  loop too, so a lift is undone. The fence's orphan sweep leaves the enforced Homes alone (pure `orphanSweepTargets`),
+  or the sweep and `apply()` would undo each other; the fence itself skips them as already suspended.
 - **The report's `notification_listeners`** (`NotificationListenersReader`, pure `notificationListenersReport`):
-  Android's enabled listeners but Vibb One, each `off` while Vibb has the package hidden or suspended. Contract
-  `notification_listeners.json` (root `CLAUDE.md`).
-- **Not device-tested** (emulator gate owed): a suspended Home at a reboot (BFU and after the unlock), whether a hidden or
-  suspended listener is unbound (`dumpsys notification`), and which package is the Jelly Star's recents provider.
+  Android's enabled listeners but Vibb One, each `off` while Vibb has the package hidden (only hidden: Android may keep
+  a suspended listener bound) and `system` when it came with the phone (`FLAG_SYSTEM` or an updated system app). The
+  server names a system listener and Android Auto quietly, never orange. Contract `notification_listeners.json` (root
+  `CLAUDE.md`).
+- **Removing Device Owner or uninstalling Vibb One leaves the apps Vibb hid hidden** - Android Auto as every other
+  hidden app; a gap that predates this, no code for it now.
+- **Not device-tested** (emulator gate owed, `docs/testing/emulator.md` §6be): a suspended Home at a reboot (BFU and
+  after the unlock), whether a hidden or suspended listener is unbound and whether hiding drops its approval
+  (`dumpsys notification`), and which package is the Jelly Star's recents provider.

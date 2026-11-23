@@ -23,14 +23,21 @@ pub const MAX_LISTENERS: usize = 32;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Listener {
     pub package: String,
-    /// Vibb has the app hidden or suspended, so it reads nothing.
+    /// Vibb has the app hidden, so it reads nothing.
     #[serde(default)]
     pub off: bool,
+    /// The app came with the phone (a system app, or an update of one): named quietly, never orange - the parent
+    /// can't remove it.
+    #[serde(default)]
+    pub system: bool,
 }
 
-/// The report's `notification_listeners`, re-built: a list of `{package, off}` with a real package name, each package
-/// once (the first), at most [MAX_LISTENERS], `off` a boolean or false, every other key dropped. `None` when it isn't
-/// a list.
+/// Android Auto: managed by Vibb itself (hidden unless the parent allows it), so never an unknown reader.
+pub const ANDROID_AUTO: &str = "com.google.android.projection.gearhead";
+
+/// The report's `notification_listeners`, re-built: a list of `{package, off, system}` with a real package name, each
+/// package once (the first), at most [MAX_LISTENERS], `off` and `system` booleans or false, every other key dropped.
+/// `None` when it isn't a list.
 pub fn clean(value: &Value) -> Option<Value> {
     let rows = value.as_array()?;
     let mut kept: Vec<Value> = Vec::new();
@@ -48,8 +55,8 @@ pub fn clean(value: &Value) -> Option<Value> {
         if kept.len() == MAX_LISTENERS {
             break;
         }
-        let off = object.get("off").and_then(Value::as_bool).unwrap_or(false);
-        kept.push(json!({"package": package, "off": off}));
+        let flag = |key: &str| object.get(key).and_then(Value::as_bool).unwrap_or(false);
+        kept.push(json!({"package": package, "off": flag("off"), "system": flag("system")}));
     }
     Some(Value::from(kept))
 }
@@ -62,11 +69,12 @@ pub fn report(latest: &DeviceStatus) -> Option<Vec<Listener>> {
         .and_then(|json| serde_json::from_str(json).ok())
 }
 
-/// The listeners that read and that the parent didn't give the phone: not `off`, not in `known`; in the report's order.
+/// The listeners that read and that the parent didn't give the phone: not `off`, not `system`, not Android Auto, not in
+/// `known`; in the report's order.
 pub fn unknown<'a>(listeners: &'a [Listener], known: &BTreeSet<String>) -> Vec<&'a str> {
     listeners
         .iter()
-        .filter(|l| !l.off && !known.contains(&l.package))
+        .filter(|l| !l.off && !l.system && l.package != ANDROID_AUTO && !known.contains(&l.package))
         .map(|l| l.package.as_str())
         .collect()
 }
@@ -209,10 +217,12 @@ mod tests {
             Listener {
                 package: "com.example.watch".into(),
                 off: false,
+                system: false,
             },
             Listener {
                 package: "com.google.android.projection.gearhead".into(),
                 off: true,
+                system: true,
             },
         ];
         let installed: Vec<InstalledApp> = serde_json::from_value(

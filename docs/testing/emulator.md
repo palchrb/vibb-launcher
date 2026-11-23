@@ -5117,6 +5117,26 @@ and the top activity. Afterwards `jelly36` was restored (22 of 22 sums).
 **Not run:** a real bond and the real dialog (owed on the Jelly Star with the Jabra), a pause (the arm refuses then:
 `BtPairingPlanTest`), Android 14 and 17.
 
+## 6be. Android Auto, the other Home apps, the notification listeners (branch `notif-readers`) - not run yet
+
+On Android 14 and the highest image, a Play image with Android Auto (`com.google.android.projection.gearhead`).
+`docs/notes/launcher/hardening.md`, "Android Auto, the other Home apps, the notification listeners".
+
+1. Before enrolling: `cmd overlay lookup android android:string/config_recentsComponentName` and
+   `cmd package query-activities --brief -a android.intent.action.MAIN -c android.intent.category.HOME` - which package
+   carries the gestures, which other Homes there are.
+2. Managed: `dumpsys package <pkg> | grep -E "hidden=|suspended="` - Android Auto hidden, every other Home but the
+   recents provider suspended (not hidden). Home, Recents and Back in both navigation modes.
+3. Start the pause: both released; end it: both restricted again. Advanced › Android Auto › Tillat: unhidden at the
+   next sync.
+4. Reboot while locked and while unlocked: no "app paused" dialog, our Home after the unlock.
+5. **Listeners** (record what you see, no fix expected): `dumpsys notification | grep -A20 "Live notification
+   listeners"` with a listener (a) hidden and (b) suspended - is it still bound? Does `enabled_notification_listeners`
+   (`settings get secure enabled_notification_listeners`) keep a hidden package, or does hiding drop the approval (then
+   Android Auto comes back without notification access after Tillat or a pause)? The report counts only hidden as `off`.
+6. A third-party listener granted in a pause: About › Varseltilgang names it in orange; allowed in Apps, quiet. A system
+   listener (the stock launcher, `com.google.android.as`) is named quietly.
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:

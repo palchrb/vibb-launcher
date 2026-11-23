@@ -85,7 +85,7 @@ async fn the_report_is_stored_as_the_contract_has_it() {
 }
 
 /// About's row: orange while an app the parent didn't give reads, quiet once it is an allowed app; Vibb's own off
-/// ones never count.
+/// ones never count, and one that came with the phone is named quietly.
 #[tokio::test]
 async fn about_names_an_unknown_reader_in_orange() {
     let app = TestApp::new().await;
@@ -116,7 +116,7 @@ async fn about_names_an_unknown_reader_in_orange() {
     .unwrap();
     let html = app.get_page(&about, &cookie).await.text();
     assert!(
-        html.contains("<span class=\"row-value\">Watch</span>"),
+        html.contains("<span class=\"row-value\">com.android.launcher3, Watch</span>"),
         "{html}"
     );
     assert!(!html.contains("row-value-action\">Watch"), "{html}");

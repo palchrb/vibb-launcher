@@ -58,7 +58,7 @@ class RecentsProviderCallersTest {
 
     @Test
     fun `the fence passes the provider - plan, release and orphan sweep`() {
-        for (name in listOf("fencePlan", "runRelease", "orphanFenceTargets")) {
+        for (name in listOf("fencePlan", "runRelease", "orphanSweepTargets")) {
             assertPassed("server/UpdateFence.kt", name, "recentsPackage = AppEnforcer.systemRecentsPackage(app)", 1)
         }
     }

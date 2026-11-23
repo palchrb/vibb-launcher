@@ -409,9 +409,9 @@ row through `channelsReport` and encodes the reports exactly; both compare the c
 The apps with notification access and Android Auto (the policy's `allow_android_auto`, Advanced › Android Auto) are
 `server/testdata/notification_listeners.json`, byte-identical in `launcher/app/src/test/resources/`: `android_auto`
 (the package), `policy` (`off`, a new phone's, and `on`), `report`/`report_none` (the exact `notification_listeners` of
-a status report: `[{package, off}]`, Vibb One left out), `read` (the launcher's reading of Android's enabled listeners),
-`clean` (the server's cleaning) and `unknown` (the listeners About This Phone names in orange: reading, and neither an
-allowed app nor a catalog app ticked for the phone). The server's `notification_listeners::tests` runs `clean` and
+a status report: `[{package, off, system}]`, Vibb One left out, `off` only while hidden), `read` (the launcher's reading of Android's enabled listeners),
+`clean` (the server's cleaning) and `unknown` (the listeners About This Phone names in orange: reading, not a system app,
+not Android Auto, and neither an allowed app nor a catalog app ticked for the phone). The server's `notification_listeners::tests` runs `clean` and
 `unknown`, `tests::notification_listeners` saves the switch and produces `policy`, posts the reports and checks About,
 and `intake_limits` keeps the reports' keys; the launcher's `SystemReadersTest` decodes `policy`, runs `read` through
 `notificationListenersReport` and encodes the reports exactly; both compare the copies. The other Home apps' and

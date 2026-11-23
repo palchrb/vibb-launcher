@@ -267,8 +267,10 @@ fun computeEnforcementPlan(
     if (playSuspended && PLAY_STORE in controllable) suspend += PLAY_STORE
     val installModePin = playState.installMode && !locked && PLAY_STORE in controllable
     // The other Home apps: suspended (never hidden) while apps are managed; the recents provider is in neverRestrict.
+    // With no recents provider known none is (the gesture rule: a vendor launcher may carry the gestures) - they are
+    // still visited, so an earlier suspension is undone.
     val homes = otherHomes(homeCandidates, ownPackage, controllable.toSet(), neverRestrict + lockTaskHelpers) - setOfNotNull(auto)
-    if (appsManaged) suspend += homes
+    if (appsManaged && recentsPackage != null) suspend += homes
     // Design 105 §2.1: during a rule the clocks a parent didn't tick leave the list; the chrome pins them while LOCKED or dark.
     val clocksOut = if (locked && ruleLocked) allowed.filter { it in alarmApps && it !in lockUsableApps }.toSet() else emptySet()
 
