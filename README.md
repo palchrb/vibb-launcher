@@ -48,7 +48,7 @@ contacts live on your own server and the child's phone, and nowhere else.
 - **A web app on your own phone**, with passkey sign-in, push notifications and an account for each
   parent. In Norwegian
   and English.
-- **Location and zones** without Google: arrived and left for the places you mark. Wi-Fi places are learned on the
+- **Location and zones** without Google's location service: arrived and left for the places you mark. Wi-Fi places are learned on the
   phone itself.
 - **Find the phone**: ring it, see where it is, lock it or erase it.
 
@@ -61,7 +61,7 @@ contacts live on your own server and the child's phone, and nowhere else.
   can ask your own DNS-over-HTTPS or DNS-over-TLS server.
 - **Tailscale, if you want it.** Vibb One has a Tailscale client built in and can join your tailnet on its own, so
   your server never has to be reachable from the internet. Without it, the phones reach your server over HTTPS.
-- **Ready for a phone without Google.** Google Maps and Apple Maps links open as a pin, with the place's name and
+- **Works on a phone without Google.** Google Maps and Apple Maps links open as a pin, with the place's name and
   address, in [Organic Maps](https://organicmaps.app) or [CoMaps](https://www.comaps.app). A short link is read by your
   server, so the phone never opens Google. Vibb One is also a built-in [UnifiedPush](https://unifiedpush.org) distributor:
   Matrix apps such as Element X and FluffyChat get push through your server, with no extra app to install or keep updated.
@@ -71,7 +71,7 @@ contacts live on your own server and the child's phone, and nowhere else.
 | | |
 |---|---|
 | Send data to us | There is no "us". The server is yours. |
-| Depend on Google | No Firebase push, no Google location. Play services can stay for the apps that need them. |
+| Depend on Google | Vibb itself uses no Firebase push and no Google location service. |
 | Need a Google account | Optional, only for the Play Store. |
 | Ask you to trust unsigned builds | Signed APKs, minisign-signed server releases, attested Docker images. |
 
@@ -89,6 +89,11 @@ Some of this follows other projects:
 - **Android's own controls**: no screen content goes to Google's on-device AI or the assistant, and Chrome sends no
   usage data and has no sign-in. The setup list shows you where to turn off the advertising ID, usage reports, number
   verification and Play Protect uploads.
+
+**What Vibb can't promise.** On a stock Android phone, Android itself and Google Play services still talk to Google
+in the background, for example to check the network, set the clock and speed up GPS, and the phone maker's own apps
+may do the same. Vibb adds nothing to that and turns off what it can, but it doesn't make a stock phone Google-free.
+A phone running GrapheneOS removes most of it.
 
 ## Parts
 
