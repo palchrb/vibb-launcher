@@ -809,6 +809,7 @@ pub async fn backfill_release_hashes(state: AppState) {
         }
     }
     backfill_pins(&state).await;
+    drop_foreign_own_releases(&state).await;
     backfill_version_codes(&state).await;
     backfill_release_permissions(&state).await;
     backfill_split_permissions(&state).await;
@@ -838,13 +839,65 @@ async fn apk_identity(path: &str) -> Result<crate::apk::ApkIdentity, String> {
         .map_err(|err| format!("reading the APK failed: {err}"))?
 }
 
+/// Which key a release must be signed with: an app's pinned one, or for our own apps (Vibb One's
+/// and Vibb music's rows, `catalog_holds::ours`) the release certificate behind
+/// `LAUNCHER_SIGNATURE_CHECKSUM`, whatever is pinned - never the first signer seen.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum KeyRule<'a> {
+    Pinned,
+    /// Ours, with the configured checksum (`None`: not set, so no release passes).
+    Ours(Option<&'a str>),
+}
+
+/// The [KeyRule] of `app` on this server.
+pub(crate) fn key_rule<'a>(state: &'a AppState, app: &TrackedApp) -> KeyRule<'a> {
+    if crate::catalog_holds::ours(app, &our_repos(state)) {
+        KeyRule::Ours(state.config.launcher_signature_checksum.as_deref())
+    } else {
+        KeyRule::Pinned
+    }
+}
+
+/// Whether `signer` (hex) is the certificate `checksum` names.
+fn own_signer(checksum: Option<&str>, signer: Option<&str>) -> bool {
+    matches!((checksum, signer), (Some(checksum), Some(signer))
+        if crate::launcher_check::checksum_matches(checksum, signer))
+}
+
+/// Whether a phone may be given `app`'s cached release: one of ours only when its pinned signer
+/// is our release certificate.
+pub(crate) fn servable(state: &AppState, app: &TrackedApp) -> bool {
+    match key_rule(state, app) {
+        KeyRule::Pinned => true,
+        KeyRule::Ours(checksum) => own_signer(checksum, app.signer_sha256.as_deref()),
+    }
+}
+
 /// A release must be the app the catalog already knows (security review M10): the same package
 /// and the pinned signing key, each readable from the APK once it is pinned (fail closed, like the
-/// signer - QA of the security wave). The first release pins what it has.
+/// signer - QA of the security wave). The first release pins what it has; one of ours must be
+/// signed with our release certificate ([KeyRule::Ours]), checked first.
 pub(crate) fn check_pins(
     app: &TrackedApp,
     identity: &crate::apk::ApkIdentity,
+    rule: KeyRule<'_>,
 ) -> Result<(), Failure> {
+    if let KeyRule::Ours(checksum) = rule {
+        if checksum.is_none() {
+            return Err(Failure::new(
+                SyncProblem::NoOwnKey,
+                "refused: LAUNCHER_SIGNATURE_CHECKSUM isn't set, so this release of Vibb's own \
+                 app can't be checked against its release key (DEPLOY.md)",
+            ));
+        }
+        if !own_signer(checksum, identity.signer_sha256.as_deref()) {
+            return Err(Failure::new(
+                SyncProblem::OwnKey,
+                "refused: the release isn't signed with Vibb's release key \
+                 (LAUNCHER_SIGNATURE_CHECKSUM)",
+            ));
+        }
+    }
     match (&identity.package, app.package_name.is_empty()) {
         (Some(package), false) if *package != app.package_name => {
             return Err(Failure::new(
@@ -864,6 +917,9 @@ pub(crate) fn check_pins(
             ));
         }
         _ => {}
+    }
+    if let KeyRule::Ours(_) = rule {
+        return Ok(());
     }
     match (&app.signer_sha256, &identity.signer_sha256) {
         (Some(pinned), Some(signer)) if pinned != signer => Err(Failure::new(
@@ -996,27 +1052,42 @@ async fn check_new_package(
 }
 
 /// Stores the pins a release brought, where the app had none: the package only when the catalog
-/// had none, the signer only when none is pinned. Nothing is allowed by this: a phone allows the
-/// app once the launcher has installed it there (`device_api::allow_installed_catalog_apps`), or
-/// when the parent checks it.
+/// had none, the signer only when none is pinned - for one of ours, our release certificate
+/// always, and nothing else. Nothing is allowed by this: a phone allows the app once the launcher
+/// has installed it there (`device_api::allow_installed_catalog_apps`), or when the parent checks
+/// it.
 async fn store_pins(state: &AppState, app: &TrackedApp, identity: &crate::apk::ApkIdentity) {
     let new_package = identity
         .package
         .as_deref()
         .filter(|_| app.package_name.is_empty());
-    let new_signer = identity
-        .signer_sha256
-        .as_deref()
-        .filter(|_| app.signer_sha256.is_none());
-    if new_package.is_none() && new_signer.is_none() {
+    let (own, new_signer) = match key_rule(state, app) {
+        KeyRule::Ours(checksum) => (
+            identity
+                .signer_sha256
+                .as_deref()
+                .filter(|signer| own_signer(checksum, Some(signer)))
+                .filter(|signer| app.signer_sha256.as_deref() != Some(*signer)),
+            None,
+        ),
+        KeyRule::Pinned => (
+            None,
+            identity
+                .signer_sha256
+                .as_deref()
+                .filter(|_| app.signer_sha256.is_none()),
+        ),
+    };
+    if new_package.is_none() && own.is_none() && new_signer.is_none() {
         return;
     }
     let stored = sqlx::query(
         "UPDATE tracked_apps SET \
          package_name = CASE WHEN package_name = '' THEN COALESCE(?, '') ELSE package_name END, \
-         signer_sha256 = COALESCE(signer_sha256, ?) WHERE id = ?",
+         signer_sha256 = COALESCE(?, signer_sha256, ?) WHERE id = ?",
     )
     .bind(new_package)
+    .bind(own)
     .bind(new_signer)
     .bind(app.id)
     .execute(&state.db)
@@ -1068,6 +1139,41 @@ async fn backfill_pins(state: &AppState) {
                 store_pins(state, &app, &identity).await;
             }
             Err(err) => tracing::warn!(app_id = app.id, %err, "can't read the cached APK"),
+        }
+    }
+}
+
+/// Forgets the cached release of one of our own apps whose pinned signer isn't our release
+/// certificate (cached before ours were pinned to it, or `LAUNCHER_SIGNATURE_CHECKSUM` changed):
+/// no phone is given it, and the next sync downloads the release again and checks it. Run once at
+/// startup after [backfill_pins].
+async fn drop_foreign_own_releases(state: &AppState) {
+    let apps = match sqlx::query_as::<_, TrackedApp>(
+        "SELECT * FROM tracked_apps WHERE latest_release_tag IS NOT NULL",
+    )
+    .fetch_all(&state.db)
+    .await
+    {
+        Ok(apps) => apps,
+        Err(err) => {
+            tracing::warn!(%err, "can't list the cached releases to check our own apps' key");
+            return;
+        }
+    };
+    for app in apps.iter().filter(|app| !servable(state, app)) {
+        tracing::warn!(
+            app_id = app.id,
+            "the cached release isn't signed with Vibb's release key - forgotten"
+        );
+        if let Err(err) = sqlx::query(
+            "UPDATE tracked_apps SET signer_sha256 = NULL, latest_release_tag = NULL, \
+             latest_release_asset_id = NULL WHERE id = ?",
+        )
+        .bind(app.id)
+        .execute(&state.db)
+        .await
+        {
+            tracing::error!(app_id = app.id, %err, "can't forget the cached release");
         }
     }
 }
@@ -1377,6 +1483,10 @@ pub enum SyncProblem {
     /// The repo offers a lower versionCode than the cached release; the hourly sync keeps the
     /// cached one, "Check Now" takes it (S4 fix round M1).
     OlderVersion,
+    /// A release of Vibb's own apps isn't signed with the release key (`LAUNCHER_SIGNATURE_CHECKSUM`).
+    OwnKey,
+    /// `LAUNCHER_SIGNATURE_CHECKSUM` isn't set, so a release of Vibb's own apps can't be checked.
+    NoOwnKey,
 }
 
 impl SyncProblem {
@@ -1409,6 +1519,8 @@ impl SyncProblem {
                 SyncProblem::IndexSigner => "apps.sync.index_signer",
                 SyncProblem::RepoRollback => "apps.sync.repo_rollback",
                 SyncProblem::OlderVersion => "apps.sync.older_version",
+                SyncProblem::OwnKey => "apps.sync.own_key",
+                SyncProblem::NoOwnKey => "apps.sync.no_own_key",
             },
         )
     }
@@ -1448,8 +1560,8 @@ pub(crate) fn class_of(
         GithubUnreachable | GithubError | Download | RepoUnreachable => Some(Transient),
         RepoNotFound | NoRelease | Filter | FdroidUnknown | NotInRepo | RepoError => Some(Parent),
         ChecksumMismatch if !refused => Some(Transient),
-        OtherApp | OtherKey | Taken | TooBig | Unreadable | CantCheck | IndexSigner | RepoKey
-        | RepoSignature | RepoRollback | ChecksumMismatch => Some(Stop),
+        OtherApp | OtherKey | OwnKey | NoOwnKey | Taken | TooBig | Unreadable | CantCheck
+        | IndexSigner | RepoKey | RepoSignature | RepoRollback | ChecksumMismatch => Some(Stop),
         Server | Removed => None,
         // The source answered; the cached release is kept on purpose: a success.
         OlderVersion => None,
@@ -1792,7 +1904,7 @@ async fn sync_listed(
 
 /// This server's own release repos (QA L4: what makes the music app's row ours): the server's
 /// releases' repo and the launcher's.
-fn our_repos(state: &AppState) -> Vec<String> {
+pub(crate) fn our_repos(state: &AppState) -> Vec<String> {
     let mut repos = vec![state.config.server_release_repo.clone()];
     repos.extend(launcher_repo_from_url(&state.config.launcher_apk_url));
     repos
@@ -2254,7 +2366,7 @@ async fn sync_release(
     {
         Ok(identity) => {
             match check_fdroid_package(app, &identity, asset.index_signers.as_deref())
-                .and_then(|()| check_pins(app, &identity))
+                .and_then(|()| check_pins(app, &identity, key_rule(state, app)))
             {
                 Ok(()) => check_new_package(state, app, &identity)
                     .await
@@ -4667,7 +4779,7 @@ pub async fn upload_tracked_app_release(
     let identity = match apk_identity(&file_path)
         .await
         .map_err(|err| Failure::new(SyncProblem::Unreadable, err))
-        .and_then(|identity| check_pins(&app, &identity).map(|()| identity))
+        .and_then(|identity| check_pins(&app, &identity, key_rule(&state, &app)).map(|()| identity))
     {
         Ok(identity) => identity,
         Err(err) => {
@@ -5762,7 +5874,7 @@ async fn approve(
     let identity = apk_identity(&held.file_path)
         .await
         .map_err(|e| Failure::new(Unreadable, e))?;
-    check_pins(app, &identity)?;
+    check_pins(app, &identity, key_rule(state, app))?;
     check_new_package(state, app, &identity).await?;
     let path = std::path::PathBuf::from(&held.file_path);
     let sha256 = tokio::task::spawn_blocking(move || sha256_of_file(&path))
@@ -6718,6 +6830,8 @@ mod tests {
             IndexSigner,
             RepoRollback,
             OlderVersion,
+            OwnKey,
+            NoOwnKey,
         ];
         for lang in [Lang::En, Lang::Nb] {
             let titles: std::collections::HashSet<&str> =
@@ -6905,6 +7019,135 @@ mod tests {
             .unwrap();
         assert_eq!(downloads.load(Ordering::SeqCst), 3);
         assert_eq!(row().await.latest_release_tag.as_deref(), Some("v2"));
+    }
+
+    /// Our own apps are pinned to the release key behind `LAUNCHER_SIGNATURE_CHECKSUM` (key1 in
+    /// the tests), never to the first signer seen: the music app's release signed with another
+    /// key is refused on a row with no signer, and on one that pinned it before is never served;
+    /// after "Forget" (no package) the row is still ours and takes key1's release.
+    #[tokio::test]
+    async fn our_own_apps_take_only_the_release_key() {
+        let app = crate::tests::TestApp::new().await;
+        let server = axum::Router::new()
+            .route(
+                "/key1.apk",
+                axum::routing::get(|| async {
+                    std::fs::read("testdata/apk/fixture-key1.apk").unwrap()
+                }),
+            )
+            .route(
+                "/key2.apk",
+                axum::routing::get(|| async {
+                    std::fs::read("testdata/apk/fixture-key2.apk").unwrap()
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, server).await.unwrap() });
+        let asset = |id: i64, file: &str| ReleaseAsset {
+            id,
+            name: "vibb-music.apk".to_string(),
+            browser_download_url: format!("{base}/{file}.apk"),
+            size: std::fs::metadata(format!("testdata/apk/fixture-{file}.apk"))
+                .unwrap()
+                .len(),
+            sha256: None,
+            index_signers: None,
+            updated_at: None,
+        };
+        let id: i64 = sqlx::query_scalar(
+            "INSERT INTO tracked_apps (name, package_name, source_type, github_repo, \
+             release_tag_prefix) VALUES ('Vibb Musikk', 'me.vibb.music', 'github', ?, 'music-v') \
+             RETURNING id",
+        )
+        .bind(&app.state.config.server_release_repo)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+        let row = || async {
+            sqlx::query_as::<_, TrackedApp>("SELECT * FROM tracked_apps WHERE id = ?")
+                .bind(id)
+                .fetch_one(&app.db)
+                .await
+                .unwrap()
+        };
+        assert!(matches!(
+            key_rule(&app.state, &row().await),
+            KeyRule::Ours(Some(_))
+        ));
+
+        // No signer pinned: another key is refused, nothing pinned or cached.
+        let refused = sync_release(
+            &app.state,
+            &row().await,
+            "music-v1.0.0",
+            &asset(1, "key2"),
+            true,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(refused.problem, SyncProblem::OwnKey, "{refused}");
+        assert_eq!(row().await.signer_sha256, None);
+        assert_eq!(row().await.latest_release_tag, None);
+
+        // Pinned to that key before: still refused, and its cached release never served.
+        sqlx::query("UPDATE tracked_apps SET signer_sha256 = ?, latest_release_tag = 'music-v0.9.0' WHERE id = ?")
+            .bind("7639db09b107ba0392d32bf2e80aebc4e728c8ea06c091a0d4330fddaaddd434")
+            .bind(id)
+            .execute(&app.db)
+            .await
+            .unwrap();
+        let refused = sync_release(
+            &app.state,
+            &row().await,
+            "music-v1.0.0",
+            &asset(1, "key2"),
+            true,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(refused.problem, SyncProblem::OwnKey, "{refused}");
+        assert!(!servable(&app.state, &row().await));
+        drop_foreign_own_releases(&app.state).await;
+        assert_eq!(row().await.latest_release_tag, None, "forgotten at startup");
+        assert_eq!(row().await.signer_sha256, None);
+
+        // Without the checksum nothing of ours passes.
+        let identity = apk_identity("testdata/apk/fixture-key1.apk").await.unwrap();
+        let unset = check_pins(&row().await, &identity, KeyRule::Ours(None)).unwrap_err();
+        assert_eq!(unset.problem, SyncProblem::NoOwnKey);
+
+        // After "Forget" (no package) the row is still ours: the release key is taken and pinned.
+        sqlx::query("UPDATE tracked_apps SET package_name = '' WHERE id = ?")
+            .bind(id)
+            .execute(&app.db)
+            .await
+            .unwrap();
+        let refused = sync_release(
+            &app.state,
+            &row().await,
+            "music-v1.0.0",
+            &asset(2, "key2"),
+            true,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(refused.problem, SyncProblem::OwnKey, "{refused}");
+        sync_release(
+            &app.state,
+            &row().await,
+            "music-v1.0.1",
+            &asset(3, "key1"),
+            true,
+        )
+        .await
+        .unwrap();
+        let synced = row().await;
+        assert_eq!(
+            synced.signer_sha256.as_deref(),
+            Some("0796f1809e476a2ce724f1341bcb32d03185b7a202c3469787c5775d65ef4be3")
+        );
+        assert!(servable(&app.state, &synced));
     }
 
     /// A newly stored release nudges exactly the enrolled phones whose list carries the app

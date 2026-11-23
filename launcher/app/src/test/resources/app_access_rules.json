@@ -1,6 +1,7 @@
 {
-  "comment": "Design 127 §4.1, the launcher's own rules (AppAccessRulesTest): the grant plan (accessGrants) and the report's readings (accessReports). States: default, granted, denied. A grant is [package, permission].",
+  "comment": "Design 127 §4.1, the launcher's own rules (AppAccessRulesTest): the grant plan (accessGrants) and the report's readings (accessReports). States: default, granted, denied. A grant is [package, permission]. same_signer: the packages signed with the launcher's own certificate (a row may name its own).",
   "own": "me.vibb.launcher.debug",
+  "same_signer": ["me.vibb.launcher", "me.vibb.music"],
   "requested": {
     "io.element.android.x": ["android.permission.CAMERA", "android.permission.RECORD_AUDIO", "android.permission.READ_CONTACTS", "android.permission.INTERNET"],
     "org.example.maps": ["android.permission.ACCESS_FINE_LOCATION", "android.permission.ACCESS_COARSE_LOCATION", "android.permission.READ_CONTACTS", "android.permission.WRITE_CONTACTS"],
@@ -52,7 +53,21 @@
      "writes": [["io.element.android.x", "android.permission.RECORD_AUDIO", "denied"]]},
     {"name": "ours and Vibb's own apps never, even when listed",
      "denied": {"me.vibb.launcher.debug": ["camera", "contacts"], "me.vibb.music": ["microphone"], "me.vibb.launcher": ["camera"]},
-     "writes": []}
+     "writes": []},
+    {"name": "Vibb music signed by another key: every key it asks for denied, policy or none",
+     "same_signer": ["me.vibb.launcher"],
+     "denied": {},
+     "writes": [["me.vibb.music", "android.permission.RECORD_AUDIO", "denied"]]},
+    {"name": "Vibb music signed by another key, no app_permissions: still denied",
+     "same_signer": ["me.vibb.launcher"],
+     "denied": null,
+     "writes": [["me.vibb.music", "android.permission.RECORD_AUDIO", "denied"]]},
+    {"name": "Vibb music signed by another key in a window: lifted",
+     "same_signer": ["me.vibb.launcher"],
+     "denied": {},
+     "window": true,
+     "current": [["me.vibb.music", "android.permission.RECORD_AUDIO", "denied"]],
+     "writes": [["me.vibb.music", "android.permission.RECORD_AUDIO", "default"]]}
   ],
   "reports": [
     {"name": "every requested permission denied", "requested": ["android.permission.ACCESS_FINE_LOCATION", "android.permission.ACCESS_COARSE_LOCATION"],

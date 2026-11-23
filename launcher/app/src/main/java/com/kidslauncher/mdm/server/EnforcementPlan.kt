@@ -397,11 +397,16 @@ enum class AccessKey(val key: String, val permissions: List<String>) {
 }
 
 /** The packages no [AccessKey] is ever applied or reported for (design 127 §3.3 `never`): Vibb One and Vibb music, in
- * either build - our own package is left out besides. */
+ * either build - our own package is left out besides - but only when signed with our own certificate. */
 val ACCESS_NEVER = setOf("me.vibb.launcher", "me.vibb.launcher.debug", "me.vibb.music", "me.vibb.music.debug")
 
-/** Whether [pkg] (a third-party app: the caller's filter) gets the parent's [AccessKey]s: never ours or [ACCESS_NEVER]. */
-fun accessTarget(pkg: String, ownPackage: String): Boolean = pkg != ownPackage && pkg !in ACCESS_NEVER
+/** Whether [pkg] (a third-party app: the caller's filter) gets the parent's [AccessKey]s: never ours, nor an
+ * [ACCESS_NEVER] package signed with our certificate ([sameSigner], `MusicTrust.sameSigner`). */
+fun accessTarget(pkg: String, ownPackage: String, sameSigner: (String) -> Boolean): Boolean =
+    pkg != ownPackage && !(pkg in ACCESS_NEVER && sameSigner(pkg))
+
+/** An [ACCESS_NEVER] name with another signer: it gets every [AccessKey] denied, whatever the policy says. */
+private fun impostor(pkg: String): Boolean = pkg in ACCESS_NEVER
 
 /** One runtime permission of one package. */
 data class Grant(val packageName: String, val permission: String)
@@ -411,10 +416,14 @@ data class AppKey(val packageName: String, val key: AccessKey)
 
 /** Every (package, permission) [accessGrants] works on, with its key: each [accessTarget] in [requested] (third-party
  * only, mapped to their requested permissions) and each of its requested permissions an [AccessKey] covers. */
-fun accessTargets(requested: Map<String, Collection<String>>, ownPackage: String): Map<Grant, AccessKey> {
+fun accessTargets(
+    requested: Map<String, Collection<String>>,
+    ownPackage: String,
+    sameSigner: (String) -> Boolean,
+): Map<Grant, AccessKey> {
     val out = LinkedHashMap<Grant, AccessKey>()
     for ((pkg, perms) in requested) {
-        if (!accessTarget(pkg, ownPackage)) continue
+        if (!accessTarget(pkg, ownPackage, sameSigner)) continue
         for (key in AccessKey.entries) for (permission in key.permissions) {
             if (permission in perms) out[Grant(pkg, permission)] = key
         }
@@ -437,7 +446,8 @@ data class AccessPlan(val writes: Map<Grant, Int>, val waiting: Set<Grant>) {
  * [AccessPlan.waiting]; one it doesn't hold is denied at once. [denied] `null` (no `app_permissions`, a `Fallback`)
  * writes nothing, except in a window: every target reading DENIED goes to DEFAULT (we are the only admin, so a
  * `Fallback` phone's pause still lifts it). [current] is each target's grant state now; writes only where it differs
- * ([grantWrite]).
+ * ([grantWrite]). An [ACCESS_NEVER] name another key signed ([sameSigner] false) is denied every key it asks for,
+ * policy or none, until a window opens.
  */
 fun accessGrants(
     requested: Map<String, Collection<String>>,
@@ -447,14 +457,17 @@ fun accessGrants(
     callLive: Boolean,
     held: Set<Grant>,
     current: Map<Grant, Int>,
+    sameSigner: (String) -> Boolean,
 ): AccessPlan {
     val writes = LinkedHashMap<Grant, Int>()
     val waiting = LinkedHashSet<Grant>()
-    for ((grant, key) in accessTargets(requested, ownPackage)) {
+    for ((grant, key) in accessTargets(requested, ownPackage, sameSigner)) {
         val now = current[grant] ?: GRANT_STATE_DEFAULT
+        val impostor = impostor(grant.packageName)
         val wanted = when {
-            denied == null -> if (windowOpen && now == GRANT_STATE_DENIED) GRANT_STATE_DEFAULT else continue
-            key in denied[grant.packageName].orEmpty() && !windowOpen -> GRANT_STATE_DENIED
+            denied == null && !impostor ->
+                if (windowOpen && now == GRANT_STATE_DENIED) GRANT_STATE_DEFAULT else continue
+            (impostor || key in denied?.get(grant.packageName).orEmpty()) && !windowOpen -> GRANT_STATE_DENIED
             else -> GRANT_STATE_DEFAULT
         }
         if (wanted == GRANT_STATE_DENIED && now != GRANT_STATE_DENIED && callLive && grant in held) {

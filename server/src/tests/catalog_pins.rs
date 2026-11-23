@@ -439,7 +439,12 @@ async fn a_pinned_app_refuses_what_it_cant_check() {
         permissions: None,
         split_target: None,
     };
-    let refused = crate::handlers::tracked_apps::check_pins(&pinned, &unreadable).unwrap_err();
+    let refused = crate::handlers::tracked_apps::check_pins(
+        &pinned,
+        &unreadable,
+        crate::handlers::tracked_apps::KeyRule::Pinned,
+    )
+    .unwrap_err();
     assert_eq!(
         refused.problem,
         crate::handlers::tracked_apps::SyncProblem::CantCheck

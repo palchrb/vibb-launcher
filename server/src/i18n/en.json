@@ -327,6 +327,8 @@
   "apps.sync.index_signer": "Key differs from the repo's listing",
   "apps.sync.repo_rollback": "The repo sent an older index",
   "apps.sync.older_version": "The repo offers an older version",
+  "apps.sync.own_key": "Not signed with Vibb's key",
+  "apps.sync.no_own_key": "Vibb's signing key isn't set",
 
   "error.csrf": "Refused: this form was sent from another site.",
 

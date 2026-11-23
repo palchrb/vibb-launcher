@@ -178,12 +178,14 @@ impl ForkConfig {
         agent
     }
 
-    /// Defaults plus a syntactically valid (made-up) checksum, so tests see a working QR page
-    /// unless they clear it on purpose.
+    /// Defaults plus the checksum of the test fixtures' throwaway key1
+    /// (`testdata/apk/fixture-key1.apk`), so tests see a working QR page unless they clear it on
+    /// purpose, and our own catalog rows take key1's releases.
     #[cfg(test)]
     pub fn for_tests() -> Self {
         let mut config = Self::from_vars(&HashMap::new());
-        config.launcher_signature_checksum = Some("A".repeat(43));
+        config.launcher_signature_checksum =
+            Some("B5bxgJ5HaiznJPE0G8sy0DGFt6ICw0aXh8V3XWXvS-M".to_string());
         // Port 9 (discard) on loopback: refused at once, so a check "fails" without the network.
         config.github_api = "http://127.0.0.1:9".to_string();
         config

@@ -39,7 +39,8 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   `Map<String, Set<AccessKey>>?` (`[{package_name, camera?, location?, microphone?, contacts?}]`, each `"deny"`; an entry
   with nothing known off dropped; `null` still touches nothing). The pure `accessGrants` works per (package,
   permission) (`Grant`) over `accessTargets`: third-party apps but ours and never `ACCESS_NEVER` (Vibb One and Vibb
-  music, either build); DENIED while the key is off outside a window, else DEFAULT, **never GRANT**, only on a change;
+  music, either build) while signed with the launcher's own certificate (`MusicTrust.sameSigner`; one of those names
+  with another signer gets every key it asks for denied, policy or none, until a window); DENIED while the key is off outside a window, else DEFAULT, **never GRANT**, only on a change;
   while a call is live a permission the app holds waits (`AccessPlan.waiting` -> `AppEnforcer.accessDeferred`,
   `BootHome.callMayHaveEnded` through `deferredAccessApplyDue`). `AppEnforcer.accessPass` (after the loop, hidden apps
   skipped) and `enforceAccessOnPackage` (every install and package change, under `apply`'s lock) replace the camera's.

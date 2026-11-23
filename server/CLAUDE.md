@@ -83,7 +83,10 @@ No prior programming experience - build features directly rather than explaining
   an APK's manifest `package` (binary XML) and its signer (SHA-256 hex of the first certificate in the v3, else v2,
   signing block - what `apksigner --print-certs` and the launcher's `SelfUpdate.signers` give). `tracked_apps`
   `sync_one_app` and the manual upload refuse a release whose package differs from `package_name` or whose signer
-  differs from `signer_sha256` (migration 0062), and pin what the first release has (`store_pins`); a first package
+  differs from `signer_sha256` (migration 0062), and pin what the first release has (`store_pins`); our own two rows
+  (Vibb One's and Vibb music's, `catalog_holds::ours`) take only the certificate behind `LAUNCHER_SIGNATURE_CHECKSUM`,
+  never the first signer seen (`KeyRule::Ours`: `OwnKey`/`NoOwnKey` refusals, `servable` in `scoped_apps`, a cached
+  release of another key forgotten at startup by `drop_foreign_own_releases`); a first package
   that a catalog app can never be (`never_a_catalog_package`: `android`, `com.android.*`, Play core) or that a phone
   has as a system app or from another installer (`foreign_on_a_phone`) is refused (QA of the security wave,
   Medium 2); a manifest that can't be read is refused once a package is pinned, like the signer. `backfill_pins`
