@@ -1272,6 +1272,15 @@ pub struct InstalledApp {
         deserialize_with = "lenient_text"
     )]
     pub logo: Option<String>,
+    /// Design 87b: the SHA-256 of the tile the phone draws for the app's Automatic look (128 px PNG; equal to `logo`
+    /// for an app without a monochrome layer), kept only with a valid `logo` on the same app, as `logo` is checked.
+    /// Taken out with the logo (`app_logos::take_logos`): it lives in `device_app_logos.tile_hash`.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "lenient_text"
+    )]
+    pub auto_tile: Option<String>,
 }
 
 // ---------------------------------------------------------------------

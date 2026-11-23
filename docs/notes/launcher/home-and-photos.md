@@ -131,6 +131,12 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   row outside a pause or the offline override; messages still arrive and notify, and a thread opens from the
   notification, the lock's row and the phone book. Tests: `AppDisplayTest`, `SmsContractTest` (`sms_contract.json`'s
   `app.display`), `HomeModelTest`, `SmsGlanceTest`, `PolicyResponseCompatTest`.
+- **The Automatic tile for the PWA** (design 87b, `docs/design/87b-auto-tile.md`, 2026-11-23): beside each logo
+  `AppLogos` draws the tile Home's Automatic draws - `KidAvatars.drawVibbMono` (now `internal`) from the same
+  drawable, at 128 px - and reports its hash as `installed_apps[].auto_tile`; an app without a monochrome layer
+  reports the logo's own hash (its Automatic is the logo), nothing drawn twice. The index entry keeps it (`tile`), a
+  missing tile file draws the app again, `LOGO_RENDER_VERSION` 2; the upload is the logo's (the same wanted list and
+  route).
 - **The apps' real logos for the PWA** (design 87 step 2, `docs/design/87-app-logos.md`): `appdisplay/AppLogos.kt`
   draws each reported app's logo with `KidAvatars.drawOwnLogo` (now `internal`; one drawing, the "App logo" one) at
   128 px as PNG, from the launcher activity's (else the application's, else Android's default) icon resource loaded

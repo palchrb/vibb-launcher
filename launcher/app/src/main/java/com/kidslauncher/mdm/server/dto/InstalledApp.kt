@@ -33,6 +33,10 @@ data class InstalledApp(
      * PNG; the server asks for the file in the report's answer ([WantedLogos]). `null` (left out) when there is
      * nothing to say this time - never "no logo". */
     val logo: String? = null,
+    /** Design 87b: the SHA-256 of the tile the phone draws for the app's Automatic look ("Vibb style"), a
+     * [APP_LOGO_SIZE_PX] px PNG uploaded as a logo is; [logo]'s own hash for an app without a monochrome layer (its
+     * Automatic is the logo). Only beside [logo]; `null` (left out) otherwise. */
+    val autoTile: String? = null,
 )
 
 /** The longest versionName a report carries (the server clips to the same). */

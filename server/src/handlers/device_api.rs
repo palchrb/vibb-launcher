@@ -842,17 +842,26 @@ pub(crate) fn cap_installed_apps(apps: Vec<InstalledApp>) -> Vec<InstalledApp> {
         .filter(|app| !crate::builtin::is_reserved(&app.package_name))
         .filter(|app| seen.insert(app.package_name.clone()))
         .take(MAX_INSTALLED_APPS)
-        .map(|app| InstalledApp {
-            label: crate::audit::clip(&app.label, MAX_APP_LABEL_CHARS).to_string(),
-            installer: app.installer.filter(|installer| is_package_name(installer)),
-            version_name: app
-                .version_name
-                .as_deref()
-                .map(|name| crate::audit::clip(name.trim(), MAX_APP_VERSION_NAME_CHARS).to_string())
-                .filter(|name| !name.is_empty()),
-            // Design 87 (R2-M5): set here, never carried through unchecked by `..app`.
-            logo: app.logo.filter(|hash| crate::photos::is_valid_hash(hash)),
-            ..app
+        .map(|app| {
+            let logo = app.logo.filter(|hash| crate::photos::is_valid_hash(hash));
+            InstalledApp {
+                label: crate::audit::clip(&app.label, MAX_APP_LABEL_CHARS).to_string(),
+                installer: app.installer.filter(|installer| is_package_name(installer)),
+                version_name: app
+                    .version_name
+                    .as_deref()
+                    .map(|name| {
+                        crate::audit::clip(name.trim(), MAX_APP_VERSION_NAME_CHARS).to_string()
+                    })
+                    .filter(|name| !name.is_empty()),
+                // Design 87 (R2-M5): set here, never carried through unchecked by `..app`.
+                // Design 87b: the Automatic tile only beside a valid logo.
+                auto_tile: app
+                    .auto_tile
+                    .filter(|hash| logo.is_some() && crate::photos::is_valid_hash(hash)),
+                logo,
+                ..app
+            }
         })
         .collect();
     if capped.len() < reported {

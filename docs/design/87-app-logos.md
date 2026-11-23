@@ -1,6 +1,7 @@
 # 87 - The apps' real logos in the PWA
 
-Status: design note by the architect, 2026-11-12, on `main` at 0e72d7a9, branch `design-87`. Not built. The three
+Status: design note by the architect, 2026-11-12, on `main` at 0e72d7a9, branch `design-87`. Built. Addendum
+`87b-auto-tile.md` (2026-11-23): the phone also uploads its Automatic tile, which reverses R2-M6 below. The three
 questions in §12 were answered by the user on 2026-11-12, each as recommended. Design QA on 2026-11-12 (of the file
 at 763e7773): "Revision 2: the design QA" at the end lists the findings; the sections above are corrected in place
 and marked (R2-...).

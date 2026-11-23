@@ -5,7 +5,8 @@
     saved state). Logo · Automatisk · Symbol are three radios before the rows, so CSS marks the chosen segment and
     shows the symbols and the colours under Symbol only - with or without JS, never a flash (no :has()). One glyph is
     always checked (the chosen one, else the stored or the catalog's, else the first), so Symbol saves a real glyph at
-    once. A part of Vibb One (design 82 D9: Meldinger, `form.builtin`) has no Logo, and Automatic previews its own look.
+    once. A part of Vibb One (design 82 D9: Meldinger, `form.builtin`) has no Logo, and Automatic previews its own look;
+    an app's Automatic previews the tile its phone drew for it (design 87b, `form.auto_src`), else its letter.
     A refusal sits at its field, the field `aria-invalid`. -#}
 <form method="post" action="{{ form.action }}" class="group app-display-form" data-letter="{{ form.letter() }}" data-w-own="{{ self.t("apps.display.preview_own") }}"{% if let Some(look) = form.builtin %} data-auto-glyph="{{ look.glyph }}" data-auto-tile="{{ look.tile }}"{% endif %}{% if let Some(src) = form.logo %} data-logo="{{ src }}"{% endif %}>
     {% if !form.package_name.is_empty() %}
@@ -19,8 +20,9 @@
         <span class="home-peek" aria-hidden="true">
             <span class="peek-tile" data-preview-tile style="background: {{ form.preview_tile() }}">
                 {%- if let Some(glyph) = form.preview_glyph() %}<img class="peek-glyph" data-preview-glyph src="/static/app-icons/{{ glyph }}.svg" alt="">{% else %}<img class="peek-glyph" data-preview-glyph alt="" hidden>{% endif -%}
-                <span class="peek-text" data-preview-text{% if form.mode() == "logo" %} data-word{% endif %}{% if form.preview_glyph().is_some() || (form.mode() == "logo" && form.logo.is_some()) %} hidden{% endif %}>{% if form.mode() == "logo" %}{{ self.t("apps.display.preview_own") }}{% else %}{{ form.letter() }}{% endif %}</span>
+                <span class="peek-text" data-preview-text{% if form.mode() == "logo" %} data-word{% endif %}{% if form.preview_glyph().is_some() || (form.mode() == "logo" && form.logo.is_some()) || (form.mode() == "auto" && form.auto_src.is_some()) %} hidden{% endif %}>{% if form.mode() == "logo" %}{{ self.t("apps.display.preview_own") }}{% else %}{{ form.letter() }}{% endif %}</span>
                 {%- if let Some(src) = form.logo %}<img class="peek-logo" data-preview-logo src="{{ src }}" alt="" decoding="async"{% if form.mode() != "logo" %} hidden{% endif %}>{% endif -%}
+                {%- if let Some(src) = form.auto_src %}<img class="peek-logo" data-preview-auto src="{{ src }}" alt="" decoding="async"{% if form.mode() != "auto" %} hidden{% endif %}>{% endif -%}
             </span>
             <span class="peek-label" data-preview-label>{{ form.preview_label() }}</span>
         </span>

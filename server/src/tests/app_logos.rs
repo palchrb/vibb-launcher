@@ -133,6 +133,37 @@ async fn the_contract() {
     let content_type = upload_row["content_type"].as_str().unwrap();
     let res = upload(&app, &token, hash, content_type, png_bytes.clone()).await;
     assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.text());
+    // Design 87b: the Automatic tile goes up the same route; an app without a monochrome layer names its logo as its
+    // tile, nothing more.
+    let tile_bytes = base64::engine::general_purpose::STANDARD
+        .decode(contract["tile_png_base64"].as_str().unwrap())
+        .unwrap();
+    let tile_hash = contract["tile_png_sha256"].as_str().unwrap();
+    assert_eq!(sha(&tile_bytes), tile_hash);
+    let res = upload(&app, &token, tile_hash, content_type, tile_bytes.clone()).await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.text());
+    let tiles: Vec<(String, String, Option<String>)> = sqlx::query_as(
+        "SELECT package_name, logo_hash, tile_hash FROM device_app_logos ORDER BY package_name",
+    )
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        tiles,
+        [
+            (
+                "org.example.drawing".to_string(),
+                hash.to_string(),
+                Some(tile_hash.to_string())
+            ),
+            (
+                "org.example.plain".to_string(),
+                hash.to_string(),
+                Some(hash.to_string())
+            ),
+        ]
+    );
+    assert!(file(&app, tile_hash).is_file());
     // Stored: a second report wants nothing.
     let res = report(&app, &token, contract["report"].clone()).await;
     assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.text());
@@ -165,6 +196,7 @@ async fn the_contract() {
         let case = row["case"].as_str().unwrap();
         let (path_hash, content_type, bytes) = match case {
             "stored" => (hash.to_string(), "image/png", png_bytes.clone()),
+            "tile_stored" => (tile_hash.to_string(), "image/png", tile_bytes.clone()),
             "bad_hash" => (hash.to_uppercase(), "image/png", png_bytes.clone()),
             "mismatch" => (sha(b"other bytes"), "image/png", png_bytes.clone()),
             "type" => (hash.to_string(), "image/webp", png_bytes.clone()),
@@ -280,7 +312,7 @@ async fn the_rows_follow_the_reports_and_the_files_follow_the_rows() {
     assert!(!file(&app, &hash).exists());
 }
 
-/// R2-M2: a phone whose rows name 300 stored files is asked for nothing more, while another phone still is.
+/// R2-M2: a phone whose rows name 600 stored files (87b: logos and tiles) is asked for nothing more, while another phone still is.
 #[tokio::test]
 async fn a_full_phone_is_asked_for_nothing_more() {
     let app = TestApp::new().await;
@@ -833,4 +865,141 @@ async fn a_catalog_event_shows_the_apps_logo() {
         chatty.contains("src=\"/static/app-icons/chat.svg\"") && !chatty.contains(">C<"),
         "{chatty}"
     );
+}
+
+/// One reported app with its logo and Automatic tile (design 87b).
+fn tile_row(package: &str, logo: &str, tile: serde_json::Value) -> serde_json::Value {
+    let mut row = app_row(package, "Drawing", Some(logo));
+    row["auto_tile"] = tile;
+    row
+}
+
+/// Design 87b: the Automatic tile is stored beside the logo, shown by "Vises som" under Automatisk on the phone's app
+/// page and the catalog app's page, replaced and pruned with the reports; a malformed one, or one without a logo, is
+/// no tile and never a refused report.
+#[tokio::test]
+async fn the_automatic_tile_is_kept_shown_and_pruned() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (emma, token) = app.enrolled_device("Emma").await;
+    let logo = png(SIZE_PX, 70);
+    let first = png(SIZE_PX, 71);
+    let second = png(SIZE_PX, 72);
+    let package = "org.example.drawing";
+    report_and_upload(
+        &app,
+        &token,
+        json!([tile_row(package, &sha(&logo), json!(sha(&first)))]),
+        &[&logo, &first],
+    )
+    .await;
+    assert!(file(&app, &sha(&first)).is_file());
+    // An allowed app has a page (design 127).
+    sqlx::query("UPDATE device_policy SET allowlist_json = ? WHERE device_id = ?")
+        .bind(format!(r#"["{package}"]"#))
+        .bind(emma)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let shown = |hash: &str| {
+        format!(
+            "<img class=\"peek-logo\" data-preview-auto src=\"/app-logos/{hash}\" alt=\"\" decoding=\"async\">"
+        )
+    };
+    let page = app
+        .get_page(&format!("/devices/{emma}/apps/{package}"), &cookie)
+        .await
+        .text();
+    assert!(page.contains(&shown(&sha(&first))), "{page}");
+    assert!(page.contains("data-preview-text hidden>"), "{page}");
+    // The tile is served like a logo.
+    let res = app
+        .get_page(&format!("/app-logos/{}", sha(&first)), &cookie)
+        .await;
+    assert_eq!(res.status, StatusCode::OK);
+
+    // The catalog app's page: the tile a phone drew.
+    let catalog: i64 = sqlx::query_scalar(
+        "INSERT INTO tracked_apps (name, package_name, github_repo) VALUES ('Drawing', ?, 'o/r') RETURNING id",
+    )
+    .bind(package)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    let catalog_page = app
+        .get_page(&format!("/apps/tracked/{catalog}"), &cookie)
+        .await
+        .text();
+    assert!(
+        catalog_page.contains(&shown(&sha(&first))),
+        "{catalog_page}"
+    );
+
+    // Another phone with the app installed and no tile of its own (its logo failed or is queued): the letter, never
+    // Emma's tile - another phone's only for a catalog app not installed there (the logo's rule, design 87 Q3).
+    let (lily, lily_token) = app.enrolled_device("Lily").await;
+    let res = report(
+        &app,
+        &lily_token,
+        status_body(json!([app_row(package, "Drawing", None)])),
+    )
+    .await;
+    assert!(res.status.is_success(), "{}", res.text());
+    sqlx::query("UPDATE device_policy SET allowlist_json = ? WHERE device_id = ?")
+        .bind(format!(r#"["{package}"]"#))
+        .bind(lily)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let lily_page = app
+        .get_page(&format!("/devices/{lily}/apps/{package}"), &cookie)
+        .await;
+    assert_eq!(lily_page.status, StatusCode::OK);
+    let lily_page = lily_page.text();
+    assert!(!lily_page.contains("data-preview-auto"), "{lily_page}");
+    assert!(
+        !lily_page.contains("data-preview-text hidden>"),
+        "{lily_page}"
+    );
+
+    // A new tile replaces the old, whose file goes; the new one is wanted.
+    let apps = json!([tile_row(package, &sha(&logo), json!(sha(&second)))]);
+    assert_eq!(
+        wanted(&app, &token, status_body(apps.clone())).await,
+        json!([sha(&second)])
+    );
+    assert!(!file(&app, &sha(&first)).exists());
+    report_and_upload(&app, &token, apps, &[&second]).await;
+
+    // A malformed tile, or a report with the logo and no tile: no tile, the report taken, the file pruned, the letter.
+    for tile in [json!(7), json!({"x": 1}), json!("not a hash")] {
+        let res = report(
+            &app,
+            &token,
+            status_body(json!([tile_row(package, &sha(&logo), tile)])),
+        )
+        .await;
+        assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.text());
+    }
+    let row: Option<String> =
+        sqlx::query_scalar("SELECT tile_hash FROM device_app_logos WHERE device_id = ?")
+            .bind(emma)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(row, None);
+    assert!(!file(&app, &sha(&second)).exists());
+    let page = app
+        .get_page(&format!("/devices/{emma}/apps/{package}"), &cookie)
+        .await
+        .text();
+    assert!(!page.contains("data-preview-auto"), "{page}");
+    assert!(!page.contains("data-preview-text hidden>"), "{page}");
+
+    // A tile without a logo is dropped with it: the row stays as it was.
+    let mut alone = app_row(package, "Drawing", None);
+    alone["auto_tile"] = json!(sha(&first));
+    let res = report(&app, &token, status_body(json!([alone]))).await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.text());
+    assert_eq!(rows(&app, emma).await, [(package.to_string(), sha(&logo))]);
 }

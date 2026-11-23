@@ -17,8 +17,9 @@ import java.security.MessageDigest
  */
 
 /** Bumped when our drawing of a logo changes ([com.kidslauncher.mdm.ui.home.KidAvatars.drawOwnLogo], the size, the
- * configuration it is loaded in): every app is drawn again and reported under its new hash. */
-const val LOGO_RENDER_VERSION = 1
+ * configuration it is loaded in): every app is drawn again and reported under its new hash. 2: design 87b's Automatic
+ * tile beside the logo. */
+const val LOGO_RENDER_VERSION = 2
 
 /** The most drawing one sync spends (§3); what doesn't fit is drawn at the next. */
 const val LOGO_DRAW_BUDGET_MS = 1_500L
@@ -40,13 +41,19 @@ data class AppLogoKey(
     val render: Int = LOGO_RENDER_VERSION,
 )
 
-/** One app in the cache's index: its [key] and the logo's [hash] - `null` when the draw failed or the PNG was over
- * [APP_LOGO_MAX_BYTES] (never reported; drawn again only when the key changes). */
+/** One app in the cache's index: its [key], the logo's [hash] - `null` when the draw failed or the PNG was over
+ * [APP_LOGO_MAX_BYTES] (never reported; drawn again only when the key changes) - and the Automatic tile's [tile]
+ * (design 87b: the [hash] itself for an app without a monochrome layer; `null` when it didn't draw or was too large -
+ * the logo is still reported). */
 @Serializable
 data class AppLogoEntry(
     val key: AppLogoKey,
     val hash: String? = null,
+    val tile: String? = null,
 )
+
+/** What the report says of one app: its logo's hash and its Automatic tile's (design 87b), when there is one. */
+data class ReportedLogo(val logo: String, val tile: String? = null)
 
 /** The cache's `index.json`: package -> entry. */
 @Serializable
@@ -65,15 +72,16 @@ fun decodeLogoIndex(text: String?): AppLogoIndex = try {
 fun encodeLogoIndex(index: AppLogoIndex): String = ServerJson.encodeToString(AppLogoIndex.serializer(), index)
 
 /** What a sync does with the cache: [index] without the packages no longer installed, and the packages to draw, in
- * [current]'s order - those without an entry, whose key changed, or whose logo's file is gone from [files] (the hashes
- * on disk). A failed draw (no hash) under the same key is not drawn again. */
+ * [current]'s order - those without an entry, whose key changed, or whose logo's or tile's file is gone from [files]
+ * (the hashes on disk). A failed draw (no hash) under the same key is not drawn again. */
 data class LogoRefreshPlan(val index: AppLogoIndex, val toDraw: List<String>)
 
 fun logoRefreshPlan(index: AppLogoIndex, current: Map<String, AppLogoKey>, files: Set<String>): LogoRefreshPlan {
     val kept = index.apps.filterKeys { it in current }
     val toDraw = current.filter { (pkg, key) ->
         val entry = kept[pkg]
-        entry == null || entry.key != key || (entry.hash != null && entry.hash !in files)
+        entry == null || entry.key != key ||
+            (entry.hash != null && (entry.hash !in files || (entry.tile != null && entry.tile !in files)))
     }.keys.toList()
     return LogoRefreshPlan(AppLogoIndex(kept), toDraw)
 }
@@ -89,21 +97,25 @@ fun sha256Hex(bytes: ByteArray): String =
 fun isLogoHash(text: String): Boolean = text.length == 64 && text.all { it in '0'..'9' || it in 'a'..'f' }
 
 /** The logos the report carries (§3): package -> hash for each app whose entry was drawn under its [current] key,
- * has a hash and whose file is there ([files], the hashes on disk). Anything else is absent - "nothing to say this
- * time", never "no logo". */
-fun reportedLogos(index: AppLogoIndex, current: Map<String, AppLogoKey>, files: Set<String>): Map<String, String> =
+ * has a hash and whose file is there ([files], the hashes on disk), with its Automatic tile (design 87b) when that
+ * file is there too. Anything else is absent - "nothing to say this time", never "no logo". */
+fun reportedLogos(index: AppLogoIndex, current: Map<String, AppLogoKey>, files: Set<String>): Map<String, ReportedLogo> =
     index.apps.mapNotNull { (pkg, entry) ->
         val hash = entry.hash
-        if (hash != null && current[pkg] == entry.key && hash in files) pkg to hash else null
+        if (hash != null && current[pkg] == entry.key && hash in files) {
+            pkg to ReportedLogo(hash, entry.tile?.takeIf { it in files })
+        } else {
+            null
+        }
     }.toMap()
 
-/** [apps] with each reported [logos]' hash in `logo`. */
-fun withLogos(apps: List<InstalledApp>, logos: Map<String, String>): List<InstalledApp> =
-    apps.map { app -> logos[app.packageName]?.let { app.copy(logo = it) } ?: app }
+/** [apps] with each reported [logos]' hashes in `logo` and `auto_tile`. */
+fun withLogos(apps: List<InstalledApp>, logos: Map<String, ReportedLogo>): List<InstalledApp> =
+    apps.map { app -> logos[app.packageName]?.let { app.copy(logo = it.logo, autoTile = it.tile) } ?: app }
 
 /** The cache's files no index entry names (a removed package's, an app's old logo) and stray temp files: deleted. */
 fun unnamedLogoFiles(index: AppLogoIndex, fileNames: Collection<String>): List<String> {
-    val named = index.apps.values.mapNotNullTo(HashSet()) { it.hash?.let { hash -> "$hash.png" } }
+    val named = index.apps.values.flatMapTo(HashSet()) { entry -> listOfNotNull(entry.hash, entry.tile).map { "$it.png" } }
     return fileNames.filter { it != LOGO_INDEX_FILE && it !in named }
 }
 
