@@ -424,7 +424,11 @@ Install Now), so a held or waiting release never reaches them and no contract ch
   200 bytes, no NUL or control character in an element's name or a permission (code QA H2: Android's string reader
   stops at a NUL). A string pool or resource map after the first XML node makes it `None` and is never used (code QA
   H1: `ResXMLTree::setTo` takes them only before the first node - the last there - and `nextNode` skips any other
-  chunk; so a later pool can't rename the package either). Anything else is `None` - never "no permissions". Fixtures `testdata/apk/perms-key3-v1.apk` (INTERNET,
+  chunk; so a later pool can't rename the package either). Every element after `<manifest>` must have its attributes
+  in Android's order (`apk::in_android_order`): `obtainAttributes` walks the element's attributes and the wanted ids
+  together, both taken as sorted, so an attribute after a higher id is never seen there; the ids must rise strictly,
+  an attribute without an id is skipped wherever it is, and an id outside the android package (`0x01`), which the
+  APK's own dynamic-reference table may rewrite, makes it `None` too. aapt2 always writes them sorted. Anything else is `None` - never "no permissions". Fixtures `testdata/apk/perms-key3-v1.apk` (INTERNET,
   POST_NOTIFICATIONS) and `perms-key3-v2.apk` (READ_CONTACTS, a `maxSdkVersion="32"` WRITE_EXTERNAL_STORAGE, an sdk-23
   ACCESS_FINE_LOCATION, another app's permission, a service with BIND_ACCESSIBILITY_SERVICE, a receiver with
   BIND_DEVICE_ADMIN): aapt2 + apksigner (v2+v3) with a third throwaway key, made 2026-11-12 and discarded.

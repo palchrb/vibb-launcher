@@ -114,8 +114,8 @@ No prior programming experience - build features directly rather than explaining
   sensitive release is held). Only the parent widens the set (Approve, an upload); a held release never reaches
   `latest_release_*`, so the phones keep what they have; Approve checks the file again (pins, package, SHA-256). Every
   new release first waits the app's hours from the later of its source's time and this server's first sight
-  (`release_wait_hours`, 48; `tracked_app_seen_releases`). A string pool or resource map after the first XML node, or a
-  NUL in a permission's string, makes the list unreadable (Android reads them otherwise). `docs/notes/server/play-and-updates.md`, "Update holds and the per-app wait".
+  (`release_wait_hours`, 48; `tracked_app_seen_releases`). A string pool or resource map after the first XML node, a
+  NUL in a permission's string, or an element's attributes out of Android's resource-id order makes the list unreadable (Android reads them otherwise). `docs/notes/server/play-and-updates.md`, "Update holds and the per-app wait".
 - **An F-Droid repo's index is used only under its pinned key (round S4).** entry.json is read only out of the
   repo's `entry.jar` once `jar_signature::verify_entry_jar` has checked its JAR v1 signature (manifest digest, .SF
   over the manifest, the CMS SignedData by `ring`, SHA-256 only) and `fdroid::RepoKey` has matched the signer's

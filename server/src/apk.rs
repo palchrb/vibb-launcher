@@ -305,6 +305,12 @@ fn walk_manifest(
                 if element.chars().any(char::is_control) {
                     *permissions = None;
                 }
+                // Android finds an element's attributes by walking them in resource-id order: one
+                // it can't reach that way, or an id it might map to another, it never reads - so
+                // a list that relied on it would not be the one Android grants.
+                if !in_android_order(resource_ids, ext) {
+                    *permissions = None;
+                }
                 if let Some(names) = permissions {
                     match permission_of(pool, resource_ids, ext, &element) {
                         Some(Some(name)) if names.len() < MAX_PERMISSIONS => names.push(name),
@@ -433,6 +439,43 @@ fn by_id<'a>(resource_ids: Option<&[u8]>, ext: &'a [u8], attr: u32) -> Option<Op
         }
     }
     Some(found)
+}
+
+/// Whether Android's attribute lookup sees a start element's attributes as this reader does.
+/// `AttributeResolution`'s `RetrieveAttributes` (what `obtainAttributes` runs while the package is
+/// parsed) walks the element's attributes and the wanted ids together, both taken as sorted: an
+/// attribute after one with a higher id is never found. An attribute with no id (none in the
+/// resource map, or 0) is never wanted and is skipped wherever it is. An id outside the android
+/// package (`0x01`) may be rewritten by the APK's own dynamic-reference table before that walk,
+/// so its order there can't be known. True when every id is 0 or an android id and those rise
+/// strictly; false otherwise or when the attributes can't be read.
+fn in_android_order(resource_ids: Option<&[u8]>, ext: &[u8]) -> bool {
+    let ordered = || -> Option<bool> {
+        let attribute_start = usize::from(u16_at(ext, 8)?);
+        let attribute_size = usize::from(u16_at(ext, 10)?);
+        let count = usize::from(u16_at(ext, 12)?);
+        if attribute_size < 20 {
+            return None;
+        }
+        let mut last = 0u32;
+        for index in 0..count {
+            let start = attribute_start.checked_add(index.checked_mul(attribute_size)?)?;
+            let attribute = ext.get(start..start.checked_add(attribute_size)?)?;
+            let name_index = u32_at(attribute, 4)?;
+            let id = resource_ids
+                .and_then(|ids| u32_at(ids, (name_index as usize).checked_mul(4)?))
+                .unwrap_or(0);
+            if id == 0 {
+                continue;
+            }
+            if id >> 24 != 0x01 || id <= last {
+                return Some(false);
+            }
+            last = id;
+        }
+        Some(true)
+    };
+    ordered() == Some(true)
 }
 
 /// A permission attribute's string: the typed string, which the raw value must equal when both are
@@ -892,6 +935,70 @@ mod tests {
         let size = xml.len() as u32 + 8;
         xml[4..8].copy_from_slice(&size.to_le_bytes());
         assert_eq!(read_manifest(&xml).unwrap().permissions, None);
+    }
+
+    /// Android reads an element's attributes by walking them in resource-id order: attributes out
+    /// of that order, or an id outside the android package (which the APK's own tables may map to
+    /// another), are unreadable - a `maxSdkVersion` Android never sees must not drop a permission.
+    /// An attribute without an id is skipped wherever it is.
+    #[test]
+    fn attributes_out_of_androids_order_are_unreadable() {
+        const STRINGS: [&str; 8] = [
+            "name",
+            "maxSdkVersion",
+            "label",
+            "manifest",
+            "package",
+            "me.vibb.testfixture",
+            "uses-permission",
+            "android.permission.ACCESS_FINE_LOCATION",
+        ];
+        let ns = 9;
+        let manifest = (3, vec![[NO_INDEX, 4, 5, u32::from(TYPE_STRING), 5]], 1);
+        let uses = |attributes: Vec<[u32; 5]>| (6, attributes.clone(), attributes.len() as u16);
+        let name = [ns, 0, 7, u32::from(TYPE_STRING), 7];
+        let capped = [ns, 1, NO_INDEX, u32::from(TYPE_INT_DEC), 32];
+        let no_id = [NO_INDEX, 3, NO_INDEX, u32::from(TYPE_INT_DEC), 1];
+        let read = |ids: &[u32], attributes: Vec<[u32; 5]>| {
+            read_manifest(&xml_doc(
+                &STRINGS,
+                ids,
+                &[manifest.clone(), uses(attributes)],
+            ))
+            .unwrap()
+        };
+        let ids = [ATTR_NAME, ATTR_MAX_SDK_VERSION];
+        assert_eq!(
+            read(&ids, vec![name, capped]).permissions,
+            Some(Vec::new()),
+            "in order: capped below Android 14, left out"
+        );
+        assert_eq!(
+            read(&ids, vec![no_id, name, no_id, capped, no_id]).permissions,
+            Some(Vec::new()),
+            "attributes without an id anywhere"
+        );
+        let swapped = read(&ids, vec![capped, name]);
+        assert_eq!(swapped.permissions, None, "maxSdkVersion before the name");
+        assert_eq!(swapped.package.as_deref(), Some("me.vibb.testfixture"));
+        // An id outside the android package, here before the name.
+        let ids = [ATTR_NAME, ATTR_MAX_SDK_VERSION, 0x0501_0001];
+        let label = [ns, 2, 7, u32::from(TYPE_STRING), 7];
+        assert_eq!(read(&ids, vec![label, name]).permissions, None);
+        assert_eq!(read(&ids, vec![name, label]).permissions, None);
+        // The order matters on every element, not only `<uses-permission>`.
+        let ids = [ATTR_NAME, ATTR_PERMISSION];
+        let other = read_manifest(&xml_doc(
+            &STRINGS,
+            &ids,
+            &[
+                manifest.clone(),
+                uses(vec![name]),
+                (2, vec![[ns, 1, 7, u32::from(TYPE_STRING), 7], name], 2),
+            ],
+        ))
+        .unwrap();
+        assert_eq!(other.permissions, None);
     }
 
     /// Design 90 QA H1, H2, L5: Android takes the string pool and resource map only before the
