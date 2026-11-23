@@ -982,6 +982,32 @@ pub(crate) fn call_and_text_roles(call_state: Option<&serde_json::Value>) -> Vec
         .collect()
 }
 
+/// The SMS apps a phone gets back when SMS goes from managed (or off) to unmanaged - what its first report's list left
+/// out while SMS was managed (the counterpart of design 109's dialer): the installed [TEXT_APPS], and the SMS role's
+/// holder its last report names unless it is Vibb One itself. `installed` is the last report's `installed_apps_json`.
+pub(crate) fn sms_apps_to_restore(
+    state: &AppState,
+    call_state: Option<&serde_json::Value>,
+    installed: Option<&serde_json::Value>,
+) -> Vec<String> {
+    let installed: Vec<&str> = installed
+        .and_then(serde_json::Value::as_array)
+        .map(|apps| {
+            apps.iter()
+                .filter_map(|app| app.get("package_name")?.as_str())
+                .collect()
+        })
+        .unwrap_or_default();
+    let role = call_state
+        .and_then(|call_state| role_package(call_state, "default_sms_package"))
+        .filter(|package| !installed_by_launcher(state, Some(package)));
+    installed
+        .into_iter()
+        .filter(|package| TEXT_APPS.contains(package) || role.as_deref() == Some(*package))
+        .map(str::to_string)
+        .collect()
+}
+
 /// The phone's system dialer as its last report names it (design 109): `call_state.system_dialer`, a real package
 /// name, never Settings or Play's core - the filters of [call_and_text_roles].
 pub(crate) fn system_dialer(call_state: Option<&serde_json::Value>) -> Option<String> {

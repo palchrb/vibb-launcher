@@ -1255,6 +1255,10 @@ pub(crate) enum Finding {
     /// SMS "Ikke styrt" and Vibb One still holds the role (code QA L3): it shows every message unfiltered until it
     /// hands it back.
     SmsRoleKept,
+    /// Calls "Styrt av Vibb" and no contact may call in: every incoming call is rejected (a new phone's start).
+    NoCallers,
+    /// SMS "Styrt av Vibb" and no contact may text in, while someone may call (else [Finding::NoCallers] says it).
+    NoTexters,
 }
 
 /// "10:58 · 3 min ago": a report's time with its age (one of them when they read the same).
@@ -1291,6 +1295,8 @@ impl Finding {
             Finding::MmsNoData => CallProblem::MmsNoData,
             Finding::OwnNumberMismatch { .. } => CallProblem::OwnNumberMismatch,
             Finding::SmsRoleKept => CallProblem::SmsRoleKept,
+            Finding::NoCallers => CallProblem::NoCallers,
+            Finding::NoTexters => CallProblem::NoTexters,
         }
     }
 
@@ -1429,6 +1435,9 @@ impl Finding {
                 None,
             ),
             Finding::SmsRoleKept => (say("device.calls.finding.sms_role_kept"), None),
+            Finding::NoCallers | Finding::NoTexters => {
+                (say("device.calls.finding.no_contacts"), None)
+            }
         };
         // Where the sentence is the news, it shows under the title (a KEEP: the emergency call,
         // the call-back window, a call that couldn't show) and only the fix stays behind the ⓘ
@@ -1504,6 +1513,22 @@ pub(crate) async fn call_report(
         auto_refresh: false,
         emergency_left_attention: false,
     };
+    // A managed channel no contact can reach yet (a new phone's start): said once, calls first - from the stored
+    // contacts, with or without a report.
+    if policy.calls_mode == "managed" || policy.sms_mode == "managed" {
+        let (callers, texters): (bool, bool) = sqlx::query_as(
+            "SELECT EXISTS(SELECT 1 FROM device_contacts WHERE device_id = ?1 AND allow_inbound = 1), \
+                    EXISTS(SELECT 1 FROM device_contacts WHERE device_id = ?1 AND sms_in = 1)",
+        )
+        .bind(policy.device_id)
+        .fetch_one(&state.db)
+        .await?;
+        if policy.calls_mode == "managed" && !callers {
+            report.findings.push(Finding::NoCallers);
+        } else if policy.sms_mode == "managed" && !texters {
+            report.findings.push(Finding::NoTexters);
+        }
+    }
     // `call_state`, the report's time and `sms_state` (design 77).
     type Latest = (Option<String>, String, Option<String>);
     let latest: Option<Latest> = sqlx::query_as(
@@ -1804,6 +1829,10 @@ pub enum CallProblem {
     OwnNumberMismatch,
     /// SMS not managed but Vibb One still the SMS app (not an Attention row: it hands the role back itself).
     SmsRoleKept,
+    /// Calls managed and no contact may call in.
+    NoCallers,
+    /// SMS managed and no contact may text in.
+    NoTexters,
 }
 
 impl CallProblem {
@@ -1833,6 +1862,8 @@ impl CallProblem {
                 CallProblem::MmsNoData => "device.calls.problem.mms_no_data",
                 CallProblem::OwnNumberMismatch => "device.calls.problem.own_number",
                 CallProblem::SmsRoleKept => "device.calls.problem.sms_role_kept",
+                CallProblem::NoCallers => "device.calls.problem.no_callers",
+                CallProblem::NoTexters => "device.calls.problem.no_texters",
             },
         )
     }
@@ -1855,7 +1886,7 @@ impl CallProblem {
 
     /// Every kind, for the tests.
     #[cfg(test)]
-    pub(crate) const ALL: [CallProblem; 21] = [
+    pub(crate) const ALL: [CallProblem; 23] = [
         CallProblem::EmergencyCall,
         CallProblem::CallbackWindow,
         CallProblem::CallScreenFailed,
@@ -1877,6 +1908,8 @@ impl CallProblem {
         CallProblem::MmsNoData,
         CallProblem::OwnNumberMismatch,
         CallProblem::SmsRoleKept,
+        CallProblem::NoCallers,
+        CallProblem::NoTexters,
     ];
 }
 
@@ -1998,11 +2031,13 @@ pub async fn save_settings(
     let result = async {
         // BEGIN IMMEDIATE: it reads the stored mode before it writes (design 109).
         let mut tx = state.db.begin_with("BEGIN IMMEDIATE").await?;
-        let was_managed: Option<String> =
-            sqlx::query_scalar("SELECT calls_mode FROM device_policy WHERE device_id = ?")
+        let was: Option<(String, String)> =
+            sqlx::query_as("SELECT calls_mode, sms_mode FROM device_policy WHERE device_id = ?")
                 .bind(id)
                 .fetch_optional(&mut *tx)
                 .await?;
+        let was_managed = was.as_ref().map(|(calls, _)| calls.clone());
+        let sms_was_managed = was.as_ref().is_some_and(|(_, sms)| sms != "unmanaged");
         // A change to either mode stamps roles_changed_at: reports from before it may still
         // show the old role state (B1).
         let updated = sqlx::query(
@@ -2020,28 +2055,48 @@ pub async fn save_settings(
         // Design 109: from managed (or off) to unmanaged the Phone app is the kid's again, so it is put back on the
         // allowlist if it is missing - the Apps page showed it as a link while calls were managed. A NULL allowlist
         // stays NULL (apps not managed), an unreadable one stays as it is, no report or no dialer adds nothing.
+        // The same for SMS: a phone whose first list left its SMS apps out while SMS was managed gets them back.
         let mut pruned = 0;
-        if updated > 0
-            && calls_mode == "unmanaged"
-            && was_managed.is_some_and(|mode| mode != "unmanaged")
-        {
-            let call_state: Option<Option<String>> = sqlx::query_scalar(
-                "SELECT call_state_json FROM device_status WHERE device_id = ? \
+        let calls_back =
+            calls_mode == "unmanaged" && was_managed.is_some_and(|mode| mode != "unmanaged");
+        let sms_back = sms_mode == "unmanaged" && sms_was_managed;
+        if updated > 0 && (calls_back || sms_back) {
+            type Latest = (Option<String>, Option<String>);
+            let latest: Option<Latest> = sqlx::query_as(
+                "SELECT call_state_json, installed_apps_json FROM device_status WHERE device_id = ? \
                  ORDER BY reported_at DESC, id DESC LIMIT 1",
             )
             .bind(id)
             .fetch_optional(&mut *tx)
             .await?;
-            let call_state: Option<serde_json::Value> = call_state
-                .flatten()
-                .and_then(|json| serde_json::from_str(&json).ok());
-            if let Some(dialer) = crate::handlers::device_api::system_dialer(call_state.as_ref()) {
+            let (call_state, installed) = latest.unwrap_or_default();
+            let parse = |json: Option<String>| -> Option<serde_json::Value> {
+                json.and_then(|json| serde_json::from_str(&json).ok())
+            };
+            let (call_state, installed) = (parse(call_state), parse(installed));
+            let mut back = Vec::new();
+            if calls_back
+                && let Some(dialer) =
+                    crate::handlers::device_api::system_dialer(call_state.as_ref())
+            {
+                back.push(dialer);
+            }
+            if sms_back {
+                back.extend(crate::handlers::device_api::sms_apps_to_restore(
+                    &state,
+                    call_state.as_ref(),
+                    installed.as_ref(),
+                ));
+            }
+            if !back.is_empty() {
                 match crate::handlers::devices::edit_allowlist_in(&mut tx, id, false, |packages| {
-                    if packages.contains(&dialer) {
-                        return false;
+                    let before = packages.len();
+                    for package in &back {
+                        if !packages.contains(package) {
+                            packages.push(package.clone());
+                        }
                     }
-                    packages.push(dialer.clone());
-                    true
+                    packages.len() > before
                 })
                 .await
                 {
@@ -3541,6 +3596,8 @@ mod tests {
                 sim: "+4790000002".to_string(),
             },
             Finding::SmsRoleKept,
+            Finding::NoCallers,
+            Finding::NoTexters,
         ];
         let mut kinds: Vec<_> = all.iter().map(Finding::problem).collect();
         kinds.dedup();

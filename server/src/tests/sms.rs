@@ -262,6 +262,106 @@ async fn a_new_phone_starts_with_both_channels_managed() {
         serde_json::from_str::<Vec<String>>(&allowlist).unwrap(),
         ["com.google.android.dialer", "com.google.android.deskclock"]
     );
+
+    // No contact yet: one orange line on the Calls page and in the Devices list's Attention, calls first.
+    let page = app
+        .get_page(&format!("/devices/{id}/calls"), &cookie)
+        .await
+        .text();
+    assert!(page.contains("No one can call the phone yet"), "{page}");
+    assert!(!page.contains("No one can text the phone yet"));
+    assert!(page.contains("Add contacts under Calls &#38; Contacts."));
+    let summary = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(
+        summary.contains("No one can call the phone yet"),
+        "{summary}"
+    );
+    let list = app.get_page("/devices", &cookie).await.text();
+    let row = &list[list.find(&format!("data-device=\"{id}\"")).unwrap()..];
+    assert!(row[..row.find("</a>").unwrap()].contains("data-attention-count"));
+
+    // A contact who may text but not call: the calls line stays. One who may call: the texts line, if none may text.
+    contact(
+        &app,
+        id,
+        ("Mamma", "+4791234567"),
+        [false, true, true],
+        None,
+        [true, true, true],
+        0,
+    )
+    .await;
+    let page = app
+        .get_page(&format!("/devices/{id}/calls"), &cookie)
+        .await
+        .text();
+    assert!(page.contains("No one can call the phone yet"));
+    sqlx::query("UPDATE device_contacts SET allow_inbound = 1, sms_in = 0 WHERE device_id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let page = app
+        .get_page(&format!("/devices/{id}/calls"), &cookie)
+        .await
+        .text();
+    assert!(!page.contains("No one can call the phone yet"));
+    assert!(page.contains("No one can text the phone yet"), "{page}");
+    sqlx::query("UPDATE device_contacts SET sms_in = 1 WHERE device_id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let page = app
+        .get_page(&format!("/devices/{id}/calls"), &cookie)
+        .await
+        .text();
+    assert!(!page.contains("can call the phone yet") && !page.contains("can text the phone yet"));
+
+    // SMS to "Ikke styrt": the SMS apps the first list left out come back (Vibb One, the role's holder now, never).
+    app.post_status(
+        &token,
+        json!({
+            "installed_apps": [
+                { "package_name": "com.google.android.dialer", "label": "Phone", "preinstalled": true },
+                { "package_name": "com.google.android.apps.messaging", "label": "Messages", "preinstalled": true },
+                { "package_name": "com.maker.sms", "label": "SMS", "preinstalled": true },
+                { "package_name": "com.google.android.deskclock", "label": "Clock", "preinstalled": true },
+            ],
+            "call_state": { "system_dialer": "com.google.android.dialer", "default_sms_package": "me.vibb.launcher" },
+        }),
+    )
+    .await;
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/calls/settings"),
+            Some(&cookie),
+            &[
+                ("section", "channels"),
+                ("calls_mode", "managed"),
+                ("sms_mode", "unmanaged"),
+            ],
+        )
+        .await;
+    assert!(res.status.is_redirection());
+    let allowlist: String =
+        sqlx::query_scalar("SELECT allowlist_json FROM device_policy WHERE device_id = ?")
+            .bind(id)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(
+        serde_json::from_str::<Vec<String>>(&allowlist).unwrap(),
+        [
+            "com.google.android.dialer",
+            "com.google.android.deskclock",
+            "com.google.android.apps.messaging"
+        ]
+    );
 }
 
 /// Migration 0130 on rows from before it: D2's table - no phone less restricted and none more - and each contact's
