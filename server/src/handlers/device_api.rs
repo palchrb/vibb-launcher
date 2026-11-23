@@ -1289,6 +1289,14 @@ pub(crate) const CALL_STATE_FIELDS: &[(&str, Field)] = &[
     ("call_log_readable", Field::Bool),
     ("boot_policy", Field::Word(32)),
     ("in_call_ui_failed_at", Field::Word(64)),
+    // Android's blocked-numbers list, cleared while a channel is managed (`blocked_numbers`): the class counts only.
+    ("blocked_readable", Field::Bool),
+    ("blocked_left", Field::Int),
+    ("blocked_cleared_contact", Field::Int),
+    ("blocked_cleared_number", Field::Int),
+    ("blocked_cleared_short", Field::Int),
+    ("blocked_cleared_other", Field::Int),
+    ("blocked_cleared_at", Field::Word(64)),
 ];
 
 /// A phone's JSON object through `fields` (security review L10): each known key kept only with a
@@ -1772,6 +1780,16 @@ async fn status_intake(
         if vpn_filter_json.is_some() {
             crate::mobile_network::filter_down_intake(&state, phone).await;
         }
+    }
+    // A number cleared from Android's blocked list: a line per class that rose against the previous report.
+    if call_state_json.is_some() {
+        crate::blocked_numbers::log_lines(
+            &state.db,
+            device.id,
+            previous.as_ref().map(|p| p.call_state_json.as_deref()),
+            call_state_json.as_deref(),
+        )
+        .await;
     }
     if let Some(line) =
         crate::boot_witness::log_line(previous_unseen, unseen_boots.map(|(count, _)| count))

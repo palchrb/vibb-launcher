@@ -727,6 +727,21 @@
                 <action android:name="org.unifiedpush.android.distributor.MESSAGE_ACK" />
             </intent-filter>
         </receiver>
+        <!-- Android's Blocked numbers page while the phone is managed: closes at once (calls/BlockedNumbersGate). Enabled
+             only while managed; AppEnforcer always sets its persistent preferred activity. -->
+        <activity
+            android:name=".calls.BlockedNumbersGate"
+            android:configChanges="orientation|screenSize|uiMode"
+            android:enabled="false"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.telecom.action.MANAGE_BLOCKED_NUMBERS" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
         <!-- Design 108 §5.2: the distributor's Link Activity (unifiedpush://link) - no window, never in Recents, in the
              caller's task; RESULT_OK only for an app that may register. Disabled with the receiver; AppEnforcer always
              sets its persistent preferred activity, so Android never offers a chooser of distributors (L3). -->

@@ -981,3 +981,35 @@ capability, device route or kid-facing string: the bubble is still "Bildet kunne
 - **Not unit-tested:** `SmsRuntime.simOperators` (the platform's telephony) and `MmsRuntime`'s sync request - the
   emulator's, `docs/testing/emulator.md` §6v "design 83". **Only a real SIM shows** what an operator's notification
   names and on which network the platform fetches (design 77 step 0's two checks).
+
+## Android's blocked numbers cleared while managed (2026-11-23; branch `blocked-numbers`)
+
+Android keeps its own list of blocked numbers (`BlockedNumberContract`); Telecom rejects a listed caller's calls and
+texts before the screening service runs, so a number blocked there cuts a contact off without Vibb One seeing a thing.
+Telecom's Blocked numbers page opens from any app (`MANAGE_BLOCKED_NUMBERS` needs no permission) and inside the kiosk
+(Telecom is a lock-task helper for the call screens).
+
+- **Who may read and write the list** (`BlockedNumberProvider`, unchanged from Android 14 to 17): the system and phone
+  processes, the default dialer, the default SMS app and carrier-privileged apps. A device owner as such may not.
+  Vibb One holds the dialer role while calls are managed and the SMS role while SMS is, so a managed phone can always
+  clear it; without either role the read fails and the report says `blocked_readable: false` (the Calls page's role
+  findings already say why).
+- **`calls/BlockedNumbersRuntime`**: after every `AppEnforcer.apply()` (after the SMS role's hand-back) and from a
+  `ContentObserver` on the list (registered once per process), it reads the list and runs the pure
+  `blockedNumbersPlan` (`calls/BlockedNumbers.kt`): while `CallPolicyStore.state` is managed (either channel, or
+  failing closed) every row is deleted; unmanaged, the list is the kid's own and stays. What it deleted is counted
+  per class (`contact` - a number of the rules' contacts, `number`, `short`, `other`; never the number) in its own prefs
+  (`blocked_numbers`, `commit()`), and a clearing asks for a sync so the server's line follows within seconds.
+- **Not lifted by the pause or the offline override** (the call rules never are): a number blocked during a pause is
+  cleared at once too.
+- **The report**: `call_state`'s flat `blocked_readable`, `blocked_left`, `blocked_cleared_<class>` (since the install)
+  and `blocked_cleared_at` (`CallState.withBlocked`; the contract `blocked_numbers.json`, root `CLAUDE.md`). The server
+  writes a `phone_blocked_cleared` security-log line per class that rose and shows "Blokkert nummer fjernet" on the
+  Calls page for 7 days (Attention for a day), and "Numre blokkert på telefonen" when a managed phone left rows.
+- **The page itself**: `calls/BlockedNumbersGate` (no window, finishes at once) handles `MANAGE_BLOCKED_NUMBERS`;
+  `AppEnforcer.enforceBlockedNumbersPin` pins it as a persistent preferred activity on every apply and in the re-seat
+  (the eighth PPA, `PlayInvariantsTest`), and the runtime enables it only while managed (disabled, Android skips the
+  pin and its own page opens). An explicit start of Telecom's activity still opens the page; the observer clears what is
+  added there.
+- **Tests**: `BlockedNumbersTest` (the class of every stored form, the plan, the report's keys exactly as the contract,
+  the gate's manifest entry), `PlayInvariantsTest` (the re-seat's list). The emulator: `docs/testing/emulator.md` §6be.

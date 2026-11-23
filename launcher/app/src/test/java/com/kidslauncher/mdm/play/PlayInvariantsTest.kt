@@ -54,6 +54,8 @@ class PlayInvariantsTest {
                 // insertion order among equal priorities, so added first it could shadow the Play blocker's and the map
                 // handler's.
                 "enforceLinkGatePin(dpm, admin, context)",
+                // Android's Blocked numbers page to Vibb's gate, the eighth (no filter shared with the others).
+                "enforceBlockedNumbersPin(dpm, admin, context)",
             ),
             body,
         )

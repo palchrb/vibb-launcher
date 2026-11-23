@@ -8,6 +8,7 @@ mod app_logos;
 mod app_permissions;
 mod attention;
 mod audit;
+mod blocked_numbers;
 mod boot_witness;
 mod builtin;
 mod caldav;

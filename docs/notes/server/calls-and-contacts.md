@@ -542,3 +542,16 @@ which app its button opens (`device_contacts.message_app`, NULL = the phone's `d
   through "Add from the family", edited there - both phones nudged -, read in the first's policy, a stale page's save,
   Element X to a phone that has it), `the_migration_moves_the_matrix_id_to_the_contact`,
   `tests::contact_requests::a_request_never_renames_a_family_contact` (the kid's ID refused against the family's).
+
+## Android's blocked numbers cleared on the phone (2026-11-23; branch `blocked-numbers`)
+
+While calls or SMS are managed the launcher clears Android's own blocked-numbers list (Telecom rejects a listed caller
+before Vibb One sees the call or text) and reports it in `call_state`'s flat `blocked_*` keys (`device_api::CALL_STATE_FIELDS`):
+`blocked_readable`, `blocked_left`, `blocked_cleared_<contact|number|short|other>` (counts since its install, never a
+number) and `blocked_cleared_at`. `blocked_numbers.rs` compares the counts with the previous report and writes a
+`phone_blocked_cleared` line per class that rose (`PhoneLine::BlockedCleared`, the phone's hourly budget; no line
+without a previous report, a lower count taken silently). The Calls page: `Finding::BlockedCleared` ("Blokkert nummer
+fjernet", its time visible, the sentence behind the ⓘ; 7 days on the page, a day in Attention) and
+`Finding::BlockedLeft` ("Numre blokkert på telefonen", only while a channel is managed and the phone could read the
+list). The contract is `testdata/blocked_numbers.json` (root `CLAUDE.md`); tests in `blocked_numbers::tests` and
+`tests::blocked_numbers`.
