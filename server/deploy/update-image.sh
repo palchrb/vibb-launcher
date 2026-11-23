@@ -407,15 +407,17 @@ selftest() {
     minisign -S -s "$k/other.key" -m "$rel/0.99.0/$STATEMENT" -x "$rel/0.99.0/$STATEMENT.minisig" \
         -t "$STATEMENT server-v0.99.0" >/dev/null 2>&1
     mv "$rel/0.98.0" "$dir/gone"
+    # Its own name: signed_digest has a local $dir of its own, which the fake would otherwise write into.
+    local fetch_log="$dir/fetched"
     pick() {
         (
             SERVER_SIGNING_PUBKEY="$pub"
             fetch_statement() {
-                echo "$1" >>"$dir/fetched"
+                echo "$1" >>"$fetch_log"
                 [ -f "$rel/$1/$STATEMENT" ] || return 1
                 cp "$rel/$1/$STATEMENT" "$rel/$1/$STATEMENT.minisig" "$2/"
             }
-            : >"$dir/fetched"
+            : >"$fetch_log"
             printf '%s\n' "${@:2}" | pick_signed "$1" 2>"$dir/skipped" || echo none
         )
     }
@@ -433,9 +435,9 @@ selftest() {
         : >"$rel/$v/$STATEMENT.minisig"
     done
     check "pick: more than five newer" "$(pick 0.90.0 0.99.0 0.98.0 0.97.0 0.96.0 0.95.0 0.94.0 0.93.0)" none
-    check "pick: only five tried" "$(paste -sd ' ' "$dir/fetched")" "0.99.0 0.98.0 0.97.0 0.96.0 0.95.0"
+    check "pick: only five tried" "$(paste -sd ' ' "$fetch_log")" "0.99.0 0.98.0 0.97.0 0.96.0 0.95.0"
     check "pick: none newer" "$(pick 0.99.0 0.99.0 0.94.0)" none
-    check "pick: nothing fetched when none is newer" "$(wc -l <"$dir/fetched")" "0"
+    check "pick: nothing fetched when none is newer" "$(wc -l <"$fetch_log")" "0"
 
     # --verify-statement uses the pinned key: the test key's statement is refused there; a wrong count is usage.
     local script
