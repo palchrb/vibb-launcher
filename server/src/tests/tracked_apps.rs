@@ -38,14 +38,18 @@ async fn app_with_file(
 ) -> i64 {
     let path = dir.join(name);
     std::fs::write(&path, bytes).unwrap();
+    // The launcher's row is served only with the release key pinned: the tests' key1.
+    let signer =
+        launcher.then_some("0796f1809e476a2ce724f1341bcb32d03185b7a202c3469787c5775d65ef4be3");
     sqlx::query_scalar(
         "INSERT INTO tracked_apps (name, package_name, github_repo, latest_release_tag, \
-         latest_release_asset_id, latest_release_file_path, is_launcher) \
-         VALUES (?, '', 'owner/repo', 'v1.0', 14, ?, ?) RETURNING id",
+         latest_release_asset_id, latest_release_file_path, is_launcher, signer_sha256) \
+         VALUES (?, '', 'owner/repo', 'v1.0', 14, ?, ?, ?) RETURNING id",
     )
     .bind(name)
     .bind(path.to_str().unwrap())
     .bind(launcher)
+    .bind(signer)
     .fetch_one(&app.db)
     .await
     .unwrap()

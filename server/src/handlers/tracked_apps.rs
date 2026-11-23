@@ -8965,13 +8965,14 @@ mod tests {
         assert!(!std::path::Path::new(&v4.file_path).exists());
         assert_eq!(held_events().await.len(), 3);
 
-        // Ours is never held (and its served release supersedes the held one).
+        // Ours is never held, and takes only the release key: this app's key is another, so its
+        // release is refused, neither held nor served (`our_own_apps_take_only_the_release_key`).
         sqlx::query("UPDATE tracked_apps SET is_launcher = 1 WHERE id = ?")
             .bind(id)
             .execute(&app.db)
             .await
             .unwrap();
-        sync_release(
+        let refused = sync_release(
             &app.state,
             &row_of(&app, id).await,
             "v6",
@@ -8979,12 +8980,20 @@ mod tests {
             false,
         )
         .await
-        .unwrap();
+        .unwrap_err();
+        assert_eq!(refused.problem, SyncProblem::OwnKey);
         assert_eq!(
             row_of(&app, id).await.latest_release_tag.as_deref(),
-            Some("v6")
+            Some("v3")
         );
-        assert!(held_release(&app.state, id).await.unwrap().is_none());
+        assert_eq!(
+            held_release(&app.state, id)
+                .await
+                .unwrap()
+                .unwrap()
+                .release_tag,
+            "v5"
+        );
     }
 
     /// Design 116 §2.1: a sync's outcome reaches the integration health. An F-Droid repo that answers is a success;
