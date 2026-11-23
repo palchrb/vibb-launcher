@@ -22,6 +22,18 @@ contacts live on your own server and the child's phone, and nowhere else.
 > with Android 16, and real-world testing on more phones is under way. Android 17 is supported in the code but has
 > seen little testing. Development moves fast, so expect breaking changes between versions.
 
+<p>
+  <img src="docs/screenshots/home.png" width="200" alt="Vibb One's Home screen with contacts and a few apps">
+  <img src="docs/screenshots/lock.png" width="200" alt="The lock screen with the next event and two message rows">
+  <img src="docs/screenshots/day.png" width="200" alt="The day view with a day's events">
+  <img src="docs/screenshots/music.png" width="200" alt="Vibb Music's library">
+</p>
+<p>
+  <img src="docs/screenshots/pwa-phone.png" width="200" alt="The parents' web app: a phone's summary page">
+  <img src="docs/screenshots/pwa-app.png" width="200" alt="The parents' web app: an app's page with camera, location and microphone access">
+  <img src="docs/screenshots/pwa-locate.png" width="200" alt="The parents' web app: the phone on the map">
+</p>
+
 ## What it does
 
 ### On the child's phone
