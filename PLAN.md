@@ -33,7 +33,7 @@ findings, merge to `main`, full suite once.
 - **LOCKED LIST (the owner, 2026-11-24: no new features or ideas before this list is done; checked against the code
   2026-11-24)** - the order of work. Anything new goes to "Inbox (not prioritised)" below and is not built until the
   owner and I have discussed where it goes.
-  1. In progress: squeue 11 (the owner's Jelly registered its TEE key on rc.2 2026-11-24 - pass; a false "unusual address" to fix before S2, with 129b); 129b (enrolment requires a key, the per-phone exception) designed, design QA 3H 7M 9L being folded in - NOTE its H2: it can only ship after a STABLE launcher with it is GitHub's latest (the QR downloads latest, today 0.41.0) (emulator gate, an RC for the
+  1. In progress: squeue 11 (the owner's Jelly registered its TEE key on rc.2 2026-11-24 - pass; a false "unusual address" to fix before S2, with 129b); 129b (enrolment requires a key, the per-phone exception; `docs/design/129b-enrolment-requires-a-key.md`) revision 2 MERGED as a doc 2026-11-24 (design QA 3H 7M 9L all taken, plus the false "unusual address" fix), waiting for the owner's Q2-Q5 (Q1, the code typed from the phone, OK'd) - NOTE its H2: it can only ship after a STABLE launcher with it is GitHub's latest (the QR downloads latest, today 0.41.0) (emulator gate, an RC for the
      Jelly, then the key-required enrolment with the per-phone exception, then S2).
   2. Squeue 7 (design written 2026-11-24, in design QA), then squeue 12.
   3. C3 / Phase D: Vibb's own PIN lock removed (own-mode code still in the launcher).
