@@ -1042,7 +1042,7 @@ async fn the_route_answers_the_cell_contract() {
             }
             "cells_limit_hourly" => {
                 for _ in 0..route::PHONE_LOOKUPS_AN_HOUR {
-                    wifi.phone_asks.record(id, Instant::now());
+                    assert!(wifi.phone_asks.ask(id, Instant::now()).is_ok());
                 }
                 let answer = timed(&app, &token, request).await;
                 // Code QA L1: a refused request takes nothing of the day's count.
