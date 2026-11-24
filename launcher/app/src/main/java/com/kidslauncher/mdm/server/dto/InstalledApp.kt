@@ -37,7 +37,24 @@ data class InstalledApp(
      * [APP_LOGO_SIZE_PX] px PNG uploaded as a logo is; [logo]'s own hash for an app without a monochrome layer (its
      * Automatic is the logo). Only beside [logo]; `null` (left out) otherwise. */
     val autoTile: String? = null,
+    /** `true` for an installed music app this build would trust by name
+     * ([com.kidslauncher.mdm.music.trustedMusicNames]) but that another key signed
+     * ([com.kidslauncher.mdm.music.MusicTrust.signerMatches]): the phone refuses it (no bridge, no grants), and the PWA
+     * says so. `null` (left out) otherwise. */
+    val otherSigner: Boolean? = null,
 )
+
+/**
+ * [InstalledApp.otherSigner] for [packageName]: `true` only for one of [trusted] (this build's music names) that is
+ * [installed] for this user and whose signer [signerMatches] says differs (`false`); `null` (unknown, the package not
+ * there) and a match say nothing. A left-over of another user or an uninstalled-but-kept package is never flagged.
+ */
+fun otherSignerOf(
+    packageName: String,
+    installed: Boolean,
+    trusted: Collection<String>,
+    signerMatches: (String) -> Boolean?,
+): Boolean? = (installed && packageName in trusted && signerMatches(packageName) == false).takeIf { it }
 
 /** The longest versionName a report carries (the server clips to the same). */
 const val INSTALLED_VERSION_NAME_MAX = 60

@@ -493,13 +493,13 @@ data class CallState(
      * QA 10 #8) - the last time, ISO-8601; `null` = never. */
     val inCallUiFailedAt: String? = null,
     /** Android's blocked-numbers list (`calls/BlockedNumbers.kt`, `testdata/blocked_numbers.json`): readable at all,
-     * the rows left, what was cleared by class since the install, and the last clearing (ISO-8601). Never a number. */
+     * the rows the rule clears still left (a delete failed), the rows it keeps (the kid's own), what was cleared by class
+     * since the install, and the last clearing (ISO-8601). Never a number. */
     val blockedReadable: Boolean? = null,
     val blockedLeft: Int? = null,
+    val blockedKept: Int? = null,
     val blockedClearedContact: Int? = null,
-    val blockedClearedNumber: Int? = null,
-    val blockedClearedShort: Int? = null,
-    val blockedClearedOther: Int? = null,
+    val blockedClearedEmergency: Int? = null,
     val blockedClearedAt: String? = null,
     /** Cleared by the first sweep after the phone became managed (the parent's switch): counted apart, never logged. */
     val blockedClearedInitial: Int? = null,
@@ -509,10 +509,9 @@ data class CallState(
 fun CallState.withBlocked(report: com.kidslauncher.mdm.calls.BlockedReport): CallState = copy(
     blockedReadable = report.readable,
     blockedLeft = report.left,
+    blockedKept = report.kept,
     blockedClearedContact = report.cleared[com.kidslauncher.mdm.calls.BlockedClass.CONTACT] ?: 0,
-    blockedClearedNumber = report.cleared[com.kidslauncher.mdm.calls.BlockedClass.NUMBER] ?: 0,
-    blockedClearedShort = report.cleared[com.kidslauncher.mdm.calls.BlockedClass.SHORT] ?: 0,
-    blockedClearedOther = report.cleared[com.kidslauncher.mdm.calls.BlockedClass.OTHER] ?: 0,
+    blockedClearedEmergency = report.cleared[com.kidslauncher.mdm.calls.BlockedClass.EMERGENCY] ?: 0,
     blockedClearedAt = report.lastClearedMs?.let { java.time.Instant.ofEpochMilli(it).toString() },
     blockedClearedInitial = report.clearedInitial,
 )

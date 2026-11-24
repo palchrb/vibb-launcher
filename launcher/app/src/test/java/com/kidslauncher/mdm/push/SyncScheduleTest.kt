@@ -164,14 +164,36 @@ class SyncScheduleTest {
                     access = mapOf("camera" to "admin_denied", "exact_alarm" to "denied", "full_screen" to "granted"),
                 ),
                 InstalledApp("org.example.older", "Older", true),
+                // The music app signed with another key: the phone refuses it, the PWA says so.
+                InstalledApp(
+                    "me.vibb.music", "Vibb music", false,
+                    otherSigner = otherSigner("me.vibb.music") { false },
+                ),
             ),
         )
         assertEquals(contract.trimEnd(), ServerJson.encodeToString(StatusReportRequest.serializer(), report))
+        // Only this build's music names, installed, with another key, are flagged.
+        assertEquals(null, otherSigner("me.vibb.music") { true })
+        assertEquals(null, otherSigner("me.vibb.music") { null })
+        assertEquals(null, otherSigner("me.vibb.music", installed = false) { false })
+        assertEquals(null, otherSigner("org.example.older") { false })
+        // A release launcher never trusts the debug music app by name, so it isn't flagged there.
+        assertEquals(null, otherSigner("me.vibb.music.debug") { false })
+        assertEquals(true, otherSigner("me.vibb.music.debug", debug = true) { false })
         // Gradle runs unit tests with the module directory (launcher/app/) as the working directory.
         val serverCopy = java.io.File("../../server/testdata/installed_apps_report.json")
         assertTrue("${serverCopy.absolutePath} not found", serverCopy.isFile)
         assertEquals("${serverCopy.path} differs from the launcher's copy", serverCopy.readText(), contract)
     }
+
+    private fun otherSigner(
+        pkg: String,
+        installed: Boolean = true,
+        debug: Boolean = false,
+        matches: (String) -> Boolean?,
+    ): Boolean? = com.kidslauncher.mdm.server.dto.otherSignerOf(
+        pkg, installed, com.kidslauncher.mdm.music.trustedMusicNames(debug), matches,
+    )
 
     /** PLAN "Installed versionCode per catalog app in the status report": each listed app's versionCode and
      * versionName (the server's `app_updated` for every catalog app); both left out when unknown. */

@@ -321,6 +321,11 @@ async fn each_music_warning_raises_its_row_and_marks_the_music_row() {
             music(json!({"package": "me.vibb.music", "bridge": "bound", "storytel": "refused"})),
         ),
         (
+            "music-other-signer",
+            json!({"installed_apps": [{"package_name": "me.vibb.music", "label": "Vibb music",
+                                       "other_signer": true}]}),
+        ),
+        (
             "music-over-limit",
             music(json!({"package": "me.vibb.music", "bridge": "bound",
                          "cache_bytes": 3_500_000_000_i64, "audio_bytes": 3_400_000_000_i64,

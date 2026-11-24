@@ -1,6 +1,6 @@
 //! Android's blocked-numbers list (`blocked_numbers`): the launcher's `call_state` counts from
 //! `testdata/blocked_numbers.json`, the security-log line per class that rose, and the Calls page's
-//! orange lines.
+//! orange lines (never for the kid's own blocks the phone keeps).
 
 use axum::http::StatusCode;
 use serde_json::{Value, json};
@@ -108,7 +108,10 @@ async fn a_cleared_number_is_logged_and_shown() {
     let logged = lines(&app).await;
     assert_eq!(logged.len(), 2, "{logged:?}");
     assert!(logged[0].contains("blocked_cleared.contact"), "{logged:?}");
-    assert!(logged[1].contains("blocked_cleared.number"), "{logged:?}");
+    assert!(
+        logged[1].contains("blocked_cleared.emergency"),
+        "{logged:?}"
+    );
     let detail: String = sqlx::query_scalar(
         "SELECT detail FROM security_events WHERE event_type = 'phone_blocked_cleared' LIMIT 1",
     )
@@ -170,8 +173,9 @@ async fn a_cleared_number_leaves_attention_after_a_day() {
     }
 }
 
-/// Numbers left in the list are orange only while a channel is managed (the phone should have cleared them); with
-/// both channels unmanaged they are the kid's own, the parent's choice: nothing.
+/// Rows the rule clears left in the list are orange only while a channel is managed (the phone should have cleared
+/// them); with both channels unmanaged the list is the kid's own, the parent's choice: nothing. The kid's own blocks the
+/// phone keeps are never a line, however many.
 #[tokio::test]
 async fn numbers_left_are_orange_only_while_managed() {
     let app = TestApp::new().await;
@@ -184,14 +188,24 @@ async fn numbers_left_are_orange_only_while_managed() {
     app.post_status(&token, json!({"call_state": call_state(&report)}))
         .await;
     let page = calls_page(&app, &cookie, id).await;
-    assert!(page.contains("Numbers blocked on the phone"), "{page}");
+    assert!(page.contains("Block not removed"), "{page}");
+    // Kept rows alone: nothing.
+    report["blocked_left"] = json!(0);
+    report["blocked_kept"] = json!(9);
+    app.post_status(&token, json!({"call_state": call_state(&report)}))
+        .await;
+    let page = calls_page(&app, &cookie, id).await;
+    assert!(!page.contains("Block not removed"), "{page}");
+    report["blocked_left"] = json!(2);
+    app.post_status(&token, json!({"call_state": call_state(&report)}))
+        .await;
     sqlx::query("UPDATE device_policy SET sms_mode = 'unmanaged' WHERE device_id = ?")
         .bind(id)
         .execute(&app.db)
         .await
         .unwrap();
     let page = calls_page(&app, &cookie, id).await;
-    assert!(!page.contains("Numbers blocked on the phone"), "{page}");
+    assert!(!page.contains("Block not removed"), "{page}");
 }
 
 /// The first sweep after the phone became managed (the parent's switch) is counted apart: no line, no orange, no
@@ -226,7 +240,7 @@ async fn the_initial_clearing_is_quiet() {
     assert!(lines(&app).await.is_empty());
     let page = calls_page(&app, &cookie, id).await;
     assert!(!page.contains("Blocked number removed"), "{page}");
-    assert!(!page.contains("Numbers blocked on the phone"), "{page}");
+    assert!(!page.contains("Block not removed"), "{page}");
     let summary = app
         .get_page(&format!("/devices/{id}"), &cookie)
         .await

@@ -1289,6 +1289,15 @@ pub struct InstalledApp {
         deserialize_with = "lenient_text"
     )]
     pub auto_tile: Option<String>,
+    /// A Vibb music package (`music::MUSIC_PACKAGES`) not signed with Vibb One's own key: the phone refuses it (no
+    /// bridge, no grants), and Device › Music says so in one orange line. Only `true` counts (anything else is
+    /// `false`), and only on a music package (`device_api::cap_installed_apps`); left out when `false`.
+    #[serde(
+        default,
+        skip_serializing_if = "std::ops::Not::not",
+        deserialize_with = "lenient_true"
+    )]
+    pub other_signer: bool,
 }
 
 // ---------------------------------------------------------------------
@@ -1919,6 +1928,12 @@ fn lenient_text<'de, D: serde::Deserializer<'de>>(
 ) -> Result<Option<String>, D::Error> {
     let value = Option::<serde_json::Value>::deserialize(deserializer)?;
     Ok(value.and_then(|v| v.as_str().map(str::to_string)))
+}
+
+/// `true` only for JSON `true` (anything else, `null` or missing is `false`, never a refused report).
+fn lenient_true<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<bool, D::Error> {
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(value.and_then(|v| v.as_bool()).unwrap_or(false))
 }
 
 /// A non-negative integer (an Android versionCode), else `None` - a string, a fraction or a

@@ -1,14 +1,16 @@
 //! Numbers blocked in Android's own list (`BlockedNumberContract`), which rejects a caller's calls and texts before
-//! Vibb One sees them. While calls or SMS are managed the launcher clears the list and counts what it cleared, by the
-//! number's class only (never the number), in its `call_state`: `blocked_cleared_<class>` (counts since its install),
-//! `blocked_cleared_at` (the last clearing, RFC 3339), `blocked_readable` and `blocked_left` (what it couldn't clear).
+//! Vibb One sees them. While calls or SMS are managed the launcher clears a row only when it blocks a number of the
+//! rules' contacts, one of the phone's own numbers or an emergency number; the kid's other blocks stay. It counts what
+//! it cleared, by class only (never the number), in its `call_state`: `blocked_cleared_<class>` (counts since its
+//! install), `blocked_cleared_at` (the last clearing, RFC 3339), `blocked_readable`, `blocked_left` (rows it should
+//! have cleared and couldn't) and `blocked_kept` (the kid's own blocks: stored, never a line or a warning).
 //! The first sweep after the phone became managed (the parent's switch) is `blocked_cleared_initial` alone: stored, never
 //! a line or a warning. The flat keys go through `device_api::CALL_STATE_FIELDS`. Each class's rise against the previous
 //! report is a security-log line ([log_lines], `phone_blocked_cleared`); the Calls page words the rest (`calls::Finding::BlockedCleared`,
 //! `BlockedLeft`). The shapes are `testdata/blocked_numbers.json`, shared with the launcher.
 
 /// The classes the launcher sorts a cleared entry into, in the contract's order.
-pub const CLASSES: [&str; 4] = ["contact", "number", "short", "other"];
+pub const CLASSES: [&str; 2] = ["contact", "emergency"];
 
 /// The `call_state` key of a class's count.
 pub fn count_key(class: &str) -> String {
@@ -16,8 +18,8 @@ pub fn count_key(class: &str) -> String {
 }
 
 /// A stored `call_state`'s counts per [CLASSES] (a missing or negative count is 0).
-pub fn counts(call_state: Option<&serde_json::Value>) -> [i64; 4] {
-    let mut counts = [0; 4];
+pub fn counts(call_state: Option<&serde_json::Value>) -> [i64; 2] {
+    let mut counts = [0; 2];
     if let Some(state) = call_state {
         for (slot, class) in counts.iter_mut().zip(CLASSES) {
             *slot = state
@@ -32,7 +34,7 @@ pub fn counts(call_state: Option<&serde_json::Value>) -> [i64; 4] {
 
 /// Each class whose count rose since the previous report, with the rise. A lower count (the launcher's data cleared)
 /// is taken silently; with no previous report nothing is logged (a fresh enrolment).
-pub fn rises(previous: Option<[i64; 4]>, now: [i64; 4]) -> Vec<(&'static str, i64)> {
+pub fn rises(previous: Option<[i64; 2]>, now: [i64; 2]) -> Vec<(&'static str, i64)> {
     let Some(previous) = previous else {
         return Vec::new();
     };
@@ -48,9 +50,7 @@ pub fn rises(previous: Option<[i64; 4]>, now: [i64; 4]) -> Vec<(&'static str, i6
 pub fn line(class: &str, rose: i64) -> crate::security::Detail {
     let key = match class {
         "contact" => "security.detail.blocked_cleared.contact",
-        "number" => "security.detail.blocked_cleared.number",
-        "short" => "security.detail.blocked_cleared.short",
-        _ => "security.detail.blocked_cleared.other",
+        _ => "security.detail.blocked_cleared.emergency",
     };
     crate::security::Detail::counted(key, rose, &[])
 }
@@ -115,7 +115,7 @@ mod tests {
     #[test]
     fn the_report_reads_as_counts() {
         let report = &contract()["call_state"];
-        assert_eq!(counts(Some(report)), [1, 2, 0, 0]);
+        assert_eq!(counts(Some(report)), [1, 2]);
     }
 
     #[test]

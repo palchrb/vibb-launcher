@@ -4649,6 +4649,9 @@ fn warning(title: &str, detail: String) -> Note {
 pub struct MusicWarnings {
     /// The launcher's bridge to the music app isn't bound.
     pub unreachable: bool,
+    /// The phone has a music app signed with another key, which it refuses (the report's
+    /// `installed_apps[].other_signer` on a music package).
+    pub other_signer: bool,
     /// The phone's own Storytel login was refused (design 26b §4.5).
     pub storytel_refused: bool,
     /// The kept items alone pass the storage limit: what they use ("3.2 GB") and the limit in GB.
@@ -4726,6 +4729,14 @@ pub fn music_warnings(
         unreachable: report
             .and_then(|r| r.bridge.as_deref())
             .is_some_and(|b| b != "bound"),
+        other_signer: latest
+            .and_then(|s| s.installed_apps_json.as_deref())
+            .and_then(|j| serde_json::from_str::<Vec<InstalledApp>>(j).ok())
+            .is_some_and(|apps| {
+                apps.iter().any(|a| {
+                    a.other_signer && music::MUSIC_PACKAGES.contains(&a.package_name.as_str())
+                })
+            }),
         storytel_refused: report.and_then(|r| r.storytel.as_deref()) == Some("refused"),
         over_limit: report
             .and_then(|r| {
@@ -5006,6 +5017,13 @@ pub(crate) async fn device_card(
             ),
         )),
         None => {}
+    }
+    // The phone refuses a music app signed with another key (the launcher's `MusicTrust`): say why music is silent.
+    if found.other_signer {
+        warnings.push(warning(
+            t(lang, "device.music.other_signer"),
+            t(lang, "device.music.other_signer_sub").to_string(),
+        ));
     }
     if found.unreachable {
         warnings.push(warning(

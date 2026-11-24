@@ -5305,6 +5305,20 @@ phones enrolled with calls and SMS unmanaged, then calls set managed. Android 17
 abort, §6as), so not run. Not run: the "Unknown" switch on Telecom's page (Android keeps it in the provider's own
 settings, which only the system may read or write).
 
+**Since 2026-11-24 (branch `blocked-keep`) only rows that hit the rules are cleared**, so the rows above that cleared
+`99887766` (`number=1`) and a short number (`short=1`) no longer hold: those blocks stay. Expected results, not run yet
+(the same rig, the contact Mamma `+4791234567`, default country 47):
+
+| Row | Expected (14 and 16) |
+|---|---|
+| A contact's number blocked (`91234567`, also as `0047 912 34 567`) | Cleared at once (`Cleared blocked numbers: contact=1`), a sync, the line `blocked_cleared.contact`; "Blokkert nummer fjernet" on Calls |
+| An emergency number blocked (`112`, `113`) | Cleared (`emergency=1`), the line `blocked_cleared.emergency` |
+| Another number (`99887766`), a short number (`2222`), an e-mail address | Kept: no log line, no sync; the report `blocked_left: 0`, `blocked_kept` counts them; nothing on Calls, no Attention, no security line |
+| A kept number (`98765432`) then added as a contact in the PWA | Cleared at the apply that follows the policy (`contact=1`), `blocked_kept` one lower |
+| The initial sweep: a contact's number and `99887766` blocked while unmanaged, then calls set managed | `Cleared blocked numbers on becoming managed: 1`; `blocked_cleared_initial: 1`, `blocked_kept: 1`; no line, nothing orange |
+| The action with calls and SMS both managed | Resolves to `BlockedNumbersGate`, which closes at once |
+| The action with calls managed and SMS "Ikke styrt" (and the other way round) | The gate disabled: the action resolves to Telecom's page; a number the kid blocks there stays, a contact's is cleared |
+
 ## 6bh. The web filter's resolver: Quad9 first, Cloudflare as the fallback (branch `dns-upstreams`) - not run yet
 
 `docs/notes/launcher/dns-and-vpn.md`, "The providers in a chain". Owed on Android 14 (`compat34`) and Android 16
