@@ -400,7 +400,8 @@ A9. **The phone's Apple rows** (kind 4 in D18's sealed table, keyed by the same 
     reported (code QA L3). The `apple` and `mixed` leave-one-out classes (D16) come from the teaching fixes alone, on
     the results paired with the best teacher (code QA L2).
 A10. **Not now:** the server feeding a phone cache rows near its learned places ahead of time (since code QA M3 the
-    phone gets only the BSSIDs it asked for; decide after the counts), Apple's cell lookup, GrapheneOS's RANSAC estimator.
+    phone gets only the BSSIDs it asked for; decide after the counts), GrapheneOS's RANSAC estimator. Apple's cell
+    lookup is step 3, its own note: `docs/design/125b-apple-cell-lookup.md`.
 
 ## 5. Android 14-17 and the Jelly Star
 
@@ -531,8 +532,8 @@ Not: Wi-Fi RTT (few APs answer it), Bluetooth beacons, GNSS seeding from a learn
 system-only), sharing tables between phones, any learned-place word in the PWA.
 
 Later, each its own decision:
-- The server feeding the phones cache rows near their learned places ahead of time (A10), Apple's cell lookup, the
-  RANSAC estimator.
+- The server feeding the phones cache rows near their learned places ahead of time (A10), the RANSAC estimator.
+  Apple's cell lookup is step 3: `docs/design/125b-apple-cell-lookup.md` (in design).
 - Teaching by novelty (teach more where the table knows little), decay of rows expected but not heard, an OpenCellID
   import (Norway is sparse: 22,485 cells, Ice 1,393, NR 8, LTE ranges mostly the 1000 m default - wait for the SIM day
   test), distance from RSSI.
