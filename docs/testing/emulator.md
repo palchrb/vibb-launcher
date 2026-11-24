@@ -5155,12 +5155,13 @@ sqlite3 data/kidphone.db "SELECT created_at, detail, params FROM security_events
 | Another number (`99887766`) | - | **Pass.** Cleared 19 ms after the insert (`number=1`); the line `blocked_cleared.number` in the same second |
 | The PWA | **Pass.** Calls: "Blokkert nummer fjernet" in orange with "23:01 · nå nettopp", the sentence behind the ⓘ; the summary's Attention row; the security log "Block removed: 1 contact number" | not looked at (the same server) |
 | Calls and SMS set unmanaged | - | **Pass.** The gate disabled, the action resolves to Telecom's page; the dialer role back with Google's dialer |
-| The gate from `TelecomManager.createManageBlockedNumbersIntent()` (a test app calling it) | **Owed** | **Owed** |
-| The gate from the Google Dialer's Settings › Blocked numbers row (calls unmanaged, the dialer allowed; then managed) | **Owed** | **Owed** |
-| The observer after a process restart (`am kill` or a crash, then a number blocked before any sync) | **Owed** | **Owed** |
-| The initial sweep: numbers blocked while unmanaged, then calls set managed - `blocked_cleared_initial` rises, no line, no orange | **Owed** | **Owed** |
+| `TelecomManager.createManageBlockedNumbersIntent()` (a probe app, emulator only, calling it and starting the result) | **Fails (not fixable by the gate).** The intent names Telecom's package (`act=...MANAGE_BLOCKED_NUMBERS pkg=com.android.server.telecom`), so the pin doesn't apply and Telecom's page opens. A contact's number added there: cleared 13 ms after the insert, the server's `blocked_cleared.contact` line in the same second | **The same.** Telecom's page opens; a contact's number cleared 25 ms after the insert, the line in the same second |
+| The Google Dialer's settings row while managed | **Not reachable.** With Vibb One the phone app the Google Dialer shows only "Set Phone as default"; its own `BLOCKED_NUMBERS_SETTINGS` activity isn't exported | **The same** |
+| The observer after a process restart | **Pass.** `run-as ... kill -9`; the process back by itself (new pid); a short number added on Telecom's page cleared 22 ms after the insert (`short=1`), a sync at once | **Pass after a reboot** (new process, before any sync of its own): a short number cleared 56 ms after the insert, the line in the same second. The `kill -9` run itself ended with Telecom's page ANR-ing ("Input dispatching timed out ... FocusEvent") and then a looping "Process system isn't responding" (no focused window), so it was repeated after a reboot; logcat in the session scratchpad |
+| The initial sweep: two numbers blocked while unmanaged, then calls set managed | **Pass.** `Cleared blocked numbers on becoming managed: 2`; the report `blocked_cleared_initial: 2`, every class count 0, no `blocked_cleared_at`; no security line, no orange line on Calls, nothing in Attention | **Pass.** The same |
 
 The phones were in the fresh enrolment's setup hold (no lock task): the clearing ran there too, as it does in a pause.
-Android 17 (`compat372`, 37.2) was tried: system_server restarted during `set-device-owner` (the image's known graphics
+The last four rows ran on 2026-11-24 (00:00 CET) with the branch's second commit, a fresh server and fresh
+phones enrolled with calls and SMS unmanaged, then calls set managed. Android 17 (`compat372`, 37.2) was tried: system_server restarted during `set-device-owner` (the image's known graphics
 abort, §6as), so not run. Not run: the "Unknown" switch on Telecom's page (Android keeps it in the provider's own
 settings, which only the system may read or write).
