@@ -23,7 +23,7 @@ fun attemptNumber(attempt: ByteArray): String {
     }
     val n = ((digest[0].toLong() and 0xff) shl 24) or ((digest[1].toLong() and 0xff) shl 16) or
         ((digest[2].toLong() and 0xff) shl 8) or (digest[3].toLong() and 0xff)
-    return "%06d".format(n % 1_000_000)
+    return "%06d".format(java.util.Locale.ROOT, n % 1_000_000)
 }
 
 /** The number as the phone shows it: "482 913". */

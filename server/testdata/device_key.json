@@ -1665,6 +1665,40 @@
       }
     },
     {
+      "name": "exempt and due, the address history too young: wait, no key, still due",
+      "has_token": true,
+      "local": [],
+      "adopted": null,
+      "last_call": null,
+      "in_flight": false,
+      "conflict_reported": null,
+      "backoff": false,
+      "step1": {
+        "status": 200,
+        "vibb_auth": null,
+        "answer": {
+          "state": "exempt",
+          "rotate": false
+        }
+      },
+      "exempt_since_last_try_ms": 604800000,
+      "action": "register",
+      "key": null,
+      "drop_token": false,
+      "challenge": {
+        "status": 503,
+        "body": {
+          "reason": "address_history",
+          "retry_after_s": 600
+        }
+      },
+      "challenge_action": {
+        "action": "wait",
+        "wait_ms": 600000,
+        "make_key": false
+      }
+    },
+    {
       "name": "a challenge: make the key",
       "has_token": true,
       "local": [],

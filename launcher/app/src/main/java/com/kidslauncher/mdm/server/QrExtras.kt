@@ -197,8 +197,10 @@ object QrExtras {
         val app = context.applicationContext
         EnrolWait.start(
             app,
+            extras.enrollmentCode,
             first,
-            tryOnce = { applyProvisioningExtras(app, extras) },
+            // Code QA L5: the extras were applied by the first try; each wait's try is the enrolment alone.
+            tryOnce = { Enrollment.enroll(app, extras.serverUrl, extras.enrollmentCode, connectTailnet = false) },
             onEnd = { result ->
                 val store = store(app)
                 if (result.isSuccess) {

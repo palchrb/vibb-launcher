@@ -354,7 +354,14 @@ bearer - nothing here can lock a phone out.
   482 913" (`attemptNumber`, `shownNumber`), and "Koden er utløpt. Be om en ny." after the stop. An exempt enrolment
   (`key: {state: "exempt"}`) deletes the refused key and keeps the try's time (`exemptTriedMs`); `keyStep` registers an
   exempt phone once a week from it, and `keyNudge` asks for an exempt policy as for `none`. A challenge's `503` with
-  `retry_after_s` (`address_history`, X; `list_stale`) waits that long and makes no key (`keyChallengeStep`). S1's
+  `retry_after_s` (`address_history`, X; `list_stale`) waits that long and makes no key (`keyChallengeStep`); an exempt
+  phone's try is kept in the book only with a challenge in hand, right before the key is made (code QA M1). Code QA:
+  Settings' "Enroll now" and `ReEnrolDialog` enrol under `QrExtras.underLock` too and send nothing while `EnrolWait`
+  waits for the same code (`waitingFor`); only the current wait writes the state (a generation per start); the number
+  shown is the phone's own (`attemptNumber` of its attempt, a mismatch with the server's logged); the dialogs follow the
+  wait (`State.Enrolled` closes them, `RanOut` says so); a wait that ends without an enrolment forgets the code's
+  enrolment key (`forgetEnrolKey`); the QR wait's tries are `Enrollment.enroll` alone. The book's changes are pure
+  (`withEnrolAttempt`, `newEnrolmentBook`), and so is the no-key word (`noKeyReason`). S1's
   `refused` enrolment answer is still read (an older server) until S2. Tests: `DeviceKeyContractTest`.
 - **Not in L1**: the enrolment screen's line on a refused key ("Telefonen kan ikke lage en sikker nøkkel") - S1 never
   refuses an enrolment for its key, so it comes with S2; no report field carries `keys_unavailable` (the contract has

@@ -86,7 +86,13 @@ object Enrollment {
             val response = createMdmApi(serverUrl).enroll(request)
             val body = response.body()
             if (!response.isSuccessful || body == null) {
-                val failure = enrollFailureOf(response.code(), response.errorBody()?.use { it.string() })
+                var failure = enrollFailureOf(response.code(), response.errorBody()?.use { it.string() })
+                if (failure is EnrollWaiting) {
+                    // Code QA L2: the number the phone shows is its own, from its attempt; the server's is a check.
+                    val own = attemptNumber(java.util.Base64.getUrlDecoder().decode(attempt))
+                    if (own != failure.number) android.util.Log.w("Enrollment", "The server's attempt number isn't this phone's")
+                    failure = EnrollWaiting(failure.reason, own, failure.retryAfterS)
+                }
                 // Code QA L2: a refused code never takes this key - it goes now, not after its day. A waiting phone keeps
                 // it (the same SPKI on every try, D11).
                 if (failure.refused) (key as? EnrolKey.Made)?.let { DeviceKeys.forget(context, alias = it.alias) }
@@ -141,18 +147,18 @@ object Enrollment {
             ?: DeviceKeys.make(context, challenge, now + DeviceKeys.ENROL_CHALLENGE_HOLDS_MS, now, enrolChallenge = b64u(challenge))
         if (made == null) {
             // `make` makes none while the book doesn't read, or the cap left no room.
-            EnrolKey.None(if (KeyBook.read(context).corrupt) "keystore" else "cap")
+            EnrolKey.None(noKeyReason(KeyBook.read(context).corrupt, null))
         } else {
             EnrolKey.Made(made.alias, made.chainB64(), DeviceKeys.proof(context, made.alias, challenge, ProofKind.ENROLL))
         }
     } catch (e: KeyGenFailure) {
         android.util.Log.w("Enrollment", "No hardware key for the enrolment: ${e.message}")
-        val reason = if (e.keysUnavailable) "keys_unavailable" else "keystore"
+        val reason = noKeyReason(false, e)
         DeviceKeys.refused(context, reason)
         EnrolKey.None(reason)
     } catch (e: Exception) {
         android.util.Log.w("Enrollment", "No hardware key for the enrolment: ${e.javaClass.simpleName}")
-        EnrolKey.None("keystore")
+        EnrolKey.None(noKeyReason(false, e))
     }
 
     /** After the token is stored: the old enrolment's keys go; this one's is adopted when the server took it, deleted

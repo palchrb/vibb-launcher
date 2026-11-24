@@ -131,7 +131,7 @@ class ConnectActivity : UIObjectActivity() {
         }
         if (!typing.compareAndSet(false, true)) return
         lastError.value = null
-        EnrolWait.clearRanOut()
+        EnrolWait.clearEnded()
         render()
         hideIme()
         val app = applicationContext

@@ -455,6 +455,12 @@ def phone_rows():
         phone("the list is stale: wait, no key", step1(state="none"), "register",
               challenge={"status": 503, "body": {"reason": "list_stale", "retry_after_s": 3600}},
               challenge_action={"action": "wait", "wait_ms": 3_600_000, "make_key": False}),
+        # Code QA M1: an exempt phone's try is kept only with a challenge in hand (make_key) - a 503 here costs it no
+        # week: it is still due after the wait.
+        phone("exempt and due, the address history too young: wait, no key, still due", step1(state="exempt"),
+              "register", exempt_since_last_try_ms=WEEK,
+              challenge={"status": 503, "body": {"reason": "address_history", "retry_after_s": 600}},
+              challenge_action={"action": "wait", "wait_ms": 600_000, "make_key": False}),
         phone("a challenge: make the key", step1(state="none"), "register",
               challenge={"status": 200, "body": {"challenge": "<Base64url, 32 bytes>", "expires_in_s": 600}},
               challenge_action={"action": "make_key", "wait_ms": None, "make_key": True}),

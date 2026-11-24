@@ -230,6 +230,34 @@ class DeviceKeyContractTest {
         assertEquals(emptyMap<String, String>(), ServerJson.decodeFromString(KeyBookState.serializer(), "{}").enrolAttempts)
     }
 
+    @Test
+    fun `one attempt per challenge, gone at a new enrolment`() {
+        val once = withEnrolAttempt(KeyBookState(), "c1", "a1")
+        assertEquals(mapOf("c1" to "a1"), once.enrolAttempts)
+        // The kept one wins: every try with the code sends the same attempt.
+        assertEquals(once, withEnrolAttempt(once, "c1", "a2"))
+        val two = withEnrolAttempt(once, "c2", "b1")
+        assertEquals(mapOf("c1" to "a1", "c2" to "b1"), two.enrolAttempts)
+        val fresh = newEnrolmentBook(two.copy(exemptTriedMs = 5L, lost = true, lastRefusal = "root"))
+        assertEquals(emptyMap<String, String>(), fresh.enrolAttempts)
+        assertEquals(null, fresh.exemptTriedMs)
+        assertEquals(false, fresh.lost)
+        assertEquals(null, fresh.lastRefusal)
+    }
+
+    @Test
+    fun `every no-key path names why`() {
+        assertEquals("cap", noKeyReason(bookCorrupt = false, failure = null))
+        assertEquals("keystore", noKeyReason(bookCorrupt = true, failure = null))
+        assertEquals("keys_unavailable", noKeyReason(false, KeyGenFailure(true, null)))
+        assertEquals("keystore", noKeyReason(false, KeyGenFailure(false, null)))
+        assertEquals("keystore", noKeyReason(false, IllegalStateException("anything else")))
+        // The words are the contract's.
+        val words = contract["enroll"]!!.jsonObject["body_no_key"]!!.jsonArray.mapNotNull { it.jsonObject["body"]!!.jsonObject.str("key_error") }
+        assertTrue(words.containsAll(listOf("cap", "keystore", "keys_unavailable")))
+        assertEquals("089 851", shownNumber("089851"))
+    }
+
     private fun step1(row: JsonObject): KeyStepOne {
         val step = row["step1"]!!.jsonObject
         val answer = step["answer"]!!.takeIf { it != JsonNull }?.let { ServerJson.decodeFromString(DeviceKeyAnswer.serializer(), it.toString()) }

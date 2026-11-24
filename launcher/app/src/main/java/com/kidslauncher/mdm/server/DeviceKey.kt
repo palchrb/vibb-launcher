@@ -324,6 +324,25 @@ object KeyBook {
     fun adoptedStored(context: Context): Boolean = read(context).adopted != null
 }
 
+/** Design 129b D4: the book with an attempt for [challenge] - the one already kept wins (one attempt per challenge). */
+fun withEnrolAttempt(book: KeyBookState, challenge: String, made: String): KeyBookState =
+    if (book.enrolAttempts.containsKey(challenge)) book else book.copy(enrolAttempts = book.enrolAttempts + (challenge to made))
+
+/** A new enrolment's book (§5.1, design 129b D4): the old enrolment's marks, attempts and exempt try go. */
+fun newEnrolmentBook(book: KeyBookState): KeyBookState = book.copy(
+    adopted = null, conflictReported = null, lost = false, suspicion = null, keyGone = false, lastRefusal = null,
+    enrolAttempts = emptyMap(), exemptTriedMs = null,
+)
+
+/** Design 129b D2 (M3): why an enrolment has no key - `make` gave none ([failure] `null`): the book doesn't read
+ * (`keystore`) or the cap left no room (`cap`); an empty attestation-key pool is `keys_unavailable`; anything else
+ * `keystore`. */
+fun noKeyReason(bookCorrupt: Boolean, failure: Throwable?): String = when {
+    failure == null -> if (bookCorrupt) "keystore" else "cap"
+    failure is KeyGenFailure && failure.keysUnavailable -> "keys_unavailable"
+    else -> "keystore"
+}
+
 /** One made key with what goes to the server. */
 class MadeKey(val alias: String, val chain: List<ByteArray>, val spki: String) {
     /** The chain as the server reads it: standard Base64 DER, leaf first. */
@@ -511,13 +530,14 @@ object DeviceKeys {
         val hw = hardware(context)
         if (KeyBook.read(context).corrupt) KeyBook.reset(context, nextPast(context))
         for (key in reconcile(context, hw).keys) if (key.alias != keep) forget(context, hw, key.alias)
-        KeyBook.update(context) {
-            it.copy(
-                adopted = null, conflictReported = null, lost = false, suspicion = null, keyGone = false, lastRefusal = null,
-                enrolAttempts = emptyMap(), exemptTriedMs = null,
-            )
-        }
+        KeyBook.update(context, ::newEnrolmentBook)
         synchronized(fallbackAttempts) { fallbackAttempts.clear() }
+    }
+
+    /** Code QA L4: the enrolment key made for [challenge] (Base64url) goes - its code was abandoned. */
+    fun forgetEnrolKey(context: Context, challenge: String) {
+        val alias = KeyBook.read(context).enrolChallenges.entries.firstOrNull { it.value == challenge }?.key ?: return
+        forget(context, alias = alias)
     }
 
     /** Attempts of a book that doesn't decode (nothing is written over it): this process's only. */
@@ -530,9 +550,7 @@ object DeviceKeys {
     fun enrolAttempt(context: Context, challenge: String): String {
         KeyBook.read(context).enrolAttempts[challenge]?.let { return it }
         val made = b64u(ByteArray(16).also { java.security.SecureRandom().nextBytes(it) })
-        val after = KeyBook.update(context) { book ->
-            if (book.enrolAttempts.containsKey(challenge)) book else book.copy(enrolAttempts = book.enrolAttempts + (challenge to made))
-        }
+        val after = KeyBook.update(context) { withEnrolAttempt(it, challenge, made) }
         if (after.corrupt) return synchronized(fallbackAttempts) { fallbackAttempts.getOrPut(challenge) { made } }
         return after.enrolAttempts[challenge] ?: made
     }
