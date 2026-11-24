@@ -30,6 +30,7 @@ mod contact_requests;
 mod custom_dns;
 mod deploy_scripts;
 mod device_api;
+mod device_key;
 mod device_pages;
 mod devices_list;
 mod dialer_row;
@@ -275,6 +276,16 @@ impl TestApp {
             audit: Default::default(),
             limits: Default::default(),
             tokens: Default::default(),
+            // Design 129 §7.2: the fake attestation (no test needs a real chain but `attestation::tests`), and an
+            // empty, fresh revocation list.
+            device_keys: {
+                let mut keys = crate::device_key::DeviceKeys::default();
+                keys.attest = crate::device_key::testing::fake_attest;
+                keys.status
+                    .take(br#"{"entries": {}}"#, chrono::Utc::now())
+                    .expect("an empty list");
+                std::sync::Arc::new(keys)
+            },
             enrollment: Default::default(),
             passwords: Default::default(),
             passkeys: std::sync::Arc::new(crate::passkeys::Passkeys::new(passkeys)),

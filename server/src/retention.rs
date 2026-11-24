@@ -504,6 +504,24 @@ pub async fn prune(db: &SqlitePool) -> Pruned {
             .execute(db)
             .await,
     );
+    // Design 129 §5.2: the addresses a phone's bearer came from, for 30 days; expired key challenges.
+    let _addresses = rows(
+        failed,
+        "device_addresses",
+        sqlx::query(
+            "DELETE FROM device_addresses WHERE last_seen < datetime('now', '-' || ? || ' days')",
+        )
+        .bind(crate::device_key::ADDRESS_DAYS)
+        .execute(db)
+        .await,
+    );
+    let _challenges = rows(
+        failed,
+        "device_key_challenges",
+        sqlx::query("DELETE FROM device_key_challenges WHERE expires_at <= datetime('now')")
+            .execute(db)
+            .await,
+    );
     let install_progress = rows(
         failed,
         "device_install_progress",

@@ -1071,6 +1071,25 @@ nothing about a push is logged.
   against its own clock: with the clock badly off, signed pushes are refused with `503` and `Retry-After: 300` (which
   keeps the sender's subscription) until it is fixed (design 108b §4.8).
 
+## Hardware-bound phone keys (design 129 S1, migration 0174)
+
+A phone can prove that a key lives in its secure hardware (Android key attestation) and sign every request with it, so
+a token lifted from the phone is worthless elsewhere. **This release only observes**: a phone that registers a key
+keeps its token too, and nothing can lock a phone out. About This Phone › Connection says which sign-in each phone has.
+
+- **`LAUNCHER_SIGNATURE_CHECKSUM` must be set** (as for the setup QR): it is how the server knows the key belongs to
+  Vibb One. Without it every key is refused (a warning at start; the phones keep their token).
+- **Google's revocation list**: the server fetches `https://android.googleapis.com/attestation/status` (HTTPS 443, a
+  plain GET with nothing about the phones) at start and then hourly to daily, and keeps the last copy in
+  `data/attestation/`. If it can't reach the list for over a week, new keys wait (the phones keep their token) and
+  Settings says "Googles nøkkelliste er utdatert".
+- **One server process per database.** The replay protection lives in the process: never run two containers or
+  services on one `data/`. `docker compose up -d` and Watchtower's default stop the old container before the new one
+  starts; keep it that way (no rolling restart).
+- **A reverse proxy passes the request path through unchanged** - the phone signs the path and query exactly as it
+  sends them. Caddy's `reverse_proxy` does; with nginx, write `proxy_pass http://<the server>;` without a URI part
+  (one with a path decodes and re-encodes it).
+
 ## The Apple Wi-Fi lookup (design 125 step 2, migration 0163)
 
 With Google's location service off on a kid's phone (`docs/setup/google-account.md`), the phone learns places from its

@@ -619,8 +619,9 @@ async fn the_settings_hub_makes_no_network_call() {
         .collect();
     assert!(
         uses.iter()
-            .all(|u| u.starts_with("state.db") || *u == "state.data_dir"),
-        "the hub reads only state.db and the backups in state.data_dir: {uses:?}"
+            // Design 129: the attestation list's age, in memory (`state.device_keys.status`).
+            .all(|u| u.starts_with("state.db") || *u == "state.data_dir" || *u == "state.device_k"),
+        "the hub reads only state.db, the backups in state.data_dir and the key list's age: {uses:?}"
     );
 
     let app = TestApp::new().await;

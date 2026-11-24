@@ -70,7 +70,13 @@ admin server it talks to. Old commit hashes in the docs still resolve.
   `mmsc-hosts.py` (the server's `server/testdata/mmsc_hosts.txt`, design 83 §3: each operator's MMS server hosts from
   AOSP's `apns-full-conf.xml` at a pinned commit and SHA-256, in two classes - unasked and hints; its `UNASKED` stays
   `"none"` until design 77's step 0; `--selftest`, no network, converts `scripts/mmsc-hosts-sample.xml` and checks the
-  committed list's lines against the SHA-256 the script holds; run by `server-ci.yml`'s always-run changes job).
+  committed list's lines against the SHA-256 the script holds; run by `server-ci.yml`'s always-run changes job),
+  `grapheneos-boot-keys.py` (design 129 §9: the server's `server/src/attestation/grapheneos_boot_keys.json` from
+  GrapheneOS's signed `attestation.json`, its OpenSSH signature checked with `ssh-keygen -Y verify` against the signer
+  the script pins, an older `timestamp` refused; `--selftest`, no network, a vendored sample signed by a throwaway key
+  in `scripts/grapheneos-boot-keys-sample/`; run by `server-ci.yml`'s always-run changes job), `device-key-vectors.py`
+  (design 129 §7.1: the crypto rows of `server/testdata/device_key.json` from a throwaway P-256 key derived from a fake
+  phrase - public data only, pure Python; `--check` run by `server-ci.yml`'s always-run changes job).
 - `PLAN.md` - the plan and status, and the fix backlog ("Fix backlog": keep it current as items come in and are done).
 - `.github/` - CI for both parts (see below).
 - `kids-launcher-mdm/`, `kid-phone-server/` (gitignored, if present) - the old standalone clones.
@@ -519,6 +525,16 @@ report's counts to the security-log lines, one per class that rose). The server'
 launcher's `BlockedNumbersTest` encodes both reports exactly from `withBlocked` and checks its classes; both compare the
 copies. The plan (`blockedNumbersPlan`: while managed, a row cleared only when its number, normalised, is a rules contact's,
 an own number or an emergency number; the rest kept) stays the launcher's. No policy key.
+
+The hardware-bound phone key (design 129, S1 observe) is `server/testdata/device_key.json`, written by
+`scripts/device-key-vectors.py`: `canonical` (a request's signed bytes and body hash, percent-encoded rows matched raw),
+`signed` and `proof` (signatures by a throwaway key), `enroll_challenge`, `clock`, `window`, `edge` (each request kind to
+its answer and `Vibb-Auth`), `answers` (each reason to the phone's action), `enroll`, `register` and `policy` (the
+policy's `device_key`). The server's `tests::device_key` runs the crypto rows and produces the route rows through the
+real routes. **Server-side only in S1**: the launcher's byte-identical copy, its `DeviceKeyContractTest` and the
+registration worker's `phone` rows come with L1, and then the file joins `launcher.yml`'s filter. The attestation's own
+vectors (`server/testdata/attestation/`, Google's test chains, Apache-2.0) stay the server's. The policy's `device_key`
+is pinned by `policy_json_keys_snapshot`.
 
 The phone's clock as its decisions see it (time rules keep their own clock, `server/TrustedClock.kt`): the status
 report's `time_state.clock_skew_ms`, `clock_trust` and `unanchored_ms` ride in `time_status_report.json` (above); the rows

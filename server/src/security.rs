@@ -1356,8 +1356,8 @@ fn too_many(refused: crate::limits::Refused) -> Response {
         .into_response()
 }
 
-/// Bearer-token auth for the device-facing API (`/api/devices/*`, excluding enroll) - completely
-/// separate from the admin session system above, since a kid's phone is never an admin session.
+/// Device auth for the device-facing API (`/api/devices/*`, excluding enroll) - completely separate from the admin
+/// session system above, since a kid's phone is never an admin session.
 ///
 /// Design 22 §3.1, in this order:
 /// - the token is looked up in memory ([TokenIndex]);
@@ -1366,11 +1366,17 @@ fn too_many(refused: crate::limits::Refused) -> Response {
 /// - a valid one never touches that bucket: it takes from the device's own bucket, then an
 ///   in-flight slot for its route class, held until the response body is done (an SSE stream or
 ///   a download holds it for its whole life).
+///
+/// Design 129 S1 (observe): a request signed with the phone's key (`Vibb-Signature`, checked at the edge -
+/// `device_key::DeviceKeys::check`) is authenticated as that phone the same way. A signature that fails is a 401
+/// with `Vibb-Auth: <reason>` - unless the same phone's valid bearer came with it: then the failure is logged and the
+/// bearer authenticates (S1 never locks a phone out).
 pub async fn require_device_token(
     State(state): State<AppState>,
     mut request: Request,
     next: Next,
 ) -> Response {
+    use crate::device_key::{AuthReason, SigCheck};
     use crate::limits;
 
     let client =
@@ -1383,37 +1389,83 @@ pub async fn require_device_token(
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "));
-    let device_id = token.and_then(|token| state.tokens.lookup(token));
+    let bearer_device = token.and_then(|token| state.tokens.lookup(token));
+    let signature = request.extensions().get::<SigCheck>().cloned();
 
-    let Some(device_id) = device_id else {
-        let key = client.map(|c| c.key()).unwrap_or_default();
-        if let Some(refused) = state.limits.ip_blocked(&key) {
-            return too_many(refused);
+    let (device_id, signed_key) = match (signature, bearer_device) {
+        (
+            Some(SigCheck::Valid {
+                device_id, key_id, ..
+            }),
+            _,
+        ) => (device_id, Some(key_id)),
+        (Some(SigCheck::Refused { reason, device_id }), Some(bearer))
+            if device_id.is_none_or(|d| d == bearer) =>
+        {
+            // Observe mode: the failure is logged - never counted against the client (code QA M2) - and the
+            // bearer still authenticates.
+            if reason.counts() {
+                log_signature_failure(&state, reason, client.as_ref(), request.uri().path(), false)
+                    .await;
+            }
+            (bearer, None)
         }
-        let blocked = state.limits.ip_failed(&key);
-        let what = if token.is_some() {
-            "invalid device token"
-        } else {
-            "missing bearer token"
-        };
-        let ip = client.map(|c| c.describe());
-        let mut detail = Detail::words(
-            if token.is_some() {
-                "security.detail.device_auth.invalid_token"
-            } else {
-                "security.detail.device_auth.missing_token"
-            },
-            &[],
-        )
-        .with_facts(crate::audit::clip_path(request.uri().path(), 100));
-        if blocked {
-            detail = detail.and("security.detail.client_refused", &[]);
+        (Some(SigCheck::TooMany { device_id }), Some(bearer)) if device_id == bearer => {
+            (bearer, None)
         }
-        state
-            .audit
-            .record(&state.db, "device_auth_failed", &key, ip.as_deref(), detail)
+        (Some(SigCheck::Refused { reason, device_id }), _) => {
+            return refuse_signature(
+                &state,
+                reason,
+                device_id,
+                client.as_ref(),
+                request.uri().path(),
+            )
             .await;
-        return (axum::http::StatusCode::UNAUTHORIZED, what).into_response();
+        }
+        (Some(SigCheck::TooMany { .. }), _) => {
+            return too_many(crate::limits::Refused {
+                retry_after_secs: 5,
+            });
+        }
+        (None, Some(bearer)) => (bearer, None),
+        (None, None) => {
+            let key = client.as_ref().map(|c| c.key()).unwrap_or_default();
+            if let Some(refused) = state.limits.ip_blocked(&key) {
+                return too_many(refused);
+            }
+            let blocked = state.limits.ip_failed(&key);
+            let what = if token.is_some() {
+                "invalid device token"
+            } else {
+                "missing bearer token"
+            };
+            let ip = client.as_ref().map(|c| c.describe());
+            let mut detail = Detail::words(
+                if token.is_some() {
+                    "security.detail.device_auth.invalid_token"
+                } else {
+                    "security.detail.device_auth.missing_token"
+                },
+                &[],
+            )
+            .with_facts(crate::audit::clip_path(request.uri().path(), 100));
+            if blocked {
+                detail = detail.and("security.detail.client_refused", &[]);
+            }
+            state
+                .audit
+                .record(&state.db, "device_auth_failed", &key, ip.as_deref(), detail)
+                .await;
+            let mut response = (axum::http::StatusCode::UNAUTHORIZED, what).into_response();
+            if token.is_none() {
+                response.headers_mut().insert(
+                    crate::device_key::AUTH_HEADER,
+                    axum::http::HeaderValue::from_static(AuthReason::Missing.word()),
+                );
+            }
+            return response;
+        }
     };
 
     if let Err(refused) = state.limits.take_token(device_id) {
@@ -1427,11 +1479,80 @@ pub async fn require_device_token(
     if let Some(client) = &client {
         state.limits.record_access(device_id, client);
     }
+    match (&signed_key, &client) {
+        (Some(key_id), _) => state.device_keys.note_signed(&state.db, key_id).await,
+        // §5.2: the addresses the phone's bearer came from - what makes a registration from elsewhere `unusual`.
+        (None, Some(client)) => {
+            state
+                .device_keys
+                .note_address(&state.db, device_id, &client.key())
+                .await
+        }
+        (None, None) => {}
+    }
     request
         .extensions_mut()
         .insert(AuthedDevice(DeviceRef { id: device_id }));
     let response = next.run(request).await;
     limits::hold_until_done(response, permit)
+}
+
+/// A refused signature (design 129 §4.4): 401 (400 for `bad_body`) with `Vibb-Auth: <reason>`. Every reason but
+/// `stale` counts against the client's failure bucket (429 once it is full) and writes `device_auth_failed` with the
+/// reason, as a bad bearer does.
+pub async fn refuse_signature(
+    state: &AppState,
+    reason: crate::device_key::AuthReason,
+    _device_id: Option<i64>,
+    client: Option<&crate::net::Client>,
+    path: &str,
+) -> Response {
+    use crate::device_key::AuthReason;
+    if reason.counts() {
+        let key = client.map(|c| c.key()).unwrap_or_default();
+        if let Some(refused) = state.limits.ip_blocked(&key) {
+            return too_many(refused);
+        }
+        log_signature_failure(state, reason, client, path, true).await;
+    }
+    let status = if reason == AuthReason::BadBody {
+        axum::http::StatusCode::BAD_REQUEST
+    } else {
+        axum::http::StatusCode::UNAUTHORIZED
+    };
+    let mut response = (status, reason.word()).into_response();
+    response.headers_mut().insert(
+        crate::device_key::AUTH_HEADER,
+        axum::http::HeaderValue::from_static(reason.word()),
+    );
+    response
+}
+
+/// Writes the throttled `device_auth_failed` with a signature failure's reason; `count`: and counts it against the
+/// client (never for a phone whose own bearer came with it, code QA M2).
+pub(crate) async fn log_signature_failure(
+    state: &AppState,
+    reason: crate::device_key::AuthReason,
+    client: Option<&crate::net::Client>,
+    path: &str,
+    count: bool,
+) {
+    let key = client.map(|c| c.key()).unwrap_or_default();
+    let blocked = count && state.limits.ip_failed(&key);
+    let mut detail = Detail::words("security.detail.device_auth.signature", &[])
+        .word(
+            "reason",
+            &format!("security.detail.device_auth.reason.{}", reason.word()),
+        )
+        .with_facts(crate::audit::clip_path(path, 100));
+    if blocked {
+        detail = detail.and("security.detail.client_refused", &[]);
+    }
+    let ip = client.map(|c| c.describe());
+    state
+        .audit
+        .record(&state.db, "device_auth_failed", &key, ip.as_deref(), detail)
+        .await;
 }
 
 #[cfg(test)]

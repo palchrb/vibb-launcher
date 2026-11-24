@@ -12,6 +12,35 @@
     {% call band::tab(self.t("nav.settings"), tab) %}{% endcall %}
     <div class="sheet">
 
+    {% if key_no_checksum %}
+    <div class="group">
+        <details class="info cell" data-row="key-no-checksum">
+            <summary class="row">
+                <span class="row-label tone-orange">{{ self.t("settings.hub.key_no_checksum") }}</span>
+                <svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("common.more_info") }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>
+            </summary>
+            <div class="info-panel">
+                <p>{{ self.t("settings.hub.key_no_checksum_info") }}</p>
+            </div>
+        </details>
+    </div>
+    {% endif %}
+    {% if key_list_stale %}
+    {#- Design 129 §9.1: the one orange line S1 has - Google's attestation status list is over a week old, and new
+        phone keys wait for it (the phones keep their sign-in). -#}
+    <div class="group">
+        <details class="info cell" data-row="key-list-stale">
+            <summary class="row">
+                <span class="row-label tone-orange">{{ self.t("settings.hub.key_list_stale") }}</span>
+                <svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("common.more_info") }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>
+            </summary>
+            <div class="info-panel">
+                <p>{{ self.t("settings.hub.key_list_stale_info") }}</p>
+            </div>
+        </details>
+    </div>
+    {% endif %}
+
     <div class="group group-icons">
         <a class="row" href="/notifications/settings?from=settings" data-row="notifications">
             <span class="tile tile-red"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><path d="M8.5 2a4.2 4.2 0 0 0-4.2 4.2v2.6L3 11.6h11l-1.3-2.8V6.2A4.2 4.2 0 0 0 8.5 2z" fill="currentColor"/><path d="M6.8 13.4a1.8 1.8 0 0 0 3.4 0" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span>

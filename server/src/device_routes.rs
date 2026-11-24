@@ -7,7 +7,8 @@
 //! other route requires the bearer token issued at enrollment (`security::require_device_token`,
 //! with the per-device limits of `limits`). Every route sits behind `limits::device_edge` (the
 //! in-flight guard for requests without a valid token, the timeout, the response headers) and a
-//! 512 KiB body limit (enroll reads at most 4 KiB itself).
+//! 512 KiB body limit (enroll reads at most 32 KiB itself). Design 129: a request signed with the phone's hardware
+//! key (`Vibb-Signature`) is authenticated as the bearer is (`device_key`); the key's own routes are below.
 
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
@@ -16,8 +17,9 @@ use axum::routing::{delete, get, post};
 
 use crate::{AppState, handlers, limits, security};
 
-/// An enrollment request is one short code.
-pub const ENROLL_BODY_LIMIT: usize = 4 * 1024;
+/// An enrollment request: a short code, and (design 129 §5.1) the new key's attestation chain and proof - at most
+/// six certificates of 4 KiB each, Base64 (§3 item 1).
+pub const ENROLL_BODY_LIMIT: usize = 32 * 1024;
 
 /// Every device route with its auth layer. Takes the state for the middleware; the caller adds it
 /// to the router with `with_state` as usual.
@@ -30,17 +32,11 @@ pub fn device_routes(state: AppState) -> Router<AppState> {
 
     let authed_routes = Router::new()
         .route("/api/devices/policy", get(handlers::device_api::policy))
-        // Design 95 §3.5: a gzip'd report (`Content-Encoding: gzip`, the policy's `status_gzip`) is inflated here,
-        // inside `require_device_token` (never an unauthenticated body); another encoding is a 415. The body limit is
-        // the extractor's, on the inflated bytes: a gzip bomb stops at it with a 413.
-        .route(
-            "/api/devices/status",
-            post(handlers::device_api::status).layer(
-                tower::ServiceBuilder::new()
-                    .layer(tower_http::decompression::RequestDecompressionLayer::new())
-                    .map_request(|req: axum::http::Request<_>| req.map(axum::body::Body::new)),
-            ),
-        )
+        // Design 95 §3.5: a gzip'd report (`Content-Encoding: gzip`, the policy's `status_gzip`) is inflated by the
+        // handler itself (`device_api::report_body`), inside `require_device_token` (never an unauthenticated body) and
+        // after the whole compressed body was read - so after its signed hash was checked (design 129 code QA L4).
+        // Another encoding is a 415; the inflated bytes stop at the device limit with a 413 (a gzip bomb).
+        .route("/api/devices/status", post(handlers::device_api::status))
         .route(
             "/api/devices/command-result",
             post(handlers::device_api::command_result),
@@ -203,6 +199,21 @@ pub fn device_routes(state: AppState) -> Router<AppState> {
             post(crate::unified_push::device::messages).layer(DefaultBodyLimit::max(
                 crate::unified_push::device::MESSAGES_LIMIT,
             )),
+        )
+        // Design 129 §5.2: the phone's hardware key - what the server holds, a challenge, the registration, a conflict.
+        .route(
+            "/api/devices/key",
+            get(crate::device_key::routes::get_key)
+                .post(crate::device_key::routes::post_key)
+                .layer(DefaultBodyLimit::max(crate::device_key::routes::BODY_LIMIT)),
+        )
+        .route(
+            "/api/devices/key/challenge",
+            get(crate::device_key::routes::get_challenge),
+        )
+        .route(
+            "/api/devices/key/conflict",
+            post(crate::device_key::routes::post_conflict),
         )
         // The integrations' device routes (`integrations::Integration::device_routes`), behind the same token.
         .merge(state.integrations.device_routes())

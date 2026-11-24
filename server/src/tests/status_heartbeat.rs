@@ -274,8 +274,8 @@ async fn a_gzipd_report_is_taken_within_the_limit() {
     assert_eq!(res.status, StatusCode::PAYLOAD_TOO_LARGE, "{}", res.text());
     assert_eq!(latest(&app, device).await.5, 1);
 
-    // The decompression sits inside the token check (code QA L3): an unknown encoding is a 415 at once in the layer,
-    // so without a token the answer is the token check's 401 - it would be the 415 were the layer outside.
+    // The inflation sits inside the token check (code QA L3; design 129 L4 moved it into the handler): without a token
+    // an unknown encoding is the token check's 401, never a 415.
     let request = Request::builder()
         .method(Method::POST)
         .uri("/api/devices/status")
