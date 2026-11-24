@@ -1,5 +1,5 @@
 {
- "comment": "Design 129b §7: the emulator_keys profile's rows. Made by scripts/emulator-attestation-vectors.py from throwaway keys and made-up values in the shape of the gate images' chains (design 129 §7.3) - never a capture. `challenge` and `signature` are standard Base64; `revoked` the serials the row's status list names. With the feature each row's verdict; without it every row is `root`.",
+ "comment": "Design 129b §7: the emulator_keys profile's rows. Made by scripts/emulator-attestation-vectors.py from throwaway keys and made-up values in the shape of the gate images' chains (design 129 §7.3) - never a capture -, and the `captured-*` chains: real ones from the emulator gate (design 129b §10.3), copied from scripts/emulator-attestation-captures/. `challenge` and `signature` are standard Base64; `revoked` the serials the row's status list names. With the feature each row's verdict; without it every row is `root`.",
  "app": {
   "package": "me.vibb.launcher.debug",
   "signature": "1uJZpC3XIpE8zSUcnc1jTp+U9MRFkvSd7UUMvGZ1LKU="
@@ -12,6 +12,52 @@
   "proof": "MEUCIQDqLr-7zsES91JACFWa3VhQyLVFgqljQeGiIHyq_j6NCgIgbYnmIsP_UN9O5qi3t35JtCPdbL_arIgvqrvcl5yb5GI"
  },
  "rows": [
+  {
+   "name": "a real Android 14 chain (compat34, the gate of 2026-11-24)",
+   "chain": "captured-android14-2026-11-24.pem",
+   "now": "2026-11-24T21:53:43Z",
+   "challenge": "rcuvdN5sNsBG2BJPhf2qUAW4cw7/4VKrO5MO0fu/rFw=",
+   "signature": "oblmcWci6OgCZwUX5J0BLrNNNIXJAtkrrvvD3eqRYhA=",
+   "version": 300,
+   "patch": 202309,
+   "verdict": "ok",
+   "level": "software",
+   "boot": "unverified",
+   "locked": false,
+   "reading": "unknown",
+   "root": "emulator",
+   "serials": 3
+  },
+  {
+   "name": "a real Android 14 chain (compat34, the gate of 2026-11-24), another debug signer",
+   "chain": "captured-android14-2026-11-24.pem",
+   "now": "2026-11-24T21:53:43Z",
+   "challenge": "rcuvdN5sNsBG2BJPhf2qUAW4cw7/4VKrO5MO0fu/rFw=",
+   "verdict": "app"
+  },
+  {
+   "name": "a real Android 16 chain (aosp36, the gate of 2026-11-24)",
+   "chain": "captured-android16-2026-11-24.pem",
+   "now": "2026-11-24T22:44:32Z",
+   "challenge": "YBX6Qb7EVen6km8DujS8vS+6Pi6pa37MPKmWgqdNseM=",
+   "signature": "oblmcWci6OgCZwUX5J0BLrNNNIXJAtkrrvvD3eqRYhA=",
+   "version": 400,
+   "patch": 202507,
+   "verdict": "ok",
+   "level": "software",
+   "boot": "unverified",
+   "locked": false,
+   "reading": "unknown",
+   "root": "emulator",
+   "serials": 3
+  },
+  {
+   "name": "a real Android 16 chain (aosp36, the gate of 2026-11-24), another debug signer",
+   "chain": "captured-android16-2026-11-24.pem",
+   "now": "2026-11-24T22:44:32Z",
+   "challenge": "YBX6Qb7EVen6km8DujS8vS+6Pi6pa37MPKmWgqdNseM=",
+   "verdict": "app"
+  },
   {
    "name": "the Android 16 image",
    "chain": "android16.pem",

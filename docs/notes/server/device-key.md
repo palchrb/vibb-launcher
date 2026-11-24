@@ -194,7 +194,8 @@ orange "Testnøkkel fra emulator" on every key stored with `root = 'emulator'` (
   `scripts/emulator-attestation-vectors.py` from throwaway keys derived from fake phrases and made-up values - never a
   capture (`--check` in `server-ci.yml`'s changes job). They are made up in the emulator's shape, so **the emulator
   gate's first run is the profile's first real check**; real captures (one per image, Android 14 and 16, each with the
-  `now` it was read at) are added as rows at that gate. `attestation::emulator_tests` runs them: with the feature each
+  `now` it was read at) are added as rows at that gate - done 2026-11-24 (`docs/testing/emulator.md` §6bm): both images'
+  chains passed unchanged, kept in `scripts/emulator-attestation-captures/` and copied as `captured-*.pem`. `attestation::emulator_tests` runs them: with the feature each
   row's verdict, without it every row `root`. `tests::emulator_keys` covers the two orange lines, the setting, an
   enrolment through the real route (the feature only: the `enroll` block's fixed QR code set on the phone, the proof
   from the throwaway leaf) and the key index leaving an emulator key out without the feature.

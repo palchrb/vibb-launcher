@@ -10,7 +10,8 @@ security levels Software with every tag in the software list, attestation and Ke
 Every key here is a throwaway derived from a fake phrase and every value is made up: nothing is a capture of an
 emulator, a phone or Google's backend, and the debug signer's digest is a hash of a fake phrase. Signing is pure
 Python (standard library only, deterministic nonces), so the files are reproducible. Each negative chain changes one
-thing (the release package, the root's name, a fourth certificate, a tag in the hardware list, ...). The server's
+thing (the release package, the root's name, a fourth certificate, a tag in the hardware list, ...). Beside them
+the gate's real chains (CAPTURED, from scripts/emulator-attestation-captures/), copied as they are. The server's
 `attestation::emulator_tests::the_rows` reads `rows.json`: with the feature each row's verdict, without it `root`.
 
     python3 -I scripts/emulator-attestation-vectors.py --write    # writes the folder
@@ -186,6 +187,22 @@ CHALLENGE = hashlib.sha256(b"vibb-enroll-v1\x00" + CODE.encode()).digest()
 NOW = 1795521600  # 2026-11-24T12:00:00Z
 DAY = 86400
 
+# Real chains from the emulator gate (design 129b §10.3, docs/testing/emulator.md "129b"): the first enrolment on a
+# freshly wiped image, read off the enrolment body by the gate's logging proxy. Emulator certificates from Google's
+# test CA for unregistered devices ("Droid Unregistered Device CA"), never a family phone's; public data only. Each is
+# read at the `now` it was enrolled at (the intermediate lives two weeks); `challenge` is the leaf's attestation
+# challenge (the typed setup code's), `signature` the gate machine's debug launcher signer as the leaf names it.
+CAPTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "emulator-attestation-captures")
+GATE_DEBUG_SIGNER = "oblmcWci6OgCZwUX5J0BLrNNNIXJAtkrrvvD3eqRYhA="
+CAPTURED = [
+    {"name": "a real Android 14 chain (compat34, the gate of 2026-11-24)", "file": "android14-2026-11-24.pem",
+     "now": "2026-11-24T21:53:43Z", "challenge": "rcuvdN5sNsBG2BJPhf2qUAW4cw7/4VKrO5MO0fu/rFw=",
+     "signature": GATE_DEBUG_SIGNER, "version": 300, "patch": 202309},
+    {"name": "a real Android 16 chain (aosp36, the gate of 2026-11-24)", "file": "android16-2026-11-24.pem",
+     "now": "2026-11-24T22:44:32Z", "challenge": "YBX6Qb7EVen6km8DujS8vS+6Pi6pa37MPKmWgqdNseM=",
+     "signature": GATE_DEBUG_SIGNER, "version": 400, "patch": 202507},
+]
+
 
 def software_list(patch, os_version, package=DEBUG_PACKAGE):
     app = seq(set_of(seq(octets(package.encode()), integer(1))), set_of(octets(DEBUG_DIGEST)))
@@ -275,7 +292,18 @@ def build():
         if verdict == "ok": r.update(ok)
         else: r["verdict"] = verdict
         return r
-    rows = [
+    # The gate's real chains (design 129b §10.3), copied as they are from CAPTURES, each read at its own `now`.
+    copies = {}
+    for c in CAPTURED:
+        with open(os.path.join(CAPTURES, c["file"])) as f:
+            copies["captured-" + c["file"]] = f.read()
+    captured = [r for c in CAPTURED for r in (
+        {"name": c["name"], "chain": "captured-" + c["file"], "now": c["now"], "challenge": c["challenge"],
+         "signature": c["signature"], "version": c["version"], "patch": c["patch"], **ok},
+        {"name": c["name"] + ", another debug signer", "chain": "captured-" + c["file"], "now": c["now"],
+         "challenge": c["challenge"], "verdict": "app"},
+    )]
+    rows = captured + [
         row("the Android 16 image", "android16.pem", "ok", version=400, patch=202507),
         row("the Android 14 image", "android14.pem", "ok", version=300, patch=202309),
         row("the route test's chain (valid for years)", "route.pem", "ok", version=400, patch=202507),
@@ -301,8 +329,10 @@ def build():
     doc = {
         "comment": "Design 129b §7: the emulator_keys profile's rows. Made by scripts/emulator-attestation-vectors.py "
                    "from throwaway keys and made-up values in the shape of the gate images' chains (design 129 §7.3) "
-                   "- never a capture. `challenge` and `signature` are standard Base64; `revoked` the serials the "
-                   "row's status list names. With the feature each row's verdict; without it every row is `root`.",
+                   "- never a capture -, and the `captured-*` chains: real ones from the emulator gate (design 129b "
+                   "§10.3), copied from scripts/emulator-attestation-captures/. `challenge` and `signature` are "
+                   "standard Base64; `revoked` the serials the row's status list names. With the feature each row's "
+                   "verdict; without it every row is `root`.",
         "app": {"package": DEBUG_PACKAGE, "signature": base64.b64encode(DEBUG_DIGEST).decode()},
         "enroll": {
             "comment": "tests::emulator_keys: set `code` on a phone, enrol with `chain` and `proof` (the throwaway leaf's signature over `vibb-key-v1\\n<challenge>\\nenroll`), LAUNCHER_DEBUG_SIGNATURE_CHECKSUM `checksum`.",
@@ -312,6 +342,7 @@ def build():
         "rows": rows,
     }
     out = {name: pem(certs) for name, certs in files.items()}
+    out.update(copies)
     out["rows.json"] = json.dumps(doc, indent=1, ensure_ascii=False) + "\n"
     return out
 
