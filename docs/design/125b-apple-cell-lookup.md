@@ -1,33 +1,41 @@
 # Design 125b: Apple's cell lookup (design 125 step 3)
 
-Status: design, **revision 1**, 2026-11-24 (branch `cell-lookup-design`), read against `main` 88d11d5de. **Not built.**
-Asked by the user on 2026-11-22 ("Legg det i køen"): the phone asks the family's server for the cells it hears and has
-no position for, the same way as for BSSIDs; the server asks Apple through the same proxy into the same sealed cache,
-under the same limits; the phone gets a coarse fix (hundreds of metres to kilometres) where no Wi-Fi is known.
+Status: design, **revision 2**, 2026-11-24 (branch `cell-lookup-design`), read against `main` 88d11d5de. **Not built.**
+Revision 1 was d0610e571; revision 2 takes the design QA (1 H, 3 M, 9 L, two clarifications) and the user's answers
+(Q1, Q2 changed, Q3, Q5, Q6; §12). Asked by the user on 2026-11-22 ("Legg det i køen"): the phone asks the family's
+server for the cells it hears and has no position for, the same way as for BSSIDs; the server asks Apple through the
+same proxy into the same sealed cache, under the same limits; the phone gets a coarse fix (hundreds of metres to
+kilometres) where no Wi-Fi is known.
 
 **Why a note of its own** and not a section of design 125: 125 is at revision 3 with steps 1 and 2 built, its QA rounds
-settled and its "what the build settled" in its status line; step 3 starts at revision 1 with its own design QA. A
-build agent reads 125 (D10, §4a) and this note; 125's A10 and §9 point here. Numbering: **C1-C14** here, beside 125's
-D (step 1) and A (step 2).
+settled and its "what the build settled" in its status line; step 3 starts with its own design QA. A build agent reads
+125 (D10, D14, §4a) and this note; 125's A10 and §9 point here. Numbering: **C1-C15** here, beside 125's D (step 1)
+and A (step 2).
+
+**Two commits.** **Step 3a** (§10) is a fix of what is built - step 1's `vibb_cell` fixes count as fresh, re-arm
+`STILL`, are reported while still, and two of them 60 s apart can confirm "left Hjem" through `zones::side`/`step` - and
+goes first, on its own, with no API change. **Step 3b** is the cell lookup.
 
 ## 0. Short answer
 
 GrapheneOS NetworkLocation already does this at the commit step 2 ported (474472e, MIT): its `apple_wps.proto` has
 the cell fields, `AppleCellPositioningService.kt` the request and answer, `LocationReportingTask.kt` reads `CellInfo`
-into identities. So step 3 is mostly step 2 again with another key: the phone reads its registered cells (and any
-neighbour with a full identity), asks the server for those it has no row for - in the same request as the BSSIDs, on
-the same learned miss -, the server answers from its sealed cache or makes a **separate** Apple cell call through the
-proxy, and the phone keeps the answers as **Apple cell rows** beside step 1's own cell rows. The fix is a last resort,
-never fresh, never a vouch, and **never moves a zone** (C10 - this also closes a gap in step 1's `vibb_cell`). One
-switch (Q1), no migration, contract rows added to `wifi_lookup/contract.json`.
+into identities and estimates a cell fix. Step 3 is step 2 again with another key, and **follows GrapheneOS's cell
+logic wherever our zones and server don't need otherwise** (the user, 2026-11-24): the phone reads every cell with a
+full identity, asks the server for those it has no row for - beside the BSSIDs, or alone when Wi-Fi gives nothing -,
+the server answers from its sealed cache or makes a **separate** Apple cell call through the proxy, and the phone keeps
+the answers as **Apple cell rows** beside step 1's own. The fix takes GrapheneOS's median reference and weighting with
+our more conservative accuracy; it is a last resort, never fresh, never a vouch, never "inside" a zone, and "surely
+outside" only far away (C10, the user's cabin case). One switch, "Oppslag hos Apple"; no migration; contract rows in
+`wifi_lookup/contract.json`.
 
 ## 1. Apple's protocol for cells (sources and field numbers)
 
-Sources: GrapheneOS `platform_packages_apps_NetworkLocation` at **474472e** (the commit step 2 already cites):
-`proto/apple_wps.proto`, `cell/AppleCellPositioningService.kt`, `cell/CellTowerScanner.kt`,
-`cell/CellPositioningServiceCache.kt`, `LocationReportingTask.kt`. Cross-checked against acheong08
-`apple-corelocation-experiments` (0b136860e, `pb/BSSIDApple.proto`), which reverse-engineered LTE alone: it agrees on
-LTE's request field **25**, answer field **22** and the tower's fields 1-7. Both read 2026-11-24.
+Sources: GrapheneOS `platform_packages_apps_NetworkLocation` at **474472e**: `proto/apple_wps.proto`,
+`cell/AppleCellPositioningService.kt`, `cell/CellTowerScanner.kt`, `cell/CellPositioningServiceCache.kt`,
+`LocationReportingTask.kt`. Cross-checked against acheong08 `apple-corelocation-experiments` (0b136860e,
+`pb/BSSIDApple.proto`), which reverse-engineered LTE alone: it agrees on LTE's request field **25**, answer field **22**
+and the tower's fields 1-7. Both read 2026-11-24.
 
 | What | Request (`ALSLocationRequest`) | Count of surrounding | Answer (`ALSLocationResponse`) |
 |---|---|---|---|
@@ -48,86 +56,108 @@ PCI or signal; so do we. MCC and MNC are numbers (MNC "01" goes as 1).
 **Quirks GrapheneOS found** (kept as they are): Apple sends about 19 more surrounding towers than asked, and asking for
 none of a standard that is in the request makes it send ~120 - so each standard asked gets `max(1, (25 - 19) x its
 share of the asked towers)` (4 instead of 25 while throttled); an answer of 10 or more towers throttles the next 10 s;
-at most 12 towers asked. **Not verified anywhere:** that WCDMA belongs in the SCDMA fields (Norway has no 3G; low
-stakes, Q7), and that one call may carry both Wi-Fi and cells (GrapheneOS never does - C5 keeps them apart, Q4).
-acheong08 reads field 3/4 as `sint32` where GrapheneOS has `int32`; GrapheneOS's form is the one that works in step 2.
+at most 12 towers asked; no request when 8 of the heard cells already have a position (`onlyCachedThreshold`).
+**Not verified anywhere:** that WCDMA belongs in the SCDMA fields (Norway has no 3G; low stakes, Q7), and that one call
+may carry both Wi-Fi and cells (GrapheneOS never does - C6 keeps them apart, Q4). **The count fields' type:** acheong08
+declares the request's count fields 3 and 4 as `sint32` (zigzag), GrapheneOS as `int32` (plain varints); we encode
+GrapheneOS's `int32` - what GrapheneOS ships and what step 2's Wi-Fi count (field 4) already sends, checked against
+`protoc` in step 2's check (1).
 
 ## 2. What the phone has today
 
 Step 1 (D10, built): `WifiPlaces.servingCell` takes the first `isRegistered` cell from `getAllCellInfo()`, one
-`requestCellInfoUpdate` when it is over 60 s old (3 s wait), keys it `HMAC("cell|mcc|mnc|area|cid")`; own cell rows
-(kind 2) range 500 m-10 km, a move at 20 km; `cellFix` gives `vibb_cell` from that one row (3 occasions, <= 5 km) **with
-`fresh = true`**; `cellVetoes` rejects a Wi-Fi fix 2 km past the cell's range. Step 2 (A3-A9, built): the route, the
-sealed cache, the phone's Apple rows (kind 4). The Jelly Star has no SIM (`mCellInfo=[]` on both slots, 125 §1).
+`requestCellInfoUpdate` on the default subscription when it is over 60 s old (3 s wait), keys it
+`HMAC("cell|mcc|mnc|area|cid")`; `Snapshot.cell` holds that one cell; own cell rows (kind 2) range 500 m-10 km, a move at
+20 km; `cellFix` gives `vibb_cell` from that one row (3 occasions, <= 5 km) **with `fresh = true`**; `cellOnly` reads
+the store opened at the attempt's start; `cellVetoes` rejects a Wi-Fi fix 2 km past the cell's range. Step 2 (A3-A9,
+built): the route, the sealed cache, the phone's Apple rows (kind 4); `askApple` returns at once when `scanView` is
+null (fewer than 3 fresh usable APs, Wi-Fi and scanning off). The Jelly Star has no SIM (`mCellInfo=[]`, 125 §1).
 
 ## 3. Decisions - what the phone reads
 
 C1. **The read** (Android 14-17; every API below is <= 30). `getAllCellInfo()` returns the **cached** cells of every
     slot (AOSP `PhoneInterfaceManager.getCachedCellInfo` loops over all phones; apps targeting Q+ never trigger a modem
     poll with it). When the newest registered cell is over 60 s old (`CellInfo.getTimestampMillis()`, elapsed since
-    boot), one `requestCellInfoUpdate` per **active subscription** (`createForSubscriptionId`: the call refreshes only
-    its subscription's modem - step 1 asks only the default one, a one-line change), waiting 3 s as today. The modem is
-    asked at most every 2 s with the screen on and no Wi-Fi (or charging), else every 10 s - a request inside that
-    returns the last list (`ServiceStateTracker.requestAllCellInfo`, `DeviceStateMonitor.computeCellInfoMinInterval`,
-    read 2026-11-24): one refresh per attempt is all we ask. **Permissions:** `ACCESS_FINE_LOCATION` (and background,
-    both self-granted) with Location on - with Location off `LocationAccessPolicy` gives `DENIED_SOFT`, an empty list;
-    the fix window holds Location on. Not `READ_PHONE_STATE`. Device Owner changes nothing here. No SIM, airplane mode,
-    radio off, an invalid subscription (`IllegalArgumentException`, caught): an empty list, an ordinary miss.
-C2. **Which cells.** Every `CellInfo` with a **full identity** (C3's form): the registered ones (one per SIM;
-    `getCellConnectionStatus()` `PRIMARY_SERVING`), `SECONDARY_SERVING` (carrier aggregation) and neighbours that carry
-    one (some modems give GSM neighbours a LAC and CID; LTE and NR neighbours usually carry only PCI and channel and are
-    skipped). Registered first, then by `getCellSignalStrength().dbm`; duplicates (one cell on both slots) once; at most
-    **12**. A cell whose time is still more than 60 s before the attempt's start after the refresh is not used or asked
-    (a modem that hands back an old list).
+    boot), one `requestCellInfoUpdate` per **active subscription**, through `MobileNetworkRuntime`'s existing slot ->
+    subscription mapping (no second copy of it; the call refreshes only its subscription's modem), waiting 3 s as today.
+    The modem is asked at most every 2 s with the screen on and no Wi-Fi (or charging), else every 10 s - a request
+    inside that returns the last list (`ServiceStateTracker.requestAllCellInfo`,
+    `DeviceStateMonitor.computeCellInfoMinInterval`, read 2026-11-24): one refresh per attempt is all we ask.
+    **Permissions:** `ACCESS_FINE_LOCATION` (and background, both self-granted) with Location on - with Location off
+    `LocationAccessPolicy` gives `DENIED_SOFT`, an empty list; the fix window holds Location on. Not `READ_PHONE_STATE`.
+    Device Owner changes nothing here. No SIM, airplane mode, radio off, an invalid subscription
+    (`IllegalArgumentException`, caught): an empty list, an ordinary miss.
+C2. **Which cells.** Every `CellInfo` with a **full identity** (C3's form), as GrapheneOS reads them: the registered
+    ones (one per SIM), `SECONDARY_SERVING` (carrier aggregation) and neighbours that carry one (some modems give GSM
+    neighbours a LAC and CID; LTE and NR neighbours usually carry only PCI and channel and are skipped). Registered first,
+    then by `getCellSignalStrength().dbm`, an `UNAVAILABLE` dbm sorting weakest; duplicates (one cell on both slots, or
+    two spellings of one MNC) once, by C7's canonical form; at most **12**. `Snapshot.cells` becomes a list (step 1's
+    single `cell` goes). A cell whose time is still more than 60 s before the attempt's start after the refresh is not
+    used or asked (a modem that hands back an old list).
     **NR:** in NSA (EN-DC) the LTE anchor is the registered cell and the NR leg comes as a `CellInfoNr` without NCI or
     TAC - skipped; in SA the registered `CellIdentityNr` has the 36-bit NCI and the 24-bit TAC and is used.
     **Guards** against values modems send for "unknown": `CellInfo.UNAVAILABLE`/`UNAVAILABLE_LONG`, a null MCC or MNC
-    string, 0, and the reserved/placeholder areas (C3's ranges). What the Jelly Star's MediaTek modem sends - the
-    registered flag on both slots, neighbour identities, timestamps that move, NR - is §9's SIM check; the guards hold
-    whatever it sends. TD-SCDMA and CDMA identities are skipped.
-    Logs: counts only (`WifiPlaces: cells read=4 usable=2 registered=1 nr=0 stale=0`).
+    string, 0, and C3's placeholder values. What the Jelly Star's MediaTek modem sends - the registered flag on both
+    slots, neighbour identities, timestamps that move, NR - is §9's SIM check; the guards hold whatever it sends.
+    TD-SCDMA and CDMA identities are skipped. Logs: counts only (`WifiPlaces: cells read=4 usable=2 registered=1 nr=0
+    stale=0`).
 C3. **The wire form** of a cell: `"<radio>:<mcc>:<mnc>:<area>:<cid>"`, radio `gsm|wcdma|lte|nr`, MCC 3 digits
     (`001`-`999`), MNC 2-3 digits as the network gives it (`mncString`), area and cid decimal without leading zeros,
-    in these ranges (3GPP TS 23.003 reserves area 0 and `...FFFE`; `...FFFF` and 0 are common "unknown" fills):
+    in these ranges (3GPP TS 23.003 reserves area 0 and `...FFFE`; the all-ones value of each field and 0 are common
+    "unknown" fills, so both ends are cut):
 
     | radio | area | cid |
     |---|---|---|
-    | `gsm` | LAC 1..65533 | 1..65535 |
-    | `wcdma` | LAC 1..65533 | 1..268435455 (28 bits) |
-    | `lte` | TAC 1..65533 | 1..268435455 (ECI, 28 bits) |
-    | `nr` | TAC 1..16777213 (24 bits) | 1..68719476735 (NCI, 36 bits) |
+    | `gsm` | LAC 1..65533 | 1..65534 |
+    | `wcdma` | LAC 1..65533 | 1..268435454 (28 bits less all-ones) |
+    | `lte` | TAC 1..65533 | 1..268435454 (ECI, 28 bits less all-ones) |
+    | `nr` | TAC 1..16777213 (24 bits) | 1..68719476734 (NCI, 2^36 - 2) |
 
-    The phone sends only what passes; the server refuses anything else (C4). Example: `lte:242:01:4711:12345678`.
+    The phone sends only what passes; the server refuses anything else (C5). Example: `lte:242:01:4711:12345678`.
 
 ## 4. Decisions - the ask, the route, Apple and the cache
 
-C4. **When the phone asks** - A3's rule, unchanged: the switch on, the `network` provider off, Location on, a network
-    up, a **learned miss** in a fresh-fix attempt (heartbeat, `locate`, crossing, low-battery), beside GPS, never from a
-    teaching or passive fix, never periodic. On that miss the request carries the BSSIDs A3 picks **and** the usable
-    cells (C2) with no trusted own cell row (3 occasions), no live Apple cell row, no negative and no tombstone (C7) -
-    either list may be empty, not both. So an area's cells are asked once per three months, and only where Wi-Fi
-    didn't give a fix that stands alone. Never with GLA on (H1 of 125).
+C4. **When the phone asks** - A3's conditions: the switch on, the `network` provider off, Location on, a network up, in
+    a fresh-fix attempt (heartbeat, `locate`, crossing, low-battery), beside GPS, never from a teaching or passive fix,
+    never periodic, never with GLA on. **The trigger is a learned miss, and a missing scan view is one** (QA H1):
+    `askApple` no longer returns when `scanView` is null - with fewer than 3 fresh usable APs, or Wi-Fi and scanning off,
+    it asks for the cells alone. The cells asked: the usable ones (C2) with no trusted own cell row (3 occasions), no
+    live Apple cell row, no negative and no tombstone (C7); none when 8 or more of the read cells already have a position
+    (GrapheneOS's threshold); and none while the **cell wait** runs (C5). Either list may be empty, not both. So an
+    area's cells are asked once per three months, and only where Wi-Fi gave no fix that stands alone.
 C5. **The route** stays `POST /api/devices/wifi-lookup` (a rename would touch both dirs, the docs and the PWA for
     nothing): `{"bssids"?: [...], "cells"?: [...]}` - each list optional, 1..40 BSSIDs and **1..12 cells** when present,
-    at least one list; any other key, an empty list or one bad entry is a 400 (hand-parsed as today, 4 KB).
-    **200** adds `"cells": [{"cell", "lat", "lng", "acc_m", "fresh_months_left"}]` and `"unknown_cells": [...]` -
-    present only when the request had cells (and `aps`/`unknown` only when it had BSSIDs, so every step-2 row stays
-    as it is); `cell` echoes the phone's own string; `retry_after_s` covers both lists. 409/429/503 as A4 (503 only when
-    the cache answered nothing of either list). One request is one of the phone's 30 lookups an hour, whatever it
-    carries. **A per-phone day cap: 120 cells answered per UTC day** (memory only, like the hourly count): past it the
-    cells are left out of both lists and `retry_after_s` runs to midnight, the BSSIDs are still answered (C12 says why;
-    Q5). The phone's action per status is A4's (`phone_answers` gains one row).
+    at least one list; any other key, an empty list or one bad entry is a 400 (hand-parsed as today, 4 KB). Two
+    spellings of one cell (`01` and `001`) count once (C7's canonical form) and each asked string is echoed.
+    **200**: `aps`/`unknown`/`retry_after_s` as A4 when the request had BSSIDs; **`cells`** (`[{"cell", "lat", "lng",
+    "acc_m", "fresh_months_left"}]`), **`unknown_cells`** and **`cells_retry_after_s`** when it had cells. **The cells
+    are all or nothing** (QA L5): when Apple is needed for any asked cell and can't be asked (paused, over the
+    server-wide limit, busy) or the phone's day cap is spent, the answer carries **no** cell in either list and
+    `cells_retry_after_s` - so the cache alone never answers some cells and not others (no "which cells are cached"
+    oracle). The BSSIDs are answered as A4 whatever happens to the cells.
+    **A cells-only request** gets the cells' failures as its status: the day cap -> `429 {"error": "limit",
+    "retry_after_s": N}` (N to UTC midnight); Apple not askable -> `503 {"error": "unavailable", "retry_after_s": N}`;
+    the hourly limit and `busy` as A4.
+    **The day cap: 120 cells answered a phone a UTC day** (memory only, like the hourly count; the user, Q5). No other
+    project has a per-device cap - GrapheneOS's own proxy has none - but none of them keeps a cache that answers any
+    phone; ours does, and C12 is why. A lookup is one of the phone's 30 an hour whatever it carries.
+    **The phone's two waits** (QA M1): step 2's `apple_wait_until_ms` stays the Wi-Fi wait; a new CE prefs
+    `apple_cell_wait_until_ms` (`KEY_APPLE_CELL_WAIT`) is the cell wait, set from `cells_retry_after_s`, from a
+    cells-only request's 429 with `retry_after_s` or its 503 (capped at 24 h). A 409, a transport failure, the timeout
+    and a 429 without `retry_after_s` set both as A4 does. So the cell cap never stops a Wi-Fi ask, and a Wi-Fi wait
+    never stops a cell ask. Both cleared with the table.
 C6. **Apple's side.** Cells go in **their own Apple call** in GrapheneOS's exact shape (the towers, the per-standard
     surrounding counts of §1, `meta`; no `number_of_surrounding_wifis`), never inside the Wi-Fi call; a lookup that
     needs both makes two calls in a row under the one gate (Wi-Fi first), each counted in the 60 an hour and 10 in 10
     minutes. Field mapping: `gsm` -> 1/3, `wcdma` -> 27/28, `lte` -> 25/26, `nr` -> 29/30, written in field-number
     order (protoc's, so the golden hex matches byte for byte). Its own throttle (10 towers -> 10 s at 4). The answer
-    walks fields 1, 22, 23 and 24 (21 skipped) with step 2's bounded reader (A8): a tower missing MCC, MNC, area or cid,
-    a negative value or one outside its radio's range is dropped; a missing location or -18000000000 is **unknown**;
-    accuracy 1..**50,000 m** (towers reach further than APs; APs keep 1..5,000) else dropped; at most 200 towers; the
-    first of duplicates wins. The same URL, headers, proxy rule (no silent direct call), pauses and
-    `integration_health` - a cell call's failure is Apple's failure like any other, and the orange "Apple lookups
-    aren't working" covers both. The sweep's counts line gains `cells=` and `cell_calls=`.
+    walks fields 1, 22, 23 and 24; field 2 (APs) and 21 in a cell call's answer are skipped and **never cached** (QA L3),
+    as cells in a Wi-Fi call's answer are. With step 2's bounded reader (A8): a tower missing MCC, MNC, area or cid, a
+    negative value or one outside C3's ranges is dropped; a missing location or -18000000000 is **unknown**; accuracy
+    1..**50,000 m** (towers reach further than APs; APs keep 1..5,000) else dropped; at most 200 towers; the first of
+    duplicates wins. The same URL, headers, proxy rule (no silent direct call), pauses and `integration_health` - a cell
+    call's failure is Apple's failure, and the orange "Apple lookups aren't working" covers both. The sweep's counts line
+    gains `cells=` and `cell_calls=`.
 C7. **The server's cache: the same table, key and months.** A cell row lives in `wifi_lookup_aps` beside the APs: its
     id the HMAC of the **canonical form** with MNC as a number (`lte:242:1:4711:12345678` - Apple's form, so the
     surrounding towers it sends match what phones ask), the canonical form also the seal's AAD. No column says "cell";
@@ -144,16 +174,21 @@ C7. **The server's cache: the same table, key and months.** A cell row lives in 
 
 ## 5. Decisions - the fix, the still rule, zones
 
-C8. **The cell fix** (pure `cellFix`, replacing step 1's one-row rule): the read cells with a chosen row (C7).
-    - A **registered** cell must have one (a neighbour alone gives none). The reference is the registered cell with the
-      smaller range; two SIMs' registered cells must lie within both ranges of each other, else no fix. Any other cell
-      further from the reference than both ranges is dropped (a far or wrong row).
-    - Position: the mean weighted by `1 / range^2`. **Accuracy: `max(smallest used range, weighted RMS distance of the
-      used cells from the fix)`**, at least 500 m; over `CELL_FIX_MAX_M` (5 km, D10's; Q3) no fix. A range is the area
-      a phone hearing that cell is in (GrapheneOS reads Apple's tower accuracy so), so this is wider than 125's 68 %;
-      C11's counts tell how much.
-    - Time: the oldest used cell's `getTimestampMillis()` on the wall clock. Provider: **`vibb_apple_cell`** (15
-      characters, within `models::location_provider`'s 16) when any used position is Apple's, else `vibb_cell`.
+C8. **The cell fix** (pure `cellFix`, replacing step 1's one-row rule; GrapheneOS's `estimateLocationCell` where it
+    fits): every read cell with a chosen row (C7) - registered or not, as GrapheneOS.
+    - **Outliers by GrapheneOS's median reference:** the reference is the per-axis median of the positioned cells'
+      latitudes and longitudes; a cell further from it than its own range is dropped. With one or two cells there is no
+      median to trust: two must lie within both ranges of each other (two SIMs' registered cells included), else no fix.
+    - Position: the mean weighted by `1 / range^2` (GrapheneOS's variance `acc^2`).
+    - **Accuracy - ours, more conservative than GrapheneOS's combined variance:** `max(smallest used range, weighted
+      RMS distance of the used cells from the fix)`, at least 500 m; over `CELL_FIX_MAX_M` (**5 km**, D10's; the user,
+      Q3) no fix. A range is the area a phone hearing that cell is in (GrapheneOS reads Apple's tower accuracy so), so
+      this is wider than 125's 68 %; C11's counts tell how much.
+    - Time: the oldest used cell's `getTimestampMillis()` on the wall clock (GrapheneOS's). Provider:
+      **`vibb_apple_cell`** (15 characters, within `models::location_provider`'s 16) when any used position is Apple's,
+      else `vibb_cell`.
+    - **It reads the table after the ask** (QA H1): `cellOnly` re-reads the store (or takes the one the ask wrote) once
+      the Apple answer is stored, so the rows just answered give the fix in the same attempt.
     - The veto (D10) reads the chosen rows: a registered cell, own trusted or live Apple, more than its range + 2 km
       from a learned or `vibb_apple` fix rejects that fix (counted, `cell_vetoes=`).
 C9. **How it joins the fixes - never over a fine one.**
@@ -161,23 +196,40 @@ C9. **How it joins the fixes - never over a fine one.**
        last-known. Any of the others in the same attempt wins (keep-the-better; a cell fix is >= 500 m).
     2. **Still means still:** while `motion()` is `STILL` a cell fix is never reported; further than both accuracies +
        2 km from the vouched fix it counts as a **cell contradiction** (CE prefs, counts only, 30 days).
-    3. **It doesn't override a recent fine fix:** when the last fresh fix is under 4 h old (124's cap) and lies inside
-       the cell fix's circle (`d <= accCell + accFine`), nothing is reported - the PWA keeps the fine fix and shows its
-       age (Q6).
+    3. **It doesn't override a recent fine fix** (the user, Q6): when the last fresh fix is under 4 h old (124's cap)
+       and lies inside the cell fix's circle (`d <= accCell + accFine`), nothing is reported - the PWA keeps the fine
+       fix and shows its age.
     4. Otherwise it is reported with its provider, accuracy and time, and it is **never fresh** (`afterTry`, the
        fresh-fix stamp: `Ask.notFresh`, so the next beat tries GPS again), never a vouch (not in
-       `VOUCHING_PROVIDERS`), never renews "Hasn't moved since", never teaches, never the new side of 124's D7. **This
-       changes step 1:** its `cellFix` passes `fresh = true` today, so a `vibb_cell` fix clears the motion flags and
-       can carry a still night at kilometres.
-C10. **Zones never move on a cell fix** (the user's rule: "never move a zone on a cell fix alone"). Step 1 has a gap:
-    `zones::side` is `d - a >= r`, so a `vibb_cell` fix of 1 km 3 km from home is **surely outside** and, with a
-    second, raises "left Hjem" - from a cell that may sit across a fjord. **Server:** `zones::step` treats a fix whose
-    provider is in `zones::COARSE_PROVIDERS` (`vibb_cell`, `vibb_apple_cell`) as unsure: it moves the cursor and
-    nothing else - no pending side, no confirmation; a side changes only on two sure fine fixes, as today
-    (`evaluate_stored` reads `device_locations.provider`, stored since migration 0093). **Phone:** `sureSide` returns
-    null for the same providers, so a series check's cell fix never starts a crossing sync. A GLA-on phone's
-    `network` fix is unchanged (Q8). Visible cost (Q2): where only cells answer, an arrival or a leaving waits for a
-    GPS or Wi-Fi fix.
+       `VOUCHING_PROVIDERS`), never renews "Hasn't moved since", never teaches, never the new side of 124's D7.
+    5. **An explicit Locate** (the parent's `locate`) reports the cell fix when nothing finer came, whatever 2 and 3
+       say - the parent asked and gets the best there is, its circle showing how coarse (QA L7, Q10); still never fresh
+       and never a vouch.
+    6. **The heartbeat's back-off** (QA L9): a reported cell fix is no fresh fix, so after the beat's `FIX` the motion
+       goes to `STILL_SINCE_TRY` and 124's `QUIET` back-off spaces the next tries (up to 4 h) until a motion fire. A
+       still evening at a cabin with only cells gets few tries - each a GPS try too -, and the PWA shows the cell fix's
+       age; a move or a `locate` starts over. Accepted: more tries would give the same cell.
+C10. **Zones: a coarse fix is never "inside", and "surely outside" only far away** (the user, Q2 changed: the cabin case
+    - the phone off, driven to a cabin 200 km away, switched on, no Wi-Fi). `zones::COARSE_PROVIDERS` = `vibb_cell`,
+    `vibb_apple_cell` (the server reads `device_locations.provider`, stored since migration 0093).
+    - **Inside:** never from a coarse fix.
+    - **Surely outside:** a coarse fix only when `d - r >= max(3 x a, 20 km)` (`d` its distance from the zone's centre,
+      `r` the radius, `a` its accuracy) - three accuracies clear of the zone's edge and never nearer than 20 km. Nearer,
+      it is unsure: it moves the cursor and nothing else.
+    - **The pair:** a far coarse fix may be the first of the pair (it sets the pending side); the second - coarse by the
+      same rule, or a fine fix surely outside - must come **at least 10 minutes** after it (`COARSE_CONFIRM_GAP`;
+      fine pairs keep `CONFIRM_GAP`'s 60 s). A fine fix on the zone's side in between drops the pending side, as today.
+    - **The event's time is the first coarse fix's**: "left Hjem 18:05" says when the phone was first seen far away,
+      which after a drive with the phone off is hours after she left. The event's words are unchanged; the server notes
+      say so.
+    - **`zones::seed` and `start_over`** (a new or moved zone takes the newest fix as its pending side, QA M3) never
+      take a coarse fix: they read the newest **fine** fix (younger than `SEED_WITHIN`) or none.
+    - **"Here now"** (QA M2): `Zone::here_now`'s freshness counts from the newest **fine** fix, so a cell fix never
+      keeps "Here now" and "At Home since" alive; a far coarse fix sets a pending side, which already ends "Here now".
+    - **The phone** (QA's correction): `sureSide` is reached only through `ZoneSeries` and `requestBalancedFix` - the
+      balanced fused path, which a cell fix never takes -, so the phone half is a guard: `sureSide` mirrors the coarse
+      rule (inside never, outside only far) so a later path can't start a crossing sync on a near cell fix.
+    - A GLA-on phone's `network` fix is unchanged (Q8).
 C11. **Leave-one-out for cells** (D16's way): before a GPS fix teaches, `cellFix` on the cells paired with it against
     the table as it was; whether the GPS fix lies inside its accuracy, per source (own, apple, mixed), with the summed
     error, 30 days; logged `loo cell own=3/3 apple=12/14 mixed=1/1 err own=800 apple=600 mixed=700`. This is how the
@@ -188,9 +240,12 @@ C11. **Leave-one-out for cells** (D16's way): before a GPS fix teaches, `cellFix
 - **Per ask, a cell says less than a BSSID.** A cell is public infrastructure covering hundreds of metres to
   kilometres, shared by everyone there; it can't be tied to a household or an address the way a home router can.
   What Apple learns from a cell call through the proxy: an area and the **operator** (MCC/MNC - "a Telia Norway
-  subscriber near X"), never an IMSI, IMEI, phone number, signal or channel; not linkable to the family, but - as A6 says
-  for Wi-Fi - linkable to the other calls through the same exit over time. Apple's ~25 surrounding towers blur which
+  subscriber near X"), never an IMSI, IMEI, phone number, signal or channel. Apple's ~25 surrounding towers blur which
   one was asked.
+- **Linking through one exit** (QA L5): a lookup with both lists makes its Wi-Fi call and its cell call back to back
+  through the same exit, so Apple can link the home's BSSIDs to the operator, and - as A6 says for Wi-Fi - all calls
+  through one exit to each other over time; not to the family. Fresh SOCKS credentials per call (A7) give each call
+  its own Tor circuit, which loosens the link but doesn't remove the timing.
 - **The cache gets wider.** Cells are asked where Wi-Fi isn't known: on the road, at the cabin, abroad. Over two years
   the server's cache shows the family's trips coarsely, not just its places. The (i)'s last sentence already says the
   answers "show roughly where the phones have been".
@@ -198,22 +253,23 @@ C11. **Leave-one-out for cells** (D16's way): before a GPS fix teaches, `cellFix
   thousands; OpenCellID has them), so whoever holds both the database and the key K can open every cell row cheaply,
   where a BSSID needs a guess per vendor prefix (2^24). The database or a backup alone still reveals nothing. Said
   plainly in the server notes.
-- **A device token can enumerate.** The route answers any named cell from the cache, and over the server-wide limit it
-  answers the cache alone - so a stolen token could walk Norway's cells (12 a lookup x 30 an hour = 360 an hour, the
-  whole country in days) and map where the family's phones have been. **C5's day cap (120 cells a phone a day)** makes
-  that a year's work while a normal day asks a handful (a long trip a few dozen). BSSIDs don't need it: 2^24 per vendor.
+- **A device token could enumerate.** The route answers any named cell from the cache, so a stolen token could walk
+  Norway's cells (12 a lookup x 30 an hour = 360 an hour, the whole country in days) and map where the family's phones
+  have been. **The day cap (C5, 120 a phone a day)** makes that a year's work while a normal day asks a handful (a long
+  trip a few dozen), and **all-or-nothing cells** (C5) take away the over-the-limit answer that told cached from
+  uncached; what is left is `fresh_months_left` and timing. BSSIDs don't need it: 2^24 per vendor.
 - **On the phone**: cell ids never logged, never in a report; rows keyed by the HMAC (D18). Nothing new for the kid.
 
 ## 7. The PWA's words (C13)
 
-One switch for both (Q1), on the Location page where it is:
+One switch for both (the user, Q1), on the Location page where it is:
 - The switch: **"Oppslag hos Apple"** / **"Lookups at Apple"** (was "Wi-Fi-oppslag hos Apple"), "På"/"Av".
 - The (i): "Når Googles posisjonstjeneste er av og telefonen ikke kjenner stedet selv, spør serveren Apple hvor
-  Wi-Fi-nettene og mobilmastene rundt står. Apple ser nettene og mastene i nærheten - ikke telefonen eller navn.
-  Svarene lagres på serveren og viser omtrent hvor telefonene har vært." / "When Google's location service is off and
-  the phone doesn't know the place itself, the server asks Apple where the Wi-Fi networks and mobile masts around it
-  are. Apple sees the nearby networks and masts - not the phone or any name. The answers are kept on the server and
-  show roughly where the phones have been."
+  Wi-Fi-nettene og mobilnettet rundt er. Apple ser nettene i nærheten - ikke telefonen eller navn. Svarene lagres på
+  serveren og viser omtrent hvor telefonene har vært." / "When Google's location service is off and the phone doesn't
+  know the place itself, the server asks Apple where the Wi-Fi networks and the mobile network around it are. Apple
+  sees the nearby networks - not the phone or any name. The answers are kept on the server and show roughly where the
+  phones have been."
 - Unchanged: "Oppslagene går fra serverens egen adresse." while no proxy is set; the orange "Apple-oppslag virker ikke"
   and its (i). Nothing else: no cell line, no count, nothing on the kid's phone. Locate shows a cell fix as any fix -
   its circle and `vibb_cell`/`vibb_apple_cell` in the newest fix's title.
@@ -225,41 +281,52 @@ rows added, none changed. Test PLMN **001-01** (ITU-T E.212's test network, neve
 in every row:
 - `rules`: `cells_max` 12, `cells_a_day` 120.
 - `request_cells` (cells only) and `request_both` (the exact bodies).
-- `cell_forms`: `{cell, valid}` - every radio's range edges (area 0, 1, 65533, 65534; NR's 24-bit TAC; LTE's 28-bit and
-  NR's 36-bit cid and one past), MNC of 1 and 4 digits, a leading zero in area or cid, upper case, `cdma`, a space, a
-  sign, a 40-digit number.
+- `cell_forms`: `{cell, valid}` - every radio's range edges (area 0, 1, 65533, 65534, 65535; NR's TAC 16777213 and
+  16777214; GSM cid 65534 and 65535; WCDMA and LTE cid 268435454 and 268435455; NR cid 68719476734 and 68719476735),
+  MNC of 1 and 4 digits, a leading zero in area or cid, upper case, `cdma`, a space, a sign, a 40-digit number.
 - `answers`: `cells_fresh` (an LTE and an NR known, a GSM unknown; MNC echoed as `01` though Apple says 1; Apple's
-  surrounding towers cached, never answered), `cells_cached`, `both` (the four lists), `cells_day_cap` (the BSSIDs
-  answered, the cells in neither list, `retry_after_s` to midnight), `bad_cells_empty`, `bad_cells_too_many`,
-  `bad_cell_form`, `bad_neither_list`, `bad_cells_not_a_list`.
-- `phone_answers`: `use_cells`. `phone_rows`: cell rows and their `until` (A9's months).
+  surrounding towers cached, never answered), `cells_cached`, `both` (the four lists), `cells_two_spellings` (`01` and
+  `001` of one cell: one row each, one position), `cells_day_cap` (with BSSIDs: the BSSIDs answered, no cell in either
+  list, `cells_retry_after_s` to midnight), `cells_only_day_cap` (429 `limit` with `retry_after_s`),
+  `cells_partly_cached_paused` (one cached, one not, Apple paused: no cell answered, `cells_retry_after_s`),
+  `cells_only_unavailable` (503), `bad_cells_empty`, `bad_cells_too_many`, `bad_cell_form`, `bad_neither_list`,
+  `bad_cells_not_a_list`.
+- `phone_answers`: `use_cells`, `cells_wait` (200 with `cells_retry_after_s`: only the cell wait), `cells_only_limit`
+  (429 with `retry_after_s`: only the cell wait), `cells_only_unavailable` (503: only the cell wait); the existing 409,
+  transport and 429-without-wait rows set both waits. `phone_rows`: cell rows and their `until` (A9's months).
 
 **`server.json`** (the server's alone, by `scripts/wifi-lookup-fixtures.py` - its encoder gains the tower messages):
 `golden_cells` (one GSM, one LTE, one NR on 001-01, the per-standard counts of §1, with the header; checked once with
 `protoc --encode` like step 2's) and `apple_cells` fake answers: each tower type, unknown, a missing location, a
 missing TAC, duplicates, an NR cid over 32 bits, a negative cid (10-byte varint), accuracy 0 and 60 km, a CDMA field
-21 skipped, 201 towers, Apple's numeric MNC matched to the asked `01`.
+21 and an AP field 2 skipped and not cached, 201 towers, Apple's numeric MNC matched to the asked `01`.
 
 **The launcher's own rows** (`wifi_places.json`, `PlacesTest`): `cell_reads` (inputs shaped as `CellInfo` to entries:
-UNAVAILABLE, a null MNC, placeholder areas, an NSA NR leg, one cell on two slots, an old timestamp, 13 cells -> 12),
-`cell_fix` (one cell, two agreeing, two SIMs disagreeing, a far neighbour dropped, over 5 km none, the provider word),
-`cell_choice` (C7's own versus Apple), `cell_report` (C9: still -> withheld or contradiction, inside a recent fine fix
--> nothing, outside -> reported and not fresh) and the C11 counts. `ZonePlanTest`: `sureSide` null for both coarse
-words. **Server:** `zones::tests` and `zone_vectors.json` (the server's alone) gain a `provider` on new rows - a coarse
-fix sure by geometry changes nothing, a GPS-set pending side is not confirmed by a cell fix; the route's contract rows;
-the codec's `server.json` rows; a cell row sealed under its canonical form and found from Apple's numeric MNC; the day
-cap; the source test (no cell string in any `wifi_lookup` tracing line, as for BSSIDs).
+UNAVAILABLE, a null MNC, placeholder values, an NSA NR leg, one cell on two slots, two MNC spellings, an old timestamp,
+an `UNAVAILABLE` dbm sorted last, 13 cells -> 12), `cell_fix` (one cell, two agreeing, two SIMs disagreeing, three with
+a median outlier dropped, over 5 km none, the provider word), `cell_choice` (C7's own versus Apple), `cell_report` (C9:
+still -> withheld or contradiction, inside a recent fine fix -> nothing, outside -> reported and not fresh, a `locate`
+-> reported), `cell_ask` (8 positioned -> no ask, the cell wait, the Wi-Fi wait not stopping cells) and the C11 counts;
+**an attempt-level row** (QA H1): Wi-Fi off, no scan view, the cells unknown -> the cells-only ask -> the answer stored
+-> `vibb_apple_cell` in the same attempt. `ZonePlanTest`: `sureSide` for coarse fixes (never inside, outside only far).
+**Server:** `zones::tests` and `zone_vectors.json` (the server's alone) gain a `provider` on new rows - a coarse fix
+inside by geometry is unsure; one 19 km past the edge with a 1 km accuracy is unsure, 21 km is outside; 3 x a beats 20
+km for a 10 km accuracy; a far coarse pair 9 minutes apart confirms nothing, 10 minutes does, at the first fix's time;
+a fine fix inside between them drops the pending side; `seed` with a coarse newest fix seeds nothing; `here_now` with a
+fresh coarse fix and an old fine one is false. The route's contract rows; the codec's `server.json` rows; a cell row
+sealed under its canonical form and found from Apple's numeric MNC; the day cap; the source test (no cell string in
+any `wifi_lookup` tracing line, as for BSSIDs).
 
 ## 9. The emulator and the Jelly Star
 
 **The emulator** (14 and 17, with the user's OK) shows the wiring only. Its modem simulator has one fixed registered
 LTE cell on a real PLMN (310260, or 311740 on the Norwegian-SIM image, `docs/testing/emulator.md` §6al) - its values
 read with `adb shell dumpsys telephony.registry | grep -i cellinfo` at build time. It can show: the cell read with
-Location on and an empty list with it off; the request carrying `cells` (the server's counts line `cells=1`) on a
-learned miss with GLA off and the switch on; no ask with the switch off, with the network provider on, in airplane
-mode; the 503 path and the phone's wait. **The server's proxy points at a closed port for the run**, so no emulator
-cell (a real PLMN's numbers) ever reaches Apple. It can't show: neighbours, NR, a second SIM, a move between cells,
-Apple's answer or its accuracy.
+Location on and an empty list with it off; the **cells-only** ask with Wi-Fi and scanning off on a learned miss with
+GLA off and the switch on (the server's counts line `cells=1`); no ask with the switch off, with the network provider
+on, in airplane mode; the 503 path and the cell wait alone. **The server's proxy points at a closed port for the run**,
+so no emulator cell (a real PLMN's numbers) ever reaches Apple. It can't show: neighbours, NR, a second SIM, a move
+between cells, Apple's answer or its accuracy, a zone 20 km away.
 
 **The Jelly Star needs a SIM** (it has none: 125 §1). With one (release RC, new lines in `new-phone-model.md` §2):
 1. `dumpsys telephony.registry | grep -i -m5 cellinfo`: the registered cell's identity, which neighbours carry one,
@@ -267,41 +334,61 @@ Apple's answer or its accuracy.
 2. `WifiPlaces: cells read=` lines over a day; `apple asked=... cells=... got=...`; the server's `cells=`/`cell_calls=`.
 3. Outdoors, Wi-Fi off, GPS blocked (a bag or a car): a `vibb_apple_cell` fix and its circle against the GPS fix
    after; the C11 counts after a few days (what Apple's tower accuracy means here).
-4. A zone arrival by car: no crossing from a cell fix, the arrival at the first fine fix (C10).
+4. A zone arrival by car: no crossing from a near cell fix, the arrival at the first fine fix; if a trip > 20 km comes
+   up, "left" from two far cell fixes 10 minutes apart (C10).
 5. A fjord or valley edge, if handy: the cell contradiction count stays at 0 on a still evening.
 
 Before the first release, by hand (as step 2's L8): the `protoc --encode` check of `golden_cells`; one real cell
 lookup through the proxy - the owner's own phone's serving cell (the owner's own area, never anyone else's).
 
-## 10. Size and steps
+## 10. Steps and size
 
-One commit, server + launcher (the API in both dirs, `docs/notes/...` updated, root `CLAUDE.md`'s `wifi_lookup`
-paragraph gains the rows): server ~300 lines + ~250 of tests (route, codec, the day cap, `zones::step`), launcher
-~300 + ~250 (the read, the ask, kind 5, `cellFix`, C9, `sureSide`), the script ~120. GPL; GrapheneOS's MIT notice
-already in `NOTICE.md` and the ported files covers the cell format (its file list there gains the `cell/` files).
-Order: design QA of this revision -> the user's answers (§11) -> build -> code QA -> the emulator wiring run (the
-user's OK) -> the SIM on the Jelly Star.
+**Step 3a - the fix of what is built (first commit, separable, no API or contract change):** the launcher's `cellFix`
+passes `fresh = false`; a `vibb_cell` fix follows C9.2-C9.6 (never reported while `STILL`, not when it holds a recent
+fine fix, never fresh, never a vouch, a `locate` still gets it); the server's `zones::COARSE_PROVIDERS` with C10's whole
+rule (never inside, far outside only, the 10-minute pair at the first fix's time, `seed`/`start_over` and `here_now`
+on fine fixes only); the phone's `sureSide` guard. Tests: C10's `zones::tests` and `zone_vectors.json` rows, the
+`cell_report` rows for `vibb_cell`, `ZonePlanTest`'s guard row. `docs/notes/server/zones.md` and
+`docs/notes/launcher/wifi-places.md` say it. Size: server ~80 lines + ~120 of tests, launcher ~60 + ~80.
 
-## 11. Open questions (each with a recommendation; **visible** = the user sees a difference)
+**Step 3b - the cell lookup (one commit, server + launcher, the API in both dirs):** C1-C9, C11-C14, the contract rows,
+`server.json` and the script, `docs/notes/...`, root `CLAUDE.md`'s `wifi_lookup` paragraph gains the rows. Server ~300
+lines + ~250 of tests (route, codec, the day cap, all-or-nothing cells), launcher ~320 + ~270 (the read, the
+cells-only ask, two waits, kind 5, `cellFix`, C9), the script ~120. GPL; GrapheneOS's MIT notice already in
+`NOTICE.md` and the ported files covers the cell format (its file list there gains the `cell/` files).
 
-- **Q1 (visible) - one switch or two.** Recommended: one switch, renamed "Oppslag hos Apple" (C13); a parent who turned
-  on the Wi-Fi lookup now also sends cells (today: the owner's phone only). The other way: a second switch "Mobilmaster
-  hos Apple", off by default - one more line on the page for little.
-- **Q2 (visible) - zones and coarse fixes.** Recommended: a cell fix never sets or confirms a side (C10), so an arrival
-  or a leaving waits for a GPS or Wi-Fi fix where only cells answer. The other way: a cell fix may confirm a side a
-  fine fix proposed - not recommended (a mast across a fjord).
-- **Q3 (visible) - the largest cell fix.** Recommended: keep D10's 5 km for both sources; in open country with only
-  big cells the PWA then shows the last fine fix's age. The other way: 10 km for Apple cells, big circles on Locate.
-  Revisit with C11's counts.
-- **Q4 - one Apple call or two.** Recommended: two (C6), the shapes GrapheneOS runs; try a combined call once during
-  the manual check, and merge them later only if Apple answers both.
-- **Q5 (visible) - the day cap of 120 cells per phone.** Recommended: yes (C12's enumeration); a very long trip day may
-  hit it and leave new cells without a fix until midnight (the age shows).
-- **Q6 (visible) - a cell fix that agrees with a recent fine fix.** Recommended: not reported (C9.3), so the trail
-  keeps the fine point and its age instead of a coarse point. The other way: report it (a "still around here" dot
-  with a 1 km circle) - noisier, and it would look fresh without being so.
-- **Q7 - WCDMA in the SCDMA fields.** Recommended: as GrapheneOS sends it; unverified, and Norway has no 3G.
-- **Q8 - GMS `network` fixes with GLA on.** Recommended: unchanged (C10 names our own words only); treating every fix
-  over some accuracy as unsure is another design.
-- **Q9 - timing advance or signal to sharpen the fix.** Recommended: not now; TA measures to the mast, and Apple's
-  position is where phones heard the cell, not the mast.
+Order: design QA of this revision if wanted -> 3a -> code QA -> 3b -> code QA -> the emulator wiring run (the user's OK)
+-> the SIM on the Jelly Star.
+
+## 11. Questions (**visible** = the user sees a difference)
+
+Answered by the user on 2026-11-24: **Q1** one switch, "Oppslag hos Apple" (C13). **Q2** changed: a coarse fix may be
+surely outside at `d - r >= max(3a, 20 km)`, the pair's second at least 10 minutes later, never inside, never a seed,
+the event at the first coarse fix (C10). **Q3** 5 km (C8). **Q5** 120 cells a phone a day (C5). **Q6** an agreeing cell
+fix isn't reported (C9.3).
+
+Taken as recommended unless the user says otherwise (no visible cost):
+- **Q4** two Apple calls (C6); try a combined call once during the manual check and merge later only if Apple answers
+  both.
+- **Q7** WCDMA in the SCDMA fields, as GrapheneOS; unverified, Norway has no 3G.
+- **Q8** GMS `network` fixes with GLA on unchanged in zones.
+- **Q9** no timing advance or signal: TA measures to the mast, and Apple's position is where phones heard the cell.
+
+Open:
+- **Q10 (visible) - an explicit Locate shows a cell fix** when nothing finer came, even while still or agreeing with a
+  recent fine fix (C9.5). Recommended: yes - the parent asked; the circle says how coarse. The other way: Locate keeps
+  the fine fix and its age as the heartbeat does.
+
+## 12. Revision 2 - the design QA and the user's answers
+
+H1 the cells-only ask (C4: no return on a null scan view; C8: the table read after the ask; C2: `Snapshot.cells`; §8's
+attempt row). M1 two waits, `cells_retry_after_s`, a cells-only 429 with its wait (C5, §8). M2 "Here now" from fine
+fixes (C10). M3 `seed`/`start_over` never coarse (C10). M4 placeholder cid ranges and their `cell_forms` rows (C3,
+§8). L1 an `UNAVAILABLE` dbm sorts weakest (C2). L2 `MobileNetworkRuntime`'s slot mapping (C1). L3 field 2 in a cell
+answer skipped and never cached (C6). L4 one cell per canonical form, each string echoed (C2, C5, §8). L5 cells all or
+nothing, 503 when Apple can't be asked, the back-to-back link (C5, C12). L6 the (i)'s "mobilnettet rundt er" (C13). L7
+Locate shows a cell fix (C9.5, Q10). L9 the `QUIET` back-off (C9.6). The `sint32` wording (§1); the phone half of C10
+(`sureSide` a guard). The confirmed bug of step 1 is step 3a (§10). The user: Q1, Q2 (the cabin rule), Q3, Q5 (with the
+note that the cap is ours alone), Q6, and "follow GrapheneOS's cell logic where our zones and server don't need
+otherwise" - the median reference, every cell with an identity used (not only registered ones), the 8-positioned
+threshold, the oldest time; our accuracy stays the more conservative one (C8).
