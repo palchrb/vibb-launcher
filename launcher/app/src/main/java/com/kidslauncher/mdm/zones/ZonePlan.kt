@@ -578,17 +578,28 @@ enum class CheckVerdict {
 /**
  * A fix's side of [zone] by the server's own rule (decision 2): inside when `d + a <= r`, outside
  * when `d - a >= r`, `null` (unsure - it counts for neither side) otherwise and always without an
- * accuracy.
+ * accuracy. Design 125b C10, a guard: a coarse fix ([COARSE_PROVIDERS], a cell's) is never inside and outside only
+ * when `d - r >= max(3 x a, 20 km)` - the server's `zones::coarse_side` - so no later path starts a crossing sync on a
+ * near cell fix (today only the balanced fused path reaches here, which a cell fix never takes).
  */
 fun sureSide(fix: QueuedFix, zone: PolicyZone): Boolean? {
     val accuracy = fix.accuracy?.takeIf { it.isFinite() && it >= 0f } ?: return null
     val d = distanceM(fix.latitude, fix.longitude, zone.latitude, zone.longitude)
+    if (fix.provider in COARSE_PROVIDERS) {
+        return if (d - zone.radiusM >= maxOf(3.0 * accuracy, COARSE_OUTSIDE_MIN_M)) false else null
+    }
     return when {
         d + accuracy <= zone.radiusM -> true
         d - accuracy >= zone.radiusM -> false
         else -> null
     }
 }
+
+/** Design 125b C10: the providers of a coarse fix (the server's `zones::COARSE_PROVIDERS`). */
+val COARSE_PROVIDERS = setOf("vibb_cell", "vibb_apple_cell")
+
+/** Design 125b C10: a coarse fix is surely outside only this far past a zone's edge at the least. */
+const val COARSE_OUTSIDE_MIN_M = 20_000.0
 
 /**
  * A check's [fix] against the reported fix ([previous]; `null` = none) - qa-design-64-step2-code

@@ -255,8 +255,12 @@ impl Presence {
 }
 
 /// The zones the fix itself is surely inside (`zones::side`), "At Home · School": the fix row's
-/// and the popup's words are that fix's own, never the zones' confirmed sides (code QA Q-1).
+/// and the popup's words are that fix's own, never the zones' confirmed sides (code QA Q-1). A
+/// coarse fix (a cell's, design 125b C10) is never inside: no badge.
 fn fix_badge(lang: Lang, zones: &[crate::zones::Zone], fix: &DeviceLocation) -> Option<String> {
+    if crate::zones::is_coarse(fix.provider.as_deref()) {
+        return None;
+    }
     let inside: Vec<&str> = zones
         .iter()
         .filter(|z| {
@@ -1687,11 +1691,13 @@ async fn location_policy(state: &AppState, id: i64) -> Result<LocationPolicy, sq
 }
 
 /// A phone's zones, its latest zone watch and the interval it is served (design 64 step 2: the
-/// 30-min floor while it has zones and watches them).
+/// 30-min floor while it has zones and watches them); the newest fine fix's time and its "seen"
+/// (design 125b C10: "Here now" never counts from a cell fix, `zones::newest_fine_seen`).
 struct PhoneZones {
     list: Vec<crate::zones::Zone>,
     watch: Option<crate::zones::ZoneWatch>,
     served_interval: i64,
+    fine: (Option<DateTime<Utc>>, Option<DateTime<Utc>>),
 }
 
 async fn phone_zones(
@@ -1707,19 +1713,20 @@ async fn phone_zones(
         list.len(),
         crate::zones::watching(watch.as_ref()),
     );
+    let fine = crate::zones::newest_fine_seen(&state.db, id).await?;
     Ok(PhoneZones {
         list,
         watch,
         served_interval,
+        fine,
     })
 }
 
-/// The Zones part for `zones` ([zones_view]) with the newest fix's times; `flash` is `?zone=`,
-/// `flash_zone` `?zone_id=`.
+/// The Zones part for `zones` ([zones_view]) with the newest fine fix's times; `flash` is
+/// `?zone=`, `flash_zone` `?zone_id=`.
 fn zones_of(
     zones: &PhoneZones,
     policy: &LocationPolicy,
-    newest: Option<&DeviceLocation>,
     flash: Option<&str>,
     flash_zone: Option<i64>,
     zone: &Zone,
@@ -1732,8 +1739,8 @@ fn zones_of(
         policy.locked,
         flash,
         flash_zone,
-        newest.and_then(|l| parse_db_utc(&l.captured_at)),
-        newest.and_then(DeviceLocation::seen_at),
+        zones.fine.0,
+        zones.fine.1,
         zones.watch.as_ref(),
         zone,
         now,
@@ -1883,15 +1890,7 @@ async fn locate_view(
         None => None,
     };
 
-    let zones = zones_of(
-        &phone_zones,
-        &policy,
-        newest.as_ref(),
-        None,
-        None,
-        zone,
-        now,
-    );
+    let zones = zones_of(&phone_zones, &policy, None, None, zone, now);
     // Q-9: with when the count last rose.
     let mock_at = crate::zones::mock_logged_at(&state.db, id).await?;
     let mock_ignored = phone_zones
@@ -1964,16 +1963,7 @@ pub async fn show_zones(
     let view = async {
         let policy = location_policy(&state, id).await?;
         let zones = phone_zones(&state, id, &policy).await?;
-        let newest = newest_fix(&state, id).await?;
-        Ok::<_, sqlx::Error>(zones_of(
-            &zones,
-            &policy,
-            newest.as_ref(),
-            flash,
-            flash_zone,
-            &zone,
-            now,
-        ))
+        Ok::<_, sqlx::Error>(zones_of(&zones, &policy, flash, flash_zone, &zone, now))
     };
     let zones = match view.await {
         Ok(zones) => zones,

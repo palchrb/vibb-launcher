@@ -1,6 +1,7 @@
 package com.kidslauncher.mdm.places
 
 import com.kidslauncher.mdm.server.dto.PolicyZone
+import com.kidslauncher.mdm.zones.STILL_SKIP_MAX_MS
 import com.kidslauncher.mdm.zones.distanceM
 import java.io.File
 import java.util.Random
@@ -389,26 +390,57 @@ class PlacesTest {
 
     @Test
     fun `cells - an empty list is a miss, three occasions give a fix, a far cell vetoes`() {
-        assertNull(cellFix(null, emptyList(), 0))
-        val cell = Heard(keys.cell("242|01|1001|50001"), "c", "c", Band.CELL, 0, 5_000, kind = RowKind.CELL)
+        assertNull(cellFix(emptyList(), emptyList(), 0))
+        val cell = Heard(keys.cell("242|01|1001|50001"), "c", "c", Band.CELL, 0, 5_000, kind = RowKind.CELL, registered = true)
         val (lat, lng) = Town.ll(0.0, 0.0)
         var row: PlaceRow? = null
         for (t in 0 until 3) row = teachRow(row, Sighting(cell, lat, lng, 10.0), t * 60, 20000 + t).first
         assertEquals(CELL_RANGE_MIN_M, row!!.rangeM)
         assertEquals(3, row.occasions)
-        val fix = cellFix(cell, listOf(row), 200)!!
+        val fix = cellFix(listOf(cell), listOf(row), 200)!!
         assertEquals(PROVIDER_CELL, fix.provider)
         assertEquals(500.0, fix.accuracyM, 0.0)
-        assertNull(cellFix(cell, listOf(row.copy(occasions = 2)), 200))
+        assertNull(cellFix(listOf(cell), listOf(row.copy(occasions = 2)), 200))
         // A cell's range is capped at 10 km, and it moves at 20 km.
         val wide = teachRow(row, Sighting(cell, Town.ll(0.0, 15_000.0).first, lng, 10.0), 300, 20004).first
         assertEquals(CELL_RANGE_MAX_M, wide.rangeM)
         assertEquals(RowChange.MOVED, teachRow(row, Sighting(cell, Town.ll(0.0, 25_000.0).first, lng, 10.0), 300, 20004).second)
         // The veto: a Wi-Fi fix 3 km from the learned serving cell (range 500 m + 2 km).
         val far = LearnedFix(Town.ll(0.0, 3_000.0).first, lng, 40.0, 3, 0, true, emptySet())
-        assertTrue(cellVetoes(cell, listOf(row), far, 200))
-        assertFalse(cellVetoes(cell, listOf(row), far.copy(lat = Town.ll(0.0, 2_000.0).first), 200))
-        assertFalse(cellVetoes(null, listOf(row), far, 200))
+        assertTrue(cellVetoes(listOf(cell), listOf(row), far, 200))
+        assertFalse(cellVetoes(listOf(cell), listOf(row), far.copy(lat = Town.ll(0.0, 2_000.0).first), 200))
+        assertFalse(cellVetoes(emptyList(), listOf(row), far, 200))
+        // Design 125b step 3a: a cell fix is never fresh.
+        assertFalse(fix.fresh)
+    }
+
+    @Test
+    fun `design 125b C9 - cell_report, every row`() {
+        val (lat, lng) = Town.ll(0.0, 0.0)
+        val now = 10_000_000_000L
+        fun north(m: Double) = Town.ll(0.0, m).first
+        for (r in rows["cell_report"]!!.jsonArray.map { it.jsonObject }) {
+            val why = r["why"]!!.str()
+            val fix = LearnedFix(lat, lng, r["accuracy"]!!.dbl()!!, 1, 0, false, emptySet(), PROVIDER_CELL)
+            val vouch = r["vouch_m"]!!.dbl()?.let { SeenFix(north(it), lng, r["vouch_acc"]!!.dbl()!!, now - 30 * 60_000L) }
+            val fresh = r["fresh_m"]!!.dbl()?.let { SeenFix(north(it), lng, r["fresh_acc"]!!.dbl()!!, now - r["fresh_age_min"]!!.dbl()!!.toLong() * 60_000L) }
+            val got = cellReport(fix, r["still"]!!.jsonPrimitive.boolean, vouch, fresh, now, r["locate"]!!.jsonPrimitive.boolean)
+            assertEquals(why, r["verdict"]!!.str(), got.name)
+        }
+    }
+
+    @Test
+    fun `design 125b C9_3 - the last fresh fix's age is elapsed realtime, never the wall clock (code QA L4)`() {
+        val (lat, lng) = Town.ll(0.0, 0.0)
+        val fix = LearnedFix(lat, lng, 1000.0, 1, 0, false, emptySet(), PROVIDER_CELL)
+        val nowElapsed = 50_000_000L
+        val hourOld = SeenFix(Town.ll(0.0, 800.0).first, lng, 20.0, nowElapsed - 60 * 60_000L)
+        assertEquals(CellVerdict.WITHHOLD, cellReport(fix, false, null, hourOld, nowElapsed, false))
+        // A fix of another boot (no elapsed time): its age unknown, nothing held back - whatever the wall clock says.
+        assertEquals(CellVerdict.REPORT, cellReport(fix, false, null, hourOld.copy(elapsedMs = null), nowElapsed, false))
+        // An elapsed time after now (not this boot's): never under 4 h.
+        assertEquals(CellVerdict.REPORT, cellReport(fix, false, null, hourOld.copy(elapsedMs = nowElapsed + 1), nowElapsed, false))
+        assertEquals(CellVerdict.REPORT, cellReport(fix, false, null, hourOld.copy(elapsedMs = nowElapsed - STILL_SKIP_MAX_MS), nowElapsed, false))
     }
 
     // --- D12 ---
@@ -487,8 +519,8 @@ class PlacesTest {
         days = countsWith(days, 20000) { it.loo(LooClass.THREE, false) }
         days = countsWith(days, 20010) { it.loo(LooClass.TWO, true).loo(LooClass.ZONE, true) }
         days = countsWith(days, 20010) { it.copy(contradictions = it.contradictions + 1) }
-        assertEquals("loo 3+=1/2 2=1/1 zone=1/1 own=0/0 apple=0/0 mixed=0/0 err own=- apple=- mixed=- contradictions=1 apple_contradictions=0", countsLine(days))
-        assertEquals("loo 3+=0/0 2=1/1 zone=1/1 own=0/0 apple=0/0 mixed=0/0 err own=- apple=- mixed=- contradictions=1 apple_contradictions=0", countsLine(countsWith(days, 20030) { it }))
+        assertEquals("loo 3+=1/2 2=1/1 zone=1/1 own=0/0 apple=0/0 mixed=0/0 err own=- apple=- mixed=- contradictions=1 apple_contradictions=0 cell_contradictions=0", countsLine(days))
+        assertEquals("loo 3+=0/0 2=1/1 zone=1/1 own=0/0 apple=0/0 mixed=0/0 err own=- apple=- mixed=- contradictions=1 apple_contradictions=0 cell_contradictions=0", countsLine(countsWith(days, 20030) { it }))
         assertTrue(learnedContradiction(fix3, north(600.0), lng0, 1_000 + 9 * 60_000))
         assertFalse("within 500 m", learnedContradiction(fix3, north(400.0), lng0, 1_000))
         assertFalse("more than 10 min", learnedContradiction(fix3, north(600.0), lng0, 1_000 + 11 * 60_000))

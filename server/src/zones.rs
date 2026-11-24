@@ -43,6 +43,17 @@ pub const NAME_MAX: usize = 40;
 /// The second fix of a pair is at least this long after the first: a burst of fixes from one
 /// moment isn't two observations.
 pub const CONFIRM_GAP: Duration = Duration::seconds(60);
+/// Design 125b C10: a pair with a coarse fix in it ([COARSE_PROVIDERS]) needs this between its
+/// two fixes - two cell fixes a minute apart are one moment's guess, not two observations.
+pub const COARSE_CONFIRM_GAP: Duration = Duration::minutes(10);
+/// Design 125b C10: a coarse fix is surely outside only this far past the zone's edge at the
+/// least (and three accuracies past it): the cabin case - the phone switched on far from home.
+pub const COARSE_OUTSIDE_MIN_M: i64 = 20_000;
+/// Design 125b C10: the providers of a coarse fix (a cell's position, hundreds of metres to
+/// kilometres): never inside a zone, outside only far away ([fix_side]), never a seed
+/// ([seed]), never what keeps "Here now" ([freshness_inputs]). A GLA-on phone's `network` fix
+/// is not among them (Q8).
+pub const COARSE_PROVIDERS: &[&str] = &["vibb_cell", "vibb_apple_cell"];
 /// A crossing is pushed only when the fix that confirmed it is younger than this at the intake
 /// (decision 8): a phone back from a day without data doesn't push "arrived at School 08:10" at
 /// 15:00. The inbox gets it either way.
@@ -110,7 +121,18 @@ pub struct Fix {
     pub longitude: f64,
     pub accuracy_m: Option<f64>,
     pub at: DateTime<Utc>,
+    /// Its provider is one of [COARSE_PROVIDERS] (design 125b C10).
+    pub coarse: bool,
 }
+
+/// The stored provider word names a coarse fix (design 125b C10).
+pub fn is_coarse(provider: Option<&str>) -> bool {
+    provider.is_some_and(|p| COARSE_PROVIDERS.contains(&p))
+}
+
+/// SQL: the row's `provider` is not a coarse one ([COARSE_PROVIDERS]; NULL - an older row - is
+/// fine). `zones::tests::the_fine_only_filter_names_every_coarse_provider` keeps the two lists equal.
+const FINE_ONLY: &str = "(provider IS NULL OR provider NOT IN ('vibb_cell', 'vibb_apple_cell'))";
 
 /// The great-circle distance in metres (haversine on [EARTH_RADIUS_M]).
 pub fn distance_m(lat1: f64, lng1: f64, lat2: f64, lng2: f64) -> f64 {
@@ -149,6 +171,35 @@ pub fn side(zone: &Circle, latitude: f64, longitude: f64, accuracy_m: Option<f64
     }
 }
 
+/// The side of `zone` a coarse fix is on (design 125b C10): never inside; outside only when
+/// `d - r >= max(3 x a, 20 km)`, in whole millimetres as [side]; else unsure. No accuracy is
+/// unsure.
+pub fn coarse_side(
+    zone: &Circle,
+    latitude: f64,
+    longitude: f64,
+    accuracy_m: Option<f64>,
+) -> Option<Side> {
+    let accuracy = accuracy_m.filter(|a| a.is_finite() && *a >= 0.0)?;
+    let d = mm(distance_m(
+        zone.latitude,
+        zone.longitude,
+        latitude,
+        longitude,
+    ));
+    let clear = (3 * mm(accuracy)).max(COARSE_OUTSIDE_MIN_M * 1000);
+    (d - zone.radius_m * 1000 >= clear).then_some(Side::Outside)
+}
+
+/// The side of `zone` the stored fix is on: [side], or [coarse_side] for a coarse fix.
+pub fn fix_side(zone: &Circle, fix: &Fix) -> Option<Side> {
+    if fix.coarse {
+        coarse_side(zone, fix.latitude, fix.longitude, fix.accuracy_m)
+    } else {
+        side(zone, fix.latitude, fix.longitude, fix.accuracy_m)
+    }
+}
+
 /// A zone's rule state (§3.2), as stored on its row.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct State {
@@ -160,6 +211,9 @@ pub struct State {
     pub pending: Option<(Side, DateTime<Utc>)>,
     /// The newest fix evaluated, `(captured_at, id)`: only a later one counts.
     pub cursor: Option<(DateTime<Utc>, i64)>,
+    /// The pending side came from a coarse fix (design 125b C10): its second needs
+    /// [COARSE_CONFIRM_GAP]. Not a column: [evaluate_stored] reads it from the pending fix's row.
+    pub pending_coarse: bool,
 }
 
 /// A confirmed change of side: `to`, at the pair's first fix (the earliest evidence, so
@@ -176,29 +230,39 @@ pub struct Crossing {
 /// trail, never evaluated twice); otherwise the cursor moves to it and:
 /// - unsure: nothing else (it neither confirms nor breaks);
 /// - sure and on the zone's side: a pending other side is forgotten (one bad fix flaps nothing);
-/// - sure, other than the side, the pending side and at least [CONFIRM_GAP] after it: the side
-///   changes, a [Crossing] at the pending fix unless the side was unknown;
+/// - sure, other than the side, the pending side and at least [CONFIRM_GAP] after it
+///   ([COARSE_CONFIRM_GAP] when either fix is coarse): the side changes, a [Crossing] at the
+///   pending fix unless the side was unknown;
 /// - the same but sooner: nothing;
 /// - sure, other than the side and the pending one (or none): it becomes the pending side.
+///
+/// A coarse fix is sure only by [coarse_side] (design 125b C10).
 pub fn step(state: &mut State, zone: &Circle, fix: &Fix) -> Option<Crossing> {
     let key = (fix.at, fix.id);
     if state.cursor.is_some_and(|cursor| key <= cursor) {
         return None;
     }
     state.cursor = Some(key);
-    let sure = side(zone, fix.latitude, fix.longitude, fix.accuracy_m)?;
+    let sure = fix_side(zone, fix)?;
     if state.side == Some(sure) {
         state.pending = None;
+        state.pending_coarse = false;
         return None;
     }
     match state.pending {
         Some((pending, since)) if pending == sure => {
-            if fix.at - since < CONFIRM_GAP {
+            let gap = if fix.coarse || state.pending_coarse {
+                COARSE_CONFIRM_GAP
+            } else {
+                CONFIRM_GAP
+            };
+            if fix.at - since < gap {
                 return None;
             }
             let before = state.side.replace(sure);
             state.side_since = Some(since);
             state.pending = None;
+            state.pending_coarse = false;
             before.map(|_| Crossing {
                 to: sure,
                 at: since,
@@ -207,6 +271,7 @@ pub fn step(state: &mut State, zone: &Circle, fix: &Fix) -> Option<Crossing> {
         }
         _ => {
             state.pending = Some((sure, fix.at));
+            state.pending_coarse = fix.coarse;
             None
         }
     }
@@ -273,6 +338,7 @@ impl Zone {
                 .and_then(Side::of)
                 .zip(time(&self.pending_at)),
             cursor: time(&self.evaluated_at).zip(self.evaluated_fix_id),
+            pending_coarse: false,
         }
     }
 
@@ -283,7 +349,9 @@ impl Zone {
     }
 
     /// The confirmed side is inside, no other side is pending (the newest sure fix agrees) and the
-    /// newest fix is fresh ([fresh]): "Here now" and "At Home since" (code QA Q-1, Q-2).
+    /// newest fix is fresh ([fresh]): "Here now" and "At Home since" (code QA Q-1, Q-2). The
+    /// freshness counts from the newest **fine** fix (design 125b C10, [newest_fine_seen]): a cell
+    /// fix never keeps "Here now" alive.
     pub fn here_now(&self, fresh: bool) -> bool {
         self.here() && self.pending_side.is_none() && fresh
     }
@@ -309,8 +377,29 @@ pub fn fresh(
     newest.is_some_and(|at| now - at < fresh_for(mode, interval_minutes))
 }
 
-/// The phone's newest fix time - its own, or its last still re-send (`resent_at`, Q-3) - and its
-/// location setting (`location_mode`,
+/// The phone's newest **fine** fix (design 125b C10: never a coarse one) - its own time, and
+/// the later of it and its last still re-send (`resent_at`, Q-3).
+pub async fn newest_fine_seen(
+    db: &sqlx::SqlitePool,
+    device_id: i64,
+) -> Result<(Option<DateTime<Utc>>, Option<DateTime<Utc>>), sqlx::Error> {
+    let row: Option<(String, Option<String>)> = sqlx::query_as(&format!(
+        "SELECT captured_at, resent_at FROM device_locations WHERE device_id = ? AND {FINE_ONLY} \
+         ORDER BY captured_at DESC, id DESC LIMIT 1"
+    ))
+    .bind(device_id)
+    .fetch_optional(db)
+    .await?;
+    let Some((captured, resent)) = row else {
+        return Ok((None, None));
+    };
+    let captured = parse_db_utc(&captured);
+    let seen = captured.max(resent.as_deref().and_then(parse_db_utc));
+    Ok((captured, seen))
+}
+
+/// The phone's newest fine fix time - its own, or its last still re-send (`resent_at`, Q-3;
+/// [newest_fine_seen]) - and its location setting (`location_mode`,
 /// the interval as served - [served_interval_of]; a phone without a policy row reads as a new
 /// phone's), for [fresh].
 pub async fn freshness_inputs(
@@ -318,13 +407,7 @@ pub async fn freshness_inputs(
     device_id: i64,
 ) -> Result<(Option<DateTime<Utc>>, String, i64), sqlx::Error> {
     // Q-3: a fix the phone re-sent as still current counts from that re-send.
-    let newest: Option<String> = sqlx::query_scalar(
-        "SELECT MAX(MAX(captured_at, COALESCE(resent_at, captured_at))) FROM device_locations \
-         WHERE device_id = ?",
-    )
-    .bind(device_id)
-    .fetch_one(db)
-    .await?;
+    let (_, newest) = newest_fine_seen(db, device_id).await?;
     let (mode, interval): (String, i64) = sqlx::query_as(
         "SELECT location_mode, location_interval_minutes FROM device_policy WHERE device_id = ?",
     )
@@ -334,7 +417,7 @@ pub async fn freshness_inputs(
     .unwrap_or_else(|| ("on_request".to_string(), 30));
     // Design 64 step 2: the interval the phone is served (the 30-min floor with zones).
     let interval = served_interval_of(db, device_id, &mode, interval).await?;
-    Ok((newest.as_deref().and_then(parse_db_utc), mode, interval))
+    Ok((newest, mode, interval))
 }
 
 /// The phone's zones, oldest first.
@@ -350,8 +433,9 @@ pub async fn list<'e, E: sqlx::SqliteExecutor<'e>>(
 
 /// Forgets a zone's side (a new zone, a moved centre, a changed radius): unknown again, the
 /// cursor at the phone's newest fix, so the history isn't read and the next confirmed side is set
-/// silently. A newest fix younger than [SEED_WITHIN] that is sure for `circle` is the pending side
-/// ([seed]): one more fix on that side confirms it. A pending side raises nothing.
+/// silently. The newest **fine** fix (design 125b C10), younger than [SEED_WITHIN] and sure for
+/// `circle`, is the pending side ([seed]): one more fix on that side confirms it. A pending side
+/// raises nothing.
 pub async fn start_over(
     conn: &mut SqliteConnection,
     zone_id: i64,
@@ -359,23 +443,23 @@ pub async fn start_over(
     circle: &Circle,
     now: DateTime<Utc>,
 ) -> Result<(), sqlx::Error> {
-    let newest: Option<(i64, f64, f64, Option<f64>, String)> = sqlx::query_as(
-        "SELECT id, latitude, longitude, accuracy_meters, captured_at FROM device_locations \
-         WHERE device_id = ? ORDER BY captured_at DESC, id DESC LIMIT 1",
-    )
-    .bind(device_id)
-    .fetch_optional(&mut *conn)
-    .await?;
-    let fix = newest.and_then(|(id, latitude, longitude, accuracy_m, at)| {
-        Some(Fix {
-            id,
-            latitude,
-            longitude,
-            accuracy_m,
-            at: parse_db_utc(&at)?,
-        })
-    });
-    let state = seed(circle, fix.as_ref(), now);
+    let mut fixes = [None, None];
+    for (slot, filter) in fixes
+        .iter_mut()
+        .zip([String::new(), format!("AND {FINE_ONLY}")])
+    {
+        let row: Option<FixRow> = sqlx::query_as(&format!(
+            "SELECT id, latitude, longitude, accuracy_meters, captured_at, provider \
+             FROM device_locations WHERE device_id = ? {filter} \
+             ORDER BY captured_at DESC, id DESC LIMIT 1"
+        ))
+        .bind(device_id)
+        .fetch_optional(&mut *conn)
+        .await?;
+        *slot = row.and_then(fix_of_row);
+    }
+    let [newest, fine] = fixes;
+    let state = seed(circle, newest.as_ref(), fine.as_ref(), now);
     sqlx::query(
         "UPDATE device_zones SET side = NULL, side_since = NULL, pending_side = ?, \
          pending_at = ?, evaluated_at = ?, evaluated_fix_id = ? WHERE id = ?",
@@ -391,21 +475,43 @@ pub async fn start_over(
 }
 
 /// A new or moved zone's state from the phone's newest fix: the side unknown, the cursor at the
-/// fix, and the fix's sure side pending when it is younger than [SEED_WITHIN] (one ahead by the
-/// phone's clock counts as young). No fix: everything empty, every later fix is read.
-pub fn seed(circle: &Circle, newest: Option<&Fix>, now: DateTime<Utc>) -> State {
-    let Some(fix) = newest else {
+/// fix, and the newest **fine** fix's (`fine`; design 125b C10: a coarse fix never seeds) sure
+/// side pending when it is younger than [SEED_WITHIN] (one ahead by the phone's clock counts as
+/// young). No fix: everything empty, every later fix is read.
+pub fn seed(
+    circle: &Circle,
+    newest: Option<&Fix>,
+    fine: Option<&Fix>,
+    now: DateTime<Utc>,
+) -> State {
+    let Some(newest) = newest else {
         return State::default();
     };
-    let pending = (now - fix.at < SEED_WITHIN)
-        .then(|| side(circle, fix.latitude, fix.longitude, fix.accuracy_m))
-        .flatten()
-        .map(|side| (side, fix.at));
+    let pending = fine
+        .filter(|fix| !fix.coarse && now - fix.at < SEED_WITHIN)
+        .and_then(|fix| {
+            side(circle, fix.latitude, fix.longitude, fix.accuracy_m).map(|s| (s, fix.at))
+        });
     State {
         pending,
-        cursor: Some((fix.at, fix.id)),
+        cursor: Some((newest.at, newest.id)),
         ..State::default()
     }
+}
+
+/// A stored fix's columns as [evaluate_stored] and [start_over] read them.
+type FixRow = (i64, f64, f64, Option<f64>, String, Option<String>);
+
+/// A stored fix's row as the rule reads it; a time that doesn't read is no fix.
+fn fix_of_row((id, latitude, longitude, accuracy_m, at, provider): FixRow) -> Option<Fix> {
+    Some(Fix {
+        id,
+        latitude,
+        longitude,
+        accuracy_m,
+        at: parse_db_utc(&at)?,
+        coarse: is_coarse(provider.as_deref()),
+    })
 }
 
 /// Another phone was enrolled into the row (§3.1): every zone's side is forgotten; the cursors
@@ -635,10 +741,27 @@ pub async fn evaluate_stored(
         return Ok(Vec::new());
     }
     let mut states: Vec<(Circle, State)> = zones.iter().map(|z| (z.circle(), z.state())).collect();
+    // Design 125b C10: whether a pending side came from a coarse fix - the pending fix's own row
+    // at its stored time (one gone to retention reads as fine).
+    for (_, state) in states.iter_mut() {
+        if let Some((_, at)) = state.pending {
+            let coarse: Option<i64> = sqlx::query_scalar(&format!(
+                "SELECT 1 FROM device_locations WHERE device_id = ? AND captured_at = ? \
+                 AND NOT {FINE_ONLY} LIMIT 1"
+            ))
+            .bind(device_id)
+            .bind(instant(at))
+            .fetch_optional(&mut *conn)
+            .await?;
+            state.pending_coarse = coarse.is_some();
+        }
+    }
+    let before: Vec<State> = states.iter().map(|(_, state)| state.clone()).collect();
     // From the oldest cursor on; a zone without one reads every stored fix.
     let from = states.iter().map(|(_, state)| state.cursor).min().flatten();
-    let rows: Vec<(i64, f64, f64, Option<f64>, String)> = sqlx::query_as(
-        "SELECT id, latitude, longitude, accuracy_meters, captured_at FROM device_locations \
+    let rows: Vec<FixRow> = sqlx::query_as(
+        "SELECT id, latitude, longitude, accuracy_meters, captured_at, provider \
+         FROM device_locations \
          WHERE device_id = ?1 AND (?2 IS NULL OR captured_at > ?2 OR (captured_at = ?2 AND id > ?3)) \
          ORDER BY captured_at, id LIMIT ?4",
     )
@@ -648,24 +771,13 @@ pub async fn evaluate_stored(
     .bind(EVALUATE_AT_MOST)
     .fetch_all(&mut *conn)
     .await?;
-    let fixes: Vec<Fix> = rows
-        .into_iter()
-        .filter_map(|(id, latitude, longitude, accuracy_m, at)| {
-            Some(Fix {
-                id,
-                latitude,
-                longitude,
-                accuracy_m,
-                at: parse_db_utc(&at)?,
-            })
-        })
-        .collect();
+    let fixes: Vec<Fix> = rows.into_iter().filter_map(fix_of_row).collect();
     if fixes.is_empty() {
         return Ok(Vec::new());
     }
     let crossings = evaluate(&mut states, &fixes);
-    for (zone, (_, state)) in zones.iter().zip(&states) {
-        if *state == zone.state() {
+    for ((zone, (_, state)), before) in zones.iter().zip(&states).zip(&before) {
+        if state == before {
             continue;
         }
         sqlx::query(
@@ -1018,8 +1130,20 @@ mod tests {
             longitude: place.1,
             accuracy_m: accuracy,
             at: utc(at),
+            coarse: false,
         }
     }
+
+    /// A cell fix (design 125b C10) at `place` within `accuracy` metres.
+    fn cell(id: i64, at: &str, place: (f64, f64), accuracy: f64) -> Fix {
+        Fix {
+            coarse: true,
+            ..fix(id, at, place, Some(accuracy))
+        }
+    }
+
+    /// About 21 km past HOME's edge (north).
+    const FAR: (f64, f64) = (60.1041, 10.7522);
 
     fn inside(id: i64, at: &str) -> Fix {
         fix(id, at, NEAR, Some(20.0))
@@ -1035,6 +1159,7 @@ mod tests {
             side_since: Some(utc("2026-10-24T06:00:00Z")),
             pending: None,
             cursor: Some((utc("2026-10-24T06:00:00Z"), 1)),
+            pending_coarse: false,
         }
     }
 
@@ -1058,6 +1183,8 @@ mod tests {
             latitude: f64,
             longitude: f64,
             accuracy_meters: Option<f64>,
+            #[serde(default)]
+            provider: Option<String>,
         }
         let text = include_str!("../testdata/zone_vectors.json");
         let file: serde_json::Value = serde_json::from_str(text).unwrap();
@@ -1069,13 +1196,15 @@ mod tests {
                 longitude: row.zone.longitude,
                 radius_m: row.zone.radius_m,
             };
-            let got = side(
-                &zone,
-                row.fix.latitude,
-                row.fix.longitude,
-                row.fix.accuracy_meters,
-            )
-            .map_or("unsure", Side::word);
+            let stored = Fix {
+                id: 1,
+                latitude: row.fix.latitude,
+                longitude: row.fix.longitude,
+                accuracy_m: row.fix.accuracy_meters,
+                at: utc("2026-10-24T08:00:00Z"),
+                coarse: is_coarse(row.fix.provider.as_deref()),
+            };
+            let got = fix_side(&zone, &stored).map_or("unsure", Side::word);
             assert_eq!(got, row.side, "{}", row.note);
         }
     }
@@ -1313,7 +1442,7 @@ mod tests {
     fn a_new_zone_is_seeded_from_a_fresh_sure_fix_only() {
         let now = utc("2026-10-24T08:30:00Z");
         let fresh = inside(7, "2026-10-24T08:10:00Z");
-        let state = seed(&HOME, Some(&fresh), now);
+        let state = seed(&HOME, Some(&fresh), Some(&fresh), now);
         assert_eq!(
             state,
             State {
@@ -1334,11 +1463,185 @@ mod tests {
             inside(7, "2026-10-24T08:00:00Z"),
             fix(7, "2026-10-24T08:20:00Z", NEAR, Some(500.0)),
         ] {
-            let state = seed(&HOME, Some(&fix), now);
+            let state = seed(&HOME, Some(&fix), Some(&fix), now);
             assert_eq!(state.pending, None);
             assert_eq!(state.cursor, Some((fix.at, 7)));
         }
-        assert_eq!(seed(&HOME, None, now), State::default());
+        assert_eq!(seed(&HOME, None, None, now), State::default());
+    }
+
+    #[test]
+    fn a_coarse_newest_fix_seeds_nothing() {
+        // Design 125b C10: the newest fix a far cell fix, no fine fix: the cursor only.
+        let now = utc("2026-10-24T08:30:00Z");
+        let far = cell(9, "2026-10-24T08:25:00Z", FAR, 1000.0);
+        let state = seed(&HOME, Some(&far), None, now);
+        assert_eq!(state.pending, None);
+        assert_eq!(state.cursor, Some((far.at, 9)));
+        // A fresh fine fix before it seeds; the cursor stays at the newest.
+        let fine = inside(8, "2026-10-24T08:20:00Z");
+        let state = seed(&HOME, Some(&far), Some(&fine), now);
+        assert_eq!(state.pending, Some((Side::Inside, fine.at)));
+        assert_eq!(state.cursor, Some((far.at, 9)));
+        // A coarse fix handed in as the fine one seeds nothing either.
+        assert_eq!(seed(&HOME, Some(&far), Some(&far), now).pending, None);
+    }
+
+    #[test]
+    fn a_coarse_fix_is_never_inside_and_outside_only_far() {
+        // On the centre within 500 m of a 2 km zone: GPS would be inside, a cell fix is unsure.
+        let big = Circle {
+            radius_m: 2000,
+            ..HOME
+        };
+        let centre = (HOME.latitude, HOME.longitude);
+        assert_eq!(
+            fix_side(&big, &fix(1, "2026-10-24T08:00:00Z", centre, Some(500.0))),
+            Some(Side::Inside)
+        );
+        assert_eq!(
+            fix_side(&big, &cell(1, "2026-10-24T08:00:00Z", centre, 500.0)),
+            None
+        );
+        // 1 km away within 30 m: GPS outside, a cell fix (under 20 km) unsure.
+        assert_eq!(
+            fix_side(&HOME, &cell(1, "2026-10-24T08:00:00Z", AWAY, 30.0)),
+            None
+        );
+        assert_eq!(
+            fix_side(&HOME, &cell(1, "2026-10-24T08:00:00Z", FAR, 1000.0)),
+            Some(Side::Outside)
+        );
+        // No accuracy: unsure.
+        let mut no_accuracy = cell(1, "2026-10-24T08:00:00Z", FAR, 1000.0);
+        no_accuracy.accuracy_m = None;
+        assert_eq!(fix_side(&HOME, &no_accuracy), None);
+        // A near cell fix inside moves the cursor and nothing else: no "arrived".
+        let mut state = known(Side::Outside);
+        assert_eq!(
+            step(
+                &mut state,
+                &HOME,
+                &cell(2, "2026-10-24T08:00:00Z", NEAR, 500.0)
+            ),
+            None
+        );
+        assert_eq!(state.pending, None);
+        assert_eq!(state.cursor, Some((utc("2026-10-24T08:00:00Z"), 2)));
+    }
+
+    #[test]
+    fn a_far_coarse_pair_needs_ten_minutes_and_crosses_at_the_first() {
+        let mut state = known(Side::Inside);
+        assert_eq!(
+            step(
+                &mut state,
+                &HOME,
+                &cell(2, "2026-10-24T18:05:00Z", FAR, 1000.0)
+            ),
+            None
+        );
+        assert_eq!(
+            state.pending,
+            Some((Side::Outside, utc("2026-10-24T18:05:00Z")))
+        );
+        assert!(state.pending_coarse);
+        // Nine minutes later: nothing - from a cell fix or a fine one.
+        assert_eq!(
+            step(
+                &mut state,
+                &HOME,
+                &cell(3, "2026-10-24T18:14:00Z", FAR, 1000.0)
+            ),
+            None
+        );
+        assert_eq!(
+            step(&mut state, &HOME, &outside(4, "2026-10-24T18:14:30Z")),
+            None
+        );
+        assert_eq!(state.side, Some(Side::Inside));
+        // Ten minutes after the first: "left", at the first coarse fix's time.
+        assert_eq!(
+            step(
+                &mut state,
+                &HOME,
+                &cell(5, "2026-10-24T18:15:00Z", FAR, 1000.0)
+            ),
+            Some(Crossing {
+                to: Side::Outside,
+                at: utc("2026-10-24T18:05:00Z"),
+                confirmed_at: utc("2026-10-24T18:15:00Z"),
+            })
+        );
+        assert!(!state.pending_coarse);
+        // A fine fix surely outside confirms a coarse first too, but only after ten minutes.
+        let mut state = known(Side::Inside);
+        step(
+            &mut state,
+            &HOME,
+            &cell(2, "2026-10-24T18:05:00Z", FAR, 1000.0),
+        );
+        assert_eq!(
+            step(&mut state, &HOME, &outside(3, "2026-10-24T18:15:00Z")).map(|c| c.at),
+            Some(utc("2026-10-24T18:05:00Z"))
+        );
+        // A fine first and a coarse second: ten minutes too.
+        let mut state = known(Side::Inside);
+        step(
+            &mut state,
+            &HOME,
+            &fix(2, "2026-10-24T18:05:00Z", FAR, Some(30.0)),
+        );
+        assert!(!state.pending_coarse);
+        assert_eq!(
+            step(
+                &mut state,
+                &HOME,
+                &cell(3, "2026-10-24T18:07:00Z", FAR, 1000.0)
+            ),
+            None
+        );
+        assert!(
+            step(
+                &mut state,
+                &HOME,
+                &cell(4, "2026-10-24T18:15:00Z", FAR, 1000.0)
+            )
+            .is_some()
+        );
+    }
+
+    #[test]
+    fn a_fine_fix_inside_drops_a_coarse_pending_side() {
+        let mut state = known(Side::Inside);
+        step(
+            &mut state,
+            &HOME,
+            &cell(2, "2026-10-24T18:05:00Z", FAR, 1000.0),
+        );
+        assert_eq!(
+            step(&mut state, &HOME, &inside(3, "2026-10-24T18:08:00Z")),
+            None
+        );
+        assert_eq!(state.pending, None);
+        assert!(!state.pending_coarse);
+        assert_eq!(
+            step(
+                &mut state,
+                &HOME,
+                &cell(4, "2026-10-24T18:20:00Z", FAR, 1000.0)
+            ),
+            None
+        );
+        assert_eq!(state.side, Some(Side::Inside));
+    }
+
+    #[test]
+    fn the_fine_only_filter_names_every_coarse_provider() {
+        for provider in COARSE_PROVIDERS {
+            assert!(FINE_ONLY.contains(&format!("'{provider}'")), "{provider}");
+        }
+        assert_eq!(FINE_ONLY.matches("'vibb_").count(), COARSE_PROVIDERS.len());
     }
 
     #[test]

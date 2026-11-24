@@ -2117,7 +2117,7 @@ async fn location_settings_goes_back_to_where_it_was_opened_from() {
         .text();
     assert!(!from.contains("/devices/locate?device="), "{from}");
     assert!(from.contains(&format!("href=\"/devices/{id}\"")));
-    // The two settings forms and design 125's "Wi-Fi lookup at Apple".
+    // The two settings forms and design 125's "Lookups at Apple".
     assert_eq!(from.matches("name=\"from\" value=\"device\"").count(), 3);
     let device_page = app
         .get_page(&format!("/devices/{id}"), &cookie)

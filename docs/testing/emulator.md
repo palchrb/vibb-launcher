@@ -5558,3 +5558,26 @@ Findings (not fixed here; for the L1 and S1 owners):
    (`credentialSigner`) and TrustedClock's real time before that, every process start's first signed request (and the
    first after an adoption) is `stale` - one extra round trip (in S2 a 401 and a retry). Harmless now; months of
    automatic restarts make it hours.
+
+## 6bk. Apple's cell lookup and the coarse fix (design 125b, branch `cell-lookup`) - written, not run
+
+Design 125b (`docs/design/125b-apple-cell-lookup.md` §9): the wiring only, on **Android 14 and 16** with the user's OK.
+A server from the branch with **`WIFI_LOOKUP_PROXY` pointing at a closed port** (`socks5h://127.0.0.1:9`), so no
+emulator cell - the modem simulator's fixed LTE cell on a real PLMN (310260, or 311740 on the Norwegian-SIM image,
+§6al) - ever reaches Apple; the debug launcher, Regularly, the phone's "Oppslag hos Apple" on, Google's location
+accuracy off (`settings get secure location_mode`, the `network` provider off), Location on. Read the cell first:
+`adb shell dumpsys telephony.registry | grep -i -m3 cellinfo`. Logs: `adb logcat -s WifiPlaces ZoneWatch`.
+
+| # | Step | Expect |
+|---|---|---|
+| 1 | Location on, a heartbeat `FIX` | `WifiPlaces: cells read=1 usable=1 registered=1 nr=0 stale=0` |
+| 2 | Location off (`cmd location set-location-enabled false`), a parent `locate` | no `cells read=` line with a usable cell (an empty list: `DENIED_SOFT`) |
+| 3 | Wi-Fi and Wi-Fi scanning off, a learned miss | `apple cells asked=1 status=503 step=Wait` - the cells-only ask with no scan view (QA H1); the server's 503 (the call failed at the proxy) came at the fixed answer time, 14 s after the request (`curl -w %{time_total}` on the same body with the phone's token: 14.0-14.5; code QA M2) |
+| 4 | The next attempt within 5 min | no cell ask (the cell wait); a Wi-Fi ask still goes when a scan view is there (Wi-Fi back on): `apple asked=` - the Wi-Fi wait untouched |
+| 5 | The switch off in the PWA, a sync | no ask; the waits gone (`run-as ... cat shared_prefs/wifi_places.xml`: no `apple_cell_wait_until_ms`) |
+| 6 | The switch on, `settings put global airplane_mode_on 1` + broadcast | `cells read=0`; no ask |
+| 7 | Google's location accuracy on (the `network` provider on) | none of this runs: no `cells read=` line (design 124 D9's balanced path) |
+| 8 | `curl` the route with `{"cells": ["lte:001:01:4711:7"], "bssids": []}` | 400; `{"cells": ["lte:001:01:0:7"]}` 400; the 31st request in an hour 429 `limit` at once |
+
+Not on the emulator (§9): neighbours, NR, a second SIM, a move between cells, Apple's answer and its accuracy, a zone
+20 km away, a `vibb_apple_cell` fix - the Jelly Star with a SIM (`docs/testing/new-phone-model.md` §2).

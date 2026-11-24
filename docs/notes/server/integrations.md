@@ -85,7 +85,7 @@ map links for both to use.
   (10 s) to connect and in all; a failure there is the call's (class `proxy`), never a direct call. A setting that
   isn't a proxy address (`proxy_setting`) and a key file the server can't read (`key`) are `Stop` at once: the orange
   line shows without the 24-h grace. reqwest's `socks` feature is hyper-util's own SOCKS client in 0.13: no new crate.
-- `page.rs`: the Location page's group (A1) - the switch, the ⓘ (and "The lookups come from the server's own
+- `page.rs`: the Location page's group (A1; "Oppslag hos Apple" since design 125b) - the switch, the ⓘ (and "The lookups come from the server's own
   address." while no proxy is set), the orange "Apple lookups aren't working" while `integration_health` raises its row
   (key `wifi_lookup`, scope `""`: `Transient` failures past a 24-h grace, or `Stop` at the day-long pause step) and the
   switch is on. The Attention row is `Title::WifiLookup`, mapped to the phones with the switch on (`FOR_DEVICE`).
@@ -96,4 +96,48 @@ map links for both to use.
   how many months their rows stay fresh, so a token holder can learn whether a BSSID it names is in the cache and
   roughly how fresh - never when or by which phone it was asked. The surrounding APs Apple sends are cached and never
   answered.
-- Not built (A10): rows sent to a phone ahead of time, Apple's cell lookup, GrapheneOS's RANSAC estimator.
+- Not built (A10): rows sent to a phone ahead of time, GrapheneOS's RANSAC estimator.
+
+## Apple's cell lookup (design 125b, `docs/design/125b-apple-cell-lookup.md`)
+
+The same integration, route, sealed cache and limits; no migration. The PWA's switch is one for both: "Oppslag hos
+Apple" / "Lookups at Apple", its (i) naming the mobile network too (C13).
+
+- `cells.rs`: a cell's **wire form** (`Cell::parse`: `<radio>:<mcc>:<mnc>:<area>:<cid>`, `gsm|wcdma|lte|nr`, MCC three
+  digits, MNC two or three, no leading zeros, each radio's ranges with 0 and the all-ones fills cut - `cell_forms`) and
+  its **canonical form** (MCC and MNC as numbers, `lte:242:1:4711:12345678`: the cache's id and the seal's AAD, so
+  Apple's numeric MNC meets the phones' `01` and two spellings are one row); the cell call (GrapheneOS's towers 1, 25,
+  27 - WCDMA in SCDMA's fields -, 29, each standard's count `max(1, (total - 19) x its share)`, `total` 25 or 4 while
+  throttled, `meta`; pinned by `server.json`'s `golden_cells`) and its answer (fields 1, 22, 23, 24; field 2 and 21
+  skipped, never cached; a tower missing a part, negative or out of range left out; accuracy 1..50,000 m; 200 towers;
+  the first of duplicates wins; `apple_cells`). `codec.rs` shares its writer and bounded reader with it.
+- `route.rs`: a body is `{"bssids"}` or `{"cells"}` (1..12), never both. **No cache oracle** (the user, 2026-11-24): a
+  cells 200 is `{"cells": [{cell, lat, lng, acc_m}], "unknown": [cell]}` - no age, no cached mark, each asked string
+  echoed; any cells request while Apple can't be asked (paused, over the server-wide limit) is `503 unavailable` with
+  its wait, cached or not, and so is an uncached cell's failed call. **Before the cache is read** (code QA H1, M1)
+  every cells request takes the admit permit (held to the answer time, `lookup_cells` hands it back), the gate and one
+  slot of the 60/10 limits, cached or not; no permit or the gate's wait run out is `503` with 900
+  (`CELL_BUSY_WAIT`) - there is no `busy` for cells. The lookup runs in a task of its own; the 200 or 503 leaves
+  **exactly** `cell_answer_after` after the request arrived (`mod::cell_answer_after`: the gate's wait + the Apple
+  call's whole deadline - `music_net::PROXIED` through the proxy, `Kind::AppleWps` direct - + `CELL_ANSWER_MARGIN`'s
+  1 s: 14 s proxied, 9 s direct; code QA M2); a task that hasn't answered by then gives `503` (900) and goes on to fill
+  the cache. The **abuse brake**: 1000 cells (canonical, distinct per request) a phone a UTC day (`CellDays`, memory
+  only), past it `429 limit` with `retry_after_s` to midnight; checked and counted under one lock with the hour's 30
+  asked inside it (`try_add`, code QA L1), so a refused request takes neither. The cell call has its own throttle (10
+  towers -> 10 s at 4) and shares the gate, the pauses, `integration_health` and the 60/10 call limits with the Wi-Fi
+  call. The sweep line gains `cells=` and `cell_calls=`.
+- **What is left of an oracle** (C12, code QA L2): an Apple call that fails during one request with an uncached cell
+  (503 where an all-cached one got 200, at the same time). The limits, the gate and the permit no longer depend on the
+  cache.
+- **Sealing protects cell rows less**: cell identities are enumerable from public lists, so whoever holds both the
+  database and `K` can open every cell row cheaply; the database or a backup alone still reveals nothing. The cache
+  over two years shows the family's trips coarsely, not only its places.
+- Tests (`tests.rs`): the contract's `cell_answers` through the real route (the same body from the cache and from
+  Apple, each at the answer time - `CELL_ANSWER_AFTER_IN_TESTS`, 700 ms, over the tests' 300-ms gate; the day cap's
+  wait to midnight; `cells_busy` with the gate held), a held gate and two lookups in flight answering cached and
+  uncached alike and the permit held to the answer time (H1), a cached request taking a limit slot and a full window
+  answering both alike (M1), an Apple call past the answer time answering 503 then and filling the cache (M2), the day
+  brake under concurrent requests (L1),
+  `golden_cells`, every `apple_cells` row, `cell_forms` and the rules, a row sealed under its canonical form and found
+  from Apple's numeric MNC, the surrounding towers cached and an AP in a cell answer never, the cell throttle apart from
+  the Wi-Fi one, the source test (no cell identity in a tracing line).

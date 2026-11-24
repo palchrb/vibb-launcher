@@ -12,8 +12,12 @@
 //! - **No lookup log**: no device id, no lookup time, no query history - only the sealed rows with their months and
 //!   the integration's health. Logs carry counts and Apple's status, never a BSSID, a coordinate or a device id.
 //! - **The route** ([route]): `POST /api/devices/wifi-lookup`, its limits, pauses and answers.
+//! - **Cells** (design 125b, [cells]): the same route with `{"cells"}`, the same sealed cache keyed by a cell's
+//!   canonical form, a call of their own to Apple; no cache oracle (a fixed answer time, no age, the same permit,
+//!   gate and limit slot whatever the cache holds).
 
 pub mod cache;
+pub mod cells;
 pub mod codec;
 pub mod page;
 pub mod route;
@@ -36,6 +40,10 @@ use crate::music_net::{BoxFut, PhoneAsks, Source, Window};
 
 /// The name: the logs, the contract folder and `integration_health`'s key.
 pub const NAME: &str = "wifi_lookup";
+
+/// The tests' fixed answer time for cells (the server's is 9 or 14 s): over the tests' gate wait of 300 ms.
+#[cfg(test)]
+pub const CELL_ANSWER_AFTER_IN_TESTS: Duration = Duration::from_millis(700);
 
 /// Where Apple calls go: the server setting `WIFI_LOOKUP_PROXY`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -82,6 +90,9 @@ pub struct Counts {
     wanted: AtomicU64,
     fetched: AtomicU64,
     unanswered: AtomicU64,
+    /// Design 125b: the cells named and the cell calls made.
+    cells: AtomicU64,
+    cell_calls: AtomicU64,
 }
 
 impl Counts {
@@ -98,14 +109,26 @@ impl Counts {
             .fetch_add(unanswered as u64, Ordering::Relaxed);
     }
 
-    /// The counts since the last take, and back to zero: (lookups, named, not cached, Apple calls, unanswered).
-    pub fn take(&self) -> [u64; 5] {
+    /// One cells lookup: the cells it named (canonical) and whether a cell call was made.
+    pub fn add_cells(&self, cells: usize, called: bool) {
+        self.lookups.fetch_add(1, Ordering::Relaxed);
+        self.cells.fetch_add(cells as u64, Ordering::Relaxed);
+        if called {
+            self.cell_calls.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    /// The counts since the last take, and back to zero: (lookups, named, not cached, Apple calls, unanswered, cells,
+    /// cell calls).
+    pub fn take(&self) -> [u64; 7] {
         [
             &self.lookups,
             &self.asked,
             &self.wanted,
             &self.fetched,
             &self.unanswered,
+            &self.cells,
+            &self.cell_calls,
         ]
         .map(|n| n.swap(0, Ordering::Relaxed))
     }
@@ -129,6 +152,13 @@ pub struct WifiLookup {
     pub(crate) pauses: std::sync::Mutex<route::Pauses>,
     /// GrapheneOS's own throttle: after an answer of 17 or more APs, the next 10 s ask for 8 surrounding.
     pub(crate) throttled_until: std::sync::Mutex<Option<tokio::time::Instant>>,
+    /// Design 125b C6: the cell call's own throttle - after 10 towers, the next 10 s ask for 4 in all.
+    pub(crate) cell_throttled_until: std::sync::Mutex<Option<tokio::time::Instant>>,
+    /// Design 125b C5: the cells each phone named today (the abuse brake).
+    pub(crate) cell_days: route::CellDays,
+    /// Design 125b C5: a cells answer leaves exactly this long after the request arrived - [cell_answer_after]: the
+    /// gate's wait, the Apple call's whole deadline and [route::CELL_ANSWER_MARGIN] (code QA M2).
+    pub(crate) cell_answer_after: Duration,
     /// `K`, loaded at the first use.
     pub(crate) key: tokio::sync::OnceCell<Arc<cache::CacheKey>>,
     pub(crate) health: HealthCell,
@@ -149,12 +179,17 @@ impl WifiLookup {
                  is fixed (never a direct call)"
             ),
         }
-        // The gate's wait and Apple's 10 s stay within the phone's 15 s (code QA L5).
+        // The gate's wait and Apple's 10 s stay within the phone's 15 s (code QA L5); a cells answer's fixed time
+        // within the phone's 20 s for cells (design 125b C5).
         Self::with(source, proxy, Duration::from_secs(3))
     }
 
     pub fn with(source: Arc<dyn Source>, proxy: Proxy, gate_wait: Duration) -> Self {
+        let cell_answer_after = cell_answer_after(&proxy, gate_wait);
         WifiLookup {
+            cell_answer_after,
+            cell_throttled_until: Default::default(),
+            cell_days: Default::default(),
             source,
             proxy,
             admit: tokio::sync::Semaphore::new(2),
@@ -171,10 +206,13 @@ impl WifiLookup {
         }
     }
 
-    /// The tests': a short wait at the gate.
+    /// The tests': a short wait at the gate, a short fixed answer time for cells.
     #[cfg(test)]
     pub fn for_tests(source: Arc<dyn Source>) -> Self {
-        Self::with(source, Proxy::Direct, Duration::from_millis(300))
+        Self {
+            cell_answer_after: CELL_ANSWER_AFTER_IN_TESTS,
+            ..Self::with(source, Proxy::Direct, Duration::from_millis(300))
+        }
     }
 
     /// The cache's key, loaded (and made) at the first use. `Err` is logged by the caller.
@@ -188,6 +226,17 @@ impl WifiLookup {
             .await
             .cloned()
     }
+}
+
+/// Design 125b C5 (code QA M2): a cells answer's fixed time - the slowest path of a lookup that gets the call: the
+/// gate's wait, then the Apple call's whole deadline (`music_net::PROXIED` through a proxy, `Kind::AppleWps` direct),
+/// then [route::CELL_ANSWER_MARGIN] for the cache's writes. 9 s direct, 14 s proxied with the server's 3-s gate.
+pub fn cell_answer_after(proxy: &Proxy, gate_wait: Duration) -> Duration {
+    let deadline = match proxy {
+        Proxy::Socks(_) => crate::music_net::PROXIED,
+        _ => crate::music_net::Kind::AppleWps.overall(),
+    };
+    gate_wait + deadline + route::CELL_ANSWER_MARGIN
 }
 
 impl Integration for WifiLookup {
@@ -234,7 +283,15 @@ impl Integration for WifiLookup {
     fn prune<'a>(&'a self, state: &'a AppState, why: Prune) -> BoxFut<'a, ()> {
         Box::pin(async move {
             if why == Prune::Sweep {
-                let [lookups, named, uncached, calls, unanswered] = self.counts.take();
+                let [
+                    lookups,
+                    named,
+                    uncached,
+                    calls,
+                    unanswered,
+                    cells,
+                    cell_calls,
+                ] = self.counts.take();
                 if lookups > 0 {
                     tracing::info!(
                         lookups,
@@ -242,6 +299,8 @@ impl Integration for WifiLookup {
                         uncached,
                         calls,
                         unanswered,
+                        cells,
+                        cell_calls,
                         "wifi_lookup: since the last sweep"
                     );
                 }

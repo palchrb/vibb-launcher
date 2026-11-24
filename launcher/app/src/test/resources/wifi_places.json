@@ -1,5 +1,5 @@
 {
-  "about": "Design 125 step 1's rows, the launcher's alone (PlacesTest). Documentation MACs only (RFC 7042: 00:00:5e:00:53:xx; 01:00:5e:90:10:xx multicast); made-up SSIDs.",
+  "about": "Design 125 step 1's rows (and design 125b's cell rows), the launcher's alone (PlacesTest). Documentation MACs only (RFC 7042: 00:00:5e:00:53:xx; 01:00:5e:90:10:xx multicast); made-up SSIDs.",
   "usable": [
     {"bssid": "00:00:5e:00:53:01", "ssid": "Hjemme", "usable": true, "why": "a home router"},
     {"bssid": "00:00:5E:00:53:02", "ssid": "Altibox123456", "usable": true, "why": "upper case BSSID"},
@@ -64,5 +64,17 @@
     {"why": "-60 dBm is strong: no floor", "spread": 5, "range_med": 60, "networks": 3, "median_occasions": 5, "rssi": -60, "band": "G5", "stronger_unknown": 0, "accuracy": 30.41},
     {"why": "-61 dBm at 6 GHz: the floor", "spread": 5, "range_med": 60, "networks": 3, "median_occasions": 5, "rssi": -61, "band": "G6", "stronger_unknown": 0, "accuracy": 60},
     {"why": "over 200 m: no fix", "spread": 30, "range_med": 80, "networks": 2, "median_occasions": 3, "rssi": -80, "band": "G24", "stronger_unknown": 2, "accuracy": null}
+  ],
+  "cell_report": [
+    {"why": "design 125b C9.2: still, the vouch inside the cell's circle: withheld", "accuracy": 1000, "still": true, "vouch_m": 500, "vouch_acc": 20, "fresh_m": 500, "fresh_acc": 20, "fresh_age_min": 30, "locate": false, "verdict": "WITHHOLD"},
+    {"why": "still, the vouch 4 km away (over 1000 + 20 + 2000 m): a cell contradiction", "accuracy": 1000, "still": true, "vouch_m": 4000, "vouch_acc": 20, "fresh_m": 4000, "fresh_acc": 20, "fresh_age_min": 30, "locate": false, "verdict": "CONTRADICTS"},
+    {"why": "still, 3 km (within 1000 + 20 + 2000 m): withheld", "accuracy": 1000, "still": true, "vouch_m": 3000, "vouch_acc": 20, "fresh_m": 3000, "fresh_acc": 20, "fresh_age_min": 30, "locate": false, "verdict": "WITHHOLD"},
+    {"why": "still with no vouch: withheld", "accuracy": 1000, "still": true, "vouch_m": null, "vouch_acc": null, "fresh_m": null, "fresh_acc": null, "fresh_age_min": null, "locate": false, "verdict": "WITHHOLD"},
+    {"why": "C9.3 (Q6): moved, a fine fix an hour old inside the cell's circle: nothing reported", "accuracy": 1000, "still": false, "vouch_m": null, "vouch_acc": null, "fresh_m": 800, "fresh_acc": 20, "fresh_age_min": 60, "locate": false, "verdict": "WITHHOLD"},
+    {"why": "moved, the fine fix outside the circle: reported", "accuracy": 1000, "still": false, "vouch_m": null, "vouch_acc": null, "fresh_m": 1500, "fresh_acc": 20, "fresh_age_min": 60, "locate": false, "verdict": "REPORT"},
+    {"why": "moved, the fine fix inside but over 4 h old: reported", "accuracy": 1000, "still": false, "vouch_m": null, "vouch_acc": null, "fresh_m": 300, "fresh_acc": 20, "fresh_age_min": 241, "locate": false, "verdict": "REPORT"},
+    {"why": "moved, no fresh fix at all: reported", "accuracy": 1000, "still": false, "vouch_m": null, "vouch_acc": null, "fresh_m": null, "fresh_acc": null, "fresh_age_min": null, "locate": false, "verdict": "REPORT"},
+    {"why": "C9.5 (Q10): the parent's locate reports it though still and far from the vouch", "accuracy": 1000, "still": true, "vouch_m": 4000, "vouch_acc": 20, "fresh_m": 4000, "fresh_acc": 20, "fresh_age_min": 30, "locate": true, "verdict": "REPORT"},
+    {"why": "C9.5: the parent's locate reports it though a recent fine fix lies inside", "accuracy": 1000, "still": false, "vouch_m": null, "vouch_acc": null, "fresh_m": 300, "fresh_acc": 20, "fresh_age_min": 10, "locate": true, "verdict": "REPORT"}
   ]
 }

@@ -1,9 +1,14 @@
 {
- "_doc": "Design 125 step 2 (§4a A3, A4), the Apple Wi-Fi lookup's shared contract: byte-identical in launcher/app/src/test/resources/wifi_lookup/contract.json. rules: the server's cache months (a positive row fresh fresh_months calendar months from the month Apple answered, a negative until the month it was asked in ends, UTC) and the phone's stale_grace_h. policy: the policy's wifi_lookup. request: the exact body of POST /api/devices/wifi-lookup. answers: each case the server's tests produce (only asked BSSIDs; fresh_months_left, never a month). phone_answers: the phone's action for each status and body (use: the rows stored; wait_s: no ask for that long; off: none until a policy says on). phone_rows: what the phone keeps from a 200 at now, and until when (storeApple).",
+ "_doc": "Design 125 step 2 (§4a A3, A4), the Apple Wi-Fi lookup's shared contract: byte-identical in launcher/app/src/test/resources/wifi_lookup/contract.json. rules: the server's cache months (a positive row fresh fresh_months calendar months from the month Apple answered, a negative until the month it was asked in ends, UTC) and the phone's stale_grace_h. policy: the policy's wifi_lookup. request: the exact body of POST /api/devices/wifi-lookup. answers: each case the server's tests produce (only asked BSSIDs; fresh_months_left, never a month). phone_answers: the phone's action for each status and body (use: the rows stored; wait_s: no ask for that long; off: none until a policy says on). phone_rows: what the phone keeps from a 200 at now, and until when (storeApple). Design 125b (cells): rules' cells_max, cells_a_day (the per-phone brake), cell_answer_after_s (a cells answer's fixed time through a proxy - the gate's 3 s, the Apple call's 10 s and a second; 9 s direct is the server's alone), cell_row_days and cell_negative_days (the phone's rows). request_cells: the exact cells body. cell_forms: a cell's wire form to valid or not (the server's cells::Cell::parse, the launcher's cellWire). cell_answers: each cells case the server's tests produce - no age, no cached mark, the same body from the cache as from Apple; each asked string echoed. cell_phone_answers: the phone's action for each (the cell wait alone; a 409 both waits). cell_phone_rows: what the phone keeps from a cells 200 at now, and until when (storeAppleCells). Test network 001-01 only, made-up coordinates.",
  "rules": {
   "fresh_months": 3,
   "negative_months": 1,
-  "stale_grace_h": 24
+  "stale_grace_h": 24,
+  "cells_max": 12,
+  "cells_a_day": 1000,
+  "cell_answer_after_s": 14,
+  "cell_row_days": 90,
+  "cell_negative_days": 30
  },
  "policy": {
   "off": {
@@ -672,6 +677,652 @@
      "negative": true
     }
    ]
+  }
+ ],
+ "request_cells": {
+  "cells": [
+   "lte:001:01:4711:12345678",
+   "nr:001:01:1048577:4294967297",
+   "gsm:001:01:1001:5001"
+  ]
+ },
+ "cell_forms": [
+  {
+   "cell": "lte:001:01:4711:12345678",
+   "valid": true,
+   "why": "LTE on the test network"
+  },
+  {
+   "cell": "nr:001:01:1048577:4294967297",
+   "valid": true,
+   "why": "NR, the NCI over 32 bits"
+  },
+  {
+   "cell": "gsm:001:01:1001:5001",
+   "valid": true,
+   "why": "GSM"
+  },
+  {
+   "cell": "wcdma:001:01:2001:70001",
+   "valid": true,
+   "why": "WCDMA"
+  },
+  {
+   "cell": "gsm:001:01:1:65534",
+   "valid": true,
+   "why": "gsm: the highest cid"
+  },
+  {
+   "cell": "gsm:001:01:1:65535",
+   "valid": false,
+   "why": "gsm: the all-ones cid"
+  },
+  {
+   "cell": "wcdma:001:01:1:268435454",
+   "valid": true,
+   "why": "wcdma: the highest cid"
+  },
+  {
+   "cell": "wcdma:001:01:1:268435455",
+   "valid": false,
+   "why": "wcdma: the all-ones cid"
+  },
+  {
+   "cell": "lte:001:01:1:268435454",
+   "valid": true,
+   "why": "lte: the highest cid"
+  },
+  {
+   "cell": "lte:001:01:1:268435455",
+   "valid": false,
+   "why": "lte: the all-ones cid"
+  },
+  {
+   "cell": "nr:001:01:1:68719476734",
+   "valid": true,
+   "why": "NR: the highest NCI"
+  },
+  {
+   "cell": "nr:001:01:1:68719476735",
+   "valid": false,
+   "why": "NR: the all-ones NCI"
+  },
+  {
+   "cell": "lte:001:01:0:7",
+   "valid": false,
+   "why": "LTE area 0"
+  },
+  {
+   "cell": "lte:001:01:1:7",
+   "valid": true,
+   "why": "LTE area 1"
+  },
+  {
+   "cell": "lte:001:01:65533:7",
+   "valid": true,
+   "why": "LTE area 65533"
+  },
+  {
+   "cell": "lte:001:01:65534:7",
+   "valid": false,
+   "why": "LTE area 65534"
+  },
+  {
+   "cell": "lte:001:01:65535:7",
+   "valid": false,
+   "why": "LTE area 65535"
+  },
+  {
+   "cell": "nr:001:01:16777213:7",
+   "valid": true,
+   "why": "NR: the highest TAC"
+  },
+  {
+   "cell": "nr:001:01:16777214:7",
+   "valid": false,
+   "why": "NR: the reserved TAC"
+  },
+  {
+   "cell": "lte:001:01:4711:0",
+   "valid": false,
+   "why": "cid 0"
+  },
+  {
+   "cell": "lte:001:1:4711:7",
+   "valid": false,
+   "why": "an MNC of one digit"
+  },
+  {
+   "cell": "lte:001:0001:4711:7",
+   "valid": false,
+   "why": "an MNC of four digits"
+  },
+  {
+   "cell": "lte:001:001:4711:7",
+   "valid": true,
+   "why": "an MNC of three digits"
+  },
+  {
+   "cell": "lte:01:01:4711:7",
+   "valid": false,
+   "why": "an MCC of two digits"
+  },
+  {
+   "cell": "lte:000:01:4711:7",
+   "valid": false,
+   "why": "MCC 000"
+  },
+  {
+   "cell": "lte:001:01:04711:7",
+   "valid": false,
+   "why": "a leading zero in the area"
+  },
+  {
+   "cell": "lte:001:01:4711:07",
+   "valid": false,
+   "why": "a leading zero in the cid"
+  },
+  {
+   "cell": "LTE:001:01:4711:7",
+   "valid": false,
+   "why": "upper case"
+  },
+  {
+   "cell": "cdma:001:01:4711:7",
+   "valid": false,
+   "why": "CDMA"
+  },
+  {
+   "cell": "lte:001:01:4711: 7",
+   "valid": false,
+   "why": "a space"
+  },
+  {
+   "cell": "lte:001:01:4711:+7",
+   "valid": false,
+   "why": "a sign"
+  },
+  {
+   "cell": "lte:001:01:4711:1111111111111111111111111111111111111111",
+   "valid": false,
+   "why": "a 40-digit number"
+  },
+  {
+   "cell": "lte:001:01:4711",
+   "valid": false,
+   "why": "four parts"
+  },
+  {
+   "cell": "lte:001:01:4711:7:1",
+   "valid": false,
+   "why": "six parts"
+  }
+ ],
+ "cell_answers": [
+  {
+   "case": "cells_fetched",
+   "request": {
+    "cells": [
+     "lte:001:01:4711:12345678",
+     "nr:001:01:1048577:4294967297",
+     "gsm:001:01:1001:5001"
+    ]
+   },
+   "status": 200,
+   "body": {
+    "cells": [
+     {
+      "cell": "lte:001:01:4711:12345678",
+      "lat": 59.91,
+      "lng": 10.75,
+      "acc_m": 800
+     },
+     {
+      "cell": "nr:001:01:1048577:4294967297",
+      "lat": 59.912,
+      "lng": 10.751,
+      "acc_m": 350
+     }
+    ],
+    "unknown": [
+     "gsm:001:01:1001:5001"
+    ]
+   },
+   "note": "LTE and NR from Apple, GSM unknown to Apple; MNC echoed as asked (01) though Apple says 1; Apple's surrounding towers cached, never answered"
+  },
+  {
+   "case": "cells_cached",
+   "request": {
+    "cells": [
+     "lte:001:01:4711:12345678",
+     "nr:001:01:1048577:4294967297",
+     "gsm:001:01:1001:5001"
+    ]
+   },
+   "status": 200,
+   "body": {
+    "cells": [
+     {
+      "cell": "lte:001:01:4711:12345678",
+      "lat": 59.91,
+      "lng": 10.75,
+      "acc_m": 800
+     },
+     {
+      "cell": "nr:001:01:1048577:4294967297",
+      "lat": 59.912,
+      "lng": 10.751,
+      "acc_m": 350
+     }
+    ],
+    "unknown": [
+     "gsm:001:01:1001:5001"
+    ]
+   },
+   "note": "the same again from the cache: the same body, at the same answer time"
+  },
+  {
+   "case": "cells_stale",
+   "request": {
+    "cells": [
+     "lte:001:01:4711:12345678",
+     "nr:001:01:1048577:4294967297",
+     "gsm:001:01:1001:5001"
+    ]
+   },
+   "status": 200,
+   "body": {
+    "cells": [
+     {
+      "cell": "lte:001:01:4711:12345678",
+      "lat": 59.91,
+      "lng": 10.75,
+      "acc_m": 800
+     },
+     {
+      "cell": "nr:001:01:1048577:4294967297",
+      "lat": 59.912,
+      "lng": 10.751,
+      "acc_m": 350
+     }
+    ],
+    "unknown": [
+     "gsm:001:01:1001:5001"
+    ]
+   },
+   "note": "rows fetched four months ago: the same body again, refreshed from Apple"
+  },
+  {
+   "case": "cells_two_spellings",
+   "request": {
+    "cells": [
+     "lte:001:01:4711:12345678",
+     "lte:001:001:4711:12345678"
+    ]
+   },
+   "status": 200,
+   "body": {
+    "cells": [
+     {
+      "cell": "lte:001:01:4711:12345678",
+      "lat": 59.91,
+      "lng": 10.75,
+      "acc_m": 800
+     },
+     {
+      "cell": "lte:001:001:4711:12345678",
+      "lat": 59.91,
+      "lng": 10.75,
+      "acc_m": 800
+     }
+    ],
+    "unknown": []
+   },
+   "note": "01 and 001: one cell, each string echoed"
+  },
+  {
+   "case": "cells_paused_cached",
+   "request": {
+    "cells": [
+     "lte:001:01:4711:12345678",
+     "nr:001:01:1048577:4294967297",
+     "gsm:001:01:1001:5001"
+    ]
+   },
+   "status": 503,
+   "body": {
+    "error": "unavailable",
+    "retry_after_s": 300
+   },
+   "note": "every cell cached, Apple paused: the same 503 as uncached"
+  },
+  {
+   "case": "cells_paused_uncached",
+   "request": {
+    "cells": [
+     "lte:001:01:4711:12345678",
+     "nr:001:01:1048577:4294967297",
+     "gsm:001:01:1001:5001"
+    ]
+   },
+   "status": 503,
+   "body": {
+    "error": "unavailable",
+    "retry_after_s": 300
+   },
+   "note": "nothing cached, Apple paused (the first transient failure's 5 minutes)"
+  },
+  {
+   "case": "cells_busy",
+   "request": {
+    "cells": [
+     "lte:001:01:4711:12345678",
+     "nr:001:01:1048577:4294967297",
+     "gsm:001:01:1001:5001"
+    ]
+   },
+   "status": 503,
+   "body": {
+    "error": "unavailable",
+    "retry_after_s": 900
+   },
+   "note": "the Apple call not free within the gate's wait, two lookups in flight, or the call past the answer time: the same 503 at the same time, cached or not"
+  },
+  {
+   "case": "cells_day_cap",
+   "request": {
+    "cells": [
+     "gsm:001:01:1001:5001"
+    ]
+   },
+   "status": 429,
+   "body": {
+    "error": "limit",
+    "retry_after_s": 3600
+   },
+   "note": "the 1001st cell of the phone's UTC day: retry_after_s is the time to UTC midnight (3600 here stands for it)"
+  },
+  {
+   "case": "cells_limit_hourly",
+   "request": {
+    "cells": [
+     "lte:001:01:4711:12345678",
+     "nr:001:01:1048577:4294967297",
+     "gsm:001:01:1001:5001"
+    ]
+   },
+   "status": 429,
+   "body": {
+    "error": "limit"
+   },
+   "note": "this phone's 31st lookup in an hour"
+  },
+  {
+   "case": "cells_off",
+   "request": {
+    "cells": [
+     "lte:001:01:4711:12345678",
+     "nr:001:01:1048577:4294967297",
+     "gsm:001:01:1001:5001"
+    ]
+   },
+   "status": 409,
+   "body": {
+    "error": "off"
+   }
+  },
+  {
+   "case": "bad_both_lists",
+   "request": {
+    "bssids": [
+     "00:00:5e:00:53:01"
+    ],
+    "cells": [
+     "lte:001:01:4711:12345678"
+    ]
+   },
+   "status": 400,
+   "body": {
+    "error": "invalid"
+   }
+  },
+  {
+   "case": "bad_cells_empty",
+   "request": {
+    "cells": []
+   },
+   "status": 400,
+   "body": {
+    "error": "invalid"
+   }
+  },
+  {
+   "case": "bad_cells_too_many",
+   "request": {
+    "cells": [
+     "lte:001:01:4711:1",
+     "lte:001:01:4711:2",
+     "lte:001:01:4711:3",
+     "lte:001:01:4711:4",
+     "lte:001:01:4711:5",
+     "lte:001:01:4711:6",
+     "lte:001:01:4711:7",
+     "lte:001:01:4711:8",
+     "lte:001:01:4711:9",
+     "lte:001:01:4711:10",
+     "lte:001:01:4711:11",
+     "lte:001:01:4711:12",
+     "lte:001:01:4711:13"
+    ]
+   },
+   "status": 400,
+   "body": {
+    "error": "invalid"
+   }
+  },
+  {
+   "case": "bad_cell_form",
+   "request": {
+    "cells": [
+     "lte:001:01:4711:12345678",
+     "lte:001:01:0:7"
+    ]
+   },
+   "status": 400,
+   "body": {
+    "error": "invalid"
+   }
+  },
+  {
+   "case": "bad_cells_not_a_list",
+   "request": {
+    "cells": "lte:001:01:4711:12345678"
+   },
+   "status": 400,
+   "body": {
+    "error": "invalid"
+   }
+  }
+ ],
+ "cell_phone_answers": [
+  {
+   "case": "use_cells",
+   "status": 200,
+   "body": {
+    "cells": [
+     {
+      "cell": "lte:001:01:4711:12345678",
+      "lat": 59.91,
+      "lng": 10.75,
+      "acc_m": 800
+     },
+     {
+      "cell": "nr:001:01:1048577:4294967297",
+      "lat": 59.912,
+      "lng": 10.751,
+      "acc_m": 350
+     }
+    ],
+    "unknown": [
+     "gsm:001:01:1001:5001"
+    ]
+   },
+   "action": "use",
+   "wait_s": 0
+  },
+  {
+   "case": "cells_unavailable",
+   "status": 503,
+   "body": {
+    "error": "unavailable",
+    "retry_after_s": 300
+   },
+   "action": "wait",
+   "wait_s": 300
+  },
+  {
+   "case": "cells_unavailable_long",
+   "status": 503,
+   "body": {
+    "error": "unavailable",
+    "retry_after_s": 172800
+   },
+   "action": "wait",
+   "wait_s": 86400
+  },
+  {
+   "case": "cells_limit",
+   "status": 429,
+   "body": {
+    "error": "limit",
+    "retry_after_s": 3600
+   },
+   "action": "wait",
+   "wait_s": 3600
+  },
+  {
+   "case": "cells_limit_hourly",
+   "status": 429,
+   "body": {
+    "error": "limit"
+   },
+   "action": "wait",
+   "wait_s": 900
+  },
+  {
+   "case": "cells_busy",
+   "status": 503,
+   "body": {
+    "error": "unavailable",
+    "retry_after_s": 900
+   },
+   "action": "wait",
+   "wait_s": 900
+  },
+  {
+   "case": "cells_transport",
+   "status": 0,
+   "body": null,
+   "action": "wait",
+   "wait_s": 900
+  },
+  {
+   "case": "cells_unreadable_200",
+   "status": 200,
+   "body": {
+    "cells": "x"
+   },
+   "action": "wait",
+   "wait_s": 900
+  },
+  {
+   "case": "cells_off",
+   "status": 409,
+   "body": {
+    "error": "off"
+   },
+   "action": "off"
+  }
+ ],
+ "cell_phone_rows": [
+  {
+   "case": "cells",
+   "now": "2026-11-24T10:00:00Z",
+   "cells": [
+    {
+     "cell": "lte:001:01:4711:12345678",
+     "lat": 59.91,
+     "lng": 10.75,
+     "acc_m": 800
+    },
+    {
+     "cell": "nr:001:01:1048577:4294967297",
+     "lat": 59.912,
+     "lng": 10.751,
+     "acc_m": 350
+    }
+   ],
+   "unknown": [
+    "gsm:001:01:1001:5001"
+   ],
+   "rows": [
+    {
+     "cell": "lte:001:01:4711:12345678",
+     "until": "2027-02-22T10:00:00Z"
+    },
+    {
+     "cell": "nr:001:01:1048577:4294967297",
+     "until": "2027-02-22T10:00:00Z"
+    },
+    {
+     "cell": "gsm:001:01:1001:5001",
+     "until": "2026-12-24T10:00:00Z",
+     "negative": true
+    }
+   ],
+   "note": "a cell row lives 90 days from now, a negative 30"
+  },
+  {
+   "case": "wide",
+   "now": "2026-11-24T10:00:00Z",
+   "cells": [
+    {
+     "cell": "lte:001:01:4711:12345678",
+     "lat": 59.91,
+     "lng": 10.75,
+     "acc_m": 50000
+    }
+   ],
+   "unknown": [],
+   "rows": [
+    {
+     "cell": "lte:001:01:4711:12345678",
+     "until": "2027-02-22T10:00:00Z",
+     "range_m": 50000
+    }
+   ],
+   "note": "Apple's accuracy is the row's range"
+  },
+  {
+   "case": "narrow",
+   "now": "2026-11-24T10:00:00Z",
+   "cells": [
+    {
+     "cell": "nr:001:01:1048577:4294967297",
+     "lat": 59.912,
+     "lng": 10.751,
+     "acc_m": 120
+    }
+   ],
+   "unknown": [],
+   "rows": [
+    {
+     "cell": "nr:001:01:1048577:4294967297",
+     "until": "2027-02-22T10:00:00Z",
+     "range_m": 500
+    }
+   ],
+   "note": "a range of at least 500 m"
   }
  ]
 }

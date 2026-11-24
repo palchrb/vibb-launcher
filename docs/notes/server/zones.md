@@ -170,6 +170,36 @@ counts.
   `time_rules` (the policy's `location_policy` with `zones`), `music_spotify::migrations_73_to_95_in_order`,
   `zone_watch::a_fix_keeps_its_provider_and_mock_flag_in_the_title_only`.
 
+## A coarse fix and the zones (design 125b C10, step 3a; `docs/design/125b-apple-cell-lookup.md`)
+
+The user's cabin case (Q2, 2026-11-24): a phone switched off, driven to a cabin 200 km away, switched on with no Wi-Fi
+- its only fixes are a cell's. No migration, no API change.
+
+- **Coarse** = the stored `device_locations.provider` is one of `zones::COARSE_PROVIDERS` (`vibb_cell`,
+  `vibb_apple_cell`; `zones::is_coarse`, the SQL filter `FINE_ONLY` kept equal by a test). A GLA-on phone's `network`
+  fix is not coarse (Q8). `zones::Fix.coarse` carries it through the rule.
+- **Inside: never** from a coarse fix. **Surely outside** only when `d - r >= max(3 x a, 20 km)`
+  (`zones::coarse_side`, `COARSE_OUTSIDE_MIN_M`, whole millimetres as `side`); nearer it is unsure - it moves the cursor
+  and nothing else. `zones::fix_side` picks the rule; `zone_vectors.json` has the coarse rows (a `provider` on the fix).
+- **The pair**: a far coarse fix may be the first of it; when either fix of a pair is coarse the second must come at
+  least `COARSE_CONFIRM_GAP` (10 min) after the first (fine pairs keep `CONFIRM_GAP`'s 60 s). Whether the pending side
+  came from a coarse fix is `State.pending_coarse` - no column: `evaluate_stored` reads it from the pending fix's row
+  (`captured_at = pending_at` with a coarse provider; a fix gone to retention reads as fine). A fine fix on the zone's
+  side in between drops the pending side, as always.
+- **The event's time is the first coarse fix's**, as for every pair: "left Home 18:05" says when the phone was first
+  seen far away - after a drive with the phone off, hours after she left. The words are unchanged.
+- **`seed`/`start_over`** take the pending side from the newest **fine** fix only (younger than `SEED_WITHIN`); the
+  cursor still goes to the newest fix of any kind (the history before the zone is never judged).
+- **"Here now"** and "At Home since" count from the newest fine fix (`zones::newest_fine_seen`, used by
+  `freshness_inputs` and the Locate page's `PhoneZones.fine`): a cell fix never keeps them alive; a far coarse fix sets
+  a pending side, which ends "Here now" anyway. The fix row's "At Home" badge (`locate::fix_badge`) is never shown for a
+  coarse fix.
+- The phone mirrors the side rule in `sureSide` as a guard only (`docs/notes/launcher/zones-and-power.md`).
+- Tests: `zones::tests` (`a_coarse_fix_is_never_inside_and_outside_only_far`,
+  `a_far_coarse_pair_needs_ten_minutes_and_crosses_at_the_first`, `a_fine_fix_inside_drops_a_coarse_pending_side`,
+  `a_coarse_newest_fix_seeds_nothing`, the vectors), `tests::zone_watch::cell_fixes_leave_only_far_and_ten_minutes_apart`
+  (across reports) and `a_cell_fix_never_keeps_here_now`.
+
 ## A zone stands in for the weather (design 75, migration `0122_lock_weather.sql`)
 
 `device_policy.weather_zone_id` names one of the phone's zones whose centre gives the lock screen's weather when the

@@ -37,6 +37,8 @@ pub const ANSWER_HEADER: usize = 10;
 pub const MAX_ANSWER_APS: usize = 200;
 /// A longer answer isn't read (`music_net::Kind::AppleWps` cuts the body here).
 pub const MAX_ANSWER_BYTES: usize = 256_000;
+/// An AP's accuracy is at most this (A8).
+pub const MAX_AP_ACCURACY_M: i64 = 5000;
 /// Apple's "unknown" latitude.
 const UNKNOWN_LATITUDE: i64 = -18_000_000_000;
 
@@ -58,7 +60,7 @@ pub struct Position {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Malformed;
 
-fn varint(out: &mut Vec<u8>, mut n: u64) {
+pub(super) fn varint(out: &mut Vec<u8>, mut n: u64) {
     loop {
         let byte = (n & 0x7f) as u8;
         n >>= 7;
@@ -70,11 +72,11 @@ fn varint(out: &mut Vec<u8>, mut n: u64) {
     }
 }
 
-fn tag(out: &mut Vec<u8>, field: u64, wire: u64) {
+pub(super) fn tag(out: &mut Vec<u8>, field: u64, wire: u64) {
     varint(out, (field << 3) | wire);
 }
 
-fn bytes_field(out: &mut Vec<u8>, field: u64, payload: &[u8]) {
+pub(super) fn bytes_field(out: &mut Vec<u8>, field: u64, payload: &[u8]) {
     tag(out, field, 2);
     varint(out, payload.len() as u64);
     out.extend_from_slice(payload);
@@ -95,11 +97,20 @@ pub fn request(bssids: &[String], surrounding: u32) -> Vec<u8> {
     bytes_field(&mut message, 31, &[1, 2]);
     tag(&mut message, 32, 0);
     varint(&mut message, 2);
+    meta(&mut message);
+    frame(&message)
+}
+
+/// `meta` (33): macOS's software build and product.
+pub(super) fn meta(message: &mut Vec<u8>) {
     let mut meta = Vec::new();
     bytes_field(&mut meta, 1, SOFTWARE_BUILD);
     bytes_field(&mut meta, 2, PRODUCT_ID);
-    bytes_field(&mut message, 33, &meta);
+    bytes_field(message, 33, &meta);
+}
 
+/// GrapheneOS's binary header before `message`: the request's body.
+pub(super) fn frame(message: &[u8]) -> Vec<u8> {
     let mut body = Vec::with_capacity(64 + message.len());
     body.extend_from_slice(&1u16.to_be_bytes());
     for text in [LOCALE, IDENTIFIER, VERSION] {
@@ -108,18 +119,18 @@ pub fn request(bssids: &[String], surrounding: u32) -> Vec<u8> {
     }
     body.extend_from_slice(&1u32.to_be_bytes());
     body.extend_from_slice(&(message.len() as u32).to_be_bytes());
-    body.extend_from_slice(&message);
+    body.extend_from_slice(message);
     body
 }
 
 /// A cursor over one message's bytes.
-struct Reader<'a> {
+pub(super) struct Reader<'a> {
     bytes: &'a [u8],
     at: usize,
 }
 
 /// One field's value.
-enum Value<'a> {
+pub(super) enum Value<'a> {
     Varint(u64),
     Bytes(&'a [u8]),
     /// A fixed 32- or 64-bit value, skipped.
@@ -127,8 +138,16 @@ enum Value<'a> {
 }
 
 impl<'a> Reader<'a> {
-    fn new(bytes: &'a [u8]) -> Self {
+    pub(super) fn new(bytes: &'a [u8]) -> Self {
         Reader { bytes, at: 0 }
+    }
+
+    /// An answer's message: at most [MAX_ANSWER_BYTES], past the [ANSWER_HEADER].
+    pub(super) fn answer(body: &'a [u8]) -> Result<Self, Malformed> {
+        if body.len() > MAX_ANSWER_BYTES {
+            return Err(Malformed);
+        }
+        Ok(Reader::new(body.get(ANSWER_HEADER..).ok_or(Malformed)?))
     }
 
     fn varint(&mut self) -> Result<u64, Malformed> {
@@ -156,7 +175,7 @@ impl<'a> Reader<'a> {
     }
 
     /// The next field's number and value, `None` at the end.
-    fn field(&mut self) -> Result<Option<(u64, Value<'a>)>, Malformed> {
+    pub(super) fn field(&mut self) -> Result<Option<(u64, Value<'a>)>, Malformed> {
         if self.at >= self.bytes.len() {
             return Ok(None);
         }
@@ -211,8 +230,8 @@ pub fn normal_mac(raw: &str) -> Option<String> {
     (groups == 6).then_some(out)
 }
 
-/// `ALSLocation`'s position, `None` when unknown or out of range.
-fn position(bytes: &[u8]) -> Result<Option<Position>, Malformed> {
+/// `ALSLocation`'s position, `None` when unknown or out of range (an accuracy outside 1..=`max_acc_m`).
+pub(super) fn position(bytes: &[u8], max_acc_m: i64) -> Result<Option<Position>, Malformed> {
     let mut reader = Reader::new(bytes);
     let (mut lat, mut lng, mut acc) = (None, None, 0i64);
     while let Some((number, value)) = reader.field()? {
@@ -234,7 +253,7 @@ fn position(bytes: &[u8]) -> Result<Option<Position>, Malformed> {
     let (lat, lng) = (degrees(lat), degrees(lng));
     if !(-90.0..=90.0).contains(&lat)
         || !(-180.0..=180.0).contains(&lng)
-        || !(1..=5000).contains(&acc)
+        || !(1..=max_acc_m.min(i64::from(u16::MAX))).contains(&acc)
     {
         return Ok(None);
     }
@@ -248,11 +267,7 @@ fn position(bytes: &[u8]) -> Result<Option<Position>, Malformed> {
 /// The APs of an answer's body (the header included), in Apple's order: each BSSID once, with its position or `None`
 /// (unknown). `Err` = not an answer this reads (a format failure).
 pub fn answer(body: &[u8]) -> Result<Vec<(String, Option<Position>)>, Malformed> {
-    if body.len() > MAX_ANSWER_BYTES {
-        return Err(Malformed);
-    }
-    let message = body.get(ANSWER_HEADER..).ok_or(Malformed)?;
-    let mut reader = Reader::new(message);
+    let mut reader = Reader::answer(body)?;
     let mut aps: Vec<(String, Option<Position>)> = Vec::new();
     while let Some((number, value)) = reader.field()? {
         let (2, ap) = (number, value) else {
@@ -269,7 +284,7 @@ pub fn answer(body: &[u8]) -> Result<Vec<(String, Option<Position>)>, Malformed>
         while let Some((number, value)) = fields.field()? {
             match (number, value) {
                 (1, Value::Bytes(text)) => mac = Some(text),
-                (2, Value::Bytes(bytes)) => location = Some(position(bytes)?),
+                (2, Value::Bytes(bytes)) => location = Some(position(bytes, MAX_AP_ACCURACY_M)?),
                 (1 | 2, _) => return Err(Malformed),
                 _ => {}
             }

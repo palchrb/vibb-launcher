@@ -113,6 +113,91 @@ class WifiLookupContractTest {
         }
     }
 
+    // --- Design 125b: cells ---
+
+    @Test
+    fun `the cell rules are the phone's constants`() {
+        val rules = contract["rules"]!!.jsonObject
+        assertEquals(rules["cells_max"]!!.jsonPrimitive.int, CELLS_MAX)
+        assertEquals(rules["cell_row_days"]!!.jsonPrimitive.int * 24 * 60, APPLE_CELL_ROW_MIN)
+        assertEquals(rules["cell_negative_days"]!!.jsonPrimitive.int * 24 * 60, APPLE_CELL_NEGATIVE_MIN)
+        // The server's fixed answer time (the gate's wait, Apple's deadline and a margin: code QA M2) and 3 s for the
+        // network stay within the phone's cells timeout.
+        assertTrue(rules["cell_answer_after_s"]!!.jsonPrimitive.long * 1000 + 3_000 <= APPLE_CELL_TIMEOUT_MS)
+    }
+
+    @Test
+    fun `every cell form is the server's verdict`() {
+        for (row in contract["cell_forms"]!!.jsonArray.map { it.jsonObject }) {
+            val cell = row["cell"]!!.jsonPrimitive.content
+            assertEquals(row["why"]!!.jsonPrimitive.content, row["valid"]!!.jsonPrimitive.boolean, parseCellWire(cell) != null)
+        }
+    }
+
+    @Test
+    fun `the cells request is encoded exactly`() {
+        val request = contract["request_cells"]!!
+        val cells = request.jsonObject["cells"]!!.jsonArray.map { it.jsonPrimitive.content }
+        assertEquals(request, ServerJson.encodeToJsonElement(WifiLookupCellsRequest.serializer(), WifiLookupCellsRequest(cells)))
+    }
+
+    @Test
+    fun `every cell phone answer maps to its action, and every cells answer is one the phone reads`() {
+        for (row in contract["cell_phone_answers"]!!.jsonArray.map { it.jsonObject }) {
+            val case = row["case"]!!.jsonPrimitive.content
+            val step = appleCellStep(row["status"]!!.jsonPrimitive.int, row.bodyText())
+            when (row["action"]!!.jsonPrimitive.content) {
+                "use" -> assertEquals(case, row["body"]!!.jsonObject["cells"]!!.jsonArray.size, (step as CellStep.Use).cells.size)
+                "off" -> assertEquals(case, CellStep.Off, step)
+                "wait" -> assertEquals(case, CellStep.Wait(row["wait_s"]!!.jsonPrimitive.long * 1000), step)
+                else -> error("an action the test doesn't know: $case")
+            }
+        }
+        for (row in contract["cell_answers"]!!.jsonArray.map { it.jsonObject }) {
+            val case = row["case"]!!.jsonPrimitive.content
+            val status = row["status"]!!.jsonPrimitive.int
+            val step = appleCellStep(status, row.bodyText())
+            val body = row["body"]!!.jsonObject
+            when (status) {
+                200 -> {
+                    val use = step as CellStep.Use
+                    val asked = row["request"]!!.jsonObject["cells"]!!.jsonArray.map { it.jsonPrimitive.content }
+                    // Every asked cell in one list, each an asked string; no age.
+                    assertEquals(case, asked.toSet(), (use.cells.map { it.cell } + use.unknown).toSet())
+                    assertTrue(case, body["cells"]!!.jsonArray.none { "month" in it.jsonObject || "age" in it.jsonObject })
+                }
+                409 -> assertEquals(case, CellStep.Off, step)
+                429 -> assertEquals(case, CellStep.Wait(body["retry_after_s"]?.jsonPrimitive?.long?.times(1000) ?: APPLE_WAIT_MS), step)
+                503 -> assertEquals(case, CellStep.Wait(body["retry_after_s"]!!.jsonPrimitive.long * 1000), step)
+                400 -> assertEquals(case, CellStep.Wait(APPLE_WAIT_MS), step)
+                else -> error("a status the test doesn't know: $case")
+            }
+        }
+    }
+
+    @Test
+    fun `every cell phone row is what storeAppleCells keeps, until when`() {
+        for (row in contract["cell_phone_rows"]!!.jsonArray.map { it.jsonObject }) {
+            val case = row["case"]!!.jsonPrimitive.content
+            val now = minute(row["now"]!!.jsonPrimitive.content)
+            val answer = ServerJson.decodeFromString(CellLookupAnswer.serializer(), JsonObject(mapOf("cells" to row["cells"]!!, "unknown" to row["unknown"]!!)).toString())
+            val stored = storeAppleCells(emptyList(), answer.cells, answer.unknown, keys, now)
+            val want = row["rows"]!!.jsonArray.map { it.jsonObject }
+            assertEquals(case, want.size, stored.size)
+            for (w in want) {
+                val got = stored.single { it.key == keys.cell(parseCellWire(w["cell"]!!.jsonPrimitive.content)!!.id) }
+                val until = minute(w["until"]!!.jsonPrimitive.content)
+                if (w["negative"]?.jsonPrimitive?.boolean == true) {
+                    assertEquals(case, until, got.blockedUntilMin)
+                } else {
+                    assertEquals(case, until, got.lastTeachMin)
+                    assertTrue(case, got.appleCellLive(now) && !got.appleCellLive(until))
+                    w["range_m"]?.let { assertEquals(case, it.jsonPrimitive.int.toFloat(), got.rangeM) }
+                }
+            }
+        }
+    }
+
     @Test
     fun `every phone row is what storeApple keeps, until when`() {
         for (row in contract["phone_rows"]!!.jsonArray.map { it.jsonObject }) {
