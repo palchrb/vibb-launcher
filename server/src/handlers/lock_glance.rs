@@ -250,7 +250,7 @@ pub async fn save_wake(
     }
 }
 
-/// `POST /devices/{id}/lock-alert` (design 129; design 82 W3's `/lock-buzz` before it): the select `alert` - `off`,
+/// `POST /devices/{id}/lock-alert` (design 130; design 82 W3's `/lock-buzz` before it): the select `alert` - `off`,
 /// `buzz` or `sound` (anything else, or none, a 400 with nothing written) - in the cell under the wake switch. As
 /// [`save_wake`]: back to `#lock-alert`, the phone nudged, a security-log line when the value changed; 404 for an
 /// unknown device, 500 on a DB error - each with nothing written.

@@ -5305,9 +5305,9 @@ phones enrolled with calls and SMS unmanaged, then calls set managed. Android 17
 abort, §6as), so not run. Not run: the "Unknown" switch on Telecom's page (Android keeps it in the provider's own
 settings, which only the system may read or write).
 
-## 6bh. Lyd: a notification sound on the locked phone (design 129, branch `lock-sound`) - written, not run
+## 6bi. Lyd: a notification sound on the locked phone (design 130, branch `lock-sound`) - written, not run
 
-Design 129 (`docs/design/129-lock-sound.md`): Lock Screen & PINs' "Varsling" is Av / Vibrer / Lyd
+Design 130 (`docs/design/130-lock-sound.md`): Lock Screen & PINs' "Varsling" is Av / Vibrer / Lyd
 (`launcher_ui.lock_notice_alert`). Run on the lowest and the highest image it touches (Android 14 and 16/17), with a
 server from the branch, the debug launcher, calls and SMS managed, Meldinger on the lock (Name only) and the phone
 locked and dark. The emulator has no motor and its audio is the host's: a buzz is `I/PinLock: Notice buzz`, a sound
@@ -5327,8 +5327,7 @@ notification stream.
 - **Notification volume 0** (ringer Normal, `cmd media_session volume --stream 5 --set 0`): `Notice sound` logs, nothing
   is heard - Android's own behaviour.
 - **Unlocked** (Vibb's lock off or the phone open): nothing from the launcher. **During a call:** nothing.
-- **Default notification sound "None"** (`settings put system notification_sound ''`): `Notice sound` is not logged
-  past the null ringtone, nothing plays, nothing throws.
+- **Default notification sound "None"** (`settings put system notification_sound ''`): nothing heard, nothing throws.
 - **Av and Vibrer** as before (§6ad, §6af): Vibrer buzzes on Normal and Vibrate, Av never.
 - **Not on the emulator:** whether the Jelly Star (16) plays it from the lock and how loud, a custom notification sound
   on storage (the remote-player fallback).

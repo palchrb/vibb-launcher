@@ -531,7 +531,7 @@ async fn policy_json_keys_snapshot() {
         launcher_ui["lock_wake_on_notification"],
         serde_json::json!(false)
     );
-    // Design 129 (design 82 W3's buzz before it): always sent, off for a new phone (the launcher reads a missing or
+    // Design 130 (design 82 W3's buzz before it): always sent, off for a new phone (the launcher reads a missing or
     // unknown value as off).
     assert_eq!(launcher_ui["lock_notice_alert"], serde_json::json!("off"));
     // Design 25, "Lock background": always sent, null = the lock shows Home's wallpaper.

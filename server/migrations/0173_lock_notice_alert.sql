@@ -1,4 +1,4 @@
--- Design 129 (docs/design/129-lock-sound.md): the lock screen's "Vibrer ved varsler" switch becomes one choice
+-- Design 130 (docs/design/130-lock-sound.md): the lock screen's "Vibrer ved varsler" switch becomes one choice
 -- Av / Vibrer / Lyd, sent as launcher_ui.lock_notice_alert ('off', 'buzz', 'sound'). A stored buzz on becomes 'buzz',
 -- off 'off'; the old column (0136) goes.
 ALTER TABLE device_policy ADD COLUMN lock_notice_alert TEXT NOT NULL DEFAULT 'off'

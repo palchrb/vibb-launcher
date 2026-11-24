@@ -31,7 +31,7 @@ async fn launcher_settings(app: &TestApp, token: &str) -> serde_json::Value {
     ui.as_object_mut()
         .unwrap()
         .remove("lock_wake_on_notification");
-    // Design 129: always sent; Lock Screen & PINs sets it, never this form.
+    // Design 130: always sent; Lock Screen & PINs sets it, never this form.
     assert!(ui["lock_notice_alert"].is_string());
     ui.as_object_mut().unwrap().remove("lock_notice_alert");
     // Design 75: always sent; Device › Weather sets it, never this form.

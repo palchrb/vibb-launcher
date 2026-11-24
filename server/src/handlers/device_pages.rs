@@ -1180,7 +1180,7 @@ struct LockTemplate {
     background_same_as_home: bool,
     /// "Wake the screen for a notification" (launcher round 7 §3, `/lock-wake`).
     lock_wake: bool,
-    /// Av / Vibrer / Lyd for a notification (design 129, `/lock-alert`).
+    /// Av / Vibrer / Lyd for a notification (design 130, `/lock-alert`).
     lock_alert: crate::lock_glance::NoticeAlert,
     /// The Notifications group: one switch per app and, on a ticked one, its text switch.
     lock_screen: crate::lock_glance::LockScreenCard,

@@ -1519,7 +1519,7 @@ object PinLockRuntime {
         noticeWakeOn = on
     }
 
-    /** The parent's Av / Vibrer / Lyd (`launcher_ui.lock_notice_alert`, design 129; design 82 W3's buzz switch before
+    /** The parent's Av / Vibrer / Lyd (`launcher_ui.lock_notice_alert`, design 130; design 82 W3's buzz switch before
      * it), read where the wake's switch is ([noticeWakeSwitch], [noticeWakeFromCache]). */
     @Volatile
     var noticeAlert = NoticeAlert.OFF
@@ -1528,9 +1528,21 @@ object PinLockRuntime {
     /** The last notice buzz or sound (elapsed; `null` = none in this process): one gap for both. Main thread. */
     private var noticeBuzzAt: Long? = null
 
-    /** The last notice sound, kept until the next one (a collected [android.media.Ringtone] could cut its player
-     * short) and stopped before it. Main thread. */
+    /** The notice sound's own thread (code QA M1: the ringtone's lookup and player setup read storage and the media
+     * server, never on the main thread). [noticeRingtone] and [noticeFocus] are touched on it alone. */
+    private val noticeSoundHandler: Handler by lazy {
+        Handler(android.os.HandlerThread("notice-sound").apply { start() }.looper)
+    }
+
+    /** The token of the pending release ([noticeSoundRelease]) on [noticeSoundHandler]. */
+    private val noticeSoundReleaseToken = Any()
+
+    /** The playing notice sound, kept until it is released (a collected [android.media.Ringtone] could cut its
+     * player short). The notice-sound thread alone. */
     private var noticeRingtone: android.media.Ringtone? = null
+
+    /** The transient focus held while the notice sound plays (code QA L2). The notice-sound thread alone. */
+    private var noticeFocus: android.media.AudioFocusRequest? = null
 
     private fun setNoticeAlert(alert: NoticeAlert) {
         if (alert != noticeAlert) Log.i(LOG_TAG, "Notice alert: ${alert.name.lowercase()}")
@@ -1538,7 +1550,7 @@ object PinLockRuntime {
     }
 
     /**
-     * Design 82 W3 and design 129: one short buzz, or Android's notification sound once, for a notice that came - when
+     * Design 82 W3 and design 130: one short buzz, or Android's notification sound once, for a notice that came - when
      * [noticeBuzzAllowed] says so; [noticeAlertAction] picks which by the ringer. Apart from the wake: neither its
      * switch, the lit screen nor the proximity read is asked (a pocket is where a buzz matters, and there the screen
      * never lights). `USAGE_NOTIFICATION` for both, so Android's own vibration settings, the notification volume and
@@ -1583,21 +1595,57 @@ object PinLockRuntime {
     }
 
     /**
-     * Design 129: Android's default notification sound once (`Settings.System.DEFAULT_NOTIFICATION_URI`), with
-     * `USAGE_NOTIFICATION` attributes set before `play()`. A default of "None" gives no ringtone: nothing plays. The one
-     * before is stopped first. Called by [noticeBuzz] alone, inside its try. Main thread.
+     * Design 130: Android's default notification sound once (`Settings.System.DEFAULT_NOTIFICATION_URI`), with
+     * `USAGE_NOTIFICATION` attributes set before `play()` and a transient focus that lets music duck (code QA L2). A
+     * default of "None" gives no ringtone: nothing plays. The one before is released first, and each is released
+     * [NOTICE_SOUND_RELEASE_MS] after it started (code QA L1: a notification sound is shorter). The work runs on
+     * [noticeSoundHandler] (code QA M1); [noticeBuzz] has stamped the gap on the main thread already. Never throws.
      */
     private fun noticeSound(app: Context) {
-        noticeRingtone?.stop()
+        noticeSoundHandler.post {
+            try {
+                noticeSoundRelease(app)
+                val ringtone = android.media.RingtoneManager.getRingtone(app, android.provider.Settings.System.DEFAULT_NOTIFICATION_URI)
+                    ?: return@post
+                val attributes = android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build()
+                ringtone.audioAttributes = attributes
+                val focus = android.media.AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                    .setAudioAttributes(attributes)
+                    .build()
+                app.getSystemService(AudioManager::class.java)?.requestAudioFocus(focus)
+                noticeFocus = focus
+                noticeRingtone = ringtone
+                ringtone.play()
+                Log.i(LOG_TAG, "Notice sound")
+                noticeSoundHandler.postDelayed({ noticeSoundRelease(app) }, noticeSoundReleaseToken, NOTICE_SOUND_RELEASE_MS)
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "Notice sound failed", e)
+                noticeSoundRelease(app)
+            }
+        }
+    }
+
+    /** Stops the notice sound (which frees its player) and gives its focus back. The notice-sound thread alone;
+     * never throws. */
+    private fun noticeSoundRelease(app: Context) {
+        noticeSoundHandler.removeCallbacksAndMessages(noticeSoundReleaseToken)
+        try {
+            noticeRingtone?.stop()
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Notice sound stop failed", e)
+        }
         noticeRingtone = null
-        val ringtone = android.media.RingtoneManager.getRingtone(app, android.provider.Settings.System.DEFAULT_NOTIFICATION_URI) ?: return
-        ringtone.audioAttributes = android.media.AudioAttributes.Builder()
-            .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION)
-            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
-            .build()
-        noticeRingtone = ringtone
-        ringtone.play()
-        Log.i(LOG_TAG, "Notice sound")
+        noticeFocus?.let { focus ->
+            try {
+                app.getSystemService(AudioManager::class.java)?.abandonAudioFocusRequest(focus)
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "Notice sound focus failed", e)
+            }
+        }
+        noticeFocus = null
     }
 
     /**

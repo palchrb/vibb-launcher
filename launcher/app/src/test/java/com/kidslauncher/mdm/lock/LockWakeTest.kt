@@ -216,7 +216,7 @@ class LockWakeTest {
         assertFalse(runtime.substringAfter("fun noticeCame() {").substringBefore("\n    }\n").contains("noticeUpdated"))
     }
 
-    /** Design 129: Av / Vibrer / Lyd - the policy's word read (missing or unknown is off), and what follows the ringer:
+    /** Design 130: Av / Vibrer / Lyd - the policy's word read (missing or unknown is off), and what follows the ringer:
      * Lyd plays the sound on Normal and buzzes on Vibrate, Silent or an unreadable ringer is nothing. By source: the
      * sound comes from [noticeBuzz] alone, after the same gate and the one stamp, with notification attributes set
      * before `play()`. */
@@ -247,7 +247,17 @@ class LockWakeTest {
         assertTrue(sound, sound.contains("Settings.System.DEFAULT_NOTIFICATION_URI"))
         assertTrue(sound, sound.contains("USAGE_NOTIFICATION"))
         assertTrue(sound, sound.indexOf("ringtone.audioAttributes = ") in 0 until sound.indexOf("ringtone.play()"))
-        assertTrue(sound, sound.indexOf("noticeRingtone?.stop()") in 0 until sound.indexOf("ringtone.play()"))
+        // Code QA M1, L1, L2: off the main thread, the one before released first, a ducking focus asked before play
+        // and the release posted after it.
+        assertTrue(sound, sound.trimStart().startsWith("app: Context) {\n        noticeSoundHandler.post {"))
+        assertTrue(sound, sound.indexOf("noticeSoundRelease(app)") in 0 until sound.indexOf("ringtone.play()"))
+        assertTrue(sound, sound.indexOf("AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK") in 0 until sound.indexOf("ringtone.play()"))
+        assertTrue(sound, sound.indexOf("requestAudioFocus(focus)") in 0 until sound.indexOf("ringtone.play()"))
+        assertTrue(sound, sound.indexOf("ringtone.play()") < sound.indexOf("NOTICE_SOUND_RELEASE_MS"))
+        val release = runtime.substringAfter("private fun noticeSoundRelease(").substringBefore("\n    }\n")
+        assertTrue(release, release.contains("noticeRingtone?.stop()"))
+        assertTrue(release, release.contains("abandonAudioFocusRequest(focus)"))
+        assertEquals(5_000L, NOTICE_SOUND_RELEASE_MS)
     }
 
     private val main = listOf(File("src/main"), File("app/src/main")).first { it.exists() }

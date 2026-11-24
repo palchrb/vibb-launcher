@@ -1302,7 +1302,7 @@ async fn the_wake_switch_saves_logs_nudges_and_reaches_the_policy() {
     assert_eq!(events(&app, "lock_wake_changed").await.len(), 3);
 }
 
-/// Design 129 (design 82 W3's buzz switch before it): Av / Vibrer / Lyd - the cell under the wake switch, Off for a
+/// Design 130 (design 82 W3's buzz switch before it): Av / Vibrer / Lyd - the cell under the wake switch, Off for a
 /// new phone, no sub-line; a save lands on `#lock-alert`, nudges the phone, logs a line only for a change, reaches
 /// the policy's `launcher_ui.lock_notice_alert` and leaves the wake switch alone; a value outside the three is a 400
 /// and an unknown phone a 404, each with nothing written.
@@ -1400,7 +1400,7 @@ async fn the_alert_choice_saves_logs_nudges_and_reaches_the_policy() {
     assert_eq!(events(&app, "lock_alert_changed").await.len(), 4);
 }
 
-/// Design 129's migration (0173): a stored buzz switch on becomes `buzz`, off `off`, and the old column is gone.
+/// Design 130's migration (0173): a stored buzz switch on becomes `buzz`, off `off`, and the old column is gone.
 #[tokio::test]
 async fn the_buzz_switch_becomes_the_alert_choice() {
     let dir = tempfile::tempdir().unwrap();

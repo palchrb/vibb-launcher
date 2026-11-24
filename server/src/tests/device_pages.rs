@@ -728,7 +728,7 @@ async fn lock_forms_return_to_the_page() {
             &[("on", "on")],
             (lock.clone(), Some("lock-wake")),
         ),
-        // Design 129: Av / Vibrer / Lyd, back to its cell.
+        // Design 130: Av / Vibrer / Lyd, back to its cell.
         (
             "lock-alert#lock-alert",
             &[("alert", "sound")],

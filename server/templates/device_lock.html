@@ -224,7 +224,7 @@
                 </label>
                 <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
             </form>
-            {#- Design 129: Av / Vibrer / Lyd, one select saving on change and answering on its own row (#lock-alert). -#}
+            {#- Design 130: Av / Vibrer / Lyd, one select saving on change and answering on its own row (#lock-alert). -#}
             <form method="post" action="/devices/{{ device.id }}/lock-alert#lock-alert" class="cell" id="lock-alert">
                 <label class="row">
                     <span class="row-label">{{ self.t("device.lock.alert") }}</span>

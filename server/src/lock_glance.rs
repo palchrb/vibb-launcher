@@ -226,7 +226,7 @@ pub fn wake_log_line(device_id: i64, on: bool) -> crate::security::Detail {
     )
 }
 
-/// The same for the alert choice (design 129): "phone 3: alert: sound". Older rows keep design 82 W3's
+/// The same for the alert choice (design 130): "phone 3: alert: sound". Older rows keep design 82 W3's
 /// `security.detail.lock_buzz.*` words.
 pub fn alert_log_line(device_id: i64, alert: NoticeAlert) -> crate::security::Detail {
     switch_line(
@@ -240,7 +240,7 @@ pub fn alert_log_line(device_id: i64, alert: NoticeAlert) -> crate::security::De
     )
 }
 
-/// What the locked phone does for a notice (design 129, `docs/design/129-lock-sound.md`; design 82 W3's buzz switch
+/// What the locked phone does for a notice (design 130, `docs/design/130-lock-sound.md`; design 82 W3's buzz switch
 /// before it): `device_policy.lock_notice_alert` (0173), sent as `launcher_ui.lock_notice_alert`, the Lock Screen
 /// page's Av / Vibrer / Lyd. Off by default.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]

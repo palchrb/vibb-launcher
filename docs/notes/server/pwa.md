@@ -286,7 +286,7 @@ family's one backup row (`backups::backup_state`, `#backup-warning`, to `/backup
   (`lock_glance::wake_log_line`); sent as `launcher_ui.lock_wake_on_notification`. The group's footer says that what
   the lock shows is seen by anyone near the phone (its ⓘ went in the ⓘ cut, 2026-10-24). Tests: `lock_glance::the_wake_switch_saves_logs_nudges_and_reaches_the_policy`,
   the redirect table in `device_pages`, `policy_json_keys_snapshot`.
-- **Varsling: Av / Vibrer / Lyd** (design 129, `docs/design/129-lock-sound.md`; design 82 W3's "Buzz for a
+- **Varsling: Av / Vibrer / Lyd** (design 130, `docs/design/130-lock-sound.md`; design 82 W3's "Buzz for a
   notification" switch before it, §9 and §14): the cell `#lock-alert` right under the wake's - a select "Varsling" /
   "Alert" with Av / Vibrer / Lyd (Off / Buzz / Sound; `lock_glance::NoticeAlert`, no sub-line, `data-autosave`,
   `<noscript>` Save) posting `POST /devices/{id}/lock-alert` field `alert` (`lock_glance::save_alert`:

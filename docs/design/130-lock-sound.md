@@ -1,4 +1,4 @@
-# Design 129: A sound for a notification on the locked phone (Av / Vibrer / Lyd)
+# Design 130: A sound for a notification on the locked phone (Av / Vibrer / Lyd)
 
 Status: built, 2026-11-24 (branch `lock-sound`). Server and launcher. PLAN's queue item (4h), approved 2026-11-23
 ("Ja"): the user asked for an ordinary message sound for chat and SMS on the locked phone, beside the Lock Screen
@@ -81,12 +81,20 @@ Checked against the SDK's `api-versions.xml` (API 37) and the platform's behavio
   already refuses any filter but "all", so it never comes to that.
 - On 14+ the ring and notification volumes may be split; a notification volume of 0 under a Normal ringer plays
   nothing - Android's own behaviour, kept.
-- The `Ringtone` is kept in a field until the next one (a collected `Ringtone` could cut its player short) and
-  stopped before a new one plays. Main thread, as the buzz; `getRingtone` is one settings read.
+- The sound is set up and played on its own thread (`notice-sound`, a `HandlerThread`): `getRingtone` reads settings and
+  storage and the player talks to the media server, never on the main thread. The gap is stamped on the main thread
+  before it is posted. It asks a transient focus that lets music duck (`AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK`) and
+  gives it back when the sound is released: 5 s after it started (`NOTICE_SOUND_RELEASE_MS`; a notification sound is
+  shorter), or when the next one starts. `Ringtone.stop()` frees its player. `AudioFocusRequest` is API 26: no gate.
 - Not checked on a device: whether the Jelly Star (16) plays it from the lock as on the emulator; the emulator row
-  (`docs/testing/emulator.md` §6bh) is written but not run.
+  (`docs/testing/emulator.md` §6bi) is written but not run.
 
-## 6. Tests
+## 6. Release note
+
+Ship the server first, as always: a phone on the old launcher reads the policy's old buzz key, which the new server no
+longer sends, so the lock screen's buzz stops until that phone's launcher updates.
+
+## 7. Tests
 
 Server: `lock_glance::the_alert_choice_saves_logs_nudges_and_reaches_the_policy` (the cell, the three values, a
 bad value's 400, the log, the 404), `policy_json_keys_snapshot`, `launcher_ui`'s key test, the Lock Screen page's

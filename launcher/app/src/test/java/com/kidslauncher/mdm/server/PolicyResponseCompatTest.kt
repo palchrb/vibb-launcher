@@ -567,7 +567,7 @@ class PolicyResponseCompatTest {
         assertTrue("clock_format_applied" !in follow)
     }
 
-    /** Design 129's `launcher_ui.lock_notice_alert` (the server's `policy_json_keys_snapshot` pins it, always sent):
+    /** Design 130's `launcher_ui.lock_notice_alert` (the server's `policy_json_keys_snapshot` pins it, always sent):
      * `off`, `buzz`, `sound`; missing, `null` and an unknown word read as off, and the policy still decodes, through the cache round trip. The old `lock_buzz_on_notification` is no key of ours any more. */
     @Test
     fun `launcher_ui's lock_notice_alert decodes, anything else is off`() {
