@@ -103,6 +103,18 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
     coming up just after a screen-on is logged as its "alarm" yield alone),
     and a queued start sent at once drops its queued copy (`KeyguardCover.dropWaiting`; R4: one time-rule screen).
     R3 is a label only.
+  - *(4i) The charging glimpse* (the owner's Jelly, Android 16, 2026-11-24; branch `glance-back`): a USB plug-in woke
+    the screen, something tried to start an activity under lock task and Android's own `BlockedAppActivity` took the
+    front in a task of its own, slept at once and un-occluded the keyguard - the glance was paused and stopped ~0.4 s
+    after the screen-on, read as a probable SOS, and after the "sos" yield the face's rule stopped (no fresh loss):
+    Android's lock screen with Unihertz's `ChargingDialog` (`com.agui.settings`) over it until the screen cycled. Now a
+    screen-on within 2 s of `ACTION_POWER_CONNECTED` (`POWER_WAKE_MS`, either order) is never the SOS gesture's
+    (`sosScreenOn`, at the pause's mark, its delay and the stop's mark), and 1 s after the connect (`POWER_RECHECK_MS`,
+    `PinLockRuntime.powerReceiver`, registered at runtime) `powerRecheck` looks once: LOCKED, the glance not in front
+    and lost no earlier than the connect's window -> a plug-in's SOS mark ends and the re-front check runs now as a
+    fresh loss (log `AndroidLock: power connected`). The same rule decides the rest, so the kid's own PIN pad (ours),
+    Android open (the leave), the exempt screens (calls, emergency, alarm, VoIP, a real SOS mark not from the plug-in)
+    and the cap of two re-fronts per screen-on all hold; a loss from before the plug-in is left as it was. `PowerGlanceTest`.
   - *R2, decided* (the user, 2026-11-02; branch `android-r2`): as the face with Android's secure keyguard locked
     (`AndroidLock.refrontHeld`) **and the kiosk off** (`LockTaskChrome.kioskOn` false) the glance takes **no lock task**
     (`lockTaskEntry(.., androidLocked)` -> NONE, beside the VoIP row; log `AndroidLock: lock task: none of the glance's

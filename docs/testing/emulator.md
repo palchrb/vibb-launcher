@@ -5588,3 +5588,23 @@ accuracy off (`settings get secure location_mode`, the `network` provider off), 
 
 Not on the emulator (§9): neighbours, NR, a second SIM, a move between cells, Apple's answer and its accuracy, a zone
 20 km away, a `vibb_apple_cell` fix - the Jelly Star with a SIM (`docs/testing/new-phone-model.md` §2).
+
+## 6bl. The glance back after a plug-in (PLAN (4i), branch `glance-back`) - written, not run
+
+The charging glimpse (`docs/notes/launcher/lock-and-glance.md`, "(4i) The charging glimpse"): on **Android 14 and 16**,
+with the user's OK. The debug launcher as Device Owner, the kiosk on, Android's PIN set (the glance is Android's face),
+Settings not on the allowlist. Logs: `adb logcat -s AndroidLock PinLock ActivityTaskManager`. A plug-in is
+`adb shell dumpsys battery unplug` then `adb shell dumpsys battery set usb 1` (it wakes the screen); `dumpsys battery
+reset` at the end. The blocked start is `adb shell am start -n com.android.settings/.Settings` (Android starts
+`BlockedAppActivity` in a task of its own). The emulator may have no SOS app (`PinLockRuntime.sosPackage` null), so row 2
+shows the plug-in's look and row 6 the SOS rule only where one is installed.
+
+| # | Step | Expect |
+|---|---|---|
+| 1 | Locked, screen off, a plug-in | the screen wakes, the glance is up and stays; no `AndroidLock: power connected` (nothing lost) |
+| 2 | Locked, screen off: a plug-in and the blocked start in one line (`... set usb 1; am start -n ...`) | `BlockedAppActivity` in `ActivityTaskManager`, the glance paused and stopped; within ~1 s `AndroidLock: power connected` and `re-front #1`, the glance in front again with the keyguard occluded (`dumpsys window | grep -i occluded`); no `probably Emergency SOS` line |
+| 3 | Locked, screen on: swipe or tap the glance up to Android's PIN pad, then a plug-in | the pad stays (the ask is ours): no re-front; the right PIN unlocks as before |
+| 4 | Locked: an incoming call (`adb emu gsm call 5551234`), then a plug-in | the call screen stays (`Lock yields to an exempt screen`); the glance back after the hang-up as before |
+| 5 | Locked, one screen-on: the row 2 line three times | at most two re-fronts (`re-front #1`, `#2`), then Android's lock screen until a screen cycle - no loop |
+| 6 | With an SOS app: no plug-in, the power button, then the blocked start within 3 s | unchanged: the "sos" yield (`probably Emergency SOS`) |
+| 7 | Unplugged (`dumpsys battery unplug`), the same blocked start with the screen on well after its screen-on | unchanged: the face's re-front (`re-front #1`) |
