@@ -251,8 +251,10 @@ any APK: the music app's page loads it from Spotify at run time, under Spotify's
 Spotify on a Sonos room (design 54) reimplements in Kotlin, under the GPL-3.0 (or later), parts of
 [SoCo](https://github.com/SoCo/SoCo) (the Python Sonos library vibb's Sonos sidecar uses): the ShareLink plugin's share
 types and its `AddURIToQueue` request and metadata template (`soco/plugins/sharelink.py`), and `play_from_queue`,
-`clear_queue`, `queue_size`, `get_queue` and `set_sleep_timer` (`soco/core.py`) - in
+`clear_queue`, `queue_size`, `get_queue`, `play_mode`, `set_sleep_timer` and `get_sleep_timer` (`soco/core.py`) - in
 `music/app/src/main/java/me/vibb/music/sonos/ShareLink.kt`, `Soap.kt` and `SonosTransport.kt`, each header naming it.
+The grouping in "Spill av på" (design 53, `GroupVerbs.kt`) uses SoCo's `join` and `unjoin` requests, and the SOAP
+actions the music app sends (`Soap.kt`) are the ones vibb reaches through SoCo, with SoCo's envelope.
 SoCo is licensed under the MIT License, Copyright (c) Rahim Sonawalla and individual contributors; its notice is in
 [`music/app/src/main/assets/licenses/MIT-SoCo.txt`](music/app/src/main/assets/licenses/MIT-SoCo.txt), shipped in the
 app. vibb's `spotify_sharelink` (`pi/sonosd.py`) behind it is covered by vibb's notice above.
