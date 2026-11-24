@@ -5388,3 +5388,48 @@ notification stream.
 - **Av and Vibrer** as before (§6ad, §6af): Vibrer buzzes on Normal and Vibrate, Av never.
 - **Not on the emulator:** whether the Jelly Star (16) plays it from the lock and how loud, a custom notification sound
   on storage (the remote-player fallback).
+
+## 6bj. The hardware-bound phone key, L1 (design 129, branch `hw-key-l1`) - written, not run
+
+Design 129 §8's gate, the launcher's half (`docs/notes/launcher/security.md`, "The hardware-bound phone key, L1").
+**Android 14 and 16 only** (never 17: its image is broken; the code still targets 14-17). A server from main (S1) built
+with the Cargo feature `emulator_keys` once §7.3 has read the gate images' chains - until then a release-feature server
+refuses the emulator's chain (`software` or `root`), which is itself a row below. The debug launcher (`.debug`, its
+digest in `LAUNCHER_DEBUG_SIGNATURE_CHECKSUM` for `emulator_keys`), enrolled as usual. Logs: `adb logcat -s
+KeyRegistration DeviceKey ServerAuth Enrollment`; the server's side is About This Phone › Connection's "Innlogging" row
+and the security log. The owner's OK for the emulator first, as always.
+
+- **Step 0 of §7.3 (read only):** on each image, enrol once and read the chain the server logs for the key
+  (`device_key_refused` with the reason, or `device_key_bound`): its root and levels go into
+  `server/testdata/attestation/roots/` for `emulator_keys`, and §7.3 is corrected.
+- **A fresh enrolment with a key:** "Innlogging" reads "Maskinvarenøkkel" (or, on a release-feature server, "Nøkkel
+  avvist (...)" - the phone enrols on its bearer either way); `I/KeyRegistration` nothing more to do; the next policy
+  GET goes without `If-None-Match` once and the next report is full (the owner moved to `key:<id>`).
+- **A phone enrolled before L1 (migration):** install the L1 build over the older one; the first sync's policy has
+  `device_key.state: none`, the flow registers (`GET /key/challenge`, `POST /key`), adopts, and every later request
+  carries `Vibb-Signature` beside the bearer (the server's `last_signed_at` moves; "Innlogging" "Maskinvarenøkkel").
+- **Every refusal leaves the bearer:** with the server's `LAUNCHER_SIGNATURE_CHECKSUM` unset (`app`): the key is
+  deleted, `lastRefusal` `app`, the phone syncs on as before, no second registration for a day (a process restart may
+  try once). `list_stale` (an old `data/attestation/status.json`, the fetch blocked): the phone waits `retry_after_s`.
+- **A restart's `stale`:** restart the server: a request signed with the old offset is `stale` against the new floor,
+  logged by the server and answered 200 on the bearer (S1); the answer's `Vibb-Time` moves the phone's offset and the
+  next request verifies. With
+  `adb shell settings put global auto_time 0` and the phone's clock a day off, signatures still verify (the offset is
+  the server's, from `Vibb-Time`).
+- **A lost answer:** a proxy (or `tc`) that holds `POST /api/devices/key`'s answer past the phone's 10 s read timeout:
+  the flow's step 1 finds the key and adopts it; no second key is made in that run; the key book (`run-as
+  me.vibb.launcher.debug cat shared_prefs/device_key.xml`) shows any extra key deleted at adoption.
+- **Parallel workers during registration:** "Sync now" three times and a music sync while the registration runs: one
+  run (`KeyRegistration` logs once), no second key.
+- **The SSE closed at binding:** S1 never binds; the row is S2's - here only: the stream's connect carries
+  `Vibb-Signature` once a key is adopted (server log), and reconnects work.
+- **The key before the first unlock:** reboot, don't unlock: the phone is silent until the first unlock, as today (the
+  token and the key book are CE prefs); after the unlock the first request is signed (the Keystore key itself needs no
+  unlock).
+- **Generation in the SINK shape with an empty pool:** Mobilnett "Ingen data" abroad (`docs/testing/emulator.md`
+  §6al's roaming image) so the VPN is the sink with lockdown; `adb shell dumpsys connectivity` shows the always-on
+  lockdown allow list with `com.android.rkpdapp` (when the image has it) and the VPN's disallowed apps include it;
+  with the pool emptied (`adb shell cmd remote_provisioning` where the image has it) the key generation logs
+  `No key made: keys_unavailable` and the next run after the backoff succeeds once rkpd refilled the pool.
+- **Android 14 vs 16:** StrongBox absent on both images (TEE); `attestationVersion` as each image reports it (100/200
+  on 14, 300+ on 16) - noted for §10.

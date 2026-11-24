@@ -145,8 +145,9 @@ def build():
     return {
         "comment": "Design 129 S1's shared contract (s7.1). The crypto rows are scripts/device-key-vectors.py's (a "
                    "throwaway key from a fake phrase - public data only); the route rows are produced by the "
-                   "server's tests::device_key through the real routes. The launcher's copy and its "
-                   "DeviceKeyContractTest come with L1; S1 keeps the file server-side.",
+                   "server's tests::device_key through the real routes. Byte-identical in the launcher's "
+                   "test resources (L1): its DeviceKeyContractTest builds the canonical and proof rows, computes "
+                   "the clock, maps the answers and runs the phone rows (the registration flow's decision).",
         "headers": {"signature": "Vibb-Signature", "body_sha256": "Vibb-Body-SHA256", "time": "Vibb-Time",
                     "auth": "Vibb-Auth"},
         "encodings": {"key_id": "16 bytes, Base64url without padding", "nonce": "16 bytes, Base64url without padding",
@@ -246,7 +247,90 @@ def build():
             "none": {"state": "none", "rotate": False},
             "observed": {"state": "observed", "key_id": "<key id>", "spki_sha256": "<hex>", "rotate": False},
         },
+        "phone": phone_rows(),
+        "phone_nudge": nudge_rows(),
     }
+
+
+def step1(status=200, state=None, spki=None, rotate=False, vibb_auth=None):
+    answer = None
+    if status == 200:
+        answer = {"state": state, "rotate": rotate}
+        if spki is not None:
+            answer.update(key_id="key-" + spki, spki_sha256=spki)
+    return {"status": status, "vibb_auth": vibb_auth, "answer": answer}
+
+
+def phone(name, step, action, local=(), adopted=None, has_token=True, last_call=None, in_flight=False,
+          conflict_reported=None, backoff=False, key=None, drop_token=False):
+    """One row of the registration flow's table (s5.2; the launcher's `keyStep`). Keys are named by letters standing
+    for their SPKI hashes; `last_call` is the last POST's fate, which never decides (step 1 does)."""
+    return {"name": name, "has_token": has_token, "local": list(local), "adopted": adopted, "last_call": last_call,
+            "in_flight": in_flight, "conflict_reported": conflict_reported, "backoff": backoff, "step1": step,
+            "action": action, "key": key, "drop_token": drop_token}
+
+
+def phone_rows():
+    return [
+        phone("a phone on its bearer, no key anywhere", step1(state="none"), "register"),
+        phone("a lost answer committed late: step 1 names the key", step1(state="observed", spki="A"), "adopt",
+              local=["A"], last_call="timeout", key="A"),
+        phone("a lost answer never committed: another key, this one kept", step1(state="none"), "register",
+              local=["A"], last_call="timeout"),
+        phone("two keys made, the server names the second", step1(state="observed", spki="B"), "adopt",
+              local=["A", "B"], last_call="timeout", key="B"),
+        phone("the server names a key the phone doesn't hold", step1(state="observed", spki="X"), "report_conflict",
+              local=["A"], last_call="exists"),
+        phone("a conflict already reported: keep waiting", step1(state="observed", spki="X"), "wait", local=["A"],
+              conflict_reported="X"),
+        phone("adopted and named: nothing to do", step1(state="observed", spki="A"), "keep", local=["A"],
+              adopted="A"),
+        phone("an unknown_key wake while a POST is in flight", step1(state="observed", spki="A"), "wait",
+              local=["A", "B"], adopted="A", in_flight=True),
+        phone("step 1 had no answer", step1(status=0), "wait", local=["A"], last_call="timeout"),
+        phone("step 1 answered 5xx", step1(status=503), "wait", local=["A"]),
+        phone("a restore after S2: no bearer, the key unknown", step1(status=401, vibb_auth="unknown_key"),
+              "re_enrol", local=["A"], adopted="A", has_token=False),
+        phone("unknown_key while the bearer still goes along", step1(status=401, vibb_auth="unknown_key"), "wait",
+              local=["A"], adopted="A"),
+        phone("held: adopted, the bearer kept", step1(state="held", spki="A"), "adopt", local=["A"], key="A"),
+        phone("bound: the bearer goes", step1(state="bound", spki="A"), "adopt", local=["A"], adopted="A", key="A",
+              drop_token=True),
+        phone("bound and the bearer gone already", step1(state="bound", spki="A"), "keep", local=["A"], adopted="A",
+              has_token=False),
+        phone("a rotation asked", step1(state="observed", spki="A", rotate=True), "register", local=["A"],
+              adopted="A"),
+        phone("a rotation's lost answer: the old key still named", step1(state="observed", spki="A", rotate=True),
+              "register", local=["A", "B"], adopted="A", last_call="timeout"),
+        phone("a rotation's commit: the new key named", step1(state="observed", spki="B"), "adopt",
+              local=["A", "B"], adopted="A", key="B"),
+        phone("a refusal still waiting out its time", step1(state="none"), "wait", backoff=True,
+              last_call="refused"),
+        phone("the server forgot the key (S1, the bearer along)", step1(state="none"), "register", local=["A"],
+              adopted="A"),
+    ]
+
+
+def nudge(name, policy, ask, adopted_key_id=None, has_token=True, lost=False, backoff=False):
+    """Whether a policy's `device_key` asks for step 1 (s5.5: only a nudge; the launcher's `keyNudge`)."""
+    return {"name": name, "policy": policy, "adopted_key_id": adopted_key_id, "has_token": has_token, "lost": lost,
+            "backoff": backoff, "ask": ask}
+
+
+def nudge_rows():
+    observed = {"state": "observed", "key_id": "K1", "spki_sha256": "A", "rotate": False}
+    return [
+        nudge("none, nothing adopted", {"state": "none", "rotate": False}, True),
+        nudge("none while a refusal waits", {"state": "none", "rotate": False}, False, backoff=True),
+        nudge("the adopted key named", observed, False, adopted_key_id="K1"),
+        nudge("a key named, none adopted", observed, True),
+        nudge("another key named", observed, True, adopted_key_id="K0"),
+        nudge("a rotation asked", dict(observed, rotate=True), True, adopted_key_id="K1"),
+        nudge("bound while the bearer is kept", dict(observed, state="bound"), True, adopted_key_id="K1"),
+        nudge("bound, the bearer gone", dict(observed, state="bound"), False, adopted_key_id="K1", has_token=False),
+        nudge("an older server: no device_key", None, False),
+        nudge("a lost key asks nothing", {"state": "none", "rotate": False}, False, adopted_key_id="K1", lost=True),
+    ]
 
 
 def render():

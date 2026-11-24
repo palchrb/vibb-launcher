@@ -161,13 +161,16 @@ object MobileNetworkRuntime {
             val pkg = if (wanted.ownPackage) context.packageName else null
             val current = dpm.getAlwaysOnVpnPackage(admin)
             val currentLockdown = current != null && dpm.isAlwaysOnVpnLockdownEnabled(admin)
-            if (current == pkg && currentLockdown == wanted.lockdown) return
+            // Design 129 Q9: rkpd outside the sink reaches the network only through lockdown's allow list.
+            val allow = lockdownAllowList(wanted.lockdown, rkpdInstalled(context))
+            val currentAllow = if (currentLockdown) dpm.getAlwaysOnVpnLockdownWhitelist(admin).orEmpty().toSet() else emptySet()
+            if (current == pkg && currentLockdown == wanted.lockdown && currentAllow == allow) return
             if (keepLockdown && currentLockdown && !wanted.lockdown) {
                 Log.i(LOG_TAG, "Always-on: lockdown stays on until the tunnel's switch (${shape.wire})")
                 return
             }
             changed = true
-            dpm.setAlwaysOnVpnPackage(admin, pkg, wanted.lockdown, emptySet())
+            dpm.setAlwaysOnVpnPackage(admin, pkg, wanted.lockdown, allow)
             Log.i(LOG_TAG, "Always-on: ${pkg ?: "none"}, lockdown ${wanted.lockdown} (${shape.wire})")
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Couldn't set always-on for ${shape.wire}: ${e.javaClass.simpleName}")

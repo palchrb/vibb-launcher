@@ -293,7 +293,7 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
             mdm.serverUrl(value)
             row.summary = serverUrlSummary(value)
             // The stream retries a closed path every 30 s; a sync now uses the new address at once.
-            if (value.isNotEmpty() && com.kidslauncher.mdm.server.DeviceToken.present()) {
+            if (value.isNotEmpty() && com.kidslauncher.mdm.server.DeviceCredentials.stored(requireContext())) {
                 com.kidslauncher.mdm.push.SyncRunner.request(requireContext().applicationContext, "server_url")
             }
         }
@@ -702,7 +702,7 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
     private fun syncNowWithServer(context: Context) {
         val mdm = LauncherPreferences.mdm()
         // Presence only: no Keystore call on the main thread (design r10, code QA Q-6); the sync reads the token itself.
-        if (mdm.serverUrl().isNullOrBlank() || !com.kidslauncher.mdm.server.DeviceToken.present()) {
+        if (mdm.serverUrl().isNullOrBlank() || !com.kidslauncher.mdm.server.DeviceCredentials.stored(context)) {
             Toast.makeText(context, R.string.toast_mdm_enroll_missing_fields, Toast.LENGTH_LONG)
                 .show()
             return

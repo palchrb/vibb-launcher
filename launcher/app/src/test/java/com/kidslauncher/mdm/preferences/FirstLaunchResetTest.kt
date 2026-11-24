@@ -30,7 +30,7 @@ class FirstLaunchResetTest {
     fun `initRest asks the rule with what both enrolment paths write`() {
         val app = src("Application.kt")
         val initRest = app.substringAfter("private fun initRest()").substringBefore("\n    private fun ").substringBefore("\n    fun ")
-        val call = "firstLaunchResetDue(startedBefore, mdm.enrolled(), com.kidslauncher.mdm.server.DeviceToken.present())"
+        val call = "firstLaunchResetDue(startedBefore, mdm.enrolled(), com.kidslauncher.mdm.server.DeviceCredentials.stored(this))"
         assertTrue(call in initRest)
         assertTrue("val startedBefore = LauncherPreferences.internal().started()" in initRest)
         // The reset is called once, only under the rule and nothing else (code QA Q-3: an extra `|| !startedBefore`

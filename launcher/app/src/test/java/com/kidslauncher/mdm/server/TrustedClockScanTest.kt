@@ -18,6 +18,9 @@ class TrustedClockScanTest {
     private val serverFiles = listOf(
         "ParentPin.kt", "ParentPinLockout.kt", "TrustedClock.kt", "TrustedClockPlan.kt", "LocateCommands.kt",
         "MdmSyncWorker.kt", "UpdateFence.kt", "WindowRelock.kt", "PowerEvents.kt",
+        // Design 129 §4.3: the signer's time is the server's signature clock (elapsed realtime + the answers' offset),
+        // else TrustedClock's - never a wall-clock read; the key book's challenge times are TrustedClock's too.
+        "DeviceCredential.kt", "ServerAuth.kt", "KeyRegistration.kt", "Enrollment.kt",
     )
 
     /** The wall-clock reads that stay: per file, each line's text (trimmed). */

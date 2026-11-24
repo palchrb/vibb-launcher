@@ -304,9 +304,10 @@ class ServerTransportTest {
             "android.webkit", Regex("android\\.webkit"),
             mapOf("portal/" to null, "server/AppEnforcer.kt" to "android.webkit.WebView.getCurrentWebViewPackage()"),
         ),
+        // Design 129 §2.1: the credential (the bearer, or the hardware key's signature) only on the server clients.
         Triple(
-            "bearerInterceptor(", Regex("(?<!fun )bearerInterceptor\\("),
-            mapOf("server/MdmApi.kt" to null, "music/MusicServer.kt" to null),
+            "credentialInterceptor(", Regex("(?<!fun OkHttpClient\\.Builder\\.)credentialInterceptor\\("),
+            mapOf("server/MdmApi.kt" to null, "music/MusicServer.kt" to null, "server/CommandListenerService.kt" to null),
         ),
     )
 
@@ -328,6 +329,10 @@ class ServerTransportTest {
         assertEquals("unreviewed network code (name it here after a review)", emptyList<String>(), found)
         // Retrofit only with its client set, never its own default one.
         for (name in listOf("server/MdmApi.kt", "music/MusicServer.kt")) assertTrue(name, ".client(" in mainSources.getValue(name))
+        // Design 129 §2.1: every server client carries the credential (the stream's connect is signed too).
+        for (name in listOf("server/MdmApi.kt", "music/MusicServer.kt", "server/CommandListenerService.kt")) {
+            assertTrue(name, "credentialInterceptor(" in mainSources.getValue(name))
+        }
         // The scan sees what it should: a planted `URL(x).readText()` and a no-argument client fail it.
         assertTrue(allowed.first { it.first == "java.net.URL" }.second.containsMatchIn("import java.net.URL\nURL(x).readText()"))
         assertTrue(allowed.first { it.first == "OkHttpClient(" }.second.containsMatchIn("val c = OkHttpClient()"))

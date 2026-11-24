@@ -192,11 +192,11 @@ fun afterAnswer(record: PowerRecord, sent: PowerReport, code: Int?): PowerRecord
 
 /** What the prepared shutdown client was built for (QA N1): `createMdmApi` reads the tsnet proxy
  * only when it is built. `null` = no server or token (not enrolled). */
-data class ClientKey(val baseUrl: String, val token: String, val proxy: String?, val pinned: Boolean = false)
+data class ClientKey(val baseUrl: String, val token: DeviceCredential, val proxy: String?, val pinned: Boolean = false)
 
 /** [pinned] is the certificate check's flag (design 76): the client is built with the pinner or without it. */
-fun clientKeyOf(baseUrl: String?, token: String?, proxy: String?, pinned: Boolean = false): ClientKey? =
-    if (baseUrl.isNullOrBlank() || token.isNullOrBlank()) null else ClientKey(baseUrl, token, proxy, pinned)
+fun clientKeyOf(baseUrl: String?, token: DeviceCredential?, proxy: String?, pinned: Boolean = false): ClientKey? =
+    if (baseUrl.isNullOrBlank() || token == null) null else ClientKey(baseUrl, token, proxy, pinned)
 
 /** The prepared client is rebuilt (or dropped) whenever the base URL, the token, the proxy or the certificate check's
  * flag differ. */
@@ -427,7 +427,7 @@ object PowerEvents {
     fun prepare(context: Context) {
         try {
             val mdm = LauncherPreferences.mdm()
-            val wanted = clientKeyOf(mdm.serverUrl(), DeviceToken.get(), TsnetClient.proxyAddress, ServerPinStore.enforce(context))
+            val wanted = clientKeyOf(mdm.serverUrl(), DeviceCredentials.current(context), TsnetClient.proxyAddress, ServerPinStore.enforce(context))
             synchronized(this) {
                 if (!rebuildNeeded(prepared?.key, wanted)) return
                 prepared = wanted?.let { Prepared(it, createMdmApi(it.baseUrl, it.token, callTimeoutMs = SHUTDOWN_POST_TIMEOUT_MS, ownPool = true)) }

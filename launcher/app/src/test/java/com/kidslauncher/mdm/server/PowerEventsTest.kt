@@ -245,14 +245,17 @@ class PowerEventsTest {
 
     @Test
     fun `the prepared client is rebuilt when the base URL, the token or the proxy change`() {
-        val key = clientKeyOf("https://kidphone.example", "FAKE-TOKEN", null)!!
-        assertFalse(rebuildNeeded(key, clientKeyOf("https://kidphone.example", "FAKE-TOKEN", null)))
-        assertTrue("the proxy came up", rebuildNeeded(key, clientKeyOf("https://kidphone.example", "FAKE-TOKEN", "127.0.0.1:1055")))
-        assertTrue(rebuildNeeded(key, clientKeyOf("https://other.example", "FAKE-TOKEN", null)))
-        assertTrue(rebuildNeeded(key, clientKeyOf("https://kidphone.example", "FAKE-TOKEN-2", null)))
-        assertTrue("design 76: the certificate check came on", rebuildNeeded(key, clientKeyOf("https://kidphone.example", "FAKE-TOKEN", null, pinned = true)))
-        assertNull(clientKeyOf("https://kidphone.example", "", null))
-        assertNull(clientKeyOf(null, "FAKE-TOKEN", null))
+        val token = DeviceCredential.Bearer("FAKE-TOKEN")
+        val key = clientKeyOf("https://kidphone.example", token, null)!!
+        assertFalse(rebuildNeeded(key, clientKeyOf("https://kidphone.example", DeviceCredential.Bearer("FAKE-TOKEN"), null)))
+        assertTrue("the proxy came up", rebuildNeeded(key, clientKeyOf("https://kidphone.example", token, "127.0.0.1:1055")))
+        assertTrue(rebuildNeeded(key, clientKeyOf("https://other.example", token, null)))
+        assertTrue(rebuildNeeded(key, clientKeyOf("https://kidphone.example", DeviceCredential.Bearer("FAKE-TOKEN-2"), null)))
+        // Design 129: a key adopted is another credential - the prepared client signs with it.
+        assertTrue(rebuildNeeded(key, clientKeyOf("https://kidphone.example", DeviceCredential.Key("k1", "device_key_1", "FAKE-TOKEN"), null)))
+        assertTrue("design 76: the certificate check came on", rebuildNeeded(key, clientKeyOf("https://kidphone.example", token, null, pinned = true)))
+        assertNull(clientKeyOf("https://kidphone.example", null, null))
+        assertNull(clientKeyOf(null, token, null))
         assertTrue("unenrolled: dropped", rebuildNeeded(key, null))
         assertFalse(rebuildNeeded(null, null))
     }

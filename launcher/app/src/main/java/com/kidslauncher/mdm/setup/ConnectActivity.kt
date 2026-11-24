@@ -16,7 +16,7 @@ import com.kidslauncher.mdm.BuildConfig
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.databinding.ActivityConnectBinding
 import com.kidslauncher.mdm.preferences.LauncherPreferences
-import com.kidslauncher.mdm.server.DeviceToken
+import com.kidslauncher.mdm.server.DeviceCredentials
 import com.kidslauncher.mdm.server.QrExtras
 import com.kidslauncher.mdm.server.enrolFailureRefused
 import com.kidslauncher.mdm.server.serverUrlUsable
@@ -166,7 +166,7 @@ class ConnectActivity : UIObjectActivity() {
             connectScreenDue(
                 deviceOwner = SetupReadings.deviceOwner(context),
                 enrolled = mdm.enrolled(),
-                tokenStored = DeviceToken.present(),
+                tokenStored = DeviceCredentials.stored(context),
                 policyEverApplied = mdm.policyEverApplied(),
             )
         } catch (e: Exception) {

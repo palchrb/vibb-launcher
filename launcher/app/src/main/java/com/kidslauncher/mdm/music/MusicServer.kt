@@ -1,5 +1,6 @@
 package com.kidslauncher.mdm.music
 
+import com.kidslauncher.mdm.server.credentialInterceptor
 import com.kidslauncher.mdm.server.retryOnStaleConnection
 import okhttp3.RequestBody
 import okhttp3.ResponseBody
@@ -64,9 +65,10 @@ private interface MusicApi {
     suspend fun storytelToken(@Body body: RequestBody): Response<ResponseBody>
 }
 
-/** Like `createMdmApi`: the bearer (to the server's own host only, review L8), the way to the server
- * [com.kidslauncher.mdm.server.serverPathNow]'s (security review S-M1: no request on a closed path). */
-fun createMusicServer(baseUrl: String, token: String): MusicServer {
+/** Like `createMdmApi`: the credential (the bearer or the hardware key's signature, design 129; to the server's own
+ * host only, review L8), the way to the server [com.kidslauncher.mdm.server.serverPathNow]'s (security review S-M1: no
+ * request on a closed path). */
+fun createMusicServer(baseUrl: String, credential: com.kidslauncher.mdm.server.DeviceCredential): MusicServer {
     val path = com.kidslauncher.mdm.server.serverPathNow(baseUrl)
     val normalizedBaseUrl = path.baseUrl
     // Design 95 §3.5: a child of the shared base client (one pool with the sync and the stream).
@@ -74,7 +76,7 @@ fun createMusicServer(baseUrl: String, token: String): MusicServer {
     val client = base.newBuilder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
-        .addInterceptor(com.kidslauncher.mdm.server.bearerInterceptor(normalizedBaseUrl, token))
+        .credentialInterceptor(normalizedBaseUrl, credential)
         // Design 95 code QA M1: a GET that timed out on a reused connection goes once more on a fresh one.
         .retryOnStaleConnection({ base.connectionPool })
         .build()

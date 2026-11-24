@@ -70,7 +70,7 @@ object QrExtras {
 
     private fun store(context: Context) = QrExtrasStore(context.applicationContext.getSharedPreferences(QrExtrasStore.FILE, Context.MODE_PRIVATE))
 
-    private fun enrolledNow(): Boolean = LauncherPreferences.mdm().enrolled() || DeviceToken.present()
+    private fun enrolledNow(): Boolean = LauncherPreferences.mdm().enrolled() || DeviceCredentials.tokenStored()
 
     /**
      * A delivery of the admin extras bundle from [source] ("Admin policy compliance", "Provisioning complete"): seals

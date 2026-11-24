@@ -190,6 +190,9 @@ object DeviceToken {
 
     /** Sealed and committed synchronously; false when it couldn't be sealed or written. Off the main thread. */
     fun set(token: String): Boolean = Secrets.prefs.putRecovering(prefs(), AAD, key(), token)
+
+    /** Design 129 §5.5: a `bound` key's bearer goes (`DeviceCredentials.dropTokenForBoundKey` only). */
+    fun clear(): Boolean = Secrets.prefs.edit(prefs()) { it.remove(AAD, key()) }
 }
 
 /** [DeviceToken.present]'s rule on the stored string: anything not blank - a `ks1:` blob no key opens included. */

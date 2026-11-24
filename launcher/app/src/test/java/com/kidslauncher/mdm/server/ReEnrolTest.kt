@@ -23,6 +23,11 @@ class ReEnrolTest {
         assertFalse(showReEnrol(Sealed.Absent, untilSync, url))
         assertFalse(showReEnrol(Sealed.Unreadable, untilSync, null))
         assertFalse(showReEnrol(Sealed.Unreadable, untilSync, " "))
+        // Design 129: an adopted key still speaks for an unreadable token; a key the server no longer knows (or one
+        // that stopped signing with no bearer beside it) needs the new setup code - with the same parent-PIN half.
+        assertFalse(showReEnrol(Sealed.Unreadable, untilSync, url, keyAdopted = true))
+        assertTrue(showReEnrol(Sealed.Absent, untilSync, url, keyAdopted = true, keyUnusable = true))
+        assertFalse(showReEnrol(Sealed.Absent, checkable, url, keyAdopted = true, keyUnusable = true))
     }
 
     @Test

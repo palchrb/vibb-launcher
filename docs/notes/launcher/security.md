@@ -40,7 +40,8 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   **only** code that names the generated `deviceToken` getter/setter (`get()` - `null` for none or unreadable, so every
   site's "not enrolled" covers a broken key -, `state()`, `present()` - stored at all, `tokenStored`, no Keystore call -,
   `set()`: one retry, then a new key only when `SecretBox.keyBroken()`); never read the token raw - `Bearer ks1:...`
-  looks like a dead server (`SealedPrefsTest` pins every `DeviceToken.get()` site and bans the key `mdm.device_token`,
+  looks like a dead server (since design 129 L1 only `DeviceCredentials` reads it - `SealedPrefsTest` pins every `DeviceCredentials.current(`
+  site - and the test bans the key `mdm.device_token`,
   the AADs and the generated accessor outside their owners in `src/main`, `src/debug` and `src/release`). The
   Keystore box caches its key handle; no token read on the main thread but `PinLockRuntime.init`'s PIN (the SSE
   connect reads on a background thread, Settings' Sync now checks presence).
@@ -75,7 +76,7 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
 
 ## Security review, launcher wave (2026-10-11, `docs/review/security-review-2026-10-10.md`, at the monorepo root)
 
-- **The bearer stays home** (L8, `server/ServerAuth.kt`, `ServerAuthTest`): `bearerInterceptor` adds `Authorization` only to requests for the server's own origin (scheme, host, port - `sameOrigin`); `createMdmApi` and `createMusicServer` both use it, so an absolute `@Url` elsewhere never gets the device token. The SSE request builds its URL from the base itself.
+- **The bearer stays home** (L8, `server/ServerAuth.kt`, `ServerAuthTest`): `credentialInterceptor` (until design 129 L1 `bearerInterceptor`) adds `Authorization` (and the key's signature) only to requests for the server's own origin (scheme, host, port - `sameOrigin`); `createMdmApi` and `createMusicServer` both use it, so an absolute `@Url` elsewhere never gets the device token. The SSE request builds its URL from the base itself.
 - **The Tailscale key is deleted after the first connect** (M12, `server/TailnetKey.kt`, `TailnetKeyTest`): tsnet reads `AuthKey` only to create the node (its state dir then holds the identity), so once `connect` returns an address `TsnetClient.forgetKeyOnceJoined` removes `tailscale_auth_key` and sets `tsnet_node_joined` in one `commit()`; later starts come up with an empty key from the stored state (`tailnetConnect`: key -> up with it, joined -> up with "", neither -> nothing). A key scanned or typed while connected is dropped the same way (tsnet would ignore it). `connectFromPreferences` is `@Synchronized` (QA Low 5): two first joins at once would race two tsnet servers on one state dir with the one key. Settings shows "On the tailnet - the key was deleted". A node removed from the tailnet may come back with a newly scanned key (tsnet logs in again when its stored node is refused; not verified) - else it is set up again (wipe and provision).
 - **Remote wipe works on API 34+** (M8, `server/WipePlan.kt`, `WipePlanTest`): `LocateCommands.wipe` calls `wipeDevice(0)` (`wipeCall`): AOSP 14+'s `wipeData` from a device owner on the system user means "remove this user" for apps targeting 34+ and throws, so the old `wipeData(0)` only logged and the phone kept its data. Flags 0: factory reset protection stays (a found phone still wants the Google account). `device_admin.xml` declares `<wipe-data />` (AOSP 14 without its policy-engine flag accepts a wipe only from an admin that declares it). A wipe that throws or returns answers the command (`wipeOutcome`: a dying system server is "wiping"; anything else - also a call that *returns*, which a reset that starts never does: AOSP's `forceWipeDeviceNoLock` swallows a failure to write the recovery command, QA Low 3 - is a failure the Locate page shows). `device_admin.xml` declares exactly the uses-policies the code needs where AOSP checks the admin's declared policy rather than the owner's permissions (`limit-password` for `onPasswordChanged` - AOSP sends ACTION_PASSWORD_CHANGED only to it, not to `watch-login` as the file used to say -, `force-lock`, `wipe-data`, `disable-keyguard-features` - an Android 16 emulator refused `setKeyguardDisabledFeatures` without it); `AdminPoliciesTest` pins the XML, `DECLARED_ADMIN_POLICIES` and the calls in the sources against each other. A policy an update adds may count only after a restart: the calls retry by themselves (apply() sets the keyguard features each time), and every report lists what isn't granted yet (`admin_policies_pending`), which the device page turns into "Restart the phone once". Every status report sends `remote_wipe_ready` (`remoteWipeReady`, QA Low 4): on API 34 a device owner's `DeviceAdminInfo` is parsed at boot, so the new `<wipe-data />` counts only after a restart (`hasGrantedPolicy`); 35+ needs no policy (the owner holds `MANAGE_DEVICE_POLICY_WIPE_DATA`). The Locate page warns while it's false. Device check: `docs/testing/emulator.md` §6g.
 - **Catalog APKs are checked before they install** (M10, phone side; `server/CatalogApkCheck.kt` pure, `CatalogApkCheckTest`): the server pins each catalog app's package and signing-certificate SHA-256 but only *reads* its signing block, so `AppDownloads.install` asks PackageManager (`getPackageArchiveInfo(GET_SIGNING_CERTIFICATES)`) first: the package must be the pin, and the pinned certificate must be in the APK's signers or their lineage (`SelfUpdate.signers`: `signingCertificateHistory`, or every `apkContentsSigners` with several signers - the server pins the first; a v3.1 rotation for SDK 33+, which the server ignores, keeps the older pinned key in the lineage). An unreadable manifest or signer fails closed. The session gets `setAppPackageName` (catalog: the pin; our own update: our package). A refused APK is deleted and its release refused until the list names another (`recordRefused`, no hourly re-download); a catalog app without both pins in the list isn't queued at all, and a record an older build wrote without pins waits for the next list (`finish` relists and defers). A release recorded as installed counts only while Android still has the package (`phonePackage`: `MATCH_UNINSTALLED_PACKAGES` so a hidden app counts, then `FLAG_INSTALLED`) at least at the versionCode the launcher installed (`lastInstalledVersionCode`, recorded via the install intent): one uninstalled by hand is forgotten (`forgetInstalled`) and queued again through every check (the user's emulator, 2026-10-12); PackageManager failing to tell counts as installed, so it never loops. Refusals go to the server as the install-failed report and, until the list changes, as `app_downloads` entries with state `refused_package`/`refused_signer`/`refused_unreadable`/`refused_unpinned` (`CatalogRefusal`, CE prefs `app_downloads` key `refusals`, `reconcileRefusals`).
@@ -164,7 +165,7 @@ waits for a device capture of the Play Protect / account-security channel ids.
     (each with `.client(`); `java.net.URL`, `.openStream(`, `DownloadManager`, `HttpEngine` nowhere; `URLConnection` only
     as `UpstreamTransport.kt`'s `HttpsURLConnection.getDefaultHostnameVerifier()`; `setDataSource(` only in
     `KidSounds.kt`/`LocateCommands.kt` (a content or alarm `Uri`); `WebView(` and `android.webkit` only under `portal/`
-    (and `AppEnforcer.kt`'s `getCurrentWebViewPackage()`); `bearerInterceptor(` only in the server clients. A new token
+    (and `AppEnforcer.kt`'s `getCurrentWebViewPackage()`); `credentialInterceptor(` only in the server clients (and in each of them). A new token
     or file fails the build until it is reviewed and named there. **A new library that does its own HTTP is not seen by
     a source scan**: the gate for that is the dependency review (`gradle/verification-metadata.xml` fails the build on
     any new or bumped dependency until its checksums are added and reviewed).
@@ -255,3 +256,70 @@ waits for a device capture of the Play Protect / account-security channel ids.
   client is rebuilt in the sync when the flag moved (code QA nits).
 - **Not device-tested yet** (design 76 step 0 and §6's emulator rows): the anchor Android validates for the user's
   host and for a ZeroSSL host, mitmproxy with the check off and on, the tailnet recovery end to end, a QR re-scan.
+
+## The hardware-bound phone key, L1 (design 129, `docs/design/129-hardware-bound-phone-key.md`)
+
+The launcher's half of step 1; the server's S1 is `docs/notes/server/device-key.md`. While the server observes (S1)
+the bearer goes along with every request, signed or not, and every failure of the key path leaves the phone on its
+bearer - nothing here can lock a phone out.
+
+- **The key** (`server/DeviceKey.kt`): `AndroidKeyHardware` makes an EC P-256 `PURPOSE_SIGN` key with SHA-256, the
+  server's attestation challenge, no user authentication and no `UnlockedDeviceRequired`, in StrongBox when
+  `FEATURE_STRONGBOX_KEYSTORE`, and in the TEE once on any StrongBox failure; never a key without attestation, never a
+  software one. An empty attestation-key pool (`KeyStoreException.ERROR_ATTESTATION_KEYS_UNAVAILABLE`, anywhere in the
+  cause chain) is `KeyGenFailure(keysUnavailable)`: a retry with the reason `keys_unavailable`, never a downgrade.
+  Aliases `device_key_<n>`. The key book (CE prefs `device_key`, one JSON, plain - nothing secret: the aliases, when
+  each key's challenge runs out, whether the server ever named it, the adopted alias and key id, a reported conflict,
+  the lost mark, the last refusal) is `KeyBook`; `DeviceKeys` makes, proves, adopts and forgets keys, and reconciles the
+  book with the Keystore (a Keystore alias the book lost counts as never named, long expired). At most three keys
+  (`keyCapPlan`): a fourth first deletes the oldest whose challenge ran out and that the server never named; none such,
+  no new key.
+- **One credential** (`server/DeviceCredential.kt`): `DeviceCredential.Bearer(token)` or `.Key(keyId, alias, bearer?)`
+  (the bearer beside the key until the server says `bound`), `ownerId` the token's hash or `key:<key id>` - the policy's
+  ETag owner and the heartbeat's base are re-keyed on it (`PolicyOwner.of`, `HeartbeatAckStore.ownerOf`), so adopting a
+  key fetches the policy once without an ETag and sends one full report. `toString` never prints the token.
+  `DeviceCredentials.current(context)` is the only reader of the sealed token (`SealedPrefsTest`: `DeviceToken.` only in
+  `SealedPrefs.kt`, `DeviceCredential.kt` and `Enrollment.kt`; the sites of `current(` counted), and `null` while not
+  enrolled or while the key is lost (§5.4: the phone goes silent); `stored(context)` is presence only (the first-launch
+  reset, Settings, the connect screen); `dropTokenForBoundKey` is the token's one removal (`bound`, §5.5).
+- **Every request signed** (`server/ServerAuth.kt`): `OkHttpClient.Builder.credentialInterceptor(baseUrl, credential)`
+  on every server client (`createMdmApi`, `createMusicServer`, the command stream's client - its connect is signed; the
+  tailnet path the same, since only the path from `/api/devices` on is signed, never the host). Two parts: the signer, a
+  **network** interceptor (`credentialSigner` -> `authorize`), signs each attempt afresh - OkHttp's retries and the stale
+  connection's retry included - with `Vibb-Body-SHA256` (the body's bytes as sent: a gzip'd report compressed; a
+  one-shot body read once and sent as the same bytes) and `Vibb-Signature: v1;k=..;t=..;n=..;s=..` over
+  `canonicalRequest` (`DeviceKeyRules.kt`, OkHttp's raw `encodedPath`/`encodedQuery`), only to the server's own origin;
+  a key that can't sign sends the bearer alone (S1), or with no bearer throws `KeyUnusable` (nothing is sent). Each
+  answer's `Vibb-Time` sets `SignatureClock`'s offset (elapsed realtime, the round trip's middle); before any answer in
+  the process its time is `TrustedClock`'s - no wall-clock read (`TrustedClockScanTest` scans the files). The
+  application half (`credentialRetry`) sends a 401 `stale` or `replay` once more and hands `unknown_key` to the
+  registration flow (`KeyRegistration.wake`); it never deletes a key.
+- **The registration flow** (`server/KeyRegistration.kt`; the decision `keyStep` and the nudge `keyNudge` are pure, the
+  contract's `phone` and `phone_nudge` rows): one run at a time in the process; step 1 (`GET /api/devices/key`) decides -
+  adopt the key the server names (delete the others; `bound` also drops the bearer), keep, register (a challenge, a new
+  key, a fresh `register` proof, `POST /api/devices/key`, then step 1 again whatever the POST's fate - at most one key a
+  run), report a conflict once (`POST /api/devices/key/conflict`), wait, or mark the key lost ("Ny oppsettkode"). A 400
+  refusal deletes that key (never stored) and waits a day (`challenge`: at once); a 503 `list_stale` waits its
+  `retry_after_s`; any other failure backs off from a minute, doubling, to six hours. The launcher has no WorkManager
+  (design 129 named one): the run is a coroutine of its own, asked by the sync after every accepted policy (the
+  policy's `device_key` only nudges; an older server's policy without it asks nothing), by another call's
+  `unknown_key`, and its backoff lives in memory (a process start may try once more). Its own calls never wake it.
+- **The enrolment** (`Enrollment.enroll`, §5.1): the key is attested for `SHA-256("vibb-enroll-v1" || 0x00 ||
+  normalised code)`; a retry with the same code reuses that key (the book keeps each enrolment key's challenge) and
+  signs a new `enroll` proof every attempt (S1 refuses a repeated ECDSA `r`). The body carries `chain` and `proof` only
+  when a key was made; no key (a Keystore failure, an empty pool) enrols on the bearer alone. On success the old
+  enrolment's keys and marks go; an `observed` key is adopted, a `refused` one deleted (the reason kept).
+- **"Ny oppsettkode"** (`showReEnrol`): an adopted key still speaks for an unreadable token; a lost key (step 1's
+  `unknown_key` with no bearer, §5.4) or a key that stopped signing with no bearer beside it shows the button, with the
+  same parent-PIN half as before.
+- **rkpd outside the sink** (Q9): `KidVpnService` adds `com.android.rkpdapp` to the disallowed apps in every shape when
+  the phone has it, and `MobileNetworkRuntime.writeAlwaysOn` puts it in lockdown's allow list (`lockdownAllowList`):
+  under lockdown an app outside the VPN has no network unless allowed, so the exclusion alone would not reach Google's
+  provisioning service in the SINK shape. Nothing else is ever allowed around the sink.
+- **Not in L1**: the enrolment screen's line on a refused key ("Telefonen kan ikke lage en sikker nøkkel") - S1 never
+  refuses an enrolment for its key, so it comes with S2; no report field carries `keys_unavailable` (the contract has
+  none; the server sees no registration and shows "Eldre innlogging").
+- Tests: `DeviceKeyContractTest` (the shared rows; the signatures verify over what this side builds), `ServerAuthTest`
+  (origin, the canonical form, the bearer-only fallback, `KeyUnusable`, the retries), `SealedPrefsTest` (the sites),
+  `ServerTransportTest` (`credentialInterceptor(` on every server client), `PolicyEtagsTest`/`StatusReportsTest` (the
+  owner moves with a key), `ReEnrolTest`. The gate is `docs/testing/emulator.md` §6bj (Android 14 and 16; not run).

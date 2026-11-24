@@ -55,13 +55,18 @@ object Enrollment {
             )
             // No-ops when connected or when no key is set.
             if (connectTailnet) TsnetClient.connectFromPreferences(context)
-            val response = createMdmApi(serverUrl).enroll(EnrollRequest(code))
+            // Design 129 §5.1: the new hardware key, attested for this code's challenge (a retry with the same code
+            // reuses its key), and a proof signed afresh on every attempt. No key: the enrolment goes without one
+            // (S1 - the bearer; the registration flow tries again later).
+            val key = enrolKey(context, code)
+            val response = createMdmApi(serverUrl).enroll(EnrollRequest(code, key?.second, key?.third))
             val body = response.body()
             if (!response.isSuccessful || body == null) return@withContext Result.failure(enrollFailureOf(response.code()))
             val mdm = LauncherPreferences.mdm()
             if (!DeviceToken.set(body.deviceToken)) {
                 return@withContext Result.failure(EnrollFailure(refused = false, "the token couldn't be stored"))
             }
+            enrolledKey(context, key?.first, body.key)
             mdm.enrolled(true)
             // Design 95 (code QA L3): the old enrollment's kept policy body (its PIN hashes) goes; the token hash would
             // refuse it anyway.
@@ -88,15 +93,57 @@ object Enrollment {
             Result.failure(e)
         }
     }
+
+    /** The enrolment's key (§5.1): its alias, chain and a fresh proof, or `null` when none could be made. */
+    private fun enrolKey(context: Context, code: String): Triple<String, List<String>, String>? = try {
+        val challenge = enrolChallenge(code)
+        val now = TrustedClock.nowMs()
+        val made = DeviceKeys.enrolKeyFor(context, b64u(challenge))
+            ?: DeviceKeys.make(context, challenge, now + DeviceKeys.ENROL_CHALLENGE_HOLDS_MS, now, enrolChallenge = b64u(challenge))
+        made?.let { Triple(it.alias, it.chainB64(), DeviceKeys.proof(context, it.alias, challenge, ProofKind.ENROLL)) }
+    } catch (e: KeyGenFailure) {
+        android.util.Log.w("Enrollment", "No hardware key for the enrolment: ${e.message}")
+        DeviceKeys.refused(context, if (e.keysUnavailable) "keys_unavailable" else "keystore")
+        null
+    } catch (e: Exception) {
+        android.util.Log.w("Enrollment", "No hardware key for the enrolment: ${e.javaClass.simpleName}")
+        null
+    }
+
+    /** After the token is stored: the old enrolment's keys go; this one's is adopted when the server took it, deleted
+     * when it refused it (S1: the phone stays on its bearer, the registration flow tries again). */
+    private fun enrolledKey(context: Context, alias: String?, answer: com.kidslauncher.mdm.server.dto.EnrollKeyAnswer?) {
+        try {
+            val keyId = answer?.keyId
+            val keep = if (answer?.state == "observed" && !keyId.isNullOrBlank()) alias else null
+            DeviceKeys.newEnrolment(context, keep)
+            if (keep != null && keyId != null) {
+                DeviceKeys.adopt(context, keep, keyId, "observed")
+            } else if (answer?.state == "refused") {
+                android.util.Log.w("Enrollment", "The server refused the enrolment's key: ${answer.reason}")
+                DeviceKeys.refused(context, answer.reason ?: "invalid")
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("Enrollment", "The enrolment's key wasn't kept: ${e.javaClass.simpleName}")
+        }
+    }
 }
 
 /**
  * "Ny oppsettkode" in the parent-code dialogs (design r10 §5, QA R10-5): only in the deadlock - the device token is
  * [Sealed.Unreadable] **and** the parent PIN can't be checked until a sync (or there is none), with a server URL
- * stored. Not kid-controllable: a key goes only by an OEM fault, root or our uid.
+ * stored. Not kid-controllable: a key goes only by an OEM fault, root or our uid. Design 129 (§5.4, §6.2): an adopted
+ * hardware key still speaks for an unreadable token ([keyAdopted]); a key the server no longer knows, or one that stopped
+ * signing with no bearer beside it ([keyUnusable]), needs the new setup code too.
  */
-fun showReEnrol(token: Sealed, parent: ParentPinStatus, serverUrl: String?): Boolean =
-    token == Sealed.Unreadable && (parent.untilSync || !parent.configured) && !serverUrl.isNullOrBlank()
+fun showReEnrol(
+    token: Sealed,
+    parent: ParentPinStatus,
+    serverUrl: String?,
+    keyAdopted: Boolean = false,
+    keyUnusable: Boolean = false,
+): Boolean =
+    ((token == Sealed.Unreadable && !keyAdopted) || keyUnusable) && (parent.untilSync || !parent.configured) && !serverUrl.isNullOrBlank()
 
 /** The code dialog's line for a failed enrolment: only a refused code says "that code didn't work" (Q-1). */
 fun enrolFailureRefused(error: Throwable?): Boolean = (error as? EnrollFailure)?.refused == true

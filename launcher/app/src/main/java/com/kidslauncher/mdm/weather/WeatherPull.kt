@@ -3,7 +3,7 @@ package com.kidslauncher.mdm.weather
 import android.content.Context
 import android.util.Log
 import com.kidslauncher.mdm.preferences.LauncherPreferences
-import com.kidslauncher.mdm.server.DeviceToken
+import com.kidslauncher.mdm.server.DeviceCredentials
 import com.kidslauncher.mdm.server.ServerJson
 import com.kidslauncher.mdm.server.createMdmApi
 import com.kidslauncher.mdm.server.dto.PolicyResponse
@@ -164,8 +164,8 @@ object WeatherPull {
 
     private fun api(timeoutMs: Long) = try {
         val url = LauncherPreferences.mdm().serverUrl()
-        val token = DeviceToken.get()
-        if (url.isNullOrBlank() || token.isNullOrBlank()) null else createMdmApi(url, token, callTimeoutMs = timeoutMs)
+        val token = DeviceCredentials.current()
+        if (url.isNullOrBlank() || token == null) null else createMdmApi(url, token, callTimeoutMs = timeoutMs)
     } catch (e: Exception) {
         Log.w(LOG_TAG, "Weather: no API client (${e.javaClass.simpleName})")
         null

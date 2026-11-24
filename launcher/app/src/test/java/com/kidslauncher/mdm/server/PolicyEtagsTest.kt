@@ -18,7 +18,7 @@ import retrofit2.Response
 class PolicyEtagsTest {
     private val prefs = ParentPinStoreTest.FakePrefs()
     private val store = PolicyEtagStore(prefs, SealedPrefs(SealedPrefsTest.FakeBox()) { _, _ -> })
-    private val owner = PolicyOwner.of(390009, "https://vibb.example/", "token-a")
+    private val owner = PolicyOwner.of(390009, "https://vibb.example/", DeviceCredential.Bearer("token-a").ownerId)
     private val body = """{"allowlist": [], "kiosk_desired": true, "an_unknown_key": 1}"""
     private val serverError = FreshDecode.Failed("server error")
 
@@ -73,7 +73,9 @@ class PolicyEtagsTest {
         for (other in listOf(
             owner.copy(versionCode = 390010),
             owner.copy(serverUrl = "https://other.example/"),
-            PolicyOwner.of(390009, "https://vibb.example/", "token-b"),
+            PolicyOwner.of(390009, "https://vibb.example/", DeviceCredential.Bearer("token-b").ownerId),
+            // Design 129 §2.1: a key adopted is another owner - the policy once without an ETag.
+            PolicyOwner.of(390009, "https://vibb.example/", DeviceCredential.Key("k1", "device_key_1", "token-a").ownerId),
         )) {
             assertTrue(store.keep(owner, "W/\"abc\"", body))
             assertNull(store.usable(other))

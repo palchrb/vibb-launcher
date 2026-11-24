@@ -11,7 +11,8 @@ import androidx.appcompat.app.AlertDialog
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.push.SyncRunner
-import com.kidslauncher.mdm.server.DeviceToken
+import com.kidslauncher.mdm.server.DeviceCredentials
+import com.kidslauncher.mdm.server.KeyBook
 import com.kidslauncher.mdm.server.Enrollment
 import com.kidslauncher.mdm.server.ParentPin
 import com.kidslauncher.mdm.server.enrolFailureRefused
@@ -62,7 +63,10 @@ object ReEnrolDialog {
 
     /** Off the main thread (a Keystore call). Never throws. */
     private fun due(context: Context): Boolean = try {
-        showReEnrol(DeviceToken.state(), ParentPin.status(context), LauncherPreferences.mdm().serverUrl())
+        showReEnrol(
+            DeviceCredentials.tokenState(), ParentPin.status(context), LauncherPreferences.mdm().serverUrl(),
+            keyAdopted = KeyBook.adoptedStored(context), keyUnusable = DeviceCredentials.keyUnusable(context),
+        )
     } catch (e: Exception) {
         false
     }

@@ -168,7 +168,7 @@ class MusicBridgeService : Service() {
             withTimeout(SPOTIFY_TOKEN_TIMEOUT_MS) {
                 val mdm = LauncherPreferences.mdm()
                 val url = mdm.serverUrl()
-                val token = com.kidslauncher.mdm.server.DeviceToken.get()
+                val token = com.kidslauncher.mdm.server.DeviceCredentials.current(applicationContext)
                 if (url == null || token == null) {
                     SpotifyTokenAnswer.LAUNCHER
                 } else {
@@ -200,7 +200,7 @@ class MusicBridgeService : Service() {
             withTimeout(STORYTEL_TOKEN_TIMEOUT_MS) {
                 val mdm = LauncherPreferences.mdm()
                 val url = mdm.serverUrl()
-                val token = com.kidslauncher.mdm.server.DeviceToken.get()
+                val token = com.kidslauncher.mdm.server.DeviceCredentials.current(applicationContext)
                 if (url == null || token == null) {
                     StorytelTokenAnswer.LAUNCHER
                 } else {

@@ -58,10 +58,12 @@ class PolicyEtagStore(
     }
 }
 
-/** What a kept body belongs to: this build, this server address, this device token (its SHA-256, never the token). */
+/** What a kept body belongs to: this build, this server address, this credential (design 129 §2.1: its `ownerId` - the
+ * token's hash or `key:<key id>` -, hashed again; never the token). Binding a key changes the owner: the policy is
+ * fetched once without an ETag. */
 data class PolicyOwner(val versionCode: Int, val serverUrl: String, val tokenHash: String) {
     companion object {
-        fun of(versionCode: Int, serverUrl: String, token: String) = PolicyOwner(versionCode, serverUrl, sha256Hex(token))
+        fun of(versionCode: Int, serverUrl: String, ownerId: String) = PolicyOwner(versionCode, serverUrl, sha256Hex(ownerId))
     }
 }
 

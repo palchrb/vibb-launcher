@@ -25,7 +25,7 @@ import android.util.AtomicFile
 import android.util.Log
 import com.kidslauncher.mdm.BuildConfig
 import com.kidslauncher.mdm.preferences.LauncherPreferences
-import com.kidslauncher.mdm.server.DeviceToken
+import com.kidslauncher.mdm.server.DeviceCredentials
 import com.kidslauncher.mdm.server.LocateCommands
 import com.kidslauncher.mdm.server.QuickControls
 import com.kidslauncher.mdm.server.Secrets
@@ -509,7 +509,7 @@ object WifiPlaces {
         val now = nowMin()
         val asking = appleAsk(view.heard, store.rows, now)
         if (asking.isEmpty()) return false
-        val (status, body) = withTimeoutOrNull(APPLE_TIMEOUT_MS) { postLookup(asking) } ?: (0 to null)
+        val (status, body) = withTimeoutOrNull(APPLE_TIMEOUT_MS) { postLookup(context, asking) } ?: (0 to null)
         val p = prefs(context)
         val step = appleStep(status, body)
         val outcome = if (step is AppleStep.Use) "got=${step.aps.size} unknown=${step.unknown.size}" else "step=${step.javaClass.simpleName}"
@@ -535,10 +535,10 @@ object WifiPlaces {
     }
 
     /** The server's answer: its status and body (0 = no answer). */
-    private suspend fun postLookup(asking: List<String>): Pair<Int, String?> = try {
+    private suspend fun postLookup(context: Context, asking: List<String>): Pair<Int, String?> = try {
         val url = LauncherPreferences.mdm().serverUrl()
-        val token = DeviceToken.get()
-        if (url.isNullOrBlank() || token.isNullOrBlank()) {
+        val token = DeviceCredentials.current(context)
+        if (url.isNullOrBlank() || token == null) {
             0 to null
         } else {
             val body = ServerJson.encodeToString(WifiLookupRequest.serializer(), WifiLookupRequest(asking))
