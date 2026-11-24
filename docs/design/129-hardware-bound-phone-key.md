@@ -1,6 +1,6 @@
 # Design 129: A hardware-bound phone key
 
-Status: design, revision 2, 2026-11-24 (branch `hw-key`, from main 2d08708eb). Revision 2 answers the design QA of
+Status: design, revision 2 (Q1-Q10 decided; gates on Android 14 and 16), 2026-11-24 (branch `hw-key`, from main 2d08708eb). Revision 2 answers the design QA of
 revision 1 (H1-H4, M1-M8, L1-L8; the finding is named where its fix lands) and records the owner's decisions on Q1-Q8
 (§11). Server and launcher; the music app is untouched (it never holds the device credential: its server calls go
 through the launcher's bridge). Owner-approved direction: step 1, a non-exportable Keystore key with key attestation
@@ -74,7 +74,7 @@ whose system is not what it should be.
   has passed, then the `key_refused` line with that reason. The pool is filled by `com.android.rkpdapp`, which the
   kid's VPN blackholes in its SINK shape (only the launcher is excluded today, `KidVpnService`): rkpd is also
   excluded (`addDisallowedApplication`, when the package exists), since it talks only to Google's provisioning
-  service and gives the kid no path out (Q9). The gate checks generation in the SINK shape with an empty pool.
+  service and gives the kid no path out (Q9, decided). The gate checks generation in the SINK shape with an empty pool.
 - Aliases `device_key_<n>`, `n` counting up. The phone **keeps every key it made until the server names one** (§5.2);
   then it deletes the others. At most three exist; a fourth generation first deletes the oldest key whose challenge
   has expired and that the server has never named. No ID attestation (`setDevicePropertiesAttestationIncluded` stays
@@ -433,7 +433,7 @@ and in the workflows' path filters like the others. Rows (L7):
 
 - What an emulator attests to is **not yet known** [assumed]: older images' KeyMint is software, its chain ending in
   AOSP's published software root at level `Software`; newer images may attest through a fake remote provisioning
-  setup under a test root. Before §7.3 is built, one `adb shell` key generation on each gate image (Android 14 and 17)
+  setup under a test root. Before §7.3 is built, one `adb shell` key generation on each gate image (Android 14 and 16)
   reads the chain's root and levels (the owner's OK for the emulator, as always); the found roots go into
   `testdata/attestation/roots/` (an emulator's chain is not a family phone's) and this section is corrected.
 - The emulator gate runs a server built with the Cargo feature **`emulator_keys`** (not in `default`): it adds those
@@ -454,7 +454,7 @@ The server ships first. No phone-side compatibility (only emulators run Vibb yet
 |---|---|---|
 | S1 (server) | `attestation/`, the status-list fetch, a migration (next free number): `device_keys` (key id, device, SPKI, level, version, patch, boot state, boot key, locked, serials, root, address, `unusual`, state `observed`/`bound`/`held`/`pending`/`retired`, times), `device_addresses`, the signature clock's floor, the enrol SPKI on consumed codes; `GET /key`, the challenge, `POST /key`, the conflict report and the new enrol; the edge and auth layer of §4.5 beside the bearer; `Vibb-Time`; **observe mode**: keys stored `observed`, signatures verified and their failures logged, bearer kept; the PWA shows the verdict quietly (§9.1). The contract file. Step 2's reading and the GrapheneOS list (data only). | code QA |
 | L1 (launcher) | `DeviceKey`, `DeviceCredential` and its sites (§2.1), the signer on every server client and the SSE, `serverOffset`, enrolment with a key, the registration worker (§5.2), rotation, the policy's `device_key`, "Ny oppsettkode" for a broken or unknown key, rkpd out of the sink. | code QA |
-| Gate | Emulator, Android 14 and 17 against an `emulator_keys` server: enrolment, migration, every refusal, a restart's `stale`, a lost answer (the server delays its commit past the phone's timeout), parallel workers during registration, the SSE closed at binding, the key before the first unlock, generation in the SINK shape with an empty pool. | the owner's OK to run it |
+| Gate | Emulator, Android 14 and 16 (never 17: its image is broken; the code still targets 14-17) against an `emulator_keys` server: enrolment, migration, every refusal, a restart's `stale`, a lost answer (the server delays its commit past the phone's timeout), parallel workers during registration, the SSE closed at binding, the key before the first unlock, generation in the SINK shape with an empty pool. | the owner's OK to run it |
 | Step 0 | The **Jelly Star** on S1 + L1: About This Phone shows its verdict in observe mode - root, level, version, patch, boot state, the revocation check, StrongBox or not, the sign time under parallel load (§10). Nothing can lock it out yet. | the owner, from the PWA |
 | S2 (server) | Commit (§8.1); a bound phone's bearer refused (`device_old_token`); new enrolments key-only; registration requires the boot state (§3 item 13); step 2's orange line. DEPLOY.md: S2 can't be rolled back. | after step 0 is clean |
 | Later | Drop the bearer code when no phone in the database is bearer-only. | the PWA shows none |
@@ -531,8 +531,8 @@ and `device_auth_failed`'s new reasons.
 ## 10. Android 14 to 17, and the Jelly Star
 
 - **Versions** [doc]: the KeyDescription's `attestationVersion` is the KeyMint version, not Android's: 300 is KeyMint
-  3, 400 adds `moduleHash`, 500 adds ML-DSA; which of 15, 16 and 17 ship 400 and 500 is read off the emulators in the
-  gate [assumed]. A phone that **upgraded** keeps its vendor's frozen KeyMint, so an Android 16 phone launched on 13
+  3, 400 adds `moduleHash`, 500 adds ML-DSA; which of 15, 16 and 17 ship 400 and 500 is read off the Android 14 and 16
+  gate images and, for 15 and 17, from their documentation [assumed]. A phone that **upgraded** keeps its vendor's frozen KeyMint, so an Android 16 phone launched on 13
   may report 200 or even Keymaster 4.1 (4) - hence `>= 3` in §3. ID attestation is used on no version.
 - **Provisioning** [doc]: phones launched with Android 16 use only remote key provisioning (short-lived certificates;
   chains under the new P-384 root from 2026-02-01; the pool needs the network now and then - §2's `keys_unavailable`
@@ -563,12 +563,12 @@ Decided by the owner on 2026-11-24 (revision 1's recommendations, taken as they 
 - **Q7. No switch for a phone without a Google root**; only as its own design if the Jelly Star needs it.
 - **Q8. `LAUNCHER_SIGNATURE_CHECKSUM` is the app check** (decoded, §3 item 10); a server without it refuses all keys.
 
-New in revision 2, for the owner:
+Decided by the owner on 2026-11-24, new in revision 2:
 
-- **Q9. rkpd outside the kid's VPN sink** (§2, M7). Without it, a remote-provisioning-only phone in the SINK shape
+- **Q9. rkpd outside the kid's VPN sink** (§2, M7) - decided: excluded. Without it, a remote-provisioning-only phone in the SINK shape
   (no data, "Ingen data" abroad) can't make its key until it is on a network where the sink is off. With it, Google's
   provisioning app reaches the network in every shape: a few kilobytes now and then, and no path for the kid.
-  **Recommendation: exclude it.**
-- **Q10. A held key at S2** (§8.1): the parent's Bekreft binds it. The alternative is to require a new setup code for
-  every held phone (stricter, more work for the parent). **Recommendation: Bekreft, logged; a held key with a failing
-  boot state can't be confirmed.**
+  Taken.
+- **Q10. A held key at S2** (§8.1) - decided: Bekreft binds it. the parent's Bekreft binds it. The alternative is to require a new setup code for
+  every held phone (stricter, more work for the parent). Taken: Bekreft, logged; a held key with a failing boot state can't be
+  confirmed.
