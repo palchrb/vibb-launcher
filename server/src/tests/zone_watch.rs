@@ -859,3 +859,91 @@ async fn alternating_mock_counts_stay_within_the_line_budget() {
     assert_eq!(count("phone_lines_dropped").await, 1);
     assert_eq!(returned, 60, "a line is returned only when it was written");
 }
+
+/// A cell fix (design 125b C10) at `place` within `accuracy` metres.
+fn cell(place: (f64, f64), captured_at: &str, accuracy: f64) -> Value {
+    json!({"latitude": place.0, "longitude": place.1, "accuracy_meters": accuracy,
+           "captured_at": captured_at, "provider": "vibb_cell"})
+}
+
+/// About 21 km past Home's edge.
+const FAR: (f64, f64) = (60.1041, 10.7522);
+
+/// Design 125b C10 (step 3a): a near cell fix never arrives, and "left" from cell fixes needs two
+/// far ones at least 10 minutes apart - across reports, so the pending side's coarseness is read
+/// from the stored fix - at the first one's time.
+#[tokio::test]
+async fn cell_fixes_leave_only_far_and_ten_minutes_apart() {
+    let app = TestApp::new().await;
+    let (id, token) = app.enrolled_device("Anna").await;
+    add_home(&app, id).await;
+    // Away first (the first side is silent), then near cell fixes: nothing.
+    post(&app, &token, json!({"location": fix(AWAY, &at(120))})).await;
+    post(&app, &token, json!({"location": fix(AWAY, &at(118))})).await;
+    post(
+        &app,
+        &token,
+        json!({"location": cell(NEAR, &at(100), 500.0)}),
+    )
+    .await;
+    post(
+        &app,
+        &token,
+        json!({"location": cell(NEAR, &at(95), 500.0)}),
+    )
+    .await;
+    assert!(
+        events(&app).await.is_empty(),
+        "a near cell fix never arrives"
+    );
+    post(&app, &token, json!({"location": fix(NEAR, &at(90))})).await;
+    post(&app, &token, json!({"location": fix(NEAR, &at(88))})).await;
+    assert_eq!(events(&app).await.len(), 1);
+    // Far cell fixes: the first pending, the second 9 minutes on nothing, 10 minutes on "left".
+    let first = at(40);
+    post(&app, &token, json!({"location": cell(FAR, &first, 1000.0)})).await;
+    post(
+        &app,
+        &token,
+        json!({"location": cell(FAR, &at(31), 1000.0)}),
+    )
+    .await;
+    assert_eq!(events(&app).await.len(), 1);
+    post(
+        &app,
+        &token,
+        json!({"location": cell(FAR, &at(30), 1000.0)}),
+    )
+    .await;
+    assert_eq!(
+        events(&app).await.last().unwrap(),
+        &("zone_left".to_string(), stored(&first))
+    );
+}
+
+/// Design 125b C10 (QA M2): "Here now" counts from the newest fine fix - a fresh cell fix never
+/// keeps it alive; no "At Home" badge on a cell fix.
+#[tokio::test]
+async fn a_cell_fix_never_keeps_here_now() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("Anna").await;
+    set_location(&app, id, "interval", 10).await;
+    add_home(&app, id).await;
+    post(&app, &token, json!({"location": fix(AWAY, &at(90))})).await;
+    post(&app, &token, json!({"location": fix(NEAR, &at(70))})).await;
+    post(&app, &token, json!({"location": fix(NEAR, &at(65))})).await;
+    post(&app, &token, json!({"location": cell(NEAR, &at(1), 30.0)})).await;
+    let (when, mode, interval) = crate::zones::freshness_inputs(&app.db, id).await.unwrap();
+    assert!(!crate::zones::fresh(when, &mode, interval, Utc::now()));
+    let page = app
+        .get_page(&format!("/devices/{id}/zones"), &cookie)
+        .await
+        .text();
+    assert!(!page.contains("data-here>Here now"), "{page}");
+    let locate = app
+        .get_page(&format!("/devices/locate?device={id}"), &cookie)
+        .await
+        .text();
+    assert!(!locate.contains("At Home"), "no badge on a cell fix");
+}

@@ -578,6 +578,27 @@ class ZonePlanTest {
         assertEquals(listOf("KEEP", "SIDE_CHANGED"), CheckVerdict.values().map { it.name })
     }
 
+    @Test
+    fun `design 125b C10 - a coarse fix is never inside and outside only far`() {
+        fun cell(m: Double, accuracy: Float, provider: String = "vibb_cell") = north(m, accuracy).copy(provider = provider)
+        val big = home.copy(radiusM = 2000)
+        // Inside by geometry: GPS inside, a cell fix unsure.
+        assertEquals(true, sureSide(north(0.0, accuracy = 500f), big))
+        assertEquals(null, sureSide(cell(0.0, 500f), big))
+        assertEquals(null, sureSide(cell(0.0, 500f, "vibb_apple_cell"), big))
+        // 1 km away within 30 m: GPS outside, a cell fix (under 20 km past the edge) unsure.
+        assertEquals(null, sureSide(cell(1000.0, 30f), home))
+        // 19 km past the edge within 1 km unsure, 21 km outside; within 10 km three accuracies count.
+        assertEquals(null, sureSide(cell(150.0 + 19_000.0, 1000f), home))
+        assertEquals(false, sureSide(cell(150.0 + 21_000.0, 1000f), home))
+        assertEquals(null, sureSide(cell(150.0 + 25_000.0, 10_000f), home))
+        assertEquals(false, sureSide(cell(150.0 + 31_000.0, 10_000f), home))
+        // A near cell fix never starts a crossing check.
+        assertEquals(CheckVerdict.KEEP, checkVerdict(north(1000.0), cell(30.0, 500f), listOf(big)))
+        // A GLA-on phone's `network` fix is not coarse (Q8).
+        assertEquals(true, sureSide(north(0.0, accuracy = 500f).copy(provider = "network"), big))
+    }
+
     private fun source(path: String) = File("src/main/java/com/kidslauncher/mdm/$path").readText()
 
     @Test

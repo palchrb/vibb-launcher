@@ -119,10 +119,17 @@ object WifiPlaces {
      * What a sync's attempt knows ([motion], [movedAtElapsedMs] - design 124's flags) and, for the heartbeat's 4-h cap
      * try with `motion` `STILL`, the [vouched] fix a zone link may renew (D12); while `motion` is `STILL`
      * ([appleStillMotion]), the [stillVouch] an Apple fix may only renew (design 125 A9, H2). The attempt answers in
-     * [renewed] (the vouched fix re-sent with `still: true`) and [notFresh] (a 2-min fallback fix: reported, never fresh,
-     * M2).
+     * [renewed] (the vouched fix re-sent with `still: true`) and [notFresh] (a 2-min fallback fix or a cell fix:
+     * reported, never fresh, M2, design 125b C9.4). [lastFresh]: the last fresh fix, whatever the motion - a cell fix
+     * inside its circle while it is under 4 h old is not reported (design 125b C9.3).
      */
-    class Ask(val motion: Motion, val movedAtElapsedMs: Long, val vouched: Location? = null, val stillVouch: Location? = null) {
+    class Ask(
+        val motion: Motion,
+        val movedAtElapsedMs: Long,
+        val vouched: Location? = null,
+        val stillVouch: Location? = null,
+        val lastFresh: Location? = null,
+    ) {
         @Volatile var renewed = false
 
         /** The renewal came from an Apple fix within the vouch, not a zone link (A9). */
@@ -451,12 +458,23 @@ object WifiPlaces {
         return fix
     }
 
-    /** D10: the serving cell's own fix, after GPS and Wi-Fi gave nothing. */
-    private fun cellOnly(context: Context, store: Store?, snap: Snapshot): Location? {
+    /** D10: the serving cell's own fix, after GPS and Wi-Fi gave nothing - reported only by design 125b C9
+     * ([cellReport]: never while still, not over a recent fine fix it agrees with, a `locate` always), never fresh. */
+    private fun cellOnly(context: Context, store: Store?, snap: Snapshot, ask: Ask, locate: Boolean, accept: (Location) -> Boolean): Location? {
         store ?: return null
         val fix = cellFix(snap.cell, store.rows, nowMin()) ?: return null
         save(context, store.generation) { touchSeen(it, fix.keys, nowMin()) }
-        return location(fix)
+        fun seen(l: Location?) = l?.let { SeenFix(it.latitude, it.longitude, if (it.hasAccuracy()) it.accuracy.toDouble() else 0.0, it.time) }
+        val verdict = cellReport(fix, appleStillMotion(ask.motion), seen(ask.stillVouch), seen(ask.lastFresh), System.currentTimeMillis(), locate)
+        Log.i(LOG_TAG, "cell fix acc=${fix.accuracyM.toInt()} $verdict")
+        return when (verdict) {
+            CellVerdict.REPORT -> location(fix).takeIf(accept)?.also { ask.notFresh = true }
+            CellVerdict.WITHHOLD -> null
+            CellVerdict.CONTRADICTS -> {
+                count(context, today()) { c -> c.copy(cellContradictions = c.cellContradictions + 1) }
+                null
+            }
+        }
     }
 
     // --- The Apple lookup through the family's server (design 125 step 2, A3, A4, A9) ---
@@ -850,7 +868,7 @@ object WifiPlaces {
                         better(fix, early.await())
                     }
                 }
-                val result = kept ?: cellOnly(app, store, snap.await())
+                val result = kept ?: cellOnly(app, store, snap.await(), ask, plan == AttemptPlan.LOCATE, accept)
                 Log.i(LOG_TAG, "attempt path=$plan result=${if (ask.renewed) "renewed" else result?.provider ?: "none"}")
                 result
             }

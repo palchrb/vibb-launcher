@@ -961,7 +961,14 @@ private suspend fun currentLocationReport(
     }
     // Design 125 A9 (H2): while the phone is still, an Apple fix may only renew this vouch.
     val stillVouch = lastFreshQueued?.takeIf { com.kidslauncher.mdm.places.appleStillMotion(motion) }
-    val places = WifiPlaces.Ask(motion, motionNow?.movedAtElapsedMs ?: 0L, renewable?.let(::asLocation), stillVouch?.let(::asLocation))
+    // Design 125b C9.3: the last fresh fix, whatever the motion - a cell fix inside its circle under 4 h is not reported.
+    val places = WifiPlaces.Ask(
+        motion,
+        motionNow?.movedAtElapsedMs ?: 0L,
+        renewable?.let(::asLocation),
+        stillVouch?.let(::asLocation),
+        lastFreshQueued?.let(::asLocation),
+    )
     // The parent's `locate` waits up to EXPLICIT_FIX_BOUND_MS here, under the sync mutex: rare and asked for, and its
     // fix goes into this report; every other fix keeps its 15 s (preciseFix).
     val location = LocateCommands.currentLocation(

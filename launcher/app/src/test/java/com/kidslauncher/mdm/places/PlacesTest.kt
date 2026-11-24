@@ -409,6 +409,23 @@ class PlacesTest {
         assertTrue(cellVetoes(cell, listOf(row), far, 200))
         assertFalse(cellVetoes(cell, listOf(row), far.copy(lat = Town.ll(0.0, 2_000.0).first), 200))
         assertFalse(cellVetoes(null, listOf(row), far, 200))
+        // Design 125b step 3a: a cell fix is never fresh.
+        assertFalse(fix.fresh)
+    }
+
+    @Test
+    fun `design 125b C9 - cell_report, every row`() {
+        val (lat, lng) = Town.ll(0.0, 0.0)
+        val now = 10_000_000_000L
+        fun north(m: Double) = Town.ll(0.0, m).first
+        for (r in rows["cell_report"]!!.jsonArray.map { it.jsonObject }) {
+            val why = r["why"]!!.str()
+            val fix = LearnedFix(lat, lng, r["accuracy"]!!.dbl()!!, 1, 0, false, emptySet(), PROVIDER_CELL)
+            val vouch = r["vouch_m"]!!.dbl()?.let { SeenFix(north(it), lng, r["vouch_acc"]!!.dbl()!!, now - 30 * 60_000L) }
+            val fresh = r["fresh_m"]!!.dbl()?.let { SeenFix(north(it), lng, r["fresh_acc"]!!.dbl()!!, now - r["fresh_age_min"]!!.dbl()!!.toLong() * 60_000L) }
+            val got = cellReport(fix, r["still"]!!.jsonPrimitive.boolean, vouch, fresh, now, r["locate"]!!.jsonPrimitive.boolean)
+            assertEquals(why, r["verdict"]!!.str(), got.name)
+        }
     }
 
     // --- D12 ---
@@ -487,8 +504,8 @@ class PlacesTest {
         days = countsWith(days, 20000) { it.loo(LooClass.THREE, false) }
         days = countsWith(days, 20010) { it.loo(LooClass.TWO, true).loo(LooClass.ZONE, true) }
         days = countsWith(days, 20010) { it.copy(contradictions = it.contradictions + 1) }
-        assertEquals("loo 3+=1/2 2=1/1 zone=1/1 own=0/0 apple=0/0 mixed=0/0 err own=- apple=- mixed=- contradictions=1 apple_contradictions=0", countsLine(days))
-        assertEquals("loo 3+=0/0 2=1/1 zone=1/1 own=0/0 apple=0/0 mixed=0/0 err own=- apple=- mixed=- contradictions=1 apple_contradictions=0", countsLine(countsWith(days, 20030) { it }))
+        assertEquals("loo 3+=1/2 2=1/1 zone=1/1 own=0/0 apple=0/0 mixed=0/0 err own=- apple=- mixed=- contradictions=1 apple_contradictions=0 cell_contradictions=0", countsLine(days))
+        assertEquals("loo 3+=0/0 2=1/1 zone=1/1 own=0/0 apple=0/0 mixed=0/0 err own=- apple=- mixed=- contradictions=1 apple_contradictions=0 cell_contradictions=0", countsLine(countsWith(days, 20030) { it }))
         assertTrue(learnedContradiction(fix3, north(600.0), lng0, 1_000 + 9 * 60_000))
         assertFalse("within 500 m", learnedContradiction(fix3, north(400.0), lng0, 1_000))
         assertFalse("more than 10 min", learnedContradiction(fix3, north(600.0), lng0, 1_000 + 11 * 60_000))

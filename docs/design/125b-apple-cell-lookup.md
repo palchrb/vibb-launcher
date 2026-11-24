@@ -218,8 +218,8 @@ C9. **How it joins the fixes - never over a fine one.**
        fresh-fix stamp: `Ask.notFresh`, so the next beat tries GPS again), never a vouch (not in `VOUCHING_PROVIDERS`),
        never renews "Hasn't moved since", never teaches, never the new side of 124's D7.
     5. **An explicit Locate** (the parent's `locate`) reports the cell fix when nothing finer came, whatever 2 and 3 say
-       - the parent asked and gets the best there is, its circle showing how coarse (QA L7, Q10); still never fresh and
-       never a vouch.
+       - the parent asked and gets the best there is, its circle showing how coarse (QA L7; the owner's Q10: yes); still
+       never fresh and never a vouch.
     6. **The heartbeat's back-off** (QA L9): a reported cell fix is no fresh fix, so after the beat's `FIX` the motion
        goes to `STILL_SINCE_TRY` and 124's `QUIET` back-off spaces the next tries (up to 4 h) until a motion fire. A
        still evening at a cabin with only cells gets few tries - each a GPS try too -, and the PWA shows the cell fix's
@@ -389,7 +389,8 @@ surely outside at `d - r >= max(3a, 20 km)`, the pair's second at least 10 minut
 the event at the first coarse fix (C10). **Q3** 5 km (C8). **Q5** first 120 cells a phone a day, then **changed**: the
 cap protects the server's cache, not Apple's data - so no cache oracle for cells (the same answer, no age, a fixed
 answer time) and the cap raised to **1000 a day**, an abuse brake only (C5, C12). **Q6** an agreeing cell fix isn't
-reported (C9.3).
+reported (C9.3). **Q10** (2026-11-24) yes: an explicit Locate shows a cell fix when nothing finer came, even while
+still or agreeing with a recent fine fix (C9.5).
 
 Taken as recommended unless the user says otherwise (no visible cost):
 - **Q4** two Apple calls (C6); try a combined call once during the manual check and merge later only if Apple answers
@@ -398,10 +399,7 @@ Taken as recommended unless the user says otherwise (no visible cost):
 - **Q8** GMS `network` fixes with GLA on unchanged in zones.
 - **Q9** no timing advance or signal: TA measures to the mast, and Apple's position is where phones heard the cell.
 
-Open:
-- **Q10 (visible) - an explicit Locate shows a cell fix** when nothing finer came, even while still or agreeing with a
-  recent fine fix (C9.5). Recommended: yes - the parent asked; the circle says how coarse. The other way: Locate keeps
-  the fine fix and its age as the heartbeat does.
+Open: none.
 
 ## 12. Revision 2 - the design QA and the user's answers
 

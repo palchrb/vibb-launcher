@@ -175,7 +175,8 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   `CHECK_MAX_DELAY_MS`), from the newest fix known (`LocateCommands.newestKnown`: the kept one or the reported one); no
   zones = no series, no fix = 3 min. A check's fix (`checkVerdict`, qa-design-64-step2-code F-1): **surely** on the
   other side of a boundary than the **reported** fix by the server's own rule (`sureSide`: inside at `d + a <= r`,
-  outside at `d - a >= r`; the reported fix's sure side, or its plain distance when unsure) -> the phone marked moved,
+  outside at `d - a >= r` - design 125b C10, a guard: a `vibb_cell`/`vibb_apple_cell` fix never inside, outside only at
+  `d - r >= max(3a, 20 km)`, the server's `zones::coarse_side`; the reported fix's sure side, or its plain distance when unsure) -> the phone marked moved,
   promoted to the reported fix, queued, a sync (`"zone_check"`) and the confirming GPS fix 2 min later; anything else
   (unsure, no accuracy, the same side) -> only the kept slot (`keepFix`, the heartbeat's `KEPT`). **Caps** (F-2,
   provisional until the Jelly Star walk, design 64 §5): after a series ends the motion sensor starts no new one for

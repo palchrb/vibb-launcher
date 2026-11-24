@@ -55,6 +55,15 @@
   without a router of its own, that hear home, never inside a zone just smaller than their distance. The leave-one-out
   counts on the Jelly Star are the real check. The time is the oldest used
   result's. The lookup only touches `lastSeen`. A learned serving cell more than its range + 2 km away vetoes the fix.
+- **A cell fix is a last resort** (design 125b step 3a, C9; `cellReport`, `PlacesTest`'s `cell_report` rows in
+  `wifi_places.json`): `cellFix` is **never fresh** (`Ask.notFresh` - the next beat tries GPS again; it never stamps
+  the fresh fix, never renews "Hasn't moved since", never vouches - not in `VOUCHING_PROVIDERS` -, never teaches).
+  While `motion` is `STILL` it is never reported: further than both accuracies + 2 km from the vouched fix it counts as
+  a **cell contradiction** (`DayCounts.cellContradictions`, `cell_contradictions=` in the counts line), else it is
+  withheld. Moved or not, the last fresh fix (`Ask.lastFresh`) under 4 h old (`STILL_SKIP_MAX_MS`) and inside the cell
+  fix's circle (`d <= accCell + accFine`) keeps it back too (the owner's Q6): the cached fine fix is reported with its
+  age. **The parent's `locate`** (`AttemptPlan.LOCATE`) reports it whatever the rest says (C9.5, the owner's Q10 on
+  2026-11-24: yes). Logged `cell fix acc=... REPORT|WITHHOLD|CONTRADICTS`.
 - **Stands alone** (H2): after a motion fire (`motion` not `STILL`) a fix from fewer than three networks never stands
   alone - GPS runs in the same attempt; one network never gives a fix.
 - **The attempt** (D13, D14; `WifiPlaces.attempt`, from `LocateCommands.freshOrLastKnown` when
