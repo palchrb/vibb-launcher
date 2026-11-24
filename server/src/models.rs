@@ -222,9 +222,10 @@ pub struct DevicePolicy {
     /// "Wake the screen for a notification" (launcher round 7 §3, migrations/0084, default off),
     /// sent as `launcher_ui.lock_wake_on_notification`.
     pub lock_wake_on_notification: bool,
-    /// "Buzz for a notification" (design 82 W3, migrations/0136, default off), sent as
-    /// `launcher_ui.lock_buzz_on_notification`.
-    pub lock_buzz_on_notification: bool,
+    /// What the locked phone does for a notice (design 130, migrations/0173: `off`/`buzz`/`sound`, default off;
+    /// design 82 W3's buzz switch before it), sent as `launcher_ui.lock_notice_alert`
+    /// ([crate::lock_glance::NoticeAlert::stored]).
+    pub lock_notice_alert: String,
     /// Device › Weather's "Weather on the lock screen" (design 75, migrations/0122, default off), sent as
     /// `launcher_ui.lock_weather`.
     pub lock_weather: bool,
@@ -341,9 +342,10 @@ pub struct LauncherUi {
     /// page or a missed call turns the screen on, on the lock. Always sent; a launcher without the
     /// key reads it as off.
     pub lock_wake_on_notification: bool,
-    /// "Buzz for a notification" (design 82 W3): the same notices make the locked phone vibrate once, without a
-    /// sound. Always sent; a launcher without the key reads it as off.
-    pub lock_buzz_on_notification: bool,
+    /// Design 130 (design 82 W3's buzz before it): the same notices make the locked phone buzz once (`buzz`) or play
+    /// Android's notification sound once (`sound`), or neither (`off`). Always sent; the launcher reads a missing or
+    /// unknown value as off.
+    pub lock_notice_alert: crate::lock_glance::NoticeAlert,
     /// "Weather on the lock screen" (design 75 D17): the glance shows yr's symbol and the degrees by the date and asks
     /// `GET /api/devices/weather`. Always sent; a launcher without the key reads it as off.
     pub lock_weather: bool,

@@ -5332,3 +5332,30 @@ settings, which only the system may read or write).
 | 853 blocked | Block port 853 only: both providers' DoH on 443 answer (Cloudflare by name at its fixed addresses, the certificate checked) |
 | Parent's pick | Pick Cloudflare in the PWA: the line says Cloudflare; the picker has no Mullvad |
 | Custom by name | Custom with `tls://dns.example...` names (a server by name): its name's look-up goes to 9.9.9.9 on 853/443, never to Cloudflare (`tcpdump host 1.1.1.2 or host 1.0.0.2` empty) |
+
+## 6bi. Lyd: a notification sound on the locked phone (design 130, branch `lock-sound`) - written, not run
+
+Design 130 (`docs/design/130-lock-sound.md`): Lock Screen & PINs' "Varsling" is Av / Vibrer / Lyd
+(`launcher_ui.lock_notice_alert`). Run on the lowest and the highest image it touches (Android 14 and 16/17), with a
+server from the branch, the debug launcher, calls and SMS managed, Meldinger on the lock (Name only) and the phone
+locked and dark. The emulator has no motor and its audio is the host's: a buzz is `I/PinLock: Notice buzz`, a sound
+`I/PinLock: Notice sound` beside `dumpsys audio` ("playback activity": a player with `usage=USAGE_NOTIFICATION`,
+`content=CONTENT_TYPE_SONIFICATION`, the launcher's uid) and `dumpsys media.audio_flinger` showing a track on the
+notification stream.
+
+- **The PWA:** the cell under "Vekk skjermen ved varsler" reads "Varsling" with Av selected on a new phone; Lyd saved
+  lands on the same row (no jump to the top), the security log says "telefon N: varsling: lyd", the policy's
+  `launcher_ui.lock_notice_alert` is `"sound"` (`curl` the policy with the phone's token). A server upgraded from a
+  database with the buzz switch on shows Vibrer.
+- **Lyd, ringer Normal:** an SMS from a contact: one `Notice sound`, no `Notice buzz`; a second SMS in the same thread
+  within 10 s: nothing; after 10 s: one more. A missed call: one.
+- **Lyd, ringer Vibrate** (`adb shell cmd audio set-ringer-mode VIBRATE` or Kid Settings' sound choice): `Notice buzz`,
+  no sound. **Silent:** neither.
+- **Do Not Disturb** (`cmd notification set_dnd priority`) and a time rule's silence: neither, the row still comes.
+- **Notification volume 0** (ringer Normal, `cmd media_session volume --stream 5 --set 0`): `Notice sound` logs, nothing
+  is heard - Android's own behaviour.
+- **Unlocked** (Vibb's lock off or the phone open): nothing from the launcher. **During a call:** nothing.
+- **Default notification sound "None"** (`settings put system notification_sound ''`): nothing heard, nothing throws.
+- **Av and Vibrer** as before (§6ad, §6af): Vibrer buzzes on Normal and Vibrate, Av never.
+- **Not on the emulator:** whether the Jelly Star (16) plays it from the lock and how loud, a custom notification sound
+  on storage (the remote-player fallback).

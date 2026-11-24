@@ -9,8 +9,43 @@ package com.kidslauncher.mdm.lock
  * too, through [PinLockRuntime.noticeUpdated] - the same gate and the same gap, and never the wake.
  */
 
+/*
+ * Design 130 (docs/design/130-lock-sound.md): the switch became the parent's choice Av / Vibrer / Lyd
+ * (`launcher_ui.lock_notice_alert`). The gate below decides whether, for both; [noticeAlertAction] decides what, by
+ * the ringer: Lyd plays Android's default notification sound on a normal ringer, buzzes on Vibrate.
+ */
+
+/** The parent's choice for a notice on the locked phone (design 130). */
+enum class NoticeAlert { OFF, BUZZ, SOUND }
+
+/** `launcher_ui.lock_notice_alert`'s word: `buzz`, `sound`, anything else (missing, unknown) off. */
+fun noticeAlertOf(word: String?): NoticeAlert = when (word) {
+    "buzz" -> NoticeAlert.BUZZ
+    "sound" -> NoticeAlert.SOUND
+    else -> NoticeAlert.OFF
+}
+
+/** What a notice the gate let through does. */
+enum class NoticeAlertAction { NONE, BUZZ, SOUND }
+
+/**
+ * Design 130: what follows the ringer - Off nothing; a Silent ringer, or one that couldn't be read, nothing; Vibrate
+ * a buzz for both; Normal a buzz for Vibrer and the sound alone for Lyd.
+ */
+fun noticeAlertAction(alert: NoticeAlert, ringerMode: Int?): NoticeAlertAction = when {
+    alert == NoticeAlert.OFF -> NoticeAlertAction.NONE
+    ringerMode == RINGER_MODE_VIBRATE -> NoticeAlertAction.BUZZ
+    ringerMode != RINGER_MODE_NORMAL -> NoticeAlertAction.NONE
+    alert == NoticeAlert.SOUND -> NoticeAlertAction.SOUND
+    else -> NoticeAlertAction.BUZZ
+}
+
 /** The buzz's length: the SMS reaction buzz's (`SmsNotifier`). */
 const val NOTICE_BUZZ_MS = 40L
+
+/** The notice sound is released (stopped, its player freed, its focus given back) this long after it started
+ * (design 130, code QA L1): a notification sound is shorter. */
+const val NOTICE_SOUND_RELEASE_MS = 5_000L
 
 /** At least this long between two notice buzzes (in memory: a new process starts over). */
 const val BUZZ_GAP_MS = 10_000L

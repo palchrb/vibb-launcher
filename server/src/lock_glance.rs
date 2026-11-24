@@ -226,17 +226,63 @@ pub fn wake_log_line(device_id: i64, on: bool) -> crate::security::Detail {
     )
 }
 
-/// The same for the buzz switch (design 82 W3): "phone 3: buzz for a notification: on".
-pub fn buzz_log_line(device_id: i64, on: bool) -> crate::security::Detail {
+/// The same for the alert choice (design 130): "phone 3: alert: sound". Older rows keep design 82 W3's
+/// `security.detail.lock_buzz.*` words.
+pub fn alert_log_line(device_id: i64, alert: NoticeAlert) -> crate::security::Detail {
     switch_line(
         device_id,
-        if on {
-            "security.detail.lock_buzz.on"
-        } else {
-            "security.detail.lock_buzz.off"
+        match alert {
+            NoticeAlert::Off => "security.detail.lock_alert.off",
+            NoticeAlert::Buzz => "security.detail.lock_alert.buzz",
+            NoticeAlert::Sound => "security.detail.lock_alert.sound",
         },
         &[],
     )
+}
+
+/// What the locked phone does for a notice (design 130, `docs/design/130-lock-sound.md`; design 82 W3's buzz switch
+/// before it): `device_policy.lock_notice_alert` (0173), sent as `launcher_ui.lock_notice_alert`, the Lock Screen
+/// page's Av / Vibrer / Lyd. Off by default.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NoticeAlert {
+    #[default]
+    Off,
+    Buzz,
+    Sound,
+}
+
+impl NoticeAlert {
+    /// In the page's order.
+    pub const ALL: [NoticeAlert; 3] = [NoticeAlert::Off, NoticeAlert::Buzz, NoticeAlert::Sound];
+
+    /// The stored and sent word.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            NoticeAlert::Off => "off",
+            NoticeAlert::Buzz => "buzz",
+            NoticeAlert::Sound => "sound",
+        }
+    }
+
+    /// One of the three words, else `None` (the form's 400).
+    pub fn parse(word: &str) -> Option<NoticeAlert> {
+        NoticeAlert::ALL.into_iter().find(|a| a.as_str() == word)
+    }
+
+    /// The stored value; anything else (no row yet, `DevicePolicy::default()`) is off.
+    pub fn stored(word: &str) -> NoticeAlert {
+        NoticeAlert::parse(word).unwrap_or_default()
+    }
+
+    /// The choice's word on the page.
+    pub fn label_key(self) -> &'static str {
+        match self {
+            NoticeAlert::Off => "device.lock.alert.off",
+            NoticeAlert::Buzz => "device.lock.alert.buzz",
+            NoticeAlert::Sound => "device.lock.alert.sound",
+        }
+    }
 }
 
 fn switch_line(device_id: i64, key: &str, params: &[(&str, &str)]) -> crate::security::Detail {
@@ -455,8 +501,15 @@ mod tests {
             "telefon 3: vekk skjermen ved varsel: på"
         );
         assert_eq!(
-            crate::security::worded_in(&buzz_log_line(3, false), crate::i18n::Lang::Nb),
-            "telefon 3: vibrer ved varsel: av"
+            crate::security::worded_in(
+                &alert_log_line(3, NoticeAlert::Sound),
+                crate::i18n::Lang::Nb
+            ),
+            "telefon 3: varsling: lyd"
+        );
+        assert_eq!(
+            worded(&alert_log_line(3, NoticeAlert::Buzz)),
+            "phone 3: alert: buzz"
         );
         assert_eq!(
             log_line(3, ELEMENT_X, true).columns().0.as_deref(),
