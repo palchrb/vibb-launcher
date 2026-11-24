@@ -93,6 +93,13 @@ class TrustedClockTest {
         val before = TrustedClockState(ClockAnchor("server", 1_764_000_000_000, 5_000_000, 7), checkpointMs = 1_764_000_000_000)
         assertEquals(true, readClock(before, 1_000_000_000_000, 9_000, 8).state!!.carriedOpen)
         assertEquals(false, readClock(before, 1_764_000_100_000, 9_000, 8).state!!.carriedOpen)
+
+        // A checkpoint between automatic time's set and its TIME_SET keeps the offset, so the set is still taken.
+        val open = readClock(before, 1_000_000_000_000, 9_000, 8).state!!
+        val setWall = 1_764_000_200_000L
+        val checked = checkpointAt(open, readClock(open, setWall, 20_000, 8), setWall)
+        assertEquals(open.checkpointSkewMs, checked.checkpointSkewMs)
+        assertEquals(setWall, timeSetAnchor(checked, setWall, 21_000, 8)?.anchor?.ms)
     }
 
     @Test

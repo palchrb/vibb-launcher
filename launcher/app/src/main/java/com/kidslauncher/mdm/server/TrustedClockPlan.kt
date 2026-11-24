@@ -190,8 +190,13 @@ fun takeAnchor(state: TrustedClockState, anchor: ClockAnchor, wallMs: Long, elap
 }
 
 /** The checkpoint at a read: the trusted time and the wall clock's offset from it. Only with a trust to carry. */
-fun checkpointAt(state: TrustedClockState, read: ClockRead, wallMs: Long): TrustedClockState =
-    if (read.trust == ClockTrust.NONE) state else state.copy(checkpointMs = read.ms, checkpointSkewMs = wallMs - read.ms)
+fun checkpointAt(state: TrustedClockState, read: ClockRead, wallMs: Long): TrustedClockState = when {
+    read.trust == ClockTrust.NONE -> state
+    // While the carried time is open the wall clock's offset is unknown: a checkpoint that runs after automatic time set
+    // the clock but before its `TIME_SET` arrives would otherwise make that set look like no move (gate 6bf (j)).
+    state.carriedOpen && read.trust == ClockTrust.CARRIED -> state.copy(checkpointMs = read.ms)
+    else -> state.copy(checkpointMs = read.ms, checkpointSkewMs = wallMs - read.ms)
+}
 
 /** The band of offsets a reported step stands for: 0 is `[-5, 5]` min, a step `s` is `[s, s + 5)` min on its side. */
 private fun band(step: Long): LongRange = when {

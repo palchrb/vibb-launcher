@@ -209,6 +209,12 @@ class ClockFormatTest {
             assertTrue(path, "ClockFormat.watch(" in src(path) && "ClockFormat.unwatch(" in src(path))
         }
         assertTrue("Intent.ACTION_LOCALE_CHANGED" in src("ui/ClockFormat.kt"))
+        // A face showing the decisions' time as text binds again when Android's clock or zone is set (gate 6bf (a)).
+        assertTrue("Intent.ACTION_TIME_CHANGED" in src("ui/ClockFormat.kt"))
+        assertTrue("Intent.ACTION_TIMEZONE_CHANGED" in src("ui/ClockFormat.kt"))
+        for (path in listOf("lock/GlancePanel.kt", "ui/LockActivity.kt")) {
+            assertTrue(path, "clockFace.rebindDate()" in src(path))
+        }
     }
 
     /** A function's body: from its signature to the first line that closes it at its indent. */

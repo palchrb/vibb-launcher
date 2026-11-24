@@ -111,6 +111,9 @@ class LockClockFace(
      * flips with the line's moods; the long date with the switch off. A profile's date is always the short one. */
     private var short = false
 
+    /** The date bound again (Android's clock or zone was set: [ClockFormat.bindTrusted] decides afresh). */
+    fun rebindDate() = datePattern(if (profile != null) true else short)
+
     fun shortDate(on: Boolean) {
         if (profile != null || on == short) return
         short = on

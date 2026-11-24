@@ -249,8 +249,8 @@ object ClockFormat {
     class Watch internal constructor(val observer: ContentObserver, val receiver: BroadcastReceiver?)
 
     /**
-     * Calls [onChange] on the main thread whenever `TIME_12_24` or the system locale changes (N6:
-     * the lock handles `locale` itself, so it isn't recreated).
+     * Calls [onChange] on the main thread whenever `TIME_12_24`, the system locale, Android's clock or its zone changes
+     * (N6: the lock handles `locale` itself, so it isn't recreated).
      */
     fun watch(context: Context, onChange: () -> Unit): Watch? {
         val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
@@ -264,7 +264,15 @@ object ClockFormat {
                 override fun onReceive(c: Context?, intent: Intent?) = onChange()
             }
             val registered = try {
-                context.registerReceiver(receiver, IntentFilter(Intent.ACTION_LOCALE_CHANGED), Context.RECEIVER_NOT_EXPORTED)
+                context.registerReceiver(
+                    receiver,
+                    // A set clock or zone too: a face showing the decisions' time as text binds again at once.
+                    IntentFilter(Intent.ACTION_LOCALE_CHANGED).apply {
+                        addAction(Intent.ACTION_TIME_CHANGED)
+                        addAction(Intent.ACTION_TIMEZONE_CHANGED)
+                    },
+                    Context.RECEIVER_NOT_EXPORTED,
+                )
                 receiver
             } catch (e: Exception) {
                 Log.w("ClockFormat", "Couldn't watch the system locale", e)
