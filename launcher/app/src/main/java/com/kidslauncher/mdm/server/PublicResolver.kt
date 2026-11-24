@@ -72,11 +72,11 @@ object DotBlockedRule {
 fun Budget.atMost(cap: Budget): Budget = Budget(minOf(connectMs, cap.connectMs), minOf(totalMs, cap.totalMs))
 
 /**
- * A public resolver (Cloudflare, Quad9): DoT on 853 to its fixed [address], and on a network that
- * blocks 853 the same provider's DoH on 443 by its IP-literal URL ([doh]: no SNI, the certificate must
- * name the IP - theirs do) - never the other provider (design 36 step 3). The parent's own servers
- * never come here: a parent's DoT server never gets a guessed DoH URL. Logs name the [label] and
- * counts only.
+ * A public resolver (Quad9, Mullvad, Cloudflare): DoT on 853 to its fixed [address], and on a network
+ * that blocks 853 the same provider's DoH on 443 ([doh]: an IP-literal URL where the certificate names
+ * the IP, else the name at the same fixed address, [PINNED_DNS]) - design 36 step 3. Which provider a
+ * query goes to is [resolveChain]'s. The parent's own servers never come here: a parent's DoT server
+ * never gets a guessed DoH URL. Logs name the [label] and counts only.
  */
 class PublicResolver(
     val label: String,
@@ -88,10 +88,16 @@ class PublicResolver(
 ) {
     private val state = AtomicReference(DotBlockedRule.IDLE)
 
+    /** Whether the chain skips this provider for now ([ProviderChainRule]). */
+    internal val down = AtomicReference(ProviderChainRule.UP)
+
     internal fun state(): DotBlocked = state.get()
 
-    /** A network reset: DoT first again. */
-    fun reset() = update { DotBlockedRule.IDLE }
+    /** A network reset: DoT first again, and asked again in the chain. */
+    fun reset() {
+        update { DotBlockedRule.IDLE }
+        down.set(ProviderChainRule.UP)
+    }
 
     /**
      * One query: DoT within [dotBudget] (a probe within at most [UPSTREAM_BUDGET], so its query still
@@ -106,8 +112,16 @@ class PublicResolver(
         dotBudget: Budget,
         dohCap: Budget,
         transport: (UpstreamTarget, List<InetAddress>, ByteArray, Budget) -> Attempt,
+    ): Attempt = resolveBy(elapsed() + QUERY_DEADLINE_MS, query, dotBudget, dohCap, transport)
+
+    /** [resolve] within a [deadline] that is already running (the chain's one per query). */
+    fun resolveBy(
+        deadline: Long,
+        query: ByteArray,
+        dotBudget: Budget,
+        dohCap: Budget,
+        transport: (UpstreamTarget, List<InetAddress>, ByteArray, Budget) -> Attempt,
     ): Attempt {
-        val deadline = elapsed() + QUERY_DEADLINE_MS
         val addresses = listOf(address)
         fun attempt(target: UpstreamTarget, budget: Budget): Attempt = try {
             transport(target, addresses, query, budget)
@@ -156,24 +170,157 @@ class PublicResolver(
     }
 }
 
-/** The public resolvers (design 36 §0 and step 3), one state each for the process; Cloudflare's is
- * also the bootstrap's last resolver ([CLOUDFLARE_BOOTSTRAP]). [KidVpnService] resets them on a
- * network reset. */
-object PublicResolvers {
-    val cloudflare = cloudflareResolver()
-    val quad9 = quad9Resolver()
+/**
+ * Whether the chain skips one provider for now (the web filter's resolver: the parent's choice first,
+ * the others as fallbacks, all encrypted). Up: asked. Down after a query it didn't answer: skipped
+ * until [untilMs], then one query asks it ([probing]); [periods] failed periods in a row. Elapsed time.
+ */
+data class ProviderDown(val untilMs: Long = 0, val periods: Int = 0, val probing: Boolean = false)
 
-    /** The policy's `dns_upstream_provider`: Quad9 by name, anything else Cloudflare (as before). */
-    fun of(provider: String?): PublicResolver = if (provider == "quad9") quad9 else cloudflare
+/** The pure rule for [ProviderDown]: a query a provider doesn't answer skips it for [BACKOFF_BASE_MS],
+ * doubling with every failed probe to [BACKOFF_CAP_MS]; an answer, or a network reset, ends it. */
+object ProviderChainRule {
+    const val BACKOFF_BASE_MS = 60_000L
+    const val BACKOFF_CAP_MS = 15 * 60_000L
 
-    fun reset() {
-        cloudflare.reset()
-        quad9.reset()
+    val UP = ProviderDown()
+
+    /** Whether a query asks the provider now, and the state after; a due one is asked by one query. */
+    fun ask(s: ProviderDown, now: Long): Pair<Boolean, ProviderDown> = when {
+        s.periods == 0 -> true to s
+        now >= s.untilMs && !s.probing -> true to s.copy(probing = true)
+        else -> false to s
     }
+
+    /** It didn't answer. While down only the probe's failure counts (two queries in flight count once). */
+    fun afterFailure(s: ProviderDown, now: Long, probe: Boolean): ProviderDown {
+        if (s.periods > 0 && !(probe && s.probing)) return s
+        val periods = s.periods + 1
+        return ProviderDown(untilMs = now + backoff(periods), periods = periods)
+    }
+
+    /** Our own VPN refused the socket: nothing counts, a probe that never ran is given back. */
+    fun afterUnprotected(s: ProviderDown, probe: Boolean): ProviderDown = if (probe && s.probing) s.copy(probing = false) else s
+
+    fun backoff(periods: Int): Long = minOf(BACKOFF_BASE_MS shl (periods - 1).coerceIn(0, 10), BACKOFF_CAP_MS)
+}
+
+/** No answer from a provider: below DNS, or silence after the query was written. */
+internal fun unanswered(a: Attempt): Boolean = a is Attempt.Transport || (a is Attempt.Odd && a.kind == OddKind.TIMEOUT)
+
+/**
+ * One query through [order] (the parent's choice first, then the fallbacks): each provider that is up,
+ * or due for its probe, in turn, within one [QUERY_DEADLINE_MS]; one that doesn't answer is skipped for
+ * a while ([ProviderChainRule]) and the query goes on to the next while at least [BACKUP_FLOOR_MS] is
+ * left. With every provider skipped, the first is asked anyway (the filter never stops answering for a
+ * back-off). [answered] gets the label of the one that answered. Every hop is DoT or DoH, never plain DNS.
+ */
+fun resolveChain(
+    order: List<PublicResolver>,
+    query: ByteArray,
+    dotBudget: Budget,
+    dohCap: Budget,
+    transport: (UpstreamTarget, List<InetAddress>, ByteArray, Budget) -> Attempt,
+    elapsed: () -> Long = SystemClock::elapsedRealtime,
+    answered: (String) -> Unit = {},
+): Attempt {
+    val deadline = elapsed() + QUERY_DEADLINE_MS
+    var last: Attempt = Attempt.Transport(BackupReason.CONNECT)
+    var asked = false
+    for (provider in order) {
+        if (asked && deadline - elapsed() < BACKUP_FLOOR_MS) break
+        var ask = false
+        var probe = false
+        provider.down.updateAndGet { s ->
+            val (a, next) = ProviderChainRule.ask(s, elapsed())
+            ask = a
+            probe = next.probing && !s.probing
+            next
+        }
+        if (!ask) continue
+        asked = true
+        val outcome = provider.resolveBy(deadline, query, dotBudget, dohCap, transport)
+        when {
+            outcome is Attempt.Unprotected -> {
+                provider.down.updateAndGet { ProviderChainRule.afterUnprotected(it, probe) }
+                return outcome
+            }
+            unanswered(outcome) -> {
+                provider.down.updateAndGet { ProviderChainRule.afterFailure(it, elapsed(), probe) }
+                last = outcome
+            }
+            else -> {
+                provider.down.set(ProviderChainRule.UP)
+                answered(provider.label)
+                return outcome
+            }
+        }
+    }
+    if (asked) return last
+    val first = order.first()
+    val outcome = first.resolveBy(deadline, query, dotBudget, dohCap, transport)
+    if (outcome !is Attempt.Unprotected && !unanswered(outcome)) {
+        first.down.set(ProviderChainRule.UP)
+        answered(first.label)
+    }
+    return outcome
+}
+
+/** The public resolvers, one state each for the process; [KidVpnService] resets them on a network
+ * reset. The web filter's resolver: Quad9 by default, Mullvad and Cloudflare the fallbacks, all
+ * encrypted; a parent's server's name is never looked up through Cloudflare ([bootstrap]). */
+object PublicResolvers {
+    val quad9 = quad9Resolver()
+    val mullvad = mullvadResolver()
+    val cloudflare = cloudflareResolver()
+
+    /** The fallback order behind the parent's choice; Cloudflare last. */
+    private val chain = listOf(quad9, mullvad, cloudflare)
+
+    /** The provider of a policy without a known one (the server's `dns_server::DEFAULT_PROVIDER`). */
+    const val DEFAULT = "quad9"
+
+    /** Where a parent's server's name is looked up: the providers by their fixed addresses, never Cloudflare. */
+    val bootstrap = listOf(quad9, mullvad)
+
+    /** The provider that answered last (the status report's `provider`); `null` before any. */
+    @Volatile
+    var answering: String? = null
+        private set
+
+    /** The policy's `dns_upstream_provider`, an unknown one [DEFAULT]. */
+    fun of(provider: String?): PublicResolver = chain.firstOrNull { it.label == provider } ?: chain.first { it.label == DEFAULT }
+
+    /** The parent's choice first, then the rest in [chain]'s order. */
+    fun order(provider: String?): List<PublicResolver> = of(provider).let { first -> listOf(first) + chain.filter { it !== first } }
+
+    fun resolve(
+        provider: String?,
+        query: ByteArray,
+        dotBudget: Budget,
+        dohCap: Budget,
+        transport: (UpstreamTarget, List<InetAddress>, ByteArray, Budget) -> Attempt,
+    ): Attempt = resolveChain(order(provider), query, dotBudget, dohCap, transport) { answering = it }
+
+    fun reset() = chain.forEach(PublicResolver::reset)
 }
 
 val CLOUDFLARE_DOT = UpstreamTarget.Dot("cloudflare-dns.com", 853)
 val CLOUDFLARE_ADDRESS: InetAddress = InetAddress.getByAddress(byteArrayOf(1, 1, 1, 1))
+val QUAD9_DOT = UpstreamTarget.Dot("dns.quad9.net", 853)
+val QUAD9_ADDRESS: InetAddress = InetAddress.getByAddress(byteArrayOf(9, 9, 9, 9))
+
+/** Mullvad's encrypted DNS that blocks malware (also ads and trackers: Mullvad has no malware-only
+ * variant). Its certificate names the host, not the IP: DoH by name at the same fixed address. */
+val MULLVAD_DOT = UpstreamTarget.Dot("base.dns.mullvad.net", 853)
+val MULLVAD_ADDRESS: InetAddress = InetAddress.getByAddress(byteArrayOf(194.toByte(), 242.toByte(), 2, 4))
+
+/** The providers' names and their fixed addresses: never looked up. */
+val PINNED_PROVIDERS: Map<String, InetAddress> = mapOf(
+    CLOUDFLARE_DOT.host to CLOUDFLARE_ADDRESS,
+    QUAD9_DOT.host to QUAD9_ADDRESS,
+    MULLVAD_DOT.host to MULLVAD_ADDRESS,
+)
 
 fun cloudflareResolver(
     elapsed: () -> Long = SystemClock::elapsedRealtime,
@@ -183,11 +330,9 @@ fun cloudflareResolver(
 fun quad9Resolver(
     elapsed: () -> Long = SystemClock::elapsedRealtime,
     log: (String) -> Unit = { Log.i(LOG_TAG, it) },
-) = PublicResolver(
-    "quad9",
-    UpstreamTarget.Dot("dns.quad9.net", 853),
-    InetAddress.getByAddress(byteArrayOf(9, 9, 9, 9)),
-    UpstreamTarget.Doh("https://9.9.9.9/dns-query"),
-    elapsed,
-    log,
-)
+) = PublicResolver("quad9", QUAD9_DOT, QUAD9_ADDRESS, UpstreamTarget.Doh("https://9.9.9.9/dns-query"), elapsed, log)
+
+fun mullvadResolver(
+    elapsed: () -> Long = SystemClock::elapsedRealtime,
+    log: (String) -> Unit = { Log.i(LOG_TAG, it) },
+) = PublicResolver("mullvad", MULLVAD_DOT, MULLVAD_ADDRESS, UpstreamTarget.Doh("https://base.dns.mullvad.net/dns-query"), elapsed, log)

@@ -146,8 +146,9 @@
                 <label class="row" for="upstream">
                     <span class="row-label">{{ self.t("settings.web_filter.lookups_go_to") }}</span>
                     <select id="upstream" name="upstream" class="pick" data-autosave>
-                        <option value="cloudflare"{% if server.choice == "cloudflare" %} selected{% endif %}>{{ self.t("settings.web_filter.cloudflare") }}</option>
                         <option value="quad9"{% if server.choice == "quad9" %} selected{% endif %}>{{ self.t("settings.web_filter.quad9") }}</option>
+                        <option value="mullvad"{% if server.choice == "mullvad" %} selected{% endif %}>{{ self.t("settings.web_filter.mullvad") }}</option>
+                        <option value="cloudflare"{% if server.choice == "cloudflare" %} selected{% endif %}>{{ self.t("settings.web_filter.cloudflare") }}</option>
                         <option value="custom"{% if server.choice == "custom" %} selected{% endif %}>{{ self.t("settings.web_filter.custom_option") }}</option>
                     </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 </label>
@@ -195,6 +196,7 @@
                 <summary aria-label="{{ self.t("settings.web_filter.server_info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
                     <p>{{ self.t("settings.web_filter.server_footer") }}</p>
+                    <p>{{ self.t("settings.web_filter.provider_info") }}</p>
                     <p>{{ self.t("settings.web_filter.server_info") }}</p>
                 </div>
             </details>

@@ -271,11 +271,11 @@ struct LastReport<'a> {
 }
 
 /// Where the phones look names up, for the DNS Server group's lines: the parent's servers at
-/// their `custom_rev`, or a provider by its name ("Cloudflare", "Quad9").
+/// their `custom_rev`, or the public providers (the parent's choice first, the others as fallbacks).
 #[derive(Clone, Copy)]
-enum Lookups<'a> {
+enum Lookups {
     Custom { rev: i64 },
-    Provider(&'a str),
+    Provider,
 }
 
 /// The browsers that ignore the managed config (design 67 §2.4): allowed on a phone, its Each
@@ -362,8 +362,9 @@ fn ended_outage(
 
 /// One phone's line under the DNS Server group (design 36 §6.3, design 67 §3.3), from its filter
 /// switch and its last report (`None` before the first), in the [Zone]'s language, and whether it is orange. With the
-/// parent's servers every phone has one but a phone using them with no outage (design 113 P4); with a provider only a
-/// phone whose DNS can't be reached, or couldn't within 24 h. Every line is orange but the wait for a phone's report
+/// parent's servers every phone has one but a phone using them with no outage (design 113 P4); with a provider a
+/// phone whose DNS can't be reached (none of the providers answers; orange), or else, quietly, the provider that
+/// answers. Every line is orange but the wait for a phone's report
 /// and an ended outage alone (it is over; design 113 QA L4).
 /// An ended outage shows whatever the report's rev or mode (the fixed servers bumped it), and
 /// nothing shows for a phone whose filter is off but that.
@@ -407,17 +408,27 @@ fn phone_line(
         })
         .unwrap_or_default();
     let what = match lookups {
-        Lookups::Provider(provider) => state
+        Lookups::Provider => state
             .as_ref()
             .filter(|state| state.in_use == "provider")
-            .and_then(outage_since)
-            .map(|since| {
-                let line = t_params(
-                    lang,
-                    "settings.web_filter.line.provider_down",
-                    &[("since", &when(since)), ("provider", provider)],
-                );
-                (format!("{line}{at_last_report}"), true)
+            .and_then(|state| match outage_since(state) {
+                Some(since) => {
+                    let line = t_params(
+                        lang,
+                        "settings.web_filter.line.provider_down",
+                        &[("since", &when(since))],
+                    );
+                    Some((format!("{line}{at_last_report}"), true))
+                }
+                // Which provider answers: the parent's setup, a quiet value.
+                None => state.provider.as_deref().map(|provider| {
+                    let line = t_params(
+                        lang,
+                        "settings.web_filter.line.answers",
+                        &[("provider", dns_server::provider_name(provider))],
+                    );
+                    (line, false)
+                }),
             }),
         Lookups::Custom { rev } => match (&report, &state) {
             // A provider report while Custom is in force (even at rev 0) is never the backup.
@@ -492,7 +503,7 @@ fn bypass_lines(lang: Lang, name: &str, filter_on: bool, allowlist: Option<&str>
 /// ([phone_line]) and the Each Phone group's ([bypass_lines]), each with the phone's id.
 async fn phone_lines(
     state: &AppState,
-    lookups: Lookups<'_>,
+    lookups: Lookups,
     devices: &[Device],
     lang: Lang,
 ) -> Result<(Vec<(i64, String, bool)>, Vec<(i64, String)>), sqlx::Error> {
@@ -683,9 +694,8 @@ async fn render_page(
         "custom" if pair.is_some() => Lookups::Custom {
             rev: settings.custom_rev,
         },
-        "quad9" => Lookups::Provider("Quad9"),
-        // Cloudflare, also for a stored Custom without a valid pair (the phones use it then).
-        _ => Lookups::Provider("Cloudflare"),
+        // A provider, also for a stored Custom without a valid pair (the phones use the default then).
+        _ => Lookups::Provider,
     };
     let (phones, bypass) = match phone_lines(state, lookups, &devices, lang).await {
         Ok(lines) => lines,
@@ -768,7 +778,7 @@ async fn nudge(state: &AppState, device: Option<i64>) {
     }
 }
 
-/// The DNS server phones forward what isn't blocked to: `cloudflare`, `quad9` or `custom`, else a
+/// The DNS server phones forward what isn't blocked to: one of `dns_server::PROVIDERS` or `custom`, else a
 /// 400. Custom needs a valid stored pair (design 36 §3): without one the page renders in place
 /// (400) with the Custom Server row open and nothing written. A change is logged
 /// (`dns_server_changed`, kinds only) and nudges every phone. Back to its group (`#server`).
@@ -779,9 +789,8 @@ pub async fn set_upstream(
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
     let upstream = match form.get("upstream").map(String::as_str) {
-        Some("quad9") => "quad9",
-        Some("cloudflare") => "cloudflare",
         Some("custom") => "custom",
+        Some(provider) if dns_server::PROVIDERS.contains(&provider) => provider,
         _ => return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.unknown_dns_server"),
     };
     let settings = match load_settings(&state).await {
@@ -875,9 +884,10 @@ pub async fn set_custom(
             "UPDATE dns_filter_settings SET \
                custom_rev = custom_rev + (custom_server <> '' OR custom_backup <> ''), \
                custom_server = '', custom_backup = '', \
-               upstream = CASE WHEN upstream = 'custom' THEN 'cloudflare' ELSE upstream END, \
+               upstream = CASE WHEN upstream = 'custom' THEN ? ELSE upstream END, \
                updated_at = datetime('now') WHERE id = 1",
         )
+        .bind(dns_server::DEFAULT_PROVIDER)
         .execute(&state.db)
         .await;
         if let Err(err) = result {
@@ -885,7 +895,7 @@ pub async fn set_custom(
         }
         if stored {
             let upstream = match settings.upstream.as_str() {
-                "custom" => "cloudflare",
+                "custom" => dns_server::DEFAULT_PROVIDER,
                 other => other,
             };
             let detail = dns_server::event_detail(upstream, "", "");

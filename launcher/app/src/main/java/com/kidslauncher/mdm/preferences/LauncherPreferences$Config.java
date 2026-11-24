@@ -127,11 +127,11 @@ import eu.jonahbauer.android.preference.annotations.Preferences;
                         // even the passive getLastKnownLocation() read triggers the location-in-use
                         // indicator, not just an active fetch.
                         @Preference(name = "cached_location_json", type = String.class),
-                        // Admin-configured public DoT upstream ("cloudflare" | "quad9") for
+                        // Admin-configured public DoT upstream ("quad9" | "mullvad" | "cloudflare") for
                         // KidVpnService's on-device filter - cached from the last successful
                         // policy sync (PolicyResponse.dnsUpstreamProvider) so the VPN service can
                         // read it without needing to touch the network itself.
-                        @Preference(name = "dns_upstream_provider", type = String.class, defaultValue = "\"cloudflare\""),
+                        @Preference(name = "dns_upstream_provider", type = String.class, defaultValue = "\"quad9\""),
                         // The parent's own DNS server and its backup (design 36 §5.1): the accepted
                         // policy's raw `dns_upstream` when customUpstreamFrom takes it, written with
                         // dns_upstream_provider in storeAcceptedPolicy's one commit(), removed by an

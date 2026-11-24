@@ -57,10 +57,10 @@ data class PolicyResponse(
     val pendingCommand: PendingCommand? = null,
     val vpnFilterEnabled: Boolean = true,
     val dnsFilterVersion: String? = null,
-    val dnsUpstreamProvider: String = "cloudflare",
+    val dnsUpstreamProvider: String = "quad9",
     /** The parent's own DNS server and its backup (design 36 §4.1): `{kind, url | host+port, rev,
      * backup: {kind, url | host+port}}`, or `null` (missing) = forward to
-     * [dnsUpstreamProvider], which the server then sends as "cloudflare". Raw JSON read field by
+     * [dnsUpstreamProvider], which the server then sends as its default. Raw JSON read field by
      * field by [com.kidslauncher.mdm.server.customUpstreamFrom], so nothing in it - a future kind,
      * a wrong type - can fail the policy (like [music]); anything it can't use is the provider.
      * Kept in the pref `dns_upstream_custom` with the policy (design 36 §5.1). */

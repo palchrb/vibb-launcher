@@ -24,11 +24,14 @@ The server runs no DNS listener: each phone filters on-device (the launcher's `K
 - **Data** (0079): `dns_filter_settings.custom_server`/`custom_backup` (normalized, `''` = not set),
   `custom_rev` (up on every change of either and on Forget; compared by equality only), `device_status.dns_upstream_json`.
   `upstream` may be `'custom'`; a reader that finds it without a valid pair (both parse, not equal) treats it as
-  `'cloudflare'`. Both values are **kept in backups** (design 36 §7, `backup_secrets::a_snapshot_keeps_the_custom_dns_server`).
+  `dns_server::DEFAULT_PROVIDER`. The providers are `dns_server::PROVIDERS` (`quad9`, `mullvad`, `cloudflare` - the
+  phone's fallback order behind the parent's choice, all encrypted; 2026-11-24); the default is `quad9`, and migration
+  0173 moved a stored `cloudflare` (the old default) there. Both values are **kept in backups** (design 36 §7, `backup_secrets::a_snapshot_keeps_the_custom_dns_server`).
 - **Wire**: `PolicyResponse.dns_upstream` (always the key; `null` unless Custom with a valid pair - then
-  `dns_upstream_provider` is `"cloudflare"` for an older launcher): `{kind, url | host+port, rev, backup: {kind, url |
+  `dns_upstream_provider` is the default): `{kind, url | host+port, rev, backup: {kind, url |
   host+port}}`. Status `dns_upstream` `{rev, in_use: custom|backup|provider, since_ms, reason, unreachable_since_ms,
-  unreachable_until_ms}` stored through the known words only (`reason` only with `backup`:
+  unreachable_until_ms, provider}` stored through the known words only (`provider`, the one that answered last, only
+  in provider mode and only one of `PROVIDERS`) (`reason` only with `backup`:
   bootstrap/connect/tls/http/refused/timeout; every time from 2000 up to the report's arrival + 5 min -
   `CLOCK_SLACK_MS`, a phone clock ahead; `unreachable_until_ms` only with a kept `unreachable_since_ms`, and neither
   when it ends before it starts), never an address, inside `dns_upstream_json` (no migration; a row stored
@@ -49,14 +52,16 @@ The server runs no DNS listener: each phone filters on-device (the launcher's `K
   in place (400, `Cache-Control: no-store`, the typed values back in the body only, `aria-invalid` and the reason under
   the field); something typed and valid stores both normalized, sets `upstream = 'custom'`, moves `custom_rev` if
   either changed; Forget with both fields empty clears both and puts Custom back on Cloudflare; nothing typed changes
-  nothing. A save returns to `/dns?open=custom-server#server` (the row open again), a pick to `/dns#server`. Each hint and the backup prefill follow their own stored value, not the pair's validity, and the picker's 400 names the missing or equal field (`check_custom`, shared with Save). While Custom is in force the footer has one line per set-up phone
+  nothing (Forget puts Custom back on the default provider). A save returns to `/dns?open=custom-server#server` (the row open again), a pick to `/dns#server`. Each hint and the backup prefill follow their own stored value, not the pair's validity, and the picker's 400 names the missing or equal field (`check_custom`, shared with Save). While Custom is in force the footer has one line per set-up phone
   (`dns_filter::phone_line`: "Your server in use", "Backup server since 10:42 - <reason>", "Waiting for the
   phone" without a report at the current `rev` or
   with a `provider` report (even at rev 0), "Web filter off" when the phone's filter switch is off; design 67: "DNS
   can't be reached since 10:42 - neither your server nor the backup answers" while an outage goes on at the current
   `rev`, in place of the custom/backup words); a stored but no longer valid pair says so instead. With a provider
-  (`Lookups::Provider`, Cloudflare also for a stale Custom) only a phone with an outage has a line: "DNS can't be
-  reached since 10:42 - Quad9 doesn't answer from where the phone is" from a `provider` report. An ongoing line from a
+  (`Lookups::Provider`, also for a stale Custom) a phone with an outage has an orange line: "DNS can't be
+  reached since 10:42 - no DNS server answers from where the phone is" from a `provider` report (none of the chain
+  answers); otherwise a quiet "Anna · Mullvad answers" from the report's `provider` (2026-11-24: the parent's setup,
+  not a warning). The picker offers Quad9, Mullvad, Cloudflare, Custom; its ⓘ says the default and the order. An ongoing line from a
   phone that is Offline or Disconnected (the Attention rows' rule, `connection_of`) adds " · at last report (2 h ago)".
   An outage that ended within the last 24 h (`ENDED_OUTAGE_SHOWN`; design 67 §6: no push) and lasted at least 5 min
   (`MIN_ENDED_OUTAGE`, qa-67-code M1: Android keeps a fading Wi-Fi or a cellular dead spot VALIDATED for a while, so a

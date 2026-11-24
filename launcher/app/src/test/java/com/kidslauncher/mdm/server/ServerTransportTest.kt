@@ -233,7 +233,7 @@ class ServerTransportTest {
     /** Design 102 R3-L2: the DoH client refuses a non-https URL itself. */
     @Test
     fun `the DoH client speaks https only`() {
-        val client = buildDohClient(IP_LITERAL_DNS) { true }
+        val client = buildDohClient(PINNED_DNS) { true }
         try {
             client.newCall(Request.Builder().url("http://127.0.0.1:1/dns-query").build()).execute()
             fail("http went out")

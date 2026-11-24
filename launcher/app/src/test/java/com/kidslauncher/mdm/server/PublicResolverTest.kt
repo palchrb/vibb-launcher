@@ -67,10 +67,11 @@ class PublicResolverTest {
     }
 
     @Test
-    fun `Cloudflare and Quad9 each fall back to their own DoH on 443, never the other's`() {
+    fun `each provider falls back to its own DoH on 443, never another's`() {
         for ((resolver, url) in listOf(
             cloudflareResolver({ 0 }, {}) to "https://1.1.1.1/dns-query",
             quad9Resolver({ 0 }, {}) to "https://9.9.9.9/dns-query",
+            mullvadResolver({ 0 }, {}) to "https://base.dns.mullvad.net/dns-query",
         )) {
             val asked = mutableListOf<UpstreamTarget>()
             val budgets = mutableListOf<Budget>()
@@ -168,7 +169,7 @@ class PublicResolverTest {
     }
 
     @Test
-    fun `under Custom a parent's DoT server never gets a DoH URL, and only two DoH URLs exist`() {
+    fun `under Custom a parent's DoT server never gets a DoH URL, and only three DoH URLs exist`() {
         val primary = UpstreamTarget.Dot("192.0.2.10", 853)
         val backup = UpstreamTarget.Dot("192.0.2.20", 853)
         val asked = mutableListOf<UpstreamTarget>()
@@ -182,18 +183,21 @@ class PublicResolverTest {
                 asked += target
                 blocked
             },
-            cloudflare = cloudflareResolver({ 1_000 }, {}),
+            providers = listOf(quad9Resolver({ 1_000 }, {})),
         )
         d.start()
         repeat(5) { d.resolve(query, Message(query)) }
         assertEquals(listOf<UpstreamTarget>(primary, backup), asked.distinct())
-        // Structurally: a DoH target is built only from the parent's URL or the two public resolvers'.
+        // Structurally: a DoH target is built only from the parent's URL or the three public resolvers'.
         val src = listOf("src", "app/src").map(::File).first { File(it, "main/java").isDirectory }
         val built = File(src, "main/java").walkTopDown().filter { it.extension == "kt" }
             .flatMap { file -> Regex("""UpstreamTarget\.Doh\(([^)]*)\)""").findAll(file.readText()).map { "${file.name}: ${it.groupValues[1]}" } }
             .toList()
         assertEquals(
-            listOf("CustomUpstream.kt: it", "PublicResolver.kt: \"https://1.1.1.1/dns-query\"", "PublicResolver.kt: \"https://9.9.9.9/dns-query\""),
+            listOf(
+                "CustomUpstream.kt: it", "PublicResolver.kt: \"https://1.1.1.1/dns-query\"",
+                "PublicResolver.kt: \"https://9.9.9.9/dns-query\"", "PublicResolver.kt: \"https://base.dns.mullvad.net/dns-query\"",
+            ),
             built.sorted(),
         )
     }
@@ -201,7 +205,7 @@ class PublicResolverTest {
     @Test
     fun `the public resolvers' DoH client is the protected one and never looks a name up`() {
         val vpn = File(listOf("src", "app/src").map(::File).first { File(it, "main/java").isDirectory }, "main/java/com/kidslauncher/mdm/server/KidVpnService.kt").readText()
-        assertTrue("buildDohClient(IP_LITERAL_DNS, ::protect)" in vpn)
+        assertTrue("buildDohClient(PINNED_DNS, ::protect)" in vpn)
         // Built at the first DoH use, not the first provider query (N2).
         assertTrue("resolveProvider(query, upstream, ::protect, dotPool) { providerDoh.value }" in vpn)
         // A network reset puts both providers back on DoT (L2: the reset is wired).
@@ -210,12 +214,81 @@ class PublicResolverTest {
         assertTrue("PublicResolvers.reset()" in changed && "custom?.networkReset()" in changed)
         // S-L9: the kept DoT connections ran over the old network.
         assertTrue("dotPool::evictAll" in changed)
-        assertEquals(listOf(InetAddress.getByName("192.0.2.1")), IP_LITERAL_DNS.lookup("192.0.2.1"))
+        assertEquals(listOf(InetAddress.getByName("192.0.2.1")), PINNED_DNS.lookup("192.0.2.1"))
+        // A provider's name is its fixed address, never looked up.
+        assertEquals(listOf(InetAddress.getByName("194.242.2.4")), PINNED_DNS.lookup("base.dns.mullvad.net"))
         try {
-            IP_LITERAL_DNS.lookup("dns.example")
+            PINNED_DNS.lookup("dns.example")
             fail("a name was resolved")
         } catch (e: UnknownHostException) {
             // never the system resolver
         }
+    }
+
+    @Test
+    fun `the parent's choice first, then Quad9, Mullvad, Cloudflare - Cloudflare last, an unknown choice the default`() {
+        fun labels(p: String?) = PublicResolvers.order(p).map { it.label }
+        assertEquals(listOf("quad9", "mullvad", "cloudflare"), labels(null))
+        assertEquals(listOf("quad9", "mullvad", "cloudflare"), labels("bogus"))
+        assertEquals(listOf("mullvad", "quad9", "cloudflare"), labels("mullvad"))
+        assertEquals(listOf("cloudflare", "quad9", "mullvad"), labels("cloudflare"))
+        assertEquals(listOf("quad9", "mullvad"), PublicResolvers.bootstrap.map { it.label })
+    }
+
+    @Test
+    fun `a provider that doesn't answer is skipped for a while, the next answers, a probe brings it back`() {
+        var now = 0L
+        val order = listOf(quad9Resolver({ now }, {}), mullvadResolver({ now }, {}), cloudflareResolver({ now }, {}))
+        val asked = mutableListOf<String>()
+        val answered = mutableListOf<String>()
+        var quad9Up = false
+        val transport = { target: UpstreamTarget, _: List<InetAddress>, _: ByteArray, _: Budget ->
+            val host = target.serverHost
+            asked += host
+            if (host == "dns.quad9.net" || host == "9.9.9.9") { if (quad9Up) Attempt.Answer(answer) else blocked } else Attempt.Answer(answer)
+        }
+        fun ask() = resolveChain(order, query, PROVIDER_BUDGET, UPSTREAM_BUDGET, transport, { now }) { answered += it }
+        // Quad9 refused (DoT, then its own DoH): the same query goes on to Mullvad.
+        assertTrue(ask() is Attempt.Answer)
+        assertEquals(listOf("dns.quad9.net", "9.9.9.9", "base.dns.mullvad.net"), asked)
+        assertEquals(listOf("mullvad"), answered)
+        // Skipped while down.
+        asked.clear()
+        now = ProviderChainRule.BACKOFF_BASE_MS - 1
+        ask()
+        assertEquals(listOf("base.dns.mullvad.net"), asked)
+        // Due: one query probes it; it answers and is first again.
+        quad9Up = true
+        asked.clear()
+        now = ProviderChainRule.BACKOFF_BASE_MS
+        ask()
+        assertEquals(listOf("dns.quad9.net"), asked)
+        assertEquals(ProviderChainRule.UP, order[0].down.get())
+        assertEquals("quad9", answered.last())
+    }
+
+    @Test
+    fun `the back-off doubles to its cap, only the probe counts, and with every provider down the first is still asked`() {
+        var s = ProviderDown()
+        s = ProviderChainRule.afterFailure(s, 0, probe = false)
+        assertEquals(ProviderDown(untilMs = 60_000, periods = 1), s)
+        // A second query in flight failing too counts once.
+        assertEquals(s, ProviderChainRule.afterFailure(s, 10, probe = false))
+        val periods = mutableListOf<Long>()
+        repeat(6) {
+            val (ask, probing) = ProviderChainRule.ask(s, s.untilMs)
+            assertTrue(ask)
+            assertFalse(ProviderChainRule.ask(probing, s.untilMs).first)
+            val at = s.untilMs
+            s = ProviderChainRule.afterFailure(probing, at, probe = true)
+            periods += (s.untilMs - at) / 60_000
+        }
+        assertEquals(listOf(2L, 4, 8, 15, 15, 15), periods)
+        val order = listOf(quad9Resolver({ 0 }, {}), cloudflareResolver({ 0 }, {}))
+        order.forEach { it.down.set(ProviderDown(untilMs = 1_000_000, periods = 3)) }
+        val asked = mutableListOf<String>()
+        resolveChain(order, query, PROVIDER_BUDGET, UPSTREAM_BUDGET, { t, _, _, _ -> asked += t.serverHost; Attempt.Answer(answer) }, { 0 })
+        assertEquals(listOf("dns.quad9.net"), asked)
+        assertEquals(ProviderChainRule.UP, order[0].down.get())
     }
 }

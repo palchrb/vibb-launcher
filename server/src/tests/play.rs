@@ -181,7 +181,7 @@ async fn dns_changes_nudge_the_devices() {
             Method::POST,
             "/dns/upstream",
             Some(&cookie),
-            &[("upstream", "quad9")],
+            &[("upstream", "mullvad")],
         )
         .await;
     assert!(res.status.is_redirection(), "{}", res.text());

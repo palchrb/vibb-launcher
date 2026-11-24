@@ -74,14 +74,14 @@ private fun ipv6Bytes(text: String): ByteArray? {
     return bytes
 }
 
-/** The last fallback for the bootstrap resolver (design 36 §5.3): Cloudflare over DoT, by its
- * fixed address - the only case a look-up leaves for anyone but the parent's servers. Asked through
- * [PublicResolvers.cloudflare], so on a network that blocks 853 it is Cloudflare's DoH on 443 (step 3). */
-val CLOUDFLARE_BOOTSTRAP = CLOUDFLARE_DOT
+/** The bootstrap's last resolvers (design 36 §5.3): the public providers by their fixed addresses,
+ * over DoT (or the same provider's DoH where 853 is blocked, step 3) - the only case a look-up leaves
+ * for anyone but the parent's servers, and never Cloudflare ([PublicResolvers.bootstrap]). */
+val BOOTSTRAP_PROVIDERS: List<UpstreamTarget.Dot> = PublicResolvers.bootstrap.map { it.dot }
 
 /**
  * Where the servers' names are looked up (design 36 §5.3), in order: the backup when it is an IP
- * literal, the primary when it is, then [CLOUDFLARE_BOOTSTRAP]. A look-up (only a look-up, never a
+ * literal, the primary when it is, then [BOOTSTRAP_PROVIDERS]. A look-up (only a look-up, never a
  * query) moves to the next when one fails at the transport level, so a home-network primary by IP
  * away from home still lets the backup's name be found. Empty when both are IP literals (nothing to
  * look up).
@@ -90,7 +90,7 @@ fun bootstrapResolvers(config: CustomUpstream): List<UpstreamTarget> {
     val backupIp = ipLiteral(config.backup.serverHost) != null
     val primaryIp = ipLiteral(config.primary.serverHost) != null
     if (backupIp && primaryIp) return emptyList()
-    return listOfNotNull(config.backup.takeIf { backupIp }, config.primary.takeIf { primaryIp }, CLOUDFLARE_BOOTSTRAP)
+    return listOfNotNull(config.backup.takeIf { backupIp }, config.primary.takeIf { primaryIp }) + BOOTSTRAP_PROVIDERS
 }
 
 /** At most two addresses, IPv4 first (one of each family when there are both). */
@@ -210,7 +210,7 @@ class BootstrapCache {
 /**
  * The addresses of both servers (design 36 §5.3), and OkHttp's [Dns] for the DoH client - never the
  * system resolver (the launcher's own look-ups go to the VPN's fake DNS server, back into us).
- * An IP literal is itself, [CLOUDFLARE_BOOTSTRAP] its fixed address, a name what [cache] holds; a
+ * An IP literal is itself, a provider's name its fixed address ([PINNED_PROVIDERS]), a name what [cache] holds; a
  * name with nothing cached starts a look-up through [lookUp] (in the background, see [CustomDns])
  * and has no addresses for now. [lookUp] reports through [put]/[failed].
  */
@@ -223,7 +223,7 @@ class BootstrapDns(
     /** The addresses to connect to now, at most two, IPv4 first; empty = not looked up yet. */
     fun addresses(host: String): List<InetAddress> {
         ipLiteral(host)?.let { return listOf(it) }
-        if (host == CLOUDFLARE_BOOTSTRAP.host) return listOf(CLOUDFLARE_ADDRESS)
+        PINNED_PROVIDERS[host]?.let { return listOf(it) }
         val found = cache.get(host, clock())
         if (found.lookUp) lookUp(host)
         return found.addresses
@@ -285,9 +285,9 @@ object BootstrapDiskCache {
     /** Whether the file may exist at all: a custom server with a name to look up. */
     fun keptFor(config: CustomUpstream?): Boolean = config != null && namesOf(config).isNotEmpty()
 
-    /** The names of [config] that are looked up (IP literals and Cloudflare's fixed name never are). */
+    /** The names of [config] that are looked up (IP literals and the providers' fixed names never are). */
     fun namesOf(config: CustomUpstream): Set<String> = listOf(config.primary.serverHost, config.backup.serverHost)
-        .filter { ipLiteral(it) == null && it != CLOUDFLARE_BOOTSTRAP.host }
+        .filter { ipLiteral(it) == null && it !in PINNED_PROVIDERS }
         .toSet()
 }
 

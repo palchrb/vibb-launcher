@@ -83,8 +83,8 @@ object UpstreamReach {
         ReachState(key = key, lastOutage = downSinceMs?.let { Outage(it, now) } ?: lastOutage)
 }
 
-/** The servers a query goes to, as [ReachState.key]: the parent's `rev` ([custom]), or the provider's
- * name ([provider] as the policy has it; anything but Quad9 is Cloudflare). */
+/** The servers a query goes to, as [ReachState.key]: the parent's `rev` ([custom]), or the parent's
+ * provider ([provider] as the policy has it, an unknown one the default) with its fallbacks. */
 fun reachKey(custom: CustomUpstream?, provider: String?): String =
     custom?.let { "custom:${it.rev}" } ?: PublicResolvers.of(provider).label
 
@@ -100,10 +100,14 @@ fun outageTimes(s: ReachState, elapsedNow: Long, wallNow: Long): Pair<Long?, Lon
     return wall(ended.sinceMs) to wall(ended.untilMs)
 }
 
-/** Provider mode's `dns_upstream` (§3.2): no rev, no since, no reason - only the outage. */
-fun providerReport(reach: ReachState, elapsedNow: Long, wallNow: Long): DnsUpstreamReport {
+/** Provider mode's `dns_upstream` (§3.2): no rev, no since, no reason - the outage (none of the
+ * providers answers), and [answering], the provider that answered last. */
+fun providerReport(reach: ReachState, elapsedNow: Long, wallNow: Long, answering: String? = null): DnsUpstreamReport {
     val (since, until) = outageTimes(reach, elapsedNow, wallNow)
-    return DnsUpstreamReport(rev = 0, inUse = "provider", sinceMs = null, reason = null, unreachableSinceMs = since, unreachableUntilMs = until)
+    return DnsUpstreamReport(
+        rev = 0, inUse = "provider", sinceMs = null, reason = null,
+        unreachableSinceMs = since, unreachableUntilMs = until, provider = answering,
+    )
 }
 
 /** [UpstreamReach] for one VPN service instance: one [AtomicReference] changed by CAS. */

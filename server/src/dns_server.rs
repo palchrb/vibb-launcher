@@ -191,6 +191,23 @@ pub fn event_detail(upstream: &str, server: &str, backup: &str) -> String {
     detail.to_string()
 }
 
+/// The public resolvers a phone forwards to without a custom server, in the fallback order
+/// behind the parent's choice (the launcher's `PublicResolvers`): all encrypted, Cloudflare last.
+pub const PROVIDERS: [&str; 3] = ["quad9", "mullvad", "cloudflare"];
+
+/// The provider of a new server, after Forget, and for Custom without a valid pair (migration
+/// 0173 moved the old default, Cloudflare, here; the launcher's `PublicResolvers.DEFAULT`).
+pub const DEFAULT_PROVIDER: &str = "quad9";
+
+/// A provider's name as the PWA shows it.
+pub fn provider_name(provider: &str) -> &'static str {
+    match provider {
+        "mullvad" => "Mullvad",
+        "cloudflare" => "Cloudflare",
+        _ => "Quad9",
+    }
+}
+
 /// Why a phone is on the backup (design 36 §4.2's words).
 pub const BACKUP_REASONS: [&str; 6] = ["bootstrap", "connect", "tls", "http", "refused", "timeout"];
 
@@ -210,6 +227,9 @@ pub struct DnsUpstreamState {
     pub unreachable_since_ms: Option<i64>,
     /// The last outage's end; only with a kept `unreachable_since_ms`, never before it.
     pub unreachable_until_ms: Option<i64>,
+    /// With `provider` only: the one of [PROVIDERS] that answered last.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
 }
 
 /// The secure-DNS hosts the phone blocks whatever the lists say (design 67 §2.2): the launcher's
@@ -269,6 +289,11 @@ pub fn sanitize_dns_upstream(value: &serde_json::Value, now_ms: i64) -> Option<S
         (Some(since), Some(until)) if until < since => (None, None),
         (since, until) => (since, until.filter(|_| since.is_some())),
     };
+    let provider = value
+        .get("provider")
+        .and_then(serde_json::Value::as_str)
+        .filter(|word| in_use == "provider" && PROVIDERS.contains(word))
+        .map(str::to_string);
     let state = DnsUpstreamState {
         rev,
         in_use: in_use.to_string(),
@@ -276,6 +301,7 @@ pub fn sanitize_dns_upstream(value: &serde_json::Value, now_ms: i64) -> Option<S
         reason,
         unreachable_since_ms,
         unreachable_until_ms,
+        provider,
     };
     serde_json::to_string(&state).ok()
 }
@@ -836,6 +862,7 @@ mod tests {
             reason: reason.map(str::to_string),
             unreachable_since_ms: None,
             unreachable_until_ms: None,
+            provider: None,
         };
         assert_eq!(
             kept(
@@ -893,6 +920,18 @@ mod tests {
                 "{sent}"
             );
         }
+        // The provider that answered: a known one, in provider mode only.
+        let answered = |sent: serde_json::Value| {
+            kept(json!({"rev": 0, "in_use": "provider", "provider": sent})).and_then(|s| s.provider)
+        };
+        assert_eq!(answered(json!("mullvad")), Some("mullvad".to_string()));
+        assert_eq!(answered(json!("dns.example")), None);
+        assert_eq!(answered(json!(4)), None);
+        assert_eq!(
+            kept(json!({"rev": 1, "in_use": "custom", "provider": "quad9"}))
+                .and_then(|s| s.provider),
+            None
+        );
         // A report stored before design 67 reads back without them.
         assert_eq!(
             parse_dns_upstream(Some(

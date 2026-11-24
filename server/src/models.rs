@@ -817,8 +817,8 @@ impl TrackedApp {
 /// Singleton row (id always 1) - see migrations/0009_dns_filter.sql.
 #[derive(sqlx::FromRow, Clone)]
 pub struct DnsFilterSettings {
-    /// `cloudflare`, `quad9` or `custom` (design 36; `custom` counts only with a valid pair, else
-    /// it reads as `cloudflare` - `dns_server::valid_pair`).
+    /// One of `dns_server::PROVIDERS` or `custom` (design 36; `custom` counts only with a valid pair,
+    /// else it reads as `dns_server::DEFAULT_PROVIDER` - `dns_server::valid_pair`).
     pub upstream: String,
     /// The custom server and its backup, stored normalized (`dns_server::DnsServer::normalized`),
     /// '' = not set; write-only in the PWA (migration 0079).
@@ -1330,13 +1330,13 @@ pub struct PolicyResponse {
     /// domain payload) when it actually changes, rather than on every
     /// 2-minute sync. See `handlers::device_api::policy`.
     pub dns_filter_version: String,
-    /// Which public DoT resolver the client's on-device filter should send
-    /// allowed (non-blocked) queries to - "cloudflare" or "quad9", mirrors
-    /// `dns_filter_settings.upstream`.
+    /// Which public resolver the client's on-device filter sends allowed
+    /// (non-blocked) queries to first - one of `dns_server::PROVIDERS` (the others
+    /// are its fallbacks), mirrors `dns_filter_settings.upstream`.
     pub dns_upstream_provider: String,
     /// The parent's own DNS server and its backup (design 36 §4.1), `null` unless
     /// `dns_filter_settings.upstream` is `custom` with a valid pair - `dns_upstream_provider` is
-    /// then `cloudflare`, for a launcher that doesn't read this. Always the key.
+    /// then the default. Always the key.
     pub dns_upstream: Option<crate::dns_server::DnsUpstream>,
     /// Packages the device should silently uninstall - see migrations/0014_device_pending_uninstalls.sql
     /// and `handlers::devices::toggle_tracked_app`. Populated fresh on every fetch (not a one-shot
