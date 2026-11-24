@@ -3,21 +3,25 @@
 // trail of the span picked with a small dot per fix, the newest fix as the marker whatever the
 // span. What the page knows comes in data- attributes on the map box (`data-locate` = the phone,
 // `data-shown` / `data-shown-text` = the newest fix shown and the popup's words, `data-newest-age`,
-// `data-span`, `data-list` on the Locations page, `data-waiting` after Update Location); a phone's
-// values reach the page only as text (textContent; security review H2).
+// `data-trail` on the Locate page, `data-span` and `data-list` on the Locations page,
+// `data-waiting` after Update Location); a phone's values reach the page only as text
+// (textContent; security review H2).
 //
-// The span pick (12 hours · 24 hours · 7 days · all kept) is a view choice, remembered per
-// browser in localStorage (`handy-locate-span`): on the Locate page it redraws the trail and the
-// Locations row's count in place; on the Locations page its link opens the page with that span
-// (the server words and pages the list). Without JS the links do the same with the server's
-// default. A tap on a Locations row brings the map into view and shows that fix on it. After
+// The Locate map's trail (the owner, 2026-11-24) is none by default - the newest fix alone
+// (`locations.json?newest=1`) - or the last 6, 12, 24 or 48 hours, picked in the map's chip (a
+// <details> at its bottom left, `data-span-pick`): a choice redraws in place, the chip's word
+// follows it, the menu closes (also on Escape or a tap outside), and nothing is remembered - every
+// load starts without a trail. On the Locations page the span pick (12 hours · 24 hours · 7 days ·
+// all kept) opens the page with that span (the server words and pages the list). Without JS the
+// links do the same. A tap on a Locations row brings the map into view and shows that fix on it. After
 // Update Location the page asks every 5 s, for a minute, for a fix newer than the one shown and
 // for the phone's answer. The phone's zones (design 64, `zones.json`, no-store; `data-zones` on
 // the box while it has any) are circles in
 // `--map-zone` with their names as tooltips (text nodes). Its words come from the page (design 70
 // §5.3): the Locations count's `data-w-*`, the map box's `data-w-newest`, the wait line's
 // `data-w-answered`/`data-w-no-answer`, set with textContent; `locate-result.json` is asked in the
-// page's language (`data-lang`).
+// page's language (`data-lang`). The chip's words are its links' (`data-face`) and its summary's
+// `data-label`.
 //
 // On the Locate page the newest fix is the Alle view's marker (design 85 revision 3,
 // static/map-marker.js, loaded first): the phone's avatar in its tone, the time tag, fresh or old
@@ -32,9 +36,6 @@
 (function (root) {
     "use strict";
 
-    var SPAN_KEY = "handy-locate-span";
-    // Hours (0 = everything kept), as the server's locate::SPANS.
-    var SPANS = { "12": true, "24": true, "168": true, "0": true };
     // The trail's colour when the page names none: vibb's dark peach.
     var TRAIL = "#A64B25";
     // A zone's circle when the page names none (`--map-zone`).
@@ -57,35 +58,6 @@
             }
         }
         return text;
-    }
-
-    function readSpan(storage, fallback) {
-        try {
-            var span = storage && storage.getItem(SPAN_KEY);
-            if (span && Object.prototype.hasOwnProperty.call(SPANS, span)) return span;
-        } catch (e) {}
-        return fallback;
-    }
-
-    function storeSpan(storage, span) {
-        try {
-            if (storage) storage.setItem(SPAN_KEY, span);
-        } catch (e) {}
-    }
-
-    /**
-     * The Locations row's value for `points` (locations.json's answer for `span`), as the server
-     * words it, in the words `el` (the count) carries: "14 in the last 12 hours", "3 kept", "None
-     * yet", "0 in the last 12 hours · newest 3 days ago". The newest point flagged `newest` lies
-     * outside the span and isn't counted.
-     */
-    function countText(points, span, newestAge, el) {
-        if (!points.length) return w(el, "none");
-        var count = points.length - (points[points.length - 1].newest ? 1 : 0);
-        if (span === "0") return fill(w(el, "kept"), { count: count });
-        var inSpan = fill(w(el, "in-" + span), { count: count });
-        if (count === 0) return inSpan + " · " + fill(w(el, "newest"), { age: newestAge });
-        return inSpan;
     }
 
     // The trail in the page's accent, `--map-trail` (style.css): the tiles are light in both
@@ -161,36 +133,14 @@
         var id = box.getAttribute("data-locate");
         var shown = box.getAttribute("data-shown") || "";
         var shownText = box.getAttribute("data-shown-text") || "";
-        var newestAge = box.getAttribute("data-newest-age") || "";
         var listPage = box.hasAttribute("data-list");
-        var rendered = box.getAttribute("data-span") || "12";
+        // The Locate map's trail in hours, "0" none; the Locations page's span, "0" all kept.
+        var trailPage = box.hasAttribute("data-trail");
+        var span = trailPage ? box.getAttribute("data-trail") || "0" : box.getAttribute("data-span") || "12";
         var lang = box.getAttribute("data-lang") || "";
-        var storage = null;
-        try {
-            storage = win.localStorage;
-        } catch (e) {}
         var pick = doc.querySelector("[data-span-pick]");
         var links = pick ? pick.querySelectorAll("a[data-span]") : [];
-
-        function linkFor(span) {
-            for (var i = 0; i < links.length; i++) {
-                if (links[i].getAttribute("data-span") === span) return links[i];
-            }
-            return null;
-        }
-
-        // The address's span (a link followed) wins and is remembered; else the remembered one.
-        var span = rendered;
-        if (/[?&]span=/.test(win.location.search || "")) {
-            storeSpan(storage, rendered);
-        } else {
-            span = readSpan(storage, rendered);
-        }
-        if (listPage && span !== rendered && linkFor(span)) {
-            // The server words and pages the list: open it with the remembered span.
-            win.location.replace(linkFor(span).getAttribute("href"));
-            return null;
-        }
+        var face = trailPage && pick ? pick.querySelector("summary") : null;
 
         // The phone's own marker (the Locate page), else Leaflet's pin (the Locations page).
         var mark = Mk && box.hasAttribute("data-marker-tone") ? {
@@ -304,15 +254,14 @@
 
         function load(span) {
             var mine = ++asked;
-            return win.fetch("/devices/" + id + "/locations.json?since=" + span, { credentials: "same-origin" })
+            var query = trailPage && span === "0" ? "newest=1" : "since=" + span;
+            return win.fetch("/devices/" + id + "/locations.json?" + query, { credentials: "same-origin" })
                 .then(function (r) { return r.ok ? r.json() : null; })
                 .then(function (points) {
                     if (mine !== asked) return;
                     if (!points) throw new Error("points");
                     drawn = true;
                     draw(points);
-                    var count = doc.querySelector("[data-locations-count]");
-                    if (count) count.textContent = countText(points, span, newestAge, count);
                 })
                 .catch(function () {
                     if (mine === asked && !drawn) map.setView([20, 0], 2);
@@ -322,18 +271,33 @@
         function choose(chosen) {
             span = chosen;
             for (var i = 0; i < links.length; i++) {
-                links[i].setAttribute("aria-checked", links[i].getAttribute("data-span") === chosen ? "true" : "false");
+                var on = links[i].getAttribute("data-span") === chosen;
+                links[i].setAttribute("aria-checked", on ? "true" : "false");
+                if (on) chipSays(links[i]);
             }
-            var row = doc.querySelector('[data-row="locations"]');
-            if (row) row.setAttribute("href", "/devices/" + id + "/locations?span=" + chosen);
             return load(chosen);
+        }
+
+        // The chip's word ("Spor", "24 t") and its spoken name ("Spor, 24 t") from the link chosen.
+        function chipSays(link) {
+            if (!face) return;
+            var word = face.querySelector ? face.querySelector("[data-trail-face]") : null;
+            if (word) word.textContent = link.getAttribute("data-face") || "";
+            face.setAttribute("aria-label", (face.getAttribute("data-label") || "") + ", " + (link.textContent || ""));
+        }
+
+        // The chip's menu closes; the focus back on the chip when it was inside the menu.
+        function closeMenu(refocus) {
+            if (!trailPage || !pick || !pick.hasAttribute("open")) return false;
+            pick.removeAttribute("open");
+            if (refocus && face && face.focus) face.focus({ preventScroll: true });
+            return true;
         }
 
         if (pick) {
             pick.addEventListener("click", function (e) {
                 var link = e.target && e.target.closest ? e.target.closest("a[data-span]") : null;
                 if (!link) return;
-                storeSpan(storage, link.getAttribute("data-span"));
                 e.preventDefault();
                 // The Locations page opens again with the span, in place of this history entry
                 // (Back goes to Locate, not through the spans); Locate redraws here.
@@ -341,8 +305,23 @@
                     win.location.replace(link.getAttribute("href"));
                     return;
                 }
+                var inside = doc.activeElement && pick.contains && pick.contains(doc.activeElement);
+                closeMenu(inside);
                 choose(link.getAttribute("data-span"));
             });
+        }
+        if (trailPage && pick) {
+            // Escape closes the menu before anything else hears it (map-full.js's full screen
+            // waits for the next one: it skips a handled key).
+            doc.addEventListener("keydown", function (e) {
+                if ((e.key === "Escape" || e.key === "Esc") && closeMenu(true)) e.preventDefault();
+            });
+            // A tap outside closes it, before the map (or anything) acts on that tap.
+            var outside = function (e) {
+                if (pick.contains && !pick.contains(e.target)) closeMenu(false);
+            };
+            doc.addEventListener(win.PointerEvent ? "pointerdown" : "mousedown", outside, true);
+            if (!win.PointerEvent) doc.addEventListener("touchstart", outside, true);
         }
 
         // A Locations row: the map into view (inside the page's scroller), that fix on it.
@@ -425,7 +404,7 @@
             }, WAIT_EVERY_MS);
         }
 
-        // The zones (`data-zones` while the phone has any), once: they don't change with the span.
+        // The zones (`data-zones` while the phone has any), once: they don't change with the trail.
         // Asked after the first locations settled (code QA Q-7: in either order the view is the
         // trail's, or the zones' when the span has no points).
         var first = choose(span);
@@ -443,7 +422,7 @@
         return { choose: choose, map: map, zonesLoaded: zonesLoaded };
     }
 
-    var api = { install: install, bubble: bubble, countText: countText, readSpan: readSpan, trailColour: trailColour, drawZones: drawZones, SPAN_KEY: SPAN_KEY, SPANS: SPANS };
+    var api = { install: install, bubble: bubble, trailColour: trailColour, drawZones: drawZones };
     if (typeof module !== "undefined" && module.exports) {
         module.exports = api;
     } else if (root.document) {

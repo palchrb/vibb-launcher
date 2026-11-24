@@ -4077,6 +4077,20 @@ details.own-edit[open] {
 .map-legend-over { display: none; }
 .map-full .map-legend-over { position: absolute; z-index: 1001; bottom: calc(26px + env(safe-area-inset-bottom, 0px)); left: max(10px, env(safe-area-inset-left, 0px)); display: flex; margin: 0; padding: 6px 12px; border-radius: 16px; background: #FFFFFF; color: #636366; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2); }
 .map-legend-over > span:last-child { margin-right: 0; }
+/* The Locate map's trail chip (the owner, 2026-11-24, mockup A): a white pill at the map's bottom
+   left, beside ⤢ (36 px at 10 px), over Leaflet's panes as the chips are; its menu (a <details>,
+   static/locate.js) opens above it, the current choice ticked. At full screen ⤢ is hidden and it
+   takes the corner above the legend's strip. Outside Leaflet's container: a drag or a wheel on it
+   never reaches the map. */
+.trail-chip { position: absolute; z-index: 1002; bottom: 10px; left: 54px; }
+.trail-face { display: flex; align-items: center; box-sizing: border-box; height: 36px; padding: 0 12px 0 14px; border-radius: 18px; background: #FFFFFF; color: #1C1C1E; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3); font-size: 0.875rem; font-weight: 600; white-space: nowrap; list-style: none; cursor: pointer; }
+.trail-face::-webkit-details-marker { display: none; }
+.trail-caret { width: 10px; height: 6px; margin-left: 6px; }
+.trail-menu { position: absolute; bottom: calc(100% + 6px); left: 0; display: flex; flex-direction: column; box-sizing: border-box; min-width: 136px; max-height: 236px; padding: 4px; overflow-y: auto; border-radius: 14px; background: #FFFFFF; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25); }
+.trail-menu a { display: flex; align-items: center; min-height: 40px; padding: 0 12px; border-radius: 10px; color: #1C1C1E; font-size: 0.9375rem; font-weight: 600; text-decoration: none; white-space: nowrap; }
+.trail-menu a[aria-checked="true"] { background: #F2F2F7; }
+.trail-menu a[aria-checked="true"]::after { content: "\2713"; margin-left: auto; padding-left: 14px; color: #A64B25; }
+.map-full .trail-chip { bottom: calc(66px + env(safe-area-inset-bottom, 0px)); left: max(10px, env(safe-area-inset-left, 0px)); }
 
 /* The hairlines on 2x+ screens (design 103 §4, D12 a): every row line's 1px --sep line scaled to half - 1 device px at
    2x, 1.5 at 3x, the same at every fractional position. Last in the file, after every list's rule, so no list gets

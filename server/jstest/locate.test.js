@@ -1,9 +1,9 @@
-// Behaviour of static/locate.js (design 44): the span pick, the trail and its count, the
-// Locations rows. Run: node --test jstest/locate.test.js
+// Behaviour of static/locate.js (design 44; the trail chip, 2026-11-24): the Locate map's trail and
+// its chip, the Locations page's span pick, the Locations rows. Run: node --test jstest/locate.test.js
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert");
-const { install, bubble, countText, readSpan, trailColour, SPAN_KEY } = require("../static/locate.js");
+const { install, bubble, trailColour } = require("../static/locate.js");
 
 /** A fake Leaflet that records what was drawn. */
 function fakeLeaflet() {
@@ -43,68 +43,70 @@ function fakeLeaflet() {
     return L;
 }
 
-// The Locations count's words, as device_locate.html gives them (data-w-*, design 70 §5.3).
-const COUNT_WORDS = {
-    "data-w-none": "None yet",
-    "data-w-kept": "{count} kept",
-    "data-w-in-12": "{count} in the last 12 hours",
-    "data-w-in-24": "{count} in the last 24 hours",
-    "data-w-in-168": "{count} in the last 7 days",
-    "data-w-newest": "newest {age}",
-};
-
 function fakeAttrs(attrs) {
     return {
         attrs,
         listeners: {},
         getAttribute(name) { return Object.prototype.hasOwnProperty.call(this.attrs, name) ? this.attrs[name] : null; },
         setAttribute(name, value) { this.attrs[name] = String(value); },
+        removeAttribute(name) { delete this.attrs[name]; },
         hasAttribute(name) { return Object.prototype.hasOwnProperty.call(this.attrs, name); },
         addEventListener(type, fn) { this.listeners[type] = fn; },
     };
 }
 
+// The Locate map's chip, as device_locate.html gives it: hours, the menu's word, the chip's word.
+const TRAILS = [["0", "Ingen spor", "Spor"], ["6", "6 t", "6 t"], ["12", "12 t", "12 t"], ["24", "24 t", "24 t"], ["48", "48 t", "48 t"]];
+// The Locations page's spans.
+const SPANS = ["12", "24", "168", "0"];
+
 /**
- * A fake page: the map box with `box` attributes, the span pick, the Locations row (Locate) or
- * the fix rows (Locations), `answers` maps a fetched URL to its JSON.
+ * A fake page: the map box with `box` attributes - the Locate page (`data-trail`, the chip) unless
+ * `data-list` makes it the Locations page (`data-span`, the span pick) -, the fix rows (Locations),
+ * `answers` maps a fetched URL to its JSON. Browser storage throws: nothing may use it.
  */
-function fakePage({ box = {}, search = "", stored = null, answers = {}, fixes = [] } = {}) {
+function fakePage({ box = {}, answers = {}, fixes = [] } = {}) {
     const fetched = [];
-    const store = new Map();
-    if (stored !== null) store.set(SPAN_KEY, stored);
-    const mapBox = fakeAttrs({ "data-locate": "3", "data-shown": "2026-10-20T10:00:00.000Z", "data-shown-text": "10 min ago · within 40 m", "data-newest-age": "3 days ago", "data-span": "12", "data-w-newest": "Newest location", ...box });
+    const list = Object.prototype.hasOwnProperty.call(box, "data-list");
+    const own = list ? { "data-span": "12" } : { "data-trail": "12" };
+    const mapBox = fakeAttrs({ "data-locate": "3", "data-shown": "2026-10-20T10:00:00.000Z", "data-shown-text": "10 min ago · within 40 m", "data-newest-age": "3 days ago", "data-w-newest": "Newest location", ...own, ...box });
     const scrolled = [];
     mapBox.scrollIntoView = (options) => scrolled.push(options);
     mapBox.querySelector = () => ({ id: "map" });
-    const links = ["12", "24", "168", "0"].map((s) => {
-        const a = fakeAttrs({ "data-span": s, role: "radio", "aria-checked": s === mapBox.attrs["data-span"] ? "true" : "false", href: `/x?span=${s}` });
+    const shown = list ? mapBox.attrs["data-span"] : mapBox.attrs["data-trail"];
+    const links = (list ? SPANS.map((s) => [s, s, s]) : TRAILS).map(([s, words, face]) => {
+        const a = fakeAttrs({ "data-span": s, "data-face": face, role: "radio", "aria-checked": s === shown ? "true" : "false", href: `/x?trail=${s}` });
+        a.textContent = words;
         a.closest = () => a;
         return a;
     });
-    const pick = fakeAttrs({ "data-span-pick": "" });
-    pick.querySelectorAll = () => links;
-    const count = Object.assign(fakeAttrs({ ...COUNT_WORDS }), { textContent: "server's" });
-    const row = fakeAttrs({ "data-row": "locations", href: "/devices/3/locations?span=12" });
-    const fixRows = fixes.map((f) => fakeAttrs({ "data-fix": "", "data-lat": f[0], "data-lng": f[1], "data-text": f[2] }));
-    const replaced = [];
+    const word = { textContent: "server's" };
+    const face = fakeAttrs({ "aria-label": "server's", "data-label": "Spor" });
+    face.querySelector = (sel) => (sel === "[data-trail-face]" ? word : null);
     const doc = {
+        activeElement: null,
+        listeners: {},
+        addEventListener(type, fn, capture) { doc.listeners[type] = { fn, capture }; },
         querySelector: (selector) => ({
             "[data-locate]": mapBox,
             "[data-span-pick]": pick,
-            "[data-locations-count]": mapBox.hasAttribute("data-list") ? null : count,
-            '[data-row="locations"]': mapBox.hasAttribute("data-list") ? null : row,
         })[selector] || null,
         querySelectorAll: (selector) => (selector === "[data-fix]" ? fixRows : []),
         getElementById: () => null,
         createElement: () => ({ textContent: "" }),
     };
+    face.focus = () => { doc.activeElement = face; };
+    const pick = fakeAttrs({ "data-span-pick": "" });
+    pick.querySelectorAll = () => links;
+    pick.querySelector = (sel) => (sel === "summary" ? face : null);
+    pick.contains = (other) => other === pick || other === face || links.includes(other);
+    const fixRows = fixes.map((f) => fakeAttrs({ "data-fix": "", "data-lat": f[0], "data-lng": f[1], "data-text": f[2] }));
+    const replaced = [];
     const win = {
         document: doc,
-        location: { search, replace: (url) => replaced.push(url) },
-        localStorage: {
-            getItem: (k) => (store.has(k) ? store.get(k) : null),
-            setItem: (k, v) => store.set(k, v),
-        },
+        PointerEvent: function () {},
+        location: { search: "", replace: (url) => replaced.push(url) },
+        get localStorage() { throw new Error("storage is not used"); },
         fetch: (url) => {
             fetched.push(url);
             const answer = Object.prototype.hasOwnProperty.call(answers, url) ? answers[url] : [];
@@ -113,37 +115,13 @@ function fakePage({ box = {}, search = "", stored = null, answers = {}, fixes = 
         setInterval: () => 1,
         clearInterval: () => {},
     };
-    return { win, mapBox, links, pick, count, row, fixRows, fetched, store, replaced, scrolled };
+    return { win, doc, mapBox, links, pick, face, word, fixRows, fetched, replaced, scrolled };
 }
 
 const point = (lat, at, newest) => ({ latitude: lat, longitude: 10, captured_at: at, ...(newest ? { newest: true } : {}) });
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 
-test("the count is worded as the server words it; the newest outside the span isn't counted", () => {
-    const two = [point(1, "a"), point(2, "b")];
-    const el = fakeAttrs({ ...COUNT_WORDS });
-    assert.strictEqual(countText(two, "12", "x", el), "2 in the last 12 hours");
-    assert.strictEqual(countText(two, "168", "x", el), "2 in the last 7 days");
-    assert.strictEqual(countText(two, "0", "x", el), "2 kept");
-    assert.strictEqual(countText([point(1, "a", true)], "24", "3 days ago", el), "0 in the last 24 hours · newest 3 days ago");
-    assert.strictEqual(countText([], "12", "", el), "None yet");
-    // The page's words, whatever the language; a missing word shows its name.
-    const nb = fakeAttrs({ "data-w-in-168": "{count} de siste 7 dagene", "data-w-none": "Ingen ennå" });
-    assert.strictEqual(countText(two, "168", "x", nb), "2 de siste 7 dagene");
-    assert.strictEqual(countText([], "12", "", nb), "Ingen ennå");
-    assert.strictEqual(countText(two, "0", "x", nb), "kept");
-});
-
-test("the remembered span reads back only when it is one of the four", () => {
-    const store = (value) => ({ getItem: () => value });
-    assert.strictEqual(readSpan(store("168"), "12"), "168");
-    assert.strictEqual(readSpan(store("0"), "12"), "0");
-    assert.strictEqual(readSpan(store("5"), "12"), "12");
-    assert.strictEqual(readSpan(store(null), "12"), "12");
-    assert.strictEqual(readSpan({ getItem: () => { throw new Error("blocked"); } }, "24"), "24");
-});
-
-test("the map loads the span's points, draws the trail with a dot per fix and the newest as the marker", async () => {
+test("the map loads the trail's points, draws the trail with a dot per fix and the newest as the marker", async () => {
     const L = fakeLeaflet();
     const page = fakePage({
         answers: {
@@ -164,67 +142,95 @@ test("the map loads the span's points, draws the trail with a dot per fix and th
         ["popup", "10 min ago · within 40 m"],
         ["fitBounds", 3],
     ]);
-    assert.strictEqual(page.count.textContent, "3 in the last 12 hours");
 });
 
-test("the newest fix outside the span keeps the marker, joins no trail and isn't counted", async () => {
+test("the newest fix outside the trail keeps the marker and joins no trail", async () => {
     const L = fakeLeaflet();
     const page = fakePage({ answers: { "/devices/3/locations.json?since=12": [point(9, "old", true)] } });
     install(page.win, L);
     await settle();
     const drawn = L.calls.filter((c) => ["polyline", "dot", "marker", "popup"].includes(c[0]));
     assert.deepStrictEqual(drawn, [["polyline", 0], ["marker", [9, 10]], ["popup", "Newest location"]]);
-    assert.strictEqual(page.count.textContent, "0 in the last 12 hours · newest 3 days ago");
 });
 
-test("the pick stores the span, fetches with since and redraws in place", async () => {
+test("every load starts without a trail: the newest fix alone, nothing remembered", async () => {
     const L = fakeLeaflet();
     const page = fakePage({
-        answers: { "/devices/3/locations.json?since=168": [point(1, "a"), point(2, "b")] },
+        box: { "data-trail": "0" },
+        answers: { "/devices/3/locations.json?newest=1": [point(9, "2026-10-20T10:00:00.000Z", true)] },
     });
     install(page.win, L);
     await settle();
-    let prevented = false;
-    page.pick.listeners.click({ target: page.links[2], preventDefault: () => { prevented = true; } });
-    await settle();
-    assert.ok(prevented, "no navigation, nothing that can jump");
-    assert.strictEqual(page.store.get(SPAN_KEY), "168");
-    assert.deepStrictEqual(page.fetched, ["/devices/3/locations.json?since=12", "/devices/3/locations.json?since=168"]);
-    assert.deepStrictEqual(page.links.map((a) => a.getAttribute("aria-checked")), ["false", "false", "true", "false"]);
-    assert.deepStrictEqual(page.links.map((a) => a.getAttribute("role")), ["radio", "radio", "radio", "radio"]);
-    assert.strictEqual(page.count.textContent, "2 in the last 7 days");
-    assert.strictEqual(page.row.getAttribute("href"), "/devices/3/locations?span=168");
-    assert.ok(L.calls.filter((c) => c[0] === "clear").length >= 2, "the old trail went");
+    assert.deepStrictEqual(page.fetched, ["/devices/3/locations.json?newest=1"]);
+    const drawn = L.calls.filter((c) => ["polyline", "dot", "marker"].includes(c[0]));
+    assert.deepStrictEqual(drawn, [["polyline", 0], ["marker", [9, 10]]]);
+    assert.strictEqual(page.word.textContent, "Spor");
+    assert.strictEqual(page.face.getAttribute("aria-label"), "Spor, Ingen spor");
+    assert.deepStrictEqual(page.links.map((a) => a.getAttribute("aria-checked")), ["true", "false", "false", "false", "false"]);
 });
 
-test("a remembered span is shown on the next visit; the address's span wins and is remembered", async () => {
+test("the chip's choice fetches with since, redraws in place, says its word and closes the menu", async () => {
     const L = fakeLeaflet();
-    const page = fakePage({ stored: "0" });
+    const page = fakePage({
+        box: { "data-trail": "0" },
+        answers: { "/devices/3/locations.json?since=24": [point(1, "a"), point(2, "b")] },
+    });
     install(page.win, L);
     await settle();
-    assert.deepStrictEqual(page.fetched, ["/devices/3/locations.json?since=0"]);
-    assert.strictEqual(page.links[3].getAttribute("aria-checked"), "true");
-    const linked = fakePage({ stored: "0", search: "?device=3&span=12" });
-    install(linked.win, fakeLeaflet());
+    page.pick.setAttribute("open", "");
+    page.doc.activeElement = page.links[3];
+    let prevented = false;
+    page.pick.listeners.click({ target: page.links[3], preventDefault: () => { prevented = true; } });
     await settle();
-    assert.deepStrictEqual(linked.fetched, ["/devices/3/locations.json?since=12"]);
-    assert.strictEqual(linked.store.get(SPAN_KEY), "12");
+    assert.ok(prevented, "no navigation, nothing that can jump");
+    assert.deepStrictEqual(page.fetched, ["/devices/3/locations.json?newest=1", "/devices/3/locations.json?since=24"]);
+    assert.deepStrictEqual(page.links.map((a) => a.getAttribute("aria-checked")), ["false", "false", "false", "true", "false"]);
+    assert.deepStrictEqual(page.links.map((a) => a.getAttribute("role")), ["radio", "radio", "radio", "radio", "radio"]);
+    assert.strictEqual(page.word.textContent, "24 t");
+    assert.strictEqual(page.face.getAttribute("aria-label"), "Spor, 24 t");
+    assert.ok(!page.pick.hasAttribute("open"), "the menu closed");
+    assert.strictEqual(page.doc.activeElement, page.face, "the focus back on the chip");
+    assert.ok(L.calls.filter((c) => c[0] === "clear").length >= 2, "the old trail went");
+    // "Ingen spor" again: the newest fix alone.
+    page.pick.listeners.click({ target: page.links[0], preventDefault: () => {} });
+    await settle();
+    assert.strictEqual(page.fetched[2], "/devices/3/locations.json?newest=1");
+    assert.strictEqual(page.word.textContent, "Spor");
 });
 
-test("on the Locations page the pick's link opens the page; a remembered span reopens it", async () => {
-    const page = fakePage({ box: { "data-list": "" } });
+test("Escape and a tap outside close the chip's menu; a tap inside doesn't", async () => {
+    const page = fakePage();
     install(page.win, fakeLeaflet());
     await settle();
+    const { keydown, pointerdown } = page.doc.listeners;
+    assert.ok(pointerdown.capture, "before the map hears the tap");
+    // Shut: Escape is left to others (map-full.js's full screen).
+    let prevented = false;
+    keydown.fn({ key: "Escape", preventDefault: () => { prevented = true; } });
+    assert.ok(!prevented);
+    page.pick.setAttribute("open", "");
+    keydown.fn({ key: "Escape", preventDefault: () => { prevented = true; } });
+    assert.ok(prevented && !page.pick.hasAttribute("open"));
+    assert.strictEqual(page.doc.activeElement, page.face);
+    page.pick.setAttribute("open", "");
+    pointerdown.fn({ target: page.links[2] });
+    assert.ok(page.pick.hasAttribute("open"), "a tap on the menu");
+    pointerdown.fn({ target: page.mapBox });
+    assert.ok(!page.pick.hasAttribute("open"), "a tap on the map");
+});
+
+test("on the Locations page the pick's link opens the page with its span, never a remembered one", async () => {
+    const page = fakePage({ box: { "data-list": "", "data-span": "0" } });
+    install(page.win, fakeLeaflet());
+    await settle();
+    assert.deepStrictEqual(page.fetched, ["/devices/3/locations.json?since=0"]);
+    assert.deepStrictEqual(page.replaced, []);
     let prevented = false;
     page.pick.listeners.click({ target: page.links[1], preventDefault: () => { prevented = true; } });
     // The page opens with its span in place of this entry: Back goes to Locate (qa-r5-a-code N1).
     assert.ok(prevented, "no new history entry");
-    assert.deepStrictEqual(page.replaced, ["/x?span=24"]);
-    assert.strictEqual(page.store.get(SPAN_KEY), "24");
-    const remembered = fakePage({ box: { "data-list": "" }, stored: "24" });
-    assert.strictEqual(install(remembered.win, fakeLeaflet()), null);
-    assert.deepStrictEqual(remembered.replaced, ["/x?span=24"]);
-    assert.deepStrictEqual(remembered.fetched, []);
+    assert.deepStrictEqual(page.replaced, ["/x?trail=24"]);
+    assert.ok(!page.doc.listeners.keydown, "no chip, no Escape of its own");
 });
 
 test("a Locations row scrolls the map into view, then pans to its fix with its words", async () => {

@@ -31,9 +31,11 @@ const MOVED = {
     "install-now.js": [],
     // The APK upload's size check (its message comes from the field's data-w-too-big): a selector.
     "apk-upload.js": ["input[type=file][data-max-bytes]"],
-    // 3c: Locate (locate-result.json's text comes worded): a key's name, and OpenStreetMap's attribution - its
+    // 3c: Locate (locate-result.json's text comes worded): keys' names, and OpenStreetMap's attribution - its
     // licence's credit line, HTML Leaflet renders as given.
     "locate.js": [
+        "Escape",
+        "Esc",
         "Enter",
         '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
     ],

@@ -885,15 +885,13 @@ Tilgang): the "camera" words here are history.
   (`install_now::install_row`). One macro, `partials/recent.html` (`recent_group::show`), renders both; its Cancel
   posts a hidden `back` (`summary` → `/devices/{id}?cancel=…#recent`, anything else → `/devices/locate?device={id}&
   cancel=…#recent`; `cancel_command` takes the form).
-- **The span** (`locate::SPANS`: 12 hours (default), 24 hours, 7 days, All kept = 0): a segmented row of four
-  `<a role="radio" aria-checked>` above the map on both pages, links with `?span=` (Locate's with `#location`) as the
-  no-JS fallback; the server renders the count and the list for `?span=` (any other value is 12). `static/locate.js`
-  remembers it per browser (`localStorage` `handy-locate-span`; the address's span wins and is remembered): on Locate it
-  redraws in place (`preventDefault`, nothing to save, nothing to jump), on the Locations page it opens the page (`location.replace`: Back goes to Locate, not through the spans)
-  with the span (the server words and pages the rows), and a remembered span other than the rendered one reopens it.
-- **The "Locations" row** under the map's group: the count in the span ("14 in the last 12 hours", "3 kept", "None
-  yet", "0 in the last 12 hours · newest 3 days ago" - `locate::locations_value`, worded the same by `locate.js`
-  `countText`), linking to `/devices/{id}/locations?span=`.
+- **The span** (`locate::SPANS`: 12 hours (default), 24 hours, 7 days, All kept = 0): since 2026-11-24 the Locations
+  page's alone (Locate's map has the trail chip, "Locate's trail chip" below): a segmented row of four
+  `<a role="radio" aria-checked>` above its map, links with `?span=` as the no-JS fallback; the server renders the list
+  for `?span=` (any other value is 12). `static/locate.js` opens the page with the span picked (`location.replace`: Back
+  goes to Locate, not through the spans); nothing is remembered (the `localStorage` `handy-locate-span` went).
+- **The "Locations" row** under the map's group: since 2026-11-24 every kept fix ("3 kept", "None yet" -
+  `locate::locations_value`), whatever the trail, linking to `/devices/{id}/locations?span=0`.
 - **`/devices/{id}/locations`** (`locate::show_locations`, `device_locations.html`, tab Locate, back to Locate): the
   pick, the map, then every fix of the span newest first, 200 a page, "Show older" with `before=<captured_at>,<id>`
   (URL-encoded; `captured_at DESC, id DESC`, fixes arrive out of order) and "Newest" on an older page; each row the
@@ -2735,3 +2733,28 @@ Pinned by `shell::the_app_shell_scrolls_main_not_the_document`; measured by `jst
   inside its capped box instead of widening the row. `.row-value-words` is gone; `.row-value-keep` stays only for
   `white-space: nowrap` dates/versions. The managed Phone row on Device › Apps has no value (title and sub-line say it).
   Vibb One's name there is `tracked_apps.name`, the parent's own text (migration 0077 renames only the defaults).
+
+## Locate's trail chip (the owner, 2026-11-24, mockup A, branch `locate-span-chip`)
+
+- **Nothing above the map**: the one-phone view's map sits where the Alle view's does. The trail matters little: every
+  load shows **no trail**, the newest fix alone (`locations.json?newest=1`: that fix flagged `newest`); the chip at the
+  map's bottom left, beside ⤢, offers `locate::TRAILS` - "Ingen spor" (0, the default), "6 t", "12 t", "24 t", "48 t"
+  (`locate.trail.*`; en "No trail", "6 h" ...). Its word is "Spor ▾" without a trail, "24 t ▾" with one (the caret an
+  SVG); its spoken name "Spor, 24 t" (`data-label` + the choice). The Locations row and every kept fix are unchanged
+  by it; "7 dager" and "Alt lagret" stay on the Locations page.
+- **Markup**: `<details class="trail-chip" data-span-pick>` inside the map box (outside Leaflet's container, so a drag,
+  a tap or a wheel on it never reaches the map), its `<summary class="trail-face">` and a `div.trail-menu
+  role="radiogroup"` of five `<a role="radio" aria-checked data-span data-face>` above it. Without JS the details opens
+  and its links load `/devices/locate?device=N&trail=H#location` (none: no `trail`); the server reads `?trail=` by
+  `locate::trail_of` (any other value is none) and marks the box `data-trail`. `?span=` on Locate is ignored now.
+- **`static/locate.js`** (`?v=10`): a choice is `preventDefault`ed and redrawn in place (no jump), the chip's word
+  and name follow it, the menu closes and the focus goes back to the chip; Escape closes the menu first (handled, so
+  `map-full.js` leaves full screen only on the next one) and a tap outside closes it (a capturing `pointerdown`, before
+  the map acts). The choice lasts until the page is left; nothing is stored.
+- **CSS** (`style.css?v=135`): a white 36 px pill like ⤢ and the chips (z-index 1002 over Leaflet's panes), at
+  `bottom: 10px; left: 54px`; the menu above it, the current choice ticked in the trail's peach. At full screen (⤢
+  hidden) it takes the corner above the legend strip (`bottom: 66px` plus the safe area). `map-full.js` (`?v=3`) counts
+  a `summary` as a Tab stop and skips the links of a closed `<details>`, so the wrap never lands on a hidden link.
+- Tests: `locate_page::the_locations_row_counts_every_fix_and_the_chip_marks_the_trail`,
+  `locations_json_takes_a_span_and_keeps_the_newest` (`?newest=1`), the nb/en page words; `jstest/locate.test.js`
+  (no trail on load, the chip's choice, Escape and the tap outside, the Locations page's pick), `jstest/map-full.test.js`.

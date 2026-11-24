@@ -44,13 +44,16 @@
 
         open.addEventListener("click", function () { set(true); });
         close.addEventListener("click", function () { set(false); });
-        // What Tab moves between inside the box: links, buttons, Leaflet's markers; none hidden.
+        // What Tab moves between inside the box: links, buttons, the trail chip's summary,
+        // Leaflet's markers; none hidden, none inside a closed <details> (the chip's menu).
         function stops() {
-            var all = box.querySelectorAll("a[href], button, [tabindex]");
+            var all = box.querySelectorAll("a[href], button, summary, [tabindex]");
             var out = [];
             for (var i = 0; i < all.length; i++) {
                 var el = all[i];
                 if (el.getAttribute("tabindex") === "-1" || (el.closest && el.closest("[hidden]"))) continue;
+                var shut = el.closest ? el.closest("details:not([open])") : null;
+                if (shut && el.tagName !== "SUMMARY") continue;
                 out.push(el);
             }
             return out;

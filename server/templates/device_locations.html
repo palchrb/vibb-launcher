@@ -14,7 +14,7 @@
     <div class="sheet">
 
     {#- Design 44 §1.4: the map for the span, then every kept fix of it. Nothing posts here. The pick
-        opens the page again with its span (static/locate.js remembers it); a row's tap brings the
+        opens the page again with its span (static/locate.js; never remembered); a row's tap brings the
         map into view and shows that fix on it. -#}
     <section id="map-view" aria-label="{{ self.t("locate.map_aria") }}">
         <div class="phone-switch span-pick" role="radiogroup" aria-label="{{ self.t("locate.span.aria") }}" data-span-pick>
@@ -55,7 +55,7 @@
     </section>
 
     <script src="/static/leaflet/leaflet.js"></script>
-    <script src="/static/locate.js?v=9"></script>
+    <script src="/static/locate.js?v=10"></script>
     </div>
 </main>
 </body>
