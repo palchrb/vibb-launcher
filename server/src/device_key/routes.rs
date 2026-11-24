@@ -86,6 +86,40 @@ pub fn check(
     let Some(revoked) = state.device_keys.status.fresh(now) else {
         return Err(Refusal::ListStale);
     };
+    check_against(state, &revoked, chain, challenge, kind, proof_b64)
+}
+
+/// Design 129b D3 (M1): the enrolment's §3, run against the last good list even when it is stale - a refusal for any
+/// reason is the phone's; a chain that would pass under a stale list (or with no list ever fetched) is `ListStale`,
+/// the server's state, and asks for a fetch at once.
+pub fn check_enrol(
+    state: &AppState,
+    chain: &[String],
+    challenge: &[u8],
+    proof_b64: &str,
+) -> Result<Attested, Refusal> {
+    let now = chrono::Utc::now();
+    if let Some(revoked) = state.device_keys.status.fresh(now) {
+        return check_against(state, &revoked, chain, challenge, "enroll", proof_b64);
+    }
+    let Some(revoked) = state.device_keys.status.any() else {
+        state.device_keys.status.ask_fetch(now);
+        return Err(Refusal::ListStale);
+    };
+    check_against(state, &revoked, chain, challenge, "enroll", proof_b64)?;
+    state.device_keys.status.ask_fetch(now);
+    Err(Refusal::ListStale)
+}
+
+fn check_against(
+    state: &AppState,
+    revoked: &std::sync::Arc<std::collections::HashSet<String>>,
+    chain: &[String],
+    challenge: &[u8],
+    kind: &str,
+    proof_b64: &str,
+) -> Result<Attested, Refusal> {
+    let now = chrono::Utc::now();
     let chain = decode_chain(chain)?;
     let digest = attestation::signature_digest(state.config.launcher_signature_checksum.as_deref())
         .unwrap_or_default();
@@ -110,8 +144,8 @@ pub async fn get_key(
     State(state): State<AppState>,
     Extension(AuthedDevice(device)): Extension<AuthedDevice>,
 ) -> Response {
-    match super::current_key(&state.db, device.id).await {
-        Ok(key) => axum::Json(super::key_answer(key.as_ref())).into_response(),
+    match super::policy_value(&state.db, device.id).await {
+        Ok(answer) => axum::Json(answer).into_response(),
         Err(err) => {
             tracing::error!(device_id = device.id, %err, "can't read the phone's key");
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
@@ -124,6 +158,15 @@ pub async fn get_challenge(
     State(state): State<AppState>,
     Extension(AuthedDevice(device)): Extension<AuthedDevice>,
 ) -> Response {
+    // Design 129b X: no challenge while the phone's address history is younger than an hour (no key is made then).
+    match super::address_history_wait(&state.db, device.id).await {
+        Ok(None) => {}
+        Ok(Some(wait)) => return super::address_history_answer(wait),
+        Err(err) => {
+            tracing::error!(device_id = device.id, %err, "can't read the phone's addresses");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    }
     let challenge = super::random_bytes::<32>();
     let stored = sqlx::query(
         "INSERT INTO device_key_challenges (device_id, challenge, created_at, expires_at) \
@@ -158,6 +201,14 @@ pub async fn post_key(
         return StatusCode::BAD_REQUEST.into_response();
     };
     let client = state.net.client(&headers, addr.ip());
+    match super::address_history_wait(&state.db, device.id).await {
+        Ok(None) => {}
+        Ok(Some(wait)) => return super::address_history_answer(wait),
+        Err(err) => {
+            tracing::error!(device_id = device.id, %err, "can't read the phone's addresses");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    }
     let Ok(challenge) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(&req.challenge)
     else {
         return refused(Refusal::Challenge);
@@ -182,9 +233,14 @@ pub async fn post_key(
     )
     .await;
     match answer {
-        Ok(Registered::New { key_id, unusual }) => {
+        Ok(Registered::New {
+            key_id,
+            unusual,
+            ended,
+        }) => {
             state.device_keys.index.refresh(&state.db, device.id).await;
-            log_bound(&state, device.id, &client, unusual, "register").await;
+            let via = if ended { "exempt" } else { "register" };
+            log_bound(&state, device.id, &client, unusual, via).await;
             axum::Json(serde_json::json!({ "key_id": key_id, "state": "observed" })).into_response()
         }
         Ok(Registered::Same(key)) => {
@@ -211,7 +267,11 @@ pub async fn post_key(
 }
 
 enum Registered {
-    New { key_id: String, unusual: bool },
+    New {
+        key_id: String,
+        unusual: bool,
+        ended: bool,
+    },
     Same(super::StoredKey),
     Exists,
     Refused(Refusal),
@@ -271,8 +331,22 @@ async fn register(
         .bind(device_id)
         .execute(&mut *tx)
         .await?;
+    // Design 129b D10: a key that passes ends an exempt phone's exception.
+    let ended = sqlx::query(
+        "UPDATE devices SET key_exempt_at = NULL, key_exempt_reason = NULL, key_exempt_by = NULL \
+         WHERE id = ? AND key_exempt_at IS NOT NULL",
+    )
+    .bind(device_id)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected()
+        > 0;
     tx.commit().await?;
-    Ok(Registered::New { key_id, unusual })
+    Ok(Registered::New {
+        key_id,
+        unusual,
+        ended,
+    })
 }
 
 /// `POST /api/devices/key/conflict`: the server names a key the phone doesn't hold.
@@ -358,6 +432,17 @@ pub async fn note_refusal(
     if refusal == Refusal::App && !checksum_set(state) {
         return;
     }
+    // Design 129b D10: an exempt phone's weekly try refused for its exception's own reason is no news.
+    let exempt_for: Option<Option<String>> = sqlx::query_scalar(
+        "SELECT key_exempt_reason FROM devices WHERE id = ? AND key_exempt_at IS NOT NULL",
+    )
+    .bind(device_id)
+    .fetch_optional(&state.db)
+    .await
+    .unwrap_or_default();
+    if exempt_for.flatten().as_deref() == Some(refusal.word()) {
+        return;
+    }
     if let Err(err) = sqlx::query(
         "UPDATE devices SET key_refused_reason = ?, key_refused_at = datetime('now') WHERE id = ?",
     )
@@ -403,6 +488,10 @@ pub async fn log_bound(
     }
     if via == "enroll" {
         detail = detail.and("security.detail.device_key_bound.enroll", &[]);
+    }
+    // Design 129b D10: a passing key of an exempt phone ends its exception.
+    if via == "exempt" {
+        detail = detail.and("security.detail.device_key_bound.ends_exception", &[]);
     }
     security::record_security_event(
         &state.db,

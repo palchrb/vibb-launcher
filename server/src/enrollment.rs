@@ -121,17 +121,28 @@ pub async fn new_code(
     kind: Kind,
 ) -> Result<(String, String), sqlx::Error> {
     let code = generate(kind);
+    // Design 129b D4 (M5): each code has its own tag, which the key exception's form carries; the old code's waiting
+    // attempts, its wrong numbers and its older-launcher mark go with it.
+    let tag = crate::device_key::random_bytes::<8>();
+    let mut tx = state.db.begin().await?;
     let expires: String = sqlx::query_scalar(
         "UPDATE devices SET enrollment_code_hash = ?, enrollment_code_kind = ?, \
-         enrollment_code_expires_at = datetime('now', ?) WHERE id = ? \
+         enrollment_code_expires_at = datetime('now', ?), enrollment_code_tag = ?, enroll_wrong_numbers = 0, \
+         enroll_old_app_at = NULL WHERE id = ? \
          RETURNING enrollment_code_expires_at",
     )
     .bind(code_hash(&code))
     .bind(kind.as_str())
     .bind(format!("+{} minutes", kind.minutes()))
+    .bind(tag.as_slice())
     .bind(device_id)
-    .fetch_one(&state.db)
+    .fetch_one(&mut *tx)
     .await?;
+    sqlx::query("DELETE FROM enroll_key_attempts WHERE device_id = ?")
+        .bind(device_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
     state.enrollment.refresh(&state.db).await;
     Ok((code, expires))
 }

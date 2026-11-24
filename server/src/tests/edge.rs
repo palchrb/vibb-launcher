@@ -279,7 +279,7 @@ async fn re_enrolling_a_phone_retires_its_old_token() {
             Method::POST,
             "/api/devices/enroll",
             None,
-            Some(serde_json::json!({"enrollment_code": code})),
+            Some(crate::tests::enroll_body(&code)),
         )
         .await;
     assert_eq!(res.status, StatusCode::OK);

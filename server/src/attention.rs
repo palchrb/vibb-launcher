@@ -92,6 +92,10 @@ pub enum Kind {
     /// Design 116 §2.3: an outside service's failure behind this phone's features (the server's own data): its title
     /// and the failing scopes behind it.
     Integration(crate::integration_health::Title, usize),
+    /// Design 129b: the new phone couldn't prove its key and waits for the parent (the server's own data).
+    KeyWait,
+    /// Design 129b D13: the phone's Vibb One is too old to enrol (the server's own data).
+    OldApp,
 }
 
 impl Kind {
@@ -106,6 +110,8 @@ impl Kind {
                 | Kind::AppPushRefused(_)
                 | Kind::AppPushOutside(_)
                 | Kind::Integration(..)
+                | Kind::KeyWait
+                | Kind::OldApp
         )
     }
 }
@@ -168,6 +174,8 @@ impl AttentionItem {
             Kind::MusicSpotifyEnding => "music-spotify-ending",
             Kind::MusicSpotifyNoApp => "music-spotify-no-app",
             Kind::Integration(title, _) => title.key(),
+            Kind::KeyWait => "key-wait",
+            Kind::OldApp => "old-app",
         }
     }
 }
@@ -220,19 +228,28 @@ pub struct Facts {
     /// Design 116 §2.3: the outside services failing behind this phone's features
     /// (`integration_health::for_device`), one per title.
     pub integrations: Vec<(crate::integration_health::Title, usize)>,
+    /// Design 129b: a waiting enrolment's line and an older launcher's (`enrol_key::facts`), also for a phone not set
+    /// up. Read by [facts] (the Devices list's count); the summary shows them in `#key-exception` instead.
+    pub key: crate::enrol_key::KeyFacts,
 }
 
 /// The rows for one phone, alarms first, worded in `lang`.
 pub fn items(lang: Lang, device_id: i64, facts: &Facts) -> Vec<AttentionItem> {
-    if facts.not_set_up {
-        return Vec::new();
-    }
     let mut kinds: Vec<Kind> = Vec::new();
     let mut add = |on: bool, kind: Kind| {
         if on {
             kinds.push(kind);
         }
     };
+    // Design 129b: a phone's enrolment waiting for the parent - a phone not set up too.
+    add(facts.key.waiting_reason.is_some(), Kind::KeyWait);
+    add(facts.key.old_app, Kind::OldApp);
+    if facts.not_set_up {
+        return kinds
+            .into_iter()
+            .map(|kind| key_item(lang, device_id, facts, kind))
+            .collect();
+    }
     add(facts.restrictions_paused, Kind::RestrictionsPaused);
     add(facts.foreign_access, Kind::ForeignAccess);
     add(facts.do_not_disturb, Kind::DoNotDisturb);
@@ -294,6 +311,7 @@ pub fn items(lang: Lang, device_id: i64, facts: &Facts) -> Vec<AttentionItem> {
                 Kind::RestrictionsPaused if facts.setup_hold => {
                     t(lang, "device.attention.setup_hold").to_string()
                 }
+                Kind::KeyWait | Kind::OldApp => key_item(lang, device_id, facts, kind).title,
                 _ => title(lang, kind),
             },
             target: match kind {
@@ -305,6 +323,37 @@ pub fn items(lang: Lang, device_id: i64, facts: &Facts) -> Vec<AttentionItem> {
             at_last_report: facts.report_stale && kind.read_from_report(),
         })
         .collect()
+}
+
+/// Design 129b's rows: the line's own words, with the phone's name, to the summary's `#key-exception`.
+fn key_item(lang: Lang, device_id: i64, facts: &Facts, kind: Kind) -> AttentionItem {
+    let name = facts.key.name.as_str();
+    let title = match kind {
+        Kind::KeyWait => crate::i18n::t_params(
+            lang,
+            "device.key_wait",
+            &[
+                ("name", name),
+                (
+                    "reason",
+                    t(
+                        lang,
+                        crate::enrol_key::reason_key(
+                            facts.key.waiting_reason.as_deref().unwrap_or(""),
+                        ),
+                    ),
+                ),
+            ],
+        ),
+        _ => crate::i18n::t_params(lang, "device.old_app", &[("name", name)]),
+    };
+    AttentionItem {
+        kind,
+        level: Level::Action,
+        title,
+        target: format!("/devices/{device_id}#key-exception"),
+        at_last_report: false,
+    }
 }
 
 fn level(kind: Kind) -> Level {
@@ -341,7 +390,9 @@ fn level(kind: Kind) -> Level {
         | Kind::MusicSpotifyLogin
         | Kind::MusicSpotifyEnding
         | Kind::MusicSpotifyNoApp
-        | Kind::Integration(..) => Level::Action,
+        | Kind::Integration(..)
+        | Kind::KeyWait
+        | Kind::OldApp => Level::Action,
     }
 }
 
@@ -396,6 +447,8 @@ fn title(lang: Lang, kind: Kind) -> String {
             return t_count(lang, title.words(), count(n), &[]);
         }
         Kind::Integration(title, _) => t(lang, title.words()),
+        // Worded with the phone's name by `key_item`.
+        Kind::KeyWait | Kind::OldApp => "",
     }
     .to_string()
 }
@@ -450,6 +503,7 @@ fn target(kind: Kind, id: i64) -> String {
         Kind::Integration(title, _) => {
             return title.target(id);
         }
+        Kind::KeyWait | Kind::OldApp => ("", "key-exception"),
     };
     format!("/devices/{id}{page}#{anchor}")
 }
@@ -534,12 +588,20 @@ pub async fn dnd_is_rules_own(
 /// Reads what [items] needs. A read that fails counts as "nothing to say" for its row (logged by
 /// the builder that failed); the card it belongs to shows the error.
 pub async fn facts(state: &AppState, device: &Device, connection: ConnectionState) -> Facts {
+    let key = crate::enrol_key::facts(&state.db, device.id, &device.name).await;
     if device.enrolled_at.is_none() {
         return Facts {
             not_set_up: true,
+            key,
             ..Default::default()
         };
     }
+    let mut facts = facts_enrolled(state, device, connection).await;
+    facts.key = key;
+    facts
+}
+
+async fn facts_enrolled(state: &AppState, device: &Device, connection: ConnectionState) -> Facts {
     let id = device.id;
     let Some(policy) =
         sqlx::query_as::<_, DevicePolicy>("SELECT * FROM device_policy WHERE device_id = ?")
@@ -679,6 +741,7 @@ pub fn facts_of(s: &Sources, now_ms: i64) -> Facts {
         crate::setup_status::state_of(policy, latest, s.setup_part, &[]);
     let setup_row = crate::setup_status::setup_row(&setup_missing, &setup_readings);
     Facts {
+        key: Default::default(),
         not_set_up: false,
         report_stale: matches!(
             s.connection,

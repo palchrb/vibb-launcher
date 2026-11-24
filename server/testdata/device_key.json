@@ -2007,6 +2007,32 @@
       "backoff": false,
       "since_last_ask_ms": null,
       "ask": false
+    },
+    {
+      "name": "exempt, nothing adopted",
+      "policy": {
+        "state": "exempt",
+        "rotate": false
+      },
+      "adopted_key_id": null,
+      "has_token": true,
+      "lost": false,
+      "backoff": false,
+      "since_last_ask_ms": null,
+      "ask": true
+    },
+    {
+      "name": "exempt, asked minutes ago",
+      "policy": {
+        "state": "exempt",
+        "rotate": false
+      },
+      "adopted_key_id": null,
+      "has_token": true,
+      "lost": false,
+      "backoff": false,
+      "since_last_ask_ms": 600000,
+      "ask": false
     }
   ],
   "lost_verdict": [

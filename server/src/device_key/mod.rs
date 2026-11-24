@@ -741,7 +741,27 @@ pub async fn policy_value(
     db: &sqlx::SqlitePool,
     device_id: i64,
 ) -> Result<serde_json::Value, sqlx::Error> {
-    Ok(key_answer(current_key(db, device_id).await?.as_ref()))
+    let key = current_key(db, device_id).await?;
+    if key.is_none() && exempt(db, device_id).await? {
+        return Ok(exempt_answer());
+    }
+    Ok(key_answer(key.as_ref()))
+}
+
+/// Design 129b D10: the phone enrolled without a key by the parent's exception (`key_exempt_at`).
+pub async fn exempt(db: &sqlx::SqlitePool, device_id: i64) -> Result<bool, sqlx::Error> {
+    Ok(sqlx::query_scalar::<_, i64>(
+        "SELECT 1 FROM devices WHERE id = ? AND key_exempt_at IS NOT NULL",
+    )
+    .bind(device_id)
+    .fetch_optional(db)
+    .await?
+    .is_some())
+}
+
+/// `{state: "exempt", rotate: false}` (§4.3): no key id, no SPKI.
+pub fn exempt_answer() -> serde_json::Value {
+    serde_json::json!({ "state": "exempt", "rotate": false })
 }
 
 /// `GET /key`'s answer and the policy's `device_key`, from the current key.
@@ -820,6 +840,66 @@ pub async fn unusual_address(
     .fetch_optional(db)
     .await?;
     Ok(known.is_none())
+}
+
+/// Design 129b X (§8): a registration waits until the phone has an address first seen at least this long ago.
+pub const ADDRESS_HISTORY_S: i64 = 3600;
+
+/// Design 129b X: `Some(seconds)` while the phone has no `device_addresses` row (of the last [ADDRESS_DAYS] days)
+/// first seen more than [ADDRESS_HISTORY_S] ago - the time until its oldest row is that old, the whole hour with none.
+/// Every phone that registered in its first hour after 0.93.0 (whose history started empty) was marked `unusual`.
+pub async fn address_history_wait(
+    db: &sqlx::SqlitePool,
+    device_id: i64,
+) -> Result<Option<i64>, sqlx::Error> {
+    let age: Option<i64> = sqlx::query_scalar(
+        "SELECT CAST(strftime('%s', 'now') AS INTEGER) - CAST(strftime('%s', MIN(first_seen)) AS INTEGER) \
+         FROM device_addresses WHERE device_id = ? AND last_seen > datetime('now', ?)",
+    )
+    .bind(device_id)
+    .bind(format!("-{ADDRESS_DAYS} days"))
+    .fetch_one(db)
+    .await?;
+    Ok(history_wait(age))
+}
+
+/// [address_history_wait]'s rule from the oldest row's age in seconds (`None`: no row).
+pub fn history_wait(oldest_age_s: Option<i64>) -> Option<i64> {
+    match oldest_age_s {
+        None => Some(ADDRESS_HISTORY_S),
+        Some(age) if age >= ADDRESS_HISTORY_S => None,
+        Some(age) => Some((ADDRESS_HISTORY_S - age).max(1)),
+    }
+}
+
+/// Design 129b X (§8), for S2's commit: a stored `unusual` mark is cleared when the registration's address has a row
+/// whose `last_seen` is at least 24 hours after the key's registration and within the last 30 days - the address stayed
+/// the phone's own after the registration, which a registration from elsewhere doesn't (its address appears only around
+/// the registration). `rows` are the phone's `(address, last_seen)`. Written now, called by S2's commit.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn unusual_cleared(
+    registered_at: chrono::DateTime<chrono::Utc>,
+    address: &str,
+    rows: &[(String, chrono::DateTime<chrono::Utc>)],
+    now: chrono::DateTime<chrono::Utc>,
+) -> bool {
+    rows.iter().any(|(a, last_seen)| {
+        a == address
+            && *last_seen >= registered_at + chrono::TimeDelta::hours(24)
+            && *last_seen >= now - chrono::TimeDelta::days(ADDRESS_DAYS)
+    })
+}
+
+/// The registration routes' wait while the address history is young: 503 `{reason: "address_history",
+/// retry_after_s}` with `Retry-After`.
+pub fn address_history_answer(seconds: i64) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    (
+        axum::http::StatusCode::SERVICE_UNAVAILABLE,
+        [(axum::http::header::RETRY_AFTER, seconds.to_string())],
+        axum::Json(serde_json::json!({ "reason": "address_history", "retry_after_s": seconds })),
+    )
+        .into_response()
 }
 
 /// Removes every key of a phone (a re-enrolment, a revoked access) and its challenge; the index follows.

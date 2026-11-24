@@ -1,6 +1,8 @@
 {
   "about": "The versionCode a release tag was built with (scripts/release-version.sh): X*10_000_000 + Y*10_000 + Z*10 + N, N = the RC number 1..8, 9 for the release; X <= 199, Y and Z <= 999. 'codes': launcher tags, as the launcher (SelfUpdatePlanTest, launcherTagVersionCode) and the server (install_now::launcher_tag_version_code) read them; code null = not a launcher release tag (a music tag included). A tag from before the rule's first tag (launcher-v0.36.0-rc.4, music-v0.5.0-rc.4) reads by it too, below every build since. 'music_codes': music tags with the version the server's About This Phone shows for that code (handlers::device_pages::version_of_code). scripts/release-version.sh --selftest reads both lists' rows without '@': a tag it builds gets the row's code, a row below the first tag is refused. The part from '@' on (the server's release id) is ignored. Two byte-identical copies: server/testdata/launcher_tag_codes.json and launcher/app/src/test/resources/launcher_tag_codes.json; each suite fails if the other copy is missing or differs. Change both together.",
+  "enrol_attempt_first": "launcher-v0.43.0-rc.3",
   "codes": [
+    { "tag": "launcher-v0.43.0-rc.3", "code": 430003 },
     { "tag": "launcher-v0.36.0-rc.4", "code": 360004 },
     { "tag": "launcher-v0.36.0", "code": 360009 },
     { "tag": "launcher-v0.36.1-rc.1", "code": 360011 },

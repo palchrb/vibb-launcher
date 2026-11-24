@@ -138,6 +138,17 @@ selftest() {
             failures=$((failures + 1))
         fi
     done <"$contract"
+    # Design 129b D13: the server's floor for the setup QR's launcher is the code of the contract's
+    # `enrol_attempt_first` tag (server/src/launcher_check.rs, ENROL_ATTEMPT_FIRST_CODE).
+    local first_tag server_first
+    first_tag=$(sed -n 's/^ *"enrol_attempt_first": "\(launcher-v[^"]*\)",$/\1/p' "$contract")
+    server_first=$(sed -n 's/^pub const ENROL_ATTEMPT_FIRST_CODE: i64 = \([0-9]*\);$/\1/p' \
+        "$(dirname "${BASH_SOURCE[0]}")/../server/src/launcher_check.rs")
+    if [ -z "$first_tag" ] || [ -z "$server_first" ] \
+        || [ "$(release_version "$first_tag" | sed -n 's/^code=//p')" != "$server_first" ]; then
+        echo "FAIL: enrol_attempt_first ($first_tag) isn't the server's ENROL_ATTEMPT_FIRST_CODE ($server_first)"
+        failures=$((failures + 1))
+    fi
     if (( launcher_rows < 20 || music_rows < 4 )); then
         echo "FAIL: only $launcher_rows launcher and $music_rows music rows read from $contract"
         failures=$((failures + 1))

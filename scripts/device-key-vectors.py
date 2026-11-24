@@ -516,6 +516,9 @@ def nudge_rows():
         nudge("bound, the bearer gone", dict(observed, state="bound"), False, adopted_key_id="K1", has_token=False),
         nudge("an older server: no device_key", None, False),
         nudge("a lost key asks nothing", {"state": "none", "rotate": False}, False, adopted_key_id="K1", lost=True),
+        # Design 129b: an exempt phone asks as one without a key does (its weekly try is keyStep's).
+        nudge("exempt, nothing adopted", {"state": "exempt", "rotate": False}, True),
+        nudge("exempt, asked minutes ago", {"state": "exempt", "rotate": False}, False, since_last_ask_ms=600_000),
     ]
 
 

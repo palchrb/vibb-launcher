@@ -636,7 +636,7 @@ async fn a_re_enrolled_phone_counts_only_its_own_reports_and_rows() {
             Method::POST,
             "/api/devices/enroll",
             None,
-            Some(json!({ "enrollment_code": code })),
+            Some(crate::tests::enroll_body(&code)),
         )
         .await;
     assert_eq!(res.status, StatusCode::OK);

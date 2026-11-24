@@ -93,123 +93,89 @@ pub async fn enroll(
         }
     }
 
-    // Design 129 §5.1 (M4): a key's chain is checked first, with no database - the challenge comes from the code.
+    // Design 129b D3: without LAUNCHER_SIGNATURE_CHECKSUM no key can pass - the server's state, never the phone's.
+    if !crate::device_key::routes::checksum_set(&state) {
+        return crate::enrol_key::unavailable(
+            "server_setup",
+            crate::enrol_key::SERVER_SETUP_RETRY_S,
+        );
+    }
+    // Design 129 §5.1 (M4): a key's chain is checked first, with no database - the challenge comes from the code; a
+    // stale list's last copy still refuses (129b D3, M1).
     let key_check = req.chain.as_ref().map(|chain| {
-        crate::device_key::routes::check(
+        crate::device_key::routes::check_enrol(
             &state,
             chain,
             &crate::attestation::enroll_challenge(&code),
-            "enroll",
             req.proof.as_deref().unwrap_or_default(),
         )
     });
-    let key_spki = match &key_check {
-        Some(Ok(attested)) => Some(crate::attestation::spki_sha256(&attested.spki)),
-        _ => None,
-    };
     // The proof's `r` (code QA H1): a repeat of a lost answer must come with a proof never seen before.
-    let proof_r = match &key_check {
-        Some(Ok(_)) => req
-            .proof
-            .as_deref()
-            .and_then(|p| {
-                base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, p).ok()
-            })
-            .and_then(|p| crate::attestation::proof_r(&p)),
-        _ => None,
-    };
-    let key_spki = key_spki.filter(|_| proof_r.is_some());
-    // A list too old, or no LAUNCHER_SIGNATURE_CHECKSUM, is the server's state, never the phone's refusal (L10).
-    let refused_reason = match &key_check {
-        Some(Err(refusal))
-            if *refusal != crate::attestation::Refusal::ListStale
-                && !(*refusal == crate::attestation::Refusal::App
-                    && !crate::device_key::routes::checksum_set(&state)) =>
-        {
-            Some(refusal.word())
-        }
-        _ => None,
-    };
+    let key_check = key_check.map(|checked| {
+        checked.and_then(|attested| {
+            req.proof
+                .as_deref()
+                .and_then(|p| {
+                    base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, p)
+                        .ok()
+                })
+                .and_then(|p| crate::attestation::proof_r(&p))
+                .map(|r| (attested, r))
+                .ok_or(crate::attestation::Refusal::Proof)
+        })
+    });
+    if let Some(Err(crate::attestation::Refusal::ListStale)) = key_check {
+        return crate::enrol_key::unavailable("list_stale", crate::enrol_key::LIST_STALE_RETRY_S);
+    }
 
     let token = security::generate_device_token();
     let token_hash = security::hash_token(&token);
-    // The code that consumed with a key keeps that key's SPKI until its own expiry: a lost answer can be asked for
-    // again (§5.1). SQLite's SET reads the row as it was, so the code's hash and expiry are kept before they're
-    // cleared.
-    let enrolled: Result<Option<(i64, String)>, sqlx::Error> = sqlx::query_as(
-        "UPDATE devices SET token_hash = ?1, \
-         enroll_used_code_hash = CASE WHEN ?3 IS NULL THEN NULL ELSE enrollment_code_hash END, \
-         enroll_used_expires_at = CASE WHEN ?3 IS NULL THEN NULL ELSE enrollment_code_expires_at END, \
-         enroll_used_spki_sha256 = ?3, key_refused_reason = ?4, \
-         enroll_used_proof_rs = CASE WHEN ?3 IS NULL THEN NULL ELSE json_array(?5) END, enroll_repeats = 0, \
-         key_refused_at = CASE WHEN ?4 IS NULL THEN NULL ELSE datetime('now') END, key_conflict_at = NULL, \
-         enrollment_code_hash = NULL, \
-         enrollment_code_kind = NULL, enrollment_code_expires_at = NULL, \
-         enrolled_at = datetime('now'), mock_logged = NULL, mock_logged_at = NULL \
-         WHERE enrollment_code_hash = ?2 AND enrollment_code_expires_at > datetime('now') \
-         RETURNING id, name",
-    )
-    .bind(&token_hash)
-    .bind(enrollment::code_hash(&code))
-    .bind(key_spki.as_deref())
-    .bind(refused_reason)
-    .bind(proof_r.as_deref())
-    .fetch_optional(&state.db)
-    .await;
+    let code_hash = enrollment::code_hash(&code);
 
-    let (device_id, name) = match enrolled {
-        Ok(Some(device)) => device,
-        Ok(None) if key_spki.is_some() => {
-            // A lost answer (§5.1): the same code with the same key, within the code's own life, gets the same
-            // answer again - a new bearer (the server keeps only its hash, and the phone never got the first). At
-            // most [ENROLL_REPEATS] times, each with a proof never seen before: a captured body never replays.
-            match repeat_enrolment(
-                &state,
-                &code,
-                key_spki.as_deref().unwrap_or_default(),
-                proof_r.as_deref().unwrap_or_default(),
-                &token_hash,
-            )
-            .await
-            {
-                Ok(Some((device_id, name))) => {
-                    state
-                        .tokens
-                        .refresh(&state.db, device_id, Some(&token_hash))
-                        .await;
-                    state.command_streams.close_device(device_id);
-                    security::record_security_event(
-                        &state.db,
-                        "device_enrolled",
-                        None,
-                        Some(&ip),
-                        Some(
-                            security::Detail::words(
-                                "security.detail.enrolled.again",
-                                &[("name", &name), ("device", &device_id.to_string())],
-                            )
-                            .with_facts(format!("device {device_id}")),
-                        ),
-                    )
-                    .await;
-                    let key = crate::device_key::current_key(&state.db, device_id)
-                        .await
-                        .ok()
-                        .flatten();
-                    return Json(EnrollResponse {
-                        device_id,
-                        device_token: token,
-                        key: Some(match key {
-                            Some(key) => {
-                                serde_json::json!({ "key_id": key.key_id, "state": key.state })
-                            }
-                            None => serde_json::json!({ "state": "none" }),
-                        }),
-                    })
-                    .into_response();
-                }
+    let (device_id, name, key_answer) = match key_check {
+        Some(Ok((attested, proof_r))) => {
+            match enrol_with_key(&state, &code_hash, &token_hash, &attested, &proof_r).await {
+                Ok(Some((device_id, name))) => (device_id, name, Some(attested)),
                 Ok(None) => {
-                    return enroll_failed(&state, kind, &key, &ip, now).await;
+                    let key_spki = crate::attestation::spki_sha256(&attested.spki);
+                    // A lost answer (§5.1): the same code with the same key, within the code's own life, gets the
+                    // same answer again - a new bearer. At most [ENROLL_REPEATS] times, each with a proof never seen
+                    // before: a captured body never replays.
+                    return match repeat_enrolment(&state, &code, &key_spki, &proof_r, &token_hash)
+                        .await
+                    {
+                        Ok(Some((device_id, name))) => {
+                            asked_again(
+                                &state,
+                                device_id,
+                                &name,
+                                &ip,
+                                "security.detail.enrolled.again",
+                                &token_hash,
+                            )
+                            .await;
+                            let key = crate::device_key::current_key(&state.db, device_id)
+                                .await
+                                .ok()
+                                .flatten();
+                            Json(EnrollResponse {
+                                device_id,
+                                device_token: token,
+                                key: Some(match key {
+                                    Some(key) => serde_json::json!({
+                                        "key_id": key.key_id, "state": key.state
+                                    }),
+                                    None => serde_json::json!({ "state": "none" }),
+                                }),
+                            })
+                            .into_response()
+                        }
+                        Ok(None) => enroll_failed(&state, kind, &key, &ip, now, false).await,
+                        Err(err) => {
+                            tracing::error!(%err, "enrollment failed");
+                            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+                        }
+                    };
                 }
                 Err(err) => {
                     tracing::error!(%err, "enrollment failed");
@@ -217,17 +183,205 @@ pub async fn enroll(
                 }
             }
         }
-        Ok(None) => return enroll_failed(&state, kind, &key, &ip, now).await,
-        Err(err) => {
-            tracing::error!(%err, "enrollment failed");
-            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        not_passing => {
+            // Design 129b §4.2 step 5: a refused chain, or no key, waits for a parent - never an enrolment on its own.
+            let (reason, spki) = match &not_passing {
+                Some(Err(refusal)) => (refusal.word(), None),
+                _ => (
+                    crate::enrol_key::no_key_reason(req.key_error.as_deref()),
+                    None,
+                ),
+            };
+            let spki: Option<String> = spki;
+            let attempt = req
+                .attempt
+                .as_deref()
+                .and_then(crate::enrol_key::attempt_hash);
+            let outcome = crate::enrol_key::waiting_try(
+                &state,
+                &crate::enrol_key::Try {
+                    code_hash: &code_hash,
+                    attempt,
+                    reason,
+                    spki_sha256: spki.as_deref(),
+                    address: &ip,
+                    token_hash: &token_hash,
+                },
+            )
+            .await;
+            use crate::enrol_key::TryOutcome;
+            match outcome {
+                Ok(TryOutcome::Waiting {
+                    reason,
+                    number,
+                    retry_after_s,
+                }) => return crate::enrol_key::waiting_answer(&reason, &number, retry_after_s),
+                Ok(TryOutcome::Throttled { retry_after_s }) => return too_many(retry_after_s),
+                Ok(TryOutcome::OldApp) => {
+                    return enroll_failed(&state, kind, &key, &ip, now, true).await;
+                }
+                Ok(TryOutcome::NoCode) => {
+                    return enroll_failed(&state, kind, &key, &ip, now, false).await;
+                }
+                Ok(TryOutcome::Exempt {
+                    device_id,
+                    name,
+                    reason,
+                    repeat: true,
+                }) => {
+                    asked_again(
+                        &state,
+                        device_id,
+                        &name,
+                        &ip,
+                        "security.detail.enrolled.exempt_again",
+                        &token_hash,
+                    )
+                    .await;
+                    return exempt_answer(device_id, token, &reason);
+                }
+                Ok(TryOutcome::Exempt {
+                    device_id,
+                    name,
+                    reason,
+                    repeat: false,
+                }) => {
+                    enrolled(&state, device_id, &name, kind, &ip, true, &token_hash).await;
+                    crate::device_key::remove_keys(&state, device_id).await;
+                    return exempt_answer(device_id, token, &reason);
+                }
+                Err(err) => {
+                    tracing::error!(%err, "enrollment failed");
+                    return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+                }
+            }
         }
     };
 
+    enrolled(&state, device_id, &name, kind, &ip, false, &token_hash).await;
+    // Design 129 §5.1: the new phone's key (the old phone's keys and addresses went in `enrolled`).
+    let key_answer = match key_answer {
+        Some(attested) => match store_enrolled_key(&state, device_id, &attested, &client.key())
+            .await
+        {
+            Ok(key_id) => {
+                crate::device_key::routes::log_bound(&state, device_id, &client, false, "enroll")
+                    .await;
+                Some(serde_json::json!({ "key_id": key_id, "state": "observed" }))
+            }
+            Err(err) => {
+                tracing::error!(device_id, %err, "can't store the enrolled phone's key");
+                // The old phone's keys must not outlive a failed write (code QA L5).
+                crate::device_key::remove_keys(&state, device_id).await;
+                Some(serde_json::json!({ "state": "none" }))
+            }
+        },
+        None => None,
+    };
+
+    Json(EnrollResponse {
+        device_id,
+        device_token: token,
+        key: key_answer,
+    })
+    .into_response()
+}
+
+/// Design 129b: the exempt enrolment's answer, `{device_id, device_token, key: {state: "exempt", reason}}`.
+fn exempt_answer(device_id: i64, token: String, reason: &str) -> axum::response::Response {
+    Json(EnrollResponse {
+        device_id,
+        device_token: token,
+        key: Some(serde_json::json!({ "state": "exempt", "reason": reason })),
+    })
+    .into_response()
+}
+
+/// A lost answer asked for again (S1's key repeat, 129b's exempt repeat): the new bearer works from now on.
+async fn asked_again(
+    state: &AppState,
+    device_id: i64,
+    name: &str,
+    ip: &str,
+    words: &str,
+    token_hash: &str,
+) {
+    state
+        .tokens
+        .refresh(&state.db, device_id, Some(token_hash))
+        .await;
+    state.command_streams.close_device(device_id);
+    security::record_security_event(
+        &state.db,
+        "device_enrolled",
+        None,
+        Some(ip),
+        Some(
+            security::Detail::words(words, &[("name", name), ("device", &device_id.to_string())])
+                .with_facts(format!("device {device_id}")),
+        ),
+    )
+    .await;
+}
+
+/// §4.2 step 4: a passing key's enrolment in one transaction - S1's code use, the code's attempt rows gone, any
+/// exception of the row's earlier phone cleared. `None`: no live code.
+async fn enrol_with_key(
+    state: &AppState,
+    code_hash: &str,
+    token_hash: &str,
+    attested: &crate::attestation::Attested,
+    proof_r: &str,
+) -> Result<Option<(i64, String)>, sqlx::Error> {
+    let key_spki = crate::attestation::spki_sha256(&attested.spki);
+    let mut tx = state.db.begin().await?;
+    // The code that consumed with a key keeps that key's SPKI until its own expiry: a lost answer can be asked for
+    // again (§5.1). SQLite's SET reads the row as it was, so the code's hash and expiry are kept before they're
+    // cleared.
+    let enrolled: Option<(i64, String)> = sqlx::query_as(
+        "UPDATE devices SET token_hash = ?1, \
+         enroll_used_code_hash = enrollment_code_hash, enroll_used_expires_at = enrollment_code_expires_at, \
+         enroll_used_spki_sha256 = ?3, key_refused_reason = NULL, key_refused_at = NULL, \
+         enroll_used_proof_rs = json_array(?4), enroll_repeats = 0, key_conflict_at = NULL, \
+         key_exempt_at = NULL, key_exempt_reason = NULL, key_exempt_by = NULL, \
+         enrollment_code_hash = NULL, enrollment_code_kind = NULL, enrollment_code_expires_at = NULL, \
+         enrollment_code_tag = NULL, enroll_old_app_at = NULL, \
+         enrolled_at = datetime('now'), mock_logged = NULL, mock_logged_at = NULL \
+         WHERE enrollment_code_hash = ?2 AND enrollment_code_expires_at > datetime('now') \
+         RETURNING id, name",
+    )
+    .bind(token_hash)
+    .bind(code_hash)
+    .bind(&key_spki)
+    .bind(proof_r)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if let Some((device_id, _)) = &enrolled {
+        sqlx::query("DELETE FROM enroll_key_attempts WHERE device_id = ?")
+            .bind(device_id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    Ok(enrolled)
+}
+
+/// After an enrolment (with a key, or exempt): the old phone's token, zones' sides, setup ticks, commands, keys'
+/// addresses and streams go; logged as `device_enrolled`.
+async fn enrolled(
+    state: &AppState,
+    device_id: i64,
+    name: &str,
+    kind: crate::enrollment::Kind,
+    ip: &str,
+    exempt: bool,
+    token_hash: &str,
+) {
+    use crate::enrollment::Kind;
     // The old token (a re-enrolled phone) stops working, the new one works from now on.
     state
         .tokens
-        .refresh(&state.db, device_id, Some(&token_hash))
+        .refresh(&state.db, device_id, Some(token_hash))
         .await;
     // Another phone in the row (design 64 §3.1): its zones' sides are the old phone's.
     if let Err(err) = crate::zones::forget_sides(&state.db, device_id).await {
@@ -251,17 +405,18 @@ pub async fn enroll(
             Kind::Typed => "security.detail.enrolled.typed",
             Kind::Qr => "security.detail.enrolled.qr",
         },
-        &[("name", &name), ("device", &device_id.to_string())],
+        &[("name", name), ("device", &device_id.to_string())],
     )
     .with_facts(format!("device {device_id}"));
+    if exempt {
+        detail = detail.and("security.detail.enrolled.exempt", &[]);
+    }
     if dropped > 0 {
         detail = detail.and_counted("security.detail.enrolled_dropped", dropped as i64, &[]);
     }
-    security::record_security_event(&state.db, "device_enrolled", None, Some(&ip), Some(detail))
+    security::record_security_event(&state.db, "device_enrolled", None, Some(ip), Some(detail))
         .await;
-
-    // Design 129 §5.1, S1: the new phone's key (the old phone's keys and addresses go), or why not - the phone enrols on
-    // its bearer either way. The old phone's addresses go on every path (code QA L5), in memory too.
+    // Design 129 §5.1: the old phone's addresses go on every path (code QA L5), in memory too.
     if let Err(err) = sqlx::query("DELETE FROM device_addresses WHERE device_id = ?")
         .bind(device_id)
         .execute(&state.db)
@@ -270,45 +425,6 @@ pub async fn enroll(
         tracing::error!(device_id, %err, "can't forget the old phone's addresses");
     }
     state.device_keys.forget_device(device_id);
-    let key_answer = match key_check {
-        None => {
-            crate::device_key::remove_keys(&state, device_id).await;
-            None
-        }
-        Some(Ok(attested)) => Some(
-            match store_enrolled_key(&state, device_id, &attested, &client.key()).await {
-                Ok(key_id) => {
-                    crate::device_key::routes::log_bound(
-                        &state, device_id, &client, false, "enroll",
-                    )
-                    .await;
-                    serde_json::json!({ "key_id": key_id, "state": "observed" })
-                }
-                Err(err) => {
-                    tracing::error!(device_id, %err, "can't store the enrolled phone's key");
-                    // The old phone's keys must not outlive a failed write (code QA L5).
-                    crate::device_key::remove_keys(&state, device_id).await;
-                    serde_json::json!({ "state": "none" })
-                }
-            },
-        ),
-        Some(Err(refusal)) => {
-            crate::device_key::remove_keys(&state, device_id).await;
-            crate::device_key::routes::note_refusal(&state, device_id, refusal, &client).await;
-            let mut answer = serde_json::json!({ "state": "refused", "reason": refusal.word() });
-            if refusal == crate::attestation::Refusal::ListStale {
-                answer["retry_after_s"] = crate::attestation::status_list::RETRY_AFTER_S.into();
-            }
-            Some(answer)
-        }
-    };
-
-    Json(EnrollResponse {
-        device_id,
-        device_token: token,
-        key: key_answer,
-    })
-    .into_response()
 }
 
 /// A refused enrolment code (not live, used, or never made): counted and logged as before design 129.
@@ -318,9 +434,29 @@ async fn enroll_failed(
     key: &str,
     ip: &str,
     now: chrono::DateTime<chrono::Utc>,
+    old_app: bool,
 ) -> axum::response::Response {
     use crate::enrollment::{self, Kind};
     let (key, ip) = (key.to_string(), ip.to_string());
+    if old_app {
+        // Design 129b D13: a right code from a launcher without `attempt` - 426, outside the phone's code refusals,
+        // so it keeps its QR extras; the right code is never counted as a guess.
+        state
+            .audit
+            .record(
+                &state.db,
+                "enroll_failed",
+                &key,
+                Some(&ip),
+                security::Detail::words("security.detail.enroll_failed.old_app", &[]),
+            )
+            .await;
+        return (
+            StatusCode::UPGRADE_REQUIRED,
+            Json(serde_json::json!({ "reason": crate::enrol_key::UPDATE_APP })),
+        )
+            .into_response();
+    }
     let unauthorized = || {
         (
             StatusCode::UNAUTHORIZED,

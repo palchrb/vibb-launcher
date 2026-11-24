@@ -32,6 +32,9 @@
     </div>
     {% endif %}
 
+    {#- Design 129b: above the QR, the new phone that couldn't prove its key. -#}
+    {% include "partials/key_wait.html" %}
+
     {% if let Some(why) = url_warning %}
     <div class="attention attention-action" data-warning="plain-http">
         <span class="attention-text">{{ self.t("devices.qr.plain_http") }}<span class="attention-sub">{{ why }} <a href="/settings/provisioning">{{ self.t("devices.qr.phone_setup") }}</a></span></span>
@@ -119,10 +122,15 @@
         </div>
         {% endif %}
         <div class="group">
+            {#- Design 129b D3: no setup code without the checksum either, as no QR. -#}
+            {% if missing_checksum %}
+            <p class="row row-note" data-row="code-needs-setup">{{ self.t("devices.qr.needs_setup") }}</p>
+            {% else %}
             {#- A POST: the code is made now and shown once, on its own page. -#}
             <form method="post" action="/devices/{{ device.id }}/regenerate-code" class="cell">
                 <button type="submit" class="row row-button">{{ self.t("device.summary.access.new_code") }}</button>
             </form>
+            {% endif %}
         </div>
         <div class="group-footer">
             <details class="info"><summary aria-label="{{ self.t("devices.qr.code_info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.tp("devices.qr.code_info", [("minutes", code_minutes.to_string().as_str())]) }}</p></div></details>

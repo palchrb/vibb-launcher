@@ -881,6 +881,7 @@ pub fn no_store_path(path: &str) -> bool {
             | ["devices", _, "lock"]
             | ["devices", _, "provision"]
             | ["devices", _, "regenerate-code"]
+            | ["devices", _, "key-exception"]
             | ["backups", ..]
             | ["settings", "provisioning"]
             | ["account", ..]

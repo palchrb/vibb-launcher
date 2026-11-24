@@ -108,6 +108,58 @@ byte-identical in `launcher/app/src/test/resources/` (`the_contract_matches_the_
 `phone_nudge` rows (the registration flow's table, the launcher's alone to run: `DeviceKeyContractTest`). The
 launcher's side is `docs/notes/launcher/security.md`, "The hardware-bound phone key".
 
+## E1: a new phone's enrolment requires a key (design 129b)
+
+The design is `docs/design/129b-enrolment-requires-a-key.md` (revision 2, the owner's answers in §11). Phones enrolled
+before it keep their bearer and register as above.
+
+- `POST /api/devices/enroll` (`handlers::device_api::enroll`, `src/enrol_key.rs`): no `LAUNCHER_SIGNATURE_CHECKSUM` is
+  `503 server_setup` (3600 s) and no setup code of either kind is made (`regenerate_code` back to Connect's
+  `#setup-code`, which says the server needs setting up). §3 runs first with no database, against the **last good
+  list when stale** (`routes::check_enrol`): a refusal is the phone's; a chain that would pass under a stale list (or
+  with none fetched) is `503 list_stale` (60 s), no row, and asks `StatusList::ask_fetch` (at most one a minute; the
+  fetch loop wakes on it). A passing key enrols as S1 did (`enrol_with_key`, one transaction: the code's attempt rows
+  go, any earlier exception is cleared) - the S1 lost-answer repeat unchanged.
+- Not passing (`enrol_key::waiting_try`, one `BEGIN IMMEDIATE`): the live code's phone; none - an exempt row's repeat
+  (`used_at`, within `keep_until`, at most `EXEMPT_REPEATS` 2, a fresh bearer each) or the counted `401`; a right code
+  without `attempt` is `426 {reason: "update_app"}` (`devices.enroll_old_app_at`, the orange "{name} har en eldre Vibb
+  One", logged `enroll_failed` "eldre Vibb One", never counted as a guess); an allowed row enrols exempt
+  (`key_exempt_at/_reason/_by`, the row `used_at` and kept until the code's expiry + 10 min, the code's other rows gone,
+  `device_enrolled` "Uten maskinvarenøkkel."); else the row upserted - `429` with `Retry-After` under 10 s since its
+  last try, a new row only under 8 a code (the ninth waits with no row, logged once per code) - and `409 {state:
+  "waiting", reason, number, retry_after_s}` (`wait_pace`: 15/30/60 s). A waiting try never counts against the client's
+  bucket or the typed pause. `device_key_refused` "ved oppsett: ... venter på en forelder" once per attempt row.
+- The number (`enrol_key::number`): `u32_be(SHA-256("vibb-attempt-v1" || 0x00 || attempt_hash)[0..4]) mod 1 000 000`;
+  the server keeps only the attempt's SHA-256. The PWA never shows it.
+- The confirm, `POST /devices/{id}/key-exception` (`enrol_key::confirm`; `passkeys::reauth_route` takes the route):
+  `admin_auth::reauth` first (a wrong one counts `reauth_wrong` and logs `device_key_exempt_refused`), then one
+  `BEGIN IMMEDIATE`: the form's tag must be the live code's (`devices.enrollment_code_tag`, made by `new_code`; else
+  "Ny kode - se igjen." or "Telefonen er koblet til."), the typed number one live, not allowed row's; exactly one with a
+  covered reason (all but `app`, `challenge`, `proof` - those 400, and no button) is allowed by the compare-and-set and
+  the code's expiry moved to at least now + 10 min (`device_key_exempted`); none counts `enroll_wrong_numbers` - the
+  fifth ends the code; two is "Lag en ny oppsettkode.". Every answer is a redirect to the summary or Connect at
+  `#key-exception` (`?key_error=` re-opens the confirm with its field's error - the design's "rendered there", as a
+  redirect so the password never sits in a rendered POST).
+- The pages: `partials/key_wait.html` (`enrol_key::Section`) in `<section id="key-exception">` on the summary and
+  Connect, empty when nothing shows; the Devices list's badge counts `attention::Kind::KeyWait`/`OldApp`
+  (`enrol_key::facts`, also for a phone not set up). About's "Innlogging" is the quiet "Uten maskinvarenøkkel" with
+  "Valgt av {parent} {date} ({reason})." behind the (i) while exempt and keyless.
+- `GET /api/devices/key` and the policy's `device_key` answer `{state: "exempt", rotate: false}`; a passing
+  registration ends the exception (`device_key_bound` "Avslutter unntaket."); a refusal with the exception's own reason
+  isn't logged again.
+- The rows die with the code: `new_code` deletes them, Revoke Access too, the phone's delete cascades, and
+  `retention::prune` runs `enrol_key::SWEEP_SQL` (a used row lives to its `keep_until`).
+- D13: `launcher_check`'s `Verdict::TooOld` blocks the setup QR while its launcher's versionCode is under
+  `ENROL_ATTEMPT_FIRST_CODE` (430003, `launcher-v0.43.0-rc.3` - the first tag after every tag made before this step;
+  `launcher_tag_codes.json`'s `enrol_attempt_first`, checked by `scripts/release-version.sh --selftest` and
+  `launcher_check::tests`).
+- X (§8): `GET /api/devices/key/challenge` and `POST /api/devices/key` answer `503 {reason: "address_history",
+  retry_after_s}` while the phone has no `device_addresses` row first seen over an hour ago (`address_history_wait`);
+  signed requests note their address too (`security::require_device_token`); `device_key::unusual_cleared` is S2's
+  re-check, written and tested now.
+- Migration 0175: `enroll_key_attempts`, and on `devices` the code's tag, the wrong numbers, the older-launcher mark and
+  `key_exempt_*`. Tests: `tests::enrol_key`, `enrol_key::tests`, `tests::device_key`.
+
 ## Not in S1
 
 `emulator_keys` (§7.3) waits for the emulator's chain to be read on the gate images; the bound state, `held`,

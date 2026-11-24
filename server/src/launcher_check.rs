@@ -49,7 +49,16 @@ pub enum Verdict {
     Unreachable,
     /// The whole check took longer than [CHECK_TIMEOUT]: a download that trickles.
     TimedOut,
+    /// Design 129b D13: older than the first Vibb One that sends an enrolment attempt
+    /// ([ENROL_ATTEMPT_FIRST_CODE]) - this server never enrols it: no QR is made.
+    TooOld { version: String },
 }
+
+/// Design 129b D13: the first launcher versionCode that speaks design 129b's enrolment (`attempt`, `key_error`, the
+/// waiting answer) - the first launcher tag after every tag made before it. `launcher_tag_codes.json`'s
+/// `enrol_attempt_first` names its tag; `scripts/release-version.sh --selftest` and
+/// `tests::the_first_enrol_attempt_code_is_the_contracts` check it.
+pub const ENROL_ATTEMPT_FIRST_CODE: i64 = 430003;
 
 impl Verdict {
     /// A phone would stop at "Can't set up device": no QR is made (fail closed).
@@ -310,6 +319,9 @@ async fn download(url: &str, path: &str) -> Result<(), String> {
 pub(crate) struct Known {
     pub(crate) newest: Option<(String, i64)>,
     pub(crate) published: Vec<(i64, DateTime<Utc>)>,
+    /// The lowest versionCode a phone can enrol with ([ENROL_ATTEMPT_FIRST_CODE] in a running server; the tests'
+    /// fixtures, codes 1 and 2, set their own).
+    pub(crate) min_code: i64,
 }
 
 #[derive(Deserialize)]
@@ -336,7 +348,15 @@ async fn known_releases(state: &AppState) -> Known {
         .as_ref()
         .and_then(|row| row.release_tag_prefix.clone())
         .unwrap_or_else(|| crate::handlers::tracked_apps::LAUNCHER_ROW_TAG_PREFIX.to_string());
-    let mut known = Known::default();
+    let mut known = Known {
+        // The test fixtures are codes 1 and 2: their own rows set the floor (`judge`'s tests).
+        min_code: if cfg!(test) {
+            0
+        } else {
+            ENROL_ATTEMPT_FIRST_CODE
+        },
+        ..Known::default()
+    };
     let mut offer = |version: String, code: i64| {
         if known
             .newest
@@ -463,6 +483,13 @@ pub(crate) fn judge(
         Verdict::WrongPackage { package }
     } else if !signed {
         Verdict::WrongSigner
+    } else if identity
+        .version_code
+        .is_some_and(|code| code < known.min_code)
+    {
+        Verdict::TooOld {
+            version: version.clone().unwrap_or_default(),
+        }
     } else {
         match (identity.version_code, &known.newest) {
             (Some(code), Some((newest, newest_code))) if code < *newest_code => Verdict::Older {
@@ -671,6 +698,13 @@ fn words(
             refused(),
             address(),
         ),
+        // Design 129b D13: the fix behind the (i).
+        Verdict::TooOld { .. } => (
+            "refused",
+            t(lang, "settings.provisioning.launcher.too_old").to_string(),
+            refused(),
+            Some(t(lang, "settings.provisioning.launcher.too_old_sub").to_string()),
+        ),
     }
 }
 
@@ -862,6 +896,23 @@ mod tests {
         );
     }
 
+    /// Design 129b D13: the floor is the shared contract's `enrol_attempt_first` tag's code.
+    #[test]
+    fn the_first_enrol_attempt_code_is_the_contracts() {
+        let contract: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string("testdata/launcher_tag_codes.json").unwrap(),
+        )
+        .unwrap();
+        let tag = contract["enrol_attempt_first"].as_str().unwrap();
+        let row = contract["codes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["tag"] == tag)
+            .expect("the tag is a row");
+        assert_eq!(row["code"].as_i64(), Some(ENROL_ATTEMPT_FIRST_CODE));
+    }
+
     #[test]
     fn the_android_a_new_phone_needs() {
         assert_eq!(
@@ -887,6 +938,7 @@ mod tests {
         let known = Known {
             newest: Some(("0.0.0-rc.2".to_string(), 2)),
             published: Vec::new(),
+            min_code: 0,
         };
         assert_eq!(
             judge(&identity, &config, KEY1_CHECKSUM, &known).verdict,
@@ -898,6 +950,19 @@ mod tests {
             judge(&identity, &config, KEY1_CHECKSUM, &Known::default()).verdict,
             Verdict::Works
         );
+        // Design 129b D13: under the first launcher that sends an enrolment attempt, no QR.
+        let floor = Known {
+            min_code: 2,
+            ..Known::default()
+        };
+        let too_old = judge(&identity, &config, KEY1_CHECKSUM, &floor).verdict;
+        assert_eq!(
+            too_old,
+            Verdict::TooOld {
+                version: "1".to_string()
+            }
+        );
+        assert!(too_old.blocks_qr());
         let no_package = ApkIdentity {
             package: None,
             ..identity

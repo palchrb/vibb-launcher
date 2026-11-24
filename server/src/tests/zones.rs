@@ -378,7 +378,7 @@ async fn a_moved_zone_forgets_its_side_and_a_rename_keeps_it() {
             Method::POST,
             "/api/devices/enroll",
             None,
-            Some(json!({ "enrollment_code": code })),
+            Some(crate::tests::enroll_body(&code)),
         )
         .await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.text());
