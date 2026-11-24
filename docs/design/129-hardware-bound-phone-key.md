@@ -36,8 +36,8 @@ checked by step 0 (§10) or the emulator gate.
   registration from an address its bearer never used, or a boot state that doesn't pass, which waits for the parent.
   S2 is a one-way door for the database (§8.1).
 - **Fail closed**: an attestation that does not verify is refused - never a software key, never "accept anyway". A
-  refused phone stays on its bearer with one orange line (from S2); once new enrolments require a key, a phone that
-  can't attest can't be enrolled.
+  refused phone stays on its bearer with one orange line (from S2); since design 129b a new enrolment requires a key,
+  and a phone that can't attest waits for the parent's per-phone exception.
 - **Step 2**: `Verified` with a locked bootloader, or `SelfSigned` with a verified-boot key on the pinned GrapheneOS
   list: nothing shown. Anything else: one orange line, **"Ukjent eller ulåst system" / "Unknown or unlocked system"**.
 
@@ -318,10 +318,10 @@ unknown key, a bad signature, a stale `t`, a missing body hash.
   the credential, as today).
 - `proof` = the new key's signature over `vibb-key-v1\n<challenge Base64url>\nenroll`.
 - **Order**: §3's checks run first, with no database (the challenge comes from the submitted code). Only a chain that
-  passes reaches the code's transaction (`UPDATE .. RETURNING`). A refusal leaves the code live and counts against
-  the enrol failure bucket, as a wrong code does today.
+  passes reaches the code's transaction (`UPDATE .. RETURNING`). A refusal leaves the code live (since 129b D5 it no
+  longer counts against the enrol failure bucket; a wrong code still does).
 - **Answers** (since 129b a refused or missing key no longer enrols: `409 waiting` and the parent's exception,
-  129b §4.1; the S1 answers below are history):
+  129b §4.1, revision 2; the S1 answers below are history):
   - S1: `{device_id, device_token, key: {key_id, state: "observed"}}`, or, when the chain was refused,
     `{device_id, device_token, key: {state: "refused", reason}}` - the phone enrols on the bearer (S1 never refuses an
     enrolment for its key) and deletes the refused key; the registration flow then waits as after a refused registration
