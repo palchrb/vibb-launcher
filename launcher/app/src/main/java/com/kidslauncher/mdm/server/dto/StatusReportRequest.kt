@@ -446,6 +446,13 @@ data class TimeState(
      * end ("until 07:00") only when it is Phone Setup's zone. `null` = left out of the JSON (an
      * older report's shape; the runtime always sets it). */
     val zone: String? = null,
+    /** How far the phone's own clock is from the decisions' clock (wall minus trusted): 0 within five minutes, then
+     * five-minute steps ([com.kidslauncher.mdm.server.reportedSkew]). `null` = left out (the runtime always sets it). */
+    val clockSkewMs: Long? = null,
+    /** How the decisions' clock knows its time: `server`, `gnss`, `carried` or `none` ([com.kidslauncher.mdm.server.ClockTrust]). */
+    val clockTrust: String? = null,
+    /** Since the last server or satellite time, in whole hours; `null` (left out) when there never was one. */
+    val unanchoredMs: Long? = null,
 )
 
 /**

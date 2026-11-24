@@ -102,8 +102,8 @@ class LockClockFace(
 
     private fun datePattern(short: Boolean) {
         val pattern = DateFormat.getBestDateTimePattern(locale, glanceDateSkeleton(short))
-        if (date.format12Hour?.toString() != pattern) date.format12Hour = pattern
-        if (date.format24Hour?.toString() != pattern) date.format24Hour = pattern
+        // The decisions' date while the phone's own clock is off (as the time: ClockFormat.bind).
+        com.kidslauncher.mdm.ui.ClockFormat.bindTrusted(date, pattern)
     }
 
     /** Whether the no-profile date is the short one (design 75 D14, launcher QA M1/L2): while the policy's lock weather

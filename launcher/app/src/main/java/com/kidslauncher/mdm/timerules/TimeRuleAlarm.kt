@@ -5,6 +5,7 @@ import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.os.SystemClock
 import android.util.Log
 
 private const val LOG_TAG = "TimeRuleAlarm"
@@ -32,23 +33,25 @@ object TimeRuleAlarm {
             val alarms = context.getSystemService(AlarmManager::class.java) ?: return
             val pi = pendingIntent(context)
             // Also the Play edges (handy step 7): install mode's end and the nightly update
-            // window's start/end, so the plan follows them with the screen off.
-            val next = listOfNotNull(
+            // window's start/end, so the plan follows them with the screen off. Both are instants on the decisions'
+            // clock; the alarm is on elapsed realtime, so a wall clock set meanwhile neither fires it early nor late.
+            val now = com.kidslauncher.mdm.server.TrustedClock.nowMs()
+            val elapsed = SystemClock.elapsedRealtime()
+            val edges = listOfNotNull(
                 TimeRulesRuntime.nextBoundary(context),
                 com.kidslauncher.mdm.play.PlayRuntime.nextEdge(context),
-            ).minOrNull()
-            if (next == null) {
+            ).map { com.kidslauncher.mdm.server.AlarmEdge(it.toEpochMilli(), now) }
+            val at = com.kidslauncher.mdm.server.alarmDeadline(edges, elapsed)
+            if (at == null) {
                 alarms.cancel(pi)
                 return
             }
-            // A second late, so the evaluation lands inside the new period, not on its edge.
-            val at = next.toEpochMilli() + 1_000L
             if (alarms.canScheduleExactAlarms()) {
-                alarms.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi)
+                alarms.setExactAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, at, pi)
             } else {
-                alarms.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi)
+                alarms.setAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, at, pi)
             }
-            Log.i(LOG_TAG, "Next time-rule boundary at $next")
+            Log.i(LOG_TAG, "Next time-rule boundary in ${(at - elapsed) / 1000} s")
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Couldn't schedule the time-rule alarm", e)
         }
@@ -64,6 +67,14 @@ object TimeRuleAlarm {
  */
 class TimeRuleReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
+        // The wall clock was set: only the decisions' clock's offset changes (a large change asks for a sync).
+        if (intent.action == Intent.ACTION_TIME_CHANGED) {
+            try {
+                com.kidslauncher.mdm.server.TrustedClock.onTimeSet(context.applicationContext)
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "Clock offset check failed: ${e.javaClass.simpleName}")
+            }
+        }
         when (timeRuleSystemAction(intent.action)) {
             TimeRuleWake.RECHECK -> TimeRulesRuntime.recheck(context.applicationContext)
             TimeRuleWake.BOOT -> TimeRulesRuntime.recheck(context.applicationContext, com.kidslauncher.mdm.server.RelockTrigger.BOOT)

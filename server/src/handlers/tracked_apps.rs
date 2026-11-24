@@ -259,6 +259,13 @@ async fn fetch_releases(
         .send()
         .await
         .map_err(|e| Failure::new(GithubUnreachable, e.to_string()))?;
+    // This server's own clock against GitHub's (`clock_skew::observe_date`): the phones take the server's time.
+    crate::clock_skew::observe_date(
+        response
+            .headers()
+            .get(reqwest::header::DATE)
+            .and_then(|v| v.to_str().ok()),
+    );
     if !response.status().is_success() {
         return Err(Failure::new(
             github_problem(response.status()),

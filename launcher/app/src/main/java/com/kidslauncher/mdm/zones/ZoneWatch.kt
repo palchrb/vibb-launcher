@@ -440,16 +440,22 @@ fun Location.toQueued(provider: String? = this.provider): QueuedFix = QueuedFix(
     timeMs = time,
     provider = provider,
     mock = isMock,
+    elapsedMs = elapsedRealtimeNanos.takeIf { it > 0 }?.let { it / 1_000_000L },
+    bootCount = com.kidslauncher.mdm.server.BootClock.bootCount(),
 )
 
-/** A queued fix as the status report sends it. */
-fun QueuedFix.toReport(): LocationReport = LocationReport(
+/** A queued fix as the status report sends it, with its age now ([fixAgeMs]). */
+fun QueuedFix.toReport(
+    nowElapsedMs: Long = android.os.SystemClock.elapsedRealtime(),
+    nowBoot: Int = com.kidslauncher.mdm.server.BootClock.bootCount(),
+): LocationReport = LocationReport(
     latitude = latitude,
     longitude = longitude,
     accuracyMeters = accuracy,
     capturedAt = Instant.ofEpochMilli(timeMs).toString(),
     provider = provider?.take(16),
     mock = mock,
+    ageMs = fixAgeMs(this, nowElapsedMs, nowBoot),
 )
 
 /** The confirming fix's alarm - our own explicit PendingIntent only (not exported). */

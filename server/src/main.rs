@@ -16,6 +16,7 @@ mod calendar;
 mod calendar_feeds;
 mod calendar_kid_events;
 mod catalog_holds;
+mod clock_skew;
 mod config;
 mod crashes;
 mod device_routes;

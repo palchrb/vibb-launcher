@@ -2,7 +2,6 @@ package com.kidslauncher.mdm.timerules
 
 import android.content.Context
 import android.content.SharedPreferences
-import android.os.SystemClock
 import android.util.Log
 import com.kidslauncher.mdm.calls.CallPolicyState
 import com.kidslauncher.mdm.calls.CallPolicyStore
@@ -10,7 +9,6 @@ import com.kidslauncher.mdm.calls.CallSystem
 import com.kidslauncher.mdm.calls.OngoingCalls
 import com.kidslauncher.mdm.calls.messagingAppPackages
 import com.kidslauncher.mdm.preferences.LauncherPreferences
-import com.kidslauncher.mdm.server.BootClock
 import com.kidslauncher.mdm.server.KidModeEnforcer
 import com.kidslauncher.mdm.server.LockReason
 import com.kidslauncher.mdm.server.OfflineOverride
@@ -54,7 +52,8 @@ object TimeRulesRuntime {
         TimeRulesStore.liveDecider = { callsBlockedNow() }
     }
 
-    fun clocks() = Clocks(System.currentTimeMillis(), SystemClock.elapsedRealtime(), BootClock.bootCount())
+    /** The trusted clocks ([com.kidslauncher.mdm.server.TrustedClock]): every decision here is on them. */
+    fun clocks(): Clocks = com.kidslauncher.mdm.server.TrustedClock.clocks()
 
     private fun zone(): ZoneId = ZoneId.systemDefault()
 
@@ -141,6 +140,8 @@ object TimeRulesRuntime {
     /** [zone] is read once here and passed down; nothing below reads the system zone again. */
     fun snapshot(context: Context, policy: PolicyResponse?, overrideActive: Boolean = overrideActive(), zone: ZoneId = zone()): Snapshot {
         val clocks = clocks()
+        // The next boot carries this time over (at most once a minute).
+        com.kidslauncher.mdm.server.TrustedClock.checkpoint()
         // Design 93 §9.1: a rule turned on now is gone from its `until_ms`.
         val tp = KidModeEnforcer.timePolicyOf(policy)?.inForceAt(clocks.wallMs)
             ?: return Snapshot(UNLOCKED, null, null, null, emptyList(), clocks, zone)
@@ -203,7 +204,8 @@ object TimeRulesRuntime {
      * counting lifts and the override PIN/pause. */
     fun callsBlockedNow(): Boolean {
         val context = appContext ?: return callsBlockedAt(
-            TimeRulesStore.policy?.inForceAt(System.currentTimeMillis()), LocalDateTime.now(), false, RuleLifts(),
+            TimeRulesStore.policy?.inForceAt(com.kidslauncher.mdm.server.TrustedClock.nowMs()),
+            com.kidslauncher.mdm.server.TrustedClock.localNow(), false, RuleLifts(),
         )
         val clocks = clocks()
         val tp = TimeRulesStore.policy?.inForceAt(clocks.wallMs) ?: return false
@@ -214,10 +216,11 @@ object TimeRulesRuntime {
 
     /** The status report's `time_state`. */
     fun report(context: Context, policy: PolicyResponse?, lockReason: LockReason): TimeState =
-        timeStateOf(snapshot(context, policy), lockReason)
+        timeStateOf(snapshot(context, policy), lockReason, com.kidslauncher.mdm.server.TrustedClock.report())
 
-    /** The `time_state` of [snap] - pure: its `zone` is the snapshot's own (design 34 P13). */
-    fun timeStateOf(snap: Snapshot, lockReason: LockReason): TimeState {
+    /** The `time_state` of [snap] - pure: its `zone` is the snapshot's own (design 34 P13); [clock] the decisions'
+     * clock's three fields. */
+    fun timeStateOf(snap: Snapshot, lockReason: LockReason, clock: com.kidslauncher.mdm.server.ClockReport? = null): TimeState {
         // Design 93 §9.2: the rule the card names (a turned-on rule with a certain end ahead of the kind order), so the
         // PWA's badge names the same rule and end.
         val top = try {
@@ -237,6 +240,9 @@ object TimeRulesRuntime {
             liftsActive = snap.ledger?.let { activeLiftIds(snap.records, snap.policy?.lifts.orEmpty(), it, snap.clocks) + snap.phoneLiftIds }.orEmpty(),
             ledgerUnreadable = snap.ledger?.unreadable == true,
             zone = snap.zone.id,
+            clockSkewMs = clock?.skewMs,
+            clockTrust = clock?.trust?.wire,
+            unanchoredMs = clock?.unanchoredMs,
         )
     }
 
@@ -319,17 +325,19 @@ object TimeRulesRuntime {
     }
 
     /** The open override's and pause's ends: the earlier of the wall end and now plus the elapsed
-     * time left ([windowEndMs]). */
+     * time left ([windowEndMs]). These windows are started and checked on the wall clock and bounded by elapsed
+     * realtime ([BootClock]); their ends are moved into the trusted clock of [clocks] for the alarm. */
     private fun windowEnds(clocks: Clocks): List<Long> {
+        val wall = System.currentTimeMillis()
         val mdm = LauncherPreferences.mdm()
         val override = WindowStart(mdm.offlineOverrideExpiresAt(), mdm.offlineOverrideElapsedStart(), mdm.offlineOverrideBoot())
             .takeIf { mdm.offlineOverrideActive() }
         val pause = WindowStart(mdm.restrictionsPausedUntil(), mdm.restrictionsPausedElapsedStart(), mdm.restrictionsPausedBoot())
             .takeIf { mdm.restrictionsPaused() }
         return listOfNotNull(
-            override?.let { windowEndMs(it, OVERRIDE_DURATION_MS, clocks.wallMs, clocks.elapsedMs, clocks.bootCount) },
-            pause?.let { windowEndMs(it, com.kidslauncher.mdm.server.pauseDurationMs(mdm.restrictionsPausedHold()), clocks.wallMs, clocks.elapsedMs, clocks.bootCount) },
-        )
+            override?.let { windowEndMs(it, OVERRIDE_DURATION_MS, wall, clocks.elapsedMs, clocks.bootCount) },
+            pause?.let { windowEndMs(it, com.kidslauncher.mdm.server.pauseDurationMs(mdm.restrictionsPausedHold()), wall, clocks.elapsedMs, clocks.bootCount) },
+        ).map { it - wall + clocks.wallMs }
     }
 
     /**

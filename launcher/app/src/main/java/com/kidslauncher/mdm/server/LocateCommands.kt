@@ -71,6 +71,9 @@ private data class CachedFix(
     val timeMs: Long,
     val provider: String? = null,
     val mock: Boolean = false,
+    /** The fix's elapsed realtime and boot: its age at send is told by them, never by the wall clock. */
+    val elapsedMs: Long? = null,
+    val bootCount: Int = -1,
 )
 
 /**
@@ -106,7 +109,13 @@ object LocateCommands {
     ): Location? {
         // Off: no permission grants, no Location toggle, no LocationManager - nothing at all.
         if (action == LocationAction.NONE) return null
-        fun reportable(fix: Location) = cachedFixReportable(System.currentTimeMillis() - fix.time, maxCachedAgeMs)
+        // The fix's age from elapsed realtime when it has one (a wall clock set forward can't age it out), else the
+        // wall clock against the fix's own time.
+        fun reportable(fix: Location) = cachedFixReportable(
+            fix.elapsedRealtimeNanos.takeIf { it > 0 }?.let { android.os.SystemClock.elapsedRealtime() - it / 1_000_000L }
+                ?: (System.currentTimeMillis() - fix.time),
+            maxCachedAgeMs,
+        )
         // Not due: our own cached fix only, no LocationManager call (no indicator, no slow sync).
         if (action == LocationAction.CACHED) return loadCachedFix()?.takeIf(::reportable)
 
@@ -241,6 +250,8 @@ object LocateCommands {
         if (fresh != null) {
             saveCachedFix(context, fresh)
         }
+        // A location request may have given the satellite time: an anchor for the decisions' clock.
+        TrustedClock.readGnss()
         return fresh ?: loadCachedFix()?.takeIf(reportable)
     }
 
@@ -275,13 +286,17 @@ object LocateCommands {
             cached.accuracy?.let { accuracy = it }
             time = cached.timeMs
             isMock = cached.mock
+            // Its elapsed time only in its own boot: across a reboot the age is unknown.
+            if (cached.elapsedMs != null && cached.bootCount >= 0 && cached.bootCount == BootClock.bootCount()) {
+                elapsedRealtimeNanos = cached.elapsedMs * 1_000_000L
+            }
         }
     }
 
     /** The cached fix as the zone queue keeps it (`null` without one) - the moving series compares
      * a check's fix with it. */
     fun cachedQueued(): com.kidslauncher.mdm.zones.QueuedFix? = cachedFix()?.let {
-        com.kidslauncher.mdm.zones.QueuedFix(it.latitude, it.longitude, it.accuracy, it.timeMs, it.provider, it.mock)
+        com.kidslauncher.mdm.zones.QueuedFix(it.latitude, it.longitude, it.accuracy, it.timeMs, it.provider, it.mock, it.elapsedMs, it.bootCount)
     }
 
     /**
@@ -379,6 +394,8 @@ object LocateCommands {
             timeMs = location.time,
             provider = providerOf(location),
             mock = location.isMock,
+            elapsedMs = location.elapsedRealtimeNanos.takeIf { it > 0 }?.let { it / 1_000_000L },
+            bootCount = BootClock.bootCount(),
         )
         PreferenceManager.getDefaultSharedPreferences(context).edit()
             .putString(KEPT_FIX_KEY, ServerJson.encodeToString(kept)).commit()
@@ -404,7 +421,7 @@ object LocateCommands {
         val kept = keptFix() ?: return null
         val cached = cachedFixTimeMs()
         if (cached != null && kept.timeMs <= cached) return null
-        return com.kidslauncher.mdm.zones.QueuedFix(kept.latitude, kept.longitude, kept.accuracy, kept.timeMs, kept.provider, kept.mock)
+        return com.kidslauncher.mdm.zones.QueuedFix(kept.latitude, kept.longitude, kept.accuracy, kept.timeMs, kept.provider, kept.mock, kept.elapsedMs, kept.bootCount)
     }
 
     /** The newest fix the phone knows, reported or kept - what the series times its next check by. */
@@ -443,6 +460,8 @@ object LocateCommands {
             timeMs = location.time,
             provider = providerOf(location),
             mock = location.isMock,
+            elapsedMs = location.elapsedRealtimeNanos.takeIf { it > 0 }?.let { it / 1_000_000L },
+            bootCount = BootClock.bootCount(),
         )
         val key = LauncherPreferences.mdm().keys().cachedLocationJson()
         PreferenceManager.getDefaultSharedPreferences(context)

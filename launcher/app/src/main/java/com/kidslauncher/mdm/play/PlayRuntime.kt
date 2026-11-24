@@ -20,13 +20,14 @@ import com.kidslauncher.mdm.server.BootClock
 import com.kidslauncher.mdm.server.OfflineOverride
 import com.kidslauncher.mdm.server.ParentPin
 import com.kidslauncher.mdm.server.RestrictionsPause
+import com.kidslauncher.mdm.server.TrustedClock
 import com.kidslauncher.mdm.server.WindowStart
 import com.kidslauncher.mdm.server.currentPolicyDecision
 import com.kidslauncher.mdm.server.dto.InstallModeReport
 import com.kidslauncher.mdm.timerules.TimeRuleAlarm
 import com.kidslauncher.mdm.timerules.TimeRulesRuntime
 import java.time.Instant
-import java.time.LocalTime
+
 import java.util.Date
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -87,7 +88,7 @@ object PlayRuntime {
     private const val SUSPENDABLE_PREFS = "play_store_state"
     private const val SUSPENDABLE_KEY = "suspendable"
 
-    private fun minuteOfDay(): Int = LocalTime.now().let { it.hour * 60 + it.minute }
+    private fun minuteOfDay(): Int = TrustedClock.localNow().let { it.hour * 60 + it.minute }
 
     private fun screenInteractive(context: Context): Boolean = try {
         context.getSystemService(PowerManager::class.java)?.isInteractive != false
@@ -113,10 +114,12 @@ object PlayRuntime {
     fun nextEdge(context: Context): Instant? {
         val managed = currentPolicyDecision().policy?.allowlist != null
         val edges = mutableListOf<Instant>()
-        installModeUntil(context)?.let { edges += Instant.ofEpochMilli(it) }
+        // Install mode is a window on the wall clock bounded by elapsed realtime: its end moved onto the decisions'
+        // clock, as the update window's edges are.
+        installModeUntil(context)?.let { edges += Instant.ofEpochMilli(it - System.currentTimeMillis() + TrustedClock.nowMs()) }
         if (managed && playStoreInstalled(context)) {
             val minutes = DEFAULT_UPDATE_WINDOW.minutesToNextEdge(minuteOfDay())
-            val startOfMinute = System.currentTimeMillis() / 60_000L * 60_000L
+            val startOfMinute = TrustedClock.nowMs() / 60_000L * 60_000L
             edges += Instant.ofEpochMilli(startOfMinute + minutes * 60_000L)
         }
         return edges.minOrNull()

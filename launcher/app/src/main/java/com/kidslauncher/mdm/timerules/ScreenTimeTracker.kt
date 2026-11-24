@@ -101,7 +101,7 @@ object ScreenTimeTracker {
             handler.postDelayed(checkpoint, checkpointDelayMs(remaining))
             if (remaining == null) return
             try {
-                com.kidslauncher.mdm.server.AnchorNotice.refresh(context, budget, policy, ledger.day, System.currentTimeMillis())
+                com.kidslauncher.mdm.server.AnchorNotice.refresh(context, budget, policy, ledger.day, com.kidslauncher.mdm.server.TrustedClock.nowMs())
             } catch (e: Exception) {
                 Log.w(LOG_TAG, "Notice refresh failed: ${e.javaClass.simpleName}")
             }

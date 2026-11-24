@@ -2007,6 +2007,34 @@ async fn render_device_time(
             fix: None,
         });
     }
+    // The phone's clock (time rules keep their own clock): one orange line when it is off or unchecked, why behind
+    // its (i); nothing when it is right.
+    if let Some(problem) = report.as_ref().and_then(|(_, r)| r.clock_problem()) {
+        warnings.push(Note {
+            warning: true,
+            title: problem.words(lang),
+            value: None,
+            sub: None,
+            detail: Some(problem.detail(lang)),
+            fix: None,
+        });
+    }
+    // The rules count in the phone's own zone (a trip abroad follows local time): another zone than Phone Setup's is
+    // a quiet line, never a warning.
+    if let Some(other) = report
+        .as_ref()
+        .and_then(|(_, r)| r.zone.as_deref())
+        .filter(|z| zone.name().is_some_and(|setup| setup != *z))
+    {
+        warnings.push(Note {
+            warning: false,
+            title: t_params(lang, "device.time.zone_other", &[("zone", other)]),
+            value: None,
+            sub: None,
+            detail: Some(t(lang, "device.time.zone_other_info").to_string()),
+            fix: None,
+        });
+    }
 
     let refused = entered.is_some();
     render(

@@ -2590,7 +2590,7 @@ async fn render_device(
     // "Needs attention" while Device › Time shows a warning, as the Music row does.
     let (time_value, time_attention) = match &time_rules {
         Err(_) => (unreadable(), false),
-        Ok(_) if facts.ledger_unreadable => (needs_attention(), true),
+        Ok(_) if facts.ledger_unreadable || facts.clock.is_some() => (needs_attention(), true),
         // A rule or the own limit in force that doesn't read: the phone gets a 500 for its
         // settings until it is saved again (qa-31-s9-code N5).
         Ok(rules)

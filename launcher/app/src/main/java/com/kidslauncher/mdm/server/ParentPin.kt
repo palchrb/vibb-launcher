@@ -64,7 +64,7 @@ object ParentPin {
                 },
                 startWindow = { start ->
                     if (entry == ParentPinEntry.RULE_PAUSE) {
-                        pause?.let { com.kidslauncher.mdm.timerules.PhonePauses.addFromGate(app, it.first, System.currentTimeMillis()) }
+                        pause?.let { com.kidslauncher.mdm.timerules.PhonePauses.addFromGate(app, it.first, TrustedClock.nowMs()) }
                     } else if (start != null) {
                         startWindow(app, entry, start)
                     }
@@ -128,7 +128,8 @@ object ParentPin {
         ParentPinStore.of(context).saveQueue(emptyList())
     }
 
-    private fun clocks() = LockClocks(System.currentTimeMillis(), SystemClock.elapsedRealtime(), BootClock.bootCount())
+    /** The lockout's clocks: the decisions' time, so a wall clock set across a reboot can't shorten a lockout. */
+    private fun clocks() = LockClocks(TrustedClock.nowMs(), SystemClock.elapsedRealtime(), BootClock.bootCount())
 
     private fun storageFull(context: Context): Boolean = try {
         context.filesDir.usableSpace < 1024L * 1024L

@@ -83,7 +83,7 @@ object TimeRulesStore {
 
     /** Whether a rule that allows no calls is in force now. Any doubt blocks (emergency calls and
      * the callback window always pass anyway). */
-    fun callsBlockedNow(): Boolean = callsBlockedFor(source, policy, bootBlocks, liveDecider, LocalDateTime.now())
+    fun callsBlockedNow(): Boolean = callsBlockedFor(source, policy, bootBlocks, liveDecider, com.kidslauncher.mdm.server.TrustedClock.localNow())
 
     private fun bootPrefs(context: Context): SharedPreferences =
         context.createDeviceProtectedStorageContext().getSharedPreferences(BOOT_PREFS, Context.MODE_PRIVATE)

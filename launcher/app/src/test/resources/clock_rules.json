@@ -1,0 +1,49 @@
+{
+  "server_anchor": [
+    {"note": "a trusted answer", "date": 1764000000000, "e0": 1000, "e1": 1400, "trusted": true, "off": false, "anchor": {"ms": 1764000000700, "elapsed": 1400}},
+    {"note": "no Date", "date": null, "e0": 1000, "e1": 1400, "trusted": true, "off": false, "anchor": null},
+    {"note": "a connection not trusted", "date": 1764000000000, "e0": 1000, "e1": 1400, "trusted": false, "off": false, "anchor": null},
+    {"note": "the server says its clock is off", "date": 1764000000000, "e0": 1000, "e1": 1400, "trusted": true, "off": true, "anchor": null},
+    {"note": "a round trip of exactly 30 s", "date": 1764000000000, "e0": 1000, "e1": 31000, "trusted": true, "off": false, "anchor": {"ms": 1764000015500, "elapsed": 31000}},
+    {"note": "a round trip over 30 s", "date": 1764000000000, "e0": 1000, "e1": 31001, "trusted": true, "off": false, "anchor": null}
+  ],
+  "connections": [
+    {"connection": "PASSED", "debug": false, "anchors": true},
+    {"connection": "TAILNET", "debug": false, "anchors": true},
+    {"connection": "FAILED", "debug": true, "anchors": false},
+    {"connection": "NONE", "debug": false, "anchors": false},
+    {"connection": "NONE", "debug": true, "anchors": true}
+  ],
+  "read": [
+    {"note": "never anchored: the wall clock", "state": {}, "wall": 5000000, "elapsed": 100, "boot": 7, "ms": 5000000, "trust": "none", "carried": false},
+    {"note": "server anchor, wall +26 h ignored", "state": {"anchor": {"kind": "server", "ms": 1764000000000, "elapsedMs": 1000, "bootCount": 7}, "checkpointMs": 1764000000000}, "wall": 1764093601000, "elapsed": 2000, "boot": 7, "ms": 1764000001000, "trust": "server", "carried": false},
+    {"note": "server anchor, wall -5 h ignored", "state": {"anchor": {"kind": "server", "ms": 1764000000000, "elapsedMs": 1000, "bootCount": 7}, "checkpointMs": 1764000000000}, "wall": 1763982001000, "elapsed": 2000, "boot": 7, "ms": 1764000001000, "trust": "server", "carried": false},
+    {"note": "gnss anchor, wall ignored", "state": {"anchor": {"kind": "gnss", "ms": 1764000000000, "elapsedMs": 1000, "bootCount": 7}, "checkpointMs": 1764000000000}, "wall": 1, "elapsed": 61000, "boot": 7, "ms": 1764000060000, "trust": "gnss", "carried": false},
+    {"note": "a reboot carries the offset over", "state": {"anchor": {"kind": "server", "ms": 1764000000000, "elapsedMs": 5000000, "bootCount": 7}, "checkpointMs": 1764000000000, "checkpointSkewMs": 93600000}, "wall": 1764093660000, "elapsed": 9000, "boot": 8, "ms": 1764000060000, "trust": "carried", "carried": true},
+    {"note": "a reboot with the wall set back: never before the checkpoint", "state": {"anchor": {"kind": "server", "ms": 1764000000000, "elapsedMs": 5000000, "bootCount": 7}, "checkpointMs": 1764000000000, "checkpointSkewMs": 0}, "wall": 1763900000000, "elapsed": 9000, "boot": 8, "ms": 1764000000000, "trust": "carried", "carried": true},
+    {"note": "a wall set ahead before the first read wins the max (the gap a later check closes)", "state": {"anchor": {"kind": "server", "ms": 1764000000000, "elapsedMs": 5000000, "bootCount": 7}, "checkpointMs": 1764000000000, "checkpointSkewMs": 0}, "wall": 1764093600000, "elapsed": 9000, "boot": 8, "ms": 1764093600000, "trust": "carried", "carried": true},
+    {"note": "elapsed behind the anchor is another boot", "state": {"anchor": {"kind": "server", "ms": 1764000000000, "elapsedMs": 5000000, "bootCount": -1}, "checkpointMs": 1764000000000, "checkpointSkewMs": 0}, "wall": 1764000100000, "elapsed": 9000, "boot": -1, "ms": 1764000100000, "trust": "carried", "carried": true},
+    {"note": "the carried anchor holds in its boot: a wall set after the first read moves nothing", "state": {"anchor": {"kind": "carried", "ms": 1764000060000, "elapsedMs": 9000, "bootCount": 8}, "checkpointMs": 1764000000000, "checkpointSkewMs": 0}, "wall": 1764093600000, "elapsed": 69000, "boot": 8, "ms": 1764000120000, "trust": "carried", "carried": false}
+  ],
+  "take": [
+    {"note": "the first anchor", "state": {}, "anchor": {"kind": "gnss", "ms": 1000000, "elapsedMs": 100, "bootCount": 3}, "wall": 1000000, "elapsed": 100, "boot": 3, "inForce": "gnss", "lastStrong": 1000000},
+    {"note": "gnss doesn't replace server", "state": {"anchor": {"kind": "server", "ms": 1000000, "elapsedMs": 100, "bootCount": 3}}, "anchor": {"kind": "gnss", "ms": 1300000, "elapsedMs": 200, "bootCount": 3}, "wall": 1000000, "elapsed": 200, "boot": 3, "inForce": "server", "lastStrong": 1000100},
+    {"note": "server replaces gnss", "state": {"anchor": {"kind": "gnss", "ms": 1000000, "elapsedMs": 100, "bootCount": 3}}, "anchor": {"kind": "server", "ms": 900000, "elapsedMs": 200, "bootCount": 3}, "wall": 1000000, "elapsed": 200, "boot": 3, "inForce": "server", "lastStrong": 900000},
+    {"note": "gnss replaces carried", "state": {"anchor": {"kind": "carried", "ms": 94600000, "elapsedMs": 100, "bootCount": 3}, "lastStrong": 500}, "anchor": {"kind": "gnss", "ms": 1000000, "elapsedMs": 200, "bootCount": 3}, "wall": 94600100, "elapsed": 200, "boot": 3, "inForce": "gnss", "lastStrong": 1000000},
+    {"note": "a newer server anchor replaces the older", "state": {"anchor": {"kind": "server", "ms": 1000000, "elapsedMs": 100, "bootCount": 3}}, "anchor": {"kind": "server", "ms": 1000500, "elapsedMs": 200, "bootCount": 3}, "wall": 1000000, "elapsed": 200, "boot": 3, "inForce": "server", "lastStrong": 1000500},
+    {"note": "an anchor of another boot is replaced by anything", "state": {"anchor": {"kind": "server", "ms": 1000000, "elapsedMs": 100, "bootCount": 2}}, "anchor": {"kind": "gnss", "ms": 2000000, "elapsedMs": 50, "bootCount": 3}, "wall": 2000000, "elapsed": 50, "boot": 3, "inForce": "gnss", "lastStrong": 2000000}
+  ],
+  "alarm": [
+    {"note": "one edge, a second late", "edges": [{"edge": 1000000, "now": 940000}], "elapsed": 5000, "deadline": 66000},
+    {"note": "each with its own clock, the minimum after", "edges": [{"edge": 1000000, "now": 940000}, {"edge": 2000000, "now": 1990000}], "elapsed": 5000, "deadline": 16000},
+    {"note": "an edge at now floors to now plus a second", "edges": [{"edge": 940000, "now": 940000}], "elapsed": 5000, "deadline": 6000},
+    {"note": "an edge behind now floors too (no loop)", "edges": [{"edge": 900000, "now": 940000}], "elapsed": 5000, "deadline": 6000},
+    {"note": "no edges", "edges": [], "elapsed": 5000, "deadline": null}
+  ],
+  "unanchored": [
+    {"lastStrong": null, "now": 1000, "ms": null},
+    {"lastStrong": 0, "now": 3599999, "ms": 0},
+    {"lastStrong": 0, "now": 108000000, "ms": 108000000},
+    {"lastStrong": 0, "now": 109799999, "ms": 108000000}
+  ]
+}

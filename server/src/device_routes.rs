@@ -214,6 +214,8 @@ pub fn device_routes(state: AppState) -> Router<AppState> {
     Router::new()
         .merge(public_routes)
         .merge(authed_routes)
+        // A phone never takes this server's time while its clock is off (`clock_skew::mark_answers`).
+        .layer(axum::middleware::from_fn(crate::clock_skew::mark_answers))
         .layer(DefaultBodyLimit::max(limits::DEVICE_BODY_LIMIT))
         .layer(from_fn_with_state(state, limits::device_edge))
 }

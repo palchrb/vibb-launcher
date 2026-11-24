@@ -1,5 +1,6 @@
 package com.kidslauncher.mdm.timerules
 
+import com.kidslauncher.mdm.server.ClockTrust
 import com.kidslauncher.mdm.server.WindowStart
 import com.kidslauncher.mdm.server.timedWindowActive
 import kotlinx.serialization.Serializable
@@ -13,8 +14,14 @@ import java.time.ZoneId
  * commit(). Design: 06-time-rules.md ("Ledger", "Lifts").
  */
 
-/** The three clocks every decision here looks at. [bootCount] -1 = unknown (BootClock). */
-data class Clocks(val wallMs: Long, val elapsedMs: Long, val bootCount: Int)
+/** The clocks every decision here looks at. [wallMs] is the trusted time ([com.kidslauncher.mdm.server.TrustedClock]),
+ * known as [trust] says; [bootCount] -1 = unknown (BootClock). */
+data class Clocks(
+    val wallMs: Long,
+    val elapsedMs: Long,
+    val bootCount: Int,
+    val trust: ClockTrust = ClockTrust.NONE,
+)
 
 /** A wall-clock change larger than this (forward) is treated as a jump, not drift. */
 const val CLOCK_JUMP_TOLERANCE_MS = 5 * 60 * 1000L
@@ -40,9 +47,16 @@ data class ScreenTimeLedger(
     val appliedBudgetLifts: List<Long> = emptyList(),
     /** The stored record couldn't be read today ([unreadableLedger]); reported to the parent. */
     val unreadable: Boolean = false,
+    /** The day a reset on a carried time left ([observe]): put back when the next checked time says it is still that
+     * day. */
+    val previous: PreviousDay? = null,
 ) {
     fun date(): LocalDate? = day?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
 }
+
+/** A day's count a reset on a carried time replaced, kept until a checked time says whether that reset was right. */
+@Serializable
+data class PreviousDay(val day: String, val usedMs: Long, val extraMinutes: Int)
 
 /** [ledger] after looking at the clocks: the trusted time now, and the day it belongs to. */
 data class Observation(val ledger: ScreenTimeLedger, val trustedNowMs: Long, val newDayByClock: Boolean)
@@ -57,6 +71,7 @@ data class Observation(val ledger: ScreenTimeLedger, val trustedNowMs: Long, val
  * never moves backwards, so setting the clock back can't refill the budget either.
  */
 fun observe(ledger: ScreenTimeLedger, clocks: Clocks, zone: ZoneId): Observation {
+    if (clocks.trust != ClockTrust.NONE) return observeTrusted(ledger, clocks, zone)
     val sameBoot = ledger.day != null && ledger.bootCount >= 0 && ledger.bootCount == clocks.bootCount &&
         clocks.elapsedMs >= ledger.anchorElapsedMs
     val estimate = if (sameBoot) ledger.anchorWallMs + (clocks.elapsedMs - ledger.anchorElapsedMs) else null
@@ -71,6 +86,50 @@ fun observe(ledger: ScreenTimeLedger, clocks: Clocks, zone: ZoneId): Observation
         !clockDate.isAfter(current) -> Observation(anchored, trusted, false)
         resetAllowed -> Observation(anchored.copy(day = clockDate.toString(), usedMs = 0, extraMinutes = 0, unreadable = false), trusted, true)
         else -> Observation(anchored.copy(day = clockDate.toString()), trusted, false)
+    }
+}
+
+/**
+ * [observe] on the decisions' clock ([Clocks.trust] not `none`): its time is the reference - a wall clock set in this
+ * boot already moves nothing -, so the day follows it, and a later day starts over. A reset on a carried time (after a
+ * reboot, before any check) keeps the day it replaced ([ScreenTimeLedger.previous]): when the next server or satellite
+ * time puts now in that day, the day comes back with its count and the minutes used since; any other checked day makes
+ * the reset final. So a reboot offline never locks the kid out, and a clock moved before it never refills the day for
+ * good.
+ */
+private fun observeTrusted(ledger: ScreenTimeLedger, clocks: Clocks, zone: ZoneId): Observation {
+    val trusted = clocks.wallMs
+    fun dateOf(ms: Long) = LocalDate.ofInstant(Instant.ofEpochMilli(ms), zone)
+    val clockDate = dateOf(trusted)
+    val checked = clocks.trust == ClockTrust.SERVER || clocks.trust == ClockTrust.GNSS
+    val previous = ledger.previous
+    val undone = when {
+        !checked || previous == null -> ledger
+        previous.day == clockDate.toString() && ledger.day != previous.day -> ledger.copy(
+            day = previous.day,
+            usedMs = previous.usedMs + ledger.usedMs,
+            extraMinutes = (previous.extraMinutes + ledger.extraMinutes).coerceAtMost(MINUTES_PER_DAY),
+            previous = null,
+        )
+        else -> ledger.copy(previous = null)
+    }
+    val anchored = undone.copy(anchorWallMs = trusted, anchorElapsedMs = clocks.elapsedMs, bootCount = clocks.bootCount)
+    val current = undone.date()
+    return when {
+        current == null -> Observation(anchored.copy(day = clockDate.toString(), usedMs = 0, extraMinutes = 0), trusted, true)
+        !clockDate.isAfter(current) -> Observation(anchored, trusted, false)
+        else -> {
+            val kept = if (clocks.trust == ClockTrust.CARRIED) {
+                undone.previous ?: PreviousDay(current.toString(), undone.usedMs, undone.extraMinutes)
+            } else {
+                null
+            }
+            Observation(
+                anchored.copy(day = clockDate.toString(), usedMs = 0, extraMinutes = 0, unreadable = false, previous = kept),
+                trusted,
+                true,
+            )
+        }
     }
 }
 

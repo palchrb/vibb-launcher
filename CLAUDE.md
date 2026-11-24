@@ -505,6 +505,19 @@ report's counts to the security-log lines, one per class that rose). The server'
 launcher's `BlockedNumbersTest` encodes both reports exactly from `withBlocked` and checks its classes; both compare the
 copies. The plan (`blockedNumbersPlan`: every row cleared while managed) stays the launcher's. No policy key.
 
+The phone's clock as its decisions see it (time rules keep their own clock, `server/TrustedClock.kt`): the status
+report's `time_state.clock_skew_ms`, `clock_trust` and `unanchored_ms` ride in `time_status_report.json` (above); the rows
+are `server/testdata/clock_skew.json`, byte-identical in `launcher/app/src/test/resources/`: `round` (a raw offset and
+the last reported step to the reported step: 0 within five minutes, five-minute steps, a minute's hysteresis), `clean`
+(the server's keeping of the three keys), `pages` (`{skew, trust, unanchored, lang}` to the one orange line or none),
+`fix_age` (a fix's `{received, captured_at, age_ms}` to the stored time and `phone_offset_ms`: receipt minus the age,
+whatever the phone's clock says) and `phone_age` (the launcher's `fixAgeMs`: a fix's elapsed time and boot to its age). The
+server's `tests::clock_skew` runs `clean`, `pages` and `fix_age` and posts reports (Device › Time's line, the Attention
+row, the Devices list's badge, a fix stored from its age, a refused fix on Locate); the launcher's `ClockSkewContractTest`
+runs `round` and `phone_age` and encodes a fix's `age_ms`; both compare the copies. The anchor, reboot and alarm rules stay
+the launcher's alone, in `launcher/app/src/test/resources/clock_rules.json` (`TrustedClockTest`); `TrustedClockScanTest`
+fails on a new wall-clock read where the phone decides. No policy key.
+
 ## CI and releases
 
 - `.github/workflows/launcher.yml`, `server-ci.yml` and `music.yml` run on every push/PR, but their build job
@@ -512,7 +525,7 @@ copies. The plan (`blockedNumbersPlan`: every row cleared while managed) stays t
   (`launcher.yml` also on `.github/actions/build-tsnet/` and the music files its tests read: the bridge, the
   shared snapshots, the three `spotify_hosts.json`, `server/testdata/time_status_report.json`,
   `dns_upstream_status.json`, `power_report.json`, `zone_status_report.json`, `launcher_tag_codes.json`,
-  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json`, `server_url_vectors.json`, `restrictions_pause.json`, `server_tls_report.json`, `sms_contract.json`, `contact_request.json`, `app_logos.json`, `lock_now.json`, `mobile_network.json`, `status_heartbeat.json`, `airplane_mode.json`, `rule_pause.json`, `shortcuts.json`, `login_windows.json`, `notification_channels.json`, `unified_push.json`, `setup_steps.json`, `install_failure.json`, `app_access.json` and `blocked_numbers.json`, `server/testdata/map_links/contract.json` and
+  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json`, `server_url_vectors.json`, `restrictions_pause.json`, `server_tls_report.json`, `sms_contract.json`, `contact_request.json`, `app_logos.json`, `lock_now.json`, `mobile_network.json`, `status_heartbeat.json`, `airplane_mode.json`, `rule_pause.json`, `shortcuts.json`, `login_windows.json`, `notification_channels.json`, `unified_push.json`, `setup_steps.json`, `install_failure.json`, `app_access.json`, `blocked_numbers.json` and `clock_skew.json`, `server/testdata/map_links/contract.json` and
   `server/testdata/wifi_lookup/contract.json`, `music/gradle/` and `music.yml`, and the server's and music's `storytel_token_answers.json`, and `server/testdata/doh_hosts.txt`, and `scripts/yr-symbols.py` with its vendored `yr-symbols-11.svg` and `scripts/fake-portal.py` (the changes job runs both `--selftest`s always); `music.yml` also on the shared
   `server/testdata/music_*.json` and `spotify_hosts.json`, the launcher's copy of the bridge AIDL,
   `bridge_contract.json` and `spotify_hosts.json`, `server/testdata/spotify/`, `scripts/fake-sonos.py`,
@@ -523,7 +536,7 @@ copies. The plan (`blockedNumbersPlan`: every row cleared while managed) stays t
   `server-ci.yml`'s build job also on the apps' `spotify_hosts.json` and `storytel_token_answers.json` copies and
   the launcher's `time_status_report.json`,
   `dns_upstream_status.json`, `power_report.json`, `zone_status_report.json`, `launcher_tag_codes.json`,
-  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json`, `server_url_vectors.json`, `restrictions_pause.json`, `server_tls_report.json`, `sms_contract.json`, `contact_request.json`, `app_logos.json`, `lock_now.json`, `mobile_network.json`, `status_heartbeat.json`, `airplane_mode.json`, `rule_pause.json`, `shortcuts.json`, `login_windows.json`, `notification_channels.json`, `unified_push.json`, `setup_steps.json`, `install_failure.json`, `app_access.json` and `blocked_numbers.json`, the launcher's `map_links/` and `wifi_lookup/` folders, and the launcher's `assets/dns/doh_hosts.txt` and `ui/home/HomeModel.kt` (the avatar palette the PWA mirrors), and `scripts/wifi-lookup-fixtures.py` (the changes job runs its `--selftest` always), and
+  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json`, `server_url_vectors.json`, `restrictions_pause.json`, `server_tls_report.json`, `sms_contract.json`, `contact_request.json`, `app_logos.json`, `lock_now.json`, `mobile_network.json`, `status_heartbeat.json`, `airplane_mode.json`, `rule_pause.json`, `shortcuts.json`, `login_windows.json`, `notification_channels.json`, `unified_push.json`, `setup_steps.json`, `install_failure.json`, `app_access.json`, `blocked_numbers.json` and `clock_skew.json`, the launcher's `map_links/` and `wifi_lookup/` folders, and the launcher's `assets/dns/doh_hosts.txt` and `ui/home/HomeModel.kt` (the avatar palette the PWA mirrors), and `scripts/wifi-lookup-fixtures.py` (the changes job runs its `--selftest` always), and
   `scripts/mmsc-hosts.py` with its `scripts/mmsc-hosts-sample.xml` (the changes job runs its `--selftest` always, and `server/deploy/update-image.sh --selftest`, after a bounded `apt-get install minisign`: the signed image statement's checks with a throwaway key, the image update's release pick and version rules, DEPLOY.md "Automatic, verified updates", with `deploy/handy-update.service`/`.timer`);
   `server-ci.yml`'s
   `server-image` job only when `server/Dockerfile`, `server/.dockerignore`, `server/deploy/image-smoke.sh`, `server/deploy/distrusted-roots.txt` or

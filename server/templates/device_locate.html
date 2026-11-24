@@ -26,6 +26,15 @@
         redraws in place and remembers it; without JS the links show the span here. -#}
     <section id="location" aria-label="{{ self.t("locate.location_aria") }}">
         {% for line in view.setup_warnings.at("location") %}{% include "partials/setup_warning.html" %}{% endfor %}
+        {% if view.fix_refused %}
+        <div class="attention attention-action" data-warning="fix-refused">
+            <div class="attention-text">{{ self.t("device.locate.fix_refused") }}<div class="attention-sub">
+                <details class="info">
+                    <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                    <div class="info-panel"><p>{{ self.t("device.locate.fix_refused_info") }}</p></div>
+                </details></div></div>
+        </div>
+        {% endif %}
         <div class="phone-switch span-pick" role="radiogroup" aria-label="{{ self.t("locate.span.aria") }}" data-span-pick>
             {% for (hours, words) in crate::handlers::locate::SPANS %}
             <a role="radio" href="/devices/locate?device={{ view.device.id }}&amp;span={{ hours }}#location" data-span="{{ hours }}" aria-checked="{% if hours == view.span %}true{% else %}false{% endif %}">{{ self.t(words) }}</a>

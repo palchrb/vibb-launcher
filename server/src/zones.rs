@@ -421,6 +421,12 @@ pub async fn forget_sides(db: &sqlx::SqlitePool, device_id: i64) -> Result<(), s
     Ok(())
 }
 
+/// One fix of the phone: the device `?1`, the place `?2`/`?3`, and the time the phone named - the stored `?5` plus
+/// the offset `?8` - within a second of a row's own (an older row without an offset: its time alone).
+const SAME_FIX: &str = "device_id = ?1 AND latitude = ?2 AND longitude = ?3 AND (captured_at = ?5 OR \
+    abs((julianday(captured_at) - julianday(?5)) * 86400000.0 + coalesce(phone_offset_ms, 0) - coalesce(?8, 0)) \
+    < 1000)";
+
 /// Stores the fix once: `Some(id)` for a new row, `None` when the phone has it already (the same
 /// `captured_at`, latitude and longitude - the launcher re-sends its cached fix in every report).
 async fn store_fix(
@@ -429,13 +435,15 @@ async fn store_fix(
     loc: &LocationReport,
     captured_at: &str,
 ) -> Result<Option<i64>, sqlx::Error> {
-    sqlx::query_scalar(
+    // A fix with an age is stored at the receipt minus it, so a re-sent fix comes with another time: the same place
+    // and the phone's own named time within a second of a stored one is that fix again ([SAME_FIX]).
+    sqlx::query_scalar(&format!(
         "INSERT INTO device_locations \
-           (device_id, latitude, longitude, accuracy_meters, captured_at, provider, mock) \
-         SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7 WHERE NOT EXISTS (SELECT 1 FROM device_locations \
-           WHERE device_id = ?1 AND captured_at = ?5 AND latitude = ?2 AND longitude = ?3) \
-         RETURNING id",
-    )
+           (device_id, latitude, longitude, accuracy_meters, captured_at, provider, mock, phone_offset_ms) \
+         SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8 WHERE NOT EXISTS (SELECT 1 FROM device_locations \
+           WHERE {SAME_FIX}) \
+         RETURNING id"
+    ))
     .bind(device_id)
     .bind(loc.latitude)
     .bind(loc.longitude)
@@ -443,6 +451,7 @@ async fn store_fix(
     .bind(captured_at)
     .bind(crate::models::location_provider(loc.provider.as_deref()))
     .bind(loc.mock)
+    .bind(crate::models::phone_offset_ms(loc, captured_at))
     .fetch_optional(&mut *conn)
     .await
 }
@@ -540,15 +549,18 @@ async fn mark_resent(
     loc: &LocationReport,
     captured_at: &str,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "UPDATE device_locations SET resent_at = ? WHERE device_id = ? AND captured_at = ? \
-         AND latitude = ? AND longitude = ?",
-    )
-    .bind(instant(Utc::now()))
+    sqlx::query(&format!(
+        "UPDATE device_locations SET resent_at = ?9 WHERE {SAME_FIX}"
+    ))
     .bind(device_id)
-    .bind(captured_at)
     .bind(loc.latitude)
     .bind(loc.longitude)
+    .bind(Option::<f64>::None)
+    .bind(captured_at)
+    .bind(Option::<String>::None)
+    .bind(Option::<bool>::None)
+    .bind(crate::models::phone_offset_ms(loc, captured_at))
+    .bind(instant(Utc::now()))
     .execute(&mut *conn)
     .await?;
     Ok(())
@@ -563,15 +575,18 @@ pub async fn mark_shutdown(
     captured_at: &str,
     off_at: DateTime<Utc>,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "UPDATE device_locations SET shutdown_at = ? WHERE device_id = ? AND captured_at = ? \
-         AND latitude = ? AND longitude = ?",
-    )
-    .bind(instant(off_at))
+    sqlx::query(&format!(
+        "UPDATE device_locations SET shutdown_at = ?9 WHERE {SAME_FIX}"
+    ))
     .bind(device_id)
-    .bind(captured_at)
     .bind(loc.latitude)
     .bind(loc.longitude)
+    .bind(Option::<f64>::None)
+    .bind(captured_at)
+    .bind(Option::<String>::None)
+    .bind(Option::<bool>::None)
+    .bind(crate::models::phone_offset_ms(loc, captured_at))
+    .bind(instant(off_at))
     .execute(db)
     .await?;
     Ok(())
@@ -915,27 +930,63 @@ pub async fn served_interval_of(
 
 /// The fixes of one report to store (design 64 step 2): each of `extra_locations` and `location`
 /// through `models::checked_location` (an invalid one dropped), the newest
-/// [MAX_EXTRA_LOCATIONS] of the extras, then the report's own fix. The checked fixes with their
-/// stored `captured_at`, and how many were dropped.
+/// [MAX_EXTRA_LOCATIONS] of the extras, then the report's own fix, all received at `received`
+/// (`models::checked_location_at`). The checked fixes with their stored `captured_at`, how many were
+/// refused (not a fix the server can use: `devices.fixes_dropped`) and how many more were left out over the cap.
 pub fn report_fixes<'a>(
     extra: &'a [LocationReport],
     location: Option<&'a LocationReport>,
-) -> (Vec<(&'a LocationReport, String)>, usize) {
-    let mut dropped = 0;
-    let mut checked = |loc: &'a LocationReport| match crate::models::checked_location(loc) {
-        Some(at) => Some((loc, at)),
-        None => {
-            dropped += 1;
-            None
-        }
-    };
+    received: DateTime<Utc>,
+) -> (Vec<(&'a LocationReport, String)>, usize, usize) {
+    let mut refused = 0;
+    let mut checked =
+        |loc: &'a LocationReport| match crate::models::checked_location_at(loc, received) {
+            Some(at) => Some((loc, at)),
+            None => {
+                refused += 1;
+                None
+            }
+        };
     let mut fixes: Vec<(&LocationReport, String)> = extra.iter().filter_map(&mut checked).collect();
     // The stored form sorts as text in time order; the newest stay.
     fixes.sort_by(|a, b| a.1.cmp(&b.1));
     let over = fixes.len().saturating_sub(MAX_EXTRA_LOCATIONS);
     fixes.drain(..over);
     fixes.extend(location.and_then(&mut checked));
-    (fixes, dropped + over)
+    (fixes, refused, over)
+}
+
+/// Fixes a phone sent that the server refused (`report_fixes`' count): counted on the phone, with the instant, so the
+/// Locate page can say so ([fix_refused]).
+pub async fn count_refused(db: &sqlx::SqlitePool, device_id: i64, refused: usize) {
+    if refused == 0 {
+        return;
+    }
+    if let Err(err) = sqlx::query(
+        "UPDATE devices SET fixes_dropped = fixes_dropped + ?, fix_dropped_at = ? WHERE id = ?",
+    )
+    .bind(i64::try_from(refused).unwrap_or(i64::MAX))
+    .bind(instant(Utc::now()))
+    .bind(device_id)
+    .execute(db)
+    .await
+    {
+        tracing::error!(device_id, %err, "can't count the refused fixes");
+    }
+}
+
+/// The Locate page's "Position refused": a fix was refused after the newest one stored was received (or none is
+/// stored).
+pub async fn fix_refused(db: &sqlx::SqlitePool, device_id: i64) -> bool {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM devices d WHERE d.id = ?1 AND d.fix_dropped_at IS NOT NULL AND NOT EXISTS \
+         (SELECT 1 FROM device_locations l WHERE l.device_id = ?1 \
+          AND julianday(l.received_at) >= julianday(d.fix_dropped_at))",
+    )
+    .bind(device_id)
+    .fetch_one(db)
+    .await
+    .is_ok_and(|n| n > 0)
 }
 
 #[cfg(test)]
@@ -1394,13 +1445,15 @@ mod tests {
         let mut extra: Vec<LocationReport> = (0..25).rev().map(|m| loc(m, 59.0)).collect();
         extra.push(loc(30, 95.0));
         let own = loc(40, 59.0);
-        let (fixes, dropped) = report_fixes(&extra, Some(&own));
+        let (fixes, refused, over) = report_fixes(&extra, Some(&own), Utc::now());
+        let dropped = refused + over;
         assert_eq!(dropped, 6, "5 over the cap and one off the Earth");
         assert_eq!(fixes.len(), 21);
         assert_eq!(fixes[0].1, "2026-10-24T08:05:00.000Z");
         assert_eq!(fixes[19].1, "2026-10-24T08:24:00.000Z");
         assert_eq!(fixes[20].1, "2026-10-24T08:40:00.000Z");
-        let (none, dropped) = report_fixes(&[], None);
+        let (none, refused, over) = report_fixes(&[], None, Utc::now());
+        let dropped = refused + over;
         assert!(none.is_empty());
         assert_eq!(dropped, 0);
     }

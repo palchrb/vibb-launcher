@@ -185,3 +185,38 @@ the parent ticks it on that rule (Leggetid too; no default tick).
   its own silence-after, or two power presses (LOCKED pins it and the glance sends the ringing screen).
 - **Not device-tested**: the Jelly's system clock's action types (`dumpsys notification --noredact`), and Android 16's
   lock-task clearing on the Jelly (a `dumpsys` look after the release). Emulator: `docs/testing/emulator.md` §6au.
+
+## The decisions' clock (2026-11-24, branch `trusted-time`)
+
+Decisions use the server's time. `server/TrustedClock.kt` (pure rules in `TrustedClockPlan.kt`, `TrustedClockTest` over
+`clock_rules.json`) is the one clock the time rules, screen time, the lifts and pauses, Play's update window, the
+parent-PIN lockout and the boundary alarm read: `TimeRulesRuntime.clocks()` is `TrustedClock.clocks()`, whose `wallMs` is
+the trusted time and `trust` how it is known (`server`, `gnss`, `carried`, `none`).
+- **Anchors.** A server answer's `Date` (2xx or 304 through `createMdmApi`'s client, over a connection that passes the
+  certificate check or the tailnet; a debug build's plain http too), at the middle of the round trip plus half a second;
+  none after a round trip over 30 s or with `Vibb-Clock: off`. A location fix's own time
+  after each location request and at each sync's start. A stronger or newer anchor replaces the one in force.
+- **Within a boot** the time is the anchor plus elapsed realtime: a wall clock set in the boot moves nothing.
+- **Across a reboot** (another `BOOT_COUNT`, or elapsed behind the anchor) the first read (`Application.onCreate`, direct
+  boot: device-protected prefs `trusted_clock`) makes a `carried` anchor: `max(wall - last offset, last checkpoint)`. The
+  checkpoint (trusted time and the wall clock's offset) is kept at the snapshots, at most once a minute, and at
+  `ACTION_SHUTDOWN`. A phone never anchored (before its first sync) reads the wall clock.
+- **The ledger** (`ScreenTime.observe` with a trust other than `none`) follows the trusted day; a reset on a `carried` time
+  keeps the day it replaced (`previous`), and the next `server`/`gnss` time that puts now in that day brings it back with
+  its minutes and those used since. A reboot offline never locks the kid out; a clock moved before it never refills the
+  day for good.
+- **The alarm** (`TimeRuleAlarm`) is `ELAPSED_REALTIME_WAKEUP`: each edge converted with its own clock, the minimum taken
+  after, a second late, floored to now plus a second (`alarmDeadline`).
+- **Windows on the wall clock** bounded by elapsed realtime stay as they were (the override, the pause, install mode: they
+  fail closed); their ends are moved onto the trusted clock for the alarm. Android's own stamps compared with Android's
+  clock (the call log, a package's install time) stay on the wall clock. `TrustedClockScanTest` lists every wall-clock
+  read left in `timerules/ calls/ zones/ play/ assistant/ logins/` and the server files that decide, and fails on a new one.
+- **The report** (`time_state`): `clock_skew_ms` (wall minus trusted: 0 within five minutes, then five-minute steps that
+  change only a minute past a step's edge, so the heartbeat's hash stays), `clock_trust`, `unanchored_ms` (since the last
+  `server`/`gnss` anchor, whole hours). `TIME_SET` re-checks the offset and asks for a sync when it moved over five minutes.
+- **Fixes** carry `age_ms` from elapsed realtime (`fixAgeMs`; unknown across a reboot): the server stores the fix at the
+  receipt minus it. The cached and kept fixes keep their elapsed time and boot.
+- **Vibb's clock faces** (`ClockFormat.bindTrusted`: the time-rule screen's and the glance's time and date) show the trusted
+  time as literal text while the offset is over five minutes, refreshed at each minute; back within five minutes, the
+  system's pattern again.
+- **Not done:** Android's own clock is never set (the status bar and other apps keep the wall clock).

@@ -5165,3 +5165,30 @@ The last four rows ran on 2026-11-24 (00:00 CET) with the branch's second commit
 phones enrolled with calls and SMS unmanaged, then calls set managed. Android 17 (`compat372`, 37.2) was tried: system_server restarted during `set-device-owner` (the image's known graphics
 abort, §6as), so not run. Not run: the "Unknown" switch on Telecom's page (Android keeps it in the provider's own
 settings, which only the system may read or write).
+
+## 6bf. Time rules keep their own clock (branch `trusted-time`, 2026-11-24) - not run yet
+
+`docs/notes/launcher/time-rules.md`, "The decisions' clock". Owed on Android 14 (`compat34`) and 16 (`handy36`); Android
+17 on a device. The rig: a fresh server, a phone enrolled with a Leggetid rule in force now, a daily budget with some
+minutes used, Location "Only when asked". The phone's own clock is moved by the owner's private test method (not in
+this repo) to the row's offset; then:
+
+```sh
+A="adb -s emulator-5556"
+$A logcat -d -s TrustedClock TimeRuleAlarm TimeRulesRuntime
+sqlite3 data/kidphone.db "SELECT time_state_json FROM device_status WHERE device_id=1 ORDER BY id DESC LIMIT 1"
+```
+
+| Row | Android 14 | Android 16 |
+|---|---|---|
+| (a) The phone's clock at +26 h: Leggetid stays in force, the card's end and the glance's clock show the server's time | owed | owed |
+| (b) The day's minutes kept across an offline `adb reboot` after (a); the server's next sync takes a carried reset back | owed | owed |
+| (c) Update Location: the fix stored at the server's time (`device_locations.captured_at`, `phone_offset_ms` about +26 h) | owed | owed |
+| (d) The PWA: Device › Time's "Klokken går feil (26 t foran)" in nb and "Clock is wrong (26 h ahead)" in en, the summary's Attention row, the Devices list's badge | owed | owed |
+| (e) Again at -5 h: (a), (c), (d) "5 t bak" | owed | owed |
+| (f) The clock at +26 h before Vibb's first read after a reboot: carried at +26 h, corrected by a location fix (`adb emu geo fix`) and then by the server; the ledger's reset taken back | owed | owed |
+| (g) Undo: the clock right again, the line gone, nothing jumps (rules, budget, the alarm) | owed | owed |
+| (h) On 14: `canScheduleExactAlarms()` true with `USE_EXACT_ALARM`; the elapsed boundary alarm fires in Doze (`dumpsys deviceidle force-idle`) | owed | - |
+| (i) Another time zone (`adb shell service call alarm 3 s16 Asia/Tokyo` with automatic zone off for the test): rules follow local time; Device › Time's quiet "Telefonens tidssone: Asia/Tokyo" | owed | owed |
+
+Screenshots on `jelly36`.

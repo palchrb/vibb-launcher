@@ -56,6 +56,12 @@ pub struct TimeReport {
     /// The phone's own IANA time zone (design 34 P13; `None` when absent, or a value
     /// that isn't a non-empty string of at most 64 bytes). Only compared with Phone Setup's name.
     pub zone: Option<String>,
+    /// The phone's own clock minus the time its decisions use (`clock_skew::clean_skew`).
+    pub clock_skew_ms: Option<i64>,
+    /// How the phone knows its time (`clock_skew::clean_trust`).
+    pub clock_trust: Option<String>,
+    /// Since the phone's time was last checked (`clock_skew::clean_unanchored`).
+    pub unanchored_ms: Option<i64>,
 }
 
 impl TimeReport {
@@ -88,7 +94,19 @@ impl TimeReport {
                 .as_str()
                 .filter(|z| !z.is_empty() && z.len() <= 64)
                 .map(str::to_string),
+            clock_skew_ms: crate::clock_skew::clean_skew(&state["clock_skew_ms"]),
+            clock_trust: crate::clock_skew::clean_trust(&state["clock_trust"]),
+            unanchored_ms: crate::clock_skew::clean_unanchored(&state["unanchored_ms"]),
         })
+    }
+
+    /// The one line about the phone's clock, if any (`clock_skew::problem`).
+    pub fn clock_problem(&self) -> Option<crate::clock_skew::ClockProblem> {
+        crate::clock_skew::problem(
+            self.clock_skew_ms,
+            self.clock_trust.as_deref(),
+            self.unanchored_ms,
+        )
     }
 
     /// A report without `time_state`: only `device_status.lock_reason`.
