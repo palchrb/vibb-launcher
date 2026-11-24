@@ -180,7 +180,7 @@ class LockWakeTest {
         // buzz reads nothing of calls or alarms itself.
         val buzz = runtime.substringAfter("private fun noticeBuzz(").substringBefore("\n    }\n")
         val firstRead = buzz.indexOf("getSystemService")
-        for (early in listOf("if (!noticeBuzzOn) return", "if (mode != LockMode.LOCKED) return", "if (!noticeBuzzGapOver(sinceLast)) return")) {
+        for (early in listOf("if (alert == NoticeAlert.OFF) return", "if (mode != LockMode.LOCKED) return", "if (!noticeBuzzGapOver(sinceLast)) return")) {
             assertTrue(early, buzz.indexOf(early) in 0 until firstRead)
         }
         assertFalse(buzz, buzz.contains("noticeBusy(") || buzz.contains("telecomInCall(") || buzz.contains("alarmNow("))
@@ -205,7 +205,7 @@ class LockWakeTest {
         val runtime = code("lock/PinLockRuntime.kt")
         val updated = runtime.substringAfter("fun noticeUpdated() {").substringBefore("\n    }\n")
         // What is in memory answers before anything is read from the system; then the one buzz, with the same gate.
-        val early = "if (!noticeBuzzOn || mode != LockMode.LOCKED || !noticeBuzzGapOver(noticeBuzzAt?.let { now - it })) return"
+        val early = "if (noticeAlert == NoticeAlert.OFF || mode != LockMode.LOCKED || !noticeBuzzGapOver(noticeBuzzAt?.let { now - it })) return"
         assertTrue(updated, updated.indexOf(early) in 0 until updated.indexOf("noticeBuzz(app, now, noticeBusy(app, now))"))
         for (wake in listOf("noticeAllowed(", "show(", "NoticeProximity", "noticeWakeOff", "lastNoticeElapsed", "noticeWokeAt")) {
             assertFalse(wake, updated.contains(wake))
@@ -214,6 +214,50 @@ class LockWakeTest {
         assertEquals(1, Regex("""noticeBuzzAt = """).findAll(runtime).count())
         assertEquals(1, Regex("""\.vibrate\(""").findAll(runtime.substringAfter("private fun noticeBuzz(").substringBefore("fun noticeCame() {")).count())
         assertFalse(runtime.substringAfter("fun noticeCame() {").substringBefore("\n    }\n").contains("noticeUpdated"))
+    }
+
+    /** Design 130: Av / Vibrer / Lyd - the policy's word read (missing or unknown is off), and what follows the ringer:
+     * Lyd plays the sound on Normal and buzzes on Vibrate, Silent or an unreadable ringer is nothing. By source: the
+     * sound comes from [noticeBuzz] alone, after the same gate and the one stamp, with notification attributes set
+     * before `play()`. */
+    @Test
+    fun `the alert choice - the word, the ringer table, the sound behind the buzz's gate`() {
+        assertEquals(NoticeAlert.BUZZ, noticeAlertOf("buzz"))
+        assertEquals(NoticeAlert.SOUND, noticeAlertOf("sound"))
+        for (word in listOf("off", null, "", "loud", "SOUND", "true")) assertEquals("$word", NoticeAlert.OFF, noticeAlertOf(word))
+
+        val table = mapOf(
+            NoticeAlert.OFF to listOf(NoticeAlertAction.NONE, NoticeAlertAction.NONE, NoticeAlertAction.NONE, NoticeAlertAction.NONE),
+            NoticeAlert.BUZZ to listOf(NoticeAlertAction.BUZZ, NoticeAlertAction.BUZZ, NoticeAlertAction.NONE, NoticeAlertAction.NONE),
+            NoticeAlert.SOUND to listOf(NoticeAlertAction.SOUND, NoticeAlertAction.BUZZ, NoticeAlertAction.NONE, NoticeAlertAction.NONE),
+        )
+        for ((alert, actions) in table) {
+            for ((ringer, action) in listOf(RINGER_MODE_NORMAL, RINGER_MODE_VIBRATE, RINGER_MODE_SILENT, null).zip(actions)) {
+                assertEquals("$alert $ringer", action, noticeAlertAction(alert, ringer))
+            }
+        }
+
+        val runtime = code("lock/PinLockRuntime.kt")
+        val buzz = runtime.substringAfter("private fun noticeBuzz(").substringBefore("\n    }\n")
+        val gate = buzz.indexOf("if (!allowed || action == NoticeAlertAction.NONE) return")
+        assertTrue(buzz, gate in 0 until buzz.indexOf("noticeBuzzAt = now"))
+        assertTrue(buzz, buzz.indexOf("noticeBuzzAt = now") in 0 until buzz.indexOf("noticeSound(app)"))
+        assertEquals(1, Regex("""noticeSound\(app\)""").findAll(runtime).count())
+        val sound = runtime.substringAfter("private fun noticeSound(").substringBefore("\n    }\n")
+        assertTrue(sound, sound.contains("Settings.System.DEFAULT_NOTIFICATION_URI"))
+        assertTrue(sound, sound.contains("USAGE_NOTIFICATION"))
+        assertTrue(sound, sound.indexOf("ringtone.audioAttributes = ") in 0 until sound.indexOf("ringtone.play()"))
+        // Code QA M1, L1, L2: off the main thread, the one before released first, a ducking focus asked before play
+        // and the release posted after it.
+        assertTrue(sound, sound.trimStart().startsWith("app: Context) {\n        noticeSoundHandler.post {"))
+        assertTrue(sound, sound.indexOf("noticeSoundRelease(app)") in 0 until sound.indexOf("ringtone.play()"))
+        assertTrue(sound, sound.indexOf("AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK") in 0 until sound.indexOf("ringtone.play()"))
+        assertTrue(sound, sound.indexOf("requestAudioFocus(focus)") in 0 until sound.indexOf("ringtone.play()"))
+        assertTrue(sound, sound.indexOf("ringtone.play()") < sound.indexOf("NOTICE_SOUND_RELEASE_MS"))
+        val release = runtime.substringAfter("private fun noticeSoundRelease(").substringBefore("\n    }\n")
+        assertTrue(release, release.contains("noticeRingtone?.stop()"))
+        assertTrue(release, release.contains("abandonAudioFocusRequest(focus)"))
+        assertEquals(5_000L, NOTICE_SOUND_RELEASE_MS)
     }
 
     private val main = listOf(File("src/main"), File("app/src/main")).first { it.exists() }

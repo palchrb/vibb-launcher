@@ -5306,23 +5306,52 @@ abort, §6as), so not run. Not run: the "Unknown" switch on Telecom's page (Andr
 settings, which only the system may read or write).
 
 **Since 2026-11-24 (branch `blocked-keep`) only rows that hit the rules are cleared**, so the rows above that cleared
-`99887766` (`number=1`) and a short number (`short=1`) no longer hold: those blocks stay. Expected results, not run yet
-(the same rig, the contact Mamma `+4791234567`, default country 47):
+`99887766` (`number=1`) and a short number (`short=1`) no longer hold: those blocks stay. **Run 2026-11-24 (10:15-10:23
+CET), main `6ce0dedf4`** (debug launcher 0.23.6 built from it, server 0.92.0 from it, fresh on 3130/3131), on Android 14
+(`compat34`) and Android 16 (**`aosp36`** instead of `handy36`: the AOSP image takes `adb root`, which §6bh's rig
+needs, and one AVD did both sections). Fresh phones enrolled with a typed setup code, calls and SMS managed (Vibb One
+holds the dialer and SMS roles), the contact Mamma `+4791234567`. The first contact row was blocked on Telecom's page
+(`BlockedNumbersActivity` started explicitly, Add a number, Block); the other rows were inserted as root with `content
+insert --uri content://com.android.blockednumber/blocked --bind original_number:s:<n>` (the same provider insert, so
+the same observer). The phones were in the enrolment's setup hold.
 
-| Row | Expected (14 and 16) |
-|---|---|
-| A contact's number blocked (`91234567`, also as `0047 912 34 567`) | Cleared at once (`Cleared blocked numbers: contact=1`), a sync, the line `blocked_cleared.contact`; "Blokkert nummer fjernet" on Calls |
-| An emergency number blocked (`112`, `113`) | Cleared (`emergency=1`), the line `blocked_cleared.emergency` |
-| Another number (`99887766`), a short number (`2222`), an e-mail address | Kept: no log line, no sync; the report `blocked_left: 0`, `blocked_kept` counts them; nothing on Calls, no Attention, no security line |
-| A kept number (`98765432`) then added as a contact in the PWA | Cleared at the apply that follows the policy (`contact=1`), `blocked_kept` one lower |
-| The initial sweep: a contact's number and `99887766` blocked while unmanaged, then calls set managed | `Cleared blocked numbers on becoming managed: 1`; `blocked_cleared_initial: 1`, `blocked_kept: 1`; no line, nothing orange |
-| The action with calls and SMS both managed | Resolves to `BlockedNumbersGate`, which closes at once |
-| The action with calls managed and SMS "Ikke styrt" (and the other way round) | The gate disabled: the action resolves to Telecom's page; a number the kid blocks there stays, a contact's is cleared |
+| Row | Expected (14 and 16) | Android 14 (`compat34`) | Android 16 (`aosp36`) |
+|---|---|---|---|
+| A contact's number blocked (`91234567`, also as `0047 912 34 567`) | Cleared at once (`Cleared blocked numbers: contact=1`), a sync, the line `blocked_cleared.contact`; "Blokkert nummer fjernet" on Calls | **Pass.** Both forms: `Cleared blocked numbers: contact=1` then `Sync for [blocked_numbers]` 3 ms later; the list empty; `phone_blocked_cleared` `{"key":"security.detail.blocked_cleared.contact","n":1}` in the next second; Calls "Blocked number removed · 1 min ago" (the admin in English), the summary's Attention row | **Pass.** The same (`contact=1`, the sync 10 ms later, the line in the next second) |
+| An emergency number blocked (`112`, `113`) | Cleared (`emergency=1`), the line `blocked_cleared.emergency` | **Pass.** Each: `emergency=1`, a sync, `blocked_cleared.emergency` | **Pass.** The same |
+| Another number (`99887766`), a short number (`2222`), an e-mail address | Kept: no log line, no sync; the report `blocked_left: 0`, `blocked_kept` counts them; nothing on Calls, no Attention, no security line | **Pass.** (`kid@example.com`) No `VibbBlockedNumbers` line, no sync; the rows stay; after a nudged report `blocked_left: 0`, `blocked_kept: 4` (with `98765432`); security lines still 8; no "Numbers blocked on the phone" on Calls | **Pass.** The same |
+| A kept number (`98765432`) then added as a contact in the PWA | Cleared at the apply that follows the policy (`contact=1`), `blocked_kept` one lower | **Pass.** `contact=1` at the apply after the contact's save, a sync; `blocked_kept: 3`, `blocked_cleared_contact: 3` | **Pass.** The same |
+| The initial sweep: a contact's number and `99887766` blocked while unmanaged, then calls set managed | `Cleared blocked numbers on becoming managed: 1`; `blocked_cleared_initial: 1`, `blocked_kept: 1`; no line, nothing orange | **Pass.** `Cleared blocked numbers on becoming managed: 1`, `99887766` stays; `blocked_cleared_initial: 1`, `blocked_kept: 1`, `blocked_cleared_at` unchanged; security lines 14 before and after | **Pass.** The same |
+| The action with calls and SMS both managed | Resolves to `BlockedNumbersGate`, which closes at once | **Pass.** `resolve-activity` names `BlockedNumbersGate`; `am start` reports it | **Pass.** The same |
+| The action with calls managed and SMS "Ikke styrt" (and the other way round) | The gate disabled: the action resolves to Telecom's page; a number the kid blocks there stays, a contact's is cleared | **Pass.** Both ways: the action resolves to and starts `BlockedNumbersActivity` (SMS role back with Google Messages, or the dialer role with Google's dialer); `55554444`/`55553333` blocked on that page stay; `91234567`/`+4791234567` cleared (`contact=1`) | **Pass.** The same (AOSP Messaging / Dialer get the roles back) |
 
-## 6bh. The web filter's resolver: Quad9 first, Cloudflare as the fallback (branch `dns-upstreams`) - not run yet
+## 6bh. The web filter's resolver: Quad9 first, Cloudflare as the fallback (branch `dns-upstreams`) - run 2026-11-24
 
 `docs/notes/launcher/dns-and-vpn.md`, "The providers in a chain". Owed on Android 14 (`compat34`) and Android 16
 (`handy36`); a fresh server (migration 0172 puts a stored `cloudflare` or `mullvad` on `quad9`), a phone with the Web filter on.
+
+**Run 2026-11-24 (10:23-10:37 CET), main `6ce0dedf4`**, the same rig and phones as §6bg's second run (Android 14
+`compat34`, Android 16 `aosp36`), after the PWA's "Lock again" ended the setup hold (the filter is off in it). The VM has
+no root, so the host's `iptables`/`tcpdump` were replaced by the guest's own (`adb root`): a chain first in `OUTPUT`
+counting Vibb One's uid to 9.9.9.9, 1.1.1.2, 1.0.0.2 and every UDP/TCP 53 packet not on `tun+` (IPv4 and IPv6, any uid),
+then a chain of `REJECT`s for the blocks. Look-ups were made with `su 2000 ping -c1 <new name>` (through the VPN), a
+report nudged with Apps' "Download apps on Wi-Fi only" off and on, the line read from `/dns`'s `data-dns-phone` rows.
+A Wi-Fi off/on (`svc wifi`) reset the providers' state between rows.
+
+| Row | Android 14 (`compat34`) | Android 16 (`aosp36`) |
+|---|---|---|
+| Default | **Pass.** No `DnsUpstream` line; "Fjorten · Quad9 answers" | **Pass.** "Seksten · Quad9 answers" |
+| Fallback | **Pass.** Look-ups still answer; one query paid (`DoT attempt failed: ConnectException`, `DoH attempt failed: ConnectException`, 3 packets to 9.9.9.9, 15 to 1.1.1.2); "Cloudflare answers". Block lifted 10:25:41, look-ups every 10 s: back on "Quad9 answers" by 10:27:16 (63 packets to 9.9.9.9) | **Pass.** The same (3 to 9.9.9.9, 17 to 1.1.1.2; back on Quad9) |
+| None | **Pass.** `unknown host` for each name; "DNS can't be reached since 10:27 - no DNS server answers from where the phone is" (orange: the template's `tone-orange`); 0 UDP/53 and 0 TCP/53 packets off `tun+` from any uid, IPv4 and IPv6, over 2 min 20 s | **Pass.** The same |
+| 853 blocked | **Pass.** `DoT blocked: quad9 over DoH, periods=1`, 36 packets to 9.9.9.9:443, "Quad9 answers"; with 9.9.9.9 also blocked `DoT blocked: cloudflare over DoH`, 24 packets to 1.1.1.2:443, "Cloudflare answers" (the certificate check not tested apart) | **Pass.** The same (23 to 9.9.9.9:443; 28 to 1.1.1.2:443) |
+| Parent's pick | **Pass.** Cloudflare picked: 0 packets to 9.9.9.9, 20 to 1.1.1.2; "Cloudflare answers"; the picker's options `quad9`, `cloudflare`, `custom`, no "mullvad" anywhere on `/dns` | **Pass.** The same (18 to 1.1.1.2) |
+| Custom by name | **Pass.** `tls://family.adguard-dns.com` with backup `tls://unfiltered.adguard-dns.com`: `Bootstrap cache: 0 names`, 29 packets to 9.9.9.9, 0 to 1.1.1.2 and 1.0.0.2, the DoT connection up; no line (a working custom server is quiet) | **Pass.** The same (22 to 9.9.9.9) |
+
+Noted, not faults: with a backup given as an IP literal (the default `https://1.1.1.3/dns-query`) the primary's name is
+asked of that backup first (`bootstrapResolvers`), so `dns.adguard-dns.com` was looked up through 1.1.1.3 (Cloudflare
+for Families, the parent's backup) and never through 9.9.9.9 - as the code says, outside this row (both by name). A
+phone whose last report has no `provider` (after a Wi-Fi reset, before a look-up answered) has no line on `/dns` until
+its next report (`phone_line`'s quiet case); seen once per phone.
 
 | Row | What passes |
 |---|---|
@@ -5332,3 +5361,30 @@ settings, which only the system may read or write).
 | 853 blocked | Block port 853 only: both providers' DoH on 443 answer (Cloudflare by name at its fixed addresses, the certificate checked) |
 | Parent's pick | Pick Cloudflare in the PWA: the line says Cloudflare; the picker has no Mullvad |
 | Custom by name | Custom with `tls://dns.example...` names (a server by name): its name's look-up goes to 9.9.9.9 on 853/443, never to Cloudflare (`tcpdump host 1.1.1.2 or host 1.0.0.2` empty) |
+
+## 6bi. Lyd: a notification sound on the locked phone (design 130, branch `lock-sound`) - written, not run
+
+Design 130 (`docs/design/130-lock-sound.md`): Lock Screen & PINs' "Varsling" is Av / Vibrer / Lyd
+(`launcher_ui.lock_notice_alert`). Run on the lowest and the highest image it touches (Android 14 and 16/17), with a
+server from the branch, the debug launcher, calls and SMS managed, Meldinger on the lock (Name only) and the phone
+locked and dark. The emulator has no motor and its audio is the host's: a buzz is `I/PinLock: Notice buzz`, a sound
+`I/PinLock: Notice sound` beside `dumpsys audio` ("playback activity": a player with `usage=USAGE_NOTIFICATION`,
+`content=CONTENT_TYPE_SONIFICATION`, the launcher's uid) and `dumpsys media.audio_flinger` showing a track on the
+notification stream.
+
+- **The PWA:** the cell under "Vekk skjermen ved varsler" reads "Varsling" with Av selected on a new phone; Lyd saved
+  lands on the same row (no jump to the top), the security log says "telefon N: varsling: lyd", the policy's
+  `launcher_ui.lock_notice_alert` is `"sound"` (`curl` the policy with the phone's token). A server upgraded from a
+  database with the buzz switch on shows Vibrer.
+- **Lyd, ringer Normal:** an SMS from a contact: one `Notice sound`, no `Notice buzz`; a second SMS in the same thread
+  within 10 s: nothing; after 10 s: one more. A missed call: one.
+- **Lyd, ringer Vibrate** (`adb shell cmd audio set-ringer-mode VIBRATE` or Kid Settings' sound choice): `Notice buzz`,
+  no sound. **Silent:** neither.
+- **Do Not Disturb** (`cmd notification set_dnd priority`) and a time rule's silence: neither, the row still comes.
+- **Notification volume 0** (ringer Normal, `cmd media_session volume --stream 5 --set 0`): `Notice sound` logs, nothing
+  is heard - Android's own behaviour.
+- **Unlocked** (Vibb's lock off or the phone open): nothing from the launcher. **During a call:** nothing.
+- **Default notification sound "None"** (`settings put system notification_sound ''`): nothing heard, nothing throws.
+- **Av and Vibrer** as before (§6ad, §6af): Vibrer buzzes on Normal and Vibrate, Av never.
+- **Not on the emulator:** whether the Jelly Star (16) plays it from the lock and how loud, a custom notification sound
+  on storage (the remote-player fallback).

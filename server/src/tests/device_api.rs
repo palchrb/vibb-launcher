@@ -525,7 +525,7 @@ async fn policy_json_keys_snapshot() {
             "clock_format",
             "home_columns",
             "language",
-            "lock_buzz_on_notification",
+            "lock_notice_alert",
             "lock_wake_on_notification",
             "lock_wallpaper",
             "lock_weather",
@@ -539,11 +539,9 @@ async fn policy_json_keys_snapshot() {
         launcher_ui["lock_wake_on_notification"],
         serde_json::json!(false)
     );
-    // Design 82 W3: always sent, off for a new phone (the launcher reads a missing key as off).
-    assert_eq!(
-        launcher_ui["lock_buzz_on_notification"],
-        serde_json::json!(false)
-    );
+    // Design 130 (design 82 W3's buzz before it): always sent, off for a new phone (the launcher reads a missing or
+    // unknown value as off).
+    assert_eq!(launcher_ui["lock_notice_alert"], serde_json::json!("off"));
     // Design 25, "Lock background": always sent, null = the lock shows Home's wallpaper.
     assert_eq!(launcher_ui["lock_wallpaper"], serde_json::json!(null));
     // Design 14 (QA #1): always a list, even when nothing is named.

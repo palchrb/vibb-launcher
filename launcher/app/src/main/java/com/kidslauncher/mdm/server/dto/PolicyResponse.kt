@@ -266,10 +266,12 @@ data class LauncherUi(
      * lock's glance page or a missed call turns the screen on, on the lock
      * ([com.kidslauncher.mdm.lock.PinLockRuntime.noticeCame]). Missing = off. */
     val lockWakeOnNotification: Boolean = false,
-    /** The parent's "Buzz for a notification" (design 82 W3): the same notices make the locked phone vibrate once,
-     * without a sound ([com.kidslauncher.mdm.lock.noticeBuzzAllowed]) - and, since 2026-11-10, a message more in a
-     * row the lock already shows. Missing = off. */
-    val lockBuzzOnNotification: Boolean = false,
+    /** The parent's Av / Vibrer / Lyd (design 130; design 82 W3's buzz switch before it): `off`, `buzz` or `sound` -
+     * the same notices make the locked phone buzz once or play Android's notification sound once
+     * ([com.kidslauncher.mdm.lock.noticeBuzzAllowed], [com.kidslauncher.mdm.lock.noticeAlertAction]) - and, since
+     * 2026-11-10, a message more in a row the lock already shows. Read by [com.kidslauncher.mdm.lock.noticeAlertOf]:
+     * missing or unknown = off. */
+    val lockNoticeAlert: String? = null,
     /** Device › Weather's "Weather on the lock screen" (design 75 D17): the glance shows yr's symbol and the degrees by
      * the date and asks `GET /api/devices/weather`. Missing = off. */
     val lockWeather: Boolean = false,

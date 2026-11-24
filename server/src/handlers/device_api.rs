@@ -716,7 +716,7 @@ pub(crate) async fn build_policy(
                     Vec::new()
                 }),
             lock_wake_on_notification: policy.lock_wake_on_notification,
-            lock_buzz_on_notification: policy.lock_buzz_on_notification,
+            lock_notice_alert: crate::lock_glance::NoticeAlert::stored(&policy.lock_notice_alert),
             lock_weather: policy.lock_weather,
         },
         time_policy,
