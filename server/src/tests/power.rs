@@ -347,7 +347,6 @@ async fn a_bad_shutdown_position_costs_the_position_only() {
     let now = Utc::now();
     for (n, location) in [
         json!({ "lat": 200.0, "lng": 10.7, "at_ms": ms(now - Duration::minutes(5)) }),
-        json!({ "lat": 59.9, "lng": 10.7, "at_ms": ms(now + Duration::hours(1)) }),
         json!({ "lat": "north", "lng": 10.7, "at_ms": 1 }),
         json!("here"),
     ]
@@ -371,7 +370,7 @@ async fn a_bad_shutdown_position_costs_the_position_only() {
             "{n}: {params}"
         );
     }
-    assert_eq!(events(&app, id).await.len(), 4);
+    assert_eq!(events(&app, id).await.len(), 3);
     assert!(shutdown_fixes(&app, id).await.is_empty());
     // Q-4: a valid position with an off the plan drops (older than 30 days, after its start)
     // stores no fix.
@@ -406,6 +405,31 @@ async fn a_bad_shutdown_position_costs_the_position_only() {
             .await
             .unwrap();
     assert_eq!(provider, None);
+}
+
+/// The shutdown's position (sent after the reboot, its age lost) is never dropped for its time: one ahead of the
+/// server is stored at the receipt, how far ahead it was kept in `phone_offset_ms`.
+#[tokio::test]
+async fn a_shutdown_position_ahead_is_kept_at_receipt() {
+    let (app, id, token) = setup().await;
+    let now = Utc::now();
+    let location = json!({ "lat": 59.9, "lng": 10.7, "at_ms": ms(now + Duration::hours(26)) });
+    let body =
+        json!({ "off": off(now - Duration::minutes(1), 41, json!({ "location": location })) });
+    assert_eq!(post(&app, &token, body).await, StatusCode::NO_CONTENT);
+    let (captured_at, offset): (String, Option<i64>) = sqlx::query_as(
+        "SELECT captured_at, phone_offset_ms FROM device_locations WHERE device_id = ?",
+    )
+    .bind(id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    let stored = crate::display_time::parse_db_utc(&captured_at).unwrap();
+    assert!((stored - now).num_seconds().abs() < 60, "{captured_at}");
+    assert!(
+        offset.is_some_and(|ms| (ms - 26 * 3_600_000).abs() < 60_000),
+        "{offset:?}"
+    );
 }
 
 /// Q-5: a restart the phone announced ("Anna's phone is restarting") never says "before the phone went

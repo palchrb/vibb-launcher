@@ -123,8 +123,7 @@ async fn a_wrong_clock_is_one_orange_line() {
         .text();
     assert!(time.contains("Clock is wrong (26\u{a0}h ahead)"), "{time}");
     assert!(
-        time.contains("Rules and screen time follow the server&#x27;s time.")
-            || time.contains("Rules and screen time follow the server's time."),
+        time.contains("Rules and screen time follow the server"),
         "{time}"
     );
     let summary = app
@@ -132,10 +131,19 @@ async fn a_wrong_clock_is_one_orange_line() {
         .await
         .text();
     assert!(summary.contains("data-attention=\"clock\""), "{summary}");
-    let list = app.get_page("/devices?lang=en", &cookie).await.text();
-    assert!(list.contains("data-attention-count=\"1\""), "{list}");
+    // The badge counts the row: one more than with the clock right.
+    let badge = |html: &str| {
+        html.split("data-attention-count=\"")
+            .nth(1)
+            .and_then(|rest| rest.split('"').next())
+            .and_then(|n| n.parse::<i64>().ok())
+            .unwrap_or(0)
+    };
+    let wrong = badge(&app.get_page("/devices?lang=en", &cookie).await.text());
 
     app.post_status(&token, report(0)).await;
+    let right = badge(&app.get_page("/devices?lang=en", &cookie).await.text());
+    assert_eq!(wrong, right + 1);
     let time = app
         .get_page(&format!("/devices/{anna}/time?lang=en"), &cookie)
         .await

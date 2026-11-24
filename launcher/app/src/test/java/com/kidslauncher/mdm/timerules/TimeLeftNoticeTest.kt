@@ -227,7 +227,7 @@ class TimeLeftNoticeTest {
         val update = tracker.substringAfter("fun update(context: Context) {")
         assertTrue(update, update.contains("handler.postDelayed(checkpoint, checkpointDelayMs(remaining))"))
         // Q-5: from the budget the tracker computed, never a snapshot of its own.
-        assertTrue(update, update.contains("AnchorNotice.refresh(context, budget, policy, ledger.day, System.currentTimeMillis())"))
+        assertTrue(update, update.contains("AnchorNotice.refresh(context, budget, policy, ledger.day, com.kidslauncher.mdm.server.TrustedClock.nowMs())"))
         assertFalse(update, update.contains("refreshNow") || update.contains("snapshot("))
         assertFalse(update.substringBefore("if (!appInUse(context)) return").contains("AnchorNotice"))
         val sync = source("server/MdmSyncWorker.kt")
