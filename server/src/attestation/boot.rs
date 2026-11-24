@@ -39,11 +39,6 @@ impl Reading {
             Reading::Unknown => "unknown",
         }
     }
-
-    /// Nothing to show (§9's table): the maker's system or GrapheneOS.
-    pub fn passes(self) -> bool {
-        self != Reading::Unknown
-    }
 }
 
 #[derive(serde::Deserialize)]

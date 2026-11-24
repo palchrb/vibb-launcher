@@ -609,16 +609,6 @@ fn key_detail(key: &crate::device_key::StoredKey, lang: Lang) -> String {
         "google_ec_ca1" => "device.about.key.root.google_ec_ca1",
         _ => "device.about.key.root.google_rsa",
     };
-    let revoked = if key.revoked_at.is_some() {
-        "device.about.key.revoked"
-    } else {
-        "device.about.key.not_revoked"
-    };
-    let signed = if key.last_signed_at.is_some() {
-        "device.about.key.signed"
-    } else {
-        "device.about.key.not_signed"
-    };
     let patch = key
         .os_patch_level
         .map(|p| format!("{}-{:02}", p / 100, p % 100))
@@ -632,15 +622,21 @@ fn key_detail(key: &crate::device_key::StoredKey, lang: Lang) -> String {
             ("patch", &patch),
             ("system", t(lang, system)),
             ("root", t(lang, root)),
-            ("revoked", t(lang, revoked)),
-            ("signed", t(lang, signed)),
         ],
     );
-    if key.unusual {
-        format!("{detail} {}", t(lang, "device.about.key.unusual"))
-    } else {
-        detail
+    // What is wrong, and only that (code QA L10): revoked, not signing yet, an unusual address.
+    let mut detail = detail;
+    for (wrong, key) in [
+        (key.revoked_at.is_some(), "device.about.key.revoked"),
+        (key.last_signed_at.is_none(), "device.about.key.not_signed"),
+        (key.unusual, "device.about.key.unusual"),
+    ] {
+        if wrong {
+            detail.push(' ');
+            detail.push_str(t(lang, key));
+        }
     }
+    detail
 }
 
 /// A refusal's words (§9.1's `{reason}`): `chain`/`root` one, `revoked`, `software`, `app`, `boot`, the rest "invalid".

@@ -31,6 +31,46 @@ fn unb64(text: &str) -> Vec<u8> {
         .unwrap()
 }
 
+/// The other valid form of a P-256 ECDSA signature, `(r, n - s)` (DER in, DER out).
+fn malleable(der: &[u8]) -> Vec<u8> {
+    // n of P-256, big-endian.
+    let n =
+        hex::decode("ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551").unwrap();
+    let seq =
+        crate::attestation::der::parse_one(der, crate::attestation::der::Tag::SEQUENCE).unwrap();
+    let mut fields = seq.reader();
+    let r = fields.next().unwrap().content.to_vec();
+    let s = fields.next().unwrap().content.to_vec();
+    let mut s32 = vec![0u8; 32];
+    let s_trim: Vec<u8> = s.iter().copied().skip_while(|b| *b == 0).collect();
+    s32[32 - s_trim.len()..].copy_from_slice(&s_trim);
+    // n - s, byte by byte with borrow.
+    let mut out = vec![0u8; 32];
+    let mut borrow = 0i16;
+    for i in (0..32).rev() {
+        let mut d = n[i] as i16 - s32[i] as i16 - borrow;
+        borrow = if d < 0 { 1 } else { 0 };
+        if d < 0 {
+            d += 256;
+        }
+        out[i] = d as u8;
+    }
+    let int = |bytes: &[u8]| {
+        let mut b: Vec<u8> = bytes.iter().copied().skip_while(|x| *x == 0).collect();
+        if b.first().is_some_and(|x| x & 0x80 != 0) {
+            b.insert(0, 0);
+        }
+        let mut e = vec![0x02, b.len() as u8];
+        e.extend(b);
+        e
+    };
+    let mut body = int(&r);
+    body.extend(int(&out));
+    let mut sig = vec![0x30, body.len() as u8];
+    sig.extend(body);
+    sig
+}
+
 /// A phone enrolled with a key (`key_id` from the enrol answer).
 struct Phone {
     id: i64,
@@ -348,6 +388,18 @@ async fn the_contract_routes() {
         .take(br#"{"entries": {}}"#, chrono::Utc::now())
         .unwrap();
 
+    // A conflict while the server names no key (L8).
+    let res = app
+        .request(
+            Method::POST,
+            "/api/devices/key/conflict",
+            Some(&plain_token),
+            None,
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::CONFLICT);
+    shaped(&res.json(), &c["register"]["conflict_without_key"]["body"]);
+
     // Register.
     let none = app
         .request(Method::GET, "/api/devices/key", Some(&plain_token), None)
@@ -589,6 +641,27 @@ async fn the_edge_rows() {
                 *request.body_mut() = Body::from(r#"{"id":"00000000000000fe","asked_at_ms":1}"#);
                 request
             }
+            "signature_body_changed_with_own_bearer" => {
+                let body = br#"{"id":"00000000000000ff","asked_at_ms":1}"#.to_vec();
+                let mut request = signed(
+                    &app,
+                    &phone,
+                    Method::POST,
+                    "/api/devices/time-request",
+                    body,
+                    "",
+                    0,
+                );
+                *request.body_mut() = Body::from(format!(
+                    r#"{{"id":"00000000000000fe","asked_at_ms":{}}}"#,
+                    chrono::Utc::now().timestamp_millis()
+                ));
+                request.headers_mut().insert(
+                    header::AUTHORIZATION,
+                    format!("Bearer {}", phone.token).parse().unwrap(),
+                );
+                request
+            }
             "signature_bad_with_own_bearer" => {
                 let impostor = Phone {
                     id: phone.id,
@@ -673,12 +746,47 @@ async fn a_signed_gzip_report() {
             &phone,
             Method::POST,
             "/api/devices/status",
-            body,
+            body.clone(),
             "gzip",
             0,
         ))
         .await;
     assert!(res.status.is_success(), "{}: {}", res.status, res.text());
+
+    // Signed over other compressed bytes: refused before anything is inflated.
+    let mut request = signed(
+        &app,
+        &phone,
+        Method::POST,
+        "/api/devices/status",
+        body.clone(),
+        "gzip",
+        0,
+    );
+    let mut other = body.clone();
+    let last = other.len() - 1;
+    other[last] ^= 1;
+    *request.body_mut() = Body::from(other);
+    let res = app.send(request).await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    assert_eq!(vibb_auth(&res).as_deref(), Some("bad_body"));
+
+    // Signed, but bytes after the gzip member: no report of ours.
+    let mut trailing = body.clone();
+    trailing.extend_from_slice(b"junk");
+    let res = app
+        .send(signed(
+            &app,
+            &phone,
+            Method::POST,
+            "/api/devices/status",
+            trailing,
+            "gzip",
+            0,
+        ))
+        .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST, "{}", res.text());
+    assert_eq!(vibb_auth(&res), None);
 }
 
 /// §4.5 step 4: the body limit stays each route's own - a signed kid-events body of 1 MiB passes its route's limit,
@@ -745,6 +853,84 @@ async fn a_lost_enrolment_answer() {
     app.policy(again["device_token"].as_str().unwrap()).await;
     let other = enroll_with(&app, &code, &TestKey::new(), serde_json::json!({})).await;
     assert_eq!(other.status, StatusCode::UNAUTHORIZED);
+    // Code QA H1: the repeat's body replayed byte for byte (its proof's `r` seen) is refused, a third fresh repeat
+    // too, and each repeat is in the security log.
+    let third = enroll_with(&app, &code, &key, serde_json::json!({})).await;
+    assert_eq!(third.status, StatusCode::OK, "the second repeat");
+    let fourth = enroll_with(&app, &code, &key, serde_json::json!({})).await;
+    assert_eq!(
+        fourth.status,
+        StatusCode::UNAUTHORIZED,
+        "at most two repeats"
+    );
+    let again = super::security_words(&app, "device_enrolled", crate::i18n::Lang::En).await;
+    assert_eq!(
+        again.iter().filter(|w| w.contains("asked again")).count(),
+        2,
+        "{again:?}"
+    );
+
+    let (id, code) = app.create_device("replayed").await;
+    let key = TestKey::new();
+    let challenge = crate::attestation::enroll_challenge(&crate::enrollment::normalize(&code));
+    let proof = key.sign(crate::attestation::proof_message(&challenge, "enroll").as_bytes());
+    let body = serde_json::json!({
+        "enrollment_code": code,
+        "chain": key.chain(&challenge, serde_json::json!({})),
+        "proof": b64u(&proof),
+    });
+    let first = app
+        .request(
+            Method::POST,
+            "/api/devices/enroll",
+            None,
+            Some(body.clone()),
+        )
+        .await;
+    assert_eq!(first.status, StatusCode::OK);
+    let replayed = app
+        .request(
+            Method::POST,
+            "/api/devices/enroll",
+            None,
+            Some(body.clone()),
+        )
+        .await;
+    assert_eq!(
+        replayed.status,
+        StatusCode::UNAUTHORIZED,
+        "a captured body never replays"
+    );
+    // Its malleable twin `(r, n - s)` has the same `r`: refused as well.
+    let twin = malleable(&proof);
+    assert_ne!(twin, proof);
+    assert!(crate::attestation::verify_proof(
+        &key.public_key(),
+        &challenge,
+        "enroll",
+        &twin
+    ));
+    let mut twin_body = body.clone();
+    twin_body["proof"] = b64u(&twin).into();
+    let res = app
+        .request(Method::POST, "/api/devices/enroll", None, Some(twin_body))
+        .await;
+    assert_eq!(res.status, StatusCode::UNAUTHORIZED, "the same r");
+    // Revoke Access: the kept code is gone - a fresh repeat is refused.
+    let cookie = app.admin_cookie().await;
+    app.request_form(
+        Method::POST,
+        &format!("/devices/{id}/revoke"),
+        Some(&cookie),
+        &[("confirm", "yes")],
+    )
+    .await;
+    let res = enroll_with(&app, &code, &key, serde_json::json!({})).await;
+    assert_eq!(
+        res.status,
+        StatusCode::UNAUTHORIZED,
+        "revoked stays revoked"
+    );
     // A code-only enrolment can't be repeated.
     let (_, code) = app.create_device("plain").await;
     enroll_plain(&app, &code).await;
@@ -872,7 +1058,7 @@ async fn the_clock_is_stored() {
     assert!(stored <= app.state.device_keys.clock.now_ms());
     let next = device_key::SigClock::starting(Some(stored), stored - 3_600_000);
     assert!(
-        next.now_ms() >= stored + 40_000,
+        next.now_ms() >= stored + 100_000,
         "never back past the floor"
     );
 }
@@ -915,6 +1101,38 @@ async fn the_pwa_shows_the_key_quietly() {
     let hub = app.get_page("/settings?lang=en", &cookie).await.text();
     assert!(hub.contains("data-row=\"key-list-stale\""));
     assert!(hub.contains("key list is out of date"));
+}
+
+/// Code QA L10: without LAUNCHER_SIGNATURE_CHECKSUM, Settings says it once; no phone is blamed for it.
+#[tokio::test]
+async fn no_checksum_is_said_once_on_settings() {
+    let mut config = crate::config::ForkConfig::for_tests();
+    config.launcher_signature_checksum = None;
+    let app = TestApp::with_config(config).await;
+    let cookie = app.admin_cookie().await;
+    let (id, code) = app.create_device("phone").await;
+    // The fake attestation refuses `app` without the digest, as the real one does.
+    let res = enroll_with(&app, &code, &TestKey::new(), serde_json::json!({})).await;
+    assert_eq!(res.status, StatusCode::OK);
+    assert_eq!(res.json()["key"]["reason"], "app");
+    let stored: Option<String> =
+        sqlx::query_scalar("SELECT key_refused_reason FROM devices WHERE id = ?")
+            .bind(id)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(
+        stored, None,
+        "the server's setting, not the phone's refusal"
+    );
+    let hub = app.get_page("/settings", &cookie).await.text();
+    assert!(hub.contains("data-row=\"key-no-checksum\""));
+    let page = app
+        .get_page(&format!("/devices/{id}/about?lang=nb"), &cookie)
+        .await
+        .text();
+    assert!(page.contains("Eldre innlogging"));
+    assert!(!page.contains("Nøkkel avvist"));
 }
 
 /// §4.5 step 3's assumption, pinned: every POST device route reads its whole body through an extractor before it

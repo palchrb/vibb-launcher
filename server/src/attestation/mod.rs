@@ -152,10 +152,12 @@ pub fn verify(
         .ok_or(Refusal::Chain)?;
     let last = certs.len() - 1;
 
-    // 2. The root's key is pinned; each certificate is signed by the next, and names it as its issuer.
+    // 2. The root's key is pinned; each certificate is signed by the next. The signatures bind the chain: the names
+    // are not compared (code QA L2 - a byte compare would refuse an issuer encoded as another string type; step 0
+    // reads the Jelly Star's chain).
     let root = roots::pinned(certs[last].spki).ok_or(Refusal::Root)?;
     for i in 0..last {
-        if certs[i].issuer != certs[i + 1].subject || !x509::signed_by(&certs[i], &certs[i + 1]) {
+        if !x509::signed_by(&certs[i], &certs[i + 1]) {
             return Err(Refusal::Chain);
         }
     }
@@ -246,11 +248,13 @@ pub fn verify(
     }
 
     // 10. The app: the framework's statement in the software list (never a hardware claim, §6.1) - exactly one
-    // package, ours, and exactly one signing certificate, ours.
+    // package, ours, and exactly one signing certificate, ours. A KeyMint that puts it in the hardware list instead
+    // is read there (code QA L3; step 0 reads where the Jelly Star puts it); the software list's wins when both have it.
     let app = description
         .software
         .application_id
         .as_ref()
+        .or(description.hardware.application_id.as_ref())
         .ok_or(Refusal::App)?;
     if expect.signature_digest.len() != 32
         || app.packages != [expect.package]
@@ -296,6 +300,25 @@ pub fn verify_proof(public_key: &[u8], challenge: &[u8], kind: &str, proof: &[u8
     ring::signature::UnparsedPublicKey::new(&ring::signature::ECDSA_P256_SHA256_ASN1, public_key)
         .verify(proof_message(challenge, kind).as_bytes(), proof)
         .is_ok()
+}
+
+/// A proof's ECDSA `r` (lowercase hex, no leading zeros): what a lost enrolment answer's repeat must not have
+/// sent before (design 129 §5.1, code QA H1). `r`, never the bytes: `(r, s)` and `(r, n - s)` both verify.
+pub fn proof_r(proof: &[u8]) -> Option<String> {
+    let seq = der::parse_one(proof, der::Tag::SEQUENCE)?;
+    let mut fields = seq.reader();
+    let r = fields.expect(der::Tag::INTEGER)?;
+    fields.expect(der::Tag::INTEGER)?;
+    if !fields.is_empty() {
+        return None;
+    }
+    let hex = hex::encode(r.content);
+    let trimmed = hex.trim_start_matches('0');
+    Some(if trimmed.is_empty() {
+        "0".to_string()
+    } else {
+        trimmed.to_string()
+    })
 }
 
 /// The bytes a proof signs.

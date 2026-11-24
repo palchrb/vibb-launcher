@@ -67,6 +67,8 @@
      "challenge": "Y2hhbGxlbmdl", "verdict": "root"},
     {"name": "authorization tags out of order", "chain": "invalid-tags_not_in_ascending_order.pem",
      "now": "2026-11-24T00:00:00Z", "challenge": "Y2hhbGxlbmdl", "verdict": "chain"},
+    {"name": "a RootOfTrust whose deviceLocked isn't DER's 0x00 or 0xFF", "chain": "invalid-malformed_rot_device_locked.pem",
+     "now": "2026-11-24T00:00:00Z", "challenge": "Y2hhbGxlbmdl", "verdict": "chain"},
     {"name": "one certificate", "chain": "allow-while-on-body.pem", "now": "2025-01-01T00:00:00Z",
      "challenge": "Y2hhbGxlbmdl", "verdict": "chain"}
   ]

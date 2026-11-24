@@ -8,7 +8,8 @@
 //! - `POST /api/devices/key {challenge, chain, proof}` -> 200 `{key_id, state}`; idempotent on the SPKI (the same key
 //!   again is the same answer, whatever the challenge's state); 409 `{reason: "exists"}` for another key while one is
 //!   stored; 400 `{reason}` for a refused chain; 503 `{reason: "list_stale", retry_after_s}`.
-//! - `POST /api/devices/key/conflict` -> 204: the phone holds none of the key the server names (§5.2 step 3).
+//! - `POST /api/devices/key/conflict` -> 204: the phone holds none of the key the server names (§5.2 step 3); 409
+//!   `{reason: "none"}` while the server names none.
 //!
 //! The chain is checked before any transaction (M4). S1 stores the key `observed`; the bearer keeps working.
 
@@ -31,6 +32,11 @@ pub struct RegisterRequest {
     pub challenge: String,
     pub chain: Vec<String>,
     pub proof: String,
+}
+
+/// Whether `LAUNCHER_SIGNATURE_CHECKSUM` is set and readable: without it no key can be checked (§3 item 10).
+pub fn checksum_set(state: &AppState) -> bool {
+    attestation::signature_digest(state.config.launcher_signature_checksum.as_deref()).is_some()
 }
 
 /// A refusal's answer: 400 `{reason}`, or 503 `{reason: "list_stale", retry_after_s}` with `Retry-After`.
@@ -274,6 +280,21 @@ pub async fn post_conflict(
     State(state): State<AppState>,
     Extension(AuthedDevice(device)): Extension<AuthedDevice>,
 ) -> Response {
+    // A conflict is about a key the server names (§5.2 step 3): with none stored there is nothing to report (L8).
+    match super::current_key(&state.db, device.id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            return (
+                StatusCode::CONFLICT,
+                axum::Json(serde_json::json!({ "reason": "none" })),
+            )
+                .into_response();
+        }
+        Err(err) => {
+            tracing::error!(device_id = device.id, %err, "can't read the phone's key");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    }
     mark_conflict(&state, device.id, "report").await;
     StatusCode::NO_CONTENT.into_response()
 }
@@ -297,7 +318,7 @@ async fn mark_conflict(state: &AppState, device_id: i64, how: &str) {
                 Some(
                     Detail::words(
                         &format!("security.detail.device_key_conflict.{how}"),
-                        &[("device", &device_id.to_string())],
+                        &[("name", &device_name(state, device_id).await)],
                     )
                     .with_facts(format!("device {device_id}")),
                 ),
@@ -307,6 +328,17 @@ async fn mark_conflict(state: &AppState, device_id: i64, how: &str) {
         Ok(None) => {}
         Err(err) => tracing::error!(device_id, %err, "can't note the key conflict"),
     }
+}
+
+/// The phone's name for the security log's words (the numeric id stays in the facts).
+async fn device_name(state: &AppState, device_id: i64) -> String {
+    sqlx::query_scalar("SELECT name FROM devices WHERE id = ?")
+        .bind(device_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| device_id.to_string())
 }
 
 /// A refused registration: kept on the phone's row for About This Phone (`Nøkkel avvist (reason)`), and the
@@ -319,6 +351,11 @@ pub async fn note_refusal(
     client: &crate::net::Client,
 ) {
     if refusal == Refusal::ListStale {
+        return;
+    }
+    // Without LAUNCHER_SIGNATURE_CHECKSUM every key is refused `app`: the server's setting, said once on Settings -
+    // never the phone's blame (code QA L10).
+    if refusal == Refusal::App && !checksum_set(state) {
         return;
     }
     if let Err(err) = sqlx::query(
@@ -341,7 +378,7 @@ pub async fn note_refusal(
             Some(&ip),
             Detail::words(
                 "security.detail.device_key_refused",
-                &[("device", &device_id.to_string())],
+                &[("name", &device_name(state, device_id).await)],
             )
             .word("reason", crate::handlers::device_pages::key_reason(refusal)),
         )
@@ -358,7 +395,7 @@ pub async fn log_bound(
 ) {
     let mut detail = Detail::words(
         "security.detail.device_key_bound",
-        &[("device", &device_id.to_string())],
+        &[("name", &device_name(state, device_id).await)],
     )
     .with_facts(format!("device {device_id}"));
     if unusual {

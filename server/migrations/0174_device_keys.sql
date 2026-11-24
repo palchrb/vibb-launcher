@@ -29,6 +29,8 @@ CREATE TABLE device_keys (
     last_signed_at TEXT
 );
 CREATE INDEX device_keys_device ON device_keys (device_id);
+-- One live key per phone (a rotation's `pending` key sits beside it until it is committed).
+CREATE UNIQUE INDEX device_keys_one_live ON device_keys (device_id) WHERE state IN ('observed', 'bound', 'held');
 
 -- One live registration challenge per phone (32 random bytes, 10 minutes, used once).
 CREATE TABLE device_key_challenges (
@@ -55,11 +57,14 @@ CREATE TABLE sig_clock (
 );
 
 -- The enrolment code a phone used with a key, kept until the code's own expiry, so a lost answer can be asked for
--- again with the same key (§5.1); the last refused registration's reason (About This Phone); a key conflict (an
+-- again with the same key (§5.1) - at most twice, each time with a proof whose ECDSA `r` wasn't seen before (a
+-- captured body never replays); the last refused registration's reason (About This Phone); a key conflict (an
 -- `exists` answer or the phone's report), cleared only by a new setup code.
 ALTER TABLE devices ADD COLUMN enroll_used_code_hash TEXT;
 ALTER TABLE devices ADD COLUMN enroll_used_expires_at TEXT;
 ALTER TABLE devices ADD COLUMN enroll_used_spki_sha256 TEXT;
+ALTER TABLE devices ADD COLUMN enroll_used_proof_rs TEXT;
+ALTER TABLE devices ADD COLUMN enroll_repeats INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE devices ADD COLUMN key_refused_reason TEXT;
 ALTER TABLE devices ADD COLUMN key_refused_at TEXT;
 ALTER TABLE devices ADD COLUMN key_conflict_at TEXT;

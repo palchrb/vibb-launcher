@@ -104,23 +104,6 @@ fn the_rows() {
     assert!(ok >= 6, "{ok} passing rows");
 }
 
-/// The Kotlin library's malformed RootOfTrust: never taken.
-#[test]
-fn a_malformed_root_of_trust_is_refused() {
-    let expect = Expect {
-        challenge: b"challenge",
-        package: "x",
-        signature_digest: &[0; 32],
-        now: at("2026-11-24T00:00:00Z"),
-    };
-    let result = verify(
-        &chain("invalid-malformed_rot_device_locked.pem"),
-        &expect,
-        &HashSet::new(),
-    );
-    assert!(result.is_err());
-}
-
 fn good() -> (Vec<Vec<u8>>, Vec<u8>, Vec<u8>, i64) {
     (
         chain("caiman-sdk36-TEE_EC_RKP.pem"),

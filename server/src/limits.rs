@@ -437,29 +437,36 @@ pub async fn device_edge(
     use axum::response::IntoResponse;
 
     let mut request = request;
-    let valid_token = request
+    let bearer_device = request
         .headers()
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
-        .is_some_and(|token| state.tokens.lookup(token).is_some());
-    // Design 129 §4.5: a signature is checked from the headers alone, before the body is read; only one that verifies
-    // (its nonce new) authenticates.
-    let signature = state
-        .device_keys
-        .check(request.method(), request.uri(), request.headers());
-    if signature == Some(crate::device_key::SigCheck::TooMany) {
-        return with_time(
-            &state,
-            (StatusCode::TOO_MANY_REQUESTS, [(header::RETRY_AFTER, "5")]).into_response(),
-        );
-    }
-    let signed = matches!(signature, Some(crate::device_key::SigCheck::Valid { .. }));
-    let permit = if valid_token || signed {
-        None
-    } else {
+        .and_then(|token| state.tokens.lookup(token));
+    // Design 129 code QA L6: without a valid bearer, a blocked client is refused and the request takes its
+    // unauthenticated slot before any signature is verified.
+    let mut permit = None;
+    if bearer_device.is_none() {
+        if request
+            .headers()
+            .contains_key(crate::device_key::SIGNATURE_HEADER)
+        {
+            let key = crate::gate::peer_of(&request)
+                .map(|peer| state.net.client(request.headers(), peer.ip()).key())
+                .unwrap_or_default();
+            if let Some(refused) = state.limits.ip_blocked(&key) {
+                return with_time(
+                    &state,
+                    (
+                        StatusCode::TOO_MANY_REQUESTS,
+                        [(header::RETRY_AFTER, refused.retry_after_secs.to_string())],
+                    )
+                        .into_response(),
+                );
+            }
+        }
         match state.limits.unauthenticated().try_acquire_owned() {
-            Ok(permit) => Some(permit),
+            Ok(slot) => permit = Some(slot),
             Err(_) => {
                 return with_time(
                     &state,
@@ -471,7 +478,33 @@ pub async fn device_edge(
                 );
             }
         }
+    }
+    // Design 129 §4.5: a signature is checked from the headers alone, before the body is read; only one that verifies
+    // (its nonce new) authenticates.
+    let signature = state
+        .device_keys
+        .check(request.method(), request.uri(), request.headers());
+    // S1 never acts against a phone whose own bearer came along (code QA M2): no 429 for its key's nonces, and its
+    // body's hash is only logged.
+    let own_bearer = |device_id: i64| bearer_device == Some(device_id);
+    if let Some(crate::device_key::SigCheck::TooMany { device_id }) = signature
+        && !own_bearer(device_id)
+    {
+        return with_time(
+            &state,
+            (StatusCode::TOO_MANY_REQUESTS, [(header::RETRY_AFTER, "5")]).into_response(),
+        );
+    }
+    let (signed, strict) = match &signature {
+        Some(crate::device_key::SigCheck::Valid { device_id, .. }) => {
+            (true, !own_bearer(*device_id))
+        }
+        _ => (false, true),
     };
+    if signed {
+        // Authenticated: the unauthenticated slot goes back at once.
+        permit = None;
+    }
     // §4.5 step 3: the body hashed as it streams, outside any decompression; a body that is empty already is
     // compared here (a route that never reads its body still can't take one that wasn't signed).
     let mismatch = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -485,7 +518,9 @@ pub async fn device_edge(
             let expected = *body_sha256;
             let flag = mismatch.clone();
             request = request.map(|body| {
-                axum::body::Body::new(crate::device_key::HashingBody::new(body, expected, flag))
+                axum::body::Body::new(crate::device_key::HashingBody::new(
+                    body, expected, flag, strict,
+                ))
             });
         }
     }
@@ -505,7 +540,7 @@ pub async fn device_edge(
         )
     });
     let class = route_class(request.uri().path());
-    let mut response = if mismatch.load(std::sync::atomic::Ordering::Relaxed) {
+    let mut response = if strict && mismatch.load(std::sync::atomic::Ordering::Relaxed) {
         // An empty body that isn't the signed one: the handler never runs.
         StatusCode::BAD_REQUEST.into_response()
     } else if matches!(class, RouteClass::Long | RouteClass::Stream) {
@@ -524,14 +559,26 @@ pub async fn device_edge(
     if mismatch.load(std::sync::atomic::Ordering::Relaxed)
         && let Some((client, path, device_id)) = body_check
     {
-        response = crate::security::refuse_signature(
-            &state,
-            crate::device_key::AuthReason::BadBody,
-            device_id,
-            client.as_ref(),
-            &path,
-        )
-        .await;
+        if strict {
+            response = crate::security::refuse_signature(
+                &state,
+                crate::device_key::AuthReason::BadBody,
+                device_id,
+                client.as_ref(),
+                &path,
+            )
+            .await;
+        } else {
+            // Observe (M2): the phone's own bearer came with it - the audit row, nothing more.
+            crate::security::log_signature_failure(
+                &state,
+                crate::device_key::AuthReason::BadBody,
+                client.as_ref(),
+                &path,
+                false,
+            )
+            .await;
+        }
     }
     let headers = response.headers_mut();
     let cache = device_cache_control(

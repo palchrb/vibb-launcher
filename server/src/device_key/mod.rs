@@ -36,7 +36,8 @@ pub const AUTH_HEADER: &str = "vibb-auth";
 pub const WINDOW_PAST_MS: i64 = 60_000;
 pub const WINDOW_FUTURE_MS: i64 = 30_000;
 /// The signature clock is written this often (and at shutdown); the floor after a restart is the stored value
-/// plus this and the future window.
+/// plus this and both windows (100 s: code QA M1 - a `t` signed just before the stop, up to the future window
+/// ahead and accepted for the past window after it, can never be accepted again).
 pub const CLOCK_WRITE_EVERY: Duration = Duration::from_secs(10);
 /// Nonces remembered per key within the window; past it the key's requests get a 429.
 pub const NONCES_PER_KEY: usize = 4096;
@@ -87,40 +88,6 @@ impl AuthReason {
     /// Every refusal but `stale` counts against the client's failure bucket and is logged (§4.4).
     pub fn counts(self) -> bool {
         self != AuthReason::Stale
-    }
-}
-
-/// A key's state (§8's `device_keys.state`). S1 stores `observed` alone.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum KeyState {
-    Observed,
-    Bound,
-    Held,
-    Pending,
-    Retired,
-}
-
-impl KeyState {
-    pub fn word(self) -> &'static str {
-        match self {
-            KeyState::Observed => "observed",
-            KeyState::Bound => "bound",
-            KeyState::Held => "held",
-            KeyState::Pending => "pending",
-            KeyState::Retired => "retired",
-        }
-    }
-
-    pub fn from_word(word: &str) -> Option<KeyState> {
-        [
-            KeyState::Observed,
-            KeyState::Bound,
-            KeyState::Held,
-            KeyState::Pending,
-            KeyState::Retired,
-        ]
-        .into_iter()
-        .find(|s| s.word() == word)
     }
 }
 
@@ -215,12 +182,11 @@ impl SigClock {
     }
 }
 
-/// The base at a start (the contract's `clock` rows): `max(wall, stored + 10 s + the future window)`.
+/// The base at a start (the contract's `clock` rows): `max(wall, stored + 10 s + the future and past windows)`.
 pub fn sig_base(stored: Option<i64>, wall_ms: i64) -> i64 {
     match stored {
-        Some(stored) => {
-            wall_ms.max(stored + CLOCK_WRITE_EVERY.as_millis() as i64 + WINDOW_FUTURE_MS)
-        }
+        Some(stored) => wall_ms
+            .max(stored + CLOCK_WRITE_EVERY.as_millis() as i64 + WINDOW_FUTURE_MS + WINDOW_PAST_MS),
         None => wall_ms,
     }
 }
@@ -377,7 +343,11 @@ impl DeviceKeys {
         {
             NonceVerdict::New => {}
             NonceVerdict::Replay => return refused(AuthReason::Replay, Some(key.device_id)),
-            NonceVerdict::Full => return SigCheck::TooMany,
+            NonceVerdict::Full => {
+                return SigCheck::TooMany {
+                    device_id: key.device_id,
+                };
+            }
         }
         let mut expected = [0u8; 32];
         hex::decode_to_slice(body_hash, &mut expected).expect("checked hex");
@@ -466,8 +436,8 @@ pub enum SigCheck {
         reason: AuthReason,
         device_id: Option<i64>,
     },
-    /// The key's nonce set is full: a 429.
-    TooMany,
+    /// The key's nonce set is full: a 429 (unless the phone's own bearer came with it, S1).
+    TooMany { device_id: i64 },
 }
 
 /// `Vibb-Signature: v1;k=<key id>;t=<ms>;n=<nonce>;s=<sig>` (§4.2), in that order.
@@ -549,22 +519,30 @@ pub fn verify_signature(public_key: &[u8], message: &[u8], signature: &[u8]) -> 
 }
 
 /// A request body hashed as it streams (§4.5 step 3, no buffering): at its end the hash is compared, and a mismatch
-/// makes the body yield an error - so the route's extractor fails and the handler never runs - and sets `mismatch`,
-/// which the edge turns into a 400 `bad_body`.
+/// sets `mismatch` and, when `strict`, makes the body yield an error - so the route's extractor fails and the handler
+/// never runs, and the edge answers 400 `bad_body`. Not strict (S1, the phone's own bearer came with it, code QA M2):
+/// the body ends as sent and the mismatch is only logged.
 pub struct HashingBody {
     inner: axum::body::Body,
     hasher: Option<sha2::Sha256>,
     expected: [u8; 32],
     mismatch: Arc<AtomicBool>,
+    strict: bool,
 }
 
 impl HashingBody {
-    pub fn new(inner: axum::body::Body, expected: [u8; 32], mismatch: Arc<AtomicBool>) -> Self {
+    pub fn new(
+        inner: axum::body::Body,
+        expected: [u8; 32],
+        mismatch: Arc<AtomicBool>,
+        strict: bool,
+    ) -> Self {
         HashingBody {
             inner,
             hasher: Some(sha2::Sha256::new()),
             expected,
             mismatch,
+            strict,
         }
     }
 }
@@ -593,6 +571,9 @@ impl http_body::Body for HashingBody {
             Poll::Ready(None) => {
                 let hash: [u8; 32] = self.hasher.take().expect("checked").finalize().into();
                 if hash == self.expected {
+                    Poll::Ready(None)
+                } else if !self.strict {
+                    self.mismatch.store(true, Ordering::Relaxed);
                     Poll::Ready(None)
                 } else {
                     self.mismatch.store(true, Ordering::Relaxed);
@@ -636,7 +617,6 @@ pub fn b64url(bytes: &[u8]) -> String {
 #[derive(Clone, Debug, sqlx::FromRow)]
 pub struct StoredKey {
     pub key_id: String,
-    pub device_id: i64,
     pub spki_sha256: String,
     pub security_level: String,
     pub attestation_version: i64,
@@ -649,7 +629,6 @@ pub struct StoredKey {
     pub state: String,
     pub revoked_at: Option<String>,
     pub last_signed_at: Option<String>,
-    pub created_at: String,
 }
 
 impl StoredKey {
@@ -675,8 +654,8 @@ pub async fn current_key(
     device_id: i64,
 ) -> Result<Option<StoredKey>, sqlx::Error> {
     sqlx::query_as(
-        "SELECT key_id, device_id, spki_sha256, security_level, attestation_version, os_patch_level, boot_state, \
-         boot_key, device_locked, root, unusual, state, revoked_at, last_signed_at, created_at FROM device_keys \
+        "SELECT key_id, spki_sha256, security_level, attestation_version, os_patch_level, boot_state, \
+         boot_key, device_locked, root, unusual, state, revoked_at, last_signed_at FROM device_keys \
          WHERE device_id = ? AND state != 'retired' ORDER BY created_at DESC LIMIT 1",
     )
     .bind(device_id)
@@ -1035,11 +1014,11 @@ mod tests {
     #[test]
     fn the_clock_never_steps_back() {
         // A floor ahead of the wall clock wins; the wall clock wins once it's past the floor.
-        assert_eq!(sig_base(Some(1_000_000), 900_000), 1_040_000);
+        assert_eq!(sig_base(Some(1_000_000), 900_000), 1_100_000);
         assert_eq!(sig_base(Some(1_000_000), 2_000_000), 2_000_000);
         assert_eq!(sig_base(None, 5), 5);
         let clock = SigClock::starting(Some(10_000_000_000_000), 1);
-        assert!(clock.now_ms() >= 10_000_000_040_000);
+        assert!(clock.now_ms() >= 10_000_000_100_000);
     }
 
     #[test]
@@ -1089,11 +1068,31 @@ mod tests {
         use http_body_util::BodyExt;
         let expected: [u8; 32] = sha2::Sha256::digest(b"hello").into();
         let flag = Arc::new(AtomicBool::new(false));
-        let body = HashingBody::new(axum::body::Body::from("hello"), expected, flag.clone());
+        let body = HashingBody::new(
+            axum::body::Body::from("hello"),
+            expected,
+            flag.clone(),
+            true,
+        );
         assert_eq!(body.collect().await.unwrap().to_bytes(), "hello");
         assert!(!flag.load(Ordering::Relaxed));
-        let body = HashingBody::new(axum::body::Body::from("hellO"), expected, flag.clone());
+        let body = HashingBody::new(
+            axum::body::Body::from("hellO"),
+            expected,
+            flag.clone(),
+            true,
+        );
         assert!(body.collect().await.is_err());
+        assert!(flag.load(Ordering::Relaxed));
+        // Not strict (S1 with the phone's own bearer): the body as sent, the mismatch noted.
+        let flag = Arc::new(AtomicBool::new(false));
+        let body = HashingBody::new(
+            axum::body::Body::from("hellO"),
+            expected,
+            flag.clone(),
+            false,
+        );
+        assert_eq!(body.collect().await.unwrap().to_bytes(), "hellO");
         assert!(flag.load(Ordering::Relaxed));
     }
 }

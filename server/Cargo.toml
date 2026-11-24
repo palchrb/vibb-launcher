@@ -91,7 +91,8 @@ tracing = "0.1.44"
 unicode-normalization = "0.1"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
-# Design 95 §3.5: the status route's request decompression and its body mapping (`device_routes`).
+# Design 95 §3.5 once mapped the status route's request body here; `tower`'s util is still used by the tests and the
+# shell (the status route inflates its own gzip since design 129, `device_api::report_body`).
 tower = { version = "0.5", features = ["util"] }
 
 [dev-dependencies]

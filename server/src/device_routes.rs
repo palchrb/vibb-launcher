@@ -32,17 +32,11 @@ pub fn device_routes(state: AppState) -> Router<AppState> {
 
     let authed_routes = Router::new()
         .route("/api/devices/policy", get(handlers::device_api::policy))
-        // Design 95 §3.5: a gzip'd report (`Content-Encoding: gzip`, the policy's `status_gzip`) is inflated here,
-        // inside `require_device_token` (never an unauthenticated body); another encoding is a 415. The body limit is
-        // the extractor's, on the inflated bytes: a gzip bomb stops at it with a 413.
-        .route(
-            "/api/devices/status",
-            post(handlers::device_api::status).layer(
-                tower::ServiceBuilder::new()
-                    .layer(tower_http::decompression::RequestDecompressionLayer::new())
-                    .map_request(|req: axum::http::Request<_>| req.map(axum::body::Body::new)),
-            ),
-        )
+        // Design 95 §3.5: a gzip'd report (`Content-Encoding: gzip`, the policy's `status_gzip`) is inflated by the
+        // handler itself (`device_api::report_body`), inside `require_device_token` (never an unauthenticated body) and
+        // after the whole compressed body was read - so after its signed hash was checked (design 129 code QA L4).
+        // Another encoding is a 415; the inflated bytes stop at the device limit with a 413 (a gzip bomb).
+        .route("/api/devices/status", post(handlers::device_api::status))
         .route(
             "/api/devices/command-result",
             post(handlers::device_api::command_result),

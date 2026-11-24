@@ -23,7 +23,7 @@ OTHER = b"vibb fake phone key - test only, never a real phone (another one)"
 OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "server", "testdata",
                    "device_key.json")
 # The window (s4.3) and the clock's floor step (10 s writes + the future window).
-PAST_MS, FUTURE_MS, FLOOR_STEP_MS = 60_000, 30_000, 40_000
+PAST_MS, FUTURE_MS, FLOOR_STEP_MS = 60_000, 30_000, 100_000
 
 
 def add(p, q):
@@ -194,6 +194,8 @@ def build():
             {"kind": "signature_no_body_hash", "authenticated": False, "status": 401, "vibb_auth": "missing"},
             {"kind": "signature_body_changed", "authenticated": True, "status": 400, "vibb_auth": "bad_body"},
             {"kind": "signature_bad_with_own_bearer", "authenticated": True, "status": 200, "vibb_auth": None},
+            {"kind": "signature_body_changed_with_own_bearer", "authenticated": True, "status": 200,
+             "vibb_auth": None},
         ],
         "answers": [
             {"reason": "stale", "phone": "take_offset_and_retry_once"},
@@ -218,6 +220,9 @@ def build():
                 "repeat": {"device_id": "<id>", "device_token": "<token>",
                            "key": {"key_id": "<key id>", "state": "observed"}},
             },
+            "repeats": 2,
+            "repeat_rule": "the same code with the same key, in the code's own life, at most twice, each with a proof "
+                           "whose ECDSA r was never seen for it: the phone signs the proof afresh on every attempt",
             "refusal_words": ["chain", "root", "revoked", "expired", "software", "properties", "app", "boot",
                               "lost", "challenge", "proof", "list_stale"],
         },
@@ -235,6 +240,7 @@ def build():
                 {"case": "list_stale", "status": 503, "body": {"reason": "list_stale", "retry_after_s": 3600}},
             ],
             "conflict": {"status": 204},
+            "conflict_without_key": {"status": 409, "body": {"reason": "none"}},
         },
         "policy": {
             "none": {"state": "none", "rotate": False},

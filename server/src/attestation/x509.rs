@@ -19,8 +19,6 @@ pub const OID_PROVISIONING_INFO: &[u8] =
     &[0x2b, 0x06, 0x01, 0x04, 0x01, 0xd6, 0x79, 0x02, 0x01, 0x1e];
 /// `serialNumber` (2.5.4.5) in a name: a factory intermediate has it.
 pub const OID_SERIAL_NUMBER_ATTR: &[u8] = &[0x55, 0x04, 0x05];
-pub const OID_COMMON_NAME: &[u8] = &[0x55, 0x04, 0x03];
-pub const OID_ORGANIZATION: &[u8] = &[0x55, 0x04, 0x0a];
 
 /// A public key's kind, as the chain's signatures need it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -34,7 +32,6 @@ pub enum KeyKind {
 #[derive(Clone, Debug)]
 pub struct Extension<'a> {
     pub oid: &'a [u8],
-    pub critical: bool,
     pub value: &'a [u8],
 }
 
@@ -46,7 +43,6 @@ pub struct Certificate<'a> {
     pub signature: &'a [u8],
     /// The serial's INTEGER content (a leading 0x00 kept).
     pub serial: &'a [u8],
-    pub issuer: &'a [u8],
     pub subject: &'a [u8],
     pub not_before: i64,
     pub not_after: i64,
@@ -82,7 +78,8 @@ impl<'a> Certificate<'a> {
         if inner_alg != signature_alg {
             return None;
         }
-        let issuer = t.expect(Tag::SEQUENCE)?.raw;
+        // The issuer: read past, never compared (the signatures bind the chain).
+        t.expect(Tag::SEQUENCE)?;
         let validity = t.expect(Tag::SEQUENCE)?;
         let mut v = validity.reader();
         let not_before = time(&v.next()?)?;
@@ -105,10 +102,10 @@ impl<'a> Certificate<'a> {
                         let ext = l.expect(Tag::SEQUENCE)?;
                         let mut e = ext.reader();
                         let oid = e.expect(Tag::OID)?.content;
-                        let critical = match e.optional(Tag::BOOLEAN) {
-                            Some(b) => b.boolean()?,
-                            None => false,
-                        };
+                        // `critical` is read past: every extension the check needs is read, the rest ignored.
+                        if let Some(b) = e.optional(Tag::BOOLEAN) {
+                            b.boolean()?;
+                        }
                         let value = e.expect(Tag::OCTET_STRING)?.content;
                         if !e.is_empty() {
                             return None;
@@ -117,11 +114,7 @@ impl<'a> Certificate<'a> {
                         if extensions.iter().any(|x: &Extension| x.oid == oid) {
                             return None;
                         }
-                        extensions.push(Extension {
-                            oid,
-                            critical,
-                            value,
-                        });
+                        extensions.push(Extension { oid, value });
                     }
                 }
                 _ => return None,
@@ -132,7 +125,6 @@ impl<'a> Certificate<'a> {
             signature_alg,
             signature,
             serial,
-            issuer,
             subject,
             not_before,
             not_after,
@@ -161,14 +153,6 @@ impl<'a> Certificate<'a> {
     /// Whether the subject names `oid` (with any value).
     pub fn subject_has(&self, oid: &[u8]) -> bool {
         name_values(self.subject).iter().any(|(o, _)| *o == oid)
-    }
-
-    /// The subject's value for `oid` as text (UTF8String or PrintableString), if any.
-    pub fn subject_value(&self, oid: &[u8]) -> Option<String> {
-        name_values(self.subject)
-            .into_iter()
-            .find(|(o, _)| *o == oid)
-            .and_then(|(_, v)| std::str::from_utf8(v).ok().map(str::to_string))
     }
 }
 
@@ -231,6 +215,10 @@ fn public_key<'a>(spki: &Tlv<'a>) -> Option<(KeyKind, &'a [u8])> {
 
 /// UTCTime (YYMMDDHHMMSSZ, a year below 50 is 20YY) or GeneralizedTime (YYYYMMDDHHMMSSZ), to Unix seconds.
 fn time(tlv: &Tlv) -> Option<i64> {
+    // ASCII digits only, before any slicing by byte (code QA M3: a multi-byte character would panic).
+    if !tlv.content.is_ascii() {
+        return None;
+    }
     let text = std::str::from_utf8(tlv.content).ok()?;
     let text = text.strip_suffix('Z')?;
     let full = if tlv.tag == Tag::UTC_TIME {
@@ -299,4 +287,74 @@ pub fn pem_certificates(pem: &str) -> Vec<Vec<u8>> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tlv(tag: Tag, content: &[u8]) -> Vec<u8> {
+        let mut out = vec![
+            if tag == Tag::UTC_TIME { 0x17 } else { 0x18 },
+            content.len() as u8,
+        ];
+        out.extend_from_slice(content);
+        out
+    }
+
+    /// Code QA M3: a time that isn't ASCII digits is no time - never a panic (reachable unauthenticated through an
+    /// enrolment's chain).
+    #[test]
+    fn malformed_times_are_refused_not_panics() {
+        let read = |tag: Tag, text: &[u8]| {
+            let raw = tlv(tag, text);
+            time(&parse_one(&raw, tag).unwrap())
+        };
+        assert_eq!(read(Tag::UTC_TIME, b"260101000000Z"), Some(1_767_225_600));
+        assert_eq!(
+            read(Tag::GENERALIZED_TIME, b"20260101000000Z"),
+            Some(1_767_225_600)
+        );
+        let bad: [&[u8]; 10] = [
+            "Ø60101000000Z".as_bytes(),
+            "2Ø0101000000Z".as_bytes(),
+            "26010100000ØZ".as_bytes(),
+            b"26010100000Z",
+            b"2601010000000",
+            b"2601010000+0Z",
+            b"261301000000Z",
+            b"",
+            b"Z",
+            &[0xff; 13],
+        ];
+        for text in bad {
+            assert_eq!(read(Tag::UTC_TIME, text), None, "{text:?}");
+            assert_eq!(read(Tag::GENERALIZED_TIME, text), None, "{text:?}");
+        }
+        assert_eq!(
+            read(Tag::GENERALIZED_TIME, "2026010100000Ø".as_bytes()),
+            None
+        );
+    }
+
+    /// Every single-byte change of a real chain's certificates parses or is refused - never a panic.
+    #[test]
+    fn a_changed_byte_never_panics() {
+        let pem =
+            std::fs::read_to_string("testdata/attestation/chains/caiman-sdk36-TEE_EC_RKP.pem")
+                .unwrap();
+        for der in pem_certificates(&pem) {
+            for at in 0..der.len() {
+                for value in [0x00, 0x80, 0xff, der[at] ^ 0x01] {
+                    let mut changed = der.clone();
+                    changed[at] = value;
+                    if let Some(cert) = Certificate::parse(&changed)
+                        && let Some(ext) = cert.extension(OID_KEY_DESCRIPTION)
+                    {
+                        let _ = super::super::key_description::KeyDescription::parse(ext.value);
+                    }
+                }
+            }
+        }
+    }
 }

@@ -26,8 +26,6 @@ impl Tag {
     pub const NULL: Tag = Tag::universal(5, false);
     pub const OID: Tag = Tag::universal(6, false);
     pub const ENUMERATED: Tag = Tag::universal(10, false);
-    pub const UTF8_STRING: Tag = Tag::universal(12, false);
-    pub const PRINTABLE_STRING: Tag = Tag::universal(19, false);
     pub const UTC_TIME: Tag = Tag::universal(23, false);
     pub const GENERALIZED_TIME: Tag = Tag::universal(24, false);
     pub const SEQUENCE: Tag = Tag::universal(16, true);
@@ -70,9 +68,13 @@ impl<'a> Tlv<'a> {
         int_of(self.content)
     }
 
-    /// A BOOLEAN (DER: 0x00 or 0xFF; any non-zero byte read as true, as the Kotlin library does).
+    /// A BOOLEAN: DER's 0x00 or 0xFF only (code QA L1); any other byte is no BOOLEAN.
     pub fn boolean(&self) -> Option<bool> {
-        (self.tag == Tag::BOOLEAN && self.content.len() == 1).then(|| self.content[0] != 0)
+        match (self.tag == Tag::BOOLEAN, self.content) {
+            (true, [0x00]) => Some(false),
+            (true, [0xff]) => Some(true),
+            _ => None,
+        }
     }
 }
 

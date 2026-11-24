@@ -832,7 +832,9 @@ pub async fn revoke_access(
         )));
     }
     let revoked = sqlx::query_scalar::<_, String>(
-        "UPDATE devices SET token_hash = NULL WHERE id = ? RETURNING name",
+        // Design 129 (code QA H1): nor can a lost enrolment answer be asked for again.
+        "UPDATE devices SET token_hash = NULL, enroll_used_code_hash = NULL, enroll_used_expires_at = NULL, \
+         enroll_used_spki_sha256 = NULL, enroll_used_proof_rs = NULL WHERE id = ? RETURNING name",
     )
     .bind(id)
     .fetch_optional(&state.db)

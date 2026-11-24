@@ -217,7 +217,8 @@ vibb-req-v1
 - **The signature clock is the server's, and it never steps back** (M5). `sig_now()` = `base + monotonic elapsed since
   start`, where `base = max(wall clock at start, floor)` and `floor` is read from the database at start. The server
   writes `sig_now()` to the database every 10 s and at shutdown; `floor` = the stored value + 10 s + the future
-  window (30 s). So no `t` accepted before a restart can be accepted after it, an NTP step or a VM snapshot restore
+  window (30 s) + the past window (60 s), 100 s in all (S1's code QA M1: a `t` up to 30 s ahead of the last stored
+  value stays acceptable for 60 s past it, so the floor must clear both windows). So no `t` accepted before a restart can be accepted after it, an NTP step or a VM snapshot restore
   moves nothing back, and while the wall clock is behind the signature clock simply runs ahead of it (it is used for
   nothing else). It catches up to the wall clock only at a restart.
 - The phone keeps `serverOffset` = the server's `Vibb-Time` (`sig_now()` in ms; a new header on **every** device
@@ -298,7 +299,10 @@ unknown key, a bad signature, a stale `t`, a missing body hash.
 - **Idempotent** (lost answer): the consumed code keeps the SPKI that consumed it until the code's own expiry. The
   same code with the same SPKI (and a fresh valid `proof`) gets the same answer again; in S1 the bearer is reissued
   (the server keeps only its hash, and the phone never got the first). The same code with another SPKI is the
-  ordinary "code used".
+  ordinary "code used". S1's code QA H1 bounds it: at most **two** repeats, each with a proof whose ECDSA `r` was never
+  seen for this code (`r`, not the bytes: `(r, s)` and `(r, n - s)` both verify), so a captured enrol body never
+  replays - **the phone signs the proof afresh on every attempt** (L1). Revoke Access and any later enrolment of the row
+  clear the kept code; each repeat is logged (`device_enrolled`, "asked again").
 
 ### 5.2 A phone enrolled today: the registration flow (H2)
 
@@ -464,6 +468,10 @@ never locked out, never silent (Q3, decided).
 
 ### 8.1 S2's commit (H3, M1, M3)
 
+**Keys registered before L1 ships** (S1's code QA L9): S1 takes registrations from any client with the bearer, before
+any real launcher makes a key - such a key can only be someone else's. S2 treats every key registered before the first
+L1 release reached the phone as suspect: `held`, never bound automatically.
+
 S2's migration turns an `observed` key into `bound` (and sets `token_hash = NULL`, and closes the phone's streams) only
 when all hold: the key passes §3 item 13 (the boot state); the device has no recorded key conflict (`exists` answer or
 conflict report); the registration was not `unusual`. Any other observed key becomes **`held`**: the phone keeps its
@@ -541,6 +549,9 @@ and `device_auth_failed`'s new reasons.
 - **Locked use**: a key without user auth or `UnlockedDeviceRequired` works while the screen is locked [doc]; before
   the first unlock after a boot the sealed token is unreadable today anyway (CE prefs); whether the key itself signs
   before the first unlock is checked in the gate [assumed].
+- **Step 0 also reads, from S1's code QA**: whether the Jelly Star's chain encodes each issuer exactly as the next
+  certificate's subject (S1 compares no names - the signatures bind the chain, L2), and in which list it puts the app
+  (tag 709: S1 reads the software list and falls back to the hardware list, L3).
 - **The Jelly Star** (MediaTek, Android 16 by Unihertz's update, launched on 13) **must be checked on the real phone
   before S2** [assumed on every point]: that its chain ends at a Google root at all, its security level (TEE;
   StrongBox likely absent), its `attestationVersion`, that no certificate of its chain is revoked (leaked MediaTek

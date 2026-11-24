@@ -231,7 +231,7 @@
         "stored": 1790000000000,
         "wall_at_start": 1789000000000,
         "elapsed": 1000,
-        "sig_now": 1790000041000
+        "sig_now": 1790000101000
       },
       {
         "name": "the wall clock past the floor: the wall clock",
@@ -345,6 +345,12 @@
       "authenticated": true,
       "status": 200,
       "vibb_auth": null
+    },
+    {
+      "kind": "signature_body_changed_with_own_bearer",
+      "authenticated": true,
+      "status": 200,
+      "vibb_auth": null
     }
   ],
   "answers": [
@@ -427,6 +433,8 @@
         }
       }
     },
+    "repeats": 2,
+    "repeat_rule": "the same code with the same key, in the code's own life, at most twice, each with a proof whose ECDSA r was never seen for it: the phone signs the proof afresh on every attempt",
     "refusal_words": [
       "chain",
       "root",
@@ -513,6 +521,12 @@
     ],
     "conflict": {
       "status": 204
+    },
+    "conflict_without_key": {
+      "status": 409,
+      "body": {
+        "reason": "none"
+      }
     }
   },
   "policy": {

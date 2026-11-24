@@ -1402,10 +1402,15 @@ pub async fn require_device_token(
         (Some(SigCheck::Refused { reason, device_id }), Some(bearer))
             if device_id.is_none_or(|d| d == bearer) =>
         {
-            // Observe mode: the failure is logged, the bearer still authenticates.
+            // Observe mode: the failure is logged - never counted against the client (code QA M2) - and the
+            // bearer still authenticates.
             if reason.counts() {
-                log_signature_failure(&state, reason, client.as_ref(), request.uri().path()).await;
+                log_signature_failure(&state, reason, client.as_ref(), request.uri().path(), false)
+                    .await;
             }
+            (bearer, None)
+        }
+        (Some(SigCheck::TooMany { device_id }), Some(bearer)) if device_id == bearer => {
             (bearer, None)
         }
         (Some(SigCheck::Refused { reason, device_id }), _) => {
@@ -1418,7 +1423,7 @@ pub async fn require_device_token(
             )
             .await;
         }
-        (Some(SigCheck::TooMany), _) => {
+        (Some(SigCheck::TooMany { .. }), _) => {
             return too_many(crate::limits::Refused {
                 retry_after_secs: 5,
             });
@@ -1508,7 +1513,7 @@ pub async fn refuse_signature(
         if let Some(refused) = state.limits.ip_blocked(&key) {
             return too_many(refused);
         }
-        log_signature_failure(state, reason, client, path).await;
+        log_signature_failure(state, reason, client, path, true).await;
     }
     let status = if reason == AuthReason::BadBody {
         axum::http::StatusCode::BAD_REQUEST
@@ -1523,15 +1528,17 @@ pub async fn refuse_signature(
     response
 }
 
-/// Counts a signature failure against the client and writes the throttled `device_auth_failed` with its reason.
-async fn log_signature_failure(
+/// Writes the throttled `device_auth_failed` with a signature failure's reason; `count`: and counts it against the
+/// client (never for a phone whose own bearer came with it, code QA M2).
+pub(crate) async fn log_signature_failure(
     state: &AppState,
     reason: crate::device_key::AuthReason,
     client: Option<&crate::net::Client>,
     path: &str,
+    count: bool,
 ) {
     let key = client.map(|c| c.key()).unwrap_or_default();
-    let blocked = state.limits.ip_failed(&key);
+    let blocked = count && state.limits.ip_failed(&key);
     let mut detail = Detail::words("security.detail.device_auth.signature", &[])
         .word(
             "reason",

@@ -42,6 +42,7 @@ impl StatusList {
     /// Takes a list's body (Google's JSON) fetched at `fetched_at`; the number of listed serials, or why not.
     pub fn take(&self, body: &[u8], fetched_at: DateTime<Utc>) -> Result<usize, String> {
         let revoked = parse(body)?;
+        let fetched_at = fetched_at.min(Utc::now());
         let count = revoked.len();
         *self.loaded.write().unwrap_or_else(|e| e.into_inner()) = Some(Loaded {
             revoked: Arc::new(revoked),
@@ -149,6 +150,8 @@ pub async fn load(state: &crate::AppState) {
     let Some(at) = DateTime::<Utc>::from_timestamp_millis(disk.fetched_at_ms) else {
         return;
     };
+    // A copy stamped in the future (a clock set back since) is read as fetched now, never as fresh for longer (L7).
+    let at = at.min(Utc::now());
     match state
         .device_keys
         .status
@@ -231,11 +234,16 @@ async fn fetch(client: &reqwest::Client, url: &str) -> Result<(Vec<u8>, Option<S
     if answer.content_length().is_some_and(|n| n > MAX_BODY as u64) {
         return Err("too large".into());
     }
-    let body = answer.bytes().await.map_err(|e| e.to_string())?;
-    if body.len() > MAX_BODY {
-        return Err("too large".into());
+    // Read as it streams, stopping at the cap (code QA L7): a list without a length can't grow without bound.
+    let mut answer = answer;
+    let mut body = Vec::new();
+    while let Some(chunk) = answer.chunk().await.map_err(|e| e.to_string())? {
+        if body.len() + chunk.len() > MAX_BODY {
+            return Err("too large".into());
+        }
+        body.extend_from_slice(&chunk);
     }
-    Ok((body.to_vec(), cache_control))
+    Ok((body, cache_control))
 }
 
 #[cfg(test)]

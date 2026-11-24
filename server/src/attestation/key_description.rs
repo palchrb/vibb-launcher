@@ -105,7 +105,6 @@ pub struct AuthorizationList {
 pub struct KeyDescription {
     pub attestation_version: i64,
     pub attestation_security_level: SecurityLevel,
-    pub keymint_version: i64,
     pub keymint_security_level: SecurityLevel,
     pub challenge: Vec<u8>,
     pub software: AuthorizationList,
@@ -119,7 +118,7 @@ impl KeyDescription {
         let mut r = seq.reader();
         let attestation_version = r.expect(Tag::INTEGER)?.int()?;
         let attestation_security_level = SecurityLevel::of(r.expect(Tag::ENUMERATED)?.int()?)?;
-        let keymint_version = r.expect(Tag::INTEGER)?.int()?;
+        let _keymint_version = r.expect(Tag::INTEGER)?.int()?;
         let keymint_security_level = SecurityLevel::of(r.expect(Tag::ENUMERATED)?.int()?)?;
         let challenge = r.expect(Tag::OCTET_STRING)?.content.to_vec();
         let _unique_id = r.expect(Tag::OCTET_STRING)?;
@@ -129,7 +128,6 @@ impl KeyDescription {
         Some(KeyDescription {
             attestation_version,
             attestation_security_level,
-            keymint_version,
             keymint_security_level,
             challenge,
             software,
