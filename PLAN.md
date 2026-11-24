@@ -29,6 +29,27 @@ done. Process for each batch: design note where needed, QA, implementation, code
 findings, merge to `main`, full suite once.
 
 ### Approved, not built - the queue (kept current; checked against the code 2026-11-16)
+
+- **LOCKED LIST (the owner, 2026-11-24: no new features or ideas before this list is done; checked against the code
+  2026-11-24)** - the order of work. Anything new goes to "Inbox (not prioritised)" below and is not built until the
+  owner and I have discussed where it goes.
+  1. In progress: (4b) Apple's cell lookup (code QA fixes, then merge); squeue 11 (emulator gate, an RC for the
+     Jelly, then the key-required enrolment with the per-phone exception, then S2).
+  2. Squeue 7 (design first), then squeue 12.
+  3. C3 / Phase D: Vibb's own PIN lock removed (own-mode code still in the launcher).
+  4. C4: one `contracts/` folder both builds read (not started).
+  5. Zones shared by the family, picked per phone (a design 64 revision; not started).
+  6. CalDAV accounts belong to a phone, "Delt i familien" a choice (a design 72/72b revision; not started).
+  7. From upstream (siesta5787): app groups with a shared time limit, and its second idea (design first each).
+  8. Storytel books sealed at rest (design 117 rev 2 written; not built).
+  9. QR setup made robust.
+  10. Privacy round 2 (measure the Jelly's system apps' traffic, then a design; debloat batch 1 being watched).
+  11. Then the frozen two: "Husk!" notes on the glance, "Følg meg hjem".
+  Blocked (done when the blocker goes, not ahead of the list): Nett per app (the SIM); SMS/MMS step 0 and group MMS
+  (the SIM); the GPS signal floor and the three-networks question (the Jelly's data); Storytel on Sonos (cause not
+  found); Vipps/BankID browser; (4i) the charging glimpse (a log); the Jelly device checks.
+- **Inbox (not prioritised)** - the owner's new issues and ideas since the lock, each waiting to be discussed:
+  - (empty)
 - **SECURITY: squeue** (2026-11-23) - security items are kept in a private queue outside the repo, referred to here
   only by number. Done and merged 2026-11-23: squeue 1, 2, 3 (next release; squeue 1 needs the owner's GitHub settings before the next server tag - see DEPLOY.md's recommended settings). Done and merged 2026-11-24: squeue 4, 6, 8, 9; squeue 10 on main (docs). Squeue 13 merged 2026-11-24 (migration 0172; emulator §6bh run 2026-11-24, 14 and 16, all pass). Its follow-up MERGED 2026-11-24 (`dns-bootstrap`: a custom server's name only via Quad9's unfiltered dns10, four pinned addresses per provider, code QA 0H 1M 5L fixed; §6bh's new rows owed on 14 and 16; the backup prefill stays Cloudflare for Families, the owner). Squeue 6/8 follow-ups' §6bg rows run 2026-11-24, all pass. The follow-ups of squeue 6 and 8 merged 2026-11-24 (`blocked-keep`; emulator §6bg's new rows not run). Squeue 5 part (b) dropped by the owner 2026-11-24 (design 128 not built; branch `silent-alarm` kept as the record). Squeue 11: design 129 (Q1-Q10 decided by the owner 2026-11-24); step S1 (server observes, bearer unchanged; migration 0174) MERGED 2026-11-24, code QA 1H 3M 11L fixed. RELEASE: the server needs `LAUNCHER_SIGNATURE_CHECKSUM` set (DEPLOY.md), else Settings shows one orange line. Step L1 (launcher signs with the key; the launcher's copy of device_key.json) MERGED 2026-11-24, code QA 1H 4M 9L fixed (H1: a key is lost only after three strikes over an hour, the server's KeyIndex answers 503 while stale; M4: rkpd found by its service, both names, a UID guard). Next: emulator gate §6bj on 14 and 16, an RC for the owner's Jelly (its first key, TEE expected; doubles as step 0), then S2. Squeue 11 follow-up (owner 2026-11-24, APPROVED, not built; design first): a per-phone exception for a phone that can't prove its key - the parent sees the refusal's reason, confirms, it is logged; no server-wide switch (the checksum is simply required). The owner (2026-11-24): a new phone's enrolment requires a proven key from L1 on, not S2 - built together with the exception in one follow-up right after L1 merges (design 129 addendum first), so a phone that can't attest always has a way in. Next: squeue 7, 12.
 - **Locate: the map jumps down when one phone is picked - ASKED 2026-11-24** (the user: "når man velger en telefon så dytter man ned kartet ... det skaper litt uro"): the span pick (12 t/24 t/7 d/Alt) sits above the map only in the one-phone view. Mockups A (a chip in the map), B (under the map, recommended), C (a row in both) shown as an artifact; the user picked A 2026-11-24 ("A er bra"; a `<details>` chip, no JS needed). Changed by the user the same day: no trail by default, "Spor ▾" offers Ingen spor/6/12/24/48 t, nothing remembered. DONE and MERGED 2026-11-24 (`locate-span-chip`, server CI 45373727694); the Locations page keeps 12 t/24 t/7 d/Alt. Server only (device_locate.html, locate.js).
