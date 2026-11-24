@@ -583,6 +583,8 @@ and a release-feature one, each fresh; a typed code and a QR (Settings' scanner)
 
 ## 11. Owner questions (visible costs first, each with a recommendation)
 
+**Decided 2026-11-24 (the owner): all five as recommended.** Q5 is settled in detail with S2's design.
+
 1. **The kid's phone shows "Venter på en forelder." and a six-digit code; you type that code into the PWA before
    "Bekreft".** One more field, but it is what stops someone else who has the setup code from getting the exception.
    The reason (for example "ukjent utsteder") shows only in the PWA, not on the phone, though you asked for it on the
