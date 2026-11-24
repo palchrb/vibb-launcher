@@ -155,6 +155,16 @@ fn vibb_auth(res: &TestResponse) -> Option<String> {
         .map(str::to_string)
 }
 
+/// The launcher's copy (L1: its `DeviceKeyContractTest` runs the phone's rows) is byte-identical.
+#[test]
+fn the_contract_matches_the_launchers_copy() {
+    let ours = std::fs::read_to_string("testdata/device_key.json").unwrap();
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../launcher/app/src/test/resources/device_key.json");
+    let copy = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    assert_eq!(copy, ours, "{} differs", path.display());
+}
+
 /// The contract's crypto rows (the script's) through the server's own code.
 #[test]
 fn the_contract_rows() {
@@ -727,6 +737,29 @@ async fn observe_mode_keeps_the_bearer() {
     let bound = super::security_words(&app, "device_key_bound", crate::i18n::Lang::En).await;
     assert_eq!(bound.len(), 1, "{bound:?}");
     assert!(bound[0].contains("At setup"), "{bound:?}");
+}
+
+/// L1's code QA L5: a valid signature with another phone's bearer beside it authenticates neither phone.
+#[tokio::test]
+async fn a_signature_with_another_phones_bearer_is_refused() {
+    let app = TestApp::new().await;
+    let a = phone_with_key(&app, "a").await;
+    let b = phone_with_key(&app, "b").await;
+    let mut request = signed(&app, &a, Method::GET, "/api/devices/policy", vec![], "", 0);
+    request.headers_mut().insert(
+        header::AUTHORIZATION,
+        format!("Bearer {}", b.token).parse().unwrap(),
+    );
+    let res = app.send(request).await;
+    assert_eq!(res.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(vibb_auth(&res).as_deref(), Some("bad_sig"));
+    // Its own bearer beside it is fine.
+    let mut own = signed(&app, &a, Method::GET, "/api/devices/policy", vec![], "", 0);
+    own.headers_mut().insert(
+        header::AUTHORIZATION,
+        format!("Bearer {}", a.token).parse().unwrap(),
+    );
+    assert_eq!(app.send(own).await.status, StatusCode::OK);
 }
 
 /// A gzip'd status report signed over its compressed bytes (§4.2: the hash is the body as sent, checked before

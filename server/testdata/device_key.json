@@ -1,5 +1,5 @@
 {
-  "comment": "Design 129 S1's shared contract (s7.1). The crypto rows are scripts/device-key-vectors.py's (a throwaway key from a fake phrase - public data only); the route rows are produced by the server's tests::device_key through the real routes. The launcher's copy and its DeviceKeyContractTest come with L1; S1 keeps the file server-side.",
+  "comment": "Design 129 S1's shared contract (s7.1). The crypto rows are scripts/device-key-vectors.py's (a throwaway key from a fake phrase - public data only); the route rows are produced by the server's tests::device_key through the real routes. Byte-identical in the launcher's test resources (L1): its DeviceKeyContractTest builds the canonical and proof rows, computes the clock, maps the answers and runs the phone rows (the registration flow's decision).",
   "headers": {
     "signature": "Vibb-Signature",
     "body_sha256": "Vibb-Body-SHA256",
@@ -540,5 +540,749 @@
       "spki_sha256": "<hex>",
       "rotate": false
     }
-  }
+  },
+  "phone": [
+    {
+      "name": "a phone on its bearer, no key anywhere",
+      "has_token": true,
+      "local": [],
+      "adopted": null,
+      "last_call": null,
+      "in_flight": false,
+      "conflict_reported": null,
+      "backoff": false,
+      "step1": {
+        "status": 200,
+        "vibb_auth": null,
+        "answer": {
+          "state": "none",
+          "rotate": false
+        }
+      },
+      "action": "register",
+      "key": null,
+      "drop_token": false
+    },
+    {
+      "name": "a lost answer committed late: step 1 names the key",
+      "has_token": true,
+      "local": [
+        "A"
+      ],
+      "adopted": null,
+      "last_call": "timeout",
+      "in_flight": false,
+      "conflict_reported": null,
+      "backoff": false,
+      "step1": {
+        "status": 200,
+        "vibb_auth": null,
+        "answer": {
+          "state": "observed",
+          "rotate": false,
+          "key_id": "key-A",
+          "spki_sha256": "A"
+        }
+      },
+      "action": "adopt",
+      "key": "A",
+      "drop_token": false
+    },
+    {
+      "name": "a lost answer never committed: another key, this one kept",
+      "has_token": true,
+      "local": [
+        "A"
+      ],
+      "adopted": null,
+      "last_call": "timeout",
+      "in_flight": false,
+      "conflict_reported": null,
+      "backoff": false,
+      "step1": {
+        "status": 200,
+        "vibb_auth": null,
+        "answer": {
+          "state": "none",
+          "rotate": false
+        }
+      },
+      "action": "register",
+      "key": null,
+      "drop_token": false
+    },
+    {
+      "name": "two keys made, the server names the second",
+      "has_token": true,
+      "local": [
+        "A",
+        "B"
+      ],
+      "adopted": null,
+      "last_call": "timeout",
+      "in_flight": false,
+      "conflict_reported": null,
+      "backoff": false,
+      "step1": {
+        "status": 200,
+        "vibb_auth": null,
+        "answer": {
+          "state": "observed",
+          "rotate": false,
+          "key_id": "key-B",
+          "spki_sha256": "B"
+        }
+      },
+      "action": "adopt",
+      "key": "B",
+      "drop_token": false
+    },
+    {
+      "name": "the server names a key the phone doesn't hold",
+      "has_token": true,
+      "local": [
+        "A"
+      ],
+      "adopted": null,
+      "last_call": "exists",
+      "in_flight": false,
+      "conflict_reported": null,
+      "backoff": false,
+      "step1": {
+        "status": 200,
+        "vibb_auth": null,
+        "answer": {
+          "state": "observed",
+          "rotate": false,
+          "key_id": "key-X",
+          "spki_sha256": "X"
+        }
+      },
+      "action": "report_conflict",
+      "key": null,
+      "drop_token": false
+    },
+    {
+      "name": "a conflict already reported: keep waiting",
+      "has_token": true,
+      "local": [
+        "A"
+      ],
+      "adopted": null,
+      "last_call": null,
+      "in_flight": false,
+      "conflict_reported": "X",
+      "backoff": false,
+      "step1": {
+        "status": 200,
+        "vibb_auth": null,
+        "answer": {
+          "state": "observed",
+          "rotate": false,
+          "key_id": "key-X",
+          "spki_sha256": "X"
+        }
+      },
+      "action": "wait",
+      "key": null,
+      "drop_token": false
+    },
+    {
+      "name": "adopted and named: nothing to do",
+      "has_token": true,
+      "local": [
+        "A"
+      ],
+      "adopted": "A",
+      "last_call": null,
+      "in_flight": false,
+      "conflict_reported": null,
+      "backoff": false,
+      "step1": {
+        "status": 200,
+        "vibb_auth": null,
+        "answer": {
+          "state": "observed",
+          "rotate": false,
+          "key_id": "key-A",
+          "spki_sha256": "A"
+        }
+      },
+      "action": "keep",
+      "key": null,
+      "drop_token": false
+    },
+    {
+      "name": "an unknown_key wake while a POST is in flight",
+      "has_token": true,
+      "local": [
+        "A",
+        "B"
+      ],
+      "adopted": "A",
+      "last_call": null,
+      "in_flight": true,
+      "conflict_reported": null,
+      "backoff": false,
+      "step1": {
+        "status": 200,
+        "vibb_auth": null,
+        "answer": {
+          "state": "observed",
+          "rotate": false,
+          "key_id": "key-A",
+          "spki_sha256": "A"
+        }
+      },
+      "action": "wait",
+      "key": null,
+      "drop_token": false
+    },
+    {
+      "name": "step 1 had no answer",
+      "has_token": true,
+      "local": [
+        "A"
+      ],
+      "adopted": null,
+      "last_call": "timeout",
+      "in_flight": false,
+      "conflict_reported": null,
+      "backoff": false,
+      "step1": {
+        "status": 0,
+        "vibb_auth": null,
+        "answer": null
+      },
+      "action": "wait",
+      "key": null,
+      "drop_token": false
+    },
+    {
+      "name": "step 1 answered 5xx",
+      "has_token": true,
+      "local": [
+        "A"
+      ],
+      "adopted": null,
+      "last_call": null,
+      "in_flight": false,
+      "conflict_reported": null,
+      "backoff": false,
+      "step1": {
+        "status": 503,
+        "vibb_auth": null,
+        "answer": null
+      },
+      "action": "wait",
+      "key": null,
+      "drop_token": false
+    },
+    {
+      "name": "a restore after S2: no bearer, the key unknown - one strike, never lost at once",
+      "has_token": false,
+      "local": [
+        "A"
+      ],
+      "adopted": "A",
+      "last_call": null,
+      "in_flight": false,
+      "conflict_reported": null,
+      "backoff": false,
+      "step1": {
+        "status": 401,
+        "vibb_auth": "unknown_key",
+        "answer": null
+      },
+      "action": "suspect_lost",
+      "key": null,
+      "drop_token": false
+    },
+    {
+      "name": "suspected, then the key is known again",
+      "has_token": false,
+      "local": [
+        "A"
+      ],
+      "adopted": "A",
+      "last_call": null,
+      "in_flight": false,
+      "conflict_reported": null,
+      "backoff": false,
+      "step1": {
+        "status": 200,
+        "vibb_auth": null,
+        "answer": {
+          "state": "bound",
+          "rotate": false,
+          "key_id": "key-A",
+          "spki_sha256": "A"
+        }
+      },
+      "action": "keep",
+      "key": null,
+      "drop_token": false
+    },
+    {
+      "name": "unknown_key while the bearer still goes along",
+      "has_token": true,
+      "local": [
+        "A"
+      ],
+      "adopted": "A",
+      "last_call": null,
+      "in_flight": false,
+      "conflict_reported": null,
+      "backoff": false,
+      "step1": {
+        "status": 401,
+        "vibb_auth": "unknown_key",
+        "answer": null
+      },
+      "action": "wait",
+      "key": null,
+      "drop_token": false
+    },
+    {
+      "name": "held: adopted, the bearer kept",
+      "has_token": true,
+      "local": [
+        "A"
+      ],
+      "adopted": null,
+      "last_call": null,
+      "in_flight": false,
+      "conflict_reported": null,
+      "backoff": false,
+      "step1": {
+        "status": 200,
+        "vibb_auth": null,
+        "answer": {
+          "state": "held",
+          "rotate": false,
+          "key_id": "key-A",
+          "spki_sha256": "A"
+        }
+      },
+      "action": "adopt",
+      "key": "A",
+      "drop_token": false
+    },
+    {
+      "name": "bound: the bearer goes",
+      "has_token": true,
+      "local": [
+        "A"
+      ],
+      "adopted": "A",
+      "last_call": null,
+      "in_flight": false,
+      "conflict_reported": null,
+      "backoff": false,
+      "step1": {
+        "status": 200,
+        "vibb_auth": null,
+        "answer": {
+          "state": "bound",
+          "rotate": false,
+          "key_id": "key-A",
+          "spki_sha256": "A"
+        }
+      },
+      "action": "adopt",
+      "key": "A",
+      "drop_token": true
+    },
+    {
+      "name": "bound and the bearer gone already",
+      "has_token": false,
+      "local": [
+        "A"
+      ],
+      "adopted": "A",
+      "last_call": null,
+      "in_flight": false,
+      "conflict_reported": null,
+      "backoff": false,
+      "step1": {
+        "status": 200,
+        "vibb_auth": null,
+        "answer": {
+          "state": "bound",
+          "rotate": false,
+          "key_id": "key-A",
+          "spki_sha256": "A"
+        }
+      },
+      "action": "keep",
+      "key": null,
+      "drop_token": false
+    },
+    {
+      "name": "a rotation asked",
+      "has_token": true,
+      "local": [
+        "A"
+      ],
+      "adopted": "A",
+      "last_call": null,
+      "in_flight": false,
+      "conflict_reported": null,
+      "backoff": false,
+      "step1": {
+        "status": 200,
+        "vibb_auth": null,
+        "answer": {
+          "state": "observed",
+          "rotate": true,
+          "key_id": "key-A",
+          "spki_sha256": "A"
+        }
+      },
+      "action": "register",
+      "key": null,
+      "drop_token": false
+    },
+    {
+      "name": "a rotation's lost answer: the old key still named",
+      "has_token": true,
+      "local": [
+        "A",
+        "B"
+      ],
+      "adopted": "A",
+      "last_call": "timeout",
+      "in_flight": false,
+      "conflict_reported": null,
+      "backoff": false,
+      "step1": {
+        "status": 200,
+        "vibb_auth": null,
+        "answer": {
+          "state": "observed",
+          "rotate": true,
+          "key_id": "key-A",
+          "spki_sha256": "A"
+        }
+      },
+      "action": "register",
+      "key": null,
+      "drop_token": false
+    },
+    {
+      "name": "a rotation's commit: the new key named",
+      "has_token": true,
+      "local": [
+        "A",
+        "B"
+      ],
+      "adopted": "A",
+      "last_call": null,
+      "in_flight": false,
+      "conflict_reported": null,
+      "backoff": false,
+      "step1": {
+        "status": 200,
+        "vibb_auth": null,
+        "answer": {
+          "state": "observed",
+          "rotate": false,
+          "key_id": "key-B",
+          "spki_sha256": "B"
+        }
+      },
+      "action": "adopt",
+      "key": "B",
+      "drop_token": false
+    },
+    {
+      "name": "a refusal still waiting out its time",
+      "has_token": true,
+      "local": [],
+      "adopted": null,
+      "last_call": "refused",
+      "in_flight": false,
+      "conflict_reported": null,
+      "backoff": true,
+      "step1": {
+        "status": 200,
+        "vibb_auth": null,
+        "answer": {
+          "state": "none",
+          "rotate": false
+        }
+      },
+      "action": "wait",
+      "key": null,
+      "drop_token": false
+    },
+    {
+      "name": "the server forgot the key (S1, the bearer along)",
+      "has_token": true,
+      "local": [
+        "A"
+      ],
+      "adopted": "A",
+      "last_call": null,
+      "in_flight": false,
+      "conflict_reported": null,
+      "backoff": false,
+      "step1": {
+        "status": 200,
+        "vibb_auth": null,
+        "answer": {
+          "state": "none",
+          "rotate": false
+        }
+      },
+      "action": "register",
+      "key": null,
+      "drop_token": false
+    }
+  ],
+  "phone_nudge": [
+    {
+      "name": "none, nothing adopted",
+      "policy": {
+        "state": "none",
+        "rotate": false
+      },
+      "adopted_key_id": null,
+      "has_token": true,
+      "lost": false,
+      "backoff": false,
+      "since_last_ask_ms": null,
+      "ask": true
+    },
+    {
+      "name": "none while a refusal waits",
+      "policy": {
+        "state": "none",
+        "rotate": false
+      },
+      "adopted_key_id": null,
+      "has_token": true,
+      "lost": false,
+      "backoff": true,
+      "since_last_ask_ms": null,
+      "ask": false
+    },
+    {
+      "name": "none, asked minutes ago",
+      "policy": {
+        "state": "none",
+        "rotate": false
+      },
+      "adopted_key_id": null,
+      "has_token": true,
+      "lost": false,
+      "backoff": false,
+      "since_last_ask_ms": 600000,
+      "ask": false
+    },
+    {
+      "name": "none, asked an hour ago",
+      "policy": {
+        "state": "none",
+        "rotate": false
+      },
+      "adopted_key_id": null,
+      "has_token": true,
+      "lost": false,
+      "backoff": false,
+      "since_last_ask_ms": 3600000,
+      "ask": true
+    },
+    {
+      "name": "the adopted key named",
+      "policy": {
+        "state": "observed",
+        "key_id": "K1",
+        "spki_sha256": "A",
+        "rotate": false
+      },
+      "adopted_key_id": "K1",
+      "has_token": true,
+      "lost": false,
+      "backoff": false,
+      "since_last_ask_ms": null,
+      "ask": false
+    },
+    {
+      "name": "a key named, none adopted",
+      "policy": {
+        "state": "observed",
+        "key_id": "K1",
+        "spki_sha256": "A",
+        "rotate": false
+      },
+      "adopted_key_id": null,
+      "has_token": true,
+      "lost": false,
+      "backoff": false,
+      "since_last_ask_ms": null,
+      "ask": true
+    },
+    {
+      "name": "another key named",
+      "policy": {
+        "state": "observed",
+        "key_id": "K1",
+        "spki_sha256": "A",
+        "rotate": false
+      },
+      "adopted_key_id": "K0",
+      "has_token": true,
+      "lost": false,
+      "backoff": false,
+      "since_last_ask_ms": null,
+      "ask": true
+    },
+    {
+      "name": "a rotation asked",
+      "policy": {
+        "state": "observed",
+        "key_id": "K1",
+        "spki_sha256": "A",
+        "rotate": true
+      },
+      "adopted_key_id": "K1",
+      "has_token": true,
+      "lost": false,
+      "backoff": false,
+      "since_last_ask_ms": null,
+      "ask": true
+    },
+    {
+      "name": "bound while the bearer is kept",
+      "policy": {
+        "state": "bound",
+        "key_id": "K1",
+        "spki_sha256": "A",
+        "rotate": false
+      },
+      "adopted_key_id": "K1",
+      "has_token": true,
+      "lost": false,
+      "backoff": false,
+      "since_last_ask_ms": null,
+      "ask": true
+    },
+    {
+      "name": "bound, the bearer gone",
+      "policy": {
+        "state": "bound",
+        "key_id": "K1",
+        "spki_sha256": "A",
+        "rotate": false
+      },
+      "adopted_key_id": "K1",
+      "has_token": false,
+      "lost": false,
+      "backoff": false,
+      "since_last_ask_ms": null,
+      "ask": false
+    },
+    {
+      "name": "an older server: no device_key",
+      "policy": null,
+      "adopted_key_id": null,
+      "has_token": true,
+      "lost": false,
+      "backoff": false,
+      "since_last_ask_ms": null,
+      "ask": false
+    },
+    {
+      "name": "a lost key asks nothing",
+      "policy": {
+        "state": "none",
+        "rotate": false
+      },
+      "adopted_key_id": "K1",
+      "has_token": true,
+      "lost": true,
+      "backoff": false,
+      "since_last_ask_ms": null,
+      "ask": false
+    }
+  ],
+  "lost_verdict": [
+    {
+      "name": "the first strike",
+      "before": null,
+      "now_elapsed": 1000,
+      "boot": 7,
+      "after": {
+        "first_elapsed_ms": 1000,
+        "first_boot": 7,
+        "strikes": 1
+      },
+      "lost": false
+    },
+    {
+      "name": "three strikes in minutes: not yet",
+      "before": {
+        "first_elapsed_ms": 1000,
+        "first_boot": 7,
+        "strikes": 2
+      },
+      "now_elapsed": 601000,
+      "boot": 7,
+      "after": {
+        "first_elapsed_ms": 1000,
+        "first_boot": 7,
+        "strikes": 3
+      },
+      "lost": false
+    },
+    {
+      "name": "three strikes over an hour: lost",
+      "before": {
+        "first_elapsed_ms": 1000,
+        "first_boot": 7,
+        "strikes": 2
+      },
+      "now_elapsed": 3601000,
+      "boot": 7,
+      "after": {
+        "first_elapsed_ms": 1000,
+        "first_boot": 7,
+        "strikes": 3
+      },
+      "lost": true
+    },
+    {
+      "name": "many strikes, still within the hour",
+      "before": {
+        "first_elapsed_ms": 1000,
+        "first_boot": 7,
+        "strikes": 9
+      },
+      "now_elapsed": 3600999,
+      "boot": 7,
+      "after": {
+        "first_elapsed_ms": 1000,
+        "first_boot": 7,
+        "strikes": 10
+      },
+      "lost": false
+    },
+    {
+      "name": "a reboot starts the span again",
+      "before": {
+        "first_elapsed_ms": 1000,
+        "first_boot": 7,
+        "strikes": 5
+      },
+      "now_elapsed": 500,
+      "boot": 8,
+      "after": {
+        "first_elapsed_ms": 500,
+        "first_boot": 8,
+        "strikes": 6
+      },
+      "lost": false
+    }
+  ]
 }

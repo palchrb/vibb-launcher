@@ -1393,12 +1393,34 @@ pub async fn require_device_token(
     let signature = request.extensions().get::<SigCheck>().cloned();
 
     let (device_id, signed_key) = match (signature, bearer_device) {
+        // L1's code QA L5: a valid signature with another phone's bearer beside it authenticates neither.
+        (Some(SigCheck::Valid { device_id, .. }), Some(bearer)) if device_id != bearer => {
+            return refuse_signature(
+                &state,
+                AuthReason::BadSig,
+                Some(device_id),
+                client.as_ref(),
+                request.uri().path(),
+            )
+            .await;
+        }
         (
             Some(SigCheck::Valid {
                 device_id, key_id, ..
             }),
             _,
         ) => (device_id, Some(key_id)),
+        // The key index is stale (L1's code QA H1): the phone's own bearer still authenticates (S1); without one, a
+        // 503 the phone retries - never `unknown_key`.
+        (Some(SigCheck::Unavailable), Some(bearer)) => (bearer, None),
+        (Some(SigCheck::Unavailable), None) => {
+            state.device_keys.index.retry_if_stale(&state.db).await;
+            return (
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                [(axum::http::header::RETRY_AFTER, "30")],
+            )
+                .into_response();
+        }
         (Some(SigCheck::Refused { reason, device_id }), Some(bearer))
             if device_id.is_none_or(|d| d == bearer) =>
         {

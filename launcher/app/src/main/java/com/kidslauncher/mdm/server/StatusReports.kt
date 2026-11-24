@@ -119,9 +119,10 @@ class HeartbeatAckStore(private val prefs: SharedPreferences) {
         fun of(context: Context) =
             HeartbeatAckStore(context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE))
 
-        /** The owner key for [serverUrl] and [token]. */
-        fun ownerOf(serverUrl: String, token: String): String = MessageDigest.getInstance("SHA-256")
-            .digest("$serverUrl\n$token".toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+        /** The owner key for [serverUrl] and the credential's [ownerId] (design 129 §2.1: the token's hash or
+         * `key:<key id>` - binding a key sends one full report). */
+        fun ownerOf(serverUrl: String, ownerId: String): String = MessageDigest.getInstance("SHA-256")
+            .digest("$serverUrl\n$ownerId".toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
     }
 
     fun get(): HeartbeatAck? {

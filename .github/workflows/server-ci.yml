@@ -75,7 +75,8 @@ jobs:
           # setup_steps.json; setup_status::tests compares it); and an install failure's reason (upstream review
           # 2026-11-20, install_failure.json; install_failure::tests compares it); and what each app may use (design 127,
           # app_access.json; app_permissions::tests::the_contract compares it); and Android's blocked numbers cleared
-          # (blocked_numbers.json; blocked_numbers::tests compares it); and the Apple Wi-Fi lookup's contract folder (design
+          # (blocked_numbers.json; blocked_numbers::tests compares it); and the phone key's contract (design 129,
+          # device_key.json; tests::device_key compares it); and the Apple Wi-Fi lookup's contract folder (design
           # 125, wifi_lookup/contract.json; integrations::wifi_lookup::tests compares it) and its fixtures script
           # (scripts/wifi-lookup-fixtures.py, which wrote server/testdata/wifi_lookup/server.json); and the MMS
           # servers' generator and
@@ -83,7 +84,7 @@ jobs:
           # And design 129's scripts: the GrapheneOS boot keys (scripts/grapheneos-boot-keys.py and its sample; its
           # output src/attestation/grapheneos_boot_keys.json is compiled in) and the phone key's contract vectors
           # (scripts/device-key-vectors.py, which wrote server/testdata/device_key.json).
-          if grep -qE '^(server/|\.github/workflows/server-ci\.yml$|(launcher|music)/app/src/test/resources/spotify_hosts\.json$|launcher/app/src/test/resources/(time_status_report|dns_upstream_status|power_report|zone_status_report|launcher_tag_codes|time_request|installed_apps_report|calendar_title_rules|calendar_status_report|calendar_feeds|emergency_numbers|calendar_kid_events|weather|leave_tailnet|server_url_vectors|restrictions_pause|server_tls_report|sms_contract|contact_request|app_logos|lock_now|mobile_network|status_heartbeat|airplane_mode|rule_pause|shortcuts|login_windows|notification_channels|notification_listeners|unified_push|setup_steps|install_failure|app_access|blocked_numbers|clock_skew)\.json$|launcher/app/src/test/resources/(map_links|wifi_lookup)/|(launcher|music)/app/src/test/resources/storytel_token_answers\.json$|launcher/app/src/main/assets/dns/doh_hosts\.txt$|launcher/app/src/main/java/com/kidslauncher/mdm/ui/home/HomeModel\.kt$|scripts/mmsc-hosts(\.py|-sample\.xml)$|scripts/wifi-lookup-fixtures\.py$|scripts/grapheneos-boot-keys(\.py|-sample/.*)$|scripts/device-key-vectors\.py$)' <<<"$files"; then
+          if grep -qE '^(server/|\.github/workflows/server-ci\.yml$|(launcher|music)/app/src/test/resources/spotify_hosts\.json$|launcher/app/src/test/resources/(time_status_report|dns_upstream_status|power_report|zone_status_report|launcher_tag_codes|time_request|installed_apps_report|calendar_title_rules|calendar_status_report|calendar_feeds|emergency_numbers|calendar_kid_events|weather|leave_tailnet|server_url_vectors|restrictions_pause|server_tls_report|sms_contract|contact_request|app_logos|lock_now|mobile_network|status_heartbeat|airplane_mode|rule_pause|shortcuts|login_windows|notification_channels|notification_listeners|unified_push|setup_steps|install_failure|app_access|blocked_numbers|clock_skew|device_key)\.json$|launcher/app/src/test/resources/(map_links|wifi_lookup)/|(launcher|music)/app/src/test/resources/storytel_token_answers\.json$|launcher/app/src/main/assets/dns/doh_hosts\.txt$|launcher/app/src/main/java/com/kidslauncher/mdm/ui/home/HomeModel\.kt$|scripts/mmsc-hosts(\.py|-sample\.xml)$|scripts/wifi-lookup-fixtures\.py$|scripts/grapheneos-boot-keys(\.py|-sample/.*)$|scripts/device-key-vectors\.py$)' <<<"$files"; then
             changed=true
           else
             changed=false

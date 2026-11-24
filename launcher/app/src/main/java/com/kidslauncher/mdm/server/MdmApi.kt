@@ -32,12 +32,28 @@ import java.util.concurrent.TimeUnit
  * Device-facing kid-phone-server REST endpoints. Enrollment is unauthenticated (the enrollment
  * code itself is the one-shot credential); policy/status require the bearer token issued at
  * enrollment, attached by [createMdmApi] via a header rather than threaded through every call -
- * only to the server's own origin ([bearerInterceptor], security review L8).
+ * only to the server's own origin ([credentialInterceptor], security review L8; design 129: or the key's signature).
  */
 interface MdmApi {
 
     @POST("api/devices/enroll")
     suspend fun enroll(@Body request: EnrollRequest): Response<EnrollResponse>
+
+    /** Design 129 §5.2 step 1: `{state, key_id?, spki_sha256?, rotate}` - the one answer the registration acts on. */
+    @GET("api/devices/key")
+    suspend fun getKey(): Response<ResponseBody>
+
+    /** Design 129 §5.2 step 4: `{challenge, expires_in_s}`. */
+    @GET("api/devices/key/challenge")
+    suspend fun getKeyChallenge(): Response<ResponseBody>
+
+    /** Design 129 §5.2 step 4: 200 `{key_id, state}`, 409 `exists`, 400 `{reason}`, 503 `list_stale`. */
+    @POST("api/devices/key")
+    suspend fun postKey(@Body body: KeyRegisterBody): Response<ResponseBody>
+
+    /** Design 129 §5.2 step 3: the server names a key this phone doesn't hold - 204 (409 `none`). */
+    @POST("api/devices/key/conflict")
+    suspend fun postKeyConflict(): Response<ResponseBody>
 
     /** Raw body: decoded with [decodeFresh] so a body the launcher can't read is told apart from
      * an unreachable server (see `MdmSyncWorker.fetchPolicy`). [ifNoneMatch] is the kept body's ETag (design 95
@@ -196,18 +212,19 @@ interface MdmApi {
 }
 
 /** [callTimeoutMs] bounds a whole call (design 38's prepared shutdown client); `null` = none.
- * [token] is omitted for the enroll-only call (no token exists yet); pass it for every
- * subsequent authenticated call. The way to the server is [serverPathNow]'s (security review S-M1): https direct or
+ * [credential] is omitted for the enroll-only call (no credential exists yet); every other call passes
+ * [DeviceCredentials.current]'s (design 129 §2.1: the bearer, or the hardware key's signature beside it). The way to the server is [serverPathNow]'s (security review S-M1): https direct or
  * through [TsnetClient]'s embedded-tailnet SOCKS5 proxy while it runs; http to a tailnet IP only through that proxy;
  * any other address, or a tailnet one while tsnet is down, gives a client whose every call throws [ServerPathClosed]
  * before anything is sent. [path] is passed by the sync, which judges its answers by it (design 76: `tailnet` is
  * `path is ServerPath.Tailnet`, R-5). */
 fun createMdmApi(
     baseUrl: String,
-    token: String? = null,
+    credential: DeviceCredential? = null,
     callTimeoutMs: Long? = null,
     path: ServerPath = serverPathNow(baseUrl),
     ownPool: Boolean = false,
+    onUnknownKey: () -> Unit = KeyRegistration::wake,
 ): MdmApi {
     // Design 95 §3.5: a child of the shared base client (one pool, one TLS context). The base is [toServer]'s:
     // a closed path refuses before any other interceptor sees the request; on the direct path the origin fence and
@@ -222,8 +239,9 @@ fun createMdmApi(
 
     val normalizedBaseUrl = path.baseUrl
 
-    // Only to the server's own host (security review L8), never to an absolute URL elsewhere.
-    if (token != null) clientBuilder.addInterceptor(bearerInterceptor(normalizedBaseUrl, token))
+    // Only to the server's own host (security review L8), never to an absolute URL elsewhere; the key's signature as a
+    // network interceptor, afresh on every attempt (design 129 §4.2).
+    clientBuilder.credentialInterceptor(normalizedBaseUrl, credential, onUnknownKey = onUnknownKey)
     // The server's answers anchor the decisions' clock (over a connection the phone trusts only).
     clientBuilder.addInterceptor(TrustedClock.interceptor(path))
     if (ownPool) {

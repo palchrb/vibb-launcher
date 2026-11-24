@@ -195,6 +195,10 @@ data class PolicyResponse(
     /** Design 125 A2: the Apple Wi-Fi lookup - the parent's switch (`{on}`). Missing = off
      * ([com.kidslauncher.mdm.places.wifiLookupOn]). Pinned by `wifi_lookup/contract.json`'s `policy` rows. */
     val wifiLookup: com.kidslauncher.mdm.places.WifiLookupPolicy? = null,
+    /** Design 129 §5.5: the phone's hardware key as the server holds it (`{state, key_id?, spki_sha256?, rotate}`) -
+     * only a nudge to ask `GET /api/devices/key` ([com.kidslauncher.mdm.server.keyNudge]). Missing = an older server:
+     * nothing asked. Pinned by `device_key.json`'s `policy` rows. */
+    val deviceKey: com.kidslauncher.mdm.server.DeviceKeyPolicy? = null,
 )
 
 /** `PolicyResponse.kidLock` - `security::hash_pin` on the server (PBKDF2-SHA256, see

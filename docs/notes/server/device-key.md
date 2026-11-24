@@ -77,6 +77,11 @@ signatures are verified and their failures logged, and nothing can lock a phone 
   for the code (`devices.enroll_used_proof_rs`, `enroll_repeats`), logged as `device_enrolled` "asked again"; Revoke
   Access and any later enrolment clear the kept code. One live key per phone is a unique index.
 - The signature clock's floor after a restart is the stored value + 100 s (the 10 s write and both windows, M1).
+- L1's code QA: a key index whose reload after a key write failed three times keeps the other phones' entries, drops
+  that phone's (a removed key must never sign) and is **stale**: an unknown key id is then `SigCheck::Unavailable` - a
+  503 with `Retry-After` (the phone's own bearer still authenticates in S1), never `unknown_key`, which the phone
+  counts towards "lost" - and a request retries the reload at most every 10 s (`retry_if_stale`); a reload that works
+  ends it. A valid signature that comes with **another** phone's bearer is refused (`bad_sig`).
 - The policy's `device_key` (`{state, key_id?, spki_sha256?, rotate}`, `rotate` always false in S1) is pinned by
   `policy_json_keys_snapshot`.
 - A re-enrolment replaces the row's keys, challenge and addresses (another phone); Revoke Access removes the keys;
@@ -94,9 +99,10 @@ registrert". Nothing is orange in S1 but Settings' two lines: the stale list, an
 
 `server/testdata/device_key.json`, written by `scripts/device-key-vectors.py` (a throwaway key from a fake phrase;
 `--check` in `server-ci.yml`'s changes job). `tests::device_key::the_contract_rows` runs the crypto, clock, window and
-answer rows; `the_contract_routes` and `the_edge_rows` produce the route rows through the real routes. S1 keeps it
-server-side: the launcher's byte-identical copy, its `DeviceKeyContractTest` and the `phone` rows (the registration
-worker's table) come with L1.
+answer rows; `the_contract_routes` and `the_edge_rows` produce the route rows through the real routes. Since L1 it is
+byte-identical in `launcher/app/src/test/resources/` (`the_contract_matches_the_launchers_copy`), with the `phone` and
+`phone_nudge` rows (the registration flow's table, the launcher's alone to run: `DeviceKeyContractTest`). The
+launcher's side is `docs/notes/launcher/security.md`, "The hardware-bound phone key".
 
 ## Not in S1
 

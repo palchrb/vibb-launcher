@@ -103,7 +103,15 @@ struct IndexedKey {
 pub struct KeyIndex {
     map: RwLock<HashMap<String, IndexedKey>>,
     reload: tokio::sync::Mutex<()>,
+    /// L1's code QA H1: a reload after a key write failed, so a key id the index doesn't hold may be one the database
+    /// does - answered 503, never `unknown_key` (a phone counts those towards "lost"), until a reload works.
+    stale: std::sync::atomic::AtomicBool,
+    /// When a request last made a stale index try to reload (at most every [STALE_RETRY]).
+    last_retry: Mutex<Option<Instant>>,
 }
+
+/// How often a stale index tries to reload on a request's behalf.
+const STALE_RETRY: std::time::Duration = std::time::Duration::from_secs(10);
 
 impl KeyIndex {
     fn lookup(&self, key_id: &str) -> Option<IndexedKey> {
@@ -121,6 +129,8 @@ impl KeyIndex {
         )
         .fetch_all(db)
         .await?;
+        self.stale
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         *self.map.write().unwrap_or_else(|e| e.into_inner()) = rows
             .into_iter()
             .map(|(id, device_id, key)| {
@@ -136,15 +146,54 @@ impl KeyIndex {
         Ok(())
     }
 
-    /// After a key write for `device_id`: [KeyIndex::reload]; if the database can't be read, the device's keys are
-    /// dropped from memory (a removed key must never keep signing; a new one waits for the next reload).
+    /// After a key write for `device_id`: [KeyIndex::reload], tried three times; if the database still can't be read,
+    /// the device's keys are dropped from memory (a removed key must never keep signing) and the index is marked stale:
+    /// an unknown key id is then a 503, not `unknown_key` (L1's code QA H1), until a reload works - a request's
+    /// [KeyIndex::retry_if_stale] tries one at most every 10 s.
     pub async fn refresh(&self, db: &sqlx::SqlitePool, device_id: i64) {
+        let mut last = None;
+        for pause_ms in [0u64, 100, 500] {
+            if pause_ms > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(pause_ms)).await;
+            }
+            match self.reload(db).await {
+                Ok(()) => return,
+                Err(err) => last = Some(err),
+            }
+        }
+        if let Some(err) = last {
+            tracing::error!(device_id, %err, "couldn't reload the device keys - dropping the phone's, the index stale");
+            self.mark_stale_without(device_id);
+        }
+    }
+
+    fn mark_stale_without(&self, device_id: i64) {
+        self.stale.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.map
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|_, k| k.device_id != device_id);
+    }
+
+    /// Whether a reload after a key write failed and none has worked since.
+    pub fn is_stale(&self) -> bool {
+        self.stale.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// A stale index tries to reload, at most every 10 s.
+    pub async fn retry_if_stale(&self, db: &sqlx::SqlitePool) {
+        if !self.is_stale() {
+            return;
+        }
+        {
+            let mut last = self.last_retry.lock().unwrap_or_else(|e| e.into_inner());
+            if last.is_some_and(|at| at.elapsed() < STALE_RETRY) {
+                return;
+            }
+            *last = Some(Instant::now());
+        }
         if let Err(err) = self.reload(db).await {
-            tracing::error!(device_id, %err, "couldn't reload the device keys - dropping the phone's");
-            self.map
-                .write()
-                .unwrap_or_else(|e| e.into_inner())
-                .retain(|_, k| k.device_id != device_id);
+            tracing::warn!(%err, "the device key index is still stale");
         }
     }
 
@@ -306,6 +355,9 @@ impl DeviceKeys {
             return refused(AuthReason::BadSig, None);
         };
         let Some(key) = self.index.lookup(&parsed.key_id) else {
+            if self.index.is_stale() {
+                return SigCheck::Unavailable;
+            }
             return refused(AuthReason::UnknownKey, None);
         };
         if !in_window(parsed.t, sig_now) {
@@ -438,6 +490,8 @@ pub enum SigCheck {
     },
     /// The key's nonce set is full: a 429 (unless the phone's own bearer came with it, S1).
     TooMany { device_id: i64 },
+    /// The key id is unknown while the index is stale (L1's code QA H1): a 503, never `unknown_key`.
+    Unavailable,
 }
 
 /// `Vibb-Signature: v1;k=<key id>;t=<ms>;n=<nonce>;s=<sig>` (§4.2), in that order.
@@ -995,6 +1049,56 @@ mod tests {
         ] {
             assert!(SignatureHeader::parse(&bad).is_none(), "{bad}");
         }
+    }
+
+    /// L1's code QA H1: an unknown key id while a reload after a key write failed is `Unavailable` (a 503), never
+    /// `unknown_key`; a reload that works ends it.
+    #[tokio::test]
+    async fn a_stale_index_answers_unavailable() {
+        let keys = DeviceKeys::default();
+        let id = b64url(&[1; 16]);
+        let header = axum::http::HeaderValue::from_str(&format!(
+            "v1;k={id};t=1790000000000;n={};s={}",
+            b64url(&[2; 16]),
+            b64url(&[3; 70])
+        ))
+        .unwrap();
+        let uri: Uri = "/api/devices/policy".parse().unwrap();
+        let check = |keys: &DeviceKeys| {
+            keys.check_at(
+                &Method::GET,
+                &uri,
+                &HeaderMap::new(),
+                &header,
+                1_790_000_000_000,
+            )
+        };
+        assert!(matches!(
+            check(&keys),
+            SigCheck::Refused {
+                reason: AuthReason::UnknownKey,
+                ..
+            }
+        ));
+        keys.index.mark_stale_without(7);
+        assert!(matches!(check(&keys), SigCheck::Unavailable));
+        let db = sqlx::sqlite::SqlitePoolOptions::new()
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE device_keys (key_id TEXT, device_id INTEGER, public_key BLOB, state TEXT)")
+            .execute(&db)
+            .await
+            .unwrap();
+        keys.index.retry_if_stale(&db).await;
+        assert!(!keys.index.is_stale());
+        assert!(matches!(
+            check(&keys),
+            SigCheck::Refused {
+                reason: AuthReason::UnknownKey,
+                ..
+            }
+        ));
     }
 
     #[test]

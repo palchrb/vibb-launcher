@@ -95,8 +95,9 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     BtPairingWindow.putBackIfMarked(context)
     val mdm = LauncherPreferences.mdm()
     val serverUrl = mdm.serverUrl()
-    val deviceToken = DeviceToken.get()
-    if (serverUrl.isNullOrBlank() || deviceToken.isNullOrBlank()) {
+    // Design 129 §2.1: the bearer, or the adopted hardware key signing beside it.
+    val credential = DeviceCredentials.current(context)
+    if (serverUrl.isNullOrBlank() || credential == null) {
         // Design 95 code QA L3: not enrolled - no kept policy body (its PIN hashes) stays behind.
         PolicyEtagStore.of(context).drop()
         return false
@@ -114,7 +115,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
 
     // Design 76: the sync judges its answers by the path its client was built for (R-5).
     var apiPath = serverPathNow(serverUrl)
-    var api = createMdmApi(serverUrl, deviceToken, path = apiPath)
+    var api = createMdmApi(serverUrl, credential, path = apiPath)
     val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
     val admin = ComponentName(context, MdmDeviceAdminReceiver::class.java)
 
@@ -132,7 +133,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     // Design 95 §3.5: the raw body kept for this build, server and token (null: none, and the GET goes without
     // `If-None-Match`); a 304 hands it back as if it had just arrived, a 200 is kept below once accepted.
     val etags = PolicyEtagStore.of(context)
-    val owner = PolicyOwner.of(BuildConfig.VERSION_CODE, serverUrl, deviceToken)
+    val owner = PolicyOwner.of(BuildConfig.VERSION_CODE, serverUrl, credential.ownerId)
     var served: ServedPolicy? = null
     // Design 98 §4.4.4: the parent code's pauses go before the policy GET, so this sync's policy carries them.
     try {
@@ -176,6 +177,8 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
 
     if (freshPolicy != null) {
         storeAcceptedPolicy(context, freshPolicy)
+        // Design 129 §5.5: the policy's `device_key` only nudges the registration flow, which asks step 1 itself.
+        KeyRegistration.nudge(context, freshPolicy.deviceKey)
         // Design 98 §4.4.4: the parent code's pauses read this policy (an ack, or ended in the PWA after the ack).
         com.kidslauncher.mdm.timerules.PhonePauses.policyAccepted(context, freshPolicy.timePolicy, policyGetStartedMs)
         com.kidslauncher.mdm.setup.SetupTicks.policyAccepted(context, freshPolicy.setup)
@@ -247,7 +250,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         // client is built again, on the direct path.
         if (ranCommand?.command == LEAVE_TAILNET_COMMAND) {
             apiPath = serverPathNow(serverUrl)
-            api = createMdmApi(serverUrl, deviceToken, path = apiPath)
+            api = createMdmApi(serverUrl, credential, path = apiPath)
         }
         // Design 72: the calendar links whose set moved, written into their own local calendars (never throws) -
         // after the command, so a lock or locate never waits behind a first apply (QA L6), before the report.
@@ -384,7 +387,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
             ),
             heartbeat = heartbeatOn(decision.policy),
             gzip = decision.policy?.statusGzip == true,
-            owner = HeartbeatAckStore.ownerOf(serverUrl, deviceToken),
+            owner = HeartbeatAckStore.ownerOf(serverUrl, credential.ownerId),
             acks = HeartbeatAckStore.of(context),
             nowMs = System::currentTimeMillis,
             // Design 87 (R2-L7): read at once (bounded) and closed; a body that fails to read is nothing wanted, and
@@ -488,10 +491,10 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
 suspend fun postReportOnly(context: Context, airplaneGoingOn: Boolean): Boolean = syncMutex.withLock {
     val mdm = LauncherPreferences.mdm()
     val serverUrl = mdm.serverUrl()
-    val deviceToken = DeviceToken.get()
-    if (serverUrl.isNullOrBlank() || deviceToken.isNullOrBlank()) return false
+    val credential = DeviceCredentials.current(context)
+    if (serverUrl.isNullOrBlank() || credential == null) return false
     try {
-        val api = createMdmApi(serverUrl, deviceToken, path = serverPathNow(serverUrl))
+        val api = createMdmApi(serverUrl, credential, path = serverPathNow(serverUrl))
         val decision = currentPolicyDecision()
         val policy = decision.policy
         val reason = mdm.lockReason()
@@ -504,7 +507,7 @@ suspend fun postReportOnly(context: Context, airplaneGoingOn: Boolean): Boolean 
             ),
             heartbeat = heartbeatOn(policy),
             gzip = policy?.statusGzip == true,
-            owner = HeartbeatAckStore.ownerOf(serverUrl, deviceToken),
+            owner = HeartbeatAckStore.ownerOf(serverUrl, credential.ownerId),
             acks = HeartbeatAckStore.of(context),
             nowMs = System::currentTimeMillis,
             read = { body ->

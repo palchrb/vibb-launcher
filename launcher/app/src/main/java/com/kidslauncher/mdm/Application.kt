@@ -437,7 +437,7 @@ class Application : android.app.Application() {
         // enrolled before Home's first start - the reset would drop its token and policy (design 59d §8.17).
         val mdm = LauncherPreferences.mdm()
         val startedBefore = LauncherPreferences.internal().started()
-        if (firstLaunchResetDue(startedBefore, mdm.enrolled(), com.kidslauncher.mdm.server.DeviceToken.present())) {
+        if (firstLaunchResetDue(startedBefore, mdm.enrolled(), com.kidslauncher.mdm.server.DeviceCredentials.stored(this))) {
             resetPreferences(this)
         } else if (!startedBefore) {
             android.util.Log.i("Application", "Home hasn't started yet, but the phone is enrolled - keeping its preferences")

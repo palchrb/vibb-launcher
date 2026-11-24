@@ -15,7 +15,8 @@ import android.util.Log
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.push.up.vendor.RaiseToForeground
 import com.kidslauncher.mdm.server.CachedPolicy
-import com.kidslauncher.mdm.server.DeviceToken
+import com.kidslauncher.mdm.server.DeviceCredential
+import com.kidslauncher.mdm.server.DeviceCredentials
 import com.kidslauncher.mdm.server.KidVpnService
 import com.kidslauncher.mdm.server.MobileNetworkRuntime
 import com.kidslauncher.mdm.server.ServerJson
@@ -119,7 +120,7 @@ object UpRuntime {
             unlocked = { isUserUnlocked(app) },
             store = { UpStore.of(app) },
             view = ::view,
-            server = { serverFor() },
+            server = { serverFor(app) },
             phone = phone,
             log = { Log.i(LOG_TAG, it) },
             boot = { bootCount(app) },
@@ -395,11 +396,11 @@ object UpRuntime {
         }
     }
 
-    private fun serverFor(): UpServer? {
+    private fun serverFor(app: Context): UpServer? {
         val url = LauncherPreferences.mdm().serverUrl()
-        val token = DeviceToken.get()
-        if (url.isNullOrBlank() || token.isNullOrBlank()) return null
-        return MdmUpServer(url, token)
+        val credential = DeviceCredentials.current(app)
+        if (url.isNullOrBlank() || credential == null) return null
+        return MdmUpServer(url, credential)
     }
 
     @Synchronized
@@ -425,7 +426,7 @@ object UpRuntime {
     }
 
     /** The device API through [createMdmApi] (S-M1's transport, design 76's check), blocking on the executor. */
-    private class MdmUpServer(private val url: String, private val token: String) : UpServer {
+    private class MdmUpServer(private val url: String, private val token: DeviceCredential) : UpServer {
         override fun register(body: UpRegisterBody): UpServer.Registered = try {
             val response = runBlocking { createMdmApi(url, token, callTimeoutMs = REGISTER_TIMEOUT_MS).upRegister(body) }
             val text = (if (response.isSuccessful) response.body() else response.errorBody())?.use { it.string() }

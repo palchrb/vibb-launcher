@@ -222,8 +222,8 @@ object MusicFileDownloads {
                 }
                 val mdm = LauncherPreferences.mdm()
                 val url = mdm.serverUrl()
-                val token = com.kidslauncher.mdm.server.DeviceToken.get()
-                if (url.isNullOrBlank() || token.isNullOrBlank()) break
+                val token = com.kidslauncher.mdm.server.DeviceCredentials.current(app)
+                if (url.isNullOrBlank() || token == null) break
                 wake?.acquire(10 * 60_000L)
                 val fetch = OwnFileFetch(
                     createMusicServer(url, token),

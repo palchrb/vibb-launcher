@@ -117,7 +117,7 @@ class CommandListenerService : Service() {
 
     private fun airplaneHeld(): Boolean = SystemClock.elapsedRealtime() < airplaneHoldUntil
 
-    private fun buildClient(path: ServerPath, stamp: AtomicLong): OkHttpClient {
+    private fun buildClient(path: ServerPath, stamp: AtomicLong, credential: DeviceCredential): OkHttpClient {
         // Security review S-M1: the path read fresh per connect - the server may be reachable only through the
         // embedded tailnet's proxy, which may come up after this service (CLAUDE.md, the "by lazy" staleness bug).
         // Design 95 §3.5: a child of the shared base ([ServerClients]), so a sync can ride this stream's connection.
@@ -127,6 +127,9 @@ class CommandListenerService : Service() {
             .readTimeout(SSE_READ_TIMEOUT_MS, TimeUnit.MILLISECONDS)
             // The keepalives never reach the listener: stamp every read here (design 19 hole 1).
             .addNetworkInterceptor(LastByteInterceptor { stamp.set(SystemClock.elapsedRealtime()) })
+            // Design 129 §4.3: the connect carries the credential - the bearer, or the key's signature beside it (the
+            // server closes the stream when the phone's credential changes, §5.6).
+            .credentialInterceptor(path.baseUrl, credential)
         return builder.build()
     }
 
@@ -306,7 +309,7 @@ class CommandListenerService : Service() {
     /** Bumped by every [connect]: a token read that comes back after a newer connect (or the stop) is dropped. */
     private var connectGen = 0
 
-    /** The token is read off the main thread (design r10, code QA Q-6: a Keystore open, and while it is unreadable
+    /** The credential (design 129 §2.1) is read off the main thread (design r10, code QA Q-6: a Keystore open, and while it is unreadable
      * nothing is memoised - every 30 s retry would be a keystore2 round trip on main), then the stream opens here. */
     private fun connect() {
         if (stopped || airplaneHeld()) return
@@ -314,19 +317,19 @@ class CommandListenerService : Service() {
         eventSource = null
         val gen = ++connectGen
         TOKEN_READER.execute {
-            val deviceToken = try {
-                DeviceToken.get()
+            val credential = try {
+                DeviceCredentials.current(applicationContext)
             } catch (e: Exception) {
                 null
             }
-            handler.post { if (gen == connectGen && !stopped) openStream(deviceToken) }
+            handler.post { if (gen == connectGen && !stopped) openStream(credential) }
         }
     }
 
-    private fun openStream(deviceToken: String?) {
+    private fun openStream(credential: DeviceCredential?) {
         val mdm = LauncherPreferences.mdm()
         val serverUrl = mdm.serverUrl()
-        if (serverUrl.isNullOrBlank() || deviceToken.isNullOrBlank()) {
+        if (serverUrl.isNullOrBlank() || credential == null) {
             handler.postDelayed(connectRunnable, NOT_ENROLLED_RETRY_DELAY_MS)
             return
         }
@@ -340,13 +343,12 @@ class CommandListenerService : Service() {
         }
         val request = Request.Builder()
             .url("${path.baseUrl}api/devices/commands/stream")
-            .header("Authorization", "Bearer $deviceToken")
             .build()
 
         val stamp = AtomicLong(SystemClock.elapsedRealtime())
         lastByte = stamp
         streamNetwork = defaultNetwork
-        eventSource = EventSources.createFactory(buildClient(path, stamp)).newEventSource(
+        eventSource = EventSources.createFactory(buildClient(path, stamp, credential)).newEventSource(
             request,
             object : EventSourceListener() {
                 override fun onOpen(eventSource: EventSource, response: Response) {

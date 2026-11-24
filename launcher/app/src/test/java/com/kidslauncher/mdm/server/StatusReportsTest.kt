@@ -150,6 +150,12 @@ class StatusReportsTest {
         assertTrue(lastWasHeartbeat())
         assertNotEquals(HeartbeatAckStore.ownerOf("https://a.example/", "t"), HeartbeatAckStore.ownerOf("https://b.example/", "t"))
         assertNotEquals(HeartbeatAckStore.ownerOf("https://a.example/", "t"), HeartbeatAckStore.ownerOf("https://a.example/", "u"))
+        // Design 129 §2.1: binding a key changes the owner (one full report); the key's owner holds no token.
+        val bearer = DeviceCredential.Bearer("t")
+        val key = DeviceCredential.Key("k1", "device_key_1", "t")
+        assertNotEquals(HeartbeatAckStore.ownerOf("https://a.example/", bearer.ownerId), HeartbeatAckStore.ownerOf("https://a.example/", key.ownerId))
+        assertEquals("key:k1", key.ownerId)
+        assertNotEquals("t", bearer.ownerId)
     }
 
     @Test

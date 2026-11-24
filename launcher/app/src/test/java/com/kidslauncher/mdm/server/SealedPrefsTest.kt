@@ -200,7 +200,15 @@ class SealedPrefsTest {
         val all = sources()
         assertEquals(setOf("server/SealedPrefs.kt"), all.filterValues { Regex("""\bdeviceToken\(""").containsMatchIn(it) }.keys)
         assertTrue(all.values.none { "settings_mdm_device_token_key" in it })
-        val sites = all.mapValues { Regex("""DeviceToken\.get\(\)""").findAll(it.value).count() }.filterValues { it > 0 }
+        // Design 129 §2.1 (H4): the files that touch the sealed token at all - its owner, the one reader
+        // (DeviceCredentials) and the one enrolment; the first-launch reset clears the whole file without naming it.
+        assertEquals(
+            setOf("server/SealedPrefs.kt", "server/DeviceCredential.kt", "server/Enrollment.kt"),
+            all.filterValues { Regex("""\bDeviceToken\.""").containsMatchIn(it) }.keys,
+        )
+        assertEquals(setOf("server/DeviceCredential.kt"), all.filterValues { Regex("""DeviceToken\.(get|state)\(\)""").containsMatchIn(it) }.keys)
+        // Every server call takes its credential from DeviceCredentials.current - the bearer, or the hardware key.
+        val sites = all.mapValues { Regex("""DeviceCredentials\.current\(""").findAll(it.value).count() }.filterValues { it > 0 }
         assertEquals(
             mapOf(
                 // Design 98 §2.2 step 2: the sync and Flymodus's report-only post.
@@ -218,8 +226,11 @@ class SealedPrefsTest {
             ),
             sites,
         )
-        // The writer is the one enrolment.
+        // Design 129 §5.2 (code QA H1): the registration flow's own calls take the key even while it is suspected lost.
+        assertEquals(setOf("server/KeyRegistration.kt"), all.filterValues { "DeviceCredentials.forRegistration(" in it }.keys)
+        // The writer is the one enrolment; the one removal is a bound key's (§5.5).
         assertEquals(setOf("server/Enrollment.kt"), all.filterValues { "DeviceToken.set(" in it }.keys)
+        assertEquals(setOf("server/DeviceCredential.kt"), all.filterValues { "DeviceToken.clear(" in it }.keys)
     }
 
     @Test

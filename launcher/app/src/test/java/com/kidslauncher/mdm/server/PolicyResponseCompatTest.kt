@@ -71,6 +71,18 @@ class PolicyResponseCompatTest {
         assertFalse(com.kidslauncher.mdm.map.mapLinksOn((decodeCached(serverResponse) as CachedPolicy.Ok).policy))
     }
 
+    /** Design 129 §5.5: `device_key` (the server's `policy_json_keys_snapshot`; every row in `DeviceKeyContractTest`)
+     * decodes; missing (an older server) asks nothing. */
+    @Test
+    fun `device_key decodes, and missing asks nothing`() {
+        val observed = """"device_key": {"state": "observed", "key_id": "k1", "spki_sha256": "ab", "rotate": false}, "allowlist":"""
+        val policy = (decodeFresh(serverResponse.replace("\"allowlist\":", observed)) as FreshDecode.Ok).policy
+        assertEquals(DeviceKeyPolicy("observed", "k1", "ab", false), policy.deviceKey)
+        val missing = (decodeCached(serverResponse) as CachedPolicy.Ok).policy.deviceKey
+        assertEquals(null, missing)
+        assertFalse(keyNudge(missing, null, hasToken = true, lost = false, backoff = false))
+    }
+
     /** Design 125 A2: `wifi_lookup` (the server's `policy_json_keys_snapshot` literal, `{"on": false}` for a new phone)
      * decodes; missing is off (every row in `WifiLookupContractTest`). */
     @Test

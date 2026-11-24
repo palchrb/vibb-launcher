@@ -12,7 +12,7 @@ import androidx.appcompat.app.AppCompatDelegate
 import androidx.lifecycle.lifecycleScope
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.preferences.LauncherPreferences
-import com.kidslauncher.mdm.server.DeviceToken
+import com.kidslauncher.mdm.server.DeviceCredentials
 import com.kidslauncher.mdm.server.LockReason
 import com.kidslauncher.mdm.server.OfflineOverride
 import com.kidslauncher.mdm.server.RestrictionsPause
@@ -117,8 +117,8 @@ class MapLinkActivity : AppCompatActivity() {
     /** The server's answer: its status and body (0 = no answer). */
     private suspend fun resolve(request: MapResolveRequest): Pair<Int, MapResolveAnswer?> = try {
         val url = LauncherPreferences.mdm().serverUrl()
-        val token = DeviceToken.get()
-        if (url.isNullOrBlank() || token.isNullOrBlank()) {
+        val token = DeviceCredentials.current(applicationContext)
+        if (url.isNullOrBlank() || token == null) {
             0 to null
         } else {
             val body = ServerJson.encodeToString(MapResolveRequest.serializer(), request)

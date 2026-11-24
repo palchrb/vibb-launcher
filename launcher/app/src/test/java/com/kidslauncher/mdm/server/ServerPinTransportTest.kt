@@ -91,7 +91,7 @@ class ServerPinTransportTest {
         val path = ServerPath.Direct(base, proxy)
         val pinning = ServerPinning(enforce, pins) { kind, _, anchor -> outside += kind to anchor }
         return OkHttpClient.Builder().toServer(path, pinning = pinning)
-            .addInterceptor(bearerInterceptor(base, "secret-token"))
+            .credentialInterceptor(base, DeviceCredential.Bearer("secret-token"))
             .sslSocketFactory(clientSocketFactory, trustManager)
             .retryOnConnectionFailure(false)
             .build()

@@ -485,8 +485,9 @@ fun kidMobileRow(
     else -> KidMobileRow.ON
 }
 
-/** What `setAlwaysOnVpnPackage` is given: our package or none, and lockdown. The lockdown allow list stays empty (D4:
- * neither the music app nor Play services goes around the sink); the VPN's owner is exempt by itself. */
+/** What `setAlwaysOnVpnPackage` is given: our package or none, and lockdown. The lockdown allow list holds only Google's
+ * key provisioning, rkpd (design 129 Q9, [lockdownAllowList], found by `Rkpd`) - neither the music app nor Play services goes around the
+ * sink (D4); the VPN's owner is exempt by itself. */
 data class AlwaysOn(val ownPackage: Boolean, val lockdown: Boolean)
 
 /**

@@ -50,10 +50,11 @@ class SealedGlueTest {
         val listener = src("server/CommandListenerService.kt")
         val connect = body(listener, "connect")
         assertTrue(connect.contains("TOKEN_READER.execute {"))
-        assertTrue(connect.contains("handler.post { if (gen == connectGen && !stopped) openStream(deviceToken) }"))
-        assertFalse(body(listener, "openStream").contains("DeviceToken"))
+        assertTrue(connect.contains("handler.post { if (gen == connectGen && !stopped) openStream(credential) }"))
+        assertTrue(connect.contains("DeviceCredentials.current(applicationContext)"))
+        assertFalse(body(listener, "openStream").contains("DeviceCredentials"))
         val syncNow = body(src("ui/settings/launcher/SettingsFragmentLauncher.kt"), "syncNowWithServer")
-        assertTrue(syncNow.contains("!com.kidslauncher.mdm.server.DeviceToken.present()"))
-        assertFalse(syncNow.contains("DeviceToken.get()"))
+        assertTrue(syncNow.contains("!com.kidslauncher.mdm.server.DeviceCredentials.stored(context)"))
+        assertFalse(syncNow.contains("DeviceCredentials.current("))
     }
 }
