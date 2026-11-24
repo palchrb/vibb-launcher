@@ -561,7 +561,8 @@ fn connection_rows(
 
 /// About This Phone's "Sign-in" row (design 129 S1, §9.1): a quiet value in every state - "Older sign-in", "Hardware
 /// key" (what the attestation said behind the ⓘ: step 0 reads the Jelly Star's verdict here), "Key refused (reason)"
-/// or "Another key registered". Nothing is orange in S1: the parent can't act on it yet.
+/// or "Another key registered" - the parent can't act on them yet. One is orange: "Emulator test key", a key the
+/// `emulator_keys` profile took (design 129b §7, H3).
 async fn key_row(state: &AppState, id: i64, lang: Lang) -> Result<Row, sqlx::Error> {
     let label = t(lang, "device.about.key");
     let (refused, conflict): (Option<String>, Option<String>) =

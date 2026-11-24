@@ -418,7 +418,13 @@ async fn main() {
              until it is (see DEPLOY.md)"
         );
     }
-    // Design 129b §7 (H3): said at every start while the emulator profile is compiled in.
+    // Design 129b §7 (H3): said at every start while the emulator profile is compiled in - and never in a build
+    // without debug assertions (the compile_error! in attestation/mod.rs; this is a second guard against a profile
+    // that turns them on for release).
+    #[cfg(feature = "emulator_keys")]
+    if !cfg!(debug_assertions) {
+        panic!("emulator_keys is for debug builds only");
+    }
     #[cfg(feature = "emulator_keys")]
     tracing::warn!(
         "built with emulator_keys: this server accepts emulator test keys, which anyone can forge - for the \

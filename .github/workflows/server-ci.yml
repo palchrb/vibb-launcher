@@ -124,10 +124,15 @@ jobs:
       run: python3 -I scripts/emulator-attestation-vectors.py --check
     - name: No release names emulator_keys
       # Design 129b §7 (H3): the emulator profile takes keys anyone can make. Beside the compile_error! that refuses
-      # it outside a debug build, neither the release workflow nor the image may name it.
+      # it outside a debug build, neither the release workflow nor the image may name it, and neither the release
+      # workflow nor server/Cargo.toml may turn debug assertions on (that would let the compile_error! pass).
       run: |
         if grep -n 'emulator_keys' .github/workflows/server-release.yml server/Dockerfile; then
           echo "::error::emulator_keys is for the emulator gate's debug builds only"
+          exit 1
+        fi
+        if grep -niE 'debug-assertions|debug_assertions' .github/workflows/server-release.yml server/Cargo.toml; then
+          echo "::error::no debug assertions in a release build (emulator_keys' guard)"
           exit 1
         fi
     - name: The fake homeserver's self-test

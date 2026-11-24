@@ -3166,7 +3166,7 @@
   "settings.hub.key_list_stale": "Googles nøkkelliste er utdatert",
   "settings.hub.key_list_stale_info": "Serveren har ikke nådd Googles liste på over en uke. Nye telefoner kan ikke kobles til før den gjør det.",
   "settings.emulator_keys": "Serveren godtar testnøkler fra emulatorer",
-  "settings.emulator_keys.info": "Bygget med emulator_keys. Bare for testing: en slik nøkkel kan forfalskes.",
+  "settings.emulator_keys.info": "Bare for emulatortesten. Bygg serveren uten emulator_keys.",
   "settings.hub.key_no_checksum": "Telefonene kan ikke registrere maskinvarenøkkel",
   "settings.hub.key_no_checksum_info": "LAUNCHER_SIGNATURE_CHECKSUM er ikke satt på serveren, så den kan ikke skille Vibb Ones nøkkel fra en annen apps. Telefonene bruker eldre innlogging til den er satt (DEPLOY.md).",
   "settings.hub.sign_out": "Logg ut",

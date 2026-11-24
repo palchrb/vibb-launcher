@@ -180,7 +180,9 @@ def key_description(version, keymint, level, challenge, software, hardware):
 
 DEBUG_PACKAGE = "me.vibb.launcher.debug"
 DEBUG_DIGEST = hashlib.sha256(b"vibb fake debug launcher signer - test only, never a real certificate").digest()
-CHALLENGE = hashlib.sha256(b"vibb-enroll-v1\x00EMULATORTESTCODE").digest()
+# A setup code in the QR form (26 of A-Z2-7), made up: the route test sets it on a phone and enrols with it.
+CODE = "EMULATORTESTCODEVIBBFAKEAA"
+CHALLENGE = hashlib.sha256(b"vibb-enroll-v1\x00" + CODE.encode()).digest()
 NOW = 1795521600  # 2026-11-24T12:00:00Z
 DAY = 86400
 
@@ -197,8 +199,10 @@ def software_list(patch, os_version, package=DEBUG_PACKAGE):
 
 def chain(image, version=400, keymint=None, patch=202507, os_version=160000, level=0, package=DEBUG_PACKAGE,
           root_name=("Droid Unregistered Device CA", "Google Test LLC"), hardware=None, fourth=False,
-          root_info=True, self_signed=True, leaf_curve=P256):
-    """Leaf first. `image` names the throwaway keys (a wiped image has another root key)."""
+          root_info=True, self_signed=True, leaf_curve=P256, long=False):
+    """Leaf first. `image` names the throwaway keys (a wiped image has another root key). `long`: valid until 2049
+    (the route test reads it against the real clock), not the images' two and ten weeks."""
+    end = 2524607999 if long else None
     root_d = scalar(P256, f"{image} root".encode())
     int_d = scalar(P256, f"{image} intermediate".encode())
     leaf_d = scalar(leaf_curve, f"{image} leaf".encode())
@@ -206,7 +210,7 @@ def chain(image, version=400, keymint=None, patch=202507, os_version=160000, lev
     tee = hashlib.sha256(f"vibb fake emulator {image}".encode()).hexdigest()[:32]
     int_subject = name((OID_O, "TEE"), (OID_CN, tee))
     signer = root_d if self_signed else scalar(P256, f"{image} another".encode())
-    root = certificate(f"{image} root", root_subject, root_subject, NOW - 7 * DAY, NOW + 63 * DAY,
+    root = certificate(f"{image} root", root_subject, root_subject, NOW - 7 * DAY, end or NOW + 63 * DAY,
                        spki(P256, P256.point(root_d)), [CA] + ([INFO] if root_info else []), signer)
     above, above_d, above_subject = [root], root_d, root_subject
     if fourth:
@@ -215,7 +219,7 @@ def chain(image, version=400, keymint=None, patch=202507, os_version=160000, lev
         extra = certificate(f"{image} second", root_subject, extra_subject, NOW - DAY, NOW + 13 * DAY,
                             spki(P256, P256.point(extra_d)), [CA], root_d)
         above, above_d, above_subject = [extra, root], extra_d, extra_subject
-    intermediate = certificate(f"{image} intermediate", above_subject, int_subject, NOW - DAY, NOW + 13 * DAY,
+    intermediate = certificate(f"{image} intermediate", above_subject, int_subject, NOW - DAY, end or NOW + 13 * DAY,
                                spki(P256, P256.point(int_d)), [CA, INFO], above_d)
     description = key_description(version, keymint or version, level, CHALLENGE,
                                   software_list(patch, os_version, package), hardware or {})
@@ -231,6 +235,13 @@ def pem(certs):
         out += "-----BEGIN CERTIFICATE-----\n" + "\n".join(b[i:i + 64] for i in range(0, len(b), 64)) \
             + "\n-----END CERTIFICATE-----\n"
     return out
+
+
+def b64u(b): return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+
+
+def proof_message(challenge, kind):
+    return "vibb-key-v1\n" + b64u(challenge) + "\n" + kind
 
 
 def iso(unix):
@@ -250,6 +261,7 @@ def build():
         "tee-claim.pem": chain("android16", level=1),
         "hardware-tag.pem": chain("android16", hardware={706: integer(202507)}),
         "versions-differ.pem": chain("android16", keymint=300),
+        "route.pem": chain("route", long=True),
         "version-200.pem": chain("android16", version=200),
         "leaf-p384.pem": chain("android16", leaf_curve=P384),
     }
@@ -266,6 +278,7 @@ def build():
     rows = [
         row("the Android 16 image", "android16.pem", "ok", version=400, patch=202507),
         row("the Android 14 image", "android14.pem", "ok", version=300, patch=202309),
+        row("the route test's chain (valid for years)", "route.pem", "ok", version=400, patch=202507),
         row("the release package", "release-package.pem", "app"),
         row("no LAUNCHER_DEBUG_SIGNATURE_CHECKSUM", "android16.pem", "app", signature=""),
         row("another debug signer", "android16.pem", "app",
@@ -291,6 +304,11 @@ def build():
                    "- never a capture. `challenge` and `signature` are standard Base64; `revoked` the serials the "
                    "row's status list names. With the feature each row's verdict; without it every row is `root`.",
         "app": {"package": DEBUG_PACKAGE, "signature": base64.b64encode(DEBUG_DIGEST).decode()},
+        "enroll": {
+            "comment": "tests::emulator_keys: set `code` on a phone, enrol with `chain` and `proof` (the throwaway leaf's signature over `vibb-key-v1\\n<challenge>\\nenroll`), LAUNCHER_DEBUG_SIGNATURE_CHECKSUM `checksum`.",
+            "code": CODE, "chain": "route.pem", "checksum": b64u(DEBUG_DIGEST),
+            "proof": b64u(sign(scalar(P256, b"route leaf"), proof_message(CHALLENGE, "enroll").encode())),
+        },
         "rows": rows,
     }
     out = {name: pem(certs) for name, certs in files.items()}

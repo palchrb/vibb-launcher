@@ -3166,7 +3166,7 @@
   "settings.hub.key_list_stale": "Google's key list is out of date",
   "settings.hub.key_list_stale_info": "The server hasn't reached Google's list for over a week. New phones can't be set up until it does.",
   "settings.emulator_keys": "The server accepts emulator test keys",
-  "settings.emulator_keys.info": "Built with emulator_keys. For testing only: such a key can be forged.",
+  "settings.emulator_keys.info": "For the emulator test only. Build the server without emulator_keys.",
   "settings.hub.key_no_checksum": "Phones can't register a hardware key",
   "settings.hub.key_no_checksum_info": "LAUNCHER_SIGNATURE_CHECKSUM isn't set on the server, so it can't tell Vibb One's key from another app's. The phones use the older sign-in until it is set (DEPLOY.md).",
   "settings.hub.sign_out": "Sign Out",

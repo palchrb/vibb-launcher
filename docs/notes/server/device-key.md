@@ -113,7 +113,8 @@ launcher's side is `docs/notes/launcher/security.md`, "The hardware-bound phone 
 **Not a security check**: the emulator gate's way to let the debug launcher enrol with a key. The Cargo feature
 `emulator_keys` (never in `default`) compiles `attestation/emulator.rs`; `attestation/mod.rs` has
 `compile_error!("emulator_keys is for debug builds only")` for any build without `debug_assertions`, and
-`server-ci.yml`'s changes job fails if `server-release.yml` or the Dockerfile names it. While compiled in: a warning at
+`server-ci.yml`'s changes job fails if `server-release.yml` or the Dockerfile names it, or if `server-release.yml` or
+`server/Cargo.toml` names debug assertions; `main` also panics at start in such a build without them. While compiled in: a warning at
 every start, Settings' orange "Serveren godtar testnøkler fra emulatorer" (`settings_hub`, `emulator-keys`), and About's
 orange "Testnøkkel fra emulator" on every key stored with `root = 'emulator'` (in any build: the stored root says it).
 
@@ -134,8 +135,14 @@ orange "Testnøkkel fra emulator" on every key stored with `root = 'emulator'` (
   programvare"). A later migration may let the column say `software`.
 - Vectors: `testdata/attestation/emulator/` (the two gate images' shapes and one chain per refusal), written by
   `scripts/emulator-attestation-vectors.py` from throwaway keys derived from fake phrases and made-up values - never a
-  capture (`--check` in `server-ci.yml`'s changes job). `attestation::emulator_tests` runs them: with the feature each
-  row's verdict, without it every row `root`. `tests::emulator_keys` covers the two orange lines and the setting.
+  capture (`--check` in `server-ci.yml`'s changes job). They are made up in the emulator's shape, so **the emulator
+  gate's first run is the profile's first real check**; real captures (one per image, Android 14 and 16, each with the
+  `now` it was read at) are added as rows at that gate. `attestation::emulator_tests` runs them: with the feature each
+  row's verdict, without it every row `root`. `tests::emulator_keys` covers the two orange lines, the setting, an
+  enrolment through the real route (the feature only: the `enroll` block's fixed QR code set on the phone, the proof
+  from the throwaway leaf) and the key index leaving an emulator key out without the feature.
+- **Never trusted without the feature**: `KeyIndex::reload` leaves out every `root = 'emulator'` row in a build
+  without `emulator_keys` (a database moved from a gate server), so such a key's signatures are `unknown_key`.
 - CI's build job also runs `cargo clippy --all-targets --features emulator_keys`, `cargo test --features emulator_keys
   -- attestation device_key emulator_keys`, and checks that `cargo check --release --features emulator_keys` fails with
   the `compile_error!`.

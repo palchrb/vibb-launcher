@@ -5461,11 +5461,13 @@ server with `cargo build --features emulator_keys` (the debug profile - a releas
 padding), and check the start's warning `built with emulator_keys` and Settings' orange "Serveren godtar testnøkler fra
 emulatorer". A key it takes shows About's orange "Testnøkkel fra emulator" (level "Bare programvare", root "Emulator").
 Unset, or the release launcher on the emulator: `app`. Design 129b §10.3 is that gate's table; the throwaway patch
-below is no longer needed.
+below is no longer needed. The profile's vectors are made up in the images' shape, so that gate's first run is the
+profile's first real check: keep one chain from each image (Android 14 and 16) with the time it was read and add them
+as rows of `server/testdata/attestation/emulator/rows.json` then.
 
-- **Step 0 of §7.3 (read only):** on each image, enrol once and read the chain the server logs for the key
-  (`device_key_refused` with the reason, or `device_key_bound`): its root and levels go into
-  `server/testdata/attestation/roots/` for `emulator_keys`, and §7.3 is corrected.
+- **Step 0 of §7.3 (read only), done 2026-11-24 (below):** each image's chain was read and §7.3 corrected. The root
+  changes with every wiped image, so it is deliberately not pinned in `server/testdata/attestation/roots/`:
+  `emulator_keys` takes it by its name and its own signature.
 - **A fresh enrolment with a key:** "Innlogging" reads "Maskinvarenøkkel" (or, on a release-feature server, "Nøkkel
   avvist (...)" - the phone enrols on its bearer either way); `I/KeyRegistration` nothing more to do; the next policy
   GET goes without `If-None-Match` once and the next report is full (the owner moved to `key:<id>`).

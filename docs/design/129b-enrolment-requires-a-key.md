@@ -439,11 +439,13 @@ root, the release package, or anything for a chain whose root *is* pinned (the r
 `Attested` records `root: "emulator"`.
 
 CI: the build job runs `cargo clippy --all-targets --features emulator_keys` and `cargo test --features emulator_keys
-attestation device_key` (debug profile). Vectors: `server/testdata/attestation/emulator/` - one chain from each gate
-image (Android 14 `compat34`, 16 `aosp36`), captured at the gate's own enrolment with a fake code (emulator
-certificates from Google's test CA, never a family phone's), each with the `now` it was read at; negative rows made from
-them (the release package, the root renamed, a fourth certificate, a hardware-list tag). Without the feature the same
-rows are `root`.
+attestation device_key` (debug profile). Vectors: `server/testdata/attestation/emulator/` - **made up in the
+emulator's shape** (as built in E2: `scripts/emulator-attestation-vectors.py`, throwaway keys and made-up values, one
+chain per gate image's shape and one per refusal - the release package, the root renamed, a fourth certificate, a
+hardware-list tag and more), never a capture. So **the gate's first run is the profile's first real check**: at that
+gate one real chain from each image (Android 14 `compat34`, 16 `aosp36`, enrolled with a fake code; emulator
+certificates from Google's test CA, never a family phone's) is kept with the `now` it was read at and added as rows.
+Without the feature every row is `root`.
 
 ## 8. X: "Registered from an unusual address" right after a server update
 

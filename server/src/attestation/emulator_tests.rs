@@ -86,7 +86,7 @@ fn the_rows() {
         }
     }
     if cfg!(feature = "emulator_keys") {
-        assert_eq!(ok, 2, "both gate images pass");
+        assert_eq!(ok, 3, "both gate images and the route test's chain pass");
     }
 }
 
