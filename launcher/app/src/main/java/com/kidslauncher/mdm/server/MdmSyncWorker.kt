@@ -48,6 +48,7 @@ import com.kidslauncher.mdm.zones.reportStill
 import com.kidslauncher.mdm.zones.syncLocationAction
 import com.kidslauncher.mdm.zones.toQueued
 import com.kidslauncher.mdm.zones.toReport
+import com.kidslauncher.mdm.zones.withFixCheck
 import com.kidslauncher.mdm.timerules.key
 import com.kidslauncher.mdm.ui.LockActivity
 import com.kidslauncher.mdm.play.PlayRuntime
@@ -956,14 +957,20 @@ private suspend fun currentLocationReport(
     // Design 125 D12: the heartbeat's 4-h cap try (motion STILL, so a fix is due only because the cap ran out) may renew
     // the vouch through a zone link instead of a new position.
     val renewable = if (zonesOn && beat == Heartbeat.FIX && motion == Motion.STILL) lastFreshQueued else null
+    // Design 131: a renewal re-sends the vouch with the vouch's own check - never a better one.
     fun asLocation(q: QueuedFix) = android.location.Location(q.provider ?: "cached").apply {
         latitude = q.latitude
         longitude = q.longitude
         q.accuracy?.let { accuracy = it }
         time = q.timeMs
+    }.withFixCheck(q.check)
+    // Design 131 (design 125 A9): while the phone is still, a Wi-Fi fix is compared with the last fresh fix - a satellite
+    // or a checked one, since an unchecked Wi-Fi fix never stamps it; an Apple fix within it renews it.
+    val stillVouch = if (motionNow != null && action.fresh && com.kidslauncher.mdm.places.appleStillMotion(motion)) {
+        ZoneWatch.lastFreshFix(context)?.takeIf { it.timeMs == lastFreshFix }
+    } else {
+        null
     }
-    // Design 125 A9 (H2): while the phone is still, an Apple fix may only renew this vouch.
-    val stillVouch = lastFreshQueued?.takeIf { com.kidslauncher.mdm.places.appleStillMotion(motion) }
     // Design 125b C9.3: the last fresh fix, whatever the motion - a cell fix inside its circle under 4 h is not reported;
     // its age by elapsed realtime (code QA L4), unknown for a fix of another boot.
     val lastFreshSeen = lastFreshQueued?.let { q ->
@@ -993,7 +1000,7 @@ private suspend fun currentLocationReport(
         // A genuinely fresh fix of our own (not the cached or an old last-known fallback, Q-6; not a learned fix from
         // the 2-min fallback or a renewed vouch, design 125 M2).
         val fresh = location?.takeIf { freshOwnFix(it.time, now) && !places.notFresh && !places.renewed }
-        if (fresh != null) ZoneWatch.stampFreshFix(context, fresh.time)
+        if (fresh != null) ZoneWatch.stampFreshFix(context, fresh.toQueued(LocateCommands.providerOf(fresh)))
         // The moving car: a fix on the move vouches for nothing - every due beat fixes until one at rest.
         val intervalMs = (policy ?: LocationPolicy()).intervalMinutes.coerceAtLeast(MIN_LOCATION_INTERVAL_MINUTES) * 60_000L
         val moving = fresh != null &&

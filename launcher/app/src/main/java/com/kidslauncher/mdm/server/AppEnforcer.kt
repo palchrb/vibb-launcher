@@ -736,6 +736,11 @@ object AppEnforcer {
 
         applyDateTimeLock(dpm, admin, plan.lockDateTime)
 
+        // Design 131 D11: the networks Vibb saved stay as saved - Android's screens can't change or forget them (a new
+        // password on Vibb's own Wi-Fi page is forget plus add, a new network id, so a zone link learns it again). Managed
+        // as the clock is, lifted by the override and the pause like it.
+        applySavedNetworksLock(dpm, admin, plan.lockDateTime)
+
         // One clock format on the whole phone (design 34 P12): TIME_12_24 through the "Modify system
         // settings" app-op, not a restriction - the override and the pause change nothing.
         ClockFormatSetting.apply(context, policy?.launcherUi)
@@ -1642,6 +1647,16 @@ object AppEnforcer {
             }
         }
         setRestriction(dpm, admin, UserManager.DISALLOW_CONFIG_DATE_TIME, lock)
+    }
+
+    /** Design 131 D11: [DevicePolicyManager.setConfiguredNetworksLockdownState] (API 30, within minSdk 34), written only
+     * on a change. The kid still adds and joins networks (`DISALLOW_CONFIG_WIFI` is not set). */
+    private fun applySavedNetworksLock(dpm: DevicePolicyManager, admin: ComponentName, lock: Boolean) {
+        try {
+            if (dpm.hasLockdownAdminConfiguredNetworks(admin) != lock) dpm.setConfiguredNetworksLockdownState(admin, lock)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Failed to set the saved networks' lock: ${e.javaClass.simpleName}")
+        }
     }
 
     private fun isHidden(dpm: DevicePolicyManager, admin: ComponentName, packageName: String): Boolean =

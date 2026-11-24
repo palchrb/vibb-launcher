@@ -26,12 +26,13 @@ class ZoneReportTest {
         val report = StatusReportRequest(
             lockReason = "NONE",
             kioskEngaged = true,
-            location = LocationReport(59.91417, 10.7522, 15.0f, "2026-10-24T08:14:05Z", provider = "gps"),
+            // Design 131: a Wi-Fi fix a linked network confirmed, and one of the Wi-Fi alone (no `check`).
+            location = LocationReport(59.91417, 10.7522, 40.0f, "2026-10-24T08:14:05Z", provider = "vibb_wifi", check = "link"),
             extraLocations = listOf(
-                LocationReport(59.9229, 10.7522, 30.0f, "2026-10-24T08:02:00Z", provider = "fused"),
+                LocationReport(59.9229, 10.7522, 30.0f, "2026-10-24T08:02:00Z", provider = "vibb_apple"),
                 LocationReport(59.91417, 10.7522, 25.0f, "2026-10-24T08:12:03.250Z", provider = "fused"),
             ),
-            zoneWatch = ZoneWatchReport(fences = 1, motionSensor = true, locationOn = true, backgroundLocation = true, mockIgnored = 2, still = true),
+            zoneWatch = ZoneWatchReport(fences = 1, motionSensor = true, locationOn = true, backgroundLocation = true, mockIgnored = 2, wifiDisagreed = 3, still = true),
         )
         assertEquals(contract.trimEnd(), ServerJson.encodeToString(StatusReportRequest.serializer(), report))
         val none = ServerJson.parseToJsonElement(

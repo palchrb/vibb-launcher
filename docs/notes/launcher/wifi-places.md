@@ -214,3 +214,44 @@
   `loo cell own=3/3 apple=12/14 mixed=1/1 err own=800 apple=600 mixed=700`.
 - Not device-tested: the Jelly Star has no SIM (§9: the SIM check list); the emulator rows are
   `docs/testing/emulator.md` §6bk.
+
+## A Wi-Fi fix carries what confirmed it (design 131, `docs/design/131-wifi-fix-check.md`)
+
+A Wi-Fi fix that no satellite fix or linked network confirms never starts an arrival. Pure rules at the end of
+`places/PlacesPlan.kt` (`PlacesTest`: the `checks` rows in `wifi_places.json`, the link, the bands, the town far away);
+glue in `WifiPlaces.attempt`/`judged`.
+
+- **The check** (`FixCheck`, in the fix's extras `vibb_check`, `zones/ZoneWatch.kt`'s `fixCheck`/`withFixCheck`):
+  `link` (`linkConfirms`) - the connection now (`linkConn`: by the network's name, so a mesh node, 6 GHz or a locally
+  administered BSSID counts; unmetered; PSK or SAE, or EAP with the connected AP among the fix's own rows; never open or
+  OWE) holds a live D12 link under the binding it was learned with (`PlaceKeys.binding`: the security and
+  `WifiInfo.getNetworkId()`, kept in the link row's device field; another binding starts the row's occasions over, its
+  strikes kept; D12's renewal needs the binding too), and the fix is surely inside that zone; else `gnss`
+  (`gnssConfirms`) - a `gps` fix of at most 50 m within 2 min (the attempt's own, or the carried last one of this boot)
+  within both accuracies. None: the Wi-Fi alone. The check rides on `QueuedFix.check`, the cached and kept fix, the
+  report's `location`/`extra_locations`, the shutdown fix (`PowerLocation.check`) and every renewal (the vouch's own,
+  never upgraded).
+- **The verdict** (`wifiVerdict`): an impossible jump refuses; `STILL` with a vouch - the last fresh fix
+  (`ZoneWatch.lastFreshFix`, a satellite or a checked fix: an unchecked Wi-Fi fix never stamps it, `wifiFresh`) -
+  within both accuracies uses it (an Apple fix renews the vouch, design 125 A9), outside refuses (counted); a checked
+  fix stands; an unchecked one runs GPS while `STILL` without a vouch or `STILL_SINCE_TRY`, or after a jump over the
+  movement bound - reported unchecked only when GPS gives nothing, never withheld. After GPS, `keepBetter`: a teaching
+  quality `gps` fix further than `max(500 m, 3 x both accuracies)` overrules (counted), else the usual choice; a kept
+  Wi-Fi fix takes `gnss` when the GPS fix agrees.
+- **The jump gate** (`jumpGate`, `LastGnss` in CE prefs `wifi_places` `last_gnss_v1`, from every own and passive `gps`
+  fix, `noteGnss`): `v = (d - both accuracies) / dt` from the last satellite fix of at most 50 m, `dt` by elapsed time in
+  its boot, else the decisions' clock (`TrustedClock`); over 60 m/s impossible, over 8 m/s (60 after a satellite fix over
+  8 m/s in the last 15 min) fast.
+- **Bands and names** (`learnedFix`): a result heard on another band than its own row's (`otherBand`) is left out and
+  the attempt disagreed (`bandDisagrees`); one heard under another network name than its row's (`otherName`, neither
+  hidden) is left out, not counted. Apple rows carry neither.
+- **Locate** stops at 20 s only on a `link`-checked fix within 60 m (`locateStopsShort`).
+- **The count** (`Disagreement`: one rise an attempt; a passive fix's learned contradiction its own):
+  `zone_watch.wifi_disagreed` (CE prefs `zone_watch` `wifi_disagreed`, cleared with a new enrolment), logged
+  `Wi-Fi and satellites disagreed (n in all)`.
+- **Saved networks** (D11): `AppEnforcer.applySavedNetworksLock` sets
+  `setConfiguredNetworksLockdownState` while managed, lifted by the override and the pause (as the clock lock):
+  Android's screens can't change or forget a network Vibb saved. Vibb's own Wi-Fi page adds a new network (a new id) and
+  never edits one; `DISALLOW_CONFIG_WIFI` is not set.
+- **The emulator**: the debug build's `PlacesDebugReceiver` (src/debug) hands the places a made-up scan and connection;
+  rows in `docs/testing/emulator.md` §6bm.

@@ -81,6 +81,7 @@ fun shutdownLocation(newest: QueuedFix?, policy: LocationPolicy?, trustedAtMs: L
         // The fix's time on the decisions' clock when its age is known (sent after the reboot, the age is lost).
         atMs = trustedAtMs ?: newest.timeMs,
         provider = newest.provider,
+        check = newest.check,
     )
 }
 

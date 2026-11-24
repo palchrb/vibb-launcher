@@ -30,6 +30,8 @@ import com.kidslauncher.mdm.places.AttemptPath
 import com.kidslauncher.mdm.places.WifiPlaces
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.zones.ZoneWatch
+import com.kidslauncher.mdm.zones.fixCheck
+import com.kidslauncher.mdm.zones.withFixCheck
 import kotlin.coroutines.resume
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
@@ -74,6 +76,8 @@ private data class CachedFix(
     /** The fix's elapsed realtime and boot: its age at send is told by them, never by the wall clock. */
     val elapsedMs: Long? = null,
     val bootCount: Int = -1,
+    /** Design 131: what confirmed a Wi-Fi fix (`gnss`, `link`), kept with it for every re-send. */
+    val check: String? = null,
 )
 
 /**
@@ -290,13 +294,13 @@ object LocateCommands {
             if (cached.elapsedMs != null && cached.bootCount >= 0 && cached.bootCount == BootClock.bootCount()) {
                 elapsedRealtimeNanos = cached.elapsedMs * 1_000_000L
             }
-        }
+        }.withFixCheck(cached.check)
     }
 
     /** The cached fix as the zone queue keeps it (`null` without one) - the moving series compares
      * a check's fix with it. */
     fun cachedQueued(): com.kidslauncher.mdm.zones.QueuedFix? = cachedFix()?.let {
-        com.kidslauncher.mdm.zones.QueuedFix(it.latitude, it.longitude, it.accuracy, it.timeMs, it.provider, it.mock, it.elapsedMs, it.bootCount)
+        com.kidslauncher.mdm.zones.QueuedFix(it.latitude, it.longitude, it.accuracy, it.timeMs, it.provider, it.mock, it.elapsedMs, it.bootCount, it.check)
     }
 
     /**
@@ -396,6 +400,7 @@ object LocateCommands {
             mock = location.isMock,
             elapsedMs = location.elapsedRealtimeNanos.takeIf { it > 0 }?.let { it / 1_000_000L },
             bootCount = BootClock.bootCount(),
+            check = location.fixCheck(),
         )
         PreferenceManager.getDefaultSharedPreferences(context).edit()
             .putString(KEPT_FIX_KEY, ServerJson.encodeToString(kept)).commit()
@@ -421,7 +426,7 @@ object LocateCommands {
         val kept = keptFix() ?: return null
         val cached = cachedFixTimeMs()
         if (cached != null && kept.timeMs <= cached) return null
-        return com.kidslauncher.mdm.zones.QueuedFix(kept.latitude, kept.longitude, kept.accuracy, kept.timeMs, kept.provider, kept.mock, kept.elapsedMs, kept.bootCount)
+        return com.kidslauncher.mdm.zones.QueuedFix(kept.latitude, kept.longitude, kept.accuracy, kept.timeMs, kept.provider, kept.mock, kept.elapsedMs, kept.bootCount, kept.check)
     }
 
     /** The newest fix the phone knows, reported or kept - what the series times its next check by. */
@@ -462,6 +467,7 @@ object LocateCommands {
             mock = location.isMock,
             elapsedMs = location.elapsedRealtimeNanos.takeIf { it > 0 }?.let { it / 1_000_000L },
             bootCount = BootClock.bootCount(),
+            check = location.fixCheck(),
         )
         val key = LauncherPreferences.mdm().keys().cachedLocationJson()
         PreferenceManager.getDefaultSharedPreferences(context)

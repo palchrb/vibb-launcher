@@ -153,8 +153,17 @@ async fn a_launcher_report_raises_both() {
         Some(crate::zones::instant(off_at).as_str())
     );
     let (params, _) = off_params(&app, id).await;
-    assert_eq!(params["location"]["provider"], "fused");
-    assert_eq!(params["location"]["accuracy_m"], 25.0);
+    assert_eq!(params["location"]["provider"], "vibb_wifi");
+    assert_eq!(params["location"]["accuracy_m"], 35.0);
+    // Design 131: the Wi-Fi fix's check rides along and is stored on the fix.
+    assert_eq!(params["location"]["check"], "gnss");
+    let check: Option<String> =
+        sqlx::query_scalar("SELECT fix_check FROM device_locations WHERE device_id = ?")
+            .bind(id)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(check.as_deref(), Some("gnss"));
 
     // The same body again: nothing new (the kept off is resent with every later start's on).
     assert_eq!(post(&app, &token, body).await, StatusCode::NO_CONTENT);

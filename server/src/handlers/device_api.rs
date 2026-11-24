@@ -353,7 +353,8 @@ async fn enrol_with_key(
          key_exempt_at = NULL, key_exempt_reason = NULL, key_exempt_by = NULL, \
          enrollment_code_hash = NULL, enrollment_code_kind = NULL, enrollment_code_expires_at = NULL, \
          enrollment_code_tag = NULL, enroll_old_app_at = NULL, \
-         enrolled_at = datetime('now'), mock_logged = NULL, mock_logged_at = NULL \
+         enrolled_at = datetime('now'), mock_logged = NULL, mock_logged_at = NULL, \
+         wifi_disagreed_logged = NULL, wifi_disagreed_at = NULL \
          WHERE enrollment_code_hash = ?2 AND enrollment_code_expires_at > datetime('now') \
          RETURNING id, name",
     )
@@ -2265,6 +2266,18 @@ async fn status_intake(
     .await
     {
         tracing::error!(device_id = device.id, %err, "can't compare the mock count");
+    }
+    // Design 131: the attempts in which Wi-Fi and the satellites disagreed - one quiet security-log line a day at most,
+    // the rises summed (`zones::wifi_disagreed_rise`).
+    if let Err(err) = crate::zones::wifi_disagreed_rise(
+        &state.db,
+        device.id,
+        crate::zones::parse_zone_watch(zone_watch_json.as_deref()).as_ref(),
+        chrono::Utc::now(),
+    )
+    .await
+    {
+        tracing::error!(device_id = device.id, %err, "can't compare the Wi-Fi count");
     }
     crate::handlers::window_relock::log_relock(
         &state.db,

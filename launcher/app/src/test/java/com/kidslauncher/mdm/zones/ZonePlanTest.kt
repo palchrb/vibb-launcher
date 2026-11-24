@@ -669,9 +669,9 @@ class ZonePlanTest {
         // genuinely fresh own fix, stamped only with freshOwnFix.
         assertTrue(Regex("""if \(verdict != FenceVerdict\.CROSSING\) return[\s\S]{0,300}MotionGate\.markMoved\(\)""").containsMatchIn(source("zones/ZoneWatch.kt")))
         assertTrue(Regex("""MotionGate\.markMoved\(\)\s+LocateCommands\.promoteKept\(context\)""").containsMatchIn(seriesSource))
-        assertTrue(seriesSource.contains("if (fresh) ZoneWatch.stampFreshFix(context, location.time)"))
+        assertTrue(seriesSource.contains("if (fresh) ZoneWatch.stampFreshFix(context, fix)"))
         // Design 125 M2: a learned fix from the 2-min fallback and a renewed vouch are no fresh fix.
-        assertTrue(sync.contains("val fresh = location?.takeIf { freshOwnFix(it.time, now) && !places.notFresh && !places.renewed }\n        if (fresh != null) ZoneWatch.stampFreshFix(context, fresh.time)"))
+        assertTrue(sync.contains("val fresh = location?.takeIf { freshOwnFix(it.time, now) && !places.notFresh && !places.renewed }\n        if (fresh != null) ZoneWatch.stampFreshFix(context, fresh.toQueued(LocateCommands.providerOf(fresh)))"))
         assertTrue(sync.contains("val lastFreshFix = if (stillOn) ZoneWatch.lastFreshFixMs(context) else lastOwnFix"))
         // Design 125 D12: the still skip counts from the later of the fresh fix and a zone link's renewal.
         assertTrue(sync.contains("val stillFrom = if (stillOn) maxOf(lastFreshFix, ZoneWatch.vouchRenewedMs(context)) else lastOwnFix"))

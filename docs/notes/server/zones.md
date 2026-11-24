@@ -208,3 +208,25 @@ key `ON DELETE SET NULL`: deleting the zone clears it (and the delete nudges the
 **A future migration that rebuilds `device_zones`** (copy, drop, rename) runs with foreign keys on, so dropping the old
 table would set every `weather_zone_id` to NULL without a word: such a rebuild must save the column first and restore
 it after (server QA R2 of design 75).
+
+## A Wi-Fi fix's check (design 131, migration 0176)
+
+A Wi-Fi fix that no satellite fix or linked network confirms never starts an arrival.
+
+- **Three classes** (`zones::FixClass::of(provider, check)`): `Coarse` (`COARSE_PROVIDERS`), `WifiAlone` (a
+  `models::WIFI_PROVIDERS` fix, `vibb_wifi`/`vibb_apple`, without a check), `Fine` (the rest). The report's fixes carry
+  `check` (`gnss`, `link`), stored as `device_locations.fix_check` only on a Wi-Fi provider and only those two words
+  (`models::fix_check`); the shutdown's fix too (`PowerLocation.check`).
+- **The rule** (`step`): a Wi-Fi fix alone surely inside never starts a pending side, never drops a pending outside and
+  never seeds a zone (`seed` takes a `Fine` fix); it confirms a pending inside that a fine fix started from
+  `CONFIRM_GAP` to `WIFI_CONFIRM_WITHIN` (10 min) after it - the satellites saw the approach. Outside it counts as a fine
+  fix. The pending fix's class is read from its rows at its time, a fine one preferred (`pending_class`).
+- **"Here now"**: `FINE_ONLY` leaves out the Wi-Fi alone with the cell providers, so neither it nor its still re-send
+  keeps "Here now" fresh.
+- **Locate**: the fix row and the popup say "Wi-Fi estimate" / "Wi-Fi-anslag" (`locate.fix.wifi_estimate`) in place of
+  the zone badge (`fix_badge`); a checked fix shows no word.
+- **The count**: `zone_watch.wifi_disagreed` (0 when absent) through `wifi_disagreed_rise` as `mock_rise` does - one
+  `phone_wifi_disagreed` line ("Wi-Fi and GPS disagreed", "{n} times ({total} in all)") at most every
+  `WIFI_DISAGREED_LINE_EVERY` (24 h), the rises between summed; `devices.wifi_disagreed_logged`/`wifi_disagreed_at`,
+  cleared at re-enrolment (`device_api::enroll`, `enrol_key`). No Attention row, no orange line (the owner,
+  2026-11-24).

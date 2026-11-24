@@ -160,10 +160,11 @@ every `codes` row and compare the copies; the server's `device_pages::tests::mus
 reads the `music_codes` rows (the music app's version from its code), and `scripts/release-version.sh --selftest`
 checks both lists' rows against what the workflows build.
 The launcher's `POST /api/devices/power` body (design 38 §2; since 2026-10-25 its `off` with the shutdown's last stored fix,
-`location`) is `server/testdata/power_report.json`, byte-identical in
+`location`, since design 131 with the fix's `check`) is `server/testdata/power_report.json`, byte-identical in
 `launcher/app/src/test/resources/`: the launcher's `PowerEventsTest` encodes exactly it, the server's
 `power::a_launcher_report_raises_both` posts it (its instants moved to the last hour), and both compare the copies.
-The launcher's status body with `extra_locations` and `zone_watch` (design 64 step 2) is
+The launcher's status body with `extra_locations` and `zone_watch` (design 64 step 2; design 131: a Wi-Fi fix's
+`check` - a `vibb_wifi` location with `link`, a `vibb_apple` extra without one - and `zone_watch.wifi_disagreed`) is
 `server/testdata/zone_status_report.json`, byte-identical in `launcher/app/src/test/resources/`: the launcher's
 `ZoneReportTest` encodes exactly it, the server's `zone_watch::a_launcher_report_raises_the_arrival` posts it (its
 instants moved to the last minutes), and both compare the copies. The policy's `location_policy.zones` is pinned by

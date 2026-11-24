@@ -36,7 +36,8 @@ class PowerEventsTest {
         val report = PowerReport(
             off = PowerOff(
                 1_760_900_040_000, 41, BatteryReport(3, charging = false, low = true), reboot = false, reason = "userrequested",
-                location = PowerLocation(lat = 59.9139, lng = 10.7522, accuracyM = 25f, atMs = 1_760_899_800_000, provider = "fused"),
+                // Design 131: a Wi-Fi fix a satellite fix confirmed carries its check.
+                location = PowerLocation(lat = 59.9139, lng = 10.7522, accuracyM = 35f, atMs = 1_760_899_800_000, provider = "vibb_wifi", check = "gnss"),
             ),
             on = PowerOn(1_760_936_520_000, 42, BatteryReport(11, charging = true, low = false), unlockedAtMs = 1_760_937_300_000),
         )
@@ -173,6 +174,9 @@ class PowerEventsTest {
         assertNull("location Off", shutdownLocation(fix, LocationPolicy(mode = "off", intervalMinutes = 30)))
         assertNull("no policy (not managed)", shutdownLocation(fix, null))
         assertNull("a mock fix (only a debug build keeps one)", shutdownLocation(fix.copy(mock = true), regularly))
+        // Design 131: the fix's check rides along, never more than it had.
+        assertEquals("link", shutdownLocation(fix.copy(provider = "vibb_wifi", check = "link"), regularly)?.check)
+        assertNull(shutdownLocation(fix.copy(provider = "vibb_wifi"), regularly)?.check)
         // Unknowns are left out of the body.
         assertEquals(
             """{"at_ms":5,"boot_count":1,"location":{"lat":1.5,"lng":2.5,"at_ms":4}}""",

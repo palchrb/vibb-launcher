@@ -242,7 +242,8 @@ pub async fn waiting_try(state: &AppState, try_: &Try<'_>) -> Result<TryOutcome,
                  key_exempt_at = datetime('now'), key_exempt_reason = ?3, key_exempt_by = ?4, \
                  enrollment_code_hash = NULL, enrollment_code_kind = NULL, enrollment_code_tag = NULL, \
                  enrollment_code_expires_at = NULL, enroll_old_app_at = NULL, \
-                 enrolled_at = datetime('now'), mock_logged = NULL, mock_logged_at = NULL \
+                 enrolled_at = datetime('now'), mock_logged = NULL, mock_logged_at = NULL, \
+                 wifi_disagreed_logged = NULL, wifi_disagreed_at = NULL \
                  WHERE id = ?2 AND enrollment_code_hash = ?5 AND enrollment_code_expires_at > datetime('now') \
                  RETURNING enrolled_at",
             )

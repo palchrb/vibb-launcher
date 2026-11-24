@@ -40,5 +40,10 @@
             android:name="com.kidslauncher.mdm.server.BtPairingDebugReceiver"
             android:exported="true"
             android:permission="android.permission.DUMP" />
+        <!-- Design 131 §7: a made-up Wi-Fi scan and connection the emulator can't hear (the Wi-Fi fix's check). -->
+        <receiver
+            android:name="com.kidslauncher.mdm.places.PlacesDebugReceiver"
+            android:exported="true"
+            android:permission="android.permission.DUMP" />
     </application>
 </manifest>
