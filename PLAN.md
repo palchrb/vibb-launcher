@@ -30,7 +30,7 @@ findings, merge to `main`, full suite once.
 
 ### Approved, not built - the queue (kept current; checked against the code 2026-11-16)
 - **SECURITY: squeue** (2026-11-23) - security items are kept in a private queue outside the repo, referred to here
-  only by number. Done and merged 2026-11-23: squeue 1, 2, 3 (next release; squeue 1 needs the owner's GitHub settings before the next server tag - see DEPLOY.md's recommended settings). Done and merged 2026-11-24: squeue 6, 8, 9; squeue 10 on main (docs). Built on branch `trusted-time` (migration 0171), code QA fixed, emulator gate running (emulator.md §6bf): squeue 4. Next: squeue 5 (b), 13, 11, 7, 12.
+  only by number. Done and merged 2026-11-23: squeue 1, 2, 3 (next release; squeue 1 needs the owner's GitHub settings before the next server tag - see DEPLOY.md's recommended settings). Done and merged 2026-11-24: squeue 6, 8, 9; squeue 10 on main (docs). Built on branch `trusted-time` (migration 0171), code QA fixed, emulator gate run 2026-11-24 on 14 and 16 (emulator.md §6bf: three faults found and fixed on the branch; (k) not run), awaiting merge: squeue 4. Next: squeue 5 (b), 13, 11, 7, 12.
 - **ON RESTART 2026-11-23 (the user paused the VM for the adversarial review)** - in order:
   (1) Check the release runs of `server-v0.91.0` and `launcher-v0.43.0-rc.1` (174845880; tagged before main's server
   CI finished - confirm `Server CI` on 174845880 went green and both releases published after the user's signing).
