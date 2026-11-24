@@ -36,6 +36,8 @@ data class PowerLocation(
     val accuracyM: Float? = null,
     val atMs: Long,
     val provider: String? = null,
+    /** Design 131: what confirmed a Wi-Fi fix (`gnss`, `link`), left out otherwise. */
+    val check: String? = null,
 )
 
 /** The boot this process's first start saw: its instant (wall clock minus elapsed realtime), its

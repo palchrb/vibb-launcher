@@ -138,7 +138,7 @@ object ZoneSeries {
         // The moving car (design 124): measured from the reported fix while it is the last fresh one;
         // the checks come at most CHECK_MAX_DELAY_MS apart.
         val lastFresh = previous?.takeIf { it.timeMs == ZoneWatch.lastFreshFixMs(context) }
-        if (fresh) ZoneWatch.stampFreshFix(context, location.time)
+        if (fresh) ZoneWatch.stampFreshFix(context, fix)
         Log.i(LOG_TAG, "Series check: $verdict")
         if (verdict == CheckVerdict.KEEP) {
             if (fresh) {

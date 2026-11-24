@@ -54,6 +54,9 @@ pub const COARSE_OUTSIDE_MIN_M: i64 = 20_000;
 /// ([seed]), never what keeps "Here now" ([freshness_inputs]). A GLA-on phone's `network` fix
 /// is not among them (Q8).
 pub const COARSE_PROVIDERS: &[&str] = &["vibb_cell", "vibb_apple_cell"];
+/// Design 131: a Wi-Fi fix with nothing that confirmed it ([FixClass::WifiAlone]) may confirm an arrival a fine fix
+/// started at most this long after it - the satellites saw the approach, Wi-Fi confirms it indoors.
+pub const WIFI_CONFIRM_WITHIN: Duration = Duration::minutes(10);
 /// A crossing is pushed only when the fix that confirmed it is younger than this at the intake
 /// (decision 8): a phone back from a day without data doesn't push "arrived at School 08:10" at
 /// 15:00. The inbox gets it either way.
@@ -113,6 +116,33 @@ pub struct Circle {
     pub radius_m: i64,
 }
 
+/// What a stored fix can say about a zone (design 131).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FixClass {
+    /// A cell's position ([COARSE_PROVIDERS], design 125b C10): never inside, outside only far away.
+    Coarse,
+    /// A Wi-Fi fix (`models::WIFI_PROVIDERS`) that nothing confirmed: never starts an arrival, never keeps "Here now"
+    /// ([step], [FINE_ONLY]); outside it counts as a fine fix.
+    WifiAlone,
+    /// The rest: satellites, `fused`, a GLA-on `network` fix (125b Q8), a Wi-Fi fix a satellite fix or a linked network
+    /// confirmed.
+    #[default]
+    Fine,
+}
+
+impl FixClass {
+    /// The class of a stored fix from its provider and its stored check (`models::fix_check`).
+    pub fn of(provider: Option<&str>, check: Option<&str>) -> FixClass {
+        match provider {
+            Some(p) if COARSE_PROVIDERS.contains(&p) => FixClass::Coarse,
+            Some(p) if crate::models::WIFI_PROVIDERS.contains(&p) && check.is_none() => {
+                FixClass::WifiAlone
+            }
+            _ => FixClass::Fine,
+        }
+    }
+}
+
 /// A stored fix as the rule reads it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Fix {
@@ -121,18 +151,15 @@ pub struct Fix {
     pub longitude: f64,
     pub accuracy_m: Option<f64>,
     pub at: DateTime<Utc>,
-    /// Its provider is one of [COARSE_PROVIDERS] (design 125b C10).
-    pub coarse: bool,
+    /// What it can say ([FixClass]).
+    pub class: FixClass,
 }
 
-/// The stored provider word names a coarse fix (design 125b C10).
-pub fn is_coarse(provider: Option<&str>) -> bool {
-    provider.is_some_and(|p| COARSE_PROVIDERS.contains(&p))
-}
-
-/// SQL: the row's `provider` is not a coarse one ([COARSE_PROVIDERS]; NULL - an older row - is
-/// fine). `zones::tests::the_fine_only_filter_names_every_coarse_provider` keeps the two lists equal.
-const FINE_ONLY: &str = "(provider IS NULL OR provider NOT IN ('vibb_cell', 'vibb_apple_cell'))";
+/// SQL: the row is a fine fix ([FixClass::Fine]): its `provider` not a coarse one ([COARSE_PROVIDERS];
+/// NULL - an older row - is fine), and not a Wi-Fi fix without a check (design 131).
+/// `zones::tests::the_fine_only_filter_names_every_coarse_provider` keeps the lists equal.
+const FINE_ONLY: &str = "((provider IS NULL OR provider NOT IN ('vibb_cell', 'vibb_apple_cell')) \
+    AND NOT (provider IS NOT NULL AND provider IN ('vibb_wifi', 'vibb_apple') AND fix_check IS NULL))";
 
 /// The great-circle distance in metres (haversine on [EARTH_RADIUS_M]).
 pub fn distance_m(lat1: f64, lng1: f64, lat2: f64, lng2: f64) -> f64 {
@@ -193,7 +220,7 @@ pub fn coarse_side(
 
 /// The side of `zone` the stored fix is on: [side], or [coarse_side] for a coarse fix.
 pub fn fix_side(zone: &Circle, fix: &Fix) -> Option<Side> {
-    if fix.coarse {
+    if fix.class == FixClass::Coarse {
         coarse_side(zone, fix.latitude, fix.longitude, fix.accuracy_m)
     } else {
         side(zone, fix.latitude, fix.longitude, fix.accuracy_m)
@@ -211,9 +238,10 @@ pub struct State {
     pub pending: Option<(Side, DateTime<Utc>)>,
     /// The newest fix evaluated, `(captured_at, id)`: only a later one counts.
     pub cursor: Option<(DateTime<Utc>, i64)>,
-    /// The pending side came from a coarse fix (design 125b C10): its second needs
-    /// [COARSE_CONFIRM_GAP]. Not a column: [evaluate_stored] reads it from the pending fix's row.
-    pub pending_coarse: bool,
+    /// The class of the fix the pending side came from (design 125b C10: a coarse one's second
+    /// needs [COARSE_CONFIRM_GAP]; design 131: a Wi-Fi fix alone confirms only a fine one's
+    /// arrival). Not a column: [evaluate_stored] reads it from the pending fix's row.
+    pub pending_class: FixClass,
 }
 
 /// A confirmed change of side: `to`, at the pair's first fix (the earliest evidence, so
@@ -236,7 +264,10 @@ pub struct Crossing {
 /// - the same but sooner: nothing;
 /// - sure, other than the side and the pending one (or none): it becomes the pending side.
 ///
-/// A coarse fix is sure only by [coarse_side] (design 125b C10).
+/// A coarse fix is sure only by [coarse_side] (design 125b C10). Design 131: a Wi-Fi fix alone
+/// ([FixClass::WifiAlone]) surely inside never starts a pending side and never drops a pending
+/// outside; it confirms only a pending inside a fine fix started, from [CONFIRM_GAP] to
+/// [WIFI_CONFIRM_WITHIN] after it. Outside it counts as a fine fix.
 pub fn step(state: &mut State, zone: &Circle, fix: &Fix) -> Option<Crossing> {
     let key = (fix.at, fix.id);
     if state.cursor.is_some_and(|cursor| key <= cursor) {
@@ -244,14 +275,27 @@ pub fn step(state: &mut State, zone: &Circle, fix: &Fix) -> Option<Crossing> {
     }
     state.cursor = Some(key);
     let sure = fix_side(zone, fix)?;
+    if fix.class == FixClass::WifiAlone && sure == Side::Inside {
+        return match state.pending {
+            Some((Side::Inside, since))
+                if state.pending_class == FixClass::Fine
+                    && state.side != Some(Side::Inside)
+                    && fix.at - since >= CONFIRM_GAP
+                    && fix.at - since <= WIFI_CONFIRM_WITHIN =>
+            {
+                confirm(state, Side::Inside, since, fix.at)
+            }
+            _ => None,
+        };
+    }
     if state.side == Some(sure) {
         state.pending = None;
-        state.pending_coarse = false;
+        state.pending_class = FixClass::Fine;
         return None;
     }
     match state.pending {
         Some((pending, since)) if pending == sure => {
-            let gap = if fix.coarse || state.pending_coarse {
+            let gap = if fix.class == FixClass::Coarse || state.pending_class == FixClass::Coarse {
                 COARSE_CONFIRM_GAP
             } else {
                 CONFIRM_GAP
@@ -259,22 +303,33 @@ pub fn step(state: &mut State, zone: &Circle, fix: &Fix) -> Option<Crossing> {
             if fix.at - since < gap {
                 return None;
             }
-            let before = state.side.replace(sure);
-            state.side_since = Some(since);
-            state.pending = None;
-            state.pending_coarse = false;
-            before.map(|_| Crossing {
-                to: sure,
-                at: since,
-                confirmed_at: fix.at,
-            })
+            confirm(state, sure, since, fix.at)
         }
         _ => {
             state.pending = Some((sure, fix.at));
-            state.pending_coarse = fix.coarse;
+            state.pending_class = fix.class;
             None
         }
     }
+}
+
+/// The pending side `sure` (first seen at `since`) confirmed at `at`: the crossing, unless the
+/// side was unknown (the first side is silent).
+fn confirm(
+    state: &mut State,
+    sure: Side,
+    since: DateTime<Utc>,
+    at: DateTime<Utc>,
+) -> Option<Crossing> {
+    let before = state.side.replace(sure);
+    state.side_since = Some(since);
+    state.pending = None;
+    state.pending_class = FixClass::Fine;
+    before.map(|_| Crossing {
+        to: sure,
+        at: since,
+        confirmed_at: at,
+    })
 }
 
 /// Every zone stepped through every fix in time order (`captured_at`, then id - fixes of one
@@ -338,7 +393,7 @@ impl Zone {
                 .and_then(Side::of)
                 .zip(time(&self.pending_at)),
             cursor: time(&self.evaluated_at).zip(self.evaluated_fix_id),
-            pending_coarse: false,
+            pending_class: FixClass::Fine,
         }
     }
 
@@ -449,7 +504,7 @@ pub async fn start_over(
         .zip([String::new(), format!("AND {FINE_ONLY}")])
     {
         let row: Option<FixRow> = sqlx::query_as(&format!(
-            "SELECT id, latitude, longitude, accuracy_meters, captured_at, provider \
+            "SELECT id, latitude, longitude, accuracy_meters, captured_at, provider, fix_check \
              FROM device_locations WHERE device_id = ? {filter} \
              ORDER BY captured_at DESC, id DESC LIMIT 1"
         ))
@@ -488,7 +543,7 @@ pub fn seed(
         return State::default();
     };
     let pending = fine
-        .filter(|fix| !fix.coarse && now - fix.at < SEED_WITHIN)
+        .filter(|fix| fix.class == FixClass::Fine && now - fix.at < SEED_WITHIN)
         .and_then(|fix| {
             side(circle, fix.latitude, fix.longitude, fix.accuracy_m).map(|s| (s, fix.at))
         });
@@ -499,18 +554,40 @@ pub fn seed(
     }
 }
 
+/// The class of a pending side's fix from the rows stored at its time (`provider`, `fix_check`):
+/// a fine one when any is (design 131), else a Wi-Fi fix alone, else a coarse one; none - a row
+/// gone to retention - reads as fine.
+pub fn pending_class(rows: &[(Option<String>, Option<String>)]) -> FixClass {
+    let classes: Vec<FixClass> = rows
+        .iter()
+        .map(|(provider, check)| FixClass::of(provider.as_deref(), check.as_deref()))
+        .collect();
+    [FixClass::Fine, FixClass::WifiAlone, FixClass::Coarse]
+        .into_iter()
+        .find(|c| classes.contains(c))
+        .unwrap_or(FixClass::Fine)
+}
+
 /// A stored fix's columns as [evaluate_stored] and [start_over] read them.
-type FixRow = (i64, f64, f64, Option<f64>, String, Option<String>);
+type FixRow = (
+    i64,
+    f64,
+    f64,
+    Option<f64>,
+    String,
+    Option<String>,
+    Option<String>,
+);
 
 /// A stored fix's row as the rule reads it; a time that doesn't read is no fix.
-fn fix_of_row((id, latitude, longitude, accuracy_m, at, provider): FixRow) -> Option<Fix> {
+fn fix_of_row((id, latitude, longitude, accuracy_m, at, provider, check): FixRow) -> Option<Fix> {
     Some(Fix {
         id,
         latitude,
         longitude,
         accuracy_m,
         at: parse_db_utc(&at)?,
-        coarse: is_coarse(provider.as_deref()),
+        class: FixClass::of(provider.as_deref(), check.as_deref()),
     })
 }
 
@@ -548,8 +625,8 @@ async fn store_fix(
     // and the phone's own named time within a second of a stored one is that fix again ([SAME_FIX]).
     sqlx::query_scalar(&format!(
         "INSERT INTO device_locations \
-           (device_id, latitude, longitude, accuracy_meters, captured_at, provider, mock, phone_offset_ms) \
-         SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8 WHERE NOT EXISTS (SELECT 1 FROM device_locations \
+           (device_id, latitude, longitude, accuracy_meters, captured_at, provider, mock, phone_offset_ms, fix_check) \
+         SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9 WHERE NOT EXISTS (SELECT 1 FROM device_locations \
            WHERE {SAME_FIX}) \
          RETURNING id"
     ))
@@ -561,6 +638,10 @@ async fn store_fix(
     .bind(crate::models::location_provider(loc.provider.as_deref()))
     .bind(loc.mock)
     .bind(crate::models::phone_offset_ms(loc, captured_at))
+    .bind(crate::models::fix_check(
+        loc.provider.as_deref(),
+        loc.check.as_deref(),
+    ))
     .fetch_optional(&mut *conn)
     .await
 }
@@ -741,26 +822,27 @@ pub async fn evaluate_stored(
         return Ok(Vec::new());
     }
     let mut states: Vec<(Circle, State)> = zones.iter().map(|z| (z.circle(), z.state())).collect();
-    // Design 125b C10: whether a pending side came from a coarse fix - the pending fix's own row
-    // at its stored time (one gone to retention reads as fine).
+    // Design 125b C10, design 131: the class of the fix a pending side came from - the pending
+    // fix's own rows at its stored time, a fine one preferred when several share it (one gone to
+    // retention reads as fine).
     for (_, state) in states.iter_mut() {
         if let Some((_, at)) = state.pending {
-            let coarse: Option<i64> = sqlx::query_scalar(&format!(
-                "SELECT 1 FROM device_locations WHERE device_id = ? AND captured_at = ? \
-                 AND NOT {FINE_ONLY} LIMIT 1"
-            ))
+            let rows: Vec<(Option<String>, Option<String>)> = sqlx::query_as(
+                "SELECT provider, fix_check FROM device_locations \
+                 WHERE device_id = ? AND captured_at = ?",
+            )
             .bind(device_id)
             .bind(instant(at))
-            .fetch_optional(&mut *conn)
+            .fetch_all(&mut *conn)
             .await?;
-            state.pending_coarse = coarse.is_some();
+            state.pending_class = pending_class(&rows);
         }
     }
     let before: Vec<State> = states.iter().map(|(_, state)| state.clone()).collect();
     // From the oldest cursor on; a zone without one reads every stored fix.
     let from = states.iter().map(|(_, state)| state.cursor).min().flatten();
     let rows: Vec<FixRow> = sqlx::query_as(
-        "SELECT id, latitude, longitude, accuracy_meters, captured_at, provider \
+        "SELECT id, latitude, longitude, accuracy_meters, captured_at, provider, fix_check \
          FROM device_locations \
          WHERE device_id = ?1 AND (?2 IS NULL OR captured_at > ?2 OR (captured_at = ?2 AND id > ?3)) \
          ORDER BY captured_at, id LIMIT ?4",
@@ -878,7 +960,9 @@ pub fn served_interval(mode: &str, chosen: i64, zones: usize, watching: bool) ->
 /// `StatusReportRequest.zone_watch` as stored (design 64 step 2): the fences the phone holds,
 /// whether it has a significant-motion sensor (without one it fixes at every heartbeat), the
 /// system Location switch, the background-location grant, and the mock fixes a release build
-/// ignored since the launcher's data was created (a running count, so a lost report loses none).
+/// ignored since the launcher's data was created (a running count, so a lost report loses none);
+/// design 131: the attempts in which Wi-Fi and the satellites disagreed, a running count too
+/// (`wifi_disagreed`, 0 when a launcher doesn't send it).
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ZoneWatch {
     pub fences: i64,
@@ -886,10 +970,13 @@ pub struct ZoneWatch {
     pub location_on: bool,
     pub background_location: bool,
     pub mock_ignored: i64,
+    #[serde(default)]
+    pub wifi_disagreed: i64,
 }
 
-/// The phone's `zone_watch` through its known keys (all five, of the right types; at most 100
-/// fences and 10^9 fixes), as stored; `None` for anything else.
+/// The phone's `zone_watch` through its known keys (the first five, of the right types; at most
+/// 100 fences and 10^9 fixes; `wifi_disagreed` when it is one, else 0), as stored; `None` for
+/// anything else.
 pub fn sanitize_zone_watch(value: &serde_json::Value) -> Option<String> {
     let count = |key: &str, max: i64| value.get(key)?.as_i64().filter(|n| (0..=max).contains(n));
     let flag = |key: &str| value.get(key)?.as_bool();
@@ -899,6 +986,7 @@ pub fn sanitize_zone_watch(value: &serde_json::Value) -> Option<String> {
         location_on: flag("location_on")?,
         background_location: flag("background_location")?,
         mock_ignored: count("mock_ignored", 1_000_000_000)?,
+        wifi_disagreed: count("wifi_disagreed", 1_000_000_000).unwrap_or(0),
     };
     serde_json::to_string(&watch)
         .ok()
@@ -972,6 +1060,87 @@ pub async fn mock_rise(
                 &mut tx,
                 device_id,
                 crate::security::PhoneLine::MockLocationIgnored,
+                line.clone(),
+            )
+            .await?
+            .then_some(line),
+            None => None,
+        }
+    } else {
+        None
+    };
+    tx.commit().await?;
+    Ok(line)
+}
+
+/// Design 131: the quiet security-log line of the attempts in which Wi-Fi and the satellites
+/// disagreed (`phone_wifi_disagreed`, "Wi-Fi and GPS disagreed"): how many since the last line,
+/// and in all - never a place.
+pub fn wifi_disagreed_line(logged: i64, count: i64) -> Option<crate::security::Detail> {
+    let rose = count - logged;
+    (rose > 0).then(|| {
+        crate::security::Detail::counted(
+            "security.detail.wifi_disagreed",
+            rose,
+            &[("total", &count.to_string())],
+        )
+    })
+}
+
+/// At most one `phone_wifi_disagreed` line in this long (the owner, 2026-11-24: a quiet line); the
+/// rises between are summed into the next.
+pub const WIFI_DISAGREED_LINE_EVERY: Duration = Duration::hours(24);
+
+/// The report's `wifi_disagreed` against `devices.wifi_disagreed_logged`, as [mock_rise] does: in
+/// one `BEGIN IMMEDIATE` transaction the count last logged is read and, when it rose and the last
+/// line is older than [WIFI_DISAGREED_LINE_EVERY], the line written with the new count and its
+/// time - so two parallel reports log a rise once, and a rise within the day waits for the next
+/// line, summed. A lower count (the launcher's data cleared) is taken silently. A re-enrolment
+/// clears both (`device_api::enroll`). `Some(line)` for the report that wrote it.
+pub async fn wifi_disagreed_rise(
+    db: &sqlx::SqlitePool,
+    device_id: i64,
+    watch: Option<&ZoneWatch>,
+    now: DateTime<Utc>,
+) -> Result<Option<crate::security::Detail>, sqlx::Error> {
+    let Some(count) = watch.map(|w| w.wifi_disagreed) else {
+        return Ok(None);
+    };
+    let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
+    let row: Option<(i64, Option<String>)> = sqlx::query_as(
+        "SELECT COALESCE(wifi_disagreed_logged, 0), wifi_disagreed_at FROM devices WHERE id = ?",
+    )
+    .bind(device_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some((logged, at)) = row else {
+        return Ok(None);
+    };
+    let recent = at
+        .as_deref()
+        .and_then(parse_db_utc)
+        .is_some_and(|at| now - at < WIFI_DISAGREED_LINE_EVERY && at <= now);
+    let line = if count < logged {
+        sqlx::query("UPDATE devices SET wifi_disagreed_logged = ? WHERE id = ?")
+            .bind(count)
+            .bind(device_id)
+            .execute(&mut *tx)
+            .await?;
+        None
+    } else if count > logged && !recent {
+        sqlx::query(
+            "UPDATE devices SET wifi_disagreed_logged = ?, wifi_disagreed_at = ? WHERE id = ?",
+        )
+        .bind(count)
+        .bind(instant(now))
+        .bind(device_id)
+        .execute(&mut *tx)
+        .await?;
+        match wifi_disagreed_line(logged, count) {
+            Some(line) => crate::security::record_phone_event(
+                &mut tx,
+                device_id,
+                crate::security::PhoneLine::WifiDisagreed,
                 line.clone(),
             )
             .await?
@@ -1130,14 +1299,14 @@ mod tests {
             longitude: place.1,
             accuracy_m: accuracy,
             at: utc(at),
-            coarse: false,
+            class: FixClass::Fine,
         }
     }
 
     /// A cell fix (design 125b C10) at `place` within `accuracy` metres.
     fn cell(id: i64, at: &str, place: (f64, f64), accuracy: f64) -> Fix {
         Fix {
-            coarse: true,
+            class: FixClass::Coarse,
             ..fix(id, at, place, Some(accuracy))
         }
     }
@@ -1159,7 +1328,7 @@ mod tests {
             side_since: Some(utc("2026-10-24T06:00:00Z")),
             pending: None,
             cursor: Some((utc("2026-10-24T06:00:00Z"), 1)),
-            pending_coarse: false,
+            pending_class: FixClass::Fine,
         }
     }
 
@@ -1185,6 +1354,8 @@ mod tests {
             accuracy_meters: Option<f64>,
             #[serde(default)]
             provider: Option<String>,
+            #[serde(default)]
+            check: Option<String>,
         }
         let text = include_str!("../testdata/zone_vectors.json");
         let file: serde_json::Value = serde_json::from_str(text).unwrap();
@@ -1202,7 +1373,7 @@ mod tests {
                 longitude: row.fix.longitude,
                 accuracy_m: row.fix.accuracy_meters,
                 at: utc("2026-10-24T08:00:00Z"),
-                coarse: is_coarse(row.fix.provider.as_deref()),
+                class: FixClass::of(row.fix.provider.as_deref(), row.fix.check.as_deref()),
             };
             let got = fix_side(&zone, &stored).map_or("unsure", Side::word);
             assert_eq!(got, row.side, "{}", row.note);
@@ -1545,7 +1716,7 @@ mod tests {
             state.pending,
             Some((Side::Outside, utc("2026-10-24T18:05:00Z")))
         );
-        assert!(state.pending_coarse);
+        assert_eq!(state.pending_class, FixClass::Coarse);
         // Nine minutes later: nothing - from a cell fix or a fine one.
         assert_eq!(
             step(
@@ -1573,7 +1744,7 @@ mod tests {
                 confirmed_at: utc("2026-10-24T18:15:00Z"),
             })
         );
-        assert!(!state.pending_coarse);
+        assert_eq!(state.pending_class, FixClass::Fine);
         // A fine fix surely outside confirms a coarse first too, but only after ten minutes.
         let mut state = known(Side::Inside);
         step(
@@ -1592,7 +1763,7 @@ mod tests {
             &HOME,
             &fix(2, "2026-10-24T18:05:00Z", FAR, Some(30.0)),
         );
-        assert!(!state.pending_coarse);
+        assert_eq!(state.pending_class, FixClass::Fine);
         assert_eq!(
             step(
                 &mut state,
@@ -1624,7 +1795,7 @@ mod tests {
             None
         );
         assert_eq!(state.pending, None);
-        assert!(!state.pending_coarse);
+        assert_eq!(state.pending_class, FixClass::Fine);
         assert_eq!(
             step(
                 &mut state,
@@ -1636,12 +1807,178 @@ mod tests {
         assert_eq!(state.side, Some(Side::Inside));
     }
 
+    /// A Wi-Fi fix that nothing confirmed (design 131).
+    fn wifi_alone(id: i64, at: &str, place: (f64, f64)) -> Fix {
+        Fix {
+            class: FixClass::WifiAlone,
+            ..fix(id, at, place, Some(40.0))
+        }
+    }
+
+    #[test]
+    fn a_fix_class_from_its_provider_and_check() {
+        assert_eq!(FixClass::of(Some("vibb_wifi"), None), FixClass::WifiAlone);
+        assert_eq!(FixClass::of(Some("vibb_apple"), None), FixClass::WifiAlone);
+        assert_eq!(
+            FixClass::of(Some("vibb_wifi"), Some("link")),
+            FixClass::Fine
+        );
+        assert_eq!(
+            FixClass::of(Some("vibb_apple"), Some("gnss")),
+            FixClass::Fine
+        );
+        assert_eq!(FixClass::of(Some("vibb_cell"), None), FixClass::Coarse);
+        assert_eq!(FixClass::of(Some("gps"), None), FixClass::Fine);
+        assert_eq!(FixClass::of(Some("network"), None), FixClass::Fine);
+        assert_eq!(FixClass::of(None, None), FixClass::Fine);
+        // The pending fix's class: a fine row preferred when several share its time.
+        let row = |p: &str, c: Option<&str>| (Some(p.to_string()), c.map(str::to_string));
+        assert_eq!(
+            pending_class(&[row("vibb_wifi", None), row("gps", None)]),
+            FixClass::Fine
+        );
+        assert_eq!(
+            pending_class(&[row("vibb_cell", None), row("vibb_apple", None)]),
+            FixClass::WifiAlone
+        );
+        assert_eq!(pending_class(&[row("vibb_cell", None)]), FixClass::Coarse);
+        assert_eq!(pending_class(&[]), FixClass::Fine, "gone to retention");
+    }
+
+    #[test]
+    fn a_wifi_fix_alone_inside_starts_nothing_and_drops_no_pending_outside() {
+        // Outside, then the Wi-Fi alone inside twice: no pending side, no arrival.
+        let mut state = known(Side::Outside);
+        assert_eq!(
+            step(
+                &mut state,
+                &HOME,
+                &wifi_alone(2, "2026-10-24T18:00:00Z", NEAR)
+            ),
+            None
+        );
+        assert_eq!(state.pending, None);
+        assert_eq!(
+            step(
+                &mut state,
+                &HOME,
+                &wifi_alone(3, "2026-10-24T18:05:00Z", NEAR)
+            ),
+            None
+        );
+        assert_eq!(state.side, Some(Side::Outside));
+        // Inside, a fine fix outside pending: the Wi-Fi alone inside keeps it pending, and the
+        // next fine fix outside confirms "left".
+        let mut state = known(Side::Inside);
+        step(&mut state, &HOME, &outside(2, "2026-10-24T18:00:00Z"));
+        step(
+            &mut state,
+            &HOME,
+            &wifi_alone(3, "2026-10-24T18:01:00Z", NEAR),
+        );
+        assert!(state.pending.is_some_and(|(s, _)| s == Side::Outside));
+        assert_eq!(
+            step(&mut state, &HOME, &outside(4, "2026-10-24T18:02:00Z")).map(|c| c.to),
+            Some(Side::Outside)
+        );
+        // A new zone is never seeded from it.
+        let alone = wifi_alone(9, "2026-10-24T18:00:00Z", NEAR);
+        let seeded = seed(
+            &HOME,
+            Some(&alone),
+            Some(&alone),
+            utc("2026-10-24T18:05:00Z"),
+        );
+        assert_eq!(seeded.pending, None);
+    }
+
+    #[test]
+    fn a_wifi_fix_alone_confirms_a_fine_arrival_within_ten_minutes() {
+        // The satellites see the approach, Wi-Fi confirms it indoors 2 minutes later.
+        let mut state = known(Side::Outside);
+        step(&mut state, &HOME, &inside(2, "2026-10-24T18:00:00Z"));
+        let crossing = step(
+            &mut state,
+            &HOME,
+            &wifi_alone(3, "2026-10-24T18:02:00Z", NEAR),
+        );
+        assert_eq!(
+            crossing,
+            Some(Crossing {
+                to: Side::Inside,
+                at: utc("2026-10-24T18:00:00Z"),
+                confirmed_at: utc("2026-10-24T18:02:00Z"),
+            })
+        );
+        // At 11 minutes: nothing, the pending side stays.
+        let mut state = known(Side::Outside);
+        step(&mut state, &HOME, &inside(2, "2026-10-24T18:00:00Z"));
+        assert_eq!(
+            step(
+                &mut state,
+                &HOME,
+                &wifi_alone(3, "2026-10-24T18:11:00Z", NEAR)
+            ),
+            None
+        );
+        assert!(state.pending.is_some());
+        // Within the minute: nothing either.
+        let mut state = known(Side::Outside);
+        step(&mut state, &HOME, &inside(2, "2026-10-24T18:00:00Z"));
+        assert_eq!(
+            step(
+                &mut state,
+                &HOME,
+                &wifi_alone(3, "2026-10-24T18:00:30Z", NEAR)
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn a_wifi_fix_alone_outside_counts_as_a_fine_fix() {
+        let mut state = known(Side::Inside);
+        step(
+            &mut state,
+            &HOME,
+            &wifi_alone(2, "2026-10-24T18:00:00Z", AWAY),
+        );
+        assert_eq!(state.pending_class, FixClass::WifiAlone);
+        assert_eq!(
+            step(
+                &mut state,
+                &HOME,
+                &wifi_alone(3, "2026-10-24T18:01:00Z", AWAY)
+            )
+            .map(|c| c.to),
+            Some(Side::Outside)
+        );
+    }
+
+    #[test]
+    fn the_wifi_line_comes_with_a_rise() {
+        assert_eq!(wifi_disagreed_line(0, 0), None);
+        assert_eq!(
+            wifi_disagreed_line(1, 3).map(|d| crate::security::worded_test(&d)),
+            Some("2 times (3 in all)".to_string())
+        );
+        assert_eq!(wifi_disagreed_line(3, 1), None, "a reset count");
+    }
+
     #[test]
     fn the_fine_only_filter_names_every_coarse_provider() {
         for provider in COARSE_PROVIDERS {
             assert!(FINE_ONLY.contains(&format!("'{provider}'")), "{provider}");
         }
-        assert_eq!(FINE_ONLY.matches("'vibb_").count(), COARSE_PROVIDERS.len());
+        // Design 131: and the Wi-Fi providers, without a check.
+        for provider in crate::models::WIFI_PROVIDERS {
+            assert!(FINE_ONLY.contains(&format!("'{provider}'")), "{provider}");
+        }
+        assert!(FINE_ONLY.contains("fix_check IS NULL"));
+        assert_eq!(
+            FINE_ONLY.matches("'vibb_").count(),
+            COARSE_PROVIDERS.len() + crate::models::WIFI_PROVIDERS.len()
+        );
     }
 
     #[test]
@@ -1682,6 +2019,7 @@ mod tests {
             location_on: true,
             background_location: true,
             mock_ignored: 0,
+            wifi_disagreed: 0,
         };
         assert!(watching(Some(&watch(1))));
         assert!(!watching(Some(&watch(0))));
@@ -1702,6 +2040,7 @@ mod tests {
                 location_on: true,
                 background_location: true,
                 mock_ignored: 7,
+                wifi_disagreed: 0,
             })
         );
         for bad in [
@@ -1716,6 +2055,19 @@ mod tests {
             assert_eq!(sanitize_zone_watch(&bad), None, "{bad}");
         }
         assert_eq!(parse_zone_watch(Some("{\"fences\":1}")), None);
+        // Design 131: `wifi_disagreed` kept when it is a count, else 0 (an older launcher's report).
+        let with = serde_json::json!({"fences": 2, "motion_sensor": false, "location_on": true,
+            "background_location": true, "mock_ignored": 7, "wifi_disagreed": 4});
+        let kept = parse_zone_watch(sanitize_zone_watch(&with).as_deref()).unwrap();
+        assert_eq!(kept.wifi_disagreed, 4);
+        let mut bad = with.clone();
+        bad["wifi_disagreed"] = serde_json::json!("four");
+        assert_eq!(
+            parse_zone_watch(sanitize_zone_watch(&bad).as_deref())
+                .unwrap()
+                .wifi_disagreed,
+            0
+        );
     }
 
     #[test]

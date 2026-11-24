@@ -5728,3 +5728,30 @@ Findings (nothing failed; none fixed here):
    minutes, also under 45) only after a confirm's grace - i.e. practically never. Worth a look at D11's number.
 
 Not on the emulator: the passkey confirm, the QR path, a really empty key pool, the L1 and 0.93.0 builds.
+
+## 6bn. A Wi-Fi fix carries what confirmed it (design 131, branch `wifi-confirm`) - written, not run
+
+`docs/design/131-wifi-fix-check.md`: on **Android 14 and 16** with the user's OK (17 is a device row). The debug
+launcher, Regularly, a zone Home (150 m) on the phone, Google's location accuracy off (the `network` provider off),
+Location on. The emulator hears no other network and its own is open, so the debug build's receiver hands the places a
+made-up scan and connection:
+`adb shell am broadcast -n me.vibb.launcher.debug/com.kidslauncher.mdm.places.PlacesDebugReceiver --es aps
+"<bssid>,<ssid>,<MHz>,<dBm>;..." [--es connect "<bssid>,<ssid>,psk|sae|eap|open,<networkId>,<MHz>"]`, `--ez clear
+true` to end it. Satellite fixes: `adb emu geo fix <lng> <lat> <alt> <satellites>` (8 satellites, so they teach).
+Teach first: `geo fix` at home on three occasions over 2 local days with the made-up home scan (three networks, 2.4 and 5 GHz) and the home connection (`psk`, id 7) until
+`WifiPlaces: taught` and the link holds (3 occasions on 2 local days). Logs: `adb logcat -s WifiPlaces ZoneWatch
+PlacesDebug`.
+
+| # | Step | Expect |
+|---|---|---|
+| a | Home's scan, a `geo fix` 3 km away (8 satellites), a heartbeat `FIX` after a move | `satellites overruled a Wi-Fi fix`; the report's fix is `gps`; `zone_watch.wifi_disagreed` up by one (`run-as ... cat shared_prefs/zone_watch.xml`) - once, even with `learned contradiction` in the same attempt |
+| b | Still (no motion), the last fresh fix at home by GPS; then home's scan replaced by another place's taught scan 1 km off, a 4-h cap `FIX` | `wifi fix check=none step=REFUSE`, then the GPS stream (`gps fixes=`); no Wi-Fi fix reported |
+| c | No `geo fix` (GPS silent), home's scan, the connection `open` | the report's fix `vibb_wifi` without `check`; the PWA's Locate row and popup say "Wi-Fi estimate" (nb "Wi-Fi-anslag"), no "At Home"; no "arrived"; "Here now" lapses after two intervals |
+| d | Twice (a) within an hour, then a third the next day | Security log: one "Wi-Fi and GPS disagreed" line ("1 time (1 in all)"), the next a day later with the rises summed; no Attention row, no orange line on Locate |
+| e | The walk home: `geo fix` inside Home, then (GPS silent) home's scan and the home connection (`psk`, 7) 3 min later | the second fix `check: "link"` (Locate: no word, "At Home"); the PWA's inbox "arrived Home" at the satellite fix's time |
+| f | A parent `locate` on the home connection; then on `open` | the first stops GPS after ~20 s (`locate` answered within ~25 s); the second runs GPS up to 60 s |
+| g | Kid Settings › Wi-Fi: save and forget a network; design 102's sign-in window on a captive network; Android's own Wi-Fi settings (`am start -a android.settings.WIFI_SETTINGS`) on a network Vibb saved | saving and forgetting work on Vibb's page; the sign-in window works (§6ap); Android's screen can't modify or forget Vibb's network (`dumpsys device_policy | grep -i lockdown`: on), and with the pause on it can |
+| h | The home link held: forget an older saved network on Vibb's page, a teach at home (the count kept), `adb reboot`, the home connection with the id `adb shell dumpsys wifi \| grep -i networkid` now shows, a teach at home | the link survives (the same id) or rebinds on that first teach after the boot (exactly one saved network of that name, the count unchanged): the next Wi-Fi fix at home `check: "link"`; the id before and after noted in the run's log |
+| i | The home connection with the same id negotiated as WPA3 (`sae`, 7) | still `check: "link"` |
+
+Not on the emulator: real neighbours, real bands, a real mesh - the owner's device check on the Jelly Star, later.

@@ -38,6 +38,13 @@ private const val KEY_MOCK_KEYS = "mock_keys_v1"
 private const val KEY_LAST_BEAT = "last_beat_ms"
 private const val KEY_LAST_TRY = "last_try_ms"
 private const val KEY_LAST_FRESH_FIX = "last_fresh_fix_ms"
+
+/** Design 131: the last fresh fix itself - a satellite or a checked fix (an unchecked Wi-Fi fix is never fresh), the
+ * still vouch a Wi-Fi fix is compared with. */
+private const val KEY_FRESH_FIX = "fresh_fix_v1"
+
+/** Design 131: the attempts in which Wi-Fi and the satellites disagreed, a running count (`zone_watch.wifi_disagreed`). */
+private const val KEY_WIFI_DISAGREED = "wifi_disagreed"
 private const val KEY_RENEWED = "vouch_renewed_ms"
 private const val KEY_BUDGET = "series_budget_v1"
 private const val KEY_CONTRADICTIONS = "motion_contradictions_v1"
@@ -165,6 +172,7 @@ object ZoneWatch {
                     .remove(KEY_FENCES).remove(KEY_QUEUE).remove(KEY_LAST_BEAT)
                     .remove(KEY_MOCK_IGNORED).remove(KEY_MOCK_LAST).remove(KEY_MOCK_KEYS)
                     .remove(KEY_LAST_FRESH_FIX).remove(KEY_LAST_TRY).remove(KEY_BUDGET).remove(KEY_RENEWED)
+                    .remove(KEY_FRESH_FIX).remove(KEY_WIFI_DISAGREED)
                     .commit()
             }
         } catch (e: Exception) {
@@ -253,8 +261,28 @@ object ZoneWatch {
      * heartbeat's still skip and `still` count their 4 h from, never a failed attempt (F-3). */
     fun lastFreshFixMs(context: Context): Long = prefs(context).getLong(KEY_LAST_FRESH_FIX, 0L)
 
-    fun stampFreshFix(context: Context, fixTimeMs: Long) {
-        prefs(context).edit().putLong(KEY_LAST_FRESH_FIX, fixTimeMs).commit()
+    fun stampFreshFix(context: Context, fix: QueuedFix) {
+        prefs(context).edit().putLong(KEY_LAST_FRESH_FIX, fix.timeMs).putString(KEY_FRESH_FIX, ServerJson.encodeToString(QueuedFix.serializer(), fix))
+            .commit()
+    }
+
+    /** Design 131: the last fresh fix while it is the one [lastFreshFixMs] names - the still vouch of a Wi-Fi fix (a
+     * satellite or a checked fix: an unchecked Wi-Fi fix never stamps); `null` without one. */
+    fun lastFreshFix(context: Context): QueuedFix? = try {
+        prefs(context).getString(KEY_FRESH_FIX, null)?.let { ServerJson.decodeFromString(QueuedFix.serializer(), it) }
+            ?.takeIf { it.timeMs == lastFreshFixMs(context) }
+    } catch (e: Exception) {
+        null
+    }
+
+    /** Design 131: an attempt in which Wi-Fi and the satellites disagreed (at most one an attempt). */
+    @Synchronized
+    fun countWifiDisagreed(context: Context, rise: Long) {
+        if (rise <= 0) return
+        val p = prefs(context)
+        val count = p.getLong(KEY_WIFI_DISAGREED, 0L) + rise
+        p.edit().putLong(KEY_WIFI_DISAGREED, count).commit()
+        Log.w(LOG_TAG, "Wi-Fi and satellites disagreed ($count in all)")
     }
 
     /** Wall time of the last zone-link renewal of the still vouch (design 125 D12; 0 = none): the still skip counts its
@@ -425,6 +453,7 @@ object ZoneWatch {
                 backgroundLocation = ContextCompat.checkSelfPermission(app, android.Manifest.permission.ACCESS_BACKGROUND_LOCATION) ==
                     PackageManager.PERMISSION_GRANTED,
                 mockIgnored = prefs(app).getLong(KEY_MOCK_IGNORED, 0L),
+                wifiDisagreed = prefs(app).getLong(KEY_WIFI_DISAGREED, 0L),
                 still = still,
             )
         }
@@ -444,7 +473,30 @@ fun Location.toQueued(provider: String? = this.provider): QueuedFix = QueuedFix(
     mock = isMock,
     elapsedMs = elapsedRealtimeNanos.takeIf { it > 0 }?.let { it / 1_000_000L },
     bootCount = com.kidslauncher.mdm.server.BootClock.bootCount(),
+    check = fixCheck(),
+    satellites = try {
+        extras?.getInt("satellites", -1)?.takeIf { it >= 0 }
+    } catch (e: Exception) {
+        null
+    },
 )
+
+/** Design 131: the extra a Wi-Fi fix carries its check in (`gnss`, `link`) from the attempt to the report. */
+const val FIX_CHECK_EXTRA = "vibb_check"
+
+/** This fix's check ([FIX_CHECK_EXTRA]), `null` for none. */
+fun Location.fixCheck(): String? = try {
+    extras?.getString(FIX_CHECK_EXTRA)
+} catch (e: Exception) {
+    null
+}
+
+/** This fix carrying [check] (none: the extra removed) - every re-send keeps the check it had, never more. */
+fun Location.withFixCheck(check: String?): Location = apply {
+    val bundle = extras ?: android.os.Bundle()
+    if (check == null) bundle.remove(FIX_CHECK_EXTRA) else bundle.putString(FIX_CHECK_EXTRA, check)
+    extras = bundle
+}
 
 /** A queued fix as the status report sends it, with its age now ([fixAgeMs]). */
 fun QueuedFix.toReport(
@@ -458,6 +510,7 @@ fun QueuedFix.toReport(
     provider = provider?.take(16),
     mock = mock,
     ageMs = fixAgeMs(this, nowElapsedMs, nowBoot),
+    check = check,
 )
 
 /** The confirming fix's alarm - our own explicit PendingIntent only (not exported). */

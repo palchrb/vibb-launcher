@@ -179,11 +179,24 @@ async fn a_launcher_report_raises_the_arrival() {
             location_on: true,
             background_location: true,
             mock_ignored: 2,
+            wifi_disagreed: 3,
         }
     );
     let logged = super::security_words(&app, "mock_location_ignored", crate::i18n::Lang::En).await;
     assert_eq!(logged.len(), 1);
     assert!(logged[0].contains("ignored 2 made-up"), "{logged:?}");
+    // Design 131: the Wi-Fi fix's check stored on it alone, and the disagreements' quiet line.
+    let checks: Vec<(Option<String>, Option<String>)> =
+        sqlx::query_as("SELECT provider, fix_check FROM device_locations")
+            .fetch_all(&app.db)
+            .await
+            .unwrap();
+    assert!(checks.contains(&(Some("vibb_wifi".to_string()), Some("link".to_string()))));
+    assert!(checks.contains(&(Some("vibb_apple".to_string()), None)));
+    assert_eq!(
+        super::security_words(&app, "phone_wifi_disagreed", crate::i18n::Lang::En).await,
+        ["phone 1: 3 times (3 in all)"]
+    );
     // The same report again: nothing new (the fixes are stored, the count didn't rise).
     app.request(
         Method::POST,
@@ -540,6 +553,7 @@ async fn the_mock_counter_logs_each_rise() {
         location_on: true,
         background_location: true,
         mock_ignored: n,
+        wifi_disagreed: 0,
     };
     crate::zones::mock_rise(&app.db, id, Some(&w(3)))
         .await
@@ -829,6 +843,7 @@ async fn alternating_mock_counts_stay_within_the_line_budget() {
         location_on: true,
         background_location: true,
         mock_ignored: n,
+        wifi_disagreed: 0,
     };
     let mut returned = 0;
     for _ in 0..70 {
@@ -946,4 +961,189 @@ async fn a_cell_fix_never_keeps_here_now() {
         .await
         .text();
     assert!(!locate.contains("At Home"), "no badge on a cell fix");
+}
+
+/// Design 131: a Wi-Fi fix with what confirmed it (`check`), as the launcher sends it.
+fn wifi(place: (f64, f64), captured_at: &str, check: Option<&str>) -> Value {
+    let mut fix = json!({"latitude": place.0, "longitude": place.1, "accuracy_meters": 40.0,
+           "captured_at": captured_at, "provider": "vibb_wifi"});
+    if let Some(check) = check {
+        fix["check"] = json!(check);
+    }
+    fix
+}
+
+/// Design 131: a Wi-Fi fix that nothing confirmed never makes an arrival, never keeps "Here now"
+/// and is no "At Home" - Locate calls it "Wi-Fi estimate"; a satellite fix's arrival it confirms
+/// within ten minutes; a linked one is a fine fix and shows no word.
+#[tokio::test]
+async fn a_wifi_fix_alone_is_an_estimate() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("Anna").await;
+    set_location(&app, id, "interval", 10).await;
+    add_home(&app, id).await;
+    post(&app, &token, json!({"location": fix(AWAY, &at(90))})).await;
+    post(&app, &token, json!({"location": fix(AWAY, &at(85))})).await;
+    // The Wi-Fi alone at home, twice: no arrival, no "Here now".
+    post(&app, &token, json!({"location": wifi(NEAR, &at(30), None)})).await;
+    post(&app, &token, json!({"location": wifi(NEAR, &at(25), None)})).await;
+    assert!(events(&app).await.is_empty());
+    let (when, mode, interval) = crate::zones::freshness_inputs(&app.db, id).await.unwrap();
+    assert!(!crate::zones::fresh(when, &mode, interval, Utc::now()));
+    let locate = app
+        .get_page(&format!("/devices/locate?device={id}"), &cookie)
+        .await
+        .text();
+    assert!(locate.contains("Wi-Fi estimate"), "{locate}");
+    assert!(
+        !locate.to_lowercase().contains("at home"),
+        "no badge on the Wi-Fi alone"
+    );
+    let nb = app
+        .get_page(&format!("/devices/locate?device={id}&lang=nb"), &cookie)
+        .await
+        .text();
+    assert!(nb.contains("Wi-Fi-anslag"), "{nb}");
+    assert!(
+        !nb.to_lowercase().contains("i sonen"),
+        "no badge on the Wi-Fi alone"
+    );
+    // A still re-send of it refreshes nothing either.
+    post(
+        &app,
+        &token,
+        json!({"location": wifi(NEAR, &at(25), None), "zone_watch": {"fences": 1,
+            "motion_sensor": true, "location_on": true, "background_location": true,
+            "mock_ignored": 0, "still": true}}),
+    )
+    .await;
+    let (when, mode, interval) = crate::zones::freshness_inputs(&app.db, id).await.unwrap();
+    assert!(!crate::zones::fresh(when, &mode, interval, Utc::now()));
+    // The walk home: satellites inside, the Wi-Fi alone 3 minutes later confirms the arrival.
+    let first = at(10);
+    post(&app, &token, json!({"location": fix(NEAR, &first)})).await;
+    post(&app, &token, json!({"location": wifi(NEAR, &at(7), None)})).await;
+    assert_eq!(
+        events(&app).await,
+        [("zone_arrived".to_string(), stored(&first))]
+    );
+    // A linked Wi-Fi fix is a fine fix: stored with its check, "At Home", no word.
+    post(
+        &app,
+        &token,
+        json!({"location": wifi(NEAR, &at(1), Some("link"))}),
+    )
+    .await;
+    let check: Option<String> = sqlx::query_scalar(
+        "SELECT fix_check FROM device_locations ORDER BY captured_at DESC LIMIT 1",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(check.as_deref(), Some("link"));
+    let (when, mode, interval) = crate::zones::freshness_inputs(&app.db, id).await.unwrap();
+    assert!(crate::zones::fresh(when, &mode, interval, Utc::now()));
+    let locate = app
+        .get_page(&format!("/devices/locate?device={id}"), &cookie)
+        .await
+        .text();
+    assert!(locate.contains("at Home"), "{locate}");
+    assert!(!locate.contains("Wi-Fi estimate"));
+    // A check is kept only on a Wi-Fi provider, and only a known one.
+    post(
+        &app,
+        &token,
+        json!({"location": {"latitude": NEAR.0, "longitude": NEAR.1, "accuracy_meters": 10.0,
+            "captured_at": at(0), "provider": "gps", "check": "link"}}),
+    )
+    .await;
+    let check: Option<String> = sqlx::query_scalar(
+        "SELECT fix_check FROM device_locations ORDER BY captured_at DESC LIMIT 1",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(check, None);
+    assert_eq!(
+        crate::models::fix_check(Some("vibb_apple"), Some("gnss")),
+        Some("gnss")
+    );
+    assert_eq!(
+        crate::models::fix_check(Some("vibb_wifi"), Some("sure")),
+        None
+    );
+    assert_eq!(
+        crate::models::fix_check(Some("vibb_cell"), Some("link")),
+        None
+    );
+    assert_eq!(crate::models::fix_check(None, Some("link")), None);
+}
+
+/// Design 131 (the owner's Q4, 2026-11-24): the disagreements are one quiet security-log line, at
+/// most one a day with the rises between summed; no Attention row; a re-enrolment clears the count.
+#[tokio::test]
+async fn the_wifi_disagreements_are_a_quiet_line() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _token) = app.enrolled_device("Anna").await;
+    let w = |n| crate::zones::ZoneWatch {
+        fences: 1,
+        motion_sensor: true,
+        location_on: true,
+        background_location: true,
+        mock_ignored: 0,
+        wifi_disagreed: n,
+    };
+    let now = Utc::now();
+    let rise = |n, at| {
+        let db = app.db.clone();
+        async move {
+            crate::zones::wifi_disagreed_rise(&db, id, Some(&w(n)), at)
+                .await
+                .unwrap()
+        }
+    };
+    assert!(rise(1, now).await.is_some());
+    assert!(rise(1, now).await.is_none(), "no rise");
+    assert!(
+        rise(3, now + Duration::hours(1)).await.is_none(),
+        "within the day"
+    );
+    assert!(rise(4, now + Duration::hours(25)).await.is_some());
+    let lines = super::security_words(&app, "phone_wifi_disagreed", crate::i18n::Lang::En).await;
+    assert_eq!(
+        lines,
+        ["phone 1: 1 time (1 in all)", "phone 1: 3 times (4 in all)"]
+    );
+    let nb = super::security_words(&app, "phone_wifi_disagreed", crate::i18n::Lang::Nb).await;
+    assert!(nb[1].ends_with("3 ganger (4 i alt)"), "{nb:?}");
+    // A lower count (the launcher's data cleared) is taken silently.
+    assert!(rise(2, now + Duration::hours(50)).await.is_none());
+    // No Attention row, no orange line: the summary and Locate say nothing of it.
+    for page in [
+        format!("/devices/{id}"),
+        format!("/devices/locate?device={id}"),
+    ] {
+        let text = app.get_page(&page, &cookie).await.text();
+        assert!(!text.contains("disagreed"), "{page}");
+    }
+    // A re-enrolment clears the count and its line's time.
+    let code = app.new_code(id, crate::enrollment::Kind::Qr).await;
+    let res = app
+        .request(
+            Method::POST,
+            "/api/devices/enroll",
+            None,
+            Some(crate::tests::enroll_body(&code)),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK);
+    let after: (Option<i64>, Option<String>) =
+        sqlx::query_as("SELECT wifi_disagreed_logged, wifi_disagreed_at FROM devices WHERE id = ?")
+            .bind(id)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(after, (None, None));
 }

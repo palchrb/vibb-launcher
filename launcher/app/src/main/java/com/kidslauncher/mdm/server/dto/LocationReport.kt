@@ -22,4 +22,7 @@ data class LocationReport(
     /** How old the fix is at send, from elapsed realtime: the server stamps it at receipt minus this. `null` (left
      * out) when unknown - a fix kept from another boot. */
     val ageMs: Long? = null,
+    /** Design 131: what confirmed a Wi-Fi fix (`vibb_wifi`, `vibb_apple`): `gnss` or `link`; `null` (left out) for the
+     * Wi-Fi alone and every other provider. Pinned by `zone_status_report.json`. */
+    val check: String? = null,
 )

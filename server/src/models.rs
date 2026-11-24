@@ -932,6 +932,9 @@ pub struct DeviceLocation {
     pub resent_at: Option<String>,
     /// The shutdown whose last position this fix was (0097, RFC 3339); NULL = none.
     pub shutdown_at: Option<String>,
+    /// Design 131 (0176): what confirmed a Wi-Fi fix (`gnss`, `link`); NULL for the Wi-Fi alone and every other fix.
+    #[sqlx(default)]
+    pub fix_check: Option<String>,
 }
 
 impl DeviceLocation {
@@ -1888,6 +1891,9 @@ pub struct PowerLocation {
     pub at_ms: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider: Option<String>,
+    /// Design 131: what confirmed a Wi-Fi fix (`gnss`, `link`); stored through [fix_check].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check: Option<String>,
 }
 
 /// Compared only in tests and plans; the coordinates are never NaN once checked.
@@ -1906,6 +1912,7 @@ impl PowerLocation {
             provider: self.provider.clone(),
             mock: None,
             age_ms: None,
+            check: self.check.clone(),
         })
     }
 }
@@ -1996,6 +2003,27 @@ pub struct LocationReport {
     /// kept across a reboot).
     #[serde(default)]
     pub age_ms: Option<i64>,
+    /// Design 131: what confirmed a Wi-Fi fix - `gnss` (a satellite fix agreed) or `link` (the phone was on a saved
+    /// network linked to a zone the fix is surely inside); absent for the Wi-Fi alone. Stored through [fix_check] only.
+    #[serde(default)]
+    pub check: Option<String>,
+}
+
+/// The Wi-Fi providers whose fixes carry a check (design 131): the phone's own learned places and Apple's positions.
+pub const WIFI_PROVIDERS: &[&str] = &["vibb_wifi", "vibb_apple"];
+
+/// A fix's check as stored (migration 0176): `gnss` or `link` on a Wi-Fi provider ([WIFI_PROVIDERS]), nothing for
+/// anything else - another word, another provider, none.
+pub fn fix_check(provider: Option<&str>, check: Option<&str>) -> Option<&'static str> {
+    let provider = location_provider(provider)?;
+    if !WIFI_PROVIDERS.contains(&provider.as_str()) {
+        return None;
+    }
+    match check? {
+        "gnss" => Some("gnss"),
+        "link" => Some("link"),
+        _ => None,
+    }
 }
 
 /// A fix's provider as stored (migration 0093): a short lowercase word - 1 to 16 of `a-z`, `0-9`,

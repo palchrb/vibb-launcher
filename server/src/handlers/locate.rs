@@ -256,10 +256,15 @@ impl Presence {
 
 /// The zones the fix itself is surely inside (`zones::side`), "At Home · School": the fix row's
 /// and the popup's words are that fix's own, never the zones' confirmed sides (code QA Q-1). A
-/// coarse fix (a cell's, design 125b C10) is never inside: no badge.
+/// coarse fix (a cell's, design 125b C10) is never inside: no badge. Design 131: a Wi-Fi fix that nothing
+/// confirmed gets no badge either, only the quiet "Wi-Fi estimate" in its place.
 fn fix_badge(lang: Lang, zones: &[crate::zones::Zone], fix: &DeviceLocation) -> Option<String> {
-    if crate::zones::is_coarse(fix.provider.as_deref()) {
-        return None;
+    match crate::zones::FixClass::of(fix.provider.as_deref(), fix.fix_check.as_deref()) {
+        crate::zones::FixClass::Coarse => return None,
+        crate::zones::FixClass::WifiAlone => {
+            return Some(t(lang, "locate.fix.wifi_estimate").to_string());
+        }
+        crate::zones::FixClass::Fine => {}
     }
     let inside: Vec<&str> = zones
         .iter()
@@ -1867,7 +1872,17 @@ async fn locate_view(
         }
     });
     if let Some(badge) = badge.as_ref().filter(|_| newest.is_some()) {
-        map.shown_text = format!("{} · {}", map.shown_text, lowercase_first(badge));
+        // "at Home" as a tail; design 131's "Wi-Fi estimate" keeps its capital.
+        let wifi = newest.as_ref().is_some_and(|l| {
+            crate::zones::FixClass::of(l.provider.as_deref(), l.fix_check.as_deref())
+                == crate::zones::FixClass::WifiAlone
+        });
+        let tail = if wifi {
+            badge.clone()
+        } else {
+            lowercase_first(badge)
+        };
+        map.shown_text = format!("{} · {}", map.shown_text, tail);
     }
     let count = count_in_span(state, id, 0, now).await?;
     let locations_value = locations_value(lang, count);

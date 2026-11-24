@@ -159,6 +159,10 @@ data class QueuedFix(
     /** The fix's elapsed realtime and boot ([fixAgeMs]); unknown for a fix kept from before. */
     val elapsedMs: Long? = null,
     val bootCount: Int = -1,
+    /** Design 131: what confirmed a Wi-Fi fix (`gnss`, `link`); carried by every re-send, never upgraded. */
+    val check: String? = null,
+    /** A satellite fix's satellites (the fix's extras; `null` unknown): a still vouch needs teaching quality. */
+    val satellites: Int? = null,
 ) {
     fun sameFix(other: QueuedFix) = timeMs == other.timeMs && latitude == other.latitude && longitude == other.longitude
 }

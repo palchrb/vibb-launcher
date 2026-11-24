@@ -222,9 +222,6 @@ fun chooseRow(h: Heard, own: PlaceRow?, apple: PlaceRow?, nowMin: Int): Pair<Pla
     }
 }
 
-/** H2 for Apple fixes: what a `vibb_apple` fix may do while the phone is still. */
-enum class StillVerdict { USE, RENEW, CONTRADICTS, WITHHOLD }
-
 /**
  * A9 (H2): still means `STILL` alone - the sensor hasn't fired since the last fresh fix, so that fix is where the phone
  * is. `STILL_SINCE_TRY` is not still here (2026-11-22, the owner's phone indoors at a new place): the phone moved since
@@ -233,15 +230,5 @@ enum class StillVerdict { USE, RENEW, CONTRADICTS, WITHHOLD }
  */
 fun appleStillMotion(motion: Motion): Boolean = motion == Motion.STILL
 
-/**
- * A9 (H2): while `motion()` is still ([still]) a fix using Apple's positions only renews the [vouch] - re-sent with
- * `still: true` - when it lies within `accOld + accNew` of it; outside it is an Apple contradiction, never reported;
- * with no vouch to renew it is withheld - neither fresh nor reported (code QA L3). An own fix or a moving phone: used
- * as it is.
- */
-fun appleStill(fix: LearnedFix, vouch: Vouched?, still: Boolean): StillVerdict = when {
-    !still || fix.source == PlaceSource.OWN -> StillVerdict.USE
-    vouch == null -> StillVerdict.WITHHOLD
-    distanceM(fix.lat, fix.lng, vouch.lat, vouch.lng) <= vouch.accuracyM + fix.accuracyM -> StillVerdict.RENEW
-    else -> StillVerdict.CONTRADICTS
-}
+// Still means still for every Wi-Fi fix since design 131: `wifiVerdict` (PlacesPlan.kt) - an Apple fix within the vouch
+// renews it, one outside is refused and counted, and with no vouch GPS runs (never withheld).

@@ -533,6 +533,8 @@ phone_lines! {
     ForeignAccess = "phone_foreign_access", crate::retention::PHONE_LOG_DAYS;
     RelockFindings = "phone_relock_findings", crate::retention::PHONE_LOG_DAYS;
     MockLocationIgnored = "mock_location_ignored", crate::retention::PHONE_LOG_DAYS;
+    /// Design 131: attempts in which Wi-Fi and the satellites disagreed (`zones::wifi_disagreed_rise`), one a day.
+    WifiDisagreed = "phone_wifi_disagreed", crate::retention::PHONE_LOG_DAYS;
     /// Design 77 (QA R2-M3): a phone's held and blocked senders past `sms::HELD_ROWS_A_PHONE`.
     SmsHeldCapped = "sms_held_capped", crate::retention::PHONE_LOG_DAYS;
     /// The line in place of an hour's lines past [PHONE_LINES_AN_HOUR].

@@ -231,6 +231,9 @@ data class ZoneWatchReport(
     val locationOn: Boolean,
     val backgroundLocation: Boolean,
     val mockIgnored: Long,
+    /** Design 131: the attempts in which Wi-Fi and the satellites disagreed, since the launcher's data was created - a
+     * running count, at most one an attempt (the server writes a quiet security-log line from its rises). */
+    val wifiDisagreed: Long,
     val still: Boolean = false,
 )
 
