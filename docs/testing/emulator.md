@@ -5376,7 +5376,27 @@ branch's code QA: the unfiltered bootstrap, and a DoT handshake that hangs leavi
 | Custom, bootstrap blocked | The same, with 9.9.9.10 alone blocked (`REJECT`, 853 and 443): the look-up answers from 149.112.112.10; with all four unfiltered addresses blocked the look-up gives nothing (`Look-up gave nothing (primary=true)`, the backup answers) - still no packet to Cloudflare for the name |
 | Hanging handshake | `DROP` only the server's answers to 9.9.9.9:853 after the TCP handshake (e.g. `iptables -I INPUT -s 9.9.9.9 -p tcp --sport 853 -m connbytes --connbytes 2: --connbytes-dir reply --connbytes-mode packets -j DROP`): a look-up still answers within ~5 s (the setup part ends ~1.4 s before the deadline, the DoH asks); the next ones start at 149.112.112.112 |
 
-## 6bi. Lyd: a notification sound on the locked phone (design 130, branch `lock-sound`) - written, not run
+**Run 2026-11-24 (14:36-15:04 CET), main `32e22a1fd`** (debug launcher 0.23.6 and server from it, fresh on 3130/3131),
+Android 16 (`aosp36`) and Android 14 (`compat34`), both with `adb root`, the Web filter on (the VPN up, the phones in
+the enrolment's setup hold). The same counting chain as the run above (`OUTPUT`, every address of both providers,
+Quad9's four unfiltered addresses and 1.1.1.3/1.0.0.3, IPv4 and IPv6, plus UDP/TCP 53 off `tun+`), a `REJECT` chain for
+the blocks; look-ups with `su 2000 ping -c1 <new name>`; the custom rows each from a fresh bootstrap (Forget, Quad9, then
+the custom server saved again); a fresh launcher process (`run-as ... kill -9`) where a provider's state had to start
+clean.
+
+| Row | Android 14 (`compat34`) | Android 16 (`aosp36`) |
+|---|---|---|
+| Default | **Pass.** 10 packets to 9.9.9.9, none elsewhere; "P14 · Quad9 answers" | **Pass.** 15 to 9.9.9.9; "P16 · Quad9 answers" |
+| One address | **Pass** (`REJECT`): one `DoT attempt failed`, 14 packets to 149.112.112.112, none to Cloudflare, no `DoT blocked: quad9`; "Quad9 answers" | **Pass** (`REJECT`): the same (14 to 149.112.112.112). `DROP`: the next look-ups went straight to 149.112.112.112 (0 to 9.9.9.9); the first query's extra ~2.5 s not seen (the order was already remembered) |
+| Fallback | **Pass.** `DoT/DoH attempt failed` for Quad9's four, 13 to 1.1.1.2, "Cloudflare answers"; back on Quad9 after the lift (33 to 149.112.112.112, 1 to 1.1.1.2, "Quad9 answers") - seen ~3 min after the lift, since the first look-ups after it repeated one cached name | **Pass.** 12 to 1.1.1.2, "Cloudflare answers"; 44 to 149.112.112.112 within ~90 s of the lift, "Quad9 answers" |
+| None | **Pass.** `unknown host` for each; orange "DNS can't be reached since 15:01 - no DNS server answers from where the phone is"; 0 UDP/53 and 0 TCP/53 off `tun+`, IPv4 and IPv6 | **Pass.** The same ("since 14:41") |
+| 853 blocked | **Pass.** `DoT blocked: quad9 over DoH, periods=1` (fresh process), 15 to 9.9.9.9, the DoH connection to 9.9.9.9:443, "Quad9 answers" (the certificate check not tested apart) | **Pass.** The same (27 to 9.9.9.9) |
+| Custom by name | **Pass.** `tls://family.adguard-dns.com`, backup `tls://unfiltered.adguard-dns.com`: the names' look-ups to 9.9.9.10 (28 packets) - in a second run to 149.112.112.10, 9.9.9.10 having failed before; never 1.1.1.2/1.0.0.2; to 9.9.9.9 only 40-byte packets with no SYN (the old Quad9 connection closing at the switch), no query | **Pass.** 28 to 9.9.9.10, nothing else; the DoT connection to AdGuard's 94.140.14.15:853 up |
+| Custom, IP backup | **Pass.** Backup `https://1.1.1.3/dns-query`: 11 to 9.9.9.10, 0 to 1.1.1.3 | **Pass.** The same |
+| Custom, bootstrap blocked | **Pass.** 9.9.9.10 `REJECT`: 1 to it, 11 to 149.112.112.10; all four blocked: `Look-up gave nothing (primary=true)`, `Upstream: backup, reason=bootstrap`, 17 to 1.1.1.3, none to 1.1.1.2/1.0.0.2 | **Pass.** The same |
+| Hanging handshake | **Not run:** the Android 14 image's kernel has no `connbytes` match | **Pass.** 8 answers from 9.9.9.9:853 dropped; `DoT attempt failed: SocketException`, the first look-up answered in ~3.6 s, the next ones from 149.112.112.112 (0.6 s, 0.1 s) |
+
+## 6bi. Lyd: a notification sound on the locked phone (design 130, branch `lock-sound`) - run 2026-11-24
 
 Design 130 (`docs/design/130-lock-sound.md`): Lock Screen & PINs' "Varsling" is Av / Vibrer / Lyd
 (`launcher_ui.lock_notice_alert`). Run on the lowest and the highest image it touches (Android 14 and 16/17), with a
@@ -5403,7 +5423,28 @@ notification stream.
 - **Not on the emulator:** whether the Jelly Star (16) plays it from the lock and how loud, a custom notification sound
   on storage (the remote-player fallback).
 
-## 6bj. The hardware-bound phone key, L1 (design 129, branch `hw-key-l1`) - written, not run
+**Run 2026-11-24 (14:28-14:53 CET), main `32e22a1fd`**, Android 16 (`aosp36`) and Android 14 (`compat34`), the same
+server and phones as §6bj's run: the contact Mamma `+4791234567` (calls and SMS both ways), Meldinger on the lock "Name
+only", a Child PIN (Android's lock, `kid_keyguard` `android`), the phone locked by screen-off (`UNLOCKED -> LOCKED on
+ScreenOff`). SMS with `adb emu sms send +4791234567 <text>` - without the `+` the sender is held as unknown and nothing
+reaches the lock. On `compat34` the image floods the 2 MiB log buffer (an installed Thunderbird), so `adb logcat -G 16M`
+first; and Android 14 has no `cmd audio set-ringer-mode` (it prints nothing and changes nothing): the ringer was set with
+Settings' Ring volume slider (`am start -a android.settings.SOUND_SETTINGS`, the slider to 0 = Vibrate).
+
+| Row | Android 14 (`compat34`) | Android 16 (`aosp36`) |
+|---|---|---|
+| The PWA | (the same server) | **Pass.** "Alert": Off / Buzz / Sound, Off on a new phone; Sound saved back to `#lock-alert`, `selected` on Sound; the security log `lock_alert_changed` "telefon 2: varsling: lyd"; `device_policy.lock_notice_alert` `sound`, the phone's `Notice alert: sound`. The upgraded-database row not run (a migration, `cargo test`) |
+| Lyd, Normal: one SMS; a second within 10 s; one after 10 s; a missed call | **Pass.** `Notice sound`; nothing; `Notice sound`; the missed call `Notice sound` | **Pass.** The same; `dumpsys audio`: a player of uid 10150 (the launcher) with `usage=USAGE_NOTIFICATION content=CONTENT_TYPE_SONIFICATION` |
+| Lyd, Vibrate | **Pass.** `Notice buzz` (41 ms in `vibrator_manager`) | **Pass.** `Notice buzz` |
+| Lyd, Silent | **Not run** (no way to Silent from the shell on 14) | **Pass.** Neither |
+| Do Not Disturb (`set_dnd priority`) | **Pass.** Neither | **Pass.** Neither; the lock's rows still came. A time rule's silence not run |
+| Notification volume 0 | **Pass.** `Notice sound` logged | **Pass.** The same |
+| Unlocked | **Pass.** Nothing | **Pass.** Nothing (`LOCKED -> UNLOCKED`, then an SMS) |
+| During a call | **Pass.** Nothing while it rang; `Notice sound` for the missed call after it | **Pass.** The same |
+| Default sound "None" | **Pass.** `settings delete system notification_sound` (the shell can't store an empty value): `Notice sound` logged, nothing played, no exception | **Pass.** The same; `Ringtone: Neither local nor remote playback available` |
+| Vibrer and Av | **Pass.** Vibrer on Vibrate: `Notice buzz`; Av: nothing (Vibrer on Normal not run here) | **Pass.** Vibrer: `Notice buzz` on Normal and Vibrate; Av: nothing |
+
+## 6bj. The hardware-bound phone key, L1 (design 129, branch `hw-key-l1`) - run 2026-11-24
 
 Design 129 §8's gate, the launcher's half (`docs/notes/launcher/security.md`, "The hardware-bound phone key, L1").
 **Android 14 and 16 only** (never 17: its image is broken; the code still targets 14-17). A server from main (S1) built
@@ -5426,7 +5467,7 @@ and the security log. The owner's OK for the emulator first, as always.
   deleted, `lastRefusal` `app`, the phone syncs on as before, no second registration for a day (a process restart may
   try once). `list_stale` (an old `data/attestation/status.json`, the fetch blocked): the phone waits `retry_after_s`.
 - **A restart's `stale`:** restart the server: a request signed with the old offset is `stale` against the new floor,
-  logged by the server and answered 200 on the bearer (S1); the answer's `Vibb-Time` moves the phone's offset and the
+  answered 200 on the bearer (S1; the server never logs `stale`, `AuthReason::counts`); the answer's `Vibb-Time` moves the phone's offset and the
   next request verifies. With
   `adb shell settings put global auto_time 0` and the phone's clock a day off, signatures still verify (the offset is
   the server's, from `Vibb-Time`).
@@ -5454,3 +5495,66 @@ and the security log. The owner's OK for the emulator first, as always.
   `com.android.rkpdapp`; the Jelly Star has `com.google.android.rkpdapp`).
 - **Android 14 vs 16:** StrongBox absent on both images (TEE); `attestationVersion` as each image reports it (100/200
   on 14, 300+ on 16) - noted for §10.
+
+### The run of 2026-11-24 (13:52-14:27 CET)
+
+Main `32e22a1fd` (debug launcher 0.23.6, server 0.92.x built from it, fresh on 3130/3131 with a dummy
+`LAUNCHER_SIGNATURE_CHECKSUM` and the debug component), Android 14 (`compat34`, google_apis) and Android 16 (`aosp36`),
+each from `-wipe-data`, "Block USB debugging" off before the enrolment, a typed setup code. The phones talked to the
+server through a small logging proxy (port 3132 in front of 3131: each request's method, path, status, whether a bearer
+and a `Vibb-Signature` came - only its `k=` and `t=` -, `Vibb-Auth` and `Vibb-Time`; the `chain` of enrol and key
+bodies kept to read; a switch that holds `POST /api/devices/key`'s answer 15 s). No `emulator_keys` feature exists yet,
+so the rows that need an accepted key ran against the same server with a **throwaway local patch, never committed**:
+behind an environment variable, `attestation::verify` took an unpinned root, the provisioning info on the root, the
+software list as the hardware one, `Software` as TEE and any app (exactly what step 0 below says `emulator_keys` needs).
+
+**Step 0 (read only), the release-feature server.** Both images' chains have three P-256 certificates: the leaf
+("Android Keystore Key"), an intermediate `O=TEE, CN=<32 hex>` (valid ~2 weeks) and a self-signed root `CN=Droid
+Unregistered Device CA, O=Google Test LLC` (valid ~10 weeks) - remotely provisioned through rkpd from Google's backend
+for unregistered devices. **The root is not stable:** each `-wipe-data` of either image brought a different root key
+(three seen: 14 twice, 16 once), so `server/testdata/attestation/roots/` can't pin it; the provisioning-info extension
+(`1.3.6.1.4.1.11129.2.1.30`) is on the intermediate **and** on the root (S1's check refuses it on the root as `chain`).
+The KeyDescription: `attestationVersion` and KeyMint 300 on 14, 400 on 16, **both security levels `Software`**, every tag
+in the software list (the hardware list empty), RootOfTrust unverified, unlocked, a zero boot key, `osPatchLevel`
+2023-09 (14) / 2025-07 (16), the app `me.vibb.launcher.debug` with the debug signer. No StrongBox feature on either
+(`hardware_keystore` 300 / 400). So §7.3's `emulator_keys` must accept that root by its name or any self-signed root
+(not a pinned key), the provisioning info on the root, the software list, the `Software` level and the debug package;
+design 129 §7.3 to be corrected. The release server refused both: `root` ("Key refused (unknown issuer)" on About This
+Phone, the security log's `device_key_refused`).
+
+| Row | Android 14 (`compat34`) | Android 16 (`aosp36`) |
+|---|---|---|
+| Fresh enrolment, release server | **Pass.** Enrolled on the bearer (`Enrollment: The server refused the enrolment's key: root`), syncs on; see finding 2 | **Pass.** The same |
+| Fresh enrolment, accepting server | **Pass.** `via=enroll`, `observed`; the first policy right after it 200 (no ETag), every request signed with the new key at once, no `KeyRegistration` run; the old enrolment's keys gone from the key book | **Pass.** The same |
+| A bearer-only phone registers (the migration's flow; the install over a pre-L1 build not run) | **Pass.** After a process restart: `GET /key` (none), the challenge, `POST /key` 200, step 1 again, `Key adopted (observed)`; the next policy 200 without the ETag, then every request with `Vibb-Signature` beside the bearer; About This Phone "Hardware key - In the phone's secure area (TEE), attestation 300, security patch 2023-09. Unknown or unlocked system. Google (2026). Registered from an unusual address."; `last_signed_at` moved | **Pass.** The same |
+| Every refusal leaves the bearer | **Pass.** `root`: the key deleted (the book `{"next":4,"last_refusal":"root"}`), the phone synced on, two nudged syncs asked nothing; a process restart tried once more (refused again). `list_stale` (the stored list set 8 days old, Google unreachable through a dead proxy): `POST /key` 503, the key deleted, `last_refusal` `list_stale`, no further try on the next sync. `app` not reachable (the root is refused first) | **Pass** (`root`; the same) |
+| A restart's `stale` | **Pass.** The first request after the restart signed ~98 s behind the new floor: 200 on the bearer, no `Vibb-Auth`, nothing logged (`stale` never is); the next request's `t` within 0.3 s of the server's. Signature-only (bearer removed, below): `401 stale`, sent once more, 304 | **Pass.** The same (98 s; signature-only `401 stale` then 200) |
+| The phone's clock a day ahead (`auto_time 0`, `cmd alarm set-time`) | **Pass.** Signatures on the server's time; after a process restart the first request's `t` was the real time (TrustedClock), not +1 day | **Pass.** The same |
+| A lost answer (the key POST held 15 s) | **Pass.** `The registration's POST had no answer: SocketTimeoutException` at 10 s, step 1 named the new key, `Key adopted (observed)`; one key made; the old key deleted, one key in the book | **Pass.** The same |
+| Parallel workers during that registration (three nudged syncs) | **Pass.** One run (one challenge, one POST), the syncs ran beside it | **Pass.** The same |
+| The SSE | **Pass.** The stream's connect signed once a key was adopted; reconnects after each server restart worked | **Pass.** The same |
+| The key before the first unlock (an Android PIN, reboot) | **Pass.** No request for 40 s while locked; after the PIN the first request signed (`stale` after the boot, sent again, 304) | **Pass.** The same (65 s locked) |
+| Never "lost" on one answer (bearer removed from the debug build's prefs, the key's row deleted on the server) | **Pass, with finding 1.** `unknown_key` on every call, no "a new setup code" line, the book's `suspicion` counting, the phone signing on; the row restored: requests verify again signature-only | **Pass, with finding 1.** The same |
+| rkpd found by its service; outside the VPN | **Pass.** `com.google.android.rkpdapp` (the google_apis image has Google's, not AOSP's), its uid outside the filter VPN's uid ranges | **Pass.** `com.android.rkpdapp`, outside the VPN |
+| Generation in the SINK shape with an empty pool | **Not run:** no roaming image here, and neither image can empty the pool (`cmd remote_provisioning` has only `list`, `csr`, `dump`) | **Not run** (the same) |
+| Android 14 vs 16 | KeyMint/attestation 300, `Software`, no StrongBox | 400, `Software`, no StrongBox |
+
+Findings (not fixed here; for the L1 and S1 owners):
+
+1. **A suspicion of a lost key outlives the key's return** (launcher, `KeyRegistration`): `book.suspicion` is cleared
+   only by a step 1 that finds the key, and once the server knows the key again nothing asks step 1 (the policy names
+   the adopted key, signed calls succeed) - after the row came back the book still held `strikes: 15` (14) / `8` (16)
+   and the first strike's time. A single `unknown_key` an hour or more after that first strike then makes the key
+   "lost" at once, which is what code QA H1 ruled out. And `wake()` asks step 1 on every `unknown_key` answer whatever
+   the backoff, so each SSE retry (every 5-10 s) is a step 1 and a strike: 12 strikes in the first minute. Fix
+   suggestion: clear the suspicion on a 2xx to a signed request (or ask step 1 when a suspicion is held), and let
+   `wake()` keep the backoff.
+2. **A refused enrolment key is followed by a second key at once** (launcher): the enrolment's refusal sets no backoff,
+   so the first sync's policy (`device_key.state: none`) starts a registration, which makes a new key and is refused
+   again (then waits a day). One wasted key and a second `device_key_refused` per enrolment.
+3. **The server's signature clock moves 100 s ahead of the wall clock at every restart, for good** (server,
+   `sig_base`): the stored value is the signature clock itself, so `max(wall, stored + 100 s)` only grows; after ~10
+   restarts in this run `Vibb-Time` was ~17 min ahead. With the launcher taking `Vibb-Time` only from signed exchanges
+   (`credentialSigner`) and TrustedClock's real time before that, every process start's first signed request (and the
+   first after an adoption) is `stale` - one extra round trip (in S2 a 401 and a retry). Harmless now; months of
+   automatic restarts make it hours.
