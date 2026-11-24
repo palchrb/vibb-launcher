@@ -341,6 +341,13 @@ async fn register(
     .await?
     .rows_affected()
         > 0;
+    if ended {
+        // Code QA L1: nor may the exempt enrolment's lost answer be asked for again.
+        sqlx::query("DELETE FROM enroll_key_attempts WHERE device_id = ?")
+            .bind(device_id)
+            .execute(&mut *tx)
+            .await?;
+    }
     tx.commit().await?;
     Ok(Registered::New {
         key_id,

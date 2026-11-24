@@ -183,7 +183,8 @@ pub async fn waiting_try(state: &AppState, try_: &Try<'_>) -> Result<TryOutcome,
         let used: Option<(i64, i64, String, String)> = sqlx::query_as(
             "SELECT a.id, a.device_id, a.reason, d.name FROM enroll_key_attempts a \
              JOIN devices d ON d.id = a.device_id WHERE a.code_hash = ? AND a.attempt_hash = ? \
-             AND a.used_at IS NOT NULL AND a.keep_until > datetime('now') AND a.repeats < ?",
+             AND a.used_at IS NOT NULL AND a.keep_until > datetime('now') AND a.repeats < ? \
+             AND d.key_exempt_at IS NOT NULL",
         )
         .bind(try_.code_hash)
         .bind(attempt.as_slice())

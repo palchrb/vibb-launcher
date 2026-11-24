@@ -4,6 +4,7 @@
 use axum::http::{Method, StatusCode, header};
 use base64::Engine;
 use serde_json::json;
+use sha2::Digest;
 
 use super::{TestApp, TestResponse};
 use crate::device_key::testing::TestKey;
@@ -591,6 +592,242 @@ async fn a_passing_registration_ends_the_exception() {
         words.iter().any(|w| w.contains("Ends the exception.")),
         "{words:?}"
     );
+    // Code QA L1: the exception ended, its lost answer can't be asked for again.
+    assert_eq!(
+        refused(&app, &code, &attempt).await.status,
+        StatusCode::UNAUTHORIZED
+    );
+}
+
+/// An exempt phone's row allowed and enrolled, from a fresh phone: `(id, code, attempt)`.
+async fn exempt_phone(
+    app: &TestApp,
+    cookie: &str,
+    name: &str,
+    kind: crate::enrollment::Kind,
+) -> (i64, String, String) {
+    let (id, _) = app.create_device(name).await;
+    let code = app.new_code(id, kind).await;
+    let attempt = new_attempt();
+    refused(app, &code, &attempt).await;
+    let page = app.get_page(&format!("/devices/{id}"), cookie).await.text();
+    let res = confirm(
+        app,
+        cookie,
+        id,
+        &number_of(&attempt),
+        &tag_of(&page),
+        PASSWORD,
+    )
+    .await;
+    assert!(res.location().unwrap().contains("notice=key_exception"));
+    past_pace(app).await;
+    let res = refused(app, &code, &attempt).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    (id, code, attempt)
+}
+
+/// Code QA M1: a typed code's lost answers are asked for again after the code was used (no typed code live any more):
+/// D9's exempt repeat and S1's key repeat.
+#[tokio::test]
+async fn a_typed_codes_lost_answer() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (_, code, attempt) =
+        exempt_phone(&app, &cookie, "Ka", crate::enrollment::Kind::Typed).await;
+    assert!(!app.state.enrollment.typed_live(chrono::Utc::now()));
+    let again = refused(&app, &code, &attempt).await;
+    assert_eq!(again.status, StatusCode::OK, "{}", again.text());
+    assert_eq!(again.json()["key"]["state"], "exempt");
+
+    let (id, _) = app.create_device("Lo").await;
+    let code = app.new_code(id, crate::enrollment::Kind::Typed).await;
+    let key = TestKey::new();
+    let challenge = crate::attestation::enroll_challenge(&crate::enrollment::normalize(&code));
+    let body = || {
+        let proof = key.sign(crate::attestation::proof_message(&challenge, "enroll").as_bytes());
+        json!({
+            "enrollment_code": code, "attempt": new_attempt(),
+            "chain": key.chain(&challenge, json!({})), "proof": b64u(&proof),
+        })
+    };
+    let first = app
+        .request(Method::POST, "/api/devices/enroll", None, Some(body()))
+        .await;
+    assert_eq!(first.status, StatusCode::OK);
+    let again = app
+        .request(Method::POST, "/api/devices/enroll", None, Some(body()))
+        .await;
+    assert_eq!(again.status, StatusCode::OK, "{}", again.text());
+    assert_eq!(again.json()["key"]["key_id"], first.json()["key"]["key_id"]);
+    // A miss is still a 401.
+    let miss = refused(&app, "ABCDEFGH", &new_attempt()).await;
+    assert_eq!(miss.status, StatusCode::UNAUTHORIZED);
+}
+
+/// Code QA L3: a malformed attempt is a 400 and marks no older launcher.
+#[tokio::test]
+async fn a_malformed_attempt_is_a_bad_body() {
+    let app = TestApp::new().await;
+    let (id, code) = app.create_device("Mi").await;
+    for attempt in ["short", "!!!!", &b64u(&[1u8; 15]), &b64u(&[1u8; 17])] {
+        let res = refused(&app, &code, attempt).await;
+        assert_eq!(res.status, StatusCode::BAD_REQUEST, "{attempt}");
+    }
+    let old: Option<String> =
+        sqlx::query_scalar("SELECT enroll_old_app_at FROM devices WHERE id = ?")
+            .bind(id)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(old, None);
+}
+
+/// Code QA L4: the confirm's route takes a passkey's re-auth.
+#[test]
+fn the_confirm_takes_a_passkey() {
+    assert!(crate::passkeys::reauth_route("/devices/3/key-exception"));
+    assert!(!crate::passkeys::reauth_route("/devices/x/key-exception"));
+}
+
+/// Code QA L4: the race's two orders, one after the other - a try then the confirm (allowed, waiting), the confirm
+/// then the try (enrolled).
+#[tokio::test]
+async fn both_orders_of_a_try_and_the_confirm() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, code) = app.create_device("Ni").await;
+    let attempt = new_attempt();
+    refused(&app, &code, &attempt).await;
+    let page = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    let tag = tag_of(&page);
+    past_pace(&app).await;
+    // A try first: it waits; then the confirm allows it.
+    assert_eq!(
+        refused(&app, &code, &attempt).await.status,
+        StatusCode::CONFLICT
+    );
+    let res = confirm(&app, &cookie, id, &number_of(&attempt), &tag, PASSWORD).await;
+    assert!(res.location().unwrap().contains("notice=key_exception"));
+    let allowed: Option<String> =
+        sqlx::query_scalar("SELECT allowed_at FROM enroll_key_attempts WHERE device_id = ?")
+            .bind(id)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert!(allowed.is_some());
+    // The confirm stood: the next try enrols.
+    assert_eq!(refused(&app, &code, &attempt).await.status, StatusCode::OK);
+    // And a confirm after the enrolment lands on "connected", nothing changed.
+    let res = confirm(&app, &cookie, id, &number_of(&attempt), &tag, PASSWORD).await;
+    assert!(
+        res.location()
+            .unwrap()
+            .contains("notice=key_exception_connected")
+    );
+}
+
+/// Code QA L4: the sweep keeps a used row inside its keep_until and an allowed live row; a new code and Revoke Access
+/// end an exempt repeat.
+#[tokio::test]
+async fn the_sweep_and_the_end_of_a_repeat() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, code, attempt) = exempt_phone(&app, &cookie, "Ol", crate::enrollment::Kind::Qr).await;
+    let (other, other_code) = app.create_device("Pa").await;
+    let waiting = new_attempt();
+    refused(&app, &other_code, &waiting).await;
+    let page = app
+        .get_page(&format!("/devices/{other}"), &cookie)
+        .await
+        .text();
+    confirm(
+        &app,
+        &cookie,
+        other,
+        &number_of(&waiting),
+        &tag_of(&page),
+        PASSWORD,
+    )
+    .await;
+    sqlx::query(crate::enrol_key::SWEEP_SQL)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        rows(&app, id).await,
+        1,
+        "the used row inside its keep_until"
+    );
+    assert_eq!(rows(&app, other).await, 1, "the allowed live row");
+    // A new code ends the repeat.
+    app.new_code(id, crate::enrollment::Kind::Qr).await;
+    assert_eq!(
+        refused(&app, &code, &attempt).await.status,
+        StatusCode::UNAUTHORIZED
+    );
+    // Revoke Access too.
+    let (id, code, attempt) = exempt_phone(&app, &cookie, "Qu", crate::enrollment::Kind::Qr).await;
+    app.request_form(
+        Method::POST,
+        &format!("/devices/{id}/revoke"),
+        Some(&cookie),
+        &[("confirm", "yes")],
+    )
+    .await;
+    assert_eq!(
+        refused(&app, &code, &attempt).await.status,
+        StatusCode::UNAUTHORIZED
+    );
+}
+
+/// D7: two live attempts with the same number - neither is allowed; the field asks for a new code.
+#[tokio::test]
+async fn two_attempts_with_one_number() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, code) = app.create_device("Ra").await;
+    // Two attempts whose numbers meet (a birthday search over fixed fake attempts).
+    let mut seen = std::collections::HashMap::new();
+    let (first, second) = (0u32..)
+        .find_map(|n| {
+            let attempt = b64u(&sha2::Sha256::digest(format!("twin {n}")).as_slice()[..16]);
+            let number = number_of(&attempt);
+            seen.insert(number, attempt.clone())
+                .map(|before| (before, attempt))
+        })
+        .unwrap();
+    refused(&app, &code, &first).await;
+    refused(&app, &code, &second).await;
+    let page = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    let res = confirm(
+        &app,
+        &cookie,
+        id,
+        &number_of(&first),
+        &tag_of(&page),
+        PASSWORD,
+    )
+    .await;
+    assert!(
+        res.location().unwrap().contains("key_error=twice"),
+        "{:?}",
+        res.location()
+    );
+    let allowed: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM enroll_key_attempts WHERE device_id = ? AND allowed_at IS NOT NULL",
+    )
+    .bind(id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(allowed, 0);
 }
 
 /// D6: a passing try while a row is allowed enrols with the key, never exempt.
@@ -883,32 +1120,49 @@ async fn the_address_history_waits() {
     assert_eq!(crate::device_key::history_wait(Some(3600)), None);
 
     let at = |s: &str| s.parse::<chrono::DateTime<chrono::Utc>>().unwrap();
+    let challenge = at("2026-11-24T11:59:00Z");
     let registered = at("2026-11-24T12:00:00Z");
     let now = at("2026-11-30T12:00:00Z");
-    let rows = |last: &str| vec![("10.0.0.1".to_string(), at(last))];
-    assert!(crate::device_key::unusual_cleared(
-        registered,
+    // The Jelly's case: its address first seen just under an hour before the challenge.
+    let jelly = at("2026-11-24T11:00:30Z");
+    let rows = |first: chrono::DateTime<chrono::Utc>, last: &str| {
+        vec![("10.0.0.1".to_string(), first, at(last))]
+    };
+    let cleared = |address: &str,
+                   rows: &[(
+        String,
+        chrono::DateTime<chrono::Utc>,
+        chrono::DateTime<chrono::Utc>,
+    )],
+                   now: chrono::DateTime<chrono::Utc>| {
+        crate::device_key::unusual_cleared(challenge, registered, address, rows, now)
+    };
+    assert!(cleared(
         "10.0.0.1",
-        &rows("2026-11-25T12:00:00Z"),
+        &rows(jelly, "2026-11-25T12:00:00Z"),
         now
     ));
-    assert!(!crate::device_key::unusual_cleared(
-        registered,
+    assert!(!cleared(
         "10.0.0.1",
-        &rows("2026-11-25T11:59:59Z"),
+        &rows(jelly, "2026-11-25T11:59:59Z"),
         now
     ));
-    assert!(!crate::device_key::unusual_cleared(
-        registered,
+    assert!(!cleared(
         "10.0.0.2",
-        &rows("2026-11-29T12:00:00Z"),
+        &rows(jelly, "2026-11-29T12:00:00Z"),
         now
     ));
-    assert!(!crate::device_key::unusual_cleared(
-        registered,
+    assert!(!cleared(
         "10.0.0.1",
-        &rows("2026-11-29T12:00:00Z"),
+        &rows(jelly, "2026-11-29T12:00:00Z"),
         at("2027-01-30T12:00:00Z")
+    ));
+    // Code QA M2: an address first seen at the registration (a key registered from elsewhere, then signing from there
+    // for a day) never clears.
+    assert!(!cleared(
+        "10.0.0.1",
+        &rows(registered, "2026-11-29T12:00:00Z"),
+        now
     ));
 }
 

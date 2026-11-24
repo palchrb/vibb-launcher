@@ -129,6 +129,11 @@ before it keep their bearer and register as above.
   last try, a new row only under 8 a code (the ninth waits with no row, logged once per code) - and `409 {state:
   "waiting", reason, number, retry_after_s}` (`wait_pace`: 15/30/60 s). A waiting try never counts against the client's
   bucket or the typed pause. `device_key_refused` "ved oppsett: ... venter på en forelder" once per attempt row.
+- A setup code made before 0175 has no tag: its confirm lands on "Ny kode - se igjen." - the parent makes a new code.
+  An `attempt` that isn't 16 bytes of Base64url is a 400 (never the older launcher's 426). A typed code's lost answer
+  (S1's key repeat, D9's exempt repeat) is looked up even when no typed code is live any more; a miss is the counted
+  401 (the typed pause counts only while a typed code is live). D9's repeat needs the exception still standing: a
+  passing registration ends both.
 - The number (`enrol_key::number`): `u32_be(SHA-256("vibb-attempt-v1" || 0x00 || attempt_hash)[0..4]) mod 1 000 000`;
   the server keeps only the attempt's SHA-256. The PWA never shows it.
 - The confirm, `POST /devices/{id}/key-exception` (`enrol_key::confirm`; `passkeys::reauth_route` takes the route):
@@ -150,7 +155,8 @@ before it keep their bearer and register as above.
 - The rows die with the code: `new_code` deletes them, Revoke Access too, the phone's delete cascades, and
   `retention::prune` runs `enrol_key::SWEEP_SQL` (a used row lives to its `keep_until`).
 - D13: `launcher_check`'s `Verdict::TooOld` blocks the setup QR while its launcher's versionCode is under
-  `ENROL_ATTEMPT_FIRST_CODE` (430003, `launcher-v0.43.0-rc.3` - the first tag after every tag made before this step;
+  `ENROL_ATTEMPT_FIRST_CODE` (430003, `launcher-v0.43.0-rc.3` - the first tag after every tag made before this step,
+  to be tagged from this step's merge commit; the release notes say so;
   `launcher_tag_codes.json`'s `enrol_attempt_first`, checked by `scripts/release-version.sh --selftest` and
   `launcher_check::tests`).
 - X (§8): `GET /api/devices/key/challenge` and `POST /api/devices/key` answer `503 {reason: "address_history",

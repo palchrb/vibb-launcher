@@ -875,16 +875,25 @@ pub fn history_wait(oldest_age_s: Option<i64>) -> Option<i64> {
 /// Design 129b X (§8), for S2's commit: a stored `unusual` mark is cleared when the registration's address has a row
 /// whose `last_seen` is at least 24 hours after the key's registration and within the last 30 days - the address stayed
 /// the phone's own after the registration, which a registration from elsewhere doesn't (its address appears only around
-/// the registration). `rows` are the phone's `(address, last_seen)`. Written now, called by S2's commit.
+/// the registration). The row must also have been first seen before the registration's challenge (code QA M2): since
+/// signed requests note their address too, a key registered from elsewhere would otherwise make its own address "stay"
+/// by signing from it for a day. `rows` are the phone's `(address, first_seen, last_seen)`. Written now, called by S2's
+/// commit.
 #[cfg_attr(not(test), allow(dead_code))]
 pub fn unusual_cleared(
+    challenge_at: chrono::DateTime<chrono::Utc>,
     registered_at: chrono::DateTime<chrono::Utc>,
     address: &str,
-    rows: &[(String, chrono::DateTime<chrono::Utc>)],
+    rows: &[(
+        String,
+        chrono::DateTime<chrono::Utc>,
+        chrono::DateTime<chrono::Utc>,
+    )],
     now: chrono::DateTime<chrono::Utc>,
 ) -> bool {
-    rows.iter().any(|(a, last_seen)| {
+    rows.iter().any(|(a, first_seen, last_seen)| {
         a == address
+            && *first_seen < challenge_at
             && *last_seen >= registered_at + chrono::TimeDelta::hours(24)
             && *last_seen >= now - chrono::TimeDelta::days(ADDRESS_DAYS)
     })

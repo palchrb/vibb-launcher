@@ -88,9 +88,16 @@ pub async fn enroll(
         if let Some(refused) = state.limits.ip_blocked(&key) {
             return too_many(refused.retry_after_secs as i64);
         }
-        if !state.enrollment.typed_live(now) {
-            return unauthorized();
-        }
+        // Design 129b (code QA M1): no early 401 when no typed code is live - a typed code's lost answer (S1's key
+        // repeat, D9's exempt repeat) is looked up by its hash after the code was used. A miss is a counted 401.
+    }
+    // Design 129b L3: an `attempt` that isn't 16 bytes of Base64url is a bad body, never an older launcher.
+    if req
+        .attempt
+        .as_deref()
+        .is_some_and(|a| crate::enrol_key::attempt_hash(a).is_none())
+    {
+        return StatusCode::BAD_REQUEST.into_response();
     }
 
     // Design 129b D3: without LAUNCHER_SIGNATURE_CHECKSUM no key can pass - the server's state, never the phone's.
@@ -471,7 +478,9 @@ async fn enroll_failed(
         },
         &[],
     );
-    if kind == Kind::Typed {
+    // Design 22: a typed guess counts only while a typed code is live (nothing to guess otherwise) - design 129b's
+    // lost-answer lookups after a typed code was used keep that rule.
+    if kind == Kind::Typed && state.enrollment.typed_live(now) {
         if state.limits.ip_failed(&key) {
             detail = detail.and("security.detail.client_refused", &[]);
         }
