@@ -91,7 +91,7 @@ class PublicResolverTest {
             resolver.resolve(query, PROVIDER_BUDGET, UPSTREAM_BUDGET, transport)
             assertEquals(List(3) { listOf(resolver.dot, UpstreamTarget.Doh(url)) }.flatten() + UpstreamTarget.Doh(url), asked)
             assertTrue(asked.filterIsInstance<UpstreamTarget.Doh>().all { it.url == url })
-            assertEquals(PROVIDER_BUDGET, budgets[0])
+            assertEquals(Budget(PROVIDER_BUDGET.connectMs, QUERY_DEADLINE_MS.toInt()), budgets[0])
             assertEquals(UPSTREAM_BUDGET, budgets[1])
             // A network reset tries DoT first again.
             resolver.reset()
@@ -296,5 +296,33 @@ class PublicResolverTest {
         resolveChain(order, query, PROVIDER_BUDGET, UPSTREAM_BUDGET, { t, _, _, _ -> asked += t.serverHost; Attempt.Answer(answer) }, { 0 })
         assertEquals(listOf("dns.quad9.net"), asked)
         assertEquals(ProviderChainRule.UP, order[0].down.get())
+    }
+
+    @Test
+    fun `after a reset a provider is tried by one query at a time until it answers - the others go on or wait`() {
+        var now = 0L
+        val order = listOf(mullvadResolver({ now }, {}), quad9Resolver({ now }, {}), cloudflareResolver({ now }, {}))
+        order.forEach { it.down.set(ProviderChainRule.UP) }
+        order.forEach(PublicResolver::reset)
+        assertEquals(ProviderChainRule.UNPROVEN, order[0].down.get())
+        val asked = mutableListOf<String>()
+        val transport = { t: UpstreamTarget, _: List<InetAddress>, _: ByteArray, _: Budget -> asked += t.serverHost; Attempt.Answer(answer) }
+        // Another query is finding out whether Mullvad answers: this one goes to Quad9, not into the same wait.
+        order[0].down.set(ProviderChainRule.UNPROVEN.copy(probing = true))
+        resolveChain(order, query, PROVIDER_BUDGET, UPSTREAM_BUDGET, transport, { now })
+        assertEquals(listOf("dns.quad9.net"), asked)
+        // Every one being found out: the query waits, then takes the first that answered.
+        order.forEach { it.down.set(ProviderChainRule.UNPROVEN.copy(probing = true)) }
+        asked.clear()
+        var waits = 0
+        resolveChain(order, query, PROVIDER_BUDGET, UPSTREAM_BUDGET, transport, { now }, pause = { ms ->
+            now += ms
+            if (++waits == 2) order[2].down.set(ProviderChainRule.UP)
+        })
+        assertEquals(2, waits)
+        assertEquals(listOf("security.cloudflare-dns.com"), asked)
+        // A provider that never answers: only the query that probed it pays.
+        assertEquals(ProviderDown(untilMs = 60_000, periods = 1), ProviderChainRule.afterFailure(ProviderChainRule.UNPROVEN.copy(probing = true), 0, probe = true))
+        assertEquals(ProviderChainRule.UNPROVEN, ProviderChainRule.afterFailure(ProviderChainRule.UNPROVEN, 0, probe = false))
     }
 }

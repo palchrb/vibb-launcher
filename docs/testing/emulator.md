@@ -5236,7 +5236,7 @@ settings, which only the system may read or write).
 ## 6bh. The web filter's resolver: Quad9 first, Mullvad and Cloudflare as fallbacks (branch `dns-upstreams`) - not run yet
 
 `docs/notes/launcher/dns-and-vpn.md`, "The providers in a chain". Owed on Android 14 (`compat34`) and Android 16
-(`handy36`); a fresh server (migration 0173 puts a stored `cloudflare` on `quad9`), a phone with the Web filter on.
+(`handy36`); a fresh server (migration 0172 puts a stored `cloudflare` on `quad9`), a phone with the Web filter on.
 
 | Row | What passes |
 |---|---|

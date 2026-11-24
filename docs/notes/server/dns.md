@@ -26,7 +26,7 @@ The server runs no DNS listener: each phone filters on-device (the launcher's `K
   `upstream` may be `'custom'`; a reader that finds it without a valid pair (both parse, not equal) treats it as
   `dns_server::DEFAULT_PROVIDER`. The providers are `dns_server::PROVIDERS` (`quad9`, `mullvad`, `cloudflare` - the
   phone's fallback order behind the parent's choice, all encrypted; 2026-11-24); the default is `quad9`, and migration
-  0173 moved a stored `cloudflare` (the old default) there. Both values are **kept in backups** (design 36 §7, `backup_secrets::a_snapshot_keeps_the_custom_dns_server`).
+  0172 moved a stored `cloudflare` (the old default) there. Both values are **kept in backups** (design 36 §7, `backup_secrets::a_snapshot_keeps_the_custom_dns_server`).
 - **Wire**: `PolicyResponse.dns_upstream` (always the key; `null` unless Custom with a valid pair - then
   `dns_upstream_provider` is the default): `{kind, url | host+port, rev, backup: {kind, url |
   host+port}}`. Status `dns_upstream` `{rev, in_use: custom|backup|provider, since_ms, reason, unreachable_since_ms,

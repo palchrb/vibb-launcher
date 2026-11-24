@@ -12,6 +12,7 @@ import com.kidslauncher.mdm.server.dto.DnsUpstreamReport
 import com.kidslauncher.mdm.server.dto.StatusReportRequest
 import java.net.SocketTimeoutException
 import javax.net.ssl.SSLHandshakeException
+import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -163,7 +164,8 @@ class UpstreamChooserTest {
                 lockReason = "NONE", kioskEngaged = true, dnsUpstream = report,
             ),
         )
-        assertEquals(contract.trimEnd(), encoded)
+        val custom = ServerJson.parseToJsonElement(contract).jsonObject["custom"].toString()
+        assertEquals(custom, encoded)
         // Healthy: "custom", never a reason; no outage, no times.
         val back = upstreamReport(afterAnswer(s, s.gen, since + 9_000), 4, ReachState(), since + 10_000, 2_000_000)
         assertEquals(DnsUpstreamReport(4, "custom", 1_999_000, null, null, null), back)

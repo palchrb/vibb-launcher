@@ -196,7 +196,7 @@ pub fn event_detail(upstream: &str, server: &str, backup: &str) -> String {
 pub const PROVIDERS: [&str; 3] = ["quad9", "mullvad", "cloudflare"];
 
 /// The provider of a new server, after Forget, and for Custom without a valid pair (migration
-/// 0173 moved the old default, Cloudflare, here; the launcher's `PublicResolvers.DEFAULT`).
+/// 0172 moved the old default, Cloudflare, here; the launcher's `PublicResolvers.DEFAULT`).
 pub const DEFAULT_PROVIDER: &str = "quad9";
 
 /// A provider's name as the PWA shows it.

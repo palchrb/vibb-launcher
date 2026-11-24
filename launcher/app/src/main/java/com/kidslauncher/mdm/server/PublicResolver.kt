@@ -88,15 +88,15 @@ class PublicResolver(
 ) {
     private val state = AtomicReference(DotBlockedRule.IDLE)
 
-    /** Whether the chain skips this provider for now ([ProviderChainRule]). */
-    internal val down = AtomicReference(ProviderChainRule.UP)
+    /** Whether the chain skips this provider for now ([ProviderChainRule]); unproven until it answers. */
+    internal val down = AtomicReference(ProviderChainRule.UNPROVEN)
 
     internal fun state(): DotBlocked = state.get()
 
-    /** A network reset: DoT first again, and asked again in the chain. */
+    /** A network reset: DoT first again, and unproven in the chain until it answers on this network. */
     fun reset() {
         update { DotBlockedRule.IDLE }
-        down.set(ProviderChainRule.UP)
+        down.set(ProviderChainRule.UNPROVEN)
     }
 
     /**
@@ -141,7 +141,13 @@ class PublicResolver(
             if (fallback is Attempt.Answer || fallback is Attempt.Odd) update(DotBlockedRule::afterDotWorked)
             return fallback
         }
-        val outcome = attempt(dot, if (route == DotRoute.PROBE) dotBudget.atMost(UPSTREAM_BUDGET) else dotBudget)
+        // Never past the query's deadline (a later provider in the chain keeps its share).
+        val dotFirst = left(if (route == DotRoute.PROBE) dotBudget.atMost(UPSTREAM_BUDGET) else dotBudget)
+        if (dotFirst == null) {
+            update { DotBlockedRule.afterUnprotected(it, route == DotRoute.PROBE) }
+            return Attempt.Transport(BackupReason.TIMEOUT)
+        }
+        val outcome = attempt(dot, dotFirst)
         if (outcome is Attempt.Unprotected) {
             update { DotBlockedRule.afterUnprotected(it, route == DotRoute.PROBE) }
             return outcome
@@ -171,29 +177,36 @@ class PublicResolver(
 
 /**
  * Whether the chain skips one provider for now (the web filter's resolver: the parent's choice first,
- * the others as fallbacks, all encrypted). Up: asked. Down after a query it didn't answer: skipped
- * until [untilMs], then one query asks it ([probing]); [periods] failed periods in a row. Elapsed time.
+ * the others as fallbacks, all encrypted). Up: asked by every query. [unproven] (at start and after a
+ * network reset, until it answers once): asked by one query at a time ([probing]). Down after a query it
+ * didn't answer: skipped until [untilMs], then one query asks it; [periods] failed periods in a row.
+ * Elapsed time.
  */
-data class ProviderDown(val untilMs: Long = 0, val periods: Int = 0, val probing: Boolean = false)
+data class ProviderDown(val untilMs: Long = 0, val periods: Int = 0, val probing: Boolean = false, val unproven: Boolean = false)
 
 /** The pure rule for [ProviderDown]: a query a provider doesn't answer skips it for [BACKOFF_BASE_MS],
- * doubling with every failed probe to [BACKOFF_CAP_MS]; an answer, or a network reset, ends it. */
+ * doubling with every failed probe to [BACKOFF_CAP_MS]; an answer ends it. A network reset makes it
+ * unproven, so a dead one costs one query, not every query in flight. */
 object ProviderChainRule {
     const val BACKOFF_BASE_MS = 60_000L
     const val BACKOFF_CAP_MS = 15 * 60_000L
 
     val UP = ProviderDown()
+    val UNPROVEN = ProviderDown(unproven = true)
 
-    /** Whether a query asks the provider now, and the state after; a due one is asked by one query. */
+    /** Whether a query asks the provider now, and the state after; an unproven or due one is asked by one query. */
     fun ask(s: ProviderDown, now: Long): Pair<Boolean, ProviderDown> = when {
-        s.periods == 0 -> true to s
-        now >= s.untilMs && !s.probing -> true to s.copy(probing = true)
+        s.periods == 0 && !s.unproven -> true to s
+        (s.unproven || now >= s.untilMs) && !s.probing -> true to s.copy(probing = true)
         else -> false to s
     }
 
-    /** It didn't answer. While down only the probe's failure counts (two queries in flight count once). */
+    /** Another query is finding out whether this unproven provider answers: worth a short wait. */
+    fun proving(s: ProviderDown): Boolean = s.unproven && s.probing
+
+    /** It didn't answer. While unproven or down only the probe's failure counts (queries in flight count once). */
     fun afterFailure(s: ProviderDown, now: Long, probe: Boolean): ProviderDown {
-        if (s.periods > 0 && !(probe && s.probing)) return s
+        if ((s.periods > 0 || s.unproven) && !(probe && s.probing)) return s
         val periods = s.periods + 1
         return ProviderDown(untilMs = now + backoff(periods), periods = periods)
     }
@@ -204,15 +217,22 @@ object ProviderChainRule {
     fun backoff(periods: Int): Long = minOf(BACKOFF_BASE_MS shl (periods - 1).coerceIn(0, 10), BACKOFF_CAP_MS)
 }
 
+/** How long a query waits at a time for another query to find out whether an unproven provider answers. */
+const val PROVING_WAIT_MS = 25L
+
 /** No answer from a provider: below DNS, or silence after the query was written. */
 internal fun unanswered(a: Attempt): Boolean = a is Attempt.Transport || (a is Attempt.Odd && a.kind == OddKind.TIMEOUT)
 
 /**
  * One query through [order] (the parent's choice first, then the fallbacks): each provider that is up,
- * or due for its probe, in turn, within one [QUERY_DEADLINE_MS]; one that doesn't answer is skipped for
- * a while ([ProviderChainRule]) and the query goes on to the next while at least [BACKUP_FLOOR_MS] is
- * left. With every provider skipped, the first is asked anyway (the filter never stops answering for a
- * back-off). [answered] gets the label of the one that answered. Every hop is DoT or DoH, never plain DNS.
+ * or unproven or due for its probe and not being probed, in turn, within one [QUERY_DEADLINE_MS]. Only no
+ * answer at all ([unanswered]: a transport failure or silence after the write) moves the query on - an
+ * answer, SERVFAIL and REFUSED included, is relayed. One that doesn't answer is skipped for a while
+ * ([ProviderChainRule]) and the query goes on to the next while at least [BACKUP_FLOOR_MS] is left. With
+ * every provider skipped while another query finds out whether an unproven one answers, the query waits
+ * for that ([PROVING_WAIT_MS] at a time), then looks again; with none to wait for, the first is asked
+ * anyway (the filter never stops answering for a back-off). [answered] gets the label of the one that
+ * answered. Every hop is DoT or DoH, never plain DNS.
  */
 fun resolveChain(
     order: List<PublicResolver>,
@@ -221,39 +241,48 @@ fun resolveChain(
     dohCap: Budget,
     transport: (UpstreamTarget, List<InetAddress>, ByteArray, Budget) -> Attempt,
     elapsed: () -> Long = SystemClock::elapsedRealtime,
+    pause: (Long) -> Unit = Thread::sleep,
     answered: (String) -> Unit = {},
 ): Attempt {
     val deadline = elapsed() + QUERY_DEADLINE_MS
     var last: Attempt = Attempt.Transport(BackupReason.CONNECT)
     var asked = false
-    for (provider in order) {
-        if (asked && deadline - elapsed() < BACKUP_FLOOR_MS) break
-        var ask = false
-        var probe = false
-        provider.down.updateAndGet { s ->
-            val (a, next) = ProviderChainRule.ask(s, elapsed())
-            ask = a
-            probe = next.probing && !s.probing
-            next
+    val tried = HashSet<PublicResolver>()
+    while (true) {
+        for (provider in order) {
+            if (provider in tried) continue
+            if (asked && deadline - elapsed() < BACKUP_FLOOR_MS) return last
+            var ask = false
+            var probe = false
+            provider.down.updateAndGet { s ->
+                val (a, next) = ProviderChainRule.ask(s, elapsed())
+                ask = a
+                probe = next.probing && !s.probing
+                next
+            }
+            if (!ask) continue
+            asked = true
+            tried += provider
+            val outcome = provider.resolveBy(deadline, query, dotBudget, dohCap, transport)
+            when {
+                outcome is Attempt.Unprotected -> {
+                    provider.down.updateAndGet { ProviderChainRule.afterUnprotected(it, probe) }
+                    return outcome
+                }
+                unanswered(outcome) -> {
+                    provider.down.updateAndGet { ProviderChainRule.afterFailure(it, elapsed(), probe) }
+                    last = outcome
+                }
+                else -> {
+                    provider.down.set(ProviderChainRule.UP)
+                    answered(provider.label)
+                    return outcome
+                }
+            }
         }
-        if (!ask) continue
-        asked = true
-        val outcome = provider.resolveBy(deadline, query, dotBudget, dohCap, transport)
-        when {
-            outcome is Attempt.Unprotected -> {
-                provider.down.updateAndGet { ProviderChainRule.afterUnprotected(it, probe) }
-                return outcome
-            }
-            unanswered(outcome) -> {
-                provider.down.updateAndGet { ProviderChainRule.afterFailure(it, elapsed(), probe) }
-                last = outcome
-            }
-            else -> {
-                provider.down.set(ProviderChainRule.UP)
-                answered(provider.label)
-                return outcome
-            }
-        }
+        val waitFor = order.any { it !in tried && ProviderChainRule.proving(it.down.get()) }
+        if (!waitFor || deadline - elapsed() < BACKUP_FLOOR_MS + PROVING_WAIT_MS) break
+        pause(PROVING_WAIT_MS)
     }
     if (asked) return last
     val first = order.first()
@@ -299,9 +328,23 @@ object PublicResolvers {
         dotBudget: Budget,
         dohCap: Budget,
         transport: (UpstreamTarget, List<InetAddress>, ByteArray, Budget) -> Attempt,
-    ): Attempt = resolveChain(order(provider), query, dotBudget, dohCap, transport) { answering = it }
+    ): Attempt {
+        // Another choice: what answered before says nothing about it.
+        if (provider != chosen) {
+            chosen = provider
+            answering = null
+        }
+        return resolveChain(order(provider), query, dotBudget, dohCap, transport, answered = { answering = it })
+    }
 
-    fun reset() = chain.forEach(PublicResolver::reset)
+    /** The choice the last query went out under. */
+    @Volatile
+    private var chosen: String? = null
+
+    fun reset() {
+        chain.forEach(PublicResolver::reset)
+        answering = null
+    }
 }
 
 private fun ip(vararg octets: Int): InetAddress = InetAddress.getByAddress(ByteArray(4) { octets[it].toByte() })

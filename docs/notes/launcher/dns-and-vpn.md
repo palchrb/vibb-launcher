@@ -44,13 +44,19 @@ Also found and fixed on the same test pass: **`CommandListenerService`'s SSE `Ok
   the fixed order Quad9, Mullvad, Cloudflare (`PublicResolvers.order`) - Quad9 `dns.quad9.net`/9.9.9.9 (malware
   blocking), Mullvad `base.dns.mullvad.net`/194.242.2.4 (malware, ads and trackers: Mullvad has no malware-only
   variant), Cloudflare `security.cloudflare-dns.com`/1.1.1.2 and 1.0.0.2 (malware blocking), each by its fixed address (`PINNED_PROVIDERS`), never looked up.
-  `resolveChain` asks each provider that is up, or due for its one probe, within the query's one ~4.8 s deadline
-  (`PublicResolver.resolveBy`); a provider that doesn't answer (a transport failure after its own DoT-then-DoH, or
-  silence after the write) is skipped for 60 s, doubling with each failed probe to 15 min (pure `ProviderChainRule`,
+  `resolveChain` asks each provider that is up, or unproven or due for its one probe, within the query's one ~4.8 s
+  deadline (`PublicResolver.resolveBy`, whose DoT and DoH are both capped by the time left). **Only no answer moves a
+  query on**: a transport failure after the provider's own DoT-then-DoH, or silence after the write (`unanswered`).
+  An answer - NXDOMAIN, SERVFAIL, REFUSED or one that can't be read included - stops there and is relayed. A provider
+  that doesn't answer is skipped for 60 s, doubling with each failed probe to 15 min (pure `ProviderChainRule`,
   `ProviderDown` in an `AtomicReference` per provider), and the query goes on to the next while `BACKUP_FLOOR_MS` is
-  left; an answer or a network reset (`PublicResolvers.reset`) brings it back. With every provider skipped the first is
-  asked anyway. `PublicResolvers.answering` (the last provider that answered) is the status report's `provider`. Every
-  hop is DoT or DoH; there is no plain-DNS path. Tests: `PublicResolverTest`.
+  left; an answer brings it back. At start and after a network reset (`PublicResolvers.reset`) every provider is
+  **unproven** until it answers once: one query at a time tries it, the others go on to the next provider, and with
+  every provider being tried they wait (`PROVING_WAIT_MS` at a time) for the first that answers - so a dead provider
+  costs one query, not every query in flight. With every provider skipped and none being tried the first is asked
+  anyway. `PublicResolvers.answering` (the last provider that answered; cleared at a reset and when the parent's choice
+  changes) is the status report's `provider`. Every hop is DoT or DoH; there is no plain-DNS path. Tests:
+  `PublicResolverTest`.
 - **Policy and pref** (step 1's wire): `PolicyResponse.dnsUpstream` is raw `JsonElement?` read field by field by the
   pure `server/CustomUpstream.kt` `customUpstreamFrom` (kind `doh` with an `https://` URL OkHttp parses, or `dot` with
   a host and a port 1-65535, a numeric `rev`, a backup passing the same check - anything else is `null` = the provider;
