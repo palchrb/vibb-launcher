@@ -16,8 +16,9 @@ import java.util.concurrent.Executors
 private const val LOG_TAG = "VibbBlockedNumbers"
 
 /**
- * Android's side of [blockedNumbersPlan]: reads and clears `BlockedNumberContract` after every `AppEnforcer.apply()`
- * and whenever the list changes (a [ContentObserver], once per process), counts what it cleared in its own prefs
+ * Android's side of [blockedNumbersPlan]: reads `BlockedNumberContract` after every `AppEnforcer.apply()` and whenever
+ * the list changes (a [ContentObserver], once per process), clears the rows that block a contact's, an own or an
+ * emergency number (the rest, the kid's own blocks, stay), counts what it cleared in its own prefs
  * (`commit()`), and asks for a sync after a clearing so the server's security-log line follows within seconds. The
  * first sweep after the phone becomes managed is counted apart (`cleared_initial`, no sync of its own).
  *
@@ -47,6 +48,9 @@ object BlockedNumbersRuntime {
     @Volatile
     private var left: Int? = null
 
+    @Volatile
+    private var kept: Int? = null
+
     /** From `AppEnforcer.apply()` (a background thread): the observer once, then a sweep, so the report that follows
      * the apply reads a current list. */
     fun afterApply(context: Context) {
@@ -61,6 +65,7 @@ object BlockedNumbersRuntime {
         return BlockedReport(
             readable = readable,
             left = if (readable) left else null,
+            kept = if (readable) kept else null,
             cleared = BlockedClass.entries.associateWith { prefs.getInt(it.wire, 0) },
             lastClearedMs = prefs.getLong(KEY_LAST, 0L).takeIf { it > 0L },
             clearedInitial = prefs.getInt(KEY_INITIAL, 0),
@@ -102,6 +107,7 @@ object BlockedNumbersRuntime {
             if (rows == null) {
                 readable = false
                 left = null
+                kept = null
                 return
             }
             readable = true
@@ -118,7 +124,9 @@ object BlockedNumbersRuntime {
                 }
                 if (gone) cleared[kind] = (cleared[kind] ?: 0) + 1
             }
-            left = rows.size - cleared.values.sum()
+            // What the rule clears and couldn't, and what it keeps (the kid's own blocks: normal, never a warning).
+            left = plan.delete.size - cleared.values.sum()
+            kept = plan.kept
             if (plan.initial) {
                 // The first sweep since the phone became managed: counted apart, no clearing time, no sync of its own.
                 prefs.edit().apply {
@@ -144,11 +152,11 @@ object BlockedNumbersRuntime {
     private fun read(context: Context): List<BlockedRow>? = try {
         context.contentResolver.query(
             BlockedNumbers.CONTENT_URI,
-            arrayOf(BlockedNumbers.COLUMN_ID, BlockedNumbers.COLUMN_ORIGINAL_NUMBER),
+            arrayOf(BlockedNumbers.COLUMN_ID, BlockedNumbers.COLUMN_ORIGINAL_NUMBER, BlockedNumbers.COLUMN_E164_NUMBER),
             null, null, null,
         )?.use { cursor ->
             val rows = mutableListOf<BlockedRow>()
-            while (cursor.moveToNext()) rows += BlockedRow(cursor.getLong(0), cursor.getString(1))
+            while (cursor.moveToNext()) rows += BlockedRow(cursor.getLong(0), cursor.getString(1), cursor.getString(2))
             rows
         }
     } catch (e: Exception) {

@@ -161,9 +161,11 @@ instants moved to the last minutes), and both compare the copies. The policy's `
 `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTest`. `server/testdata/zone_vectors.json` stays the
 server's alone: the phone judges no zone (design 64 decision 1).
 The launcher's status body with `installed_apps[].version_code`/`version_name` (2026-10-25, the `app_updated` of every
-checked catalog app) is `server/testdata/installed_apps_report.json`, byte-identical in
+checked catalog app) and `other_signer` (2026-11-24: a Vibb music package not signed with Vibb One's key, which the
+phone refuses - Device › Music's orange line) is `server/testdata/installed_apps_report.json`, byte-identical in
 `launcher/app/src/test/resources/`: the launcher's `SyncScheduleTest` encodes exactly it, the server's
-`app_updates::the_installed_apps_contract_raises_app_updated` posts it, and both compare the copies.
+`app_updates::the_installed_apps_contract_raises_app_updated` posts it (`tests::music` posts its music row and reads
+the line), and both compare the copies.
 The launcher's `POST /api/devices/time-request` body and the three answers (design r13 §2.5), and the parent's answer
 as the policy carries it (design 100 §14.5), are `server/testdata/time_request.json`, byte-identical in
 `launcher/app/src/test/resources/`: `request`, `answers`, `policy_no`/`policy_yes`/`policy_unnamed`/`policy_lift_only`/
@@ -507,15 +509,16 @@ the copies. The launcher's own rules (the grant plan, the report's readings, the
 `launcher/app/src/test/resources/app_access_rules.json` (`AppAccessRulesTest`). The policy's `app_permissions` is
 pinned by `policy_json_keys_snapshot` and `PolicyResponseCompatTest`. `network` (Nett) joins in step 3.
 
-Android's blocked-numbers list, cleared while managed, is `server/testdata/blocked_numbers.json`, byte-identical in
-`launcher/app/src/test/resources/`: `classes` (a cleared entry's class: `contact`, `number`, `short`, `other` - never the
-number), `call_state` and `call_state_unreadable` (the exact `blocked_*` keys of a status report's `call_state`: readable,
-the rows left, the counts per class since the install, the last clearing, and `blocked_cleared_initial` - the first
+Android's blocked-numbers list, its rows that hit the rules cleared while managed, is `server/testdata/blocked_numbers.json`, byte-identical in
+`launcher/app/src/test/resources/`: `classes` (a cleared entry's class: `contact` - a contact's or an own number -,
+`emergency` - never the number), `call_state` and `call_state_unreadable` (the exact `blocked_*` keys of a status report's `call_state`: readable,
+the rows the rule clears left (a failed delete), `blocked_kept` (the kid's own blocks, never worded), the counts per class since the install, the last clearing, and `blocked_cleared_initial` - the first
 sweep after the phone became managed, counted apart and never worded as a warning) and `lines` (the previous and this
 report's counts to the security-log lines, one per class that rose). The server's `blocked_numbers::tests` runs the rows and
 `tests::blocked_numbers` posts the reports (the `phone_blocked_cleared` lines, the Calls page's orange lines); the
 launcher's `BlockedNumbersTest` encodes both reports exactly from `withBlocked` and checks its classes; both compare the
-copies. The plan (`blockedNumbersPlan`: every row cleared while managed) stays the launcher's. No policy key.
+copies. The plan (`blockedNumbersPlan`: while managed, a row cleared only when its number, normalised, is a rules contact's,
+an own number or an emergency number; the rest kept) stays the launcher's. No policy key.
 
 The phone's clock as its decisions see it (time rules keep their own clock, `server/TrustedClock.kt`): the status
 report's `time_state.clock_skew_ms`, `clock_trust` and `unanchored_ms` ride in `time_status_report.json` (above); the rows

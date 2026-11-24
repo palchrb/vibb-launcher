@@ -164,9 +164,18 @@ class SyncScheduleTest {
                     access = mapOf("camera" to "admin_denied", "exact_alarm" to "denied", "full_screen" to "granted"),
                 ),
                 InstalledApp("org.example.older", "Older", true),
+                // The music app signed with another key: the phone refuses it, the PWA says so.
+                InstalledApp(
+                    "me.vibb.music", "Vibb music", false,
+                    otherSigner = com.kidslauncher.mdm.server.dto.otherSignerOf("me.vibb.music") { false },
+                ),
             ),
         )
         assertEquals(contract.trimEnd(), ServerJson.encodeToString(StatusReportRequest.serializer(), report))
+        // Only a music package, and only with another key, is flagged.
+        assertEquals(null, com.kidslauncher.mdm.server.dto.otherSignerOf("me.vibb.music") { true })
+        assertEquals(null, com.kidslauncher.mdm.server.dto.otherSignerOf("org.example.older") { false })
+        assertEquals(true, com.kidslauncher.mdm.server.dto.otherSignerOf("me.vibb.music.debug") { false })
         // Gradle runs unit tests with the module directory (launcher/app/) as the working directory.
         val serverCopy = java.io.File("../../server/testdata/installed_apps_report.json")
         assertTrue("${serverCopy.absolutePath} not found", serverCopy.isFile)

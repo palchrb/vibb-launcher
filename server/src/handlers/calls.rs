@@ -1266,7 +1266,8 @@ pub(crate) enum Finding {
     BlockedCleared {
         at: DateTime<Utc>,
     },
-    /// A channel is managed and Android's blocked list still holds numbers the phone couldn't clear.
+    /// A channel is managed and Android's blocked list still holds rows the phone should have cleared (a contact's,
+    /// an own or an emergency number) and couldn't: `blocked_left`. The kid's own blocks (`blocked_kept`) are never one.
     BlockedLeft {
         count: i64,
     },
@@ -1663,7 +1664,8 @@ pub(crate) async fn call_report(
         )
         .await?;
     }
-    // Android's blocked list still holds numbers while a channel is managed: the phone couldn't clear them.
+    // Android's blocked list still holds rows the rule clears while a channel is managed: the phone couldn't clear them.
+    // `blocked_kept` (the kid's own blocks) is never read here.
     if roles != RoleReport::Pending
         && (policy.calls_managed() || policy.sms_mode == "managed")
         && flag("blocked_readable") == Some(true)

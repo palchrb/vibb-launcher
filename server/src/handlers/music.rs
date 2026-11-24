@@ -5007,6 +5007,16 @@ pub(crate) async fn device_card(
         )),
         None => {}
     }
+    // The phone refuses a music app signed with another key (the launcher's `MusicTrust`): say why music is silent.
+    if installed
+        .iter()
+        .any(|a| a.other_signer && crate::music::MUSIC_PACKAGES.contains(&a.package_name.as_str()))
+    {
+        warnings.push(warning(
+            t(lang, "device.music.other_signer"),
+            t(lang, "device.music.other_signer_sub").to_string(),
+        ));
+    }
     if found.unreachable {
         warnings.push(warning(
             t(lang, "device.music.unreachable"),

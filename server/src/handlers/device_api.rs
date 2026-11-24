@@ -861,6 +861,9 @@ pub(crate) fn cap_installed_apps(apps: Vec<InstalledApp>) -> Vec<InstalledApp> {
                     .auto_tile
                     .filter(|hash| logo.is_some() && crate::photos::is_valid_hash(hash)),
                 logo,
+                // Only a music package can be the refused music app.
+                other_signer: app.other_signer
+                    && crate::music::MUSIC_PACKAGES.contains(&app.package_name.as_str()),
                 ..app
             }
         })
@@ -1293,13 +1296,14 @@ pub(crate) const CALL_STATE_FIELDS: &[(&str, Field)] = &[
     ("call_log_readable", Field::Bool),
     ("boot_policy", Field::Word(32)),
     ("in_call_ui_failed_at", Field::Word(64)),
-    // Android's blocked-numbers list, cleared while a channel is managed (`blocked_numbers`): the class counts only.
+    // Android's blocked-numbers list, its rows that hit the rules cleared while a channel is managed
+    // (`blocked_numbers`): the class counts only.
     ("blocked_readable", Field::Bool),
     ("blocked_left", Field::Int),
+    // The kid's own blocks, which the launcher keeps: stored, never worded.
+    ("blocked_kept", Field::Int),
     ("blocked_cleared_contact", Field::Int),
-    ("blocked_cleared_number", Field::Int),
-    ("blocked_cleared_short", Field::Int),
-    ("blocked_cleared_other", Field::Int),
+    ("blocked_cleared_emergency", Field::Int),
     ("blocked_cleared_at", Field::Word(64)),
     // The first sweep after the phone became managed (the parent's switch): counted apart, never a line or a warning.
     ("blocked_cleared_initial", Field::Int),
