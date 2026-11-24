@@ -79,9 +79,10 @@ impl ClockProblem {
         match self {
             ClockProblem::Wrong(skew) => {
                 let minutes = skew.abs() / 60_000;
-                // Whole hours from an hour on, minutes below: one short amount.
+                // Whole hours from an hour on (the nearest: the phone's five-minute steps fall short of the
+                // hour), minutes below: one short amount.
                 let shown = if minutes >= 60 {
-                    (minutes / 60) * 60
+                    (minutes + 30) / 60 * 60
                 } else {
                     minutes
                 };

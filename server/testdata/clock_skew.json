@@ -28,6 +28,7 @@
     {"skew": 600000, "trust": "server", "unanchored": 0, "lang": "nb", "line": "Klokken går feil (10\u00a0min foran)"},
     {"skew": 900000, "trust": "server", "unanchored": 0, "lang": "nb", "line": "Klokken går feil (15 min foran)"},
     {"skew": 93600000, "trust": "carried", "unanchored": 3600000, "lang": "nb", "line": "Klokken går feil (26 t foran)"},
+    {"skew": 93300000, "trust": "carried", "unanchored": 3600000, "lang": "nb", "line": "Klokken går feil (26 t foran)"},
     {"skew": 93600000, "trust": "carried", "unanchored": 3600000, "lang": "en", "line": "Clock is wrong (26 h ahead)"},
     {"skew": -18000000, "trust": "gnss", "unanchored": 0, "lang": "nb", "line": "Klokken går feil (5 t bak)"},
     {"skew": -18000000, "trust": "gnss", "unanchored": 0, "lang": "en", "line": "Clock is wrong (5 h behind)"},
