@@ -591,8 +591,9 @@ Tilgang): the "camera" words here are history.
   `device_music.html`, its parts from `handlers::music::device_card`; the device page's row "Music · 6 in library",
   "None" with nothing on, "Needs attention" (orange) while the page shows a warning, "Couldn't read" on a failed
   read): warnings at the top (the music app not reachable; "The music app is not from Vibb" while the last report's
-  installed apps have a music package with `other_signer` - the phone refuses it, 2026-11-24 - the why behind ⓘ; a
-  page line only, no Attention row), **Music app** (the catalog
+  installed apps have a music package with `other_signer` - the phone refuses it, 2026-11-24 - the why and the fix
+  behind ⓘ: Music app off, which queues the silent uninstall, and on again once it is gone; `MusicWarnings::other_signer`,
+  so the summary's Attention row `music-other-signer` says the same), **Music app** (the catalog
   switch, "Not in the catalog ›" to `/music/settings#app` without a catalog row), **Library** (one switch per entry,
   `#music-entry-<id>`, the phone's error for the entry under its name while it is on), the **settings form**
   `#music-settings` (one form, `v=2`, design 30: Mobile data, Storage limit and Volume cap pickers, Storytel - groups

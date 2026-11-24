@@ -17,6 +17,18 @@ object MusicTrust {
         false
     }
 
+    /** [pkg]'s signer against ours: `true` the same, `false` another (or unsigned), `null` the package unknown
+     * (`SIGNATURE_UNKNOWN_PACKAGE`) or the check failed - the report's `other_signer` says nothing then. */
+    fun signerMatches(context: Context, pkg: String): Boolean? = try {
+        when (context.packageManager.checkSignatures(context.packageName, pkg)) {
+            PackageManager.SIGNATURE_MATCH -> true
+            PackageManager.SIGNATURE_UNKNOWN_PACKAGE -> null
+            else -> false
+        }
+    } catch (e: Exception) {
+        null
+    }
+
     fun trusted(context: Context, pkg: String?): Boolean = musicTrusted(pkg, BuildConfig.DEBUG) { sameSigner(context, it) }
 
     /** The installed, trusted music apps, release first. */

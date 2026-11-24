@@ -76,6 +76,8 @@ pub enum Kind {
     /// `music::music_warnings` like the page's: the music app not reachable, Storytel's login
     /// refused, over the storage limit, entries the phone can't fetch (one row for all).
     MusicUnreachable,
+    /// The phone has a music app signed with another key, which it refuses.
+    MusicOtherSigner,
     MusicStorytelRefused,
     MusicOverLimit,
     MusicFailing(usize),
@@ -157,6 +159,7 @@ impl AttentionItem {
             Kind::LedgerUnreadable => "screen-time-record",
             Kind::Clock(_) => "clock",
             Kind::MusicUnreachable => "music-unreachable",
+            Kind::MusicOtherSigner => "music-other-signer",
             Kind::MusicStorytelRefused => "music-storytel-refused",
             Kind::MusicOverLimit => "music-over-limit",
             Kind::MusicFailing(_) => "music-entries",
@@ -267,6 +270,7 @@ pub fn items(lang: Lang, device_id: i64, facts: &Facts) -> Vec<AttentionItem> {
         add(true, Kind::Clock(problem));
     }
     let music = &facts.music;
+    add(music.other_signer, Kind::MusicOtherSigner);
     add(music.unreachable, Kind::MusicUnreachable);
     add(music.storytel_refused, Kind::MusicStorytelRefused);
     add(music.over_limit.is_some(), Kind::MusicOverLimit);
@@ -329,6 +333,7 @@ fn level(kind: Kind) -> Level {
         | Kind::LedgerUnreadable
         | Kind::Clock(_)
         | Kind::MusicUnreachable
+        | Kind::MusicOtherSigner
         | Kind::MusicStorytelRefused
         | Kind::MusicOverLimit
         | Kind::MusicFailing(_)
@@ -377,6 +382,7 @@ fn title(lang: Lang, kind: Kind) -> String {
             return problem.words(lang);
         }
         Kind::MusicUnreachable => t(lang, "device.attention.music_unreachable"),
+        Kind::MusicOtherSigner => t(lang, "device.music.other_signer"),
         Kind::MusicStorytelRefused => t(lang, "device.attention.music_storytel_refused"),
         Kind::MusicOverLimit => t(lang, "device.attention.music_over_limit"),
         Kind::MusicFailing(n) => {
@@ -430,7 +436,7 @@ fn target(kind: Kind, id: i64) -> String {
             return format!("/devices/{id}/time");
         }
         // Device › Music's warnings at the top of the page: no fragment needed.
-        Kind::MusicUnreachable => {
+        Kind::MusicUnreachable | Kind::MusicOtherSigner => {
             return format!("/devices/{id}/music");
         }
         // The others above their own group (its header) or by their rows.
@@ -795,6 +801,7 @@ mod tests {
             ledger_unreadable: true,
             music: crate::handlers::music::MusicWarnings {
                 unreachable: true,
+                other_signer: true,
                 storytel_refused: true,
                 over_limit: Some(("3.2 GB".to_string(), 2)),
                 failing_entries: 2,
@@ -893,6 +900,7 @@ mod tests {
                 "2 apps' notifications go via an outside service",
                 "Anyone can call this phone",
                 "Screen-time record unreadable",
+                "The music app is not from Vibb",
                 "Music app not reachable",
                 "Storytel refused the phone's login",
                 "Music over the storage limit",
@@ -1011,6 +1019,7 @@ mod tests {
         // Step 7's fix round: Device › Music - the top warnings without a fragment, the others at
         // their group.
         assert_eq!(target("music-unreachable"), "/devices/7/music");
+        assert_eq!(target("music-other-signer"), "/devices/7/music");
         assert_eq!(
             target("music-storytel-refused"),
             "/devices/7/music#storytel-title"

@@ -1428,9 +1428,11 @@ private fun collectInstalledApps(context: Context): List<InstalledApp> {
                     versionCode = pkg.longVersionCode,
                     versionName = com.kidslauncher.mdm.server.dto.installedVersionName(pkg.versionName),
                     access = AppAccessReader.report(context, pkg),
-                    otherSigner = com.kidslauncher.mdm.server.dto.otherSignerOf(packageName) {
-                        com.kidslauncher.mdm.music.MusicTrust.sameSigner(context, it)
-                    },
+                    otherSigner = com.kidslauncher.mdm.server.dto.otherSignerOf(
+                        packageName,
+                        installed = (info.flags and ApplicationInfo.FLAG_INSTALLED) != 0,
+                        trusted = com.kidslauncher.mdm.music.trustedMusicNames(com.kidslauncher.mdm.BuildConfig.DEBUG),
+                    ) { com.kidslauncher.mdm.music.MusicTrust.signerMatches(context, it) },
                 ).also {
                     logoSources += com.kidslauncher.mdm.appdisplay.AppLogos.Source(
                         packageName, pkg.longVersionCode, pkg.lastUpdateTime, info,

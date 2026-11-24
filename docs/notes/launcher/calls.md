@@ -1010,6 +1010,9 @@ at once.
   sync; the server never words it as a warning.
 - **Not lifted by the pause or the offline override** (the call rules never are): a number blocked during a pause is
   cleared at once too.
+- **Known, not handled**: Android's enhanced blocking (`BlockedNumberContract.SystemContract`: unknown, private,
+  payphone callers) isn't read or undone, and a blocked SMS sender name of letters (an `sms_names` sender) never
+  normalises, so it stays blocked.
 - **The report**: `call_state`'s flat `blocked_readable`, `blocked_left` (rows the rule clears still there: a delete
   failed), `blocked_kept` (the kid's own, never worded), `blocked_cleared_<class>` (since the install),
   `blocked_cleared_at` and `blocked_cleared_initial` (`CallState.withBlocked`; the contract `blocked_numbers.json`, root
