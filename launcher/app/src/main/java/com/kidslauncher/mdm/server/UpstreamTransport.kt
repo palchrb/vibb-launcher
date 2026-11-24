@@ -534,7 +534,7 @@ fun targetTransport(
  * system resolver, never a look-up). */
 val PINNED_DNS: okhttp3.Dns = object : okhttp3.Dns {
     override fun lookup(hostname: String): List<InetAddress> =
-        listOfNotNull(ipLiteral(hostname) ?: PINNED_PROVIDERS[hostname]).ifEmpty { throw java.net.UnknownHostException("not a fixed address") }
+        (ipLiteral(hostname)?.let(::listOf) ?: PINNED_PROVIDERS[hostname].orEmpty()).ifEmpty { throw java.net.UnknownHostException("not a fixed address") }
 }
 
 /** One DoH query: POST [url] with the query (ID 0), both media types `application/dns-message`, within [budget]. */

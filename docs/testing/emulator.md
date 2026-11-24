@@ -5246,4 +5246,4 @@ settings, which only the system may read or write).
 | None | Block all three: after 30 s the orange "DNS kan ikke nås siden ... - ingen DNS-server svarer ..."; never a plain UDP/53 or TCP/53 packet leaves the emulator (`tcpdump -i any port 53` on the host stays empty) |
 | 853 blocked | Block port 853 only: every provider's DoH on 443 answers (Mullvad by name at its fixed address, the certificate checked) |
 | Parent's pick | Pick Mullvad in the PWA: the line says Mullvad; pick Cloudflare: Cloudflare |
-| Custom by name | Custom with `tls://dns.example...` names (a server by name): its name's look-up goes to 9.9.9.9 or 194.242.2.4 on 853/443, never to 1.1.1.1 (`tcpdump host 1.1.1.1` empty) |
+| Custom by name | Custom with `tls://dns.example...` names (a server by name): its name's look-up goes to 9.9.9.9 or 194.242.2.4 on 853/443, never to Cloudflare (`tcpdump host 1.1.1.2 or host 1.0.0.2` empty) |

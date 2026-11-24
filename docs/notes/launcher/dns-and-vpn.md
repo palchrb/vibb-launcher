@@ -43,7 +43,7 @@ Also found and fixed on the same test pass: **`CommandListenerService`'s SSE `Ok
   (`dns_upstream_provider`; an unknown or missing one is `PublicResolvers.DEFAULT`, `quad9`) first, then the others in
   the fixed order Quad9, Mullvad, Cloudflare (`PublicResolvers.order`) - Quad9 `dns.quad9.net`/9.9.9.9 (malware
   blocking), Mullvad `base.dns.mullvad.net`/194.242.2.4 (malware, ads and trackers: Mullvad has no malware-only
-  variant), Cloudflare `cloudflare-dns.com`/1.1.1.1, each by its fixed address (`PINNED_PROVIDERS`), never looked up.
+  variant), Cloudflare `security.cloudflare-dns.com`/1.1.1.2 and 1.0.0.2 (malware blocking), each by its fixed address (`PINNED_PROVIDERS`), never looked up.
   `resolveChain` asks each provider that is up, or due for its one probe, within the query's one ~4.8 s deadline
   (`PublicResolver.resolveBy`); a provider that doesn't answer (a transport failure after its own DoT-then-DoH, or
   silence after the write) is skipped for 60 s, doubling with each failed probe to 15 min (pure `ProviderChainRule`,
@@ -114,9 +114,9 @@ Also found and fixed on the same test pass: **`CommandListenerService`'s SSE `Ok
   nothing at all after its look-up is a `bootstrap` period (not stepped again inside a period). A backup with no address drops the query.
 - **Networks that block 853** (step 3, pure `DotBlockedRule` + glue `PublicResolver` in `server/PublicResolver.kt`):
   each provider (`PublicResolvers`, one state each per process) falls back to **the same provider's** DoH on 443 -
-  `https://1.1.1.1/dns-query`, `https://9.9.9.9/dns-query` by IP literal (no SNI, OkHttp's verifier on the IP; their
-  certificates name it), Mullvad's `https://base.dns.mullvad.net/dns-query` by name at its fixed address (its
-  certificate names the host, not the IP; `PINNED_DNS`) - never another provider's (switching providers is the chain's). A DoT `Transport` failure (connect refused/timed out, reset,
+  Quad9's `https://9.9.9.9/dns-query` by IP literal (no SNI, OkHttp's verifier on the IP; its certificate names it),
+  Mullvad's `https://base.dns.mullvad.net/dns-query` and Cloudflare's `https://security.cloudflare-dns.com/dns-query`
+  by name at their fixed addresses (Mullvad's certificate names the host, not the IP; `PINNED_DNS`) - never another provider's (switching providers is the chain's). A DoT `Transport` failure (connect refused/timed out, reset,
   TLS) counts; 3 within 60 s start a DoH period of 5 min, doubling with each failed probe to 1 h; in a period one query
   per period probes DoT (within at most `UPSTREAM_BUDGET`, so its query still gets DoH in time), the rest go straight
   to DoH; DoT that reaches the server (an answer, or anything above TLS) or a network reset (`PublicResolvers.reset`

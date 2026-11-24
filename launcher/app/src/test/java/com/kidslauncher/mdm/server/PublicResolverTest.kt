@@ -69,7 +69,7 @@ class PublicResolverTest {
     @Test
     fun `each provider falls back to its own DoH on 443, never another's`() {
         for ((resolver, url) in listOf(
-            cloudflareResolver({ 0 }, {}) to "https://1.1.1.1/dns-query",
+            cloudflareResolver({ 0 }, {}) to "https://security.cloudflare-dns.com/dns-query",
             quad9Resolver({ 0 }, {}) to "https://9.9.9.9/dns-query",
             mullvadResolver({ 0 }, {}) to "https://base.dns.mullvad.net/dns-query",
         )) {
@@ -78,7 +78,7 @@ class PublicResolverTest {
             val transport = { target: UpstreamTarget, addresses: List<InetAddress>, _: ByteArray, budget: Budget ->
                 asked += target
                 budgets += budget
-                assertEquals(listOf(resolver.address), addresses)
+                assertEquals(resolver.addresses, addresses)
                 if (target is UpstreamTarget.Dot) blocked else Attempt.Answer(answer)
             }
             // Each failed DoT query is answered over DoH at once; the third failure starts the period.
@@ -195,8 +195,9 @@ class PublicResolverTest {
             .toList()
         assertEquals(
             listOf(
-                "CustomUpstream.kt: it", "PublicResolver.kt: \"https://1.1.1.1/dns-query\"",
-                "PublicResolver.kt: \"https://9.9.9.9/dns-query\"", "PublicResolver.kt: \"https://base.dns.mullvad.net/dns-query\"",
+                "CustomUpstream.kt: it", "PublicResolver.kt: \"https://9.9.9.9/dns-query\"",
+                "PublicResolver.kt: \"https://base.dns.mullvad.net/dns-query\"",
+                "PublicResolver.kt: \"https://security.cloudflare-dns.com/dns-query\"",
             ),
             built.sorted(),
         )
@@ -217,6 +218,11 @@ class PublicResolverTest {
         assertEquals(listOf(InetAddress.getByName("192.0.2.1")), PINNED_DNS.lookup("192.0.2.1"))
         // A provider's name is its fixed address, never looked up.
         assertEquals(listOf(InetAddress.getByName("194.242.2.4")), PINNED_DNS.lookup("base.dns.mullvad.net"))
+        // Cloudflare's malware-blocking resolver, both its addresses.
+        assertEquals(
+            listOf(InetAddress.getByName("1.1.1.2"), InetAddress.getByName("1.0.0.2")),
+            PINNED_DNS.lookup("security.cloudflare-dns.com"),
+        )
         try {
             PINNED_DNS.lookup("dns.example")
             fail("a name was resolved")

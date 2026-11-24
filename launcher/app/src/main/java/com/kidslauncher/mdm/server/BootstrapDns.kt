@@ -223,7 +223,7 @@ class BootstrapDns(
     /** The addresses to connect to now, at most two, IPv4 first; empty = not looked up yet. */
     fun addresses(host: String): List<InetAddress> {
         ipLiteral(host)?.let { return listOf(it) }
-        PINNED_PROVIDERS[host]?.let { return listOf(it) }
+        PINNED_PROVIDERS[host]?.let { return it }
         val found = cache.get(host, clock())
         if (found.lookUp) lookUp(host)
         return found.addresses

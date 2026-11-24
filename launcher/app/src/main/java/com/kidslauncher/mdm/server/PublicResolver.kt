@@ -72,7 +72,7 @@ object DotBlockedRule {
 fun Budget.atMost(cap: Budget): Budget = Budget(minOf(connectMs, cap.connectMs), minOf(totalMs, cap.totalMs))
 
 /**
- * A public resolver (Quad9, Mullvad, Cloudflare): DoT on 853 to its fixed [address], and on a network
+ * A public resolver (Quad9, Mullvad, Cloudflare): DoT on 853 to its fixed [addresses], and on a network
  * that blocks 853 the same provider's DoH on 443 ([doh]: an IP-literal URL where the certificate names
  * the IP, else the name at the same fixed address, [PINNED_DNS]) - design 36 step 3. Which provider a
  * query goes to is [resolveChain]'s. The parent's own servers never come here: a parent's DoT server
@@ -81,7 +81,7 @@ fun Budget.atMost(cap: Budget): Budget = Budget(minOf(connectMs, cap.connectMs),
 class PublicResolver(
     val label: String,
     val dot: UpstreamTarget.Dot,
-    val address: InetAddress,
+    val addresses: List<InetAddress>,
     val doh: UpstreamTarget.Doh,
     private val elapsed: () -> Long = SystemClock::elapsedRealtime,
     private val log: (String) -> Unit = { Log.i(LOG_TAG, it) },
@@ -122,7 +122,6 @@ class PublicResolver(
         dohCap: Budget,
         transport: (UpstreamTarget, List<InetAddress>, ByteArray, Budget) -> Attempt,
     ): Attempt {
-        val addresses = listOf(address)
         fun attempt(target: UpstreamTarget, budget: Budget): Attempt = try {
             transport(target, addresses, query, budget)
         } catch (e: Exception) {
@@ -305,34 +304,39 @@ object PublicResolvers {
     fun reset() = chain.forEach(PublicResolver::reset)
 }
 
-val CLOUDFLARE_DOT = UpstreamTarget.Dot("cloudflare-dns.com", 853)
-val CLOUDFLARE_ADDRESS: InetAddress = InetAddress.getByAddress(byteArrayOf(1, 1, 1, 1))
+private fun ip(vararg octets: Int): InetAddress = InetAddress.getByAddress(ByteArray(4) { octets[it].toByte() })
+
+/** Cloudflare's malware-blocking resolver (1.1.1.1 for Families' "security"). */
+val CLOUDFLARE_DOT = UpstreamTarget.Dot("security.cloudflare-dns.com", 853)
+val CLOUDFLARE_ADDRESSES: List<InetAddress> = listOf(ip(1, 1, 1, 2), ip(1, 0, 0, 2))
 val QUAD9_DOT = UpstreamTarget.Dot("dns.quad9.net", 853)
-val QUAD9_ADDRESS: InetAddress = InetAddress.getByAddress(byteArrayOf(9, 9, 9, 9))
+val QUAD9_ADDRESSES: List<InetAddress> = listOf(ip(9, 9, 9, 9))
 
 /** Mullvad's encrypted DNS that blocks malware (also ads and trackers: Mullvad has no malware-only
  * variant). Its certificate names the host, not the IP: DoH by name at the same fixed address. */
 val MULLVAD_DOT = UpstreamTarget.Dot("base.dns.mullvad.net", 853)
-val MULLVAD_ADDRESS: InetAddress = InetAddress.getByAddress(byteArrayOf(194.toByte(), 242.toByte(), 2, 4))
+val MULLVAD_ADDRESSES: List<InetAddress> = listOf(ip(194, 242, 2, 4))
 
 /** The providers' names and their fixed addresses: never looked up. */
-val PINNED_PROVIDERS: Map<String, InetAddress> = mapOf(
-    CLOUDFLARE_DOT.host to CLOUDFLARE_ADDRESS,
-    QUAD9_DOT.host to QUAD9_ADDRESS,
-    MULLVAD_DOT.host to MULLVAD_ADDRESS,
+val PINNED_PROVIDERS: Map<String, List<InetAddress>> = mapOf(
+    CLOUDFLARE_DOT.host to CLOUDFLARE_ADDRESSES,
+    QUAD9_DOT.host to QUAD9_ADDRESSES,
+    MULLVAD_DOT.host to MULLVAD_ADDRESSES,
 )
 
 fun cloudflareResolver(
     elapsed: () -> Long = SystemClock::elapsedRealtime,
     log: (String) -> Unit = { Log.i(LOG_TAG, it) },
-) = PublicResolver("cloudflare", CLOUDFLARE_DOT, CLOUDFLARE_ADDRESS, UpstreamTarget.Doh("https://1.1.1.1/dns-query"), elapsed, log)
+) = PublicResolver(
+    "cloudflare", CLOUDFLARE_DOT, CLOUDFLARE_ADDRESSES, UpstreamTarget.Doh("https://security.cloudflare-dns.com/dns-query"), elapsed, log,
+)
 
 fun quad9Resolver(
     elapsed: () -> Long = SystemClock::elapsedRealtime,
     log: (String) -> Unit = { Log.i(LOG_TAG, it) },
-) = PublicResolver("quad9", QUAD9_DOT, QUAD9_ADDRESS, UpstreamTarget.Doh("https://9.9.9.9/dns-query"), elapsed, log)
+) = PublicResolver("quad9", QUAD9_DOT, QUAD9_ADDRESSES, UpstreamTarget.Doh("https://9.9.9.9/dns-query"), elapsed, log)
 
 fun mullvadResolver(
     elapsed: () -> Long = SystemClock::elapsedRealtime,
     log: (String) -> Unit = { Log.i(LOG_TAG, it) },
-) = PublicResolver("mullvad", MULLVAD_DOT, MULLVAD_ADDRESS, UpstreamTarget.Doh("https://base.dns.mullvad.net/dns-query"), elapsed, log)
+) = PublicResolver("mullvad", MULLVAD_DOT, MULLVAD_ADDRESSES, UpstreamTarget.Doh("https://base.dns.mullvad.net/dns-query"), elapsed, log)
