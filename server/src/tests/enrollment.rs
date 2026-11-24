@@ -6,7 +6,6 @@ use std::time::Duration;
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode, header};
 use http_body_util::BodyExt;
-use serde_json::json;
 
 use super::{LOOPBACK_PEER, TestApp, assert_redirect};
 use crate::enrollment::{self, Kind, TYPED_PAUSE_FAILURES};
@@ -20,7 +19,7 @@ fn enroll_request(code: &str) -> Request<Body> {
         .method(Method::POST)
         .uri("/api/devices/enroll")
         .header(header::CONTENT_TYPE, "application/json")
-        .body(Body::from(json!({ "enrollment_code": code }).to_string()))
+        .body(Body::from(crate::tests::enroll_body(code).to_string()))
         .unwrap()
 }
 

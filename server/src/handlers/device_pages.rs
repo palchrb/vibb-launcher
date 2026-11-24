@@ -584,6 +584,10 @@ async fn key_row(state: &AppState, id: i64, lang: Lang) -> Result<Row, sqlx::Err
         return Ok(Row::new("key", label, t(lang, "device.about.key.hardware"))
             .detail(Some(key_detail(&key, lang))));
     }
+    // Design 129b §5.2: the parent's exception - a choice, quiet; who and when behind the (i).
+    if let Some(detail) = crate::enrol_key::about_exempt(state, lang, id).await? {
+        return Ok(Row::new("key", label, t(lang, "device.about.key.exempt")).detail(Some(detail)));
+    }
     if let Some(reason) = refused
         .as_deref()
         .and_then(crate::attestation::Refusal::from_word)
@@ -603,10 +607,9 @@ async fn key_row(state: &AppState, id: i64, lang: Lang) -> Result<Row, sqlx::Err
 
 /// What the key's attestation said (§3 item 12), for the ⓘ.
 fn key_detail(key: &crate::device_key::StoredKey, lang: Lang) -> String {
-    // An emulator key is software alone, whatever its column says (`device_key::stored_level`).
-    let level = match (key.root.as_str(), key.security_level.as_str()) {
-        ("emulator", _) | (_, "software") => "device.about.key.level.software",
-        (_, "strongbox") => "device.about.key.level.strongbox",
+    let level = match key.security_level.as_str() {
+        "software" => "device.about.key.level.software",
+        "strongbox" => "device.about.key.level.strongbox",
         _ => "device.about.key.level.tee",
     };
     let system = match key.reading() {

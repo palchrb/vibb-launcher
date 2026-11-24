@@ -605,7 +605,7 @@ async fn the_mock_counter_logs_each_rise() {
             Method::POST,
             "/api/devices/enroll",
             None,
-            Some(json!({ "enrollment_code": code })),
+            Some(crate::tests::enroll_body(&code)),
         )
         .await;
     assert_eq!(res.status, StatusCode::OK);

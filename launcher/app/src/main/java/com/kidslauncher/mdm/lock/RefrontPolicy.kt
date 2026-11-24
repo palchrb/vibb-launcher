@@ -585,3 +585,73 @@ fun screenOffWorkDue(interactive: Boolean): Boolean = !interactive
 /** The probable-SOS mark survives a re-front check only when that check yields to it: any other
  * outcome (the lock in front, the screen off, a call, an alarm, a VoIP call) ends it. */
 fun sosMarkKept(action: RefrontAction): Boolean = action == RefrontAction.Yield("sos")
+
+/*
+ * (4i) The charging glimpse (the owner's Jelly, Android 16, 2026-11-24): a USB plug-in wakes the screen, something tries
+ * to start an activity under lock task, Android's own `BlockedAppActivity` takes the front in a task of its own and
+ * sleeps at once (the phone is locked) - the glance is paused and stopped within ~0.4 s of the screen-on, so the loss
+ * read as a probable Emergency SOS ([sosGestureLikely]) and the face's rule stopped after the "sos" yield (not a fresh
+ * loss): Android's own lock screen until the next screen cycle.
+ *
+ * The fix, and the SOS guarantee (code QA): only the screen-on that is the power change's own wake ([powerWokeScreen]:
+ * the screen was off at the connect or disconnect and came on from -300 ms to +2 s around it, no screen-off between)
+ * is exempt from the SOS rule. The SOS gesture's presses start on a lit screen with a press that turns it off, so a
+ * press-SOS after a plug-in's wake always has a screen-off first and keeps its mark; a power change while the screen
+ * is already on exempts nothing. A screen-on by the kid's press 2-3 s before a plug-in can't be told from a press-SOS
+ * whose screen comes up with the plug-in: the SOS rule wins there (the glimpse stays possible in that narrow case). The
+ * power change then looks once ([powerRecheck]) - a fresh loss through the same rule ([refrontAction]), so the kid's own
+ * path to Android's PIN pad ([androidLossOurs]), the exempt screens and the cap per screen-on ([ANDROID_REFRONT_CAP])
+ * all hold.
+ */
+
+/** The power change's broadcast may come this long after its screen-on (the two are reordered). */
+const val POWER_WAKE_BEFORE_MS = 300L
+
+/** The power change's wake may come this long after its broadcast. */
+const val POWER_WAKE_AFTER_MS = 2_000L
+
+/** The power change's own look at the glance, this long after the broadcast: the blocked start's pause and stop are
+ * over by then (~0.9 s in the owner's log). Once per change - a re-front it makes counts for the cap. */
+const val POWER_RECHECK_MS = 1_000L
+
+/** A loss of the glance this close around the power change ([POWER_LOSS_BEFORE_MS] before, [POWER_LOSS_AFTER_MS] after)
+ * is the blocked start's. */
+const val POWER_LOSS_BEFORE_MS = 300L
+const val POWER_LOSS_AFTER_MS = 1_500L
+
+/**
+ * The screen-on at [screenOnAtMs] was the power change's own wake at [powerAtMs] (elapsed ms): from
+ * [POWER_WAKE_BEFORE_MS] before to [POWER_WAKE_AFTER_MS] after it, with no screen-off ([screenOffAtMs], the last one)
+ * between the earlier of the two and now - the first screen-on after the change, the tag gone at the next screen-off.
+ */
+fun powerWokeScreen(powerAtMs: Long?, screenOnAtMs: Long?, screenOffAtMs: Long?): Boolean {
+    if (powerAtMs == null || screenOnAtMs == null) return false
+    if (screenOnAtMs - powerAtMs !in -POWER_WAKE_BEFORE_MS..POWER_WAKE_AFTER_MS) return false
+    return screenOffAtMs == null || screenOffAtMs < minOf(powerAtMs, screenOnAtMs)
+}
+
+/** The screen-on [sosGestureLikely] reads: none when it was the power change's own wake ([powerWokeScreen]). */
+fun sosScreenOn(lastScreenOnAtMs: Long?, powerAtMs: Long?, lastScreenOffAtMs: Long?): Long? =
+    lastScreenOnAtMs?.takeUnless { powerWokeScreen(powerAtMs, it, lastScreenOffAtMs) }
+
+/** What the power change's look does ([powerRecheck]). */
+data class PowerRecheck(
+    /** A probable-SOS mark set before the broadcast came, by the power change's own wake, ends. */
+    val clearSosMark: Boolean,
+    /** The glance lost the front to the blocked start: the re-front check runs now, as a fresh loss. */
+    val freshLoss: Boolean,
+)
+
+/**
+ * The power change's look ([POWER_RECHECK_MS] after the broadcast at [powerAtMs]): only while LOCKED ([locked]) with the
+ * glance not in front ([lockResumed]) and lost at [lostAtMs] around the change ([POWER_LOSS_BEFORE_MS] ..
+ * [POWER_LOSS_AFTER_MS]) - a loss from before (the kid's own PIN pad, a yield that ended into the platform's screen, the
+ * cap reached) is left as the rule left it. A probable-SOS mark ([sosMarked]) wins unless the screen-on behind it was
+ * the change's own wake ([powerWake], [powerWokeScreen]). The check itself decides the rest (screen on, Android locked,
+ * ours, the exemptions, the cap).
+ */
+fun powerRecheck(locked: Boolean, lockResumed: Boolean, powerAtMs: Long, lostAtMs: Long?, powerWake: Boolean, sosMarked: Boolean): PowerRecheck {
+    val around = lostAtMs != null && lostAtMs - powerAtMs in -POWER_LOSS_BEFORE_MS..POWER_LOSS_AFTER_MS
+    val fresh = locked && !lockResumed && around && (!sosMarked || powerWake)
+    return PowerRecheck(clearSosMark = fresh && sosMarked, freshLoss = fresh)
+}

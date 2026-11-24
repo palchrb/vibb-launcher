@@ -125,6 +125,8 @@ class DeviceKeyContractTest {
         val policy = contract["policy"]!!.jsonObject
         assertEquals(DeviceKeyPolicy("none"), ServerJson.decodeFromString(DeviceKeyPolicy.serializer(), policy["none"].toString()))
         assertEquals(DeviceKeyPolicy("observed", "<key id>", "<hex>"), ServerJson.decodeFromString(DeviceKeyPolicy.serializer(), policy["observed"].toString()))
+        assertEquals(DeviceKeyPolicy("exempt"), ServerJson.decodeFromString(DeviceKeyPolicy.serializer(), policy["exempt"].toString()))
+        assertEquals(DeviceKeyAnswer("exempt"), ServerJson.decodeFromString(DeviceKeyAnswer.serializer(), contract["register"]!!.jsonObject["get_key_exempt"].toString()))
         val register = contract["register"]!!.jsonObject
         assertEquals(DeviceKeyAnswer("observed", "<key id>", "<hex>"), ServerJson.decodeFromString(DeviceKeyAnswer.serializer(), register["get_key_observed"].toString()))
         assertEquals(KeyChallengeAnswer("<Base64url, 32 bytes>", 600), ServerJson.decodeFromString(KeyChallengeAnswer.serializer(), register["challenge"].toString()))
@@ -138,13 +140,51 @@ class DeviceKeyContractTest {
     @Test
     fun `the enrolment's bodies and answers`() {
         val enroll = contract["enroll"]!!.jsonObject
-        val withKey = com.kidslauncher.mdm.server.dto.EnrollRequest("<code>", listOf("<Base64 DER>"), "<Base64url>")
-        assertEquals(enroll["body_with_key"], Json.parseToJsonElement(ServerJson.encodeToString(com.kidslauncher.mdm.server.dto.EnrollRequest.serializer(), withKey)))
-        val codeOnly = com.kidslauncher.mdm.server.dto.EnrollRequest("<code>")
-        assertEquals(enroll["body_code_only"], Json.parseToJsonElement(ServerJson.encodeToString(com.kidslauncher.mdm.server.dto.EnrollRequest.serializer(), codeOnly)))
-        // The answers' `key` (their `device_id` is a placeholder here; the real one is a number).
+        fun encode(request: com.kidslauncher.mdm.server.dto.EnrollRequest) =
+            Json.parseToJsonElement(ServerJson.encodeToString(com.kidslauncher.mdm.server.dto.EnrollRequest.serializer(), request))
+        val attempt = "<16 bytes, Base64url>"
+        assertEquals(
+            enroll["body_with_key"],
+            encode(com.kidslauncher.mdm.server.dto.EnrollRequest("<code>", attempt, listOf("<Base64 DER>"), "<Base64url>")),
+        )
+        // Design 129b D2 (M3): every no-key body names why.
+        for (row in enroll["body_no_key"]!!.jsonArray.map { it.jsonObject }) {
+            val body = row["body"]!!.jsonObject
+            val keyError = body.str("key_error") ?: continue
+            assertEquals(body, encode(com.kidslauncher.mdm.server.dto.EnrollRequest("<code>", attempt, keyError = keyError)))
+        }
+        // An older launcher's body (the server's 426).
+        assertEquals(enroll["body_code_only"], encode(com.kidslauncher.mdm.server.dto.EnrollRequest("<code>")))
+
+        // Every E1 answer to the phone's action.
         val answers = enroll["answers"]!!.jsonObject
-        fun key(name: String) = answers[name]!!.jsonObject["key"]?.let {
+        fun kindOf(row: JsonObject): String {
+            val status = row["status"]!!.jsonPrimitive.int
+            val body = row["body"]!!.takeIf { it != JsonNull }?.jsonObject
+            val keyState = body?.get("key")?.jsonObject?.str("state")
+            if (status == 409) {
+                val failure = enrollFailureOf(status, body.toString())
+                assertTrue(row.toString(), failure is EnrollWaiting)
+                assertEquals(body!!.s("reason"), (failure as EnrollWaiting).reason)
+                assertEquals(15L, failure.retryAfterS)
+            }
+            if (status == 426) assertTrue(enrollFailureOf(status, body.toString()) is EnrollUpdateApp)
+            return enrolAnswerKind(status, keyState, body?.str("state")).wire
+        }
+        for ((name, value) in answers) {
+            val rows = if (value is kotlinx.serialization.json.JsonArray) value.map { it.jsonObject } else listOf(value.jsonObject)
+            for (row in rows) assertEquals(name, row.s("phone"), kindOf(row))
+        }
+        assertEquals(
+            "exempt",
+            ServerJson.decodeFromString(
+                com.kidslauncher.mdm.server.dto.EnrollResponse.serializer(),
+                answers["exempt"]!!.jsonObject["body"].toString().replace("\"<id>\"", "7"),
+            ).key!!.state,
+        )
+        // S1's answers (a server before design 129b) are still read until S2 (D13).
+        val s1 = enroll["answers_s1"]!!.jsonObject
+        fun key(name: String) = s1[name]!!.jsonObject["key"]?.let {
             ServerJson.decodeFromString(com.kidslauncher.mdm.server.dto.EnrollKeyAnswer.serializer(), it.toString())
         }
         assertEquals(null, key("code_only"))
@@ -152,11 +192,70 @@ class DeviceKeyContractTest {
         assertEquals("observed", key("repeat")!!.state)
         assertEquals("app", key("refused")!!.reason)
         assertEquals(3600L, key("list_stale")!!.retryAfterS)
-        val real = ServerJson.decodeFromString(
-            com.kidslauncher.mdm.server.dto.EnrollResponse.serializer(),
-            answers["observed"].toString().replace("\"<id>\"", "7"),
-        )
-        assertEquals("<key id>", real.key!!.keyId)
+    }
+
+    @Test
+    fun `the attempt's number is the server's`() {
+        for (row in contract["enroll"]!!.jsonObject["numbers"]!!.jsonArray.map { it.jsonObject }) {
+            val attempt = unb64u(row.s("attempt"))
+            assertEquals(row.s("attempt_hash"), hexOf(sha256(attempt)))
+            assertEquals(row.s("number"), attemptNumber(attempt))
+            assertEquals(row.s("shown"), shownNumber(attemptNumber(attempt)))
+        }
+    }
+
+    @Test
+    fun `the waiting enrolment's steps`() {
+        for (row in rows("enrol_wait")) {
+            val step = enrolWaitStep(
+                row.s("answer"), row.str("retry_after_s")?.toLong(), row["since_first_ms"]!!.jsonPrimitive.long,
+                row["has_key"]!!.jsonPrimitive.boolean,
+            )
+            assertEquals(row.s("name"), row.s("action"), step.action)
+            assertEquals(row.s("name"), row.str("delay_ms")?.toLong(), step.delayMs)
+            assertEquals(row.s("name"), row["make_key"]!!.jsonPrimitive.boolean, step.makeKey)
+        }
+        assertEquals(QrExtrasAfter.WAIT, qrExtrasAfter(Result.failure(EnrollWaiting("root", "123456", 15))))
+        assertEquals(QrExtrasAfter.RETRY, qrExtrasAfter(Result.failure(EnrollUpdateApp())))
+        assertEquals(null, enrolFailureLine(EnrollWaiting("root", "123456", 15)))
+        assertEquals(com.kidslauncher.mdm.R.string.enrol_update_app, enrolFailureLine(EnrollUpdateApp()))
+    }
+
+    @Test
+    fun `the book keeps the attempts across a reload`() {
+        val book = KeyBookState(enrolAttempts = mapOf("challenge" to "attempt"), exemptTriedMs = 42L)
+        val again = ServerJson.decodeFromString(KeyBookState.serializer(), ServerJson.encodeToString(KeyBookState.serializer(), book))
+        assertEquals(book, again)
+        // A book written before design 129b reads without them.
+        assertEquals(emptyMap<String, String>(), ServerJson.decodeFromString(KeyBookState.serializer(), "{}").enrolAttempts)
+    }
+
+    @Test
+    fun `one attempt per challenge, gone at a new enrolment`() {
+        val once = withEnrolAttempt(KeyBookState(), "c1", "a1")
+        assertEquals(mapOf("c1" to "a1"), once.enrolAttempts)
+        // The kept one wins: every try with the code sends the same attempt.
+        assertEquals(once, withEnrolAttempt(once, "c1", "a2"))
+        val two = withEnrolAttempt(once, "c2", "b1")
+        assertEquals(mapOf("c1" to "a1", "c2" to "b1"), two.enrolAttempts)
+        val fresh = newEnrolmentBook(two.copy(exemptTriedMs = 5L, lost = true, lastRefusal = "root"))
+        assertEquals(emptyMap<String, String>(), fresh.enrolAttempts)
+        assertEquals(null, fresh.exemptTriedMs)
+        assertEquals(false, fresh.lost)
+        assertEquals(null, fresh.lastRefusal)
+    }
+
+    @Test
+    fun `every no-key path names why`() {
+        assertEquals("cap", noKeyReason(bookCorrupt = false, failure = null))
+        assertEquals("keystore", noKeyReason(bookCorrupt = true, failure = null))
+        assertEquals("keys_unavailable", noKeyReason(false, KeyGenFailure(true, null)))
+        assertEquals("keystore", noKeyReason(false, KeyGenFailure(false, null)))
+        assertEquals("keystore", noKeyReason(false, IllegalStateException("anything else")))
+        // The words are the contract's.
+        val words = contract["enroll"]!!.jsonObject["body_no_key"]!!.jsonArray.mapNotNull { it.jsonObject["body"]!!.jsonObject.str("key_error") }
+        assertTrue(words.containsAll(listOf("cap", "keystore", "keys_unavailable")))
+        assertEquals("089 851", shownNumber("089851"))
     }
 
     private fun step1(row: JsonObject): KeyStepOne {
@@ -176,6 +275,7 @@ class DeviceKeyContractTest {
                 inFlight = row["in_flight"]!!.jsonPrimitive.boolean,
                 conflictReported = row.str("conflict_reported"),
                 backoff = row["backoff"]!!.jsonPrimitive.boolean,
+                exemptSinceLastTryMs = row.str("exempt_since_last_try_ms")?.toLong(),
             )
             val expected = when (row.s("action")) {
                 "adopt" -> KeyAction.Adopt(row.s("key"), row["drop_token"]!!.jsonPrimitive.boolean)
@@ -187,6 +287,13 @@ class DeviceKeyContractTest {
                 else -> error(row.s("action"))
             }
             assertEquals(row.s("name"), expected, keyStep(input))
+            // Design 129b X: after a `register`, the challenge's answer decides whether a key is made.
+            val challenge = row["challenge"]!!.takeIf { it != JsonNull }?.jsonObject ?: continue
+            val body = challenge["body"]!!.takeIf { it != JsonNull }?.toString()
+            val refusal = body?.let { runCatching { ServerJson.decodeFromString(KeyRefusalAnswer.serializer(), it) }.getOrNull() }
+            val step = keyChallengeStep(challenge["status"]!!.jsonPrimitive.int, refusal?.takeIf { it.reason.isNotBlank() })
+            val want = row["challenge_action"]!!.jsonObject
+            assertEquals(row.s("name"), ChallengeAction(want.s("action"), want.str("wait_ms")?.toLong(), want["make_key"]!!.jsonPrimitive.boolean), step)
         }
         // The last call's fate never decides: step 1 does.
         assertTrue(rows("phone").any { it.str("last_call") == "timeout" && it.s("action") == "adopt" })

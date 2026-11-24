@@ -1,0 +1,51 @@
+{#- Design 129b §5.6: a new phone that couldn't prove its key (`enrol_key::Section`, as `key_wait`) - one orange line,
+    the explanation behind (i), "Sett opp uten maskinvarenøkkel…" where the exception covers the reason; a quiet row once
+    confirmed or after a landing. Always the section, empty when nothing shows: every answer of the confirm lands at
+    #key-exception, so a save never jumps to the top. -#}
+{%- let passkey_reauth = key_wait.passkey %}
+{%- let passkey_only = key_wait.passkey_only %}
+<section id="key-exception">
+{%- if let Some(old) = key_wait.old_app %}
+    <div class="attention attention-action" data-warning="old-app">
+        <div class="attention-text">{{ old }}<div class="attention-sub"><details class="info">
+            <summary aria-label="{{ self.t("common.how_to_fix") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+            <div class="info-panel"><p>{{ self.t("device.old_app.info") }}</p></div>
+        </details></div></div>
+    </div>
+{%- endif %}
+{%- if let Some(wait) = key_wait.wait %}
+    <div class="attention attention-action" data-warning="key-wait">
+        <div class="attention-text">{{ wait.line }}<div class="attention-sub">{% if let Some(count) = wait.count %}<span data-row="key-wait-attempts">{{ count }}</span> {% endif %}<details class="info">
+            <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+            <div class="info-panel"><p>{% if wait.app %}{{ self.t("device.key_wait.app_info") }}{% else %}{{ self.t("device.key_wait.info") }}{% endif %}</p></div>
+        </details></div></div>
+    </div>
+    {%- if wait.button %}
+    <div class="group">
+        <details class="edit cell" data-row="key-exception"{% if key_wait.error.is_some() %} open{% endif %}>
+            <summary class="row">
+                <span class="row-label">{{ self.t("device.key_exception") }}</span>
+                <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </summary>
+            <form method="post" action="/devices/{{ key_wait.device_id }}/key-exception#key-exception" class="edit-body" data-native-post>
+                <input type="hidden" name="tag" value="{{ wait.tag }}">
+                <input type="hidden" name="back" value="{{ key_wait.back }}">
+                {%- for attempt in wait.attempts %}
+                <p class="row row-note" data-row="key-attempt">{{ attempt.text }}</p>
+                {%- endfor %}
+                <label class="field-label" for="key_number">{{ self.t("device.key_exception.number") }}</label>
+                <input type="text" id="key_number" name="number" inputmode="numeric" autocomplete="off" required{% if key_wait.error.is_some() %} aria-invalid="true" aria-describedby="key-error" autofocus{% endif %}>
+                {% if let Some(error) = key_wait.error %}<p class="field-error" id="key-error" role="alert">{{ error }}</p>{% endif %}
+                {% include "partials/reauth_passkey.html" %}
+                <label class="field-label" for="key_password"{% if passkey_only %} hidden{% endif %}>{{ self.t("device.lock.your_password") }}</label>
+                <input type="password" id="key_password" name="password" autocomplete="off"{% if passkey_only %} hidden{% else %} required{% endif %}>
+                <button type="submit" class="button-wide"{% if passkey_only %} hidden{% endif %}>{{ self.t("device.key_exception.confirm") }}</button>
+            </form>
+        </details>
+    </div>
+    {%- endif %}
+{%- endif %}
+{%- if let Some(quiet) = key_wait.quiet %}
+    <div class="group"><p class="row" data-row="key-exception-quiet"><span class="row-label">{{ quiet }}</span></p></div>
+{%- endif %}
+</section>

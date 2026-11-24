@@ -318,6 +318,7 @@ fn migrations_from_73_in_order() {
             (172, "dns default provider".to_string()),
             (173, "lock notice alert".to_string()),
             (174, "device keys".to_string()),
+            (175, "enroll key attempts".to_string()),
         ],
         "0073 (design 30), 0074 (Spotify), 0075 (the clock format), 0076 (the softer \
          wallpapers), 0077 (Vibb One), 0078 (design 35), 0079 (the custom DNS server), 0080 \

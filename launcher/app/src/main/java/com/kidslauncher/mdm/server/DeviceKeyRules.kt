@@ -122,6 +122,8 @@ data class KeyStepInput(
     val inFlight: Boolean = false,
     val conflictReported: String? = null,
     val backoff: Boolean = false,
+    /** Design 129b D10: the time since the key book's last try of an exempt phone (`null`: none kept). */
+    val exemptSinceLastTryMs: Long? = null,
 )
 
 /** The flow's actions (the contract's `phone` rows). */
@@ -163,6 +165,11 @@ fun keyStep(input: KeyStepInput): KeyAction {
     val answer = step1.answer
     if (step1.status != 200 || answer == null) return KeyAction.Wait
     if (answer.state == "none") return if (input.backoff) KeyAction.Wait else KeyAction.Register
+    // Design 129b D10: enrolled without a key by the parent's exception - a try once a week (the book keeps the last).
+    if (answer.state == "exempt") {
+        val due = input.exemptSinceLastTryMs == null || input.exemptSinceLastTryMs >= EXEMPT_TRY_EVERY_MS
+        return if (!input.backoff && due) KeyAction.Register else KeyAction.Wait
+    }
     val named = answer.spkiSha256
     if (answer.state !in NAMING_STATES || named.isNullOrBlank()) return KeyAction.Wait
     if (named !in input.local) {
@@ -188,7 +195,9 @@ fun keyNudge(
 ): Boolean = when {
     policy == null || lost -> false
     // A state that names no key asks again only after [NONE_ASK_AGAIN_MS] (code QA L9: not on every sync).
-    policy.state == "none" -> !backoff && (sinceLastAskMs == null || sinceLastAskMs >= NONE_ASK_AGAIN_MS)
+    // Design 129b: an exempt phone asks as one without a key does (its weekly try is `keyStep`'s).
+    policy.state == "none" || policy.state == "exempt" ->
+        !backoff && (sinceLastAskMs == null || sinceLastAskMs >= NONE_ASK_AGAIN_MS)
     policy.rotate -> !backoff
     policy.keyId != adoptedKeyId -> true
     policy.state == "bound" && hasToken -> true

@@ -695,8 +695,8 @@ pub fn b64url(bytes: &[u8]) -> String {
 pub struct StoredKey {
     pub key_id: String,
     pub spki_sha256: String,
-    /// `tee` or `strongbox` - but a key with `root = 'emulator'` is stored as `tee` (`stored_level`): **a reader checks
-    /// [StoredKey::root] first**. Design 129b's migration 0175 lets the column say `software`; that stub goes then.
+    /// `tee`, `strongbox`, or `software` - only an `emulator_keys` key (`root = 'emulator'`, design 129b §7; migration
+    /// 0175 lets the column say it).
     pub security_level: String,
     pub attestation_version: i64,
     pub os_patch_level: Option<i64>,
@@ -747,7 +747,27 @@ pub async fn policy_value(
     db: &sqlx::SqlitePool,
     device_id: i64,
 ) -> Result<serde_json::Value, sqlx::Error> {
-    Ok(key_answer(current_key(db, device_id).await?.as_ref()))
+    let key = current_key(db, device_id).await?;
+    if key.is_none() && exempt(db, device_id).await? {
+        return Ok(exempt_answer());
+    }
+    Ok(key_answer(key.as_ref()))
+}
+
+/// Design 129b D10: the phone enrolled without a key by the parent's exception (`key_exempt_at`).
+pub async fn exempt(db: &sqlx::SqlitePool, device_id: i64) -> Result<bool, sqlx::Error> {
+    Ok(sqlx::query_scalar::<_, i64>(
+        "SELECT 1 FROM devices WHERE id = ? AND key_exempt_at IS NOT NULL",
+    )
+    .bind(device_id)
+    .fetch_optional(db)
+    .await?
+    .is_some())
+}
+
+/// `{state: "exempt", rotate: false}` (§4.3): no key id, no SPKI.
+pub fn exempt_answer() -> serde_json::Value {
+    serde_json::json!({ "state": "exempt", "rotate": false })
 }
 
 /// `GET /key`'s answer and the policy's `device_key`, from the current key.
@@ -761,17 +781,6 @@ pub fn key_answer(key: Option<&StoredKey>) -> serde_json::Value {
         }),
         None => serde_json::json!({ "state": "none", "rotate": false }),
     }
-}
-
-/// The key's `security_level` column. Migration 0174's CHECK takes `tee` and `strongbox` alone, so a key the
-/// `emulator_keys` profile took (design 129b §7: `Software`, under `root = 'emulator'`) is stored as `tee` and read by
-/// its root (About shows it as the emulator's, in orange). A reader of the column checks `root` first. Design 129b's
-/// migration 0175 (step E1) widens the CHECK to `software`; this stub is dropped at that merge.
-fn stored_level(attested: &Attested) -> &'static str {
-    if attested.root == attestation::roots::Root::Emulator {
-        return attestation::SecurityLevel::TrustedEnvironment.word();
-    }
-    attested.level.word()
 }
 
 /// Stores an attested key for `device_id` on the caller's transaction (`observed` in S1), returning its random id.
@@ -796,7 +805,7 @@ pub async fn insert_key(
     .bind(&attested.spki)
     .bind(attestation::spki_sha256(&attested.spki))
     .bind(&attested.public_key)
-    .bind(stored_level(attested))
+    .bind(attested.level.word())
     .bind(attested.attestation_version)
     .bind(attested.os_patch_level)
     .bind(root.map(|r| r.state.word()))
@@ -837,6 +846,75 @@ pub async fn unusual_address(
     .fetch_optional(db)
     .await?;
     Ok(known.is_none())
+}
+
+/// Design 129b X (§8): a registration waits until the phone has an address first seen at least this long ago.
+pub const ADDRESS_HISTORY_S: i64 = 3600;
+
+/// Design 129b X: `Some(seconds)` while the phone has no `device_addresses` row (of the last [ADDRESS_DAYS] days)
+/// first seen more than [ADDRESS_HISTORY_S] ago - the time until its oldest row is that old, the whole hour with none.
+/// Every phone that registered in its first hour after 0.93.0 (whose history started empty) was marked `unusual`.
+pub async fn address_history_wait(
+    db: &sqlx::SqlitePool,
+    device_id: i64,
+) -> Result<Option<i64>, sqlx::Error> {
+    let age: Option<i64> = sqlx::query_scalar(
+        "SELECT CAST(strftime('%s', 'now') AS INTEGER) - CAST(strftime('%s', MIN(first_seen)) AS INTEGER) \
+         FROM device_addresses WHERE device_id = ? AND last_seen > datetime('now', ?)",
+    )
+    .bind(device_id)
+    .bind(format!("-{ADDRESS_DAYS} days"))
+    .fetch_one(db)
+    .await?;
+    Ok(history_wait(age))
+}
+
+/// [address_history_wait]'s rule from the oldest row's age in seconds (`None`: no row).
+pub fn history_wait(oldest_age_s: Option<i64>) -> Option<i64> {
+    match oldest_age_s {
+        None => Some(ADDRESS_HISTORY_S),
+        Some(age) if age >= ADDRESS_HISTORY_S => None,
+        Some(age) => Some((ADDRESS_HISTORY_S - age).max(1)),
+    }
+}
+
+/// Design 129b X (§8), for S2's commit: a stored `unusual` mark is cleared when the registration's address has a row
+/// whose `last_seen` is at least 24 hours after the key's registration and within the last 30 days - the address stayed
+/// the phone's own after the registration, which a registration from elsewhere doesn't (its address appears only around
+/// the registration). The row must also have been first seen before the registration's challenge (code QA M2): since
+/// signed requests note their address too, a key registered from elsewhere would otherwise make its own address "stay"
+/// by signing from it for a day. `rows` are the phone's `(address, first_seen, last_seen)`. Written now, called by S2's
+/// commit.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn unusual_cleared(
+    challenge_at: chrono::DateTime<chrono::Utc>,
+    registered_at: chrono::DateTime<chrono::Utc>,
+    address: &str,
+    rows: &[(
+        String,
+        chrono::DateTime<chrono::Utc>,
+        chrono::DateTime<chrono::Utc>,
+    )],
+    now: chrono::DateTime<chrono::Utc>,
+) -> bool {
+    rows.iter().any(|(a, first_seen, last_seen)| {
+        a == address
+            && *first_seen < challenge_at
+            && *last_seen >= registered_at + chrono::TimeDelta::hours(24)
+            && *last_seen >= now - chrono::TimeDelta::days(ADDRESS_DAYS)
+    })
+}
+
+/// The registration routes' wait while the address history is young: 503 `{reason: "address_history",
+/// retry_after_s}` with `Retry-After`.
+pub fn address_history_answer(seconds: i64) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    (
+        axum::http::StatusCode::SERVICE_UNAVAILABLE,
+        [(axum::http::header::RETRY_AFTER, seconds.to_string())],
+        axum::Json(serde_json::json!({ "reason": "address_history", "retry_after_s": seconds })),
+    )
+        .into_response()
 }
 
 /// Removes every key of a phone (a re-enrolment, a revoked access) and its challenge; the index follows.

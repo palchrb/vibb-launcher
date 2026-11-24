@@ -18,7 +18,8 @@ import com.kidslauncher.mdm.databinding.ActivityConnectBinding
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.server.DeviceCredentials
 import com.kidslauncher.mdm.server.QrExtras
-import com.kidslauncher.mdm.server.enrolFailureRefused
+import com.kidslauncher.mdm.server.EnrolWait
+import com.kidslauncher.mdm.server.enrolFailureLine
 import com.kidslauncher.mdm.server.serverUrlUsable
 import com.kidslauncher.mdm.ui.UIObjectActivity
 import kotlinx.coroutines.CoroutineScope
@@ -52,7 +53,8 @@ class ConnectActivity : UIObjectActivity() {
     private lateinit var binding: ActivityConnectBinding
     private var watch: Job? = null
 
-    private val busy: Boolean get() = typing.value || QrExtras.running.value > 0
+    private val busy: Boolean get() = typing.value || QrExtras.running.value > 0 ||
+        EnrolWait.state.value is EnrolWait.State.Waiting
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -91,6 +93,7 @@ class ConnectActivity : UIObjectActivity() {
             launch { QrExtras.running.collect { render() } }
             launch { typing.collect { render() } }
             launch { lastError.collect { render() } }
+            launch { EnrolWait.state.collect { render() } }
         }
     }
 
@@ -110,9 +113,11 @@ class ConnectActivity : UIObjectActivity() {
             binding.connectServerUrl.text.toString(), binding.connectCode.text.toString(), busyNow,
         )
         binding.connectButton.setText(if (busyNow) R.string.connect_busy else R.string.connect_title)
-        val error = lastError.value
-        binding.connectError.text = error?.let { getString(it) }.orEmpty()
-        binding.connectError.visibility = if (error == null) View.GONE else View.VISIBLE
+        // Design 129b D12: while the enrolment waits for a parent, one line and the attempt's number; after the 45-minute
+        // stop, "Koden er utløpt. Be om en ny." (L7).
+        val line = EnrolWait.lines(this) ?: lastError.value?.let { getString(it) }
+        binding.connectError.text = line.orEmpty()
+        binding.connectError.visibility = if (line == null) View.GONE else View.VISIBLE
     }
 
     private fun connect() {
@@ -126,6 +131,7 @@ class ConnectActivity : UIObjectActivity() {
         }
         if (!typing.compareAndSet(false, true)) return
         lastError.value = null
+        EnrolWait.clearEnded()
         render()
         hideIme()
         val app = applicationContext
@@ -133,9 +139,7 @@ class ConnectActivity : UIObjectActivity() {
             try {
                 val result = QrExtras.enrolTyped(app, url, code)
                 // Code QA Q-1 of design r10: only a refused code is "that code didn't work".
-                if (result.isFailure) {
-                    lastError.value = if (enrolFailureRefused(result.exceptionOrNull())) R.string.re_enrol_failed else R.string.re_enrol_unreachable
-                }
+                if (result.isFailure) lastError.value = enrolFailureLine(result.exceptionOrNull())
             } finally {
                 // The started instance's watchers render; an enrolled phone's screen finishes there.
                 typing.value = false

@@ -26,6 +26,7 @@ mod display_time;
 mod dns_engine;
 mod dns_server;
 mod emergency;
+mod enrol_key;
 mod enrollment;
 mod fdroid;
 mod gate;
@@ -1195,7 +1196,7 @@ pub fn build_admin_router(
         )
         .route(
             "/devices/{id}/provision",
-            get(handlers::provisioning::provision_form).post(handlers::provisioning::provision_qr),
+            get(handlers::provisioning::provision_page).post(handlers::provisioning::provision_qr),
         )
         // 2026-11-22: the saved Wi-Fi network deleted.
         .route(
@@ -1300,6 +1301,7 @@ pub fn build_admin_router(
             "/devices/{id}/regenerate-code",
             post(handlers::devices::regenerate_code),
         )
+        .route("/devices/{id}/key-exception", post(enrol_key::confirm))
         .route(
             "/devices/{id}/revoke",
             post(handlers::devices::revoke_access),

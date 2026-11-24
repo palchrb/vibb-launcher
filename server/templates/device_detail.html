@@ -76,6 +76,8 @@
     </section>
     {% endif %}
 
+    {% include "partials/key_wait.html" %}
+
     {% if device.enrolled_at.is_none() %}
     {#- A phone not set up has no Attention rows; without its Parent PIN it gets no setup code (design 114 §5.8): the
         line to the PIN, whose save lands on Connect's QR, in place of New Setup Code. -#}

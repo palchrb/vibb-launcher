@@ -94,6 +94,7 @@ async fn enroll_with(
         None,
         Some(serde_json::json!({
             "enrollment_code": code,
+            "attempt": b64u(&crate::device_key::random_bytes::<16>()),
             "chain": key.chain(&challenge, extra),
             "proof": b64u(&proof),
         })),
@@ -331,36 +332,18 @@ async fn the_contract_routes() {
     let c = contract();
     let app = TestApp::new().await;
 
-    // Enrol: code only, with a key, refused, the lost answer's repeat, a stale list.
+    // Enrol (design 129b): a key that passes and its lost answer's repeat; the waiting, exempt and server-state
+    // answers are `tests::enrol_key`'s. A phone without a key (its key removed) registers below.
     let (_, code) = app.create_device("plain").await;
-    let res = app
-        .request(
-            Method::POST,
-            "/api/devices/enroll",
-            None,
-            Some(serde_json::json!({ "enrollment_code": code })),
-        )
-        .await;
-    shaped(&res.json(), &c["enroll"]["answers"]["code_only"]);
-    let plain_token = res.json()["device_token"].as_str().unwrap().to_string();
+    let plain_token = enroll_plain(&app, &code).await;
 
     let (_, code) = app.create_device("keyed").await;
     let key = TestKey::new();
     let first = enroll_with(&app, &code, &key, serde_json::json!({})).await;
-    shaped(&first.json(), &c["enroll"]["answers"]["observed"]);
+    shaped(&first.json(), &c["enroll"]["answers"]["observed"]["body"]);
     let again = enroll_with(&app, &code, &key, serde_json::json!({})).await;
-    shaped(&again.json(), &c["enroll"]["answers"]["repeat"]);
+    shaped(&again.json(), &c["enroll"]["answers"]["repeat"]["body"]);
     assert_eq!(again.json()["key"]["key_id"], first.json()["key"]["key_id"]);
-
-    let (_, code) = app.create_device("refused").await;
-    let res = enroll_with(
-        &app,
-        &code,
-        &TestKey::new(),
-        serde_json::json!({"refuse": "app"}),
-    )
-    .await;
-    shaped(&res.json(), &c["enroll"]["answers"]["refused"]);
 
     app.state
         .device_keys
@@ -372,12 +355,8 @@ async fn the_contract_routes() {
         .unwrap();
     let (_, code) = app.create_device("stale").await;
     let res = enroll_with(&app, &code, &TestKey::new(), serde_json::json!({})).await;
-    assert_eq!(
-        res.status,
-        StatusCode::OK,
-        "S1 never refuses an enrolment for its key"
-    );
-    shaped(&res.json(), &c["enroll"]["answers"]["list_stale"]);
+    assert_eq!(res.status, StatusCode::SERVICE_UNAVAILABLE);
+    shaped(&res.json(), &c["enroll"]["answers"]["list_stale"]["body"]);
     let plain_challenge = app
         .request(
             Method::GET,
@@ -529,16 +508,28 @@ async fn the_contract_routes() {
     shaped(&res.json(), &c["register"]["answers"][4]["body"]);
 }
 
+/// A phone enrolled and then without a key (design 129b: no phone enrols without one - this one's is removed), with
+/// an address history an hour old (X), so it can register.
 async fn enroll_plain(app: &TestApp, code: &str) -> String {
     let res = app
         .request(
             Method::POST,
             "/api/devices/enroll",
             None,
-            Some(serde_json::json!({ "enrollment_code": code })),
+            Some(crate::tests::enroll_body(code)),
         )
         .await;
     assert_eq!(res.status, StatusCode::OK);
+    let id = res.json()["device_id"].as_i64().unwrap();
+    device_key::remove_keys(&app.state, id).await;
+    sqlx::query(
+        "INSERT INTO device_addresses (device_id, address, first_seen, last_seen) \
+         VALUES (?, 'an earlier address', datetime('now', '-2 hours'), datetime('now'))",
+    )
+    .bind(id)
+    .execute(&app.db)
+    .await
+    .unwrap();
     res.json()["device_token"].as_str().unwrap().to_string()
 }
 
@@ -1148,10 +1139,10 @@ async fn no_checksum_is_said_once_on_settings() {
     let app = TestApp::with_config(config).await;
     let cookie = app.admin_cookie().await;
     let (id, code) = app.create_device("phone").await;
-    // The fake attestation refuses `app` without the digest, as the real one does.
+    // Design 129b D3: no key can pass without it - the server's state, a 503, never the phone's refusal.
     let res = enroll_with(&app, &code, &TestKey::new(), serde_json::json!({})).await;
-    assert_eq!(res.status, StatusCode::OK);
-    assert_eq!(res.json()["key"]["reason"], "app");
+    assert_eq!(res.status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(res.json()["reason"], "server_setup");
     let stored: Option<String> =
         sqlx::query_scalar("SELECT key_refused_reason FROM devices WHERE id = ?")
             .bind(id)
@@ -1168,7 +1159,6 @@ async fn no_checksum_is_said_once_on_settings() {
         .get_page(&format!("/devices/{id}/about?lang=nb"), &cookie)
         .await
         .text();
-    assert!(page.contains("Eldre innlogging"));
     assert!(!page.contains("Nøkkel avvist"));
 }
 

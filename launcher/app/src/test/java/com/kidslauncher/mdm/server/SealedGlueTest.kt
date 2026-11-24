@@ -39,7 +39,10 @@ class SealedGlueTest {
         assertTrue(dialog.contains("ENROL_SCOPE.launch {"))
         assertFalse(body(dialog, "open").contains("scope.launch"))
         assertTrue(dialog.contains("if (!dialog.isShowing) return@withContext"))
-        assertTrue(dialog.contains("if (enrolFailureRefused(result.exceptionOrNull())) R.string.re_enrol_failed else R.string.re_enrol_unreachable"))
+        // Q-1, and design 129b D12: the line from `enrolFailureLine` - waiting shows the parent's line and the number.
+        assertTrue(dialog.contains("val line = enrolFailureLine(result.exceptionOrNull())"))
+        org.junit.Assert.assertEquals(com.kidslauncher.mdm.R.string.re_enrol_failed, enrolFailureLine(enrollFailureOf(401)))
+        org.junit.Assert.assertEquals(com.kidslauncher.mdm.R.string.re_enrol_unreachable, enrolFailureLine(java.io.IOException("no route")))
         val bind = body(dialog, "bind")
         assertTrue(bind.indexOf("button?.visibility = View.GONE") in 0 until bind.indexOf("recheck()"))
         assertTrue(bind.contains("button?.visibility = if (due) View.VISIBLE else View.GONE"))

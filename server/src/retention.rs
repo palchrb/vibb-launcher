@@ -522,6 +522,13 @@ pub async fn prune(db: &SqlitePool) -> Pruned {
             .execute(db)
             .await,
     );
+    // Design 129b D4: a waiting attempt whose code is no longer the phone's live code is dead (a used one is kept for a
+    // lost answer until its `keep_until`).
+    let _attempts = rows(
+        failed,
+        "enroll_key_attempts",
+        sqlx::query(crate::enrol_key::SWEEP_SQL).execute(db).await,
+    );
     let install_progress = rows(
         failed,
         "device_install_progress",

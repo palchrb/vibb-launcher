@@ -281,7 +281,7 @@ async fn find_phone_shows_waiting_expired_and_cancelled() {
             Method::POST,
             "/api/devices/enroll",
             None,
-            Some(json!({ "enrollment_code": code })),
+            Some(crate::tests::enroll_body(&code)),
         )
         .await;
     assert_eq!(res.status, StatusCode::OK);
@@ -445,7 +445,7 @@ async fn an_enrollment_or_a_restart_ends_what_could_expire() {
             Method::POST,
             "/api/devices/enroll",
             None,
-            Some(json!({ "enrollment_code": code })),
+            Some(crate::tests::enroll_body(&code)),
         )
         .await;
     assert_eq!(res.status, StatusCode::OK);

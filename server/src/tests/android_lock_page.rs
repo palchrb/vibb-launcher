@@ -590,7 +590,7 @@ async fn a_new_phone_gets_androids_lock_once_the_child_pin_is_set() {
             Method::POST,
             "/api/devices/enroll",
             None,
-            Some(json!({ "enrollment_code": code })),
+            Some(crate::tests::enroll_body(&code)),
         )
         .await;
     assert_eq!(res.status, StatusCode::OK);

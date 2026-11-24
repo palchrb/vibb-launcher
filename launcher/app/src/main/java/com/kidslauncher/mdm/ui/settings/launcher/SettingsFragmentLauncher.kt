@@ -14,6 +14,7 @@ import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.flow.drop
 import androidx.preference.Preference
 import androidx.preference.PreferenceFragmentCompat
 import androidx.preference.SwitchPreference
@@ -587,7 +588,27 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
         val app = context.applicationContext
         CoroutineScope(Dispatchers.IO).launch {
             // Design r10: the token is sealed and committed on IO inside the enrolment (revision check N7).
-            val outcome = com.kidslauncher.mdm.server.Enrollment.enroll(app, serverUrl, enrollmentCode)
+            // Design 129b (code QA M2): the code already waits - nothing is sent again; the dialog shows its lines.
+            if (com.kidslauncher.mdm.server.EnrolWait.waitingFor(enrollmentCode)) {
+                withContext(Dispatchers.Main) { showEnrolWait(context) }
+                return@launch
+            }
+            // Under QrExtras' mutex, as every enrolment and the waiting one's tries are.
+            val outcome = com.kidslauncher.mdm.server.QrExtras.underLock {
+                com.kidslauncher.mdm.server.Enrollment.enroll(app, serverUrl, enrollmentCode)
+            }
+            // Design 129b D11/D12: the server waits for a parent - the code keeps trying; the dialog says so.
+            val waiting = outcome.exceptionOrNull() as? com.kidslauncher.mdm.server.EnrollWaiting
+            if (waiting != null) {
+                com.kidslauncher.mdm.server.EnrolWait.start(
+                    app,
+                    enrollmentCode,
+                    waiting,
+                    tryOnce = { com.kidslauncher.mdm.server.Enrollment.enroll(app, serverUrl, enrollmentCode) },
+                )
+                withContext(Dispatchers.Main) { showEnrolWait(context) }
+                return@launch
+            }
             withContext(Dispatchers.Main) {
                 outcome.onSuccess {
                     // First policy now, not at the next backstop (up to 30 min away).
@@ -603,6 +624,33 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
                 }
             }
         }
+    }
+
+    /** Design 129b D12: the enrolment waits for a parent - "Venter på en forelder." and the attempt's number; while it
+     * shows it follows the wait (code QA L3): enrolled closes it with the success toast, run out says so. */
+    private fun showEnrolWait(context: Context) {
+        val wait = com.kidslauncher.mdm.server.EnrolWait
+        val lines = wait.lines(context) ?: return
+        val dialog = AlertDialog.Builder(context, R.style.AlertDialogCustom)
+            .setMessage(lines)
+            .setPositiveButton(android.R.string.ok, null)
+            .show()
+        val watch = lifecycleScope.launch {
+            wait.state.drop(1).collect { state ->
+                if (!dialog.isShowing) return@collect
+                when (state) {
+                    com.kidslauncher.mdm.server.EnrolWait.State.Enrolled -> {
+                        dialog.dismiss()
+                        Toast.makeText(context, R.string.toast_mdm_enroll_success, Toast.LENGTH_LONG).show()
+                    }
+                    com.kidslauncher.mdm.server.EnrolWait.State.RanOut ->
+                        dialog.setMessage(context.getString(R.string.enrol_code_ran_out))
+                    is com.kidslauncher.mdm.server.EnrolWait.State.Waiting -> wait.lines(context)?.let { dialog.setMessage(it) }
+                    null -> Unit
+                }
+            }
+        }
+        dialog.setOnDismissListener { watch.cancel() }
     }
 
     /**
@@ -667,6 +715,10 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
         CoroutineScope(Dispatchers.IO).launch {
             // QA L3: the QR's one apply under its mutex; a re-scan of the code that enrolled this phone sends nothing.
             val outcome = com.kidslauncher.mdm.server.QrExtras.applyScanned(appContext, extras)
+            if (outcome.exceptionOrNull() is com.kidslauncher.mdm.server.EnrollWaiting) {
+                withContext(Dispatchers.Main) { showEnrolWait(context) }
+                return@launch
+            }
             withContext(Dispatchers.Main) {
                 outcome.onSuccess {
                     Toast.makeText(context, R.string.toast_mdm_enroll_success, Toast.LENGTH_LONG)

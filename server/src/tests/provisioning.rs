@@ -699,8 +699,9 @@ async fn server_setup_needed_is_one_row_with_its_detail_behind_info() {
         !html.contains("/provision#qr"),
         "a QR form without a checksum"
     );
-    // New Setup Code still works.
-    assert!(html.contains(&format!("action=\"/devices/{id}/regenerate-code\"")));
+    // Design 129b D3: nor a setup code - no phone could enrol with it.
+    assert!(!html.contains(&format!("action=\"/devices/{id}/regenerate-code\"")));
+    assert!(html.contains("data-row=\"code-needs-setup\""));
 
     for res in [
         app.get_page("/devices/9999/provision", &cookie).await,

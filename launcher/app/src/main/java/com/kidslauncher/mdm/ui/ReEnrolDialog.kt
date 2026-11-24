@@ -15,11 +15,15 @@ import com.kidslauncher.mdm.server.DeviceCredentials
 import com.kidslauncher.mdm.server.KeyBook
 import com.kidslauncher.mdm.server.Enrollment
 import com.kidslauncher.mdm.server.ParentPin
-import com.kidslauncher.mdm.server.enrolFailureRefused
+import com.kidslauncher.mdm.server.EnrolWait
+import com.kidslauncher.mdm.server.EnrollWaiting
+import com.kidslauncher.mdm.server.QrExtras
+import com.kidslauncher.mdm.server.enrolFailureLine
 import com.kidslauncher.mdm.server.showReEnrol
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -94,6 +98,31 @@ object ReEnrolDialog {
             dialog.dismiss()
         }
         val ok = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+        // Design 129b (code QA L3): while the dialog shows it follows a waiting enrolment - enrolled closes it as any
+        // enrolment does; run out says so and gives OK back.
+        val watch = ENROL_SCOPE.launch(Dispatchers.Main) {
+            EnrolWait.state.drop(1).collect { state ->
+                if (!dialog.isShowing) return@collect
+                when (state) {
+                    EnrolWait.State.Enrolled -> {
+                        hideIme(field)
+                        dialog.dismiss()
+                        done(context.getString(R.string.re_enrol_done))
+                    }
+                    EnrolWait.State.RanOut -> {
+                        error.text = context.getString(R.string.enrol_code_ran_out)
+                        error.visibility = View.VISIBLE
+                        ok.isEnabled = true
+                    }
+                    is EnrolWait.State.Waiting -> {
+                        error.text = EnrolWait.lines(context).orEmpty()
+                        error.visibility = View.VISIBLE
+                    }
+                    null -> Unit
+                }
+            }
+        }
+        dialog.setOnDismissListener { watch.cancel() }
         ok.setOnClickListener {
             val code = field.text.toString().trim()
             val url = LauncherPreferences.mdm().serverUrl()
@@ -102,8 +131,21 @@ object ReEnrolDialog {
             // Code QA Q-8: the enrolment runs in the process's scope - a one-shot code the server consumed must not be
             // lost to the activity going away mid-call; the dialog hears the result only while it still shows.
             ENROL_SCOPE.launch {
-                val result = Enrollment.enroll(app, url, code)
+                // Design 129b (code QA M2): the code already waits - nothing is sent again; the lines show.
+                if (EnrolWait.waitingFor(code)) {
+                    withContext(Dispatchers.Main) {
+                        error.text = EnrolWait.lines(context).orEmpty()
+                        error.visibility = View.VISIBLE
+                    }
+                    return@launch
+                }
+                // Under QrExtras' mutex, as every enrolment and the waiting one's tries are.
+                val result = QrExtras.underLock { Enrollment.enroll(app, url, code) }
                 if (result.isSuccess) SyncRunner.request(app, "re_enrolled")
+                // Design 129b D11: the server waits for a parent - the same code keeps trying in the process.
+                (result.exceptionOrNull() as? EnrollWaiting)?.let { waiting ->
+                    EnrolWait.start(app, code, waiting, tryOnce = { Enrollment.enroll(app, url, code) })
+                }
                 withContext(Dispatchers.Main) {
                     if (!dialog.isShowing) return@withContext
                     if (result.isSuccess) {
@@ -111,11 +153,12 @@ object ReEnrolDialog {
                         dialog.dismiss()
                         done(context.getString(R.string.re_enrol_done))
                     } else {
-                        // Q-1: only a refused code is "that code didn't work".
-                        val line = if (enrolFailureRefused(result.exceptionOrNull())) R.string.re_enrol_failed else R.string.re_enrol_unreachable
-                        error.text = context.getString(line)
+                        // Q-1: only a refused code is "that code didn't work"; design 129b D12: waiting, the line and
+                        // the number.
+                        val line = enrolFailureLine(result.exceptionOrNull())
+                        error.text = if (line == null) EnrolWait.lines(context).orEmpty() else context.getString(line)
                         error.visibility = View.VISIBLE
-                        ok.isEnabled = true
+                        ok.isEnabled = line != null
                     }
                 }
             }

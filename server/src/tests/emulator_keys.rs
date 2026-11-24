@@ -26,6 +26,12 @@ async fn store_key(app: &TestApp, device_id: i64, root: Root, level: attestation
         root,
     };
     let mut conn = app.db.acquire().await.unwrap();
+    // The key the test enrolment made (design 129b: every enrolment has one) gives way to this one.
+    sqlx::query("DELETE FROM device_keys WHERE device_id = ?")
+        .bind(device_id)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
     crate::device_key::insert_key(
         &mut conn,
         device_id,
@@ -147,7 +153,7 @@ async fn an_emulator_key_signs_only_with_the_feature() {
 
 /// Code QA M2: the Android 16-shaped vector through the real enrolment, with the real attestation check and
 /// `LAUNCHER_DEBUG_SIGNATURE_CHECKSUM` set. An enrolment's challenge is the code's (design 129 §5.1), so the vector's
-/// fixed QR code is set on the phone. Written against main's route (before design 129b's `attempt`).
+/// fixed QR code is set on the phone; the body is design 129b's (`tests::enroll_body`: the code and an attempt).
 #[cfg(feature = "emulator_keys")]
 #[tokio::test]
 async fn the_emulator_enrols_with_its_key() {
@@ -192,11 +198,10 @@ async fn the_emulator_enrols_with_its_key() {
         .iter()
         .map(|der| base64::Engine::encode(&base64::engine::general_purpose::STANDARD, der))
         .collect();
-    let body = serde_json::json!({
-        "enrollment_code": code,
-        "chain": chain,
-        "proof": enroll["proof"],
-    });
+    // Design 129b's body (the code and an attempt), with the vector's chain and proof in place of the fake key's.
+    let mut body = super::enroll_body(code);
+    body["chain"] = serde_json::json!(chain);
+    body["proof"] = enroll["proof"].clone();
     let request = Request::builder()
         .method(Method::POST)
         .uri("/api/devices/enroll")
