@@ -195,7 +195,10 @@ class QrExtrasTest {
 
         val qr = code("server/QrExtras.kt")
         // The QR's apply, "Koble til"'s typed code and Settings' scanner, each under the one mutex, never cancelled.
-        assertEquals(3, Regex("""applyProvisioningExtras\(""").findAll(qr).count())
+        // Design 129b D11: the fourth is the waiting enrolment's try, which EnrolWait runs under the same mutex.
+        assertEquals(4, Regex("""applyProvisioningExtras\(""").findAll(qr).count())
+        assertTrue("last = QrExtras.underLock { tryOnce() }" in code("server/EnrolWait.kt"))
+        assertTrue("suspend fun <T> underLock(block: suspend () -> T): T = locked(block)" in qr)
         assertTrue("= counted { mutex.withLock { withContext(NonCancellable) { block() } } }" in qr)
         val typed = qr.substringAfter("suspend fun enrolTyped(").substringBefore("suspend fun applyScanned(")
         assertTrue(typed.contains("): Result<Unit> = locked {"))

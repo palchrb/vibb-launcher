@@ -555,7 +555,12 @@ the phone's offset), `window`, `edge`, `answers` (each `Vibb-Auth` reason to the
 (the routes' bodies and answers), `policy` (the policy's `device_key`), `phone` (the registration flow's table: step 1's
 answer and the phone's keys to adopt, keep, register, report a conflict, wait or a strike towards "lost"),
 `phone_nudge` (the policy's `device_key` to asking step 1 or not) and `lost_verdict` (the strikes: three over an hour of
-elapsed realtime make a key lost). The server's `tests::device_key` verifies the crypto rows and
+elapsed realtime make a key lost). Design 129b added: `enroll`'s bodies with `attempt` and `body_no_key` (`key_error`),
+every E1 answer with the phone's action (`answers`; S1's in `answers_s1`), `wait_reasons`, `exception_reasons`,
+`wait_pace`, `numbers` (an attempt to its hash and six digits), `enrol_wait` (the waiting enrolment's steps, the
+launcher's `enrolWaitStep`), the `exempt` key state (`register.get_key_exempt`, `policy.exempt`), `register`'s
+`address_history` and the `phone` rows' `exempt_since_last_try_ms` and `challenge`/`challenge_action`
+(`keyChallengeStep`); the server's `tests::enrol_key` and `enrol_key::tests` produce and run them. The server's `tests::device_key` verifies the crypto rows and
 produces the route rows through the real routes; the launcher's `DeviceKeyContractTest` builds `canonical` and `proof`
 exactly (and verifies the signatures over what it built), derives the enrolment challenge, computes `clock`, maps every
 answer, decodes the policy and the bodies, and runs `phone` through `keyStep`, `phone_nudge` through `keyNudge` and `lost_verdict`

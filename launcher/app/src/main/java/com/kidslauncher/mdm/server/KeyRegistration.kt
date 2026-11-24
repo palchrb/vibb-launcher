@@ -177,6 +177,7 @@ object KeyRegistration {
                     step1 = step1,
                     conflictReported = book.conflictReported,
                     backoff = backoff(),
+                    exemptSinceLastTryMs = book.exemptTriedMs?.let { TrustedClock.nowMs() - it },
                 ),
             )
             when (action) {
@@ -247,6 +248,9 @@ object KeyRegistration {
                         return
                     }
                     registered = true
+                    // Design 129b D10: an exempt phone's weekly try, kept before the key is made (a restart never
+                    // tries sooner).
+                    if (step1.answer?.state == "exempt") DeviceKeys.exemptTried(app, TrustedClock.nowMs())
                     if (!register(app, api)) return
                 }
             }
@@ -266,8 +270,18 @@ object KeyRegistration {
     private suspend fun register(app: Context, api: MdmApi): Boolean {
         val challengeAnswer = try {
             val response = api.getKeyChallenge()
-            val text = response.body()?.use { it.string() }
-            if (!response.isSuccessful || text == null) null else ServerJson.decodeFromString(KeyChallengeAnswer.serializer(), text)
+            val text = (if (response.isSuccessful) response.body() else response.errorBody())?.use { it.string() }
+            val refusal = if (response.isSuccessful) null else text?.let {
+                runCatching { ServerJson.decodeFromString(KeyRefusalAnswer.serializer(), it) }.getOrNull()
+            }
+            // Design 129b X: a young address history (and a stale list) waits its time; no key is made before a challenge.
+            val step = keyChallengeStep(response.code(), refusal)
+            if (step.action == "wait") {
+                Log.i(LOG_TAG, "No challenge yet: ${refusal?.reason}")
+                failed(step.waitMs ?: 0L)
+                return false
+            }
+            if (step.action != "make_key" || text == null) null else ServerJson.decodeFromString(KeyChallengeAnswer.serializer(), text)
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {

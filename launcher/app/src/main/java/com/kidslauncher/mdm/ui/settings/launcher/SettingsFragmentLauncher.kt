@@ -588,6 +588,17 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
         CoroutineScope(Dispatchers.IO).launch {
             // Design r10: the token is sealed and committed on IO inside the enrolment (revision check N7).
             val outcome = com.kidslauncher.mdm.server.Enrollment.enroll(app, serverUrl, enrollmentCode)
+            // Design 129b D11/D12: the server waits for a parent - the code keeps trying; the dialog says so.
+            val waiting = outcome.exceptionOrNull() as? com.kidslauncher.mdm.server.EnrollWaiting
+            if (waiting != null) {
+                com.kidslauncher.mdm.server.EnrolWait.start(
+                    app,
+                    waiting,
+                    tryOnce = { com.kidslauncher.mdm.server.Enrollment.enroll(app, serverUrl, enrollmentCode) },
+                )
+                withContext(Dispatchers.Main) { showEnrolWait(context) }
+                return@launch
+            }
             withContext(Dispatchers.Main) {
                 outcome.onSuccess {
                     // First policy now, not at the next backstop (up to 30 min away).
@@ -603,6 +614,15 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
                 }
             }
         }
+    }
+
+    /** Design 129b D12: the enrolment waits for a parent - "Venter på en forelder." and the attempt's number. */
+    private fun showEnrolWait(context: Context) {
+        val lines = com.kidslauncher.mdm.server.EnrolWait.lines(context) ?: return
+        AlertDialog.Builder(context, R.style.AlertDialogCustom)
+            .setMessage(lines)
+            .setPositiveButton(android.R.string.ok, null)
+            .show()
     }
 
     /**
@@ -667,6 +687,10 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
         CoroutineScope(Dispatchers.IO).launch {
             // QA L3: the QR's one apply under its mutex; a re-scan of the code that enrolled this phone sends nothing.
             val outcome = com.kidslauncher.mdm.server.QrExtras.applyScanned(appContext, extras)
+            if (outcome.exceptionOrNull() is com.kidslauncher.mdm.server.EnrollWaiting) {
+                withContext(Dispatchers.Main) { showEnrolWait(context) }
+                return@launch
+            }
             withContext(Dispatchers.Main) {
                 outcome.onSuccess {
                     Toast.makeText(context, R.string.toast_mdm_enroll_success, Toast.LENGTH_LONG)

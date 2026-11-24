@@ -754,6 +754,11 @@
     <string name="re_enrol_field">Setup code</string>
     <string name="re_enrol_failed">That code didn\'t work. Check it and try again, or make a new one.</string>
     <string name="re_enrol_unreachable">Couldn\'t reach the server. Check the connection and try again.</string>
+    <!-- Design 129b §5.5: the enrolment waits for a parent (the reason is the PWA's alone). -->
+    <string name="enrol_key_wait">Waiting for a parent.</string>
+    <string name="enrol_key_number">Code: %1$s</string>
+    <string name="enrol_update_app">Update Vibb One.</string>
+    <string name="enrol_code_ran_out">The code has expired. Ask for a new one.</string>
     <!-- "Koble til" (2026-11-20): a Device Owner phone that isn't enrolled. -->
     <string name="connect_title">Connect</string>
     <string name="connect_busy">Connecting…</string>

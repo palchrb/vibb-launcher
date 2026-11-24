@@ -11,14 +11,32 @@ import kotlinx.coroutines.withContext
 /** Why an enrolment failed (code QA Q-1): [refused] - the server refused the code itself ([CODE_REFUSED_STATUSES]: a
  * wrong, used or expired code); else the server wasn't reached, was busy (408, 425, 429), answered 5xx, or the token
  * couldn't be stored - worth trying again. */
-class EnrollFailure(val refused: Boolean, message: String) : Exception(message)
+open class EnrollFailure(val refused: Boolean, message: String) : Exception(message)
+
+/** Design 129b D11: the server keeps the code live and waits for a parent - the phone's key was refused, or it has
+ * none. [number] is the attempt's six digits the phone shows; [retryAfterS] the server's pace. */
+class EnrollWaiting(val reason: String, val number: String, val retryAfterS: Long) :
+    EnrollFailure(refused = false, "waiting for a parent ($reason)")
+
+/** Design 129b D13: the server needs a newer Vibb One (`426 update_app`) - not the code's fault. */
+class EnrollUpdateApp : EnrollFailure(refused = false, "update_app")
 
 /** The statuses that are the code's fault (QA of qr-compliance-extras, M1): the server answers 429 (+Retry-After, the
  * enrol slots full) and 408 (the body's timeout) for a code that is still good. */
 val CODE_REFUSED_STATUSES = setOf(400, 401, 403, 404, 410)
 
-/** An HTTP status's failure: only [CODE_REFUSED_STATUSES] are the code's fault. */
-fun enrollFailureOf(httpCode: Int): EnrollFailure = EnrollFailure(refused = httpCode in CODE_REFUSED_STATUSES, "HTTP $httpCode")
+/** An HTTP status's failure: only [CODE_REFUSED_STATUSES] are the code's fault. Design 129b: a `409 waiting` is
+ * [EnrollWaiting], a `426` [EnrollUpdateApp]. */
+fun enrollFailureOf(httpCode: Int, errorBody: String? = null): EnrollFailure {
+    if (httpCode == 409 && errorBody != null) {
+        val waiting = runCatching { ServerJson.decodeFromString(EnrolWaitingAnswer.serializer(), errorBody) }.getOrNull()
+        if (waiting != null && waiting.state == "waiting" && waiting.number.isNotBlank()) {
+            return EnrollWaiting(waiting.reason, waiting.number, waiting.retryAfterS)
+        }
+    }
+    if (httpCode == 426) return EnrollUpdateApp()
+    return EnrollFailure(refused = httpCode in CODE_REFUSED_STATUSES, "HTTP $httpCode")
+}
 
 /**
  * The one enrolment (design r10 §5): `POST /api/devices/enroll` with a one-shot code, the new device token sealed
@@ -59,12 +77,19 @@ object Enrollment {
             // reuses its key), and a proof signed afresh on every attempt. No key: the enrolment goes without one
             // (S1 - the bearer; the registration flow tries again later).
             val key = enrolKey(context, code)
-            val response = createMdmApi(serverUrl).enroll(EnrollRequest(code, key?.second, key?.third))
+            // Design 129b D4: the code's attempt, the same on every try (a process death included).
+            val attempt = DeviceKeys.enrolAttempt(context, b64u(enrolChallenge(code)))
+            val request = when (key) {
+                is EnrolKey.Made -> EnrollRequest(code, attempt, key.chain, key.proof)
+                is EnrolKey.None -> EnrollRequest(code, attempt, keyError = key.keyError)
+            }
+            val response = createMdmApi(serverUrl).enroll(request)
             val body = response.body()
             if (!response.isSuccessful || body == null) {
-                val failure = enrollFailureOf(response.code())
-                // Code QA L2: a refused code never takes this key - it goes now, not after its day.
-                if (failure.refused) key?.let { DeviceKeys.forget(context, alias = it.first) }
+                val failure = enrollFailureOf(response.code(), response.errorBody()?.use { it.string() })
+                // Code QA L2: a refused code never takes this key - it goes now, not after its day. A waiting phone keeps
+                // it (the same SPKI on every try, D11).
+                if (failure.refused) (key as? EnrolKey.Made)?.let { DeviceKeys.forget(context, alias = it.alias) }
                 return@withContext Result.failure(failure)
             }
             val mdm = LauncherPreferences.mdm()
@@ -74,7 +99,7 @@ object Enrollment {
             if (!DeviceToken.set(body.deviceToken)) {
                 return@withContext Result.failure(EnrollFailure(refused = false, "the token couldn't be stored"))
             }
-            enrolledKey(context, key?.first, body.key)
+            enrolledKey(context, (key as? EnrolKey.Made)?.alias, body.key)
             mdm.enrolled(true)
             // Design 95 (code QA L3): the old enrollment's kept policy body (its PIN hashes) goes; the token hash would
             // refuse it anyway.
@@ -102,20 +127,32 @@ object Enrollment {
         }
     }
 
-    /** The enrolment's key (§5.1): its alias, chain and a fresh proof, or `null` when none could be made. */
-    private fun enrolKey(context: Context, code: String): Triple<String, List<String>, String>? = try {
+    /** The enrolment's key (§5.1): its alias, chain and a fresh proof - or why there is none (design 129b D2, M3:
+     * every path without a key names one; a phone without a key tries to make one on every try, D11). */
+    private sealed interface EnrolKey {
+        class Made(val alias: String, val chain: List<String>, val proof: String) : EnrolKey
+        class None(val keyError: String) : EnrolKey
+    }
+
+    private fun enrolKey(context: Context, code: String): EnrolKey = try {
         val challenge = enrolChallenge(code)
         val now = TrustedClock.nowMs()
         val made = DeviceKeys.enrolKeyFor(context, b64u(challenge), now)
             ?: DeviceKeys.make(context, challenge, now + DeviceKeys.ENROL_CHALLENGE_HOLDS_MS, now, enrolChallenge = b64u(challenge))
-        made?.let { Triple(it.alias, it.chainB64(), DeviceKeys.proof(context, it.alias, challenge, ProofKind.ENROLL)) }
+        if (made == null) {
+            // `make` makes none while the book doesn't read, or the cap left no room.
+            EnrolKey.None(if (KeyBook.read(context).corrupt) "keystore" else "cap")
+        } else {
+            EnrolKey.Made(made.alias, made.chainB64(), DeviceKeys.proof(context, made.alias, challenge, ProofKind.ENROLL))
+        }
     } catch (e: KeyGenFailure) {
         android.util.Log.w("Enrollment", "No hardware key for the enrolment: ${e.message}")
-        DeviceKeys.refused(context, if (e.keysUnavailable) "keys_unavailable" else "keystore")
-        null
+        val reason = if (e.keysUnavailable) "keys_unavailable" else "keystore"
+        DeviceKeys.refused(context, reason)
+        EnrolKey.None(reason)
     } catch (e: Exception) {
         android.util.Log.w("Enrollment", "No hardware key for the enrolment: ${e.javaClass.simpleName}")
-        null
+        EnrolKey.None("keystore")
     }
 
     /** After the token is stored: the old enrolment's keys go; this one's is adopted when the server took it, deleted
@@ -129,7 +166,13 @@ object Enrollment {
                 DeviceKeys.adopt(context, keep, keyId, "observed")
                 // Code QA L6: the shutdown's prepared client carries the credential.
                 PowerEvents.prepare(context)
+            } else if (answer?.state == "exempt") {
+                // Design 129b D9/D10: enrolled on the bearer by the parent's exception - the refused key went above; the
+                // registration tries a key again in a week.
+                android.util.Log.i("Enrollment", "Enrolled without a hardware key (${answer.reason})")
+                DeviceKeys.exemptTried(context, TrustedClock.nowMs())
             } else if (answer?.state == "refused") {
+                // S1's answer (a server before design 129b, D13): read until S2.
                 android.util.Log.w("Enrollment", "The server refused the enrolment's key: ${answer.reason}")
                 val reason = answer.reason ?: "invalid"
                 DeviceKeys.refused(context, reason)
@@ -159,3 +202,12 @@ fun showReEnrol(
 
 /** The code dialog's line for a failed enrolment: only a refused code says "that code didn't work" (Q-1). */
 fun enrolFailureRefused(error: Throwable?): Boolean = (error as? EnrollFailure)?.refused == true
+
+/** The enrolment screens' failure line (a string resource), or `null` while the enrolment waits for a parent (design
+ * 129b D12: [EnrolWait]'s lines show instead): a refused code, "Oppdater Vibb One." (D13), or the server not reached. */
+fun enrolFailureLine(error: Throwable?): Int? = when {
+    error is EnrollWaiting -> null
+    error is EnrollUpdateApp -> com.kidslauncher.mdm.R.string.enrol_update_app
+    enrolFailureRefused(error) -> com.kidslauncher.mdm.R.string.re_enrol_failed
+    else -> com.kidslauncher.mdm.R.string.re_enrol_unreachable
+}

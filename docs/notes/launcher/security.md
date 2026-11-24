@@ -341,6 +341,21 @@ bearer - nothing here can lock a phone out.
   in every shape, and `MobileNetworkRuntime.writeAlwaysOn` puts them in lockdown's allow list (`lockdownAllowList`):
   under lockdown an app outside the VPN has no network unless allowed. None found: logged once, and the key waits as
   `keys_unavailable` where the pool runs dry. Nothing else is ever allowed around the sink.
+- **L2 (design 129b, a new phone's enrolment requires a key)**: every enrolment body carries the code's **attempt** -
+  16 random bytes made once per enrolment challenge and kept in the key book's `enrolAttempts` (challenge -> attempt,
+  independent of any alias; a corrupt book keeps it in the process; `newEnrolment` clears the map) - and either the
+  key or `key_error` on every path without one (`keystore`, `keys_unavailable`, `cap`: a `null` from `make`, any
+  exception, a `KeyGenFailure`). The server's `409 waiting` is `EnrollWaiting(reason, number, retryAfterS)`, a `426`
+  `EnrollUpdateApp` ("Oppdater Vibb One."); `QrExtrasAfter.WAIT` keeps the QR's extras. `EnrolWait` (pure
+  `enrolWaitStep`, the contract's `enrol_wait` rows) keeps trying the same code with the same attempt at the server's
+  pace (10-300 s), each try under `QrExtras.underLock`, until it enrols, the code is refused, or 45 minutes; a transient
+  answer keeps the schedule; each try makes a key when none is held; the kept QR extras' `retryPending` stays out of it
+  while it runs. "Koble til", Settings' enrol and scanner, and `ReEnrolDialog` show "Venter på en forelder." and "Kode:
+  482 913" (`attemptNumber`, `shownNumber`), and "Koden er utløpt. Be om en ny." after the stop. An exempt enrolment
+  (`key: {state: "exempt"}`) deletes the refused key and keeps the try's time (`exemptTriedMs`); `keyStep` registers an
+  exempt phone once a week from it, and `keyNudge` asks for an exempt policy as for `none`. A challenge's `503` with
+  `retry_after_s` (`address_history`, X; `list_stale`) waits that long and makes no key (`keyChallengeStep`). S1's
+  `refused` enrolment answer is still read (an older server) until S2. Tests: `DeviceKeyContractTest`.
 - **Not in L1**: the enrolment screen's line on a refused key ("Telefonen kan ikke lage en sikker nøkkel") - S1 never
   refuses an enrolment for its key, so it comes with S2; no report field carries `keys_unavailable` (the contract has
   none; the server sees no registration and shows "Eldre innlogging").

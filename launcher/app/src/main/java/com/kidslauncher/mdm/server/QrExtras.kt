@@ -68,6 +68,9 @@ object QrExtras {
     /** Takes the mutex, then never cancelled (QA M3). */
     private suspend fun <T> locked(block: suspend () -> T): T = counted { mutex.withLock { withContext(NonCancellable) { block() } } }
 
+    /** Design 129b D11: a waiting enrolment's try ([EnrolWait]) under the same mutex, never cancelled once sent. */
+    suspend fun <T> underLock(block: suspend () -> T): T = locked(block)
+
     private fun store(context: Context) = QrExtrasStore(context.applicationContext.getSharedPreferences(QrExtrasStore.FILE, Context.MODE_PRIVATE))
 
     private fun enrolledNow(): Boolean = LauncherPreferences.mdm().enrolled() || DeviceCredentials.tokenStored()
@@ -119,6 +122,8 @@ object QrExtras {
     suspend fun retryPending(context: Context) {
         val store = store(context)
         if (!store.hasPending()) return
+        // Design 129b D11: a waiting enrolment tries the kept code at its own pace.
+        if (EnrolWait.running()) return
         when (val kept = store.pendingRead()) {
             is KeptRead.Value -> apply(context.applicationContext, kept.extras, "Retry")
             KeptRead.Absent -> Unit
@@ -152,10 +157,15 @@ object QrExtras {
         }
         val key = (store.pendingRead() as? KeptRead.Value)?.extras?.tailscaleAuthKey.orEmpty()
         Log.i(LOG_TAG, "Koble til: enrolling with a typed code")
-        val result = applyProvisioningExtras(app, ProvisioningExtras(serverUrl.trim(), key, code.trim()))
+        val extras = ProvisioningExtras(serverUrl.trim(), key, code.trim())
+        val result = applyProvisioningExtras(app, extras)
         if (result.isSuccess) {
             store.markApplied(qrCodeHash(code), refused = false)
             Log.i(LOG_TAG, "Koble til: enrolled")
+        } else if (result.exceptionOrNull() is EnrollWaiting) {
+            // Design 129b D11: a typed code lives only in the process; the screen shows the number while it waits.
+            Log.i(LOG_TAG, "Koble til: waiting for a parent")
+            waitFor(app, extras, result.exceptionOrNull() as EnrollWaiting, keepPending = false)
         } else {
             Log.w(LOG_TAG, "Koble til: enrolment failed (${result.exceptionOrNull()?.javaClass?.simpleName})")
         }
@@ -177,7 +187,27 @@ object QrExtras {
         Log.i(LOG_TAG, "Scanned QR: applying")
         val result = applyProvisioningExtras(app, extras)
         if (result.isSuccess) store.markApplied(qrCodeHash(extras.enrollmentCode), refused = false)
+        (result.exceptionOrNull() as? EnrollWaiting)?.let { waitFor(app, extras, it, keepPending = false) }
         result
+    }
+
+    /** Design 129b D11: the waiting enrolment for [extras]' code; enrolled, the code is marked (and the kept extras go);
+     * refused or run out, the kept extras go too. */
+    private fun waitFor(context: Context, extras: ProvisioningExtras, first: EnrollWaiting, keepPending: Boolean) {
+        val app = context.applicationContext
+        EnrolWait.start(
+            app,
+            first,
+            tryOnce = { applyProvisioningExtras(app, extras) },
+            onEnd = { result ->
+                val store = store(app)
+                if (result.isSuccess) {
+                    store.markApplied(qrCodeHash(extras.enrollmentCode), refused = false)
+                } else if (keepPending) {
+                    store.markApplied(qrCodeHash(extras.enrollmentCode), refused = true)
+                }
+            },
+        )
     }
 
     private suspend fun apply(context: Context, extras: ProvisioningExtras, source: String) = locked {
@@ -216,6 +246,14 @@ object QrExtras {
                         LOG_TAG,
                         "$source: enrolment failed (${result.exceptionOrNull()?.javaClass?.simpleName}) - tried again at the next sync",
                     )
+                    // Design 129b D11: kept while it waits - after a process death the next sync run's retry gets the 409
+                    // again and starts the waiting with the same attempt.
+                    QrExtrasAfter.WAIT -> {
+                        Log.i(LOG_TAG, "$source: waiting for a parent")
+                        if (!EnrolWait.running()) {
+                            waitFor(context, extras, result.exceptionOrNull() as EnrollWaiting, keepPending = true)
+                        }
+                    }
                 }
             }
         }
@@ -242,11 +280,13 @@ fun qrExtrasAction(extras: ProvisioningExtras?, appliedHash: String?, enrolled: 
 fun scannedCodeSends(enrolled: Boolean, appliedHash: String?, code: String): Boolean =
     !(enrolled && appliedHash != null && appliedHash == qrCodeHash(code))
 
-/** After an apply: done, refused for good (the address, or a status that is the code's fault), or kept for a retry. */
-enum class QrExtrasAfter { DONE, REFUSED, RETRY }
+/** After an apply: done, refused for good (the address, or a status that is the code's fault), kept for a retry, or
+ * kept while the server waits for a parent (design 129b D11). */
+enum class QrExtrasAfter { DONE, REFUSED, RETRY, WAIT }
 
 fun qrExtrasAfter(result: Result<Unit>): QrExtrasAfter = when {
     result.isSuccess -> QrExtrasAfter.DONE
+    result.exceptionOrNull() is EnrollWaiting -> QrExtrasAfter.WAIT
     (result.exceptionOrNull() as? EnrollFailure)?.refused == true -> QrExtrasAfter.REFUSED
     else -> QrExtrasAfter.RETRY
 }

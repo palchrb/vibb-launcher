@@ -15,7 +15,9 @@ import com.kidslauncher.mdm.server.DeviceCredentials
 import com.kidslauncher.mdm.server.KeyBook
 import com.kidslauncher.mdm.server.Enrollment
 import com.kidslauncher.mdm.server.ParentPin
-import com.kidslauncher.mdm.server.enrolFailureRefused
+import com.kidslauncher.mdm.server.EnrolWait
+import com.kidslauncher.mdm.server.EnrollWaiting
+import com.kidslauncher.mdm.server.enrolFailureLine
 import com.kidslauncher.mdm.server.showReEnrol
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -104,6 +106,10 @@ object ReEnrolDialog {
             ENROL_SCOPE.launch {
                 val result = Enrollment.enroll(app, url, code)
                 if (result.isSuccess) SyncRunner.request(app, "re_enrolled")
+                // Design 129b D11: the server waits for a parent - the same code keeps trying in the process.
+                (result.exceptionOrNull() as? EnrollWaiting)?.let { waiting ->
+                    EnrolWait.start(app, waiting, tryOnce = { Enrollment.enroll(app, url, code) })
+                }
                 withContext(Dispatchers.Main) {
                     if (!dialog.isShowing) return@withContext
                     if (result.isSuccess) {
@@ -111,11 +117,12 @@ object ReEnrolDialog {
                         dialog.dismiss()
                         done(context.getString(R.string.re_enrol_done))
                     } else {
-                        // Q-1: only a refused code is "that code didn't work".
-                        val line = if (enrolFailureRefused(result.exceptionOrNull())) R.string.re_enrol_failed else R.string.re_enrol_unreachable
-                        error.text = context.getString(line)
+                        // Q-1: only a refused code is "that code didn't work"; design 129b D12: waiting, the line and
+                        // the number.
+                        val line = enrolFailureLine(result.exceptionOrNull())
+                        error.text = if (line == null) EnrolWait.lines(context).orEmpty() else context.getString(line)
                         error.visibility = View.VISIBLE
-                        ok.isEnabled = true
+                        ok.isEnabled = line != null
                     }
                 }
             }

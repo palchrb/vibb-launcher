@@ -667,6 +667,10 @@
     <string name="re_enrol_field">Oppsettkode</string>
     <string name="re_enrol_failed">Koden virket ikke. Sjekk den og prøv igjen, eller lag en ny.</string>
     <string name="re_enrol_unreachable">Fikk ikke kontakt med serveren. Sjekk tilkoblingen og prøv igjen.</string>
+    <string name="enrol_key_wait">Venter på en forelder.</string>
+    <string name="enrol_key_number">Kode: %1$s</string>
+    <string name="enrol_update_app">Oppdater Vibb One.</string>
+    <string name="enrol_code_ran_out">Koden er utløpt. Be om en ny.</string>
     <!-- «Koble til» (2026-11-20): en Device Owner-telefon som ikke er registrert. -->
     <string name="connect_title">Koble til</string>
     <string name="connect_busy">Kobler til …</string>
