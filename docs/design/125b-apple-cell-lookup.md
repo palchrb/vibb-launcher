@@ -1,6 +1,6 @@
 # Design 125b: Apple's cell lookup (design 125 step 3)
 
-Status: design, **revision 2**, 2026-11-24 (branch `cell-lookup-design`), read against `main` 88d11d5de. **Not built.**
+Status: design, **revision 2**, 2026-11-24 (branch `cell-lookup-design`), read against `main` 88d11d5de. **Step 3a built** on branch `cell-lookup` (a83041bac and the commit after it; the zones half needs no column: a pending side's coarseness is read from its fix's row). Step 3b not built.
 Revision 1 was d0610e571; revision 2 takes the design QA (1 H, 3 M, 9 L, two clarifications) and the user's answers (Q1,
 Q2 changed, Q3, Q5 then superseded, Q6; §12) and the user's later change: **no cache oracle for cells** and the day cap
 raised to an abuse brake (C5, C12). Asked by the user on 2026-11-22 ("Legg det i køen"): the phone asks the family's
