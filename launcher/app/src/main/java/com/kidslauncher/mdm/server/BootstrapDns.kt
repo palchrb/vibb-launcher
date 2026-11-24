@@ -74,8 +74,8 @@ private fun ipv6Bytes(text: String): ByteArray? {
     return bytes
 }
 
-/** The bootstrap's last resolvers (design 36 §5.3): the public providers by their fixed addresses,
- * over DoT (or the same provider's DoH where 853 is blocked, step 3) - the only case a look-up leaves
+/** The bootstrap's last resolver (design 36 §5.3): Quad9 by its fixed address,
+ * over DoT (or its DoH where 853 is blocked, step 3) - the only case a look-up leaves
  * for anyone but the parent's servers, and never Cloudflare ([PublicResolvers.bootstrap]). */
 val BOOTSTRAP_PROVIDERS: List<UpstreamTarget.Dot> = PublicResolvers.bootstrap.map { it.dot }
 

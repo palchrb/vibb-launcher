@@ -32,7 +32,7 @@ class DnsUpstreamStatusTest {
         // Provider mode names the provider that answered last.
         val provider = StatusReportRequest(
             lockReason = "NONE", kioskEngaged = true,
-            dnsUpstream = providerReport(ReachState(key = "quad9"), 0, 0, answering = "mullvad"),
+            dnsUpstream = providerReport(ReachState(key = "quad9"), 0, 0, answering = "cloudflare"),
         )
         assertEquals(rows["provider"].toString(), ServerJson.encodeToString(StatusReportRequest.serializer(), provider))
         val none = ServerJson.encodeToString(StatusReportRequest.serializer(), StatusReportRequest(lockReason = "NONE", kioskEngaged = true))

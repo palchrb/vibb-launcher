@@ -28,7 +28,6 @@ class CustomDnsTest {
     private val primaryDoh = UpstreamTarget.Doh("https://192.0.2.10/dns-query/abc123")
     private val backupDot = UpstreamTarget.Dot("192.0.2.20", 853)
     private val quad9Doh = UpstreamTarget.Doh("https://9.9.9.9/dns-query")
-    private val mullvadDoh = UpstreamTarget.Doh("https://base.dns.mullvad.net/dns-query")
     private val request = Message.newQuery(Record.newRecord(Name.fromString("example.com."), Type.A, DClass.IN))
     private val query = request.toWire()
 
@@ -74,7 +73,7 @@ class CustomDnsTest {
             synchronized(calls) { calls.asks += Ask(target, m.question.name.toString(), m.question.type) }
             answer(target, m)
         },
-        providers = listOf(quad9Resolver(clock, {}), mullvadResolver(clock, {})),
+        providers = listOf(quad9Resolver(clock, {})),
         cacheFile = cacheFile,
     )
 
@@ -291,7 +290,7 @@ class CustomDnsTest {
         // Every resolver fails (the providers' DoH too): the start's look-up gives nothing, a bootstrap period starts.
         d.start()
         assertEquals(
-            listOf(backupDot to Type.A, QUAD9_DOT to Type.A, quad9Doh to Type.A, MULLVAD_DOT to Type.A, mullvadDoh to Type.A),
+            listOf(backupDot to Type.A, QUAD9_DOT to Type.A, quad9Doh to Type.A),
             calls.lookups("abc123.dns.example"),
         )
         assertEquals(BackupReason.BOOTSTRAP, d.state().reason)

@@ -41,9 +41,8 @@ Also found and fixed on the same test pass: **`CommandListenerService`'s SSE `Ok
   step 3's DoH on 443 where 853 is blocked (below).
 - **The providers in a chain** (2026-11-24, branch `dns-upstreams`; `server/PublicResolver.kt`): the parent's choice
   (`dns_upstream_provider`; an unknown or missing one is `PublicResolvers.DEFAULT`, `quad9`) first, then the others in
-  the fixed order Quad9, Mullvad, Cloudflare (`PublicResolvers.order`) - Quad9 `dns.quad9.net`/9.9.9.9 (malware
-  blocking), Mullvad `base.dns.mullvad.net`/194.242.2.4 (malware, ads and trackers: Mullvad has no malware-only
-  variant), Cloudflare `security.cloudflare-dns.com`/1.1.1.2 and 1.0.0.2 (malware blocking), each by its fixed address (`PINNED_PROVIDERS`), never looked up.
+  the fixed order Quad9, Cloudflare (`PublicResolvers.order`) - Quad9 `dns.quad9.net`/9.9.9.9 (malware
+  blocking), Cloudflare `security.cloudflare-dns.com`/1.1.1.2 and 1.0.0.2 (malware blocking), each by its fixed address (`PINNED_PROVIDERS`), never looked up.
   `resolveChain` asks each provider that is up, or unproven or due for its one probe, within the query's one ~4.8 s
   deadline (`PublicResolver.resolveBy`, whose DoT and DoH are both capped by the time left). **Only no answer moves a
   query on**: a transport failure after the provider's own DoT-then-DoH, or silence after the write (`unanswered`).
@@ -109,8 +108,8 @@ Also found and fixed on the same test pass: **`CommandListenerService`'s SSE `Ok
 - **Bootstrap** (`server/BootstrapDns.kt`): an IP literal is itself (`ipLiteral` parses it into bytes - never
   `InetAddress.getByName`, which would resolve a malformed one through our own VPN), a provider's name its fixed
   address (`PINNED_PROVIDERS`); a name is A then AAAA through the bootstrap resolvers (`bootstrapResolvers`: the backup
-  if it is an IP, the primary if it is, then `BOOTSTRAP_PROVIDERS` - Quad9, then Mullvad, over DoT by their fixed
-  addresses, **never Cloudflare** (2026-11-24); the look-up - never a query - falls through to the next on a
+  if it is an IP, the primary if it is, then `BOOTSTRAP_PROVIDERS` - Quad9 alone, over DoT by its fixed
+  address, **never Cloudflare** (2026-11-24; Mullvad was the second until its public DNS ended on 2026-11-02); the look-up - never a query - falls through to the next on a
   transport failure or silence, and a step that failed for A is skipped for AAAA, so a home-IP primary away from home
   still lets a backup by name be found), never the system resolver and never through the lists or the chooser, 1 s
   connect (DoH too, per call from its `Budget`), 2 s in all. `BootstrapCache` (memory): the CNAME chain's final name,
@@ -121,8 +120,7 @@ Also found and fixed on the same test pass: **`CommandListenerService`'s SSE `Ok
 - **Networks that block 853** (step 3, pure `DotBlockedRule` + glue `PublicResolver` in `server/PublicResolver.kt`):
   each provider (`PublicResolvers`, one state each per process) falls back to **the same provider's** DoH on 443 -
   Quad9's `https://9.9.9.9/dns-query` by IP literal (no SNI, OkHttp's verifier on the IP; its certificate names it),
-  Mullvad's `https://base.dns.mullvad.net/dns-query` and Cloudflare's `https://security.cloudflare-dns.com/dns-query`
-  by name at their fixed addresses (Mullvad's certificate names the host, not the IP; `PINNED_DNS`) - never another provider's (switching providers is the chain's). A DoT `Transport` failure (connect refused/timed out, reset,
+  Cloudflare's `https://security.cloudflare-dns.com/dns-query` by name at its fixed addresses (`PINNED_DNS`) - never another provider's (switching providers is the chain's). A DoT `Transport` failure (connect refused/timed out, reset,
   TLS) counts; 3 within 60 s start a DoH period of 5 min, doubling with each failed probe to 1 h; in a period one query
   per period probes DoT (within at most `UPSTREAM_BUDGET`, so its query still gets DoH in time), the rest go straight
   to DoH; DoT that reaches the server (an answer, or anything above TLS) or a network reset (`PublicResolvers.reset`

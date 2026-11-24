@@ -193,16 +193,15 @@ pub fn event_detail(upstream: &str, server: &str, backup: &str) -> String {
 
 /// The public resolvers a phone forwards to without a custom server, in the fallback order
 /// behind the parent's choice (the launcher's `PublicResolvers`): all encrypted, Cloudflare last.
-pub const PROVIDERS: [&str; 3] = ["quad9", "mullvad", "cloudflare"];
+pub const PROVIDERS: [&str; 2] = ["quad9", "cloudflare"];
 
 /// The provider of a new server, after Forget, and for Custom without a valid pair (migration
-/// 0172 moved the old default, Cloudflare, here; the launcher's `PublicResolvers.DEFAULT`).
+/// 0172 moved the old default, Cloudflare, and the dropped Mullvad here; the launcher's `PublicResolvers.DEFAULT`).
 pub const DEFAULT_PROVIDER: &str = "quad9";
 
 /// A provider's name as the PWA shows it.
 pub fn provider_name(provider: &str) -> &'static str {
     match provider {
-        "mullvad" => "Mullvad",
         "cloudflare" => "Cloudflare",
         _ => "Quad9",
     }
@@ -924,7 +923,11 @@ mod tests {
         let answered = |sent: serde_json::Value| {
             kept(json!({"rev": 0, "in_use": "provider", "provider": sent})).and_then(|s| s.provider)
         };
-        assert_eq!(answered(json!("mullvad")), Some("mullvad".to_string()));
+        assert_eq!(
+            answered(json!("cloudflare")),
+            Some("cloudflare".to_string())
+        );
+        assert_eq!(answered(json!("mullvad")), None);
         assert_eq!(answered(json!("dns.example")), None);
         assert_eq!(answered(json!(4)), None);
         assert_eq!(

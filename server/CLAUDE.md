@@ -228,7 +228,7 @@ Every migration follows the one before it: sqlx applies them in number order, an
 every file from 0073 on. The pairs a server must get in that order (the hazard above): 0070 before 0071 before 0072,
 0073 before 0074, 0078 before 0079, 0122 before 0123. What a file adds is its name and its header comment; the tables
 below name the migration of the columns they list. The next free number is 0173 (0171 held by an unmerged
-branch; 0172 moves the web filter's stored `cloudflare` default to `quad9`; 0170 `device_policy.allow_android_auto` and `device_status.notification_listeners_json`, 0169 Software Updates' `dismissed_notices`, 0158 is design 116's, 0159 design
+branch; 0172 moves the web filter's stored `cloudflare` (the old default) and `mullvad` to `quad9`; 0170 `device_policy.allow_android_auto` and `device_status.notification_listeners_json`, 0169 Software Updates' `dismissed_notices`, 0158 is design 116's, 0159 design
 110's map links, 0160 the contact request's picture, 0161 the contact's Matrix ID, 0162 the saved Wi-Fi network, 0163
 design 125's Apple Wi-Fi lookup - `wifi_lookup_devices`, `wifi_lookup_aps`, `docs/notes/server/integrations.md` -,
 0164 the install failure's reason, 0165 design 126's `device_policy.block_2g`, 0166 design 127's `app_denials`, 0167

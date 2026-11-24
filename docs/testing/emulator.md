@@ -5233,17 +5233,16 @@ phones enrolled with calls and SMS unmanaged, then calls set managed. Android 17
 abort, §6as), so not run. Not run: the "Unknown" switch on Telecom's page (Android keeps it in the provider's own
 settings, which only the system may read or write).
 
-## 6bh. The web filter's resolver: Quad9 first, Mullvad and Cloudflare as fallbacks (branch `dns-upstreams`) - not run yet
+## 6bh. The web filter's resolver: Quad9 first, Cloudflare as the fallback (branch `dns-upstreams`) - not run yet
 
 `docs/notes/launcher/dns-and-vpn.md`, "The providers in a chain". Owed on Android 14 (`compat34`) and Android 16
-(`handy36`); a fresh server (migration 0172 puts a stored `cloudflare` on `quad9`), a phone with the Web filter on.
+(`handy36`); a fresh server (migration 0172 puts a stored `cloudflare` or `mullvad` on `quad9`), a phone with the Web filter on.
 
 | Row | What passes |
 |---|---|
 | Default | A fresh phone: `logcat` shows no `DnsUpstream` failures; the PWA's Web Filter footer says "<phone> · Quad9 svarer" within a report |
-| Fallback | Block 9.9.9.9 (both 853 and 443) on the host (`iptables -I FORWARD -d 9.9.9.9 -j REJECT`): pages still load; the line turns to "Mullvad svarer"; within a minute of lifting the block (a back-off's probe) it is back on Quad9 |
-| Two down | Block 9.9.9.9 and 194.242.2.4: Cloudflare answers ("Cloudflare svarer") |
-| None | Block all three: after 30 s the orange "DNS kan ikke nås siden ... - ingen DNS-server svarer ..."; never a plain UDP/53 or TCP/53 packet leaves the emulator (`tcpdump -i any port 53` on the host stays empty) |
-| 853 blocked | Block port 853 only: every provider's DoH on 443 answers (Mullvad by name at its fixed address, the certificate checked) |
-| Parent's pick | Pick Mullvad in the PWA: the line says Mullvad; pick Cloudflare: Cloudflare |
-| Custom by name | Custom with `tls://dns.example...` names (a server by name): its name's look-up goes to 9.9.9.9 or 194.242.2.4 on 853/443, never to Cloudflare (`tcpdump host 1.1.1.2 or host 1.0.0.2` empty) |
+| Fallback | Block 9.9.9.9 (both 853 and 443) on the host (`iptables -I FORWARD -d 9.9.9.9 -j REJECT`): pages still load; the line turns to "Cloudflare svarer"; within a minute of lifting the block (a back-off's probe) it is back on Quad9 |
+| None | Block both (9.9.9.9, 1.1.1.2, 1.0.0.2): after 30 s the orange "DNS kan ikke nås siden ... - ingen DNS-server svarer ..."; never a plain UDP/53 or TCP/53 packet leaves the emulator (`tcpdump -i any port 53` on the host stays empty) |
+| 853 blocked | Block port 853 only: both providers' DoH on 443 answer (Cloudflare by name at its fixed addresses, the certificate checked) |
+| Parent's pick | Pick Cloudflare in the PWA: the line says Cloudflare; the picker has no Mullvad |
+| Custom by name | Custom with `tls://dns.example...` names (a server by name): its name's look-up goes to 9.9.9.9 on 853/443, never to Cloudflare (`tcpdump host 1.1.1.2 or host 1.0.0.2` empty) |

@@ -72,7 +72,7 @@ object DotBlockedRule {
 fun Budget.atMost(cap: Budget): Budget = Budget(minOf(connectMs, cap.connectMs), minOf(totalMs, cap.totalMs))
 
 /**
- * A public resolver (Quad9, Mullvad, Cloudflare): DoT on 853 to its fixed [addresses], and on a network
+ * A public resolver (Quad9, Cloudflare): DoT on 853 to its fixed [addresses], and on a network
  * that blocks 853 the same provider's DoH on 443 ([doh]: an IP-literal URL where the certificate names
  * the IP, else the name at the same fixed address, [PINNED_DNS]) - design 36 step 3. Which provider a
  * query goes to is [resolveChain]'s. The parent's own servers never come here: a parent's DoT server
@@ -295,21 +295,20 @@ fun resolveChain(
 }
 
 /** The public resolvers, one state each for the process; [KidVpnService] resets them on a network
- * reset. The web filter's resolver: Quad9 by default, Mullvad and Cloudflare the fallbacks, all
+ * reset. The web filter's resolver: Quad9 by default, Cloudflare the fallback, all
  * encrypted; a parent's server's name is never looked up through Cloudflare ([bootstrap]). */
 object PublicResolvers {
     val quad9 = quad9Resolver()
-    val mullvad = mullvadResolver()
     val cloudflare = cloudflareResolver()
 
     /** The fallback order behind the parent's choice; Cloudflare last. */
-    private val chain = listOf(quad9, mullvad, cloudflare)
+    private val chain = listOf(quad9, cloudflare)
 
     /** The provider of a policy without a known one (the server's `dns_server::DEFAULT_PROVIDER`). */
     const val DEFAULT = "quad9"
 
-    /** Where a parent's server's name is looked up: the providers by their fixed addresses, never Cloudflare. */
-    val bootstrap = listOf(quad9, mullvad)
+    /** Where a parent's server's name is looked up: Quad9 by its fixed address, never Cloudflare. */
+    val bootstrap = listOf(quad9)
 
     /** The provider that answered last (the status report's `provider`); `null` before any. */
     @Volatile
@@ -355,16 +354,10 @@ val CLOUDFLARE_ADDRESSES: List<InetAddress> = listOf(ip(1, 1, 1, 2), ip(1, 0, 0,
 val QUAD9_DOT = UpstreamTarget.Dot("dns.quad9.net", 853)
 val QUAD9_ADDRESSES: List<InetAddress> = listOf(ip(9, 9, 9, 9))
 
-/** Mullvad's encrypted DNS that blocks malware (also ads and trackers: Mullvad has no malware-only
- * variant). Its certificate names the host, not the IP: DoH by name at the same fixed address. */
-val MULLVAD_DOT = UpstreamTarget.Dot("base.dns.mullvad.net", 853)
-val MULLVAD_ADDRESSES: List<InetAddress> = listOf(ip(194, 242, 2, 4))
-
 /** The providers' names and their fixed addresses: never looked up. */
 val PINNED_PROVIDERS: Map<String, List<InetAddress>> = mapOf(
     CLOUDFLARE_DOT.host to CLOUDFLARE_ADDRESSES,
     QUAD9_DOT.host to QUAD9_ADDRESSES,
-    MULLVAD_DOT.host to MULLVAD_ADDRESSES,
 )
 
 fun cloudflareResolver(
@@ -378,8 +371,3 @@ fun quad9Resolver(
     elapsed: () -> Long = SystemClock::elapsedRealtime,
     log: (String) -> Unit = { Log.i(LOG_TAG, it) },
 ) = PublicResolver("quad9", QUAD9_DOT, QUAD9_ADDRESSES, UpstreamTarget.Doh("https://9.9.9.9/dns-query"), elapsed, log)
-
-fun mullvadResolver(
-    elapsed: () -> Long = SystemClock::elapsedRealtime,
-    log: (String) -> Unit = { Log.i(LOG_TAG, it) },
-) = PublicResolver("mullvad", MULLVAD_DOT, MULLVAD_ADDRESSES, UpstreamTarget.Doh("https://base.dns.mullvad.net/dns-query"), elapsed, log)

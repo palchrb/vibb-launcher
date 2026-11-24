@@ -40,7 +40,7 @@ class CustomDns(
     private val log: (String) -> Unit = { Log.i(LOG_TAG, it) },
     /** One attempt at a target: DoH or DoT ([targetTransport]); a test's fake otherwise. */
     transport: ((UpstreamTarget, List<InetAddress>, ByteArray, Budget) -> Attempt)? = null,
-    /** The bootstrap's last resolvers, the providers but Cloudflare - DoT, or their DoH where 853 is blocked (step 3). */
+    /** The bootstrap's last resolver, Quad9 (never Cloudflare) - DoT, or its DoH where 853 is blocked (step 3). */
     private val providers: List<PublicResolver> = PublicResolvers.bootstrap,
     /** The bootstrap's disk cache ([BootstrapDiskCache]); `null` = none (tests). */
     private val cacheFile: File? = null,

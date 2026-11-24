@@ -498,9 +498,9 @@ async fn custom_server_in_the_policy() {
         assert_eq!(policy["dns_upstream"], expected);
     }
     // A provider with values kept: its word, no object.
-    store(&app, "mullvad", "tls://9.9.9.9", "tls://1.1.1.3", 4).await;
+    store(&app, "cloudflare", "tls://9.9.9.9", "tls://1.1.1.3", 4).await;
     let policy = policy().await;
-    assert_eq!(policy["dns_upstream_provider"], "mullvad");
+    assert_eq!(policy["dns_upstream_provider"], "cloudflare");
     assert_eq!(policy["dns_upstream"], Value::Null);
 }
 
@@ -947,11 +947,11 @@ async fn the_lines_say_when_dns_cant_be_reached() {
     // Without an outage, which provider answers: a quiet value.
     report(
         per_token,
-        json!({"rev": 0, "in_use": "provider", "provider": "mullvad"}),
+        json!({"rev": 0, "in_use": "provider", "provider": "cloudflare"}),
     )
     .await;
     let page = app.get_page("/dns", &cookie).await.text();
-    assert_eq!(line(&page, per), "Per · Mullvad answers");
+    assert_eq!(line(&page, per), "Per · Cloudflare answers");
     assert!(page.contains(&format!("<li data-dns-phone=\"{per}\">")));
 }
 

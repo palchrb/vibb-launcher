@@ -71,7 +71,6 @@ class PublicResolverTest {
         for ((resolver, url) in listOf(
             cloudflareResolver({ 0 }, {}) to "https://security.cloudflare-dns.com/dns-query",
             quad9Resolver({ 0 }, {}) to "https://9.9.9.9/dns-query",
-            mullvadResolver({ 0 }, {}) to "https://base.dns.mullvad.net/dns-query",
         )) {
             val asked = mutableListOf<UpstreamTarget>()
             val budgets = mutableListOf<Budget>()
@@ -188,7 +187,7 @@ class PublicResolverTest {
         d.start()
         repeat(5) { d.resolve(query, Message(query)) }
         assertEquals(listOf<UpstreamTarget>(primary, backup), asked.distinct())
-        // Structurally: a DoH target is built only from the parent's URL or the three public resolvers'.
+        // Structurally: a DoH target is built only from the parent's URL or the two public resolvers'.
         val src = listOf("src", "app/src").map(::File).first { File(it, "main/java").isDirectory }
         val built = File(src, "main/java").walkTopDown().filter { it.extension == "kt" }
             .flatMap { file -> Regex("""UpstreamTarget\.Doh\(([^)]*)\)""").findAll(file.readText()).map { "${file.name}: ${it.groupValues[1]}" } }
@@ -196,7 +195,6 @@ class PublicResolverTest {
         assertEquals(
             listOf(
                 "CustomUpstream.kt: it", "PublicResolver.kt: \"https://9.9.9.9/dns-query\"",
-                "PublicResolver.kt: \"https://base.dns.mullvad.net/dns-query\"",
                 "PublicResolver.kt: \"https://security.cloudflare-dns.com/dns-query\"",
             ),
             built.sorted(),
@@ -216,9 +214,7 @@ class PublicResolverTest {
         // S-L9: the kept DoT connections ran over the old network.
         assertTrue("dotPool::evictAll" in changed)
         assertEquals(listOf(InetAddress.getByName("192.0.2.1")), PINNED_DNS.lookup("192.0.2.1"))
-        // A provider's name is its fixed address, never looked up.
-        assertEquals(listOf(InetAddress.getByName("194.242.2.4")), PINNED_DNS.lookup("base.dns.mullvad.net"))
-        // Cloudflare's malware-blocking resolver, both its addresses.
+        // A provider's name is its fixed address, never looked up: Cloudflare's malware-blocking resolver, both its addresses.
         assertEquals(
             listOf(InetAddress.getByName("1.1.1.2"), InetAddress.getByName("1.0.0.2")),
             PINNED_DNS.lookup("security.cloudflare-dns.com"),
@@ -232,19 +228,19 @@ class PublicResolverTest {
     }
 
     @Test
-    fun `the parent's choice first, then Quad9, Mullvad, Cloudflare - Cloudflare last, an unknown choice the default`() {
+    fun `the parent's choice first, then the other - Quad9 by default, Mullvad is no provider`() {
         fun labels(p: String?) = PublicResolvers.order(p).map { it.label }
-        assertEquals(listOf("quad9", "mullvad", "cloudflare"), labels(null))
-        assertEquals(listOf("quad9", "mullvad", "cloudflare"), labels("bogus"))
-        assertEquals(listOf("mullvad", "quad9", "cloudflare"), labels("mullvad"))
-        assertEquals(listOf("cloudflare", "quad9", "mullvad"), labels("cloudflare"))
-        assertEquals(listOf("quad9", "mullvad"), PublicResolvers.bootstrap.map { it.label })
+        assertEquals(listOf("quad9", "cloudflare"), labels(null))
+        assertEquals(listOf("quad9", "cloudflare"), labels("bogus"))
+        assertEquals(listOf("quad9", "cloudflare"), labels("mullvad"))
+        assertEquals(listOf("cloudflare", "quad9"), labels("cloudflare"))
+        assertEquals(listOf("quad9"), PublicResolvers.bootstrap.map { it.label })
     }
 
     @Test
     fun `a provider that doesn't answer is skipped for a while, the next answers, a probe brings it back`() {
         var now = 0L
-        val order = listOf(quad9Resolver({ now }, {}), mullvadResolver({ now }, {}), cloudflareResolver({ now }, {}))
+        val order = listOf(quad9Resolver({ now }, {}), cloudflareResolver({ now }, {}))
         val asked = mutableListOf<String>()
         val answered = mutableListOf<String>()
         var quad9Up = false
@@ -254,15 +250,15 @@ class PublicResolverTest {
             if (host == "dns.quad9.net" || host == "9.9.9.9") { if (quad9Up) Attempt.Answer(answer) else blocked } else Attempt.Answer(answer)
         }
         fun ask() = resolveChain(order, query, PROVIDER_BUDGET, UPSTREAM_BUDGET, transport, { now }) { answered += it }
-        // Quad9 refused (DoT, then its own DoH): the same query goes on to Mullvad.
+        // Quad9 refused (DoT, then its own DoH): the same query goes on to Cloudflare.
         assertTrue(ask() is Attempt.Answer)
-        assertEquals(listOf("dns.quad9.net", "9.9.9.9", "base.dns.mullvad.net"), asked)
-        assertEquals(listOf("mullvad"), answered)
+        assertEquals(listOf("dns.quad9.net", "9.9.9.9", "security.cloudflare-dns.com"), asked)
+        assertEquals(listOf("cloudflare"), answered)
         // Skipped while down.
         asked.clear()
         now = ProviderChainRule.BACKOFF_BASE_MS - 1
         ask()
-        assertEquals(listOf("base.dns.mullvad.net"), asked)
+        assertEquals(listOf("security.cloudflare-dns.com"), asked)
         // Due: one query probes it; it answers and is first again.
         quad9Up = true
         asked.clear()
@@ -301,13 +297,13 @@ class PublicResolverTest {
     @Test
     fun `after a reset a provider is tried by one query at a time until it answers - the others go on or wait`() {
         var now = 0L
-        val order = listOf(mullvadResolver({ now }, {}), quad9Resolver({ now }, {}), cloudflareResolver({ now }, {}))
+        val order = listOf(cloudflareResolver({ now }, {}), quad9Resolver({ now }, {}))
         order.forEach { it.down.set(ProviderChainRule.UP) }
         order.forEach(PublicResolver::reset)
         assertEquals(ProviderChainRule.UNPROVEN, order[0].down.get())
         val asked = mutableListOf<String>()
         val transport = { t: UpstreamTarget, _: List<InetAddress>, _: ByteArray, _: Budget -> asked += t.serverHost; Attempt.Answer(answer) }
-        // Another query is finding out whether Mullvad answers: this one goes to Quad9, not into the same wait.
+        // Another query is finding out whether Cloudflare answers: this one goes to Quad9, not into the same wait.
         order[0].down.set(ProviderChainRule.UNPROVEN.copy(probing = true))
         resolveChain(order, query, PROVIDER_BUDGET, UPSTREAM_BUDGET, transport, { now })
         assertEquals(listOf("dns.quad9.net"), asked)
@@ -317,10 +313,10 @@ class PublicResolverTest {
         var waits = 0
         resolveChain(order, query, PROVIDER_BUDGET, UPSTREAM_BUDGET, transport, { now }, pause = { ms ->
             now += ms
-            if (++waits == 2) order[2].down.set(ProviderChainRule.UP)
+            if (++waits == 2) order[1].down.set(ProviderChainRule.UP)
         })
         assertEquals(2, waits)
-        assertEquals(listOf("security.cloudflare-dns.com"), asked)
+        assertEquals(listOf("dns.quad9.net"), asked)
         // A provider that never answers: only the query that probed it pays.
         assertEquals(ProviderDown(untilMs = 60_000, periods = 1), ProviderChainRule.afterFailure(ProviderChainRule.UNPROVEN.copy(probing = true), 0, probe = true))
         assertEquals(ProviderChainRule.UNPROVEN, ProviderChainRule.afterFailure(ProviderChainRule.UNPROVEN, 0, probe = false))

@@ -24,9 +24,10 @@ The server runs no DNS listener: each phone filters on-device (the launcher's `K
 - **Data** (0079): `dns_filter_settings.custom_server`/`custom_backup` (normalized, `''` = not set),
   `custom_rev` (up on every change of either and on Forget; compared by equality only), `device_status.dns_upstream_json`.
   `upstream` may be `'custom'`; a reader that finds it without a valid pair (both parse, not equal) treats it as
-  `dns_server::DEFAULT_PROVIDER`. The providers are `dns_server::PROVIDERS` (`quad9`, `mullvad`, `cloudflare` - the
+  `dns_server::DEFAULT_PROVIDER`. The providers are `dns_server::PROVIDERS` (`quad9`, `cloudflare` - the
   phone's fallback order behind the parent's choice, all encrypted; 2026-11-24); the default is `quad9`, and migration
-  0172 moved a stored `cloudflare` (the old default) there. Both values are **kept in backups** (design 36 §7, `backup_secrets::a_snapshot_keeps_the_custom_dns_server`).
+  0172 moved a stored `cloudflare` (the old default, so a parent who picked Cloudflare is moved too) and `mullvad`
+  (dropped: Mullvad's public DNS ended 2026-11-02) there. Both values are **kept in backups** (design 36 §7, `backup_secrets::a_snapshot_keeps_the_custom_dns_server`).
 - **Wire**: `PolicyResponse.dns_upstream` (always the key; `null` unless Custom with a valid pair - then
   `dns_upstream_provider` is the default): `{kind, url | host+port, rev, backup: {kind, url |
   host+port}}`. Status `dns_upstream` `{rev, in_use: custom|backup|provider, since_ms, reason, unreachable_since_ms,
@@ -60,8 +61,8 @@ The server runs no DNS listener: each phone filters on-device (the launcher's `K
   `rev`, in place of the custom/backup words); a stored but no longer valid pair says so instead. With a provider
   (`Lookups::Provider`, also for a stale Custom) a phone with an outage has an orange line: "DNS can't be
   reached since 10:42 - no DNS server answers from where the phone is" from a `provider` report (none of the chain
-  answers); otherwise a quiet "Anna · Mullvad answers" from the report's `provider` (2026-11-24: the parent's setup,
-  not a warning). The picker offers Quad9, Mullvad, Cloudflare, Custom; its ⓘ says the default and the order. An ongoing line from a
+  answers); otherwise a quiet "Anna · Cloudflare answers" from the report's `provider` (2026-11-24: the parent's setup,
+  not a warning). The picker offers Quad9, Cloudflare, Custom; its ⓘ says the default and the order. An ongoing line from a
   phone that is Offline or Disconnected (the Attention rows' rule, `connection_of`) adds " · at last report (2 h ago)".
   An outage that ended within the last 24 h (`ENDED_OUTAGE_SHOWN`; design 67 §6: no push) and lasted at least 5 min
   (`MIN_ENDED_OUTAGE`, qa-67-code M1: Android keeps a fading Wi-Fi or a cellular dead spot VALIDATED for a while, so a
