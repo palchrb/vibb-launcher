@@ -38,6 +38,7 @@ mod dns_blocklist;
 mod docker;
 mod edge;
 mod emergency_menu;
+mod emulator_keys;
 mod enrollment;
 pub(crate) mod fake_dav;
 mod fdroid;

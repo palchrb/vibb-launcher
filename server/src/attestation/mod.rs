@@ -13,13 +13,22 @@
 
 pub mod boot;
 pub mod der;
+#[cfg(feature = "emulator_keys")]
+pub mod emulator;
 pub mod key_description;
 pub mod roots;
 pub mod status_list;
 pub mod x509;
 
 #[cfg(test)]
+mod emulator_tests;
+#[cfg(test)]
 mod tests;
+
+// Design 129b §7 (H3): the emulator profile accepts a chain anyone can make. It exists for the emulator gate alone and
+// must never reach a release build.
+#[cfg(all(feature = "emulator_keys", not(debug_assertions)))]
+compile_error!("emulator_keys is for debug builds only");
 
 pub use key_description::{BootState, RootOfTrust, SecurityLevel};
 
@@ -31,8 +40,8 @@ pub const MAX_CERT_BYTES: usize = 4 * 1024;
 /// The lowest `attestationVersion` taken (§3 item 6): Keymaster 4.0 and every KeyMint.
 pub const MIN_ATTESTATION_VERSION: i64 = 3;
 
-/// The package the phone's key must belong to (§3 item 10). A debug launcher is never accepted (§7.3: only an
-/// `emulator_keys` server would, and S1 builds none).
+/// The package the phone's key must belong to (§3 item 10). A debug launcher is never accepted outside the
+/// `emulator_keys` profile (design 129b §7, debug builds only).
 pub const LAUNCHER_PACKAGE: &str = "me.vibb.launcher";
 
 /// Why a chain was refused: one word each (§3's list), never a weaker acceptance.
@@ -97,6 +106,9 @@ pub struct Expect<'a> {
     pub package: &'a str,
     /// `LAUNCHER_SIGNATURE_CHECKSUM` decoded: the release certificate's SHA-256, 32 bytes.
     pub signature_digest: &'a [u8],
+    /// `LAUNCHER_DEBUG_SIGNATURE_CHECKSUM` decoded, read by the `emulator_keys` profile alone (design 129b §7); empty
+    /// in every other build, and then nothing reads it.
+    pub debug_signature_digest: &'a [u8],
     /// Unix seconds.
     pub now: i64,
 }
@@ -154,19 +166,18 @@ pub fn verify(
 
     // 2. The root's key is pinned; each certificate is signed by the next. The signatures bind the chain: the names
     // are not compared (code QA L2 - a byte compare would refuse an issuer encoded as another string type; step 0
-    // reads the Jelly Star's chain).
-    let root = roots::pinned(certs[last].spki).ok_or(Refusal::Root)?;
-    for i in 0..last {
-        if !x509::signed_by(&certs[i], &certs[i + 1]) {
-            return Err(Refusal::Chain);
-        }
-    }
+    // reads the Jelly Star's chain). A root that isn't pinned is refused - or, in an `emulator_keys` build only, read
+    // by the emulator profile (design 129b §7), which never runs for a pinned root.
+    let Some(root) = roots::pinned(certs[last].spki) else {
+        #[cfg(feature = "emulator_keys")]
+        return emulator::verify(&certs, expect, revocations);
+        #[cfg(not(feature = "emulator_keys"))]
+        return Err(Refusal::Root);
+    };
+    signatures(&certs)?;
 
     // 3. Revocation: any certificate's serial.
-    let serials: Vec<String> = certs.iter().map(Certificate::serial_hex).collect();
-    if serials.iter().any(|s| revocations.revoked(s)) {
-        return Err(Refusal::Revoked);
-    }
+    let serials = not_revoked(&certs, revocations)?;
 
     // 4. Validity, by the Kotlin library's rule: the leaf's is set on the phone and never read; the root's key is
     // pinned, not its certificate; a factory chain (its first intermediate names a serialNumber) under the RSA key
@@ -183,24 +194,7 @@ pub fn verify(
 
     // 5. The KeyDescription is the leaf's alone (no certificate above it may carry one); the provisioning info, when
     // there, is in the certificate right above the leaf.
-    if certs[1..]
-        .iter()
-        .any(|c| c.extension(x509::OID_KEY_DESCRIPTION).is_some())
-    {
-        return Err(Refusal::Chain);
-    }
-    for (i, cert) in certs.iter().enumerate() {
-        if let Some(info) = cert.extension(x509::OID_PROVISIONING_INFO) {
-            if i != 1 || !provisioning_info_ok(info.value) {
-                return Err(Refusal::Chain);
-            }
-        }
-    }
-    let extension = certs[0]
-        .extension(x509::OID_KEY_DESCRIPTION)
-        .ok_or(Refusal::Chain)?;
-    let description =
-        key_description::KeyDescription::parse(extension.value).ok_or(Refusal::Chain)?;
+    let description = key_description(&certs, |i| i == 1)?;
 
     // 6. The version.
     if description.attestation_version < MIN_ATTESTATION_VERSION {
@@ -223,50 +217,23 @@ pub fn verify(
         return Err(Refusal::Challenge);
     }
 
-    // 9. The hardware-enforced list alone: an EC P-256 signing key made in the hardware, SHA-256 among its digests,
-    // usable without the user. VERIFY (3) beside SIGN is harmless for a public operation (Keystore adds it to some
-    // keys); any other purpose is refused.
+    // 9. The hardware-enforced list alone.
     let hw = &description.hardware;
-    let purposes_ok = hw
-        .purposes
-        .as_ref()
-        .is_some_and(|p| p.contains(&PURPOSE_SIGN) && p.iter().all(|x| [2, 3].contains(x)));
-    let leaf = &certs[0];
-    if !purposes_ok
-        || hw.algorithm != Some(ALGORITHM_EC)
-        || hw.ec_curve != Some(EC_CURVE_P256)
-        || !hw
-            .digests
-            .as_ref()
-            .is_some_and(|d| d.contains(&DIGEST_SHA256))
-        || hw.origin != Some(ORIGIN_GENERATED)
-        || !hw.no_auth_required
-        || leaf.key_kind != x509::KeyKind::P256
-        || leaf.key.len() != 65
-    {
-        return Err(Refusal::Properties);
-    }
+    properties(hw, &certs[0])?;
 
-    // 10. The app: the framework's statement in the software list (never a hardware claim, §6.1) - exactly one
-    // package, ours, and exactly one signing certificate, ours. A KeyMint that puts it in the hardware list instead
-    // is read there (code QA L3; step 0 reads where the Jelly Star puts it); the software list's wins when both have it.
+    // 10. The app: the framework's statement in the software list (never a hardware claim, §6.1). A KeyMint that
+    // puts it in the hardware list instead is read there (code QA L3; step 0 reads where the Jelly Star puts it); the
+    // software list's wins when both have it.
     let app = description
         .software
         .application_id
         .as_ref()
-        .or(description.hardware.application_id.as_ref())
-        .ok_or(Refusal::App)?;
-    if expect.signature_digest.len() != 32
-        || app.packages != [expect.package]
-        || app.signatures.len() != 1
-        || app.signatures[0] != expect.signature_digest
-    {
-        return Err(Refusal::App);
-    }
+        .or(description.hardware.application_id.as_ref());
+    app_ok(app, expect.package, expect.signature_digest)?;
 
     Ok(Attested {
-        spki: leaf.spki.to_vec(),
-        public_key: leaf.key.to_vec(),
+        spki: certs[0].spki.to_vec(),
+        public_key: certs[0].key.to_vec(),
         level,
         attestation_version: description.attestation_version,
         os_patch_level: hw.os_patch_level,
@@ -274,6 +241,99 @@ pub fn verify(
         serials,
         root,
     })
+}
+
+/// Each certificate signed by the next (`chain`).
+fn signatures(certs: &[x509::Certificate]) -> Result<(), Refusal> {
+    for pair in certs.windows(2) {
+        if !x509::signed_by(&pair[0], &pair[1]) {
+            return Err(Refusal::Chain);
+        }
+    }
+    Ok(())
+}
+
+/// Every certificate's serial, unless one is revoked (`revoked`).
+fn not_revoked(
+    certs: &[x509::Certificate],
+    revocations: &dyn Revocations,
+) -> Result<Vec<String>, Refusal> {
+    let serials: Vec<String> = certs.iter().map(x509::Certificate::serial_hex).collect();
+    if serials.iter().any(|s| revocations.revoked(s)) {
+        return Err(Refusal::Revoked);
+    }
+    Ok(serials)
+}
+
+/// §3 item 5: the leaf's KeyDescription, none above it, and the provisioning info only where `info_at(index)` says
+/// and in its form - `chain` otherwise.
+fn key_description(
+    certs: &[x509::Certificate],
+    info_at: impl Fn(usize) -> bool,
+) -> Result<key_description::KeyDescription, Refusal> {
+    if certs[1..]
+        .iter()
+        .any(|c| c.extension(x509::OID_KEY_DESCRIPTION).is_some())
+    {
+        return Err(Refusal::Chain);
+    }
+    for (i, cert) in certs.iter().enumerate() {
+        if cert
+            .extension(x509::OID_PROVISIONING_INFO)
+            .is_some_and(|info| !info_at(i) || !provisioning_info_ok(info.value))
+        {
+            return Err(Refusal::Chain);
+        }
+    }
+    let extension = certs[0]
+        .extension(x509::OID_KEY_DESCRIPTION)
+        .ok_or(Refusal::Chain)?;
+    key_description::KeyDescription::parse(extension.value).ok_or(Refusal::Chain)
+}
+
+/// §3 item 9 on the list that holds the key's properties: an EC P-256 signing key made in the key store, SHA-256
+/// among its digests, usable without the user. VERIFY (3) beside SIGN is harmless for a public operation (Keystore
+/// adds it to some keys); any other purpose is refused (`properties`).
+fn properties(
+    list: &key_description::AuthorizationList,
+    leaf: &x509::Certificate,
+) -> Result<(), Refusal> {
+    let purposes_ok = list
+        .purposes
+        .as_ref()
+        .is_some_and(|p| p.contains(&PURPOSE_SIGN) && p.iter().all(|x| [2, 3].contains(x)));
+    if !purposes_ok
+        || list.algorithm != Some(ALGORITHM_EC)
+        || list.ec_curve != Some(EC_CURVE_P256)
+        || !list
+            .digests
+            .as_ref()
+            .is_some_and(|d| d.contains(&DIGEST_SHA256))
+        || list.origin != Some(ORIGIN_GENERATED)
+        || !list.no_auth_required
+        || leaf.key_kind != x509::KeyKind::P256
+        || leaf.key.len() != 65
+    {
+        return Err(Refusal::Properties);
+    }
+    Ok(())
+}
+
+/// §3 item 10: exactly one package, `package`, and exactly one signing certificate, `digest` (32 bytes) - `app`.
+fn app_ok(
+    app: Option<&key_description::ApplicationId>,
+    package: &str,
+    digest: &[u8],
+) -> Result<(), Refusal> {
+    let app = app.ok_or(Refusal::App)?;
+    if digest.len() != 32
+        || app.packages != [package]
+        || app.signatures.len() != 1
+        || app.signatures[0] != digest
+    {
+        return Err(Refusal::App);
+    }
+    Ok(())
 }
 
 const PURPOSE_SIGN: i64 = 2;

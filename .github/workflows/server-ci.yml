@@ -83,8 +83,9 @@ jobs:
           # its sample (design 83, scripts/mmsc-hosts.py; its output server/testdata/mmsc_hosts.txt is compiled in).
           # And design 129's scripts: the GrapheneOS boot keys (scripts/grapheneos-boot-keys.py and its sample; its
           # output src/attestation/grapheneos_boot_keys.json is compiled in) and the phone key's contract vectors
-          # (scripts/device-key-vectors.py, which wrote server/testdata/device_key.json).
-          if grep -qE '^(server/|\.github/workflows/server-ci\.yml$|(launcher|music)/app/src/test/resources/spotify_hosts\.json$|launcher/app/src/test/resources/(time_status_report|dns_upstream_status|power_report|zone_status_report|launcher_tag_codes|time_request|installed_apps_report|calendar_title_rules|calendar_status_report|calendar_feeds|emergency_numbers|calendar_kid_events|weather|leave_tailnet|server_url_vectors|restrictions_pause|server_tls_report|sms_contract|contact_request|app_logos|lock_now|mobile_network|status_heartbeat|airplane_mode|rule_pause|shortcuts|login_windows|notification_channels|notification_listeners|unified_push|setup_steps|install_failure|app_access|blocked_numbers|clock_skew|device_key)\.json$|launcher/app/src/test/resources/(map_links|wifi_lookup)/|(launcher|music)/app/src/test/resources/storytel_token_answers\.json$|launcher/app/src/main/assets/dns/doh_hosts\.txt$|launcher/app/src/main/java/com/kidslauncher/mdm/ui/home/HomeModel\.kt$|scripts/mmsc-hosts(\.py|-sample\.xml)$|scripts/wifi-lookup-fixtures\.py$|scripts/grapheneos-boot-keys(\.py|-sample/.*)$|scripts/device-key-vectors\.py$)' <<<"$files"; then
+          # (scripts/device-key-vectors.py, which wrote server/testdata/device_key.json), and the emulator profile's
+          # vectors (scripts/emulator-attestation-vectors.py, design 129b §7: server/testdata/attestation/emulator/).
+          if grep -qE '^(server/|\.github/workflows/server-ci\.yml$|(launcher|music)/app/src/test/resources/spotify_hosts\.json$|launcher/app/src/test/resources/(time_status_report|dns_upstream_status|power_report|zone_status_report|launcher_tag_codes|time_request|installed_apps_report|calendar_title_rules|calendar_status_report|calendar_feeds|emergency_numbers|calendar_kid_events|weather|leave_tailnet|server_url_vectors|restrictions_pause|server_tls_report|sms_contract|contact_request|app_logos|lock_now|mobile_network|status_heartbeat|airplane_mode|rule_pause|shortcuts|login_windows|notification_channels|notification_listeners|unified_push|setup_steps|install_failure|app_access|blocked_numbers|clock_skew|device_key)\.json$|launcher/app/src/test/resources/(map_links|wifi_lookup)/|(launcher|music)/app/src/test/resources/storytel_token_answers\.json$|launcher/app/src/main/assets/dns/doh_hosts\.txt$|launcher/app/src/main/java/com/kidslauncher/mdm/ui/home/HomeModel\.kt$|scripts/mmsc-hosts(\.py|-sample\.xml)$|scripts/wifi-lookup-fixtures\.py$|scripts/grapheneos-boot-keys(\.py|-sample/.*)$|scripts/(device-key|emulator-attestation)-vectors\.py$)' <<<"$files"; then
             changed=true
           else
             changed=false
@@ -117,6 +118,18 @@ jobs:
       # Cheap and always run: server/testdata/device_key.json is exactly what scripts/device-key-vectors.py writes
       # (design 129 §7.1: a throwaway key from a fake phrase, public data only). No network.
       run: python3 -I scripts/device-key-vectors.py --check
+    - name: The emulator profile's vectors
+      # Cheap and always run: server/testdata/attestation/emulator/ is exactly what
+      # scripts/emulator-attestation-vectors.py writes (design 129b §7: throwaway keys, made-up values). No network.
+      run: python3 -I scripts/emulator-attestation-vectors.py --check
+    - name: No release names emulator_keys
+      # Design 129b §7 (H3): the emulator profile takes keys anyone can make. Beside the compile_error! that refuses
+      # it outside a debug build, neither the release workflow nor the image may name it.
+      run: |
+        if grep -n 'emulator_keys' .github/workflows/server-release.yml server/Dockerfile; then
+          echo "::error::emulator_keys is for the emulator gate's debug builds only"
+          exit 1
+        fi
     - name: The fake homeserver's self-test
       # Cheap and always run: scripts/fake-homeserver.py (design 108's emulator gate, docs/testing/emulator.md §6ay)
       # against a loopback recorder. No network.
@@ -160,6 +173,17 @@ jobs:
       # The integrations (docs/notes/server/integrations.md): a build without them still compiles (build only; the
       # core's snapshot tests pin the default build).
       - run: cargo check --no-default-features --locked
+      # Design 129b §7: the emulator gate's profile can't rot - its clippy and its tests (the debug profile) - and it
+      # can't be built for release (the compile_error! in src/attestation/mod.rs).
+      - run: cargo clippy --all-targets --features emulator_keys --locked
+      - run: cargo test --features emulator_keys --locked -- attestation device_key emulator_keys
+      - name: A release build refuses emulator_keys
+        run: |
+          if cargo check --release --features emulator_keys --locked 2> release-check.log; then
+            echo "::error::a release build compiled with emulator_keys"
+            exit 1
+          fi
+          grep -q 'emulator_keys is for debug builds only' release-check.log || { cat release-check.log; exit 1; }
 
   # The container image (design 22 §6), without pushing, as the release builds it: the static musl
   # binary built natively on a runner of each architecture (plain cargo, no cross, no QEMU), then

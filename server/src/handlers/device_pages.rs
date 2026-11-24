@@ -574,6 +574,12 @@ async fn key_row(state: &AppState, id: i64, lang: Lang) -> Result<Row, sqlx::Err
         return Ok(Row::new("key", label, t(lang, "device.about.key.conflict")));
     }
     if let Some(key) = crate::device_key::current_key(&state.db, id).await? {
+        // Design 129b §7 (H3): a key the `emulator_keys` profile took is a test key anyone can make - orange.
+        if key.root == crate::attestation::roots::Root::Emulator.word() {
+            return Ok(Row::new("key", label, t(lang, "device.about.key.emulator"))
+                .class("row-value-action")
+                .detail(Some(key_detail(&key, lang))));
+        }
         return Ok(Row::new("key", label, t(lang, "device.about.key.hardware"))
             .detail(Some(key_detail(&key, lang))));
     }
@@ -596,8 +602,10 @@ async fn key_row(state: &AppState, id: i64, lang: Lang) -> Result<Row, sqlx::Err
 
 /// What the key's attestation said (§3 item 12), for the ⓘ.
 fn key_detail(key: &crate::device_key::StoredKey, lang: Lang) -> String {
-    let level = match key.security_level.as_str() {
-        "strongbox" => "device.about.key.level.strongbox",
+    // An emulator key is software alone, whatever its column says (`device_key::stored_level`).
+    let level = match (key.root.as_str(), key.security_level.as_str()) {
+        ("emulator", _) | (_, "software") => "device.about.key.level.software",
+        (_, "strongbox") => "device.about.key.level.strongbox",
         _ => "device.about.key.level.tee",
     };
     let system = match key.reading() {
@@ -607,6 +615,7 @@ fn key_detail(key: &crate::device_key::StoredKey, lang: Lang) -> String {
     };
     let root = match key.root.as_str() {
         "google_ec_ca1" => "device.about.key.root.google_ec_ca1",
+        "emulator" => "device.about.key.root.emulator",
         _ => "device.about.key.root.google_rsa",
     };
     let patch = key

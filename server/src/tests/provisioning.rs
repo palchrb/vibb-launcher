@@ -94,6 +94,7 @@ fn provision_payload_uses_configured_values() {
         launcher_admin_component: "org.example/org.example.Admin".to_string(),
         launcher_apk_url: "https://example.org/launcher.apk".to_string(),
         launcher_signature_checksum: Some("B".repeat(43)),
+        launcher_debug_signature_checksum: None,
         phone_server_url: None,
         phone_recovery_url: None,
         sse_keepalive_secs: 120,

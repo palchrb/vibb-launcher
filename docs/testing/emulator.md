@@ -5454,6 +5454,15 @@ digest in `LAUNCHER_DEBUG_SIGNATURE_CHECKSUM` for `emulator_keys`), enrolled as 
 KeyRegistration DeviceKey ServerAuth Enrollment`; the server's side is About This Phone › Connection's "Innlogging" row
 and the security log. The owner's OK for the emulator first, as always.
 
+**Since design 129b's step E2 the feature exists** (`docs/notes/server/device-key.md`, "`emulator_keys`"): build the
+server with `cargo build --features emulator_keys` (the debug profile - a release build refuses to compile it), set
+`LAUNCHER_DEBUG_SIGNATURE_CHECKSUM` to the debug launcher's signing certificate in the QR's form (as
+`LAUNCHER_SIGNATURE_CHECKSUM`: `apksigner verify --print-certs` on the debug APK, its SHA-256 as Base64url without
+padding), and check the start's warning `built with emulator_keys` and Settings' orange "Serveren godtar testnøkler fra
+emulatorer". A key it takes shows About's orange "Testnøkkel fra emulator" (level "Bare programvare", root "Emulator").
+Unset, or the release launcher on the emulator: `app`. Design 129b §10.3 is that gate's table; the throwaway patch
+below is no longer needed.
+
 - **Step 0 of §7.3 (read only):** on each image, enrol once and read the chain the server logs for the key
   (`device_key_refused` with the reason, or `device_key_bound`): its root and levels go into
   `server/testdata/attestation/roots/` for `emulator_keys`, and §7.3 is corrected.

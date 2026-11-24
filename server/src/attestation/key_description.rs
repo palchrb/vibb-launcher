@@ -99,12 +99,17 @@ pub struct AuthorizationList {
     pub root_of_trust: Option<RootOfTrust>,
     pub os_patch_level: Option<i64>,
     pub application_id: Option<ApplicationId>,
+    /// How many tags the list names, read or not (the emulator profile takes only an empty hardware list).
+    pub entries: usize,
 }
 
 #[derive(Clone, Debug)]
 pub struct KeyDescription {
     pub attestation_version: i64,
     pub attestation_security_level: SecurityLevel,
+    /// Read by the `emulator_keys` profile alone (the two versions must agree there).
+    #[cfg_attr(not(feature = "emulator_keys"), allow(dead_code))]
+    pub keymint_version: i64,
     pub keymint_security_level: SecurityLevel,
     pub challenge: Vec<u8>,
     pub software: AuthorizationList,
@@ -118,7 +123,7 @@ impl KeyDescription {
         let mut r = seq.reader();
         let attestation_version = r.expect(Tag::INTEGER)?.int()?;
         let attestation_security_level = SecurityLevel::of(r.expect(Tag::ENUMERATED)?.int()?)?;
-        let _keymint_version = r.expect(Tag::INTEGER)?.int()?;
+        let keymint_version = r.expect(Tag::INTEGER)?.int()?;
         let keymint_security_level = SecurityLevel::of(r.expect(Tag::ENUMERATED)?.int()?)?;
         let challenge = r.expect(Tag::OCTET_STRING)?.content.to_vec();
         let _unique_id = r.expect(Tag::OCTET_STRING)?;
@@ -128,6 +133,7 @@ impl KeyDescription {
         Some(KeyDescription {
             attestation_version,
             attestation_security_level,
+            keymint_version,
             keymint_security_level,
             challenge,
             software,
@@ -165,6 +171,7 @@ fn authorization_list(seq: &Tlv) -> Option<AuthorizationList> {
             return None;
         }
         last = Some(n);
+        list.entries += 1;
         let inner = || {
             let mut i = item.reader();
             let tlv = i.next()?;

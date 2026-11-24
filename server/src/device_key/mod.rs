@@ -757,6 +757,16 @@ pub fn key_answer(key: Option<&StoredKey>) -> serde_json::Value {
     }
 }
 
+/// The key's `security_level` column. Migration 0174's CHECK takes `tee` and `strongbox` alone, so a key the
+/// `emulator_keys` profile took (design 129b §7: `Software`, under `root = 'emulator'`) is stored as `tee` and read by
+/// its root (About shows it as the emulator's, in orange) - until a migration lets the column say `software`.
+fn stored_level(attested: &Attested) -> &'static str {
+    if attested.root == attestation::roots::Root::Emulator {
+        return attestation::SecurityLevel::TrustedEnvironment.word();
+    }
+    attested.level.word()
+}
+
 /// Stores an attested key for `device_id` on the caller's transaction (`observed` in S1), returning its random id.
 /// `address`: the registering client; `unusual` when its bearer never came from there (§5.2, H3).
 pub async fn insert_key(
@@ -779,7 +789,7 @@ pub async fn insert_key(
     .bind(&attested.spki)
     .bind(attestation::spki_sha256(&attested.spki))
     .bind(&attested.public_key)
-    .bind(attested.level.word())
+    .bind(stored_level(attested))
     .bind(attested.attestation_version)
     .bind(attested.os_patch_level)
     .bind(root.map(|r| r.state.word()))

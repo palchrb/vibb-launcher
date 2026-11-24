@@ -108,7 +108,39 @@ byte-identical in `launcher/app/src/test/resources/` (`the_contract_matches_the_
 `phone_nudge` rows (the registration flow's table, the launcher's alone to run: `DeviceKeyContractTest`). The
 launcher's side is `docs/notes/launcher/security.md`, "The hardware-bound phone key".
 
+## `emulator_keys` (design 129b §7, step E2)
+
+**Not a security check**: the emulator gate's way to let the debug launcher enrol with a key. The Cargo feature
+`emulator_keys` (never in `default`) compiles `attestation/emulator.rs`; `attestation/mod.rs` has
+`compile_error!("emulator_keys is for debug builds only")` for any build without `debug_assertions`, and
+`server-ci.yml`'s changes job fails if `server-release.yml` or the Dockerfile names it. While compiled in: a warning at
+every start, Settings' orange "Serveren godtar testnøkler fra emulatorer" (`settings_hub`, `emulator-keys`), and About's
+orange "Testnøkkel fra emulator" on every key stored with `root = 'emulator'` (in any build: the stored root says it).
+
+- `verify` hands a chain to the profile **only when its root is not pinned**; a pinned root's chain is the release
+  profile's alone. The profile takes exactly the gate images' shape (design 129 §7.3): three P-256 certificates, each
+  signed by the next with ECDSA SHA-256; a self-signed root named exactly `CN=Droid Unregistered Device CA, O=Google Test
+  LLC` (the two attributes in any order, the string type not read); the provisioning info on the intermediate and the
+  root; attestation and KeyMint version 300 or 400, the two equal; both levels `Software`, §3 item 9 read from the
+  software list, the hardware list empty; the app `me.vibb.launcher.debug` with the digest in
+  `LAUNCHER_DEBUG_SIGNATURE_CHECKSUM` (`ForkConfig::launcher_debug_signature_checksum`, read only by such a build;
+  `Expect::debug_signature_digest`); revocation as §3, the intermediate's and the root's validity read. The boot state
+  comes from the software list and is never enforced (`unknown`). `Attested.root` is `Root::Emulator` (`emulator`).
+- Refusals: not the emulator's root or shape (a fourth certificate, another curve, another name, not self-signed, a TEE
+  claim, no provisioning info on the root) `root` - as without the feature; a hardware-list tag or another version
+  `properties`; the release package, another digest or none set `app`.
+- **Stored as `tee`** (`device_key::stored_level`): migration 0174's CHECK takes `tee`/`strongbox` alone, so an emulator
+  key's `security_level` column says `tee` and its root says what it is; About reads the level from the root ("Bare
+  programvare"). A later migration may let the column say `software`.
+- Vectors: `testdata/attestation/emulator/` (the two gate images' shapes and one chain per refusal), written by
+  `scripts/emulator-attestation-vectors.py` from throwaway keys derived from fake phrases and made-up values - never a
+  capture (`--check` in `server-ci.yml`'s changes job). `attestation::emulator_tests` runs them: with the feature each
+  row's verdict, without it every row `root`. `tests::emulator_keys` covers the two orange lines and the setting.
+- CI's build job also runs `cargo clippy --all-targets --features emulator_keys`, `cargo test --features emulator_keys
+  -- attestation device_key emulator_keys`, and checks that `cargo check --release --features emulator_keys` fails with
+  the `compile_error!`.
+
 ## Not in S1
 
-`emulator_keys` (§7.3) waits for the emulator's chain to be read on the gate images; the bound state, `held`,
+The bound state, `held`,
 `device_old_token`, `key_required`, rotation and the step-2 orange line are S2's.
