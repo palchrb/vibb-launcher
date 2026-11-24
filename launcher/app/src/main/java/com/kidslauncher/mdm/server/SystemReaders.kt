@@ -47,6 +47,19 @@ fun otherHomes(
     return homes - excluded
 }
 
+/**
+ * A package added (installed, updated or unhidden) that the full plan owns rather than the new-package path: Android
+ * Auto and the other Home apps ([otherHomes] with nothing kept - the recents provider is never restricted either way).
+ * That path hides what isn't on the allowlist, and these never are: an allowed Android Auto unhidden by `apply()` is
+ * itself a PACKAGE_ADDED, so the two undid each other in a loop of syncs (emulator gate §6be, 2026-11-24).
+ */
+fun planOwnsAddedPackage(
+    packageName: String,
+    homeCandidates: Collection<HomeCandidate>,
+    ownPackage: String,
+    controllable: Set<String>,
+): Boolean = packageName == ANDROID_AUTO || packageName in otherHomes(homeCandidates, ownPackage, controllable, emptySet())
+
 /** One app with notification access in the status report: [off] while Vibb has it hidden (a suspension isn't counted:
  * Android may keep a suspended listener bound - the emulator gate checks), [system] when it came with the phone. */
 @Serializable

@@ -203,6 +203,10 @@ sink there too. Whether Settings can be hidden on the Jelly Star's own Android 1
 - `computeEnforcementPlan`'s `extraPackages` (the two above, outside the controllable set) are visited by `apply()`'s
   loop too, so a lift is undone. The fence's orphan sweep leaves the enforced Homes alone (pure `orphanSweepTargets`),
   or the sweep and `apply()` would undo each other; the fence itself skips them as already suspended.
+- **An added Android Auto or other Home goes to the full plan** (`planOwnsAddedPackage`, emulator gate §6be): the
+  new-package path (`enforceOnNewPackage`) hides what isn't on the allowlist, and an allowed Android Auto never is, while
+  `apply()`'s unhide is itself a PACKAGE_ADDED - before the fix the two undid each other in a loop of syncs (several a
+  second, seen on Android 14). Now such a package runs `apply()` instead, as the Play Store does.
 - **The report's `notification_listeners`** (`NotificationListenersReader`, pure `notificationListenersReport`):
   Android's enabled listeners but Vibb One, each `off` while Vibb has the package hidden (only hidden: Android may keep
   a suspended listener bound) and `system` when it came with the phone (`FLAG_SYSTEM` or an updated system app). The
@@ -210,6 +214,7 @@ sink there too. Whether Settings can be hidden on the Jelly Star's own Android 1
   `CLAUDE.md`).
 - **Removing Device Owner or uninstalling Vibb One leaves the apps Vibb hid hidden** - Android Auto as every other
   hidden app; a gap that predates this, no code for it now.
-- **Not device-tested** (emulator gate owed, `docs/testing/emulator.md` §6be): a suspended Home at a reboot (BFU and
-  after the unlock), whether a hidden or suspended listener is unbound and whether hiding drops its approval
-  (`dumpsys notification`), and which package is the Jelly Star's recents provider.
+- **Emulator gate** (`docs/testing/emulator.md` §6be, 2026-11-24, Android 14, 16, 17): a suspended other Home keeps
+  every gesture and reboots cleanly; a hidden listener is unbound and **hiding drops its approval** (and Android Auto's
+  `SYSTEM_AUTOMOTIVE_PROJECTION` role) - neither comes back with Tillat or a pause; a suspended listener stays bound.
+  Still owed: which package is the Jelly Star's recents provider.

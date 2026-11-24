@@ -1769,6 +1769,12 @@ object AppEnforcer {
             apply(context, currentPolicyDecision())
             return false
         }
+        // Android Auto and the other Home apps: the full plan decides too (planOwnsAddedPackage).
+        val pm = context.packageManager
+        if (planOwnsAddedPackage(packageName, UpdateFence.homeCandidates(pm), context.packageName, controllablePackages(pm).toSet())) {
+            apply(context, currentPolicyDecision())
+            return false
+        }
 
         // Fails closed: with no usable cached policy on a phone that has had one, the
         // last-enforced plan (or nothing allowed) decides - see shouldSuspendNewPackage.

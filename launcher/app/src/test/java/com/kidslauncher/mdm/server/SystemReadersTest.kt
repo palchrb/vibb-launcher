@@ -77,6 +77,19 @@ class SystemReadersTest {
         assertEquals(emptySet<String>(), otherHomes(twice, own, controllable.toSet(), setOf(recents)))
     }
 
+    /** The emulator gate's loop (§6be): an added Android Auto or other Home goes to the full plan, never the new-package
+     * path's allowlist hide; a Home with a launcher icon, an ordinary app and the fallbacks stay on that path. */
+    @Test
+    fun `an added Android Auto or other Home is the plan's`() {
+        val c = controllable.toSet()
+        assertTrue(planOwnsAddedPackage(ANDROID_AUTO, homes, own, c))
+        assertTrue(planOwnsAddedPackage("com.android.launcher3", homes, own, c))
+        assertTrue(planOwnsAddedPackage(recents, homes, own, c))
+        for (other in listOf("org.example.game", "com.vendor.home.app", "com.android.settings", "com.vendor.fallback", own)) {
+            assertFalse(other, planOwnsAddedPackage(other, homes, own, c))
+        }
+    }
+
     /** The gesture rule: with no recents provider known, no other Home is suspended - a vendor launcher may carry the
      * gestures. They are still visited, so an earlier suspension is undone. */
     @Test
