@@ -6,7 +6,7 @@
 //! release, by design 76's rule for pins.
 
 /// Which root a chain ends at (kept per key, §3 item 12).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Root {
     /// The RSA-4096 key, subject `SERIALNUMBER=f92009e853b6b045`.
     GoogleRsa,

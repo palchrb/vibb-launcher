@@ -2,7 +2,7 @@
 //! signature, the serial, the names, the validity, the public key and the extensions. Parsing only - every judgement
 //! is `attestation::verify`'s.
 
-use super::der::{Reader, Tag, Tlv, parse_one};
+use super::der::{Tag, Tlv, parse_one};
 
 pub const OID_RSA_ENCRYPTION: &[u8] = &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01];
 pub const OID_SHA256_WITH_RSA: &[u8] = &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0b];

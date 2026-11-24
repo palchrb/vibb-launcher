@@ -41,6 +41,14 @@ licensed under the Apache License 2.0 (ntfy is dual Apache-2.0/GPLv2; the Apache
 directory's `README.md` lists every ported function and what changed; the rest of that directory is under the
 GPL-3.0 (or later).
 
+The server's key attestation check (`server/src/attestation/`, design 129) follows the rules of Google's
+[Android key attestation verifier](https://github.com/android/keyattestation) (commit `c391708`, Copyright 2024 Google
+LLC, Apache License 2.0 - see [`server/src/unified_push/Apache-2.0.txt`](server/src/unified_push/Apache-2.0.txt)): no
+code is copied; the checks were rewritten in Rust and are GPL-3.0 (or later). Its test chains are copied unchanged
+into `server/testdata/attestation/chains/` (test data only, never shipped; `server/testdata/attestation/NOTICE.md`
+says where each came from). GrapheneOS's verified-boot key list (`server/src/attestation/grapheneos_boot_keys.json`)
+is data from GrapheneOS's signed `https://grapheneos.org/attestation.json`.
+
 The launcher's MMS PDU codec (`launcher/app/src/main/java/com/kidslauncher/mdm/sms/vendor/pdu/`, design 77 D9) is
 vendored from [AOSP Messaging](https://android.googlesource.com/platform/packages/apps/Messaging)'s
 `src/com/android/messaging/mmslib/` at commit `de315b762312dd1a5d2bbd16e62ef2bd123f61e5`, Copyright (C) 2007-2008

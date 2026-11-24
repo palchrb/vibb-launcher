@@ -319,11 +319,15 @@ async fn bodies_are_capped_and_responses_are_private() {
                     Method::POST,
                     "/api/devices/enroll",
                     None,
-                    &format!("{{\"enrollment_code\": \"{}\"}}", "A".repeat(5000)),
+                    &format!("{{\"enrollment_code\": \"{}\"}}", "A".repeat(33 * 1024)),
                 ),
             )
             .await;
-        assert_eq!(res.status, StatusCode::PAYLOAD_TOO_LARGE, "enroll: 4 KiB");
+        assert_eq!(
+            res.status,
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "enroll: 32 KiB (design 129)"
+        );
 
         let res = app
             .send_via(

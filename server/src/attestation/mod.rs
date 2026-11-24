@@ -278,13 +278,11 @@ const EC_CURVE_P256: i64 = 1;
 const DIGEST_SHA256: i64 = 4;
 const ORIGIN_GENERATED: i64 = 0;
 
-/// The provisioning info's form: an OCTET STRING holding a CBOR map (major type 5). Its only documented field
+/// The provisioning info's form: the extension's value is a CBOR map (major type 5). Its only documented field
 /// (`certs_issued`) is not read: the schema as read on 2026-11-24 has no lost-device flag, so `lost` stays a reserved
 /// word until it has one.
 fn provisioning_info_ok(value: &[u8]) -> bool {
-    der::parse_one(value, der::Tag::OCTET_STRING)
-        .and_then(|o| o.content.first().copied())
-        .is_some_and(|first| first >> 5 == 5)
+    value.first().is_some_and(|first| first >> 5 == 5)
 }
 
 /// The SHA-256 of a key's SPKI, lowercase hex: how the server names a key to the phone (`spki_sha256`, §5.2).

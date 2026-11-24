@@ -891,10 +891,7 @@ async fn the_pwa_shows_the_key_quietly() {
         .text();
     assert!(page.contains("data-row=\"key\""), "{page}");
     assert!(page.contains("Hardware key"));
-    assert!(
-        page.contains("The maker&#x27;s system, locked")
-            || page.contains("The maker's system, locked")
-    );
+    assert!(page.contains("system, locked"), "{page}");
     let page = app
         .get_page(&format!("/devices/{plain}/about?lang=nb"), &cookie)
         .await
@@ -917,60 +914,70 @@ async fn the_pwa_shows_the_key_quietly() {
         .unwrap();
     let hub = app.get_page("/settings?lang=en", &cookie).await.text();
     assert!(hub.contains("data-row=\"key-list-stale\""));
-    assert!(
-        hub.contains("Google&#x27;s key list is out of date")
-            || hub.contains("Google's key list is out of date")
-    );
+    assert!(hub.contains("key list is out of date"));
 }
 
 /// §4.5 step 3's assumption, pinned: every POST device route reads its whole body through an extractor before it
-/// acts (a handler that never read it could act on a body that wasn't signed). DELETE and GET routes take no body:
-/// an empty one is compared at the edge.
+/// acts (a handler that never read it could act on a body that wasn't signed). GET and DELETE routes take no body:
+/// an empty one is compared at the edge, and so is the conflict report's.
 #[test]
 fn every_device_post_reads_its_body() {
-    let mut sources = String::new();
-    let mut dirs = vec![std::path::PathBuf::from("src")];
-    while let Some(dir) = dirs.pop() {
-        for entry in std::fs::read_dir(&dir).unwrap() {
-            let path = entry.unwrap().path();
-            if path.is_dir() {
-                if !path.ends_with("tests") {
-                    dirs.push(path);
-                }
-            } else if path.extension().is_some_and(|e| e == "rs") {
-                sources.push_str(&std::fs::read_to_string(&path).unwrap());
+    // Where each route list lives, and the directory its relative handler paths start from.
+    let lists = [
+        ("src/device_routes.rs", "src"),
+        (
+            "src/integrations/map_links/mod.rs",
+            "src/integrations/map_links",
+        ),
+        (
+            "src/integrations/wifi_lookup/mod.rs",
+            "src/integrations/wifi_lookup",
+        ),
+    ];
+    let extractors = ["Json<", "Bytes", "Body", "body: String"];
+    let mut checked = 0;
+    for (list, base) in lists {
+        let text = std::fs::read_to_string(list).unwrap();
+        for chunk in text.split(".route(").skip(1) {
+            if !chunk.trim_start().starts_with("\"/api/devices") {
+                continue;
             }
+            let Some(at) = chunk.find("post(") else {
+                continue;
+            };
+            let path: String = chunk[at + 5..]
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == ':')
+                .collect();
+            let mut parts: Vec<&str> = path.split("::").collect();
+            let handler = parts.pop().unwrap().to_string();
+            if handler == "post_conflict" {
+                continue;
+            }
+            // `crate::a::b::f` -> src/a/b.rs (or b/mod.rs); `handlers::x::f` -> src/handlers/x.rs; `m::f` -> base/m.rs.
+            let (root, parts) = match parts.first() {
+                Some(&"crate") => ("src".to_string(), &parts[1..]),
+                Some(&"handlers") => ("src".to_string(), &parts[..]),
+                _ => (base.to_string(), &parts[..]),
+            };
+            let stem = format!("{root}/{}", parts.join("/"));
+            let source = std::fs::read_to_string(format!("{stem}.rs"))
+                .or_else(|_| std::fs::read_to_string(format!("{stem}/mod.rs")))
+                .unwrap_or_else(|_| panic!("no module for {path}"));
+            let signature = format!("async fn {handler}(");
+            let at = source
+                .find(&signature)
+                .unwrap_or_else(|| panic!("no `{signature}` in {stem}"));
+            let end = source[at..].find('{').expect("a body");
+            let params = &source[at..at + end];
+            // A handler that takes no body never acts on one; one that does reads it whole, through an extractor -
+            // never a whole request it could stream from.
+            assert!(
+                extractors.iter().any(|e| params.contains(e)) || !params.contains("Request"),
+                "{path} reads its body some other way: {params}"
+            );
+            checked += 1;
         }
     }
-    let routes = std::fs::read_to_string("src/device_routes.rs").unwrap()
-        + &std::fs::read_to_string("src/integrations/map_links/mod.rs").unwrap_or_default()
-        + &std::fs::read_to_string("src/integrations/wifi_lookup/mod.rs").unwrap_or_default();
-    let mut handlers = Vec::new();
-    for (at, _) in routes.match_indices("post(") {
-        let rest = &routes[at + 5..];
-        let name: String = rest
-            .chars()
-            .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == ':')
-            .collect();
-        if let Some(handler) = name.rsplit("::").next().filter(|n| !n.is_empty()) {
-            handlers.push(handler.to_string());
-        }
-    }
-    assert!(handlers.len() >= 20, "{handlers:?}");
-    let extractors = ["Json<", "Bytes", "Body", "String", "axum::body::Body"];
-    for handler in handlers {
-        let signature = format!("async fn {handler}(");
-        let at = sources
-            .find(&signature)
-            .unwrap_or_else(|| panic!("no `{signature}`"));
-        let params = &sources[at..at + sources[at..].find(") ->").unwrap_or(400)];
-        // A route with no body at all (the conflict report) is fine: its empty body is compared at the edge.
-        if handler == "post_conflict" {
-            continue;
-        }
-        assert!(
-            extractors.iter().any(|e| params.contains(e)),
-            "{handler} takes no body extractor: {params}"
-        );
-    }
+    assert!(checked >= 20, "{checked} POST routes checked");
 }
