@@ -37,6 +37,8 @@ class RequestSigning(
     val log: (String) -> Unit = { Log.w("ServerAuth", it) },
     /** A sign's fate for [SignHealth]: `(ok, gone)`. */
     val health: (ok: Boolean, gone: Boolean) -> Unit = { ok, gone -> if (ok) SignHealth.ok() else SignHealth.failed(gone, SignatureClock.elapsed()) },
+    /** An answer proved the server knows the key ([signatureKnown]). */
+    val known: () -> Unit = KeyRegistration::keyKnown,
 )
 
 private val random = SecureRandom()
@@ -108,6 +110,7 @@ fun credentialSigner(baseUrl: String, credential: DeviceCredential, signing: Req
         val sent = signing.elapsed()
         val response = chain.proceed(request)
         response.header(SIGNATURE_TIME_HEADER)?.trim()?.toLongOrNull()?.let { signing.observe(it, sent, signing.elapsed()) }
+        if (signatureKnown(response.code, request.header(SIGNATURE_HEADER) != null, credential.bearer != null)) signing.known()
         response
     }
 }

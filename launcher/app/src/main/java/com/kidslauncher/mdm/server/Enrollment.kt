@@ -131,7 +131,9 @@ object Enrollment {
                 PowerEvents.prepare(context)
             } else if (answer?.state == "refused") {
                 android.util.Log.w("Enrollment", "The server refused the enrolment's key: ${answer.reason}")
-                DeviceKeys.refused(context, answer.reason ?: "invalid")
+                val reason = answer.reason ?: "invalid"
+                DeviceKeys.refused(context, reason)
+                KeyRegistration.refusedAtEnrolment(reason)
             }
         } catch (e: Exception) {
             android.util.Log.w("Enrollment", "The enrolment's key wasn't kept: ${e.javaClass.simpleName}")

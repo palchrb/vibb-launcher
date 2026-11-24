@@ -203,11 +203,14 @@ impl KeyIndex {
     }
 }
 
-/// The server's signature clock (§4.3, M5): `base + monotonic time since start`, where `base` is the larger of the
-/// wall clock at start and the floor read from the database. It never steps back - an NTP step or a VM snapshot
-/// moves nothing - and runs ahead of a wall clock that is behind it; it catches up only at a restart.
+/// The server's signature clock (§4.3, M5): from `base`, the larger of the wall clock at start and the floor read from
+/// the database, and the monotonic time since start ([sig_now_at]). It never steps back - an NTP step or a VM snapshot
+/// moves nothing. A base ahead of the wall clock (a restart soon after the last write) runs at nine tenths of real time
+/// until the wall clock as it was at start plus the monotonic time catches it up, then follows that (the 129 L1 gate's
+/// finding 3: the 100 s step no longer ratchets ahead at every restart).
 pub struct SigClock {
     base_ms: i64,
+    wall_ms: i64,
     start: Instant,
 }
 
@@ -222,12 +225,17 @@ impl SigClock {
     pub fn starting(stored: Option<i64>, wall_ms: i64) -> SigClock {
         SigClock {
             base_ms: sig_base(stored, wall_ms),
+            wall_ms,
             start: Instant::now(),
         }
     }
 
     pub fn now_ms(&self) -> i64 {
-        self.base_ms + self.start.elapsed().as_millis() as i64
+        sig_now_at(
+            self.base_ms,
+            self.wall_ms,
+            self.start.elapsed().as_millis() as i64,
+        )
     }
 }
 
@@ -238,6 +246,17 @@ pub fn sig_base(stored: Option<i64>, wall_ms: i64) -> i64 {
             .max(stored + CLOCK_WRITE_EVERY.as_millis() as i64 + WINDOW_FUTURE_MS + WINDOW_PAST_MS),
         None => wall_ms,
     }
+}
+
+/// A base ahead of the wall clock gains on it this part of each elapsed millisecond less (one tenth).
+pub const CATCH_UP_DIVISOR: i64 = 10;
+
+/// The signature clock `elapsed_ms` after a start with `base_ms` and `wall_ms` (the contract's `clock` rows):
+/// `max(wall + elapsed, base + elapsed - elapsed / 10)`. Both terms only grow, so it never steps back; it never runs
+/// faster than real time, so the floor after a stop (the stored value + 10 s + both windows) still covers every `t`
+/// accepted before it; and a base ahead of the wall clock is caught up after ten times its lead.
+pub fn sig_now_at(base_ms: i64, wall_ms: i64, elapsed_ms: i64) -> i64 {
+    (wall_ms + elapsed_ms).max(base_ms + elapsed_ms - elapsed_ms / CATCH_UP_DIVISOR)
 }
 
 /// Whether `t` is inside the window at `sig_now` (the contract's `window` rows).
@@ -1121,6 +1140,26 @@ mod tests {
         assert_eq!(sig_base(Some(1_000_000), 900_000), 1_100_000);
         assert_eq!(sig_base(Some(1_000_000), 2_000_000), 2_000_000);
         assert_eq!(sig_base(None, 5), 5);
+        // The 129 L1 gate's finding 3: a run of quick restarts never leaves the clock ahead of the wall clock for good.
+        let mut stored = None;
+        let mut wall = 1_790_000_000_000;
+        for _ in 0..10 {
+            let base = sig_base(stored, wall);
+            // Each run lasts 30 s and writes its clock at its end.
+            stored = Some(sig_now_at(base, wall, 30_000));
+            wall += 30_000;
+        }
+        let base = sig_base(stored, wall);
+        assert!(base - wall > 100_000, "ahead after the restarts");
+        let lead = base - wall;
+        assert_eq!(sig_now_at(base, wall, 10 * lead), wall + 10 * lead);
+        // Never back: monotonic across the catch-up.
+        let mut last = i64::MIN;
+        for e in (0..=12 * lead).step_by(1_000) {
+            let now = sig_now_at(base, wall, e);
+            assert!(now >= last);
+            last = now;
+        }
         let clock = SigClock::starting(Some(10_000_000_000_000), 1);
         assert!(clock.now_ms() >= 10_000_000_100_000);
     }

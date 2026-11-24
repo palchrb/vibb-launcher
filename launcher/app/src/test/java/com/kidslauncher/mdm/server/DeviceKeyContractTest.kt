@@ -209,8 +209,10 @@ class DeviceKeyContractTest {
     }
 
     @Test
-    fun `lost needs three strikes over an hour`() {
-        fun suspicion(o: JsonObject?) = o?.let { LostSuspicion(it["first_elapsed_ms"]!!.jsonPrimitive.long, it["first_boot"]!!.jsonPrimitive.int, it["strikes"]!!.jsonPrimitive.int) }
+    fun `lost needs three spaced strikes over an hour`() {
+        fun suspicion(o: JsonObject?) = o?.let {
+            LostSuspicion(it["first_elapsed_ms"]!!.jsonPrimitive.long, it["first_boot"]!!.jsonPrimitive.int, it["strikes"]!!.jsonPrimitive.int, it["last_elapsed_ms"]!!.jsonPrimitive.long)
+        }
         for (row in rows("lost_verdict")) {
             val before = row["before"]!!.takeIf { it != JsonNull }?.jsonObject
             val (after, lost) = lostVerdict(suspicion(before), row["now_elapsed"]!!.jsonPrimitive.long, row["boot"]!!.jsonPrimitive.int)

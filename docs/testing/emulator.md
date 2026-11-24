@@ -5559,6 +5559,13 @@ Findings (not fixed here; for the L1 and S1 owners):
    first after an adoption) is `stale` - one extra round trip (in S2 a 401 and a retry). Harmless now; months of
    automatic restarts make it hours.
 
+All three fixed on branch `hw-key-gate-fixes` (unit-tested, not re-run on the emulator): 1 - a 2xx or 304 to a request
+the key signed with no bearer ends the suspicion (`signatureKnown`), `wake()` keeps the backoff, and a step-1
+`unknown_key` within ten minutes of the last counted strike is none (`lostVerdict`); 2 - the enrolment's `refused`
+sets the registration's day-long backoff (`KeyRegistration.refusedAtEnrolment`); 3 - a signature clock ahead of the
+wall clock runs at nine tenths of real time until the wall clock catches it up (`sig_now_at`, design 129 §4.3). §7.3
+now says what step 0 found and what `emulator_keys` must accept.
+
 ## 6bk. Apple's cell lookup and the coarse fix (design 125b, branch `cell-lookup`) - written, not run
 
 Design 125b (`docs/design/125b-apple-cell-lookup.md` §9): the wiring only, on **Android 14 and 16** with the user's OK.

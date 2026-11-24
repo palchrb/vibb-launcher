@@ -87,7 +87,10 @@ class ServerAuthTest {
         observe = { vibbTime, _, _ -> observed += vibbTime },
         log = {},
         health = { _, _ -> },
+        known = { known++ },
     )
+
+    private var known = 0
 
     private fun call(client: OkHttpClient, url: String, body: String? = null, encoding: String? = null) {
         val builder = Request.Builder().url(url)
@@ -181,6 +184,38 @@ class ServerAuthTest {
         val bearer = Seen()
         call(client("https://kidphone.example/", DeviceCredential.Bearer("t"), bearer, answers = listOf(401 to "stale")), "https://kidphone.example/api/devices/policy")
         assertEquals(1, bearer.requests.size)
+    }
+
+    /** The 129 L1 gate's finding 1: only an answer that proves the key known ends a suspicion of a lost key. */
+    @Test
+    fun `a signed 2xx or 304 with no bearer tells the flow the key is known`() {
+        val bound = DeviceCredential.Key("KEYID", "device_key_1", null)
+        fun knownAfter(credential: DeviceCredential, code: Int, url: String = "https://kidphone.example/api/devices/policy"): Int {
+            known = 0
+            call(client("https://kidphone.example/", credential, Seen(), answers = listOf(code to null)), url)
+            return known
+        }
+        assertEquals(1, knownAfter(bound, 200))
+        assertEquals(1, knownAfter(bound, 204))
+        assertEquals("the policy's ETag answer", 1, knownAfter(bound, 304))
+        assertEquals(0, knownAfter(bound, 401))
+        assertEquals(0, knownAfter(bound, 503))
+        assertEquals("with a bearer S1 answers on it whatever the key", 0, knownAfter(DeviceCredential.Key("KEYID", "device_key_1", "TESTONLY-device-token"), 200))
+        assertEquals("not signed", 0, knownAfter(bound, 200, "https://kidphone.example/healthz"))
+        assertEquals("a bearer alone", 0, knownAfter(DeviceCredential.Bearer("TESTONLY-device-token"), 200))
+    }
+
+    /** The 129 L1 gate's finding 2: a refused key waits a day, at a registration and at the enrolment alike. */
+    @Test
+    fun `a refused key sets the registration backoff, the enrolment's too`() {
+        assertEquals(REFUSED_BACKOFF_MS, refusalBackoffMs("root"))
+        assertEquals(REFUSED_BACKOFF_MS, refusalBackoffMs("invalid"))
+        assertEquals("a stale challenge goes again at once", 0L, refusalBackoffMs("challenge"))
+        // While it waits, a policy naming no key asks nothing (the first sync after the enrolment made a second key).
+        assertFalse(keyNudge(DeviceKeyPolicy(state = "none"), null, hasToken = true, lost = false, backoff = true))
+        val enrolment = listOf("src/main/java", "app/src/main/java").map { java.io.File(it, "com/kidslauncher/mdm/server/Enrollment.kt") }.first { it.isFile }.readText()
+        val refusedBranch = enrolment.substringAfter("answer?.state == \"refused\"").substringBefore("} catch")
+        assertTrue("the enrolment's refusal sets the backoff", "KeyRegistration.refusedAtEnrolment(reason)" in refusedBranch)
     }
 
     @Test

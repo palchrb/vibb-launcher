@@ -227,11 +227,11 @@
         "sig_now": 1790000005000
       },
       {
-        "name": "the wall clock behind the floor: the floor",
+        "name": "the wall clock behind the floor: the floor, at nine tenths of real time",
         "stored": 1790000000000,
         "wall_at_start": 1789000000000,
         "elapsed": 1000,
-        "sig_now": 1790000101000
+        "sig_now": 1790000100900
       },
       {
         "name": "the wall clock past the floor: the wall clock",
@@ -239,6 +239,20 @@
         "wall_at_start": 1791000000000,
         "elapsed": 0,
         "sig_now": 1791000000000
+      },
+      {
+        "name": "a quick restart: still ahead of the wall clock, catching up",
+        "stored": 1790000000000,
+        "wall_at_start": 1790000005000,
+        "elapsed": 500000,
+        "sig_now": 1790000550000
+      },
+      {
+        "name": "a quick restart: back on the wall clock once caught up",
+        "stored": 1790000000000,
+        "wall_at_start": 1790000005000,
+        "elapsed": 1000000,
+        "sig_now": 1790001005000
       }
     ],
     "offset": [
@@ -1216,23 +1230,62 @@
       "after": {
         "first_elapsed_ms": 1000,
         "first_boot": 7,
-        "strikes": 1
+        "strikes": 1,
+        "last_elapsed_ms": 1000
       },
       "lost": false
     },
     {
-      "name": "three strikes in minutes: not yet",
+      "name": "an ask within ten minutes of the last strike: none",
       "before": {
         "first_elapsed_ms": 1000,
         "first_boot": 7,
-        "strikes": 2
+        "strikes": 1,
+        "last_elapsed_ms": 1000
+      },
+      "now_elapsed": 600999,
+      "boot": 7,
+      "after": {
+        "first_elapsed_ms": 1000,
+        "first_boot": 7,
+        "strikes": 1,
+        "last_elapsed_ms": 1000
+      },
+      "lost": false
+    },
+    {
+      "name": "ten minutes after the last strike: a strike",
+      "before": {
+        "first_elapsed_ms": 1000,
+        "first_boot": 7,
+        "strikes": 1,
+        "last_elapsed_ms": 1000
       },
       "now_elapsed": 601000,
       "boot": 7,
       "after": {
         "first_elapsed_ms": 1000,
         "first_boot": 7,
-        "strikes": 3
+        "strikes": 2,
+        "last_elapsed_ms": 601000
+      },
+      "lost": false
+    },
+    {
+      "name": "three spaced strikes within the hour: not yet",
+      "before": {
+        "first_elapsed_ms": 1000,
+        "first_boot": 7,
+        "strikes": 2,
+        "last_elapsed_ms": 601000
+      },
+      "now_elapsed": 1201000,
+      "boot": 7,
+      "after": {
+        "first_elapsed_ms": 1000,
+        "first_boot": 7,
+        "strikes": 3,
+        "last_elapsed_ms": 1201000
       },
       "lost": false
     },
@@ -1241,30 +1294,52 @@
       "before": {
         "first_elapsed_ms": 1000,
         "first_boot": 7,
-        "strikes": 2
+        "strikes": 2,
+        "last_elapsed_ms": 1201000
       },
       "now_elapsed": 3601000,
       "boot": 7,
       "after": {
         "first_elapsed_ms": 1000,
         "first_boot": 7,
-        "strikes": 3
+        "strikes": 3,
+        "last_elapsed_ms": 3601000
       },
       "lost": true
+    },
+    {
+      "name": "a quick ask at the hour: never lost on it",
+      "before": {
+        "first_elapsed_ms": 1000,
+        "first_boot": 7,
+        "strikes": 2,
+        "last_elapsed_ms": 3541000
+      },
+      "now_elapsed": 3601000,
+      "boot": 7,
+      "after": {
+        "first_elapsed_ms": 1000,
+        "first_boot": 7,
+        "strikes": 2,
+        "last_elapsed_ms": 3541000
+      },
+      "lost": false
     },
     {
       "name": "many strikes, still within the hour",
       "before": {
         "first_elapsed_ms": 1000,
         "first_boot": 7,
-        "strikes": 9
+        "strikes": 5,
+        "last_elapsed_ms": 2401000
       },
       "now_elapsed": 3600999,
       "boot": 7,
       "after": {
         "first_elapsed_ms": 1000,
         "first_boot": 7,
-        "strikes": 10
+        "strikes": 6,
+        "last_elapsed_ms": 3600999
       },
       "lost": false
     },
@@ -1273,14 +1348,16 @@
       "before": {
         "first_elapsed_ms": 1000,
         "first_boot": 7,
-        "strikes": 5
+        "strikes": 5,
+        "last_elapsed_ms": 3000000
       },
       "now_elapsed": 500,
       "boot": 8,
       "after": {
         "first_elapsed_ms": 500,
         "first_boot": 8,
-        "strikes": 6
+        "strikes": 6,
+        "last_elapsed_ms": 500
       },
       "lost": false
     }
