@@ -5316,3 +5316,5 @@ settings, which only the system may read or write).
 | Another number (`99887766`), a short number (`2222`), an e-mail address | Kept: no log line, no sync; the report `blocked_left: 0`, `blocked_kept` counts them; nothing on Calls, no Attention, no security line |
 | A kept number (`98765432`) then added as a contact in the PWA | Cleared at the apply that follows the policy (`contact=1`), `blocked_kept` one lower |
 | The initial sweep: a contact's number and `99887766` blocked while unmanaged, then calls set managed | `Cleared blocked numbers on becoming managed: 1`; `blocked_cleared_initial: 1`, `blocked_kept: 1`; no line, nothing orange |
+| The action with calls and SMS both managed | Resolves to `BlockedNumbersGate`, which closes at once |
+| The action with calls managed and SMS "Ikke styrt" (and the other way round) | The gate disabled: the action resolves to Telecom's page; a number the kid blocks there stays, a contact's is cleared |

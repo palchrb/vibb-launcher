@@ -29,7 +29,8 @@ private const val LOG_TAG = "VibbBlockedNumbers"
  * the offline override (the call rules never are): a number blocked during a pause is cleared at once too.
  *
  * Also switches [BlockedNumbersGate], the handler of `MANAGE_BLOCKED_NUMBERS` that AppEnforcer pins as a persistent
- * preferred activity: enabled while managed, so the page's action goes to the gate, which closes.
+ * preferred activity: enabled only while both channels are managed ([blockedGateOn]), so the page's action goes to the
+ * gate, which closes; with a channel unmanaged the kid manages their own blocks on Android's page.
  */
 object BlockedNumbersRuntime {
     private const val PREFS = "blocked_numbers"
@@ -97,7 +98,7 @@ object BlockedNumbersRuntime {
         try {
             CallPolicyStore.ensureLoaded(context)
             val state = CallPolicyStore.state
-            setGateEnabled(context, state.managed)
+            setGateEnabled(context, blockedGateOn(state))
             val prefs = prefs(context)
             // Unmanaged: the next managed sweep is the initial one again.
             if (!state.managed && prefs.getBoolean(KEY_WAS_MANAGED, false)) {

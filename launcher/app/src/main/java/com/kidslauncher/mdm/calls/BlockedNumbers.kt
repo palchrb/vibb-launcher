@@ -56,6 +56,19 @@ fun blockedNumbersPlan(rows: List<BlockedRow>, managed: Boolean, wasManaged: Boo
     return BlockedPlan(delete, kept = rows.size - delete.size, initial = !wasManaged)
 }
 
+/**
+ * Whether [BlockedNumbersGate] takes Android's "Blocked numbers" page (the owner, 2026-11-24): only while neither channel
+ * is "Ikke styrt" - calls and SMS both managed (or off), or the rules unknown (failing closed). Then nothing reaches the
+ * kid that they could want to block: unknown numbers are refused and a contact's block is cleared. With either channel
+ * unmanaged (or the phone unmanaged) the page is the kid's, to manage their own blocks.
+ */
+fun blockedGateOn(state: CallPolicyState): Boolean = when (state) {
+    CallPolicyState.Unmanaged -> false
+    CallPolicyState.UnknownFailClosed -> true
+    is CallPolicyState.Managed ->
+        state.rules.callsMode != ChannelMode.UNMANAGED && state.rules.smsMode != ChannelMode.UNMANAGED
+}
+
 /** The status report's part ([com.kidslauncher.mdm.server.dto.CallState]'s `blocked_*`): counts since the install. */
 data class BlockedReport(
     /** The list could be read (Vibb One is the phone or the SMS app). */

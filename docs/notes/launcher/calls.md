@@ -986,8 +986,8 @@ capability, device route or kid-facing string: the bubble is still "Bildet kunne
 
 Android keeps its own list of blocked numbers (`BlockedNumberContract`); Telecom rejects a listed caller's calls and
 texts before the screening service runs. While the phone is managed a row that blocks a number the rules need is
-cleared (since 2026-11-24, the owner: the kid's own spam blocks stay) and the page's action goes to a gate that closes
-at once.
+cleared (since 2026-11-24, the owner: the kid's own spam blocks stay). While both channels are managed the page's
+action goes to a gate that closes at once; with either channel unmanaged the page is the kid's.
 
 - **Who may read and write the list** (`BlockedNumberProvider`, unchanged from Android 14 to 17): the system and phone
   processes, the default dialer, the default SMS app and carrier-privileged apps. A device owner as such may not.
@@ -1021,8 +1021,11 @@ at once.
   list was read and a delete failed (`blocked_left` above 0 while managed).
 - **The action**: `calls/BlockedNumbersGate` (no window, finishes at once) handles `MANAGE_BLOCKED_NUMBERS`;
   `AppEnforcer.enforceBlockedNumbersPin` pins it as a persistent preferred activity on every apply and in the re-seat
-  (the eighth PPA, `PlayInvariantsTest`), and the runtime enables it only while managed (disabled, Android skips the
-  pin and the action resolves to Telecom's page). Checked with `am start -a` on 14 and 16. Not affected: an explicit
+  (the eighth PPA, `PlayInvariantsTest`), and the runtime enables it only while neither channel is unmanaged
+  (`blockedGateOn`, the owner 2026-11-24: calls and SMS both managed or off, or the rules unknown - then unknown numbers
+  are refused and a contact's block is cleared, so there is nothing for the kid to block); with either channel "Ikke
+  styrt", or the phone unmanaged, it is disabled, Android skips the pin and the action resolves to Telecom's page, where
+  the kid manages their own blocks (a contact's or an emergency number added there is still cleared while managed). Checked with `am start -a` on 14 and 16. Not affected: an explicit
   start of Telecom's activity, and `TelecomManager.createManageBlockedNumbersIntent()`, whose intent names Telecom's
   package (checked on 14 and 16); the observer clears what is added there. The Google Dialer's own row isn't reachable
   while Vibb One is the phone app (it shows only "Set Phone as default"). `docs/testing/emulator.md` §6bg.

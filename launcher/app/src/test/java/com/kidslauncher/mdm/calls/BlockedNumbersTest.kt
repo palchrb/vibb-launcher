@@ -110,6 +110,21 @@ class BlockedNumbersTest {
         assertEquals(false, blockedNumbersPlan(list, managed = false, wasManaged = false, rules = rules).initial)
     }
 
+    /** The gate takes Android's page only while neither channel is unmanaged; else the kid manages their own blocks. */
+    @Test
+    fun `the gate is on only while both channels are managed`() {
+        fun managed(calls: ChannelMode, sms: ChannelMode) =
+            CallPolicyState.Managed(rules.copy(callsMode = calls, smsMode = sms))
+        assertEquals(true, blockedGateOn(managed(ChannelMode.MANAGED, ChannelMode.MANAGED)))
+        assertEquals(true, blockedGateOn(managed(ChannelMode.MANAGED, ChannelMode.OFF)))
+        assertEquals(true, blockedGateOn(managed(ChannelMode.OFF, ChannelMode.MANAGED)))
+        assertEquals(false, blockedGateOn(managed(ChannelMode.MANAGED, ChannelMode.UNMANAGED)))
+        assertEquals(false, blockedGateOn(managed(ChannelMode.UNMANAGED, ChannelMode.MANAGED)))
+        assertEquals(false, blockedGateOn(managed(ChannelMode.UNMANAGED, ChannelMode.UNMANAGED)))
+        assertEquals(false, blockedGateOn(CallPolicyState.Unmanaged))
+        assertEquals(true, blockedGateOn(CallPolicyState.UnknownFailClosed))
+    }
+
     @Test
     fun `the classes are the contract's`() {
         assertEquals(
@@ -156,7 +171,7 @@ class BlockedNumbersTest {
         assertTrue(entry.contains("android:enabled=\"false\""))
         assertTrue(entry.contains("android.telecom.action.MANAGE_BLOCKED_NUMBERS"))
         val runtime = File(main, "java/com/kidslauncher/mdm/calls/BlockedNumbersRuntime.kt").readText()
-        assertTrue(runtime.contains("setGateEnabled(context, state.managed)"))
+        assertTrue(runtime.contains("setGateEnabled(context, blockedGateOn(state))"))
         // The initial sweep never moves the clearing time the server's warning reads.
         val initial = runtime.substringAfter("if (plan.initial) {").substringBefore("return")
         assertTrue(initial.contains("KEY_WAS_MANAGED, true"))
