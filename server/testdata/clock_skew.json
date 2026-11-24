@@ -19,12 +19,13 @@
     {"note": "all three kept", "time_state": {"clock_skew_ms": 93600000, "clock_trust": "carried", "unanchored_ms": 7200000}, "kept": {"clock_skew_ms": 93600000, "clock_trust": "carried", "unanchored_ms": 7200000}},
     {"note": "absent", "time_state": {}, "kept": {"clock_skew_ms": null, "clock_trust": null, "unanchored_ms": null}},
     {"note": "over twenty years and a negative age dropped", "time_state": {"clock_skew_ms": 631152000001, "clock_trust": "server", "unanchored_ms": -1}, "kept": {"clock_skew_ms": null, "clock_trust": "server", "unanchored_ms": null}},
-    {"note": "an unknown word reads as none, an age over a year dropped", "time_state": {"clock_skew_ms": -18000000, "clock_trust": "ntp", "unanchored_ms": 31536000001}, "kept": {"clock_skew_ms": -18000000, "clock_trust": "none", "unanchored_ms": null}},
+    {"note": "an unknown word reads as none, an age over a year dropped", "time_state": {"clock_skew_ms": -18000000, "clock_trust": "x", "unanchored_ms": 31536000001}, "kept": {"clock_skew_ms": -18000000, "clock_trust": "none", "unanchored_ms": null}},
     {"note": "not numbers", "time_state": {"clock_skew_ms": "5", "clock_trust": 3, "unanchored_ms": 1.5}, "kept": {"clock_skew_ms": null, "clock_trust": null, "unanchored_ms": null}}
   ],
   "pages": [
     {"skew": 0, "trust": "server", "unanchored": 0, "lang": "nb", "line": null},
-    {"skew": 600000, "trust": "server", "unanchored": 0, "lang": "nb", "line": null},
+    {"skew": 599999, "trust": "server", "unanchored": 0, "lang": "nb", "line": null},
+    {"skew": 600000, "trust": "server", "unanchored": 0, "lang": "nb", "line": "Klokken går feil (10\u00a0min foran)"},
     {"skew": 900000, "trust": "server", "unanchored": 0, "lang": "nb", "line": "Klokken går feil (15 min foran)"},
     {"skew": 93600000, "trust": "carried", "unanchored": 3600000, "lang": "nb", "line": "Klokken går feil (26 t foran)"},
     {"skew": 93600000, "trust": "carried", "unanchored": 3600000, "lang": "en", "line": "Clock is wrong (26 h ahead)"},

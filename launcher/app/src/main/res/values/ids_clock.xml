@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- ClockFormat.bindTrusted: the face's pending refresh while it shows the decisions' time. -->
+    <item name="trusted_clock_refresh" type="id" />
+</resources>

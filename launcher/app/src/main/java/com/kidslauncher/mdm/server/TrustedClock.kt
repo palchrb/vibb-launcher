@@ -120,7 +120,11 @@ object TrustedClock {
                     e0Ms = e0,
                     e1Ms = e1,
                     bootCount = BootClock.bootCount(),
-                    trustedConnection = anchorConnection(pinConnection(path, response.handshake), com.kidslauncher.mdm.BuildConfig.DEBUG),
+                    trustedConnection = anchorConnection(
+                        pinConnection(path, response.handshake),
+                        com.kidslauncher.mdm.BuildConfig.DEBUG,
+                        pinsEnforced = ServerPinStore.enforce(),
+                    ),
                     clockOff = response.header(CLOCK_HEADER) == "off",
                 )
                 anchor?.let(::offer)
@@ -131,10 +135,17 @@ object TrustedClock {
         response
     }
 
-    /** The satellite time, when a location fix gave one (it throws until then): after a location request and each
-     * sync. */
-    fun readGnss() {
+    /** A checked time from the location hardware, when a fix gave one (it throws until then): after a location request
+     * and each sync. Never while the last such fix is a made-up one (a mock location app), nor when it can't be read. */
+    @android.annotation.SuppressLint("MissingPermission")
+    fun readGnss(context: Context) {
         try {
+            val granted = androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.ACCESS_FINE_LOCATION) ==
+                android.content.pm.PackageManager.PERMISSION_GRANTED
+            if (!granted) return
+            val last = context.getSystemService(android.location.LocationManager::class.java)
+                ?.getLastKnownLocation(android.location.LocationManager.GPS_PROVIDER)
+            if (last == null || last.isMock) return
             val gnss = SystemClock.currentGnssTimeClock().millis()
             offer(ClockAnchor(ClockTrust.GNSS.wire, gnss, SystemClock.elapsedRealtime(), BootClock.bootCount()))
         } catch (e: java.time.DateTimeException) {
@@ -162,7 +173,17 @@ object TrustedClock {
     /** The wall clock was set (`TIME_SET`): only the offset changes; a change over five minutes asks for a sync, for a
      * fresh anchor and the parent's report. */
     fun onTimeSet(context: Context) {
-        val before = synchronized(this) { app?.let { load(it).checkpointSkewMs } } ?: return
+        val before = synchronized(this) {
+            val app = app ?: return
+            val state = load(app)
+            // A carried time that started behind the checkpoint takes the boot's first forward set (the clock lost its
+            // time while off, and automatic time puts it right).
+            timeSetAnchor(state, System.currentTimeMillis(), SystemClock.elapsedRealtime(), BootClock.bootCount())?.let {
+                Log.i(LOG_TAG, "The carried time follows the wall clock's first set in this boot")
+                save(app, it)
+            }
+            state.checkpointSkewMs
+        }
         val skew = skewMs()
         checkpoint(force = true)
         if (skewChangeAsksSync(before, skew)) {

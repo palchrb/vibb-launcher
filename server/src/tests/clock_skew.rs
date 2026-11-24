@@ -191,7 +191,12 @@ async fn a_fix_is_stored_from_its_age() {
         "{rows:?}"
     );
 
-    // A fix off the Earth: refused, counted, said.
+    // A fix off the Earth a minute later: refused, counted, said (a fix stored in the refusal's own second clears it).
+    sqlx::query("UPDATE device_locations SET received_at = datetime('now', '-1 minute') WHERE device_id = ?")
+        .bind(anna)
+        .execute(&app.db)
+        .await
+        .unwrap();
     let bad = json!({"latitude": 95.0, "longitude": 10.75, "captured_at": ahead, "age_ms": 0});
     let res = app
         .request(

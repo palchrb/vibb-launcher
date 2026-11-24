@@ -101,12 +101,18 @@ impl TimeReport {
     }
 
     /// The one line about the phone's clock, if any (`clock_skew::problem`).
+    /// While this server's own clock is off the phones take no time from it, so their unchecked time is the server's
+    /// line (Software Updates), never the phone's.
     pub fn clock_problem(&self) -> Option<crate::clock_skew::ClockProblem> {
         crate::clock_skew::problem(
             self.clock_skew_ms,
             self.clock_trust.as_deref(),
             self.unanchored_ms,
         )
+        .filter(|p| {
+            !(matches!(p, crate::clock_skew::ClockProblem::Unchecked(_))
+                && crate::clock_skew::server_clock_off())
+        })
     }
 
     /// A report without `time_state`: only `device_status.lock_reason`.

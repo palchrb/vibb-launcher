@@ -10,7 +10,7 @@
 //! clock ([observe_date]); past [SERVER_OFF_AFTER_MS] the Software Updates page says so and every phone answer
 //! carries `Vibb-Clock: off` ([CLOCK_HEADER]), which a phone never takes as its time.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use chrono::{DateTime, Utc};
 
@@ -64,7 +64,7 @@ pub fn problem(
     if trust.is_none_or(|t| t == "none") {
         return None;
     }
-    if let Some(skew) = skew_ms.filter(|s| s.abs() > WRONG_AFTER_MS) {
+    if let Some(skew) = skew_ms.filter(|s| s.abs() >= WRONG_AFTER_MS) {
         return Some(ClockProblem::Wrong(skew));
     }
     unanchored_ms
@@ -114,11 +114,15 @@ impl ClockProblem {
     }
 }
 
-/// The server's own clock is off ([observe_date]), in memory: a restart checks again.
-static SERVER_OFF: AtomicBool = AtomicBool::new(false);
+/// The server's own clock against an outside answer ([observe_date]), in memory: 0 unknown (no check yet, or the
+/// last check failed - never said as wrong), 1 right, 2 off. A restart checks again.
+static SERVER_CLOCK: AtomicU8 = AtomicU8::new(0);
 
 /// The server's clock is off past this against an outside answer's `Date`.
 pub const SERVER_OFF_AFTER_MS: i64 = 2 * 60_000;
+
+/// How often the server checks its clock ([run_check]).
+pub const CHECK_EVERY: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 
 /// The header a phone answer carries while the server's clock is off.
 pub const CLOCK_HEADER: &str = "vibb-clock";
@@ -128,27 +132,62 @@ pub fn server_off(date: DateTime<Utc>, now: DateTime<Utc>) -> bool {
     (now - date).num_milliseconds().abs() > SERVER_OFF_AFTER_MS
 }
 
-/// An outside answer's `Date` header (RFC 2822 / HTTP-date) against this machine's clock; an answer without one
-/// changes nothing. No check yet counts as fine.
+/// The clock's state from one check: `Date`'s text (RFC 2822 / HTTP-date) received at `now`, `None` for a check that
+/// failed or an answer without one - unknown, never off.
+pub fn judged(header: Option<&str>, now: DateTime<Utc>) -> u8 {
+    match header.and_then(|h| DateTime::parse_from_rfc2822(h.trim()).ok()) {
+        Some(date) if server_off(date.with_timezone(&Utc), now) => 2,
+        Some(_) => 1,
+        None => 0,
+    }
+}
+
+/// One check's answer (`None`: it failed) against this machine's clock.
 pub fn observe_date(header: Option<&str>) {
-    let Some(date) = header.and_then(|h| DateTime::parse_from_rfc2822(h.trim()).ok()) else {
-        return;
-    };
-    let off = server_off(date.with_timezone(&Utc), Utc::now());
-    if off != SERVER_OFF.swap(off, Ordering::Relaxed) {
-        if off {
-            tracing::warn!(
+    let state = judged(header, Utc::now());
+    let before = SERVER_CLOCK.swap(state, Ordering::Relaxed);
+    if state != before {
+        match state {
+            2 => tracing::warn!(
                 "this server's clock is off against GitHub's: phones won't take its time"
-            );
-        } else {
-            tracing::info!("this server's clock agrees with GitHub's again");
+            ),
+            1 => tracing::info!("this server's clock agrees with GitHub's"),
+            _ => tracing::info!("this server's clock can't be checked now"),
         }
     }
 }
 
-/// The server's clock was off at the last check.
+/// The server's clock was off at the last check that worked.
 pub fn server_clock_off() -> bool {
-    SERVER_OFF.load(Ordering::Relaxed)
+    SERVER_CLOCK.load(Ordering::Relaxed) == 2
+}
+
+/// Checks the server's clock at the start and every [CHECK_EVERY]: a `HEAD` to GitHub's API, its `Date` against this
+/// machine's clock (a failure is unknown). Started by `main`, never by the tests.
+pub async fn run_check(api: String) {
+    let client = match reqwest::Client::builder()
+        .user_agent(crate::net::USER_AGENT)
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+    {
+        Ok(client) => client,
+        Err(err) => {
+            tracing::error!(%err, "no client for the server's clock check");
+            return;
+        }
+    };
+    loop {
+        let date = match client.head(&api).send().await {
+            Ok(answer) => answer
+                .headers()
+                .get(reqwest::header::DATE)
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_string),
+            Err(_) => None,
+        };
+        observe_date(date.as_deref());
+        tokio::time::sleep(CHECK_EVERY).await;
+    }
 }
 
 /// Adds `Vibb-Clock: off` to a phone answer while the server's clock is off.
@@ -177,5 +216,9 @@ mod tests {
         assert!(!server_off(now - chrono::Duration::seconds(90), now));
         assert!(server_off(now - chrono::Duration::minutes(3), now));
         assert!(server_off(now + chrono::Duration::minutes(3), now));
+        assert_eq!(judged(None, now), 0, "a failed check is unknown, never off");
+        assert_eq!(judged(Some("not a date"), now), 0);
+        assert_eq!(judged(Some("Tue, 24 Nov 2026 10:00:30 GMT"), now), 1);
+        assert_eq!(judged(Some("Tue, 24 Nov 2026 10:05:00 GMT"), now), 2);
     }
 }

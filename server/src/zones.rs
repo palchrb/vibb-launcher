@@ -423,8 +423,11 @@ pub async fn forget_sides(db: &sqlx::SqlitePool, device_id: i64) -> Result<(), s
 
 /// One fix of the phone: the device `?1`, the place `?2`/`?3`, and the time the phone named - the stored `?5` plus
 /// the offset `?8` - within a second of a row's own (an older row without an offset: its time alone).
-const SAME_FIX: &str = "device_id = ?1 AND latitude = ?2 AND longitude = ?3 AND (captured_at = ?5 OR \
-    abs((julianday(captured_at) - julianday(?5)) * 86400000.0 + coalesce(phone_offset_ms, 0) - coalesce(?8, 0)) \
+/// The time window keeps the search on the index of `(device_id, captured_at)`: a re-sent fix is stored within a few
+/// milliseconds of its first time.
+const SAME_FIX: &str = "device_id = ?1 AND captured_at BETWEEN strftime('%Y-%m-%dT%H:%M:%fZ', ?5, '-10 minutes') \
+    AND strftime('%Y-%m-%dT%H:%M:%fZ', ?5, '+10 minutes') AND latitude = ?2 AND longitude = ?3 AND (captured_at = ?5 \
+    OR abs((julianday(captured_at) - julianday(?5)) * 86400000.0 + coalesce(phone_offset_ms, 0) - coalesce(?8, 0)) \
     < 1000)";
 
 /// Stores the fix once: `Some(id)` for a new row, `None` when the phone has it already (the same
@@ -976,12 +979,12 @@ pub async fn count_refused(db: &sqlx::SqlitePool, device_id: i64, refused: usize
 }
 
 /// The Locate page's "Position refused": a fix was refused after the newest one stored was received (or none is
-/// stored).
+/// stored), compared to the second (`received_at` has none finer): a fix stored in the refusal's second clears it.
 pub async fn fix_refused(db: &sqlx::SqlitePool, device_id: i64) -> bool {
     sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM devices d WHERE d.id = ?1 AND d.fix_dropped_at IS NOT NULL AND NOT EXISTS \
          (SELECT 1 FROM device_locations l WHERE l.device_id = ?1 \
-          AND julianday(l.received_at) >= julianday(d.fix_dropped_at))",
+          AND CAST(strftime('%s', l.received_at) AS INTEGER) >= CAST(strftime('%s', d.fix_dropped_at) AS INTEGER))",
     )
     .bind(device_id)
     .fetch_one(db)

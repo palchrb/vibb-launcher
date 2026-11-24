@@ -49,7 +49,7 @@ class TrustedClockTest {
         }
         for (row in rows("connections")) {
             assertEquals(row.toString(), row["anchors"]!!.jsonPrimitive.boolean,
-                anchorConnection(PinConnection.valueOf(row.string("connection")), row["debug"]!!.jsonPrimitive.boolean))
+                anchorConnection(PinConnection.valueOf(row.string("connection")), row["debug"]!!.jsonPrimitive.boolean, row["enforced"]!!.jsonPrimitive.boolean))
         }
     }
 
@@ -75,6 +75,24 @@ class TrustedClockTest {
             assertEquals(note, row.long("lastStrong"), taken.state.lastStrongMs)
             assertNotNull(note, taken.state.checkpointMs)
         }
+    }
+
+    @Test
+    fun `a clock that lost its time takes the boot's first forward set`() {
+        for (row in rows("time_set")) {
+            val next = timeSetAnchor(state(row), row.long("wall"), row.long("elapsed"), row.int("boot"))
+            val want = row.longOrNull("anchor")
+            assertEquals(row.string("note"), want, next?.anchor?.ms)
+            next?.let {
+                assertEquals(row.string("note"), "carried", it.anchor!!.kind)
+                assertEquals(row.string("note"), false, it.carriedOpen)
+                assertNull("only the first set", timeSetAnchor(it, row.long("wall") + 3_600_000, row.long("elapsed") + 1, row.int("boot")))
+            }
+        }
+        // The read that carries over a reboot opens it only when the wall clock is behind the checkpoint.
+        val before = TrustedClockState(ClockAnchor("server", 1_764_000_000_000, 5_000_000, 7), checkpointMs = 1_764_000_000_000)
+        assertEquals(true, readClock(before, 1_000_000_000_000, 9_000, 8).state!!.carriedOpen)
+        assertEquals(false, readClock(before, 1_764_000_100_000, 9_000, 8).state!!.carriedOpen)
     }
 
     @Test

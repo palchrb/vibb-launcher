@@ -251,7 +251,7 @@ object LocateCommands {
             saveCachedFix(context, fresh)
         }
         // A location request may have given the satellite time: an anchor for the decisions' clock.
-        TrustedClock.readGnss()
+        TrustedClock.readGnss(context)
         return fresh ?: loadCachedFix()?.takeIf(reportable)
     }
 

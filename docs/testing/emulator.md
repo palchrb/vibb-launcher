@@ -5186,7 +5186,9 @@ sqlite3 data/kidphone.db "SELECT time_state_json FROM device_status WHERE device
 | (c) Update Location: the fix stored at the server's time (`device_locations.captured_at`, `phone_offset_ms` about +26 h) | owed | owed |
 | (d) The PWA: Device › Time's "Klokken går feil (26 t foran)" in nb and "Clock is wrong (26 h ahead)" in en, the summary's Attention row, the Devices list's badge | owed | owed |
 | (e) Again at -5 h: (a), (c), (d) "5 t bak" | owed | owed |
-| (f) The clock at +26 h before Vibb's first read after a reboot: carried at +26 h, corrected by a location fix (`adb emu geo fix`) and then by the server; the ledger's reset taken back | owed | owed |
+| (f) The clock at +26 h before Vibb's first read after a reboot: carried at +26 h, corrected by a checked time and then by the server; the ledger's reset taken back | owed | owed |
+| (j) A clock that lost its time while off (behind the last checkpoint at boot): automatic time's first set is taken; offline, the rules follow the right time | owed | owed |
+| (k) A server whose certificate isn't in the built-in set (the check not enforced): its answers anchor, no "Tiden er ikke sjekket" line | owed | owed |
 | (g) Undo: the clock right again, the line gone, nothing jumps (rules, budget, the alarm) | owed | owed |
 | (h) On 14: `canScheduleExactAlarms()` true with `USE_EXACT_ALARM`; the elapsed boundary alarm fires in Doze (`dumpsys deviceidle force-idle`) | owed | - |
 | (i) Another time zone (`adb shell service call alarm 3 s16 Asia/Tokyo` with automatic zone off for the test): rules follow local time; Device › Time's quiet "Telefonens tidssone: Asia/Tokyo" | owed | owed |

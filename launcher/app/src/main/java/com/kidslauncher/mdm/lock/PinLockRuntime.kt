@@ -2145,7 +2145,8 @@ object PinLockRuntime {
         data object Unusable : PinResult
     }
 
-    private fun clocks() = LockClocks(System.currentTimeMillis(), SystemClock.elapsedRealtime(), BootClock.bootCount())
+    // The backoff on the decisions' clock (time rules keep their own clock), as the parent code's lockout.
+    private fun clocks() = LockClocks(com.kidslauncher.mdm.server.TrustedClock.nowMs(), SystemClock.elapsedRealtime(), BootClock.bootCount())
 
     /** The time left of the wrong-PIN wait (0 = none). Background thread (commit). */
     @Synchronized

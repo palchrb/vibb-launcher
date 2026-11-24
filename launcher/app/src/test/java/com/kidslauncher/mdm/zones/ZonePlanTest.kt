@@ -661,7 +661,7 @@ class ZonePlanTest {
         assertTrue(sync.contains("val lastFreshQueued = if (motionNow != null && action.fresh) LocateCommands.cachedQueued()?.takeIf { it.timeMs == lastFreshFix } else null"))
         // Design 125 D15: only a satellite fix vouches, and a learned fix never contradicts.
         assertTrue(sync.contains("val vouched = lastFreshQueued?.takeIf { motion == Motion.STILL && it.provider in VOUCHING_PROVIDERS }"))
-        assertTrue(sync.contains("if (held && fresh != null && satellite && motionContradiction(vouched, fresh.toQueued())) ZoneWatch.noteContradiction(context, now)"))
+        assertTrue(sync.contains("if (held && fresh != null && satellite && motionContradiction(vouched, fresh.toQueued())) ZoneWatch.noteContradiction(context)"))
         assertTrue(sync.contains("private val VOUCHING_PROVIDERS = setOf(\"gps\", \"fused\")"))
         assertTrue(watch.contains("motionSensor = MotionGate.hasSensor(app) && motionTrusted(app),"))
         // D4: no anchor is moved; the anchor's end disarms and marks it (QA L3), and Off marks it.

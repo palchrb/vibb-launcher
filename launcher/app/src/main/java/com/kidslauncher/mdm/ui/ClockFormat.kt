@@ -215,8 +215,6 @@ object ClockFormat {
      */
     fun bind(clock: TextClock) = bindTrusted(clock, timePattern(clock.context))
 
-    /** The refresh each face showing the decisions' time waits on ([bindTrusted]). */
-    private val refreshes = java.util.WeakHashMap<TextClock, Runnable>()
 
     /**
      * Sets [clock]'s [pattern] - or, while the phone's own clock is more than five minutes off the time its decisions use
@@ -237,10 +235,12 @@ object ClockFormat {
         }
         if (clock.format24Hour?.toString() != shown) clock.format24Hour = shown
         if (clock.format12Hour?.toString() != shown) clock.format12Hour = shown
-        refreshes.remove(clock)?.let { clock.removeCallbacks(it) }
+        // The pending refresh lives in the view's own tag, so it goes with the view.
+        (clock.getTag(com.kidslauncher.mdm.R.id.trusted_clock_refresh) as? Runnable)?.let { clock.removeCallbacks(it) }
+        clock.setTag(com.kidslauncher.mdm.R.id.trusted_clock_refresh, null)
         if (trusted) {
             val refresh = Runnable { bindTrusted(clock, pattern) }
-            refreshes[clock] = refresh
+            clock.setTag(com.kidslauncher.mdm.R.id.trusted_clock_refresh, refresh)
             clock.postDelayed(refresh, 60_000L - com.kidslauncher.mdm.server.TrustedClock.nowMs() % 60_000L + 50L)
         }
     }

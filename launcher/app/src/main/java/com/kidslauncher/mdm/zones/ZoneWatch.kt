@@ -269,16 +269,18 @@ object ZoneWatch {
 
     /** The motion sensor isn't distrusted ([motionDistrusted]); true on any error. */
     fun motionTrusted(context: Context): Boolean = try {
-        !motionDistrusted(prefs(context).getLong(KEY_DISTRUST_UNTIL, 0L), System.currentTimeMillis())
+        !motionDistrusted(prefs(context).getLong(KEY_DISTRUST_UNTIL, 0L), com.kidslauncher.mdm.server.TrustedClock.nowMs())
     } catch (e: Exception) {
         true
     }
 
     /** A fresh fix contradicted the sensor ([motionContradiction]): kept with the last 7 days', and
      * at the second the sensor is distrusted for 7 days ([trustAfterContradiction]) - `motion_sensor:
-     * false` in the report, every due beat fixes. Kept across a new enrollment: it is the hardware's. */
+     * false` in the report, every due beat fixes. Kept across a new enrollment: it is the hardware's. On the decisions'
+     * clock, as [motionTrusted] reads it. */
     @Synchronized
-    fun noteContradiction(context: Context, nowMs: Long) {
+    fun noteContradiction(context: Context) {
+        val nowMs = com.kidslauncher.mdm.server.TrustedClock.nowMs()
         val p = prefs(context)
         val recent = try {
             p.getString(KEY_CONTRADICTIONS, null)?.let { ServerJson.decodeFromString(instantsSerializer, it) }.orEmpty()
@@ -297,7 +299,7 @@ object ZoneWatch {
 
     // --- The series' daily budget (F-2) ---
 
-    private fun today(): String = java.time.LocalDate.now().toString()
+    private fun today(): String = com.kidslauncher.mdm.server.TrustedClock.localNow().toLocalDate().toString()
 
     @Synchronized
     private fun budget(context: Context): CheckBudget? = try {

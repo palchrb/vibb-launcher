@@ -48,6 +48,11 @@ data class TrustedClockState(
     val checkpointSkewMs: Long = 0,
     val lastStrongMs: Long? = null,
     val reportedSkewMs: Long? = null,
+    /** The last satellite anchor (any boot; only this boot's counts): a server anchor too far from it is refused. */
+    val gnss: ClockAnchor? = null,
+    /** The carried anchor of this boot started behind the checkpoint (the wall clock was behind it: a clock that lost
+     * its time while off): the boot's first forward wall-clock set is taken once ([timeSetAnchor]). */
+    val carriedOpen: Boolean = false,
 )
 
 /** The time now ([ms]) and how it is known ([trust]); [state] is the state to keep when it changed (a carried anchor
@@ -94,9 +99,27 @@ fun readClock(state: TrustedClockState, wallMs: Long, elapsedMs: Long, bootCount
         return ClockRead(anchoredMs(anchor, elapsedMs), anchor.trust, null)
     }
     val checkpoint = state.checkpointMs ?: return ClockRead(wallMs, ClockTrust.NONE, null)
-    val carried = maxOf(wallMs - state.checkpointSkewMs, checkpoint)
-    val next = state.copy(anchor = ClockAnchor(ClockTrust.CARRIED.wire, carried, elapsedMs, bootCount))
+    val fromWall = wallMs - state.checkpointSkewMs
+    val carried = maxOf(fromWall, checkpoint)
+    val next = state.copy(
+        anchor = ClockAnchor(ClockTrust.CARRIED.wire, carried, elapsedMs, bootCount),
+        carriedOpen = fromWall < checkpoint,
+    )
     return ClockRead(carried, ClockTrust.CARRIED, next)
+}
+
+/**
+ * A wall-clock set (`TIME_SET`) on a carried time that started behind the checkpoint ([TrustedClockState.carriedOpen]):
+ * the clock lost its time while the phone was off, and automatic time is putting it right. The boot's first set that
+ * moves the time forward is taken - `wall - last offset` as the new carried anchor - and the carried time is then fixed
+ * for the boot. Anything else (another trust, a set backwards, a second set) changes nothing: `null`.
+ */
+fun timeSetAnchor(state: TrustedClockState, wallMs: Long, elapsedMs: Long, bootCount: Int): TrustedClockState? {
+    val anchor = state.anchor ?: return null
+    if (!state.carriedOpen || anchor.trust != ClockTrust.CARRIED || !anchorInBoot(anchor, elapsedMs, bootCount)) return null
+    val fromWall = wallMs - state.checkpointSkewMs
+    if (fromWall <= anchoredMs(anchor, elapsedMs)) return null
+    return state.copy(anchor = ClockAnchor(ClockTrust.CARRIED.wire, fromWall, elapsedMs, bootCount), carriedOpen = false)
 }
 
 /**
@@ -119,13 +142,18 @@ fun serverAnchor(
     return ClockAnchor(ClockTrust.SERVER.wire, dateMs + DATE_RESOLUTION_HALF_MS + rtt / 2, e1Ms, bootCount)
 }
 
-/** A connection whose answers may anchor: TLS that passes the built-in check, the tailnet, or a debug build's
- * plain http to the emulator's host (never in a release build). */
-fun anchorConnection(connection: PinConnection, debug: Boolean): Boolean = when (connection) {
+/** A connection whose answers may anchor: TLS that passes the built-in check, the tailnet, TLS Android validated while
+ * the phone's certificate check isn't enforced ([pinsEnforced] false: a server whose issuer isn't in the built-in set,
+ * or the parent's off - with it on, such a connection never gets this far), or a debug build's plain http to the
+ * emulator's host (never in a release build). */
+fun anchorConnection(connection: PinConnection, debug: Boolean, pinsEnforced: Boolean): Boolean = when (connection) {
     PinConnection.PASSED, PinConnection.TAILNET -> true
     PinConnection.NONE -> debug
-    PinConnection.FAILED -> false
+    PinConnection.FAILED -> !pinsEnforced
 }
+
+/** A server anchor and this boot's satellite one further apart than this: the server's is refused. */
+const val SERVER_GNSS_MAX_APART_MS = 2 * 60_000L
 
 /** [taken] the state with [anchor] considered; [disagreementMs] how far it is from the anchor in force (null without
  * one), for the log. */
@@ -134,11 +162,18 @@ data class AnchorTaken(val state: TrustedClockState, val taken: Boolean, val dis
 /**
  * Considers a new [anchor] (taken at its own elapsed time). It replaces the one in force when that one is from another
  * boot, or is of the same or a weaker kind; a weaker one is only compared. A server or satellite anchor, taken or not,
- * marks the time as checked ([TrustedClockState.lastStrongMs]). The checkpoint follows.
+ * marks the time as checked ([TrustedClockState.lastStrongMs]). The checkpoint follows. A server anchor more than
+ * [SERVER_GNSS_MAX_APART_MS] from this boot's satellite anchor is refused outright: nothing changes.
  */
 fun takeAnchor(state: TrustedClockState, anchor: ClockAnchor, wallMs: Long, elapsedMs: Long, bootCount: Int): AnchorTaken {
     val current = state.anchor?.takeIf { anchorInBoot(it, elapsedMs, bootCount) }
     val disagreement = current?.let { anchoredMs(it, anchor.elapsedMs) - anchor.ms }
+    val gnss = state.gnss?.takeIf { anchorInBoot(it, anchor.elapsedMs, bootCount) }
+    if (anchor.trust == ClockTrust.SERVER && gnss != null &&
+        kotlin.math.abs(anchoredMs(gnss, anchor.elapsedMs) - anchor.ms) > SERVER_GNSS_MAX_APART_MS
+    ) {
+        return AnchorTaken(state, false, disagreement)
+    }
     val replace = current == null || anchor.trust.rank >= current.trust.rank
     val inForce = if (replace) anchor else current!!
     val nowMs = anchoredMs(inForce, elapsedMs)
@@ -148,6 +183,8 @@ fun takeAnchor(state: TrustedClockState, anchor: ClockAnchor, wallMs: Long, elap
         checkpointMs = nowMs,
         checkpointSkewMs = wallMs - nowMs,
         lastStrongMs = if (strong) nowMs else state.lastStrongMs,
+        gnss = if (anchor.trust == ClockTrust.GNSS) anchor else state.gnss,
+        carriedOpen = state.carriedOpen && !replace,
     )
     return AnchorTaken(next, replace, disagreement)
 }

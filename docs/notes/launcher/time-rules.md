@@ -193,14 +193,18 @@ Decisions use the server's time. `server/TrustedClock.kt` (pure rules in `Truste
 parent-PIN lockout and the boundary alarm read: `TimeRulesRuntime.clocks()` is `TrustedClock.clocks()`, whose `wallMs` is
 the trusted time and `trust` how it is known (`server`, `gnss`, `carried`, `none`).
 - **Anchors.** A server answer's `Date` (2xx or 304 through `createMdmApi`'s client, over a connection that passes the
-  certificate check or the tailnet; a debug build's plain http too), at the middle of the round trip plus half a second;
-  none after a round trip over 30 s or with `Vibb-Clock: off`. A location fix's own time
-  after each location request and at each sync's start. A stronger or newer anchor replaces the one in force.
+  certificate check, the tailnet, or TLS Android validated while the check isn't enforced - a server whose issuer isn't
+  in the built-in set, or the parent's off -; a debug build's plain http too), at the middle of the round trip plus half
+  a second; none after a round trip over 30 s or with `Vibb-Clock: off`. Another checked time when the phone has one (a
+  made-up location never counts); a server answer far from it in the same boot isn't taken. A stronger or newer anchor
+  replaces the one in force.
 - **Within a boot** the time is the anchor plus elapsed realtime: a wall clock set in the boot moves nothing.
 - **Across a reboot** (another `BOOT_COUNT`, or elapsed behind the anchor) the first read (`Application.onCreate`, direct
   boot: device-protected prefs `trusted_clock`) makes a `carried` anchor: `max(wall - last offset, last checkpoint)`. The
   checkpoint (trusted time and the wall clock's offset) is kept at the snapshots, at most once a minute, and at
-  `ACTION_SHUTDOWN`. A phone never anchored (before its first sync) reads the wall clock.
+  `ACTION_SHUTDOWN`. A phone never anchored (before its first sync) reads the wall clock. When the wall clock at that first
+  read is behind the checkpoint (a clock that lost its time while off), the boot's first forward wall-clock set is taken
+  once (`timeSetAnchor`), so automatic time putting it right isn't ignored.
 - **The ledger** (`ScreenTime.observe` with a trust other than `none`) follows the trusted day; a reset on a `carried` time
   keeps the day it replaced (`previous`), and the next `server`/`gnss` time that puts now in that day brings it back with
   its minutes and those used since. A reboot offline never locks the kid out; a clock moved before it never refills the
@@ -208,9 +212,12 @@ the trusted time and `trust` how it is known (`server`, `gnss`, `carried`, `none
 - **The alarm** (`TimeRuleAlarm`) is `ELAPSED_REALTIME_WAKEUP`: each edge converted with its own clock, the minimum taken
   after, a second late, floored to now plus a second (`alarmDeadline`).
 - **Windows on the wall clock** bounded by elapsed realtime stay as they were (the override, the pause, install mode: they
-  fail closed); their ends are moved onto the trusted clock for the alarm. Android's own stamps compared with Android's
-  clock (the call log, a package's install time) stay on the wall clock. `TrustedClockScanTest` lists every wall-clock
-  read left in `timerules/ calls/ zones/ play/ assistant/ logins/` and the server files that decide, and fails on a new one.
+  fail closed); their ends are moved onto the trusted clock for the alarm. The callback window, the last emergency call
+  and Flymodus's emergency check are kept on Android's clock because the call log is stamped by it; a package's install
+  time likewise (the update fence). The motion sensor's distrust, the zone series' daily budget, the refused login hosts
+  and the legacy lock's backoff are on the trusted clock. `TrustedClockScanTest` pins every wall-clock read left in
+  `timerules/ calls/ zones/ play/ assistant/ logins/ lock/` and the server files that decide by its line, and fails on a
+  new or changed one.
 - **The report** (`time_state`): `clock_skew_ms` (wall minus trusted: 0 within five minutes, then five-minute steps that
   change only a minute past a step's edge, so the heartbeat's hash stays), `clock_trust`, `unanchored_ms` (since the last
   `server`/`gnss` anchor, whole hours). `TIME_SET` re-checks the offset and asks for a sync when it moved over five minutes.

@@ -8,11 +8,12 @@
     {"note": "a round trip over 30 s", "date": 1764000000000, "e0": 1000, "e1": 31001, "trusted": true, "off": false, "anchor": null}
   ],
   "connections": [
-    {"connection": "PASSED", "debug": false, "anchors": true},
-    {"connection": "TAILNET", "debug": false, "anchors": true},
-    {"connection": "FAILED", "debug": true, "anchors": false},
-    {"connection": "NONE", "debug": false, "anchors": false},
-    {"connection": "NONE", "debug": true, "anchors": true}
+    {"connection": "PASSED", "debug": false, "enforced": true, "anchors": true},
+    {"connection": "TAILNET", "debug": false, "enforced": false, "anchors": true},
+    {"connection": "FAILED", "debug": true, "enforced": true, "anchors": false},
+    {"connection": "FAILED", "debug": false, "enforced": false, "anchors": true},
+    {"connection": "NONE", "debug": false, "enforced": false, "anchors": false},
+    {"connection": "NONE", "debug": true, "enforced": false, "anchors": true}
   ],
   "read": [
     {"note": "never anchored: the wall clock", "state": {}, "wall": 5000000, "elapsed": 100, "boot": 7, "ms": 5000000, "trust": "none", "carried": false},
@@ -31,7 +32,16 @@
     {"note": "server replaces gnss", "state": {"anchor": {"kind": "gnss", "ms": 1000000, "elapsedMs": 100, "bootCount": 3}}, "anchor": {"kind": "server", "ms": 900000, "elapsedMs": 200, "bootCount": 3}, "wall": 1000000, "elapsed": 200, "boot": 3, "inForce": "server", "lastStrong": 900000},
     {"note": "gnss replaces carried", "state": {"anchor": {"kind": "carried", "ms": 94600000, "elapsedMs": 100, "bootCount": 3}, "lastStrong": 500}, "anchor": {"kind": "gnss", "ms": 1000000, "elapsedMs": 200, "bootCount": 3}, "wall": 94600100, "elapsed": 200, "boot": 3, "inForce": "gnss", "lastStrong": 1000000},
     {"note": "a newer server anchor replaces the older", "state": {"anchor": {"kind": "server", "ms": 1000000, "elapsedMs": 100, "bootCount": 3}}, "anchor": {"kind": "server", "ms": 1000500, "elapsedMs": 200, "bootCount": 3}, "wall": 1000000, "elapsed": 200, "boot": 3, "inForce": "server", "lastStrong": 1000500},
-    {"note": "an anchor of another boot is replaced by anything", "state": {"anchor": {"kind": "server", "ms": 1000000, "elapsedMs": 100, "bootCount": 2}}, "anchor": {"kind": "gnss", "ms": 2000000, "elapsedMs": 50, "bootCount": 3}, "wall": 2000000, "elapsed": 50, "boot": 3, "inForce": "gnss", "lastStrong": 2000000}
+    {"note": "an anchor of another boot is replaced by anything", "state": {"anchor": {"kind": "server", "ms": 1000000, "elapsedMs": 100, "bootCount": 2}}, "anchor": {"kind": "gnss", "ms": 2000000, "elapsedMs": 50, "bootCount": 3}, "wall": 2000000, "elapsed": 50, "boot": 3, "inForce": "gnss", "lastStrong": 2000000},
+    {"note": "a server anchor within 2 min of this boot's satellite one is taken", "state": {"anchor": {"kind": "gnss", "ms": 1000000, "elapsedMs": 100, "bootCount": 3}, "gnss": {"kind": "gnss", "ms": 1000000, "elapsedMs": 100, "bootCount": 3}}, "anchor": {"kind": "server", "ms": 1120100, "elapsedMs": 200, "bootCount": 3}, "wall": 1000000, "elapsed": 200, "boot": 3, "inForce": "server", "lastStrong": 1120100},
+    {"note": "a server anchor over 2 min from this boot's satellite one is refused", "state": {"anchor": {"kind": "gnss", "ms": 1000000, "elapsedMs": 100, "bootCount": 3}, "gnss": {"kind": "gnss", "ms": 1000000, "elapsedMs": 100, "bootCount": 3}, "checkpointMs": 1000000, "lastStrongMs": 1000000}, "anchor": {"kind": "server", "ms": 94600100, "elapsedMs": 200, "bootCount": 3}, "wall": 1000000, "elapsed": 200, "boot": 3, "inForce": "gnss", "lastStrong": 1000000},
+    {"note": "a satellite anchor of another boot doesn't stop a server one", "state": {"gnss": {"kind": "gnss", "ms": 1000000, "elapsedMs": 100, "bootCount": 2}}, "anchor": {"kind": "server", "ms": 94600100, "elapsedMs": 200, "bootCount": 3}, "wall": 1000000, "elapsed": 200, "boot": 3, "inForce": "server", "lastStrong": 94600100}
+  ],
+  "time_set": [
+    {"note": "a clock that lost its time: the first forward set is taken", "state": {"anchor": {"kind": "carried", "ms": 1764000000000, "elapsedMs": 9000, "bootCount": 8}, "checkpointMs": 1764000000000, "checkpointSkewMs": 0, "carriedOpen": true}, "wall": 1764043200000, "elapsed": 69000, "boot": 8, "anchor": 1764043200000},
+    {"note": "a set backwards: nothing", "state": {"anchor": {"kind": "carried", "ms": 1764000000000, "elapsedMs": 9000, "bootCount": 8}, "checkpointMs": 1764000000000, "checkpointSkewMs": 0, "carriedOpen": true}, "wall": 1763990000000, "elapsed": 69000, "boot": 8, "anchor": null},
+    {"note": "a carried time that didn't start behind the checkpoint: nothing", "state": {"anchor": {"kind": "carried", "ms": 1764000000000, "elapsedMs": 9000, "bootCount": 8}, "checkpointMs": 1764000000000, "checkpointSkewMs": 0, "carriedOpen": false}, "wall": 1764043200000, "elapsed": 69000, "boot": 8, "anchor": null},
+    {"note": "a checked time: nothing", "state": {"anchor": {"kind": "server", "ms": 1764000000000, "elapsedMs": 9000, "bootCount": 8}, "checkpointMs": 1764000000000, "checkpointSkewMs": 0, "carriedOpen": true}, "wall": 1764043200000, "elapsed": 69000, "boot": 8, "anchor": null}
   ],
   "alarm": [
     {"note": "one edge, a second late", "edges": [{"edge": 1000000, "now": 940000}], "elapsed": 5000, "deadline": 66000},
