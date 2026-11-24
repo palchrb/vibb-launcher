@@ -95,8 +95,11 @@ The server's Apple Wi-Fi lookup (`server/src/integrations/wifi_lookup/codec.rs`,
 and answer format of Apple's Wi-Fi location service - the binary header, `ALSLocationRequest`/`ALSLocationResponse`, the
 macOS `locationd` meta and headers, the leading-zero `mac_id` normalisation and the unknown latitude - from
 [GrapheneOS NetworkLocation](https://github.com/GrapheneOS/platform_packages_apps_NetworkLocation) (branch 17, commit
-`474472e`: `proto/apple_wps.proto`, `ApplePositioningService.kt`, `AppleWifiPositioningService.kt`), and
-`scripts/wifi-lookup-fixtures.py` encodes the same request independently. Both files carry this notice:
+`474472e`: `proto/apple_wps.proto`, `ApplePositioningService.kt`, `AppleWifiPositioningService.kt`; for the cell lookup,
+design 125b, also `cell/AppleCellPositioningService.kt`, `cell/CellTowerScanner.kt`, `cell/CellPositioningServiceCache.kt`
+and `LocationReportingTask.kt`'s cell estimate - in `server/src/integrations/wifi_lookup/cells.rs` and the launcher's
+`places/CellPlan.kt`), and
+`scripts/wifi-lookup-fixtures.py` encodes the same requests independently. The ported files carry this notice or point to it:
 
 > Copyright © 2024-2025 GrapheneOS
 >

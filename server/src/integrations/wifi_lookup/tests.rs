@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 use tokio::time::Instant;
 
 use super::cache::{self, CacheKey, Cached};
+use super::cells;
 use super::codec;
 use super::route::{self, APPLE_URL, Failure, Pauses};
 use super::{Proxy, WifiLookup};
@@ -265,7 +266,7 @@ async fn the_policy_and_the_group_follow_the_switch() {
     let cookie = app.admin_cookie().await;
     let page = format!("/devices/{id}/location-settings?from=device");
     let html = app.get_page(&page, &cookie).await.text();
-    assert!(html.contains("id=\"wifi-lookup\"") && html.contains("Wi-Fi lookup at Apple"));
+    assert!(html.contains("id=\"wifi-lookup\"") && html.contains("Lookups at Apple"));
     assert!(html.contains(&format!("action=\"/devices/{id}/wifi-lookup#wifi-lookup\"")));
     // No proxy set: the ⓘ says the lookups go from the server's own address.
     assert!(html.contains("data-note=\"direct\""));
@@ -842,7 +843,20 @@ fn no_log_line_names_a_device_a_bssid_or_a_place() {
                 }
             }
             let call = &text[at..=end];
-            for word in ["device", "bssid", "lat", "lng", "position", "mac"] {
+            // Design 125b: nor a cell's identity.
+            for word in [
+                "device",
+                "bssid",
+                "lat",
+                "lng",
+                "position",
+                "mac",
+                "mcc",
+                "mnc",
+                "cid",
+                "canonical",
+                "tower",
+            ] {
                 assert!(
                     !call.contains(word),
                     "{}: a log line names {word}: {call}",
@@ -851,6 +865,267 @@ fn no_log_line_names_a_device_a_bssid_or_a_place() {
             }
         }
     }
+}
+
+// --- Design 125b: cells ---
+
+/// A fake answer of a cell call from `server.json` by name.
+fn apple_cell(name: &str) -> Vec<u8> {
+    let rows = server_rows();
+    let row = rows["apple_cells"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["name"] == name)
+        .unwrap_or_else(|| panic!("no apple_cells row {name}"))
+        .clone();
+    hex::decode(row["hex"].as_str().unwrap()).unwrap()
+}
+
+/// C6: the cell call is GrapheneOS's, byte for byte.
+#[test]
+fn the_cell_request_is_the_golden_one() {
+    let golden = &server_rows()["golden_cells"];
+    let towers: Vec<cells::Cell> = golden["cells"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| cells::Cell::from_canonical(c.as_str().unwrap()).unwrap())
+        .collect();
+    let body = cells::request(&towers, golden["throttled"].as_bool().unwrap());
+    assert_eq!(hex::encode(body), golden["hex"].as_str().unwrap());
+}
+
+/// C6: every fake cell answer reads as the fixtures script says - or is refused.
+#[test]
+fn every_apple_cell_answer_reads_as_recorded() {
+    for row in server_rows()["apple_cells"].as_array().unwrap() {
+        let name = row["name"].as_str().unwrap();
+        let body = hex::decode(row["hex"].as_str().unwrap()).unwrap();
+        let read = cells::answer(&body);
+        if row["malformed"] == true {
+            assert!(read.is_err(), "{name}: {read:?}");
+            continue;
+        }
+        let read: Vec<Value> = read
+            .unwrap_or_else(|_| panic!("{name} didn't read"))
+            .into_iter()
+            .map(|(cell, position)| match position {
+                Some(p) => json!([cell, p.lat, p.lng, p.acc_m]),
+                None => json!([cell, null]),
+            })
+            .collect();
+        assert_eq!(Value::Array(read), row["towers"], "{name}");
+    }
+}
+
+/// C3: every `cell_forms` row, and the contract's rules are the server's constants.
+#[test]
+fn the_cell_forms_and_rules_are_the_contracts() {
+    let contract = contract();
+    for row in contract["cell_forms"].as_array().unwrap() {
+        let cell = row["cell"].as_str().unwrap();
+        assert_eq!(
+            cells::Cell::parse(cell).is_some(),
+            row["valid"].as_bool().unwrap(),
+            "{}",
+            row["why"]
+        );
+    }
+    let rules = &contract["rules"];
+    assert_eq!(rules["cells_max"], json!(cells::MAX_CELLS));
+    assert_eq!(rules["cells_a_day"], json!(route::CELLS_A_DAY));
+    assert_eq!(
+        rules["cell_answer_after_s"],
+        json!(crate::music_net::PROXIED.as_secs())
+    );
+    // The fixed answer time is the Apple call's whole deadline: through the proxy and direct.
+    let source = std::sync::Arc::new(crate::tests::music::CannedFetch::default());
+    let proxied = WifiLookup::with(
+        source.clone(),
+        Proxy::Socks("socks5h://tor:9050".to_string()),
+        std::time::Duration::from_secs(3),
+    );
+    assert_eq!(proxied.cell_answer_after, crate::music_net::PROXIED);
+    let direct = WifiLookup::with(source, Proxy::Direct, std::time::Duration::from_secs(3));
+    assert_eq!(direct.cell_answer_after, route::CELL_ANSWER_DIRECT);
+    assert_eq!(
+        route::CELL_ANSWER_DIRECT,
+        crate::music_net::Kind::AppleWps.overall()
+    );
+}
+
+/// C5: every `cell_answers` row through the real route - the same body and no sooner than the answer time from the
+/// cache as from Apple, the 503 for every cells request while Apple can't be asked, the day's brake.
+#[tokio::test]
+async fn the_route_answers_the_cell_contract() {
+    let contract = contract();
+    for row in contract["cell_answers"].as_array().unwrap() {
+        let case = row["case"].as_str().unwrap();
+        let request = &row["request"];
+        let app = TestApp::new().await;
+        let (id, token) = phone_on(&app).await;
+        let wifi = app.state.integrations.wifi_lookup.clone();
+        app.fetch.answer(APPLE_URL, 200, apple_cell("cells_fresh"));
+        let first = &contract["request_cells"];
+        async fn timed(
+            app: &TestApp,
+            token: &str,
+            request: &Value,
+        ) -> ((StatusCode, Value), std::time::Duration) {
+            let started = Instant::now();
+            let answer = lookup(app, token, request).await;
+            (answer, started.elapsed())
+        }
+        let ((status, mut body), took) = match case {
+            "cells_fetched" | "cells_two_spellings" => timed(&app, &token, request).await,
+            "cells_cached" => {
+                assert_eq!(lookup(&app, &token, first).await.0, StatusCode::OK);
+                let answer = timed(&app, &token, request).await;
+                assert_eq!(app.fetch.count(), 1, "{case}: Apple asked again");
+                answer
+            }
+            "cells_stale" => {
+                assert_eq!(lookup(&app, &token, first).await.0, StatusCode::OK);
+                sqlx::query(
+                    "UPDATE wifi_lookup_aps SET fetched_month = fetched_month - 4, used_month = used_month - 4",
+                )
+                .execute(&app.db)
+                .await
+                .unwrap();
+                let answer = timed(&app, &token, request).await;
+                assert_eq!(app.fetch.count(), 2, "{case}: not refreshed");
+                answer
+            }
+            "cells_paused_cached" | "cells_paused_uncached" => {
+                if case == "cells_paused_cached" {
+                    assert_eq!(lookup(&app, &token, first).await.0, StatusCode::OK);
+                }
+                wifi.pauses
+                    .lock()
+                    .unwrap()
+                    .failed(Failure::Timeout, Instant::now());
+                let answer = timed(&app, &token, request).await;
+                assert!(app.fetch.count() <= 1, "{case}: Apple asked while paused");
+                answer
+            }
+            "cells_day_cap" => {
+                let now = chrono::Utc::now();
+                wifi.cell_days.add(id, route::CELLS_A_DAY, now);
+                let answer = timed(&app, &token, request).await;
+                // The wait runs to UTC midnight; the contract's number stands for it.
+                let midnight = (now.date_naive() + chrono::Days::new(1))
+                    .and_hms_opt(0, 0, 0)
+                    .unwrap()
+                    .and_utc();
+                let want = (midnight - now).num_seconds();
+                let got = answer.0.1["retry_after_s"].as_i64().unwrap();
+                assert!((got - want).abs() <= 2, "{case}: {got} against {want}");
+                answer
+            }
+            "cells_limit_hourly" => {
+                for _ in 0..route::PHONE_LOOKUPS_AN_HOUR {
+                    assert_eq!(lookup(&app, &token, request).await.0, StatusCode::OK);
+                }
+                timed(&app, &token, request).await
+            }
+            "cells_off" => {
+                super::set_on(&app.state, id, false).await.unwrap();
+                timed(&app, &token, request).await
+            }
+            bad if bad.starts_with("bad_") => timed(&app, &token, request).await,
+            other => panic!("a case the test doesn't know: {other}"),
+        };
+        if case == "cells_day_cap" {
+            body["retry_after_s"] = row["body"]["retry_after_s"].clone();
+        }
+        assert_eq!(
+            u64::from(status.as_u16()),
+            row["status"].as_u64().unwrap(),
+            "{case}: {body}"
+        );
+        assert_eq!(body, row["body"], "{case}");
+        // C5: a 200 or a 503 leaves at the answer time, cached or not; refusals at once.
+        if matches!(status.as_u16(), 200 | 503) {
+            assert!(
+                took >= super::CELL_ANSWER_AFTER_IN_TESTS,
+                "{case}: answered after {took:?}"
+            );
+        }
+    }
+}
+
+/// C7: a cell row is sealed under its canonical form - Apple's numeric MNC meets the asked `01` - and Apple's
+/// surrounding towers are cached; an AP in a cell answer never is.
+#[tokio::test]
+async fn a_cell_row_is_sealed_under_its_canonical_form() {
+    let app = TestApp::new().await;
+    let (_, token) = phone_on(&app).await;
+    app.fetch.answer(APPLE_URL, 200, apple_cell("cells_fresh"));
+    let (status, _) = lookup(&app, &token, &contract()["request_cells"]).await;
+    assert_eq!(status, StatusCode::OK);
+    let wifi = app.state.integrations.wifi_lookup.clone();
+    let key = wifi.key(&app.state).await.unwrap();
+    let month = this_month();
+    let read = cache::read(
+        &app.db,
+        &key,
+        &[
+            "lte:1:1:4711:12345678".to_string(),
+            "lte:1:1:4711:12345679".to_string(),
+            "gsm:1:1:1001:5001".to_string(),
+        ],
+        month,
+    )
+    .await
+    .unwrap();
+    assert!(matches!(read[0], Cached::Known { .. }), "{read:?}");
+    assert!(
+        matches!(read[1], Cached::Known { .. }),
+        "the surrounding tower"
+    );
+    assert_eq!(read[2], Cached::Unknown);
+    // Five towers placed and one negative: nothing under the asked spelling.
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM wifi_lookup_aps")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(rows, 5);
+    // An AP in a cell answer is never cached.
+    let app = TestApp::new().await;
+    let (_, token) = phone_on(&app).await;
+    app.fetch
+        .answer(APPLE_URL, 200, apple_cell("cells_skipped"));
+    let (status, body) = lookup(
+        &app,
+        &token,
+        &json!({"cells": ["lte:001:01:4711:12345678"]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM wifi_lookup_aps")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(rows, 1);
+    // The sweep's counts carry the cells.
+    let counts = app.state.integrations.wifi_lookup.counts.take();
+    assert_eq!(&counts[5..], &[1, 1]);
+}
+
+/// C6: a cell answer of 10 towers or more throttles the next cell call to 4 in all; the Wi-Fi throttle is apart.
+#[tokio::test]
+async fn a_big_cell_answer_throttles_the_next_cell_call() {
+    let app = TestApp::new().await;
+    let (_, token) = phone_on(&app).await;
+    app.fetch.answer(APPLE_URL, 200, apple_cell("cells_many"));
+    let (status, _) = lookup(&app, &token, &json!({"cells": ["gsm:001:01:1001:5001"]})).await;
+    assert_eq!(status, StatusCode::OK);
+    let wifi = app.state.integrations.wifi_lookup.clone();
+    assert!(wifi.cell_throttled_until.lock().unwrap().is_some());
+    assert!(wifi.throttled_until.lock().unwrap().is_none());
+    let cell = cells::Cell::parse("gsm:001:01:1001:5001").unwrap();
+    assert_eq!(cells::surrounding(&[cell], true), [(cells::Radio::Gsm, 1)]);
 }
 
 #[test]

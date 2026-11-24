@@ -480,10 +480,23 @@ object MobileNetworkRuntime {
     /** Each active SIM's `isDataRoamingEnabled`, from the slots - no permission needed (design 94 §2.4.2). */
     private fun roamingReadings(context: Context): Map<Int, Boolean?> {
         val tm = context.getSystemService(TelephonyManager::class.java) ?: return emptyMap()
-        return (0 until tm.activeModemCount)
-            .map { SubscriptionManager.getSubscriptionId(it) }
-            .filter { it != SubscriptionManager.INVALID_SUBSCRIPTION_ID }
+        return activeSubscriptionIds(context)
             .associateWith { sub -> runCatching { tm.createForSubscriptionId(sub).isDataRoamingEnabled }.getOrNull() }
+    }
+
+    /** Each slot's active subscription (the slot -> subscription mapping; no permission needed): the roaming readings'
+     * and the cell read's (design 125b C1). Empty without a SIM. */
+    fun activeSubscriptionIds(context: Context): List<Int> = try {
+        val tm = context.getSystemService(TelephonyManager::class.java)
+        if (tm == null) {
+            emptyList()
+        } else {
+            (0 until tm.activeModemCount)
+                .map { SubscriptionManager.getSubscriptionId(it) }
+                .filter { it != SubscriptionManager.INVALID_SUBSCRIPTION_ID }
+        }
+    } catch (e: Exception) {
+        emptyList()
     }
 
     private fun setRestriction(dpm: DevicePolicyManager, admin: ComponentName, restriction: String, on: Boolean) {

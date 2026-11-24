@@ -200,8 +200,8 @@ fun appleTaught(rows: List<PlaceRow>, sightings: List<Sighting>, nowMin: Int): L
     }
 }
 
-/** The switch off (A9): every Apple row goes. */
-fun dropApple(rows: List<PlaceRow>): List<PlaceRow> = rows.filter { it.kind != RowKind.APPLE }
+/** The switch off (A9, design 125b C7): every Apple row goes, the cells' too. */
+fun dropApple(rows: List<PlaceRow>): List<PlaceRow> = rows.filter { it.kind != RowKind.APPLE && it.kind != RowKind.APPLE_CELL }
 
 /**
  * A9: which row gives a heard result's position - a trusted own row, a live Apple row (as a trusted row of

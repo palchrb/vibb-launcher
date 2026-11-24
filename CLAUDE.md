@@ -478,7 +478,14 @@ keeps from a 200 at a given instant, and until when). The server's `integrations
 against its constants, encodes `request`, decodes `policy`, maps every row through `appleStep` and runs `phone_rows`
 through `storeApple`. The server's own rows (`server/testdata/wifi_lookup/server.json`, written by
 `scripts/wifi-lookup-fixtures.py`) and the launcher's Apple rules (`PlacesTest`) stay each side's. The policy's
-`wifi_lookup` is pinned by `policy_json_keys_snapshot` and `PolicyResponseCompatTest`.
+`wifi_lookup` is pinned by `policy_json_keys_snapshot` and `PolicyResponseCompatTest`. Apple's cell lookup (design
+125b) added rows, none changed: `rules`' `cells_max`, `cells_a_day`, `cell_answer_after_s`, `cell_row_days`,
+`cell_negative_days`; `request_cells` (the exact cells body); `cell_forms` (a cell's wire form to valid or not - the
+server's `cells::Cell::parse`, the launcher's `parseCellWire`); `cell_answers` (each cells case: no age, the same body
+from the cache as from Apple, the 503 while Apple can't be asked, the day's brake, the 400s - produced through the real
+route, each 200 and 503 no sooner than the answer time); `cell_phone_answers` (each to the phone's action:
+`appleCellStep`, the cell wait alone, a 409 both) and `cell_phone_rows` (`storeAppleCells`: 90 days, a negative 30, the
+range). `server.json` gained `golden_cells` and `apple_cells`; the launcher's own cell rules are `CellPlanTest`'s.
 
 Why an install failed (upstream review 2026-11-20) is `server/testdata/install_failure.json`, byte-identical in
 `launcher/app/src/test/resources/`: `kinds` (the launcher's own reasons), `report` and `report_progress` (the exact

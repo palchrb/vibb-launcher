@@ -290,6 +290,9 @@ data class Heard(
     val connected: Boolean = false,
     val kind: RowKind = RowKind.WIFI,
     val bssid: String = "",
+    /** Design 125b: a cell's wire form (`CellWire.text`, what the ask sends) and whether it is a registered cell. */
+    val wire: String = "",
+    val registered: Boolean = false,
 )
 
 /** A result's level and time as the previous scan heard it - memory only, by key. */
@@ -414,6 +417,9 @@ enum class RowKind(val code: Int) {
     CELL(2),
     LINK(3),
     APPLE(4),
+
+    /** Design 125b C7: a cell's position from Apple, keyed by step 1's cell key. */
+    APPLE_CELL(5),
     ;
 
     companion object {
@@ -453,6 +459,7 @@ data class PlaceRow(
     val id: String get() = when (kind) {
         RowKind.LINK -> "$key/$network"
         RowKind.APPLE -> "a/$key"
+        RowKind.APPLE_CELL -> "c/$key"
         else -> key
     }
 }
@@ -559,10 +566,13 @@ fun teach(rows: List<PlaceRow>, sightings: List<Sighting>, nowMin: Int, today: I
  * seen go first, tombstones included. Apple rows (A9) on their own: live ones and tombstones while they block, at most
  * [APPLE_ROWS_MAX]. */
 fun prune(rows: List<PlaceRow>, nowMin: Int): List<PlaceRow> {
-    val (apple, own) = rows.partition { it.kind == RowKind.APPLE }
+    val apple = rows.filter { it.kind == RowKind.APPLE }
+    val appleCells = rows.filter { it.kind == RowKind.APPLE_CELL }
+    val own = rows.filter { it.kind != RowKind.APPLE && it.kind != RowKind.APPLE_CELL }
     fun capped(kept: List<PlaceRow>, max: Int) = if (kept.size <= max) kept else kept.sortedByDescending { it.lastSeenMin }.take(max)
     return capped(own.filter { it.blocked(nowMin) || nowMin - it.lastSeenMin < ROW_UNSEEN_MIN }, ROWS_MAX) +
-        capped(apple.filter { it.blocked(nowMin) || it.appleLive(nowMin) }, APPLE_ROWS_MAX)
+        capped(apple.filter { it.blocked(nowMin) || it.appleLive(nowMin) }, APPLE_ROWS_MAX) +
+        capped(appleCells.filter { it.blocked(nowMin) || it.appleCellLive(nowMin) }, APPLE_CELL_ROWS_MAX)
 }
 
 /** The lookup changes nothing but `lastSeen` (D9, D8), at most once a day per row (code QA L4: no write for nothing);
@@ -766,13 +776,6 @@ fun standsAlone(fix: LearnedFix, movedSinceFresh: Boolean): Boolean = fix.networ
 
 // --- D10: cells ---
 
-/** D10: the serving cell's own fix - trusted on three occasions, accuracy its range, none over [CELL_FIX_MAX_M]. Design
- * 125b step 3a: never fresh (a cell fix is a last resort - the next beat tries GPS again), reported only by [cellReport]. */
-fun cellFix(cell: Heard?, rows: List<PlaceRow>, nowMin: Int): LearnedFix? {
-    val row = rows.firstOrNull { it.kind == RowKind.CELL && it.key == cell?.key } ?: return null
-    if (row.blocked(nowMin) || row.occasions < 3 || row.rangeM > CELL_FIX_MAX_M) return null
-    return LearnedFix(row.lat, row.lng, row.rangeM.toDouble(), 1, cell!!.elapsedMs, false, setOf(row.key), PROVIDER_CELL)
-}
 
 /** Design 125b C9: what becomes of a cell fix the attempt ends with. */
 enum class CellVerdict {
@@ -807,11 +810,6 @@ fun cellReport(fix: LearnedFix, still: Boolean, vouch: SeenFix?, lastFresh: Seen
     return if (holds) CellVerdict.WITHHOLD else CellVerdict.REPORT
 }
 
-/** D10's veto: a learned serving cell (two occasions) whose estimate lies more than its range + 2 km from [fix]. */
-fun cellVetoes(cell: Heard?, rows: List<PlaceRow>, fix: LearnedFix, nowMin: Int): Boolean {
-    val row = rows.firstOrNull { it.kind == RowKind.CELL && it.key == cell?.key }?.takeIf { it.trusted(nowMin) } ?: return false
-    return distanceM(row.lat, row.lng, fix.lat, fix.lng) > row.rangeM + CELL_VETO_SLACK_M
-}
 
 // --- D12: the zone link ---
 
@@ -922,6 +920,16 @@ data class DayCounts(
     val appleContradictions: Int = 0,
     /** Design 125b C9.2: a still phone's cell fix far from its vouch. */
     val cellContradictions: Int = 0,
+    // Design 125b C11: the cell fix's leave-one-out by source, with the summed error in metres.
+    val cellHitOwn: Int = 0,
+    val cellNOwn: Int = 0,
+    val cellErrOwn: Long = 0,
+    val cellHitApple: Int = 0,
+    val cellNApple: Int = 0,
+    val cellErrApple: Long = 0,
+    val cellHitMixed: Int = 0,
+    val cellNMixed: Int = 0,
+    val cellErrMixed: Long = 0,
 )
 
 /** The counts of the last [COUNT_DAYS] local days with one more observation on [today]. */
@@ -1025,8 +1033,8 @@ fun decodeTable(bytes: ByteArray): List<PlaceRow>? {
         PlaceRow(
             kind = kind,
             key = key,
-            device = if (kind == RowKind.LINK || kind == RowKind.APPLE) "" else device,
-            network = if (kind == RowKind.APPLE) "" else network,
+            device = if (kind == RowKind.LINK || kind == RowKind.APPLE || kind == RowKind.APPLE_CELL) "" else device,
+            network = if (kind == RowKind.APPLE || kind == RowKind.APPLE_CELL) "" else network,
             band = Band.of(buf.get().toInt()),
             lat = buf.int / 1e7,
             lng = buf.int / 1e7,

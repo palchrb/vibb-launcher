@@ -20,6 +20,10 @@ import android.telephony.CellIdentityLte
 import android.telephony.CellIdentityNr
 import android.telephony.CellIdentityWcdma
 import android.telephony.CellInfo
+import android.telephony.CellInfoGsm
+import android.telephony.CellInfoLte
+import android.telephony.CellInfoNr
+import android.telephony.CellInfoWcdma
 import android.telephony.TelephonyManager
 import android.util.AtomicFile
 import android.util.Log
@@ -74,6 +78,10 @@ private const val KEY_LAST_GPS_TRY = "last_gps_try_ms"
 private const val KEY_APPLE_ON = "apple_on"
 private const val KEY_APPLE_WAIT = "apple_wait_until_ms"
 private const val KEY_APPLE_OFF = "apple_off"
+
+/** Design 125b C5: the cell wait - set only by a cells request's answers, so the cell brake never stops a Wi-Fi ask
+ * and a Wi-Fi wait never stops a cell ask. A 409 from either is [KEY_APPLE_OFF] (the switch is one). */
+private const val KEY_APPLE_CELL_WAIT = "apple_cell_wait_until_ms"
 private const val FILE = "wifi_places_v1"
 private const val AAD_TABLE = "wifi_places_v1"
 private const val ACTION_TEACH = "com.kidslauncher.mdm.action.WIFI_PLACES_TEACH"
@@ -289,8 +297,9 @@ object WifiPlaces {
 
     // --- Reading the radio (D10, D13, D17) ---
 
-    /** What one read of the radio heard: the Wi-Fi results, the connected network, the serving cell. Never stored. */
-    private class Snapshot(val results: List<ScanAp>, val connected: Connected?, val cell: Heard?)
+    /** What one read of the radio heard: the Wi-Fi results, the connected network, the usable cells (design 125b C2:
+     * registered first, at most 12). Never stored. */
+    private class Snapshot(val results: List<ScanAp>, val connected: Connected?, val cells: List<Heard>)
 
     private fun wifi(context: Context) = context.applicationContext.getSystemService(WifiManager::class.java)
 
@@ -372,61 +381,99 @@ object WifiPlaces {
         null
     }
 
-    /** D10: the serving cell, asked once more when the cached one is over a minute old; `null` without a SIM. The fine
-     * location permission is self-granted by `currentLocation`; a refusal is caught. */
+    /**
+     * Design 125b C1, C2: the usable cells of every slot. `getAllCellInfo()` gives the cached cells of all slots; when
+     * the newest registered one is over a minute old, one `requestCellInfoUpdate` per active subscription (the slots'
+     * own, [com.kidslauncher.mdm.server.MobileNetworkRuntime.activeSubscriptionIds]), up to [CELL_WAIT_MS], and the
+     * answers first. No SIM, airplane mode, Location off: an empty list, an ordinary miss. The fine location permission
+     * is self-granted by `currentLocation`; a refusal or an invalid subscription is caught. Logs counts only.
+     */
     @Suppress("MissingPermission")
-    private suspend fun servingCell(context: Context, keys: PlaceKeys): Heard? {
-        val tm = context.getSystemService(TelephonyManager::class.java) ?: return null
-        fun pick(cells: List<CellInfo>?) = cells.orEmpty().firstOrNull { it.isRegistered }
-        var cell = try {
-            pick(tm.allCellInfo)
+    private suspend fun readCells(context: Context, keys: PlaceKeys): List<Heard> {
+        val start = SystemClock.elapsedRealtime()
+        val tm = context.getSystemService(TelephonyManager::class.java) ?: return emptyList()
+        var infos = try {
+            tm.allCellInfo.orEmpty()
+        } catch (e: Exception) {
+            emptyList()
+        }
+        val newest = infos.filter { it.isRegistered }.maxOfOrNull { it.timestampMillis }
+        if (newest == null || start - newest > CELL_STALE_MS) {
+            val subs = com.kidslauncher.mdm.server.MobileNetworkRuntime.activeSubscriptionIds(context)
+            val fresh = withTimeoutOrNull(CELL_WAIT_MS) {
+                coroutineScope {
+                    subs.map { sub ->
+                        async {
+                            suspendCancellableCoroutine<List<CellInfo>> { cont ->
+                                try {
+                                    tm.createForSubscriptionId(sub).requestCellInfoUpdate(
+                                        executor,
+                                        object : TelephonyManager.CellInfoCallback() {
+                                            override fun onCellInfo(cellInfo: MutableList<CellInfo>) {
+                                                if (cont.isActive) cont.resume(cellInfo.toList())
+                                            }
+
+                                            override fun onError(errorCode: Int, detail: Throwable?) {
+                                                if (cont.isActive) cont.resume(emptyList())
+                                            }
+                                        },
+                                    )
+                                } catch (e: Exception) {
+                                    if (cont.isActive) cont.resume(emptyList())
+                                }
+                            }
+                        }
+                    }.flatMap { it.await() }
+                }
+            }.orEmpty()
+            val again = try {
+                tm.allCellInfo.orEmpty()
+            } catch (e: Exception) {
+                emptyList()
+            }
+            infos = fresh + again
+        }
+        val reading = cellReads(infos.map(::cellInput), start)
+        Log.i(LOG_TAG, "cells read=${reading.read} usable=${reading.cells.size} registered=${reading.registered} nr=${reading.nr} stale=${reading.stale}")
+        return reading.cells.map { c ->
+            val key = keys.cell(c.wire.id)
+            Heard(key, key.take(16), key.take(16), Band.CELL, 0, c.timestampMs, kind = RowKind.CELL, wire = c.wire.text, registered = c.registered)
+        }
+    }
+
+    /** A `CellInfo` as the pure read takes it ([cellReads]): the identity's parts, `-1` for an unavailable one. An NSA NR
+     * leg comes without NCI or TAC and so is no cell; TD-SCDMA and CDMA aren't read. */
+    private fun cellInput(c: CellInfo): CellInput {
+        val un = CellInfo.UNAVAILABLE
+        fun int(n: Int) = if (n == un) -1L else n.toLong()
+        val dbm = try {
+            when (c) {
+                is CellInfoGsm -> c.cellSignalStrength.dbm
+                is CellInfoWcdma -> c.cellSignalStrength.dbm
+                is CellInfoLte -> c.cellSignalStrength.dbm
+                is CellInfoNr -> c.cellSignalStrength.dbm
+                else -> un
+            }.takeIf { it != un }
         } catch (e: Exception) {
             null
         }
-        if (cell == null || SystemClock.elapsedRealtime() - cell.timestampMillis > CELL_STALE_MS) {
-            cell = withTimeoutOrNull(CELL_WAIT_MS) {
-                suspendCancellableCoroutine { cont ->
-                    try {
-                        tm.requestCellInfoUpdate(
-                            executor,
-                            object : TelephonyManager.CellInfoCallback() {
-                                override fun onCellInfo(cellInfo: MutableList<CellInfo>) {
-                                    if (cont.isActive) cont.resume(pick(cellInfo))
-                                }
-
-                                override fun onError(errorCode: Int, detail: Throwable?) {
-                                    if (cont.isActive) cont.resume(null)
-                                }
-                            },
-                        )
-                    } catch (e: Exception) {
-                        if (cont.isActive) cont.resume(null)
-                    }
-                }
-            } ?: cell
-        }
-        val c = cell ?: return null
-        val id = cellId(c) ?: return null
-        val key = keys.cell(id)
-        return Heard(key, key.take(16), key.take(16), Band.CELL, 0, c.timestampMillis, kind = RowKind.CELL)
-    }
-
-    /** `mcc|mnc|area|cid` of an LTE, NR, WCDMA or GSM serving cell; `null` when any part is unavailable. */
-    private fun cellId(c: CellInfo): String? {
-        val un = CellInfo.UNAVAILABLE
+        val base = CellInput(null, null, null, -1, -1, c.isRegistered, dbm, c.timestampMillis)
         return when (val id = c.cellIdentity) {
-            is CellIdentityLte -> if (id.tac == un || id.ci == un) null else listOf(id.mccString, id.mncString, id.tac, id.ci)
-            is CellIdentityNr -> if (id.tac == un || id.nci == CellInfo.UNAVAILABLE_LONG) null else listOf(id.mccString, id.mncString, id.tac, id.nci)
-            is CellIdentityWcdma -> if (id.lac == un || id.cid == un) null else listOf(id.mccString, id.mncString, id.lac, id.cid)
-            is CellIdentityGsm -> if (id.lac == un || id.cid == un) null else listOf(id.mccString, id.mncString, id.lac, id.cid)
-            else -> null
-        }?.takeIf { it[0] != null && it[1] != null }?.joinToString("|")
+            is CellIdentityLte -> base.copy(radio = CellRadio.LTE, mcc = id.mccString, mnc = id.mncString, area = int(id.tac), cid = int(id.ci))
+            is CellIdentityNr -> base.copy(
+                radio = CellRadio.NR, mcc = id.mccString, mnc = id.mncString, area = int(id.tac),
+                cid = if (id.nci == CellInfo.UNAVAILABLE_LONG) -1 else id.nci,
+            )
+            is CellIdentityWcdma -> base.copy(radio = CellRadio.WCDMA, mcc = id.mccString, mnc = id.mncString, area = int(id.lac), cid = int(id.cid))
+            is CellIdentityGsm -> base.copy(radio = CellRadio.GSM, mcc = id.mccString, mnc = id.mncString, area = int(id.lac), cid = int(id.cid))
+            else -> base
+        }
     }
 
     private suspend fun snapshot(context: Context, keys: PlaceKeys, movedAtElapsedMs: Long): Snapshot = coroutineScope {
-        val cell = async { servingCell(context, keys) }
+        val cells = async { readCells(context, keys) }
         val results = scanNow(context, movedAtElapsedMs)
-        Snapshot(results, connected(context), cell.await())
+        Snapshot(results, connected(context), cells.await())
     }
 
     private fun hearing(context: Context, store: Store, snap: Snapshot, remember: Boolean): Hearing {
@@ -446,7 +493,7 @@ object WifiPlaces {
         val h = hearing(context, store, snap, remember = true)
         val view = scanView(h, SystemClock.elapsedRealtime(), movedAtElapsedMs)
         val now = nowMin()
-        val fix = view?.let { learnedFix(it, store.rows, now) }?.takeUnless { cellVetoes(snap.cell, store.rows, it, now) }
+        val fix = view?.let { learnedFix(it, store.rows, now) }?.takeUnless { cellVetoes(snap.cells, store.rows, it, now) }
         val table = store.rows.associateBy { it.id }
         val trusted = view?.heard.orEmpty().count { table[it.key]?.trusted(now) == true }
         val line = "scan usable=${h.heard.size} trusted=$trusted networks=${fix?.networks ?: 0} acc=${fix?.accuracyM?.toInt() ?: "-"}"
@@ -460,9 +507,11 @@ object WifiPlaces {
 
     /** D10: the serving cell's own fix, after GPS and Wi-Fi gave nothing - reported only by design 125b C9
      * ([cellReport]: never while still, not over a recent fine fix it agrees with, a `locate` always), never fresh. */
-    private fun cellOnly(context: Context, store: Store?, snap: Snapshot, ask: Ask, locate: Boolean, accept: (Location) -> Boolean): Location? {
-        store ?: return null
-        val fix = cellFix(snap.cell, store.rows, nowMin()) ?: return null
+    private fun cellOnly(context: Context, opened: Store?, snap: Snapshot, ask: Ask, locate: Boolean, accept: (Location) -> Boolean): Location? {
+        opened ?: return null
+        // Design 125b C8 (QA H1): the table as it is now - with the rows the cell ask just stored.
+        val store = open(context) ?: return null
+        val fix = cellFix(snap.cells, store.rows, nowMin()) ?: return null
         save(context, store.generation) { touchSeen(it, fix.keys, nowMin()) }
         fun seen(l: Location?) = l?.let { SeenFix(it.latitude, it.longitude, if (it.hasAccuracy()) it.accuracy.toDouble() else 0.0, it.time) }
         val verdict = cellReport(fix, appleStillMotion(ask.motion), seen(ask.stillVouch), seen(ask.lastFresh), System.currentTimeMillis(), locate)
@@ -496,8 +545,8 @@ object WifiPlaces {
             if (p.getBoolean(KEY_APPLE_ON, false)) p.edit().putBoolean(KEY_APPLE_ON, false).commit()
             val store = open(context) ?: return
             if (!save(context, store.generation, ::dropApple)) return
-            if (p.contains(KEY_APPLE_ON) || p.contains(KEY_APPLE_OFF) || p.contains(KEY_APPLE_WAIT)) {
-                p.edit().remove(KEY_APPLE_ON).remove(KEY_APPLE_OFF).remove(KEY_APPLE_WAIT).commit()
+            if (p.contains(KEY_APPLE_ON) || p.contains(KEY_APPLE_OFF) || p.contains(KEY_APPLE_WAIT) || p.contains(KEY_APPLE_CELL_WAIT)) {
+                p.edit().remove(KEY_APPLE_ON).remove(KEY_APPLE_OFF).remove(KEY_APPLE_WAIT).remove(KEY_APPLE_CELL_WAIT).commit()
                 Log.i(LOG_TAG, "apple rows dropped (switch off)")
             }
         } catch (e: Exception) {
@@ -505,11 +554,11 @@ object WifiPlaces {
         }
     }
 
-    /** A3: the switch on, no wait or 409 in force, and a network up (offline: no ask and nothing changed). */
+    /** A3: the switch on, no 409 in force, and a network up (offline: no ask and nothing changed). Each kind's own wait:
+     * [appleMayAskNow]. */
     private fun appleAllowed(context: Context): Boolean {
         val p = prefs(context)
-        if (!p.getBoolean(KEY_APPLE_ON, false)) return false
-        if (!appleMayAsk(System.currentTimeMillis(), p.getLong(KEY_APPLE_WAIT, 0L), p.getBoolean(KEY_APPLE_OFF, false))) return false
+        if (!p.getBoolean(KEY_APPLE_ON, false) || p.getBoolean(KEY_APPLE_OFF, false)) return false
         return try {
             val cm = context.getSystemService(ConnectivityManager::class.java)
             cm?.activeNetwork?.let { cm.getNetworkCapabilities(it) }?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
@@ -518,16 +567,55 @@ object WifiPlaces {
         }
     }
 
+    /** The wait in [waitKey] (the Wi-Fi's or the cells', design 125b C5) is over. */
+    private fun appleMayAskNow(context: Context, waitKey: String): Boolean {
+        val p = prefs(context)
+        return appleMayAsk(System.currentTimeMillis(), p.getLong(waitKey, 0L), p.getBoolean(KEY_APPLE_OFF, false))
+    }
+
+    /**
+     * Design 125b C4, C5: the read's usable cells with no position ([cellAsk]; none when eight have one) asked of the
+     * server in a request of their own, at most 15 s; the answer's rows stored (C7: kind 5), the cell wait or "off" kept.
+     * `true` when rows were stored. Runs beside the Wi-Fi ask, with or without a scan view (QA H1).
+     */
+    private suspend fun askAppleCells(context: Context, store: Store, snap: Snapshot): Boolean {
+        if (!appleMayAskNow(context, KEY_APPLE_CELL_WAIT)) return false
+        val now = nowMin()
+        val asking = cellAsk(snap.cells, store.rows, now)
+        if (asking.isEmpty()) return false
+        val body = ServerJson.encodeToString(WifiLookupCellsRequest.serializer(), WifiLookupCellsRequest(asking))
+        val (status, answer) = withTimeoutOrNull(APPLE_TIMEOUT_MS) { postLookup(body) } ?: (0 to null)
+        val p = prefs(context)
+        val step = appleCellStep(status, answer)
+        val outcome = if (step is CellStep.Use) "got=${step.cells.size} unknown=${step.unknown.size}" else "step=${step.javaClass.simpleName}"
+        Log.i(LOG_TAG, "apple cells asked=${asking.size} status=$status $outcome")
+        when (step) {
+            is CellStep.Use -> {
+                p.edit().remove(KEY_APPLE_CELL_WAIT).commit()
+                save(context, store.generation) { storeAppleCells(it, step.cells, step.unknown, store.keys, now) }
+                return step.cells.isNotEmpty()
+            }
+            is CellStep.Wait -> p.edit().putLong(KEY_APPLE_CELL_WAIT, System.currentTimeMillis() + step.ms).commit()
+            CellStep.Off -> {
+                p.edit().putBoolean(KEY_APPLE_OFF, true).commit()
+                com.kidslauncher.mdm.push.SyncRunner.request(context.applicationContext, "wifi_lookup_off")
+            }
+        }
+        return false
+    }
+
     /**
      * A3, A4: a learned miss's usable BSSIDs (none with a trusted own row, a live Apple row or a tombstone) asked of
      * the server, at most 15 s; the answer's rows stored (A9), its wait or "off" kept. `true` when rows were stored.
      */
     private suspend fun askApple(context: Context, store: Store, snap: Snapshot, movedAtElapsedMs: Long): Boolean {
+        if (!appleMayAskNow(context, KEY_APPLE_WAIT)) return false
         val view = scanView(hearing(context, store, snap, remember = false), SystemClock.elapsedRealtime(), movedAtElapsedMs) ?: return false
         val now = nowMin()
         val asking = appleAsk(view.heard, store.rows, now)
         if (asking.isEmpty()) return false
-        val (status, body) = withTimeoutOrNull(APPLE_TIMEOUT_MS) { postLookup(asking) } ?: (0 to null)
+        val request = ServerJson.encodeToString(WifiLookupRequest.serializer(), WifiLookupRequest(asking))
+        val (status, body) = withTimeoutOrNull(APPLE_TIMEOUT_MS) { postLookup(request) } ?: (0 to null)
         val p = prefs(context)
         val step = appleStep(status, body)
         val outcome = if (step is AppleStep.Use) "got=${step.aps.size} unknown=${step.unknown.size}" else "step=${step.javaClass.simpleName}"
@@ -552,15 +640,14 @@ object WifiPlaces {
         return false
     }
 
-    /** The server's answer: its status and body (0 = no answer). */
-    private suspend fun postLookup(asking: List<String>): Pair<Int, String?> = try {
+    /** The server's answer to [json] (a BSSIDs or a cells body): its status and body (0 = no answer). */
+    private suspend fun postLookup(json: String): Pair<Int, String?> = try {
         val url = LauncherPreferences.mdm().serverUrl()
         val token = DeviceToken.get()
         if (url.isNullOrBlank() || token.isNullOrBlank()) {
             0 to null
         } else {
-            val body = ServerJson.encodeToString(WifiLookupRequest.serializer(), WifiLookupRequest(asking))
-                .toRequestBody("application/json".toMediaType())
+            val body = json.toRequestBody("application/json".toMediaType())
             val response = createMdmApi(url, token, callTimeoutMs = APPLE_TIMEOUT_MS).wifiLookup(body)
             response.code() to (if (response.isSuccessful) response.body() else response.errorBody())?.use { it.string() }
         }
@@ -619,8 +706,8 @@ object WifiPlaces {
         if (teachers.isEmpty()) return false
         val h = hearing(context, store, snap, remember = false)
         val after = h.heard.filter { it.elapsedMs > movedAtElapsedMs }
-        val cell = snap.cell?.takeIf { it.elapsedMs > movedAtElapsedMs }
-        val sightings = pairings(Hearing(after + listOfNotNull(cell), h.stale, h.readings), teachers, windowMs)
+        val cells = snap.cells.filter { it.elapsedMs > movedAtElapsedMs }
+        val sightings = pairings(Hearing(after + cells, h.stale, h.readings), teachers, windowMs)
         if (sightings.isEmpty()) return false
         val best = teachers.minBy { it.accuracyM ?: Float.MAX_VALUE }
         val paired = pairedWith(after, best, windowMs, movedAtElapsedMs)
@@ -638,6 +725,12 @@ object WifiPlaces {
             val err = distanceM(fix.lat, fix.lng, best.lat, best.lng)
             counts += { c -> c.looSource(fix.source, err <= fix.accuracyM, err) }
         }
+        // Design 125b C11: the cell fix of the cells paired with the best teacher, the table as it was, by source.
+        val pairedCells = cells.filter { abs(it.elapsedMs - best.elapsedMs) <= maxOf(windowMs, PAIR_SINGLE_MS) }
+        cellFix(pairedCells, store.rows, now)?.let { fix ->
+            val err = distanceM(fix.lat, fix.lng, best.lat, best.lng)
+            counts += { c -> c.looCell(fix.source, err <= fix.accuracyM, err) }
+        }
         zones.firstOrNull { z -> store.rows.any { it.key == z.key && it.network == connectedNet && it.linked(now) } }?.let { z ->
             val inside = distanceM(best.lat, best.lng, z.zone.latitude, z.zone.longitude) <= z.zone.radiusM
             counts += { c -> c.loo(LooClass.ZONE, inside) }
@@ -652,7 +745,7 @@ object WifiPlaces {
             val taught = teach(rows, sightings, now, today).also { outcome = it }
             val acc = (best.accuracyM ?: TEACH_ACCURACY_MAX_M).toDouble()
             // Design 125 A9: an own teach beyond an Apple row's reach, or a trusted own row against it, tombstones it.
-            val apple = reconcileApple(appleTaught(taught.rows, sightings, now), now)
+            val apple = reconcileAppleCells(appleCellTaught(reconcileApple(appleTaught(taught.rows, sightings, now), now), sightings, now), now)
             teachLinks(apple, zones, best.lat, best.lng, acc, connectedNet, paired.map { it.network }.toSet(), now, today)
         }
         outcome?.let { Log.i(LOG_TAG, "taught aps=${it.taught} new=${it.new} moved=${it.moved}") }
@@ -677,6 +770,7 @@ object WifiPlaces {
         val after = countsWith(before, today, change)
         p.edit().putString(KEY_COUNTS, ServerJson.encodeToString(serializer, after)).commit()
         Log.i(LOG_TAG, countsLine(after))
+        Log.i(LOG_TAG, cellCountsLine(after))
     }
 
     /**
@@ -693,7 +787,7 @@ object WifiPlaces {
             val results = cached(context)
             if (results.isEmpty()) return
             Log.i(LOG_TAG, "passive teach sig=${signal(location)}")
-            teachWith(context, store, Snapshot(results, connected(context), null), fix, PAIR_SINGLE_MS, MotionGate.snapshot(context).movedAtElapsedMs)
+            teachWith(context, store, Snapshot(results, connected(context), emptyList()), fix, PAIR_SINGLE_MS, MotionGate.snapshot(context).movedAtElapsedMs)
         } catch (e: Exception) {
             Log.w(LOG_TAG, "passive teach failed: ${e.javaClass.simpleName}")
         }
@@ -771,7 +865,7 @@ object WifiPlaces {
                 val streamMs = stream.all().map { it.elapsedRealtimeNanos / 1_000_000 }
                 if (snap.results.none { r -> streamMs.any { abs(it - r.elapsedMs) <= PAIR_STREAM_MS } } && networkOff(lm)) {
                     // Every cached result counts as before the move: the platform scans now.
-                    snap = Snapshot(scanNow(context, SystemClock.elapsedRealtime()), snap.connected, snap.cell)
+                    snap = Snapshot(scanNow(context, SystemClock.elapsedRealtime()), snap.connected, snap.cells)
                 }
                 taught = teachWith(context, store, snap, teaching(stream.all()), PAIR_STREAM_MS, movedAtElapsedMs)
             }
@@ -810,16 +904,25 @@ object WifiPlaces {
             val plan = attemptPlan(path, ask.motion, refresh)
             return coroutineScope {
                 // Without the table (a Keystore error) nothing is scanned, used or taught: GPS as before.
-                val snap = async { if (store == null) Snapshot(emptyList(), null, null) else snapshot(app, store.keys, ask.movedAtElapsedMs) }
+                val snap = async { if (store == null) Snapshot(emptyList(), null, emptyList()) else snapshot(app, store.keys, ask.movedAtElapsedMs) }
                 suspend fun learned(): LearnedFix? = store?.let { lookup(app, it, snap.await(), ask.movedAtElapsedMs) }
                     ?.takeIf { standsAlone(it, movedSinceFresh) }
                 suspend fun gps(boundMs: Long, shortMs: Long = boundMs, stopEarly: suspend () -> Boolean = { false }) =
                     gpsTry(app, lm, store, snap, ask.movedAtElapsedMs, boundMs, accept, shortMs, stopEarly).fix
                 // Design 125 A3: on a learned miss, the Apple lookup beside GPS - then the table, with its answer, again.
+                // Design 125b C4: the cells in a request of their own beside it (a missing scan view is a miss too); their
+                // rows give the cell fix at the attempt's end ([cellOnly] reads the table again).
                 suspend fun appleFix(): LearnedFix? {
                     if (store == null || !appleAllowed(app)) return null
-                    if (!askApple(app, store, snap.await(), ask.movedAtElapsedMs)) return null
-                    return open(app)?.let { lookup(app, it, snap.await(), ask.movedAtElapsedMs) }?.takeIf { standsAlone(it, movedSinceFresh) }
+                    val s = snap.await()
+                    val wifiAsked = coroutineScope {
+                        val cells = async { askAppleCells(app, store, s) }
+                        val wifi = askApple(app, store, s, ask.movedAtElapsedMs)
+                        cells.await()
+                        wifi
+                    }
+                    if (!wifiAsked) return null
+                    return open(app)?.let { lookup(app, it, s, ask.movedAtElapsedMs) }?.takeIf { standsAlone(it, movedSinceFresh) }
                 }
                 val still = appleStillMotion(ask.motion)
                 fun asLocation(fix: LearnedFix): Location? {

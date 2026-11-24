@@ -14,6 +14,18 @@ An independent protobuf encoder (standard library only) writes:
 - `apple`: fake answers of Apple's service, each with what the server must read from it. Documentation MACs only (RFC
   7042, 00:00:5e:00:53:xx), made-up coordinates; no real capture is ever committed.
 - `health`: failure histories and whether the orange "Apple lookups aren't working" shows.
+- `golden_cells` (design 125b C6): the cell call for one GSM, one LTE and one NR cell on the test network 001-01
+  (ITU-T E.212's, never a real cell): GrapheneOS's towers (`GsmCellTower` 1, `LteCellTower` 25, `Nr5GCellTower` 29,
+  `{mcc 1, mnc 2, cell_id 3, lac_id/tac_id 4}`), each standard's count of surrounding towers (3, 26, 30:
+  max(1, (25 - 19) x its share)) and `meta`, field-number order. The protoc check, as for `golden`:
+      printf 'gsm_cell_towers { mcc: 1 mnc: 1 cell_id: 5001 lac_id: 1001 } number_of_surrounding_gsm_cells: 2
+      lte_cell_towers { mcc: 1 mnc: 1 cell_id: 12345678 tac_id: 4711 } number_of_surrounding_lte_cells: 2
+      nr5g_cell_towers { mcc: 1 mnc: 1 cell_id: 4294967297 tac_id: 1048577 } number_of_surrounding_nr5g_cells: 2
+      meta { software_build: "macOS15.4/24E248" product_id: "arm64" }' |
+      protoc --encode=app.grapheneos.networklocation.proto.ALSLocationRequest apple_wps.proto | xxd -p
+  (the field names as GrapheneOS's .proto spells them).
+- `apple_cells`: fake answers of a cell call, each with the towers the server must read ([canonical cell, lat, lng,
+  acc_m] or [canonical cell, null] = unknown) or malformed. Test network 001-01 only, made-up coordinates.
 
     python3 -I scripts/wifi-lookup-fixtures.py --write     # writes the file
     python3 -I scripts/wifi-lookup-fixtures.py --selftest  # the committed file is exactly what this writes
@@ -232,6 +244,168 @@ def apple_rows():
     return rows
 
 
+# Design 125b: cells on the test network 001-01. Radio -> (the request's towers field, its count field, the answer's).
+RADIOS = {"gsm": (1, 3, 1), "lte": (25, 26, 22), "wcdma": (27, 28, 23), "nr": (29, 30, 24)}
+LTE = ("lte", 1, 1, 4711, 12345678)
+NR = ("nr", 1, 1, 1048577, 4294967297)
+GSM = ("gsm", 1, 1, 1001, 5001)
+WCDMA = ("wcdma", 1, 1, 2001, 70001)
+
+
+def canonical(cell):
+    return "%s:%d:%d:%d:%d" % cell
+
+
+def tower(cell, loc=None, skip=(), extra=b""):
+    _, mcc, mnc, area, cid = cell
+    body = b""
+    for field, n in ((1, mcc), (2, mnc), (3, cid), (4, area)):
+        if field not in skip:
+            body += vi(field, n)
+    if loc is not None:
+        body += ld(5, loc)
+    return body + extra
+
+
+def answer_tower(cell, loc=None, skip=(), field=None):
+    return ld(field or RADIOS[cell[0]][2], tower(cell, loc, skip))
+
+
+def known_cell(cell, lat, lng, acc):
+    return [canonical(cell), deg(lat), deg(lng), acc]
+
+
+def golden_cells():
+    cells = [GSM, LTE, NR]
+    message = b""
+    for radio in ("gsm", "lte", "wcdma", "nr"):
+        towers_field, count_field, _ = RADIOS[radio]
+        mine = [c for c in cells if c[0] == radio]
+        for c in mine:
+            message += ld(towers_field, tower(c))
+        if mine:
+            message += vi(count_field, max(1, (25 - 19) * len(mine) // len(cells)))
+    message += ld(33, ld(1, b"macOS15.4/24E248") + ld(2, b"arm64"))
+    head = (1).to_bytes(2, "big")
+    for text in (b"en-US_US", b"com.apple.locationd", b"15.4.24E248"):
+        head += len(text).to_bytes(2, "big") + text
+    head += (1).to_bytes(4, "big") + len(message).to_bytes(4, "big")
+    return {
+        "cells": [canonical(c) for c in cells],
+        "throttled": False,
+        "hex": (head + message).hex(),
+        "origin": "scripts/wifi-lookup-fixtures.py's own encoder from GrapheneOS's apple_wps.proto (474472e); "
+        "the protoc check is in the script's docstring",
+    }
+
+
+def apple_cell_rows():
+    rows = []
+
+    def row(name, body, towers=None, note=""):
+        entry = {"name": name, "note": note, "hex": body.hex()}
+        if towers is None:
+            entry["malformed"] = True
+        else:
+            entry["towers"] = towers
+        rows.append(entry)
+
+    near = ("lte", 1, 1, 4711, 12345679)
+    far = ("lte", 1, 1, 4712, 22345678)
+    row(
+        "cells_fresh",
+        answer(
+            answer_tower(LTE, location(H[0], H[1], 800)),
+            answer_tower(NR, location(H[0] + 200_000, H[1] + 100_000, 350)),
+            answer_tower(GSM, location(UNKNOWN, UNKNOWN, -1)),
+            answer_tower(near, location(H[0] + 900_000, H[1], 1200)),
+            answer_tower(far, location(H[0] - 1_500_000, H[1] + 2_000_000, 2500)),
+        ),
+        [
+            known_cell(LTE, H[0], H[1], 800),
+            known_cell(NR, H[0] + 200_000, H[1] + 100_000, 350),
+            [canonical(GSM), None],
+            known_cell(near, H[0] + 900_000, H[1], 1200),
+            known_cell(far, H[0] - 1_500_000, H[1] + 2_000_000, 2500),
+        ],
+        "the contract's cells: LTE and NR known (Apple's MNC 1 for the asked 01; the NR cid over 32 bits), GSM "
+        "unknown; two surrounding LTE towers cached, never answered",
+    )
+    row(
+        "cells_kinds",
+        answer(
+            answer_tower(GSM, location(H[0], H[1], 3000)),
+            answer_tower(WCDMA, location(H[0] + 10_000, H[1], 1500)),
+            answer_tower(LTE, location(H[0] + 20_000, H[1], 50_000)),
+            answer_tower(NR, location(H[0] + 30_000, H[1], 1)),
+        ),
+        [
+            known_cell(GSM, H[0], H[1], 3000),
+            known_cell(WCDMA, H[0] + 10_000, H[1], 1500),
+            known_cell(LTE, H[0] + 20_000, H[1], 50_000),
+            known_cell(NR, H[0] + 30_000, H[1], 1),
+        ],
+        "each tower type (SCDMA's field 23 read as WCDMA); accuracy 1 and 50,000 kept",
+    )
+    row(
+        "cells_unknowns",
+        answer(
+            answer_tower(LTE),
+            answer_tower(NR, location(UNKNOWN, 0, 0)),
+            answer_tower(GSM, location(H[0], H[1], 0)),
+            answer_tower(WCDMA, location(H[0], H[1], 60_000)),
+        ),
+        [[canonical(LTE), None], [canonical(NR), None], [canonical(GSM), None], [canonical(WCDMA), None]],
+        "no location, Apple's -18000000000, accuracy 0 and 60 km: unknown",
+    )
+    row(
+        "cells_dropped",
+        answer(
+            answer_tower(LTE, location(H[0], H[1], 500), skip=(4,)),
+            answer_tower(NR, location(H[0], H[1], 500), skip=(1,)),
+            answer_tower(GSM, location(H[0], H[1], 500), skip=(2,)),
+            answer_tower(WCDMA, location(H[0], H[1], 500), skip=(3,)),
+            answer_tower(("lte", 1, 1, 4711, -5), location(H[0], H[1], 500)),
+            answer_tower(("gsm", 1, 1, 1001, 65535), location(H[0], H[1], 500)),
+            answer_tower(("lte", 1, 1, 0, 7), location(H[0], H[1], 500)),
+            answer_tower(("nr", 1, 1, 7, 68719476735), location(H[0], H[1], 500)),
+            answer_tower(("lte", 1000, 1, 7, 7), location(H[0], H[1], 500)),
+        ),
+        [],
+        "a missing TAC, MCC, MNC or cid; a negative cid (a ten-byte varint); GSM's all-ones cid, area 0, NR's "
+        "all-ones NCI, an MCC of 1000: left out",
+    )
+    row(
+        "cells_duplicates",
+        answer(
+            answer_tower(LTE, location(H[0], H[1], 500)),
+            answer_tower(LTE, location(H[0] + 50_000, H[1], 700)),
+            answer_tower(("lte", 1, 1, 4711, 12345678), location(H[0] + 90_000, H[1], 900)),
+        ),
+        [known_cell(LTE, H[0], H[1], 500)],
+        "the first of duplicates wins",
+    )
+    row(
+        "cells_skipped",
+        answer(
+            ld(21, tower(("lte", 1, 1, 7, 7), location(H[0], H[1], 500))),
+            ap(mac(1), location(H[0], H[1], 25)),
+            answer_tower(LTE, location(H[0], H[1], 500)),
+        ),
+        [known_cell(LTE, H[0], H[1], 500)],
+        "a CDMA tower (field 21) and an AP (field 2) skipped, never cached",
+    )
+    row(
+        "cells_many",
+        answer(*[answer_tower(("lte", 1, 1, 1, n + 1), location(H[0], H[1], 900)) for n in range(201)]),
+        [[canonical(("lte", 1, 1, 1, n + 1)), deg(H[0]), deg(H[1]), 900] for n in range(200)],
+        "201 towers: the first 200 read",
+    )
+    row("cells_wrong_wire", answer(key(22, 0) + varint(5)), None, "a tower as a varint")
+    row("cells_short_header", bytes(9), None, "nine bytes")
+    return rows
+
+
 HEALTH = [
     {
         "name": "23 h of failures",
@@ -283,10 +457,14 @@ def build():
         "_doc": "Design 125 step 2, the server's own rows (written by scripts/wifi-lookup-fixtures.py - edit the "
         "script, not this file). golden: the request for three BSSIDs. apple: fake answers of Apple's service with "
         "the APs the server reads ([bssid, lat, lng, acc_m], [bssid, null] = unknown) or malformed. health: failure "
-        "histories (hours from the first) to the orange line, through the pause steps and integration_health.",
+        "histories (hours from the first) to the orange line, through the pause steps and integration_health. "
+        "golden_cells: the cell call for three cells (design 125b). apple_cells: fake answers of a cell call with "
+        "the towers the server reads ([canonical cell, lat, lng, acc_m], [cell, null] = unknown) or malformed.",
         "golden": golden(),
         "apple": apple_rows(),
         "health": HEALTH,
+        "golden_cells": golden_cells(),
+        "apple_cells": apple_cell_rows(),
     }
 
 

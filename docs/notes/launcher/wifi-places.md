@@ -167,3 +167,45 @@
   inside home's zone.
 - Logs carry counts only (`apple asked=12 status=200 got=9 unknown=2`, `apple contradiction`) - no BSSID ever leaves the phone
   but in the ask's body.
+
+## Apple's cell lookup (design 125b, `docs/design/125b-apple-cell-lookup.md`)
+
+- **What it is**: the cells the phone hears and has no position for are asked of the server too, in a request of their
+  own (`{"cells": [...]}`, the same route), beside the Wi-Fi ask on a learned miss - and **alone when there is no scan
+  view** (Wi-Fi and scanning off, fewer than three fresh APs; QA H1). The answers are kept as **Apple cell rows** (kind
+  5, `RowKind.APPLE_CELL`, id `c/<key>`, keyed by step 1's cell key `HMAC("cell|mcc|mnc|area|cid")`), and the cell
+  fix at the attempt's end reads the table again, so they give `vibb_apple_cell` in the same attempt. Pure rules in
+  `places/CellPlan.kt` (`CellPlanTest`, `WifiLookupContractTest` over the shared contract's cell rows), glue in
+  `WifiPlaces` (`readCells`, `askAppleCells`, `cellOnly`). GrapheneOS's cell logic (MIT, `NOTICE.md`) wherever the
+  zones and the server don't need otherwise.
+- **The read** (C1, C2; `readCells`, `cellReads`): `getAllCellInfo()` (every slot's cached cells); when the newest
+  registered one is over a minute old, one `requestCellInfoUpdate` per active subscription
+  (`MobileNetworkRuntime.activeSubscriptionIds`, the slot -> subscription mapping the roaming readings use), up to 3 s,
+  the answers first. Every cell with a full identity (registered, secondary, neighbours that carry one; an NSA NR leg
+  without NCI or TAC skipped), its wire form within the server's ranges (`parseCellWire`, the contract's `cell_forms`),
+  none older than a minute before the attempt's start; registered first, then by signal (unavailable weakest); one per
+  canonical form (a cell on both slots, `01`/`001`); at most 12. `Snapshot.cells` is the list (step 1's single cell
+  went). Logged `cells read=4 usable=2 registered=1 nr=0 stale=0` - counts only. All APIs within minSdk 34
+  (`CellInfo.getCellSignalStrength`, `getTimestampMillis`, `requestCellInfoUpdate`); Location off reads an empty list.
+- **The ask** (C4, `cellAsk`): with the switch on, no 409, a network up and the **cell wait** over
+  (`apple_cell_wait_until_ms`, `KEY_APPLE_CELL_WAIT` - set only by a cells answer: a 503 or 429 with `retry_after_s`
+  that long, at most a day, anything else 15 min; a 409 is the one switch's `apple_off`). The Wi-Fi wait
+  (`apple_wait_until_ms`) stops only the Wi-Fi ask, the cell wait only the cell ask. The cells asked: none when 8 read
+  cells already have a position (GrapheneOS's threshold), else those with no trusted own row (3 occasions), no live
+  Apple cell row, no negative or tombstone, at most 12. Logged `apple cells asked=2 status=200 got=2 unknown=0`.
+- **Apple cell rows** (C7, `storeAppleCells`): Apple's position, `rangeM = max(500 m, acc_m)`, live a fixed 90 days
+  from receipt (`lastTeachMin`; the answer carries no age), a negative 30 days; at most 500. Own against Apple per
+  cell (`chooseCellRow`): an untrusted own row doesn't block Apple's; agreeing - the smaller range (a tie: own);
+  disagreeing - own, and the Apple row a 90-day tombstone (`reconcileAppleCells`), as after an own teach that moves the
+  cell 20 km (`appleCellTaught`). The switch off and every clear drop them with the Apple rows (`dropApple`).
+- **The cell fix** (C8, `cellFix`): every read cell with a chosen row, registered or not. Three or more: one further
+  than its range from the per-axis median is dropped (GrapheneOS's reference); two must lie within both ranges of
+  each other; the position weighted by `1/r^2`; the accuracy `max(smallest used range, weighted RMS distance)`, at
+  least 500 m, none over 5 km; the oldest cell's time; `vibb_apple_cell` when any position is Apple's. Reported by
+  `cellReport` as step 3a set it (never fresh, never while still, not over a recent fine fix inside its circle, a
+  `locate` always). The veto (`cellVetoes`) reads a registered cell's own trusted or live Apple row.
+- **Leave-one-out for cells** (C11): before a GPS fix teaches, the cell fix of the cells paired with it (within 30 s)
+  against the table as it was, by source (own, apple, mixed), with the summed error, 30 days; logged
+  `loo cell own=3/3 apple=12/14 mixed=1/1 err own=800 apple=600 mixed=700`.
+- Not device-tested: the Jelly Star has no SIM (§9: the SIM check list); the emulator rows are
+  `docs/testing/emulator.md` §6bj.

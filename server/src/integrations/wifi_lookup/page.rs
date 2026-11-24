@@ -1,4 +1,4 @@
-//! The Location page's "Wi-Fi lookup at Apple" group (design 125 A1, A7; `partials/wifi_lookup_group.html`,
+//! The Location page's "Lookups at Apple" group (design 125 A1, A7; `partials/wifi_lookup_group.html`,
 //! `#wifi-lookup`): the phone's switch as an auto-saving form back to the group (never the top), one ⓘ for what it
 //! does - with the line that the lookups go from the server's own address while no proxy is set -, and the orange
 //! "Apple lookups aren't working" while `integration_health` raises the integration's row and the switch is on.

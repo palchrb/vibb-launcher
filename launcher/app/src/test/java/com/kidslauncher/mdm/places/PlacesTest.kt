@@ -389,26 +389,26 @@ class PlacesTest {
 
     @Test
     fun `cells - an empty list is a miss, three occasions give a fix, a far cell vetoes`() {
-        assertNull(cellFix(null, emptyList(), 0))
-        val cell = Heard(keys.cell("242|01|1001|50001"), "c", "c", Band.CELL, 0, 5_000, kind = RowKind.CELL)
+        assertNull(cellFix(emptyList(), emptyList(), 0))
+        val cell = Heard(keys.cell("242|01|1001|50001"), "c", "c", Band.CELL, 0, 5_000, kind = RowKind.CELL, registered = true)
         val (lat, lng) = Town.ll(0.0, 0.0)
         var row: PlaceRow? = null
         for (t in 0 until 3) row = teachRow(row, Sighting(cell, lat, lng, 10.0), t * 60, 20000 + t).first
         assertEquals(CELL_RANGE_MIN_M, row!!.rangeM)
         assertEquals(3, row.occasions)
-        val fix = cellFix(cell, listOf(row), 200)!!
+        val fix = cellFix(listOf(cell), listOf(row), 200)!!
         assertEquals(PROVIDER_CELL, fix.provider)
         assertEquals(500.0, fix.accuracyM, 0.0)
-        assertNull(cellFix(cell, listOf(row.copy(occasions = 2)), 200))
+        assertNull(cellFix(listOf(cell), listOf(row.copy(occasions = 2)), 200))
         // A cell's range is capped at 10 km, and it moves at 20 km.
         val wide = teachRow(row, Sighting(cell, Town.ll(0.0, 15_000.0).first, lng, 10.0), 300, 20004).first
         assertEquals(CELL_RANGE_MAX_M, wide.rangeM)
         assertEquals(RowChange.MOVED, teachRow(row, Sighting(cell, Town.ll(0.0, 25_000.0).first, lng, 10.0), 300, 20004).second)
         // The veto: a Wi-Fi fix 3 km from the learned serving cell (range 500 m + 2 km).
         val far = LearnedFix(Town.ll(0.0, 3_000.0).first, lng, 40.0, 3, 0, true, emptySet())
-        assertTrue(cellVetoes(cell, listOf(row), far, 200))
-        assertFalse(cellVetoes(cell, listOf(row), far.copy(lat = Town.ll(0.0, 2_000.0).first), 200))
-        assertFalse(cellVetoes(null, listOf(row), far, 200))
+        assertTrue(cellVetoes(listOf(cell), listOf(row), far, 200))
+        assertFalse(cellVetoes(listOf(cell), listOf(row), far.copy(lat = Town.ll(0.0, 2_000.0).first), 200))
+        assertFalse(cellVetoes(emptyList(), listOf(row), far, 200))
         // Design 125b step 3a: a cell fix is never fresh.
         assertFalse(fix.fresh)
     }

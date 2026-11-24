@@ -49,6 +49,15 @@ Run it with a signed release build (never a debug APK on a kid's phone), on the 
   6. Wi-Fi off with Location -> Wi-Fi scanning on, then off (no learned fix); location Off from the PWA:
      `WifiPlaces: cleared (off)`.
   7. `adb shell dumpsys batterystats me.vibb.launcher`: Wi-Fi scans and GPS time against design 124's day.
+- [ ] Apple's cell lookup (design 125b §9; needs a SIM, "Oppslag hos Apple" on):
+  1. `adb shell dumpsys telephony.registry | grep -i -m5 cellinfo`: the registered cell's identity, which neighbours
+     carry one, NR (NSA or SA), whether the timestamps move after a refresh, both slots' registered flags.
+  2. A day: `WifiPlaces: cells read=` lines, `apple cells asked=... got=...`; the server's sweep `cells=`/`cell_calls=`.
+  3. Outdoors, Wi-Fi off, GPS blocked (a bag, a car): a `vibb_apple_cell` fix and its circle against the GPS fix after;
+     after a few days the `loo cell own=... apple=...` counts (what Apple's tower accuracy means here).
+  4. A zone arrival by car: no crossing from a near cell fix, the arrival at the first fine fix; a trip over 20 km:
+     "left" from two far cell fixes 10 minutes apart.
+  5. A still evening at a fjord or valley edge: `cell_contradictions=0`.
 - [ ] Google Location Accuracy off (the setup step `location_private`): Settings -> Location -> Location services ->
   **Emergency Location Service** is on (the model's name for it may differ; it sends the best position with an
   emergency call whatever GLA is), and the setup step reads done (`adb shell dumpsys location | grep -i network`: the
