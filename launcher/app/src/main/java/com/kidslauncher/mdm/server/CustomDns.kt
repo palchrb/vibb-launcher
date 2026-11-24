@@ -40,7 +40,8 @@ class CustomDns(
     private val log: (String) -> Unit = { Log.i(LOG_TAG, it) },
     /** One attempt at a target: DoH or DoT ([targetTransport]); a test's fake otherwise. */
     transport: ((UpstreamTarget, List<InetAddress>, ByteArray, Budget) -> Attempt)? = null,
-    /** The bootstrap's last resolver, Quad9 (never Cloudflare) - DoT, or its DoH where 853 is blocked (step 3). */
+    /** Where the servers' names are looked up: Quad9's unfiltered service alone (never Cloudflare, never the parent's
+     * own servers) - DoT, or its DoH where 853 is blocked (step 3). */
     private val providers: List<PublicResolver> = PublicResolvers.bootstrap,
     /** The bootstrap's disk cache ([BootstrapDiskCache]); `null` = none (tests). */
     private val cacheFile: File? = null,
@@ -49,7 +50,6 @@ class CustomDns(
 ) {
     private val state = AtomicReference(ChooserState(sinceMs = elapsed()))
     private val canaryInFlight = AtomicReference<CompletableFuture<CanaryVerdict>?>(null)
-    private val resolvers = bootstrapResolvers(config)
     private val bootstrap = BootstrapDns(elapsed) { host -> scope.launch { lookUp(host) } }
     private val client = buildDohClient(bootstrap, protect)
     private val transport = transport ?: targetTransport({ client }, protect, dotPool)
@@ -180,11 +180,14 @@ class CustomDns(
         state.get().takeUnless { UpstreamChooser.needsCanary(it, elapsed()) }?.canary
 
     /**
-     * A look-up of one server's name (A, then AAAA) in the background (§5.3). The bootstrap resolvers
-     * are tried in order, the next one only when a step fails at the transport level (silence after
-     * the request included) - an NXDOMAIN or an empty answer is an answer -, and a step that failed
-     * for A is skipped for AAAA. Nothing at all for the primary's name, with nothing cached, starts
-     * a period (`bootstrap`) unless one runs already; for the backup's, its queries stay dropped.
+     * A look-up of one server's name (A, then AAAA) in the background (§5.3), through [providers] alone
+     * (Quad9's unfiltered service by its fixed addresses: the owner's rule of 2026-11-24 - never Cloudflare, and never the
+     * parent's backup or primary, even one given as an IP literal such as the prefilled
+     * `https://1.1.1.3/dns-query`). They are tried in order, the next one only when a step fails at the
+     * transport level (silence after the request included) - an NXDOMAIN or an empty answer is an
+     * answer -, and a step that failed for A is skipped for AAAA. Nothing at all for the primary's name,
+     * with nothing cached, starts a period (`bootstrap`) unless one runs already; for the backup's, its
+     * queries stay dropped.
      */
     private fun lookUp(host: String) {
         val gen = state.get().gen
@@ -198,12 +201,9 @@ class CustomDns(
                 break
             }
             val query = Message.newQuery(Record.newRecord(qname, type, DClass.IN)).toWire()
-            while (step < resolvers.size) {
-                val via = resolvers[step]
-                val provider = providers.firstOrNull { it.dot == via }
+            while (step < providers.size) {
                 val outcome = try {
-                    if (provider != null) provider.resolve(query, BOOTSTRAP_BUDGET, BOOTSTRAP_BUDGET, transport)
-                    else transport(via, bootstrap.addresses(via.serverHost), query, BOOTSTRAP_BUDGET)
+                    providers[step].resolve(query, BOOTSTRAP_BUDGET, BOOTSTRAP_BUDGET, transport)
                 } catch (e: Exception) {
                     Attempt.Transport(BackupReason.CONNECT)
                 }
