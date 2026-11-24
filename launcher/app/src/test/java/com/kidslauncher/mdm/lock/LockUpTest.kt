@@ -124,7 +124,7 @@ class LockUpTest {
         assertTrue(stopped.indexOf("noteProbableSos(SystemClock.elapsedRealtime())") in 0 until stopped.indexOf("handler.postDelayed(refrontCheck"))
         val paused = body(runtime, "onLockPaused")
         assertFalse(paused.contains("noteProbableSos()"))
-        assertTrue(paused.contains("handler.postDelayed(refrontCheck, pauseRefrontDelayMs(sosScreenOn(lastScreenOnElapsed, powerConnectedAt), SystemClock.elapsedRealtime()))"))
+        assertTrue(paused.contains("handler.postDelayed(refrontCheck, pauseRefrontDelayMs(sosScreenOn(lastScreenOnElapsed, powerChangedAt, lastScreenOffElapsed), SystemClock.elapsedRealtime()))"))
         assertTrue(runtime.contains("registerActivityLifecycleCallbacks(ownScreens)"))
         assertTrue("the lock back in front ends it", body(runtime, "onLockResumed").contains("sosFlowUntilElapsed = 0L"))
         val note = body(runtime, "noteProbableSos")

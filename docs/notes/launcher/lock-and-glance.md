@@ -107,14 +107,21 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
     the screen, something tried to start an activity under lock task and Android's own `BlockedAppActivity` took the
     front in a task of its own, slept at once and un-occluded the keyguard - the glance was paused and stopped ~0.4 s
     after the screen-on, read as a probable SOS, and after the "sos" yield the face's rule stopped (no fresh loss):
-    Android's lock screen with Unihertz's `ChargingDialog` (`com.agui.settings`) over it until the screen cycled. Now a
-    screen-on within 2 s of `ACTION_POWER_CONNECTED` (`POWER_WAKE_MS`, either order) is never the SOS gesture's
-    (`sosScreenOn`, at the pause's mark, its delay and the stop's mark), and 1 s after the connect (`POWER_RECHECK_MS`,
-    `PinLockRuntime.powerReceiver`, registered at runtime) `powerRecheck` looks once: LOCKED, the glance not in front
-    and lost no earlier than the connect's window -> a plug-in's SOS mark ends and the re-front check runs now as a
-    fresh loss (log `AndroidLock: power connected`). The same rule decides the rest, so the kid's own PIN pad (ours),
-    Android open (the leave), the exempt screens (calls, emergency, alarm, VoIP, a real SOS mark not from the plug-in)
-    and the cap of two re-fronts per screen-on all hold; a loss from before the plug-in is left as it was. `PowerGlanceTest`.
+    Android's lock screen with Unihertz's `ChargingDialog` (`com.agui.settings`) over it until the screen cycled. Now
+    `PinLockRuntime.powerReceiver` (registered at runtime) stamps `ACTION_POWER_CONNECTED` and `ACTION_POWER_DISCONNECTED`
+    (an unplug wakes the screen too). Only the power change's own wake is exempt from the SOS rule (`powerWokeScreen`,
+    `sosScreenOn`, at the pause's mark, its delay and the stop's mark): the first screen-on from -300 ms to +2 s around
+    the broadcast (the two come in either order), with no screen-off between - the tag ends at the next screen-off. 1 s
+    after the change (`POWER_RECHECK_MS`) `powerRecheck` looks once: LOCKED, the glance not in front and lost from
+    -300 ms to +1.5 s around the change (the blocked start's) -> the re-front check runs now as a fresh loss (log
+    `AndroidLock: power changed`; own mode keeps its back-off). **The SOS guarantee:** a probable-SOS mark is never
+    cleared or overridden unless the screen-on behind it was the change's own wake. The SOS gesture's presses on a lit
+    screen begin with one that turns it off, so a press-SOS after a plug-in's wake has a screen-off first and keeps its
+    mark; a power change while the screen is already on exempts nothing. A screen-on by a press 2-3 s before a plug-in
+    can't be told from a press-SOS whose stop comes with the plug-in: the SOS rule wins there, and that narrow glimpse
+    stays possible. The same rule decides the rest, so the kid's own PIN pad (ours), Android open (the leave), the
+    exempt screens (calls, emergency, alarm, VoIP, a real SOS) and the cap of two re-fronts per screen-on all hold; a
+    loss from before the change is left as it was. `PowerGlanceTest`.
   - *R2, decided* (the user, 2026-11-02; branch `android-r2`): as the face with Android's secure keyguard locked
     (`AndroidLock.refrontHeld`) **and the kiosk off** (`LockTaskChrome.kioskOn` false) the glance takes **no lock task**
     (`lockTaskEntry(.., androidLocked)` -> NONE, beside the VoIP row; log `AndroidLock: lock task: none of the glance's

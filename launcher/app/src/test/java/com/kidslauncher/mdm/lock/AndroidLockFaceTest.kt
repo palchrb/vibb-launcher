@@ -344,13 +344,13 @@ class AndroidLockFaceTest {
         // The glue: the pause marks before its check is scheduled; the stop's mark is own mode's, unchanged.
         val runtime = code("$lock/PinLockRuntime.kt")
         val paused = runtime.substringAfter("fun onLockPaused(").substringBefore("\n    }\n")
-        val mark = paused.indexOf("if (sosMarkAtPause(AndroidLock.faceOn, ours, sosScreenOn(lastScreenOnElapsed, powerConnectedAt), pausedNow, sosPackage != null)) noteProbableSos(pausedNow)")
+        val mark = paused.indexOf("if (sosMarkAtPause(AndroidLock.faceOn, ours, sosScreenOn(lastScreenOnElapsed, powerChangedAt, lastScreenOffElapsed), pausedNow, sosPackage != null)) noteProbableSos(pausedNow)")
         assertTrue(mark > paused.indexOf("if (!pauseStartsRefront(chromeLocked, finishing)) return"))
         assertTrue(mark < paused.indexOf("handler.postDelayed(refrontCheck"))
         assertTrue(paused.contains("val ours = androidLossOurs(androidAskAt ?: androidCancelledAskAt, androidAnsweredAt, ownStartAt, ownOthersResumed > 0, pausedNow)"))
         assertTrue(runtime.substringAfter("fun onLockStopped(").substringBefore("\n    }\n").contains("noteProbableSos(SystemClock.elapsedRealtime())"))
         assertTrue(runtime.substringAfter("private fun noteProbableSos(leftFrontAt: Long) {").substringBefore("\n    }\n")
-            .contains("if (!sosGestureLikely(sosScreenOn(lastScreenOnElapsed, powerConnectedAt), leftFrontAt, sosAppPresent = sosPackage != null)) return"))
+            .contains("if (!sosGestureLikely(sosScreenOn(lastScreenOnElapsed, powerChangedAt, lastScreenOffElapsed), leftFrontAt, sosAppPresent = sosPackage != null)) return"))
     }
 
     /** Design 59d N1 and E7's L2: a mark (a pause's or a stop's) is logged only by a check that yields to it - never for
