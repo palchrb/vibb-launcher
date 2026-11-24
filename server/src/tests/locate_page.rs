@@ -1349,7 +1349,7 @@ async fn the_locations_row_counts_every_fix_and_the_chip_marks_the_trail() {
             let trail = if span == "0" {
                 String::new()
             } else {
-                format!("&amp;trail={span}")
+                format!("&#38;trail={span}") // Askama escapes the query's &
             };
             assert_eq!(href, format!("/devices/locate?device={id}{trail}#location"));
         }
