@@ -226,13 +226,26 @@ vibb-req-v1
 
 ### 4.3 Time, replay and the clock
 
-- **The signature clock is the server's, and it never steps back** (M5). `sig_now()` = `base + monotonic elapsed since
-  start`, where `base = max(wall clock at start, floor)` and `floor` is read from the database at start. The server
+- **The signature clock is the server's, and it never steps back** (M5). `sig_now()` = `max(wall clock at start +
+  e, base + e - e/10)`, `e` the monotonic elapsed time since start, where `base = max(wall clock at start, floor)` and
+  `floor` is read from the database at start. The server
   writes `sig_now()` to the database every 10 s and at shutdown; `floor` = the stored value + 10 s + the future
   window (30 s) + the past window (60 s), 100 s in all (S1's code QA M1: a `t` up to 30 s ahead of the last stored
   value stays acceptable for 60 s past it, so the floor must clear both windows). So no `t` accepted before a restart can be accepted after it, an NTP step or a VM snapshot restore
   moves nothing back, and while the wall clock is behind the signature clock simply runs ahead of it (it is used for
-  nothing else). It catches up to the wall clock only at a restart.
+  nothing else).
+- **A base ahead of the wall clock runs at nine tenths of real time** until the wall clock as it was at start plus `e`
+  catches it up (after ten times its lead: a restart's 100 s in under 17 minutes), then the clock follows that. The L1
+  gate (2026-11-24, `docs/testing/emulator.md` §6bj, finding 3) saw why: the stored value is the signature clock
+  itself, so a restart soon after the last write put the clock 100 s ahead of the wall clock and every later restart
+  another 100 s (~17 min after ~10 restarts), for good - and each process start's first signed request was `stale`.
+  Choices weighed: a floor of `max(wall, stored + a small margin)` would let a `t` accepted just before a stop be
+  accepted again after it (the replay set is in memory; S1's code QA M1), and storing only the highest `t` accepted
+  still ratchets while phones sign on the clock that is ahead. Slowing the clock keeps every guarantee: both terms only
+  grow (never a step back), it never runs faster than real time (so the stored value + 100 s still clears every `t`
+  accepted before a stop), and the lead always decays. The cost is a phone's offset drifting by a tenth of the time
+  since its last answer while the clock catches up: a phone quiet for over five minutes in that span signs one request
+  `stale` and takes the new offset (S1: answered on the bearer; S2: one retry).
 - The phone keeps `serverOffset` = the server's `Vibb-Time` (`sig_now()` in ms; a new header on **every** device
   answer: the route's, the auth layer's 401s and the edge's own 429 and 503, L4) minus `elapsedRealtime` at the round
   trip's middle; `t` = elapsedRealtime + offset. Not `TrustedClock`: that clock refuses a server marked `Vibb-Clock:
@@ -305,7 +318,8 @@ unknown key, a bad signature, a stale `t`, a missing body hash.
 - **Answers**:
   - S1: `{device_id, device_token, key: {key_id, state: "observed"}}`, or, when the chain was refused,
     `{device_id, device_token, key: {state: "refused", reason}}` - the phone enrols on the bearer (S1 never refuses an
-    enrolment for its key) and deletes the refused key.
+    enrolment for its key) and deletes the refused key; the registration flow then waits as after a refused registration
+    (a day; the L1 gate's finding 2: the first sync made a second key the server refused again).
   - From S2: `{device_id, key_id}` - no token; a refused chain is a 400 `{reason}` and the code stays live; the old
     body (code only) is a 400 `key_required`.
 - **Idempotent** (lost answer): the consumed code keeps the SPKI that consumed it until the code's own expiry. The
@@ -358,7 +372,10 @@ deletes its alias at the next step 1. No time-based rotation (Q5): the key never
 A bound phone that gets `unknown_key` and whose step 1 also answers `unknown_key` (the server's database was restored
 from before the key, or the phone was removed): the phone keeps its keys, stops syncing, and shows **"Ny oppsettkode"**
 on the parent-code dialog (`ReEnrolDialog`); a new setup code enrols it afresh. It never falls back to a bearer and
-never unlocks.
+never unlocks. Never on one answer (L1's code QA H1): three step-1 `unknown_key` answers over an hour, each at least ten
+minutes after the last counted one (the L1 gate's finding 1: the SSE's retries made 12 strikes in a minute), and any
+answer that proves the key known - step 1 naming it, or a 2xx/304 to a request it signed with no bearer - ends the
+suspicion (the gate's finding 1: once signed calls worked again nothing asked step 1, and the old strikes stayed).
 
 ### 5.5 The policy
 
@@ -447,14 +464,25 @@ and in the workflows' path filters like the others. Rows (L7):
 
 ### 7.3 The emulator and debug builds (L8)
 
-- What an emulator attests to is **not yet known** [assumed]: older images' KeyMint is software, its chain ending in
-  AOSP's published software root at level `Software`; newer images may attest through a fake remote provisioning
-  setup under a test root. Before §7.3 is built, one `adb shell` key generation on each gate image (Android 14 and 16)
-  reads the chain's root and levels (the owner's OK for the emulator, as always); the found roots go into
-  `testdata/attestation/roots/` (an emulator's chain is not a family phone's) and this section is corrected.
-- The emulator gate runs a server built with the Cargo feature **`emulator_keys`** (not in `default`): it adds those
-  test roots, accepts `Software`, accepts `me.vibb.launcher.debug` with the digest in
-  `LAUNCHER_DEBUG_SIGNATURE_CHECKSUM`, and skips item 13's enforcement (an emulator is never locked/Verified). Its
+- What the gate images attest to (step 0, read on 2026-11-24, `docs/testing/emulator.md` §6bj): on both Android 14
+  (`compat34`, google_apis) and Android 16 (`aosp36`) the chain is **three P-256 certificates**, remotely provisioned
+  through rkpd from Google's backend for unregistered devices: the leaf ("Android Keystore Key"), an intermediate
+  `O=TEE, CN=<32 hex>` (valid ~2 weeks) and a **self-signed root `CN=Droid Unregistered Device CA, O=Google Test LLC`**
+  (valid ~10 weeks). **The root is not stable**: every `-wipe-data` brought another root key (three seen), so it can't
+  be pinned in `testdata/attestation/roots/`. The provisioning-info extension (`1.3.6.1.4.1.11129.2.1.30`) is on the
+  intermediate **and on the root** (the release check refuses it on the root). The KeyDescription: `attestationVersion`
+  (and KeyMint) **300 on 14, 400 on 16**; **both security levels `Software`**, every tag in the software list (the
+  hardware list empty); RootOfTrust unverified, unlocked, a zero boot key; `osPatchLevel` 2023-09 (14) / 2025-07 (16);
+  the app `me.vibb.launcher.debug` with the debug signer. **No StrongBox** on either. A release server refuses both
+  (`root`).
+- The emulator gate runs a server built with the Cargo feature **`emulator_keys`** (not in `default`). From step 0 it
+  must accept exactly what those chains are, and nothing a family phone's chain needs loosened: a root that is
+  self-signed and named `CN=Droid Unregistered Device CA, O=Google Test LLC` (by its name and self-signature, not a
+  pinned key - it changes with every wiped image), the provisioning info on the root as well as the intermediate, the
+  attestation and KeyMint versions 300 and 400, the `Software` security level with the authorisation tags read from the
+  software list (the hardware list empty), no StrongBox, `me.vibb.launcher.debug` with the digest in
+  `LAUNCHER_DEBUG_SIGNATURE_CHECKSUM`, and it skips item 13's enforcement (an emulator is never locked/Verified: an
+  unverified RootOfTrust, unlocked, a zero boot key). Its
   phones always show the step-2 orange line. `server-release.yml` and the Dockerfile never enable it, and
   `server-ci.yml`'s changes job fails if either names it.
 - `server-ci.yml`'s build job also runs `cargo clippy --all-targets --features emulator_keys` and

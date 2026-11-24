@@ -29,9 +29,6 @@ object KeyRegistration {
     private const val FIRST_BACKOFF_MS = 60_000L
     private const val MAX_BACKOFF_MS = 6 * 60 * 60_000L
 
-    /** A refused chain (a 400 word): the server's checks won't change by themselves soon. */
-    private const val REFUSED_BACKOFF_MS = 24 * 60 * 60_000L
-
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var running = false
     private var again = false
@@ -42,9 +39,39 @@ object KeyRegistration {
     @Volatile
     private var failures = 0
 
-    /** Another call answered `unknown_key` (§4.4): only this flow acts on it. */
+    /** Another call answered `unknown_key` (§4.4): only this flow acts on it, and only outside the backoff (the 129 L1
+     * gate's finding 1: every SSE retry was a step 1 and a strike). */
     fun wake() {
+        if (backoff()) return
         DeviceCredentials.appContext()?.let { request(it, "unknown_key") }
+    }
+
+    /** Whether the book may hold a suspicion (`null`: not read yet), so [keyKnown] reads the book only when it might. */
+    @Volatile
+    private var suspicionHeld: Boolean? = null
+
+    /** A signed request's answer proved the server knows the key ([signatureKnown]): a suspicion of a lost key ends (the
+     * gate's finding 1). A lost key is left to step 1, which still asks now and then. */
+    fun keyKnown() {
+        if (suspicionHeld == false) return
+        val app = DeviceCredentials.appContext() ?: return
+        try {
+            if (KeyBook.read(app).suspicion == null) {
+                suspicionHeld = false
+                return
+            }
+            val after = KeyBook.update(app) { if (it.lost) it else it.copy(suspicion = null) }
+            if (after.suspicion == null) Log.i(LOG_TAG, "The server knows the key again - the suspicion ends")
+            suspicionHeld = after.suspicion != null
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "The suspicion wasn't cleared: ${e.javaClass.simpleName}")
+        }
+    }
+
+    /** The enrolment's key was refused (§5.1): the registration waits as after a refused registration (the gate's
+     * finding 2), so the first sync doesn't make a second key the server refuses again. */
+    fun refusedAtEnrolment(reason: String) {
+        failed(refusalBackoffMs(reason))
     }
 
     @Volatile
@@ -206,6 +233,7 @@ object KeyRegistration {
                     val (suspicion, lost) = lostVerdict(book.suspicion, SystemClock.elapsedRealtime(), BootClock.bootCount())
                     if (lost && !book.lost) Log.w(LOG_TAG, "The server no longer knows this phone's key - a new setup code")
                     KeyBook.update(app) { it.copy(suspicion = suspicion, lost = it.lost || lost) }
+                    suspicionHeld = true
                     failed()
                     return
                 }
@@ -292,7 +320,7 @@ object KeyRegistration {
                 Log.w(LOG_TAG, "The registration was refused: $reason")
                 DeviceKeys.forget(app, alias = made.alias)
                 DeviceKeys.refused(app, reason)
-                failed(if (reason == "challenge") 0L else REFUSED_BACKOFF_MS)
+                failed(refusalBackoffMs(reason))
                 false
             }
             503 -> {

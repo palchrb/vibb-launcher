@@ -65,7 +65,10 @@ signatures are verified and their failures logged, and nothing can lock a phone 
   gets `Vibb-Auth: missing`. Bearer requests note their address (at most hourly per address); signed ones note
   `last_signed_at` (at most every 10 min).
 - `Vibb-Time` (`sig_now`, ms) is on every device answer, the edge's own 429/503 included. The signature clock is
-  `max(wall clock, stored + 100 s)` (the 10 s write, both windows) at start plus monotonic time, written every 10 s and at shutdown.
+  `max(wall at start + elapsed, base + elapsed - elapsed / 10)` with `base = max(wall clock, stored + 100 s)` (the 10 s
+  write, both windows; `sig_now_at`), monotonic time only, written every 10 s and at shutdown: a base ahead of the wall
+  clock runs at nine tenths of real time until the wall clock catches it up (the 129 L1 gate's finding 3: it used to
+  stay 100 s further ahead after every quick restart, for good).
 - Routes: `GET /api/devices/key`, `GET /api/devices/key/challenge`, `POST /api/devices/key` (32 KiB), `POST
   /api/devices/key/conflict`; the enrolment's `chain`/`proof` (the enrol body limit is 32 KiB). The chain is checked
   before any transaction. A registration is `unusual` when the phone's bearer never came from that address in the 30
@@ -76,7 +79,8 @@ signatures are verified and their failures logged, and nothing can lock a phone 
 - A lost enrolment answer (§5.1, code QA H1): at most two repeats, each with a proof whose ECDSA `r` was never seen
   for the code (`devices.enroll_used_proof_rs`, `enroll_repeats`), logged as `device_enrolled` "asked again"; Revoke
   Access and any later enrolment clear the kept code. One live key per phone is a unique index.
-- The signature clock's floor after a restart is the stored value + 100 s (the 10 s write and both windows, M1).
+- The signature clock's floor after a restart is the stored value + 100 s (the 10 s write and both windows, M1); the
+  clock never runs faster than real time, so the floor still covers every `t` accepted before a stop.
 - L1's code QA: a key index whose reload after a key write failed three times keeps the other phones' entries, drops
   that phone's (a removed key must never sign) and is **stale**: an unknown key id is then `SigCheck::Unavailable` - a
   503 with `Retry-After` (the phone's own bearer still authenticates in S1), never `unknown_key`, which the phone

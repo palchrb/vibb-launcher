@@ -249,10 +249,14 @@ fn the_contract_rows() {
     }
     for row in c["clock"]["sig_now"].as_array().unwrap() {
         assert_eq!(
-            device_key::sig_base(
-                row["stored"].as_i64(),
-                row["wall_at_start"].as_i64().unwrap()
-            ) + row["elapsed"].as_i64().unwrap(),
+            device_key::sig_now_at(
+                device_key::sig_base(
+                    row["stored"].as_i64(),
+                    row["wall_at_start"].as_i64().unwrap()
+                ),
+                row["wall_at_start"].as_i64().unwrap(),
+                row["elapsed"].as_i64().unwrap()
+            ),
             row["sig_now"].as_i64().unwrap(),
             "{}",
             row["name"]

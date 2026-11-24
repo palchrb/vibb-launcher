@@ -165,11 +165,16 @@ def build():
             "sig_now": [
                 {"name": "no floor: the wall clock", "stored": None, "wall_at_start": 1_790_000_000_000,
                  "elapsed": 5_000, "sig_now": 1_790_000_005_000},
-                {"name": "the wall clock behind the floor: the floor", "stored": 1_790_000_000_000,
-                 "wall_at_start": 1_789_000_000_000, "elapsed": 1_000,
-                 "sig_now": 1_790_000_000_000 + FLOOR_STEP_MS + 1_000},
+                {"name": "the wall clock behind the floor: the floor, at nine tenths of real time",
+                 "stored": 1_790_000_000_000, "wall_at_start": 1_789_000_000_000, "elapsed": 1_000,
+                 "sig_now": 1_790_000_000_000 + FLOOR_STEP_MS + 900},
                 {"name": "the wall clock past the floor: the wall clock", "stored": 1_790_000_000_000,
                  "wall_at_start": 1_791_000_000_000, "elapsed": 0, "sig_now": 1_791_000_000_000},
+                {"name": "a quick restart: still ahead of the wall clock, catching up", "stored": 1_790_000_000_000,
+                 "wall_at_start": 1_790_000_005_000, "elapsed": 500_000,
+                 "sig_now": 1_790_000_000_000 + FLOOR_STEP_MS + 450_000},
+                {"name": "a quick restart: back on the wall clock once caught up", "stored": 1_790_000_000_000,
+                 "wall_at_start": 1_790_000_005_000, "elapsed": 1_000_000, "sig_now": 1_790_000_005_000 + 1_000_000},
             ],
             "offset": [
                 {"name": "the round trip's middle", "vibb_time": 1_790_000_000_000, "sent_elapsed": 10_000,
@@ -322,20 +327,32 @@ def nudge(name, policy, ask, adopted_key_id=None, has_token=True, lost=False, ba
 
 
 HOUR = 3_600_000
+GAP = 600_000
 
 
 def lost_rows():
     """Code QA H1: step 1's unknown_key with no bearer is a strike; "lost" needs three strikes over an hour (elapsed
-    realtime; a reboot starts the span again). The launcher's `lostVerdict`."""
+    realtime; a reboot starts the span again). The 129 L1 gate's finding 1: an answer within ten minutes of the last
+    counted strike is none. The launcher's `lostVerdict`."""
     def row(name, before, now_elapsed, boot, after, lost):
         return {"name": name, "before": before, "now_elapsed": now_elapsed, "boot": boot, "after": after, "lost": lost}
-    s = lambda first, boot, strikes: {"first_elapsed_ms": first, "first_boot": boot, "strikes": strikes}
+    s = lambda first, boot, strikes, last: {"first_elapsed_ms": first, "first_boot": boot, "strikes": strikes,
+                                            "last_elapsed_ms": last}
     return [
-        row("the first strike", None, 1000, 7, s(1000, 7, 1), False),
-        row("three strikes in minutes: not yet", s(1000, 7, 2), 1000 + 600_000, 7, s(1000, 7, 3), False),
-        row("three strikes over an hour: lost", s(1000, 7, 2), 1000 + HOUR, 7, s(1000, 7, 3), True),
-        row("many strikes, still within the hour", s(1000, 7, 9), 1000 + HOUR - 1, 7, s(1000, 7, 10), False),
-        row("a reboot starts the span again", s(1000, 7, 5), 500, 8, s(500, 8, 6), False),
+        row("the first strike", None, 1000, 7, s(1000, 7, 1, 1000), False),
+        row("an ask within ten minutes of the last strike: none", s(1000, 7, 1, 1000), 1000 + GAP - 1, 7,
+            s(1000, 7, 1, 1000), False),
+        row("ten minutes after the last strike: a strike", s(1000, 7, 1, 1000), 1000 + GAP, 7,
+            s(1000, 7, 2, 1000 + GAP), False),
+        row("three spaced strikes within the hour: not yet", s(1000, 7, 2, 1000 + GAP), 1000 + 2 * GAP, 7,
+            s(1000, 7, 3, 1000 + 2 * GAP), False),
+        row("three strikes over an hour: lost", s(1000, 7, 2, 1000 + 2 * GAP), 1000 + HOUR, 7,
+            s(1000, 7, 3, 1000 + HOUR), True),
+        row("a quick ask at the hour: never lost on it", s(1000, 7, 2, 1000 + HOUR - 60_000), 1000 + HOUR, 7,
+            s(1000, 7, 2, 1000 + HOUR - 60_000), False),
+        row("many strikes, still within the hour", s(1000, 7, 5, 1000 + 4 * GAP), 1000 + HOUR - 1, 7,
+            s(1000, 7, 6, 1000 + HOUR - 1), False),
+        row("a reboot starts the span again", s(1000, 7, 5, 3_000_000), 500, 8, s(500, 8, 6, 500), False),
     ]
 
 

@@ -202,23 +202,45 @@ const val NONE_ASK_AGAIN_MS = 60 * 60_000L
 const val LOST_STRIKES = 3
 const val LOST_SPAN_MS = 60 * 60_000L
 
-/** The strikes so far: the first one's elapsed realtime and boot, and how many. */
+/** The 129 L1 gate's finding 1: a step-1 `unknown_key` within this long of the last counted strike is no strike - only
+ * spaced asks count (an SSE retry every few seconds once made 12 strikes in a minute). */
+const val LOST_STRIKE_GAP_MS = 10 * 60_000L
+
+/** The strikes so far: the first one's elapsed realtime and boot, how many, and the last counted one's elapsed realtime
+ * (in the same boot as the first). */
 @Serializable
-data class LostSuspicion(val firstElapsedMs: Long, val firstBoot: Int, val strikes: Int)
+data class LostSuspicion(val firstElapsedMs: Long, val firstBoot: Int, val strikes: Int, val lastElapsedMs: Long = firstElapsedMs)
 
 /**
  * One more step-1 `unknown_key` with no bearer (code QA H1): the suspicion after it, and whether the key is now lost.
  * A reboot starts the span again (elapsed realtime restarts), keeping the strikes so far but never counting a span
- * across the boot.
+ * across the boot. An answer within [LOST_STRIKE_GAP_MS] of the last counted strike changes nothing and never makes the
+ * key lost (the gate's finding 1).
  */
 fun lostVerdict(before: LostSuspicion?, nowElapsedMs: Long, boot: Int): Pair<LostSuspicion, Boolean> {
     val next = when {
         before == null -> LostSuspicion(nowElapsedMs, boot, 1)
         before.firstBoot != boot -> LostSuspicion(nowElapsedMs, boot, before.strikes + 1)
-        else -> before.copy(strikes = before.strikes + 1)
+        nowElapsedMs - before.lastElapsedMs < LOST_STRIKE_GAP_MS -> return before to false
+        else -> before.copy(strikes = before.strikes + 1, lastElapsedMs = nowElapsedMs)
     }
     return next to (next.strikes >= LOST_STRIKES && nowElapsedMs - next.firstElapsedMs >= LOST_SPAN_MS)
 }
+
+/**
+ * The 129 L1 gate's finding 1: an answer that proves the server knows the adopted key - a 2xx or a 304 to a request
+ * the key signed with no bearer beside it (with a bearer, S1 answers on the bearer whatever the signature). It ends any
+ * suspicion of a lost key, which no step 1 would otherwise clear once signed calls work again.
+ */
+fun signatureKnown(status: Int, signed: Boolean, bearer: Boolean): Boolean =
+    signed && !bearer && (status in 200..299 || status == 304)
+
+/** The registration backoff after a refused key - a registration's 400 or the enrolment's `refused` (the gate's finding
+ * 2: the enrolment's set none, so the first sync made a second key at once). A stale challenge may go again at once. */
+fun refusalBackoffMs(reason: String): Long = if (reason == "challenge") 0L else REFUSED_BACKOFF_MS
+
+/** A refused chain: the server's checks won't change by themselves soon. */
+const val REFUSED_BACKOFF_MS = 24 * 60 * 60_000L
 
 /**
  * Code QA M3: whether a key whose signs fail is unusable - at once when the failure is permanent (no key, a key

@@ -309,14 +309,20 @@ bearer - nothing here can lock a phone out.
   key, a fresh `register` proof, `POST /api/devices/key`, then step 1 again whatever the POST's fate - at most one key a
   run; the bearer goes at `bound` only after one test sign), report a conflict once (`POST /api/devices/key/conflict`),
   wait, or count a strike towards "lost": step 1's `unknown_key` with no bearer is never "lost" on one answer
-  (`lostVerdict`: three strikes over an hour of elapsed realtime; a reboot starts the span again) - the server answers
+  (`lostVerdict`: three strikes over an hour of elapsed realtime; a reboot starts the span again; an answer within ten
+  minutes of the last counted strike is none, `LOST_STRIKE_GAP_MS` - the 129 L1 gate's finding 1) - the server answers
   503, not `unknown_key`, while its key index is stale after a failed reload. A known key ends the suspicion and the
-  mark. A policy whose `device_key` names no key asks step 1 again only an hour after the last ask. A 400
-  refusal deletes that key (never stored) and waits a day (`challenge`: at once); a 503 `list_stale` waits its
+  mark; so does any 2xx or 304 to a request the key signed with no bearer beside it (`signatureKnown`, the signer's
+  `RequestSigning.known` -> `KeyRegistration.keyKnown`, which reads the book only while it may hold a suspicion; the
+  gate's finding 1: once signed calls worked again nothing asked step 1, and the old strikes stayed). A policy whose `device_key` names no key asks step 1 again only an hour after the last ask. A 400
+  refusal deletes that key (never stored) and waits a day (`challenge`: at once; `refusalBackoffMs`), and so does the
+  enrolment's `refused` key (`KeyRegistration.refusedAtEnrolment`; the gate's finding 2: the first sync made a second
+  key the server refused again); a 503 `list_stale` waits its
   `retry_after_s`; any other failure backs off from a minute, doubling, to six hours. The launcher has no WorkManager
   (design 129 named one): the run is a coroutine of its own, asked by the sync after every accepted policy (the
   policy's `device_key` only nudges; an older server's policy without it asks nothing), by another call's
-  `unknown_key`, and its backoff lives in memory (a process start may try once more). Its own calls never wake it.
+  `unknown_key` (`wake`, only outside the backoff - the gate's finding 1: every SSE retry was a step 1), and its
+  backoff lives in memory (a process start may try once more). Its own calls never wake it.
 - **The enrolment** (`Enrollment.enroll`, §5.1): the key is attested for `SHA-256("vibb-enroll-v1" || 0x00 ||
   normalised code)`; a retry with the same code reuses that key (the book keeps each enrolment key's challenge) and
   signs a new `enroll` proof every attempt (S1 refuses a repeated ECDSA `r`). The body carries `chain` and `proof` only
