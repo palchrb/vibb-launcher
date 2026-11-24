@@ -3,6 +3,7 @@ package com.kidslauncher.mdm.calls
 import android.content.Context
 import android.os.UserManager
 import com.kidslauncher.mdm.server.dto.CallState
+import com.kidslauncher.mdm.server.dto.withBlocked
 import com.kidslauncher.mdm.server.systemDialerPackage
 
 /** What the status report says about calls (`StatusReportRequest.callState`). */
@@ -40,6 +41,6 @@ object CallStateReport {
             callLogReadable = CallSystem.callLogReadable(context),
             bootPolicy = CallPolicyStore.bootPolicyStatus,
             inCallUiFailedAt = CallSystem.isoOrNull(CallPrefs.inCallUiFailedMs(context)),
-        )
+        ).withBlocked(BlockedNumbersRuntime.report(context))
     }
 }

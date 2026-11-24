@@ -75,6 +75,8 @@ private val OWN_CALL_PERMISSIONS = listOf(
 
 /** `Telephony.Sms.Intents.ACTION_SMS_EMERGENCY_CB_RECEIVED` (system API). */
 private const val ACTION_SMS_EMERGENCY_CB_RECEIVED = "android.provider.action.SMS_EMERGENCY_CB_RECEIVED"
+/** `TelecomManager.ACTION_MANAGE_BLOCKED_NUMBERS` (hidden; `createManageBlockedNumbersIntent` is the public way in). */
+private const val MANAGE_BLOCKED_NUMBERS = "android.telecom.action.MANAGE_BLOCKED_NUMBERS"
 
 /**
  * The set of packages [AppEnforcer] will ever consider suspending/hiding, and that
@@ -399,6 +401,9 @@ object AppEnforcer {
         // Design 119 §4.1 (L4): the link gate's catch-all for http and https, after the Play link blocker's and the map
         // handler's (insertion order among equal priorities). Its use is the gate's enabled state (after the loop).
         enforceLinkGatePin(dpm, admin, context)
+        // Android's Blocked numbers page goes to Vibb's gate, the same pattern: its use is the gate's enabled state
+        // (BlockedNumbersRuntime: on while managed). Never lifted, as the call rules.
+        enforceBlockedNumbersPin(dpm, admin, context)
 
         // Hardening that the server switched off is cleared first, before anything below can
         // throw - "Block USB debugging" off is how a parent gets adb back (QA step 4 #8). The
@@ -656,6 +661,8 @@ object AppEnforcer {
         if (requested != null) applyAccessPermissions(context, dpm, admin, requested, policy, overrideActive)
         // Design 09 A6: the SMS role goes back only now, with the previous holder unhidden by the loop.
         applySmsRole(context, dpm, admin, callsState, smsMode, gateLock, allowRelease = true)
+        // Android's blocked-numbers list cleared while managed (the roles are settled now), and watched from here on.
+        com.kidslauncher.mdm.calls.BlockedNumbersRuntime.afterApply(context)
         // Design 119 §4.1 (M1): Chrome hidden by the loop first, then the gate switched - enabling it changes the role
         // service's package hash, so the controller drops a hidden holder and grants the gate -, then the repair.
         com.kidslauncher.mdm.logins.LinkGateRuntime.afterLoop(
@@ -1938,6 +1945,7 @@ object AppEnforcer {
         enforceUpLinkPin(dpm, admin, context)
         enforceMapLinkPin(dpm, admin, context)
         enforceLinkGatePin(dpm, admin, context)
+        enforceBlockedNumbersPin(dpm, admin, context)
     }
 
     /**
@@ -2011,6 +2019,22 @@ object AppEnforcer {
             )
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Failed to set the link gate's handler", e)
+        }
+    }
+
+    /**
+     * `android.telecom.action.MANAGE_BLOCKED_NUMBERS` goes to [com.kidslauncher.mdm.calls.BlockedNumbersGate] - set on
+     * every [apply] and in `HomePin`'s re-seat with the other PPAs of ours (the eighth; it shares no filter with them).
+     * While managed the gate is enabled and closes at once; disabled while unmanaged, Android skips the pin.
+     */
+    private fun enforceBlockedNumbersPin(dpm: DevicePolicyManager, admin: ComponentName, context: Context) {
+        try {
+            val filter = IntentFilter(MANAGE_BLOCKED_NUMBERS).apply {
+                addCategory(Intent.CATEGORY_DEFAULT)
+            }
+            dpm.addPersistentPreferredActivity(admin, filter, ComponentName(context, com.kidslauncher.mdm.calls.BlockedNumbersGate::class.java))
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Failed to set the blocked numbers' handler", e)
         }
     }
 

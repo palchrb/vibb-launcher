@@ -1,0 +1,30 @@
+{
+  "classes": ["contact", "number", "short", "other"],
+  "call_state": {
+    "blocked_readable": true,
+    "blocked_left": 0,
+    "blocked_cleared_contact": 1,
+    "blocked_cleared_number": 2,
+    "blocked_cleared_short": 0,
+    "blocked_cleared_other": 0,
+    "blocked_cleared_at": "2026-11-23T20:15:00Z",
+    "blocked_cleared_initial": 2
+  },
+  "call_state_unreadable": {
+    "blocked_readable": false,
+    "blocked_cleared_contact": 0,
+    "blocked_cleared_number": 0,
+    "blocked_cleared_short": 0,
+    "blocked_cleared_other": 0,
+    "blocked_cleared_initial": 0
+  },
+  "lines": [
+    {"previous": null, "now": {"blocked_cleared_contact": 1}, "lines": []},
+    {"previous": {}, "now": {"blocked_cleared_contact": 1}, "lines": [{"class": "contact", "count": 1}]},
+    {"previous": {"blocked_cleared_contact": 1, "blocked_cleared_number": 2}, "now": {"blocked_cleared_contact": 1, "blocked_cleared_number": 2}, "lines": []},
+    {"previous": {"blocked_cleared_contact": 1, "blocked_cleared_number": 2}, "now": {"blocked_cleared_contact": 2, "blocked_cleared_number": 2, "blocked_cleared_short": 1, "blocked_cleared_other": 3}, "lines": [{"class": "contact", "count": 1}, {"class": "short", "count": 1}, {"class": "other", "count": 3}]},
+    {"previous": {"blocked_cleared_contact": 4}, "now": {"blocked_cleared_contact": 0}, "lines": []},
+    {"previous": {"blocked_cleared_initial": 0}, "now": {"blocked_cleared_initial": 4}, "lines": []},
+    {"previous": {"blocked_cleared_number": -5}, "now": {"blocked_cleared_number": 1}, "lines": [{"class": "number", "count": 1}]}
+  ]
+}

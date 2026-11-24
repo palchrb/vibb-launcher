@@ -479,4 +479,27 @@ data class CallState(
     /** The in-call screen couldn't be brought up over the PIN lock for a ringing call (step 10,
      * QA 10 #8) - the last time, ISO-8601; `null` = never. */
     val inCallUiFailedAt: String? = null,
+    /** Android's blocked-numbers list (`calls/BlockedNumbers.kt`, `testdata/blocked_numbers.json`): readable at all,
+     * the rows left, what was cleared by class since the install, and the last clearing (ISO-8601). Never a number. */
+    val blockedReadable: Boolean? = null,
+    val blockedLeft: Int? = null,
+    val blockedClearedContact: Int? = null,
+    val blockedClearedNumber: Int? = null,
+    val blockedClearedShort: Int? = null,
+    val blockedClearedOther: Int? = null,
+    val blockedClearedAt: String? = null,
+    /** Cleared by the first sweep after the phone became managed (the parent's switch): counted apart, never logged. */
+    val blockedClearedInitial: Int? = null,
+)
+
+/** [CallState] with [report]'s `blocked_*` keys. */
+fun CallState.withBlocked(report: com.kidslauncher.mdm.calls.BlockedReport): CallState = copy(
+    blockedReadable = report.readable,
+    blockedLeft = report.left,
+    blockedClearedContact = report.cleared[com.kidslauncher.mdm.calls.BlockedClass.CONTACT] ?: 0,
+    blockedClearedNumber = report.cleared[com.kidslauncher.mdm.calls.BlockedClass.NUMBER] ?: 0,
+    blockedClearedShort = report.cleared[com.kidslauncher.mdm.calls.BlockedClass.SHORT] ?: 0,
+    blockedClearedOther = report.cleared[com.kidslauncher.mdm.calls.BlockedClass.OTHER] ?: 0,
+    blockedClearedAt = report.lastClearedMs?.let { java.time.Instant.ofEpochMilli(it).toString() },
+    blockedClearedInitial = report.clearedInitial,
 )

@@ -542,3 +542,31 @@ which app its button opens (`device_contacts.message_app`, NULL = the phone's `d
   through "Add from the family", edited there - both phones nudged -, read in the first's policy, a stale page's save,
   Element X to a phone that has it), `the_migration_moves_the_matrix_id_to_the_contact`,
   `tests::contact_requests::a_request_never_renames_a_family_contact` (the kid's ID refused against the family's).
+
+## Android's blocked numbers cleared on the phone (2026-11-23; branch `blocked-numbers`)
+
+While calls or SMS are managed the launcher clears Android's own blocked-numbers list (Telecom rejects a listed caller
+before Vibb One sees the call or text) and reports it in `call_state`'s flat `blocked_*` keys (`device_api::CALL_STATE_FIELDS`):
+`blocked_readable`, `blocked_left`, `blocked_cleared_<contact|number|short|other>` (counts since its install, never a
+number), `blocked_cleared_at` and `blocked_cleared_initial`. `blocked_numbers.rs` compares the class counts with the
+previous report and writes a `phone_blocked_cleared` line per class that rose (`PhoneLine::BlockedCleared`, the phone's
+hourly budget; no line without a previous report, a lower count taken silently).
+
+- **The first sweep after the phone becomes managed** (either channel; also a fresh enrolment) clears what was there
+  before - the parent's own switch, not something the kid did. The launcher counts it apart, in
+  `blocked_cleared_initial` alone (all classes together, no `blocked_cleared_at`): stored, never a security line, an
+  orange line or Attention. The phone keeps that state in its own prefs (`was_managed`, reset whenever a sweep finds it
+  unmanaged).
+- **The Calls page:** `Finding::BlockedCleared` ("Blokkert nummer fjernet", its time visible, the sentence behind the
+  ⓘ; 7 days on the page, a day in Attention) from `blocked_cleared_at`. `Finding::BlockedLeft` ("Numre blokkert på
+  telefonen") shows only when a channel is managed, the phone read the list (`blocked_readable: true`) and rows were
+  left - in practice only when a delete failed. A managed phone without the dialer or SMS role reports
+  `blocked_readable: false` and gets no `BlockedLeft`; the Calls page's role findings are what says it then.
+- **One channel managed clears the whole list** (to be confirmed by the owner): Android's list blocks calls and texts
+  alike, so with only calls (or only SMS) managed, numbers the kid blocked against spam are cleared too.
+- **Known residual:** Telecom's page also has an "Unknown" switch (block withheld callers). It lives in the provider's
+  own settings, which only the system may read or write, so Vibb can't see or undo it; Vibb's own call rules already
+  turn withheld callers away while calls are managed.
+
+The contract is `testdata/blocked_numbers.json` (root `CLAUDE.md`); tests in `blocked_numbers::tests` and
+`tests::blocked_numbers`.

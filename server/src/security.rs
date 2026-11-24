@@ -545,6 +545,8 @@ phone_lines! {
     TimeLiftPhone = "time_lift_phone", crate::parent_pin::PIN_EVENT_DAYS;
     /// Design 114 §4.4: a setup step ticked in the phone's setup flow (`setup_status::tick`).
     SetupTickPhone = "setup_tick_phone", crate::retention::PHONE_LOG_DAYS;
+    /// A number the phone cleared from Android's blocked list, by its class (`blocked_numbers`).
+    BlockedCleared = "phone_blocked_cleared", crate::retention::PHONE_LOG_DAYS;
 }
 
 /// A line a phone's report raised - a PIN use, a start without the launcher, an app installed, a

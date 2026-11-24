@@ -5127,3 +5127,41 @@ adb logcat -d -t 2000 | grep -iE "kidslauncher|vibb|Telecom|InCall|CallScreen|An
 
 plus what you did and what you saw (a screenshot helps: `adb exec-out screencap -p > s.png`).
 Restore the "enrolled" snapshot between experiments.
+
+## 6be. Android's blocked numbers cleared while managed (branch `blocked-numbers`, 2026-11-23)
+
+`docs/notes/launcher/calls.md`, "Android's blocked numbers cleared while managed". The rig: a fresh server on 3130/3131
+(debug launcher component, a dummy `LAUNCHER_SIGNATURE_CHECKSUM`), a phone per AVD with calls and SMS managed (a new
+phone's default), a Parent PIN, "Block USB debugging" off, the contact Mamma `+4791234567`, the debug launcher made
+device owner and enrolled with a typed setup code (on 16 the Connect screen's fields take Tab between them).
+
+```sh
+A="adb -s emulator-5556"
+# The action goes to Vibb's gate while managed:
+$A shell cmd package resolve-activity -a android.telecom.action.MANAGE_BLOCKED_NUMBERS | grep -m1 name=
+$A shell am start -W -a android.telecom.action.MANAGE_BLOCKED_NUMBERS | grep Activity     # BlockedNumbersGate
+# Telecom's page started explicitly (not affected by the gate): Add a number, type it, hide the keyboard (BACK), Block.
+$A shell am start -W -n com.android.server.telecom/.settings.BlockedNumbersActivity
+$A logcat -d | grep -E "VibbBlockedNumbers|SyncRunner: Sync for \[blocked_numbers\]"
+# The server: one security-log line per class, the number never.
+sqlite3 data/kidphone.db "SELECT created_at, detail, params FROM security_events WHERE event_type='phone_blocked_cleared'"
+```
+
+| Row | Android 14 (`compat34`) | Android 16 (`handy36`) |
+|---|---|---|
+| Vibb One reads the list (dialer and SMS roles) | **Pass.** `blocked_readable: true`, `blocked_left: 0` | **Pass.** The same (the dialer role; SMS not yet handed over) |
+| The action while managed | **Pass.** Resolves to `BlockedNumbersGate`, which closes at once | **Pass.** The same |
+| A contact's number blocked on Telecom's page (`91234567`) | **Pass.** Cleared 19 ms after the insert (`Cleared blocked numbers: contact=1`), a sync at once; the server's `phone_blocked_cleared` line `blocked_cleared.contact` in the same second; the page's list empty again | - |
+| Another number (`99887766`) | - | **Pass.** Cleared 19 ms after the insert (`number=1`); the line `blocked_cleared.number` in the same second |
+| The PWA | **Pass.** Calls: "Blokkert nummer fjernet" in orange with "23:01 · nå nettopp", the sentence behind the ⓘ; the summary's Attention row; the security log "Block removed: 1 contact number" | not looked at (the same server) |
+| Calls and SMS set unmanaged | - | **Pass.** The gate disabled, the action resolves to Telecom's page; the dialer role back with Google's dialer |
+| `TelecomManager.createManageBlockedNumbersIntent()` (a probe app, emulator only, calling it and starting the result) | **Fails (not fixable by the gate).** The intent names Telecom's package (`act=...MANAGE_BLOCKED_NUMBERS pkg=com.android.server.telecom`), so the pin doesn't apply and Telecom's page opens. A contact's number added there: cleared 13 ms after the insert, the server's `blocked_cleared.contact` line in the same second | **The same.** Telecom's page opens; a contact's number cleared 25 ms after the insert, the line in the same second |
+| The Google Dialer's settings row while managed | **Not reachable.** With Vibb One the phone app the Google Dialer shows only "Set Phone as default"; its own `BLOCKED_NUMBERS_SETTINGS` activity isn't exported | **The same** |
+| The observer after a process restart | **Pass.** `run-as ... kill -9`; the process back by itself (new pid); a short number added on Telecom's page cleared 22 ms after the insert (`short=1`), a sync at once | **Pass after a reboot** (new process, before any sync of its own): a short number cleared 56 ms after the insert, the line in the same second. The `kill -9` run itself ended with Telecom's page ANR-ing ("Input dispatching timed out ... FocusEvent") and then a looping "Process system isn't responding" (no focused window), so it was repeated after a reboot; logcat in the session scratchpad |
+| The initial sweep: two numbers blocked while unmanaged, then calls set managed | **Pass.** `Cleared blocked numbers on becoming managed: 2`; the report `blocked_cleared_initial: 2`, every class count 0, no `blocked_cleared_at`; no security line, no orange line on Calls, nothing in Attention | **Pass.** The same |
+
+The phones were in the fresh enrolment's setup hold (no lock task): the clearing ran there too, as it does in a pause.
+The last four rows ran on 2026-11-24 (00:00 CET) with the branch's second commit, a fresh server and fresh
+phones enrolled with calls and SMS unmanaged, then calls set managed. Android 17 (`compat372`, 37.2) was tried: system_server restarted during `set-device-owner` (the image's known graphics
+abort, §6as), so not run. Not run: the "Unknown" switch on Telecom's page (Android keeps it in the provider's own
+settings, which only the system may read or write).

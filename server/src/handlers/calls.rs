@@ -1170,6 +1170,8 @@ pub(crate) struct CallReport {
     /// The emergency call has left Attention: a parent has read its inbox event, or 24 h have
     /// passed ([EMERGENCY_ATTENTION_HOURS]). The calls page keeps the finding for 7 days.
     pub emergency_left_attention: bool,
+    /// A cleared blocked number leaves Attention after [EMERGENCY_ATTENTION_HOURS]; the calls page keeps it 7 days.
+    pub blocked_left_attention: bool,
 }
 
 impl CallReport {
@@ -1179,6 +1181,7 @@ impl CallReport {
             .iter()
             .map(Finding::problem)
             .filter(|p| !(self.emergency_left_attention && *p == CallProblem::EmergencyCall))
+            .filter(|p| !(self.blocked_left_attention && *p == CallProblem::BlockedCleared))
             .collect()
     }
 }
@@ -1259,6 +1262,14 @@ pub(crate) enum Finding {
     NoCallers,
     /// SMS "Styrt av Vibb" and no contact may text in, while someone may call (else [Finding::NoCallers] says it).
     NoTexters,
+    /// The phone cleared a number from Android's blocked list (`blocked_numbers`), the last at `at`, in the last 7 days.
+    BlockedCleared {
+        at: DateTime<Utc>,
+    },
+    /// A channel is managed and Android's blocked list still holds numbers the phone couldn't clear.
+    BlockedLeft {
+        count: i64,
+    },
 }
 
 /// "10:58 · 3 min ago": a report's time with its age (one of them when they read the same).
@@ -1297,6 +1308,8 @@ impl Finding {
             Finding::SmsRoleKept => CallProblem::SmsRoleKept,
             Finding::NoCallers => CallProblem::NoCallers,
             Finding::NoTexters => CallProblem::NoTexters,
+            Finding::BlockedCleared { .. } => CallProblem::BlockedCleared,
+            Finding::BlockedLeft { .. } => CallProblem::BlockedLeft,
         }
     }
 
@@ -1438,6 +1451,11 @@ impl Finding {
             Finding::NoCallers | Finding::NoTexters => {
                 (say("device.calls.finding.no_contacts"), None)
             }
+            Finding::BlockedCleared { .. } => (say("device.calls.finding.blocked_cleared"), None),
+            Finding::BlockedLeft { count } => (
+                crate::i18n::t_count(lang, "device.calls.finding.blocked_left", *count, &[]),
+                None,
+            ),
         };
         // Where the sentence is the news, it shows under the title (a KEEP: the emergency call,
         // the call-back window, a call that couldn't show) and only the fix stays behind the ⓘ
@@ -1450,6 +1468,9 @@ impl Finding {
         );
         let (sub, detail) = if visible {
             (Some(detail), None)
+        } else if let Finding::BlockedCleared { at } = self {
+            // When it happened is the news; what happened stays behind the ⓘ.
+            (Some(stamp(zone, *at, now)), Some(detail))
         } else {
             (None, Some(detail))
         };
@@ -1512,6 +1533,7 @@ pub(crate) async fn call_report(
         findings: Vec::new(),
         auto_refresh: false,
         emergency_left_attention: false,
+        blocked_left_attention: false,
     };
     // A managed channel no contact can reach yet (a new phone's start): said once, calls first - from the stored
     // contacts, with or without a report.
@@ -1564,6 +1586,14 @@ pub(crate) async fn call_report(
         report.emergency_left_attention = now - at
             >= chrono::Duration::hours(EMERGENCY_ATTENTION_HOURS)
             || crate::parent_events::emergency_call_read(&state.db, policy.device_id, at).await?;
+    }
+    // Android's blocked list (`blocked_numbers`): a number cleared in the last 7 days, whatever the modes now.
+    if let Some(at) = text("blocked_cleared_at").and_then(|t| parse_time(&t))
+        && now - at < chrono::Duration::days(7)
+    {
+        findings.push(Finding::BlockedCleared { at });
+        report.blocked_left_attention =
+            now - at >= chrono::Duration::hours(EMERGENCY_ATTENTION_HOURS);
     }
     if let Some(until) = text("callback_window_until").and_then(|t| parse_time(&t))
         && until > now
@@ -1632,6 +1662,17 @@ pub(crate) async fn call_report(
             findings,
         )
         .await?;
+    }
+    // Android's blocked list still holds numbers while a channel is managed: the phone couldn't clear them.
+    if roles != RoleReport::Pending
+        && (policy.calls_managed() || policy.sms_mode == "managed")
+        && flag("blocked_readable") == Some(true)
+        && let Some(left) = call_state
+            .get("blocked_left")
+            .and_then(serde_json::Value::as_i64)
+        && left > 0
+    {
+        findings.push(Finding::BlockedLeft { count: left });
     }
     // Design 77 D2: the role, screening and call-log findings are the calls channel's (the launcher reports
     // `call_state.state` for calls alone, and hands the dialer role back while only SMS is managed).
@@ -1833,6 +1874,10 @@ pub enum CallProblem {
     NoCallers,
     /// SMS managed and no contact may text in.
     NoTexters,
+    /// A number blocked in Android's settings was cleared (its Attention row: 24 h).
+    BlockedCleared,
+    /// Numbers are blocked in Android's settings and the phone couldn't clear them.
+    BlockedLeft,
 }
 
 impl CallProblem {
@@ -1864,6 +1909,8 @@ impl CallProblem {
                 CallProblem::SmsRoleKept => "device.calls.problem.sms_role_kept",
                 CallProblem::NoCallers => "device.calls.problem.no_callers",
                 CallProblem::NoTexters => "device.calls.problem.no_texters",
+                CallProblem::BlockedCleared => "device.calls.problem.blocked_cleared",
+                CallProblem::BlockedLeft => "device.calls.problem.blocked_left",
             },
         )
     }
@@ -1886,7 +1933,7 @@ impl CallProblem {
 
     /// Every kind, for the tests.
     #[cfg(test)]
-    pub(crate) const ALL: [CallProblem; 23] = [
+    pub(crate) const ALL: [CallProblem; 25] = [
         CallProblem::EmergencyCall,
         CallProblem::CallbackWindow,
         CallProblem::CallScreenFailed,
@@ -1910,6 +1957,8 @@ impl CallProblem {
         CallProblem::SmsRoleKept,
         CallProblem::NoCallers,
         CallProblem::NoTexters,
+        CallProblem::BlockedCleared,
+        CallProblem::BlockedLeft,
     ];
 }
 
@@ -3598,6 +3647,8 @@ mod tests {
             Finding::SmsRoleKept,
             Finding::NoCallers,
             Finding::NoTexters,
+            Finding::BlockedCleared { at: earlier },
+            Finding::BlockedLeft { count: 2 },
         ];
         let mut kinds: Vec<_> = all.iter().map(Finding::problem).collect();
         kinds.dedup();
@@ -3626,7 +3677,9 @@ mod tests {
                     | Finding::CallbackWindow { .. }
                     | Finding::CallScreenFailed { .. }
             );
-            assert_eq!(note.sub.is_some(), visible, "{finding:?}");
+            // A cleared blocked number shows its time and keeps what happened behind the ⓘ.
+            let timed = matches!(finding, Finding::BlockedCleared { .. });
+            assert_eq!(note.sub.is_some(), visible || timed, "{finding:?}");
             assert_eq!(note.detail.is_some(), !visible, "{finding:?}");
             let detail = note.sub.or(note.detail).unwrap();
             assert!(detail.split_whitespace().count() <= 40, "{detail}");
