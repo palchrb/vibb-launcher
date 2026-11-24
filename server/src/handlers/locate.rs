@@ -3523,16 +3523,12 @@ mod tests {
         );
         assert_eq!(word, "Mottatt");
         assert_eq!(line.as_deref(), Some("Telefonen fikk den (11:58)."));
-        assert_eq!(locations_value(Lang::Nb, 0, 12, None), "Ingen ennå");
-        assert_eq!(
-            locations_value(Lang::Nb, 14, 168, None),
-            "14 de siste 7 dagene"
-        );
-        assert_eq!(
-            locations_value(Lang::En, 0, 24, Some("3 days ago")),
-            "0 in the last 24 hours · newest 3 days ago"
-        );
-        assert_eq!(locations_value(Lang::En, 3, 0, None), "3 kept");
+        assert_eq!(locations_value(Lang::Nb, 0), "Ingen ennå");
+        assert_eq!(locations_value(Lang::Nb, 14), "14 lagret");
+        assert_eq!(locations_value(Lang::En, 3), "3 kept");
+        assert_eq!(trail_of(None), 0);
+        assert_eq!(trail_of(Some(&"48".to_string())), 48);
+        assert_eq!(trail_of(Some(&"168".to_string())), 0);
         assert_eq!(interval_label(Lang::En, 60), "1 hour");
         assert_eq!(interval_label(Lang::En, 240), "4 hours");
         assert_eq!(interval_label(Lang::Nb, 120), "2 timer");
