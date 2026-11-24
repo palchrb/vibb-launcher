@@ -1,5 +1,5 @@
 {
-  "comment": "Design 129 S1's shared contract (s7.1). The crypto rows are scripts/device-key-vectors.py's (a throwaway key from a fake phrase - public data only); the route rows are produced by the server's tests::device_key through the real routes. Byte-identical in the launcher's test resources (L1): its DeviceKeyContractTest builds the canonical and proof rows, computes the clock, maps the answers and runs the phone rows (the registration flow's decision).",
+  "comment": "Design 129 S1's shared contract (s7.1), with design 129b's enrolment rows (s10.2). The crypto rows are scripts/device-key-vectors.py's (a throwaway key from a fake phrase - public data only); the route rows are produced by the server's tests::device_key through the real routes. Byte-identical in the launcher's test resources (L1): its DeviceKeyContractTest builds the canonical and proof rows, computes the clock, maps the answers and runs the phone rows (the registration flow's decision).",
   "headers": {
     "signature": "Vibb-Signature",
     "body_sha256": "Vibb-Body-SHA256",
@@ -403,12 +403,300 @@
     },
     "body_with_key": {
       "enrollment_code": "<code>",
+      "attempt": "<16 bytes, Base64url>",
       "chain": [
         "<Base64 DER>"
       ],
       "proof": "<Base64url>"
     },
+    "body_no_key": [
+      {
+        "body": {
+          "enrollment_code": "<code>",
+          "attempt": "<16 bytes, Base64url>",
+          "key_error": "keystore"
+        },
+        "reason": "keystore"
+      },
+      {
+        "body": {
+          "enrollment_code": "<code>",
+          "attempt": "<16 bytes, Base64url>",
+          "key_error": "keys_unavailable"
+        },
+        "reason": "keys_unavailable"
+      },
+      {
+        "body": {
+          "enrollment_code": "<code>",
+          "attempt": "<16 bytes, Base64url>",
+          "key_error": "cap"
+        },
+        "reason": "cap"
+      },
+      {
+        "body": {
+          "enrollment_code": "<code>",
+          "attempt": "<16 bytes, Base64url>",
+          "key_error": "something new"
+        },
+        "reason": "keystore"
+      },
+      {
+        "body": {
+          "enrollment_code": "<code>",
+          "attempt": "<16 bytes, Base64url>"
+        },
+        "reason": "keystore"
+      }
+    ],
     "answers": {
+      "observed": {
+        "status": 200,
+        "body": {
+          "device_id": "<id>",
+          "device_token": "<token>",
+          "key": {
+            "key_id": "<key id>",
+            "state": "observed"
+          }
+        },
+        "retry_after": null,
+        "phone": "enrolled"
+      },
+      "repeat": {
+        "status": 200,
+        "body": {
+          "device_id": "<id>",
+          "device_token": "<token>",
+          "key": {
+            "key_id": "<key id>",
+            "state": "observed"
+          }
+        },
+        "retry_after": null,
+        "phone": "enrolled"
+      },
+      "waiting": [
+        {
+          "status": 409,
+          "body": {
+            "state": "waiting",
+            "reason": "chain",
+            "number": "<number>",
+            "retry_after_s": 15
+          },
+          "retry_after": null,
+          "phone": "waiting"
+        },
+        {
+          "status": 409,
+          "body": {
+            "state": "waiting",
+            "reason": "root",
+            "number": "<number>",
+            "retry_after_s": 15
+          },
+          "retry_after": null,
+          "phone": "waiting"
+        },
+        {
+          "status": 409,
+          "body": {
+            "state": "waiting",
+            "reason": "revoked",
+            "number": "<number>",
+            "retry_after_s": 15
+          },
+          "retry_after": null,
+          "phone": "waiting"
+        },
+        {
+          "status": 409,
+          "body": {
+            "state": "waiting",
+            "reason": "expired",
+            "number": "<number>",
+            "retry_after_s": 15
+          },
+          "retry_after": null,
+          "phone": "waiting"
+        },
+        {
+          "status": 409,
+          "body": {
+            "state": "waiting",
+            "reason": "software",
+            "number": "<number>",
+            "retry_after_s": 15
+          },
+          "retry_after": null,
+          "phone": "waiting"
+        },
+        {
+          "status": 409,
+          "body": {
+            "state": "waiting",
+            "reason": "properties",
+            "number": "<number>",
+            "retry_after_s": 15
+          },
+          "retry_after": null,
+          "phone": "waiting"
+        },
+        {
+          "status": 409,
+          "body": {
+            "state": "waiting",
+            "reason": "app",
+            "number": "<number>",
+            "retry_after_s": 15
+          },
+          "retry_after": null,
+          "phone": "waiting"
+        },
+        {
+          "status": 409,
+          "body": {
+            "state": "waiting",
+            "reason": "lost",
+            "number": "<number>",
+            "retry_after_s": 15
+          },
+          "retry_after": null,
+          "phone": "waiting"
+        },
+        {
+          "status": 409,
+          "body": {
+            "state": "waiting",
+            "reason": "challenge",
+            "number": "<number>",
+            "retry_after_s": 15
+          },
+          "retry_after": null,
+          "phone": "waiting"
+        },
+        {
+          "status": 409,
+          "body": {
+            "state": "waiting",
+            "reason": "proof",
+            "number": "<number>",
+            "retry_after_s": 15
+          },
+          "retry_after": null,
+          "phone": "waiting"
+        },
+        {
+          "status": 409,
+          "body": {
+            "state": "waiting",
+            "reason": "keystore",
+            "number": "<number>",
+            "retry_after_s": 15
+          },
+          "retry_after": null,
+          "phone": "waiting"
+        },
+        {
+          "status": 409,
+          "body": {
+            "state": "waiting",
+            "reason": "keys_unavailable",
+            "number": "<number>",
+            "retry_after_s": 15
+          },
+          "retry_after": null,
+          "phone": "waiting"
+        },
+        {
+          "status": 409,
+          "body": {
+            "state": "waiting",
+            "reason": "cap",
+            "number": "<number>",
+            "retry_after_s": 15
+          },
+          "retry_after": null,
+          "phone": "waiting"
+        }
+      ],
+      "exempt": {
+        "status": 200,
+        "body": {
+          "device_id": "<id>",
+          "device_token": "<token>",
+          "key": {
+            "state": "exempt",
+            "reason": "root"
+          }
+        },
+        "retry_after": null,
+        "phone": "enrolled_exempt"
+      },
+      "exempt_repeat": {
+        "status": 200,
+        "body": {
+          "device_id": "<id>",
+          "device_token": "<token>",
+          "key": {
+            "state": "exempt",
+            "reason": "root"
+          }
+        },
+        "retry_after": null,
+        "phone": "enrolled_exempt"
+      },
+      "throttled": {
+        "status": 429,
+        "body": null,
+        "retry_after": "<seconds>",
+        "phone": "transient"
+      },
+      "update_app": {
+        "status": 426,
+        "body": {
+          "reason": "update_app"
+        },
+        "retry_after": null,
+        "phone": "update_app"
+      },
+      "server_setup": {
+        "status": 503,
+        "body": {
+          "reason": "server_setup",
+          "retry_after_s": 3600
+        },
+        "retry_after": "3600",
+        "phone": "transient"
+      },
+      "server_setup_while_waiting": {
+        "status": 503,
+        "body": {
+          "reason": "server_setup",
+          "retry_after_s": 3600
+        },
+        "retry_after": "3600",
+        "phone": "transient"
+      },
+      "list_stale": {
+        "status": 503,
+        "body": {
+          "reason": "list_stale",
+          "retry_after_s": 60
+        },
+        "retry_after": "60",
+        "phone": "transient"
+      },
+      "wrong_code": {
+        "status": 401,
+        "body": null,
+        "retry_after": null,
+        "phone": "code_refused"
+      }
+    },
+    "answers_s1": {
       "code_only": {
         "device_id": "<id>",
         "device_token": "<token>"
@@ -449,6 +737,7 @@
     },
     "repeats": 2,
     "repeat_rule": "the same code with the same key, in the code's own life, at most twice, each with a proof whose ECDSA r was never seen for it: the phone signs the proof afresh on every attempt",
+    "exempt_repeat_rule": "the same attempt after its exempt enrolment, within the code's expiry plus 10 minutes, at most twice, each a fresh bearer",
     "refusal_words": [
       "chain",
       "root",
@@ -462,6 +751,85 @@
       "challenge",
       "proof",
       "list_stale"
+    ],
+    "wait_reasons": [
+      "chain",
+      "root",
+      "revoked",
+      "expired",
+      "software",
+      "properties",
+      "app",
+      "lost",
+      "challenge",
+      "proof",
+      "keystore",
+      "keys_unavailable",
+      "cap"
+    ],
+    "exception_reasons": [
+      "chain",
+      "root",
+      "revoked",
+      "expired",
+      "software",
+      "properties",
+      "lost",
+      "keystore",
+      "keys_unavailable",
+      "cap"
+    ],
+    "wait_pace": [
+      {
+        "since_first_s": 0,
+        "retry_after_s": 15
+      },
+      {
+        "since_first_s": 119,
+        "retry_after_s": 15
+      },
+      {
+        "since_first_s": 120,
+        "retry_after_s": 30
+      },
+      {
+        "since_first_s": 599,
+        "retry_after_s": 30
+      },
+      {
+        "since_first_s": 600,
+        "retry_after_s": 60
+      },
+      {
+        "since_first_s": 3000,
+        "retry_after_s": 60
+      }
+    ],
+    "numbers": [
+      {
+        "attempt": "XYLc-mtZDiFM1K5mJioSCQ",
+        "attempt_hash": "6295c4f55d18754fc45bbe940d621d56f8de3820afb5efe190b92e161bccca5b",
+        "number": "851800",
+        "shown": "851 800"
+      },
+      {
+        "attempt": "6mm_ZZIxECapurFOFAZ2oQ",
+        "attempt_hash": "2fed3ceb826554cdde930bcbf07c8ec6d25a8816188f6d003f4d7768f8e0bbb5",
+        "number": "197656",
+        "shown": "197 656"
+      },
+      {
+        "attempt": "VaSd2zUV083xWqBQ9swoBg",
+        "attempt_hash": "0e13bd3b73552838e7e2fab83fadd38c0f022edb65b5e299b154e5ffb9a6c78f",
+        "number": "390627",
+        "shown": "390 627"
+      },
+      {
+        "attempt": "s_qVE_7EB6jp9fAAxvapSg",
+        "attempt_hash": "fa9e92f2d0f5197fa1c32f41eb5cc8178d2484b323d355795f7bc38a3d443e84",
+        "number": "089851",
+        "shown": "089 851"
+      }
     ]
   },
   "register": {
@@ -473,6 +841,10 @@
       "state": "observed",
       "key_id": "<key id>",
       "spki_sha256": "<hex>",
+      "rotate": false
+    },
+    "get_key_exempt": {
+      "state": "exempt",
       "rotate": false
     },
     "challenge": {
@@ -531,6 +903,14 @@
           "reason": "list_stale",
           "retry_after_s": 3600
         }
+      },
+      {
+        "case": "address_history",
+        "status": 503,
+        "body": {
+          "reason": "address_history",
+          "retry_after_s": 3600
+        }
       }
     ],
     "conflict": {
@@ -553,6 +933,10 @@
       "key_id": "<key id>",
       "spki_sha256": "<hex>",
       "rotate": false
+    },
+    "exempt": {
+      "state": "exempt",
+      "rotate": false
     }
   },
   "phone": [
@@ -573,9 +957,12 @@
           "rotate": false
         }
       },
+      "exempt_since_last_try_ms": null,
       "action": "register",
       "key": null,
-      "drop_token": false
+      "drop_token": false,
+      "challenge": null,
+      "challenge_action": null
     },
     {
       "name": "a lost answer committed late: step 1 names the key",
@@ -598,9 +985,12 @@
           "spki_sha256": "A"
         }
       },
+      "exempt_since_last_try_ms": null,
       "action": "adopt",
       "key": "A",
-      "drop_token": false
+      "drop_token": false,
+      "challenge": null,
+      "challenge_action": null
     },
     {
       "name": "a lost answer never committed: another key, this one kept",
@@ -621,9 +1011,12 @@
           "rotate": false
         }
       },
+      "exempt_since_last_try_ms": null,
       "action": "register",
       "key": null,
-      "drop_token": false
+      "drop_token": false,
+      "challenge": null,
+      "challenge_action": null
     },
     {
       "name": "two keys made, the server names the second",
@@ -647,9 +1040,12 @@
           "spki_sha256": "B"
         }
       },
+      "exempt_since_last_try_ms": null,
       "action": "adopt",
       "key": "B",
-      "drop_token": false
+      "drop_token": false,
+      "challenge": null,
+      "challenge_action": null
     },
     {
       "name": "the server names a key the phone doesn't hold",
@@ -672,9 +1068,12 @@
           "spki_sha256": "X"
         }
       },
+      "exempt_since_last_try_ms": null,
       "action": "report_conflict",
       "key": null,
-      "drop_token": false
+      "drop_token": false,
+      "challenge": null,
+      "challenge_action": null
     },
     {
       "name": "a conflict already reported: keep waiting",
@@ -697,9 +1096,12 @@
           "spki_sha256": "X"
         }
       },
+      "exempt_since_last_try_ms": null,
       "action": "wait",
       "key": null,
-      "drop_token": false
+      "drop_token": false,
+      "challenge": null,
+      "challenge_action": null
     },
     {
       "name": "adopted and named: nothing to do",
@@ -722,9 +1124,12 @@
           "spki_sha256": "A"
         }
       },
+      "exempt_since_last_try_ms": null,
       "action": "keep",
       "key": null,
-      "drop_token": false
+      "drop_token": false,
+      "challenge": null,
+      "challenge_action": null
     },
     {
       "name": "an unknown_key wake while a POST is in flight",
@@ -748,9 +1153,12 @@
           "spki_sha256": "A"
         }
       },
+      "exempt_since_last_try_ms": null,
       "action": "wait",
       "key": null,
-      "drop_token": false
+      "drop_token": false,
+      "challenge": null,
+      "challenge_action": null
     },
     {
       "name": "step 1 had no answer",
@@ -768,9 +1176,12 @@
         "vibb_auth": null,
         "answer": null
       },
+      "exempt_since_last_try_ms": null,
       "action": "wait",
       "key": null,
-      "drop_token": false
+      "drop_token": false,
+      "challenge": null,
+      "challenge_action": null
     },
     {
       "name": "step 1 answered 5xx",
@@ -788,9 +1199,12 @@
         "vibb_auth": null,
         "answer": null
       },
+      "exempt_since_last_try_ms": null,
       "action": "wait",
       "key": null,
-      "drop_token": false
+      "drop_token": false,
+      "challenge": null,
+      "challenge_action": null
     },
     {
       "name": "a restore after S2: no bearer, the key unknown - one strike, never lost at once",
@@ -808,9 +1222,12 @@
         "vibb_auth": "unknown_key",
         "answer": null
       },
+      "exempt_since_last_try_ms": null,
       "action": "suspect_lost",
       "key": null,
-      "drop_token": false
+      "drop_token": false,
+      "challenge": null,
+      "challenge_action": null
     },
     {
       "name": "suspected, then the key is known again",
@@ -833,9 +1250,12 @@
           "spki_sha256": "A"
         }
       },
+      "exempt_since_last_try_ms": null,
       "action": "keep",
       "key": null,
-      "drop_token": false
+      "drop_token": false,
+      "challenge": null,
+      "challenge_action": null
     },
     {
       "name": "unknown_key while the bearer still goes along",
@@ -853,9 +1273,12 @@
         "vibb_auth": "unknown_key",
         "answer": null
       },
+      "exempt_since_last_try_ms": null,
       "action": "wait",
       "key": null,
-      "drop_token": false
+      "drop_token": false,
+      "challenge": null,
+      "challenge_action": null
     },
     {
       "name": "held: adopted, the bearer kept",
@@ -878,9 +1301,12 @@
           "spki_sha256": "A"
         }
       },
+      "exempt_since_last_try_ms": null,
       "action": "adopt",
       "key": "A",
-      "drop_token": false
+      "drop_token": false,
+      "challenge": null,
+      "challenge_action": null
     },
     {
       "name": "bound: the bearer goes",
@@ -903,9 +1329,12 @@
           "spki_sha256": "A"
         }
       },
+      "exempt_since_last_try_ms": null,
       "action": "adopt",
       "key": "A",
-      "drop_token": true
+      "drop_token": true,
+      "challenge": null,
+      "challenge_action": null
     },
     {
       "name": "bound and the bearer gone already",
@@ -928,9 +1357,12 @@
           "spki_sha256": "A"
         }
       },
+      "exempt_since_last_try_ms": null,
       "action": "keep",
       "key": null,
-      "drop_token": false
+      "drop_token": false,
+      "challenge": null,
+      "challenge_action": null
     },
     {
       "name": "a rotation asked",
@@ -953,9 +1385,12 @@
           "spki_sha256": "A"
         }
       },
+      "exempt_since_last_try_ms": null,
       "action": "register",
       "key": null,
-      "drop_token": false
+      "drop_token": false,
+      "challenge": null,
+      "challenge_action": null
     },
     {
       "name": "a rotation's lost answer: the old key still named",
@@ -979,9 +1414,12 @@
           "spki_sha256": "A"
         }
       },
+      "exempt_since_last_try_ms": null,
       "action": "register",
       "key": null,
-      "drop_token": false
+      "drop_token": false,
+      "challenge": null,
+      "challenge_action": null
     },
     {
       "name": "a rotation's commit: the new key named",
@@ -1005,9 +1443,12 @@
           "spki_sha256": "B"
         }
       },
+      "exempt_since_last_try_ms": null,
       "action": "adopt",
       "key": "B",
-      "drop_token": false
+      "drop_token": false,
+      "challenge": null,
+      "challenge_action": null
     },
     {
       "name": "a refusal still waiting out its time",
@@ -1026,9 +1467,12 @@
           "rotate": false
         }
       },
+      "exempt_since_last_try_ms": null,
       "action": "wait",
       "key": null,
-      "drop_token": false
+      "drop_token": false,
+      "challenge": null,
+      "challenge_action": null
     },
     {
       "name": "the server forgot the key (S1, the bearer along)",
@@ -1049,9 +1493,353 @@
           "rotate": false
         }
       },
+      "exempt_since_last_try_ms": null,
       "action": "register",
       "key": null,
-      "drop_token": false
+      "drop_token": false,
+      "challenge": null,
+      "challenge_action": null
+    },
+    {
+      "name": "exempt, tried six days ago: wait",
+      "has_token": true,
+      "local": [],
+      "adopted": null,
+      "last_call": null,
+      "in_flight": false,
+      "conflict_reported": null,
+      "backoff": false,
+      "step1": {
+        "status": 200,
+        "vibb_auth": null,
+        "answer": {
+          "state": "exempt",
+          "rotate": false
+        }
+      },
+      "exempt_since_last_try_ms": 518400000,
+      "action": "wait",
+      "key": null,
+      "drop_token": false,
+      "challenge": null,
+      "challenge_action": null
+    },
+    {
+      "name": "exempt, tried a week ago: register",
+      "has_token": true,
+      "local": [],
+      "adopted": null,
+      "last_call": null,
+      "in_flight": false,
+      "conflict_reported": null,
+      "backoff": false,
+      "step1": {
+        "status": 200,
+        "vibb_auth": null,
+        "answer": {
+          "state": "exempt",
+          "rotate": false
+        }
+      },
+      "exempt_since_last_try_ms": 604800000,
+      "action": "register",
+      "key": null,
+      "drop_token": false,
+      "challenge": null,
+      "challenge_action": null
+    },
+    {
+      "name": "exempt, no try kept: register",
+      "has_token": true,
+      "local": [],
+      "adopted": null,
+      "last_call": null,
+      "in_flight": false,
+      "conflict_reported": null,
+      "backoff": false,
+      "step1": {
+        "status": 200,
+        "vibb_auth": null,
+        "answer": {
+          "state": "exempt",
+          "rotate": false
+        }
+      },
+      "exempt_since_last_try_ms": null,
+      "action": "register",
+      "key": null,
+      "drop_token": false,
+      "challenge": null,
+      "challenge_action": null
+    },
+    {
+      "name": "exempt while a refusal waits",
+      "has_token": true,
+      "local": [],
+      "adopted": null,
+      "last_call": null,
+      "in_flight": false,
+      "conflict_reported": null,
+      "backoff": true,
+      "step1": {
+        "status": 200,
+        "vibb_auth": null,
+        "answer": {
+          "state": "exempt",
+          "rotate": false
+        }
+      },
+      "exempt_since_last_try_ms": 604800000,
+      "action": "wait",
+      "key": null,
+      "drop_token": false,
+      "challenge": null,
+      "challenge_action": null
+    },
+    {
+      "name": "the address history is younger than an hour: wait, no key",
+      "has_token": true,
+      "local": [],
+      "adopted": null,
+      "last_call": null,
+      "in_flight": false,
+      "conflict_reported": null,
+      "backoff": false,
+      "step1": {
+        "status": 200,
+        "vibb_auth": null,
+        "answer": {
+          "state": "none",
+          "rotate": false
+        }
+      },
+      "exempt_since_last_try_ms": null,
+      "action": "register",
+      "key": null,
+      "drop_token": false,
+      "challenge": {
+        "status": 503,
+        "body": {
+          "reason": "address_history",
+          "retry_after_s": 1800
+        }
+      },
+      "challenge_action": {
+        "action": "wait",
+        "wait_ms": 1800000,
+        "make_key": false
+      }
+    },
+    {
+      "name": "the list is stale: wait, no key",
+      "has_token": true,
+      "local": [],
+      "adopted": null,
+      "last_call": null,
+      "in_flight": false,
+      "conflict_reported": null,
+      "backoff": false,
+      "step1": {
+        "status": 200,
+        "vibb_auth": null,
+        "answer": {
+          "state": "none",
+          "rotate": false
+        }
+      },
+      "exempt_since_last_try_ms": null,
+      "action": "register",
+      "key": null,
+      "drop_token": false,
+      "challenge": {
+        "status": 503,
+        "body": {
+          "reason": "list_stale",
+          "retry_after_s": 3600
+        }
+      },
+      "challenge_action": {
+        "action": "wait",
+        "wait_ms": 3600000,
+        "make_key": false
+      }
+    },
+    {
+      "name": "a challenge: make the key",
+      "has_token": true,
+      "local": [],
+      "adopted": null,
+      "last_call": null,
+      "in_flight": false,
+      "conflict_reported": null,
+      "backoff": false,
+      "step1": {
+        "status": 200,
+        "vibb_auth": null,
+        "answer": {
+          "state": "none",
+          "rotate": false
+        }
+      },
+      "exempt_since_last_try_ms": null,
+      "action": "register",
+      "key": null,
+      "drop_token": false,
+      "challenge": {
+        "status": 200,
+        "body": {
+          "challenge": "<Base64url, 32 bytes>",
+          "expires_in_s": 600
+        }
+      },
+      "challenge_action": {
+        "action": "make_key",
+        "wait_ms": null,
+        "make_key": true
+      }
+    },
+    {
+      "name": "no challenge: back off, no key",
+      "has_token": true,
+      "local": [],
+      "adopted": null,
+      "last_call": null,
+      "in_flight": false,
+      "conflict_reported": null,
+      "backoff": false,
+      "step1": {
+        "status": 200,
+        "vibb_auth": null,
+        "answer": {
+          "state": "none",
+          "rotate": false
+        }
+      },
+      "exempt_since_last_try_ms": null,
+      "action": "register",
+      "key": null,
+      "drop_token": false,
+      "challenge": {
+        "status": 500,
+        "body": null
+      },
+      "challenge_action": {
+        "action": "backoff",
+        "wait_ms": null,
+        "make_key": false
+      }
+    }
+  ],
+  "enrol_wait": [
+    {
+      "name": "the first waiting answer",
+      "answer": "waiting",
+      "retry_after_s": 15,
+      "since_first_ms": 0,
+      "has_key": true,
+      "action": "retry",
+      "delay_ms": 15000,
+      "make_key": false
+    },
+    {
+      "name": "waiting without a key: the next try makes one",
+      "answer": "waiting",
+      "retry_after_s": 15,
+      "since_first_ms": 0,
+      "has_key": false,
+      "action": "retry",
+      "delay_ms": 15000,
+      "make_key": true
+    },
+    {
+      "name": "a pace under ten seconds is ten",
+      "answer": "waiting",
+      "retry_after_s": 5,
+      "since_first_ms": 60000,
+      "has_key": true,
+      "action": "retry",
+      "delay_ms": 10000,
+      "make_key": false
+    },
+    {
+      "name": "a pace over five minutes is five",
+      "answer": "waiting",
+      "retry_after_s": 3600,
+      "since_first_ms": 60000,
+      "has_key": true,
+      "action": "retry",
+      "delay_ms": 300000,
+      "make_key": false
+    },
+    {
+      "name": "a transient answer keeps the schedule",
+      "answer": "transient",
+      "retry_after_s": 60,
+      "since_first_ms": 600000,
+      "has_key": true,
+      "action": "retry",
+      "delay_ms": 60000,
+      "make_key": false
+    },
+    {
+      "name": "a transient answer without a pace",
+      "answer": "transient",
+      "retry_after_s": null,
+      "since_first_ms": 600000,
+      "has_key": false,
+      "action": "retry",
+      "delay_ms": 30000,
+      "make_key": true
+    },
+    {
+      "name": "still waiting just before 45 minutes",
+      "answer": "waiting",
+      "retry_after_s": 60,
+      "since_first_ms": 2699999,
+      "has_key": true,
+      "action": "retry",
+      "delay_ms": 60000,
+      "make_key": false
+    },
+    {
+      "name": "45 minutes since the first waiting answer: stop",
+      "answer": "waiting",
+      "retry_after_s": 60,
+      "since_first_ms": 2700000,
+      "has_key": true,
+      "action": "stop",
+      "delay_ms": null,
+      "make_key": false
+    },
+    {
+      "name": "a transient answer at 45 minutes: stop",
+      "answer": "transient",
+      "retry_after_s": 60,
+      "since_first_ms": 2700000,
+      "has_key": false,
+      "action": "stop",
+      "delay_ms": null,
+      "make_key": false
+    },
+    {
+      "name": "the code refused: stop",
+      "answer": "code_refused",
+      "retry_after_s": null,
+      "since_first_ms": 300000,
+      "has_key": true,
+      "action": "stop",
+      "delay_ms": null,
+      "make_key": false
+    },
+    {
+      "name": "enrolled",
+      "answer": "enrolled",
+      "retry_after_s": null,
+      "since_first_ms": 300000,
+      "has_key": true,
+      "action": "enrolled",
+      "delay_ms": null,
+      "make_key": false
     }
   ],
   "phone_nudge": [
