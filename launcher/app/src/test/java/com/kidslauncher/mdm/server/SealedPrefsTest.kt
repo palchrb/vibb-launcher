@@ -223,11 +223,11 @@ class SealedPrefsTest {
                 "map/MapLinkActivity.kt" to 1,
                 // Design 125 step 2: the Apple Wi-Fi lookup's ask.
                 "places/WifiPlaces.kt" to 1,
-                // Design 129 §5.2: the registration flow's own calls.
-                "server/KeyRegistration.kt" to 1,
             ),
             sites,
         )
+        // Design 129 §5.2 (code QA H1): the registration flow's own calls take the key even while it is suspected lost.
+        assertEquals(setOf("server/KeyRegistration.kt"), all.filterValues { "DeviceCredentials.forRegistration(" in it }.keys)
         // The writer is the one enrolment; the one removal is a bound key's (§5.5).
         assertEquals(setOf("server/Enrollment.kt"), all.filterValues { "DeviceToken.set(" in it }.keys)
         assertEquals(setOf("server/DeviceCredential.kt"), all.filterValues { "DeviceToken.clear(" in it }.keys)

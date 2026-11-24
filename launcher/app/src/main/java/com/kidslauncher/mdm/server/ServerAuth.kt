@@ -35,6 +35,8 @@ class RequestSigning(
     val elapsed: () -> Long = SignatureClock::elapsed,
     val observe: (vibbTime: Long, sent: Long, received: Long) -> Unit = SignatureClock::observe,
     val log: (String) -> Unit = { Log.w("ServerAuth", it) },
+    /** A sign's fate for [SignHealth]: `(ok, gone)`. */
+    val health: (ok: Boolean, gone: Boolean) -> Unit = { ok, gone -> if (ok) SignHealth.ok() else SignHealth.failed(gone, SignatureClock.elapsed()) },
 )
 
 private val random = SecureRandom()
@@ -83,11 +85,11 @@ fun authorize(request: Request, server: HttpUrl?, credential: DeviceCredential, 
         val signature = signing.sign(credential.alias, signed.toByteArray(Charsets.UTF_8))
         builder.header(BODY_SHA256_HEADER, bodyHash).header(SIGNATURE_HEADER, signatureHeader(credential.keyId, t, nonce, signature))
         if (copy != null) builder.method(request.method, copy)
-        SignatureClock.signFailing = false
+        signing.health(true, false)
     } catch (e: IOException) {
         throw e
     } catch (e: Exception) {
-        SignatureClock.signFailing = true
+        signing.health(false, e is KeyGone)
         if (credential.bearer == null) throw KeyUnusable(e)
         signing.log("The key didn't sign (${e.javaClass.simpleName}) - the bearer alone")
     }

@@ -739,6 +739,29 @@ async fn observe_mode_keeps_the_bearer() {
     assert!(bound[0].contains("At setup"), "{bound:?}");
 }
 
+/// L1's code QA L5: a valid signature with another phone's bearer beside it authenticates neither phone.
+#[tokio::test]
+async fn a_signature_with_another_phones_bearer_is_refused() {
+    let app = TestApp::new().await;
+    let a = phone_with_key(&app, "a").await;
+    let b = phone_with_key(&app, "b").await;
+    let mut request = signed(&app, &a, Method::GET, "/api/devices/policy", vec![], "", 0);
+    request.headers_mut().insert(
+        header::AUTHORIZATION,
+        format!("Bearer {}", b.token).parse().unwrap(),
+    );
+    let res = app.send(request).await;
+    assert_eq!(res.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(vibb_auth(&res).as_deref(), Some("bad_sig"));
+    // Its own bearer beside it is fine.
+    let mut own = signed(&app, &a, Method::GET, "/api/devices/policy", vec![], "", 0);
+    own.headers_mut().insert(
+        header::AUTHORIZATION,
+        format!("Bearer {}", a.token).parse().unwrap(),
+    );
+    assert_eq!(app.send(own).await.status, StatusCode::OK);
+}
+
 /// A gzip'd status report signed over its compressed bytes (§4.2: the hash is the body as sent, checked before
 /// anything is inflated).
 #[tokio::test]

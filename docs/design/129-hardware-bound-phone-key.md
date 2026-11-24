@@ -75,6 +75,18 @@ whose system is not what it should be.
   kid's VPN blackholes in its SINK shape (only the launcher is excluded today, `KidVpnService`): rkpd is also
   excluded (`addDisallowedApplication`, when the package exists), since it talks only to Google's provisioning
   service and gives the kid no path out (Q9, decided). The gate checks generation in the SINK shape with an empty pool.
+  **As built in L1 (code QA M4, 2026-11-24):** the package name differs by vendor - the owner's Jelly Star (Android 16)
+  has **`com.google.android.rkpdapp`**, AOSP names it `com.android.rkpdapp`. So the launcher finds rkpd by what it does:
+  a system service for Keystore's bind action `com.android.rkpdapp.IRemoteProvisioning` (AOSP
+  `packages/modules/RemoteKeyProvisioning`, `app/AndroidManifest.xml`, `.service.RemoteProvisioningService`), resolved
+  with `MATCH_SYSTEM_ONLY`, with both names as the fallback; each candidate is exempted only when it is a system app
+  with an app uid of its own (`uid >= FIRST_APPLICATION_UID`, `getPackagesForUid(uid)` one package), so no shared uid
+  rides along. It goes in the VPN's disallowed apps **and** lockdown's allow list (under lockdown an app outside the
+  VPN has no network otherwise). None found: logged once, and the key path waits as `keys_unavailable` wherever the
+  pool runs dry - never a lockout. The launcher has no WorkManager: the retry is the registration flow's own backoff.
+  **Per-request latency (code QA M3):** the key is StrongBox when the phone has it (Q2); signs are serialised and a
+  transient Keystore failure is retried twice; step 0 measures the sign time under load on the Jelly Star, and Q2's
+  ceiling rule (above ~150 ms p95, the TEE) is applied then - a measurement, not a guess, decides.
 - Aliases `device_key_<n>`, `n` counting up. The phone **keeps every key it made until the server names one** (§5.2);
   then it deletes the others. At most three exist; a fourth generation first deletes the oldest key whose challenge
   has expired and that the server has never named. No ID attestation (`setDevicePropertiesAttestationIncluded` stays

@@ -249,6 +249,7 @@ def build():
         },
         "phone": phone_rows(),
         "phone_nudge": nudge_rows(),
+        "lost_verdict": lost_rows(),
     }
 
 
@@ -289,8 +290,10 @@ def phone_rows():
               local=["A", "B"], adopted="A", in_flight=True),
         phone("step 1 had no answer", step1(status=0), "wait", local=["A"], last_call="timeout"),
         phone("step 1 answered 5xx", step1(status=503), "wait", local=["A"]),
-        phone("a restore after S2: no bearer, the key unknown", step1(status=401, vibb_auth="unknown_key"),
-              "re_enrol", local=["A"], adopted="A", has_token=False),
+        phone("a restore after S2: no bearer, the key unknown - one strike, never lost at once",
+              step1(status=401, vibb_auth="unknown_key"), "suspect_lost", local=["A"], adopted="A", has_token=False),
+        phone("suspected, then the key is known again", step1(state="bound", spki="A"), "keep", local=["A"],
+              adopted="A", has_token=False),
         phone("unknown_key while the bearer still goes along", step1(status=401, vibb_auth="unknown_key"), "wait",
               local=["A"], adopted="A"),
         phone("held: adopted, the bearer kept", step1(state="held", spki="A"), "adopt", local=["A"], key="A"),
@@ -311,10 +314,29 @@ def phone_rows():
     ]
 
 
-def nudge(name, policy, ask, adopted_key_id=None, has_token=True, lost=False, backoff=False):
-    """Whether a policy's `device_key` asks for step 1 (s5.5: only a nudge; the launcher's `keyNudge`)."""
+def nudge(name, policy, ask, adopted_key_id=None, has_token=True, lost=False, backoff=False, since_last_ask_ms=None):
+    """Whether a policy's `device_key` asks for step 1 (s5.5: only a nudge; the launcher's `keyNudge`). A state that
+    names no key asks again only an hour after the last ask (code QA L9)."""
     return {"name": name, "policy": policy, "adopted_key_id": adopted_key_id, "has_token": has_token, "lost": lost,
-            "backoff": backoff, "ask": ask}
+            "backoff": backoff, "since_last_ask_ms": since_last_ask_ms, "ask": ask}
+
+
+HOUR = 3_600_000
+
+
+def lost_rows():
+    """Code QA H1: step 1's unknown_key with no bearer is a strike; "lost" needs three strikes over an hour (elapsed
+    realtime; a reboot starts the span again). The launcher's `lostVerdict`."""
+    def row(name, before, now_elapsed, boot, after, lost):
+        return {"name": name, "before": before, "now_elapsed": now_elapsed, "boot": boot, "after": after, "lost": lost}
+    s = lambda first, boot, strikes: {"first_elapsed_ms": first, "first_boot": boot, "strikes": strikes}
+    return [
+        row("the first strike", None, 1000, 7, s(1000, 7, 1), False),
+        row("three strikes in minutes: not yet", s(1000, 7, 2), 1000 + 600_000, 7, s(1000, 7, 3), False),
+        row("three strikes over an hour: lost", s(1000, 7, 2), 1000 + HOUR, 7, s(1000, 7, 3), True),
+        row("many strikes, still within the hour", s(1000, 7, 9), 1000 + HOUR - 1, 7, s(1000, 7, 10), False),
+        row("a reboot starts the span again", s(1000, 7, 5), 500, 8, s(500, 8, 6), False),
+    ]
 
 
 def nudge_rows():
@@ -322,6 +344,8 @@ def nudge_rows():
     return [
         nudge("none, nothing adopted", {"state": "none", "rotate": False}, True),
         nudge("none while a refusal waits", {"state": "none", "rotate": False}, False, backoff=True),
+        nudge("none, asked minutes ago", {"state": "none", "rotate": False}, False, since_last_ask_ms=600_000),
+        nudge("none, asked an hour ago", {"state": "none", "rotate": False}, True, since_last_ask_ms=HOUR),
         nudge("the adopted key named", observed, False, adopted_key_id="K1"),
         nudge("a key named, none adopted", observed, True),
         nudge("another key named", observed, True, adopted_key_id="K0"),

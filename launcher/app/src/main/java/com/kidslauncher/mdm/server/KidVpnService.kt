@@ -265,12 +265,12 @@ class KidVpnService : VpnService() {
             builder.addDisallowedApplication(packageName)
             // Design 129 Q9: Google's key provisioning (rkpd) fills the attestation-key pool the phone's hardware key
             // needs; it talks only to Google's provisioning service, so it stays outside the tunnel in every shape (and
-            // in lockdown's allow list, `MobileNetworkRuntime.writeAlwaysOn`). Only when the phone has it.
-            if (rkpdInstalled(this)) {
+            // in lockdown's allow list, `MobileNetworkRuntime.writeAlwaysOn`). Only the packages `Rkpd` found and guarded.
+            for (rkpd in Rkpd.packages(this)) {
                 try {
-                    builder.addDisallowedApplication(RKPD_PACKAGE)
+                    builder.addDisallowedApplication(rkpd)
                 } catch (e: android.content.pm.PackageManager.NameNotFoundException) {
-                    Log.w(LOG_TAG, "rkpd isn't installed")
+                    Log.w(LOG_TAG, "An rkpd package isn't installed")
                 }
             }
             when (wanted) {

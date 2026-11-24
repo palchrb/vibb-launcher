@@ -77,6 +77,11 @@ signatures are verified and their failures logged, and nothing can lock a phone 
   for the code (`devices.enroll_used_proof_rs`, `enroll_repeats`), logged as `device_enrolled` "asked again"; Revoke
   Access and any later enrolment clear the kept code. One live key per phone is a unique index.
 - The signature clock's floor after a restart is the stored value + 100 s (the 10 s write and both windows, M1).
+- L1's code QA: a key index whose reload after a key write failed three times keeps the other phones' entries, drops
+  that phone's (a removed key must never sign) and is **stale**: an unknown key id is then `SigCheck::Unavailable` - a
+  503 with `Retry-After` (the phone's own bearer still authenticates in S1), never `unknown_key`, which the phone
+  counts towards "lost" - and a request retries the reload at most every 10 s (`retry_if_stale`); a reload that works
+  ends it. A valid signature that comes with **another** phone's bearer is refused (`bad_sig`).
 - The policy's `device_key` (`{state, key_id?, spki_sha256?, rotate}`, `rotate` always false in S1) is pinned by
   `policy_json_keys_snapshot`.
 - A re-enrolment replaces the row's keys, challenge and addresses (another phone); Revoke Access removes the keys;

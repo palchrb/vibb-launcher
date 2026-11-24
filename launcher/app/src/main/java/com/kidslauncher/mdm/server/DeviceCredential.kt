@@ -53,19 +53,33 @@ object DeviceCredentials {
     fun current(): DeviceCredential? = appContext()?.let { current(it) }
 
     /** The credential now, or `null`: not enrolled, the token unreadable with no key, or a lost key (§5.4: the phone
-     * goes silent until a new setup code). Off the main thread (a Keystore read). */
+     * goes silent until a new setup code, or until step 1 knows the key again - a lost key asks the registration flow
+     * for step 1 now and then, code QA H1). Off the main thread (a Keystore read). */
     fun current(context: Context): DeviceCredential? {
         val appContext = context.applicationContext ?: context
         app = appContext
         val book = KeyBook.read(appContext)
-        if (book.lost) return null
-        val token = DeviceToken.get()
+        if (book.lost) {
+            KeyRegistration.askWhileLost(appContext)
+            return null
+        }
+        return credentialOf(book, DeviceToken.get())
+    }
+
+    private fun credentialOf(book: KeyBookState, token: String?): DeviceCredential? {
         val adopted = book.adopted
         return when {
             adopted != null -> DeviceCredential.Key(adopted.keyId, adopted.alias, token)
             token != null -> DeviceCredential.Bearer(token)
             else -> null
         }
+    }
+
+    /** The registration flow's own credential: as [current], but a lost key still asks step 1 with it (code QA H1). */
+    fun forRegistration(context: Context): DeviceCredential? {
+        val appContext = context.applicationContext ?: context
+        app = appContext
+        return credentialOf(KeyBook.read(appContext), DeviceToken.get())
     }
 
     /** Something is stored - a token (sealed or not, readable or not) or an adopted key - with no Keystore call: the
@@ -83,11 +97,17 @@ object DeviceCredentials {
         if (!DeviceToken.clear()) android.util.Log.w("DeviceCredentials", "The bearer of a bound key didn't go")
     }
 
-    /** "Ny oppsettkode" (§5.4, §6.2): the server no longer knows the key and no bearer is left, or the key stopped
-     * signing with no bearer beside it. */
+    /**
+     * "Ny oppsettkode" (§5.4, §6.2) - only with no bearer left: the key lost (step 1's `unknown_key` over an hour, code
+     * QA H1), the adopted key gone from the Keystore (M2), a book that doesn't read with nothing to sign with (M1), the
+     * key unusable ([SignHealth], M3), or device keys in the Keystore that nothing adopted (M1). A Keystore call; off
+     * the main thread.
+     */
     fun keyUnusable(context: Context): Boolean {
+        if (DeviceToken.present()) return false
         val book = KeyBook.read(context)
-        return book.lost || (book.adopted != null && SignatureClock.signFailing && !DeviceToken.present())
+        return book.lost || book.keyGone || (book.corrupt && book.adopted == null) || SignHealth.unusable() ||
+            (book.adopted == null && DeviceKeys.anyKeyStored(context))
     }
 }
 
@@ -99,10 +119,6 @@ object SignatureClock {
     @Volatile
     private var offset: Long? = null
 
-    /** The last sign failed (the key unusable): "Ny oppsettkode" while no bearer goes along. */
-    @Volatile
-    var signFailing: Boolean = false
-
     fun now(): Long = offset?.let { signatureTime(it, SystemClock.elapsedRealtime()) } ?: TrustedClock.nowMs()
 
     fun observe(vibbTime: Long, sentElapsedMs: Long, receivedElapsedMs: Long) {
@@ -110,4 +126,29 @@ object SignatureClock {
     }
 
     fun elapsed(): Long = SystemClock.elapsedRealtime()
+}
+
+/** Code QA M3: whether the key's signs fail for good - at once for a key that is gone, else [SIGN_FAILURES] in a row
+ * over [SIGN_FAILURE_SPAN_MS] ([signUnusable]); one good sign clears it. */
+object SignHealth {
+    private var permanent = false
+    private var failures = 0
+    private var firstFailureMs = 0L
+
+    @Synchronized
+    fun ok() {
+        permanent = false
+        failures = 0
+    }
+
+    @Synchronized
+    fun failed(gone: Boolean, nowElapsedMs: Long) {
+        if (failures == 0) firstFailureMs = nowElapsedMs
+        failures++
+        permanent = permanent || gone
+    }
+
+    @Synchronized
+    fun unusable(nowElapsedMs: Long = SystemClock.elapsedRealtime()): Boolean =
+        signUnusable(permanent, failures, firstFailureMs, nowElapsedMs)
 }

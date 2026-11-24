@@ -271,16 +271,25 @@ bearer - nothing here can lock a phone out.
   Aliases `device_key_<n>`. The key book (CE prefs `device_key`, one JSON, plain - nothing secret: the aliases, when
   each key's challenge runs out, whether the server ever named it, the adopted alias and key id, a reported conflict,
   the lost mark, the last refusal) is `KeyBook`; `DeviceKeys` makes, proves, adopts and forgets keys, and reconciles the
-  book with the Keystore (a Keystore alias the book lost counts as never named, long expired). At most three keys
-  (`keyCapPlan`): a fourth first deletes the oldest whose challenge ran out and that the server never named; none such,
-  no new key.
+  book with the Keystore (`reconcileBook`: a Keystore alias the book lost counts as never named, long expired - unless
+  its number is at or past the book's `next`, then it is fresh; duplicates go; an adopted alias that left the Keystore
+  marks `keyGone`, never silently nothing). A new alias is one no Keystore entry has, and the handle cache drops it
+  first. A book that doesn't decode is never written over (only a new enrolment resets it), and the adopted key is
+  mirrored in DE prefs `device_key_adopted`, so a corrupt book still signs. At most three keys (`keyCapPlan`): a fourth
+  first deletes the oldest whose challenge ran out and that the server never named; none such, no new key. Signs are
+  serialised; a transient Keystore failure (`isTransientFailure`, a `ProviderException`) is tried twice more after 50
+  and 250 ms; a key that is gone (no entry, permanently invalidated, unrecoverable) is `KeyGone` at once
+  (`SignHealth`: unusable when gone, or after five failures in a row over ten minutes). An empty StrongBox pool also
+  falls back to the TEE once.
 - **One credential** (`server/DeviceCredential.kt`): `DeviceCredential.Bearer(token)` or `.Key(keyId, alias, bearer?)`
   (the bearer beside the key until the server says `bound`), `ownerId` the token's hash or `key:<key id>` - the policy's
   ETag owner and the heartbeat's base are re-keyed on it (`PolicyOwner.of`, `HeartbeatAckStore.ownerOf`), so adopting a
   key fetches the policy once without an ETag and sends one full report. `toString` never prints the token.
   `DeviceCredentials.current(context)` is the only reader of the sealed token (`SealedPrefsTest`: `DeviceToken.` only in
   `SealedPrefs.kt`, `DeviceCredential.kt` and `Enrollment.kt`; the sites of `current(` counted), and `null` while not
-  enrolled or while the key is lost (§5.4: the phone goes silent); `stored(context)` is presence only (the first-launch
+  enrolled or while the key is lost (§5.4: the phone goes silent - and each such call asks the registration flow for
+  step 1 when its backoff allows, so a key the server knows again comes back; the flow's own calls take
+  `forRegistration`, the key even while lost); `stored(context)` is presence only (the first-launch
   reset, Settings, the connect screen); `dropTokenForBoundKey` is the token's one removal (`bound`, §5.5).
 - **Every request signed** (`server/ServerAuth.kt`): `OkHttpClient.Builder.credentialInterceptor(baseUrl, credential)`
   on every server client (`createMdmApi`, `createMusicServer`, the command stream's client - its connect is signed; the
@@ -298,7 +307,11 @@ bearer - nothing here can lock a phone out.
   contract's `phone` and `phone_nudge` rows): one run at a time in the process; step 1 (`GET /api/devices/key`) decides -
   adopt the key the server names (delete the others; `bound` also drops the bearer), keep, register (a challenge, a new
   key, a fresh `register` proof, `POST /api/devices/key`, then step 1 again whatever the POST's fate - at most one key a
-  run), report a conflict once (`POST /api/devices/key/conflict`), wait, or mark the key lost ("Ny oppsettkode"). A 400
+  run; the bearer goes at `bound` only after one test sign), report a conflict once (`POST /api/devices/key/conflict`),
+  wait, or count a strike towards "lost": step 1's `unknown_key` with no bearer is never "lost" on one answer
+  (`lostVerdict`: three strikes over an hour of elapsed realtime; a reboot starts the span again) - the server answers
+  503, not `unknown_key`, while its key index is stale after a failed reload. A known key ends the suspicion and the
+  mark. A policy whose `device_key` names no key asks step 1 again only an hour after the last ask. A 400
   refusal deletes that key (never stored) and waits a day (`challenge`: at once); a 503 `list_stale` waits its
   `retry_after_s`; any other failure backs off from a minute, doubling, to six hours. The launcher has no WorkManager
   (design 129 named one): the run is a coroutine of its own, asked by the sync after every accepted policy (the
@@ -307,15 +320,21 @@ bearer - nothing here can lock a phone out.
 - **The enrolment** (`Enrollment.enroll`, §5.1): the key is attested for `SHA-256("vibb-enroll-v1" || 0x00 ||
   normalised code)`; a retry with the same code reuses that key (the book keeps each enrolment key's challenge) and
   signs a new `enroll` proof every attempt (S1 refuses a repeated ECDSA `r`). The body carries `chain` and `proof` only
-  when a key was made; no key (a Keystore failure, an empty pool) enrols on the bearer alone. On success the old
-  enrolment's keys and marks go; an `observed` key is adopted, a `refused` one deleted (the reason kept).
-- **"Ny oppsettkode"** (`showReEnrol`): an adopted key still speaks for an unreadable token; a lost key (step 1's
-  `unknown_key` with no bearer, §5.4) or a key that stopped signing with no bearer beside it shows the button, with the
-  same parent-PIN half as before.
-- **rkpd outside the sink** (Q9): `KidVpnService` adds `com.android.rkpdapp` to the disallowed apps in every shape when
-  the phone has it, and `MobileNetworkRuntime.writeAlwaysOn` puts it in lockdown's allow list (`lockdownAllowList`):
-  under lockdown an app outside the VPN has no network unless allowed, so the exclusion alone would not reach Google's
-  provisioning service in the SINK shape. Nothing else is ever allowed around the sink.
+  when a key was made; no key (a Keystore failure, an empty pool) enrols on the bearer alone. A refused code deletes
+  that key at once. On success the old enrolment's key stops being the credential before the new token is stored, then
+  its keys and marks go; an `observed` key is adopted (the shutdown's prepared client rebuilt), a `refused` one deleted
+  (the reason kept). The server refuses a valid signature that comes with another phone's bearer.
+- **"Ny oppsettkode"** (`showReEnrol`): an adopted key still speaks for an unreadable token; with no bearer left, a
+  lost key, an adopted key gone from the Keystore, a book that doesn't read with nothing adopted, an unusable key
+  (`SignHealth`), or device keys in the Keystore that nothing adopted show the button (`keyUnusable`), with the same
+  parent-PIN half as before.
+- **rkpd outside the sink** (Q9): `Rkpd.packages` finds it by what it does - a system service for Keystore's bind
+  action `com.android.rkpdapp.IRemoteProvisioning` (`MATCH_SYSTEM_ONLY`) - and by its names, AOSP's
+  `com.android.rkpdapp` and Google's `com.google.android.rkpdapp` (the Jelly Star, Android 16, has the latter); each
+  only as a system app with an app uid of its own (`rkpdExemptable`). `KidVpnService` adds them to the disallowed apps
+  in every shape, and `MobileNetworkRuntime.writeAlwaysOn` puts them in lockdown's allow list (`lockdownAllowList`):
+  under lockdown an app outside the VPN has no network unless allowed. None found: logged once, and the key waits as
+  `keys_unavailable` where the pool runs dry. Nothing else is ever allowed around the sink.
 - **Not in L1**: the enrolment screen's line on a refused key ("Telefonen kan ikke lage en sikker nøkkel") - S1 never
   refuses an enrolment for its key, so it comes with S2; no report field carries `keys_unavailable` (the contract has
   none; the server sees no registration and shows "Eldre innlogging").

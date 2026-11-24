@@ -183,7 +183,7 @@ class DeviceKeyContractTest {
                 "register" -> KeyAction.Register
                 "report_conflict" -> KeyAction.ReportConflict
                 "wait" -> KeyAction.Wait
-                "re_enrol" -> KeyAction.ReEnrol
+                "suspect_lost" -> KeyAction.SuspectLost
                 else -> error(row.s("action"))
             }
             assertEquals(row.s("name"), expected, keyStep(input))
@@ -200,9 +200,60 @@ class DeviceKeyContractTest {
             assertEquals(
                 row.s("name"),
                 row["ask"]!!.jsonPrimitive.boolean,
-                keyNudge(policy, row.str("adopted_key_id"), row["has_token"]!!.jsonPrimitive.boolean, row["lost"]!!.jsonPrimitive.boolean, row["backoff"]!!.jsonPrimitive.boolean),
+                keyNudge(
+                    policy, row.str("adopted_key_id"), row["has_token"]!!.jsonPrimitive.boolean, row["lost"]!!.jsonPrimitive.boolean,
+                    row["backoff"]!!.jsonPrimitive.boolean, row.str("since_last_ask_ms")?.toLong(),
+                ),
             )
         }
+    }
+
+    @Test
+    fun `lost needs three strikes over an hour`() {
+        fun suspicion(o: JsonObject?) = o?.let { LostSuspicion(it["first_elapsed_ms"]!!.jsonPrimitive.long, it["first_boot"]!!.jsonPrimitive.int, it["strikes"]!!.jsonPrimitive.int) }
+        for (row in rows("lost_verdict")) {
+            val before = row["before"]!!.takeIf { it != JsonNull }?.jsonObject
+            val (after, lost) = lostVerdict(suspicion(before), row["now_elapsed"]!!.jsonPrimitive.long, row["boot"]!!.jsonPrimitive.int)
+            assertEquals(row.s("name"), suspicion(row["after"]!!.jsonObject), after)
+            assertEquals(row.s("name"), row["lost"]!!.jsonPrimitive.boolean, lost)
+        }
+    }
+
+    @Test
+    fun `a sign failure is unusable only when permanent or long`() {
+        assertTrue(signUnusable(true, 1, 0, 0))
+        assertEquals(false, signUnusable(false, SIGN_FAILURES, 0, SIGN_FAILURE_SPAN_MS - 1))
+        assertEquals(false, signUnusable(false, SIGN_FAILURES - 1, 0, SIGN_FAILURE_SPAN_MS))
+        assertTrue(signUnusable(false, SIGN_FAILURES, 0, SIGN_FAILURE_SPAN_MS))
+    }
+
+    @Test
+    fun `rkpd is exempted only as a system app with a uid of its own`() {
+        assertTrue(rkpdExemptable(10123, system = true, packagesForUid = 1))
+        assertEquals(false, rkpdExemptable(1000, system = true, packagesForUid = 1))
+        assertEquals(false, rkpdExemptable(10123, system = false, packagesForUid = 1))
+        assertEquals(false, rkpdExemptable(10123, system = true, packagesForUid = 2))
+        assertEquals(listOf("com.android.rkpdapp", "com.google.android.rkpdapp"), RKPD_PACKAGES)
+        assertEquals(emptySet<String>(), lockdownAllowList(false, setOf("com.google.android.rkpdapp")))
+        assertEquals(setOf("com.google.android.rkpdapp"), lockdownAllowList(true, setOf("com.google.android.rkpdapp")))
+    }
+
+    @Test
+    fun `the book against the Keystore`() {
+        val book = KeyBookState(
+            next = 3,
+            keys = listOf(KeyAlias("device_key_1", 10, 20), KeyAlias("device_key_1", 10, 20), KeyAlias("device_key_2", 10, 20)),
+            adopted = AdoptedKey("device_key_2", "k2"),
+        )
+        // The adopted alias gone: marked, not silently forgotten (M2); duplicates go; a newer stray is fresh, an older
+        // one long expired; next moves past every alias (L8).
+        val after = reconcileBook(book, setOf("device_key_1", "device_key_0", "device_key_5"), 1000, 600)
+        assertEquals(null, after.adopted)
+        assertTrue(after.keyGone)
+        assertEquals(listOf("device_key_1", "device_key_0", "device_key_5"), after.keys.map { it.alias })
+        assertEquals(KeyAlias("device_key_0", 0, 0), after.keys[1])
+        assertEquals(KeyAlias("device_key_5", 1000, 1600), after.keys[2])
+        assertEquals(6, after.next)
     }
 
     @Test

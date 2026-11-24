@@ -47,10 +47,23 @@ object KeyRegistration {
         DeviceCredentials.appContext()?.let { request(it, "unknown_key") }
     }
 
-    /** The sync's accepted policy: a run when its `device_key` asks for step 1 ([keyNudge]). */
+    @Volatile
+    private var lastAskElapsed: Long? = null
+
+    /** The sync's accepted policy: a run when its `device_key` asks for step 1 ([keyNudge]; a state that names no key
+     * asks again only after an hour, code QA L9). */
     fun nudge(context: Context, policy: DeviceKeyPolicy?) {
         val book = KeyBook.read(context)
-        if (keyNudge(policy, book.adopted?.keyId, DeviceCredentials.tokenStored(), book.lost, backoff())) request(context, "policy")
+        val now = SystemClock.elapsedRealtime()
+        if (keyNudge(policy, book.adopted?.keyId, DeviceCredentials.tokenStored(), book.lost, backoff(), lastAskElapsed?.let { now - it })) {
+            lastAskElapsed = now
+            request(context, "policy")
+        }
+    }
+
+    /** Code QA H1: a lost key still asks step 1 now and then (the backoff paces it); a known key clears the mark. */
+    fun askWhileLost(context: Context) {
+        if (!backoff()) request(context, "lost")
     }
 
     fun backoff(): Boolean = SystemClock.elapsedRealtime() < notBeforeElapsed
@@ -121,7 +134,7 @@ object KeyRegistration {
         var registered = false
         repeat(ROUNDS) {
             val url = LauncherPreferences.mdm().serverUrl()
-            val credential = DeviceCredentials.current(app) ?: return
+            val credential = DeviceCredentials.forRegistration(app) ?: return
             if (url.isNullOrBlank()) return
             // This flow's own calls never wake it again.
             val api = createMdmApi(url, credential, onUnknownKey = {})
@@ -148,16 +161,25 @@ object KeyRegistration {
                         failed()
                         return
                     }
+                    // Code QA L3: the bearer goes only after the key has signed once.
+                    if (action.dropToken && !signs(hw, alias)) {
+                        Log.w(LOG_TAG, "Bound, but the key doesn't sign - the bearer stays")
+                        failed()
+                        return
+                    }
                     DeviceKeys.adopt(app, alias, keyId, answer.state)
                     if (action.dropToken) DeviceCredentials.dropTokenForBoundKey()
                     Log.i(LOG_TAG, "Key adopted (${answer.state})")
+                    // Code QA L6: the shutdown's prepared client carries the credential: built again.
+                    PowerEvents.prepare(app)
                     succeeded()
                     return
                 }
                 KeyAction.Keep -> {
                     val state = step1.answer?.state
-                    if (state != null && book.adopted != null && book.adopted.state != state) {
-                        KeyBook.update(app) { it.copy(adopted = it.adopted?.copy(state = state)) }
+                    if ((state != null && book.adopted != null && book.adopted.state != state) || book.lost || book.suspicion != null) {
+                        // The key is known: any suspicion of a lost key ends (code QA H1).
+                        KeyBook.update(app) { it.copy(adopted = it.adopted?.let { a -> a.copy(state = state ?: a.state) }, lost = false, suspicion = null) }
                     }
                     succeeded()
                     return
@@ -179,9 +201,12 @@ object KeyRegistration {
                     if (reported) KeyBook.update(app) { it.copy(conflictReported = named) } else failed()
                     return
                 }
-                KeyAction.ReEnrol -> {
-                    Log.w(LOG_TAG, "The server no longer knows this phone's key - a new setup code")
-                    KeyBook.update(app) { it.copy(lost = true) }
+                KeyAction.SuspectLost -> {
+                    // Code QA H1: never "lost" on one answer (a server reloading its key index answers it too).
+                    val (suspicion, lost) = lostVerdict(book.suspicion, SystemClock.elapsedRealtime(), BootClock.bootCount())
+                    if (lost && !book.lost) Log.w(LOG_TAG, "The server no longer knows this phone's key - a new setup code")
+                    KeyBook.update(app) { it.copy(suspicion = suspicion, lost = it.lost || lost) }
+                    failed()
                     return
                 }
                 KeyAction.Wait -> {
@@ -200,6 +225,13 @@ object KeyRegistration {
         }
         // Still undecided after every round: later.
         failed()
+    }
+
+    private fun signs(hw: KeyHardware, alias: String): Boolean = try {
+        hw.sign(alias, "vibb-probe".toByteArray(Charsets.UTF_8))
+        true
+    } catch (e: Exception) {
+        false
     }
 
     /** §5.2 step 4: a challenge, a new key, the POST. `true`: back to step 1. */

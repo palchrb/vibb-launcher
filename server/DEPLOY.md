@@ -117,6 +117,13 @@ HTTP/2), and the phones' event stream writes only a keepalive every `SSE_KEEPALI
 60 s after each keepalive, and every phone reconnected every 5 minutes (found 2026-10-20 on the user's Caddy 2.11.6).
 Any other proxy needs the same: its idle or read timeout for the upstream response above the keepalive interval.
 
+**Pass the request path and query through unchanged** (design 129, the phones' signed requests): each phone signs
+the raw path and query from `/api/devices` on, and the server checks them byte for byte. Caddy's `reverse_proxy`
+does this as given; a proxy that decodes, normalises or re-encodes the URI (nginx's `proxy_pass` with a URI part,
+`merge_slashes`, a rewrite) changes what was signed - harmless while the server only observes (S1), every such request
+refused once the server binds the keys (S2). A path prefix the proxy strips is fine: the signature starts at
+`/api/devices`.
+
 ```
 {
 	email parent@example.com

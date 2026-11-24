@@ -526,16 +526,6 @@ launcher's `BlockedNumbersTest` encodes both reports exactly from `withBlocked` 
 copies. The plan (`blockedNumbersPlan`: while managed, a row cleared only when its number, normalised, is a rules contact's,
 an own number or an emergency number; the rest kept) stays the launcher's. No policy key.
 
-The hardware-bound phone key (design 129, S1 observe) is `server/testdata/device_key.json`, written by
-`scripts/device-key-vectors.py`: `canonical` (a request's signed bytes and body hash, percent-encoded rows matched raw),
-`signed` and `proof` (signatures by a throwaway key), `enroll_challenge`, `clock`, `window`, `edge` (each request kind to
-its answer and `Vibb-Auth`), `answers` (each reason to the phone's action), `enroll`, `register` and `policy` (the
-policy's `device_key`). The server's `tests::device_key` runs the crypto rows and produces the route rows through the
-real routes. **Server-side only in S1**: the launcher's byte-identical copy, its `DeviceKeyContractTest` and the
-registration worker's `phone` rows come with L1, and then the file joins `launcher.yml`'s filter. The attestation's own
-vectors (`server/testdata/attestation/`, Google's test chains, Apache-2.0) stay the server's. The policy's `device_key`
-is pinned by `policy_json_keys_snapshot`.
-
 The phone's clock as its decisions see it (time rules keep their own clock, `server/TrustedClock.kt`): the status
 report's `time_state.clock_skew_ms`, `clock_trust` and `unanchored_ms` ride in `time_status_report.json` (above); the rows
 are `server/testdata/clock_skew.json`, byte-identical in `launcher/app/src/test/resources/`: `round` (a raw offset and
@@ -556,12 +546,14 @@ changes job) and byte-identical in `launcher/app/src/test/resources/`: the heade
 request), `signed` and `proof` (signatures by the throwaway key), `enroll_challenge`, `clock` (the signature clock and
 the phone's offset), `window`, `edge`, `answers` (each `Vibb-Auth` reason to the phone's action), `enroll` and `register`
 (the routes' bodies and answers), `policy` (the policy's `device_key`), `phone` (the registration flow's table: step 1's
-answer and the phone's keys to adopt, keep, register, report a conflict, wait or a new setup code) and `phone_nudge`
-(the policy's `device_key` to asking step 1 or not). The server's `tests::device_key` verifies the crypto rows and
+answer and the phone's keys to adopt, keep, register, report a conflict, wait or a strike towards "lost"),
+`phone_nudge` (the policy's `device_key` to asking step 1 or not) and `lost_verdict` (the strikes: three over an hour of
+elapsed realtime make a key lost). The server's `tests::device_key` verifies the crypto rows and
 produces the route rows through the real routes; the launcher's `DeviceKeyContractTest` builds `canonical` and `proof`
 exactly (and verifies the signatures over what it built), derives the enrolment challenge, computes `clock`, maps every
-answer, decodes the policy and the bodies, and runs `phone` through `keyStep` and `phone_nudge` through `keyNudge`; both
-compare the copies. A row added is the script's, then `--write`, then the launcher's copy. The policy's `device_key` is
+answer, decodes the policy and the bodies, and runs `phone` through `keyStep`, `phone_nudge` through `keyNudge` and `lost_verdict`
+through `lostVerdict`; both compare the copies. The attestation's own vectors (`server/testdata/attestation/`, Google's
+test chains, Apache-2.0) stay the server's. A row added is the script's, then `--write`, then the launcher's copy. The policy's `device_key` is
 pinned by `policy_json_keys_snapshot` and `PolicyResponseCompatTest`.
 
 ## CI and releases

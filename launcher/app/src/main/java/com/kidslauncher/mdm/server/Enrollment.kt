@@ -61,8 +61,16 @@ object Enrollment {
             val key = enrolKey(context, code)
             val response = createMdmApi(serverUrl).enroll(EnrollRequest(code, key?.second, key?.third))
             val body = response.body()
-            if (!response.isSuccessful || body == null) return@withContext Result.failure(enrollFailureOf(response.code()))
+            if (!response.isSuccessful || body == null) {
+                val failure = enrollFailureOf(response.code())
+                // Code QA L2: a refused code never takes this key - it goes now, not after its day.
+                if (failure.refused) key?.let { DeviceKeys.forget(context, alias = it.first) }
+                return@withContext Result.failure(failure)
+            }
             val mdm = LauncherPreferences.mdm()
+            // Code QA L5: the old enrolment's key stops being the credential before the new token is stored, so no call
+            // ever pairs the new bearer with the old key.
+            DeviceKeys.dropAdopted(context)
             if (!DeviceToken.set(body.deviceToken)) {
                 return@withContext Result.failure(EnrollFailure(refused = false, "the token couldn't be stored"))
             }
@@ -98,7 +106,7 @@ object Enrollment {
     private fun enrolKey(context: Context, code: String): Triple<String, List<String>, String>? = try {
         val challenge = enrolChallenge(code)
         val now = TrustedClock.nowMs()
-        val made = DeviceKeys.enrolKeyFor(context, b64u(challenge))
+        val made = DeviceKeys.enrolKeyFor(context, b64u(challenge), now)
             ?: DeviceKeys.make(context, challenge, now + DeviceKeys.ENROL_CHALLENGE_HOLDS_MS, now, enrolChallenge = b64u(challenge))
         made?.let { Triple(it.alias, it.chainB64(), DeviceKeys.proof(context, it.alias, challenge, ProofKind.ENROLL)) }
     } catch (e: KeyGenFailure) {
@@ -119,6 +127,8 @@ object Enrollment {
             DeviceKeys.newEnrolment(context, keep)
             if (keep != null && keyId != null) {
                 DeviceKeys.adopt(context, keep, keyId, "observed")
+                // Code QA L6: the shutdown's prepared client carries the credential.
+                PowerEvents.prepare(context)
             } else if (answer?.state == "refused") {
                 android.util.Log.w("Enrollment", "The server refused the enrolment's key: ${answer.reason}")
                 DeviceKeys.refused(context, answer.reason ?: "invalid")

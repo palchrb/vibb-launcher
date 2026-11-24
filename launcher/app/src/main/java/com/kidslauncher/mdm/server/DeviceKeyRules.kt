@@ -142,8 +142,9 @@ sealed interface KeyAction {
     /** Ask again later; nothing is made or deleted. */
     data object Wait : KeyAction
 
-    /** §5.4: a key the server no longer knows and no bearer: "Ny oppsettkode", never a fallback. */
-    data object ReEnrol : KeyAction
+    /** §5.4: a key the server no longer knows and no bearer - one more strike towards "lost" ([lostVerdict]); never a
+     * fallback to anything, and never "lost" on one answer (a server whose key index is reloading answers it too). */
+    data object SuspectLost : KeyAction
 }
 
 /** The states in which the server names a key. */
@@ -157,7 +158,7 @@ fun keyStep(input: KeyStepInput): KeyAction {
     if (input.inFlight) return KeyAction.Wait
     val step1 = input.step1
     if (step1.status == 401 && step1.vibbAuth == "unknown_key") {
-        return if (!input.hasToken && input.adopted != null) KeyAction.ReEnrol else KeyAction.Wait
+        return if (!input.hasToken && input.adopted != null) KeyAction.SuspectLost else KeyAction.Wait
     }
     val answer = step1.answer
     if (step1.status != 200 || answer == null) return KeyAction.Wait
@@ -177,14 +178,65 @@ fun keyStep(input: KeyStepInput): KeyAction {
  * Whether a policy's `device_key` asks for step 1 (§5.5: only a nudge). An older server's policy without it asks
  * nothing; a lost key asks nothing (only a new setup code helps, §5.4).
  */
-fun keyNudge(policy: DeviceKeyPolicy?, adoptedKeyId: String?, hasToken: Boolean, lost: Boolean, backoff: Boolean): Boolean = when {
+fun keyNudge(
+    policy: DeviceKeyPolicy?,
+    adoptedKeyId: String?,
+    hasToken: Boolean,
+    lost: Boolean,
+    backoff: Boolean,
+    sinceLastAskMs: Long? = null,
+): Boolean = when {
     policy == null || lost -> false
-    policy.state == "none" -> !backoff
+    // A state that names no key asks again only after [NONE_ASK_AGAIN_MS] (code QA L9: not on every sync).
+    policy.state == "none" -> !backoff && (sinceLastAskMs == null || sinceLastAskMs >= NONE_ASK_AGAIN_MS)
     policy.rotate -> !backoff
     policy.keyId != adoptedKeyId -> true
     policy.state == "bound" && hasToken -> true
     else -> false
 }
+
+/** How often a policy whose `device_key` names no key asks step 1 again. */
+const val NONE_ASK_AGAIN_MS = 60 * 60_000L
+
+/** Code QA H1: "lost" needs [LOST_STRIKES] step-1 `unknown_key` answers spread over at least [LOST_SPAN_MS]. */
+const val LOST_STRIKES = 3
+const val LOST_SPAN_MS = 60 * 60_000L
+
+/** The strikes so far: the first one's elapsed realtime and boot, and how many. */
+@Serializable
+data class LostSuspicion(val firstElapsedMs: Long, val firstBoot: Int, val strikes: Int)
+
+/**
+ * One more step-1 `unknown_key` with no bearer (code QA H1): the suspicion after it, and whether the key is now lost.
+ * A reboot starts the span again (elapsed realtime restarts), keeping the strikes so far but never counting a span
+ * across the boot.
+ */
+fun lostVerdict(before: LostSuspicion?, nowElapsedMs: Long, boot: Int): Pair<LostSuspicion, Boolean> {
+    val next = when {
+        before == null -> LostSuspicion(nowElapsedMs, boot, 1)
+        before.firstBoot != boot -> LostSuspicion(nowElapsedMs, boot, before.strikes + 1)
+        else -> before.copy(strikes = before.strikes + 1)
+    }
+    return next to (next.strikes >= LOST_STRIKES && nowElapsedMs - next.firstElapsedMs >= LOST_SPAN_MS)
+}
+
+/**
+ * Code QA M3: whether a key whose signs fail is unusable - at once when the failure is permanent (no key, a key
+ * permanently invalidated), else only after [SIGN_FAILURES] failures in a row spread over [SIGN_FAILURE_SPAN_MS].
+ */
+fun signUnusable(permanent: Boolean, failuresInRow: Int, firstFailureElapsedMs: Long, nowElapsedMs: Long): Boolean =
+    permanent || (failuresInRow >= SIGN_FAILURES && nowElapsedMs - firstFailureElapsedMs >= SIGN_FAILURE_SPAN_MS)
+
+const val SIGN_FAILURES = 5
+const val SIGN_FAILURE_SPAN_MS = 10 * 60_000L
+
+/** The rkpd packages (design 129 Q9): AOSP's, and Google's - the Jelly Star (Android 16) has `com.google.android.rkpdapp`. */
+val RKPD_PACKAGES = listOf("com.android.rkpdapp", "com.google.android.rkpdapp")
+
+/** Code QA M4: an rkpd package is exempted from the sink only when it is a system app with an app uid of its own -
+ * never a shared uid (another package would ride along). */
+fun rkpdExemptable(uid: Int, system: Boolean, packagesForUid: Int): Boolean =
+    uid >= android.os.Process.FIRST_APPLICATION_UID && system && packagesForUid == 1
 
 /** A key the phone made: [createdMs] and until when its challenge holds ([challengeUntilMs]), whether the server ever
  * named it. */

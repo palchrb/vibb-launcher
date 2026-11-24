@@ -86,6 +86,7 @@ class ServerAuthTest {
         elapsed = { 0L },
         observe = { vibbTime, _, _ -> observed += vibbTime },
         log = {},
+        health = { _, _ -> },
     )
 
     private fun call(client: OkHttpClient, url: String, body: String? = null, encoding: String? = null) {
@@ -156,7 +157,6 @@ class ServerAuthTest {
             call(client("https://kidphone.example/", DeviceCredential.Key("KEYID", "device_key_1", null), none, fixedSigning(fail = true)), "https://kidphone.example/api/devices/policy")
         }
         assertTrue(none.requests.isEmpty())
-        SignatureClock.signFailing = false
     }
 
     @Test

@@ -779,7 +779,7 @@
       "drop_token": false
     },
     {
-      "name": "a restore after S2: no bearer, the key unknown",
+      "name": "a restore after S2: no bearer, the key unknown - one strike, never lost at once",
       "has_token": false,
       "local": [
         "A"
@@ -794,7 +794,32 @@
         "vibb_auth": "unknown_key",
         "answer": null
       },
-      "action": "re_enrol",
+      "action": "suspect_lost",
+      "key": null,
+      "drop_token": false
+    },
+    {
+      "name": "suspected, then the key is known again",
+      "has_token": false,
+      "local": [
+        "A"
+      ],
+      "adopted": "A",
+      "last_call": null,
+      "in_flight": false,
+      "conflict_reported": null,
+      "backoff": false,
+      "step1": {
+        "status": 200,
+        "vibb_auth": null,
+        "answer": {
+          "state": "bound",
+          "rotate": false,
+          "key_id": "key-A",
+          "spki_sha256": "A"
+        }
+      },
+      "action": "keep",
       "key": null,
       "drop_token": false
     },
@@ -1026,6 +1051,7 @@
       "has_token": true,
       "lost": false,
       "backoff": false,
+      "since_last_ask_ms": null,
       "ask": true
     },
     {
@@ -1038,7 +1064,34 @@
       "has_token": true,
       "lost": false,
       "backoff": true,
+      "since_last_ask_ms": null,
       "ask": false
+    },
+    {
+      "name": "none, asked minutes ago",
+      "policy": {
+        "state": "none",
+        "rotate": false
+      },
+      "adopted_key_id": null,
+      "has_token": true,
+      "lost": false,
+      "backoff": false,
+      "since_last_ask_ms": 600000,
+      "ask": false
+    },
+    {
+      "name": "none, asked an hour ago",
+      "policy": {
+        "state": "none",
+        "rotate": false
+      },
+      "adopted_key_id": null,
+      "has_token": true,
+      "lost": false,
+      "backoff": false,
+      "since_last_ask_ms": 3600000,
+      "ask": true
     },
     {
       "name": "the adopted key named",
@@ -1052,6 +1105,7 @@
       "has_token": true,
       "lost": false,
       "backoff": false,
+      "since_last_ask_ms": null,
       "ask": false
     },
     {
@@ -1066,6 +1120,7 @@
       "has_token": true,
       "lost": false,
       "backoff": false,
+      "since_last_ask_ms": null,
       "ask": true
     },
     {
@@ -1080,6 +1135,7 @@
       "has_token": true,
       "lost": false,
       "backoff": false,
+      "since_last_ask_ms": null,
       "ask": true
     },
     {
@@ -1094,6 +1150,7 @@
       "has_token": true,
       "lost": false,
       "backoff": false,
+      "since_last_ask_ms": null,
       "ask": true
     },
     {
@@ -1108,6 +1165,7 @@
       "has_token": true,
       "lost": false,
       "backoff": false,
+      "since_last_ask_ms": null,
       "ask": true
     },
     {
@@ -1122,6 +1180,7 @@
       "has_token": false,
       "lost": false,
       "backoff": false,
+      "since_last_ask_ms": null,
       "ask": false
     },
     {
@@ -1131,6 +1190,7 @@
       "has_token": true,
       "lost": false,
       "backoff": false,
+      "since_last_ask_ms": null,
       "ask": false
     },
     {
@@ -1143,7 +1203,86 @@
       "has_token": true,
       "lost": true,
       "backoff": false,
+      "since_last_ask_ms": null,
       "ask": false
+    }
+  ],
+  "lost_verdict": [
+    {
+      "name": "the first strike",
+      "before": null,
+      "now_elapsed": 1000,
+      "boot": 7,
+      "after": {
+        "first_elapsed_ms": 1000,
+        "first_boot": 7,
+        "strikes": 1
+      },
+      "lost": false
+    },
+    {
+      "name": "three strikes in minutes: not yet",
+      "before": {
+        "first_elapsed_ms": 1000,
+        "first_boot": 7,
+        "strikes": 2
+      },
+      "now_elapsed": 601000,
+      "boot": 7,
+      "after": {
+        "first_elapsed_ms": 1000,
+        "first_boot": 7,
+        "strikes": 3
+      },
+      "lost": false
+    },
+    {
+      "name": "three strikes over an hour: lost",
+      "before": {
+        "first_elapsed_ms": 1000,
+        "first_boot": 7,
+        "strikes": 2
+      },
+      "now_elapsed": 3601000,
+      "boot": 7,
+      "after": {
+        "first_elapsed_ms": 1000,
+        "first_boot": 7,
+        "strikes": 3
+      },
+      "lost": true
+    },
+    {
+      "name": "many strikes, still within the hour",
+      "before": {
+        "first_elapsed_ms": 1000,
+        "first_boot": 7,
+        "strikes": 9
+      },
+      "now_elapsed": 3600999,
+      "boot": 7,
+      "after": {
+        "first_elapsed_ms": 1000,
+        "first_boot": 7,
+        "strikes": 10
+      },
+      "lost": false
+    },
+    {
+      "name": "a reboot starts the span again",
+      "before": {
+        "first_elapsed_ms": 1000,
+        "first_boot": 7,
+        "strikes": 5
+      },
+      "now_elapsed": 500,
+      "boot": 8,
+      "after": {
+        "first_elapsed_ms": 500,
+        "first_boot": 8,
+        "strikes": 6
+      },
+      "lost": false
     }
   ]
 }

@@ -5431,5 +5431,12 @@ and the security log. The owner's OK for the emulator first, as always.
   lockdown allow list with `com.android.rkpdapp` (when the image has it) and the VPN's disallowed apps include it;
   with the pool emptied (`adb shell cmd remote_provisioning` where the image has it) the key generation logs
   `No key made: keys_unavailable` and the next run after the backoff succeeds once rkpd refilled the pool.
+- **Never "lost" on one answer (code QA H1):** no bearer can't happen in S1 - simulate with the debug build's token
+  cleared and the key's row deleted on the server: the first step-1 `unknown_key` is a strike (`KeyRegistration`
+  logs no "a new setup code"), the phone keeps signing; "Ny oppsettkode" shows only after three strikes over an hour;
+  restoring the row (or a server whose key index is stale - it answers 503) clears it at the next step 1.
+- **rkpd found by its service (code QA M4):** `adb shell cmd package query-services -a
+  com.android.rkpdapp.IRemoteProvisioning` names the package the VPN excludes on each image (AOSP's
+  `com.android.rkpdapp`; the Jelly Star has `com.google.android.rkpdapp`).
 - **Android 14 vs 16:** StrongBox absent on both images (TEE); `attestationVersion` as each image reports it (100/200
   on 14, 300+ on 16) - noted for §10.
