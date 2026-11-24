@@ -86,7 +86,10 @@ fn the_rows() {
         }
     }
     if cfg!(feature = "emulator_keys") {
-        assert_eq!(ok, 3, "both gate images and the route test's chain pass");
+        assert_eq!(
+            ok, 5,
+            "both gate images' made-up and real chains and the route test's chain pass"
+        );
     }
 }
 

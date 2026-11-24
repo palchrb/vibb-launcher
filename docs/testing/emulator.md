@@ -5463,7 +5463,7 @@ emulatorer". A key it takes shows About's orange "Testnøkkel fra emulator" (lev
 Unset, or the release launcher on the emulator: `app`. Design 129b §10.3 is that gate's table; the throwaway patch
 below is no longer needed. The profile's vectors are made up in the images' shape, so that gate's first run is the
 profile's first real check: keep one chain from each image (Android 14 and 16) with the time it was read and add them
-as rows of `server/testdata/attestation/emulator/rows.json` then.
+as rows of `server/testdata/attestation/emulator/rows.json` then (done 2026-11-24: §6bm, both passed).
 
 - **Step 0 of §7.3 (read only), done 2026-11-24 (below):** each image's chain was read and §7.3 corrected. The root
   changes with every wiped image, so it is deliberately not pinned in `server/testdata/attestation/roots/`:
@@ -5600,7 +5600,7 @@ accuracy off (`settings get secure location_mode`, the `network` provider off), 
 Not on the emulator (§9): neighbours, NR, a second SIM, a move between cells, Apple's answer and its accuracy, a zone
 20 km away, a `vibb_apple_cell` fix - the Jelly Star with a SIM (`docs/testing/new-phone-model.md` §2).
 
-## 6bl. The glance back after a plug-in (PLAN (4i), branch `glance-back`) - written, not run
+## 6bl. The glance back after a plug-in (PLAN (4i), branch `glance-back`) - run 2026-11-24
 
 The charging glimpse (`docs/notes/launcher/lock-and-glance.md`, "(4i) The charging glimpse"): on **Android 14 and 16**,
 with the user's OK. The debug launcher as Device Owner, the kiosk on, Android's PIN set (the glance is Android's face),
@@ -5622,3 +5622,109 @@ shows the plug-in's look, and rows 6 and 8 the SOS rule only where one is instal
 | 7 | Unplugged (`dumpsys battery unplug`), the same blocked start with the screen on well after its screen-on | unchanged: the face's re-front (`re-front #1`) |
 | 8 | With an SOS app: a plug-in (the screen wakes), then five power presses within 2 s | the "sos" yield (`probably Emergency SOS`, `Lock yields to an exempt screen: sos`); no `power changed` re-front over the SOS screen |
 | 9 | Locked, screen off: `dumpsys battery unplug` (from charging) and the blocked start in one line | as row 2: the unplug's wake is no SOS, the glance back within ~1 s |
+
+### The run of 2026-11-24 (23:21-00:01 CET)
+
+Branch `gate-129b` at main `31a123725` (the merged `glance-back`), the debug launcher as Device Owner on Android 14
+(`compat34`) and Android 16 (`aosp36`), each from `-wipe-data`, enrolled on the §6bm server (exempt), Android's PIN
+`2580` (the Child PIN, `kid_keyguard` `android`), the setup hold ended from the PWA so the kiosk was on
+(`mLockTaskModeState=LOCKED`), the contact Mamma `+4791234567` for row 4. Logs: `AndroidLock`, `PinLock`,
+`ActivityTaskManager` after `logcat -G 16M`. What the table's method had to change on these images:
+
+- **No plug-in wakes the screen on either image** (`dumpsys power`: `mWakeUpWhenPluggedOrUnpluggedConfig=false`; a
+  fabricated overlay of `config_unplugTurnsOnScreen` as root didn't reach `system_server`). A plug-in was therefore
+  `dumpsys battery unplug; dumpsys battery set usb 1; input keyevent KEYCODE_WAKEUP` in one shell line - the screen-on
+  comes within milliseconds of `ACTION_POWER_CONNECTED`, the same input `powerWokeScreen` reads from a phone's own
+  wake; an unplug the same with `unplug` alone.
+- **Settings is hidden while it isn't allowed**, so `am start -n com.android.settings/.Settings` is "does not exist".
+  The blocked start was `am start -a android.intent.action.SET_WALLPAPER` (the wallpaper picker, not pinned): Android
+  answers it with `BlockedAppActivity` in a task of its own, as the table expects.
+- **Both images have an SOS app**, `com.android.emergency` (the table guessed none), so rows 6 and 8 ran. Five presses
+  for the SOS gesture (`settings put secure emergency_gesture_enabled 1`): `input keyevent` is either too slow (one
+  process per press, the taps don't count as consecutive) or too fast in one call ("Emergency gesture detected but
+  it's too fast. Gesture time: 15 ms"); what works is `adb root` and a press's four input events (key down, sync, key
+  up, sync; 96 bytes) written to the "Power Button" evdev node five times 200 ms apart (`cat press.bin >
+  /dev/input/eventN; sleep 0.2; ...`): "Emergency gesture detected, launching" after ~0.9 s.
+
+| # | Android 14 (`compat34`) | Android 16 (`aosp36`) |
+|---|---|---|
+| 1 | **Pass.** The glance resumed with the screen-on and stayed; no `power changed` | **Pass.** The same |
+| 2 | **Pass.** `BlockedAppActivity` started (`ActivityTaskManager`), the glance paused (and on another try stopped), `re-front #1` 0.2 s after the pause, the glance resumed, `Occluded=true`; no `probably Emergency SOS` line. The re-front came from the face's own rule at once (the power change's wake is exempt from the SOS rule, so the loss was an ordinary one), so `powerRecheck` found the glance in front and logged nothing | **Pass.** The same (paused, stopped, `re-front #1 (the glance stopped)` 0.2 s later, resumed) |
+| 3 | **Pass.** A swipe up -> Android's PIN pad (`Lås opp: requestDismissKeyguard`); a plug-in: the pad stayed (seen through `emu screenrecord screenshot`), no AndroidLock line; `2580` -> `LOCKED -> UNLOCKED`, Home | **Pass.** The same |
+| 4 | **Pass.** Mamma's call: `Lock yields to an exempt screen: call`, `InCallActivity` in front; a plug-in: the call screen stayed; after the hang-up the glance resumed | **Pass.** The same |
+| 5 | **Pass.** The first plug-in and start: `re-front #1`; the second, 3 s later on the same screen-on: the screen-on was the first change's, 3 s old, so the SOS rule took the loss (`probably Emergency SOS`, `yields ... sos`) and Android's lock screen stayed - no loop. This is the narrow case the note names (a screen-on 2-3 s before a change can't be told from a press-SOS) | **Pass.** `re-front #1`, `re-front #2`, then the third: stopped, `power changed` 1 s later and no re-front (the cap): Android's lock screen (`Occluded=false`) until a screen cycle |
+| 6 | **Pass.** The power key (the screen on), the blocked start 1 s later: `probably Emergency SOS`, `Lock yields to an exempt screen: sos` | **Pass.** The same |
+| 7 | **Pass.** Unplugged, the blocked start 6 s after the screen-on: `re-front #1 (the glance paused)`, resumed | **Pass.** The same |
+| 8 | **Pass.** A plug-in (the screen on), then the five presses: `com.android.emergency/.action.EmergencyAction` in front, `probably Emergency SOS`, `Lock yields to an exempt screen: sos`; no `power changed` re-front over it | **N/A: the image's SOS app crashes at launch.** The gesture fired ("Emergency gesture detected, launching", `LAUNCH_EMERGENCY` started) but `com.android.emergency` died at once (`ClassNotFoundException: com.android.emergency.action.action.EmergencyActionActivity` - the AOSP 16 image's own bug); the glance was paused 56 ms and back, nothing to yield to |
+| 9 | **Pass.** Charging, screen off: the unplug, its wake and the start: paused, stopped, `re-front #1` 0.2 s later, resumed; no SOS line | **Pass.** The same |
+
+Nothing failed. Not on the emulator: a real plug-in's own wake (the Jelly Star wakes on USB) and Unihertz's
+`ChargingDialog`; the owner's case from the field is the Jelly Star's to confirm.
+
+## 6bm. Enrolment requires a key: design 129b §10.3 with `emulator_keys` (branch `gate-129b`) - run 2026-11-24
+
+Design 129b §10.3's gate (`docs/design/129b-enrolment-requires-a-key.md`), on **Android 14 (`compat34`, google_apis)
+and Android 16 (`aosp36`, AOSP)** only, each from `-wipe-data`, 22:51-00:17 CET. Main `31a123725` (E1 + L2 + E2
+merged): the debug launcher (`me.vibb.launcher.debug`, versionCode 116) and two debug-profile servers 0.93.0 from the
+same tree - one with the default features (`server-plain`: the release profile alone) and one with `--features
+emulator_keys` (`server-ek`) - run in turn on **one data directory**, so a waiting phone's code, attempt and rows carry
+across a swap (the phone keeps trying the same code with the same attempt; its next try meets the other server). Both
+with a dummy `LAUNCHER_SIGNATURE_CHECKSUM` (a code needs it, D3) and the debug component; `server-ek` with or without
+`LAUNCHER_DEBUG_SIGNATURE_CHECKSUM` set to the debug signer (`apksigner verify --print-certs`, its SHA-256 as Base64url).
+The phones talked to the server through §6bj's logging proxy (each enrol's status and, for a non-200, its body; the
+`chain` of every enrol and key body kept; a switch that holds an enrolment's `200` for 15 s). A typed code each time
+(the Connect screen on a new phone, Settings' "Enroll with code" for a re-enrolment). **"Block USB debugging" off on
+the phone's row before its enrolment**: with it on, the enrolment's first policy takes adb away for good on that image
+(the first Android 14 image was lost that way after row 1 and wiped again). The PWA read as the signed-in parent (en).
+
+**The real chains (the profile's first real check):** the first enrolment on each image enrolled with the key at the
+first try - neither chain was refused, so the profile needed no change. Android 14: the leaf, the intermediate `O=TEE,
+CN=cfba59c948676d0b5f07ff54326c4c1e` (valid 2026-11-22 to 12-08) and the root `CN=Droid Unregistered Device CA,
+O=Google Test LLC` (serial `14F0...2D9B`, to 2027-02-01); attestation and KeyMint 300, both `Software`, patch 2023-09,
+osVersion 140000. Android 16: the intermediate `CN=fb5590d6158e062a91314f95464f2c70` (to 12-08), another root (serial
+`C213...BD80`); 400, both `Software`, patch 2025-07, osVersion 160000. Both: RootOfTrust unverified, unlocked, a zero
+boot key; the app `me.vibb.launcher.debug` with this machine's debug signer. Kept as rows of
+`server/testdata/attestation/emulator/rows.json` by `scripts/emulator-attestation-vectors.py` (the chains as read in
+`scripts/emulator-attestation-captures/`, copied as `captured-*.pem`; each row at the `now` it was enrolled at, with
+the leaf's challenge and the signer; one more row each with another debug signer: `app`).
+`attestation::emulator_tests::the_rows` now counts five passing chains; without the feature every row is `root`.
+
+| Row | Android 14 (`compat34`) | Android 16 (`aosp36`) |
+|---|---|---|
+| `emulator_keys` server, fresh enrolment | **Pass.** `200` at the first try, every request signed with the key at once; About "Sign-in: Emulator test key" (`row-value-action`, orange; "Software only, attestation 300, security patch 2023-09. Unknown or unlocked system. Emulator."); Settings' "The server accepts emulator test keys" (`tone-orange`); the start's warning `built with emulator_keys`; the security log "Hardware key registered ... At setup" | **Pass.** The same (attestation 400, 2025-07) |
+| `emulator_keys` server without `LAUNCHER_DEBUG_SIGNATURE_CHECKSUM` | **Pass.** `409 {"reason":"app","number":"715146","retry_after_s":15}`; the summary and Phone Setup "Andre14 couldn't prove its key: wrong app signature" with the install-the-official-app (i) and **no button**; the Devices list "1 to check"; the phone "Waiting for a parent." / "Code: 715 146" | **Pass.** The same (a re-enrolment from Settings; "Code: 581 674") |
+| Release-feature server, fresh enrolment | **Pass.** The binary swapped under the waiting phone: its next try `409 root`; tries every 15 s for the row's first 2 minutes, then `retry_after_s: 30` (the first at 22:01:34, the first 30 at 22:03:34); the orange line ("unknown issuer") on the summary and Phone Setup, the list's count; the security log "Hardware key refused ... at setup: unknown issuer, waiting for a parent", once per attempt | **Pass.** The same |
+| The confirm: a wrong number, a wrong password, then right | **Pass.** `?key_error=number#key-exception` (the confirm open, "That code doesn't match."), `?key_error=password#key-exception` ("Wrong password.", the log's "Confirmation refused ... wrong password"), then `?notice=key_exception#key-exception`; the phone's next try `200` exempt (`Enrolled without a hardware key (root)`); About "Without hardware key" (quiet); the log "Set up without hardware key admin ... unknown issuer; the attempt 23:01" and "Phone connected ... Without hardware key." With a second attempt waiting, see finding 1 | **Pass.** The same; with one attempt the landing showed the quiet "Waiting for the phone" (row 10's run) |
+| The confirm with a passkey | **Not run:** no browser with a passkey on the VM (the route is `admin_auth::reauth`'s, `tests::enrol_key`) | **Not run** (the same) |
+| A second holder of the code (both images) | **Pass, the second holder a script** (one emulator at a time on this machine): the same code with its own 16-byte attempt and `key_error: keystore`, through the proxy: `409` with its own number (203832); the page "2 attempts", two attempt rows; the phone's number allowed only the phone's row (the second stayed `409`, a try within 10 s of its last `429`); after the phone enrolled the second got `401` | **Pass.** The same (192704; `429`, then `401`) |
+| A stale tab | **Pass.** The form's tag read, a new code made, then the confirm with the old tag and the phone's right number: `?notice=key_exception_new_code`, "New code - look again.", nothing allowed | **Pass.** The same |
+| The 429 pace | **Pass - the phone never sends one.** "Enroll with code" with the same code twice within 10 s while waiting: neither tap sent a request (the dialog joined the running wait and showed its number); the tries kept their 15 s schedule. The `429` itself came to the second holder (above). A tap whose typed text came out garbled sent that other code: `401`, counted as a wrong code, and the wait for the right code went on | **Pass.** The same |
+| A no-key phone | **Server side pass, the phone side not run:** a body with `key_error: keys_unavailable` and no chain: `409 keys_unavailable`, the line "waiting for keys from Google" with the button. Neither image can empty the attestation-key pool (§6bj), and no debug hook forces it | **The same** |
+| A lost exempt answer | **Pass.** The proxy held the exempt `200` 15 s, past the phone's timeout; the next try with the same attempt got a fresh token, enrolled; the hold stayed on for two tries here, so two "Phone connected ... without hardware key asked again for a lost answer" lines (finding 2 for the SSE's lines meanwhile) | **Pass.** One held answer: one "asked again" line, enrolled at the next try |
+| The exempt phone's weekly try | **Pass.** No key request on two nudged syncs or after a process restart (only `GET /key`; the key book `{"exempt_tried_ms": <the enrolment>}`). A week on (the book's `exempt_tried_ms` moved 8 days back with `run-as`, the debug build): one try - first `GET /key/challenge` `503 address_history` (the phone's address history was minutes old: §8's X wait; `exempt_tried_ms` not stamped), then, the history aged 3 h in the database and the process restarted: challenge, `POST /key` `400 root`, the key deleted (`last_refusal: root`, `exempt_tried_ms` now), **not logged again**; a further restart asked nothing | **Pass.** The same (the history aged first: one try, `400 root`, not logged) |
+| A new code while waiting | **Pass.** The old rows gone from the page (no line, no button); the phone's next try `401`, `The waiting enrolment stopped (code_refused)`, "The code has expired. Ask for a new one.", no more tries | **Pass.** The same |
+| The 45-minute stop on a typed code | **Not run** (see Android 16) | **Not reachable - the code ends first** (finding 3): a re-enrolment waiting on `server-plain` from 00:02 CET: tries every 15 s, every 30 s from 2 minutes, every 60 s from 10 minutes; at 15 minutes the code expired, the try `401`, `The waiting enrolment stopped (code_refused)` - the same "The code has expired. Ask for a new one." the stop shows |
+| Process death while waiting (QR) | **Not run (QR):** no camera QR on the VM. **The typed variant:** `am kill` during the wait: no further try (a typed code lives in the process); the enrolled phone stayed on its bearer | **The same** |
+| A launcher without `attempt` (the L1 build) | **Server side pass:** a body without `attempt`: `426 {"reason":"update_app"}`; the summary and Phone Setup "Andre14 has an older Vibb One" with its (i) while the code lives. The L1 launcher itself not built here | **The same** |
+| `list_stale` | **Pass.** `status.json` set 8 days old and Google behind a dead `HTTPS_PROXY`: without the debug digest the chain still `409 app`; with it `503 {"reason":"list_stale","retry_after_s":60}`, no new attempt row (the phone kept its 15 s pace: a 503 keeps the schedule, D11); the proxy gone: the fetch at the start, the next try `200` with the key ("Emulator test key") | **Pass.** The same |
+| X: a phone enrolled before (E1 over 0.93.0's data) | **Not run** (no 0.93.0 data here). The wait itself was seen in the weekly row: `503 address_history` with `retry_after_s` the rest of the hour, then a registration once the history was an hour old, not marked unusual | **Not run** (the same) |
+| An enrolled phone from before this build | **Not run** (needs an L1 launcher and an older server) | **Not run** |
+
+Findings (nothing failed; none fixed here):
+
+1. **An allowed attempt is hidden while another attempt waits** (server, `enrol_key::section`): with the second
+   holder's row still waiting, the confirm of the phone's number landed on the same orange line and button (now with
+   the newest waiting row's reason, "the key store failed") and one attempt row - nothing says the phone's attempt was
+   allowed; "Waiting for the phone" shows only once no row waits. The phone enrolled at its next try, but a parent who
+   confirmed sees no change. Suggestion: the quiet "Waiting for the phone" beside the line while an allowed row is
+   unused.
+2. **A re-enrolment's old token reads as a refused sign-in** (server, the security log): when a waiting re-enrolment
+   of an enrolled phone ends exempt, the phone's SSE on the old token gets 401s until it reconnects - "Phone sign-in
+   refused ... Invalid phone key (2-3 times in a minute) · /api/devices/commands/stream". Expected from the token
+   swap, but it reads like an attack in the parent's log.
+3. **The 45-minute stop can't be reached with a typed code**: a typed code lives 15 minutes (`TYPED_MINUTES`), so a
+   waiting typed enrolment always ends at the code's expiry (`401`, the same "The code has expired" text) long before
+   45 minutes - unless a confirm moved the expiry on, and then the next try enrols. The stop is the QR code's (30
+   minutes, also under 45) only after a confirm's grace - i.e. practically never. Worth a look at D11's number.
+
+Not on the emulator: the passkey confirm, the QR path, a really empty key pool, the L1 and 0.93.0 builds.
