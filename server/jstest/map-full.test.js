@@ -111,3 +111,31 @@ test("Tab goes round inside the box while it is open, past the hidden ⤢", () =
     p.doc.listeners.keydown(tab(false));
     assert.strictEqual(prevented, 2);
 });
+
+// The Locate map's trail chip (2026-11-24): its summary is a stop; its menu's links only while open.
+test("Tab stops at the trail chip, and at its menu's links only while the menu is open", () => {
+    const p = fakePage();
+    const summary = Object.assign(el(), { tagName: "SUMMARY" });
+    const link = Object.assign(el({ href: "/devices/locate?device=1&trail=24" }), { tagName: "A" });
+    const details = el();
+    for (const e of [summary, link]) e.closest = (sel) => (sel === "details:not([open])" && !details.hasAttribute("open") ? details : null);
+    p.box.stops = [p.chip, summary, link];
+    p.box.contains = (other) => p.box.stops.includes(other);
+    install(p.win);
+    p.open.listeners.click();
+    const tab = (shiftKey) => ({ key: "Tab", shiftKey, preventDefault: () => {} });
+    // Shut: the summary is the last stop (the hidden link is none), so Tab from it wraps to the first.
+    summary.focus();
+    p.doc.listeners.keydown(tab(false));
+    assert.strictEqual(p.doc.activeElement, p.chip);
+    p.doc.listeners.keydown(tab(true));
+    assert.strictEqual(p.doc.activeElement, summary);
+    // Open: the link is the last stop; from the summary the browser moves on to it.
+    details.setAttribute("open", "");
+    summary.focus();
+    p.doc.listeners.keydown(tab(false));
+    assert.strictEqual(p.doc.activeElement, summary);
+    link.focus();
+    p.doc.listeners.keydown(tab(false));
+    assert.strictEqual(p.doc.activeElement, p.chip);
+});

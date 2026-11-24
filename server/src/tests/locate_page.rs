@@ -261,7 +261,7 @@ async fn the_rows_and_their_pages() {
     assert!(order.windows(2).all(|w| at(w[0]) < at(w[1])), "{rows}");
     assert_eq!(rows.matches("class=\"tile tile-").count(), 5, "{rows}");
     for href in [
-        format!("/devices/{id}/locations?span=12"),
+        format!("/devices/{id}/locations?span=0"),
         format!("/devices/{id}/zones"),
         format!("/devices/{id}/find"),
         format!("/devices/{id}/location-settings"),
@@ -520,7 +520,7 @@ async fn the_chips_and_the_alle_view() {
     assert!(!html.contains("data-marker-tag"), "no position, no tag");
     assert!(html.contains("<p class=\"map-legend\"><span>"));
     assert!(html.contains("<p class=\"map-legend map-legend-over\" aria-hidden=\"true\">"));
-    assert!(html.contains("<script src=\"/static/map-marker.js?v=1\"></script>\n    <script src=\"/static/locate.js?v=9\"></script>"));
+    assert!(html.contains("<script src=\"/static/map-marker.js?v=1\"></script>\n    <script src=\"/static/locate.js?v=10\"></script>"));
 
     fix(&app, emma, 59.9, 2).await;
     let (jack, _) = app.create_device("<b>Jack</b>").await;
@@ -1273,44 +1273,61 @@ async fn locations_json_takes_a_span_and_keeps_the_newest() {
         let all = json(query.to_string()).await;
         assert_eq!(all.as_array().unwrap().len(), 3, "{query}");
     }
+    // The Locate map without a trail (2026-11-24): the newest fix alone, flagged.
+    let newest = json("?newest=1".into()).await;
+    assert_eq!(newest.as_array().unwrap().len(), 1, "{newest}");
+    assert_eq!(newest[0]["latitude"], 3.0);
+    assert_eq!(newest[0]["newest"], true);
+    assert_eq!(
+        json("?newest=1&since=0".into())
+            .await
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
 }
 
-/// The Locations row on Locate counts the span's fixes (never the newest outside it), `?span=`
-/// renders the others, and the pick marks the span shown (design 44 §1.4-§1.6).
+/// The Locations row on Locate counts every kept fix and opens them all (`?span=0`), whatever the
+/// map's trail; the trail is none unless `?trail=` names one of the chip's (the owner, 2026-11-24),
+/// the chip's word and its menu's checked link follow it, and nothing sits above the map.
 #[tokio::test]
-async fn the_locations_row_counts_the_span() {
+async fn the_locations_row_counts_every_fix_and_the_chip_marks_the_trail() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("Anna").await;
     let value = |html: &str| {
-        // The count carries locate.js's words (`data-w-*`, design 70 §5.3) before its text.
-        html.split("data-locations-count")
+        html.split("data-locations-count>")
             .nth(1)
-            .and_then(|rest| rest.split_once('>'))
-            .and_then(|(_, rest)| rest.split('<').next())
+            .and_then(|rest| rest.split('<').next())
             .unwrap()
             .to_string()
     };
     let html = locate_page(&app, &cookie, &format!("?device={id}")).await;
     assert_eq!(value(&html), "None yet");
     fix(&app, id, 1.0, 3 * 24 * 60).await;
-    let html = locate_page(&app, &cookie, &format!("?device={id}")).await;
-    assert!(
-        value(&html).starts_with("0 in the last 12 hours · newest "),
-        "{}",
-        value(&html)
-    );
     fix(&app, id, 2.0, 20 * 60).await;
     fix(&app, id, 3.0, 60).await;
-    for (query, expected, checked) in [
-        ("", "1 in the last 12 hours", "12"),
-        ("&span=5", "1 in the last 12 hours", "12"),
-        ("&span=24", "2 in the last 24 hours", "24"),
-        ("&span=168", "3 in the last 7 days", "168"),
-        ("&span=0", "3 kept", "0"),
+    for (query, face, checked) in [
+        ("", "Trail", "0"),
+        ("&trail=5", "Trail", "0"),
+        ("&trail=0", "Trail", "0"),
+        ("&span=24", "Trail", "0"),
+        ("&trail=6", "6 h", "6"),
+        ("&trail=24", "24 h", "24"),
+        ("&trail=48", "48 h", "48"),
     ] {
         let html = locate_page(&app, &cookie, &format!("?device={id}{query}")).await;
-        assert_eq!(value(&html), expected, "{query}");
+        assert_eq!(value(&html), "3 kept", "{query}");
+        assert!(html.contains(&format!("href=\"/devices/{id}/locations?span=0\"")));
+        assert!(
+            html.contains(&format!("data-trail=\"{checked}\"")),
+            "{query}"
+        );
+        assert!(
+            html.contains(&format!("<span data-trail-face>{face}</span>")),
+            "{query}"
+        );
         let pick = tags(&html, "a")
             .into_iter()
             .filter(|a| a.attr("role") == Some("radio"))
@@ -1318,16 +1335,36 @@ async fn the_locations_row_counts_the_span() {
                 (
                     a.attr("data-span").unwrap_or("").to_string(),
                     a.attr("aria-checked").unwrap_or("").to_string(),
+                    a.attr("href").unwrap_or("").to_string(),
                 )
             })
             .collect::<Vec<_>>();
-        assert_eq!(pick.len(), 4, "{query}");
-        for (span, aria) in pick {
+        assert_eq!(
+            pick.iter().map(|(s, ..)| s.as_str()).collect::<Vec<_>>(),
+            ["0", "6", "12", "24", "48"],
+            "{query}"
+        );
+        for (span, aria, href) in pick {
             assert_eq!(aria == "true", span == checked, "{query}: {span} {aria}");
+            let trail = if span == "0" {
+                String::new()
+            } else {
+                format!("&amp;trail={span}")
+            };
+            assert_eq!(href, format!("/devices/locate?device={id}{trail}#location"));
         }
-        assert!(html.contains(&format!("href=\"/devices/{id}/locations?span={checked}\"")));
-        assert!(html.contains(&format!("data-span=\"{checked}\"")));
+        // The chip is the map's: nothing between the section's start and the map box.
+        let section = html.split("<section id=\"location\"").nth(1).unwrap();
+        let before = section.split("<div class=\"map-box").next().unwrap();
+        assert!(
+            !before.contains("role=\"radio\"") && !before.contains("trail-chip"),
+            "{before}"
+        );
+        assert!(!html.contains("phone-switch"));
     }
+    let html = locate_page(&app, &cookie, &format!("?device={id}&trail=24")).await;
+    assert!(html.contains("aria-label=\"Trail, 24 h\""));
+    assert!(!html.contains("aria-label=\"Trail, No trail\""));
 }
 
 /// The Locations page: every fix of the span as a row, newest first, 200 a page; "Show older"
@@ -1470,8 +1507,10 @@ async fn the_locate_tab_speaks_norwegian() {
         "Posisjonsinnstillinger",
         "Oppdater posisjon<",
         "Finn telefonen",
-        "0 de siste 12 timene · nyeste ",
-        "data-w-in-24=\"{count} de siste 24 timene\"",
+        " lagret</span>",
+        "aria-label=\"Spor, Ingen spor\"",
+        "<span data-trail-face>Spor</span>",
+        "data-face=\"24 t\" aria-checked=\"false\">24 t</a>",
         "data-w-newest=\"Nyeste posisjon\"",
         "data-lang=\"nb\"",
         "Posisjon er av på telefonen",
@@ -1495,7 +1534,8 @@ async fn the_locate_tab_speaks_norwegian() {
 
     // English stays as it was.
     let en = locate_page(&app, &cookie, &format!("?device={id}&lang=en")).await;
-    assert!(en.contains("Location Settings") && en.contains("0 in the last 12 hours · newest "));
+    assert!(en.contains("Location Settings") && en.contains(" kept</span>"));
+    assert!(en.contains("<span data-trail-face>Trail</span>") && en.contains(">No trail</a>"));
 
     let answer = app
         .get_page(
@@ -2040,7 +2080,7 @@ async fn both_map_views_offer_full_screen() {
                 .find(|b| b.has("data-full-close"))
                 .expect("✕");
             assert_eq!(close_button.attr("aria-label"), Some(close), "{query}");
-            assert!(html.contains("<script src=\"/static/map-full.js?v=2\"></script>"));
+            assert!(html.contains("<script src=\"/static/map-full.js?v=3\"></script>"));
         }
     }
     // The legend strip for full screen, the eye's only - on both views (revision 3).

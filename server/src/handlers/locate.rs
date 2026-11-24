@@ -7,8 +7,9 @@
 //! seconds while it's online, otherwise when it's back. The location policy (off / on request /
 //! every N minutes, handy step 6) decides when the phone takes a fix on its own.
 //!
-//! Design 44: the trail shows a span ([SPANS], picked in the browser), and every kept fix is a row
-//! on `/devices/{id}/locations` ([show_locations]). The map's script is `static/locate.js`. Design
+//! Design 44: every kept fix is a row on `/devices/{id}/locations` ([show_locations]), its map the
+//! span picked there ([SPANS]); the Locate map shows no trail unless one is picked in its chip
+//! ([TRAILS], 2026-11-24). The map's script is `static/locate.js`. Design
 //! 48: Requests ([requests]) lists this page's commands ([LOCATE_KINDS]) while they are in flight
 //! or just went wrong; every command of the phone is in its summary's Activity
 //! (`handlers::activity`).
@@ -36,13 +37,25 @@ pub(crate) const LOCATE_KINDS: &[&str] = &["locate", "ring", "stop_ring", "lock"
 /// How long a request that went wrong stays in Requests (design 48 §1.4).
 const REQUESTS_HOURS: i64 = 24;
 
-/// The trail's spans in hours (0 = everything kept) and their words' keys, the first the default
-/// (design 44 §1.5). The browser remembers the pick (`static/locate.js`).
+/// The Locations page's spans in hours (0 = everything kept) and their words' keys, the first the
+/// default (design 44 §1.5).
 pub(crate) const SPANS: [(i64, &str); 4] = [
     (12, "locate.span.12"),
     (24, "locate.span.24"),
     (168, "locate.span.168"),
     (0, "locate.span.0"),
+];
+
+/// The Locate map's trail (the owner, 2026-11-24: the trail matters little): none by default, the
+/// newest position alone, or the last 6, 12, 24 or 48 hours, picked in the map's chip (`?trail=`
+/// without JS, in place with `static/locate.js`; never remembered). Hours (0 = no trail), the
+/// address's query, the menu's word and the chip's.
+pub(crate) const TRAILS: [(i64, &str, &str, &str); 5] = [
+    (0, "", "locate.trail.none", "locate.trail.chip"),
+    (6, "&trail=6", "locate.trail.6", "locate.trail.6"),
+    (12, "&trail=12", "locate.trail.12", "locate.trail.12"),
+    (24, "&trail=24", "locate.trail.24", "locate.trail.24"),
+    (48, "&trail=48", "locate.trail.48", "locate.trail.48"),
 ];
 
 /// How many fixes the Locations page lists at a time.
@@ -78,9 +91,9 @@ struct Locate {
     /// The map's `data-` attributes for `static/locate.js` (Askama escapes them; the script reads
     /// them as text - security review H2).
     map: MapData,
-    /// The span shown: the Locations row's value and the pick's checked link.
-    span: i64,
-    /// "14 in the last 12 hours", "None yet".
+    /// The trail shown, in hours ([TRAILS]; 0 = none): the chip's word and the menu's checked link.
+    trail: i64,
+    /// "14 kept", "None yet": every kept fix, the Locations page's (`?span=0`).
     locations_value: String,
     /// The phone's answer to the newest Update Location.
     answer: Option<AnswerView>,
@@ -1521,6 +1534,13 @@ fn in_requests(status: &CommandStatus, lately: bool, newest: bool) -> bool {
         )
 }
 
+/// The trail in `?trail=`: one of [TRAILS]' hours, else none (0).
+fn trail_of(raw: Option<&String>) -> i64 {
+    raw.and_then(|s| s.trim().parse::<i64>().ok())
+        .filter(|hours| TRAILS.iter().any(|(h, ..)| h == hours))
+        .unwrap_or(0)
+}
+
 /// The span in `?span=` / `?since=`-style text: one of [SPANS]' hours, else the default.
 fn span_of(raw: Option<&String>) -> i64 {
     raw.and_then(|s| s.trim().parse::<i64>().ok())
@@ -1536,28 +1556,12 @@ fn span_start(hours: i64, now: DateTime<Utc>) -> Option<String> {
         .map(|start| start.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string())
 }
 
-/// The Locations row's value (design 44 §1.4, §1.6): "14 in the last 12 hours", "3 kept" (All
-/// kept), "None yet"; with nothing in the span but an older fix, "0 in the last 12 hours · newest
-/// 3 days ago". `static/locate.js` words it the same way when the span changes.
-fn locations_value(lang: Lang, count: i64, hours: i64, newest_age: Option<&str>) -> String {
-    let n = count.to_string();
-    let in_span = |n: &str| {
-        let key = match hours {
-            24 => "locate.locations.in_24",
-            168 => "locate.locations.in_168",
-            _ => "locate.locations.in_12",
-        };
-        t_params(lang, key, &[("count", n)])
-    };
-    match (count, newest_age) {
-        (0, None) => t(lang, "locate.locations.none").to_string(),
-        _ if hours == 0 => t_params(lang, "locate.locations.kept", &[("count", &n)]),
-        (0, Some(age)) => format!(
-            "{} · {}",
-            in_span("0"),
-            t_params(lang, "locate.locations.newest", &[("age", age)])
-        ),
-        _ => in_span(&n),
+/// The Locations row's value (design 44 §1.4): every kept fix, "3 kept", else "None yet". The
+/// trail on the map doesn't change it (2026-11-24).
+fn locations_value(lang: Lang, count: i64) -> String {
+    match count {
+        0 => t(lang, "locate.locations.none").to_string(),
+        n => t_params(lang, "locate.locations.kept", &[("count", &n.to_string())]),
     }
 }
 
@@ -1589,8 +1593,8 @@ fn interval_label(lang: Lang, minutes: i64) -> String {
 struct Asked<'a> {
     /// Just pressed Update Location (`?requested=1`).
     waiting_for_fix: bool,
-    /// `?span=` ([span_of]).
-    span: i64,
+    /// `?trail=` ([trail_of]).
+    trail: i64,
     /// After Update All (`?requested=all&at=`): the press's instant as the address has it.
     all_at: Option<&'a str>,
 }
@@ -1781,7 +1785,7 @@ async fn locate_view(
 ) -> Result<Locate, sqlx::Error> {
     let Asked {
         waiting_for_fix,
-        span,
+        trail,
         all_at: _,
     } = asked;
     let id = device.id;
@@ -1822,7 +1826,7 @@ async fn locate_view(
             .unwrap_or_default()
     };
 
-    let (newest, mut map) = map_data(state, id, span, zone, now).await?;
+    let (newest, mut map) = map_data(state, id, trail, zone, now).await?;
     // The newest fix's badge (design 64 §3.5): the zones that fix is surely in.
     let badge = newest
         .as_ref()
@@ -1858,13 +1862,8 @@ async fn locate_view(
     if let Some(badge) = badge.as_ref().filter(|_| newest.is_some()) {
         map.shown_text = format!("{} · {}", map.shown_text, lowercase_first(badge));
     }
-    let count = count_in_span(state, id, span, now).await?;
-    let locations_value = locations_value(
-        lang,
-        count,
-        span,
-        newest.is_some().then_some(map.newest_age.as_str()),
-    );
+    let count = count_in_span(state, id, 0, now).await?;
+    let locations_value = locations_value(lang, count);
 
     let newest_locate = sqlx::query_as::<_, DeviceCommand>(
         // A cancelled request never hides the one before it (qa-pwa-fixes-d Q-9, as Requests).
@@ -1916,7 +1915,7 @@ async fn locate_view(
         marker,
         fix,
         map,
-        span,
+        trail,
         locations_value,
         answer,
         waiting_for_fix,
@@ -2225,14 +2224,14 @@ pub async fn show_locate(
         .get("at")
         .map(String::as_str)
         .filter(|_| requested == Some("all"));
-    let span = span_of(params.get("span"));
+    let trail = trail_of(params.get("trail"));
     match render_locate_page(
         &state,
         admin.id,
         selected_id,
         Asked {
             waiting_for_fix: waiting,
-            span,
+            trail,
             all_at,
         },
         lang,
@@ -2357,7 +2356,8 @@ struct Point {
 /// `GET /devices/{id}/locations.json[?since=<hours>]` (no-store): the fixes of the last `since`
 /// hours (a positive integer; anything else is everything kept), oldest first, and the newest
 /// fix after them when none is that recent - the map's marker never disappears (design 44 §1.6,
-/// §1.8).
+/// §1.8). `?newest=1`: the newest fix alone, flagged `newest` (the Locate map without a trail,
+/// [TRAILS]).
 pub async fn locations_json(
     State(state): State<AppState>,
     lang: Lang,
@@ -2368,7 +2368,24 @@ pub async fn locations_json(
         .get("since")
         .and_then(|s| s.trim().parse::<i64>().ok())
         .and_then(|hours| span_start(hours, Utc::now()));
+    let newest_alone = params.get("newest").is_some_and(|v| v == "1");
     let points = async {
+        if newest_alone {
+            let newest = sqlx::query_as::<_, DeviceLocation>(
+                "SELECT * FROM device_locations WHERE device_id = ? \
+                 ORDER BY captured_at DESC, id DESC LIMIT 1",
+            )
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await?;
+            return Ok(newest
+                .map(|location| Point {
+                    location,
+                    newest: true,
+                })
+                .into_iter()
+                .collect());
+        }
         let mut points: Vec<Point> = sqlx::query_as::<_, DeviceLocation>(
             "SELECT * FROM device_locations WHERE device_id = ? \
              AND (?2 IS NULL OR captured_at >= ?2) ORDER BY captured_at ASC, id ASC",
