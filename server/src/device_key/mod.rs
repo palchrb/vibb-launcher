@@ -124,11 +124,15 @@ impl KeyIndex {
 
     pub async fn reload(&self, db: &sqlx::SqlitePool) -> Result<(), sqlx::Error> {
         let _one_at_a_time = self.reload.lock().await;
-        let rows: Vec<(String, i64, Vec<u8>)> = sqlx::query_as(
-            "SELECT key_id, device_id, public_key FROM device_keys WHERE state != 'retired'",
-        )
-        .fetch_all(db)
-        .await?;
+        // Design 129b §7 (code QA L2): a key the `emulator_keys` profile took never signs on a server built without
+        // it (a database moved from a gate server): it is left out, so its signatures are `unknown_key`.
+        let sql = if cfg!(feature = "emulator_keys") {
+            "SELECT key_id, device_id, public_key FROM device_keys WHERE state != 'retired'"
+        } else {
+            "SELECT key_id, device_id, public_key FROM device_keys WHERE state != 'retired' \
+             AND root != 'emulator'"
+        };
+        let rows: Vec<(String, i64, Vec<u8>)> = sqlx::query_as(sql).fetch_all(db).await?;
         self.stale
             .store(false, std::sync::atomic::Ordering::Relaxed);
         *self.map.write().unwrap_or_else(|e| e.into_inner()) = rows
@@ -691,6 +695,8 @@ pub fn b64url(bytes: &[u8]) -> String {
 pub struct StoredKey {
     pub key_id: String,
     pub spki_sha256: String,
+    /// `tee`, `strongbox`, or `software` - only an `emulator_keys` key (`root = 'emulator'`, design 129b §7; migration
+    /// 0175 lets the column say it).
     pub security_level: String,
     pub attestation_version: i64,
     pub os_patch_level: Option<i64>,
@@ -1194,7 +1200,9 @@ mod tests {
             .connect("sqlite::memory:")
             .await
             .unwrap();
-        sqlx::query("CREATE TABLE device_keys (key_id TEXT, device_id INTEGER, public_key BLOB, state TEXT)")
+        sqlx::query(
+            "CREATE TABLE device_keys (key_id TEXT, device_id INTEGER, public_key BLOB, state TEXT, root TEXT)",
+        )
             .execute(&db)
             .await
             .unwrap();

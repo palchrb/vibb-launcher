@@ -561,7 +561,8 @@ fn connection_rows(
 
 /// About This Phone's "Sign-in" row (design 129 S1, §9.1): a quiet value in every state - "Older sign-in", "Hardware
 /// key" (what the attestation said behind the ⓘ: step 0 reads the Jelly Star's verdict here), "Key refused (reason)"
-/// or "Another key registered". Nothing is orange in S1: the parent can't act on it yet.
+/// or "Another key registered" - the parent can't act on them yet. One is orange: "Emulator test key", a key the
+/// `emulator_keys` profile took (design 129b §7, H3).
 async fn key_row(state: &AppState, id: i64, lang: Lang) -> Result<Row, sqlx::Error> {
     let label = t(lang, "device.about.key");
     let (refused, conflict): (Option<String>, Option<String>) =
@@ -574,6 +575,12 @@ async fn key_row(state: &AppState, id: i64, lang: Lang) -> Result<Row, sqlx::Err
         return Ok(Row::new("key", label, t(lang, "device.about.key.conflict")));
     }
     if let Some(key) = crate::device_key::current_key(&state.db, id).await? {
+        // Design 129b §7 (H3): a key the `emulator_keys` profile took is a test key anyone can make - orange.
+        if key.root == crate::attestation::roots::Root::Emulator.word() {
+            return Ok(Row::new("key", label, t(lang, "device.about.key.emulator"))
+                .class("row-value-action")
+                .detail(Some(key_detail(&key, lang))));
+        }
         return Ok(Row::new("key", label, t(lang, "device.about.key.hardware"))
             .detail(Some(key_detail(&key, lang))));
     }
@@ -601,6 +608,7 @@ async fn key_row(state: &AppState, id: i64, lang: Lang) -> Result<Row, sqlx::Err
 /// What the key's attestation said (§3 item 12), for the ⓘ.
 fn key_detail(key: &crate::device_key::StoredKey, lang: Lang) -> String {
     let level = match key.security_level.as_str() {
+        "software" => "device.about.key.level.software",
         "strongbox" => "device.about.key.level.strongbox",
         _ => "device.about.key.level.tee",
     };
@@ -611,6 +619,7 @@ fn key_detail(key: &crate::device_key::StoredKey, lang: Lang) -> String {
     };
     let root = match key.root.as_str() {
         "google_ec_ca1" => "device.about.key.root.google_ec_ca1",
+        "emulator" => "device.about.key.root.emulator",
         _ => "device.about.key.root.google_rsa",
     };
     let patch = key

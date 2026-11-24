@@ -123,10 +123,15 @@ fn check_against(
     let chain = decode_chain(chain)?;
     let digest = attestation::signature_digest(state.config.launcher_signature_checksum.as_deref())
         .unwrap_or_default();
+    // Read by the `emulator_keys` profile alone (design 129b §7); always empty without the feature.
+    let debug_digest =
+        attestation::signature_digest(state.config.launcher_debug_signature_checksum.as_deref())
+            .unwrap_or_default();
     let expect = Expect {
         challenge,
         package: attestation::LAUNCHER_PACKAGE,
         signature_digest: &digest,
+        debug_signature_digest: &debug_digest,
         now: now.timestamp(),
     };
     let attested = (state.device_keys.attest)(&chain, &expect, revoked.as_ref())?;

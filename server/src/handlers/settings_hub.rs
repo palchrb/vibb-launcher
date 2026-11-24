@@ -35,6 +35,8 @@ struct SettingsHubTemplate {
     key_list_stale: bool,
     /// Design 129 §3 item 10: no LAUNCHER_SIGNATURE_CHECKSUM - every phone key is refused (code QA L10: said once here).
     key_no_checksum: bool,
+    /// Design 129b §7 (H3): built with `emulator_keys` - said in orange while it is compiled in.
+    emulator_keys: bool,
 }
 crate::i18n::words!(SettingsHubTemplate);
 
@@ -82,6 +84,7 @@ pub async fn settings_hub(
             bell: crate::parent_events::Bell::load(&state.db, admin.id).await,
             key_list_stale: state.device_keys.status.stale_line(Utc::now()),
             key_no_checksum: !crate::device_key::routes::checksum_set(&state),
+            emulator_keys: cfg!(feature = "emulator_keys"),
         }
         .render()
         .unwrap(),

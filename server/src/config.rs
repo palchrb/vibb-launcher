@@ -44,6 +44,9 @@ pub struct ForkConfig {
     /// certificate, base64url without padding (43 characters). `None` until configured - see
     /// the module doc comment and DEPLOY.md for how to compute it.
     pub launcher_signature_checksum: Option<String>,
+    /// `LAUNCHER_DEBUG_SIGNATURE_CHECKSUM` (design 129b §7): the debug launcher's signing certificate, in the same
+    /// form, for the emulator gate's keys. Read only by an `emulator_keys` build; `None` in every other.
+    pub launcher_debug_signature_checksum: Option<String>,
     /// `PHONE_SERVER_URL`: the phones' server address in the setup QR when Settings › Phone Setup
     /// has none saved - the saved one always wins (`provisioning::server_url`). Checked as Phone
     /// Setup's field ([check_server_url]): a refused one is ignored (logged), a plain-http one to
@@ -118,6 +121,11 @@ impl ForkConfig {
             launcher_apk_url: read("LAUNCHER_APK_URL", is_valid_url)
                 .unwrap_or_else(|| DEFAULT_LAUNCHER_APK_URL.to_string()),
             launcher_signature_checksum: read("LAUNCHER_SIGNATURE_CHECKSUM", is_valid_checksum),
+            launcher_debug_signature_checksum: if cfg!(feature = "emulator_keys") {
+                read("LAUNCHER_DEBUG_SIGNATURE_CHECKSUM", is_valid_checksum)
+            } else {
+                None
+            },
             phone_server_url: read("PHONE_SERVER_URL", |url| match check_server_url(url) {
                 ServerUrl::Fine => true,
                 ServerUrl::TailnetHttp(host) => {

@@ -1,0 +1,178 @@
+{
+ "comment": "Design 129b §7: the emulator_keys profile's rows. Made by scripts/emulator-attestation-vectors.py from throwaway keys and made-up values in the shape of the gate images' chains (design 129 §7.3) - never a capture. `challenge` and `signature` are standard Base64; `revoked` the serials the row's status list names. With the feature each row's verdict; without it every row is `root`.",
+ "app": {
+  "package": "me.vibb.launcher.debug",
+  "signature": "1uJZpC3XIpE8zSUcnc1jTp+U9MRFkvSd7UUMvGZ1LKU="
+ },
+ "enroll": {
+  "comment": "tests::emulator_keys: set `code` on a phone, enrol with `chain` and `proof` (the throwaway leaf's signature over `vibb-key-v1\\n<challenge>\\nenroll`), LAUNCHER_DEBUG_SIGNATURE_CHECKSUM `checksum`.",
+  "code": "EMULATORTESTCODEVIBBFAKEAA",
+  "chain": "route.pem",
+  "checksum": "1uJZpC3XIpE8zSUcnc1jTp-U9MRFkvSd7UUMvGZ1LKU",
+  "proof": "MEUCIQDqLr-7zsES91JACFWa3VhQyLVFgqljQeGiIHyq_j6NCgIgbYnmIsP_UN9O5qi3t35JtCPdbL_arIgvqrvcl5yb5GI"
+ },
+ "rows": [
+  {
+   "name": "the Android 16 image",
+   "chain": "android16.pem",
+   "now": "2026-11-24T12:00:00Z",
+   "challenge": "8bD4ZVD7wljQ2EyBaXdvMrNdPSSyjAacuOTHylSyOYw=",
+   "version": 400,
+   "patch": 202507,
+   "verdict": "ok",
+   "level": "software",
+   "boot": "unverified",
+   "locked": false,
+   "reading": "unknown",
+   "root": "emulator",
+   "serials": 3
+  },
+  {
+   "name": "the Android 14 image",
+   "chain": "android14.pem",
+   "now": "2026-11-24T12:00:00Z",
+   "challenge": "8bD4ZVD7wljQ2EyBaXdvMrNdPSSyjAacuOTHylSyOYw=",
+   "version": 300,
+   "patch": 202309,
+   "verdict": "ok",
+   "level": "software",
+   "boot": "unverified",
+   "locked": false,
+   "reading": "unknown",
+   "root": "emulator",
+   "serials": 3
+  },
+  {
+   "name": "the route test's chain (valid for years)",
+   "chain": "route.pem",
+   "now": "2026-11-24T12:00:00Z",
+   "challenge": "8bD4ZVD7wljQ2EyBaXdvMrNdPSSyjAacuOTHylSyOYw=",
+   "version": 400,
+   "patch": 202507,
+   "verdict": "ok",
+   "level": "software",
+   "boot": "unverified",
+   "locked": false,
+   "reading": "unknown",
+   "root": "emulator",
+   "serials": 3
+  },
+  {
+   "name": "the release package",
+   "chain": "release-package.pem",
+   "now": "2026-11-24T12:00:00Z",
+   "challenge": "8bD4ZVD7wljQ2EyBaXdvMrNdPSSyjAacuOTHylSyOYw=",
+   "verdict": "app"
+  },
+  {
+   "name": "no LAUNCHER_DEBUG_SIGNATURE_CHECKSUM",
+   "chain": "android16.pem",
+   "now": "2026-11-24T12:00:00Z",
+   "challenge": "8bD4ZVD7wljQ2EyBaXdvMrNdPSSyjAacuOTHylSyOYw=",
+   "signature": "",
+   "verdict": "app"
+  },
+  {
+   "name": "another debug signer",
+   "chain": "android16.pem",
+   "now": "2026-11-24T12:00:00Z",
+   "challenge": "8bD4ZVD7wljQ2EyBaXdvMrNdPSSyjAacuOTHylSyOYw=",
+   "signature": "6AQ8ZNrqR4KLMF+ifaXMuLduhnhBjFsmJKwWrtmA1mA=",
+   "verdict": "app"
+  },
+  {
+   "name": "the root renamed",
+   "chain": "root-renamed.pem",
+   "now": "2026-11-24T12:00:00Z",
+   "challenge": "8bD4ZVD7wljQ2EyBaXdvMrNdPSSyjAacuOTHylSyOYw=",
+   "verdict": "root"
+  },
+  {
+   "name": "a root signed by another key",
+   "chain": "root-not-self-signed.pem",
+   "now": "2026-11-24T12:00:00Z",
+   "challenge": "8bD4ZVD7wljQ2EyBaXdvMrNdPSSyjAacuOTHylSyOYw=",
+   "verdict": "root"
+  },
+  {
+   "name": "no provisioning info on the root",
+   "chain": "root-without-info.pem",
+   "now": "2026-11-24T12:00:00Z",
+   "challenge": "8bD4ZVD7wljQ2EyBaXdvMrNdPSSyjAacuOTHylSyOYw=",
+   "verdict": "root"
+  },
+  {
+   "name": "a fourth certificate",
+   "chain": "fourth-certificate.pem",
+   "now": "2026-11-24T12:00:00Z",
+   "challenge": "8bD4ZVD7wljQ2EyBaXdvMrNdPSSyjAacuOTHylSyOYw=",
+   "verdict": "root"
+  },
+  {
+   "name": "a TEE claim under the emulator's root",
+   "chain": "tee-claim.pem",
+   "now": "2026-11-24T12:00:00Z",
+   "challenge": "8bD4ZVD7wljQ2EyBaXdvMrNdPSSyjAacuOTHylSyOYw=",
+   "verdict": "root"
+  },
+  {
+   "name": "a leaf on another curve",
+   "chain": "leaf-p384.pem",
+   "now": "2026-11-24T12:00:00Z",
+   "challenge": "8bD4ZVD7wljQ2EyBaXdvMrNdPSSyjAacuOTHylSyOYw=",
+   "verdict": "root"
+  },
+  {
+   "name": "a tag in the hardware list",
+   "chain": "hardware-tag.pem",
+   "now": "2026-11-24T12:00:00Z",
+   "challenge": "8bD4ZVD7wljQ2EyBaXdvMrNdPSSyjAacuOTHylSyOYw=",
+   "verdict": "properties"
+  },
+  {
+   "name": "attestation 400 with KeyMint 300",
+   "chain": "versions-differ.pem",
+   "now": "2026-11-24T12:00:00Z",
+   "challenge": "8bD4ZVD7wljQ2EyBaXdvMrNdPSSyjAacuOTHylSyOYw=",
+   "verdict": "properties"
+  },
+  {
+   "name": "attestation 200",
+   "chain": "version-200.pem",
+   "now": "2026-11-24T12:00:00Z",
+   "challenge": "8bD4ZVD7wljQ2EyBaXdvMrNdPSSyjAacuOTHylSyOYw=",
+   "verdict": "properties"
+  },
+  {
+   "name": "another challenge",
+   "chain": "android16.pem",
+   "now": "2026-11-24T12:00:00Z",
+   "challenge": "b3RoZXI=",
+   "verdict": "challenge"
+  },
+  {
+   "name": "the intermediate expired",
+   "chain": "android16.pem",
+   "now": "2026-12-08T12:00:00Z",
+   "challenge": "8bD4ZVD7wljQ2EyBaXdvMrNdPSSyjAacuOTHylSyOYw=",
+   "verdict": "expired"
+  },
+  {
+   "name": "the root not valid yet",
+   "chain": "android16.pem",
+   "now": "2026-11-16T12:00:00Z",
+   "challenge": "8bD4ZVD7wljQ2EyBaXdvMrNdPSSyjAacuOTHylSyOYw=",
+   "verdict": "expired"
+  },
+  {
+   "name": "the intermediate revoked",
+   "chain": "android16.pem",
+   "now": "2026-11-24T12:00:00Z",
+   "challenge": "8bD4ZVD7wljQ2EyBaXdvMrNdPSSyjAacuOTHylSyOYw=",
+   "revoked": [
+    "7d642d267e05a50317c2996e24cd7f9a"
+   ],
+   "verdict": "revoked"
+  }
+ ]
+}

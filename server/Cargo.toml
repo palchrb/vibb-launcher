@@ -12,6 +12,10 @@ default = ["map_links", "wifi_lookup"]
 map_links = []
 # Design 125 step 2: the Apple Wi-Fi lookup for the phones, through a SOCKS5 proxy, its answers sealed here.
 wifi_lookup = []
+# Design 129b §7: the emulator gate's test keys (the debug launcher's software-only chain under an emulator's own
+# root). Debug builds only - `src/attestation/mod.rs` refuses to compile it into a release; never in `default`,
+# `server-release.yml` or the Dockerfile (server-ci.yml's changes job fails if either names it).
+emulator_keys = []
 
 [dependencies]
 # Vibb music (design 26b): Storytel's login password is AES-128-CBC with a public key (CBC and the

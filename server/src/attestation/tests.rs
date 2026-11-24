@@ -67,6 +67,7 @@ fn the_rows() {
             challenge: &challenge,
             package,
             signature_digest: &signature,
+            debug_signature_digest: &[],
             now: at(row["now"].as_str().unwrap()),
         };
         let revocations: &dyn Revocations = if row["status"] == true {
@@ -121,6 +122,7 @@ fn check(chain: &[Vec<u8>]) -> Result<Attested, Refusal> {
             challenge: &challenge,
             package: "com.google.android.attestation",
             signature_digest: &digest,
+            debug_signature_digest: &[],
             now,
         },
         &HashSet::new(),

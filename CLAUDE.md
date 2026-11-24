@@ -76,7 +76,10 @@ admin server it talks to. Old commit hashes in the docs still resolve.
   the script pins, an older `timestamp` refused; `--selftest`, no network, a vendored sample signed by a throwaway key
   in `scripts/grapheneos-boot-keys-sample/`; run by `server-ci.yml`'s always-run changes job), `device-key-vectors.py`
   (design 129 §7.1: the crypto rows of `server/testdata/device_key.json` from a throwaway P-256 key derived from a fake
-  phrase - public data only, pure Python; `--check` run by `server-ci.yml`'s always-run changes job).
+  phrase - public data only, pure Python; `--check` run by `server-ci.yml`'s always-run changes job),
+  `emulator-attestation-vectors.py` (design 129b §7: the `emulator_keys` profile's chains and rows in
+  `server/testdata/attestation/emulator/`, from throwaway keys and made-up values in the emulator gate's shape, never a
+  capture; pure Python; `--check` run by `server-ci.yml`'s always-run changes job).
 - `PLAN.md` - the plan and status, and the fix backlog ("Fix backlog": keep it current as items come in and are done).
 - `.github/` - CI for both parts (see below).
 - `kids-launcher-mdm/`, `kid-phone-server/` (gitignored, if present) - the old standalone clones.

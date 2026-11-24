@@ -12,6 +12,9 @@ pub enum Root {
     GoogleRsa,
     /// "Key Attestation CA1" (ECDSA P-384), signing chains from 2026-02-01.
     GoogleEcCa1,
+    /// Not a pin: an emulator's own self-signed test root, taken only by an `emulator_keys` build (design 129b §7).
+    /// A key stored with it shows About's orange "Emulator test key" in any build.
+    Emulator,
 }
 
 impl Root {
@@ -19,11 +22,15 @@ impl Root {
         match self {
             Root::GoogleRsa => "google_rsa",
             Root::GoogleEcCa1 => "google_ec_ca1",
+            Root::Emulator => "emulator",
         }
     }
 
     pub fn from_word(word: &str) -> Option<Root> {
-        PINS.iter().map(|(_, r)| *r).find(|r| r.word() == word)
+        PINS.iter()
+            .map(|(_, r)| *r)
+            .chain([Root::Emulator])
+            .find(|r| r.word() == word)
     }
 }
 

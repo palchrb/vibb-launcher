@@ -150,6 +150,12 @@ impl<'a> Certificate<'a> {
         }
     }
 
+    /// The subject's attributes in order: (OID, the value's content).
+    #[cfg_attr(not(feature = "emulator_keys"), allow(dead_code))]
+    pub fn subject_values(&self) -> Vec<(&'a [u8], &'a [u8])> {
+        name_values(self.subject)
+    }
+
     /// Whether the subject names `oid` (with any value).
     pub fn subject_has(&self, oid: &[u8]) -> bool {
         name_values(self.subject).iter().any(|(o, _)| *o == oid)

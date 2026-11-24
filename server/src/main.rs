@@ -419,6 +419,23 @@ async fn main() {
              until it is (see DEPLOY.md)"
         );
     }
+    // Design 129b §7 (H3): said at every start while the emulator profile is compiled in - and never in a build
+    // without debug assertions (the compile_error! in attestation/mod.rs; this is a second guard against a profile
+    // that turns them on for release).
+    #[cfg(feature = "emulator_keys")]
+    if !cfg!(debug_assertions) {
+        panic!("emulator_keys is for debug builds only");
+    }
+    #[cfg(feature = "emulator_keys")]
+    tracing::warn!(
+        "built with emulator_keys: this server accepts emulator test keys, which anyone can forge - for the \
+         emulator gate only (debug launcher, LAUNCHER_DEBUG_SIGNATURE_CHECKSUM {})",
+        if fork_config.launcher_debug_signature_checksum.is_some() {
+            "set"
+        } else {
+            "not set: every emulator key is refused `app`"
+        }
+    );
 
     // The Storytel login's key (design 21, QA #10): .env's MUSIC_SECRET_KEY, else our own key file
     // in data/keys/ (the only place the unit lets us write; no backup copies it), made on the first

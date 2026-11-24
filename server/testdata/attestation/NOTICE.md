@@ -13,3 +13,6 @@
 - `status.json` - a revocation status list in Google's form, written for the tests: one serial of
   `tegu-sdk36-TEE_EC_2026_ROOT.pem` revoked, one of `caiman-sdk36-TEE_EC_RKP.pem` suspended.
 - `rows.json` - each chain's expected verdict and reading (`attestation::tests::the_rows`).
+- `emulator/` - the `emulator_keys` profile's chains and rows (design 129b §7), written by
+  `scripts/emulator-attestation-vectors.py` from throwaway keys derived from fake phrases and made-up values, in the
+  shape of the emulator gate's chains; never a capture of an emulator, a phone or Google's backend.
