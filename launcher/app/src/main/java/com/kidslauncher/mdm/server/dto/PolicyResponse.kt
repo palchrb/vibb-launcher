@@ -163,6 +163,9 @@ data class PolicyResponse(
      * ([com.kidslauncher.mdm.server.abroadLifts2g]); missing = off (2G stays blocked abroad). Kept by
      * [com.kidslauncher.mdm.server.LastEnforcedPlan]. */
     @SerialName("allow_2g_abroad") val allow2gAbroad: Boolean? = null,
+    /** Advanced › Android Auto: the parent allows it on this phone; missing = hidden while apps are managed
+     * ([com.kidslauncher.mdm.server.ANDROID_AUTO]). Kept by [com.kidslauncher.mdm.server.LastEnforcedPlan]. */
+    val allowAndroidAuto: Boolean = false,
     /** Design 95 §3.5 (step 95-T2): the server expands heartbeat reports ([StatusReports]); missing = never
      * send one. */
     val statusHeartbeat: Boolean = false,

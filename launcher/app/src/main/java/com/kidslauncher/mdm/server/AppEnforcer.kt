@@ -94,6 +94,14 @@ private const val MANAGE_BLOCKED_NUMBERS = "android.telecom.action.MANAGE_BLOCKE
  * launcher (home-screen) icon - see the function's own doc comment for why this replaced an
  * earlier hand-maintained package-name allowlist.
  */
+/** [packageName] is installed for this user, hidden or not (`MATCH_UNINSTALLED_PACKAGES`, as [controllablePackages]). */
+internal fun installedEvenHidden(pm: PackageManager, packageName: String): Boolean = try {
+    pm.getApplicationInfo(packageName, PackageManager.ApplicationInfoFlags.of(PackageManager.MATCH_UNINSTALLED_PACKAGES.toLong()))
+    true
+} catch (e: PackageManager.NameNotFoundException) {
+    false
+}
+
 internal fun controllablePackages(pm: PackageManager): List<String> {
     // MATCH_UNINSTALLED_PACKAGES is required here, or this list silently drops any package this
     // same enforcer has already hidden via setApplicationHidden - PackageManager excludes hidden
@@ -552,6 +560,9 @@ object AppEnforcer {
             webViewProvider = webViewProviderPackage(),
             loginBrowser = com.kidslauncher.mdm.logins.CHROME_PACKAGE.takeIf { browser.ready },
             loginWindowOpen = loginWindowOpen,
+            homeCandidates = UpdateFence.homeCandidates(pm),
+            androidAutoInstalled = installedEvenHidden(pm, ANDROID_AUTO),
+            allowAndroidAuto = policy?.allowAndroidAuto == true,
         )
 
         // Set before the loop below can release the dialer, so its keypad is never usable for
@@ -581,7 +592,8 @@ object AppEnforcer {
         // Every app's playing sessions, read at most once per pass and only once a package is about to be suspended
         // (2026-11-04: each is paused before its suspension; without listener access none).
         val playingSessions by lazy { com.kidslauncher.mdm.music.MusicSessions.playingSessions(context) }
-        for (packageName in installedPackages) {
+        // The plan's packages outside the controllable set (Android Auto, the other Home apps) are visited too.
+        for (packageName in installedPackages + plan.extraPackages) {
             if (packageName == ownPackage) continue
 
             // Only apps that aren't allowed at all are hidden; the schedule lock only suspends
@@ -1762,6 +1774,12 @@ object AppEnforcer {
         if (!dpm.isDeviceOwnerApp(context.packageName)) return false
         // The Play Store (re)installed or updated: the full plan decides its suspension.
         if (packageName == PLAY_STORE) {
+            apply(context, currentPolicyDecision())
+            return false
+        }
+        // Android Auto and the other Home apps: the full plan decides too (planOwnsAddedPackage).
+        val pm = context.packageManager
+        if (planOwnsAddedPackage(packageName, UpdateFence.homeCandidates(pm), context.packageName, controllablePackages(pm).toSet())) {
             apply(context, currentPolicyDecision())
             return false
         }

@@ -388,8 +388,9 @@ object UpdateFence {
         val controllable = controllablePackages(pm).toSet()
         if ((suspendedHomes - controllable).isEmpty()) return
         val admin = ComponentName(app, MdmDeviceAdminReceiver::class.java)
-        val targets = orphanFenceTargets(
-            candidates, app.packageName, protectedPackages(app, dpm, admin), controllable, suspendedHomes,
+        val protected = protectedPackages(app, dpm, admin)
+        val targets = orphanSweepTargets(
+            candidates, app.packageName, protected, controllable, suspendedHomes,
             recentsPackage = AppEnforcer.systemRecentsPackage(app),
         )
         if (targets.isEmpty()) return
@@ -435,7 +436,9 @@ object UpdateFence {
 
     // ---- what the phone says ------------------------------------------------------------------
 
-    private fun homeCandidates(pm: PackageManager): List<HomeCandidate> =
+    /** Every package with an enabled MAIN + HOME activity (a suspended one too) - the fence's and enforcement's
+     * ([otherHomes]) view of the phone's Homes. */
+    internal fun homeCandidates(pm: PackageManager): List<HomeCandidate> =
         pm.queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), PackageManager.ResolveInfoFlags.of(0))
             .mapNotNull { info ->
                 val activity = info.activityInfo ?: return@mapNotNull null

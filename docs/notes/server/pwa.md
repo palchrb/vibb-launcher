@@ -179,6 +179,13 @@ family's one backup row (`backups::backup_state`, `#backup-warning`, to `/backup
 
 ## About This Phone and Advanced (design 31 step 3, `docs/design/31-pwa-redesign.md` §3.2, §8)
 
+- **Android Auto and notification access** (2026-11-23, migration 0170): Advanced › Android Auto, one switch "Tillat"
+  (`POST /devices/{id}/android-auto`, answered at `#android-auto`; `device_policy.allow_android_auto`, sent as the
+  policy's `allow_android_auto`, off by default - the phone hides Android Auto). About › Software's "Varseltilgang" row
+  (`notification_listeners.rs`) reads the report's `notification_listeners`: the apps that read, by name, quiet; "Bare
+  Vibb One" when none; in orange (`row-value-action`) the ones that read and that the parent didn't give - neither in
+  the allowlist nor a catalog app ticked for the phone - with how to remove the access behind the (i). An app Vibb has
+  hidden (`off`) is never named; one that came with the phone (`system`) and Android Auto are named quietly.
 - **Two sub-pages** (`src/handlers/device_pages.rs`, `device_about.html`, `device_advanced.html`), reached from two
   rows at the bottom of the device page ("About This Phone · Vibb One 0.23.6", "Advanced"). A rebuilt sub-page has the
   §3.0 header - a back link to the phone (`.nav-back`) and the large title - and includes `partials/tab_bar.html`

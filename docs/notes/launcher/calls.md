@@ -1016,7 +1016,7 @@ a gate that closes at once.
   pin and the action resolves to Telecom's page). Checked with `am start -a` on 14 and 16. Not affected: an explicit
   start of Telecom's activity, and `TelecomManager.createManageBlockedNumbersIntent()`, whose intent names Telecom's
   package (checked on 14 and 16); the observer clears what is added there. The Google Dialer's own row isn't reachable
-  while Vibb One is the phone app (it shows only "Set Phone as default"). `docs/testing/emulator.md` §6be.
+  while Vibb One is the phone app (it shows only "Set Phone as default"). `docs/testing/emulator.md` §6bg.
 - **Tests**: `BlockedNumbersTest` (the class of every stored form, the plan and its initial sweep, the report's keys
   exactly as the contract, the gate's manifest entry), `PlayInvariantsTest` (the re-seat's list). The emulator:
-  `docs/testing/emulator.md` §6be.
+  `docs/testing/emulator.md` §6bg.

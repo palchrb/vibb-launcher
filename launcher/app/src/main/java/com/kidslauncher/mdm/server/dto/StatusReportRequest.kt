@@ -155,6 +155,10 @@ data class StatusReportRequest(
      * `null` = unreadable (left out). A full-report field (not in `status_heartbeat_fields`). Pinned by
      * `notification_channels.json` (`NotificationChannelsTest`). */
     val notificationChannels: com.kidslauncher.mdm.notify.NotificationChannelsReport? = null,
+    /** The apps with notification access besides Vibb One, each `off` while Vibb has it hidden or suspended; `null` =
+     * unreadable (left out). A full-report field (not in `status_heartbeat_fields`). Pinned by
+     * `notification_listeners.json` (`SystemReadersTest`). */
+    val notificationListeners: List<com.kidslauncher.mdm.server.NotificationListenerReport>? = null,
     /** Design 115 §2.8: why the phone holds its app-push queue (`{"held": "no_network" | "none"}`), while UP is on and
      * the phone unlocked; left out otherwise. A full-report field. Pinned by `unified_push.json`'s `report` rows
      * (`UnifiedPushContractTest`). */

@@ -94,6 +94,9 @@ data class EnforcementPlan(
      * ticking an app in the PWA allows its service. */
     val permittedAccessibility: List<String>? = null,
     val permittedInputMethods: List<String>? = null,
+    /** The packages outside the controllable set the plan may restrict ([ANDROID_AUTO], [otherHomes]): `apply()` visits
+     * them too, so a restriction the plan drops (a pause, the parent's allow) is undone. */
+    val extraPackages: Set<String> = emptySet(),
 )
 
 /**
@@ -164,6 +167,10 @@ data class EnforcementPlan(
  *   (the launcher's own login screens too), so no allowlist, SMS rule or time-rule lock touches it.
  *   It has no launcher icon, so `controllablePackages` already leaves it out on most phones; this is
  *   the guard.
+ * - [homeCandidates], [androidAutoInstalled], [allowAndroidAuto] (`SystemReaders.kt`): while apps are managed the other
+ *   Home apps ([otherHomes] - never the recents provider, whose gestures stay) are suspended, never hidden, and Android
+ *   Auto is hidden unless the parent allows it; both outside the controllable set, so they are in
+ *   [EnforcementPlan.extraPackages] for `apply()`'s loop.
  */
 fun computeEnforcementPlan(
     allowlist: List<String>?,
@@ -206,6 +213,12 @@ fun computeEnforcementPlan(
     loginWindowOpen: Boolean = false,
     /** Design 105 §2.1: the lock in force has a time rule (`lock.rules.isNotEmpty()`), not only the used-up budget. */
     ruleLocked: Boolean = false,
+    /** The phone's HOME candidates: the ones [otherHomes] picks are suspended while apps are managed. */
+    homeCandidates: Collection<HomeCandidate> = emptyList(),
+    /** Android Auto is installed ([ANDROID_AUTO]); hidden while apps are managed unless [allowAndroidAuto]. */
+    androidAutoInstalled: Boolean = false,
+    /** The policy's `allow_android_auto`: Android Auto is left to the usual rules. */
+    allowAndroidAuto: Boolean = false,
 ): EnforcementPlan {
     val neverRestrict = setOfNotNull(ownPackage, systemDialer, recentsPackage, emergencySos, webViewProvider) + inputMethods + PLAY_NEVER_RESTRICT
     val features = lockTaskFeatures(serverLockTaskFeatures, blockActivityStart)
@@ -228,6 +241,11 @@ fun computeEnforcementPlan(
     // broadcasts a removal.
     if (appsManaged) controllable.filterTo(hide) { it !in allowed && it !in neverRestrict && it != PLAY_STORE && it != roleApp }
     if (suspendSmsApps) controllable.filterTo(hide) { it in smsPackages && it !in neverRestrict }
+    // Android Auto: hidden while apps are managed unless the parent allows it - then not hidden by the allowlist either.
+    val auto = ANDROID_AUTO.takeIf { androidAutoInstalled && it !in neverRestrict }
+    if (auto != null && appsManaged) {
+        if (allowAndroidAuto) hide.remove(auto) else hide += auto
+    }
     val suspend = hide.toMutableSet()
     // Design 119 §4.2: the role's Chrome is hidden outside a login window - not suspended, so a window's unhide alone
     // brings it out; and out in Play's update window too (code QA M1), so Play keeps it updated.
@@ -248,6 +266,11 @@ fun computeEnforcementPlan(
     val playSuspended = playStoreSuspended(appsManaged, locked, playState) || (locked && !playState.updateWindow)
     if (playSuspended && PLAY_STORE in controllable) suspend += PLAY_STORE
     val installModePin = playState.installMode && !locked && PLAY_STORE in controllable
+    // The other Home apps: suspended (never hidden) while apps are managed; the recents provider is in neverRestrict.
+    // With no recents provider known none is (the gesture rule: a vendor launcher may carry the gestures) - they are
+    // still visited, so an earlier suspension is undone.
+    val homes = otherHomes(homeCandidates, ownPackage, controllable.toSet(), neverRestrict + lockTaskHelpers) - setOfNotNull(auto)
+    if (appsManaged && recentsPackage != null) suspend += homes
     // Design 105 §2.1: during a rule the clocks a parent didn't tick leave the list; the chrome pins them while LOCKED or dark.
     val clocksOut = if (locked && ruleLocked) allowed.filter { it in alarmApps && it !in lockUsableApps }.toSet() else emptySet()
 
@@ -302,6 +325,7 @@ fun computeEnforcementPlan(
         restrictTethering = appsManaged,
         permittedAccessibility = allowed.sorted().takeIf { allowlist != null },
         permittedInputMethods = allowed.sorted().takeIf { appsManaged },
+        extraPackages = (homes + setOfNotNull(auto)) - controllable.toSet(),
     )
 }
 

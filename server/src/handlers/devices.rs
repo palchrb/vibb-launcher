@@ -1319,6 +1319,37 @@ pub async fn update_kiosk_block(
     }
 }
 
+/// Advanced › Android Auto (migration 0170): off (the default) the phone hides Android Auto while its apps are
+/// managed; on it leaves it to the phone's usual rules. Answered back at its group, so a save never jumps to the top.
+pub async fn update_android_auto(
+    State(state): State<AppState>,
+    lang: Lang,
+    Path(id): Path<i64>,
+    Form(form): Form<std::collections::HashMap<String, String>>,
+) -> Response {
+    let result = sqlx::query(
+        "UPDATE device_policy SET allow_android_auto = ?, updated_at = datetime('now') \
+         WHERE device_id = ?",
+    )
+    .bind(form.contains_key("allow_android_auto"))
+    .bind(id)
+    .execute(&state.db)
+    .await;
+    match result {
+        Ok(r) if r.rows_affected() == 0 => {
+            crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.device_not_found")
+        }
+        Ok(_) => {
+            let _ = state.command_notify.send(id);
+            Redirect::to(&format!("/devices/{id}/advanced#android-auto")).into_response()
+        }
+        Err(err) => {
+            tracing::error!(device_id = id, %err, "couldn't save the Android Auto switch");
+            crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.save_failed")
+        }
+    }
+}
+
 /// Lock Screen & PINs' Notifications group (design 25 §3.3; the Apps card's "On the lock screen"
 /// before design 31 step 4): with an allowlist the allowed apps (the "Names and icons" set),
 /// without one every app the phone reports (QA Low 7: a calls-only phone with a kid PIN still has

@@ -187,3 +187,34 @@ the pause. Android 17 (`google_apis`, API 37.2) only in part (§6ar): there the 
 ("Platform refused to hide com.android.settings"), so the gear and Manage reach Settings, which lock task blocks with
 Android's "App is not available" - no crash, but not the quiet sink either; Settings' filters sit at priority 1 above the
 sink there too. Whether Settings can be hidden on the Jelly Star's own Android 17 is owed.
+
+## Android Auto, the other Home apps, the notification listeners (2026-11-23)
+
+- **Android Auto** (`ANDROID_AUTO`, `server/SystemReaders.kt`) is hidden (and suspended) while apps are managed, unless
+  the policy's `allow_android_auto` is on (Advanced › Android Auto on the server; missing = hidden, also in the
+  `LastEnforcedPlan`). It has no launcher icon on current Android, so `controllablePackages` never reached it. Allowed,
+  the allowlist doesn't hide it either; a time-rule lock still suspends it only if it is controllable.
+- **The other Home apps** (`otherHomes`): every HOME candidate (`UpdateFence.homeCandidates`) but ours, `FENCE_NEVER`
+  (Settings' FallbackHome among them), persistent apps, a negative-priority fallback, controllable packages and the
+  plan's never-restrict set plus the kiosk helpers - the **recents provider stays**: the stock gestures run in it, so a
+  vendor launcher that is also the recents provider is left as it is (no gesture removed). Suspended, never hidden,
+  while apps are managed; the pause and the override lift both. With no recents provider known
+  (`systemRecentsPackage()` null or not trusted) none is suspended (the gesture rule), only visited.
+- `computeEnforcementPlan`'s `extraPackages` (the two above, outside the controllable set) are visited by `apply()`'s
+  loop too, so a lift is undone. The fence's orphan sweep leaves the enforced Homes alone (pure `orphanSweepTargets`),
+  or the sweep and `apply()` would undo each other; the fence itself skips them as already suspended.
+- **An added Android Auto or other Home goes to the full plan** (`planOwnsAddedPackage`, emulator gate §6be): the
+  new-package path (`enforceOnNewPackage`) hides what isn't on the allowlist, and an allowed Android Auto never is, while
+  `apply()`'s unhide is itself a PACKAGE_ADDED - before the fix the two undid each other in a loop of syncs (several a
+  second, seen on Android 14). Now such a package runs `apply()` instead, as the Play Store does.
+- **The report's `notification_listeners`** (`NotificationListenersReader`, pure `notificationListenersReport`):
+  Android's enabled listeners but Vibb One, each `off` while Vibb has the package hidden (only hidden: Android may keep
+  a suspended listener bound) and `system` when it came with the phone (`FLAG_SYSTEM` or an updated system app). The
+  server names a system listener and Android Auto quietly, never orange. Contract `notification_listeners.json` (root
+  `CLAUDE.md`).
+- **Removing Device Owner or uninstalling Vibb One leaves the apps Vibb hid hidden** - Android Auto as every other
+  hidden app; a gap that predates this, no code for it now.
+- **Emulator gate** (`docs/testing/emulator.md` §6be, 2026-11-24, Android 14, 16, 17): a suspended other Home keeps
+  every gesture and reboots cleanly; a hidden listener is unbound and **hiding drops its approval** (and Android Auto's
+  `SYSTEM_AUTOMOTIVE_PROJECTION` role) - neither comes back with Tillat or a pause; a suspended listener stays bound.
+  Still owed: which package is the Jelly Star's recents provider.

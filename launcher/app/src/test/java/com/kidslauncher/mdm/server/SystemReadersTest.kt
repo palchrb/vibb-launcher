@@ -1,0 +1,161 @@
+package com.kidslauncher.mdm.server
+
+import com.kidslauncher.mdm.server.dto.PolicyResponse
+import com.kidslauncher.mdm.server.dto.StatusReportRequest
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import java.io.File
+
+/** Android Auto hidden unless allowed, the other Home apps suspended (never the recents provider), the report of the
+ * apps with notification access - and the shared contract `notification_listeners.json` (byte-identical with
+ * `server/testdata/`, whose `notification_listeners` tests read the same rows). */
+class SystemReadersTest {
+    private val contractText = javaClass.classLoader!!.getResource("notification_listeners.json")!!.readText()
+    private val contract = ServerJson.parseToJsonElement(contractText).jsonObject
+
+    private val own = "me.vibb.launcher"
+    private val recents = "com.vendor.quickstep"
+    private val controllable = listOf(own, "org.example.game", "com.vendor.home.app")
+    private val homes = listOf(
+        HomeCandidate(own, system = false, persistent = false, priority = 0),
+        HomeCandidate("com.android.launcher3", system = true, persistent = false, priority = 0),
+        HomeCandidate(recents, system = true, persistent = false, priority = 0),
+        HomeCandidate("com.android.settings", system = true, persistent = false, priority = -1000),
+        HomeCandidate("com.vendor.fallback", system = true, persistent = false, priority = -1),
+        HomeCandidate("com.vendor.persistent", system = true, persistent = true, priority = 0),
+        HomeCandidate("com.vendor.home.app", system = true, persistent = false, priority = 0),
+    )
+
+    private fun plan(
+        allowlist: List<String>? = listOf("org.example.game"),
+        override: Boolean = false,
+        auto: Boolean = true,
+        allowAuto: Boolean = false,
+    ) = computeEnforcementPlan(
+        allowlist, true, 0, override, controllable, own, null,
+        recentsPackage = recents, homeCandidates = homes, androidAutoInstalled = auto, allowAndroidAuto = allowAuto,
+    )
+
+    @Test
+    fun `Android Auto is hidden while apps are managed, unless the parent allows it`() {
+        assertEquals(ANDROID_AUTO, contract.getValue("android_auto").jsonPrimitive.content)
+        val managed = plan()
+        assertTrue(ANDROID_AUTO in managed.hide && ANDROID_AUTO in managed.suspend)
+        assertTrue(ANDROID_AUTO in managed.extraPackages)
+        for (open in listOf(plan(allowAuto = true), plan(override = true), plan(allowlist = null))) {
+            assertFalse(ANDROID_AUTO in open.hide || ANDROID_AUTO in open.suspend)
+            // Still visited, so a hide from before is undone.
+            assertTrue(ANDROID_AUTO in open.extraPackages)
+        }
+        assertFalse(ANDROID_AUTO in plan(auto = false).extraPackages)
+    }
+
+    @Test
+    fun `the other Homes are suspended, never hidden, and the recents provider and fallbacks stay`() {
+        val managed = plan()
+        assertTrue("com.android.launcher3" in managed.suspend)
+        assertFalse("com.android.launcher3" in managed.hide)
+        for (kept in listOf(own, recents, "com.android.settings", "com.vendor.fallback", "com.vendor.persistent")) {
+            assertFalse(kept, kept in managed.suspend || kept in managed.extraPackages)
+        }
+        // A Home with a launcher icon is the allowlist's, not an extra.
+        assertFalse("com.vendor.home.app" in managed.extraPackages)
+        assertTrue("com.vendor.home.app" in managed.hide)
+        assertEquals(setOf("com.android.launcher3", ANDROID_AUTO), managed.extraPackages)
+        // The pause lifts it; the package is still visited, so the suspension is undone.
+        val paused = plan(override = true)
+        assertFalse("com.android.launcher3" in paused.suspend)
+        assertTrue("com.android.launcher3" in paused.extraPackages)
+        // One excluded HOME activity excludes the package.
+        val twice = homes + HomeCandidate("com.android.launcher3", system = true, persistent = false, priority = -5)
+        assertEquals(emptySet<String>(), otherHomes(twice, own, controllable.toSet(), setOf(recents)))
+    }
+
+    /** The emulator gate's loop (§6be): an added Android Auto or other Home goes to the full plan, never the new-package
+     * path's allowlist hide; a Home with a launcher icon, an ordinary app and the fallbacks stay on that path. */
+    @Test
+    fun `an added Android Auto or other Home is the plan's`() {
+        val c = controllable.toSet()
+        assertTrue(planOwnsAddedPackage(ANDROID_AUTO, homes, own, c))
+        assertTrue(planOwnsAddedPackage("com.android.launcher3", homes, own, c))
+        assertTrue(planOwnsAddedPackage(recents, homes, own, c))
+        for (other in listOf("org.example.game", "com.vendor.home.app", "com.android.settings", "com.vendor.fallback", own)) {
+            assertFalse(other, planOwnsAddedPackage(other, homes, own, c))
+        }
+    }
+
+    /** The gesture rule: with no recents provider known, no other Home is suspended - a vendor launcher may carry the
+     * gestures. They are still visited, so an earlier suspension is undone. */
+    @Test
+    fun `no recents provider known suspends no other Home`() {
+        val unknown = computeEnforcementPlan(
+            listOf("org.example.game"), true, 0, false, controllable, own, null,
+            recentsPackage = null, homeCandidates = homes, androidAutoInstalled = true,
+        )
+        assertFalse("com.android.launcher3" in unknown.suspend)
+        assertTrue("com.android.launcher3" in unknown.extraPackages)
+        assertTrue(ANDROID_AUTO in unknown.hide)
+    }
+
+    /** The fence's orphan sweep leaves the Homes enforcement owns alone, but still sweeps the recents provider. */
+    @Test
+    fun `the orphan sweep leaves the enforced Homes to enforcement`() {
+        val suspended = setOf("com.android.launcher3", recents)
+        val targets = orphanSweepTargets(homes, own, emptySet(), controllable.toSet(), suspended, recents)
+        assertEquals(setOf(recents), targets)
+        // Without the enforced set the sweep would have taken both.
+        assertEquals(suspended, orphanFenceTargets(homes, own, emptySet(), controllable.toSet(), suspended, recents))
+    }
+
+    @Test
+    fun `the policy key decodes and a missing one hides`() {
+        val on = ServerJson.decodeFromString(PolicyResponse.serializer(), contract.getValue("policy").jsonObject.getValue("on").toString())
+        val off = ServerJson.decodeFromString(PolicyResponse.serializer(), contract.getValue("policy").jsonObject.getValue("off").toString())
+        assertTrue(on.allowAndroidAuto)
+        assertFalse(off.allowAndroidAuto)
+        assertFalse(ServerJson.decodeFromString(PolicyResponse.serializer(), "{}").allowAndroidAuto)
+        assertTrue(LastEnforcedPlan.of(on).toPolicy().allowAndroidAuto)
+    }
+
+    @Test
+    fun `the read rows`() {
+        for (row in contract.getValue("read").jsonArray.map { it.jsonObject }) {
+            val enabled = row.getValue("enabled").jsonArray.map { it.jsonPrimitive.content }
+            val hidden = row.getValue("hidden").jsonArray.map { it.jsonPrimitive.content }.toSet()
+            val system = row.getValue("system").jsonArray.map { it.jsonPrimitive.content }.toSet()
+            val report = notificationListenersReport(
+                enabled, row.getValue("own").jsonPrimitive.content, hidden = { it in hidden }, system = { it in system },
+            )
+            assertEquals(
+                row.getValue("case").jsonPrimitive.content,
+                row.getValue("report"),
+                ServerJson.encodeToJsonElement(ListSerializer(NotificationListenerReport.serializer()), report),
+            )
+        }
+    }
+
+    @Test
+    fun `the report encodes exactly as the contract's`() {
+        for (name in listOf("report", "report_none")) {
+            val rows = ServerJson.decodeFromJsonElement(ListSerializer(NotificationListenerReport.serializer()), contract.getValue(name))
+            val body = ServerJson.encodeToJsonElement(
+                StatusReportRequest.serializer(),
+                StatusReportRequest(lockReason = "none", kioskEngaged = true, notificationListeners = rows),
+            ).jsonObject
+            assertEquals(name, contract.getValue(name), body.getValue("notification_listeners"))
+        }
+    }
+
+    @Test
+    fun `the two copies of the contract are identical`() {
+        val serverCopy = listOf("../../server/testdata/notification_listeners.json", "../server/testdata/notification_listeners.json")
+            .map(::File).first { it.exists() }
+        assertEquals(serverCopy.readText(), contractText)
+    }
+}
