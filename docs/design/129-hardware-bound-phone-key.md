@@ -6,6 +6,11 @@ revision 1 (H1-H4, M1-M8, L1-L8; the finding is named where its fix lands) and r
 through the launcher's bridge). Owner-approved direction: step 1, a non-exportable Keystore key with key attestation
 replaces the bearer; step 2, the server reads the verified-boot state from that attestation.
 
+**Addendum 129b** (2026-11-24, the owner's decision before S2): a new phone's enrolment requires a proven key from the
+next step on, with a per-phone exception the parent confirms - `docs/design/129b-enrolment-requires-a-key.md`. It
+replaces S1's "observe" enrolment (§5.1's S1 answers), builds §7.3's `emulator_keys`, and changes what S2 does for an
+exempt phone (129b §8).
+
 Marks: **[code]** read in the code at 2d08708eb; **[doc]** read in Android's or GrapheneOS's documentation on
 2026-11-24 (developer.android.com "Verify hardware-backed key pairs with key attestation", source.android.com
 "Key and ID attestation", grapheneos.org "Attestation compatibility guide"); **[assumed]** not verified, to be
@@ -315,7 +320,8 @@ unknown key, a bad signature, a stale `t`, a missing body hash.
 - **Order**: §3's checks run first, with no database (the challenge comes from the submitted code). Only a chain that
   passes reaches the code's transaction (`UPDATE .. RETURNING`). A refusal leaves the code live and counts against
   the enrol failure bucket, as a wrong code does today.
-- **Answers**:
+- **Answers** (since 129b a refused or missing key no longer enrols: `409 waiting` and the parent's exception,
+  129b §4.1; the S1 answers below are history):
   - S1: `{device_id, device_token, key: {key_id, state: "observed"}}`, or, when the chain was refused,
     `{device_id, device_token, key: {state: "refused", reason}}` - the phone enrols on the bearer (S1 never refuses an
     enrolment for its key) and deletes the refused key; the registration flow then waits as after a refused registration
@@ -475,7 +481,8 @@ and in the workflows' path filters like the others. Rows (L7):
   hardware list empty); RootOfTrust unverified, unlocked, a zero boot key; `osPatchLevel` 2023-09 (14) / 2025-07 (16);
   the app `me.vibb.launcher.debug` with the debug signer. **No StrongBox** on either. A release server refuses both
   (`root`).
-- The emulator gate runs a server built with the Cargo feature **`emulator_keys`** (not in `default`). From step 0 it
+- The emulator gate runs a server built with the Cargo feature **`emulator_keys`** (not in `default`; built in design
+  129b's step E2, its §7 the exact rules). From step 0 it
   must accept exactly what those chains are, and nothing a family phone's chain needs loosened: a root that is
   self-signed and named `CN=Droid Unregistered Device CA, O=Google Test LLC` (by its name and self-signature, not a
   pinned key - it changes with every wiped image), the provisioning info on the root as well as the intermediate, the
@@ -500,6 +507,7 @@ The server ships first. No phone-side compatibility (only emulators run Vibb yet
 | L1 (launcher) | `DeviceKey`, `DeviceCredential` and its sites (§2.1), the signer on every server client and the SSE, `serverOffset`, enrolment with a key, the registration worker (§5.2), rotation, the policy's `device_key`, "Ny oppsettkode" for a broken or unknown key, rkpd out of the sink. | code QA |
 | Gate | Emulator, Android 14 and 16 (never 17: its image is broken; the code still targets 14-17) against an `emulator_keys` server: enrolment, migration, every refusal, a restart's `stale`, a lost answer (the server delays its commit past the phone's timeout), parallel workers during registration, the SSE closed at binding, the key before the first unlock, generation in the SINK shape with an empty pool. | the owner's OK to run it |
 | Step 0 | The **Jelly Star** on S1 + L1: About This Phone shows its verdict in observe mode - root, level, version, patch, boot state, the revocation check, StrongBox or not, the sign time under parallel load (§10). Nothing can lock it out yet. | the owner, from the PWA |
+| E1/E2/L2 | Design 129b: a new enrolment requires a proven key, the per-phone exception, `emulator_keys`. | code QA, then the gate |
 | S2 (server) | Commit (§8.1); a bound phone's bearer refused (`device_old_token`); new enrolments key-only; registration requires the boot state (§3 item 13); step 2's orange line. DEPLOY.md: S2 can't be rolled back. | after step 0 is clean |
 | Later | Drop the bearer code when no phone in the database is bearer-only. | the PWA shows none |
 
@@ -570,7 +578,8 @@ can't act on it yet. From S2 the lines below are orange.
 "bare programvare" / "software only", `app` "feil app-signatur" / "wrong app signature", `boot` "ulåst eller ukjent
 system" / "unlocked or unknown system", `keys_unavailable` "venter på nøkler fra Google" / "waiting for keys from
 Google", the rest "ugyldig" / "invalid". The kid sees nothing; the phone's own enrolment screen gets one line on a
-refusal: "Telefonen kan ikke lage en sikker nøkkel" / "This phone can't make a secure key".
+refusal: "Telefonen kan ikke lage en sikker nøkkel" / "This phone can't make a secure key" (since 129b §5.4 with the
+reason and "Spør en forelder").
 
 Security log: `device_key_bound` ("Maskinvarenøkkel registrert" / "Hardware key registered", with the address and
 `unusual`), `device_key_refused` (with the reason), `device_key_conflict`, `device_key_confirmed`, `device_old_token`,
