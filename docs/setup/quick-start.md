@@ -39,7 +39,8 @@ LAUNCHER_SIGNATURE_CHECKSUM=rEsEJkGAQs5_NTDeuXwlDOCucbvmGXo71jozCcl5C10
 - `TZ`: your time zone. Backups and the update check run on local time.
 - `PHONE_SERVER_URL`: the address the phones use. You make it in step 4.
 - `LAUNCHER_SIGNATURE_CHECKSUM`: the signing certificate of the project's Vibb One releases. The setup QR uses it to
-  check the app it installs. If you build Vibb One yourself, use your own certificate's checksum instead
+  check the app it installs, and the server uses it to know a phone's hardware key belongs to Vibb One - **it must be
+  set**: without it no update of Vibb's apps is checked and every phone key is refused. If you build Vibb One yourself, use your own certificate's checksum instead
   ([`server/DEPLOY.md`](../../server/DEPLOY.md), "Launcher provisioning settings").
 
 While Vibb is in beta, also point new phones at the newest release candidate. Otherwise the setup QR installs the last
