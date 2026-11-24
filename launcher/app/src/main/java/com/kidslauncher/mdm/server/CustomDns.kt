@@ -40,8 +40,8 @@ class CustomDns(
     private val log: (String) -> Unit = { Log.i(LOG_TAG, it) },
     /** One attempt at a target: DoH or DoT ([targetTransport]); a test's fake otherwise. */
     transport: ((UpstreamTarget, List<InetAddress>, ByteArray, Budget) -> Attempt)? = null,
-    /** Where the servers' names are looked up: Quad9 alone (never Cloudflare, never the parent's own servers) - DoT,
-     * or its DoH where 853 is blocked (step 3). */
+    /** Where the servers' names are looked up: Quad9's unfiltered service alone (never Cloudflare, never the parent's
+     * own servers) - DoT, or its DoH where 853 is blocked (step 3). */
     private val providers: List<PublicResolver> = PublicResolvers.bootstrap,
     /** The bootstrap's disk cache ([BootstrapDiskCache]); `null` = none (tests). */
     private val cacheFile: File? = null,
@@ -181,7 +181,7 @@ class CustomDns(
 
     /**
      * A look-up of one server's name (A, then AAAA) in the background (§5.3), through [providers] alone
-     * (Quad9 by its fixed addresses: the owner's rule of 2026-11-24 - never Cloudflare, and never the
+     * (Quad9's unfiltered service by its fixed addresses: the owner's rule of 2026-11-24 - never Cloudflare, and never the
      * parent's backup or primary, even one given as an IP literal such as the prefilled
      * `https://1.1.1.3/dns-query`). They are tried in order, the next one only when a step fails at the
      * transport level (silence after the request included) - an NXDOMAIN or an empty answer is an

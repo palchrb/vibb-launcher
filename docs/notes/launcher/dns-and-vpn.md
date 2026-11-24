@@ -46,15 +46,21 @@ Also found and fixed on the same test pass: **`CommandListenerService`'s SSE `Ok
   `security.cloudflare-dns.com` at 1.1.1.2, 1.0.0.2, 2606:4700:4700::1112 and 2606:4700:4700::1002 (malware blocking),
   each by its fixed addresses (`QUAD9_ADDRESSES`, `CLOUDFLARE_ADDRESSES`, `PINNED_PROVIDERS`; IPv4 first), never looked up.
   **Several addresses, one provider** (branch `dns-bootstrap`, 2026-11-24): a provider's DoT asks one address at a
-  time from the one it last reached (`PublicResolver.preferred`); an address that fails below DNS is moved past, for
-  this query and later ones (a network reset starts from the first again). The same query tries the next address only
-  while a whole connect (`PROVIDER_BUDGET.connectMs`) still leaves `BACKUP_FLOOR_MS` for the provider's DoH - so a
-  refused address, or one of a family the network lacks, costs nothing, and a dropped one leaves the DoH its share.
-  The DoH asks every address (`PINNED_DNS`, in that order; OkHttp tries the next on a failed connect and puts a failed
-  one last for later calls). **An address failing is not the provider failing**: the chain counts a provider down
-  only when a query got no answer from any DoT address it had time for nor from the DoH, and a DoT failure counts
-  towards `DotBlockedRule` once per query and only when that query moved past an address (queries in flight failing at
-  the same address count once) or was the probe.
+  time from the one it last reached (`PublicResolver.preferred`); an address that fails below DNS, or takes the query
+  and stays silent, is moved past, for this query and later ones (a network reset starts from the first again). Each
+  address's connect and TLS handshake end while `BACKUP_FLOOR_MS` + `DOH_MARGIN_MS` (100 ms, so a few ms of overhead
+  can't push the DoH under its floor) of the query's deadline are still left - `Budget.setupMs`, enforced in
+  `dotAttempt` by a second `DotDeadline` around `open`; silence after the write keeps the whole deadline (code QA of
+  `dns-bootstrap`, M1: a handshake hanging at the first address used to eat the whole 4.8 s). The same query tries the
+  next address only while a whole connect (`PROVIDER_BUDGET.connectMs`) still fits that way - so a refused address,
+  or one of a family the network lacks, costs nothing, and a dropped or hanging one leaves the DoH its share; a first
+  address with no room for that (late in the chain) gets what is left, as before. The DoH asks every address
+  (`PINNED_DNS`, in that order; OkHttp tries the next on a failed connect and puts a failed one last for later calls).
+  **An address failing is not the provider failing**: the chain counts a provider down only when a query got no
+  answer from any DoT address it had time for nor from the DoH. A query whose DoT failed below DNS counts once
+  towards `DotBlockedRule` (queries in flight at the same blocked address each count, so a burst on a network that
+  blocks 853 reaches the DoH period as fast as with one address - QA L3); silence after the write counts nothing and
+  is no proof DoT works (no `afterDotWorked`), except that a probe's silence is a failed probe (QA L2).
   `resolveChain` asks each provider that is up, or unproven or due for its one probe, within the query's one ~4.8 s
   deadline (`PublicResolver.resolveBy`, whose DoT and DoH are both capped by the time left). **Only no answer moves a
   query on**: a transport failure after the provider's own DoT-then-DoH, or silence after the write (`unanswered`).
@@ -119,8 +125,11 @@ Also found and fixed on the same test pass: **`CommandListenerService`'s SSE `Ok
   Pool evicted on a network reset and on close.
 - **Bootstrap** (`server/BootstrapDns.kt`): an IP literal is itself (`ipLiteral` parses it into bytes - never
   `InetAddress.getByName`, which would resolve a malformed one through our own VPN), a provider's name its fixed
-  addresses (`PINNED_PROVIDERS`); a name is A then AAAA through `PublicResolvers.bootstrap` alone - **Quad9 by its fixed
-  addresses** (DoT, then its DoH on 443), **never Cloudflare and never the parent's own servers**, not even a backup
+  addresses (`PINNED_PROVIDERS`); a name is A then AAAA through `PublicResolvers.bootstrap` alone - **Quad9's unfiltered
+  service** (`PublicResolvers.quad9Unfiltered`: `dns10.quad9.net` at 9.9.9.10, 149.112.112.10, 2620:fe::10 and
+  2620:fe::fe:10, DoT, then its DoH `https://dns10.quad9.net/dns-query` on 443; its own preferred address and DoT-blocked
+  state, apart from the web filter's Quad9, and not in the chain - so a malware-list false positive never hides the
+  parent's own server; code QA of `dns-bootstrap`, L4), **never Cloudflare and never the parent's own servers**, not even a backup
   or primary given as an IP literal (the owner's rule; emulator gate §6bh found the prefilled backup
   `https://1.1.1.3/dns-query` - Cloudflare for Families - asked for the primary's name first, fixed on branch
   `dns-bootstrap`, 2026-11-24; Mullvad was a second bootstrap resolver until its public DNS ended on 2026-11-02); an
@@ -136,7 +145,7 @@ Also found and fixed on the same test pass: **`CommandListenerService`'s SSE `Ok
   Quad9's `https://dns.quad9.net/dns-query` and Cloudflare's `https://security.cloudflare-dns.com/dns-query`, each by
   name at its fixed addresses (`PINNED_DNS`; until 2026-11-24 Quad9's was `https://9.9.9.9/dns-query`, one address) -
   never another provider's (switching providers is the chain's). A DoT `Transport` failure (connect refused/timed out, reset,
-  TLS; at every address the query had time for, counted once per query as above) counts; 3 within 60 s start a DoH period of 5 min, doubling with each failed probe to 1 h; in a period one query
+  TLS; at every address the query had time for, counted once per query as above - silence after the write never) counts; 3 within 60 s start a DoH period of 5 min, doubling with each failed probe to 1 h; in a period one query
   per period probes DoT (within at most `UPSTREAM_BUDGET`, so its query still gets DoH in time), the rest go straight
   to DoH; DoT that reaches the server (an answer, or anything above TLS) or a network reset (`PublicResolvers.reset`
   from the VPN's `networkChanged`) ends it. A query whose DoT fails goes on to DoH itself while its ~4.8 s deadline
@@ -146,7 +155,8 @@ Also found and fixed on the same test pass: **`CommandListenerService`'s SSE `Ok
   blocks the provider's 443 but not 853). A transport that throws counts as a connect failure (`probing` can't stick).
   The providers' DoH client is the VPN's own `buildDohClient(PINNED_DNS, ::protect)` (built at its first DoH use,
   evicted on a reset and at stop; `PINNED_DNS` never looks a name up), never tsnet. The bootstrap's last resolvers are
-  `PublicResolvers.bootstrap` too (Quad9's DoT, or its DoH on 443), with the bootstrap's budgets. **Under Custom the parent's servers are what they are** - a parent's DoT server
+  `PublicResolvers.bootstrap` too (Quad9's unfiltered DoT, or its DoH on 443), with the bootstrap's budgets; a
+  network reset (`PublicResolvers.reset`) resets it with the chain. **Under Custom the parent's servers are what they are** - a parent's DoT server
   never gets a guessed DoH URL (`PublicResolverTest` pins that a DoH target is built only from the parent's URL or the
   two public ones); a DoT backup on a network that blocks 853 fails like any backup. The status field is unchanged.
 - **The bootstrap's disk cache** (step 3, `BootstrapDiskCache` in `BootstrapDns.kt`): `noBackupFilesDir/
@@ -222,7 +232,9 @@ Also found and fixed on the same test pass: **`CommandListenerService`'s SSE `Ok
   `DnsUpstreamStatusTest`, `PublicResolverTest` (step 3: the rule's threshold, window, back-off and cap, the probe,
   reset; each provider's own DoH; the probe's budget; no guessed DoH URL; the providers' client; the pinned addresses,
   a blocked address moved past, in-flight failures counted once, Cloudflare only when every Quad9 address fails).
-  `CustomDnsTest` also covers the bootstrap's Quad9 step over DoH, a name never asked of an IP-literal backup or
+  `PublicResolverTest` runs a moving clock for a handshake hanging at the first address (and `dotAttempt`'s setup
+  deadline with real time), the DoH margin, and the DoH period reached over every address; `CustomDnsTest` also covers
+  the bootstrap's budgets on a moving clock, the bootstrap's unfiltered Quad9 step over DoH, a name never asked of an IP-literal backup or
   primary, and the disk cache across two instances.
 - **Not device-tested**: a real DoH/DoT server through the protected sockets (emulator check `docs/testing/emulator.md`
   §6m), a LAN server on the home Wi-Fi then away, a network that blocks 853, the canary against AdGuard Home's REFUSED

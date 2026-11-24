@@ -27,8 +27,11 @@ class BootstrapResolverTest {
     @Test
     fun `a name is looked up through Quad9 alone, and only the names are looked up`() {
         // The owner's rule (2026-11-24): never Cloudflare, never the parent's own servers - an IP-literal backup included.
-        assertEquals(listOf("quad9"), PublicResolvers.bootstrap.map { it.label })
-        assertEquals(listOf(QUAD9_DOT), PublicResolvers.bootstrap.map { it.dot })
+        // Quad9's unfiltered service (L4 of the code QA), apart from the web filter's Quad9.
+        assertEquals(listOf("quad9_unfiltered"), PublicResolvers.bootstrap.map { it.label })
+        assertEquals(listOf(QUAD9_UNFILTERED_DOT), PublicResolvers.bootstrap.map { it.dot })
+        assertEquals(listOf("https://dns10.quad9.net/dns-query"), PublicResolvers.bootstrap.map { it.doh.url })
+        assertEquals(QUAD9_UNFILTERED_ADDRESSES, PublicResolvers.bootstrap.single().addresses)
         assertEquals(setOf("dns.example"), BootstrapDiskCache.namesOf(config(dotName, dotIp)))
         assertEquals(setOf("abc123.dns.example"), BootstrapDiskCache.namesOf(config(dotIp, dohName)))
         assertEquals(emptySet<String>(), BootstrapDiskCache.namesOf(config(dotIp, dohIp)))
@@ -55,6 +58,7 @@ class BootstrapResolverTest {
         val dns = BootstrapDns({ 0 }) { lookedUp += it }
         assertEquals(listOf(InetAddress.getByName("192.0.2.53")), dns.addresses("192.0.2.53"))
         assertEquals(QUAD9_ADDRESSES, dns.addresses(QUAD9_DOT.host))
+        assertEquals(QUAD9_UNFILTERED_ADDRESSES, dns.addresses(QUAD9_UNFILTERED_DOT.host))
         assertEquals(CLOUDFLARE_ADDRESSES, dns.addresses(CLOUDFLARE_DOT.host))
         assertTrue(lookedUp.isEmpty())
         // A name with nothing cached: one look-up, no address yet (OkHttp sees an unknown host).

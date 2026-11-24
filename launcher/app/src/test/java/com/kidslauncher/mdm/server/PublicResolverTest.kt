@@ -97,9 +97,11 @@ class PublicResolverTest {
             assertEquals(List(3) { List(n) { resolver.dot } + UpstreamTarget.Doh(url) }.flatten() + UpstreamTarget.Doh(url), asked)
             assertEquals(List(3) { resolver.addresses }.flatten(), dotAt)
             assertTrue(asked.filterIsInstance<UpstreamTarget.Doh>().all { it.url == url })
-            assertEquals(Budget(PROVIDER_BUDGET.connectMs, QUERY_DEADLINE_MS.toInt()), budgets[0])
-            // The next address only within what still leaves DoH its floor.
-            assertEquals(Budget(PROVIDER_BUDGET.connectMs, (QUERY_DEADLINE_MS - BACKUP_FLOOR_MS).toInt()), budgets[1])
+            // Every address's connect and handshake end while the floor and its margin are left for DoH; silence after
+            // the write keeps the whole deadline.
+            val setup = (QUERY_DEADLINE_MS - BACKUP_FLOOR_MS - DOH_MARGIN_MS).toInt()
+            assertEquals(Budget(PROVIDER_BUDGET.connectMs, QUERY_DEADLINE_MS.toInt(), setup), budgets[0])
+            assertEquals(Budget(PROVIDER_BUDGET.connectMs, QUERY_DEADLINE_MS.toInt(), setup), budgets[1])
             assertEquals(UPSTREAM_BUDGET, budgets[n])
             // A network reset tries DoT first again.
             resolver.reset()
@@ -136,7 +138,7 @@ class PublicResolverTest {
     @Test
     fun `a dropped connect at the providers' 2_5 s still gets DoH in time, under the floor it doesn't`() {
         // The providers' connect must leave the floor for DoH inside the deadline (M2).
-        assertTrue(PROVIDER_BUDGET.connectMs + BACKUP_FLOOR_MS <= QUERY_DEADLINE_MS)
+        assertTrue(PROVIDER_BUDGET.connectMs + BACKUP_FLOOR_MS + DOH_MARGIN_MS <= QUERY_DEADLINE_MS)
         for ((dotTakes, dohAsked) in listOf(PROVIDER_BUDGET.connectMs.toLong() to true, 4_000L to false)) {
             var now = 0L
             val resolver = quad9Resolver({ now }, {})
@@ -177,7 +179,7 @@ class PublicResolverTest {
     }
 
     @Test
-    fun `under Custom a parent's DoT server never gets a DoH URL, and only three DoH URLs exist`() {
+    fun `under Custom a parent's DoT server never gets a DoH URL, and only four DoH URLs exist`() {
         val primary = UpstreamTarget.Dot("192.0.2.10", 853)
         val backup = UpstreamTarget.Dot("192.0.2.20", 853)
         val asked = mutableListOf<UpstreamTarget>()
@@ -204,6 +206,7 @@ class PublicResolverTest {
         assertEquals(
             listOf(
                 "CustomUpstream.kt: it", "PublicResolver.kt: \"https://dns.quad9.net/dns-query\"",
+                "PublicResolver.kt: \"https://dns10.quad9.net/dns-query\"",
                 "PublicResolver.kt: \"https://security.cloudflare-dns.com/dns-query\"",
             ),
             built.sorted(),
@@ -233,6 +236,11 @@ class PublicResolverTest {
             listOf("9.9.9.9", "149.112.112.112", "2620:fe::fe", "2620:fe::9").map(InetAddress::getByName),
             PINNED_DNS.lookup("dns.quad9.net"),
         )
+        // Quad9's unfiltered service, the bootstrap's alone.
+        assertEquals(
+            listOf("9.9.9.10", "149.112.112.10", "2620:fe::10", "2620:fe::fe:10").map(InetAddress::getByName),
+            PINNED_DNS.lookup("dns10.quad9.net"),
+        )
         assertEquals(CLOUDFLARE_ADDRESSES, cloudflareResolver({ 0 }, {}).addresses)
         assertEquals(QUAD9_ADDRESSES, quad9Resolver({ 0 }, {}).addresses)
         try {
@@ -250,7 +258,7 @@ class PublicResolverTest {
         assertEquals(listOf("quad9", "cloudflare"), labels("bogus"))
         assertEquals(listOf("quad9", "cloudflare"), labels("mullvad"))
         assertEquals(listOf("cloudflare", "quad9"), labels("cloudflare"))
-        assertEquals(listOf("quad9"), PublicResolvers.bootstrap.map { it.label })
+        assertEquals(listOf("quad9_unfiltered"), PublicResolvers.bootstrap.map { it.label })
     }
 
     @Test
@@ -380,7 +388,7 @@ class PublicResolverTest {
     }
 
     @Test
-    fun `queries in flight failing at the same address count once`() {
+    fun `queries in flight failing at the same blocked address each count, as with one address`() {
         var now = 0L
         val resolver = quad9Resolver({ now }, {})
         var inFlight = true
@@ -399,7 +407,115 @@ class PublicResolverTest {
             }
         }
         resolver.resolve(query, PROVIDER_BUDGET, UPSTREAM_BUDGET, transport)
-        assertEquals(1, resolver.state().failures)
+        // L3 (code QA): the query whose start address failed counts even though the other moved past it first, so a
+        // burst on a network that blocks 853 reaches the DoH period as fast as with one address.
+        assertEquals(2, resolver.state().failures)
+        assertEquals(QUAD9_ADDRESSES[1], resolver.preferredAddress())
+    }
+
+    @Test
+    fun `on a moving clock a handshake hanging at the first address still leaves the DoH its floor, with a margin`() {
+        for (overheadMs in listOf(0L, 50L)) {
+            var now = 0L
+            val resolver = quad9Resolver({ now }, {})
+            val asked = mutableListOf<Pair<UpstreamTarget, Budget>>()
+            val got = resolver.resolve(query, PROVIDER_BUDGET, UPSTREAM_BUDGET) { target, _, _, budget ->
+                asked += target to budget
+                if (target is UpstreamTarget.Dot) {
+                    // M1: connected, the TLS handshake never ends - cut at the setup deadline, plus some overhead (L1).
+                    now += budget.setupMs + overheadMs
+                    Attempt.Transport(BackupReason.TIMEOUT)
+                } else {
+                    Attempt.Answer(answer)
+                }
+            }
+            assertTrue(got is Attempt.Answer)
+            val setup = (QUERY_DEADLINE_MS - BACKUP_FLOOR_MS - DOH_MARGIN_MS).toInt()
+            val dohLeft = (BACKUP_FLOOR_MS + DOH_MARGIN_MS - overheadMs).toInt()
+            assertEquals(
+                listOf<Pair<UpstreamTarget, Budget>>(
+                    resolver.dot to Budget(PROVIDER_BUDGET.connectMs, QUERY_DEADLINE_MS.toInt(), setup),
+                    resolver.doh to Budget(minOf(UPSTREAM_BUDGET.connectMs, dohLeft), dohLeft),
+                ),
+                asked,
+            )
+            assertEquals(QUAD9_ADDRESSES[1], resolver.preferredAddress())
+        }
+    }
+
+    @Test
+    fun `a DoT attempt's handshake ends at the budget's setup part, its answer may take the whole`() {
+        val server = InetAddress.getByAddress(byteArrayOf(192.toByte(), 0, 2, 53))
+        val key = DotPool.Key(server, 853, "dns.example")
+        // A handshake that never ends: cut at 150 ms, not at the 3 s total.
+        val closed = java.util.concurrent.CountDownLatch(1)
+        val started = System.nanoTime()
+        val hung = dotAttempt(query, listOf(server), Budget(100, 3_000, 150), null, { key }, log = {}) { _, deadline, marks ->
+            marks.connected = true
+            deadline.guard(java.io.Closeable { closed.countDown() })
+            closed.await(5, java.util.concurrent.TimeUnit.SECONDS)
+            throw java.net.SocketException("closed")
+        }
+        val tookMs = (System.nanoTime() - started) / 1_000_000
+        assertEquals(Attempt.Transport(BackupReason.TIMEOUT), hung)
+        assertTrue("took $tookMs ms", tookMs < 1_500)
+        // Set up in time: an answer after the setup part (silence after the write keeps the whole budget).
+        val slow = object : DotLink {
+            override fun ask(query: ByteArray, remainingMs: () -> Int, marks: CallMarks): ByteArray {
+                marks.written = true
+                Thread.sleep(300)
+                return answer
+            }
+            override fun cut() {}
+        }
+        val answered = dotAttempt(query, listOf(server), Budget(100, 3_000, 150), null, { key }, log = {}) { _, _, marks ->
+            marks.connected = true
+            slow
+        }
+        assertTrue(answered is Attempt.Answer)
+    }
+
+    @Test
+    fun `on a moving clock a network that blocks 853 at every address reaches the DoH period in three queries`() {
+        var now = 0L
+        val resolver = quad9Resolver({ now }, {})
+        val dotAt = mutableListOf<InetAddress>()
+        val transport = { target: UpstreamTarget, addresses: List<InetAddress>, _: ByteArray, _: Budget ->
+            if (target is UpstreamTarget.Dot) {
+                dotAt += addresses.single()
+                now += 30 // refused
+                blocked
+            } else {
+                Attempt.Answer(answer)
+            }
+        }
+        repeat(3) {
+            assertTrue(resolver.resolve(query, PROVIDER_BUDGET, UPSTREAM_BUDGET, transport) is Attempt.Answer)
+            now += 10_000
+        }
+        assertTrue(resolver.state().doh)
+        assertEquals(List(3) { QUAD9_ADDRESSES }.flatten(), dotAt)
+        // In the period DoT isn't tried; the probe starts at the first address again.
+        dotAt.clear()
+        resolver.resolve(query, PROVIDER_BUDGET, UPSTREAM_BUDGET, transport)
+        assertTrue(dotAt.isEmpty())
+        now = resolver.state().dohUntilMs
+        resolver.resolve(query, PROVIDER_BUDGET, UPSTREAM_BUDGET, transport)
+        assertEquals(QUAD9_ADDRESSES, dotAt)
+        assertEquals(2, resolver.state().periods)
+    }
+
+    @Test
+    fun `an address that takes the query and stays silent is moved past, and proves nothing`() {
+        val resolver = quad9Resolver({ 0 }, {})
+        val silence = Attempt.Odd(OddKind.TIMEOUT, null)
+        val failing = afterDotFailure(DotBlocked(), 0, probe = false)
+        // One failure already counted: silence neither clears it (no afterDotWorked) nor adds to it.
+        resolver.resolve(query, PROVIDER_BUDGET, UPSTREAM_BUDGET) { t, _, _, _ -> if (t is UpstreamTarget.Dot) blocked else Attempt.Answer(answer) }
+        val before = resolver.state()
+        assertEquals(failing.failures, before.failures)
+        assertEquals(silence, resolver.resolve(query, PROVIDER_BUDGET, UPSTREAM_BUDGET) { _, _, _, _ -> silence })
+        assertEquals(before, resolver.state())
         assertEquals(QUAD9_ADDRESSES[1], resolver.preferredAddress())
     }
 

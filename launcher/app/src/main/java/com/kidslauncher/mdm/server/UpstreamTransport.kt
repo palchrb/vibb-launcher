@@ -48,8 +48,10 @@ sealed interface Attempt {
 /** [e] or one of its causes is a refused protect (OkHttp may wrap the factory's exception). */
 fun unprotected(e: Throwable): Boolean = generateSequence(e) { it.cause }.any { it is NotProtectedException }
 
-/** Connect timeout and the whole attempt's budget (connect + handshake + answer), in ms. */
-data class Budget(val connectMs: Int, val totalMs: Int)
+/** Connect timeout and the whole attempt's budget (connect + handshake + answer), in ms. A DoT attempt's connect and
+ * TLS handshake end within [setupMs] (code QA of `dns-bootstrap`, M1: a public resolver's handshake that hangs must
+ * leave its query the DoH); silence after the write keeps the rest of [totalMs]. */
+data class Budget(val connectMs: Int, val totalMs: Int, val setupMs: Int = totalMs)
 
 /** A query to the parent's servers (§5.3): an answer inside the stub resolver's first ~5 s try. */
 val UPSTREAM_BUDGET = Budget(1500, 2500)
@@ -134,8 +136,11 @@ internal fun dotAttempt(
     open: (InetAddress, DotDeadline, CallMarks) -> DotLink,
 ): Attempt {
     if (addresses.isEmpty()) return Attempt.Transport(BackupReason.BOOTSTRAP)
-    val deadline = System.nanoTime() + budget.totalMs * 1_000_000L
+    val startedAt = System.nanoTime()
+    val deadline = startedAt + budget.totalMs * 1_000_000L
+    val setupEnds = startedAt + minOf(budget.setupMs, budget.totalMs) * 1_000_000L
     fun remainingMs(): Int = ((deadline - System.nanoTime()) / 1_000_000L).toInt()
+    fun setupMs(): Int = ((setupEnds - System.nanoTime()) / 1_000_000L).toInt()
     var outcome: Attempt = Attempt.Transport(BackupReason.CONNECT)
     for (address in addresses.take(2)) {
         if (remainingMs() <= 0) break
@@ -158,14 +163,18 @@ internal fun dotAttempt(
                 pool.drop(key)
             }
         }
-        if (remainingMs() <= 0) break
+        if (remainingMs() <= 0 || setupMs() <= 0) break
         val marks = CallMarks()
         // Code QA L5: one deadline for the whole attempt, the TLS handshake included - at it the socket is closed, so a
         // server trickling its handshake can't hold the query past the budget either (a close then reads as a timeout).
         val watch = DotDeadline(remainingMs())
+        // M1 (code QA of dns-bootstrap): the connect and the handshake within the budget's setup part.
+        val setup = DotDeadline(minOf(remainingMs(), setupMs()))
         var link: DotLink? = null
         try {
-            link = open(address, watch, marks)
+            link = open(address, setup, marks)
+            if (!setup.end()) throw java.net.SocketTimeoutException("DoT handshake past its deadline")
+            watch.guard(link)
             val attempt = classifyAnswer(link.ask(query, ::remainingMs, marks), BackupReason.CONNECT)
             if (pool != null && watch.end() && attempt !is Attempt.Transport) pool.give(key, link) else link.cut()
             return attempt
@@ -173,11 +182,12 @@ internal fun dotAttempt(
             link?.cut()
             log("DoT attempt failed: ${e.javaClass.simpleName}")
             if (unprotected(e)) return Attempt.Unprotected
-            // The watchdog's close at the deadline is a timeout, whatever the socket threw for it.
-            val failure = if (!watch.end()) java.net.SocketTimeoutException("DoT attempt past its deadline") else e
+            // The watchdog's close at either deadline is a timeout, whatever the socket threw for it.
+            val failure = if (!watch.end() || !setup.end()) java.net.SocketTimeoutException("DoT attempt past its deadline") else e
             if (marks.written) return afterWriteOutcome(failure)
             outcome = Attempt.Transport(transportReason(failure, marks.connected))
         } finally {
+            setup.end()
             watch.end()
         }
     }

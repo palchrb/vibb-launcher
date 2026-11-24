@@ -5354,12 +5354,14 @@ phone whose last report has no `provider` (after a Wi-Fi reset, before a look-up
 its next report (`phone_line`'s quiet case); seen once per phone.
 
 **Changed after the run (branch `dns-bootstrap`, 2026-11-24) - owed again on Android 14 and 16:** the first note above
-broke the owner's rule, so a custom server's name is now looked up through Quad9 alone (never the parent's backup or
-primary, IP literal or not; never Cloudflare), and each provider has four fixed addresses (Quad9 9.9.9.9,
+broke the owner's rule, so a custom server's name is now looked up through Quad9's unfiltered service alone
+(`dns10.quad9.net` at 9.9.9.10, 149.112.112.10, 2620:fe::10, 2620:fe::fe:10 - never the parent's backup or primary, IP
+literal or not; never Cloudflare; never the web filter's 9.9.9.9), and each provider has four fixed addresses (Quad9 9.9.9.9,
 149.112.112.112, 2620:fe::fe, 2620:fe::9; Cloudflare 1.1.1.2, 1.0.0.2, 2606:4700:4700::1112, 2606:4700:4700::1002),
 Quad9's DoH by name at them (`https://dns.quad9.net/dns-query`). The rows below are rewritten for that: the
 "Fallback", "None" and "853 blocked" blocks now cover every address of a provider (IPv6 with `ip6tables`), and "One
-address" and "Custom, IP backup" are new. The table above is the run's record of the code before.
+address", "Custom, IP backup", "Custom, bootstrap blocked" and "Hanging handshake" are new (the last two from the
+branch's code QA: the unfiltered bootstrap, and a DoT handshake that hangs leaving the DoH its time). The table above is the run's record of the code before.
 
 | Row | What passes |
 |---|---|
@@ -5369,8 +5371,10 @@ address" and "Custom, IP backup" are new. The table above is the run's record of
 | None | Block all eight (Quad9's four and Cloudflare's 1.1.1.2, 1.0.0.2, 2606:4700:4700::1112, 2606:4700:4700::1002): after 30 s the orange "DNS kan ikke nås siden ... - ingen DNS-server svarer ..."; never a plain UDP/53 or TCP/53 packet leaves the emulator (IPv4 or IPv6) |
 | 853 blocked | Block port 853 only (IPv4 and IPv6): both providers' DoH on 443 answer, each by name at its fixed addresses (`dns.quad9.net`, `security.cloudflare-dns.com`; the certificate checked); `DoT blocked: quad9 over DoH` after the third query |
 | Parent's pick | Pick Cloudflare in the PWA: the line says Cloudflare; the picker has no Mullvad |
-| Custom by name | Custom with `tls://dns.example...` names (a server by name) and a backup by name: its name's look-up goes to Quad9 (any of its four addresses) on 853/443, never to Cloudflare (no packet to 1.1.1.2, 1.0.0.2 or their IPv6) |
-| Custom, IP backup | Custom with a primary by name (`tls://family.adguard-dns.com`) and the prefilled backup `https://1.1.1.3/dns-query`, the bootstrap cache cleared (Forget, then save again): the primary's name is looked up through Quad9 only - no packet to 1.1.1.3 (nor 1.0.0.3) while the primary answers, none to Cloudflare's security addresses |
+| Custom by name | Custom with `tls://dns.example...` names (a server by name) and a backup by name: its name's look-up goes to Quad9's unfiltered service (9.9.9.10 first; any of its four addresses) on 853/443, never to Cloudflare (no packet to 1.1.1.2, 1.0.0.2 or their IPv6) and never to the web filter's 9.9.9.9 |
+| Custom, IP backup | Custom with a primary by name (`tls://family.adguard-dns.com`) and the prefilled backup `https://1.1.1.3/dns-query`, the bootstrap cache cleared (Forget, then save again): the primary's name is looked up through 9.9.9.10 only - no packet to 1.1.1.3 (nor 1.0.0.3) while the primary answers, none to Cloudflare's security addresses |
+| Custom, bootstrap blocked | The same, with 9.9.9.10 alone blocked (`REJECT`, 853 and 443): the look-up answers from 149.112.112.10; with all four unfiltered addresses blocked the look-up gives nothing (`Look-up gave nothing (primary=true)`, the backup answers) - still no packet to Cloudflare for the name |
+| Hanging handshake | `DROP` only the server's answers to 9.9.9.9:853 after the TCP handshake (e.g. `iptables -I INPUT -s 9.9.9.9 -p tcp --sport 853 -m connbytes --connbytes 2: --connbytes-dir reply --connbytes-mode packets -j DROP`): a look-up still answers within ~5 s (the setup part ends ~1.4 s before the deadline, the DoH asks); the next ones start at 149.112.112.112 |
 
 ## 6bi. Lyd: a notification sound on the locked phone (design 130, branch `lock-sound`) - written, not run
 
