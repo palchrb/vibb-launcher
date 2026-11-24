@@ -5416,7 +5416,7 @@ accuracy off (`settings get secure location_mode`, the `network` provider off), 
 |---|---|---|
 | 1 | Location on, a heartbeat `FIX` | `WifiPlaces: cells read=1 usable=1 registered=1 nr=0 stale=0` |
 | 2 | Location off (`cmd location set-location-enabled false`), a parent `locate` | no `cells read=` line with a usable cell (an empty list: `DENIED_SOFT`) |
-| 3 | Wi-Fi and Wi-Fi scanning off, a learned miss | `apple cells asked=1 status=503 step=Wait` - the cells-only ask with no scan view (QA H1); the server's 503 (the call failed at the proxy) came no sooner than 10 s after the request (`curl -w %{time_total}` on the same body with the phone's token: >= 10.0) |
+| 3 | Wi-Fi and Wi-Fi scanning off, a learned miss | `apple cells asked=1 status=503 step=Wait` - the cells-only ask with no scan view (QA H1); the server's 503 (the call failed at the proxy) came at the fixed answer time, 14 s after the request (`curl -w %{time_total}` on the same body with the phone's token: 14.0-14.5; code QA M2) |
 | 4 | The next attempt within 5 min | no cell ask (the cell wait); a Wi-Fi ask still goes when a scan view is there (Wi-Fi back on): `apple asked=` - the Wi-Fi wait untouched |
 | 5 | The switch off in the PWA, a sync | no ask; the waits gone (`run-as ... cat shared_prefs/wifi_places.xml`: no `apple_cell_wait_until_ms`) |
 | 6 | The switch on, `settings put global airplane_mode_on 1` + broadcast | `cells read=0`; no ask |

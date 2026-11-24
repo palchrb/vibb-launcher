@@ -789,23 +789,26 @@ enum class CellVerdict {
     CONTRADICTS,
 }
 
-/** A fix as [cellReport] compares with it: its place, accuracy and wall-clock time. */
-data class SeenFix(val lat: Double, val lng: Double, val accuracyM: Double, val timeMs: Long)
+/** A fix as [cellReport] compares with it: its place, accuracy and elapsed realtime in this boot (`null`: unknown - a
+ * fix of another boot), never the wall clock (code QA L4). */
+data class SeenFix(val lat: Double, val lng: Double, val accuracyM: Double, val elapsedMs: Long? = null)
 
 /**
  * Design 125b C9 (step 3a for `vibb_cell`): a cell [fix] is reported only when nothing better holds. [locate] (the
  * parent's explicit `locate`, C9.5, the owner's Q10: yes) reports it whatever the rest says. While [still] (`motion()`
  * `STILL`) it is never reported: further than both accuracies + [CELL_VETO_SLACK_M] from the vouched fix ([vouch]) a
- * cell contradiction, else withheld (C9.2). The last fresh fix ([lastFresh]) under [STILL_SKIP_MAX_MS] old and inside
- * the cell fix's circle (`d <= accCell + accFine`) keeps it back too (C9.3, the owner's Q6). Otherwise reported (C9.4).
+ * cell contradiction, else withheld (C9.2). The last fresh fix ([lastFresh]) under [STILL_SKIP_MAX_MS] old by elapsed
+ * realtime ([nowElapsedMs]; an unknown age holds nothing back) and inside the cell fix's circle
+ * (`d <= accCell + accFine`) keeps it back too (C9.3, the owner's Q6). Otherwise reported (C9.4).
  */
-fun cellReport(fix: LearnedFix, still: Boolean, vouch: SeenFix?, lastFresh: SeenFix?, nowMs: Long, locate: Boolean): CellVerdict {
+fun cellReport(fix: LearnedFix, still: Boolean, vouch: SeenFix?, lastFresh: SeenFix?, nowElapsedMs: Long, locate: Boolean): CellVerdict {
     if (locate) return CellVerdict.REPORT
     if (still) {
         val far = vouch != null && distanceM(fix.lat, fix.lng, vouch.lat, vouch.lng) > fix.accuracyM + vouch.accuracyM + CELL_VETO_SLACK_M
         return if (far) CellVerdict.CONTRADICTS else CellVerdict.WITHHOLD
     }
-    val holds = lastFresh != null && nowMs - lastFresh.timeMs in 0 until com.kidslauncher.mdm.zones.STILL_SKIP_MAX_MS &&
+    val age = lastFresh?.elapsedMs?.let { nowElapsedMs - it }
+    val holds = lastFresh != null && age != null && age in 0 until com.kidslauncher.mdm.zones.STILL_SKIP_MAX_MS &&
         distanceM(fix.lat, fix.lng, lastFresh.lat, lastFresh.lng) <= fix.accuracyM + lastFresh.accuracyM
     return if (holds) CellVerdict.WITHHOLD else CellVerdict.REPORT
 }

@@ -2,6 +2,13 @@ package com.kidslauncher.mdm.places
 
 import com.kidslauncher.mdm.zones.distanceM
 import java.io.File
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -66,11 +73,49 @@ class CellPlanTest {
     @Test
     fun `C3 - the wire form and its canonical spelling`() {
         val w = parseCellWire("lte:001:01:4711:12345678")!!
-        assertEquals("001|01|4711|12345678", w.id)
+        assertEquals("lte|1|1|4711|12345678", w.id)
         assertEquals("lte:1:1:4711:12345678", w.canonical)
         assertEquals(w.canonical, parseCellWire("lte:001:001:4711:12345678")!!.canonical)
         assertNull(parseCellWire("lte:001:01:4711:268435455"))
         assertNotNull(parseCellWire("nr:001:01:16777213:68719476734"))
+    }
+
+    @Test
+    fun `C7 - the cell key has the radio (code QA L3), and one key for two spellings`() {
+        val lte = parseCellWire("lte:001:01:4711:1234")!!
+        val gsm = parseCellWire("gsm:001:01:4711:1234")!!
+        assertFalse(lte.id == gsm.id)
+        assertFalse(keys.cell(lte.id) == keys.cell(gsm.id))
+        assertEquals(lte.id, parseCellWire("lte:001:001:4711:1234")!!.id)
+        // Apple's rows for the two are two rows; a heard GSM cell meets only its own.
+        val stored = storeAppleCells(emptyList(), listOf(AppleCell("lte:001:01:4711:1234", lat0, lng0, 800)), listOf("gsm:001:01:4711:1234"), keys, now)
+        assertEquals(2, stored.size)
+        val g = heard("gsm:001:01:4711:1234")
+        assertNull(cellFix(listOf(g), stored, now))
+        assertNotNull(cellFix(listOf(heard("lte:001:01:4711:1234")), stored, now))
+    }
+
+    @Test
+    fun `C4 - no cells asked while still, but for a locate (code QA L5)`() {
+        assertTrue(cellAskAllowed(still = false, locate = false))
+        assertFalse(cellAskAllowed(still = true, locate = false))
+        assertTrue(cellAskAllowed(still = true, locate = true))
+    }
+
+    @Test
+    fun `C4 - the Wi-Fi answer never waits for the cells' (code QA M3)`() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val cellsAnswer = CompletableDeferred<Boolean>()
+        // The cells' ask held (the server's fixed answer time): the Wi-Fi ask's answer comes at once.
+        val (wifi, cells) = withTimeout(2_000) { askBeside(scope, { cellsAnswer.await() }) { "wifi" } }
+        assertEquals("wifi", wifi)
+        assertFalse(cells!!.isCompleted)
+        // Awaited before the cell fix, it answers once the server does.
+        cellsAnswer.complete(true)
+        assertTrue(withTimeout(2_000) { cells.await() })
+        // No cells wanted: none started.
+        assertNull(askBeside(scope, null) { 1 }.second)
+        scope.cancel()
     }
 
     @Test
@@ -187,8 +232,11 @@ class CellPlanTest {
         val glue = File("src/main/java/com/kidslauncher/mdm/places/WifiPlaces.kt").readText()
         assertTrue(glue.contains("MobileNetworkRuntime.activeSubscriptionIds(context)"))
         assertTrue(glue.contains("tm.createForSubscriptionId(sub).requestCellInfoUpdate("))
-        // The cells' ask runs beside the Wi-Fi's, with or without a scan view; the fix reads the table again.
-        assertTrue(glue.contains("val cells = async { askAppleCells(app, store, s) }"))
+        // The cells' ask runs apart beside the Wi-Fi's (code QA M3), with or without a scan view, never while still but
+        // for a locate (L5); awaited only before the cell fix, which reads the table again.
+        assertTrue(glue.contains("askBeside(scope, if (askCells) ({ askAppleCells(app, store, s) }) else null)"))
+        assertTrue(glue.contains("cellAskAllowed(appleStillMotion(ask.motion), plan == AttemptPlan.LOCATE)"))
+        assertTrue(glue.contains("val result = kept ?: run {\n                    cellAsk.get()?.await()\n                    cellOnly("))
         assertTrue(glue.contains("val store = open(context) ?: return null\n        val fix = cellFix(snap.cells, store.rows, nowMin())"))
         assertFalse(Regex("""Log\.[a-z]\(LOG_TAG, "[^"]*\$\{?(wire|asking|cells)\b(?!\.size)""").containsMatchIn(glue))
         assertFalse(File("src/main/java/com/kidslauncher/mdm/places/CellPlan.kt").readText().contains("Log."))

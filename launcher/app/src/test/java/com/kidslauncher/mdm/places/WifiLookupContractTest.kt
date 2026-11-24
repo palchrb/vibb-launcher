@@ -121,8 +121,9 @@ class WifiLookupContractTest {
         assertEquals(rules["cells_max"]!!.jsonPrimitive.int, CELLS_MAX)
         assertEquals(rules["cell_row_days"]!!.jsonPrimitive.int * 24 * 60, APPLE_CELL_ROW_MIN)
         assertEquals(rules["cell_negative_days"]!!.jsonPrimitive.int * 24 * 60, APPLE_CELL_NEGATIVE_MIN)
-        // The server's fixed answer time and the gate's wait stay within the phone's 15 s.
-        assertTrue(rules["cell_answer_after_s"]!!.jsonPrimitive.long * 1000 + 3_000 <= APPLE_TIMEOUT_MS)
+        // The server's fixed answer time (the gate's wait, Apple's deadline and a margin: code QA M2) and 3 s for the
+        // network stay within the phone's cells timeout.
+        assertTrue(rules["cell_answer_after_s"]!!.jsonPrimitive.long * 1000 + 3_000 <= APPLE_CELL_TIMEOUT_MS)
     }
 
     @Test

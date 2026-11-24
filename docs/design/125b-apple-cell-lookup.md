@@ -1,6 +1,6 @@
 # Design 125b: Apple's cell lookup (design 125 step 3)
 
-Status: design, **revision 2**, 2026-11-24 (branch `cell-lookup-design`), read against `main` 88d11d5de. **Step 3a built** on branch `cell-lookup` (a83041bac and the commit after it; the zones half needs no column: a pending side's coarseness is read from its fix's row). **Step 3b built** on the same branch (the commit after them). What the build settled: the contract's cell rows sit under keys of their own (`cell_answers`, `cell_phone_answers`, `cell_phone_rows`) beside the step-2 ones; the canonical form has the MCC as a number too; a gate wait that ran out is still `429 busy`; the day's brake counts distinct canonical cells per request and is checked before the hour's 30; the phone's cell rules are `CellPlanTest` code rows, not `wifi_places.json` rows (`docs/notes/server/integrations.md` and `docs/notes/launcher/wifi-places.md`, "Apple's cell lookup").
+Status: design, **revision 2**, 2026-11-24 (branch `cell-lookup-design`), read against `main` 88d11d5de. **Step 3a built** on branch `cell-lookup` (a83041bac and the commit after it; the zones half needs no column: a pending side's coarseness is read from its fix's row). **Step 3b built** on the same branch (the commit after them). What the build settled: the contract's cell rows sit under keys of their own (`cell_answers`, `cell_phone_answers`, `cell_phone_rows`) beside the step-2 ones; the canonical form has the MCC as a number too; the day's brake counts distinct canonical cells per request and is checked before the hour's 30 (one lock, the hour's count asked inside it); the phone's cell rules are `CellPlanTest` code rows, not `wifi_places.json` rows (`docs/notes/server/integrations.md` and `docs/notes/launcher/wifi-places.md`, "Apple's cell lookup"). **The code QA round** (§13) changed C4, C5, C7 and C9.3 in place: a busy gate is the same `503` at the same answer time, every cells request takes the permit, the gate and one limit slot before the cache is read, the answer time is the gate's wait + Apple's deadline + 1 s (9 s direct, 14 s proxied; the phone's cells timeout 20 s), the cells' ask never holds up the Wi-Fi fix, no cells asked while still but for a Locate, the cell key has the radio, and the 4-h rule counts by elapsed realtime.
 Revision 1 was d0610e571; revision 2 takes the design QA (1 H, 3 M, 9 L, two clarifications) and the user's answers (Q1,
 Q2 changed, Q3, Q5 then superseded, Q6; §12) and the user's later change: **no cache oracle for cells** and the day cap
 raised to an abuse brake (C5, C12). Asked by the user on 2026-11-22 ("Legg det i køen"): the phone asks the family's
@@ -124,10 +124,15 @@ C4. **When the phone asks** - A3's conditions: the switch on, the `network` prov
     `askApple` no longer returns when `scanView` is null - with fewer than 3 fresh usable APs, or Wi-Fi and scanning
     off, it asks for the cells alone. The cells asked: the usable ones (C2) with no trusted own cell row (3 occasions),
     no live Apple cell row, no negative and no tombstone (C7); none when 8 or more of the read cells already have a
-    position (GrapheneOS's threshold); and none while the **cell wait** runs (C5). **The cells go in their own
-    request**, sent beside the BSSIDs' request when both are wanted (in parallel, each with step 2's 15 s), so the
-    cells' fixed answer time (C5) never holds up a Wi-Fi answer. So an area's cells are asked once per three months
-    (C7's phone row), and only where Wi-Fi gave no fix that stands alone.
+    position (GrapheneOS's threshold); none while the **cell wait** runs (C5); and **none while the phone is still**
+    (`appleStillMotion`) but for the parent's Locate (code QA L5, `cellAskAllowed`): C9.2 withholds the cell fix then,
+    so the ask would spend two of the hour's 30 for nothing. **The cells go in their own request**, started apart
+    beside the BSSIDs' request when both are wanted (`askBeside`, in `WifiPlaces`' own scope: the Wi-Fi ask keeps step
+    2's 15 s, the cells' ask has `APPLE_CELL_TIMEOUT_MS`, 20 s, for C5's answer time), so the cells' fixed answer time
+    never holds up a Wi-Fi answer, the learned fix, or Locate's short stop (code QA M3): the attempt awaits the cells'
+    ask only before the cell fix, and only when nothing finer was kept; otherwise it runs on and stores its rows after
+    the attempt ended. So an area's cells are asked once per three months (C7's phone row), and only where Wi-Fi gave
+    no fix that stands alone.
 C5. **The route** stays `POST /api/devices/wifi-lookup` (a rename would touch both dirs, the docs and the PWA for
     nothing). A body is **either** step 2's `{"bssids": [...]}` (unchanged) **or** `{"cells": [...]}` with 1..12 cells,
     never both (400), checked by hand as today (4 KB); any other key, an empty list or one bad entry is a 400. Two
@@ -139,21 +144,32 @@ C5. **The route** stays `POST /api/devices/wifi-lookup` (a rename would touch bo
       lists, **no `fresh_months_left`, no age, no cached or fetched mark**. A cached row (fresh or stale), a row Apple
       just sent, a cached negative and Apple's "unknown" read the same. A stale row is refreshed in the call, as A5.
     - **Apple is asked or the request fails, never "the cache alone":** when an asked cell isn't fresh in the cache and
-      Apple can't be asked (paused, over the server-wide limit, busy past the gate's wait), or the call fails, the
-      answer is **`503 {"error": "unavailable", "retry_after_s": N}`** - and so is any cells request **while Apple can't
-      be asked**, cached or not, so the pause itself doesn't separate cached from uncached. Only an Apple call that
-      fails during a request with an uncached cell answers 503 where an all-cached request got 200 - rare, and not the
-      asker's choice.
-    - **A fixed answer time:** a cells answer (200 or 503) leaves no sooner than **the Apple call's whole deadline after
-      the request arrived** - 10 s through the proxy (`music_net::PROXIED`), 5 s direct - so a cache hit looks like a
-      round trip to Apple. A call that waited for the gate (up to 3 s) can still come later; that needs another lookup
-      running at the moment, which a single asker can't time. The phone's 15 s timeout holds (3 + 10 s); GPS runs beside
-      it, and the cells request is apart from the Wi-Fi one, so nothing else waits.
+      the call fails, the answer is **`503 {"error": "unavailable", "retry_after_s": N}`** - and so is any cells
+      request **while Apple can't be asked**, cached or not, so the pause itself doesn't separate cached from uncached.
+    - **Everything before the cache** (code QA H1, M1): a cells request takes, in this order and whatever the cache
+      holds, the pause check, the **admit permit** (two lookups in flight: no permit), the **gate** (the one Apple call
+      at a time, up to its 3 s), the pause check again and **one slot of the server-wide limits** (60 an hour, 10 in 10
+      minutes) - and only then reads the cache and, for what isn't fresh there, calls Apple under that gate and slot. No
+      permit, the gate's wait run out, or the limits full: the same `503`, `retry_after_s` 900 for the first two (the
+      limit's own wait for the third), at the answer time. A cached request so fills the limits as an uncached one does,
+      and holds its permit to the answer time, so neither a 429 `busy` (gone for cells), nor the limits' state, nor
+      what else is in flight tells what the cache holds.
+    - **A fixed answer time** (code QA M2): a cells answer (200 or 503) leaves **exactly** `cell_answer_after` after the
+      request arrived - the slowest path that gets the call: the gate's 3 s, the Apple call's whole deadline (10 s
+      through the proxy, `music_net::PROXIED`; 5 s direct, `Kind::AppleWps`) and a 1-s margin for the cache's writes:
+      **14 s proxied, 9 s direct**. The lookup runs in a task of its own; one that hasn't answered by then gets `503`
+      (900) at that time, and its call goes on to fill the cache for the next ask. So a cache hit and an Apple round
+      trip can't be told apart by status or time. The phone's cells timeout is 20 s (`APPLE_CELL_TIMEOUT_MS`: 14 s and
+      the network); GPS runs beside it, and the cells request is apart from the Wi-Fi one, so nothing else waits.
+    - **What is left** (code QA L2, accepted): an Apple call that fails during a request with an uncached cell answers
+      `503` (with the pause's wait) where an all-cached request at that moment got `200` - at the same answer time,
+      rare, and not the asker's choice; it holds only because the gate, the permit, the slot and the overrun are
+      cache-blind (H1, M1, M2).
     - **The per-phone day cap - an abuse brake: 1000 cells a phone a UTC day** (memory only, like the hourly count),
       never reached by a road trip (a long day asks a few dozen); past it `429 {"error": "limit", "retry_after_s": N}`
       (N to UTC midnight). No other project has a per-device cap - GrapheneOS's own proxy has none -: it is ours because
       our server keeps a cache.
-    - 409 `off`, 429 `limit` (hourly) and `busy` (a third lookup at once) and 400 as A4.
+    - 409 `off`, 429 `limit` (hourly) and 400 as A4; no `busy` for cells (above).
     **The phone's two waits** (QA M1): step 2's `apple_wait_until_ms` stays the Wi-Fi wait, set only by a BSSIDs
     request's answers; a new CE prefs `apple_cell_wait_until_ms` (`KEY_APPLE_CELL_WAIT`) is the cell wait, set only by a
     cells request's: its 503 or 429 with `retry_after_s` (capped at 24 h), a 429 without one, a transport failure or the
@@ -177,9 +193,10 @@ C7. **The server's cache: the same table, key and months.** A cell row lives in 
     BSSID and a cell form can't collide. Fresh 3 months, a negative until its calendar month ends, `CACHE_LIFETIME` (2
     years unused), the shared caps (200,000 / 20,000 - cells are a few thousand at most). **No migration.** **The
     phone's Apple cell rows:** kind **5** (`APPLE_CELL`) in D18's table, the same 71-byte layout (no version bump,
-    nothing relearned), keyed by step 1's cell key (`HMAC("cell|mcc|mnc|area|cid")`, the radio not in it - an LTE ECI
-    and an NR NCI with the same digits under one PLMN and TAC isn't expected, and own and Apple rows of one cell must
-    meet); `rangeM = max(500 m, acc_m)`; with no age in the answer (C5) a row lives a fixed **90 days** from receipt
+    nothing relearned), keyed by the cell key **with its radio** (code QA L3: `HMAC("cell|radio|mcc|mnc|area|cid")`,
+    MCC and MNC as numbers - C7's canonical form; an LTE and a GSM cell with the same numbers are two rows, `01` and
+    `001` one), own and Apple rows of one cell alike, so they still meet (own cell rows from before are dropped by the
+    new key - no phone keeps them yet); `rangeM = max(500 m, acc_m)`; with no age in the answer (C5) a row lives a fixed **90 days** from receipt
     (`cell_row_days`; the server refreshes its own after three months, so a phone's row is at most about six months
     behind Apple - cells move rarely), a negative **30 days** (`cell_negative_days`); at most **500** (least recently
     seen out); dropped with the switch off and every D19 clear. **Own versus Apple per cell** - A9's rule: an untrusted
@@ -211,8 +228,9 @@ C9. **How it joins the fixes - never over a fine one.**
        last-known. Any of the others in the same attempt wins (keep-the-better; a cell fix is >= 500 m).
     2. **Still means still:** while `motion()` is `STILL` a cell fix is never reported; further than both accuracies + 2
        km from the vouched fix it counts as a **cell contradiction** (CE prefs, counts only, 30 days).
-    3. **It doesn't override a recent fine fix** (the user, Q6): when the last fresh fix is under 4 h old (124's cap)
-       and lies inside the cell fix's circle (`d <= accCell + accFine`), nothing is reported - the PWA keeps the fine
+    3. **It doesn't override a recent fine fix** (the user, Q6): when the last fresh fix is under 4 h old (124's cap;
+       by elapsed realtime - code QA L4: the fix's elapsed time when it is of this boot, never the wall clock; an
+       unknown age holds nothing back) and lies inside the cell fix's circle (`d <= accCell + accFine`), nothing is reported - the PWA keeps the fine
        fix and shows its age.
     4. Otherwise it is reported with its provider, accuracy and time, and it is **never fresh** (`afterTry`, the
        fresh-fix stamp: `Ask.notFresh`, so the next beat tries GPS again), never a vouch (not in `VOUCHING_PROVIDERS`),
@@ -297,7 +315,7 @@ One switch for both (the user, Q1), on the Location page where it is:
 **`server/testdata/wifi_lookup/contract.json`** (byte-identical in `launcher/app/src/test/resources/wifi_lookup/`), rows
 added, none changed. Test PLMN **001-01** (ITU-T E.212's test network, never a real cell) and made-up coordinates in
 every row:
-- `rules`: `cells_max` 12, `cells_a_day` 1000, `cell_answer_after_s` 10 (proxied; 5 direct is the server's alone),
+- `rules`: `cells_max` 12, `cells_a_day` 1000, `cell_answer_after_s` 14 (proxied: 3 + 10 + 1; 9 direct is the server's alone),
   `cell_row_days` 90, `cell_negative_days` 30.
 - `request_cells` (the exact body).
 - `cell_forms`: `{cell, valid}` - every radio's range edges (area 0, 1, 65533, 65534, 65535; NR's TAC 16777213 and
@@ -308,7 +326,8 @@ every row:
   **byte-identical bodies**, the server's test also checks both left at the answer time; `cells_stale` (rows fetched
   four months ago: the same body again, refreshed); `cells_two_spellings` (`01` and `001` of one cell: one row each, one
   position); `cells_paused_cached` and `cells_paused_uncached` (Apple paused: the same 503 with the pause's
-  `retry_after_s` for both); `cells_day_cap` (the 1001st cell: 429 `limit` with `retry_after_s` to midnight);
+  `retry_after_s` for both); `cells_busy` (code QA H1: the gate held past its wait - `503` with 900, at the answer time,
+cached or not); `cells_day_cap` (the 1001st cell: 429 `limit` with `retry_after_s` to midnight);
   `bad_both_lists`, `bad_cells_empty`, `bad_cells_too_many`, `bad_cell_form`, `bad_cells_not_a_list`.
 - `phone_answers`: `use_cells` (200: rows stored, no wait), `cells_unavailable` (503: the cell wait alone),
   `cells_limit` (429 with `retry_after_s`: the cell wait alone), `cells_limit_hourly` (429 without: the cell wait 15
@@ -417,3 +436,21 @@ a request of their own; the phone's rows a fixed 90 days; the cap 1000 a day as 
 cell logic where our zones and server don't need otherwise" - the median reference, every cell with an identity used
 (not only registered ones), the 8-positioned threshold, the oldest time; our accuracy stays the more conservative one
 (C8).
+
+## 13. The code QA round (2026-11-24)
+
+The code QA of step 3b (1 H, 3 M, 5 L) and the orchestrator's decisions, built on branch `cell-lookup`:
+- **H1** ("busy" was a cache oracle and skipped the answer time): every cells request takes the admit permit and the gate
+  before the cache is read; a gate wait that runs out, or no permit, is `503` (900) at the fixed answer time (C5). The
+  contract's `cell_answers` gains `cells_busy`; `cell_phone_answers`' `cells_busy` is that 503.
+- **M1** (the server-wide limits as an oracle): one slot a cells request, called or not, taken under the gate (C5).
+- **M2** (the answer time didn't cover the slow paths): `cell_answer_after` = gate + deadline + 1 s (9/14 s); a lookup
+  past it answers `503` then and fills the cache in its task; the phone's cells timeout 20 s (C4, C5).
+- **M3** (the Wi-Fi fix waited for the cells): `askBeside` in `WifiPlaces`' own scope; awaited only before the cell fix
+  when nothing finer was kept (C4).
+- **L1**: the day's brake checks and counts under one lock, the hour's count asked inside it (`CellDays::try_add`).
+- **L2**: holds after H1/M2, stated in C5 ("What is left").
+- **L3**: the cell key has the radio and the numeric MCC/MNC (C7).
+- **L4**: C9.3's 4 h by elapsed realtime; `PlacesPlan.kt`, `ApplePlan.kt` and `CellPlan.kt` joined
+  `TrustedClockScanTest`'s scan (no wall-clock read of their own).
+- **L5**: no cells asked while still but for a Locate (C4).

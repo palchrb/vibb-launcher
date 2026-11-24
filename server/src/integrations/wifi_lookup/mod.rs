@@ -13,7 +13,8 @@
 //!   the integration's health. Logs carry counts and Apple's status, never a BSSID, a coordinate or a device id.
 //! - **The route** ([route]): `POST /api/devices/wifi-lookup`, its limits, pauses and answers.
 //! - **Cells** (design 125b, [cells]): the same route with `{"cells"}`, the same sealed cache keyed by a cell's
-//!   canonical form, a call of their own to Apple; no cache oracle (a fixed answer time, no age).
+//!   canonical form, a call of their own to Apple; no cache oracle (a fixed answer time, no age, the same permit,
+//!   gate and limit slot whatever the cache holds).
 
 pub mod cache;
 pub mod cells;
@@ -40,9 +41,9 @@ use crate::music_net::{BoxFut, PhoneAsks, Source, Window};
 /// The name: the logs, the contract folder and `integration_health`'s key.
 pub const NAME: &str = "wifi_lookup";
 
-/// The tests' fixed answer time for cells (the server's is 5 or 10 s).
+/// The tests' fixed answer time for cells (the server's is 9 or 14 s): over the tests' gate wait of 300 ms.
 #[cfg(test)]
-pub const CELL_ANSWER_AFTER_IN_TESTS: Duration = Duration::from_millis(250);
+pub const CELL_ANSWER_AFTER_IN_TESTS: Duration = Duration::from_millis(700);
 
 /// Where Apple calls go: the server setting `WIFI_LOOKUP_PROXY`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -155,8 +156,8 @@ pub struct WifiLookup {
     pub(crate) cell_throttled_until: std::sync::Mutex<Option<tokio::time::Instant>>,
     /// Design 125b C5: the cells each phone named today (the abuse brake).
     pub(crate) cell_days: route::CellDays,
-    /// Design 125b C5: a cells answer leaves no sooner than this after the request arrived - the Apple call's whole
-    /// deadline (`music_net::PROXIED` through a proxy, [route::CELL_ANSWER_DIRECT] direct).
+    /// Design 125b C5: a cells answer leaves exactly this long after the request arrived - [cell_answer_after]: the
+    /// gate's wait, the Apple call's whole deadline and [route::CELL_ANSWER_MARGIN] (code QA M2).
     pub(crate) cell_answer_after: Duration,
     /// `K`, loaded at the first use.
     pub(crate) key: tokio::sync::OnceCell<Arc<cache::CacheKey>>,
@@ -178,15 +179,13 @@ impl WifiLookup {
                  is fixed (never a direct call)"
             ),
         }
-        // The gate's wait and Apple's 10 s stay within the phone's 15 s (code QA L5).
+        // The gate's wait and Apple's 10 s stay within the phone's 15 s (code QA L5); a cells answer's fixed time
+        // within the phone's 20 s for cells (design 125b C5).
         Self::with(source, proxy, Duration::from_secs(3))
     }
 
     pub fn with(source: Arc<dyn Source>, proxy: Proxy, gate_wait: Duration) -> Self {
-        let cell_answer_after = match proxy {
-            Proxy::Socks(_) => crate::music_net::PROXIED,
-            _ => route::CELL_ANSWER_DIRECT,
-        };
+        let cell_answer_after = cell_answer_after(&proxy, gate_wait);
         WifiLookup {
             cell_answer_after,
             cell_throttled_until: Default::default(),
@@ -227,6 +226,17 @@ impl WifiLookup {
             .await
             .cloned()
     }
+}
+
+/// Design 125b C5 (code QA M2): a cells answer's fixed time - the slowest path of a lookup that gets the call: the
+/// gate's wait, then the Apple call's whole deadline (`music_net::PROXIED` through a proxy, `Kind::AppleWps` direct),
+/// then [route::CELL_ANSWER_MARGIN] for the cache's writes. 9 s direct, 14 s proxied with the server's 3-s gate.
+pub fn cell_answer_after(proxy: &Proxy, gate_wait: Duration) -> Duration {
+    let deadline = match proxy {
+        Proxy::Socks(_) => crate::music_net::PROXIED,
+        _ => crate::music_net::Kind::AppleWps.overall(),
+    };
+    gate_wait + deadline + route::CELL_ANSWER_MARGIN
 }
 
 impl Integration for WifiLookup {

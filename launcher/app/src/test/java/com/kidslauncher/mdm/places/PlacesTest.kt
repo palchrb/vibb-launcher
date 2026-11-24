@@ -1,6 +1,7 @@
 package com.kidslauncher.mdm.places
 
 import com.kidslauncher.mdm.server.dto.PolicyZone
+import com.kidslauncher.mdm.zones.STILL_SKIP_MAX_MS
 import com.kidslauncher.mdm.zones.distanceM
 import java.io.File
 import java.util.Random
@@ -426,6 +427,20 @@ class PlacesTest {
             val got = cellReport(fix, r["still"]!!.jsonPrimitive.boolean, vouch, fresh, now, r["locate"]!!.jsonPrimitive.boolean)
             assertEquals(why, r["verdict"]!!.str(), got.name)
         }
+    }
+
+    @Test
+    fun `design 125b C9_3 - the last fresh fix's age is elapsed realtime, never the wall clock (code QA L4)`() {
+        val (lat, lng) = Town.ll(0.0, 0.0)
+        val fix = LearnedFix(lat, lng, 1000.0, 1, 0, false, emptySet(), PROVIDER_CELL)
+        val nowElapsed = 50_000_000L
+        val hourOld = SeenFix(Town.ll(0.0, 800.0).first, lng, 20.0, nowElapsed - 60 * 60_000L)
+        assertEquals(CellVerdict.WITHHOLD, cellReport(fix, false, null, hourOld, nowElapsed, false))
+        // A fix of another boot (no elapsed time): its age unknown, nothing held back - whatever the wall clock says.
+        assertEquals(CellVerdict.REPORT, cellReport(fix, false, null, hourOld.copy(elapsedMs = null), nowElapsed, false))
+        // An elapsed time after now (not this boot's): never under 4 h.
+        assertEquals(CellVerdict.REPORT, cellReport(fix, false, null, hourOld.copy(elapsedMs = nowElapsed + 1), nowElapsed, false))
+        assertEquals(CellVerdict.REPORT, cellReport(fix, false, null, hourOld.copy(elapsedMs = nowElapsed - STILL_SKIP_MAX_MS), nowElapsed, false))
     }
 
     // --- D12 ---

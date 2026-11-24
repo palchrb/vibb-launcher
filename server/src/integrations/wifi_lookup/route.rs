@@ -23,11 +23,15 @@
 //! - **Cells** (design 125b C5): a body is either `{"bssids"}` or `{"cells": [...]}` (1..12, [cells::Cell::parse]'s
 //!   form), never both. **No cache oracle**: a cells answer says nothing about the cache - 200 `{"cells": [{cell, lat,
 //!   lng, acc_m}], "unknown": [cell]}` with no age; 503 `unavailable` with `retry_after_s` for every cells request while
-//!   Apple can't be asked (paused, over the server-wide limit) and when an uncached cell's call fails; and a 200 or 503
-//!   leaves no sooner than [WifiLookup::cell_answer_after] after the request arrived (the Apple call's whole deadline),
-//!   so a cache hit looks like a round trip to Apple. Two spellings of one cell count once, each asked string echoed.
-//!   A brake on a walk through the cache: [CELLS_A_DAY] cells per phone a UTC day (memory only), past it 429 `limit`
-//!   with `retry_after_s` to midnight. Its own Apple call ([cells]), its own throttle (10 towers -> 10 s at 4).
+//!   Apple can't be asked (paused, over the server-wide limit, the gate not free within its wait, two lookups in
+//!   flight already) and when an uncached cell's call fails or overruns; a 200 or 503 leaves exactly at
+//!   [WifiLookup::cell_answer_after] after the request arrived (the gate's wait, the Apple call's whole deadline and a
+//!   margin), so a cache hit looks like a round trip to Apple. Everything a cells request takes - the admit permit
+//!   (held to the answer time), the gate, one slot of the server-wide limits - it takes before the cache is read, cached
+//!   or not (code QA H1, M1), so neither the answer nor the limits' state says what the cache holds. Two spellings of
+//!   one cell count once, each asked string echoed. A brake on a walk through the cache: [CELLS_A_DAY] cells per phone a
+//!   UTC day (memory only, counted in one step: QA L1), past it 429 `limit` with `retry_after_s` to midnight. Its own
+//!   Apple call ([cells]), its own throttle (10 towers -> 10 s at 4).
 
 use std::time::Duration;
 
@@ -53,9 +57,12 @@ use crate::security::AuthedDevice;
 pub const BODY_LIMIT: usize = 4096;
 /// Design 125b C5: the cells a phone may name in a UTC day - an abuse brake, never reached by a road trip.
 pub const CELLS_A_DAY: usize = 1000;
-/// Design 125b C5: a cells answer's fixed time without a proxy - the Apple call's whole direct deadline
-/// (`music_net::Kind::AppleWps`); through a proxy `music_net::PROXIED`.
-pub const CELL_ANSWER_DIRECT: Duration = Duration::from_secs(5);
+/// Design 125b C5 (code QA M2): a cells answer's fixed time is the gate's wait, the Apple call's whole deadline
+/// (`music_net::Kind::AppleWps` direct, `music_net::PROXIED` through a proxy) and this margin for the cache's writes.
+pub const CELL_ANSWER_MARGIN: Duration = Duration::from_secs(1);
+/// Design 125b C5: the wait a cells 503 names when Apple wasn't free (the gate, the admit permit) or the call overran
+/// the answer time - one value whatever the cache holds.
+pub const CELL_BUSY_WAIT: Duration = BUSY_WAIT;
 pub const MAX_BSSIDS: usize = 40;
 pub const PHONE_LOOKUPS_AN_HOUR: usize = 30;
 pub const CALLS_AN_HOUR: usize = 60;
@@ -232,35 +239,52 @@ impl CellDays {
         i64::from(now.date_naive().num_days_from_ce())
     }
 
-    /// `n` more of the phone's [CELLS_A_DAY] fit at `now`, or the wait to the next UTC midnight.
-    pub fn fits(
-        &self,
-        device: i64,
-        n: usize,
-        now: chrono::DateTime<chrono::Utc>,
-    ) -> Result<(), Duration> {
-        let day = Self::today(now);
-        let days = self.days.lock().unwrap_or_else(|e| e.into_inner());
-        let used = days
-            .get(&device)
-            .filter(|(d, _)| *d == day)
-            .map_or(0, |(_, n)| *n);
-        if used + n <= CELLS_A_DAY {
-            return Ok(());
-        }
+    /// The wait from `now` to the next UTC midnight.
+    fn to_midnight(now: chrono::DateTime<chrono::Utc>) -> Duration {
         let midnight = (now.date_naive() + chrono::Days::new(1))
             .and_hms_opt(0, 0, 0)
             .expect("midnight exists")
             .and_utc();
-        Err((midnight - now).to_std().unwrap_or(Duration::from_secs(1)))
+        (midnight - now).to_std().unwrap_or(Duration::from_secs(1))
     }
 
-    /// The phone named `n` more cells at `now` (yesterday's counts go).
-    pub fn add(&self, device: i64, n: usize, now: chrono::DateTime<chrono::Utc>) {
+    /// Code QA L1: `n` more of the phone's [CELLS_A_DAY] at `now`, checked and counted under one lock, and only when
+    /// `also` (the hour's count, asked inside the lock) agrees - a refused request takes nothing of either.
+    /// `Err(Some(wait))` = the day is full (the wait to UTC midnight), `Err(None)` = `also` refused.
+    pub fn try_add(
+        &self,
+        device: i64,
+        n: usize,
+        now: chrono::DateTime<chrono::Utc>,
+        also: impl FnOnce() -> bool,
+    ) -> Result<(), Option<Duration>> {
         let day = Self::today(now);
         let mut days = self.days.lock().unwrap_or_else(|e| e.into_inner());
         days.retain(|_, (d, _)| *d == day);
+        let used = days.get(&device).map_or(0, |(_, n)| *n);
+        if used + n > CELLS_A_DAY {
+            return Err(Some(Self::to_midnight(now)));
+        }
+        if !also() {
+            return Err(None);
+        }
         days.entry(device).or_insert((day, 0)).1 += n;
+        Ok(())
+    }
+
+    /// The tests': the phone named `n` more cells at `now`.
+    #[cfg(test)]
+    pub fn add(&self, device: i64, n: usize, now: chrono::DateTime<chrono::Utc>) {
+        let _ = self.try_add(device, n, now, || true);
+    }
+
+    /// The tests': the cells the phone named today.
+    #[cfg(test)]
+    pub fn used(&self, device: i64, now: chrono::DateTime<chrono::Utc>) -> usize {
+        let days = self.days.lock().unwrap_or_else(|e| e.into_inner());
+        days.get(&device)
+            .filter(|(d, _)| *d == Self::today(now))
+            .map_or(0, |(_, n)| *n)
     }
 }
 
@@ -395,8 +419,9 @@ pub async fn route(
     }
 }
 
-/// Design 125b C5: a cells request - the switch, the day's brake, the hour's 30, then the lookup; its 200 or 503 at
-/// the fixed answer time.
+/// Design 125b C5: a cells request - the switch, the day's brake and the hour's 30 (one step), then the lookup in a
+/// task of its own; its 200 or 503 exactly at the fixed answer time (code QA M2): a lookup still running then answers
+/// 503 and goes on to fill the cache.
 async fn cells_route(
     state: AppState,
     device: i64,
@@ -418,42 +443,79 @@ async fn cells_route(
         .collect();
     canonical.sort();
     canonical.dedup();
-    let now = chrono::Utc::now();
-    // The day's brake first (a refused request takes nothing of either count), then the hour's 30.
-    if let Err(wait) = lookup.cell_days.fits(device, canonical.len(), now) {
-        return (
-            StatusCode::TOO_MANY_REQUESTS,
-            axum::Json(json!({"error": "limit", "retry_after_s": seconds(wait)})),
-        )
-            .into_response();
+    // The day's brake first (a refused request takes nothing of either count), then the hour's 30 - one step.
+    let counted = lookup
+        .cell_days
+        .try_add(device, canonical.len(), chrono::Utc::now(), || {
+            lookup.phone_asks.ask(device, Instant::now()).is_ok()
+        });
+    match counted {
+        Ok(()) => {}
+        Err(Some(wait)) => {
+            return (
+                StatusCode::TOO_MANY_REQUESTS,
+                axum::Json(json!({"error": "limit", "retry_after_s": seconds(wait)})),
+            )
+                .into_response();
+        }
+        Err(None) => return refusal(StatusCode::TOO_MANY_REQUESTS, "limit"),
     }
-    if lookup.phone_asks.ask(device, Instant::now()).is_err() {
-        return refusal(StatusCode::TOO_MANY_REQUESTS, "limit");
-    }
-    lookup.cell_days.add(device, canonical.len(), now);
-    let answer = match lookup.lookup_cells(&state, &asked).await {
-        Ok(Some(answer)) => (
+    let answer_at = arrived + lookup.cell_answer_after;
+    let (sent, answered) = tokio::sync::oneshot::channel();
+    let task = lookup.clone();
+    tokio::spawn(async move {
+        let (result, admitted) = task.lookup_cells(&state, &asked).await;
+        let _ = sent.send(result);
+        // The permit is held to the answer time, cached or not: the lookups in flight never say what the cache holds.
+        tokio::time::sleep_until(answer_at).await;
+        drop(admitted);
+    });
+    let answer = match tokio::time::timeout_at(answer_at, answered).await {
+        Ok(Ok(Ok(answer))) => (
             StatusCode::OK,
             axum::Json(json!({ "cells": answer.cells, "unknown": answer.unknown })),
         )
             .into_response(),
-        Ok(None) => return refusal(StatusCode::TOO_MANY_REQUESTS, "busy"),
-        Err(wait) => unavailable(wait),
+        Ok(Ok(Err(wait))) => unavailable(wait),
+        // Overran the answer time (the call goes on and fills the cache), or the task failed.
+        Ok(Err(_)) | Err(_) => unavailable(CELL_BUSY_WAIT),
     };
     // C5: a cache hit looks like a round trip to Apple.
-    tokio::time::sleep_until(arrived + lookup.cell_answer_after).await;
+    tokio::time::sleep_until(answer_at).await;
     answer
 }
 
 impl WifiLookup {
-    /// Design 125b C5: the cells' answer - every asked cell placed or unknown, no age; `Ok(None)` = busy; `Err(wait)`
-    /// = Apple can't be asked (paused or over the server-wide limit - for every cells request, cached or not), or the
-    /// call for an uncached cell failed.
+    /// Design 125b C5: the cells' answer - every asked cell placed or unknown, no age; `Err(wait)` = Apple can't be
+    /// asked (paused, the admit permit or the gate not free, over the server-wide limit), or the call for an uncached
+    /// cell failed. Everything it takes it takes before the cache is read, cached or not (code QA H1, M1): the admit
+    /// permit (handed back, for the caller to hold to the answer time), the gate, and one slot of the server-wide limits.
     pub(crate) async fn lookup_cells(
         &self,
         state: &AppState,
         asked: &[String],
-    ) -> Result<Option<CellAnswer>, Duration> {
+    ) -> (
+        Result<CellAnswer, Duration>,
+        Option<tokio::sync::SemaphorePermit<'_>>,
+    ) {
+        if let Some(left) = self.paused(Instant::now()) {
+            return (Err(left), None);
+        }
+        let Ok(admitted) = self.admit.try_acquire() else {
+            return (Err(CELL_BUSY_WAIT), None);
+        };
+        let result = self.lookup_cells_admitted(state, asked).await;
+        (result, Some(admitted))
+    }
+
+    async fn lookup_cells_admitted(
+        &self,
+        state: &AppState,
+        asked: &[String],
+    ) -> Result<CellAnswer, Duration> {
+        let Ok(_one) = tokio::time::timeout(self.gate_wait, self.apple.lock()).await else {
+            return Err(CELL_BUSY_WAIT);
+        };
         let now = Instant::now();
         if let Some(left) = self.paused(now) {
             return Err(left);
@@ -462,6 +524,9 @@ impl WifiLookup {
         if !slot.is_zero() {
             return Err(slot);
         }
+        // M1: one slot a cells request, whether Apple is called or not.
+        self.burst.take(now);
+        self.outbound.take(now);
         let key = match self.key(state).await {
             Ok(key) => key,
             Err(err) => {
@@ -492,16 +557,13 @@ impl WifiLookup {
             .map(|(b, _)| b.clone())
             .collect();
         if !wanted.is_empty() {
-            match self.fetch(state, &key, &wanted, month, Call::Cells).await {
-                Ok(fetched) => {
-                    for (cell, c) in canonical.iter().zip(cached.iter_mut()) {
-                        if let Some(at) = wanted.iter().position(|w| w == cell) {
-                            *c = fetched[at];
-                        }
-                    }
+            let fetched = self
+                .call(state, &key, &wanted, month, Call::Cells, now)
+                .await?;
+            for (cell, c) in canonical.iter().zip(cached.iter_mut()) {
+                if let Some(at) = wanted.iter().position(|w| w == cell) {
+                    *c = fetched[at];
                 }
-                Err(NotAsked::Busy) => return Ok(None),
-                Err(NotAsked::Wait(wait)) => return Err(wait),
             }
         }
         self.counts.add_cells(canonical.len(), !wanted.is_empty());
@@ -536,7 +598,7 @@ impl WifiLookup {
         if let Err(err) = cache::touch(&state.db, &key, &used, month).await {
             tracing::error!(%err, "wifi_lookup: couldn't mark the rows used");
         }
-        Ok(Some(answer))
+        Ok(answer)
     }
 
     /// The answer; `Ok(None)` = busy; `Err(wait)` = the cache answered none of them and Apple can't be asked.
@@ -569,7 +631,7 @@ impl WifiLookup {
             .collect();
         let mut not_asked = None;
         if !wanted.is_empty() {
-            match self.fetch(state, &key, &wanted, month, Call::Wifi).await {
+            match self.fetch(state, &key, &wanted, month).await {
                 Ok(fetched) => {
                     for (bssid, c) in bssids.iter().zip(cached.iter_mut()) {
                         if let Some(at) = wanted.iter().position(|w| w == bssid) {
@@ -636,15 +698,14 @@ impl WifiLookup {
     }
 
     /// Apple asked, behind the gate, the pauses and the limits, for what of `wanted` the cache still lacks once the
-    /// call is ours: the cache's answer for each of `wanted` (in order) after it. `call`: BSSIDs, or cells in their
-    /// canonical form (design 125b C6: their own call, never inside the Wi-Fi one, under the one gate and limits).
+    /// call is ours: the cache's answer for each of `wanted` (in order) after it. Cells take the gate their own way
+    /// ([WifiLookup::lookup_cells]) and make their own call ([WifiLookup::call]) under the one gate and limits.
     async fn fetch(
         &self,
         state: &AppState,
         key: &cache::CacheKey,
         wanted: &[String],
         month: i64,
-        call: Call,
     ) -> Result<Vec<Cached>, NotAsked> {
         if let Some(left) = self.paused(Instant::now()) {
             return Err(NotAsked::Wait(left));
@@ -681,6 +742,33 @@ impl WifiLookup {
         }
         self.burst.take(now);
         self.outbound.take(now);
+        let fetched = self
+            .call(state, key, &still, month, Call::Wifi, now)
+            .await
+            .map_err(NotAsked::Wait)?;
+        Ok(wanted
+            .iter()
+            .zip(again)
+            .map(
+                |(bssid, before)| match still.iter().position(|s| s == bssid) {
+                    Some(at) => fetched[at],
+                    None => before,
+                },
+            )
+            .collect())
+    }
+
+    /// One Apple call for `still` (BSSIDs or canonical cells), the gate held and the slot taken by the caller: the
+    /// cache's answer for each of `still` (in order) after it, Apple's answer kept; `Err(wait)` = the call failed.
+    async fn call(
+        &self,
+        state: &AppState,
+        key: &cache::CacheKey,
+        still: &[String],
+        month: i64,
+        call: Call,
+        now: Instant,
+    ) -> Result<Vec<Cached>, Duration> {
         let throttle = match call {
             Call::Wifi => &self.throttled_until,
             Call::Cells => &self.cell_throttled_until,
@@ -692,7 +780,7 @@ impl WifiLookup {
         let (body, read): (Vec<u8>, Reader) = match call {
             Call::Wifi => (
                 codec::request(
-                    &still,
+                    still,
                     if throttled {
                         SURROUNDING_THROTTLED
                     } else {
@@ -711,7 +799,7 @@ impl WifiLookup {
         };
         let aps = match self.ask_apple(body, read).await {
             Ok(aps) => aps,
-            Err(failure) => return Err(NotAsked::Wait(self.failed(state, failure).await)),
+            Err(failure) => return Err(self.failed(state, failure).await),
         };
         let throttle_at = match call {
             Call::Wifi => THROTTLE_AT,
@@ -737,16 +825,12 @@ impl WifiLookup {
         if let Err(err) = cache::store(&state.db, key, &known, &unknown, month).await {
             tracing::error!(%err, "wifi_lookup: couldn't keep Apple's answer");
         }
-        Ok(wanted
+        Ok(still
             .iter()
-            .zip(again)
-            .map(|(bssid, before)| {
-                if !still.contains(bssid) {
-                    return before;
-                }
+            .map(|asked| {
                 known
                     .iter()
-                    .find(|(b, _)| b == bssid)
+                    .find(|(b, _)| b == asked)
                     .map_or(Cached::Unknown, |(_, position)| Cached::Known {
                         position: *position,
                         fetched_month: month,

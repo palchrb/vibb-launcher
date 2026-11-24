@@ -3,13 +3,16 @@ package com.kidslauncher.mdm.places
 import com.kidslauncher.mdm.server.ServerJson
 import com.kidslauncher.mdm.zones.distanceM
 import kotlin.math.sqrt
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.async
 import kotlinx.serialization.Serializable
 
 /*
  * Apple's cell lookup (design 125b, step 3 of design 125) - the pure rules: which cells the phone reads (C1, C2) and
  * their wire form (C3), which it asks the server for (C4) and what it does with each answer (C5, the shared
- * `wifi_lookup/contract.json`'s `cell_phone_answers`), the Apple cell rows (C7: kind 5, keyed by step 1's cell key, a
- * fixed 90 days), own against Apple, and the cell fix (C8: GrapheneOS's median reference and 1/r^2 weights, our more
+ * `wifi_lookup/contract.json`'s `cell_phone_answers`), the Apple cell rows (C7: kind 5, keyed by the cell key with its
+ * radio, a fixed 90 days), own against Apple, and the cell fix (C8: GrapheneOS's median reference and 1/r^2 weights, our more
  * conservative accuracy). GrapheneOS NetworkLocation (MIT, 474472e: `LocationReportingTask.kt`'s cell estimate) is the
  * model; its notice is in NOTICE.md. Tested in PlacesTest (`wifi_places.json`'s cell rows) and WifiLookupContractTest.
  */
@@ -29,6 +32,10 @@ const val CELL_OCCASIONS = 3
 /** An Apple cell row lives this long from receipt, a negative this long (contract `rules`; C7). */
 const val APPLE_CELL_ROW_MIN = 90 * 24 * 60
 const val APPLE_CELL_NEGATIVE_MIN = 30 * 24 * 60
+
+/** A cells request's own timeout (C5): the server's fixed answer time through a proxy (contract
+ * `rules.cell_answer_after_s`, 14 s) and the network's way there and back. */
+const val APPLE_CELL_TIMEOUT_MS = 20_000L
 
 /** At most this many Apple cell rows, the least recently seen out first (C7). */
 const val APPLE_CELL_ROWS_MAX = 500
@@ -56,8 +63,10 @@ data class CellWire(val radio: CellRadio, val mcc: String, val mnc: String, val 
     /** `"<radio>:<mcc>:<mnc>:<area>:<cid>"`. */
     val text: String get() = "${radio.word}:$mcc:$mnc:$area:$cid"
 
-    /** Step 1's cell id (`mcc|mnc|area|cid`, D10): the key of own and Apple rows alike. */
-    val id: String get() = "$mcc|$mnc|$area|$cid"
+    /** The cell's id (`radio|mcc|mnc|area|cid`, MCC and MNC as numbers - C7's canonical form; code QA L3): the key of
+     * own and Apple rows alike, so an LTE and a GSM cell with the same numbers are two rows, and two spellings of one
+     * MNC one. */
+    val id: String get() = "${radio.word}|${mcc.toInt()}|${mnc.toInt()}|$area|$cid"
 
     /** One cell however its MNC is spelled (C7's canonical form, the server's cache key). */
     val canonical: String get() = "${radio.word}:${mcc.toInt()}:${mnc.toInt()}:$area:$cid"
@@ -233,6 +242,20 @@ fun cellAsk(cells: List<Heard>, rows: List<PlaceRow>, nowMin: Int): List<String>
         .distinct()
         .take(CELLS_MAX)
         .toList()
+}
+
+/** Code QA L5: the cells are asked only where their fix may be reported - never while the phone is still
+ * ([appleStillMotion]: C9.2 withholds the cell fix then), unless it is the parent's `locate`. */
+fun cellAskAllowed(still: Boolean, locate: Boolean): Boolean = locate || !still
+
+/**
+ * C4 (code QA M3): the cells' ask ([cells], `null` when none is wanted) started apart in [scope], then the Wi-Fi ask
+ * ([wifi]) run - its answer never waits for the cells' fixed answer time. The cells' [Deferred] is awaited only before
+ * the cell fix, and only when nothing finer was kept.
+ */
+suspend fun <T> askBeside(scope: CoroutineScope, cells: (suspend () -> Boolean)?, wifi: suspend () -> T): Pair<T, Deferred<Boolean>?> {
+    val started = cells?.let { ask -> scope.async { ask() } }
+    return wifi() to started
 }
 
 /** `POST /api/devices/wifi-lookup`'s cells body (C5). */

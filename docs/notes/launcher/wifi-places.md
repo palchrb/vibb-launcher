@@ -33,7 +33,7 @@
   (`q(rssi) x a(accEff)`, the weight capped at 20), the range floored by band (100 m at 2.4 GHz, 60 m at 5/6 GHz) and
   never capped; a sighting further than the band's reach (300 m / 150 m) beyond its error is a **move**; two moves
   within 60 days block the row for 60 days (then it restarts). Occasions count teaches >= 30 min apart, days distinct
-  local days. Unseen 180 days goes; above 4000 rows the least recently seen go. Cells (D10): `mcc|mnc|area|cid` of the
+  local days. Unseen 180 days goes; above 4000 rows the least recently seen go. Cells (D10): `radio|mcc|mnc|area|cid` (numbers; design 125b code QA L3) of the
   registered cell (one `requestCellInfoUpdate` when the cached one is over a minute old), range 500 m-10 km, a move at
   20 km, paired within 30 s whatever the teacher; no SIM = an empty list, an ordinary miss.
 - **The lookup** (D9, `learnedFix`): results newer than the last motion fire (`MotionFlags.movedAtElapsedMs`) and
@@ -60,7 +60,7 @@
   the fresh fix, never renews "Hasn't moved since", never vouches - not in `VOUCHING_PROVIDERS` -, never teaches).
   While `motion` is `STILL` it is never reported: further than both accuracies + 2 km from the vouched fix it counts as
   a **cell contradiction** (`DayCounts.cellContradictions`, `cell_contradictions=` in the counts line), else it is
-  withheld. Moved or not, the last fresh fix (`Ask.lastFresh`) under 4 h old (`STILL_SKIP_MAX_MS`) and inside the cell
+  withheld. Moved or not, the last fresh fix (`Ask.lastFresh`) under 4 h old (`STILL_SKIP_MAX_MS`, by elapsed realtime - its elapsed time when of this boot, an unknown age holding nothing back; code QA L4) and inside the cell
   fix's circle (`d <= accCell + accFine`) keeps it back too (the owner's Q6): the cached fine fix is reported with its
   age. **The parent's `locate`** (`AttemptPlan.LOCATE`) reports it whatever the rest says (C9.5, the owner's Q10 on
   2026-11-24: yes). Logged `cell fix acc=... REPORT|WITHHOLD|CONTRADICTS`.
@@ -173,7 +173,8 @@
 - **What it is**: the cells the phone hears and has no position for are asked of the server too, in a request of their
   own (`{"cells": [...]}`, the same route), beside the Wi-Fi ask on a learned miss - and **alone when there is no scan
   view** (Wi-Fi and scanning off, fewer than three fresh APs; QA H1). The answers are kept as **Apple cell rows** (kind
-  5, `RowKind.APPLE_CELL`, id `c/<key>`, keyed by step 1's cell key `HMAC("cell|mcc|mnc|area|cid")`), and the cell
+  5, `RowKind.APPLE_CELL`, id `c/<key>`, keyed by the cell key `HMAC("cell|radio|mcc|mnc|area|cid")` with MCC and MNC as
+  numbers - own cell rows too, since code QA L3), and the cell
   fix at the attempt's end reads the table again, so they give `vibb_apple_cell` in the same attempt. Pure rules in
   `places/CellPlan.kt` (`CellPlanTest`, `WifiLookupContractTest` over the shared contract's cell rows), glue in
   `WifiPlaces` (`readCells`, `askAppleCells`, `cellOnly`). GrapheneOS's cell logic (MIT, `NOTICE.md`) wherever the
@@ -192,7 +193,11 @@
   that long, at most a day, anything else 15 min; a 409 is the one switch's `apple_off`). The Wi-Fi wait
   (`apple_wait_until_ms`) stops only the Wi-Fi ask, the cell wait only the cell ask. The cells asked: none when 8 read
   cells already have a position (GrapheneOS's threshold), else those with no trusted own row (3 occasions), no live
-  Apple cell row, no negative or tombstone, at most 12. Logged `apple cells asked=2 status=200 got=2 unknown=0`.
+  Apple cell row, no negative or tombstone, at most 12; none while still but for a Locate (`cellAskAllowed`, code QA
+  L5). Started apart in `WifiPlaces`' own scope (`askBeside`, code QA M3), timeout `APPLE_CELL_TIMEOUT_MS` (20 s: the
+  server answers cells at a fixed 14 s through its proxy): the Wi-Fi ask, the learned fix and Locate's short stop never
+  wait for it; the attempt awaits it only before the cell fix when nothing finer was kept, else it runs on and stores
+  its rows. Logged `apple cells asked=2 status=200 got=2 unknown=0`.
 - **Apple cell rows** (C7, `storeAppleCells`): Apple's position, `rangeM = max(500 m, acc_m)`, live a fixed 90 days
   from receipt (`lastTeachMin`; the answer carries no age), a negative 30 days; at most 500. Own against Apple per
   cell (`chooseCellRow`): an untrusted own row doesn't block Apple's; agreeing - the smaller range (a tie: own);

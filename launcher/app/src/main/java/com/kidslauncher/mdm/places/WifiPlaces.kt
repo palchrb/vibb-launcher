@@ -513,8 +513,11 @@ object WifiPlaces {
         val store = open(context) ?: return null
         val fix = cellFix(snap.cells, store.rows, nowMin()) ?: return null
         save(context, store.generation) { touchSeen(it, fix.keys, nowMin()) }
-        fun seen(l: Location?) = l?.let { SeenFix(it.latitude, it.longitude, if (it.hasAccuracy()) it.accuracy.toDouble() else 0.0, it.time) }
-        val verdict = cellReport(fix, appleStillMotion(ask.motion), seen(ask.stillVouch), seen(ask.lastFresh), System.currentTimeMillis(), locate)
+        // Code QA L4: the fixes' ages by elapsed realtime, never the wall clock (none set: another boot's fix, unknown).
+        fun seen(l: Location?) = l?.let {
+            SeenFix(it.latitude, it.longitude, if (it.hasAccuracy()) it.accuracy.toDouble() else 0.0, (it.elapsedRealtimeNanos / 1_000_000).takeIf { e -> e > 0 })
+        }
+        val verdict = cellReport(fix, appleStillMotion(ask.motion), seen(ask.stillVouch), seen(ask.lastFresh), SystemClock.elapsedRealtime(), locate)
         Log.i(LOG_TAG, "cell fix acc=${fix.accuracyM.toInt()} $verdict")
         return when (verdict) {
             CellVerdict.REPORT -> location(fix).takeIf(accept)?.also { ask.notFresh = true }
@@ -575,7 +578,8 @@ object WifiPlaces {
 
     /**
      * Design 125b C4, C5: the read's usable cells with no position ([cellAsk]; none when eight have one) asked of the
-     * server in a request of their own, at most 15 s; the answer's rows stored (C7: kind 5), the cell wait or "off" kept.
+     * server in a request of their own, at most [APPLE_CELL_TIMEOUT_MS] (the server's fixed answer time and the way); the
+     * answer's rows stored (C7: kind 5), the cell wait or "off" kept.
      * `true` when rows were stored. Runs beside the Wi-Fi ask, with or without a scan view (QA H1).
      */
     private suspend fun askAppleCells(context: Context, store: Store, snap: Snapshot): Boolean {
@@ -584,7 +588,7 @@ object WifiPlaces {
         val asking = cellAsk(snap.cells, store.rows, now)
         if (asking.isEmpty()) return false
         val body = ServerJson.encodeToString(WifiLookupCellsRequest.serializer(), WifiLookupCellsRequest(asking))
-        val (status, answer) = withTimeoutOrNull(APPLE_TIMEOUT_MS) { postLookup(body) } ?: (0 to null)
+        val (status, answer) = withTimeoutOrNull(APPLE_CELL_TIMEOUT_MS) { postLookup(body, APPLE_CELL_TIMEOUT_MS) } ?: (0 to null)
         val p = prefs(context)
         val step = appleCellStep(status, answer)
         val outcome = if (step is CellStep.Use) "got=${step.cells.size} unknown=${step.unknown.size}" else "step=${step.javaClass.simpleName}"
@@ -615,7 +619,7 @@ object WifiPlaces {
         val asking = appleAsk(view.heard, store.rows, now)
         if (asking.isEmpty()) return false
         val request = ServerJson.encodeToString(WifiLookupRequest.serializer(), WifiLookupRequest(asking))
-        val (status, body) = withTimeoutOrNull(APPLE_TIMEOUT_MS) { postLookup(request) } ?: (0 to null)
+        val (status, body) = withTimeoutOrNull(APPLE_TIMEOUT_MS) { postLookup(request, APPLE_TIMEOUT_MS) } ?: (0 to null)
         val p = prefs(context)
         val step = appleStep(status, body)
         val outcome = if (step is AppleStep.Use) "got=${step.aps.size} unknown=${step.unknown.size}" else "step=${step.javaClass.simpleName}"
@@ -640,15 +644,15 @@ object WifiPlaces {
         return false
     }
 
-    /** The server's answer to [json] (a BSSIDs or a cells body): its status and body (0 = no answer). */
-    private suspend fun postLookup(json: String): Pair<Int, String?> = try {
+    /** The server's answer to [json] (a BSSIDs or a cells body) within [timeoutMs]: its status and body (0 = no answer). */
+    private suspend fun postLookup(json: String, timeoutMs: Long): Pair<Int, String?> = try {
         val url = LauncherPreferences.mdm().serverUrl()
         val token = DeviceToken.get()
         if (url.isNullOrBlank() || token.isNullOrBlank()) {
             0 to null
         } else {
             val body = json.toRequestBody("application/json".toMediaType())
-            val response = createMdmApi(url, token, callTimeoutMs = APPLE_TIMEOUT_MS).wifiLookup(body)
+            val response = createMdmApi(url, token, callTimeoutMs = timeoutMs).wifiLookup(body)
             response.code() to (if (response.isSuccessful) response.body() else response.errorBody())?.use { it.string() }
         }
     } catch (e: kotlinx.coroutines.CancellationException) {
@@ -910,17 +914,20 @@ object WifiPlaces {
                 suspend fun gps(boundMs: Long, shortMs: Long = boundMs, stopEarly: suspend () -> Boolean = { false }) =
                     gpsTry(app, lm, store, snap, ask.movedAtElapsedMs, boundMs, accept, shortMs, stopEarly).fix
                 // Design 125 A3: on a learned miss, the Apple lookup beside GPS - then the table, with its answer, again.
-                // Design 125b C4: the cells in a request of their own beside it (a missing scan view is a miss too); their
-                // rows give the cell fix at the attempt's end ([cellOnly] reads the table again).
+                // Design 125b C4: the cells in a request of their own beside it (a missing scan view is a miss too), never
+                // while still but for a `locate` (code QA L5); their rows give the cell fix at the attempt's end
+                // ([cellOnly] reads the table again). Code QA M3: the cells' ask runs apart ([askBeside], in [scope]: its
+                // answer is stored even when the attempt kept a finer fix and ended) - the Wi-Fi fix and `stopEarly` never
+                // wait for its fixed answer time; it is awaited only before [cellOnly].
+                val cellAsk = java.util.concurrent.atomic.AtomicReference<Deferred<Boolean>?>(null)
+                val askCells = cellAskAllowed(appleStillMotion(ask.motion), plan == AttemptPlan.LOCATE)
                 suspend fun appleFix(): LearnedFix? {
                     if (store == null || !appleAllowed(app)) return null
                     val s = snap.await()
-                    val wifiAsked = coroutineScope {
-                        val cells = async { askAppleCells(app, store, s) }
-                        val wifi = askApple(app, store, s, ask.movedAtElapsedMs)
-                        cells.await()
-                        wifi
+                    val (wifiAsked, cells) = askBeside(scope, if (askCells) ({ askAppleCells(app, store, s) }) else null) {
+                        askApple(app, store, s, ask.movedAtElapsedMs)
                     }
+                    cellAsk.set(cells)
                     if (!wifiAsked) return null
                     return open(app)?.let { lookup(app, it, s, ask.movedAtElapsedMs) }?.takeIf { standsAlone(it, movedSinceFresh) }
                 }
@@ -971,7 +978,10 @@ object WifiPlaces {
                         better(fix, early.await())
                     }
                 }
-                val result = kept ?: cellOnly(app, store, snap.await(), ask, plan == AttemptPlan.LOCATE, accept)
+                val result = kept ?: run {
+                    cellAsk.get()?.await()
+                    cellOnly(app, store, snap.await(), ask, plan == AttemptPlan.LOCATE, accept)
+                }
                 Log.i(LOG_TAG, "attempt path=$plan result=${if (ask.renewed) "renewed" else result?.provider ?: "none"}")
                 result
             }

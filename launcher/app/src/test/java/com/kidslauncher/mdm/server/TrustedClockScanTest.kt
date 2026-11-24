@@ -20,6 +20,10 @@ class TrustedClockScanTest {
         "MdmSyncWorker.kt", "UpdateFence.kt", "WindowRelock.kt", "PowerEvents.kt",
     )
 
+    /** The places' pure rules (design 125, 125b): the cell report's 4 h and the Apple rows' times decide on elapsed
+     * realtime or a passed-in minute, never a clock read of their own (code QA L4). */
+    private val placesFiles = listOf("PlacesPlan.kt", "ApplePlan.kt", "CellPlan.kt")
+
     /** The wall-clock reads that stay: per file, each line's text (trimmed). */
     private val knownReads: Map<String, List<String>> = mapOf(
         // Android's call log stamps (an emergency call) and the route's own stamps
@@ -236,7 +240,7 @@ class TrustedClockScanTest {
     fun `no new wall-clock read where the phone decides`() {
         val root = root()
         val files = dirs.flatMap { d -> File(root, d).walkTopDown().filter { it.isFile && it.extension == "kt" }.toList() } +
-            serverFiles.map { File(root, "server/$it") }
+            serverFiles.map { File(root, "server/$it") } + placesFiles.map { File(root, "places/$it") }
         val found = files.associate { file ->
             file.relativeTo(root).path to file.readLines().map { it.trim() }.filter { read.containsMatchIn(it) }.sorted()
         }.filterValues { it.isNotEmpty() }

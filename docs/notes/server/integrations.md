@@ -114,21 +114,30 @@ Apple" / "Lookups at Apple", its (i) naming the mobile network too (C13).
 - `route.rs`: a body is `{"bssids"}` or `{"cells"}` (1..12), never both. **No cache oracle** (the user, 2026-11-24): a
   cells 200 is `{"cells": [{cell, lat, lng, acc_m}], "unknown": [cell]}` - no age, no cached mark, each asked string
   echoed; any cells request while Apple can't be asked (paused, over the server-wide limit) is `503 unavailable` with
-  its wait, cached or not, and so is an uncached cell's failed call; a 200 or 503 leaves no sooner than
-  `cell_answer_after` after the request arrived (`music_net::PROXIED`'s 10 s through the proxy, `CELL_ANSWER_DIRECT`'s
-  5 s direct - the Apple call's whole deadline), so a cache hit looks like a round trip to Apple. A gate wait that ran
-  out is still `429 busy` (it needs another lookup running at that moment). The **abuse brake**: 1000 cells (canonical,
-  distinct per request) a phone a UTC day (`CellDays`, memory only), past it `429 limit` with `retry_after_s` to
-  midnight; checked before the hour's 30, so a refused request takes neither. The cell call has its own throttle (10
+  its wait, cached or not, and so is an uncached cell's failed call. **Before the cache is read** (code QA H1, M1)
+  every cells request takes the admit permit (held to the answer time, `lookup_cells` hands it back), the gate and one
+  slot of the 60/10 limits, cached or not; no permit or the gate's wait run out is `503` with 900
+  (`CELL_BUSY_WAIT`) - there is no `busy` for cells. The lookup runs in a task of its own; the 200 or 503 leaves
+  **exactly** `cell_answer_after` after the request arrived (`mod::cell_answer_after`: the gate's wait + the Apple
+  call's whole deadline - `music_net::PROXIED` through the proxy, `Kind::AppleWps` direct - + `CELL_ANSWER_MARGIN`'s
+  1 s: 14 s proxied, 9 s direct; code QA M2); a task that hasn't answered by then gives `503` (900) and goes on to fill
+  the cache. The **abuse brake**: 1000 cells (canonical, distinct per request) a phone a UTC day (`CellDays`, memory
+  only), past it `429 limit` with `retry_after_s` to midnight; checked and counted under one lock with the hour's 30
+  asked inside it (`try_add`, code QA L1), so a refused request takes neither. The cell call has its own throttle (10
   towers -> 10 s at 4) and shares the gate, the pauses, `integration_health` and the 60/10 call limits with the Wi-Fi
   call. The sweep line gains `cells=` and `cell_calls=`.
-- **What is left of an oracle** (C12): an Apple call that fails during one request with an uncached cell (503 where an
-  all-cached one got 200), and the server-wide limit, which uncached cells fill - visible only as refused lookups.
+- **What is left of an oracle** (C12, code QA L2): an Apple call that fails during one request with an uncached cell
+  (503 where an all-cached one got 200, at the same time). The limits, the gate and the permit no longer depend on the
+  cache.
 - **Sealing protects cell rows less**: cell identities are enumerable from public lists, so whoever holds both the
   database and `K` can open every cell row cheaply; the database or a backup alone still reveals nothing. The cache
   over two years shows the family's trips coarsely, not only its places.
 - Tests (`tests.rs`): the contract's `cell_answers` through the real route (the same body from the cache and from
-  Apple, each no sooner than the answer time - `CELL_ANSWER_AFTER_IN_TESTS`, 250 ms; the day cap's wait to midnight),
+  Apple, each at the answer time - `CELL_ANSWER_AFTER_IN_TESTS`, 700 ms, over the tests' 300-ms gate; the day cap's
+  wait to midnight; `cells_busy` with the gate held), a held gate and two lookups in flight answering cached and
+  uncached alike and the permit held to the answer time (H1), a cached request taking a limit slot and a full window
+  answering both alike (M1), an Apple call past the answer time answering 503 then and filling the cache (M2), the day
+  brake under concurrent requests (L1),
   `golden_cells`, every `apple_cells` row, `cell_forms` and the rules, a row sealed under its canonical form and found
   from Apple's numeric MNC, the surrounding towers cached and an AP in a cell answer never, the cell throttle apart from
   the Wi-Fi one, the source test (no cell identity in a tracing line).
