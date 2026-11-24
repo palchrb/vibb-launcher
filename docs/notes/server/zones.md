@@ -230,3 +230,6 @@ A Wi-Fi fix that no satellite fix or linked network confirms never starts an arr
   `WIFI_DISAGREED_LINE_EVERY` (24 h), the rises between summed; `devices.wifi_disagreed_logged`/`wifi_disagreed_at`,
   cleared at re-enrolment (`device_api::enroll`, `enrol_key`). No Attention row, no orange line (the owner,
   2026-11-24).
+- **Locate's age and "Here now" can differ**: Locate's "Recent"/"Old" (`locate::Seen`) is how fresh the phone's newest
+  fix is, of any class, while a zone's "Here now" needs a fine fix - so a phone indoors on Wi-Fi estimates can show a
+  recent fix and no "Here now" at once. As intended.

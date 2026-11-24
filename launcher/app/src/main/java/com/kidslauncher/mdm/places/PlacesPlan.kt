@@ -256,9 +256,14 @@ class PlaceKeys(secret: ByteArray) {
 
     fun cell(id: String): String = hmac("cell|$id", KEY_BYTES)
 
-    /** Design 131: a saved network as a zone link is bound to it - its security and Android's id of the saved network.
-     * Saved anew (a new id) or with another security it is another binding, and the link learns again. */
-    fun binding(security: LinkSecurity, networkId: Int): String = hmac("bind|${security.name}|$networkId", SHORT_BYTES)
+    /** Design 131: a saved network as a zone link is bound to it - its security class ([LinkClass]: WPA2 and WPA3
+     * personal are one, so a mesh or a band that negotiates the other changes nothing) and Android's id of the saved
+     * network. Saved anew (a new id) or another class is another binding, and the link learns again. The first byte is
+     * the class, so a rebind after a reboot ([teachLinks]) keeps to it. */
+    fun binding(security: LinkSecurity, networkId: Int): String {
+        val cls = security.linkClass()
+        return "%02x".format(cls.code) + hmac("bind|${cls.name}|$networkId", SHORT_BYTES - 1)
+    }
 
     /** A policy zone as a link sees it: id, centre and radius - a change drops its links (D12). */
     fun zone(z: PolicyZone): String = hmac("zone|${z.id}|${z.latitude}|${z.longitude}|${z.radiusM}", KEY_BYTES)
@@ -657,11 +662,11 @@ private data class Device(
  * than half of the trusted networks heard. Position and accuracy by [learnedAccuracy]. `null` = no fix. Design 125 A9:
  * a result's row is a trusted own row or a live Apple row by [chooseRow].
  */
-fun learnedFix(view: ScanView, rows: List<PlaceRow>, nowMin: Int): LearnedFix? {
+fun learnedFix(view: ScanView, rows: List<PlaceRow>, nowMin: Int, checkBand: Boolean = true): LearnedFix? {
     val table = rows.asSequence().filter { it.kind == RowKind.WIFI }.associateBy { it.key }
     val apple = rows.asSequence().filter { it.kind == RowKind.APPLE }.associateBy { it.key }
     // Design 131: a result heard on another band than its row's, or under another network name, is left out.
-    val chosen = view.heard.filter { it.kind == RowKind.WIFI && !otherBand(it, table[it.key]) && !otherName(it, table[it.key]) }
+    val chosen = view.heard.filter { it.kind == RowKind.WIFI && !(checkBand && otherBand(it, table[it.key])) && !otherName(it, table[it.key]) }
         .mapNotNull { h -> chooseRow(h, table[h.key], apple[h.key], nowMin)?.let { h to it } }
     val trustedHeard = chosen.map { (h, row) -> h to row.first }
     val fromApple = chosen.filter { it.second.second }.map { it.first.key }.toSet()
@@ -856,6 +861,7 @@ fun teachLinks(
     nowMin: Int,
     today: Int,
     binding: String = "",
+    rebind: Boolean = false,
 ): List<PlaceRow> {
     val zoneKeys = zones.map { it.key }.toSet()
     val out = rows.filter { it.kind != RowKind.LINK || it.key in zoneKeys }.associateByTo(LinkedHashMap()) { it.id }
@@ -867,7 +873,15 @@ fun teachLinks(
             val row = out[id]?.let { if (it.blockedUntilMin != 0 && !it.blocked(nowMin)) null else it }
             if (row?.blocked(nowMin) == true) continue
             // Design 131: another binding (the network saved anew, its security changed) learns again; its strikes stay.
-            val bound = row?.let { if (it.device == binding) it else it.copy(device = binding, occasions = 0, days = 0, lastTeachMin = nowMin - OCCASION_GAP_MIN) }
+            // Design 131 (code QA M1): the first teach after a reboot may rebind a row of the same class ([rebind]: the
+            // ids Android gave its saved networks may have moved, and exactly one saved network has this name).
+            val bound = row?.let {
+                when {
+                    it.device == binding -> it
+                    rebind && it.device.take(2) == binding.take(2) -> it.copy(device = binding)
+                    else -> it.copy(device = binding, occasions = 0, days = 0, lastTeachMin = nowMin - OCCASION_GAP_MIN)
+                }
+            }
             val base = bound ?: PlaceRow(RowKind.LINK, z.key, device = binding, network = connected, lastTeachMin = nowMin - OCCASION_GAP_MIN)
             val occasion = nowMin - base.lastTeachMin !in 0 until OCCASION_GAP_MIN
             out[id] = base.copy(
@@ -1054,7 +1068,29 @@ enum class FixCheck(val wire: String) {
 
 /** The connected network's security as the link check reads it: WPA2 or WPA3 personal, an enterprise network, or
  * anything else (open, OWE, unknown) - which never confirms. */
-enum class LinkSecurity { PSK, SAE, EAP, OTHER }
+enum class LinkSecurity {
+    PSK,
+    SAE,
+    EAP,
+    OTHER,
+    ;
+
+    fun linkClass(): LinkClass = when (this) {
+        PSK, SAE -> LinkClass.PERSONAL
+        EAP -> LinkClass.ENTERPRISE
+        OTHER -> LinkClass.NONE
+    }
+}
+
+/** What a link is bound to of the security (code QA H1): Vibb saves a secured network as WPA2 and WPA3 at once, and a
+ * mesh node or a band may negotiate either - one class. */
+enum class LinkClass(val code: Int) { NONE(0), PERSONAL(1), ENTERPRISE(2) }
+
+/** A still vouch a Wi-Fi fix is compared with: a `gps` fix of teaching quality (<= 25 m, >= 5 satellites, not mock in a
+ * release build) or a checked Wi-Fi fix - never a poor indoor satellite fix, never the Wi-Fi alone (code QA H2). */
+fun stillVouchQualifies(provider: String?, accuracyM: Float?, satellites: Int?, check: String?, mock: Boolean, release: Boolean): Boolean =
+    (check != null && (provider == PROVIDER_WIFI || provider == PROVIDER_APPLE)) ||
+        teachQuality(TeachFix(0.0, 0.0, accuracyM, null, 0, provider, satellites, mock), release)
 
 /** A satellite fix confirms a Wi-Fi fix within this much elapsed time of it ... */
 const val GNSS_CHECK_WINDOW_MS = 120_000L
@@ -1083,20 +1119,22 @@ fun otherBand(h: Heard, own: PlaceRow?): Boolean =
 fun otherName(h: Heard, own: PlaceRow?): Boolean =
     own != null && own.kind == RowKind.WIFI && h.network != h.device && own.network != own.device && h.network != own.network
 
-/** Any result of [view] heard on another band than its own row's ([otherBand]): the attempt disagreed. */
-fun bandDisagrees(view: ScanView, rows: List<PlaceRow>): Boolean {
+/** The attempt disagreed by band ([otherBand]): two or more results of [view] heard on another band than their own
+ * rows', or one whose row would have carried the fix (none without it, one with it). One alone is noise. */
+fun bandDisagrees(view: ScanView, rows: List<PlaceRow>, nowMin: Int): Boolean {
     val table = rows.asSequence().filter { it.kind == RowKind.WIFI }.associateBy { it.key }
-    return view.heard.any { it.kind == RowKind.WIFI && otherBand(it, table[it.key]) }
+    val other = view.heard.count { it.kind == RowKind.WIFI && otherBand(it, table[it.key]) }
+    return other >= 2 || (other == 1 && learnedFix(view, rows, nowMin) == null && learnedFix(view, rows, nowMin, checkBand = false) != null)
 }
 
 /** The connected network as a zone link knows it: the network key (the SSID's, or the device's for a hidden one), its
  * binding ([PlaceKeys.binding]), its security and the connected AP's key (an enterprise network's check). */
 data class LinkConn(val network: String, val binding: String, val security: LinkSecurity, val apKey: String?)
 
-/** [connected] as a link sees it - by the network's name, so a mesh node, a 6 GHz or a locally administered BSSID on a
- * linked network counts too; `null` when not connected or metered (a hotspot). */
+/** [connected] as a link sees it - by the network's name; `null` when not connected, metered (a hotspot) or without
+ * Android's id of the saved network (-1: no link, neither taught nor checked; code QA M1). */
 fun linkConn(connected: Connected?, keys: PlaceKeys): LinkConn? {
-    if (connected == null || !connected.unmetered) return null
+    if (connected == null || !connected.unmetered || connected.networkId < 0) return null
     val bssid = connectedBssid(connected.bssid)
     val ssid = connected.ssid?.takeIf { it.isNotEmpty() }
     val network = when {
@@ -1223,9 +1261,11 @@ enum class Jump {
 fun jumpGate(fix: LearnedFix, last: LastGnss?, nowTrustedMs: Long, nowElapsedMs: Long, nowBoot: Int): Jump {
     last ?: return Jump.NONE
     val dtMs = if (last.bootCount == nowBoot) fix.elapsedMs - last.elapsedMs else nowTrustedMs - (nowElapsedMs - fix.elapsedMs) - last.trustedMs
+    // The Wi-Fi fix older than the satellite fix (its results heard before it): no jump to judge.
+    if (dtMs < 0) return Jump.NONE
     val d = distanceM(last.lat, last.lng, fix.lat, fix.lng) - last.accuracyM - fix.accuracyM
     if (d <= 0) return Jump.NONE
-    val v = d / (maxOf(abs(dtMs), 1_000L) / 1000.0)
+    val v = d / (maxOf(dtMs, 1_000L) / 1000.0)
     if (v > JUMP_IMPOSSIBLE_MPS) return Jump.IMPOSSIBLE
     val fastAge = ageMs(last.fastTrustedMs, last.fastElapsedMs, last.fastBoot, nowTrustedMs, nowElapsedMs, nowBoot)
     val bound = if (fastAge != null && fastAge in 0..JUMP_VEHICLE_WINDOW_MS) JUMP_IMPOSSIBLE_MPS else JUMP_MOVING_MPS
@@ -1250,27 +1290,67 @@ enum class WifiStep {
 data class WifiVerdict(val step: WifiStep, val disagreed: Boolean = false)
 
 /**
- * A Wi-Fi [fix] with its [check] before GPS: an impossible jump from the last satellite fix ([jumpGate]) refuses it
- * (counted). While the phone is still (`STILL`) with a [vouch] - a satellite or a checked fix - a fix within
- * `accOld + accNew` of it is used (an Apple one renews it), one outside is refused (counted). A checked fix stands. An
- * unchecked one runs GPS while still (`STILL` without a vouch, `STILL_SINCE_TRY`) and after a jump over the movement
- * bound; otherwise it is used.
+ * A Wi-Fi [fix] with its [check] before GPS: a `link`-checked fix stands (and, fresh, becomes the next vouch). An
+ * impossible jump from the last satellite fix ([jumpGate]) refuses any other (counted); a `gnss`-checked one stands.
+ * While the phone is still (`STILL`) with a [vouch] ([stillVouchQualifies]: satellites of teaching quality or a checked
+ * fix) an unchecked fix within `accOld + accNew` of it is used (an Apple one renews it), one outside is refused
+ * (counted). An unchecked fix runs GPS while still (`STILL` without a vouch, `STILL_SINCE_TRY`) and after a jump over
+ * the movement bound; otherwise it is used.
  */
 fun wifiVerdict(fix: LearnedFix, check: FixCheck?, motion: com.kidslauncher.mdm.zones.Motion, vouch: Vouched?, jump: Jump): WifiVerdict {
     val still = motion == com.kidslauncher.mdm.zones.Motion.STILL
     return when {
+        check == FixCheck.LINK -> WifiVerdict(WifiStep.USE)
         jump == Jump.IMPOSSIBLE -> WifiVerdict(WifiStep.REFUSE, disagreed = true)
+        check != null -> WifiVerdict(WifiStep.USE)
         still && vouch != null ->
             if (distanceM(fix.lat, fix.lng, vouch.lat, vouch.lng) <= vouch.accuracyM + fix.accuracyM) {
                 WifiVerdict(if (fix.source == PlaceSource.OWN) WifiStep.USE else WifiStep.RENEW)
             } else {
                 WifiVerdict(WifiStep.REFUSE, disagreed = true)
             }
-        check != null -> WifiVerdict(WifiStep.USE)
         still || motion == com.kidslauncher.mdm.zones.Motion.STILL_SINCE_TRY -> WifiVerdict(WifiStep.GPS)
         jump == Jump.FAST -> WifiVerdict(WifiStep.GPS)
         else -> WifiVerdict(WifiStep.USE)
     }
+}
+
+/** Code QA M1: the first teach after a boot ([boot] other than [lastBoot]) may rebind a zone link when the saved
+ * networks' count is the last boot's and exactly one saved network has the connected name ([named]). */
+fun rebindAllowed(lastBoot: Int?, lastCount: Int?, boot: Int, count: Int, named: Int): Boolean =
+    lastBoot != null && lastBoot != boot && lastCount == count && named == 1
+
+/** What an attempt keeps after the judging ([attemptKeep]). */
+enum class Kept { WIFI, GPS, RENEW, NONE }
+
+data class AttemptKeep(val kept: Kept, val check: FixCheck? = null, val disagreed: Boolean = false)
+
+/** Whether [plan] runs GPS after a Wi-Fi fix's [step] (`null`: no Wi-Fi fix): LEARNED_FIRST not when the fix is used
+ * or renews; every other plan always. */
+fun runsGps(plan: AttemptPlan, step: WifiStep?): Boolean =
+    plan != AttemptPlan.LEARNED_FIRST || (step != WifiStep.USE && step != WifiStep.RENEW)
+
+/**
+ * The order after the judging, for every plan: GPS_FIRST keeps GPS when it came, else the Wi-Fi fix (one that needed GPS
+ * unchecked, a refused one nothing); LEARNED_FIRST a used or renewing fix as it is ([runsGps]: no GPS ran); otherwise a
+ * refused fix leaves GPS, and [keepBetter] decides - the satellites far off overrule (a disagreement), a kept Wi-Fi fix
+ * takes the satellites' check, an Apple fix within the still vouch renews it.
+ */
+fun attemptKeep(plan: AttemptPlan, step: WifiStep?, fix: LearnedFix?, check: FixCheck?, gps: TeachFix?, release: Boolean): AttemptKeep {
+    if (fix == null || step == null) return AttemptKeep(if (gps != null) Kept.GPS else Kept.NONE)
+    if (plan == AttemptPlan.GPS_FIRST) {
+        return when {
+            gps != null -> AttemptKeep(Kept.GPS)
+            step == WifiStep.REFUSE -> AttemptKeep(Kept.NONE)
+            step == WifiStep.RENEW -> AttemptKeep(Kept.RENEW)
+            else -> AttemptKeep(Kept.WIFI, check)
+        }
+    }
+    if (!runsGps(plan, step)) return if (step == WifiStep.RENEW) AttemptKeep(Kept.RENEW) else AttemptKeep(Kept.WIFI, check)
+    if (step == WifiStep.REFUSE) return AttemptKeep(if (gps != null) Kept.GPS else Kept.NONE)
+    val k = keepBetter(gps, fix, check, release)
+    if (!k.wifi) return AttemptKeep(Kept.GPS, disagreed = k.disagreed)
+    return AttemptKeep(if (step == WifiStep.RENEW) Kept.RENEW else Kept.WIFI, k.check)
 }
 
 /** A Wi-Fi fix stamps the fresh fix (and so stops the next heartbeat's GPS) only when fresh and checked. */

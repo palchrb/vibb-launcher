@@ -328,6 +328,19 @@ class EnforcementPlanTest {
         assertFalse(plan(emptyList(), dialer = null).restrictOutgoingCalls)
     }
 
+    /** Design 131 D11: the saved networks' lock - while managed or while the zones and Wi-Fi places watch, lifted by an
+     * override or the pause. */
+    @Test
+    fun `the saved networks are locked while managed or watched, never under an override`() {
+        assertTrue(plan(emptyList()).lockSavedNetworks)
+        assertFalse(plan(null).lockSavedNetworks)
+        val watched = computeEnforcementPlan(null, true, 0, false, controllable, OWN, DIALER, locationWatched = true)
+        assertTrue(watched.lockSavedNetworks)
+        assertFalse(computeEnforcementPlan(null, true, 0, true, controllable, OWN, DIALER, locationWatched = true).lockSavedNetworks)
+        assertFalse(plan(emptyList(), overrideActive = true).lockSavedNetworks)
+        assertFalse("not the clock's rule", plan(emptyList(), overrideActive = true, rules = true).lockSavedNetworks)
+    }
+
     @Test
     fun `date and time are locked while managed and released otherwise`() {
         assertTrue(plan(emptyList()).lockDateTime)

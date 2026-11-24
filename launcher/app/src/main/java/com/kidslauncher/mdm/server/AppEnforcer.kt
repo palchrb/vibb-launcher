@@ -563,6 +563,7 @@ object AppEnforcer {
             homeCandidates = UpdateFence.homeCandidates(pm),
             androidAutoInstalled = installedEvenHidden(pm, ANDROID_AUTO),
             allowAndroidAuto = policy?.allowAndroidAuto == true,
+            locationWatched = policy?.locationPolicy?.mode == "interval",
         )
 
         // Set before the loop below can release the dialer, so its keypad is never usable for
@@ -737,9 +738,9 @@ object AppEnforcer {
         applyDateTimeLock(dpm, admin, plan.lockDateTime)
 
         // Design 131 D11: the networks Vibb saved stay as saved - Android's screens can't change or forget them (a new
-        // password on Vibb's own Wi-Fi page is forget plus add, a new network id, so a zone link learns it again). Managed
-        // as the clock is, lifted by the override and the pause like it.
-        applySavedNetworksLock(dpm, admin, plan.lockDateTime)
+        // password on Vibb's own Wi-Fi page is forget plus add, a new network id, so a zone link learns it again). While
+        // managed or while the zones and Wi-Fi places watch; lifted by the override and the pause.
+        applySavedNetworksLock(dpm, admin, plan.lockSavedNetworks)
 
         // One clock format on the whole phone (design 34 P12): TIME_12_24 through the "Modify system
         // settings" app-op, not a restriction - the override and the pause change nothing.

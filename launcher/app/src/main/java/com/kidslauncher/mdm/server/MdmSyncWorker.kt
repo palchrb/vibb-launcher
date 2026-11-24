@@ -964,10 +964,14 @@ private suspend fun currentLocationReport(
         q.accuracy?.let { accuracy = it }
         time = q.timeMs
     }.withFixCheck(q.check)
-    // Design 131 (design 125 A9): while the phone is still, a Wi-Fi fix is compared with the last fresh fix - a satellite
-    // or a checked one, since an unchecked Wi-Fi fix never stamps it; an Apple fix within it renews it.
+    // Design 131 (design 125 A9): while the phone is still, an unchecked Wi-Fi fix is compared with the last fresh fix
+    // when that is satellites of teaching quality or a checked fix (code QA H2: never a poor indoor satellite fix); an
+    // Apple fix within it renews it.
     val stillVouch = if (motionNow != null && action.fresh && com.kidslauncher.mdm.places.appleStillMotion(motion)) {
-        ZoneWatch.lastFreshFix(context)?.takeIf { it.timeMs == lastFreshFix }
+        ZoneWatch.lastFreshFix(context)?.takeIf {
+            it.timeMs == lastFreshFix &&
+                com.kidslauncher.mdm.places.stillVouchQualifies(it.provider, it.accuracy, it.satellites, it.check, it.mock, !BuildConfig.DEBUG)
+        }
     } else {
         null
     }

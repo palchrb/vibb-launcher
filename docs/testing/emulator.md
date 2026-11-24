@@ -5645,5 +5645,7 @@ PlacesDebug`.
 | e | The walk home: `geo fix` inside Home, then (GPS silent) home's scan and the home connection (`psk`, 7) 3 min later | the second fix `check: "link"` (Locate: no word, "At Home"); the PWA's inbox "arrived Home" at the satellite fix's time |
 | f | A parent `locate` on the home connection; then on `open` | the first stops GPS after ~20 s (`locate` answered within ~25 s); the second runs GPS up to 60 s |
 | g | Kid Settings › Wi-Fi: save and forget a network; design 102's sign-in window on a captive network; Android's own Wi-Fi settings (`am start -a android.settings.WIFI_SETTINGS`) on a network Vibb saved | saving and forgetting work on Vibb's page; the sign-in window works (§6ap); Android's screen can't modify or forget Vibb's network (`dumpsys device_policy | grep -i lockdown`: on), and with the pause on it can |
+| h | The home link held: forget an older saved network on Vibb's page, a teach at home (the count kept), `adb reboot`, the home connection with the id `adb shell dumpsys wifi \| grep -i networkid` now shows, a teach at home | the link survives (the same id) or rebinds on that first teach after the boot (exactly one saved network of that name, the count unchanged): the next Wi-Fi fix at home `check: "link"`; the id before and after noted in the run's log |
+| i | The home connection with the same id negotiated as WPA3 (`sae`, 7) | still `check: "link"` |
 
 Not on the emulator: real neighbours, real bands, a real mesh - the owner's device check on the Jelly Star, later.

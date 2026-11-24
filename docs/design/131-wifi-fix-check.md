@@ -11,26 +11,31 @@ A Wi-Fi fix that no satellite fix or linked network confirms never starts an arr
 - **The check** (`FixCheck`): every `vibb_wifi`/`vibb_apple` fix carries `check: "gnss"` (a satellite fix of at most
   50 m within 2 min lies within both accuracies of it) or `check: "link"` (the phone is on a saved WPA2/WPA3 network -
   an enterprise one only when its AP is one of the fix's own rows - that holds a live zone link, and the fix is surely
-  inside that zone); absent: the Wi-Fi alone. The link is bound to the saved network's security and Android's network
-  id: saved anew, it learns again (3 occasions on 2 days). It rides in the fix's extras to every report, the cached and
+  inside that zone); absent: the Wi-Fi alone. The link is bound to the saved network's security class (WPA2 and WPA3
+  personal are one, enterprise another) and Android's network id (-1: no link): saved anew, it learns again (3
+  occasions on 2 days); the first teach after a boot rebinds a link when exactly one saved network has the name and the
+  saved networks' count is unchanged. It rides in the fix's extras to every report, the cached and
   kept fix, the queue, the shutdown fix and every renewal, which re-sends the vouch with the vouch's own check.
 - **Good satellites overrule a far Wi-Fi fix**: a `gps` fix of teaching quality (<= 25 m, >= 5 satellites) further than
   `max(500 m, 3 x both accuracies)` is kept and the attempt counts a disagreement; any other pair is the usual choice by
   accuracy.
-- **Still means still for every Wi-Fi fix**: while the phone is `STILL`, a Wi-Fi fix is compared with the last fresh
-  fix (a satellite or a checked one - an unchecked Wi-Fi fix is never fresh); outside both accuracies it is not reported,
-  GPS runs and a disagreement is counted. With no vouch, or `STILL_SINCE_TRY`, an unchecked fix runs GPS and is
+- **Still means still for every unchecked Wi-Fi fix**: while the phone is `STILL`, an unchecked Wi-Fi fix is compared
+  with the last fresh fix when that is satellites of teaching quality or a checked fix (an unchecked Wi-Fi fix is never
+  fresh); outside both accuracies it is not reported, GPS runs and a disagreement is counted. A `link`-checked fix
+  stands and may become the next vouch. With no vouch, or `STILL_SINCE_TRY`, an unchecked fix runs GPS and is
   reported unchecked only when GPS gives nothing.
 - **The jump from the last satellite fix** (kept across a reboot, its age by elapsed time in its boot, else the
-  decisions' clock): over 60 m/s the fix is refused and counted; over 8 m/s (60 m/s after a satellite fix faster than
+  decisions' clock; a satellite fix newer than the Wi-Fi fix judges nothing): over 60 m/s a fix without a link check
+  is refused and counted; over 8 m/s (60 m/s after a satellite fix faster than
   8 m/s in the last 15 min) an unchecked fix runs GPS, not counted.
-- **Bands and names**: a result heard on another band than its row's is left out and counted; one heard under another
+- **Bands and names**: a result heard on another band than its row's is left out, counted when two or more are or the
+  one would have carried the fix; one heard under another
   network name than its row's is left out, not counted.
 - **Locate** stops at 20 s only on a `link`-checked fix within 60 m; else GPS up to 60 s.
 - **`zone_watch.wifi_disagreed`**: a running count, at most one rise an attempt (and one per learned contradiction of a
   passive fix).
-- **Saved networks**: `setConfiguredNetworksLockdownState(true)` while managed (lifted with the override and the
-  pause): Android's screens can't change or forget a network Vibb saved; Vibb's own Wi-Fi page never edits one in
+- **Saved networks**: `setConfiguredNetworksLockdownState(true)` while managed or while the zones and Wi-Fi places
+  watch (its own plan flag, lifted with the override and the pause): Android's screens can't change or forget a network Vibb saved; Vibb's own Wi-Fi page never edits one in
   place.
 
 ## On the server (`zones.rs`, migration 0176)

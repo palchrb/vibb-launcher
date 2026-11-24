@@ -81,6 +81,9 @@ private const val KEY_LAST_GPS_TRY = "last_gps_try_ms"
 /** Design 131: the last satellite fix ([LastGnss]), kept across a reboot for the jump gate and the satellite check. */
 private const val KEY_LAST_GNSS = "last_gnss_v1"
 
+/** Design 131 (code QA M1): the boot and the saved networks' count at the last teach - `boot:count`. */
+private const val KEY_SAVED_NETWORKS = "saved_networks_v1"
+
 /** Design 125 step 2: the policy's switch as the last fresh policy said, the wait after an answer, a 409's "off". */
 private const val KEY_APPLE_ON = "apple_on"
 private const val KEY_APPLE_WAIT = "apple_wait_until_ms"
@@ -519,11 +522,11 @@ object WifiPlaces {
     private fun lookup(context: Context, store: Store, snap: Snapshot, movedAtElapsedMs: Long, disagreement: Disagreement? = null): LearnedFix? {
         val h = hearing(context, store, snap, remember = true)
         val view = scanView(h, SystemClock.elapsedRealtime(), movedAtElapsedMs)
-        if (view != null && bandDisagrees(view, store.rows)) {
-            Log.w(LOG_TAG, "a network heard on another band")
+        val now = nowMin()
+        if (view != null && bandDisagrees(view, store.rows, now)) {
+            Log.w(LOG_TAG, "networks heard on another band")
             disagreement?.mark()
         }
-        val now = nowMin()
         val fix = view?.let { learnedFix(it, store.rows, now) }?.takeUnless { cellVetoes(snap.cells, store.rows, it, now) }
         val table = store.rows.associateBy { it.id }
         val trusted = view?.heard.orEmpty().count { table[it.key]?.trusted(now) == true }
@@ -702,6 +705,29 @@ object WifiPlaces {
         time = System.currentTimeMillis() - (SystemClock.elapsedRealtime() - fix.elapsedMs)
     }.withFixCheck(check?.wire)
 
+    /**
+     * Design 131 (code QA M1): Android may number its saved networks anew at a boot, so the first teach after one may
+     * rebind a zone link of the same class ([rebindAllowed]: exactly one saved network has the connected name and the
+     * count is the last boot's). Every teach keeps this boot's count. The Device Owner reads the saved networks
+     * (`getConfiguredNetworks`, inside the Location window); unreadable: no rebind.
+     */
+    @Suppress("DEPRECATION", "MissingPermission")
+    private fun rebindAfterBoot(context: Context, ssid: String?): Boolean {
+        if (ssid.isNullOrEmpty()) return false
+        val configs = try {
+            wifi(context)?.configuredNetworks
+        } catch (e: Exception) {
+            null
+        } ?: return false
+        val boot = BootClock.bootCount()
+        val p = prefs(context)
+        val stored = p.getString(KEY_SAVED_NETWORKS, null)?.split(':')?.mapNotNull { it.toIntOrNull() }?.takeIf { it.size == 2 }
+        val now = "$boot:${configs.size}"
+        if (p.getString(KEY_SAVED_NETWORKS, null) != now) p.edit().putString(KEY_SAVED_NETWORKS, now).commit()
+        val named = configs.count { it.SSID?.removeSurrounding("\"") == ssid }
+        return rebindAllowed(stored?.get(0), stored?.get(1), boot, configs.size, named)
+    }
+
     // --- Design 131: the last satellite fix ---
 
     private fun lastGnss(context: Context): LastGnss? = try {
@@ -786,6 +812,7 @@ object WifiPlaces {
         // binding (design 131: a mesh node or a 6 GHz BSSID on it counts; saved anew, it learns again).
         val conn = linkConn(snap.connected, store.keys)
         val connectedNet = conn?.network
+        val rebind = conn != null && rebindAfterBoot(context, snap.connected?.ssid)
         // D16: what the table as it was said for the same results; a zone-link renewal's class by the connected network.
         val counts = mutableListOf<(DayCounts) -> DayCounts>()
         // D16 by class, and design 125's by source with the error: the same paired results, the table as it was.
@@ -818,7 +845,7 @@ object WifiPlaces {
             val acc = (best.accuracyM ?: TEACH_ACCURACY_MAX_M).toDouble()
             // Design 125 A9: an own teach beyond an Apple row's reach, or a trusted own row against it, tombstones it.
             val apple = reconcileAppleCells(appleCellTaught(reconcileApple(appleTaught(taught.rows, sightings, now), now), sightings, now), now)
-            teachLinks(apple, zones, best.lat, best.lng, acc, connectedNet, paired.map { it.network }.toSet(), now, today, conn?.binding ?: "")
+            teachLinks(apple, zones, best.lat, best.lng, acc, connectedNet, paired.map { it.network }.toSet(), now, today, conn?.binding ?: "", rebind)
         }
         outcome?.let { Log.i(LOG_TAG, "taught aps=${it.taught} new=${it.new} moved=${it.moved}") }
         return true
@@ -1015,20 +1042,19 @@ object WifiPlaces {
                     ask.renewed = true
                     ask.renewedByApple = true
                 }
-                fun asLocation(j: Judged): Location? = when (j.verdict.step) {
-                    WifiStep.USE -> report(j, j.check)
-                    WifiStep.RENEW -> renew()
-                    WifiStep.GPS, WifiStep.REFUSE -> null
-                }
+                // The order after the judging is the pure [attemptKeep]'s, every plan's.
                 fun keep(gps: Location?, j: Judged?): Location? {
-                    if (j == null || j.verdict.step == WifiStep.REFUSE) return gps
-                    val k = keepBetter(gps?.let(::teachFix), j.fix, j.check, release)
+                    val k = attemptKeep(plan, j?.verdict?.step, j?.fix, j?.check, gps?.let(::teachFix), release)
                     if (k.disagreed) {
                         Log.w(LOG_TAG, "satellites overruled a Wi-Fi fix")
                         disagreement.mark()
                     }
-                    if (!k.wifi) return gps
-                    return (if (j.verdict.step == WifiStep.RENEW) renew() else report(j, k.check)) ?: gps
+                    return when (k.kept) {
+                        Kept.GPS -> gps
+                        Kept.WIFI -> j?.let { report(it, k.check) } ?: gps
+                        Kept.RENEW -> renew() ?: gps
+                        Kept.NONE -> null
+                    }
                 }
                 val kept = when (plan) {
                     // The lookup runs on the first scan beside GPS (code QA L5): independent of what the GPS teaches.
@@ -1039,7 +1065,7 @@ object WifiPlaces {
                     AttemptPlan.LEARNED_FIRST -> {
                         val judged = judge(learned())
                         when {
-                            judged != null && (judged.verdict.step == WifiStep.USE || judged.verdict.step == WifiStep.RENEW) -> asLocation(judged)
+                            judged != null && !runsGps(plan, judged.verdict.step) -> keep(null, judged)
                             judged == null && renews(app, store, snap.await(), ask) -> ask.vouched.also { ask.renewed = true }
                             // Not standing alone, refused, or nothing: GPS (and Apple beside it on a miss) - TOGETHER's way.
                             else -> {
@@ -1050,8 +1076,8 @@ object WifiPlaces {
                     }
                     AttemptPlan.GPS_FIRST -> {
                         val early = async { judge(learned() ?: appleFix()) }
-                        // GPS gave nothing: a fix that needed GPS is reported unchecked.
-                        gps(GPS_MS) ?: early.await()?.let { j -> if (j.verdict.step == WifiStep.GPS) report(j, j.check) else asLocation(j) }
+                        val satellites = gps(GPS_MS)
+                        keep(satellites, early.await())
                     }
                     AttemptPlan.LOCATE -> {
                         val early = async { judge(learned() ?: appleFix()) }

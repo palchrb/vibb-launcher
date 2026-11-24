@@ -83,6 +83,9 @@ data class EnforcementPlan(
     /** `UserManager.DISALLOW_CREATE_WINDOWS` while a screen-time budget is set (QA step 6 #2:
      * overlay windows over our free screens would be uncounted use). Lifted by an override. */
     val restrictCreateWindows: Boolean = false,
+    /** Design 131 D11: the networks Vibb saved are locked (`setConfiguredNetworksLockdownState`) while managed, or
+     * while the zones or the Wi-Fi places watch the phone (Regularly); lifted by an override and the pause. */
+    val lockSavedNetworks: Boolean = false,
     /** `UserManager.DISALLOW_CONFIG_TETHERING` while apps are managed and no window is open
      * (design 24b §1.5): setting it untethers, so a hotspot turned on in a window goes at the relock. */
     val restrictTethering: Boolean = false,
@@ -219,6 +222,8 @@ fun computeEnforcementPlan(
     androidAutoInstalled: Boolean = false,
     /** The policy's `allow_android_auto`: Android Auto is left to the usual rules. */
     allowAndroidAuto: Boolean = false,
+    /** Design 131 D11: the zones or the Wi-Fi places watch the phone (the location policy's Regularly). */
+    locationWatched: Boolean = false,
 ): EnforcementPlan {
     val neverRestrict = setOfNotNull(ownPackage, systemDialer, recentsPackage, emergencySos, webViewProvider) + inputMethods + PLAY_NEVER_RESTRICT
     val features = lockTaskFeatures(serverLockTaskFeatures, blockActivityStart)
@@ -322,6 +327,8 @@ fun computeEnforcementPlan(
         suspendSmsApps = suspendSmsApps,
         denyCallPermissions = callState.managed,
         restrictCreateWindows = budgetSet && !overrideActive,
+        lockSavedNetworks = (allowlist != null || callState.managed || smsMode != ChannelMode.UNMANAGED || timeRulesSet || locationWatched) &&
+            !overrideActive,
         restrictTethering = appsManaged,
         permittedAccessibility = allowed.sorted().takeIf { allowlist != null },
         permittedInputMethods = allowed.sorted().takeIf { appsManaged },

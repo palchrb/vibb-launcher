@@ -1054,16 +1054,23 @@ class PlacesTest {
         val table = listOf(learned(1, 0.0, 0.0, freq = 5180), learned(2, 30.0, 0.0, freq = 5180), learned(3, 0.0, 30.0, freq = 5180))
         val right = scanView(hear(scan(1 to -50, 2 to -55, 3 to -60, at = 100_000, freq = 5180), null, keys, moving, emptyMap(), 100_000), 100_000, 0)!!
         assertTrue(learnedFix(right, table, 0) != null)
-        assertFalse(bandDisagrees(right, table))
+        assertFalse(bandDisagrees(right, table, 0))
         // A row learned at 5 GHz heard at 2412 MHz: left out, and the attempt disagreed.
         val wrong = scanView(hear(scan(1 to -50, 2 to -55, 3 to -60, at = 100_000, freq = 2412), null, keys, moving, emptyMap(), 100_000), 100_000, 0)!!
         assertNull(learnedFix(wrong, table, 0))
-        assertTrue(bandDisagrees(wrong, table))
+        assertTrue("three rows on another band", bandDisagrees(wrong, table, 0))
+        // Code QA L1: one row on another band is noise unless it carried the fix.
+        val four = table + learned(4, 30.0, 30.0, freq = 5180)
+        val oneOff = scanView(hear(scan(1 to -50, 2 to -55, 3 to -60, at = 100_000, freq = 5180) + scan(4 to -65, at = 100_000, freq = 2412), null, keys, moving, emptyMap(), 100_000), 100_000, 0)!!
+        assertTrue(learnedFix(oneOff, four, 0) != null)
+        assertFalse(bandDisagrees(oneOff, four, 0))
+        val carried = scanView(hear(scan(1 to -50, at = 100_000, freq = 5180) + scan(4 to -65, at = 100_000, freq = 2412), null, keys, moving, emptyMap(), 100_000), 100_000, 0)
+        if (carried != null) assertTrue(bandDisagrees(carried, four, 0) == (learnedFix(carried, four, 0, checkBand = false) != null))
         // Heard under another name than its row's: left out, not counted (a renamed router).
         val renamed = view(1 to -50, 2 to -55, 3 to -60, ssid = { if (it == 1) "Annet" else "Hus$it" })
         val learned24 = listOf(learned(1, 0.0, 0.0), learned(2, 30.0, 0.0), learned(3, 0.0, 30.0))
         assertEquals(setOf(2, 3).map { keys.ap(mac(it)) }.toSet(), learnedFix(renamed, learned24, 0)!!.keys)
-        assertFalse(bandDisagrees(renamed, learned24))
+        assertFalse(bandDisagrees(renamed, learned24, 0))
         // A hidden SSID has no name to compare.
         val hidden = view(1 to -50, 2 to -55, 3 to -60, ssid = { if (it == 1) "" else "Hus$it" })
         assertEquals(3, learnedFix(hidden, learned24, 0)!!.keys.size)
@@ -1082,7 +1089,13 @@ class PlacesTest {
         fun conn(bssid: String = mac(1), ssid: String = "Hjemme", security: LinkSecurity = LinkSecurity.PSK, id: Int = 7, unmetered: Boolean = true) =
             linkConn(Connected(bssid, ssid, -45, 5180, unmetered, security, id), keys)
         assertTrue("PSK, the same id and type", linkConfirms(fix, conn(), rows, linkZones, now))
+        // Code QA H1: the same saved network negotiated as WPA3 (a mesh node, another band): still the link.
+        assertTrue("the same id seen as SAE", linkConfirms(fix, conn(security = LinkSecurity.SAE), rows, linkZones, now))
+        // Code QA M1: no network id is no link - neither checked nor taught.
+        assertNull(conn(id = -1))
+        assertFalse(linkConfirms(fix, conn(id = -1), rows, linkZones, now))
         assertFalse("the same name saved anew (a new id)", linkConfirms(fix, conn(security = LinkSecurity.SAE, id = 9), rows, linkZones, now))
+        assertFalse("another class (enterprise)", linkConfirms(fix, conn(security = LinkSecurity.EAP), rows, linkZones, now))
         assertFalse("a new id", linkConfirms(fix, conn(id = 8), rows, linkZones, now))
         assertFalse("open or OWE", linkConfirms(fix, conn(security = LinkSecurity.OTHER), rows, linkZones, now))
         assertFalse("metered", linkConfirms(fix, conn(unmetered = false), rows, linkZones, now))
@@ -1100,6 +1113,18 @@ class PlacesTest {
         val again = teachLinks(rows, linkZones, lat0, lng0, 10.0, net, setOf(net), now, 20002, other)
         assertEquals(1, again.single().occasions)
         assertFalse(again.single().linked(now))
+        // Code QA M1: the first teach after a boot rebinds a row of the same class, its occasions kept; another class
+        // starts over.
+        val rebound = teachLinks(rows, linkZones, lat0, lng0, 10.0, net, setOf(net), now, 20002, other, rebind = true)
+        assertTrue(rebound.single().linked(now))
+        assertEquals(other, rebound.single().device)
+        val otherClass = teachLinks(rows, linkZones, lat0, lng0, 10.0, net, setOf(net), now, 20002, keys.binding(LinkSecurity.EAP, 8), rebind = true)
+        assertFalse(otherClass.single().linked(now))
+        assertTrue(rebindAllowed(lastBoot = 4, lastCount = 6, boot = 5, count = 6, named = 1))
+        assertFalse("not the first teach of the boot", rebindAllowed(5, 6, 5, 6, 1))
+        assertFalse("a network forgotten or added", rebindAllowed(4, 6, 5, 7, 1))
+        assertFalse("two saved networks of that name", rebindAllowed(4, 6, 5, 6, 2))
+        assertFalse("nothing known before", rebindAllowed(null, null, 5, 6, 1))
         val v = Vouched(north(20.0), lng0, 15.0)
         assertTrue(linkRenews(rows, linkZones, v, net, still = true, refreshDue = false, nowMin = now, binding = binding))
         assertFalse(linkRenews(rows, linkZones, v, net, still = true, refreshDue = false, nowMin = now, binding = other))
@@ -1117,7 +1142,8 @@ class PlacesTest {
         val far = atHome.map { it.copy(frequencyMhz = 2412, rssi = -50) }
         val friend = Connected("00:00:5e:00:53:f0", "Venn", -40, 2437, true, LinkSecurity.PSK, 3)
         val view = scanView(hear(far, friend, keys, moving, emptyMap(), 1_000), 1_000, 0)!!
-        assertTrue("the 5 GHz rows heard at 2.4 GHz", bandDisagrees(view, table))
+        // Code QA L1: counted when two or more rows are on another band, or the one would have carried the fix.
+        if (atHome.count { it.frequencyMhz >= 5000 } >= 2) assertTrue("the 5 GHz rows heard at 2.4 GHz", bandDisagrees(view, table, now))
         val fix = learnedFix(view, table, now)
         val fiveGhz = atHome.filter { it.frequencyMhz >= 5000 }.map { keys.ap(normalBssid(it.bssid)!!) }.toSet()
         assertTrue("the 5 GHz rows left out", fix == null || fix.keys.none { it in fiveGhz })
@@ -1161,7 +1187,7 @@ class PlacesTest {
         assertTrue(locate.contains("}.withFixCheck(cached.check)"))
         val sync = source("server/MdmSyncWorker.kt")
         assertTrue(sync.contains("time = q.timeMs\n    }.withFixCheck(q.check)"))
-        assertTrue(source("zones/ZoneWatch.kt").contains("    check = fixCheck(),\n)"))
+        assertTrue(source("zones/ZoneWatch.kt").contains("    check = fixCheck(),\n    satellites = "))
         assertTrue(source("server/PowerEvents.kt").contains("check = newest.check,"))
         val glue = source("places/WifiPlaces.kt")
         // An unchecked Wi-Fi fix never stamps the fresh fix; one rise an attempt.
@@ -1169,5 +1195,52 @@ class PlacesTest {
         assertEquals(1, Regex("""ZoneWatch\.countWifiDisagreed\(app, disagreement\.rise\(\)\)""").findAll(glue).count())
         // The renewal re-sends the vouch as it is.
         assertTrue(glue.contains("fun renew(): Location? = ask.stillVouch.also {"))
+    }
+
+    @Test
+    fun `design 131 - the still vouch, a backwards jump, the order after the judging`() {
+        // Code QA H2: a still vouch is satellites of teaching quality or a checked Wi-Fi fix.
+        assertTrue(stillVouchQualifies("gps", 12f, 8, null, false, true))
+        assertFalse("a poor indoor satellite fix", stillVouchQualifies("gps", 40f, 8, null, false, true))
+        assertFalse("too few satellites", stillVouchQualifies("gps", 12f, 3, null, false, true))
+        assertFalse("satellites unknown", stillVouchQualifies("gps", 12f, null, null, false, true))
+        assertFalse("fused", stillVouchQualifies("fused", 5f, 8, null, false, true))
+        assertTrue(stillVouchQualifies(PROVIDER_WIFI, 40f, null, "link", false, true))
+        assertFalse("the Wi-Fi alone", stillVouchQualifies(PROVIDER_WIFI, 40f, null, null, false, true))
+        // Code QA L3: a satellite fix newer than the Wi-Fi fix (its results heard before it) judges no jump.
+        val fix = LearnedFix(lat0, lng0, 40.0, 3, 1_000_000, true, emptySet())
+        val newer = LastGnss(north(8000.0), lng0, 10.0, null, 0, 1_060_000, 7)
+        assertEquals(Jump.NONE, jumpGate(fix, newer, 0, 1_100_000, 7))
+        assertEquals(Jump.IMPOSSIBLE, jumpGate(fix, newer.copy(elapsedMs = 900_000), 0, 1_100_000, 7))
+        // The order after the judging, per plan.
+        val far = TeachFix(north(3000.0), lng0, 12f, 0f, 1_000_000, "gps", 8, false)
+        val near = TeachFix(north(30.0), lng0, 45f, 0f, 1_000_000, "gps", 4, false)
+        fun keep(plan: AttemptPlan, step: WifiStep, gps: TeachFix?, check: FixCheck? = null) = attemptKeep(plan, step, fix, check, gps, true)
+        assertEquals(AttemptKeep(Kept.GPS, disagreed = true), keep(AttemptPlan.TOGETHER, WifiStep.USE, far))
+        assertEquals(AttemptKeep(Kept.WIFI, FixCheck.GNSS), keep(AttemptPlan.TOGETHER, WifiStep.USE, near))
+        assertEquals(AttemptKeep(Kept.WIFI), keep(AttemptPlan.TOGETHER, WifiStep.GPS, null))
+        assertEquals(AttemptKeep(Kept.NONE), keep(AttemptPlan.TOGETHER, WifiStep.REFUSE, null))
+        assertEquals(AttemptKeep(Kept.GPS), keep(AttemptPlan.TOGETHER, WifiStep.REFUSE, near))
+        // LEARNED_FIRST: a used fix runs no GPS; its else branch keeps as TOGETHER does.
+        assertFalse(runsGps(AttemptPlan.LEARNED_FIRST, WifiStep.USE))
+        assertFalse(runsGps(AttemptPlan.LEARNED_FIRST, WifiStep.RENEW))
+        assertTrue(runsGps(AttemptPlan.LEARNED_FIRST, WifiStep.GPS))
+        assertTrue(runsGps(AttemptPlan.LEARNED_FIRST, null))
+        assertEquals(AttemptKeep(Kept.WIFI, FixCheck.LINK), keep(AttemptPlan.LEARNED_FIRST, WifiStep.USE, null, FixCheck.LINK))
+        assertEquals(AttemptKeep(Kept.RENEW), keep(AttemptPlan.LEARNED_FIRST, WifiStep.RENEW, null))
+        assertEquals(AttemptKeep(Kept.GPS, disagreed = true), keep(AttemptPlan.LEARNED_FIRST, WifiStep.GPS, far))
+        assertEquals(AttemptKeep(Kept.WIFI), keep(AttemptPlan.LEARNED_FIRST, WifiStep.GPS, null))
+        assertEquals(AttemptKeep(Kept.GPS), keep(AttemptPlan.LEARNED_FIRST, WifiStep.REFUSE, near))
+        // GPS_FIRST: GPS when it came (no D1 count), else the fix - unchecked when it needed GPS.
+        assertEquals(AttemptKeep(Kept.GPS), keep(AttemptPlan.GPS_FIRST, WifiStep.USE, far))
+        assertEquals(AttemptKeep(Kept.WIFI), keep(AttemptPlan.GPS_FIRST, WifiStep.GPS, null))
+        assertEquals(AttemptKeep(Kept.NONE), keep(AttemptPlan.GPS_FIRST, WifiStep.REFUSE, null))
+        assertEquals(AttemptKeep(Kept.RENEW), keep(AttemptPlan.GPS_FIRST, WifiStep.RENEW, null))
+        // LOCATE: stops short on a link fix only; then keeps as TOGETHER does.
+        assertTrue(locateStopsShort(fix, FixCheck.LINK))
+        assertFalse(locateStopsShort(fix, null))
+        assertEquals(AttemptKeep(Kept.WIFI, FixCheck.LINK), keep(AttemptPlan.LOCATE, WifiStep.USE, null, FixCheck.LINK))
+        assertEquals(AttemptKeep(Kept.GPS, disagreed = true), keep(AttemptPlan.LOCATE, WifiStep.USE, far))
+        assertEquals(AttemptKeep(Kept.NONE), attemptKeep(AttemptPlan.LOCATE, null, null, null, null, true))
     }
 }

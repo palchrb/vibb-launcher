@@ -474,6 +474,11 @@ fun Location.toQueued(provider: String? = this.provider): QueuedFix = QueuedFix(
     elapsedMs = elapsedRealtimeNanos.takeIf { it > 0 }?.let { it / 1_000_000L },
     bootCount = com.kidslauncher.mdm.server.BootClock.bootCount(),
     check = fixCheck(),
+    satellites = try {
+        extras?.getInt("satellites", -1)?.takeIf { it >= 0 }
+    } catch (e: Exception) {
+        null
+    },
 )
 
 /** Design 131: the extra a Wi-Fi fix carries its check in (`gnss`, `link`) from the attempt to the report. */
