@@ -7,6 +7,7 @@ mod app_icons;
 mod app_logos;
 mod app_permissions;
 mod attention;
+mod attestation;
 mod audit;
 mod blocked_numbers;
 mod boot_witness;
@@ -19,6 +20,7 @@ mod catalog_holds;
 mod clock_skew;
 mod config;
 mod crashes;
+mod device_key;
 mod device_routes;
 mod display_time;
 mod dns_engine;
@@ -202,6 +204,9 @@ pub struct AppState {
     /// `token_hash -> device id`, so a token check never touches the database
     /// (`security::TokenIndex`).
     pub tokens: std::sync::Arc<security::TokenIndex>,
+    /// The phones' hardware keys (design 129): the key index, the signature clock, the nonces and Google's
+    /// revocation list, in memory (`device_key::DeviceKeys`).
+    pub device_keys: std::sync::Arc<device_key::DeviceKeys>,
     /// Whether a typed enrollment code is live, and the typed-code pause (`enrollment`).
     pub enrollment: std::sync::Arc<enrollment::Enrollment>,
     /// argon2 off the async workers, one at a time with a short queue (`admin_auth`).
@@ -497,6 +502,7 @@ async fn main() {
     }
 
     let (command_notify, _) = tokio::sync::broadcast::channel(64);
+    let db_for_keys = db.clone();
     let state = AppState {
         db,
         session_cookie: security::session_cookie_name(insecure_cookies),
@@ -536,6 +542,13 @@ async fn main() {
         audit: Default::default(),
         limits: Default::default(),
         tokens: Default::default(),
+        // Design 129 §4.3: the signature clock never steps back across a restart.
+        device_keys: std::sync::Arc::new(device_key::DeviceKeys::with_clock(
+            device_key::SigClock::starting(
+                device_key::stored_clock(&db_for_keys).await,
+                chrono::Utc::now().timestamp_millis(),
+            ),
+        )),
         enrollment: Default::default(),
         passwords: Default::default(),
         passkeys: std::sync::Arc::new(passkeys::Passkeys::new(passkey_config)),
@@ -563,6 +576,20 @@ async fn main() {
         .reload(&state.db)
         .await
         .expect("failed to read the device tokens");
+    state
+        .device_keys
+        .index
+        .reload(&state.db)
+        .await
+        .expect("failed to read the device keys");
+    // Design 129 §3 item 10: without the launcher's certificate no phone key can be checked.
+    if attestation::signature_digest(state.config.launcher_signature_checksum.as_deref()).is_none()
+    {
+        tracing::warn!(
+            "LAUNCHER_SIGNATURE_CHECKSUM is not set: every phone key registration is refused (the phones keep \
+             their bearer token)"
+        );
+    }
     state.enrollment.refresh(&state.db).await;
     dns_engine::compile_blocklist(&state, &state.dns_compiled).await;
     // After a restore the database may name photos or wallpapers that aren't on disk: take them
@@ -625,6 +652,12 @@ async fn main() {
     tokio::task::spawn(push::run_sender(state.clone()));
     // The server's own clock against GitHub's, at the start and every 10 minutes (`clock_skew::run_check`).
     tokio::task::spawn(clock_skew::run_check(state.config.github_api.clone()));
+    // Design 129: the signature clock written every 10 s; Google's attestation status list fetched now and then.
+    tokio::task::spawn(device_key::run_clock_writer(state.clone()));
+    tokio::task::spawn(attestation::status_list::run(
+        state.clone(),
+        attestation::status_list::URL.to_string(),
+    ));
 
     serve(state, session_layer).await;
 }
@@ -704,6 +737,7 @@ async fn run_command(command: &str, args: &[String]) -> i32 {
 /// flight get [SHUTDOWN_GRACE] to finish.
 async fn serve(state: AppState, session_layer: SessionManagerLayer<SqliteStore>) {
     let net = state.net.clone();
+    let clock_state = state.clone();
     tracing::info!("{}", net.exposure_line());
     tracing::info!("{}", state.passkeys.config.startup_line());
     for warning in net.startup_warnings() {
@@ -790,6 +824,8 @@ async fn serve(state: AppState, session_layer: SessionManagerLayer<SqliteStore>)
             }
         }
     }
+    // Design 129 §4.3: the signature clock's last value, so no `t` accepted before this stop is accepted after it.
+    device_key::store_clock(&clock_state).await;
     // Idle connections close at once; a background task's query gets a moment to finish.
     let _ = tokio::time::timeout(std::time::Duration::from_secs(2), db.close()).await;
 }

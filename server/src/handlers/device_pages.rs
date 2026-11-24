@@ -559,6 +559,103 @@ fn connection_rows(
     rows
 }
 
+/// About This Phone's "Sign-in" row (design 129 S1, §9.1): a quiet value in every state - "Older sign-in", "Hardware
+/// key" (what the attestation said behind the ⓘ: step 0 reads the Jelly Star's verdict here), "Key refused (reason)"
+/// or "Another key registered". Nothing is orange in S1: the parent can't act on it yet.
+async fn key_row(state: &AppState, id: i64, lang: Lang) -> Result<Row, sqlx::Error> {
+    let label = t(lang, "device.about.key");
+    let (refused, conflict): (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT key_refused_reason, key_conflict_at FROM devices WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await?
+            .unwrap_or_default();
+    if conflict.is_some() {
+        return Ok(Row::new("key", label, t(lang, "device.about.key.conflict")));
+    }
+    if let Some(key) = crate::device_key::current_key(&state.db, id).await? {
+        return Ok(Row::new("key", label, t(lang, "device.about.key.hardware"))
+            .detail(Some(key_detail(&key, lang))));
+    }
+    if let Some(reason) = refused
+        .as_deref()
+        .and_then(crate::attestation::Refusal::from_word)
+    {
+        return Ok(Row::new(
+            "key",
+            label,
+            t_params(
+                lang,
+                "device.about.key.refused",
+                &[("reason", t(lang, key_reason(reason)))],
+            ),
+        ));
+    }
+    Ok(Row::new("key", label, t(lang, "device.about.key.none")))
+}
+
+/// What the key's attestation said (§3 item 12), for the ⓘ.
+fn key_detail(key: &crate::device_key::StoredKey, lang: Lang) -> String {
+    let level = match key.security_level.as_str() {
+        "strongbox" => "device.about.key.level.strongbox",
+        _ => "device.about.key.level.tee",
+    };
+    let system = match key.reading() {
+        crate::attestation::boot::Reading::Verified => "device.about.key.system.verified",
+        crate::attestation::boot::Reading::GrapheneOs => "device.about.key.system.grapheneos",
+        crate::attestation::boot::Reading::Unknown => "device.about.key.system.unknown",
+    };
+    let root = match key.root.as_str() {
+        "google_ec_ca1" => "device.about.key.root.google_ec_ca1",
+        _ => "device.about.key.root.google_rsa",
+    };
+    let revoked = if key.revoked_at.is_some() {
+        "device.about.key.revoked"
+    } else {
+        "device.about.key.not_revoked"
+    };
+    let signed = if key.last_signed_at.is_some() {
+        "device.about.key.signed"
+    } else {
+        "device.about.key.not_signed"
+    };
+    let patch = key
+        .os_patch_level
+        .map(|p| format!("{}-{:02}", p / 100, p % 100))
+        .unwrap_or_else(|| "?".to_string());
+    let detail = t_params(
+        lang,
+        "device.about.key.detail",
+        &[
+            ("level", t(lang, level)),
+            ("version", &key.attestation_version.to_string()),
+            ("patch", &patch),
+            ("system", t(lang, system)),
+            ("root", t(lang, root)),
+            ("revoked", t(lang, revoked)),
+            ("signed", t(lang, signed)),
+        ],
+    );
+    if key.unusual {
+        format!("{detail} {}", t(lang, "device.about.key.unusual"))
+    } else {
+        detail
+    }
+}
+
+/// A refusal's words (§9.1's `{reason}`): `chain`/`root` one, `revoked`, `software`, `app`, `boot`, the rest "invalid".
+pub(crate) fn key_reason(refusal: crate::attestation::Refusal) -> &'static str {
+    use crate::attestation::Refusal;
+    match refusal {
+        Refusal::Chain | Refusal::Root => "device.about.key.reason.issuer",
+        Refusal::Revoked => "device.about.key.reason.revoked",
+        Refusal::Software => "device.about.key.reason.software",
+        Refusal::App => "device.about.key.reason.app",
+        Refusal::Boot => "device.about.key.reason.boot",
+        _ => "device.about.key.reason.invalid",
+    }
+}
+
 /// GET `/devices/{id}/about`: About This Phone.
 pub async fn view_about(
     State(state): State<AppState>,
@@ -599,6 +696,14 @@ pub async fn view_about(
         &zone,
         now,
     );
+    let mut connection_rows = connection_rows;
+    // Design 129 S1 §9.1: the phone's sign-in as a quiet value - the parent can't act on it yet.
+    if device.enrolled_at.is_some() {
+        match key_row(&state, id, lang).await {
+            Ok(row) => connection_rows.push(row),
+            Err(err) => return read_failed(lang, id, "the phone's key", err),
+        }
+    }
 
     let mut sound = Vec::new();
     let mut software = Vec::new();

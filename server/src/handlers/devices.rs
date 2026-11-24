@@ -846,6 +846,8 @@ pub async fn revoke_access(
         }
     };
     state.tokens.refresh(&state.db, id, None).await;
+    // Design 129: the phone's hardware key stops signing with its bearer.
+    crate::device_key::remove_keys(&state, id).await;
     state.command_streams.close_device(id);
     security::record_security_event(
         &state.db,
@@ -4147,6 +4149,9 @@ pub async fn delete_device(
     // Its token stops working and its open command streams end (design 22 QA d: auth is checked
     // only when a stream opens).
     state.tokens.refresh(&state.db, id, None).await;
+    // Design 129: its keys went with the row (ON DELETE CASCADE); the index follows.
+    state.device_keys.index.refresh(&state.db, id).await;
+    state.device_keys.forget_device(id);
     state.command_streams.close_device(id);
     state.limits.forget_device(id);
     // device_contacts rows went with the device (ON DELETE CASCADE); drop address-book entries

@@ -1307,12 +1307,22 @@ pub struct InstalledApp {
 #[derive(Deserialize)]
 pub struct EnrollRequest {
     pub enrollment_code: String,
+    /// Design 129 §5.1: the new key's attestation chain (standard Base64 DER, leaf first) and its proof
+    /// (Base64url DER ECDSA over `vibb-key-v1\n<challenge>\nenroll`). A launcher without a key sends neither.
+    #[serde(default)]
+    pub chain: Option<Vec<String>>,
+    #[serde(default)]
+    pub proof: Option<String>,
 }
 
 #[derive(Serialize)]
 pub struct EnrollResponse {
     pub device_id: i64,
     pub device_token: String,
+    /// Design 129 S1: `{key_id, state: "observed"}`, or `{state: "refused", reason}` (and `retry_after_s` for
+    /// `list_stale`) - the phone enrols on the bearer either way. Absent when no chain came.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key: Option<serde_json::Value>,
 }
 
 #[derive(Serialize)]
@@ -1455,6 +1465,10 @@ pub struct PolicyResponse {
     /// Design 114 §4.3: `{"ticked": [keys]}`, always sent - the parent steps ticked in the PWA or on the phone, which
     /// the phone leaves out of its flow and its count. Pinned by `policy_json_keys_snapshot`.
     pub setup: crate::setup_status::SetupPolicy,
+    /// Design 129 §5.5: the phone's hardware key, `{state, key_id?, spki_sha256?, rotate}` (`device_key::key_answer`),
+    /// always sent - only a nudge: `GET /api/devices/key`'s answer is what the phone acts on. Pinned by
+    /// `policy_json_keys_snapshot`.
+    pub device_key: serde_json::Value,
     /// The integrations' keys (`integrations::Integrations::policy`), each at the top level: design 110's `map_links`
     /// (always sent).
     #[serde(flatten)]

@@ -31,6 +31,8 @@ struct SettingsHubTemplate {
     values: HubValues,
     /// The bell and the Notifications row's "3 unread" (design 35 §5.1).
     bell: crate::parent_events::Bell,
+    /// Design 129 §3 item 3: Google's attestation status list is over a week old - new phone keys wait for it.
+    key_list_stale: bool,
 }
 crate::i18n::words!(SettingsHubTemplate);
 
@@ -76,6 +78,7 @@ pub async fn settings_hub(
             title: t(lang, "nav.settings").to_string(),
             values,
             bell: crate::parent_events::Bell::load(&state.db, admin.id).await,
+            key_list_stale: state.device_keys.status.stale_line(Utc::now()),
         }
         .render()
         .unwrap(),

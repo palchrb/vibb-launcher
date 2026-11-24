@@ -340,6 +340,7 @@ async fn policy_json_keys_snapshot() {
             "calendar",
             "call_policy",
             "captive_portal",
+            "device_key",
             "dns_filter_version",
             "dns_log_enabled",
             "dns_upstream",
@@ -390,6 +391,7 @@ async fn policy_json_keys_snapshot() {
         "calendar",
         "call_policy",
         "captive_portal",
+        "device_key",
         "dns_filter_version",
         "dns_log_enabled",
         "dns_upstream_provider",
@@ -451,6 +453,12 @@ async fn policy_json_keys_snapshot() {
     // Design 125 A2: `wifi_lookup`, `{on}`, off for a new phone; every row in `integrations::wifi_lookup::tests`
     // (`wifi_lookup/contract.json`'s `policy`).
     assert_eq!(object["wifi_lookup"], serde_json::json!({"on": false}));
+    // Design 129 §5.5: `device_key`, `{state, key_id?, spki_sha256?, rotate}`, `none` for a phone without a key; every
+    // row in `tests::device_key` (`device_key.json`'s `policy`).
+    assert_eq!(
+        object["device_key"],
+        serde_json::json!({"state": "none", "rotate": false})
+    );
 
     // The launcher's CallPolicy DTO: every key present and non-null, also when unmanaged.
     let call_policy = object["call_policy"].as_object().unwrap();

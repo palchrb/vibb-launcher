@@ -1,0 +1,7 @@
+{
+  "entries": {
+    "2c85cdc15c3042f25698906669c35137": {"status": "REVOKED", "reason": "KEY_COMPROMISE"},
+    "f165849ef08b4658dd0a8ab95be53006": {"status": "SUSPENDED"},
+    "c0ffee": {"status": "REVOKED"}
+  }
+}

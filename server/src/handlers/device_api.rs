@@ -93,57 +93,96 @@ pub async fn enroll(
         }
     }
 
+    // Design 129 §5.1 (M4): a key's chain is checked first, with no database - the challenge comes from the code.
+    let key_check = req.chain.as_ref().map(|chain| {
+        crate::device_key::routes::check(
+            &state,
+            chain,
+            &crate::attestation::enroll_challenge(&code),
+            "enroll",
+            req.proof.as_deref().unwrap_or_default(),
+        )
+    });
+    let key_spki = match &key_check {
+        Some(Ok(attested)) => Some(crate::attestation::spki_sha256(&attested.spki)),
+        _ => None,
+    };
+    let refused_reason = match &key_check {
+        Some(Err(refusal)) if *refusal != crate::attestation::Refusal::ListStale => {
+            Some(refusal.word())
+        }
+        _ => None,
+    };
+
     let token = security::generate_device_token();
     let token_hash = security::hash_token(&token);
+    // The code that consumed with a key keeps that key's SPKI until its own expiry: a lost answer can be asked for
+    // again (§5.1). SQLite's SET reads the row as it was, so the code's hash and expiry are kept before they're
+    // cleared.
     let enrolled: Result<Option<(i64, String)>, sqlx::Error> = sqlx::query_as(
-        "UPDATE devices SET token_hash = ?, enrollment_code_hash = NULL, \
+        "UPDATE devices SET token_hash = ?1, \
+         enroll_used_code_hash = CASE WHEN ?3 IS NULL THEN NULL ELSE enrollment_code_hash END, \
+         enroll_used_expires_at = CASE WHEN ?3 IS NULL THEN NULL ELSE enrollment_code_expires_at END, \
+         enroll_used_spki_sha256 = ?3, key_refused_reason = ?4, \
+         key_refused_at = CASE WHEN ?4 IS NULL THEN NULL ELSE datetime('now') END, key_conflict_at = NULL, \
+         enrollment_code_hash = NULL, \
          enrollment_code_kind = NULL, enrollment_code_expires_at = NULL, \
          enrolled_at = datetime('now'), mock_logged = NULL, mock_logged_at = NULL \
-         WHERE enrollment_code_hash = ? AND enrollment_code_expires_at > datetime('now') \
+         WHERE enrollment_code_hash = ?2 AND enrollment_code_expires_at > datetime('now') \
          RETURNING id, name",
     )
     .bind(&token_hash)
     .bind(enrollment::code_hash(&code))
+    .bind(key_spki.as_deref())
+    .bind(refused_reason)
     .fetch_optional(&state.db)
     .await;
 
     let (device_id, name) = match enrolled {
         Ok(Some(device)) => device,
-        Ok(None) => {
-            let mut detail = security::Detail::words(
-                match kind {
-                    Kind::Typed => "security.detail.enroll_failed.typed",
-                    Kind::Qr => "security.detail.enroll_failed.qr",
-                },
-                &[],
-            );
-            if kind == Kind::Typed {
-                if state.limits.ip_failed(&key) {
-                    detail = detail.and("security.detail.client_refused", &[]);
+        Ok(None) if key_spki.is_some() => {
+            // A lost answer (§5.1): the same code with the same key, within the code's own life, gets the same
+            // answer again - a new bearer (the server keeps only its hash, and the phone never got the first).
+            match repeat_enrolment(
+                &state,
+                &code,
+                key_spki.as_deref().unwrap_or_default(),
+                &token_hash,
+            )
+            .await
+            {
+                Ok(Some(device_id)) => {
+                    state
+                        .tokens
+                        .refresh(&state.db, device_id, Some(&token_hash))
+                        .await;
+                    state.command_streams.close_device(device_id);
+                    let key = crate::device_key::current_key(&state.db, device_id)
+                        .await
+                        .ok()
+                        .flatten();
+                    return Json(EnrollResponse {
+                        device_id,
+                        device_token: token,
+                        key: Some(match key {
+                            Some(key) => {
+                                serde_json::json!({ "key_id": key.key_id, "state": key.state })
+                            }
+                            None => serde_json::json!({ "state": "none" }),
+                        }),
+                    })
+                    .into_response();
                 }
-                if state.enrollment.typed_failed(now) {
-                    security::record_security_event(
-                        &state.db,
-                        "enroll_typed_paused",
-                        None,
-                        Some(&ip),
-                        Some(
-                            security::Detail::words(
-                                "security.detail.enroll_typed_paused",
-                                &[("count", &enrollment::TYPED_PAUSE_FAILURES.to_string())],
-                            )
-                            .at("until", enrollment::end_of_hour(now)),
-                        ),
-                    )
-                    .await;
+                Ok(None) => {
+                    return enroll_failed(&state, kind, &key, &ip, now).await;
+                }
+                Err(err) => {
+                    tracing::error!(%err, "enrollment failed");
+                    return StatusCode::INTERNAL_SERVER_ERROR.into_response();
                 }
             }
-            state
-                .audit
-                .record(&state.db, "enroll_failed", &key, Some(&ip), detail)
-                .await;
-            return unauthorized();
         }
+        Ok(None) => return enroll_failed(&state, kind, &key, &ip, now).await,
         Err(err) => {
             tracing::error!(%err, "enrollment failed");
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
@@ -186,11 +225,139 @@ pub async fn enroll(
     security::record_security_event(&state.db, "device_enrolled", None, Some(&ip), Some(detail))
         .await;
 
+    // Design 129 §5.1, S1: the new phone's key (the old phone's keys and addresses go), or why not - the phone enrols on
+    // its bearer either way.
+    let key_answer = match key_check {
+        None => {
+            crate::device_key::remove_keys(&state, device_id).await;
+            None
+        }
+        Some(Ok(attested)) => Some(
+            match store_enrolled_key(&state, device_id, &attested, &client.key()).await {
+                Ok(key_id) => {
+                    crate::device_key::routes::log_bound(
+                        &state, device_id, &client, false, "enroll",
+                    )
+                    .await;
+                    serde_json::json!({ "key_id": key_id, "state": "observed" })
+                }
+                Err(err) => {
+                    tracing::error!(device_id, %err, "can't store the enrolled phone's key");
+                    serde_json::json!({ "state": "none" })
+                }
+            },
+        ),
+        Some(Err(refusal)) => {
+            crate::device_key::remove_keys(&state, device_id).await;
+            crate::device_key::routes::note_refusal(&state, device_id, refusal, &client).await;
+            let mut answer = serde_json::json!({ "state": "refused", "reason": refusal.word() });
+            if refusal == crate::attestation::Refusal::ListStale {
+                answer["retry_after_s"] = crate::attestation::status_list::RETRY_AFTER_S.into();
+            }
+            Some(answer)
+        }
+    };
+
     Json(EnrollResponse {
         device_id,
         device_token: token,
+        key: key_answer,
     })
     .into_response()
+}
+
+/// A refused enrolment code (not live, used, or never made): counted and logged as before design 129.
+async fn enroll_failed(
+    state: &AppState,
+    kind: crate::enrollment::Kind,
+    key: &str,
+    ip: &str,
+    now: chrono::DateTime<chrono::Utc>,
+) -> axum::response::Response {
+    use crate::enrollment::{self, Kind};
+    let (key, ip) = (key.to_string(), ip.to_string());
+    let unauthorized = || {
+        (
+            StatusCode::UNAUTHORIZED,
+            "invalid or expired enrollment code",
+        )
+            .into_response()
+    };
+    let mut detail = security::Detail::words(
+        match kind {
+            Kind::Typed => "security.detail.enroll_failed.typed",
+            Kind::Qr => "security.detail.enroll_failed.qr",
+        },
+        &[],
+    );
+    if kind == Kind::Typed {
+        if state.limits.ip_failed(&key) {
+            detail = detail.and("security.detail.client_refused", &[]);
+        }
+        if state.enrollment.typed_failed(now) {
+            security::record_security_event(
+                &state.db,
+                "enroll_typed_paused",
+                None,
+                Some(&ip),
+                Some(
+                    security::Detail::words(
+                        "security.detail.enroll_typed_paused",
+                        &[("count", &enrollment::TYPED_PAUSE_FAILURES.to_string())],
+                    )
+                    .at("until", enrollment::end_of_hour(now)),
+                ),
+            )
+            .await;
+        }
+    }
+    state
+        .audit
+        .record(&state.db, "enroll_failed", &key, Some(&ip), detail)
+        .await;
+    unauthorized()
+}
+
+/// §5.1's lost answer: the code consumed with this key, still within its own life - a new bearer for the same phone.
+async fn repeat_enrolment(
+    state: &AppState,
+    code: &str,
+    spki_sha256: &str,
+    token_hash: &str,
+) -> Result<Option<i64>, sqlx::Error> {
+    sqlx::query_scalar(
+        "UPDATE devices SET token_hash = ? WHERE enroll_used_code_hash = ? \
+         AND enroll_used_expires_at > datetime('now') AND enroll_used_spki_sha256 = ? RETURNING id",
+    )
+    .bind(token_hash)
+    .bind(crate::enrollment::code_hash(code))
+    .bind(spki_sha256)
+    .fetch_optional(&state.db)
+    .await
+}
+
+/// The enrolled phone's key in one transaction: the row's old keys, challenge and addresses (another phone's) go, the
+/// new key is stored `observed`.
+async fn store_enrolled_key(
+    state: &AppState,
+    device_id: i64,
+    attested: &crate::attestation::Attested,
+    address: &str,
+) -> Result<String, sqlx::Error> {
+    let mut tx = state.db.begin().await?;
+    for sql in [
+        "DELETE FROM device_keys WHERE device_id = ?",
+        "DELETE FROM device_key_challenges WHERE device_id = ?",
+        "DELETE FROM device_addresses WHERE device_id = ?",
+    ] {
+        sqlx::query(sql).bind(device_id).execute(&mut *tx).await?;
+    }
+    let key_id =
+        crate::device_key::insert_key(&mut tx, device_id, attested, "enroll", address, false)
+            .await?;
+    tx.commit().await?;
+    state.device_keys.index.refresh(&state.db, device_id).await;
+    Ok(key_id)
 }
 
 /// Why `build_policy` couldn't produce a policy. Every variant becomes an empty 500 - see
@@ -426,6 +593,8 @@ pub(crate) async fn build_policy(
     let unified_push = crate::unified_push::policy(&state.db, device_id).await?;
     // Design 114 §4.3: the ticked setup steps; a read error fails the policy.
     let setup = crate::setup_status::policy(&state.db, device_id).await?;
+    // Design 129 §5.5: the phone key's state, a nudge to run the registration flow's step 1.
+    let device_key = crate::device_key::policy_value(&state.db, device_id).await?;
     // The integrations' keys (design 110's `map_links`, always sent); a read error fails the policy.
     let integrations = state.integrations.policy(state, device_id).await?;
     let popped = pop_command(&state.db, device_id, policy.kid_pin_rev).await?;
@@ -572,6 +741,7 @@ pub(crate) async fn build_policy(
         server_tls,
         unified_push,
         setup,
+        device_key,
         integrations,
     })
 }
