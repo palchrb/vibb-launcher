@@ -169,9 +169,7 @@ async fn admin_device_api_off_leaves_the_device_api_to_the_phone_listener() {
             .method(Method::POST)
             .uri("/api/devices/enroll")
             .header(header::CONTENT_TYPE, "application/json")
-            .body(Body::from(
-                serde_json::json!({ "enrollment_code": code }).to_string(),
-            ))
+            .body(Body::from(crate::tests::enroll_body(&code).to_string()))
             .unwrap();
         let res = app
             .send_via(&app.device_router(), LOOPBACK_PEER, request)

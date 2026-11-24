@@ -143,7 +143,7 @@ def build():
                            signed=proof_message(challenge, "enroll"), valid=False))
 
     return {
-        "comment": "Design 129 S1's shared contract (s7.1). The crypto rows are scripts/device-key-vectors.py's (a "
+        "comment": "Design 129 S1's shared contract (s7.1), with design 129b's enrolment rows (s10.2). The crypto rows are scripts/device-key-vectors.py's (a "
                    "throwaway key from a fake phrase - public data only); the route rows are produced by the "
                    "server's tests::device_key through the real routes. Byte-identical in the launcher's "
                    "test resources (L1): its DeviceKeyContractTest builds the canonical and proof rows, computes "
@@ -212,29 +212,11 @@ def build():
             {"reason": "missing", "phone": "silent"},
             {"reason": "key_required", "phone": "silent"},
         ],
-        "enroll": {
-            "body_code_only": {"enrollment_code": "<code>"},
-            "body_with_key": {"enrollment_code": "<code>", "chain": ["<Base64 DER>"], "proof": "<Base64url>"},
-            "answers": {
-                "code_only": {"device_id": "<id>", "device_token": "<token>"},
-                "observed": {"device_id": "<id>", "device_token": "<token>",
-                             "key": {"key_id": "<key id>", "state": "observed"}},
-                "refused": {"device_id": "<id>", "device_token": "<token>",
-                            "key": {"state": "refused", "reason": "app"}},
-                "list_stale": {"device_id": "<id>", "device_token": "<token>",
-                               "key": {"state": "refused", "reason": "list_stale", "retry_after_s": 3600}},
-                "repeat": {"device_id": "<id>", "device_token": "<token>",
-                           "key": {"key_id": "<key id>", "state": "observed"}},
-            },
-            "repeats": 2,
-            "repeat_rule": "the same code with the same key, in the code's own life, at most twice, each with a proof "
-                           "whose ECDSA r was never seen for it: the phone signs the proof afresh on every attempt",
-            "refusal_words": ["chain", "root", "revoked", "expired", "software", "properties", "app", "boot",
-                              "lost", "challenge", "proof", "list_stale"],
-        },
+        "enroll": enroll_rows(),
         "register": {
             "get_key_none": {"state": "none", "rotate": False},
             "get_key_observed": {"state": "observed", "key_id": "<key id>", "spki_sha256": "<hex>", "rotate": False},
+            "get_key_exempt": {"state": "exempt", "rotate": False},
             "challenge": {"challenge": "<Base64url, 32 bytes>", "expires_in_s": 600},
             "body": {"challenge": "<Base64url>", "chain": ["<Base64 DER>"], "proof": "<Base64url>"},
             "answers": [
@@ -244,6 +226,10 @@ def build():
                 {"case": "refused", "status": 400, "body": {"reason": "app"}},
                 {"case": "challenge_used", "status": 400, "body": {"reason": "challenge"}},
                 {"case": "list_stale", "status": 503, "body": {"reason": "list_stale", "retry_after_s": 3600}},
+                # Design 129b X (s8): the challenge and the POST wait while the phone's address history is younger
+                # than an hour; `retry_after_s` is the time until its oldest row is an hour old (3600 with none).
+                {"case": "address_history", "status": 503,
+                 "body": {"reason": "address_history", "retry_after_s": 3600}},
             ],
             "conflict": {"status": 204},
             "conflict_without_key": {"status": 409, "body": {"reason": "none"}},
@@ -251,11 +237,146 @@ def build():
         "policy": {
             "none": {"state": "none", "rotate": False},
             "observed": {"state": "observed", "key_id": "<key id>", "spki_sha256": "<hex>", "rotate": False},
+            "exempt": {"state": "exempt", "rotate": False},
         },
         "phone": phone_rows(),
+        "enrol_wait": enrol_wait_rows(),
         "phone_nudge": nudge_rows(),
         "lost_verdict": lost_rows(),
     }
+
+
+WEEK = 7 * 24 * 3_600_000
+
+# Design 129b D2: every reason a new phone's enrolment waits for a parent (s3's refusals; `boot` joins in S2) and the
+# phone's own no-key words. D8: the exception covers all but `app`, `challenge` and `proof`.
+WAIT_REASONS = ["chain", "root", "revoked", "expired", "software", "properties", "app", "lost", "challenge", "proof",
+                "keystore", "keys_unavailable", "cap"]
+NO_KEY_WORDS = ["keystore", "keys_unavailable", "cap"]
+NO_EXCEPTION = ["app", "challenge", "proof"]
+
+
+def attempt_number(attempt):
+    """D4: the six-digit number of an attempt, from SHA-256 of the attempt (what the server keeps)."""
+    attempt_hash = hashlib.sha256(attempt).digest()
+    digest = hashlib.sha256(b"vibb-attempt-v1\x00" + attempt_hash).digest()
+    number = int.from_bytes(digest[:4], "big") % 1_000_000
+    return attempt_hash, number
+
+
+def shown(number):
+    digits = f"{number:06d}"
+    return digits[:3] + " " + digits[3:]
+
+
+def number_rows():
+    rows = []
+    for label in ("attempt one", "attempt two", "attempt three"):
+        attempt = fixed(label)
+        attempt_hash, number = attempt_number(attempt)
+        rows.append({"attempt": b64u(attempt), "attempt_hash": attempt_hash.hex(), "number": f"{number:06d}",
+                     "shown": shown(number)})
+    # One whose number starts with a zero: the six digits keep it.
+    n = 0
+    while True:
+        attempt = fixed(f"attempt with a leading zero {n}")
+        attempt_hash, number = attempt_number(attempt)
+        if number < 100_000:
+            rows.append({"attempt": b64u(attempt), "attempt_hash": attempt_hash.hex(), "number": f"{number:06d}",
+                         "shown": shown(number)})
+            break
+        n += 1
+    return rows
+
+
+def wait_pace(since_first_s):
+    """s4.1: 15 s for a row's first 2 minutes, 30 s until 10 minutes, 60 s after."""
+    return 15 if since_first_s < 120 else 30 if since_first_s < 600 else 60
+
+
+def enroll_rows():
+    token = {"device_id": "<id>", "device_token": "<token>"}
+
+    def answer(status, body, phone, retry_after=None):
+        return {"status": status, "body": body, "retry_after": retry_after, "phone": phone}
+
+    return {
+        "body_code_only": {"enrollment_code": "<code>"},
+        "body_with_key": {"enrollment_code": "<code>", "attempt": "<16 bytes, Base64url>", "chain": ["<Base64 DER>"],
+                          "proof": "<Base64url>"},
+        "body_no_key": [
+            {"body": {"enrollment_code": "<code>", "attempt": "<16 bytes, Base64url>", "key_error": word},
+             "reason": word} for word in NO_KEY_WORDS
+        ] + [
+            {"body": {"enrollment_code": "<code>", "attempt": "<16 bytes, Base64url>", "key_error": "something new"},
+             "reason": "keystore"},
+            {"body": {"enrollment_code": "<code>", "attempt": "<16 bytes, Base64url>"}, "reason": "keystore"},
+        ],
+        # Design 129b s4.1 (an E1 server). `phone`: what the launcher does with it - enrolled, enrolled_exempt,
+        # waiting (EnrolWait), transient (kept, tried again), code_refused, update_app.
+        "answers": {
+            "observed": answer(200, dict(token, key={"key_id": "<key id>", "state": "observed"}), "enrolled"),
+            "repeat": answer(200, dict(token, key={"key_id": "<key id>", "state": "observed"}), "enrolled"),
+            "waiting": [answer(409, {"state": "waiting", "reason": reason, "number": "<number>", "retry_after_s": 15},
+                               "waiting") for reason in WAIT_REASONS],
+            "exempt": answer(200, dict(token, key={"state": "exempt", "reason": "root"}), "enrolled_exempt"),
+            "exempt_repeat": answer(200, dict(token, key={"state": "exempt", "reason": "root"}), "enrolled_exempt"),
+            "throttled": answer(429, None, "transient", retry_after="<seconds>"),
+            "update_app": answer(426, {"reason": "update_app"}, "update_app"),
+            "server_setup": answer(503, {"reason": "server_setup", "retry_after_s": 3600}, "transient",
+                                   retry_after="3600"),
+            "server_setup_while_waiting": answer(503, {"reason": "server_setup", "retry_after_s": 3600}, "transient",
+                                                 retry_after="3600"),
+            "list_stale": answer(503, {"reason": "list_stale", "retry_after_s": 60}, "transient", retry_after="60"),
+            "wrong_code": answer(401, None, "code_refused"),
+        },
+        # S1's answers (0.93.0 and older): L2 still reads them until S2 (D13).
+        "answers_s1": {
+            "code_only": dict(token),
+            "observed": dict(token, key={"key_id": "<key id>", "state": "observed"}),
+            "refused": dict(token, key={"state": "refused", "reason": "app"}),
+            "list_stale": dict(token, key={"state": "refused", "reason": "list_stale", "retry_after_s": 3600}),
+            "repeat": dict(token, key={"key_id": "<key id>", "state": "observed"}),
+        },
+        "repeats": 2,
+        "repeat_rule": "the same code with the same key, in the code's own life, at most twice, each with a proof "
+                       "whose ECDSA r was never seen for it: the phone signs the proof afresh on every attempt",
+        "exempt_repeat_rule": "the same attempt after its exempt enrolment, within the code's expiry plus 10 minutes, "
+                              "at most twice, each a fresh bearer",
+        "refusal_words": ["chain", "root", "revoked", "expired", "software", "properties", "app", "boot",
+                          "lost", "challenge", "proof", "list_stale"],
+        "wait_reasons": WAIT_REASONS,
+        "exception_reasons": [r for r in WAIT_REASONS if r not in NO_EXCEPTION],
+        "wait_pace": [{"since_first_s": s, "retry_after_s": wait_pace(s)} for s in (0, 119, 120, 599, 600, 3000)],
+        "numbers": number_rows(),
+    }
+
+
+MINUTE = 60_000
+WAIT_STOP_MS = 45 * MINUTE
+
+
+def enrol_wait_rows():
+    """D11: the phone's waiting enrolment (the launcher's `enrolWaitStep`). `answer` is the try's: waiting, transient
+    (no network, 5xx, 429, either 503, 426), code_refused or enrolled; `retry_after_s` its own pace (a waiting body's,
+    a Retry-After) or null; the delay clamped to 10-300 s, 30 s when none came. `has_key`: a key is held for the code -
+    without one the next try makes one first."""
+    def row(name, answer, retry_after_s, since_first_ms, has_key, action, delay_ms=None, make_key=False):
+        return {"name": name, "answer": answer, "retry_after_s": retry_after_s, "since_first_ms": since_first_ms,
+                "has_key": has_key, "action": action, "delay_ms": delay_ms, "make_key": make_key}
+    return [
+        row("the first waiting answer", "waiting", 15, 0, True, "retry", 15_000),
+        row("waiting without a key: the next try makes one", "waiting", 15, 0, False, "retry", 15_000, True),
+        row("a pace under ten seconds is ten", "waiting", 5, 60_000, True, "retry", 10_000),
+        row("a pace over five minutes is five", "waiting", 3600, 60_000, True, "retry", 300_000),
+        row("a transient answer keeps the schedule", "transient", 60, 10 * MINUTE, True, "retry", 60_000),
+        row("a transient answer without a pace", "transient", None, 10 * MINUTE, False, "retry", 30_000, True),
+        row("still waiting just before 45 minutes", "waiting", 60, WAIT_STOP_MS - 1, True, "retry", 60_000),
+        row("45 minutes since the first waiting answer: stop", "waiting", 60, WAIT_STOP_MS, True, "stop"),
+        row("a transient answer at 45 minutes: stop", "transient", 60, WAIT_STOP_MS, False, "stop"),
+        row("the code refused: stop", "code_refused", None, 5 * MINUTE, True, "stop"),
+        row("enrolled", "enrolled", None, 5 * MINUTE, True, "enrolled"),
+    ]
 
 
 def step1(status=200, state=None, spki=None, rotate=False, vibb_auth=None):
@@ -268,12 +389,16 @@ def step1(status=200, state=None, spki=None, rotate=False, vibb_auth=None):
 
 
 def phone(name, step, action, local=(), adopted=None, has_token=True, last_call=None, in_flight=False,
-          conflict_reported=None, backoff=False, key=None, drop_token=False):
+          conflict_reported=None, backoff=False, key=None, drop_token=False, exempt_since_last_try_ms=None,
+          challenge=None, challenge_action=None):
     """One row of the registration flow's table (s5.2; the launcher's `keyStep`). Keys are named by letters standing
-    for their SPKI hashes; `last_call` is the last POST's fate, which never decides (step 1 does)."""
+    for their SPKI hashes; `last_call` is the last POST's fate, which never decides (step 1 does). Design 129b:
+    `exempt_since_last_try_ms` is the time since the key book's last try of an exempt phone (D10, null: none kept);
+    `challenge` the challenge's answer after a `register` and `challenge_action` what follows (`keyChallengeStep`)."""
     return {"name": name, "has_token": has_token, "local": list(local), "adopted": adopted, "last_call": last_call,
             "in_flight": in_flight, "conflict_reported": conflict_reported, "backoff": backoff, "step1": step,
-            "action": action, "key": key, "drop_token": drop_token}
+            "exempt_since_last_try_ms": exempt_since_last_try_ms, "action": action, "key": key,
+            "drop_token": drop_token, "challenge": challenge, "challenge_action": challenge_action}
 
 
 def phone_rows():
@@ -316,6 +441,32 @@ def phone_rows():
               last_call="refused"),
         phone("the server forgot the key (S1, the bearer along)", step1(state="none"), "register", local=["A"],
               adopted="A"),
+        # Design 129b D10: an exempt phone tries a key once a week, the last try kept in the book.
+        phone("exempt, tried six days ago: wait", step1(state="exempt"), "wait",
+              exempt_since_last_try_ms=WEEK - 24 * 3_600_000),
+        phone("exempt, tried a week ago: register", step1(state="exempt"), "register", exempt_since_last_try_ms=WEEK),
+        phone("exempt, no try kept: register", step1(state="exempt"), "register"),
+        phone("exempt while a refusal waits", step1(state="exempt"), "wait", backoff=True,
+              exempt_since_last_try_ms=WEEK),
+        # Design 129b X (s8): a young address history waits its time; no key is made.
+        phone("the address history is younger than an hour: wait, no key", step1(state="none"), "register",
+              challenge={"status": 503, "body": {"reason": "address_history", "retry_after_s": 1800}},
+              challenge_action={"action": "wait", "wait_ms": 1_800_000, "make_key": False}),
+        phone("the list is stale: wait, no key", step1(state="none"), "register",
+              challenge={"status": 503, "body": {"reason": "list_stale", "retry_after_s": 3600}},
+              challenge_action={"action": "wait", "wait_ms": 3_600_000, "make_key": False}),
+        # Code QA M1: an exempt phone's try is kept only with a challenge in hand (make_key) - a 503 here costs it no
+        # week: it is still due after the wait.
+        phone("exempt and due, the address history too young: wait, no key, still due", step1(state="exempt"),
+              "register", exempt_since_last_try_ms=WEEK,
+              challenge={"status": 503, "body": {"reason": "address_history", "retry_after_s": 600}},
+              challenge_action={"action": "wait", "wait_ms": 600_000, "make_key": False}),
+        phone("a challenge: make the key", step1(state="none"), "register",
+              challenge={"status": 200, "body": {"challenge": "<Base64url, 32 bytes>", "expires_in_s": 600}},
+              challenge_action={"action": "make_key", "wait_ms": None, "make_key": True}),
+        phone("no challenge: back off, no key", step1(state="none"), "register",
+              challenge={"status": 500, "body": None},
+              challenge_action={"action": "backoff", "wait_ms": None, "make_key": False}),
     ]
 
 
@@ -371,6 +522,9 @@ def nudge_rows():
         nudge("bound, the bearer gone", dict(observed, state="bound"), False, adopted_key_id="K1", has_token=False),
         nudge("an older server: no device_key", None, False),
         nudge("a lost key asks nothing", {"state": "none", "rotate": False}, False, adopted_key_id="K1", lost=True),
+        # Design 129b: an exempt phone asks as one without a key does (its weekly try is keyStep's).
+        nudge("exempt, nothing adopted", {"state": "exempt", "rotate": False}, True),
+        nudge("exempt, asked minutes ago", {"state": "exempt", "rotate": False}, False, since_last_ask_ms=600_000),
     ]
 
 

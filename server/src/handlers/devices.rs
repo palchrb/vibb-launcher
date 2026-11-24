@@ -758,6 +758,12 @@ pub async fn regenerate_code(
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     }
+    // Design 129b D3: without LAUNCHER_SIGNATURE_CHECKSUM no code of either kind is made (no phone could enrol with
+    // it): back to Connect, whose setup-code group says the server needs setting up.
+    if !crate::device_key::routes::checksum_set(&state) {
+        return axum::response::Redirect::to(&format!("/devices/{id}/provision#setup-code"))
+            .into_response();
+    }
     let kind = crate::enrollment::Kind::Typed;
     let (code, expires_at) = match crate::enrollment::new_code(&state, id, kind).await {
         Ok(made) => made,
@@ -833,12 +839,21 @@ pub async fn revoke_access(
     }
     let revoked = sqlx::query_scalar::<_, String>(
         // Design 129 (code QA H1): nor can a lost enrolment answer be asked for again.
+        // Design 129b: nor an exempt one; the exception and the waiting attempts go too.
         "UPDATE devices SET token_hash = NULL, enroll_used_code_hash = NULL, enroll_used_expires_at = NULL, \
-         enroll_used_spki_sha256 = NULL, enroll_used_proof_rs = NULL WHERE id = ? RETURNING name",
+         enroll_used_spki_sha256 = NULL, enroll_used_proof_rs = NULL, key_exempt_at = NULL, \
+         key_exempt_reason = NULL, key_exempt_by = NULL WHERE id = ? RETURNING name",
     )
     .bind(id)
     .fetch_optional(&state.db)
     .await;
+    if let Err(err) = sqlx::query("DELETE FROM enroll_key_attempts WHERE device_id = ?")
+        .bind(id)
+        .execute(&state.db)
+        .await
+    {
+        tracing::error!(device_id = id, %err, "couldn't forget the phone's enrolment attempts");
+    }
     let name = match revoked {
         Ok(Some(name)) => name,
         Ok(None) => return StatusCode::NOT_FOUND.into_response(),
@@ -1261,6 +1276,8 @@ struct DeviceDetailTemplate {
     /// `None` before the phone's first report (code QA M2: nothing has been read yet).
     setup_value: Option<String>,
     about_value: Option<String>,
+    /// Design 129b: the phone couldn't prove its key - the line and the confirm (`#key-exception`).
+    key_wait: crate::enrol_key::Section,
 }
 crate::i18n::words!(DeviceDetailTemplate);
 
@@ -2044,9 +2061,14 @@ pub async fn view_device(
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     lang: crate::i18n::Lang,
     Path(id): Path<i64>,
+    ceremony: crate::passkeys::Ceremony,
     Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
-    render_device(&state, admin.id, lang, id, &query).await
+    let passkey = (
+        crate::passkeys::has_here(&state.db, admin.id, &ceremony).await,
+        admin.passkey_only,
+    );
+    render_device(&state, admin.id, lang, id, &query, passkey).await
 }
 
 /// The Apps list a phone's pages build on: one row per app the phone reports and per catalog app
@@ -2400,12 +2422,16 @@ async fn render_device(
     lang: crate::i18n::Lang,
     id: i64,
     query: &std::collections::HashMap<String, String>,
+    passkey: (bool, bool),
 ) -> Response {
     use crate::handlers::device_pages::{load_device, load_latest, load_policy};
     let device = match load_device(state, id).await {
         Ok(device) => device,
         Err((status, key)) => return crate::i18n::error(lang, status, key),
     };
+    let mut key_wait =
+        crate::enrol_key::section(state, lang, id, &device.name, "summary", query).await;
+    (key_wait.passkey, key_wait.passkey_only) = passkey;
     let policy = match load_policy(state, id).await {
         Ok(policy) => policy,
         Err((status, key)) => return crate::i18n::error(lang, status, key),
@@ -2854,6 +2880,7 @@ async fn render_device(
     let done = if qa.sheet_flash.is_some() { None } else { done };
     Html(
         DeviceDetailTemplate {
+            key_wait,
             lang,
             title: device.name.clone(),
             avatar: avatar_class(&device),

@@ -254,6 +254,11 @@ data class KeyBookState(
     val spki: Map<String, String> = emptyMap(),
     /** An enrolment key's challenge (Base64url): a retried enrolment with the same code reuses its key (§5.1). */
     val enrolChallenges: Map<String, String> = emptyMap(),
+    /** Design 129b D4 (M4): enrolment challenge (Base64url) -> the attempt secret (16 bytes, Base64url) made once per
+     * setup code, sent with every try for it - independent of any alias: a phone without a key has one too. */
+    val enrolAttempts: Map<String, String> = emptyMap(),
+    /** Design 129b D10: when an exempt phone last tried a key ([TrustedClock] ms) - a restart never tries sooner. */
+    val exemptTriedMs: Long? = null,
     /** Code QA M1: the stored book didn't decode - nothing is written over it until a new enrolment resets it. */
     @kotlinx.serialization.Transient val corrupt: Boolean = false,
 )
@@ -317,6 +322,25 @@ object KeyBook {
 
     /** A key is adopted (no Keystore call). */
     fun adoptedStored(context: Context): Boolean = read(context).adopted != null
+}
+
+/** Design 129b D4: the book with an attempt for [challenge] - the one already kept wins (one attempt per challenge). */
+fun withEnrolAttempt(book: KeyBookState, challenge: String, made: String): KeyBookState =
+    if (book.enrolAttempts.containsKey(challenge)) book else book.copy(enrolAttempts = book.enrolAttempts + (challenge to made))
+
+/** A new enrolment's book (§5.1, design 129b D4): the old enrolment's marks, attempts and exempt try go. */
+fun newEnrolmentBook(book: KeyBookState): KeyBookState = book.copy(
+    adopted = null, conflictReported = null, lost = false, suspicion = null, keyGone = false, lastRefusal = null,
+    enrolAttempts = emptyMap(), exemptTriedMs = null,
+)
+
+/** Design 129b D2 (M3): why an enrolment has no key - `make` gave none ([failure] `null`): the book doesn't read
+ * (`keystore`) or the cap left no room (`cap`); an empty attestation-key pool is `keys_unavailable`; anything else
+ * `keystore`. */
+fun noKeyReason(bookCorrupt: Boolean, failure: Throwable?): String = when {
+    failure == null -> if (bookCorrupt) "keystore" else "cap"
+    failure is KeyGenFailure && failure.keysUnavailable -> "keys_unavailable"
+    else -> "keystore"
 }
 
 /** One made key with what goes to the server. */
@@ -506,9 +530,34 @@ object DeviceKeys {
         val hw = hardware(context)
         if (KeyBook.read(context).corrupt) KeyBook.reset(context, nextPast(context))
         for (key in reconcile(context, hw).keys) if (key.alias != keep) forget(context, hw, key.alias)
-        KeyBook.update(context) {
-            it.copy(adopted = null, conflictReported = null, lost = false, suspicion = null, keyGone = false, lastRefusal = null)
-        }
+        KeyBook.update(context, ::newEnrolmentBook)
+        synchronized(fallbackAttempts) { fallbackAttempts.clear() }
+    }
+
+    /** Code QA L4: the enrolment key made for [challenge] (Base64url) goes - its code was abandoned. */
+    fun forgetEnrolKey(context: Context, challenge: String) {
+        val alias = KeyBook.read(context).enrolChallenges.entries.firstOrNull { it.value == challenge }?.key ?: return
+        forget(context, alias = alias)
+    }
+
+    /** Attempts of a book that doesn't decode (nothing is written over it): this process's only. */
+    private val fallbackAttempts = HashMap<String, String>()
+
+    /**
+     * Design 129b D4: the attempt for the enrolment [challenge] (Base64url) - made once (16 random bytes) and kept in the
+     * book, so every try with the code, a process death included, sends the same one and the phone shows the same number.
+     */
+    fun enrolAttempt(context: Context, challenge: String): String {
+        KeyBook.read(context).enrolAttempts[challenge]?.let { return it }
+        val made = b64u(ByteArray(16).also { java.security.SecureRandom().nextBytes(it) })
+        val after = KeyBook.update(context) { withEnrolAttempt(it, challenge, made) }
+        if (after.corrupt) return synchronized(fallbackAttempts) { fallbackAttempts.getOrPut(challenge) { made } }
+        return after.enrolAttempts[challenge] ?: made
+    }
+
+    /** Design 129b D10: an exempt phone's try of a key now ([TrustedClock] ms), kept for the week's pace. */
+    fun exemptTried(context: Context, nowMs: Long) {
+        KeyBook.update(context) { it.copy(exemptTriedMs = nowMs) }
     }
 
     private fun nextPast(context: Context): Int =

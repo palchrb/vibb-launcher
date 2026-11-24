@@ -744,6 +744,7 @@ mod tests {
         "provisioning_settings.html",
         // Design 86: the setup QR's launcher check.
         "partials/launcher_check.html",
+        "partials/key_wait.html",
         // Design 74 step 3: the lock screen (and its breathing Vibb mark, 2026-11-03).
         "lock.html",
         "partials/vibb_breath.html",

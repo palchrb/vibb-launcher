@@ -517,7 +517,7 @@ async fn a_new_enrollment_never_gets_the_earlier_phones_commands() {
             Method::POST,
             "/api/devices/enroll",
             None,
-            Some(json!({ "enrollment_code": code })),
+            Some(crate::tests::enroll_body(&code)),
         )
         .await;
     assert_eq!(res.status, StatusCode::OK);

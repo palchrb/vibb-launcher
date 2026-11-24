@@ -577,6 +577,10 @@ async fn key_row(state: &AppState, id: i64, lang: Lang) -> Result<Row, sqlx::Err
         return Ok(Row::new("key", label, t(lang, "device.about.key.hardware"))
             .detail(Some(key_detail(&key, lang))));
     }
+    // Design 129b §5.2: the parent's exception - a choice, quiet; who and when behind the (i).
+    if let Some(detail) = crate::enrol_key::about_exempt(state, lang, id).await? {
+        return Ok(Row::new("key", label, t(lang, "device.about.key.exempt")).detail(Some(detail)));
+    }
     if let Some(reason) = refused
         .as_deref()
         .and_then(crate::attestation::Refusal::from_word)

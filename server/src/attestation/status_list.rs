@@ -36,7 +36,15 @@ pub struct StatusList {
     /// A fetch failed since the last good one (with no copy, the Settings line waits for this - not the first
     /// seconds after a start).
     failed: std::sync::atomic::AtomicBool,
+    /// Design 129b D3: an enrolment whose chain would pass under a stale list asks for a fetch at once.
+    wake: tokio::sync::Notify,
+    /// When a fetch was last asked for (unix ms; at most one a minute) and how many were asked (the tests').
+    last_ask_ms: std::sync::atomic::AtomicI64,
+    asked: std::sync::atomic::AtomicU64,
 }
+
+/// At most one asked fetch a minute.
+const ASK_EVERY_MS: i64 = 60_000;
 
 impl StatusList {
     /// Takes a list's body (Google's JSON) fetched at `fetched_at`; the number of listed serials, or why not.
@@ -86,6 +94,31 @@ impl StatusList {
     fn failed(&self) {
         self.failed
             .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Design 129b D3: asks the fetch loop ([run]) to fetch now, at most once a minute. `true` when this asked.
+    pub fn ask_fetch(&self, now: DateTime<Utc>) -> bool {
+        use std::sync::atomic::Ordering;
+        let now_ms = now.timestamp_millis();
+        let last = self.last_ask_ms.load(Ordering::Relaxed);
+        if last != 0 && now_ms - last < ASK_EVERY_MS {
+            return false;
+        }
+        if self
+            .last_ask_ms
+            .compare_exchange(last, now_ms, Ordering::Relaxed, Ordering::Relaxed)
+            .is_err()
+        {
+            return false;
+        }
+        self.asked.fetch_add(1, Ordering::Relaxed);
+        self.wake.notify_one();
+        true
+    }
+
+    /// How many fetches were asked for ([ask_fetch](StatusList::ask_fetch)).
+    pub fn fetches_asked(&self) -> u64 {
+        self.asked.load(std::sync::atomic::Ordering::Relaxed)
     }
 }
 
@@ -217,7 +250,10 @@ pub async fn run(state: crate::AppState, url: String) {
                 MIN_REFRESH
             }
         };
-        tokio::time::sleep(wait).await;
+        tokio::select! {
+            _ = tokio::time::sleep(wait) => {}
+            _ = state.device_keys.status.wake.notified() => {}
+        }
     }
 }
 

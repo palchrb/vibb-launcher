@@ -14,7 +14,7 @@ async fn enroll_returns_token_and_code_is_single_use() {
             Method::POST,
             "/api/devices/enroll",
             None,
-            Some(json!({ "enrollment_code": code })),
+            Some(crate::tests::enroll_body(&code)),
         )
         .await;
     assert_eq!(res.status, StatusCode::OK);
@@ -27,7 +27,7 @@ async fn enroll_returns_token_and_code_is_single_use() {
             Method::POST,
             "/api/devices/enroll",
             None,
-            Some(json!({ "enrollment_code": code })),
+            Some(crate::tests::enroll_body(&code)),
         )
         .await;
     assert_eq!(replay.status, StatusCode::UNAUTHORIZED);
@@ -50,7 +50,7 @@ async fn enroll_rejects_expired_code() {
             Method::POST,
             "/api/devices/enroll",
             None,
-            Some(json!({ "enrollment_code": code })),
+            Some(crate::tests::enroll_body(&code)),
         )
         .await;
     assert_eq!(res.status, StatusCode::UNAUTHORIZED);
@@ -453,12 +453,21 @@ async fn policy_json_keys_snapshot() {
     // Design 125 A2: `wifi_lookup`, `{on}`, off for a new phone; every row in `integrations::wifi_lookup::tests`
     // (`wifi_lookup/contract.json`'s `policy`).
     assert_eq!(object["wifi_lookup"], serde_json::json!({"on": false}));
-    // Design 129 §5.5: `device_key`, `{state, key_id?, spki_sha256?, rotate}`, `none` for a phone without a key; every
-    // row in `tests::device_key` (`device_key.json`'s `policy`).
+    // Design 129 §5.5: `device_key`, `{state, key_id?, spki_sha256?, rotate}` - since design 129b a new phone enrols
+    // with its key (`observed`); every row in `tests::device_key` and `tests::enrol_key` (`device_key.json`'s
+    // `policy`, `exempt` among them).
+    let mut device_key_keys: Vec<&str> = object["device_key"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    device_key_keys.sort_unstable();
     assert_eq!(
-        object["device_key"],
-        serde_json::json!({"state": "none", "rotate": false})
+        device_key_keys,
+        ["key_id", "rotate", "spki_sha256", "state"]
     );
+    assert_eq!(object["device_key"]["state"], "observed");
 
     // The launcher's CallPolicy DTO: every key present and non-null, also when unmanaged.
     let call_policy = object["call_policy"].as_object().unwrap();
@@ -781,7 +790,7 @@ async fn a_new_device_starts_with_all_kid_settings_on() {
             Method::POST,
             "/api/devices/enroll",
             None,
-            Some(serde_json::json!({ "enrollment_code": code })),
+            Some(crate::tests::enroll_body(&code)),
         )
         .await;
     let token = enrolled.json()["device_token"]
@@ -853,6 +862,7 @@ async fn device_page(app: &TestApp, id: i64) -> String {
         axum::Extension(crate::security::CurrentAdmin(app.an_admin().await)),
         crate::i18n::Lang::En,
         axum::extract::Path(id),
+        Default::default(),
         axum::extract::Query(Default::default()),
     )
     .await

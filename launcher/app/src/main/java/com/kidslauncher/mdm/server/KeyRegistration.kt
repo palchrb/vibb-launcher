@@ -177,6 +177,7 @@ object KeyRegistration {
                     step1 = step1,
                     conflictReported = book.conflictReported,
                     backoff = backoff(),
+                    exemptSinceLastTryMs = book.exemptTriedMs?.let { TrustedClock.nowMs() - it },
                 ),
             )
             when (action) {
@@ -247,7 +248,7 @@ object KeyRegistration {
                         return
                     }
                     registered = true
-                    if (!register(app, api)) return
+                    if (!register(app, api, exempt = step1.answer?.state == "exempt")) return
                 }
             }
         }
@@ -263,11 +264,21 @@ object KeyRegistration {
     }
 
     /** §5.2 step 4: a challenge, a new key, the POST. `true`: back to step 1. */
-    private suspend fun register(app: Context, api: MdmApi): Boolean {
+    private suspend fun register(app: Context, api: MdmApi, exempt: Boolean): Boolean {
         val challengeAnswer = try {
             val response = api.getKeyChallenge()
-            val text = response.body()?.use { it.string() }
-            if (!response.isSuccessful || text == null) null else ServerJson.decodeFromString(KeyChallengeAnswer.serializer(), text)
+            val text = (if (response.isSuccessful) response.body() else response.errorBody())?.use { it.string() }
+            val refusal = if (response.isSuccessful) null else text?.let {
+                runCatching { ServerJson.decodeFromString(KeyRefusalAnswer.serializer(), it) }.getOrNull()
+            }
+            // Design 129b X: a young address history (and a stale list) waits its time; no key is made before a challenge.
+            val step = keyChallengeStep(response.code(), refusal)
+            if (step.action == "wait") {
+                Log.i(LOG_TAG, "No challenge yet: ${refusal?.reason}")
+                failed(step.waitMs ?: 0L)
+                return false
+            }
+            if (step.action != "make_key" || text == null) null else ServerJson.decodeFromString(KeyChallengeAnswer.serializer(), text)
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -284,6 +295,9 @@ object KeyRegistration {
             return false
         }
         val now = TrustedClock.nowMs()
+        // Design 129b D10 (code QA M1): an exempt phone's weekly try counts from here - a challenge in hand, right
+        // before the key is made (a 503, no network or a 5xx before it costs no week); a restart never tries sooner.
+        if (exempt) DeviceKeys.exemptTried(app, now)
         val made = try {
             DeviceKeys.make(app, challenge, now + challengeAnswer.expiresInS * 1000, now)
         } catch (e: KeyGenFailure) {

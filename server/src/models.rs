@@ -1315,6 +1315,12 @@ pub struct EnrollRequest {
     pub chain: Option<Vec<String>>,
     #[serde(default)]
     pub proof: Option<String>,
+    /// Design 129b D4: the phone's attempt secret for this code (16 bytes, Base64url), the same on every try.
+    #[serde(default)]
+    pub attempt: Option<String>,
+    /// Design 129b D2: why the phone has no key (`keystore`, `keys_unavailable`, `cap`); unknown reads as `keystore`.
+    #[serde(default)]
+    pub key_error: Option<String>,
 }
 
 #[derive(Serialize)]

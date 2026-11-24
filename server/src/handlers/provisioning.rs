@@ -194,6 +194,8 @@ struct ProvisionQrTemplate {
     /// The Phone Setup zone and the time the page was built, for its "until"s.
     zone: Zone,
     now: chrono::DateTime<chrono::Utc>,
+    /// Design 129b: the phone couldn't prove its key - the line and the confirm (`#key-exception`).
+    key_wait: crate::enrol_key::Section,
 }
 crate::i18n::words!(ProvisionQrTemplate);
 
@@ -218,7 +220,17 @@ impl ProvisionQrTemplate {
                 tracing::error!(device_id = device.id, %err, "couldn't read the phone's Parent PIN");
                 false
             });
+        let key_wait = crate::enrol_key::section(
+            state,
+            lang,
+            device.id,
+            &device.name,
+            "provision",
+            &Default::default(),
+        )
+        .await;
         ProvisionQrTemplate {
+            key_wait,
             no_parent_pin,
             lang,
             title: crate::i18n::t_params(lang, "devices.qr.title", &[("name", &device.name)]),
@@ -442,18 +454,51 @@ async fn load(
 /// `GET /devices/{id}/provision`: the two ways to connect. No code is made by looking at the page
 /// (design 22 §0 #7): "Make QR Code" posts the form ([provision_qr]), "New Setup Code" posts to
 /// `regenerate-code`.
+/// Without the key exception's landing or passkey (the tests' direct call; the route is [provision_page]).
+#[cfg_attr(not(test), allow(dead_code))]
 pub async fn provision_form(
     State(state): State<AppState>,
     lang: Lang,
     Path(id): Path<i64>,
 ) -> Response {
-    let (device, settings, saved) = match load(&state, id).await {
+    provision_render(&state, lang, id, &Default::default(), (false, false)).await
+}
+
+/// The route's `GET /devices/{id}/provision`: [provision_form] with the key exception's landing (`?notice=`,
+/// `?key_error=`) and the parent's passkey for its confirm (design 129b §5.6).
+pub async fn provision_page(
+    State(state): State<AppState>,
+    lang: Lang,
+    Path(id): Path<i64>,
+    ceremony: crate::passkeys::Ceremony,
+    axum::Extension(crate::security::CurrentAdmin(admin)): axum::Extension<
+        crate::security::CurrentAdmin,
+    >,
+    axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let passkey = (
+        crate::passkeys::has_here(&state.db, admin.id, &ceremony).await,
+        admin.passkey_only,
+    );
+    provision_render(&state, lang, id, &query, passkey).await
+}
+
+async fn provision_render(
+    state: &AppState,
+    lang: Lang,
+    id: i64,
+    query: &std::collections::HashMap<String, String>,
+    passkey: (bool, bool),
+) -> Response {
+    let (device, settings, saved) = match load(state, id).await {
         Ok(loaded) => loaded,
         Err(status) => return status.into_response(),
     };
-    ProvisionQrTemplate::new(&state, lang, device, &settings, &saved, true)
-        .await
-        .page(StatusCode::OK)
+    let name = device.name.clone();
+    let mut page = ProvisionQrTemplate::new(state, lang, device, &settings, &saved, true).await;
+    page.key_wait = crate::enrol_key::section(state, lang, id, &name, "provision", query).await;
+    (page.key_wait.passkey, page.key_wait.passkey_only) = passkey;
+    page.page(StatusCode::OK)
 }
 
 /// A Wi-Fi field that can't go into the QR code: the field and why.

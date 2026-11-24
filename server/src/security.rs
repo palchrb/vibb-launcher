@@ -1501,16 +1501,16 @@ pub async fn require_device_token(
     if let Some(client) = &client {
         state.limits.record_access(device_id, client);
     }
-    match (&signed_key, &client) {
-        (Some(key_id), _) => state.device_keys.note_signed(&state.db, key_id).await,
-        // §5.2: the addresses the phone's bearer came from - what makes a registration from elsewhere `unusual`.
-        (None, Some(client)) => {
-            state
-                .device_keys
-                .note_address(&state.db, device_id, &client.key())
-                .await
-        }
-        (None, None) => {}
+    if let Some(key_id) = &signed_key {
+        state.device_keys.note_signed(&state.db, key_id).await;
+    }
+    // §5.2: the addresses the phone came from - what makes a registration from elsewhere `unusual`. Design 129b X: a
+    // signed request notes its address as a bearer request does, so the history keeps growing once the phone signs.
+    if let Some(client) = &client {
+        state
+            .device_keys
+            .note_address(&state.db, device_id, &client.key())
+            .await;
     }
     request
         .extensions_mut()

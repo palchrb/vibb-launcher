@@ -472,6 +472,8 @@ pub fn reauth_route(route: &str) -> bool {
     ) || matches!(parts.as_slice(), ["account", "parents", n, "reset" | "remove"] if number(n))
         || matches!(parts.as_slice(), ["account", "passkeys", n, "remove"] if number(n))
         || matches!(parts.as_slice(), ["devices", n, "lock"] if number(n))
+        // Design 129b D7: the key exception's confirm.
+        || matches!(parts.as_slice(), ["devices", n, "key-exception"] if number(n))
         // Privacy review 2026-11-17 M1: a backup's Download and Restore, and Upload.
         || matches!(parts.as_slice(), ["backups", "upload"])
         || matches!(parts.as_slice(), ["backups", file, "download" | "restore"]

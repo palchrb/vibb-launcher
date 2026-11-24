@@ -38,6 +38,7 @@ mod dns_blocklist;
 mod docker;
 mod edge;
 mod emergency_menu;
+mod enrol_key;
 mod enrollment;
 pub(crate) mod fake_dav;
 mod fdroid;
@@ -640,7 +641,7 @@ impl TestApp {
                 Method::POST,
                 "/api/devices/enroll",
                 None,
-                Some(serde_json::json!({ "enrollment_code": code })),
+                Some(crate::tests::enroll_body(&code)),
             )
             .await;
         assert_eq!(res.status, StatusCode::OK, "enrollment failed");
@@ -650,6 +651,23 @@ impl TestApp {
             .to_string();
         (id, token)
     }
+}
+
+/// Design 129b §10.1: an enrolment body that passes - a fresh `TestKey`'s chain through the fake attestation for
+/// `code`'s challenge, its proof, and an attempt. Every test that enrols a phone posts this.
+pub fn enroll_body(code: &str) -> serde_json::Value {
+    let key = crate::device_key::testing::TestKey::new();
+    let challenge = crate::attestation::enroll_challenge(&crate::enrollment::normalize(code));
+    let proof = key.sign(crate::attestation::proof_message(&challenge, "enroll").as_bytes());
+    let b64u = |bytes: &[u8]| {
+        base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, bytes)
+    };
+    serde_json::json!({
+        "enrollment_code": code,
+        "attempt": b64u(&crate::device_key::random_bytes::<16>()),
+        "chain": key.chain(&challenge, serde_json::json!({})),
+        "proof": b64u(&proof),
+    })
 }
 
 /// `name=value` of the first `Set-Cookie` header, if any.
