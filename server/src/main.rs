@@ -57,6 +57,7 @@ mod music_sources;
 mod music_sweep;
 mod net;
 mod notification_channels;
+mod notification_listeners;
 mod parent_events;
 mod parent_pin;
 mod parents;
@@ -1324,6 +1325,10 @@ pub fn build_admin_router(
         .route(
             "/devices/{id}/kiosk-block",
             post(handlers::devices::update_kiosk_block),
+        )
+        .route(
+            "/devices/{id}/android-auto",
+            post(handlers::devices::update_android_auto),
         )
         .route(
             "/devices/{id}/spotify-diag",

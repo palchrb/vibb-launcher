@@ -756,6 +756,21 @@ pub async fn view_about(
                 crate::shortcuts::about_value(lang, &device.name, &policy, &shortcuts),
             ));
         }
+        // The apps that can read the phone's notifications; orange for one the parent didn't give through Vibb.
+        if let Some(listeners) = crate::notification_listeners::report(status) {
+            let known = crate::notification_listeners::known_packages(&state.db, id, &policy).await;
+            let installed: Vec<crate::models::InstalledApp> = status
+                .installed_apps_json
+                .as_deref()
+                .and_then(|json| serde_json::from_str(json).ok())
+                .unwrap_or_default();
+            let row = crate::notification_listeners::about(lang, &listeners, &known, &installed);
+            software.push(
+                Row::new("listeners", t(lang, "device.about.listeners"), row.value)
+                    .class(if row.orange { "row-value-action" } else { "" })
+                    .detail(row.detail),
+            );
+        }
     }
 
     // When "Block safe mode" went on, for the advice (QA 24b Low 12).
@@ -888,6 +903,8 @@ struct AdvancedTemplate {
     /// (unreadable) nothing (design 113: no row in any state).
     backup_service_enabled: Option<bool>,
     block_activity_start: bool,
+    /// Advanced › Android Auto (migration 0170): the parent allows it on this phone.
+    allow_android_auto: bool,
     /// App screens: Play is openable (block off, Play not suspendable): a sentence behind the block switch's ⓘ.
     play_openable: bool,
     /// App screens: warnings above the group, rows in it.
@@ -1032,6 +1049,7 @@ async fn advanced_page(
                 hardening: policy.hardening.clone(),
                 backup_service_enabled: latest.as_ref().and_then(|s| s.backup_service_enabled),
                 block_activity_start: play.block_activity_start,
+                allow_android_auto: policy.allow_android_auto,
                 play_openable: play.openable,
                 play_warnings,
                 play_rows,

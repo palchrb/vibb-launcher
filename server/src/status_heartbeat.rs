@@ -97,6 +97,7 @@ pub const REPORT_KEYS: &[&str] = &[
     "captive_portal",
     "login_browser",
     "notification_channels",
+    "notification_listeners",
     "unified_push",
     "map_links",
 ];

@@ -5117,6 +5117,73 @@ and the top activity. Afterwards `jelly36` was restored (22 of 22 sums).
 **Not run:** a real bond and the real dialog (owed on the Jelly Star with the Jabra), a pause (the arm refuses then:
 `BtPairingPlanTest`), Android 14 and 17.
 
+## 6be. Android Auto, the other Home apps, the notification listeners (branch `notif-readers`) - run 2026-11-24
+
+On Android 14 and the highest image, a Play image with Android Auto (`com.google.android.projection.gearhead`).
+`docs/notes/launcher/hardening.md`, "Android Auto, the other Home apps, the notification listeners".
+
+1. Before enrolling: `cmd overlay lookup android android:string/config_recentsComponentName` and
+   `cmd package query-activities --brief -a android.intent.action.MAIN -c android.intent.category.HOME` - which package
+   carries the gestures, which other Homes there are.
+2. Managed: `dumpsys package <pkg> | grep -E "hidden=|suspended="` - Android Auto hidden, every other Home but the
+   recents provider suspended (not hidden). Home, Recents and Back in both navigation modes.
+3. Start the pause: both released; end it: both restricted again. Advanced › Android Auto › Tillat: unhidden at the
+   next sync.
+4. Reboot while locked and while unlocked: no "app paused" dialog, our Home after the unlock.
+5. **Listeners** (record what you see, no fix expected): `dumpsys notification | grep -A20 "Live notification
+   listeners"` with a listener (a) hidden and (b) suspended - is it still bound? Does `enabled_notification_listeners`
+   (`settings get secure enabled_notification_listeners`) keep a hidden package, or does hiding drop the approval (then
+   Android Auto comes back without notification access after Tillat or a pause)? The report counts only hidden as `off`.
+6. A third-party listener granted in a pause: About › Varseltilgang names it in orange; allowed in Apps, quiet. A system
+   listener (the stock launcher, `com.google.android.as`) is named quietly.
+
+### The run of 2026-11-24
+
+AVDs: `compat34` (Android 14, Google APIs, Android Auto `1.2.531830-stub` installed), `compat372` (Android 17, Google
+APIs, Android Auto installed) and `aosp36` (Android 16, AOSP - no Android Auto, so a stand-in package named
+`com.google.android.projection.gearhead`). Each phone was wiped and started with `-writable-system`. None of these images
+has a Home besides the stock launcher (the recents provider) and FallbackHome, so another Home was made: a probe app
+with only a HOME activity and a notification listener, pushed to `/product/priv-app/` (a system app, so it isn't
+controllable and `otherHomes` picks it). A sideloaded app is always controllable, so as a user app the probe would be the
+allowlist's, not an other Home. A second probe (`me.vibb.probe.reader`, a user app with a launcher icon and a listener)
+was the third-party listener. All three are throwaway: a `javac`/`d8`/`aapt2` build, never in the repo. Enrolled
+against a local server, through the setup hold; "pause" is the PWA's `start-pause`, its end `end-windows`.
+
+| Step | Android 14 (`compat34`) | Android 16 (`aosp36`) | Android 17 (`compat372`) |
+|---|---|---|---|
+| 1. Recents provider, Homes | Pixel launcher's Quickstep; Homes: Pixel launcher, FallbackHome (+ the probe) | Launcher3's Quickstep; Launcher3, FallbackHome (+ the probe) | Pixel launcher's Quickstep; the same as 14 |
+| 2. Managed: Auto hidden, other Home suspended not hidden, recents provider untouched | **Pass** | **Pass** (stand-in) | **Pass** |
+| 2. Home, Recents, Back, gesture navigation | **Pass** (Recents by `KEYCODE_APP_SWITCH`: an injected swipe-and-hold never opened Overview on this image, before the probe Home was suspended either) | **Pass** (Home by swipe, Back by edge swipe, Recents as on 14) | **Not run**: gesture navigation's region sampling kills system_server on this VM (§6ar) |
+| 2. Home, Recents, Back, 3-button navigation | **Pass** (bar taps) | **Pass** | **Not run**: the first app switch's task snapshot killed system_server (the VM's gfxstream, §6ar) |
+| 3. Pause releases both; its end restricts both again | **Pass** | **Pass** | **Pass** |
+| 3. Tillat: Auto unhidden at the next sync | **Fail, fixed**: unhidden, then a loop (below). With the fix: **Pass**, no loop | **Pass** (with the fix) | **Pass** (with the fix) |
+| 4. Reboot locked: no dialog, our Home after the unlock | **Pass** | **Pass** | **Pass** |
+| 4. Reboot unlocked: the same | **Pass** | **Pass** | **Pass** |
+| 5a. Hidden listener (Auto) | Unbound, and its approval is **dropped** from `enabled_notification_listeners`; not back after Tillat or a pause | The stand-in: the same | The same as 14 |
+| 5b. Suspended listener (the probe Home) | **Still bound** (in "Live notification listeners"), approval kept; reported `off: false` | The same | The same |
+| 6. Third-party listener granted in a pause | **Pass**: About › Notification access "Probe Reader" in orange; allowed in Apps, the row quiet | Not run | **Pass**, the same |
+| 6. System listener quiet | **Pass** (but named by package name, below) | - | **Pass**, the same |
+
+Gestures: no standard gesture broke on any version that could run them, with the other Home suspended.
+
+**The loop (fixed on the branch):** with Tillat on, `apply()` unhid Android Auto; the unhide is a PACKAGE_ADDED, and
+`enforceOnNewPackage` hid and suspended it again (Auto is never on the allowlist), then asked for a sync, whose `apply()`
+unhid it - 320 syncs in under a minute on Android 14 until Tillat was turned off. Now an added Android Auto or other Home
+runs `apply()` instead (`planOwnsAddedPackage`, `docs/notes/launcher/hardening.md`); after the fix no `package_added`
+sync on 14, 16 or 17.
+
+**Seen, not fixed (for the owner):**
+- Hiding drops a listener's approval and Android's role holders: after the Auto hide, `enabled_notification_listeners`
+  has no Auto entry and `SYSTEM_AUTOMOTIVE_PROJECTION` has no holder (logcat: "Removing package that no longer qualifies
+  for the role"); neither comes back with Tillat or a pause. So an allowed Android Auto has no notification access and
+  no projection role until someone grants them again.
+- A suspended listener stays bound and reads notifications (5b). The report counts it as reading, which matches.
+- About names a system listener without a label in the report by its package name ("com.google.android.apps.nexuslauncher,
+  com.google.android.as, me.vibb.probe.home, Probe Reader").
+- Rig: an `adb install` right before `adb emu kill` was lost on the next boot (DPM "Failed loading admin"); run
+  `adb shell sync` before killing. On a `-wipe-data -writable-system` start, the first `adb reboot` after `remount`
+  segfaulted the emulator; kill and start it again without the wipe instead.
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:
@@ -5128,7 +5195,36 @@ adb logcat -d -t 2000 | grep -iE "kidslauncher|vibb|Telecom|InCall|CallScreen|An
 plus what you did and what you saw (a screenshot helps: `adb exec-out screencap -p > s.png`).
 Restore the "enrolled" snapshot between experiments.
 
-## 6be. Android's blocked numbers cleared while managed (branch `blocked-numbers`, 2026-11-23)
+## 6bf. Time rules keep their own clock (branch `trusted-time`, 2026-11-24) - not run yet
+
+`docs/notes/launcher/time-rules.md`, "The decisions' clock". Owed on Android 14 (`compat34`) and 16 (`handy36`); Android
+17 on a device. The rig: a fresh server, a phone enrolled with a Leggetid rule in force now, a daily budget with some
+minutes used, Location "Only when asked". The phone's own clock is moved by the owner's private test method (not in
+this repo) to the row's offset; then:
+
+```sh
+A="adb -s emulator-5556"
+$A logcat -d -s TrustedClock TimeRuleAlarm TimeRulesRuntime
+sqlite3 data/kidphone.db "SELECT time_state_json FROM device_status WHERE device_id=1 ORDER BY id DESC LIMIT 1"
+```
+
+| Row | Android 14 | Android 16 |
+|---|---|---|
+| (a) The phone's clock at +26 h: Leggetid stays in force, the card's end and the glance's clock show the server's time | owed | owed |
+| (b) The day's minutes kept across an offline `adb reboot` after (a); the server's next sync takes a carried reset back | owed | owed |
+| (c) Update Location: the fix stored at the server's time (`device_locations.captured_at`, `phone_offset_ms` about +26 h) | owed | owed |
+| (d) The PWA: Device › Time's "Klokken går feil (26 t foran)" in nb and "Clock is wrong (26 h ahead)" in en, the summary's Attention row, the Devices list's badge | owed | owed |
+| (e) Again at -5 h: (a), (c), (d) "5 t bak" | owed | owed |
+| (f) The clock at +26 h before Vibb's first read after a reboot: carried at +26 h, corrected by a checked time and then by the server; the ledger's reset taken back | owed | owed |
+| (j) A clock that lost its time while off (behind the last checkpoint at boot): automatic time's first set is taken; offline, the rules follow the right time | owed | owed |
+| (k) A server whose certificate isn't in the built-in set (the check not enforced): its answers anchor, no "Tiden er ikke sjekket" line | owed | owed |
+| (g) Undo: the clock right again, the line gone, nothing jumps (rules, budget, the alarm) | owed | owed |
+| (h) On 14: `canScheduleExactAlarms()` true with `USE_EXACT_ALARM`; the elapsed boundary alarm fires in Doze (`dumpsys deviceidle force-idle`) | owed | - |
+| (i) Another time zone (`adb shell service call alarm 3 s16 Asia/Tokyo` with automatic zone off for the test): rules follow local time; Device › Time's quiet "Telefonens tidssone: Asia/Tokyo" | owed | owed |
+
+Screenshots on `jelly36`.
+
+## 6bg. Android's blocked numbers cleared while managed (branch `blocked-numbers`, 2026-11-23)
 
 `docs/notes/launcher/calls.md`, "Android's blocked numbers cleared while managed". The rig: a fresh server on 3130/3131
 (debug launcher component, a dummy `LAUNCHER_SIGNATURE_CHECKSUM`), a phone per AVD with calls and SMS managed (a new
@@ -5165,32 +5261,3 @@ The last four rows ran on 2026-11-24 (00:00 CET) with the branch's second commit
 phones enrolled with calls and SMS unmanaged, then calls set managed. Android 17 (`compat372`, 37.2) was tried: system_server restarted during `set-device-owner` (the image's known graphics
 abort, §6as), so not run. Not run: the "Unknown" switch on Telecom's page (Android keeps it in the provider's own
 settings, which only the system may read or write).
-
-## 6bf. Time rules keep their own clock (branch `trusted-time`, 2026-11-24) - not run yet
-
-`docs/notes/launcher/time-rules.md`, "The decisions' clock". Owed on Android 14 (`compat34`) and 16 (`handy36`); Android
-17 on a device. The rig: a fresh server, a phone enrolled with a Leggetid rule in force now, a daily budget with some
-minutes used, Location "Only when asked". The phone's own clock is moved by the owner's private test method (not in
-this repo) to the row's offset; then:
-
-```sh
-A="adb -s emulator-5556"
-$A logcat -d -s TrustedClock TimeRuleAlarm TimeRulesRuntime
-sqlite3 data/kidphone.db "SELECT time_state_json FROM device_status WHERE device_id=1 ORDER BY id DESC LIMIT 1"
-```
-
-| Row | Android 14 | Android 16 |
-|---|---|---|
-| (a) The phone's clock at +26 h: Leggetid stays in force, the card's end and the glance's clock show the server's time | owed | owed |
-| (b) The day's minutes kept across an offline `adb reboot` after (a); the server's next sync takes a carried reset back | owed | owed |
-| (c) Update Location: the fix stored at the server's time (`device_locations.captured_at`, `phone_offset_ms` about +26 h) | owed | owed |
-| (d) The PWA: Device › Time's "Klokken går feil (26 t foran)" in nb and "Clock is wrong (26 h ahead)" in en, the summary's Attention row, the Devices list's badge | owed | owed |
-| (e) Again at -5 h: (a), (c), (d) "5 t bak" | owed | owed |
-| (f) The clock at +26 h before Vibb's first read after a reboot: carried at +26 h, corrected by a checked time and then by the server; the ledger's reset taken back | owed | owed |
-| (j) A clock that lost its time while off (behind the last checkpoint at boot): automatic time's first set is taken; offline, the rules follow the right time | owed | owed |
-| (k) A server whose certificate isn't in the built-in set (the check not enforced): its answers anchor, no "Tiden er ikke sjekket" line | owed | owed |
-| (g) Undo: the clock right again, the line gone, nothing jumps (rules, budget, the alarm) | owed | owed |
-| (h) On 14: `canScheduleExactAlarms()` true with `USE_EXACT_ALARM`; the elapsed boundary alarm fires in Doze (`dumpsys deviceidle force-idle`) | owed | - |
-| (i) Another time zone (`adb shell service call alarm 3 s16 Asia/Tokyo` with automatic zone off for the test): rules follow local time; Device › Time's quiet "Telefonens tidssone: Asia/Tokyo" | owed | owed |
-
-Screenshots on `jelly36`.

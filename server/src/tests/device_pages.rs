@@ -277,7 +277,7 @@ async fn advanced_forms_return_to_their_groups() {
         Option<(String, Option<&'a str>)>,
     );
     // Leave Tailnet shows only for a phone on the tailnet: `tests::leave_tailnet` checks its return.
-    let table: [Row; 8] = [
+    let table: [Row; 9] = [
         // The Name row: the first form on the page, back to its own row.
         (
             "name#name",
@@ -299,6 +299,11 @@ async fn advanced_forms_return_to_their_groups() {
             "kiosk-block#app-screens",
             &[("block_activity_start", "on")],
             Some((advanced.clone(), Some("app-screens"))),
+        ),
+        (
+            "android-auto#android-auto",
+            &[("allow_android_auto", "on")],
+            Some((advanced.clone(), Some("android-auto"))),
         ),
         (
             "kiosk-escapes#updates",

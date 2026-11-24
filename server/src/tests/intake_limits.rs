@@ -468,6 +468,16 @@ fn the_field_tables_keep_every_contract_key() {
                 checked += 1;
             }
         }
+        // The report's `notification_listeners` (`notification_listeners.json`'s `report` and `report_none`), every key
+        // kept by the cleaning.
+        if path.ends_with("notification_listeners.json") {
+            for key in ["report", "report_none"] {
+                let blob = &json[key];
+                let kept = crate::notification_listeners::clean(blob).unwrap();
+                assert_eq!(&kept, blob, "{}'s {key}", path.display());
+                checked += 1;
+            }
+        }
         // Design 114 §4.2: the report's `setup` (`setup_steps.json`'s `report` and `report_no_hold`), every key kept by
         // the cleaning.
         if path.ends_with("setup_steps.json") {
