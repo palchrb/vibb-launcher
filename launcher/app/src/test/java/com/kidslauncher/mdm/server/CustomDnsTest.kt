@@ -27,7 +27,10 @@ import org.xbill.DNS.Type
 class CustomDnsTest {
     private val primaryDoh = UpstreamTarget.Doh("https://192.0.2.10/dns-query/abc123")
     private val backupDot = UpstreamTarget.Dot("192.0.2.20", 853)
-    private val quad9Doh = UpstreamTarget.Doh("https://9.9.9.9/dns-query")
+    private val quad9Doh = UpstreamTarget.Doh("https://dns.quad9.net/dns-query")
+
+    /** Quad9's DoT failing at every one of its addresses, one at a time, for a look-up of [type]. */
+    private fun quad9DotEach(type: Int) = List(QUAD9_ADDRESSES.size) { QUAD9_DOT to type }
     private val request = Message.newQuery(Record.newRecord(Name.fromString("example.com."), Type.A, DClass.IN))
     private val query = request.toWire()
 
@@ -237,7 +240,7 @@ class CustomDnsTest {
     }
 
     @Test
-    fun `a home-IP primary away from home, a backup by name, nothing cached - the look-up falls through and the backup answers`() {
+    fun `a home-IP primary away from home, a backup by name, nothing cached - Quad9 alone looks it up and the backup answers`() {
         val homeDot = UpstreamTarget.Dot("192.0.2.10", 853)
         val familyDoh = UpstreamTarget.Doh("https://family.dns.example/dns-query")
         val calls = Calls()
@@ -249,18 +252,15 @@ class CustomDnsTest {
             }
         }
         d.start()
-        // A through the primary (unreachable), then Quad9 (never Cloudflare); AAAA skips the dead step.
-        assertEquals(
-            listOf(homeDot to Type.A, QUAD9_DOT to Type.A, QUAD9_DOT to Type.AAAA),
-            calls.lookups("family.dns.example"),
-        )
+        // Quad9 alone (never Cloudflare, never the parent's primary by IP).
+        assertEquals(listOf(QUAD9_DOT to Type.A, QUAD9_DOT to Type.AAAA), calls.lookups("family.dns.example"))
         assertArrayEquals(backupAnswer, d.resolve(query, request).bytes)
         assertEquals(listOf(homeDot, familyDoh), calls.targets)
         assertEquals(BackupReason.CONNECT, d.state().reason)
     }
 
     @Test
-    fun `a working or answering bootstrap resolver is never passed by`() {
+    fun `an answering bootstrap resolver is never passed by`() {
         val homeDot = UpstreamTarget.Dot("192.0.2.10", 853)
         val familyDoh = UpstreamTarget.Doh("https://family.dns.example/dns-query")
         for (nxdomain in listOf(false, true)) {
@@ -269,8 +269,39 @@ class CustomDnsTest {
                 if (nxdomain) Attempt.Answer(answer(Rcode.NXDOMAIN, m.header.id)) else lookupAnswer(m, "192.0.2.30")
             }
             d.start()
-            assertEquals(listOf(homeDot to Type.A, homeDot to Type.AAAA), calls.lookups("family.dns.example"))
+            assertEquals(listOf(QUAD9_DOT to Type.A, QUAD9_DOT to Type.AAAA), calls.lookups("family.dns.example"))
         }
+    }
+
+    @Test
+    fun `a primary by name with the prefilled IP backup - its name goes to Quad9, never to the backup (1_1_1_3)`() {
+        // Emulator gate 6bh (2026-11-24): the name was asked of the IP-literal backup first. The owner's rule: Quad9 only.
+        val named = UpstreamTarget.Dot("family.dns.example", 853)
+        val prefill = UpstreamTarget.Doh("https://1.1.1.3/dns-query")
+        val calls = Calls()
+        val asked = mutableListOf<List<InetAddress>>()
+        val d = CustomDns(
+            CustomUpstream(named, prefill, rev = 4),
+            protect = { true },
+            scope = CoroutineScope(Dispatchers.Unconfined),
+            elapsed = { 1_000 },
+            log = {},
+            transport = { target: UpstreamTarget, addresses: List<InetAddress>, bytes: ByteArray, _: Budget ->
+                val m = Message(bytes)
+                calls.asks += Ask(target, m.question.name.toString(), m.question.type)
+                if (target == QUAD9_DOT) asked += addresses
+                if (target == QUAD9_DOT) lookupAnswer(m, "192.0.2.30") else Attempt.Answer(answer(Rcode.NOERROR, m.header.id))
+            },
+            providers = listOf(quad9Resolver({ 1_000 }, {})),
+        )
+        d.start()
+        assertEquals(listOf(QUAD9_DOT to Type.A, QUAD9_DOT to Type.AAAA), calls.lookups("family.dns.example"))
+        assertTrue(calls.asks.none { it.target == prefill || it.target.serverHost in setOf("security.cloudflare-dns.com", "1.1.1.3") })
+        // At Quad9's first fixed address, by itself.
+        assertEquals(List(2) { listOf(InetAddress.getByName("9.9.9.9")) }, asked)
+        // The address in hand: the primary answers, the backup is never asked.
+        assertArrayEquals(answer(Rcode.NOERROR), d.resolve(query, request).bytes)
+        assertEquals(listOf<UpstreamTarget>(named), calls.targets)
     }
 
     @Test
@@ -287,10 +318,11 @@ class CustomDnsTest {
                 else -> Attempt.Answer(backupAnswer)
             }
         }
-        // Every resolver fails (the providers' DoH too): the start's look-up gives nothing, a bootstrap period starts.
+        // Quad9 fails at every address and over its DoH: the start's look-up gives nothing, a bootstrap period starts.
+        // The backup is an IP literal, and is never asked for the name.
         d.start()
         assertEquals(
-            listOf(backupDot to Type.A, QUAD9_DOT to Type.A, quad9Doh to Type.A),
+            quad9DotEach(Type.A) + (quad9Doh to Type.A),
             calls.lookups("abc123.dns.example"),
         )
         assertEquals(BackupReason.BOOTSTRAP, d.state().reason)
@@ -323,10 +355,7 @@ class CustomDnsTest {
         }
         d.start()
         assertEquals(
-            listOf(
-                homeDot to Type.A, QUAD9_DOT to Type.A, quad9Doh to Type.A,
-                QUAD9_DOT to Type.AAAA, quad9Doh to Type.AAAA,
-            ),
+            quad9DotEach(Type.A) + (quad9Doh to Type.A) + quad9DotEach(Type.AAAA) + (quad9Doh to Type.AAAA),
             calls.lookups("family.dns.example"),
         )
         // The backup's address came over 443: it answers.

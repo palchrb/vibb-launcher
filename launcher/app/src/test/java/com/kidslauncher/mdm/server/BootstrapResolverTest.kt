@@ -25,14 +25,14 @@ class BootstrapResolverTest {
     private fun config(primary: UpstreamTarget, backup: UpstreamTarget) = CustomUpstream(primary, backup, rev = 1)
 
     @Test
-    fun `the backup's IP first, then the primary's, then Quad9 but never Cloudflare - and nothing to look up with two IPs`() {
-        assertEquals(listOf(QUAD9_DOT), BOOTSTRAP_PROVIDERS)
-        assertEquals(listOf(dotIp) + BOOTSTRAP_PROVIDERS, bootstrapResolvers(config(dohName, dotIp)))
-        assertEquals(listOf(dohIp) + BOOTSTRAP_PROVIDERS, bootstrapResolvers(config(dotName, dohIp)))
-        assertEquals(listOf(dotIp) + BOOTSTRAP_PROVIDERS, bootstrapResolvers(config(dotIp, dohName)))
-        assertEquals(BOOTSTRAP_PROVIDERS, bootstrapResolvers(config(dohName, dotName)))
-        assertFalse(CLOUDFLARE_DOT in bootstrapResolvers(config(dohName, dotName)))
-        assertEquals(emptyList<UpstreamTarget>(), bootstrapResolvers(config(dotIp, dohIp)))
+    fun `a name is looked up through Quad9 alone, and only the names are looked up`() {
+        // The owner's rule (2026-11-24): never Cloudflare, never the parent's own servers - an IP-literal backup included.
+        assertEquals(listOf("quad9"), PublicResolvers.bootstrap.map { it.label })
+        assertEquals(listOf(QUAD9_DOT), PublicResolvers.bootstrap.map { it.dot })
+        assertEquals(setOf("dns.example"), BootstrapDiskCache.namesOf(config(dotName, dotIp)))
+        assertEquals(setOf("abc123.dns.example"), BootstrapDiskCache.namesOf(config(dotIp, dohName)))
+        assertEquals(emptySet<String>(), BootstrapDiskCache.namesOf(config(dotIp, dohIp)))
+        assertEquals(emptySet<String>(), BootstrapDiskCache.namesOf(config(QUAD9_DOT, CLOUDFLARE_DOT)))
     }
 
     @Test
@@ -54,8 +54,8 @@ class BootstrapResolverTest {
         val lookedUp = mutableListOf<String>()
         val dns = BootstrapDns({ 0 }) { lookedUp += it }
         assertEquals(listOf(InetAddress.getByName("192.0.2.53")), dns.addresses("192.0.2.53"))
-        assertEquals(listOf(InetAddress.getByName("9.9.9.9")), dns.addresses(QUAD9_DOT.host))
-        assertEquals(listOf(InetAddress.getByName("1.1.1.2"), InetAddress.getByName("1.0.0.2")), dns.addresses(CLOUDFLARE_DOT.host))
+        assertEquals(QUAD9_ADDRESSES, dns.addresses(QUAD9_DOT.host))
+        assertEquals(CLOUDFLARE_ADDRESSES, dns.addresses(CLOUDFLARE_DOT.host))
         assertTrue(lookedUp.isEmpty())
         // A name with nothing cached: one look-up, no address yet (OkHttp sees an unknown host).
         assertTrue(dns.addresses("dns.example").isEmpty())

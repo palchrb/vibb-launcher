@@ -3,6 +3,7 @@ package com.kidslauncher.mdm.server
 import android.os.SystemClock
 import android.util.Log
 import java.net.InetAddress
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 
 private const val LOG_TAG = "DnsUpstream"
@@ -73,10 +74,15 @@ fun Budget.atMost(cap: Budget): Budget = Budget(minOf(connectMs, cap.connectMs),
 
 /**
  * A public resolver (Quad9, Cloudflare): DoT on 853 to its fixed [addresses], and on a network
- * that blocks 853 the same provider's DoH on 443 ([doh]: an IP-literal URL where the certificate names
- * the IP, else the name at the same fixed address, [PINNED_DNS]) - design 36 step 3. Which provider a
- * query goes to is [resolveChain]'s. The parent's own servers never come here: a parent's DoT server
- * never gets a guessed DoH URL. Logs name the [label] and counts only.
+ * that blocks 853 the same provider's DoH on 443 ([doh]: its name at the same fixed addresses,
+ * [PINNED_DNS]) - design 36 step 3. Which provider a query goes to is [resolveChain]'s. The parent's
+ * own servers never come here: a parent's DoT server never gets a guessed DoH URL. Logs name the
+ * [label] and counts only.
+ *
+ * Several addresses (2026-11-24): DoT starts at the one last reached ([preferred]) and takes one at a
+ * time; an address that fails below DNS is moved past, for this query and the next. An address failing
+ * is not the provider failing: only a query that got no answer from any address it had time for, nor
+ * from the DoH (every address), counts against the provider in the chain.
  */
 class PublicResolver(
     val label: String,
@@ -88,21 +94,32 @@ class PublicResolver(
 ) {
     private val state = AtomicReference(DotBlockedRule.IDLE)
 
+    /** The index in [addresses] DoT starts at: the address last reached, or the next after one that failed. */
+    private val preferred = AtomicInteger(0)
+
+    /** The address DoT asks first now, for tests. */
+    internal fun preferredAddress(): InetAddress = addresses[preferred.get()]
+
     /** Whether the chain skips this provider for now ([ProviderChainRule]); unproven until it answers. */
     internal val down = AtomicReference(ProviderChainRule.UNPROVEN)
 
     internal fun state(): DotBlocked = state.get()
 
-    /** A network reset: DoT first again, and unproven in the chain until it answers on this network. */
+    /** A network reset: DoT first again from the first address, and unproven in the chain until it answers on this network. */
     fun reset() {
         update { DotBlockedRule.IDLE }
+        preferred.set(0)
         down.set(ProviderChainRule.UNPROVEN)
     }
 
     /**
      * One query: DoT within [dotBudget] (a probe within at most [UPSTREAM_BUDGET], so its query still
-     * gets DoH in time), or DoH within [dohCap] in a DoH period. A DoT transport failure counts towards
-     * the period, and the query itself goes on to DoH while [QUERY_DEADLINE_MS] leaves at least
+     * gets DoH in time), or DoH within [dohCap] in a DoH period. DoT asks one address at a time from
+     * [preferred], the next only while a whole connect still leaves [BACKUP_FLOOR_MS] for DoH (a refused
+     * address, or one of a family the network lacks, costs no time; a dropped one leaves DoH its share).
+     * A DoT transport failure counts towards the period once per query, and only when this query moved
+     * past an address (queries in flight failing at the same address count once) or was the probe; the
+     * query itself goes on to DoH (every address, [PINNED_DNS]) while [QUERY_DEADLINE_MS] leaves at least
      * [BACKUP_FLOOR_MS]. In a period a DoH transport failure goes on to DoT the same way (QA L1: a
      * network that blocks the provider's 443 but not 853), and a DoT that works ends the period.
      * [transport] is one attempt at a target (DoT or DoH); one that throws counts as a connect failure.
@@ -122,8 +139,8 @@ class PublicResolver(
         dohCap: Budget,
         transport: (UpstreamTarget, List<InetAddress>, ByteArray, Budget) -> Attempt,
     ): Attempt {
-        fun attempt(target: UpstreamTarget, budget: Budget): Attempt = try {
-            transport(target, addresses, query, budget)
+        fun attempt(target: UpstreamTarget, to: List<InetAddress>, budget: Budget): Attempt = try {
+            transport(target, to, query, budget)
         } catch (e: Exception) {
             if (unprotected(e)) Attempt.Unprotected else Attempt.Transport(BackupReason.CONNECT)
         }
@@ -131,23 +148,46 @@ class PublicResolver(
             val left = deadline - elapsed()
             return if (left < BACKUP_FLOOR_MS) null else cap.atMost(Budget(left.toInt(), left.toInt()))
         }
+        var moved = false
+        // DoT from the address last reached: the first within [first], each next only while a whole connect within
+        // [cap] still leaves [reserve] of the deadline after it. A failed address is moved past for later queries too.
+        fun dotOver(first: Budget, cap: Budget, reserve: Long): Attempt {
+            val start = preferred.get()
+            var outcome: Attempt = Attempt.Transport(BackupReason.CONNECT)
+            for (i in addresses.indices) {
+                val at = (start + i) % addresses.size
+                val budget = if (i == 0) {
+                    first
+                } else {
+                    val room = deadline - elapsed() - reserve
+                    if (room < cap.connectMs) break
+                    cap.atMost(Budget(room.toInt(), room.toInt()))
+                }
+                outcome = attempt(dot, listOf(addresses[at]), budget)
+                if (outcome !is Attempt.Transport) return outcome
+                if (preferred.compareAndSet(at, (at + 1) % addresses.size)) moved = true
+            }
+            return outcome
+        }
         var route = DotRoute.DOT
         update { s -> DotBlockedRule.route(s, elapsed()).let { (r, next) -> route = r; next } }
         if (route == DotRoute.DOH) {
-            val outcome = attempt(doh, dohCap)
+            val outcome = attempt(doh, addresses, dohCap)
             if (outcome !is Attempt.Transport) return outcome
-            val budget = left(dotBudget.atMost(UPSTREAM_BUDGET)) ?: return outcome
-            val fallback = attempt(dot, budget)
+            val cap = dotBudget.atMost(UPSTREAM_BUDGET)
+            val budget = left(cap) ?: return outcome
+            val fallback = dotOver(budget, cap, reserve = 0)
             if (fallback is Attempt.Answer || fallback is Attempt.Odd) update(DotBlockedRule::afterDotWorked)
             return fallback
         }
         // Never past the query's deadline (a later provider in the chain keeps its share).
-        val dotFirst = left(if (route == DotRoute.PROBE) dotBudget.atMost(UPSTREAM_BUDGET) else dotBudget)
+        val cap = if (route == DotRoute.PROBE) dotBudget.atMost(UPSTREAM_BUDGET) else dotBudget
+        val dotFirst = left(cap)
         if (dotFirst == null) {
             update { DotBlockedRule.afterUnprotected(it, route == DotRoute.PROBE) }
             return Attempt.Transport(BackupReason.TIMEOUT)
         }
-        val outcome = attempt(dot, dotFirst)
+        val outcome = dotOver(dotFirst, cap, reserve = BACKUP_FLOOR_MS)
         if (outcome is Attempt.Unprotected) {
             update { DotBlockedRule.afterUnprotected(it, route == DotRoute.PROBE) }
             return outcome
@@ -156,8 +196,9 @@ class PublicResolver(
             update(DotBlockedRule::afterDotWorked)
             return outcome
         }
-        update { DotBlockedRule.afterDotFailure(it, elapsed(), route == DotRoute.PROBE) }
-        return attempt(doh, left(dohCap) ?: return outcome)
+        // One count per query, and none for an address another query in flight already moved past.
+        if (moved || route == DotRoute.PROBE) update { DotBlockedRule.afterDotFailure(it, elapsed(), route == DotRoute.PROBE) }
+        return attempt(doh, addresses, left(dohCap) ?: return outcome)
     }
 
     private inline fun update(change: (DotBlocked) -> DotBlocked) {
@@ -296,7 +337,7 @@ fun resolveChain(
 
 /** The public resolvers, one state each for the process; [KidVpnService] resets them on a network
  * reset. The web filter's resolver: Quad9 by default, Cloudflare the fallback, all
- * encrypted; a parent's server's name is never looked up through Cloudflare ([bootstrap]). */
+ * encrypted; a parent's server's name is looked up through Quad9 alone ([bootstrap]). */
 object PublicResolvers {
     val quad9 = quad9Resolver()
     val cloudflare = cloudflareResolver()
@@ -307,7 +348,8 @@ object PublicResolvers {
     /** The provider of a policy without a known one (the server's `dns_server::DEFAULT_PROVIDER`). */
     const val DEFAULT = "quad9"
 
-    /** Where a parent's server's name is looked up: Quad9 by its fixed address, never Cloudflare. */
+    /** Where a parent's server's name is looked up: Quad9 by its fixed addresses (DoT, then its DoH) - never
+     * Cloudflare, and never the parent's backup or primary, not even one given as an IP literal (2026-11-24). */
     val bootstrap = listOf(quad9)
 
     /** The provider that answered last (the status report's `provider`); `null` before any. */
@@ -346,13 +388,16 @@ object PublicResolvers {
     }
 }
 
-private fun ip(vararg octets: Int): InetAddress = InetAddress.getByAddress(ByteArray(4) { octets[it].toByte() })
+/** IP literals parsed into bytes ([ipLiteral]), never looked up. */
+private fun pinned(vararg literals: String): List<InetAddress> = literals.map { requireNotNull(ipLiteral(it)) }
 
-/** Cloudflare's malware-blocking resolver (1.1.1.1 for Families' "security"). */
+/** Cloudflare's malware-blocking resolver (1.1.1.1 for Families' "security"): both IPv4 addresses, then both IPv6. */
 val CLOUDFLARE_DOT = UpstreamTarget.Dot("security.cloudflare-dns.com", 853)
-val CLOUDFLARE_ADDRESSES: List<InetAddress> = listOf(ip(1, 1, 1, 2), ip(1, 0, 0, 2))
+val CLOUDFLARE_ADDRESSES: List<InetAddress> = pinned("1.1.1.2", "1.0.0.2", "2606:4700:4700::1112", "2606:4700:4700::1002")
+
+/** Quad9's "Recommended" service (malware blocking, DNSSEC, no ECS): both IPv4 addresses, then both IPv6. */
 val QUAD9_DOT = UpstreamTarget.Dot("dns.quad9.net", 853)
-val QUAD9_ADDRESSES: List<InetAddress> = listOf(ip(9, 9, 9, 9))
+val QUAD9_ADDRESSES: List<InetAddress> = pinned("9.9.9.9", "149.112.112.112", "2620:fe::fe", "2620:fe::9")
 
 /** The providers' names and their fixed addresses: never looked up. */
 val PINNED_PROVIDERS: Map<String, List<InetAddress>> = mapOf(
@@ -370,4 +415,4 @@ fun cloudflareResolver(
 fun quad9Resolver(
     elapsed: () -> Long = SystemClock::elapsedRealtime,
     log: (String) -> Unit = { Log.i(LOG_TAG, it) },
-) = PublicResolver("quad9", QUAD9_DOT, QUAD9_ADDRESSES, UpstreamTarget.Doh("https://9.9.9.9/dns-query"), elapsed, log)
+) = PublicResolver("quad9", QUAD9_DOT, QUAD9_ADDRESSES, UpstreamTarget.Doh("https://dns.quad9.net/dns-query"), elapsed, log)

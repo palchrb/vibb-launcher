@@ -70,28 +70,37 @@ class PublicResolverTest {
     fun `each provider falls back to its own DoH on 443, never another's`() {
         for ((resolver, url) in listOf(
             cloudflareResolver({ 0 }, {}) to "https://security.cloudflare-dns.com/dns-query",
-            quad9Resolver({ 0 }, {}) to "https://9.9.9.9/dns-query",
+            quad9Resolver({ 0 }, {}) to "https://dns.quad9.net/dns-query",
         )) {
             val asked = mutableListOf<UpstreamTarget>()
             val budgets = mutableListOf<Budget>()
+            val dotAt = mutableListOf<InetAddress>()
             val transport = { target: UpstreamTarget, addresses: List<InetAddress>, _: ByteArray, budget: Budget ->
                 asked += target
                 budgets += budget
-                assertEquals(resolver.addresses, addresses)
+                // DoT one address at a time; DoH every address (OkHttp tries them in turn).
+                if (target is UpstreamTarget.Dot) dotAt += addresses.single() else assertEquals(resolver.addresses, addresses)
                 if (target is UpstreamTarget.Dot) blocked else Attempt.Answer(answer)
             }
-            // Each failed DoT query is answered over DoH at once; the third failure starts the period.
+            // Each failed DoT query (every address refused at once) is answered over DoH at once, and counts once;
+            // the third failure starts the period.
             repeat(3) {
                 val got = resolver.resolve(query, PROVIDER_BUDGET, UPSTREAM_BUDGET, transport) as Attempt.Answer
                 assertArrayEquals(answer, got.bytes)
+                assertEquals(it < 2, !resolver.state().doh)
             }
             assertTrue(resolver.state().doh)
             // In the period DoT isn't tried at all.
             resolver.resolve(query, PROVIDER_BUDGET, UPSTREAM_BUDGET, transport)
-            assertEquals(List(3) { listOf(resolver.dot, UpstreamTarget.Doh(url)) }.flatten() + UpstreamTarget.Doh(url), asked)
+            val n = resolver.addresses.size
+            assertEquals(4, n)
+            assertEquals(List(3) { List(n) { resolver.dot } + UpstreamTarget.Doh(url) }.flatten() + UpstreamTarget.Doh(url), asked)
+            assertEquals(List(3) { resolver.addresses }.flatten(), dotAt)
             assertTrue(asked.filterIsInstance<UpstreamTarget.Doh>().all { it.url == url })
             assertEquals(Budget(PROVIDER_BUDGET.connectMs, QUERY_DEADLINE_MS.toInt()), budgets[0])
-            assertEquals(UPSTREAM_BUDGET, budgets[1])
+            // The next address only within what still leaves DoH its floor.
+            assertEquals(Budget(PROVIDER_BUDGET.connectMs, (QUERY_DEADLINE_MS - BACKUP_FLOOR_MS).toInt()), budgets[1])
+            assertEquals(UPSTREAM_BUDGET, budgets[n])
             // A network reset tries DoT first again.
             resolver.reset()
             assertEquals(DotBlocked(), resolver.state())
@@ -194,7 +203,7 @@ class PublicResolverTest {
             .toList()
         assertEquals(
             listOf(
-                "CustomUpstream.kt: it", "PublicResolver.kt: \"https://9.9.9.9/dns-query\"",
+                "CustomUpstream.kt: it", "PublicResolver.kt: \"https://dns.quad9.net/dns-query\"",
                 "PublicResolver.kt: \"https://security.cloudflare-dns.com/dns-query\"",
             ),
             built.sorted(),
@@ -214,11 +223,18 @@ class PublicResolverTest {
         // S-L9: the kept DoT connections ran over the old network.
         assertTrue("dotPool::evictAll" in changed)
         assertEquals(listOf(InetAddress.getByName("192.0.2.1")), PINNED_DNS.lookup("192.0.2.1"))
-        // A provider's name is its fixed address, never looked up: Cloudflare's malware-blocking resolver, both its addresses.
+        // A provider's name is its fixed addresses, never looked up: Cloudflare's malware-blocking resolver and Quad9's
+        // "Recommended" service, each with both IPv4 addresses first, then both IPv6.
         assertEquals(
-            listOf(InetAddress.getByName("1.1.1.2"), InetAddress.getByName("1.0.0.2")),
+            listOf("1.1.1.2", "1.0.0.2", "2606:4700:4700::1112", "2606:4700:4700::1002").map(InetAddress::getByName),
             PINNED_DNS.lookup("security.cloudflare-dns.com"),
         )
+        assertEquals(
+            listOf("9.9.9.9", "149.112.112.112", "2620:fe::fe", "2620:fe::9").map(InetAddress::getByName),
+            PINNED_DNS.lookup("dns.quad9.net"),
+        )
+        assertEquals(CLOUDFLARE_ADDRESSES, cloudflareResolver({ 0 }, {}).addresses)
+        assertEquals(QUAD9_ADDRESSES, quad9Resolver({ 0 }, {}).addresses)
         try {
             PINNED_DNS.lookup("dns.example")
             fail("a name was resolved")
@@ -247,12 +263,12 @@ class PublicResolverTest {
         val transport = { target: UpstreamTarget, _: List<InetAddress>, _: ByteArray, _: Budget ->
             val host = target.serverHost
             asked += host
-            if (host == "dns.quad9.net" || host == "9.9.9.9") { if (quad9Up) Attempt.Answer(answer) else blocked } else Attempt.Answer(answer)
+            if (host == "dns.quad9.net") { if (quad9Up) Attempt.Answer(answer) else blocked } else Attempt.Answer(answer)
         }
         fun ask() = resolveChain(order, query, PROVIDER_BUDGET, UPSTREAM_BUDGET, transport, { now }) { answered += it }
-        // Quad9 refused (DoT, then its own DoH): the same query goes on to Cloudflare.
+        // Quad9 refused (DoT at every address, then its own DoH): the same query goes on to Cloudflare.
         assertTrue(ask() is Attempt.Answer)
-        assertEquals(listOf("dns.quad9.net", "9.9.9.9", "security.cloudflare-dns.com"), asked)
+        assertEquals(List(QUAD9_ADDRESSES.size + 1) { "dns.quad9.net" } + "security.cloudflare-dns.com", asked)
         assertEquals(listOf("cloudflare"), answered)
         // Skipped while down.
         asked.clear()
@@ -320,5 +336,93 @@ class PublicResolverTest {
         // A provider that never answers: only the query that probed it pays.
         assertEquals(ProviderDown(untilMs = 60_000, periods = 1), ProviderChainRule.afterFailure(ProviderChainRule.UNPROVEN.copy(probing = true), 0, probe = true))
         assertEquals(ProviderChainRule.UNPROVEN, ProviderChainRule.afterFailure(ProviderChainRule.UNPROVEN, 0, probe = false))
+    }
+
+    @Test
+    fun `a blocked address isn't the provider failing - the next address answers, and later queries start there`() {
+        var now = 0L
+        val resolver = quad9Resolver({ now }, {})
+        val (nine, second) = QUAD9_ADDRESSES
+        val asked = mutableListOf<Pair<UpstreamTarget, List<InetAddress>>>()
+        var dropMs = 0L
+        val transport = { target: UpstreamTarget, addresses: List<InetAddress>, _: ByteArray, _: Budget ->
+            asked += target to addresses
+            when {
+                target is UpstreamTarget.Doh -> Attempt.Answer(answer)
+                addresses.single() == nine -> { now += dropMs; blocked }
+                else -> Attempt.Answer(answer)
+            }
+        }
+        fun ask() = resolver.resolve(query, PROVIDER_BUDGET, UPSTREAM_BUDGET, transport)
+        // Refused at once: the same query's DoT goes on to the next address, which answers - nothing counted.
+        assertTrue(ask() is Attempt.Answer)
+        assertEquals(listOf<Pair<UpstreamTarget, List<InetAddress>>>(QUAD9_DOT to listOf(nine), QUAD9_DOT to listOf(second)), asked)
+        assertEquals(DotBlocked(), resolver.state())
+        assertEquals(second, resolver.preferredAddress())
+        // The next query starts at the address that answered.
+        asked.clear()
+        ask()
+        assertEquals(listOf<Pair<UpstreamTarget, List<InetAddress>>>(QUAD9_DOT to listOf(second)), asked)
+        // A network reset starts from the first again.
+        resolver.reset()
+        assertEquals(nine, resolver.preferredAddress())
+        // Dropped (the whole connect gone): no time for another DoT address, the query's DoH (every address) answers;
+        // the next query's DoT starts at the second address, which answers and clears the count.
+        dropMs = PROVIDER_BUDGET.connectMs.toLong()
+        asked.clear()
+        assertTrue(ask() is Attempt.Answer)
+        assertEquals(listOf(QUAD9_DOT to listOf(nine), resolver.doh to QUAD9_ADDRESSES), asked)
+        assertEquals(1, resolver.state().failures)
+        asked.clear()
+        ask()
+        assertEquals(listOf<Pair<UpstreamTarget, List<InetAddress>>>(QUAD9_DOT to listOf(second)), asked)
+        assertEquals(DotBlocked(), resolver.state())
+    }
+
+    @Test
+    fun `queries in flight failing at the same address count once`() {
+        var now = 0L
+        val resolver = quad9Resolver({ now }, {})
+        var inFlight = true
+        lateinit var transport: (UpstreamTarget, List<InetAddress>, ByteArray, Budget) -> Attempt
+        transport = { target, _, _, _ ->
+            if (target is UpstreamTarget.Dot) {
+                // A second query fails at the same address while this one waits on it.
+                if (inFlight) {
+                    inFlight = false
+                    resolver.resolve(query, PROVIDER_BUDGET, UPSTREAM_BUDGET, transport)
+                }
+                now += PROVIDER_BUDGET.connectMs
+                blocked
+            } else {
+                Attempt.Answer(answer)
+            }
+        }
+        resolver.resolve(query, PROVIDER_BUDGET, UPSTREAM_BUDGET, transport)
+        assertEquals(1, resolver.state().failures)
+        assertEquals(QUAD9_ADDRESSES[1], resolver.preferredAddress())
+    }
+
+    @Test
+    fun `with one Quad9 address blocked Quad9 still answers - Cloudflare only when every Quad9 address fails`() {
+        val order = listOf(quad9Resolver({ 0 }, {}), cloudflareResolver({ 0 }, {}))
+        val answered = mutableListOf<String>()
+        val hosts = mutableListOf<String>()
+        var blockedHere = setOf(QUAD9_ADDRESSES[0])
+        val transport = { target: UpstreamTarget, addresses: List<InetAddress>, _: ByteArray, _: Budget ->
+            hosts += target.serverHost
+            val reachable = addresses.filterNot { it in blockedHere }
+            if (reachable.isEmpty()) blocked else Attempt.Answer(answer)
+        }
+        assertTrue(resolveChain(order, query, PROVIDER_BUDGET, UPSTREAM_BUDGET, transport, { 0 }) { answered += it } is Attempt.Answer)
+        assertEquals(listOf("quad9"), answered)
+        assertEquals(listOf("dns.quad9.net", "dns.quad9.net"), hosts)
+        assertEquals(ProviderChainRule.UP, order[0].down.get())
+        // Every Quad9 address blocked, on 853 and 443: only then the query goes on to Cloudflare.
+        blockedHere = QUAD9_ADDRESSES.toSet()
+        hosts.clear()
+        assertTrue(resolveChain(order, query, PROVIDER_BUDGET, UPSTREAM_BUDGET, transport, { 0 }) { answered += it } is Attempt.Answer)
+        assertEquals("cloudflare", answered.last())
+        assertEquals(List(QUAD9_ADDRESSES.size + 1) { "dns.quad9.net" } + "security.cloudflare-dns.com", hosts)
     }
 }

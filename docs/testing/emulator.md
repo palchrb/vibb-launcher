@@ -5353,14 +5353,24 @@ for Families, the parent's backup) and never through 9.9.9.9 - as the code says,
 phone whose last report has no `provider` (after a Wi-Fi reset, before a look-up answered) has no line on `/dns` until
 its next report (`phone_line`'s quiet case); seen once per phone.
 
+**Changed after the run (branch `dns-bootstrap`, 2026-11-24) - owed again on Android 14 and 16:** the first note above
+broke the owner's rule, so a custom server's name is now looked up through Quad9 alone (never the parent's backup or
+primary, IP literal or not; never Cloudflare), and each provider has four fixed addresses (Quad9 9.9.9.9,
+149.112.112.112, 2620:fe::fe, 2620:fe::9; Cloudflare 1.1.1.2, 1.0.0.2, 2606:4700:4700::1112, 2606:4700:4700::1002),
+Quad9's DoH by name at them (`https://dns.quad9.net/dns-query`). The rows below are rewritten for that: the
+"Fallback", "None" and "853 blocked" blocks now cover every address of a provider (IPv6 with `ip6tables`), and "One
+address" and "Custom, IP backup" are new. The table above is the run's record of the code before.
+
 | Row | What passes |
 |---|---|
 | Default | A fresh phone: `logcat` shows no `DnsUpstream` failures; the PWA's Web Filter footer says "<phone> · Quad9 svarer" within a report |
-| Fallback | Block 9.9.9.9 (both 853 and 443) on the host (`iptables -I FORWARD -d 9.9.9.9 -j REJECT`): pages still load; the line turns to "Cloudflare svarer"; within a minute of lifting the block (a back-off's probe) it is back on Quad9 |
-| None | Block both (9.9.9.9, 1.1.1.2, 1.0.0.2): after 30 s the orange "DNS kan ikke nås siden ... - ingen DNS-server svarer ..."; never a plain UDP/53 or TCP/53 packet leaves the emulator (`tcpdump -i any port 53` on the host stays empty) |
-| 853 blocked | Block port 853 only: both providers' DoH on 443 answer (Cloudflare by name at its fixed addresses, the certificate checked) |
+| One address | Block 9.9.9.9 alone (853 and 443), once with `REJECT` and once with `DROP`: pages still load and the line stays "Quad9 svarer"; packets go to 149.112.112.112, none to 1.1.1.2, 1.0.0.2 or Cloudflare's IPv6; no `DoT blocked: quad9` line with `REJECT` (the second address answers in the same query). With `DROP` the first query may take ~2.5 s more; the next ones start at 149.112.112.112 |
+| Fallback | Block every Quad9 address (9.9.9.9, 149.112.112.112 with `iptables`; 2620:fe::fe, 2620:fe::9 with `ip6tables`; 853 and 443): pages still load; the line turns to "Cloudflare svarer"; within a minute of lifting the block (a back-off's probe) it is back on Quad9 |
+| None | Block all eight (Quad9's four and Cloudflare's 1.1.1.2, 1.0.0.2, 2606:4700:4700::1112, 2606:4700:4700::1002): after 30 s the orange "DNS kan ikke nås siden ... - ingen DNS-server svarer ..."; never a plain UDP/53 or TCP/53 packet leaves the emulator (IPv4 or IPv6) |
+| 853 blocked | Block port 853 only (IPv4 and IPv6): both providers' DoH on 443 answer, each by name at its fixed addresses (`dns.quad9.net`, `security.cloudflare-dns.com`; the certificate checked); `DoT blocked: quad9 over DoH` after the third query |
 | Parent's pick | Pick Cloudflare in the PWA: the line says Cloudflare; the picker has no Mullvad |
-| Custom by name | Custom with `tls://dns.example...` names (a server by name): its name's look-up goes to 9.9.9.9 on 853/443, never to Cloudflare (`tcpdump host 1.1.1.2 or host 1.0.0.2` empty) |
+| Custom by name | Custom with `tls://dns.example...` names (a server by name) and a backup by name: its name's look-up goes to Quad9 (any of its four addresses) on 853/443, never to Cloudflare (no packet to 1.1.1.2, 1.0.0.2 or their IPv6) |
+| Custom, IP backup | Custom with a primary by name (`tls://family.adguard-dns.com`) and the prefilled backup `https://1.1.1.3/dns-query`, the bootstrap cache cleared (Forget, then save again): the primary's name is looked up through Quad9 only - no packet to 1.1.1.3 (nor 1.0.0.3) while the primary answers, none to Cloudflare's security addresses |
 
 ## 6bi. Lyd: a notification sound on the locked phone (design 130, branch `lock-sound`) - written, not run
 

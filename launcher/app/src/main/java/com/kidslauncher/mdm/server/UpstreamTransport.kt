@@ -530,8 +530,8 @@ fun targetTransport(
     }
 
 /** The public resolvers' DoH client's [okhttp3.Dns] (design 36 step 3): an IP literal is itself, a
- * provider's name its fixed address ([PINNED_PROVIDERS]); anything else has no address (never the
- * system resolver, never a look-up). */
+ * provider's name its fixed addresses ([PINNED_PROVIDERS], IPv4 first; OkHttp tries them in turn and
+ * puts one that failed last); anything else has no address (never the system resolver, never a look-up). */
 val PINNED_DNS: okhttp3.Dns = object : okhttp3.Dns {
     override fun lookup(hostname: String): List<InetAddress> =
         (ipLiteral(hostname)?.let(::listOf) ?: PINNED_PROVIDERS[hostname].orEmpty()).ifEmpty { throw java.net.UnknownHostException("not a fixed address") }

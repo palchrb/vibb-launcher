@@ -74,25 +74,6 @@ private fun ipv6Bytes(text: String): ByteArray? {
     return bytes
 }
 
-/** The bootstrap's last resolver (design 36 §5.3): Quad9 by its fixed address,
- * over DoT (or its DoH where 853 is blocked, step 3) - the only case a look-up leaves
- * for anyone but the parent's servers, and never Cloudflare ([PublicResolvers.bootstrap]). */
-val BOOTSTRAP_PROVIDERS: List<UpstreamTarget.Dot> = PublicResolvers.bootstrap.map { it.dot }
-
-/**
- * Where the servers' names are looked up (design 36 §5.3), in order: the backup when it is an IP
- * literal, the primary when it is, then [BOOTSTRAP_PROVIDERS]. A look-up (only a look-up, never a
- * query) moves to the next when one fails at the transport level, so a home-network primary by IP
- * away from home still lets the backup's name be found. Empty when both are IP literals (nothing to
- * look up).
- */
-fun bootstrapResolvers(config: CustomUpstream): List<UpstreamTarget> {
-    val backupIp = ipLiteral(config.backup.serverHost) != null
-    val primaryIp = ipLiteral(config.primary.serverHost) != null
-    if (backupIp && primaryIp) return emptyList()
-    return listOfNotNull(config.backup.takeIf { backupIp }, config.primary.takeIf { primaryIp }) + BOOTSTRAP_PROVIDERS
-}
-
 /** At most two addresses, IPv4 first (one of each family when there are both). */
 fun ipv4First(addresses: List<InetAddress>): List<InetAddress> {
     val v4 = addresses.filterIsInstance<Inet4Address>()
@@ -210,7 +191,7 @@ class BootstrapCache {
 /**
  * The addresses of both servers (design 36 §5.3), and OkHttp's [Dns] for the DoH client - never the
  * system resolver (the launcher's own look-ups go to the VPN's fake DNS server, back into us).
- * An IP literal is itself, a provider's name its fixed address ([PINNED_PROVIDERS]), a name what [cache] holds; a
+ * An IP literal is itself, a provider's name its fixed addresses ([PINNED_PROVIDERS]), a name what [cache] holds; a
  * name with nothing cached starts a look-up through [lookUp] (in the background, see [CustomDns])
  * and has no addresses for now. [lookUp] reports through [put]/[failed].
  */
@@ -220,7 +201,8 @@ class BootstrapDns(
 ) : Dns {
     val cache = BootstrapCache()
 
-    /** The addresses to connect to now, at most two, IPv4 first; empty = not looked up yet. */
+    /** The addresses to connect to now: a looked-up name's at most two, IPv4 first, a provider's all its fixed ones;
+     * empty = not looked up yet. */
     fun addresses(host: String): List<InetAddress> {
         ipLiteral(host)?.let { return listOf(it) }
         PINNED_PROVIDERS[host]?.let { return it }
