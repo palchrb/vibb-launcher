@@ -202,7 +202,8 @@ the trusted time and `trust` how it is known (`server`, `gnss`, `carried`, `none
 - **Across a reboot** (another `BOOT_COUNT`, or elapsed behind the anchor) the first read (`Application.onCreate`, direct
   boot: device-protected prefs `trusted_clock`) makes a `carried` anchor: `max(wall - last offset, last checkpoint)`. The
   checkpoint (trusted time and the wall clock's offset) is kept at the snapshots, at most once a minute, and at
-  `ACTION_SHUTDOWN`. A phone never anchored (before its first sync) reads the wall clock. When the wall clock at that first
+  `ACTION_SHUTDOWN`; while a carried time is open (below) a checkpoint keeps the last offset, so a set that lands
+  before its `TIME_SET` is still seen as a move (gate 6bf (j)). A phone never anchored (before its first sync) reads the wall clock. When the wall clock at that first
   read is behind the checkpoint (a clock that lost its time while off), the boot's first forward wall-clock set is taken
   once (`timeSetAnchor`), so automatic time putting it right isn't ignored.
 - **The ledger** (`ScreenTime.observe` with a trust other than `none`) follows the trusted day; a reset on a `carried` time
@@ -224,6 +225,6 @@ the trusted time and `trust` how it is known (`server`, `gnss`, `carried`, `none
 - **Fixes** carry `age_ms` from elapsed realtime (`fixAgeMs`; unknown across a reboot): the server stores the fix at the
   receipt minus it. The cached and kept fixes keep their elapsed time and boot.
 - **Vibb's clock faces** (`ClockFormat.bindTrusted`: the time-rule screen's and the glance's time and date) show the trusted
-  time as literal text while the offset is over five minutes, refreshed at each minute; back within five minutes, the
-  system's pattern again.
+  time as literal text while the offset is over five minutes, refreshed at each minute and bound again (the date too)
+  at start and when Android's clock or zone is set; back within five minutes, the system's pattern again.
 - **Not done:** Android's own clock is never set (the status bar and other apps keep the wall clock).
