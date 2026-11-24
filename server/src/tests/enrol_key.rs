@@ -911,3 +911,23 @@ async fn the_address_history_waits() {
         at("2027-01-30T12:00:00Z")
     ));
 }
+
+/// Migration 0175 widens `device_keys.security_level` to `software` (E2's emulator keys), the rest unchanged.
+#[tokio::test]
+async fn a_software_key_can_be_stored() {
+    let app = TestApp::new().await;
+    let (id, _) = app.enrolled_device("Ju").await;
+    let insert = |level: &'static str, key_id: &'static str| {
+        sqlx::query(
+            "INSERT INTO device_keys (key_id, device_id, spki, spki_sha256, public_key, security_level, \
+             attestation_version, serials, root, state, via) \
+             VALUES (?, ?, x'00', 'aa', x'00', ?, 300, '[]', 'emulator', 'retired', 'enroll')",
+        )
+        .bind(key_id)
+        .bind(id)
+        .bind(level)
+        .execute(&app.db)
+    };
+    insert("software", "soft").await.unwrap();
+    assert!(insert("other", "other").await.is_err(), "the CHECK stays");
+}

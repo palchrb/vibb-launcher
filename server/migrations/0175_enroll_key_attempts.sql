@@ -25,3 +25,36 @@ ALTER TABLE devices ADD COLUMN enroll_old_app_at TEXT;                          
 ALTER TABLE devices ADD COLUMN key_exempt_at TEXT;
 ALTER TABLE devices ADD COLUMN key_exempt_reason TEXT;
 ALTER TABLE devices ADD COLUMN key_exempt_by INTEGER REFERENCES admin_users(id) ON DELETE SET NULL;
+
+-- Design 129b §7 (E2, `emulator_keys`): an emulator's key is attested at the Software level. 0174's CHECK allowed only
+-- 'tee' and 'strongbox'; SQLite can't change a CHECK, so the table is rebuilt with 'software' allowed (nothing
+-- references it).
+CREATE TABLE device_keys_new (
+    key_id TEXT PRIMARY KEY,
+    device_id INTEGER NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    spki BLOB NOT NULL,
+    spki_sha256 TEXT NOT NULL,
+    public_key BLOB NOT NULL,
+    security_level TEXT NOT NULL CHECK (security_level IN ('tee', 'strongbox', 'software')),
+    attestation_version INTEGER NOT NULL,
+    os_patch_level INTEGER,
+    boot_state TEXT,
+    boot_key TEXT,
+    device_locked INTEGER,
+    serials TEXT NOT NULL,
+    root TEXT NOT NULL,
+    address TEXT,
+    unusual INTEGER NOT NULL DEFAULT 0,
+    state TEXT NOT NULL CHECK (state IN ('observed', 'bound', 'held', 'pending', 'retired')),
+    via TEXT NOT NULL CHECK (via IN ('enroll', 'register')),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    revoked_at TEXT,
+    last_signed_at TEXT
+);
+INSERT INTO device_keys_new SELECT key_id, device_id, spki, spki_sha256, public_key, security_level,
+    attestation_version, os_patch_level, boot_state, boot_key, device_locked, serials, root, address, unusual, state, via,
+    created_at, revoked_at, last_signed_at FROM device_keys;
+DROP TABLE device_keys;
+ALTER TABLE device_keys_new RENAME TO device_keys;
+CREATE INDEX device_keys_device ON device_keys (device_id);
+CREATE UNIQUE INDEX device_keys_one_live ON device_keys (device_id) WHERE state IN ('observed', 'bound', 'held');

@@ -158,7 +158,7 @@ before it keep their bearer and register as above.
   signed requests note their address too (`security::require_device_token`); `device_key::unusual_cleared` is S2's
   re-check, written and tested now.
 - Migration 0175: `enroll_key_attempts`, and on `devices` the code's tag, the wrong numbers, the older-launcher mark and
-  `key_exempt_*`. Tests: `tests::enrol_key`, `enrol_key::tests`, `tests::device_key`.
+  `key_exempt_*`; `device_keys` rebuilt with `security_level` allowing `software` (E2's emulator keys). Tests: `tests::enrol_key`, `enrol_key::tests`, `tests::device_key`.
 
 ## Not in S1
 
