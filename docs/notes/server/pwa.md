@@ -286,20 +286,24 @@ family's one backup row (`backups::backup_state`, `#backup-warning`, to `/backup
   (`lock_glance::wake_log_line`); sent as `launcher_ui.lock_wake_on_notification`. The group's footer says that what
   the lock shows is seen by anyone near the phone (its ⓘ went in the ⓘ cut, 2026-10-24). Tests: `lock_glance::the_wake_switch_saves_logs_nudges_and_reaches_the_policy`,
   the redirect table in `device_pages`, `policy_json_keys_snapshot`.
-- **Buzz for a notification** (design 82 W3, `docs/design/82-meldinger-as-an-app.md` §9 and §14): the cell `#lock-buzz`
-  right under the wake's - a switch (sub-line "One short buzz, no sound, for the apps on the lock below and missed
-  calls", `data-autosave`, `<noscript>` Save) posting `POST /devices/{id}/lock-buzz` (`lock_glance::save_buzz`:
-  `device_policy.lock_buzz_on_notification`, migration 0136, off by default; 404 for an unknown phone), back to
-  `#lock-buzz`, the phone nudged, a `lock_buzz_changed` security-log line when the value changed
-  (`lock_glance::buzz_log_line`); sent as `launcher_ui.lock_buzz_on_notification`, always. One switch for everything
-  that brings a row to the lock - Meldinger has none of its own, and no app has a buzz choice. Tests:
-  `lock_glance::the_buzz_switch_saves_logs_nudges_and_reaches_the_policy`, the redirect table in `device_pages`,
+- **Varsling: Av / Vibrer / Lyd** (design 129, `docs/design/129-lock-sound.md`; design 82 W3's "Buzz for a
+  notification" switch before it, §9 and §14): the cell `#lock-alert` right under the wake's - a select "Varsling" /
+  "Alert" with Av / Vibrer / Lyd (Off / Buzz / Sound; `lock_glance::NoticeAlert`, no sub-line, `data-autosave`,
+  `<noscript>` Save) posting `POST /devices/{id}/lock-alert` field `alert` (`lock_glance::save_alert`:
+  `device_policy.lock_notice_alert`, migration 0173 - which mapped a stored buzz on to `buzz`, off to `off` and dropped
+  `lock_buzz_on_notification` -, Off by default; 400 for any other value, 404 for an unknown phone), back to
+  `#lock-alert`, the phone nudged, a `lock_alert_changed` security-log line when the value changed
+  (`lock_glance::alert_log_line`, "phone 3: alert: sound"; older `lock_buzz_changed` rows keep their words); sent as
+  `launcher_ui.lock_notice_alert` (`off`/`buzz`/`sound`), always. One choice for everything that brings a row to the
+  lock - Meldinger has none of its own, and no app has a choice. The group's ⓘ says what it is for and that Lyd follows
+  the phone's ringer mode and volume. Tests: `lock_glance::the_alert_choice_saves_logs_nudges_and_reaches_the_policy`,
+  `lock_glance::the_buzz_switch_becomes_the_alert_choice` (the migration), the redirect table in `device_pages`,
   `policy_json_keys_snapshot`.
 - **Where the forms return** (§5.1, pinned by `device_pages::lock_forms_return_to_the_page`): `kid-lock` →
   `/lock?notice=…#child-pin`, `kid-pin/send` → `/lock?notice=…#child-pin`, `kid-lock/keyguard` → its row
   `#lock-keyguard` (design 59; a warning coming in above the group then moves nothing), Show Child PIN → the page
   itself, posted to its own row `/lock#show-pin` (the fragment never reaches the server), `parent-pin` → `/lock?notice=…#parent-pin` (the flash in the group); `screen-timeout`
-  → `#screen`, `lock-wallpaper`, `lock-wake`, `lock-buzz`, `lock-screen`, `lock-screen/apps` → their rows (`#lock-wallpaper`, `#lock-wake`, `#lock-buzz`,
+  → `#screen`, `lock-wallpaper`, `lock-wake`, `lock-alert`, `lock-screen`, `lock-screen/apps` → their rows (`#lock-wallpaper`, `#lock-wake`, `#lock-alert`,
   `#lock-screen-text`, `#lock-screen-app-<package>`; scroll-restore keeps the exact place). Attention: no/easy Parent PIN → `/lock#parent-pin`, Child PIN set but lock off
   and (design 59) "Phone's PIN isn't the Child PIN" → `/lock#child-pin`; the summary's foreign-app step and Today's Parent PIN rows point there too.
 - **Android's lock in the Child PIN group** (design 59 step 2; `docs/notes/server/hardening-and-pins.md`, "Android's

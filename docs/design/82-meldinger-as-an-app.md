@@ -356,6 +356,9 @@ control on every row). Tests: `policy_json_keys_snapshot` / `PolicyResponseCompa
 test beside `NoticeWakePlan`. Size **S-M**, server S + launcher S-M. **The core without it:** unchanged - a new
 message lights the screen if the wake switch is on, and makes no sound or buzz while locked.
 
+**Since design 129** (2026-11-24, `docs/design/129-lock-sound.md`) the switch is a choice Av / Vibrer / Lyd,
+`launcher_ui.lock_notice_alert`, under the same rules; `lock_buzz_on_notification` is gone (migration 0173).
+
 **As built, changed on 2026-11-10** (§14, "The buzz for every new message"): the buzz is not only for what brings a
 row to the lock. After the emulator pass showed that a second message in a thread already on the lock gave no buzz,
 the owner asked for **one buzz for every new message, the 10 s gap kept**. The switch, its default, the length, the

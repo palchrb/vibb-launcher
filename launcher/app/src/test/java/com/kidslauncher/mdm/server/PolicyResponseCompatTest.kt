@@ -567,15 +567,42 @@ class PolicyResponseCompatTest {
         assertTrue("clock_format_applied" !in follow)
     }
 
-    /** Launcher round 7 §3's `launcher_ui.lock_wake_on_notification`, design 75 D17's `launcher_ui.lock_weather` and
-     * design 82 W3's `launcher_ui.lock_buzz_on_notification` (the server's `policy_json_keys_snapshot` pins them,
-     * always sent): true, false and missing (an older server = off), each through the cache round trip. */
+    /** Design 129's `launcher_ui.lock_notice_alert` (the server's `policy_json_keys_snapshot` pins it, always sent):
+     * `off`, `buzz`, `sound`; missing, `null` and an unknown word read as off, and the policy still decodes, through the cache round trip. The old `lock_buzz_on_notification` is no key of ours any more. */
+    @Test
+    fun `launcher_ui's lock_notice_alert decodes, anything else is off`() {
+        fun policyWith(value: String?) = serverResponse.replaceFirst(
+            "{",
+            """{"launcher_ui": {"language": "nb", "home_columns": 3, "wallpapers": []""" +
+                (value?.let { """, "lock_notice_alert": $it""" } ?: "") + "},",
+        )
+        val rows = listOf(
+            "\"off\"" to com.kidslauncher.mdm.lock.NoticeAlert.OFF,
+            "\"buzz\"" to com.kidslauncher.mdm.lock.NoticeAlert.BUZZ,
+            "\"sound\"" to com.kidslauncher.mdm.lock.NoticeAlert.SOUND,
+            "\"loud\"" to com.kidslauncher.mdm.lock.NoticeAlert.OFF,
+            "null" to com.kidslauncher.mdm.lock.NoticeAlert.OFF,
+            null to com.kidslauncher.mdm.lock.NoticeAlert.OFF,
+        )
+        for ((json, alert) in rows) {
+            val cached = decodeCached(policyWith(json))
+            assertTrue("$json", cached is CachedPolicy.Ok)
+            val policy = (cached as CachedPolicy.Ok).policy
+            assertEquals("$json", alert, com.kidslauncher.mdm.lock.noticeAlertOf(policy.launcherUi!!.lockNoticeAlert))
+            assertEquals(FreshDecode.Ok(policy), decodeFresh(policyWith(json)))
+            assertEquals(CachedPolicy.Ok(policy), decodeCached(ServerJson.encodeToString(PolicyResponse.serializer(), policy)))
+        }
+        assertEquals(com.kidslauncher.mdm.lock.NoticeAlert.OFF, com.kidslauncher.mdm.lock.noticeAlertOf(LauncherUi().lockNoticeAlert))
+    }
+
+    /** Launcher round 7 §3's `launcher_ui.lock_wake_on_notification` and design 75 D17's `launcher_ui.lock_weather`
+     * (the server's `policy_json_keys_snapshot` pins them, always sent): true, false and missing (an older server =
+     * off), each through the cache round trip. */
     @Test
     fun `launcher_ui's lock switches decode, missing is off`() {
         val switches = listOf<Pair<String, (LauncherUi) -> Boolean>>(
             "lock_wake_on_notification" to { it.lockWakeOnNotification },
             "lock_weather" to { it.lockWeather },
-            "lock_buzz_on_notification" to { it.lockBuzzOnNotification },
         )
         for ((key, read) in switches) {
             fun policyWith(value: String?) = serverResponse.replaceFirst(

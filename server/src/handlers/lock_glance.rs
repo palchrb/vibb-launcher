@@ -250,19 +250,25 @@ pub async fn save_wake(
     }
 }
 
-/// `POST /devices/{id}/lock-buzz` (design 82 W3): the checkbox `on` (missing = off) - "Buzz for a notification",
-/// the cell under the wake switch. As [`save_wake`]: back to `#lock-buzz`, the phone nudged, a security-log line
-/// when the value changed; 404 for an unknown device, 500 on a DB error - each with nothing written.
-pub async fn save_buzz(
+/// `POST /devices/{id}/lock-alert` (design 129; design 82 W3's `/lock-buzz` before it): the select `alert` - `off`,
+/// `buzz` or `sound` (anything else, or none, a 400 with nothing written) - in the cell under the wake switch. As
+/// [`save_wake`]: back to `#lock-alert`, the phone nudged, a security-log line when the value changed; 404 for an
+/// unknown device, 500 on a DB error - each with nothing written.
+pub async fn save_alert(
     State(state): State<AppState>,
     lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Path(id): Path<i64>,
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
-    let on = form.contains_key("on");
-    let before: Option<bool> = match sqlx::query_scalar(
-        "SELECT lock_buzz_on_notification FROM device_policy WHERE device_id = ?",
+    let Some(alert) = form
+        .get("alert")
+        .and_then(|word| lock_glance::NoticeAlert::parse(word))
+    else {
+        return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.unknown_setting");
+    };
+    let before: Option<String> = match sqlx::query_scalar(
+        "SELECT lock_notice_alert FROM device_policy WHERE device_id = ?",
     )
     .bind(id)
     .fetch_optional(&state.db)
@@ -270,35 +276,34 @@ pub async fn save_buzz(
     {
         Ok(before) => before,
         Err(err) => {
-            tracing::error!(device_id = id, %err, "couldn't read the lock screen's buzz switch");
+            tracing::error!(device_id = id, %err, "couldn't read the lock screen's alert choice");
             return failed(lang);
         }
     };
     let Some(before) = before else {
         return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.device_not_found");
     };
-    let result =
-        sqlx::query("UPDATE device_policy SET lock_buzz_on_notification = ? WHERE device_id = ?")
-            .bind(on)
-            .bind(id)
-            .execute(&state.db)
-            .await;
+    let result = sqlx::query("UPDATE device_policy SET lock_notice_alert = ? WHERE device_id = ?")
+        .bind(alert.as_str())
+        .bind(id)
+        .execute(&state.db)
+        .await;
     match result {
         Ok(_) => {
-            if before != on {
+            if lock_glance::NoticeAlert::stored(&before) != alert {
                 security::record_security_event(
                     &state.db,
-                    "lock_buzz_changed",
+                    "lock_alert_changed",
                     Some(&admin.username),
                     None,
-                    Some(lock_glance::buzz_log_line(id, on)),
+                    Some(lock_glance::alert_log_line(id, alert)),
                 )
                 .await;
             }
-            saved(&state, id, "lock-buzz")
+            saved(&state, id, "lock-alert")
         }
         Err(err) => {
-            tracing::error!(device_id = id, %err, "couldn't save the lock screen's buzz switch");
+            tracing::error!(device_id = id, %err, "couldn't save the lock screen's alert choice");
             failed(lang)
         }
     }

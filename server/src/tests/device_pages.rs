@@ -728,11 +728,11 @@ async fn lock_forms_return_to_the_page() {
             &[("on", "on")],
             (lock.clone(), Some("lock-wake")),
         ),
-        // Design 82 W3: the buzz switch, back to its cell.
+        // Design 129: Av / Vibrer / Lyd, back to its cell.
         (
-            "lock-buzz#lock-buzz",
-            &[("on", "on")],
-            (lock.clone(), Some("lock-buzz")),
+            "lock-alert#lock-alert",
+            &[("alert", "sound")],
+            (lock.clone(), Some("lock-alert")),
         ),
         // Design 75 §6: the weather's switch, in the page's Weather group, back to its row.
         (
@@ -777,19 +777,20 @@ async fn lock_forms_return_to_the_page() {
         app.assert_lands(&res, &cookie).await;
     }
     // Each did what it says.
-    let (kid, timeout, text, wake, buzz): (Option<String>, i64, bool, bool, bool) = sqlx::query_as(
-        "SELECT kid_pin_hash, screen_timeout_seconds, \
+    let (kid, timeout, text, wake, alert): (Option<String>, i64, bool, bool, String) =
+        sqlx::query_as(
+            "SELECT kid_pin_hash, screen_timeout_seconds, \
          (SELECT show_text FROM device_lock_glance_apps g WHERE g.device_id = p.device_id \
           AND g.package_name = 'io.element.android.x'), \
-         lock_wake_on_notification, lock_buzz_on_notification FROM device_policy p WHERE device_id = ?",
-    )
-    .bind(id)
-    .fetch_one(&app.db)
-    .await
-    .unwrap();
+         lock_wake_on_notification, lock_notice_alert FROM device_policy p WHERE device_id = ?",
+        )
+        .bind(id)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
     assert_eq!(
-        (kid, timeout, text, wake, buzz),
-        (None, 120, true, true, true)
+        (kid, timeout, text, wake, alert.as_str()),
+        (None, 120, true, true, "sound")
     );
 }
 

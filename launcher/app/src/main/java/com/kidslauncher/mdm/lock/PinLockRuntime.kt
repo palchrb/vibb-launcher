@@ -1500,7 +1500,7 @@ object PinLockRuntime {
     fun noticeWakeSwitch(ui: com.kidslauncher.mdm.server.dto.LauncherUi?) {
         noticeWakeFresh = true
         setNoticeWake(ui?.lockWakeOnNotification == true)
-        setNoticeBuzz(ui?.lockBuzzOnNotification == true)
+        setNoticeAlert(noticeAlertOf(ui?.lockNoticeAlert))
     }
 
     /** Process start (off the main thread): the `Ok` cached policy's switch, unless a sync came first. */
@@ -1511,7 +1511,7 @@ object PinLockRuntime {
             null
         }
         if (!noticeWakeFresh) setNoticeWake(ui?.lockWakeOnNotification == true)
-        if (!noticeWakeFresh) setNoticeBuzz(ui?.lockBuzzOnNotification == true)
+        if (!noticeWakeFresh) setNoticeAlert(noticeAlertOf(ui?.lockNoticeAlert))
     }
 
     private fun setNoticeWake(on: Boolean) {
@@ -1519,47 +1519,59 @@ object PinLockRuntime {
         noticeWakeOn = on
     }
 
-    /** The parent's "Buzz for a notification" (`launcher_ui.lock_buzz_on_notification`, design 82 W3), read where the
-     * wake's switch is ([noticeWakeSwitch], [noticeWakeFromCache]). */
+    /** The parent's Av / Vibrer / Lyd (`launcher_ui.lock_notice_alert`, design 129; design 82 W3's buzz switch before
+     * it), read where the wake's switch is ([noticeWakeSwitch], [noticeWakeFromCache]). */
     @Volatile
-    var noticeBuzzOn = false
+    var noticeAlert = NoticeAlert.OFF
         private set
 
-    /** The last notice buzz (elapsed; `null` = none in this process). Main thread. */
+    /** The last notice buzz or sound (elapsed; `null` = none in this process): one gap for both. Main thread. */
     private var noticeBuzzAt: Long? = null
 
-    private fun setNoticeBuzz(on: Boolean) {
-        if (on != noticeBuzzOn) Log.i(LOG_TAG, "Notice buzz: ${if (on) "on" else "off"}")
-        noticeBuzzOn = on
+    /** The last notice sound, kept until the next one (a collected [android.media.Ringtone] could cut its player
+     * short) and stopped before it. Main thread. */
+    private var noticeRingtone: android.media.Ringtone? = null
+
+    private fun setNoticeAlert(alert: NoticeAlert) {
+        if (alert != noticeAlert) Log.i(LOG_TAG, "Notice alert: ${alert.name.lowercase()}")
+        noticeAlert = alert
     }
 
     /**
-     * Design 82 W3: one short buzz, no sound, for a notice that came - when [noticeBuzzAllowed] says so. Apart from
-     * the wake: neither its switch, the lit screen nor the proximity read is asked (a pocket is where a buzz matters,
-     * and there the screen never lights). `USAGE_NOTIFICATION`, so Android's own vibration settings apply. Carries
-     * nothing about the notice. Never throws. Main thread.
-     * Code QA L3: what is in memory answers first - the switch, the lock's mode, the gap - before anything is read
+     * Design 82 W3 and design 129: one short buzz, or Android's notification sound once, for a notice that came - when
+     * [noticeBuzzAllowed] says so; [noticeAlertAction] picks which by the ringer. Apart from the wake: neither its
+     * switch, the lit screen nor the proximity read is asked (a pocket is where a buzz matters, and there the screen
+     * never lights). `USAGE_NOTIFICATION` for both, so Android's own vibration settings, the notification volume and
+     * Do Not Disturb apply. Carries nothing about the notice. Never throws. Main thread.
+     * Code QA L3: what is in memory answers first - the choice, the lock's mode, the gap - before anything is read
      * from the system (the ringer, the filter); [busy] is [noticeCame]'s one read, shared with the wake's gate
      * ([noticeUpdated] reads its own: it has no wake).
      */
     private fun noticeBuzz(app: Context, now: Long, busy: NoticeBusy) {
-        if (!noticeBuzzOn) return
+        val alert = noticeAlert
+        if (alert == NoticeAlert.OFF) return
         if (mode != LockMode.LOCKED) return
         val sinceLast = noticeBuzzAt?.let { now - it }
         if (!noticeBuzzGapOver(sinceLast)) return
         try {
+            val ringerMode = app.getSystemService(AudioManager::class.java)?.ringerMode
             val allowed = noticeBuzzAllowed(
-                switchOn = noticeBuzzOn,
+                switchOn = true,
                 mode = mode,
                 busy = busy,
-                ringerMode = app.getSystemService(AudioManager::class.java)?.ringerMode,
+                ringerMode = ringerMode,
                 interruptionFilter = app.getSystemService(android.app.NotificationManager::class.java)?.currentInterruptionFilter,
                 ruleSilent = com.kidslauncher.mdm.timerules.ZenRuleRuntime.ruleSilent(),
                 sinceLastBuzzMs = sinceLast,
             )
-            if (!allowed) return
-            val vibrator = app.getSystemService(android.os.VibratorManager::class.java)?.defaultVibrator ?: return
+            val action = noticeAlertAction(alert, ringerMode)
+            if (!allowed || action == NoticeAlertAction.NONE) return
             noticeBuzzAt = now
+            if (action == NoticeAlertAction.SOUND) {
+                noticeSound(app)
+                return
+            }
+            val vibrator = app.getSystemService(android.os.VibratorManager::class.java)?.defaultVibrator ?: return
             vibrator.vibrate(
                 android.os.VibrationEffect.createOneShot(NOTICE_BUZZ_MS, android.os.VibrationEffect.DEFAULT_AMPLITUDE),
                 android.os.VibrationAttributes.createForUsage(android.os.VibrationAttributes.USAGE_NOTIFICATION),
@@ -1568,6 +1580,24 @@ object PinLockRuntime {
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Notice buzz failed", e)
         }
+    }
+
+    /**
+     * Design 129: Android's default notification sound once (`Settings.System.DEFAULT_NOTIFICATION_URI`), with
+     * `USAGE_NOTIFICATION` attributes set before `play()`. A default of "None" gives no ringtone: nothing plays. The one
+     * before is stopped first. Called by [noticeBuzz] alone, inside its try. Main thread.
+     */
+    private fun noticeSound(app: Context) {
+        noticeRingtone?.stop()
+        noticeRingtone = null
+        val ringtone = android.media.RingtoneManager.getRingtone(app, android.provider.Settings.System.DEFAULT_NOTIFICATION_URI) ?: return
+        ringtone.audioAttributes = android.media.AudioAttributes.Builder()
+            .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION)
+            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+            .build()
+        noticeRingtone = ringtone
+        ringtone.play()
+        Log.i(LOG_TAG, "Notice sound")
     }
 
     /**
@@ -1581,7 +1611,7 @@ object PinLockRuntime {
         val app = appContext ?: return
         try {
             val now = SystemClock.elapsedRealtime()
-            if (!noticeBuzzOn || mode != LockMode.LOCKED || !noticeBuzzGapOver(noticeBuzzAt?.let { now - it })) return
+            if (noticeAlert == NoticeAlert.OFF || mode != LockMode.LOCKED || !noticeBuzzGapOver(noticeBuzzAt?.let { now - it })) return
             noticeBuzz(app, now, noticeBusy(app, now))
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Notice buzz failed", e)

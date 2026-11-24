@@ -1254,7 +1254,7 @@ async fn the_wake_switch_saves_logs_nudges_and_reaches_the_policy() {
         .find("<div class=\"info-panel\">")
         .expect("the footer ⓘ")..];
     assert!(
-        panel.contains("The screen wakes and the phone buzzes once, no sound, for the apps on the lock and missed calls."),
+        panel.contains("For the apps on the lock and missed calls: the screen wakes, and the phone buzzes or plays Android&#39;s notification sound."),
         "{group}"
     );
     assert!(panel.contains("anyone near the phone can see"), "{group}");
@@ -1302,11 +1302,12 @@ async fn the_wake_switch_saves_logs_nudges_and_reaches_the_policy() {
     assert_eq!(events(&app, "lock_wake_changed").await.len(), 3);
 }
 
-/// Design 82 W3: "Buzz for a notification" - the cell under the wake switch, off for a new phone; a save lands on
-/// `#lock-buzz`, nudges the phone, logs a line only for a change, reaches the policy's `launcher_ui` and leaves the
-/// wake switch alone; an unknown phone is a 404 with nothing written.
+/// Design 129 (design 82 W3's buzz switch before it): Av / Vibrer / Lyd - the cell under the wake switch, Off for a
+/// new phone, no sub-line; a save lands on `#lock-alert`, nudges the phone, logs a line only for a change, reaches
+/// the policy's `launcher_ui.lock_notice_alert` and leaves the wake switch alone; a value outside the three is a 400
+/// and an unknown phone a 404, each with nothing written.
 #[tokio::test]
-async fn the_buzz_switch_saves_logs_nudges_and_reaches_the_policy() {
+async fn the_alert_choice_saves_logs_nudges_and_reaches_the_policy() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
@@ -1314,51 +1315,147 @@ async fn the_buzz_switch_saves_logs_nudges_and_reaches_the_policy() {
     let group = &html[html.find(r#"<section id="lock-screen""#).unwrap()..];
     let group = &group[..group.find("</section>").unwrap()];
     assert!(
-        group.find(r#"id="lock-wake""#) < group.find(r#"id="lock-buzz""#),
+        group.find(r#"id="lock-wake""#) < group.find(r#"id="lock-alert""#),
         "{group}"
     );
-    let cell = &group[group.find(r#"id="lock-buzz""#).expect("the cell")..];
+    let cell = &group[group.find(r#"id="lock-alert""#).expect("the cell")..];
     let cell = &cell[..cell.find("</form>").unwrap()];
-    assert!(cell.contains("Buzz for a notification"), "{cell}");
-    // Design 113: no sub-line under the switch (the group's ⓘ says what it buzzes for).
+    assert!(cell.contains(">Alert<"), "{cell}");
+    for (value, word) in [("off", "Off"), ("buzz", "Buzz"), ("sound", "Sound")] {
+        assert!(cell.contains(&format!(r#"value="{value}""#)), "{cell}");
+        assert!(cell.contains(&format!(">{word}</option>")), "{cell}");
+    }
+    assert!(
+        cell.contains(r#"<option value="off" selected>"#),
+        "Off for a new phone: {cell}"
+    );
+    assert!(cell.contains("data-autosave"), "{cell}");
+    // Design 113: no sub-line (the group's ⓘ says what it is for).
     assert!(!cell.contains("row-sub"), "{cell}");
-    assert!(!cell.contains(" checked"), "off by default: {cell}");
     assert!(!cell.contains("data-hint"), "{cell}");
+    assert_eq!(
+        app.policy(&token).await["launcher_ui"]["lock_notice_alert"],
+        json!("off")
+    );
 
     let mut nudges = app.state.command_notify.subscribe();
-    for on in [true, true, false] {
-        let fields: &[(&str, &str)] = if on { &[("on", "on")] } else { &[] };
+    for alert in ["sound", "sound", "buzz", "off"] {
         let res = app
             .request_form(
                 Method::POST,
-                &format!("/devices/{id}/lock-buzz"),
+                &format!("/devices/{id}/lock-alert"),
+                Some(&cookie),
+                &[("alert", alert)],
+            )
+            .await;
+        super::assert_redirect(&res, &lock_page(id), Some("lock-alert"));
+        app.assert_lands(&res, &cookie).await;
+        assert_eq!(nudges.try_recv().ok(), Some(id));
+        let ui = &app.policy(&token).await["launcher_ui"];
+        assert_eq!(ui["lock_notice_alert"], json!(alert));
+        assert_eq!(ui["lock_wake_on_notification"], json!(false));
+    }
+    assert_eq!(
+        events(&app, "lock_alert_changed").await,
+        ["sound", "buzz", "off"].map(|s| (
+            format!("phone {id}: alert: {s}"),
+            Some("parent".to_string())
+        ))
+    );
+    // The page shows what is stored.
+    app.request_form(
+        Method::POST,
+        &format!("/devices/{id}/lock-alert"),
+        Some(&cookie),
+        &[("alert", "buzz")],
+    )
+    .await;
+    let html = app.get_page(&lock_page(id), &cookie).await.text();
+    assert!(html.contains(r#"<option value="buzz" selected>"#));
+
+    for fields in [&[("alert", "loud")][..], &[("on", "on")][..], &[][..]] {
+        let res = app
+            .request_form(
+                Method::POST,
+                &format!("/devices/{id}/lock-alert"),
                 Some(&cookie),
                 fields,
             )
             .await;
-        super::assert_redirect(&res, &lock_page(id), Some("lock-buzz"));
-        app.assert_lands(&res, &cookie).await;
-        assert_eq!(nudges.try_recv().ok(), Some(id));
-        let ui = &app.policy(&token).await["launcher_ui"];
-        assert_eq!(ui["lock_buzz_on_notification"], json!(on));
-        assert_eq!(ui["lock_wake_on_notification"], json!(false));
+        assert_eq!(res.status, StatusCode::BAD_REQUEST, "{fields:?}");
     }
     assert_eq!(
-        events(&app, "lock_buzz_changed").await,
-        ["on", "off"].map(|s| (
-            format!("phone {id}: buzz for a notification: {s}"),
-            Some("parent".to_string())
-        ))
+        app.policy(&token).await["launcher_ui"]["lock_notice_alert"],
+        json!("buzz")
     );
-
     let res = app
         .request_form(
             Method::POST,
-            "/devices/999/lock-buzz",
+            "/devices/999/lock-alert",
             Some(&cookie),
-            &[("on", "on")],
+            &[("alert", "sound")],
         )
         .await;
     assert_eq!(res.status, StatusCode::NOT_FOUND);
-    assert_eq!(events(&app, "lock_buzz_changed").await.len(), 2);
+    assert_eq!(events(&app, "lock_alert_changed").await.len(), 4);
+}
+
+/// Design 129's migration (0173): a stored buzz switch on becomes `buzz`, off `off`, and the old column is gone.
+#[tokio::test]
+async fn the_buzz_switch_becomes_the_alert_choice() {
+    let dir = tempfile::tempdir().unwrap();
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(dir.path().join("old.db"))
+        .create_if_missing(true)
+        .foreign_keys(true);
+    let db = sqlx::SqlitePool::connect_with(options).await.unwrap();
+    let full = sqlx::migrate!("./migrations");
+    let mut old = sqlx::migrate!("./migrations");
+    old.migrations = full
+        .migrations
+        .iter()
+        .filter(|m| m.version < 173)
+        .cloned()
+        .collect::<Vec<_>>()
+        .into();
+    old.run(&db).await.unwrap();
+    let mut ids = Vec::new();
+    for on in [true, false] {
+        let id: i64 = sqlx::query_scalar("INSERT INTO devices (name) VALUES ('old') RETURNING id")
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO device_policy (device_id, kiosk_desired, lock_buzz_on_notification) VALUES (?, 1, ?)",
+        )
+        .bind(id)
+        .bind(on)
+        .execute(&db)
+        .await
+        .unwrap();
+        ids.push(id);
+    }
+    full.run(&db).await.unwrap();
+    db.close().await;
+    let options = sqlx::sqlite::SqliteConnectOptions::new().filename(dir.path().join("old.db"));
+    let db = sqlx::SqlitePool::connect_with(options).await.unwrap();
+    let mut alerts = Vec::new();
+    for id in &ids {
+        let policy = sqlx::query_as::<_, crate::models::DevicePolicy>(
+            "SELECT * FROM device_policy WHERE device_id = ?",
+        )
+        .bind(id)
+        .fetch_one(&db)
+        .await
+        .unwrap();
+        alerts.push(policy.lock_notice_alert);
+    }
+    assert_eq!(alerts, ["buzz", "off"]);
+    let old_column: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('device_policy') WHERE name = 'lock_buzz_on_notification'",
+    )
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    assert_eq!(old_column, 0);
 }

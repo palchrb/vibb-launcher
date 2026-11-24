@@ -315,6 +315,7 @@ fn migrations_from_73_in_order() {
             (169, "dismissed notices".to_string()),
             (170, "android auto listeners".to_string()),
             (171, "fix times".to_string()),
+            (173, "lock notice alert".to_string()),
         ],
         "0073 (design 30), 0074 (Spotify), 0075 (the clock format), 0076 (the softer \
          wallpapers), 0077 (Vibb One), 0078 (design 35), 0079 (the custom DNS server), 0080 \
