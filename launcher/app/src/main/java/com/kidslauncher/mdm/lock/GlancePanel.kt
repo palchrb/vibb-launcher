@@ -339,6 +339,7 @@ class GlancePanel(
             clockWatch = ClockFormat.watch(activity) {
                 guarded("clock") {
                     ClockFormat.bind(glance.lockGlanceClock)
+                    clockFace.rebindDate()
                     renderNow()
                 }
             }
@@ -361,6 +362,7 @@ class GlancePanel(
         ClockReader.reconcile()
         // Design 34 P12: the clock follows the phone's format, not Vibb's own language.
         ClockFormat.bind(glance.lockGlanceClock)
+        clockFace.rebindDate()
         val interactive = activity.getSystemService(PowerManager::class.java)?.isInteractive == true
         val offs = PinLockRuntime.screenOffs
         if (lockStageDue(interactive, decidedAt, offs)) {

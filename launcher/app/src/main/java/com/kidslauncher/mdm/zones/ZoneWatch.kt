@@ -269,16 +269,18 @@ object ZoneWatch {
 
     /** The motion sensor isn't distrusted ([motionDistrusted]); true on any error. */
     fun motionTrusted(context: Context): Boolean = try {
-        !motionDistrusted(prefs(context).getLong(KEY_DISTRUST_UNTIL, 0L), System.currentTimeMillis())
+        !motionDistrusted(prefs(context).getLong(KEY_DISTRUST_UNTIL, 0L), com.kidslauncher.mdm.server.TrustedClock.nowMs())
     } catch (e: Exception) {
         true
     }
 
     /** A fresh fix contradicted the sensor ([motionContradiction]): kept with the last 7 days', and
      * at the second the sensor is distrusted for 7 days ([trustAfterContradiction]) - `motion_sensor:
-     * false` in the report, every due beat fixes. Kept across a new enrollment: it is the hardware's. */
+     * false` in the report, every due beat fixes. Kept across a new enrollment: it is the hardware's. On the decisions'
+     * clock, as [motionTrusted] reads it. */
     @Synchronized
-    fun noteContradiction(context: Context, nowMs: Long) {
+    fun noteContradiction(context: Context) {
+        val nowMs = com.kidslauncher.mdm.server.TrustedClock.nowMs()
         val p = prefs(context)
         val recent = try {
             p.getString(KEY_CONTRADICTIONS, null)?.let { ServerJson.decodeFromString(instantsSerializer, it) }.orEmpty()
@@ -297,7 +299,7 @@ object ZoneWatch {
 
     // --- The series' daily budget (F-2) ---
 
-    private fun today(): String = java.time.LocalDate.now().toString()
+    private fun today(): String = com.kidslauncher.mdm.server.TrustedClock.localNow().toLocalDate().toString()
 
     @Synchronized
     private fun budget(context: Context): CheckBudget? = try {
@@ -440,16 +442,22 @@ fun Location.toQueued(provider: String? = this.provider): QueuedFix = QueuedFix(
     timeMs = time,
     provider = provider,
     mock = isMock,
+    elapsedMs = elapsedRealtimeNanos.takeIf { it > 0 }?.let { it / 1_000_000L },
+    bootCount = com.kidslauncher.mdm.server.BootClock.bootCount(),
 )
 
-/** A queued fix as the status report sends it. */
-fun QueuedFix.toReport(): LocationReport = LocationReport(
+/** A queued fix as the status report sends it, with its age now ([fixAgeMs]). */
+fun QueuedFix.toReport(
+    nowElapsedMs: Long = android.os.SystemClock.elapsedRealtime(),
+    nowBoot: Int = com.kidslauncher.mdm.server.BootClock.bootCount(),
+): LocationReport = LocationReport(
     latitude = latitude,
     longitude = longitude,
     accuracyMeters = accuracy,
     capturedAt = Instant.ofEpochMilli(timeMs).toString(),
     provider = provider?.take(16),
     mock = mock,
+    ageMs = fixAgeMs(this, nowElapsedMs, nowBoot),
 )
 
 /** The confirming fix's alarm - our own explicit PendingIntent only (not exported). */

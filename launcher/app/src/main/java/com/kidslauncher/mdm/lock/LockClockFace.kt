@@ -102,14 +102,17 @@ class LockClockFace(
 
     private fun datePattern(short: Boolean) {
         val pattern = DateFormat.getBestDateTimePattern(locale, glanceDateSkeleton(short))
-        if (date.format12Hour?.toString() != pattern) date.format12Hour = pattern
-        if (date.format24Hour?.toString() != pattern) date.format24Hour = pattern
+        // The decisions' date while the phone's own clock is off (as the time: ClockFormat.bind).
+        com.kidslauncher.mdm.ui.ClockFormat.bindTrusted(date, pattern)
     }
 
     /** Whether the no-profile date is the short one (design 75 D14, launcher QA M1/L2): while the policy's lock weather
      * is on, "Man. 3. nov." as the profile phones show - whether or not the line shows at the moment, so the date never
      * flips with the line's moods; the long date with the switch off. A profile's date is always the short one. */
     private var short = false
+
+    /** The date bound again (Android's clock or zone was set: [ClockFormat.bindTrusted] decides afresh). */
+    fun rebindDate() = datePattern(if (profile != null) true else short)
 
     fun shortDate(on: Boolean) {
         if (profile != null || on == short) return

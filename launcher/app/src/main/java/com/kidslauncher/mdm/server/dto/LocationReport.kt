@@ -19,4 +19,7 @@ data class LocationReport(
     val capturedAt: String,
     val provider: String? = null,
     val mock: Boolean = false,
+    /** How old the fix is at send, from elapsed realtime: the server stamps it at receipt minus this. `null` (left
+     * out) when unknown - a fix kept from another boot. */
+    val ageMs: Long? = null,
 )

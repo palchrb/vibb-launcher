@@ -224,6 +224,8 @@ fun createMdmApi(
 
     // Only to the server's own host (security review L8), never to an absolute URL elsewhere.
     if (token != null) clientBuilder.addInterceptor(bearerInterceptor(normalizedBaseUrl, token))
+    // The server's answers anchor the decisions' clock (over a connection the phone trusts only).
+    clientBuilder.addInterceptor(TrustedClock.interceptor(path))
     if (ownPool) {
         // Design 95 code QA M1: the shutdown's POST has 3 s in all - no time to wait out a dead shared connection and
         // retry, so it opens its own (as before design 95; TLS still resumes from the platform's session cache).

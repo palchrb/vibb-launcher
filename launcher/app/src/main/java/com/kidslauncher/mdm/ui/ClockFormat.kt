@@ -213,18 +213,44 @@ object ClockFormat {
      * its two formats by its own context's locale, which is Vibb's per-app language - so it is bound
      * again on every start/resume and on a change ([watch]).
      */
-    fun bind(clock: TextClock) {
-        val pattern = timePattern(clock.context)
-        if (clock.format24Hour?.toString() != pattern) clock.format24Hour = pattern
-        if (clock.format12Hour?.toString() != pattern) clock.format12Hour = pattern
+    fun bind(clock: TextClock) = bindTrusted(clock, timePattern(clock.context))
+
+
+    /**
+     * Sets [clock]'s [pattern] - or, while the phone's own clock is more than five minutes off the time its decisions use
+     * (time rules keep their own clock), that time as literal text, refreshed at each of its minutes: Vibb's faces show
+     * one time, the one its rules follow. Back within five minutes, the pattern again.
+     */
+    fun bindTrusted(clock: TextClock, pattern: String) {
+        val skew = try {
+            com.kidslauncher.mdm.server.TrustedClock.skewMs()
+        } catch (e: Exception) {
+            0L
+        }
+        val trusted = kotlin.math.abs(skew) > com.kidslauncher.mdm.server.SKEW_STEP_MS
+        val shown = if (trusted) {
+            "'" + DateFormat.format(pattern, com.kidslauncher.mdm.server.TrustedClock.nowMs()).toString().replace("'", "''") + "'"
+        } else {
+            pattern
+        }
+        if (clock.format24Hour?.toString() != shown) clock.format24Hour = shown
+        if (clock.format12Hour?.toString() != shown) clock.format12Hour = shown
+        // The pending refresh lives in the view's own tag, so it goes with the view.
+        (clock.getTag(com.kidslauncher.mdm.R.id.trusted_clock_refresh) as? Runnable)?.let { clock.removeCallbacks(it) }
+        clock.setTag(com.kidslauncher.mdm.R.id.trusted_clock_refresh, null)
+        if (trusted) {
+            val refresh = Runnable { bindTrusted(clock, pattern) }
+            clock.setTag(com.kidslauncher.mdm.R.id.trusted_clock_refresh, refresh)
+            clock.postDelayed(refresh, 60_000L - com.kidslauncher.mdm.server.TrustedClock.nowMs() % 60_000L + 50L)
+        }
     }
 
     /** What [watch] registered; [unwatch] it on stop. */
     class Watch internal constructor(val observer: ContentObserver, val receiver: BroadcastReceiver?)
 
     /**
-     * Calls [onChange] on the main thread whenever `TIME_12_24` or the system locale changes (N6:
-     * the lock handles `locale` itself, so it isn't recreated).
+     * Calls [onChange] on the main thread whenever `TIME_12_24`, the system locale, Android's clock or its zone changes
+     * (N6: the lock handles `locale` itself, so it isn't recreated).
      */
     fun watch(context: Context, onChange: () -> Unit): Watch? {
         val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
@@ -238,7 +264,15 @@ object ClockFormat {
                 override fun onReceive(c: Context?, intent: Intent?) = onChange()
             }
             val registered = try {
-                context.registerReceiver(receiver, IntentFilter(Intent.ACTION_LOCALE_CHANGED), Context.RECEIVER_NOT_EXPORTED)
+                context.registerReceiver(
+                    receiver,
+                    // A set clock or zone too: a face showing the decisions' time as text binds again at once.
+                    IntentFilter(Intent.ACTION_LOCALE_CHANGED).apply {
+                        addAction(Intent.ACTION_TIME_CHANGED)
+                        addAction(Intent.ACTION_TIMEZONE_CHANGED)
+                    },
+                    Context.RECEIVER_NOT_EXPORTED,
+                )
                 receiver
             } catch (e: Exception) {
                 Log.w("ClockFormat", "Couldn't watch the system locale", e)

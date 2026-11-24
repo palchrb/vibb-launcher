@@ -72,13 +72,14 @@ fun reasonOf(requested: String?): String? {
  * keeps one (design 64's rule counted it when it came), and a debug build's would reach the server
  * unflagged (the body has no mock word).
  */
-fun shutdownLocation(newest: QueuedFix?, policy: LocationPolicy?): PowerLocation? {
+fun shutdownLocation(newest: QueuedFix?, policy: LocationPolicy?, trustedAtMs: Long? = null): PowerLocation? {
     if (newest == null || policy == null || policy.mode == "off" || newest.mock) return null
     return PowerLocation(
         lat = newest.latitude,
         lng = newest.longitude,
         accuracyM = newest.accuracy,
-        atMs = newest.timeMs,
+        // The fix's time on the decisions' clock when its age is known (sent after the reboot, the age is lost).
+        atMs = trustedAtMs ?: newest.timeMs,
         provider = newest.provider,
     )
 }
@@ -447,14 +448,23 @@ object PowerEvents {
         val app = context.applicationContext
         val requested = shutdownRequested()
         // The newest fix already held (2026-10-25), never a fresh one: there is no time.
+        // The decisions' clock is kept for the next boot first.
+        try {
+            TrustedClock.checkpoint(force = true)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "No clock checkpoint at shutdown: ${e.javaClass.simpleName}")
+        }
+        val trustedNow = TrustedClock.nowMs()
         val location = try {
-            shutdownLocation(LocateCommands.newestKnown(), locationPolicy)
+            val newest = LocateCommands.newestKnown()
+            val age = newest?.let { com.kidslauncher.mdm.zones.fixAgeMs(it, android.os.SystemClock.elapsedRealtime(), BootClock.bootCount()) }
+            shutdownLocation(newest, locationPolicy, age?.let { trustedNow - it })
         } catch (e: Exception) {
             Log.w(LOG_TAG, "No position for the shutdown: ${e.javaClass.simpleName}")
             null
         }
         val off = PowerOff(
-            atMs = System.currentTimeMillis(),
+            atMs = trustedNow,
             bootCount = BootClock.bootCount(),
             battery = BatteryStatus.report(app),
             reboot = rebootOf(intent.getBooleanExtra(Intent.EXTRA_SHUTDOWN_USERSPACE_ONLY, false), requested),

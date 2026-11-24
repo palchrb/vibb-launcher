@@ -16,6 +16,7 @@ mod calendar;
 mod calendar_feeds;
 mod calendar_kid_events;
 mod catalog_holds;
+mod clock_skew;
 mod config;
 mod crashes;
 mod device_routes;
@@ -622,6 +623,8 @@ async fn main() {
     tokio::task::spawn(audit::run_flusher(state.clone()));
     // Web Push (design 35 §4.6): what was queued before a restart goes now, the rest when raised.
     tokio::task::spawn(push::run_sender(state.clone()));
+    // The server's own clock against GitHub's, at the start and every 10 minutes (`clock_skew::run_check`).
+    tokio::task::spawn(clock_skew::run_check(state.config.github_api.clone()));
 
     serve(state, session_layer).await;
 }

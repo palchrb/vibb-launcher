@@ -190,8 +190,10 @@ class LockActivity : UIObjectActivity() {
             .registerOnSharedPreferenceChangeListener(sharedPreferencesListener)
         // The clock follows the phone's format (design 34 P12), never Vibb's own language's.
         ClockFormat.bind(binding.lockClock)
+        clockFace.rebindDate()
         clockWatch = ClockFormat.watch(this) {
             ClockFormat.bind(binding.lockClock)
+            clockFace.rebindDate()
             render()
         }
         ContextCompat.registerReceiver(

@@ -156,9 +156,17 @@ data class QueuedFix(
     val timeMs: Long,
     val provider: String? = null,
     val mock: Boolean = false,
+    /** The fix's elapsed realtime and boot ([fixAgeMs]); unknown for a fix kept from before. */
+    val elapsedMs: Long? = null,
+    val bootCount: Int = -1,
 ) {
     fun sameFix(other: QueuedFix) = timeMs == other.timeMs && latitude == other.latitude && longitude == other.longitude
 }
+
+/** [fix]'s age at elapsed realtime [nowElapsedMs] in boot [nowBoot], for the server's `age_ms` (it stamps the fix at
+ * receipt minus this, whatever the phone's wall clock says); `null` for a fix of another boot or with no elapsed time. */
+fun fixAgeMs(fix: QueuedFix, nowElapsedMs: Long, nowBoot: Int): Long? =
+    fix.elapsedMs?.takeIf { fix.bootCount >= 0 && fix.bootCount == nowBoot }?.let { (nowElapsedMs - it).coerceAtLeast(0) }
 
 /** [fix] queued: once (its key), in time order, the newest [max] kept. */
 fun queueWith(queue: List<QueuedFix>, fix: QueuedFix, max: Int = ZONE_QUEUE_MAX): List<QueuedFix> {

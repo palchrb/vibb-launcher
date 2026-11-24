@@ -109,6 +109,8 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     TsnetClient.connectFromPreferences(context)
     // Design 38 (QA N1): the shutdown's prepared client follows the base URL, the token and the proxy.
     PowerEvents.prepare(context)
+    // The satellite time, when a fix gave one: an anchor for the decisions' clock (the server's answers below are another).
+    TrustedClock.readGnss(context)
 
     // Design 76: the sync judges its answers by the path its client was built for (R-5).
     var apiPath = serverPathNow(serverUrl)
@@ -332,7 +334,10 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         deviceOwner = dpm.isDeviceOwnerApp(context.packageName),
         policy = locationPolicy,
         systemLocationOn = QuickControls.isLocationEnabled(context),
-        ownFixAgeMs = LocateCommands.cachedQueued()?.let { System.currentTimeMillis() - it.timeMs },
+        ownFixAgeMs = LocateCommands.cachedQueued()?.let {
+            com.kidslauncher.mdm.zones.fixAgeMs(it, android.os.SystemClock.elapsedRealtime(), BootClock.bootCount())
+                ?: (System.currentTimeMillis() - it.timeMs)
+        },
     )
     val location = currentLocationReport(
         context, dpm, admin, forceFreshLocation, preciseFix, zoneFix != null, zonesOn, stillOn, locationPolicy, lowBatteryFix,
@@ -981,7 +986,7 @@ private suspend fun currentLocationReport(
         // A move during the attempt explains the distance: no contradiction then (QA L1); a learned fix is never the
         // new side of one (design 125 D15: a wrong Wi-Fi fix must not distrust the sensor).
         val satellite = fresh?.provider in VOUCHING_PROVIDERS
-        if (held && fresh != null && satellite && motionContradiction(vouched, fresh.toQueued())) ZoneWatch.noteContradiction(context, now)
+        if (held && fresh != null && satellite && motionContradiction(vouched, fresh.toQueued())) ZoneWatch.noteContradiction(context)
         if (beat == Heartbeat.FIX || moving) {
             val result = when {
                 places.renewed -> "renewed"
@@ -997,7 +1002,8 @@ private suspend fun currentLocationReport(
         action,
         location.toQueued(LocateCommands.providerOf(location)),
         accuracy,
-        (System.currentTimeMillis() - location.time) / 1000,
+        (location.elapsedRealtimeNanos.takeIf { it > 0 }?.let { android.os.SystemClock.elapsedRealtime() - it / 1_000_000L }
+            ?: (System.currentTimeMillis() - location.time)) / 1000,
         still = still,
     )
 }

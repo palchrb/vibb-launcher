@@ -67,6 +67,8 @@ struct Locate {
     device: Device,
     /// Design 114 §5.4: Vibb One's location permission missing, over the map (`#location`).
     setup_warnings: crate::setup_status::Warnings,
+    /// The phone's newest fix was refused (`zones::fix_refused`): an orange line over the map.
+    fix_refused: bool,
     /// Design 85 revision 3: every phone's chip over the map ("All" first, this one current), as
     /// the Alle view's; empty with one phone - no chips at all.
     chips: Vec<AllPhone>,
@@ -1905,9 +1907,11 @@ async fn locate_view(
             ),
             None => t_count(lang, "locate.mock.ignored", w.mock_ignored, &[]),
         });
+    let fix_refused = crate::zones::fix_refused(&state.db, id).await;
     Ok(Locate {
         device,
         setup_warnings,
+        fix_refused,
         chips,
         marker,
         fix,

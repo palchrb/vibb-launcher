@@ -288,7 +288,7 @@ object LoginWindow {
     private val refusedSerializer = kotlinx.serialization.builtins.ListSerializer(RefusedHost.serializer())
 
     /** The report's `refused` (§7, L9): the last 10 stopped hosts of the last 7 days. */
-    fun refused(context: Context): List<RefusedHost> = refusedKept(storedRefused(context), System.currentTimeMillis())
+    fun refused(context: Context): List<RefusedHost> = refusedKept(storedRefused(context), com.kidslauncher.mdm.server.TrustedClock.nowMs())
 
     private fun storedRefused(context: Context): List<RefusedHost> = try {
         prefs(context).getString(KEY_REFUSED, null)?.let { ServerJson.decodeFromString(refusedSerializer, it) }.orEmpty()
@@ -300,7 +300,7 @@ object LoginWindow {
     fun refuse(context: Context, url: String) {
         val host = refusedHostOf(url) ?: return
         synchronized(refusedSerializer) {
-            val list = refusedWith(storedRefused(context), host, System.currentTimeMillis())
+            val list = refusedWith(storedRefused(context), host, com.kidslauncher.mdm.server.TrustedClock.nowMs())
             prefs(context).edit().putString(KEY_REFUSED, ServerJson.encodeToString(refusedSerializer, list)).apply()
         }
     }

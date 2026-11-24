@@ -206,7 +206,8 @@ class PowerEventsTest {
         // hold; the upload joins it and prunes the copy.
         val power = code("PowerEvents.kt")
         val shutdownCode = body(power, "fun onShutdown(")
-        assertTrue("shutdownLocation(LocateCommands.newestKnown(), locationPolicy)" in shutdownCode)
+        assertTrue("val newest = LocateCommands.newestKnown()" in shutdownCode)
+        assertTrue("shutdownLocation(newest, locationPolicy, age?.let { trustedNow - it })" in shutdownCode)
         assertFalse("currentLocation(" in power)
         assertTrue(shutdownCode.indexOf("saveOffLocation(app, off)") in 0 until shutdownCode.indexOf("receiver.goAsync()"))
         val upload = body(power, "suspend fun upload(")

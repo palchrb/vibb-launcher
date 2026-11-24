@@ -28,8 +28,11 @@ class TimeStateZoneTest {
     private fun state(zone: String?) = TimeState(
         day = "2026-10-14", usedMinutes = 42, budgetMinutes = 90, extraMinutes = 0, activeRuleId = 7,
         activeRuleName = "Leggetid", callsBlocked = false, lockReason = "BEDTIME", liftsActive = emptyList(),
-        zone = zone,
+        zone = zone, clockSkewMs = 0, clockTrust = "server", unanchoredMs = 0,
     )
+
+    /** The contract's clock fields: checked by the server, at the time it reported. */
+    private val clock = com.kidslauncher.mdm.server.ClockReport(0, com.kidslauncher.mdm.server.ClockTrust.SERVER, 0)
 
     private fun encoded(timeState: TimeState): String = ServerJson.encodeToString(
         StatusReportRequest.serializer(),
@@ -82,7 +85,7 @@ class TimeStateZoneTest {
         assertNotEquals(here, other)
         val report = TimeRulesRuntime.timeStateOf(snapshot(ZoneId.of(other)), LockReason.BEDTIME)
         assertEquals(other, report.zone)
-        assertEquals(contract.trimEnd(), encoded(TimeRulesRuntime.timeStateOf(snapshot(ZoneId.of("Europe/Oslo")), LockReason.BEDTIME)))
+        assertEquals(contract.trimEnd(), encoded(TimeRulesRuntime.timeStateOf(snapshot(ZoneId.of("Europe/Oslo")), LockReason.BEDTIME, clock)))
     }
 
     /** The runtime reads the system zone once per snapshot and hands it down: no other read in

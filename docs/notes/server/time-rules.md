@@ -241,3 +241,26 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `pin_used` event (`Phone::rule_pause`, pushed under "Parent PIN used"), keyed `rule_pause:<end>` like the phone's own
   PIN event for it (`Phone::pin_event`), so the inbox has one line per pause whichever arrives first; a retry adds
   none. Tests: `tests::rule_pause::every_phone_pause_is_told_once`.
+
+## The phone's clock (2026-11-24, branch `trusted-time`, migration `0171_fix_times.sql`)
+
+Decisions on the phone use the server's time (`docs/notes/launcher/time-rules.md`, "The decisions' clock"). The server:
+- keeps the report's `time_state.clock_skew_ms`, `clock_trust` and `unanchored_ms` (`clock_skew::clean_*`: a skew within
+  20 years, a known word or `none`, 0 to a year) and says at most one orange line (`clock_skew::problem`): "Klokken går feil
+  (26 t foran)" from 10 minutes, else "Tiden er ikke sjekket på 30 t" past 24 hours (not while this server's own clock is
+  off: the phones take no time from it then, and Software Updates says so) - on Device › Time with "Regler og
+  skjermtid følger serverens tid." behind its (i), as the summary's Attention row (`Kind::Clock`, to Device › Time) and in
+  the Devices list's badge. Nothing under `none` or while the clock is right. No push.
+- shows the phone's zone as a quiet line on Device › Time ("Telefonens tidssone: Asia/Tokyo") when it isn't Phone Setup's:
+  the rules count in the phone's own zone, so a trip abroad follows local time.
+- stores a fix with `age_ms` at the report's receipt minus it (`models::checked_location_at`), whatever the phone's clock
+  says; `device_locations.phone_offset_ms` keeps the phone's named time minus the stored one, and a fix's identity is its
+  place and that named time (`zones::SAME_FIX`), so a re-sent fix is one row. A fix without an age keeps its own time and
+  the five-minute ahead check. The shutdown's fix (`models::checked_shutdown_location`) is never dropped for its time: one
+  ahead is stamped at receipt. A fix refused for anything else counts in `devices.fixes_dropped`/`fix_dropped_at`, and Locate
+  says "Posisjonen ble avvist" (orange) until a newer fix is stored.
+- checks its own clock against GitHub's `Date` at the start and every 10 minutes (`clock_skew::run_check`, a `HEAD` to
+  the API) and at each catalog sync (`clock_skew::observe_date`): past 2 minutes Software Updates says "Serverklokken går
+  feil" and every phone answer carries `Vibb-Clock: off` (`clock_skew::mark_answers`), which a phone never takes as its
+  time. A check that failed, or none yet, is unknown: never said as wrong.
+- (0170 is another branch's migration number; this one is 0171.)

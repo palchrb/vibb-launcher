@@ -69,6 +69,9 @@ pub enum Kind {
     AppPushOutside(usize),
     Calls(CallProblem),
     LedgerUnreadable,
+    /// The phone's clock is off the time its decisions use, or its time hasn't been checked for long
+    /// (`clock_skew::problem`).
+    Clock(crate::clock_skew::ClockProblem),
     /// Device › Music's warnings (design 31 step 7 fix round, qa-31-s7-code M1), from
     /// `music::music_warnings` like the page's: the music app not reachable, Storytel's login
     /// refused, over the storage limit, entries the phone can't fetch (one row for all).
@@ -152,6 +155,7 @@ impl AttentionItem {
             Kind::AppPushOutside(_) => "app-push-outside",
             Kind::Calls(_) => "calls",
             Kind::LedgerUnreadable => "screen-time-record",
+            Kind::Clock(_) => "clock",
             Kind::MusicUnreachable => "music-unreachable",
             Kind::MusicStorytelRefused => "music-storytel-refused",
             Kind::MusicOverLimit => "music-over-limit",
@@ -203,6 +207,8 @@ pub struct Facts {
     /// From the call report, in its order (`Waiting` left out by [items]).
     pub calls: Vec<CallProblem>,
     pub ledger_unreadable: bool,
+    /// The last report's clock line (`time_state::TimeReport::clock_problem`).
+    pub clock: Option<crate::clock_skew::ClockProblem>,
     /// Not a row: calls are managed and the launcher screens them, so a no-calls rule really
     /// blocks calls (the lock badge's "calls off", qa-31-s2-code M3).
     pub calls_enforced: bool,
@@ -257,6 +263,9 @@ pub fn items(lang: Lang, device_id: i64, facts: &Facts) -> Vec<AttentionItem> {
         add(problem.needs_attention(), Kind::Calls(*problem));
     }
     add(facts.ledger_unreadable, Kind::LedgerUnreadable);
+    if let Some(problem) = facts.clock {
+        add(true, Kind::Clock(problem));
+    }
     let music = &facts.music;
     add(music.unreachable, Kind::MusicUnreachable);
     add(music.storytel_refused, Kind::MusicStorytelRefused);
@@ -318,6 +327,7 @@ fn level(kind: Kind) -> Level {
         | Kind::AppPushOutside(_)
         | Kind::Calls(_)
         | Kind::LedgerUnreadable
+        | Kind::Clock(_)
         | Kind::MusicUnreachable
         | Kind::MusicStorytelRefused
         | Kind::MusicOverLimit
@@ -363,6 +373,9 @@ fn title(lang: Lang, kind: Kind) -> String {
         }
         Kind::Calls(problem) => problem.title(lang),
         Kind::LedgerUnreadable => t(lang, "device.attention.screen_time_record"),
+        Kind::Clock(problem) => {
+            return problem.words(lang);
+        }
         Kind::MusicUnreachable => t(lang, "device.attention.music_unreachable"),
         Kind::MusicStorytelRefused => t(lang, "device.attention.music_storytel_refused"),
         Kind::MusicOverLimit => t(lang, "device.attention.music_over_limit"),
@@ -413,7 +426,7 @@ fn target(kind: Kind, id: i64) -> String {
             return format!("/devices/{id}/calls");
         }
         // Device › Time's warnings at the top of the page (step 9): no fragment needed.
-        Kind::LedgerUnreadable => {
+        Kind::LedgerUnreadable | Kind::Clock(_) => {
             return format!("/devices/{id}/time");
         }
         // Device › Music's warnings at the top of the page: no fragment needed.
@@ -724,6 +737,11 @@ pub fn facts_of(s: &Sources, now_ms: i64) -> Facts {
             .and_then(|st| st.time_state_json.as_deref())
             .and_then(crate::time_state::TimeReport::parse)
             .is_some_and(|report| report.ledger_unreadable),
+        // Device › Time reads the same line.
+        clock: latest
+            .and_then(|st| st.time_state_json.as_deref())
+            .and_then(crate::time_state::TimeReport::parse)
+            .and_then(|report| report.clock_problem()),
         calls_enforced: calls_enforced(policy, s.call_problems),
         // Device › Music's own warnings, so the rows and the page agree.
         music: {

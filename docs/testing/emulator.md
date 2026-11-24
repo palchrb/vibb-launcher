@@ -5195,6 +5195,78 @@ adb logcat -d -t 2000 | grep -iE "kidslauncher|vibb|Telecom|InCall|CallScreen|An
 plus what you did and what you saw (a screenshot helps: `adb exec-out screencap -p > s.png`).
 Restore the "enrolled" snapshot between experiments.
 
+## 6bf. Time rules keep their own clock (branch `trusted-time`, 2026-11-24) - run 2026-11-24
+
+`docs/notes/launcher/time-rules.md`, "The decisions' clock". Owed on Android 14 (`compat34`) and 16 (`handy36`); Android
+17 on a device. The rig: a fresh server, a phone enrolled with a Leggetid rule in force now, a daily budget with some
+minutes used, Location "Only when asked". The phone's own clock is moved by the owner's private test method (not in
+this repo) to the row's offset; then:
+
+```sh
+A="adb -s emulator-5556"
+$A logcat -d -s TrustedClock TimeRuleAlarm TimeRulesRuntime
+sqlite3 data/kidphone.db "SELECT time_state_json FROM device_status WHERE device_id=1 ORDER BY id DESC LIMIT 1"
+```
+
+| Row | Android 14 | Android 16 |
+|---|---|---|
+| (a) The phone's clock at +26 h: Leggetid stays in force, the card's end and the glance's clock show the server's time | pass after the fix (1) | pass after the fix (1) |
+| (b) The day's minutes kept across an offline `adb reboot` after (a); the server's next sync takes a carried reset back | pass | pass |
+| (c) Update Location: the fix stored at the server's time (`device_locations.captured_at`, `phone_offset_ms` about +26 h) | pass | pass |
+| (d) The PWA: Device › Time's "Klokken går feil (26 t foran)" in nb and "Clock is wrong (26 h ahead)" in en, the summary's Attention row, the Devices list's badge | pass after the fix (3) | pass after the fix (3) |
+| (e) Again at -5 h: (a), (c), (d) "5 t bak" | pass | pass |
+| (f) The clock at +26 h before Vibb's first read after a reboot: carried at +26 h, corrected by a checked time and then by the server; the ledger's reset taken back | pass (server step; see below) | pass (server step; see below) |
+| (j) A clock that lost its time while off (behind the last checkpoint at boot): automatic time's first set is taken; offline, the rules follow the right time | pass after the fix (2) | pass after the fix (2) |
+| (k) A server whose certificate isn't in the built-in set (the check not enforced): its answers anchor, no "Tiden er ikke sjekket" line | not run | not run |
+| (g) Undo: the clock right again, the line gone, nothing jumps (rules, budget, the alarm) | pass | pass |
+| (h) On 14: `canScheduleExactAlarms()` true with `USE_EXACT_ALARM`; the elapsed boundary alarm fires in Doze (`dumpsys deviceidle force-idle`) | pass | - |
+| (i) Another time zone (`adb shell service call alarm 3 s16 Asia/Tokyo` with automatic zone off for the test): rules follow local time; Device › Time's quiet "Telefonens tidssone: Asia/Tokyo" | pass | pass |
+
+Screenshots on `jelly36`.
+
+### The run of 2026-11-24
+
+`compat34` (Android 14) and `aosp36` (Android 16, the default image: `adb root` for the rig), the branch merged with
+main, a fresh server, both phones enrolled with a Leggetid (bedtime) rule in force in their own zone and the global
+daily budget of 120 minutes with some minutes used. The clock was moved by the private test method; offline = the
+server stopped.
+
+- **(a)** Leggetid stayed in force at +26 h, the card's "Until" right, the report's `day` unchanged and its minutes
+  kept, `clock_skew_ms` 93600000. **Fault (1), fixed in c9b7fe6e8:** the lock's clock and date kept the phone's own time
+  until the screen restarted, and the date even then (bound once, at the face's creation). `ClockFormat.watch` now also
+  hears `ACTION_TIME_CHANGED`/`ACTION_TIMEZONE_CHANGED`, and the lock and the glance bind the date again
+  (`LockClockFace.rebindDate`) at start and on a change. Retested on both: the server's time and date within seconds of
+  the set, refreshed at the minute, the system's pattern again once right.
+- **(b)** Reboots offline after (a): the lock stayed up, `day` and the minutes kept (7 and 16), `carried` until the server
+  came back, then `server` with `clock_skew_ms` 0 (the emulators' own time set at boot had put the wall clock right).
+- **(c)** Fixes stored at the server's receipt time: `phone_offset_ms` 93599936 / 93599965, and -18000078 / -18000047 at
+  -5 h. The emulators' satellite time follows the guest's wall clock, so its anchor was refused ("A gnss anchor is
+  -93600 s from the one in force") - as it should be, but the "checked time" step of (f) can't run on an emulator.
+- **(d)** The orange line on Device › Time and the summary (Trenger oppmerksomhet), the Attention count one higher, in nb
+  and en. **Fault (3), fixed in 56af98533:** the phone's five-minute steps go towards zero, so a clock exactly 26 h ahead
+  is often reported as 25 h 55 min, which read "25 t foran"; the line now rounds to the nearest hour (a contract row in
+  `clock_skew.json`).
+- **(f)** The clock held at +26 h until Vibb's first read of the boot: `carried` at +26 h, the Home unlocked (the
+  accepted gap), the ledger reset with the day before kept as `previous`; the emulator's own time set afterwards was
+  ignored (forward of the checkpoint, so not open); with the server back the day, its minutes and the lock came back
+  at once.
+- **(j)** **Fault (2), fixed in c9b7fe6e8:** with the clock held 5 h behind until Vibb's first read, the carried time
+  opened, but a checkpoint that ran between automatic time's set and its `TIME_SET` recorded the new offset, so the set
+  looked like no move and was never taken (Android 16, first run). The checkpoint now keeps the offset while the
+  carried time is open (`checkpointAt`, `TrustedClockTest`). Retested on both with a minute between the first read and
+  the set: "The carried time follows the wall clock's first set in this boot", the boundary alarm on the right time;
+  offline before the set the lock stayed up.
+- **(g)** Back to the right time: the line gone, the Attention count back, `used_minutes` and the boundary unchanged.
+- **(h)** The boundary alarm `ELAPSED_WAKEUP` with `exactAllowReason=policy_permission`, `USE_EXACT_ALARM` granted;
+  forced into deep idle with the screen off, the rule's start fired on the second.
+- **(i)** Asia/Tokyo with automatic zone off: the rule (in local time) let go at once, the report's `zone` Asia/Tokyo,
+  "Telefonens tidssone: Asia/Tokyo" / "Phone's time zone: Asia/Tokyo" quietly on Device › Time.
+- **(k)** Not run: it needs an https server with a publicly trusted certificate whose issuer isn't in the built-in set,
+  which this rig doesn't have; `clock_rules.json`'s `connections` rows cover the rule.
+- Noted, not a fault: a fresh image's zone came back as Etc/UTC after the first reboot (set from adb, not Phone Setup),
+  so the rules moved with it - as designed - and the PWA showed "Telefonens tidssone: Etc/UTC".
+- Screenshots on `jelly36` not taken.
+
 ## 6bg. Android's blocked numbers cleared while managed (branch `blocked-numbers`, 2026-11-23)
 
 `docs/notes/launcher/calls.md`, "Android's blocked numbers cleared while managed". The rig: a fresh server on 3130/3131

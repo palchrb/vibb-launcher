@@ -1874,6 +1874,7 @@ impl PowerLocation {
             captured_at: at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
             provider: self.provider.clone(),
             mock: None,
+            age_ms: None,
         })
     }
 }
@@ -1953,6 +1954,11 @@ pub struct LocationReport {
     /// ignores a mock fix); stored as it is, never judged differently.
     #[serde(default)]
     pub mock: Option<bool>,
+    /// How old the fix was when the phone sent it, from its elapsed realtime: the fix is stored at the receipt minus
+    /// this ([checked_location_at]), whatever the phone's clock says. Absent for a fix whose age the phone lost (one
+    /// kept across a reboot).
+    #[serde(default)]
+    pub age_ms: Option<i64>,
 }
 
 /// A fix's provider as stored (migration 0093): a short lowercase word - 1 to 16 of `a-z`, `0-9`,
@@ -1967,11 +1973,67 @@ pub fn location_provider(provider: Option<&str>) -> Option<String> {
     .then(|| word.to_string())
 }
 
+/// [checked_location_at] received now.
+pub fn checked_location(loc: &LocationReport) -> Option<String> {
+    checked_location_at(loc, chrono::Utc::now())
+}
+
+/// The oldest age a fix may carry: anything older is no fix the phone could still hold.
+pub const MAX_FIX_AGE_MS: i64 = 400 * 24 * 3_600_000;
+
 /// The fix's time as stored (`YYYY-MM-DDTHH:MM:SS.mmmZ`, so text order is time order), or `None`
 /// when the report isn't a real fix (security review H2): `captured_at` must be RFC 3339 (the
 /// launcher sends `Instant.toString()`), latitude within +-90, longitude within +-180, the
-/// accuracy finite and not negative.
-pub fn checked_location(loc: &LocationReport) -> Option<String> {
+/// accuracy finite and not negative. With an `age_ms` (0 up to [MAX_FIX_AGE_MS]) the time is `received` minus
+/// it - the phone's own clock, ahead or behind, doesn't move it; all the fixes of one report hang off one
+/// `received`, so they keep their order. Without one the phone's `captured_at` is the time, and one more than
+/// [MAX_FIX_AHEAD_MINUTES] ahead of `received` is dropped.
+pub fn checked_location_at(
+    loc: &LocationReport,
+    received: chrono::DateTime<chrono::Utc>,
+) -> Option<String> {
+    let claimed = valid_fix_time(loc)?;
+    let time = match loc.age_ms {
+        Some(age) if (0..=MAX_FIX_AGE_MS).contains(&age) => {
+            received - chrono::Duration::milliseconds(age)
+        }
+        Some(_) => return None,
+        None => claimed,
+    };
+    // A fix from the future would stay "the newest" for good: the map's last-seen point, never
+    // pruned (QA of the security wave, Low 3). The launcher sends when the fix was taken; a few
+    // minutes cover a phone clock that runs ahead.
+    if time > received + chrono::Duration::minutes(MAX_FIX_AHEAD_MINUTES) {
+        return None;
+    }
+    Some(stored_fix_time(time))
+}
+
+/// The shutdown's fix (sent after the reboot, its age lost): the phone's `captured_at`, and one ahead of `received`
+/// is stamped at `received` - kept, never dropped; its `phone_offset_ms` says how far ahead it was.
+pub fn checked_shutdown_location(
+    loc: &LocationReport,
+    received: chrono::DateTime<chrono::Utc>,
+) -> Option<String> {
+    let claimed = valid_fix_time(loc)?;
+    Some(stored_fix_time(claimed.min(received)))
+}
+
+/// The stored form of a fix's time.
+fn stored_fix_time(time: chrono::DateTime<chrono::Utc>) -> String {
+    time.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string()
+}
+
+/// The phone's claimed time minus the stored one (the `phone_offset_ms` column): a fix's identity is its place and
+/// the time the phone named, stored minus this ([crate::zones::store_fix]).
+pub fn phone_offset_ms(loc: &LocationReport, stored: &str) -> Option<i64> {
+    let claimed = chrono::DateTime::parse_from_rfc3339(loc.captured_at.trim()).ok()?;
+    let stored = chrono::DateTime::parse_from_rfc3339(stored).ok()?;
+    Some((claimed - stored).num_milliseconds())
+}
+
+/// The place, accuracy and the phone's own time of a fix, when it is a real one.
+fn valid_fix_time(loc: &LocationReport) -> Option<chrono::DateTime<chrono::Utc>> {
     let finite_in = |value: f64, limit: f64| value.is_finite() && value.abs() <= limit;
     if !finite_in(loc.latitude, 90.0) || !finite_in(loc.longitude, 180.0) {
         return None;
@@ -1988,13 +2050,7 @@ pub fn checked_location(loc: &LocationReport) -> Option<String> {
     let time = chrono::DateTime::parse_from_rfc3339(loc.captured_at.trim())
         .ok()?
         .with_timezone(&chrono::Utc);
-    // A fix from the future would stay "the newest" for good: the map's last-seen point, never
-    // pruned (QA of the security wave, Low 3). The launcher sends when the fix was taken; a few
-    // minutes cover a phone clock that runs ahead.
-    if time > chrono::Utc::now() + chrono::Duration::minutes(MAX_FIX_AHEAD_MINUTES) {
-        return None;
-    }
-    Some(time.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string())
+    Some(time)
 }
 
 /// How far past the server's time a location fix's `captured_at` may be.

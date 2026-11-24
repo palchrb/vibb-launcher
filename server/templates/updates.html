@@ -47,6 +47,17 @@
             {% else if let Some(version) = newer_version %}
             <div class="row" data-row="latest"><span class="row-label tone-green">{{ self.tp("settings.updates.version_out", [("version", version.as_str())]) }}</span></div>
             {% endif %}
+            {% if server_clock_off %}
+            <details class="info cell" data-row="server-clock">
+                <summary class="row">
+                    <span class="row-label tone-orange">{{ self.t("settings.updates.server_clock") }}</span>
+                    <svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("common.more_info") }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>
+                </summary>
+                <div class="info-panel">
+                    <p>{{ self.t("settings.updates.server_clock_info") }}</p>
+                </div>
+            </details>
+            {% endif %}
             {% if image_script_notice %}
             {#- A Docker install, once: the image is now signed with the release key, and only the new update-image.sh
                 checks it. The server can't see the host's script, so the line stays until the parent's Done. -#}

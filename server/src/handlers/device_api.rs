@@ -1270,6 +1270,9 @@ pub(crate) const TIME_STATE_FIELDS: &[(&str, Field)] = &[
     ("lifts_active", Field::Ints(100)),
     ("ledger_unreadable", Field::Bool),
     ("zone", Field::Word(64)),
+    ("clock_skew_ms", Field::Int),
+    ("clock_trust", Field::Word(16)),
+    ("unanchored_ms", Field::Int),
 ];
 
 /// The launcher's `CallState` (`StatusReportRequest.kt`), every key it sends.
@@ -2001,21 +2004,25 @@ async fn status_intake(
     // phone's zones judged on it (`zones::intake`). Step 2: the report's `extra_locations` (a
     // crossing's fixes, a report that didn't get through) too - every fix stored first, the
     // zones judged once after them (code QA N-4).
-    let (fixes, dropped) =
-        crate::zones::report_fixes(&report.extra_locations, report.location.as_ref());
-    if dropped > 0 {
+    // One receipt for all of a report's fixes: each is stored at it minus its age on the phone.
+    let received = chrono::Utc::now();
+    let (fixes, refused, over) =
+        crate::zones::report_fixes(&report.extra_locations, report.location.as_ref(), received);
+    if refused + over > 0 {
         tracing::warn!(
             device_id = device.id,
-            dropped,
+            refused,
+            over,
             "dropped locations that aren't valid (time, coordinates or accuracy) or too many"
         );
     }
+    crate::zones::count_refused(&state.db, device.id, refused).await;
     // Q-3: a `still` report's own fix is current as of now ("Here now" counts from it).
     let resent = report
         .location
         .as_ref()
         .filter(|_| crate::zones::report_still(report.zone_watch.as_ref()))
-        .and_then(|loc| crate::models::checked_location(loc).map(|at| (loc, at)));
+        .and_then(|loc| crate::models::checked_location_at(loc, received).map(|at| (loc, at)));
     crate::zones::intake(&state, device.id, &fixes, resent.as_ref()).await;
 
     // Design 87 §4.2: the logos the server wants (200), or 204 when it wants none.
@@ -2765,7 +2772,10 @@ pub async fn power(
             .location
             .as_ref()
             .and_then(crate::models::PowerLocation::as_report)
-            .and_then(|loc| crate::models::checked_location(&loc).map(|at| (loc, at)));
+            .and_then(|loc| {
+                crate::models::checked_shutdown_location(&loc, chrono::Utc::now())
+                    .map(|at| (loc, at))
+            });
         if fix.is_none() && off.location.take().is_some() {
             tracing::warn!(
                 device_id = device.id,

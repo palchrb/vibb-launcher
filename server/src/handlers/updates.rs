@@ -33,6 +33,8 @@ struct UpdatesTemplate {
     /// project's, and a line names the other repo - `.env` is the service user's, so the page never
     /// quietly points the owner's root shell at it.
     other_repo: Option<String>,
+    /// This server's clock is off against GitHub's (`clock_skew::server_clock_off`): an orange line.
+    server_clock_off: bool,
 }
 crate::i18n::words!(UpdatesTemplate);
 
@@ -59,6 +61,7 @@ pub(crate) fn page(
             newer_version,
             other_repo: (repo != crate::config::DEFAULT_SERVER_RELEASE_REPO)
                 .then(|| repo.to_string()),
+            server_clock_off: crate::clock_skew::server_clock_off(),
         }
         .render()
         .unwrap(),

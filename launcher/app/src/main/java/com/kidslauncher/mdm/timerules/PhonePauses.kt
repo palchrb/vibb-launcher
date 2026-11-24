@@ -115,7 +115,7 @@ object PhonePauses {
      * `POST /api/devices/rule-pause`; the answer acks it, ends it as final, or leaves it for the next sync.
      */
     suspend fun upload(context: Context, api: MdmApi) {
-        val now = System.currentTimeMillis()
+        val now = com.kidslauncher.mdm.server.TrustedClock.nowMs()
         val syncs = syncs(context).associateBy { it.key }
         for (entry in entries(context)) {
             if (syncs[entry.key]?.posted == true) continue
@@ -142,7 +142,7 @@ object PhonePauses {
             Log.i(LOG_TAG, "Pause posted: $status -> ${action.wire}")
             when (action) {
                 RulePauseAction.ACKED -> updateSync(context, entry.key) {
-                    PhonePauseSync(entry.key, posted = true, ackedAtWallMs = it?.ackedAtWallMs ?: System.currentTimeMillis(), liftIds = answer?.liftIds.orEmpty())
+                    PhonePauseSync(entry.key, posted = true, ackedAtWallMs = it?.ackedAtWallMs ?: com.kidslauncher.mdm.server.TrustedClock.nowMs(), liftIds = answer?.liftIds.orEmpty())
                 }
                 RulePauseAction.DONE -> updateSync(context, entry.key) {
                     PhonePauseSync(entry.key, posted = true, ackedAtWallMs = it?.ackedAtWallMs, liftIds = it?.liftIds.orEmpty())
