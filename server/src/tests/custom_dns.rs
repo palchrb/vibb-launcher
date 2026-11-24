@@ -210,7 +210,7 @@ async fn a_custom_server_is_saved_write_only_and_lands_on_its_group() {
         ]
     );
 
-    // Forget clears both and puts the phones back on Cloudflare.
+    // Forget clears both and puts the phones back on the default provider.
     let res = save(
         &app,
         &cookie,
@@ -224,12 +224,9 @@ async fn a_custom_server_is_saved_write_only_and_lands_on_its_group() {
     assert_redirect(&res, "/dns?open=custom-server", Some("server"));
     assert_eq!(
         stored(&app).await,
-        ("cloudflare".into(), String::new(), String::new(), 3)
+        ("quad9".into(), String::new(), String::new(), 3)
     );
-    assert_eq!(
-        events(&app).await.last().unwrap(),
-        r#"{"server":"cloudflare"}"#
-    );
+    assert_eq!(events(&app).await.last().unwrap(), r#"{"server":"quad9"}"#);
     let page = app.get_page("/dns", &cookie).await.text();
     assert!(field(&page, "custom_backup").contains("value=\"https://1.1.1.3/dns-query\""));
     assert!(!page.contains("forget_custom"));
@@ -324,7 +321,7 @@ async fn refusals_render_in_place_and_write_nothing() {
 
     assert_eq!(
         stored(&app).await,
-        ("cloudflare".into(), String::new(), String::new(), 0)
+        ("quad9".into(), String::new(), String::new(), 0)
     );
     assert!(events(&app).await.is_empty());
 }
@@ -430,7 +427,7 @@ async fn the_dns_server_routes_refuse_without_a_session_or_from_another_site() {
     assert_eq!(res.status, StatusCode::FORBIDDEN);
     assert_eq!(
         stored(&app).await,
-        ("cloudflare".into(), String::new(), String::new(), 0)
+        ("quad9".into(), String::new(), String::new(), 0)
     );
     assert!(events(&app).await.is_empty());
 }
@@ -497,18 +494,18 @@ async fn custom_server_in_the_policy() {
     ] {
         store(&app, "custom", server, backup, 4).await;
         let policy = policy().await;
-        assert_eq!(policy["dns_upstream_provider"], "cloudflare");
+        assert_eq!(policy["dns_upstream_provider"], "quad9");
         assert_eq!(policy["dns_upstream"], expected);
     }
-    // Quad9 with values kept: the old word, no object.
-    store(&app, "quad9", "tls://9.9.9.9", "tls://1.1.1.3", 4).await;
+    // A provider with values kept: its word, no object.
+    store(&app, "cloudflare", "tls://9.9.9.9", "tls://1.1.1.3", 4).await;
     let policy = policy().await;
-    assert_eq!(policy["dns_upstream_provider"], "quad9");
+    assert_eq!(policy["dns_upstream_provider"], "cloudflare");
     assert_eq!(policy["dns_upstream"], Value::Null);
 }
 
 #[tokio::test]
-async fn custom_without_a_valid_pair_is_cloudflare() {
+async fn custom_without_a_valid_pair_is_the_default_provider() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (_, token) = app.enrolled_device("Anna").await;
@@ -523,7 +520,7 @@ async fn custom_without_a_valid_pair_is_cloudflare() {
             .request(Method::GET, "/api/devices/policy", Some(&token), None)
             .await
             .json();
-        assert_eq!(policy["dns_upstream_provider"], "cloudflare", "{server}");
+        assert_eq!(policy["dns_upstream_provider"], "quad9", "{server}");
         assert_eq!(policy["dns_upstream"], Value::Null, "{server}");
         let page = app.get_page("/dns", &cookie).await.text();
         assert!(
@@ -550,7 +547,8 @@ fn the_dns_status_contract_matches_the_launchers_copy() {
 async fn dns_upstream_status_contract() {
     let app = TestApp::new().await;
     let (id, token) = app.enrolled_device("Anna").await;
-    let report: Value = serde_json::from_str(DNS_STATUS_REPORT).unwrap();
+    let contract: Value = serde_json::from_str(DNS_STATUS_REPORT).unwrap();
+    let report = contract["custom"].clone();
     let res = app
         .request(
             Method::POST,
@@ -572,6 +570,18 @@ async fn dns_upstream_status_contract() {
         stored.map(|s| serde_json::from_str::<Value>(&s).unwrap())
     };
     assert_eq!(kept().await, Some(report["dns_upstream"].clone()));
+    // Provider mode: the provider that answered, kept as sent.
+    let provider = contract["provider"].clone();
+    let res = app
+        .request(
+            Method::POST,
+            "/api/devices/status",
+            Some(&token),
+            Some(provider.clone()),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT);
+    assert_eq!(kept().await, Some(provider["dns_upstream"].clone()));
 
     // Never an address, whatever a launcher sends; junk stores nothing; a report without it none.
     let mut sneaky = report.clone();
@@ -912,11 +922,11 @@ async fn the_lines_say_when_dns_cant_be_reached() {
         )
     );
 
-    // With a provider only the phones with an outage have a line: ongoing with the provider's
-    // name, ended alone; never one whose filter is off.
+    // With a provider an outage is a line (none of the providers answers), ended alone; never one
+    // whose filter is off.
     store(&app, "quad9", "", "", 0).await;
     report(
-        per_token,
+        per_token.clone(),
         json!({"rev": 0, "in_use": "provider", "unreachable_since_ms": ms(5)}),
     )
     .await;
@@ -924,7 +934,7 @@ async fn the_lines_say_when_dns_cant_be_reached() {
     assert_eq!(
         line(&page, per),
         format!(
-            "Per · DNS can't be reached since {} - Quad9 doesn't answer from where the phone is",
+            "Per · DNS can't be reached since {} - no DNS server answers from where the phone is",
             when(5)
         )
     );
@@ -934,9 +944,15 @@ async fn the_lines_say_when_dns_cant_be_reached() {
     for id in [anna, ola, liv, ulf] {
         assert_eq!(line(&page, id), "", "{id}");
     }
-    store(&app, "cloudflare", "", "", 0).await;
+    // Without an outage, which provider answers: a quiet value.
+    report(
+        per_token,
+        json!({"rev": 0, "in_use": "provider", "provider": "cloudflare"}),
+    )
+    .await;
     let page = app.get_page("/dns", &cookie).await.text();
-    assert!(line(&page, per).contains("- Cloudflare doesn't answer"));
+    assert_eq!(line(&page, per), "Per · Cloudflare answers");
+    assert!(page.contains(&format!("<li data-dns-phone=\"{per}\">")));
 }
 
 /// Design 67 §2.4: the built-in row, the honest footer and the Each Phone lines.

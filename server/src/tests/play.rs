@@ -181,11 +181,21 @@ async fn dns_changes_nudge_the_devices() {
             Method::POST,
             "/dns/upstream",
             Some(&cookie),
-            &[("upstream", "quad9")],
+            &[("upstream", "cloudflare")],
         )
         .await;
     assert!(res.status.is_redirection(), "{}", res.text());
     assert_eq!(rx.try_recv().unwrap(), id);
+    // Mullvad is no choice any more (its public DNS ended 2026-11-02).
+    let res = app
+        .request_form(
+            Method::POST,
+            "/dns/upstream",
+            Some(&cookie),
+            &[("upstream", "mullvad")],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]

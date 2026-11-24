@@ -25,11 +25,13 @@ class BootstrapResolverTest {
     private fun config(primary: UpstreamTarget, backup: UpstreamTarget) = CustomUpstream(primary, backup, rev = 1)
 
     @Test
-    fun `the backup's IP first, then the primary's, then Cloudflare - and nothing to look up with two IPs`() {
-        assertEquals(listOf(dotIp, CLOUDFLARE_BOOTSTRAP), bootstrapResolvers(config(dohName, dotIp)))
-        assertEquals(listOf(dohIp, CLOUDFLARE_BOOTSTRAP), bootstrapResolvers(config(dotName, dohIp)))
-        assertEquals(listOf(dotIp, CLOUDFLARE_BOOTSTRAP), bootstrapResolvers(config(dotIp, dohName)))
-        assertEquals(listOf(CLOUDFLARE_BOOTSTRAP), bootstrapResolvers(config(dohName, dotName)))
+    fun `the backup's IP first, then the primary's, then Quad9 but never Cloudflare - and nothing to look up with two IPs`() {
+        assertEquals(listOf(QUAD9_DOT), BOOTSTRAP_PROVIDERS)
+        assertEquals(listOf(dotIp) + BOOTSTRAP_PROVIDERS, bootstrapResolvers(config(dohName, dotIp)))
+        assertEquals(listOf(dohIp) + BOOTSTRAP_PROVIDERS, bootstrapResolvers(config(dotName, dohIp)))
+        assertEquals(listOf(dotIp) + BOOTSTRAP_PROVIDERS, bootstrapResolvers(config(dotIp, dohName)))
+        assertEquals(BOOTSTRAP_PROVIDERS, bootstrapResolvers(config(dohName, dotName)))
+        assertFalse(CLOUDFLARE_DOT in bootstrapResolvers(config(dohName, dotName)))
         assertEquals(emptyList<UpstreamTarget>(), bootstrapResolvers(config(dotIp, dohIp)))
     }
 
@@ -52,7 +54,8 @@ class BootstrapResolverTest {
         val lookedUp = mutableListOf<String>()
         val dns = BootstrapDns({ 0 }) { lookedUp += it }
         assertEquals(listOf(InetAddress.getByName("192.0.2.53")), dns.addresses("192.0.2.53"))
-        assertEquals(listOf(InetAddress.getByName("1.1.1.1")), dns.addresses(CLOUDFLARE_BOOTSTRAP.host))
+        assertEquals(listOf(InetAddress.getByName("9.9.9.9")), dns.addresses(QUAD9_DOT.host))
+        assertEquals(listOf(InetAddress.getByName("1.1.1.2"), InetAddress.getByName("1.0.0.2")), dns.addresses(CLOUDFLARE_DOT.host))
         assertTrue(lookedUp.isEmpty())
         // A name with nothing cached: one look-up, no address yet (OkHttp sees an unknown host).
         assertTrue(dns.addresses("dns.example").isEmpty())
@@ -152,7 +155,7 @@ class BootstrapResolverTest {
     fun `only the names are kept, and the file is replaced through a rename`() {
         assertEquals(setOf("dns.example"), BootstrapDiskCache.namesOf(config(dotName, dohIp)))
         assertEquals(emptySet<String>(), BootstrapDiskCache.namesOf(config(dotIp, dohIp)))
-        assertEquals(emptySet<String>(), BootstrapDiskCache.namesOf(config(dotIp, UpstreamTarget.Dot(CLOUDFLARE_BOOTSTRAP.host, 853))))
+        assertEquals(emptySet<String>(), BootstrapDiskCache.namesOf(config(dotIp, CLOUDFLARE_DOT)))
         val dir = java.nio.file.Files.createTempDirectory("dns-cache").toFile()
         val file = java.io.File(dir, BootstrapDiskCache.FILE_NAME)
         writeAtomically(file, "old")

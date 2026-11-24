@@ -342,19 +342,19 @@ pub(crate) async fn build_policy(
         zones: crate::zones::policy_zones(&policy.location_mode, &zones),
     };
 
-    // Design 36 §4.1: Custom with a valid pair is the `dns_upstream` object and "cloudflare" for a
-    // launcher that doesn't read it; Custom without one reads as Cloudflare.
+    // Design 36 §4.1: Custom with a valid pair is the `dns_upstream` object (the provider then the
+    // default); Custom without one reads as the default provider.
     let dns_settings =
         sqlx::query_as::<_, DnsFilterSettings>("SELECT * FROM dns_filter_settings WHERE id = 1")
             .fetch_optional(&state.db)
             .await?;
     let (dns_upstream_provider, dns_upstream) = match dns_settings {
         Some(s) if s.upstream == "custom" => (
-            "cloudflare".to_string(),
+            crate::dns_server::DEFAULT_PROVIDER.to_string(),
             crate::dns_server::upstream_of(&s.custom_server, &s.custom_backup, s.custom_rev),
         ),
         Some(s) => (s.upstream, None),
-        None => ("cloudflare".to_string(), None),
+        None => (crate::dns_server::DEFAULT_PROVIDER.to_string(), None),
     };
 
     let dns_filter_version = compute_dns_filter_version(state, device_id).await?;

@@ -80,7 +80,8 @@ class UpstreamReachTest {
         assertEquals(provider, rekey(provider, "quad9", 80_000))
         assertEquals("custom:4", reachKey(CustomUpstream(UpstreamTarget.Dot("192.0.2.10", 853), UpstreamTarget.Dot("192.0.2.11", 853), rev = 4), "quad9"))
         assertEquals("quad9", reachKey(null, "quad9"))
-        assertEquals("cloudflare", reachKey(null, null))
+        assertEquals("quad9", reachKey(null, null))
+        assertEquals("cloudflare", reachKey(null, "cloudflare"))
     }
 
     @Test

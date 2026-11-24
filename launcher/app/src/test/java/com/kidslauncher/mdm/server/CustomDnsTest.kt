@@ -27,7 +27,7 @@ import org.xbill.DNS.Type
 class CustomDnsTest {
     private val primaryDoh = UpstreamTarget.Doh("https://192.0.2.10/dns-query/abc123")
     private val backupDot = UpstreamTarget.Dot("192.0.2.20", 853)
-    private val cloudflareDoh = UpstreamTarget.Doh("https://1.1.1.1/dns-query")
+    private val quad9Doh = UpstreamTarget.Doh("https://9.9.9.9/dns-query")
     private val request = Message.newQuery(Record.newRecord(Name.fromString("example.com."), Type.A, DClass.IN))
     private val query = request.toWire()
 
@@ -73,7 +73,7 @@ class CustomDnsTest {
             synchronized(calls) { calls.asks += Ask(target, m.question.name.toString(), m.question.type) }
             answer(target, m)
         },
-        cloudflare = cloudflareResolver(clock, {}),
+        providers = listOf(quad9Resolver(clock, {})),
         cacheFile = cacheFile,
     )
 
@@ -244,14 +244,14 @@ class CustomDnsTest {
         val d = dns(primary = homeDot, backup = familyDoh, calls = calls) { target, m ->
             when {
                 target == homeDot -> Attempt.Transport(BackupReason.CONNECT)
-                target == CLOUDFLARE_BOOTSTRAP -> lookupAnswer(m, "192.0.2.30")
+                target == QUAD9_DOT -> lookupAnswer(m, "192.0.2.30")
                 else -> Attempt.Answer(backupAnswer)
             }
         }
         d.start()
-        // A through the primary (unreachable), then Cloudflare; AAAA skips the dead step.
+        // A through the primary (unreachable), then Quad9 (never Cloudflare); AAAA skips the dead step.
         assertEquals(
-            listOf(homeDot to Type.A, CLOUDFLARE_BOOTSTRAP to Type.A, CLOUDFLARE_BOOTSTRAP to Type.AAAA),
+            listOf(homeDot to Type.A, QUAD9_DOT to Type.A, QUAD9_DOT to Type.AAAA),
             calls.lookups("family.dns.example"),
         )
         assertArrayEquals(backupAnswer, d.resolve(query, request).bytes)
@@ -287,10 +287,10 @@ class CustomDnsTest {
                 else -> Attempt.Answer(backupAnswer)
             }
         }
-        // Both resolvers fail (Cloudflare's DoH too): the start's look-up gives nothing, a bootstrap period starts.
+        // Every resolver fails (the providers' DoH too): the start's look-up gives nothing, a bootstrap period starts.
         d.start()
         assertEquals(
-            listOf(backupDot to Type.A, CLOUDFLARE_BOOTSTRAP to Type.A, cloudflareDoh to Type.A),
+            listOf(backupDot to Type.A, QUAD9_DOT to Type.A, quad9Doh to Type.A),
             calls.lookups("abc123.dns.example"),
         )
         assertEquals(BackupReason.BOOTSTRAP, d.state().reason)
@@ -310,22 +310,22 @@ class CustomDnsTest {
     }
 
     @Test
-    fun `on a network that blocks 853 the bootstrap's Cloudflare step asks its DoH on 443`() {
+    fun `on a network that blocks 853 the bootstrap's Quad9 step asks its DoH on 443`() {
         val homeDot = UpstreamTarget.Dot("192.0.2.10", 853)
         val familyDoh = UpstreamTarget.Doh("https://family.dns.example/dns-query")
         val calls = Calls()
         val d = dns(primary = homeDot, backup = familyDoh, calls = calls) { target, m ->
             when (target) {
-                homeDot, CLOUDFLARE_BOOTSTRAP -> Attempt.Transport(BackupReason.CONNECT)
-                cloudflareDoh -> lookupAnswer(m, "192.0.2.30")
+                homeDot, QUAD9_DOT -> Attempt.Transport(BackupReason.CONNECT)
+                quad9Doh -> lookupAnswer(m, "192.0.2.30")
                 else -> Attempt.Answer(backupAnswer)
             }
         }
         d.start()
         assertEquals(
             listOf(
-                homeDot to Type.A, CLOUDFLARE_BOOTSTRAP to Type.A, cloudflareDoh to Type.A,
-                CLOUDFLARE_BOOTSTRAP to Type.AAAA, cloudflareDoh to Type.AAAA,
+                homeDot to Type.A, QUAD9_DOT to Type.A, quad9Doh to Type.A,
+                QUAD9_DOT to Type.AAAA, quad9Doh to Type.AAAA,
             ),
             calls.lookups("family.dns.example"),
         )

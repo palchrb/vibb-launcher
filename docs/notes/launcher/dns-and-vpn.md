@@ -33,12 +33,29 @@ Also found and fixed on the same test pass: **`CommandListenerService`'s SSE `Ok
 - **What it does**: with Settings › Web Filter › "Custom server" the VPN forwards every query **the phone's lists let
   through** (FCM/Spotify exemptions and `BlockedEventLog` unchanged - the lists always block first) to the parent's
   server - DoH or DoT, by name or IP - and, only while that server as a whole is unhealthy, to the parent's backup.
-  A failing backup drops the query as a failing Cloudflare does (no third tier); never plain DNS, never unfiltered.
+  A failing backup drops the query as a failing provider chain does (no third tier); never plain DNS, never unfiltered.
   Every connection is a `protect()`ed socket on the phone's current network, **never through tsnet** (a home-network
   server works on the home Wi-Fi, the backup answers elsewhere). Without a custom server
-  `DnsFilterEngine.resolveProvider` is DoT to Cloudflare/Quad9 (through `resolveDoT`; `PROVIDER_BUDGET` 2.5 s connect
-  since step 3's fix round, 10 s in all), with
+  `DnsFilterEngine.resolveProvider` is DoT to the provider chain (below; through `resolveDoT`; `PROVIDER_BUDGET` 2.5 s
+  connect since step 3's fix round, 10 s in all), with
   step 3's DoH on 443 where 853 is blocked (below).
+- **The providers in a chain** (2026-11-24, branch `dns-upstreams`; `server/PublicResolver.kt`): the parent's choice
+  (`dns_upstream_provider`; an unknown or missing one is `PublicResolvers.DEFAULT`, `quad9`) first, then the others in
+  the fixed order Quad9, Cloudflare (`PublicResolvers.order`) - Quad9 `dns.quad9.net`/9.9.9.9 (malware
+  blocking), Cloudflare `security.cloudflare-dns.com`/1.1.1.2 and 1.0.0.2 (malware blocking), each by its fixed address (`PINNED_PROVIDERS`), never looked up.
+  `resolveChain` asks each provider that is up, or unproven or due for its one probe, within the query's one ~4.8 s
+  deadline (`PublicResolver.resolveBy`, whose DoT and DoH are both capped by the time left). **Only no answer moves a
+  query on**: a transport failure after the provider's own DoT-then-DoH, or silence after the write (`unanswered`).
+  An answer - NXDOMAIN, SERVFAIL, REFUSED or one that can't be read included - stops there and is relayed. A provider
+  that doesn't answer is skipped for 60 s, doubling with each failed probe to 15 min (pure `ProviderChainRule`,
+  `ProviderDown` in an `AtomicReference` per provider), and the query goes on to the next while `BACKUP_FLOOR_MS` is
+  left; an answer brings it back. At start and after a network reset (`PublicResolvers.reset`) every provider is
+  **unproven** until it answers once: one query at a time tries it, the others go on to the next provider, and with
+  every provider being tried they wait (`PROVING_WAIT_MS` at a time) for the first that answers - so a dead provider
+  costs one query, not every query in flight. With every provider skipped and none being tried the first is asked
+  anyway. `PublicResolvers.answering` (the last provider that answered; cleared at a reset and when the parent's choice
+  changes) is the status report's `provider`. Every hop is DoT or DoH; there is no plain-DNS path. Tests:
+  `PublicResolverTest`.
 - **Policy and pref** (step 1's wire): `PolicyResponse.dnsUpstream` is raw `JsonElement?` read field by field by the
   pure `server/CustomUpstream.kt` `customUpstreamFrom` (kind `doh` with an `https://` URL OkHttp parses, or `dot` with
   a host and a port 1-65535, a numeric `rev`, a backup passing the same check - anything else is `null` = the provider;
@@ -89,9 +106,10 @@ Also found and fixed on the same test pass: **`CommandListenerService`'s SSE `Ok
   response that isn't 200 + `application/dns-message` (parameters ignored) + <= 65535 bytes + parsable is `http`.
   Pool evicted on a network reset and on close.
 - **Bootstrap** (`server/BootstrapDns.kt`): an IP literal is itself (`ipLiteral` parses it into bytes - never
-  `InetAddress.getByName`, which would resolve a malformed one through our own VPN), `cloudflare-dns.com` is
-  `1.1.1.1`; a name is A then AAAA through the bootstrap resolvers (`bootstrapResolvers`: the backup if it is an IP,
-  the primary if it is, then Cloudflare `1.1.1.1` DoT; the look-up - never a query - falls through to the next on a
+  `InetAddress.getByName`, which would resolve a malformed one through our own VPN), a provider's name its fixed
+  address (`PINNED_PROVIDERS`); a name is A then AAAA through the bootstrap resolvers (`bootstrapResolvers`: the backup
+  if it is an IP, the primary if it is, then `BOOTSTRAP_PROVIDERS` - Quad9 alone, over DoT by its fixed
+  address, **never Cloudflare** (2026-11-24; Mullvad was the second until its public DNS ended on 2026-11-02); the look-up - never a query - falls through to the next on a
   transport failure or silence, and a step that failed for A is skipped for AAAA, so a home-IP primary away from home
   still lets a backup by name be found), never the system resolver and never through the lists or the chooser, 1 s
   connect (DoH too, per call from its `Budget`), 2 s in all. `BootstrapCache` (memory): the CNAME chain's final name,
@@ -100,9 +118,9 @@ Also found and fixed on the same test pass: **`CommandListenerService`'s SSE `Ok
   names are looked up when a config loads. A primary with no address yet sends that query to the backup (no failure);
   nothing at all after its look-up is a `bootstrap` period (not stepped again inside a period). A backup with no address drops the query.
 - **Networks that block 853** (step 3, pure `DotBlockedRule` + glue `PublicResolver` in `server/PublicResolver.kt`):
-  Cloudflare and Quad9 (`PublicResolvers`, one state each per process) fall back to **the same provider's** DoH on 443 by
-  its IP-literal URL - `https://1.1.1.1/dns-query`, `https://9.9.9.9/dns-query` (no SNI, OkHttp's verifier on the IP;
-  their certificates name it), never the other provider's. A DoT `Transport` failure (connect refused/timed out, reset,
+  each provider (`PublicResolvers`, one state each per process) falls back to **the same provider's** DoH on 443 -
+  Quad9's `https://9.9.9.9/dns-query` by IP literal (no SNI, OkHttp's verifier on the IP; its certificate names it),
+  Cloudflare's `https://security.cloudflare-dns.com/dns-query` by name at its fixed addresses (`PINNED_DNS`) - never another provider's (switching providers is the chain's). A DoT `Transport` failure (connect refused/timed out, reset,
   TLS) counts; 3 within 60 s start a DoH period of 5 min, doubling with each failed probe to 1 h; in a period one query
   per period probes DoT (within at most `UPSTREAM_BUDGET`, so its query still gets DoH in time), the rest go straight
   to DoH; DoT that reaches the server (an answer, or anything above TLS) or a network reset (`PublicResolvers.reset`
@@ -111,9 +129,9 @@ Also found and fixed on the same test pass: **`CommandListenerService`'s SSE `Ok
   providers' DoT connect is 2.5 s (`PROVIDER_BUDGET.connectMs + BACKUP_FLOOR_MS <= QUERY_DEADLINE_MS`, pinned). In a
   period a DoH transport failure goes on to DoT the same way, and a DoT that works ends the period (a network that
   blocks the provider's 443 but not 853). A transport that throws counts as a connect failure (`probing` can't stick).
-  The providers' DoH client is the VPN's own `buildDohClient(IP_LITERAL_DNS, ::protect)` (built at its first DoH use,
-  evicted on a reset and at stop; `IP_LITERAL_DNS` never looks a name up), never tsnet. The bootstrap's last resolver is `PublicResolvers.cloudflare` too (its DoT, or its DoH on
-  443), with the bootstrap's budgets. **Under Custom the parent's servers are what they are** - a parent's DoT server
+  The providers' DoH client is the VPN's own `buildDohClient(PINNED_DNS, ::protect)` (built at its first DoH use,
+  evicted on a reset and at stop; `PINNED_DNS` never looks a name up), never tsnet. The bootstrap's last resolvers are
+  `PublicResolvers.bootstrap` too (their DoT, or their DoH on 443), with the bootstrap's budgets. **Under Custom the parent's servers are what they are** - a parent's DoT server
   never gets a guessed DoH URL (`PublicResolverTest` pins that a DoH target is built only from the parent's URL or the
   two public ones); a DoT backup on a network that blocks 853 fails like any backup. The status field is unchanged.
 - **The bootstrap's disk cache** (step 3, `BootstrapDiskCache` in `BootstrapDns.kt`): `noBackupFilesDir/
@@ -152,7 +170,8 @@ Also found and fixed on the same test pass: **`CommandListenerService`'s SSE `Ok
   (design 67: `state.tunnel` is volatile and read there; a dead read loop sends none): with a custom server `{rev,
   in_use: custom|backup, since_ms (wall clock, from elapsed time), reason (backup only):
   bootstrap|connect|tls|http|refused|timeout, unreachable_since_ms, unreachable_until_ms}`, with a provider `{rev: 0,
-  in_use: provider, since_ms: null, reason: null, ...}` (`providerReport`), never an address (`upstreamReport`;
+  in_use: provider, since_ms: null, reason: null, ..., provider}` (`providerReport`; `provider` the one that answered
+  last, left out before any), never an address (`upstreamReport`;
   contract `dns_upstream_status.json`, byte-identical with `../server/testdata/`, `DnsUpstreamStatusTest`,
   `UpstreamChooserTest`).
 - **DNS can't be reached** (design 67 §3, pure `server/UpstreamReach.kt`; glue `ReachTracker`, one `AtomicReference`

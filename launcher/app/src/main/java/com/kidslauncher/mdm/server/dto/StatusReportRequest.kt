@@ -239,8 +239,9 @@ data class ZoneWatchReport(
  * `bootstrap`, `connect`, `tls`, `http`, `refused` or `timeout`; in provider mode `rev` 0,
  * `provider`, no since and no reason (design 67 §3.2). In both, "DNS can't be reached" (wall
  * clock): ongoing [unreachableSinceMs] with no until, the last ended one both, none neither
- * ([outageTimes]). Never an address. Pinned by `dns_upstream_status.json`, byte-identical with
- * the server's `testdata/`. */
+ * ([outageTimes]). In provider mode [provider] is the one that answered last (`quad9`,
+ * `cloudflare`; left out before any). Never an address. Pinned by `dns_upstream_status.json`,
+ * byte-identical with the server's `testdata/`. */
 @Serializable
 data class DnsUpstreamReport(
     val rev: Long,
@@ -249,6 +250,7 @@ data class DnsUpstreamReport(
     val reason: String?,
     val unreachableSinceMs: Long?,
     val unreachableUntilMs: Long?,
+    val provider: String? = null,
 )
 
 /**

@@ -87,9 +87,9 @@ class KidVpnService : VpnService() {
     /** The parent's own server at work (design 36), while the VPN is up and one is configured. */
     @Volatile
     private var custom: CustomDns? = null
-    /** Cloudflare's and Quad9's DoH on 443 where 853 is blocked (design 36 step 3): IP-literal URLs,
+    /** The providers' DoH on 443 where 853 is blocked (design 36 step 3): fixed addresses ([PINNED_DNS]),
      * this service's protected sockets, no proxy - [buildDohClient], never tsnet. */
-    private val providerDoh = lazy { buildDohClient(IP_LITERAL_DNS, ::protect) }
+    private val providerDoh = lazy { buildDohClient(PINNED_DNS, ::protect) }
     /** The DoT connections kept for the next query (security review S-L9), the public resolvers' and the parent's
      * servers' alike: this service's protected sockets, so evicted on a network change and closed at stop. */
     private val dotPool = DotPool()
@@ -550,7 +550,7 @@ class KidVpnService : VpnService() {
                 custom.resolve(query, message)
                     .also { reach.after(it, reachKey(custom.config, null), lastNetwork?.validated == true) }.bytes
             } else {
-                val upstream = LauncherPreferences.mdm().dnsUpstreamProvider() ?: "cloudflare"
+                val upstream = LauncherPreferences.mdm().dnsUpstreamProvider()
                 DnsFilterEngine.resolveProvider(query, upstream, ::protect, dotPool) { providerDoh.value }
                     .also { reach.after(it, reachKey(null, upstream), lastNetwork?.validated == true) }.bytes
             }
@@ -645,7 +645,8 @@ class KidVpnService : VpnService() {
     private fun upstreamReport(): DnsUpstreamReport? {
         if (state.stopped || state.tunnel == null) return null
         val reach = reach.get()
-        return custom?.report(reach) ?: providerReport(reach, SystemClock.elapsedRealtime(), System.currentTimeMillis())
+        return custom?.report(reach)
+            ?: providerReport(reach, SystemClock.elapsedRealtime(), System.currentTimeMillis(), PublicResolvers.answering)
     }
 
     companion object {

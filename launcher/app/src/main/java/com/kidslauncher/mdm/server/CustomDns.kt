@@ -40,8 +40,8 @@ class CustomDns(
     private val log: (String) -> Unit = { Log.i(LOG_TAG, it) },
     /** One attempt at a target: DoH or DoT ([targetTransport]); a test's fake otherwise. */
     transport: ((UpstreamTarget, List<InetAddress>, ByteArray, Budget) -> Attempt)? = null,
-    /** The bootstrap's last resolver, Cloudflare - DoT, or its DoH where 853 is blocked (step 3). */
-    private val cloudflare: PublicResolver = PublicResolvers.cloudflare,
+    /** The bootstrap's last resolver, Quad9 (never Cloudflare) - DoT, or its DoH where 853 is blocked (step 3). */
+    private val providers: List<PublicResolver> = PublicResolvers.bootstrap,
     /** The bootstrap's disk cache ([BootstrapDiskCache]); `null` = none (tests). */
     private val cacheFile: File? = null,
     /** The VPN's kept DoT connections (S-L9, [DotPool]); `null` = a fresh connection per query (tests). */
@@ -200,8 +200,9 @@ class CustomDns(
             val query = Message.newQuery(Record.newRecord(qname, type, DClass.IN)).toWire()
             while (step < resolvers.size) {
                 val via = resolvers[step]
+                val provider = providers.firstOrNull { it.dot == via }
                 val outcome = try {
-                    if (via == cloudflare.dot) cloudflare.resolve(query, BOOTSTRAP_BUDGET, BOOTSTRAP_BUDGET, transport)
+                    if (provider != null) provider.resolve(query, BOOTSTRAP_BUDGET, BOOTSTRAP_BUDGET, transport)
                     else transport(via, bootstrap.addresses(via.serverHost), query, BOOTSTRAP_BUDGET)
                 } catch (e: Exception) {
                     Attempt.Transport(BackupReason.CONNECT)
