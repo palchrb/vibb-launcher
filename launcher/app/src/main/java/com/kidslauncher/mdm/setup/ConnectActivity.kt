@@ -130,7 +130,8 @@ class ConnectActivity : UIObjectActivity() {
         val code = binding.connectCode.text.toString().trim()
         if (!connectButtonEnabled(url, code, busy)) return
         // Security review S-M1: an address the phone won't use changes nothing; the whole reason shows.
-        if (!serverUrlUsable(url, BuildConfig.DEBUG)) {
+        // A phone the witness says was enrolled goes back to that server only.
+        if (!serverUrlUsable(url, BuildConfig.DEBUG) || !connectUrlAllowed(url, EnrolmentWitness.serverUrl(this))) {
             lastError.value = R.string.server_url_refused
             return
         }
@@ -178,7 +179,7 @@ class ConnectActivity : UIObjectActivity() {
                 enrolled = mdm.enrolled(),
                 tokenStored = DeviceCredentials.stored(context),
                 policyEverApplied = mdm.policyEverApplied(),
-                witnessManaged = EnrolmentWitness.managed(context),
+                witnessEnrolled = EnrolmentWitness.enrolled(context),
             )
         } catch (e: Exception) {
             false

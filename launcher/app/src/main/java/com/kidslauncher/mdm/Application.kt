@@ -439,7 +439,7 @@ class Application : android.app.Application() {
         val startedBefore = LauncherPreferences.internal().started()
         if (firstLaunchResetDue(
                 startedBefore, mdm.enrolled(), com.kidslauncher.mdm.server.DeviceCredentials.stored(this),
-                com.kidslauncher.mdm.server.EnrolmentWitness.managed(this),
+                com.kidslauncher.mdm.server.EnrolmentWitness.enrolled(this),
             )) {
             resetPreferences(this)
         } else if (!startedBefore) {

@@ -14,18 +14,18 @@ class FirstLaunchResetTest {
     @Test
     fun `the reset runs only on a phone that neither started Home nor enrolled`() {
         // A genuinely fresh install: no Home start, no enrolment - the defaults are set.
-        assertTrue(firstLaunchResetDue(startedBefore = false, enrolled = false, tokenStored = false, witnessManaged = false))
+        assertTrue(firstLaunchResetDue(startedBefore = false, enrolled = false, tokenStored = false, witnessEnrolled = false))
         // Enrolled before Home's first start (the QR's onProfileProvisioningComplete, or Settings
         // opened without Home): kept, whichever of the two writes is seen.
         // A sealed token that doesn't open (design r10) still counts as stored.
-        assertFalse(firstLaunchResetDue(startedBefore = false, enrolled = true, tokenStored = true, witnessManaged = false))
-        assertFalse(firstLaunchResetDue(startedBefore = false, enrolled = true, tokenStored = false, witnessManaged = false))
-        assertFalse(firstLaunchResetDue(startedBefore = false, enrolled = false, tokenStored = true, witnessManaged = false))
+        assertFalse(firstLaunchResetDue(startedBefore = false, enrolled = true, tokenStored = true, witnessEnrolled = false))
+        assertFalse(firstLaunchResetDue(startedBefore = false, enrolled = true, tokenStored = false, witnessEnrolled = false))
+        assertFalse(firstLaunchResetDue(startedBefore = false, enrolled = false, tokenStored = true, witnessEnrolled = false))
         // Home has started: never again, enrolled or not.
-        assertFalse(firstLaunchResetDue(startedBefore = true, enrolled = false, tokenStored = false, witnessManaged = false))
-        assertFalse(firstLaunchResetDue(startedBefore = true, enrolled = true, tokenStored = true, witnessManaged = false))
+        assertFalse(firstLaunchResetDue(startedBefore = true, enrolled = false, tokenStored = false, witnessEnrolled = false))
+        assertFalse(firstLaunchResetDue(startedBefore = true, enrolled = true, tokenStored = true, witnessEnrolled = false))
         // The preferences lost on a phone that was managed: the enrolment's witness keeps the reset away.
-        assertFalse(firstLaunchResetDue(startedBefore = false, enrolled = false, tokenStored = false, witnessManaged = true))
+        assertFalse(firstLaunchResetDue(startedBefore = false, enrolled = false, tokenStored = false, witnessEnrolled = true))
     }
 
     @Test
@@ -33,7 +33,7 @@ class FirstLaunchResetTest {
         val app = src("Application.kt")
         val initRest = app.substringAfter("private fun initRest()").substringBefore("\n    private fun ").substringBefore("\n    fun ")
         val call = "firstLaunchResetDue(\n                startedBefore, mdm.enrolled(), com.kidslauncher.mdm.server.DeviceCredentials.stored(this),\n" +
-            "                com.kidslauncher.mdm.server.EnrolmentWitness.managed(this),\n            )"
+            "                com.kidslauncher.mdm.server.EnrolmentWitness.enrolled(this),\n            )"
         assertTrue(call in initRest)
         assertTrue("val startedBefore = LauncherPreferences.internal().started()" in initRest)
         // The reset is called once, only under the rule and nothing else (code QA Q-3: an extra `|| !startedBefore`

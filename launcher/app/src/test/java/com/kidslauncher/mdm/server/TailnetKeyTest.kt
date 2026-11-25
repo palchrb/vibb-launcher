@@ -78,13 +78,18 @@ class TailnetKeyTest {
     }
 
     @Test
-    fun `the settings row masks the key`() {
+    fun `the settings row shows a fixed mask without opening the key, and the write is the recovering one`() {
         val src = listOf("src", "app/src").map(::File).first { File(it, "main/java").isDirectory }
         val settings = File(src, "main/java/com/kidslauncher/mdm/ui/settings/launcher/SettingsFragmentLauncher.kt").readText()
         val summary = settings.substringAfter("private fun tailscaleKeySummary(): String {").substringBefore("\n    }\n")
-        assertTrue("val key = TailnetAuthKey.get()" in summary)
-        assertTrue("maskedSecretSummary(key, " in summary)
-        assertTrue("only the last four shown", "val tail = value.takeLast(4)" in settings)
+        assertTrue("TailnetAuthKey.present() -> TAILNET_KEY_MASK" in summary)
+        assertFalse("no decryption on the main thread", "TailnetAuthKey.get()" in settings)
+        assertTrue("private const val TAILNET_KEY_MASK = \"••••••••\"" in settings)
+        assertTrue(TailnetAuthKey.storedSealed("ks1:AAAA"))
+        assertFalse("a plain value isn't shown as a key", TailnetAuthKey.storedSealed(key))
+        assertFalse(TailnetAuthKey.storedSealed(null))
+        val owner = File(src, "main/java/com/kidslauncher/mdm/server/TailnetAuthKey.kt").readText()
+        assertTrue("sealed.putRecovering(prefs, AAD, key, value.trim())" in owner)
     }
 
     /** Upstream 0d4201dab9: a failed connect builds a fresh tsnet.Server next time - but never on a first join. */

@@ -23,16 +23,19 @@ object TailnetAuthKey {
     /** The key, or `null`: none, blank, or not openable. A plain (unsealed) value is deleted here. */
     fun get(): String? = read(Secrets.prefs, prefs(), prefKey())
 
-    /** Something is stored, no Keystore call. */
-    fun present(): Boolean = !prefs().getString(prefKey(), null).isNullOrBlank()
+    /** A sealed key is stored, no Keystore call (Settings' summary on the main thread; a plain value doesn't count). */
+    fun present(): Boolean = storedSealed(prefs().getString(prefKey(), null))
 
-    /** Sealed and committed; a blank [value] deletes it. False when it couldn't be sealed or written. */
+    /** Sealed and committed (the device token's write rule: a retry, a new key only when the key itself is broken); a
+     * blank [value] deletes it. False when it couldn't be sealed or written. Off the main thread. */
     fun set(value: String): Boolean = write(Secrets.prefs, prefs(), prefKey(), value)
 
     /** Adds the key's removal to an edit of the default prefs (the joined mark's or the leave's one commit). */
     fun remove(editor: SealedPrefs.Editor) {
         editor.remove(AAD, prefKey())
     }
+
+    internal fun storedSealed(raw: String?): Boolean = raw?.startsWith(SealedPrefs.PREFIX) == true
 
     internal fun read(sealed: SealedPrefs, prefs: SharedPreferences, key: String): String? {
         val stored = prefs.getString(key, null) ?: return null
@@ -44,5 +47,5 @@ object TailnetAuthKey {
     }
 
     internal fun write(sealed: SealedPrefs, prefs: SharedPreferences, key: String, value: String): Boolean =
-        sealed.edit(prefs) { if (value.isBlank()) it.remove(AAD, key) else it.putSealed(AAD, key, value.trim()) }
+        if (value.isBlank()) sealed.edit(prefs) { it.remove(AAD, key) } else sealed.putRecovering(prefs, AAD, key, value.trim())
 }
