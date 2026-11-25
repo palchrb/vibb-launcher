@@ -17,7 +17,7 @@ import java.io.File
 
 /**
  * The launcher's side of Vibb music (design 21 §2/§3, 21b §5): the bridge's contract with the music
- * app (the AIDL byte-identical, the signature permission), the policy and library as the launcher
+ * app (the one AIDL's method order, the signature permission), the policy and library as the launcher
  * reads them, the listings, covers and own files it fetches, the managed config, the caller check,
  * the update deferral and `music_state`.
  */

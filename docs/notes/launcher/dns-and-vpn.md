@@ -199,7 +199,7 @@ Also found and fixed on the same test pass: **`CommandListenerService`'s SSE `Ok
   bootstrap|connect|tls|http|refused|timeout, unreachable_since_ms, unreachable_until_ms}`, with a provider `{rev: 0,
   in_use: provider, since_ms: null, reason: null, ..., provider}` (`providerReport`; `provider` the one that answered
   last, left out before any), never an address (`upstreamReport`;
-  contract `dns_upstream_status.json`, byte-identical with `../server/testdata/`, `DnsUpstreamStatusTest`,
+  contract `contracts/core/dns_upstream_status.json`, `DnsUpstreamStatusTest`,
   `UpstreamChooserTest`).
 - **DNS can't be reached** (design 67 §3, pure `server/UpstreamReach.kt`; glue `ReachTracker`, one `AtomicReference`
   per `KidVpnService` instance, CAS): `CustomDns.resolve` and `DnsFilterEngine.resolveProvider` return `Resolved(bytes,

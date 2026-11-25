@@ -10,7 +10,7 @@
   `setupMissing` / `setupCount` / `setupAlarm` / `setupRow`, the rule the server's `setup_status` runs too;
   `flowScreens`, `flowButtons`, `flowProgress` for the flow. `write_settings_used` reads bit 16, bit 8 (Sound: the
   kid's ringtone picks write `Settings.System`) or a clock format in use, as the server's `write_settings_needed`.
-- The shared contract is `setup_steps.json` (byte-identical with `server/testdata/`): `SetupStepsTest` checks the
+- The shared contract is `contracts/core/setup_steps.json`: `SetupStepsTest` checks the
   table, the names in nb and en, every `needed` row, the report's exact encoding, the policy, the tick, `map_readings`
   (rows 15-16 read from a `map_links` report, as the server's `map_links::setup_part`) and the copies. `map_links`'s map
   app is read from `controllablePackages`, the set the report's `installed_apps` lists (a hidden app counts).

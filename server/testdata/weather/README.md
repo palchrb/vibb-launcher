@@ -20,5 +20,5 @@ Kartverket's place-name pages that were here went on 2026-11-04 with the place l
 MET Norway's data is licensed under CC BY 4.0 (https://api.met.no/doc/License). Changes: `met_complete.json` trimmed as
 said above and minified; the others as sent.
 
-`../weather.json` is the contract shared with the launcher (byte-identical in `launcher/app/src/test/resources/`);
+`../../../contracts/core/weather.json` is the contract shared with the launcher (design 133);
 `WEATHER_CONTRACT_WRITE=1 cargo test weather::tests::the_contract` rewrites its computed parts.

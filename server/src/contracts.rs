@@ -2,13 +2,11 @@
 //! Test-only: the one production read outside the crate (`dns_server`'s DoH hosts) is a literal `include_str!`.
 
 /// A contract file's text, compiled in: `crate::contracts::contract!("core/weather.json")`.
-#[allow(unused_macros)]
 macro_rules! contract {
     ($p:literal) => {
         include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../contracts/", $p))
     };
 }
-#[allow(unused_imports)]
 pub(crate) use contract;
 
 /// A contract file's path, for the tests that read or write it at run time.

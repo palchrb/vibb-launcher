@@ -55,7 +55,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   POST path differs, so scroll-restore can't help - the focus keeps the place). `static/app-display.js` previews
   live (the tile in the phone's resolved colour; `auto` previews slate).
 - **Icons and colours**: `contracts/core/app_icons.json` (16 Material Symbols, 6 colours with design 14's seed and the
-  tile the launcher draws - since design 34 one of its six tones), byte-identical to the launcher's test copy;
+  tile the launcher draws - since design 34 one of its six tones), which the launcher's tests read too;
   `scripts/material-symbols.sh` (root) fetches the
   SVGs at a pinned commit with SHA-256s and writes `static/app-icons/<key>.svg` + `LICENSE.txt` (Apache-2.0), the
   launcher's vectors and both tables (`src/app_icons.rs`, generated, rustfmt-clean - don't edit). Tests check the

@@ -103,8 +103,8 @@ registrert". Nothing is orange in S1 but Settings' two lines: the stale list, an
 
 `contracts/core/device_key.json`, written by `scripts/device-key-vectors.py` (a throwaway key from a fake phrase;
 `--check` in `server-ci.yml`'s changes job). `tests::device_key::the_contract_rows` runs the crypto, clock, window and
-answer rows; `the_contract_routes` and `the_edge_rows` produce the route rows through the real routes. Since L1 it is
-byte-identical in `launcher/app/src/test/resources/` (`the_contract_matches_the_launchers_copy`), with the `phone` and
+answer rows; `the_contract_routes` and `the_edge_rows` produce the route rows through the real routes. Since L1 the
+launcher reads it too (design 133: once, in `contracts/core/`), with the `phone` and
 `phone_nudge` rows (the registration flow's table, the launcher's alone to run: `DeviceKeyContractTest`). The
 launcher's side is `docs/notes/launcher/security.md`, "The hardware-bound phone key".
 

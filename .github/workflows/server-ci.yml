@@ -45,47 +45,16 @@ jobs:
           image=true
         else
           files="$(git diff --name-only "$base" "$GITHUB_SHA")"
-          # Plus the apps' copies of Spotify's host list (design 26c §8): spotify::tests compares them;
-          # and the launcher's copies of the time status report (design 34 P13; devices_list compares it)
-          # and the DNS status report (design 36 §4.2; custom_dns compares it), and the release tags'
-          # versionCodes (install_now compares it), and the request for more time (design r13 §2.5;
-          # time_request compares it), and the status body's installed versions (2026-10-25;
-          # app_updates compares it); and the apps' copies of Storytel's token answers
-          # (design 58 §8; music_storytel compares them); and the launcher's built-in secure-DNS
-          # hosts (design 67, testdata/doh_hosts.txt; dns_server compares them); and the calendar
-          # links' contract (design 72, calendar_feeds.json; calendar_feeds compares it); and the kid's
-          # events' write-back contract (design 72b, calendar_kid_events.json; calendar_kid_events compares it); and the
-          # weather's contract (design 75, weather.json; weather::tests compares it); and Leave Tailnet's answers
-          # (security review S-L10, leave_tailnet.json; tests::leave_tailnet compares them); and the server
-          # address rule's vectors (launcher security review S-M1, server_url_vectors.json; config::tests compares them); and
-          # the pause's length (2026-11-04, restrictions_pause.json; models::paused_at_tests compares it); and the
-          # certificate check's contract (design 76, server_tls_report.json; tests::server_tls compares it); and the SMS
-          # engine's contract (design 77, sms_contract.json; sms::tests compares it); and the kid's contact request (design
-          # 77 §14, contact_request.json; tests::contact_requests compares it); and the apps' real logos (design 87,
-          # app_logos.json; tests::app_logos compares it); and a rule turned on now (design 93, lock_now.json;
-          # lock_now::tests compares it); and Mobilnett (designs 94/95, mobile_network.json; tests::mobile_network
-          # compares it); and the heartbeat report (design 95 §3.5, status_heartbeat.json; tests::status_heartbeat
-          # compares it); and Flymodus (design 98, airplane_mode.json; tests::airplane_mode compares it); and the parent code's
-          # rule pause (design 98 §4.4, rule_pause.json; tests::rule_pause compares it); and Snarveier (design 99,
-          # shortcuts.json; tests::shortcuts compares it); and Wi-Fi sign-in and Chrome only for logins (design 102,
-          # login_windows.json; tests::logins compares it); and the blocked notification channels (design 107,
-          # notification_channels.json; tests::notification_channels compares it); and the notification listeners (notification_listeners.json; notification_listeners::tests compares it); and app push (design 108,
-          # unified_push.json; tests::unified_push compares it); and the map links' contract folder (design 110,
-          # map_links/contract.json; integrations::map_links::tests compares it); and the setup steps (design 114,
-          # setup_steps.json; setup_status::tests compares it); and an install failure's reason (upstream review
-          # 2026-11-20, install_failure.json; install_failure::tests compares it); and what each app may use (design 127,
-          # app_access.json; app_permissions::tests::the_contract compares it); and Android's blocked numbers cleared
-          # (blocked_numbers.json; blocked_numbers::tests compares it); and the phone key's contract (design 129,
-          # device_key.json; tests::device_key compares it); and the Apple Wi-Fi lookup's contract folder (design
-          # 125, wifi_lookup/contract.json; integrations::wifi_lookup::tests compares it) and its fixtures script
-          # (scripts/wifi-lookup-fixtures.py, which wrote server/testdata/wifi_lookup/server.json); and the MMS
-          # servers' generator and
-          # its sample (design 83, scripts/mmsc-hosts.py; its output server/testdata/mmsc_hosts.txt is compiled in).
-          # And design 129's scripts: the GrapheneOS boot keys (scripts/grapheneos-boot-keys.py and its sample; its
-          # output src/attestation/grapheneos_boot_keys.json is compiled in) and the phone key's contract vectors
-          # (scripts/device-key-vectors.py, which wrote server/testdata/device_key.json), and the emulator profile's
+          # Plus contracts/, which both sides read (design 133; the bridge's AIDL in it is the one file the
+          # server doesn't read - a run more, never one missed); the launcher's HomeModel.kt (the avatar palette
+          # the PWA mirrors); the MMS servers' generator and its sample (design 83, scripts/mmsc-hosts.py; its
+          # output server/testdata/mmsc_hosts.txt is compiled in); the Apple Wi-Fi lookup's fixtures script
+          # (scripts/wifi-lookup-fixtures.py, which wrote server/testdata/wifi_lookup/server.json); and design
+          # 129's scripts: the GrapheneOS boot keys (scripts/grapheneos-boot-keys.py and its sample; its output
+          # src/attestation/grapheneos_boot_keys.json is compiled in), the phone key's contract vectors
+          # (scripts/device-key-vectors.py, which wrote contracts/core/device_key.json) and the emulator profile's
           # vectors (scripts/emulator-attestation-vectors.py, design 129b §7: server/testdata/attestation/emulator/).
-          if grep -qE '^(server/|contracts/|\.github/workflows/server-ci\.yml$|(launcher|music)/app/src/test/resources/spotify_hosts\.json$|launcher/app/src/test/resources/(time_status_report|dns_upstream_status|power_report|zone_status_report|launcher_tag_codes|time_request|installed_apps_report|calendar_title_rules|calendar_status_report|calendar_feeds|emergency_numbers|calendar_kid_events|weather|leave_tailnet|server_url_vectors|restrictions_pause|server_tls_report|sms_contract|contact_request|app_logos|lock_now|mobile_network|status_heartbeat|airplane_mode|rule_pause|shortcuts|login_windows|notification_channels|notification_listeners|unified_push|setup_steps|install_failure|app_access|blocked_numbers|clock_skew|device_key)\.json$|launcher/app/src/test/resources/(map_links|wifi_lookup)/|(launcher|music)/app/src/test/resources/storytel_token_answers\.json$|launcher/app/src/main/assets/dns/doh_hosts\.txt$|launcher/app/src/main/java/com/kidslauncher/mdm/ui/home/HomeModel\.kt$|scripts/mmsc-hosts(\.py|-sample\.xml)$|scripts/wifi-lookup-fixtures\.py$|scripts/grapheneos-boot-keys(\.py|-sample/.*)$|scripts/(device-key|emulator-attestation)-vectors\.py$|scripts/emulator-attestation-captures/)' <<<"$files"; then
+          if grep -qE '^(server/|contracts/|\.github/workflows/server-ci\.yml$|launcher/app/src/main/java/com/kidslauncher/mdm/ui/home/HomeModel\.kt$|scripts/mmsc-hosts(\.py|-sample\.xml)$|scripts/wifi-lookup-fixtures\.py$|scripts/grapheneos-boot-keys(\.py|-sample/.*)$|scripts/(device-key|emulator-attestation)-vectors\.py$|scripts/emulator-attestation-captures/)' <<<"$files"; then
             changed=true
           else
             changed=false
@@ -115,7 +84,7 @@ jobs:
       # server/src/attestation/grapheneos_boot_keys.json is the script's form. No network.
       run: python3 -I scripts/grapheneos-boot-keys.py --selftest
     - name: The phone key's contract vectors
-      # Cheap and always run: server/testdata/device_key.json is exactly what scripts/device-key-vectors.py writes
+      # Cheap and always run: contracts/core/device_key.json is exactly what scripts/device-key-vectors.py writes
       # (design 129 §7.1: a throwaway key from a fake phrase, public data only). No network.
       run: python3 -I scripts/device-key-vectors.py --check
     - name: The emulator profile's vectors
@@ -169,8 +138,8 @@ jobs:
           components: rustfmt, clippy
       - run: cargo build --locked
       - run: cargo fmt --check
-      # The full checkout matters: phone::tests compares testdata/phone_vectors.json with the
-      # launcher's copy in ../launcher.
+      # The full checkout matters: the tests read ../contracts/ (design 133) and the binary compiles in
+      # ../contracts/shipped/launcher-assets/dns/doh_hosts.txt.
       - run: cargo test --locked
       # static/scroll-restore.js (no POST may make a page jump to the top); node is on the runner.
       - run: node --test jstest/*.test.js
