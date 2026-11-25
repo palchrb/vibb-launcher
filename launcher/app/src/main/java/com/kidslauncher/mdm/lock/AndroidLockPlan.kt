@@ -200,10 +200,10 @@ fun secureCameraHeld(managed: Boolean, features: Int?): Boolean =
 
 /**
  * 59 §3.8 (Q59-4, M-1, L-1): the edge out of android mode - we own Android's credential ([owned], CE
- * `keyguard_android`), the policy doesn't ask for it, and the policy carries the parent's choice ([parentChoice]:
- * a fresh one or the `Ok` cache - never a `Fallback`, which has no `kid_lock`, nor `Apply(null)`).
+ * `keyguard_android`), the policy doesn't ask for it, and the server sent that policy in this sync ([fromServer],
+ * [com.kidslauncher.mdm.server.rollbackAllowed]): never the saved copy, a `Fallback` (no `kid_lock`) nor `Apply(null)`.
  */
-fun rollbackDue(owned: Boolean, requested: Boolean, parentChoice: Boolean): Boolean = owned && !requested && parentChoice
+fun rollbackDue(owned: Boolean, requested: Boolean, fromServer: Boolean): Boolean = owned && !requested && fromServer
 
 /**
  * S3-1 (qa-59-step3-code): an apply without the parent's choice (the last-enforced plan, a corrupt cache - no

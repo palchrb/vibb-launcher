@@ -1805,9 +1805,10 @@ object PinLockRuntime {
      * (`setKeyguardDisabled(true)` = screen lock "None", only possible without an Android
      * credential). Re-checked on every apply; an override or pause doesn't switch the lock off.
      * Design 59: `kid_lock.keyguard` "android" ([androidRequested]) makes Android's PIN the gate and the lock its
-     * face; [parentChoice] - a fresh or `Ok` cached policy (L-1) - is the only kind that may roll it back.
+     * face; [parentChoice] is a fresh or `Ok` cached policy (L-1), and only [fromServer] - the server's policy of this
+     * sync - may roll it back.
      */
-    fun configure(context: Context, dpm: DevicePolicyManager, admin: ComponentName, policy: PolicyResponse?, managed: Boolean, parentChoice: Boolean = false) {
+    fun configure(context: Context, dpm: DevicePolicyManager, admin: ComponentName, policy: PolicyResponse?, managed: Boolean, parentChoice: Boolean = false, fromServer: Boolean = false) {
         val app = context.applicationContext
         val kidLock = policy?.kidLock
         // Design r10 §3.2: a cached policy's kid hash is redacted - the PIN then comes from memory or the sealed store,
@@ -1816,7 +1817,7 @@ object PinLockRuntime {
         val requested = androidRequested(kidLock)
         // Design 59 first: the token, the rollback and the owned flag - the keyguard below is written for the
         // credential this leaves (a rollback's clear, then DISABLED).
-        val owned = AndroidLock.configure(app, requested, parentChoice)
+        val owned = AndroidLock.configure(app, requested, parentChoice, fromServer)
         val deviceSecure = try {
             app.getSystemService(KeyguardManager::class.java)?.isDeviceSecure == true
         } catch (e: Exception) {

@@ -345,24 +345,25 @@ object AppEnforcer {
      */
     @Synchronized
     fun apply(context: Context, decision: PolicyToApply, fromSync: Boolean = false) =
-        apply(context, decision.policy, fromSync, parentChoice = decision.carriesParentChoice)
+        apply(context, decision.policy, fromSync, parentChoice = decision.carriesParentChoice, fromServer = rollbackAllowed(decision.source))
 
-    /** [parentChoice] (design 59 §3.8, L-1): [policy] is a fresh or `Ok` cached one ([PolicyToApply.carriesParentChoice]) -
-     * only then may Android's lock be rolled back. A bare policy is never one. */
+    /** [parentChoice] (design 59 §3.8, L-1): [policy] is a fresh or `Ok` cached one ([PolicyToApply.carriesParentChoice]).
+     * [fromServer]: the server sent it in this sync ([rollbackAllowed]) - only then may Android's lock be rolled back. A
+     * bare policy is neither. */
     @Synchronized
-    fun apply(context: Context, policy: PolicyResponse?, fromSync: Boolean = false, parentChoice: Boolean = false) {
+    fun apply(context: Context, policy: PolicyResponse?, fromSync: Boolean = false, parentChoice: Boolean = false, fromServer: Boolean = false) {
         // The app list loads once when this pass ends, not once per package it hides or suspends (the provisioning
         // storm's follow-up, `ui/home/AppLoads.kt`'s `appLoadHeld`; at most 10 s if a pass hangs).
         com.kidslauncher.mdm.ui.home.AppLoadHold.hold(android.os.SystemClock.elapsedRealtime())
         try {
-            applyHeld(context, policy, fromSync, parentChoice)
+            applyHeld(context, policy, fromSync, parentChoice, fromServer)
         } finally {
             com.kidslauncher.mdm.ui.home.AppLoadHold.release(android.os.SystemClock.elapsedRealtime())
         }
     }
 
     /** [apply]'s pass, under its lock and its hold of the app-list loads. */
-    private fun applyHeld(context: Context, policy: PolicyResponse?, fromSync: Boolean, parentChoice: Boolean) {
+    private fun applyHeld(context: Context, policy: PolicyResponse?, fromSync: Boolean, parentChoice: Boolean, fromServer: Boolean) {
         val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
         if (!dpm.isDeviceOwnerApp(context.packageName)) {
             return
@@ -701,7 +702,7 @@ object AppEnforcer {
         // Handy's PIN lock (step 10) first - whether it is LOCKED changes the lock-task setting
         // below (featuresWhileLocked / lockTaskWhileLocked), so a sync can't undo the lock.
         val managed = policy?.allowlist != null || callState.managed
-        com.kidslauncher.mdm.lock.PinLockRuntime.configure(context, dpm, admin, policy, managed, parentChoice)
+        com.kidslauncher.mdm.lock.PinLockRuntime.configure(context, dpm, admin, policy, managed, parentChoice, fromServer)
         // The boot cover (design 16b, switch off by default): its PPA next to HomeActivity's while
         // wanted, the component off when not - enabled only at shutdown (and, with Android's lock as the
         // gate, at the locked boot: design 59 F3 - the gate as configure above just left it; F3C-4).

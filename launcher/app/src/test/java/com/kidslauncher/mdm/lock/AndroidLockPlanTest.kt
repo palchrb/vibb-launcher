@@ -1,9 +1,12 @@
 package com.kidslauncher.mdm.lock
 
 import android.app.admin.DevicePolicyManager
+import com.kidslauncher.mdm.server.CachedPolicy
 import com.kidslauncher.mdm.server.LastEnforcedPlan
 import com.kidslauncher.mdm.server.CredentialAction
 import com.kidslauncher.mdm.server.PolicyToApply
+import com.kidslauncher.mdm.server.choosePolicy
+import com.kidslauncher.mdm.server.rollbackAllowed
 import com.kidslauncher.mdm.server.credentialAction
 import com.kidslauncher.mdm.server.dto.KidLock
 import com.kidslauncher.mdm.server.dto.PolicyResponse
@@ -66,7 +69,7 @@ class AndroidLockPlanTest {
         assertTrue(configure.contains("val androidGate = AndroidLock.face(app, dpm, admin, requested, managed, newConfig != null, deviceSecure)"))
         assertTrue(configure.contains("androidGate = androidGate,"))
         assertTrue(body(code("$lock/AndroidLock.kt"), "face").contains("val face = androidFace(requested, managed, hasKidPin, deviceSecure)"))
-        assertTrue(configure.indexOf("AndroidLock.configure(app, requested, parentChoice)") in 0 until configure.indexOf("val deviceSecure ="))
+        assertTrue(configure.indexOf("AndroidLock.configure(app, requested, parentChoice, fromServer)") in 0 until configure.indexOf("val deviceSecure ="))
     }
 
     @Test
@@ -174,8 +177,8 @@ class AndroidLockPlanTest {
 
     @Test
     fun `the rollback - only off a policy with the parent's choice, never a Fallback (L-1, M-1)`() {
-        assertTrue(rollbackDue(owned = true, requested = false, parentChoice = true))
-        assertFalse("a Fallback or Apply(null)", rollbackDue(true, false, parentChoice = false))
+        assertTrue(rollbackDue(owned = true, requested = false, fromServer = true))
+        assertFalse("a saved copy, a Fallback or Apply(null)", rollbackDue(true, false, fromServer = false))
         assertFalse("still requested", rollbackDue(true, true, true))
         assertFalse("not ours (own mode's credential)", rollbackDue(false, false, true))
         assertEquals(AndroidRollback.CLEAR, androidRollback(deviceSecure = true, tokenActive = true))
@@ -185,10 +188,17 @@ class AndroidLockPlanTest {
         assertTrue(PolicyToApply.Apply(PolicyResponse()).carriesParentChoice)
         assertFalse(PolicyToApply.Apply(null).carriesParentChoice)
         assertFalse(PolicyToApply.Fallback(LastEnforcedPlan().toPolicy()).carriesParentChoice)
+        // Android's PIN is cleared only by the server's own choice: never from a saved copy, a fallback or no policy.
+        assertTrue(rollbackAllowed(PolicyToApply.Apply(PolicyResponse(), fromServer = true).source))
+        assertFalse("the saved copy", rollbackAllowed(PolicyToApply.Apply(PolicyResponse()).source))
+        assertFalse(rollbackAllowed(PolicyToApply.Apply(null, fromServer = true).source))
+        assertFalse(rollbackAllowed(PolicyToApply.Fallback(LastEnforcedPlan().toPolicy()).source))
+        assertTrue(rollbackAllowed(choosePolicy(PolicyResponse(), CachedPolicy.Ok(PolicyResponse()), true, null).source))
+        assertFalse(rollbackAllowed(choosePolicy(null, CachedPolicy.Ok(PolicyResponse()), true, null).source))
         // ... carried to configure, and every apply off the current decision passes the decision, not its policy.
         val enforcer = code("$server/AppEnforcer.kt")
-        assertTrue(enforcer.contains("apply(context, decision.policy, fromSync, parentChoice = decision.carriesParentChoice)"))
-        assertTrue(enforcer.contains("PinLockRuntime.configure(context, dpm, admin, policy, managed, parentChoice)"))
+        assertTrue(enforcer.contains("apply(context, decision.policy, fromSync, parentChoice = decision.carriesParentChoice, fromServer = rollbackAllowed(decision.source))"))
+        assertTrue(enforcer.contains("PinLockRuntime.configure(context, dpm, admin, policy, managed, parentChoice, fromServer)"))
         val all = file("main/java").walk().filter { it.isFile && it.extension == "kt" }.map { code(it.path.substringAfter("src/")) }.joinToString("\n")
         assertFalse(Regex("""AppEnforcer\.apply\([^)]*currentPolicyDecision\(\)\.policy""").containsMatchIn(all))
         assertTrue(code("$server/MdmSyncWorker.kt").contains("AppEnforcer.apply(context, decision, fromSync = true)"))
@@ -198,7 +208,7 @@ class AndroidLockPlanTest {
         assertTrue(migrate.indexOf("PinLockStore.saveAndroid(app, owned = true, rev = null)") in 0 until migrate.indexOf("reset(app, pin, settingRev = pinRev)"))
         assertTrue(migrate.indexOf("reset(app, pin, settingRev = pinRev)") < migrate.indexOf("if (set) commitRev(app, pinRev)"))
         val configure = body(android, "configure")
-        assertTrue(configure.contains("if (rollbackDue(owned, requested, parentChoice)) {"))
+        assertTrue(configure.contains("if (rollbackDue(owned, requested, parentChoice && fromServer)) {"))
         assertTrue(configure.contains("if (owned && !secure) {"))
         assertEquals(1, Regex("owned = false").findAll(android).count())
         // ... and step 4's command, its reset failed, gives back exactly what it wrote ahead (a credential not ours stays not ours).
@@ -222,7 +232,7 @@ class AndroidLockPlanTest {
         assertEquals(false, requestToStore(false, parentChoice = true))
         assertEquals(true, requestToStore(true, parentChoice = true))
         val configure = body(code("$lock/PinLockRuntime.kt"), "configure")
-        assertTrue(configure.contains("val owned = AndroidLock.configure(app, requested, parentChoice)"))
+        assertTrue(configure.contains("val owned = AndroidLock.configure(app, requested, parentChoice, fromServer)"))
         assertTrue(configure.contains("val androidHeld = androidKeyguardHeld(owned, deviceSecure, parentChoice)"))
         assertTrue(configure.contains("guard.trippedAtMs != null, requested, androidHeld)"))
         assertTrue(configure.contains("val storedRequest = requestToStore(requested, parentChoice)"))

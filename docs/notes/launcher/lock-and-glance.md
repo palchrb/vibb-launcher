@@ -224,9 +224,11 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   rev of the hash it was checked against (`PinResult.Ok(pinRev)`, Q59-5). The token: `ensureAndroidResetToken` at every
   apply while requested or owned (`androidTokenStep`: none -> set, inactive without a credential -> set, inactive with
   one -> wait for the escrow; L-3).
-- **Rollback** (§3.8, L-1): owned, not requested, and the apply's policy carries the parent's choice -
-  `AppEnforcer.apply(context, decision: PolicyToApply)` passes `carriesParentChoice` (a fresh or `Ok` cached policy;
-  never a `Fallback` or `Apply(null)`) to `PinLockRuntime.configure`; every caller passes the decision, not its policy.
+- **Rollback** (§3.8, L-1): owned, not requested, and Android's PIN is only cleared by the server's own choice -
+  `AppEnforcer.apply(context, decision: PolicyToApply)` passes `fromServer = rollbackAllowed(decision.source)` (only
+  `PolicySource.SERVER`: the policy the server sent in this sync; never the saved copy, a `Fallback` or `Apply(null)`)
+  with `carriesParentChoice` to `PinLockRuntime.configure`; every caller passes the decision, not its policy. A
+  rollback waiting for the token runs at a later sync's fresh policy.
   The credential is cleared with the token before the keyguard is written (then DISABLED); no active token: Android's
   PIN stays the gate (UNTOUCHED) until the escrow activates. An apply **without** the parent's choice never touches
   Android mode: while we own the live credential the keyguard stays ANDROID (`androidKeyguardHeld`) and

@@ -96,14 +96,14 @@ object AndroidLock {
      * [PinLockRuntime.configure] (every apply, background thread), before the keyguard is written: the token, the
      * rollback and the owned flag, so the keyguard below is written for the credential this leaves.
      * - Requested or owned: the reset token kept active ([WindowRelock.ensureAndroidResetToken], §3.6).
-     * - The rollback ([rollbackDue], §3.8): owned, not requested, and the policy carries the parent's choice
-     *   ([parentChoice]; never a `Fallback` or `Apply(null)`): the credential cleared with the token; without one
+     * - The rollback ([rollbackDue], §3.8): owned, not requested, and the server sent the policy in this sync
+     *   ([fromServer]; never the saved copy, a `Fallback` or `Apply(null)`): the credential cleared with the token; without one
      *   Android's PIN stays the gate and the token keeps running (escrow).
      * - Owned with no credential left (a verified clear, or removed on the phone): owned goes, and its rev.
      * Returns whether we still own Android's credential. An apply without the parent's choice (S3-1: the last-enforced
      * plan has no `kid_lock`) leaves [requested] as it was.
      */
-    fun configure(context: Context, requested: Boolean, parentChoice: Boolean): Boolean = synchronized(this) {
+    fun configure(context: Context, requested: Boolean, parentChoice: Boolean, fromServer: Boolean): Boolean = synchronized(this) {
         val app = context.applicationContext
         if (parentChoice) this.requested = requested
         val owned = try {
@@ -113,7 +113,7 @@ object AndroidLock {
         }
         val token = if (requested || owned) WindowRelock.ensureAndroidResetToken(app) else false
         var secure = deviceSecure(app)
-        if (rollbackDue(owned, requested, parentChoice)) {
+        if (rollbackDue(owned, requested, parentChoice && fromServer)) {
             when (androidRollback(secure, token)) {
                 AndroidRollback.CLEAR -> {
                     val ok = reset(app, null, settingRev = null)
