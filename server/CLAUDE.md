@@ -80,8 +80,10 @@ No prior programming experience - build features directly rather than explaining
   `STATUS_ROWS_A_DAY`, `CRASH_HASHES`; `docs/notes/server/retention-and-crashes.md`), and its security-log lines and
   inbox events an hourly one (L1, `security::record_phone_event`, `parent_events::EVENTS_AN_HOUR`).
 - **A catalog app is pinned to its package and signing key (security review M10, server part).** `src/apk.rs` reads
-  an APK's manifest `package` (binary XML) and its signer (SHA-256 hex of the first certificate in the v3, else v2,
-  signing block - what `apksigner --print-certs` and the launcher's `SelfUpdate.signers` give). `tracked_apps`
+  an APK's manifest `package` (binary XML) and its signer (SHA-256 hex of the first certificate of the v3 signer
+  Android picks for each SDK 34 to 37, else of the v2 block's first signer - one certificate for all four, else
+  unreadable; a second v2 or v3 block is unreadable too, `apk::phone_signer` - what `apksigner --print-certs` and the
+  launcher's `SelfUpdate.signers` give). `tracked_apps`
   `sync_one_app` and the manual upload refuse a release whose package differs from `package_name` or whose signer
   differs from `signer_sha256` (migration 0062), and pin what the first release has (`store_pins`); our own two rows
   (Vibb One's and Vibb music's, and any row whose pinned or incoming package is one of theirs, whatever the repo)

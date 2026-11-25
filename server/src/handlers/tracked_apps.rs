@@ -1050,6 +1050,24 @@ async fn check_new_package(
     app: &TrackedApp,
     identity: &crate::apk::ApkIdentity,
 ) -> Result<(), Failure> {
+    // A first release (or one pinning the package anew) that joins a shared user ID would share
+    // the permissions of the other apps of its key in it, which its own list doesn't show; a later
+    // one is held for the parent (`catalog_holds::judged_permissions`). Ours are exempt: only our
+    // release key signs them.
+    let pinning = app.package_name.is_empty() || app.latest_release_tag.is_none();
+    if pinning
+        && identity.shared_user_id
+        && matches!(
+            key_rule(state, app, identity.package.as_deref()),
+            KeyRule::Pinned
+        )
+    {
+        return Err(Failure::new(
+            SyncProblem::CantCheck,
+            "refused: the release declares a shared user ID (android:sharedUserId), so what it \
+             can use isn't only what it lists",
+        ));
+    }
     let Some(package) = identity
         .package
         .as_deref()
@@ -2472,7 +2490,7 @@ async fn sync_release(
     } else {
         crate::catalog_holds::judge(
             false,
-            identity.permissions.as_deref(),
+            crate::catalog_holds::judged_permissions(&identity),
             accepted.as_deref(),
             app.always_ask,
         )
@@ -7368,6 +7386,7 @@ mod tests {
             min_sdk: None,
             permissions: None,
             split_target: None,
+            shared_user_id: false,
         };
         let refused = check_pins(
             &other_row,
@@ -9257,6 +9276,91 @@ mod tests {
                 .unwrap()
                 .release_tag,
             "v5"
+        );
+    }
+
+    /// A release that joins a shared user ID: a first release is refused, a later one is held as
+    /// unreadable (its own permission list isn't all it could use).
+    #[tokio::test]
+    async fn a_release_with_a_shared_user_id_waits_for_the_parent() {
+        let app = crate::tests::TestApp::new().await;
+        let plain = std::fs::read("testdata/apk/perms-key3-v1.apk").unwrap();
+        let shared = crate::apk::tests::shared_user_apk(&plain, "me.vibb.permfixture");
+        let files = [("plain", plain), ("shared", shared)];
+        let mut server = axum::Router::new();
+        for (name, bytes) in files.clone() {
+            server = server.route(
+                &format!("/{name}.apk"),
+                axum::routing::get(move || async move { bytes }),
+            );
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, server).await.unwrap() });
+        let asset = |id: i64, name: &str| ReleaseAsset {
+            id,
+            name: format!("{name}.apk"),
+            browser_download_url: format!("{base}/{name}.apk"),
+            size: files.iter().find(|(n, _)| *n == name).unwrap().1.len() as u64,
+            sha256: None,
+            index_signers: None,
+            updated_at: None,
+        };
+        let id: i64 = sqlx::query_scalar(
+            "INSERT INTO tracked_apps (name, package_name, github_repo) \
+             VALUES ('Fixture', '', 'o/r') RETURNING id",
+        )
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+
+        let refused = sync_release(
+            &app.state,
+            &row_of(&app, id).await,
+            "v1",
+            &asset(1, "shared"),
+            false,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(refused.problem, SyncProblem::CantCheck);
+        assert!(
+            refused.detail.contains("sharedUserId"),
+            "{}",
+            refused.detail
+        );
+        let row = row_of(&app, id).await;
+        assert_eq!(
+            (row.latest_release_tag, row.package_name.as_str()),
+            (None, "")
+        );
+
+        sync_release(
+            &app.state,
+            &row_of(&app, id).await,
+            "v2",
+            &asset(2, "plain"),
+            false,
+        )
+        .await
+        .unwrap();
+        sync_release(
+            &app.state,
+            &row_of(&app, id).await,
+            "v3",
+            &asset(3, "shared"),
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            row_of(&app, id).await.latest_release_tag.as_deref(),
+            Some("v2")
+        );
+        let held = held_release(&app.state, id).await.unwrap().unwrap();
+        assert_eq!(
+            (held.release_tag.as_str(), held.reason.as_str()),
+            ("v3", "unreadable")
         );
     }
 
