@@ -49,6 +49,7 @@ findings, merge to `main`, full suite once.
   Blocked (done when the blocker goes, not ahead of the list): Nett per app (the SIM); SMS/MMS step 0 and group MMS
   (the SIM); the GPS signal floor and the three-networks question (the Jelly's data); Vipps/BankID browser; (4i) the charging glimpse (a log); the Jelly device checks.
 - **Inbox (not prioritised)** - the owner's new issues and ideas since the lock, each waiting to be discussed:
+  - **Apple's cell lookup in Norway, unverified (2026-11-25 probe):** five OpenCellID LTE cells (1 sample each) were all unknown to Apple; its answer then held ~20 operator/TAC areas with no cell id and a 149 km accuracy (the server already drops them), and no PCI/EARFCN for neighbours, so the owner's "more towers via Apple's neighbour list" idea looks unworkable. Needs one live cell id from an Android phone with a SIM (NetMonster) to tell whether Apple knows Norwegian LTE at all - design 125b's usefulness here hangs on it. The owner's other idea, a phone-learned neighbour table (PCI+EARFCN near a known cell), waits for that answer.
   - Lock alert per app (the owner, 2026-11-24: "burde nesten sette dette per app"): today one choice Av/Vibrer/Lyd
     for the phone (design 130), only for notices whose lock-glance row isn't Off; per app would sit on the Lock
     Screen page's app rows.
