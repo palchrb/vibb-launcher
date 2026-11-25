@@ -5783,7 +5783,6 @@ wifi_device_owner_configs_lockdown` (`dumpsys device_policy` shows no line for i
 
 Not on the emulator: real neighbours, real bands, a real mesh - the owner's device check on the Jelly Star, later.
 
-<<<<<<< HEAD
 ### The run of 2026-11-25 (00:00-04:40 UTC)
 
 Android 14 (`compat34`, Google APIs, `-wipe-data`) and Android 16 (`aosp36`, AOSP, `-wipe-data`), one at a time, both
@@ -5826,7 +5825,7 @@ Fixes (this branch):
 Findings: the emulator's `geo fix` has no satellites (above); a far satellite fix heard passively before an attempt
 makes the jump gate refuse rather than the satellites overrule (both count once); after a reboot the emulator's GNSS
 answers at its default place until the feed is back.
-=======
+
 ## 6bo. Posisjon also covers the location stored in photos (branch `media-location-delete-lines`) - written, not run
 
 App access's Posisjon key (design 127) also covers `android.permission.ACCESS_MEDIA_LOCATION`, the runtime permission
@@ -5854,4 +5853,3 @@ These rows confirm it on the two versions.
 | 3 | Open the photo's properties in the gallery (or the test app's `getLatLong`) | no position (the EXIF GPS fields read empty or zero); the rest of the photo is there |
 | 4 | Revoke and grant the photos access again in Android's app info (the pause on, Settings shown) | `ACCESS_MEDIA_LOCATION` comes back `granted=true` only during the pause (it lifts every key); after the pause ends, `granted=false` with `POLICY_FIXED` again |
 | 5 | Posisjon on again in the PWA, a sync | the flag is gone (`POLICY_FIXED` cleared), the permission back to what the user gave; the gallery shows the coordinates once its photos access is granted again |
->>>>>>> origin/media-location-delete-lines
