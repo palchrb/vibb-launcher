@@ -6,6 +6,18 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 
 The server runs no DNS listener: each phone filters on-device (the launcher's `KidVpnService`). `dns_engine.rs` holds `CompiledBlocklist`/`compile_blocklist`. `GET /api/devices/dns-blocklist` serves a phone's fully resolved, category-tagged list and `POST /api/devices/dns-events` ingests what got blocked (`device_dns_events`, admin page `/dns/log`). A phone's feed overrides are `device_blocklist_overrides`; `dns_custom_domains.device_id` is NULL for a global domain. `PolicyResponse.dns_filter_version` is an opaque per-device token (the global compiled-list hash plus the phone's override and custom-domain state), so the phone fetches the full list (100k+ domains) only when it changed. The compile downloads every defined feed whatever its global `enabled` flag, so a phone's override can turn a globally-off feed on for that phone alone. `device_policy.vpn_filter_enabled` (default on) is the per-device switch for `KidVpnService`. `rustls` stays a dependency: reqwest needs the process-wide `CryptoProvider` `main.rs` installs (see the `rustls` gotcha in `server/CLAUDE.md`).
 
+### How the lists are downloaded (2026-11-25)
+
+Web filter: lists are fetched over https from public addresses only. `dns_engine::fetch_feed` goes through
+`AppState::blocklist_fetch` (its own `music_net::HttpSource`, never the music gate; the canned fetch in the tests) with
+`Reach::Public` and `Kind::Blocklist` (the 32 MB cap, 30 s): no private, tailnet or loopback answer, no proxy from the
+environment. Redirects are followed one hop at a time, at most 5, and only to `https://`. A refusal is
+`FeedFailure::Refused` (health code `refused`, the parent's to mend; "not fetched: ..." behind the list's (i)). Add a
+List takes only an `https://` address (`bad_list`). A list saved earlier with an `http://` address is unchanged for now,
+waiting on the owner's decision about such lists: still fetched at that address, through the same public-only client,
+with nothing new shown on its row.
+`tests::outbound_clients` fails on a reqwest client built outside the files it lists, each with its reason.
+
 ## A custom DNS server for the Web Filter (design 36 step 1, `docs/design/36-custom-dns.md`, migration `0079_custom_dns.sql`)
 
 - **The server never contacts either address** - no resolve, no probe, no fetch (no SSRF surface); it only parses.

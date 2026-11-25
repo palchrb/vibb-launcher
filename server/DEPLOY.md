@@ -45,7 +45,7 @@ pages and the phones' API can be exposed differently:
 | `ADMIN_DEVICE_API` | `on` | The admin listener also serves the phones' API (the URLs phones set up before 0.23.0 use). `off` once every phone uses the phone listener. |
 | `ADMIN_PUBLIC` | `off` | The admin listener answers **only loopback and tailnet clients** (100.64.0.0/10, fd7a:115c:a1e0::/48); everyone else gets 403 (logged as `admin_refused` in the security log). `on` lets every client in - see (b) below. |
 | `TRUSTED_PROXIES` | `127.0.0.1,::1` | Proxies whose `X-Forwarded-For` is believed: exact proxy addresses (a range only if every address in it is one of your proxies). Your proxy on the same box needs nothing here. |
-| `ADMIN_TAILSCALE_USERS` | unset | Only behind `tailscale serve`: the admin pages also need one of these Tailscale logins (comma list). Tagged phones carry no login, so a phone node can't open the admin even if a serve rule points it there. |
+| `ADMIN_TAILSCALE_USERS` | unset | Only behind `tailscale serve`: the admin pages also need one of these Tailscale logins (comma list). Tagged phones carry no login, so a phone node can't open the admin even if a serve rule points it there. The login header counts only when it is forwarded for a tailnet client by loopback (`tailscale serve` on this host, the systemd install, `network_mode: host`, the sidecar) or by an exact `TRUSTED_PROXIES` address that isn't a tailnet one (Docker's bridge gateway, "Bridge network instead"); a tailnet client connecting straight to the server can't send its own. With a `BIND_ADDR` that isn't loopback and only loopback in `TRUSTED_PROXIES` the list can't be checked: the server starts, logs one error line and one security-log line ("Admin pages closed"), and refuses every admin page with one line pointing to the server's log, until `BIND_ADDR` is `127.0.0.1:...`, `TRUSTED_PROXIES` names the forwarder, or the list is unset. |
 | `SESSION_INACTIVITY_DAYS` | `30` | How long an admin session lasts without use. |
 | `SESSION_MAX_DAYS` | `90` | How long an admin session lasts after its sign-in, however often it is used (1-3650): the installed PWA signs in again once in that time. |
 | `PASSKEY_RP_ID` | unset | The domain parents' passkeys belong to (server with design 74). Unset: the address the PWA is opened at (an IP address gets no passkeys). **Recommended: the PWA's own name, e.g. `handy.example.com`** - other services on `example.com` then never see the passkey offered, and another address (the tailnet name) signs in with the password. A parent domain (`example.com`) makes one passkey work only at `example.com` itself and at the names you list in `PASSKEY_ORIGINS` (a second host under it is never taken from the request, so another service on the domain can't relay a sign-in). Checked at start: lower case, a name with a dot (or `localhost`), not an IP, not a public suffix (`com`, `co.uk`, `ts.net`...) - a bad value refuses to start and says why. Changing it later makes the passkeys made before stop working (each keeps the domain it was made for), and a browser with the app lock on ("Lock with Face ID") then asks for a new sign-in: Sign Out on the lock screen. |
@@ -99,7 +99,10 @@ sudo tailscale serve --bg --https=8444 http://127.0.0.1:3101
 Then set the phones' server URL to `https://<hostname>.<tailnet>.ts.net:8444`, and once every phone uses it,
 `ADMIN_DEVICE_API=off`. Also set `ADMIN_TAILSCALE_USERS=you@example.com` (your Tailscale login; several separated by
 commas): `tailscale serve` passes the signed-in user, tagged phone nodes have none, so a serve rule pointed at the
-wrong port still can't open the admin for a phone.
+wrong port still can't open the admin for a phone. The login counts only from `tailscale serve` on loopback, or
+through the forwarder `TRUSTED_PROXIES` names exactly (Docker's bridge gateway, "Bridge network instead" below); with
+a `BIND_ADDR` that isn't loopback and no such forwarder the admin pages refuse everyone (one error line and one
+security-log line at start say why).
 
 Use `tailscale serve`, **not** `tailscale funnel`, for the admin: Funnel makes it public (and the server refuses
 Funnel requests to the admin anyway).
@@ -546,7 +549,12 @@ what this server makes.
 and publish them only on the host's loopback (`ports: ["127.0.0.1:3100:3100", "127.0.0.1:3101:3101"]` - Docker's
 published ports bypass ufw). Give the network a fixed subnet and set `TRUSTED_PROXIES` to its gateway (plus Caddy's
 address if Caddy runs as a container too). Without that, every client looks like the gateway: the admin gate refuses
-them, and the server warns at startup.
+them, and the server warns at startup. With `ADMIN_TAILSCALE_USERS` and `tailscale serve` on the host, the gateway is
+the forwarder the login header is believed from: name it alone (`TRUSTED_PROXIES=172.30.0.1`, never the subnet).
+
+Enrolment's limits count per client: at most 2 enrolments at once and its own pause after wrong typed codes. Behind a
+TCP-level forward (a port forward, `socat`, a stream proxy) or a bridge without `TRUSTED_PROXIES`, every phone is the
+same client to the server, so they share one share of those limits.
 
 **Tailscale as a sidecar instead of on the host**: a `tailscale/tailscale` container with `TS_USERSPACE=false`,
 `/dev/net/tun` and the `NET_ADMIN` capability, and the server with `network_mode: service:tailscale`, so it becomes its

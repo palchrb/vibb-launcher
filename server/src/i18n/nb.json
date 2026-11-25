@@ -831,6 +831,7 @@
   "security.detail.refused.untrusted_proxy": "Videresendt av en proxy som ikke står i TRUSTED_PROXIES (fra {peer})",
   "security.detail.refused.funnel": "Gjennom Tailscale Funnel (fra {peer})",
   "security.detail.refused.tailscale_user": "Ingen tillatt Tailscale-User-Login (fra {peer})",
+  "security.detail.refused.login_list": "Tailscale-innloggingslisten kan ikke sjekkes her (fra {peer})",
   "security.detail.device_auth.invalid_token": "Ugyldig telefonnøkkel",
   "security.detail.device_auth.missing_token": "Ingen telefonnøkkel",
   "security.detail.device_auth.signature": "Signatur avvist: {reason}",
@@ -1449,6 +1450,7 @@
 
   "device.filter.label": "Nettfilter",
   "device.filter.down": "Nede i {duration}",
+  "device.filter.off_until": "Av til {at}",
   "device.filter.down_info": "Telefonen prøver igjen selv. Hjelper det ikke, start telefonen på nytt.",
   "device.filter.info_label": "Om nettfilteret",
   "device.filter.info.before": "Det virker på alle nettverk, og barnet kan ikke slå det av. Listene for alle telefoner er under",
@@ -4542,6 +4544,7 @@
   "security_log.event": "Hendelse",
 
   "error.busy": "For mange innlogginger samtidig - prøv igjen om noen sekunder.",
+  "error.admin_login_list": "Stengt av serverens innstillinger – se serverens logg.",
 
   "music.default_name.playlist": "Spilleliste",
   "music.default_name.album": "Album",
@@ -4854,10 +4857,12 @@
   "security.event.setup_tick_phone": "Oppsettsteg avkrysset på telefonen",
   "security.detail.setup_tick.phone": "telefon {device}: {step}",
   "security.event.phone_blocked_cleared": "Blokkert nummer fjernet",
+  "security.event.admin_login_list_closed": "Admin-sidene stengt",
   "security.detail.blocked_cleared.contact.one": "Blokkering fjernet: {count} kontaktnummer",
   "security.detail.blocked_cleared.contact.other": "Blokkering fjernet: {count} kontaktnumre",
   "security.detail.blocked_cleared.emergency.one": "Blokkering fjernet: {count} nødnummer",
   "security.detail.blocked_cleared.emergency.other": "Blokkering fjernet: {count} nødnumre",
+  "security.detail.admin_login_list_closed": "ADMIN_TAILSCALE_USERS kan ikke sjekkes med denne BIND_ADDR og TRUSTED_PROXIES: alle admin-sider avvises (DEPLOY.md)",
 
   "setup.page.title": "Oppsett",
   "setup.summary.one": "Oppsett: {count} steg igjen",

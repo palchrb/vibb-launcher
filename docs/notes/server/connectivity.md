@@ -28,7 +28,11 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   (100.64.0.0/10, fd7a:115c:a1e0::/48) clients and a trusted peer without XFF; an unknown client and any forward
   from an untrusted peer are refused (QA 22 H1); `Tailscale-Funnel-Request` is refused;
   `ADMIN_PUBLIC=on` passes everyone. `ADMIN_TAILSCALE_USERS`: admin pages also need a listed `Tailscale-User-Login`,
-  believed only from a tailnet client; `/api/devices/*` skips that check (tagged phones have no login). `/healthz`
+  believed only from a forwarder passing on a tailnet client (`NetConfig::login_forwarder`: loopback, or an exact
+  non-tailnet `TRUSTED_PROXIES` address such as Docker's bridge gateway; a direct tailnet peer's header is ignored -
+  2026-11-25), and with a non-loopback `BIND_ADDR` and only loopback trusted every admin page is refused
+  (`NetConfig::login_list_misplaced`: one error line and one `admin_login_list_closed` security-log line per start,
+  the 403 one line pointing to the server's log; fail closed); `/api/devices/*` skips that check (tagged phones have no login). `/healthz`
   (`SELECT 1`, "ok") skips every guard. Refused: empty 403 + `admin_refused` through `AppState.audit`
   (`src/audit.rs`: one row per kind and client key per minute, counts flushed into the detail every 30 s by
   `audit::run_flusher`; at most `ROWS_PER_MINUTE` = 60 such rows per kind and minute across all keys, the rest
@@ -55,10 +59,13 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   with the migration). A new device has no code; "New Setup Code" (`POST /devices/{id}/regenerate-code`) renders
   `enroll_code.html` once (`no-store`), Connect (`/devices/{id}/provision`) makes a QR code. `enroll`: not code-shaped -> 401;
   typed-shaped -> 429 while paused or the client's failure bucket is full, 401 uncounted with no typed code live, a
-  miss counts toward the bucket and `Enrollment::typed_failed` (20 an hour server-wide while a typed code is live
-  pause typed codes until the hour ends: `enroll_typed_paused`, the summary's Connect This Phone, Connect and the code
+  miss counts toward the bucket and `Enrollment::typed_failed` (while a typed code is live: 10 an hour from one client
+  pause that client's typed codes until the hour ends, `client_paused_until`; 60 an hour server-wide, the backstop,
+  pause everyone's: `enroll_typed_paused`, the summary's Connect This Phone, Connect and the code
   page say so and offer the QR); QR-shaped always
-  checked. At most 8 enrollments at once (`Enrollment::gate`, taken before the body is read; the body then has 5 s). Use = one `UPDATE ... WHERE
+  checked. Enrolment: fair slots per client (2026-11-25) - a client holds at most 2 enrollments at once
+  (`Enrollment::enter_client`), its body read within 5 s, and only a body that has arrived takes one of the 8 code checks
+  (`Enrollment::gate`), so slow bodies hold none. Use = one `UPDATE ... WHERE
   enrollment_code_hash = ? AND not expired RETURNING`; then the token index, streams, `device_enrolled` (with IP).
   Failures: throttled `enroll_failed`. Advanced › Connection (`/devices/{id}/advanced#connection`, the device page's
   "Access" card until design 31 step 3; a phone not set up has the summary's Connect This Phone group instead): the live

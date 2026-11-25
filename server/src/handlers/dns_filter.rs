@@ -992,7 +992,7 @@ fn backup_prefill(settings: &DnsFilterSettings) -> String {
     }
 }
 
-/// Adds a shared list (on for every phone). A name and an http(s) URL, else nothing is added and
+/// Adds a shared list (on for every phone). A name and an https URL, else nothing is added and
 /// the page reopens Add a List… with why (`?notice=bad_list#lists`).
 pub async fn create_blocklist(
     State(state): State<AppState>,
@@ -1001,7 +1001,7 @@ pub async fn create_blocklist(
 ) -> Response {
     let name = form.get("name").map(|s| s.trim()).unwrap_or_default();
     let url = form.get("url").map(|s| s.trim()).unwrap_or_default();
-    let web = url.starts_with("https://") || url.starts_with("http://");
+    let web = url.starts_with("https://");
     if name.is_empty() || !web || url.len() > 2000 || name.chars().count() > 100 {
         return crate::settings_log::refused(Redirect::to(&format!(
             "/dns?notice=bad_list&name={}&url={}#lists",

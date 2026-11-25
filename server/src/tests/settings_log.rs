@@ -197,3 +197,62 @@ async fn a_save_with_its_own_event_gets_no_second_row() {
     .unwrap();
     assert_eq!(kinds, vec!["music_sweep_saved", "override_pin_changed"]);
 }
+
+/// A save is matched to its own request's lines: another request's line by the same parent written while the save
+/// runs (a re-auth's lockout in another tab) leaves the save its own `settings_saved` row.
+#[tokio::test]
+async fn a_save_racing_another_requests_line_is_still_logged() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    // Adding a list downloads it within the save: held here until the other line is written.
+    app.fetch.hold();
+    let save = post(
+        &app,
+        &cookie,
+        "/dns/blocklists/new",
+        &[("name", "Mine"), ("url", "https://lists.example/hosts")],
+    );
+    let other = async {
+        app.fetch.wait_in_flight().await;
+        crate::security::record_security_event(
+            &app.db,
+            "reauth_signed_out",
+            Some("parent"),
+            None,
+            None,
+        )
+        .await;
+        app.fetch.release();
+    };
+    let (status, ()) = tokio::join!(save, other);
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(
+        saves(&app).await,
+        vec![(
+            "parent".to_string(),
+            "/dns · /dns/blocklists/new".to_string()
+        )]
+    );
+}
+
+/// The lines a save's handler writes carry its request's id; a line written outside a request carries none.
+#[tokio::test]
+async fn a_saves_own_line_carries_its_request() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    assert_eq!(
+        post(&app, &cookie, "/music/sweep", &[("hours", "6")]).await,
+        StatusCode::SEE_OTHER
+    );
+    crate::security::record_security_event(&app.db, "reauth_signed_out", None, None, None).await;
+    let ids: Vec<(String, Option<i64>)> = sqlx::query_as(
+        "SELECT event_type, request_id FROM security_events \
+         WHERE event_type IN ('music_sweep_saved', 'reauth_signed_out') ORDER BY id",
+    )
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(ids.len(), 2, "{ids:?}");
+    assert!(ids[0].1.is_some(), "{ids:?}");
+    assert_eq!(ids[1], ("reauth_signed_out".to_string(), None));
+}

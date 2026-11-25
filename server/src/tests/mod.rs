@@ -66,6 +66,7 @@ mod music_sweep;
 mod notification_channels;
 mod notification_listeners;
 mod notifications;
+mod outbound_clients;
 mod parent_pin;
 mod parents;
 mod passkey_only;
@@ -310,6 +311,8 @@ impl TestApp {
                 fetch.clone(),
                 std::time::Duration::ZERO,
             )),
+            // The web filter's lists answered by the canned fetch (`fetch.answer(url, ..)`).
+            blocklist_fetch: fetch.clone(),
             weather: {
                 let mut weather = crate::weather_cache::Weather::default();
                 weather.forecast_wait = std::time::Duration::from_millis(500);

@@ -28,19 +28,23 @@ use crate::time_rules::{LocationPolicy, TimePolicy};
 ///   401 at once, uncounted, when no typed code is live; a miss counts toward both.
 /// - QR-shaped: always checked (130 bits - guessing is hopeless), never paused.
 ///
-/// At most `enrollment::IN_FLIGHT` enrollments run at once, reading the body included (within
-/// `enrollment::BODY_TIMEOUT`); a failure is a throttled `enroll_failed` event, a success a
-/// `device_enrolled` event with the client's IP.
+/// One client has at most `enrollment::PER_CLIENT` enrollments at once, its body's reading
+/// included (within `enrollment::BODY_TIMEOUT`); only a body that has arrived waits for one of the
+/// `enrollment::IN_FLIGHT` code checks, so slow bodies hold none. Typed-shaped misses pause that
+/// client first (`enrollment::TYPED_CLIENT_FAILURES`), everyone only at the server-wide backstop.
+/// A failure is a throttled `enroll_failed` event, a success a `device_enrolled` event with the
+/// client's IP.
 pub async fn enroll(
     State(state): State<AppState>,
     ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
     headers: axum::http::HeaderMap,
     body: axum::body::Body,
 ) -> axum::response::Response {
-    // One of 8 slots first, then the body within 5 s (QA 22 M2): a slow body holds an enroll
-    // slot for 5 s at most, never a phone's way in.
-    let gate = state.enrollment.gate();
-    let Ok(Ok(_slot)) = tokio::time::timeout(Duration::from_secs(5), gate.acquire()).await else {
+    let client = state.net.client(&headers, addr.ip());
+    let key = client.key();
+    // This client's share first, then the body within 5 s, and only then one of the 8 code checks:
+    // slow bodies, from one client or many, hold no check and never a phone's way in.
+    let Some(_client_slot) = state.enrollment.enter_client(&key) else {
         return (StatusCode::TOO_MANY_REQUESTS, [(header::RETRY_AFTER, "5")]).into_response();
     };
     let bytes = match tokio::time::timeout(
@@ -53,14 +57,16 @@ pub async fn enroll(
         Ok(Err(_)) => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
         Err(_) => return StatusCode::REQUEST_TIMEOUT.into_response(),
     };
+    let gate = state.enrollment.gate();
+    let Ok(Ok(_slot)) = tokio::time::timeout(Duration::from_secs(5), gate.acquire()).await else {
+        return (StatusCode::TOO_MANY_REQUESTS, [(header::RETRY_AFTER, "5")]).into_response();
+    };
     let Ok(req) = serde_json::from_slice::<EnrollRequest>(&bytes) else {
         return StatusCode::BAD_REQUEST.into_response();
     };
     use crate::enrollment::{self, Kind};
 
-    let client = state.net.client(&headers, addr.ip());
     let ip = client.describe();
-    let key = client.key();
     let code = enrollment::normalize(&req.enrollment_code);
     let unauthorized = || {
         (
@@ -82,7 +88,11 @@ pub async fn enroll(
     };
     let now = chrono::Utc::now();
     if kind == Kind::Typed {
-        if let Some(until) = state.enrollment.typed_paused_until(now) {
+        if let Some(until) = state
+            .enrollment
+            .typed_paused_until(now)
+            .or_else(|| state.enrollment.client_paused_until(&key, now))
+        {
             return too_many((until - now).num_seconds());
         }
         if let Some(refused) = state.limits.ip_blocked(&key) {
@@ -485,7 +495,7 @@ async fn enroll_failed(
         if state.limits.ip_failed(&key) {
             detail = detail.and("security.detail.client_refused", &[]);
         }
-        if state.enrollment.typed_failed(now) {
+        if state.enrollment.typed_failed(&key, now) {
             security::record_security_event(
                 &state.db,
                 "enroll_typed_paused",

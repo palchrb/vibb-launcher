@@ -20,6 +20,7 @@ use tokio::sync::RwLock;
 
 use crate::AppState;
 use crate::models::{DnsBlocklist, DnsCustomDomain};
+use crate::music_net::{FetchError, Kind, Reach, Source, SourceRequest};
 
 /// One curated feed's downloaded, normalized domain set - kept separate per
 /// feed (rather than flattened into one big domain->category map) so a
@@ -121,24 +122,20 @@ pub async fn compile_blocklist(state: &AppState, shared: &SharedCompiledBlocklis
         .filter(|d| !global_custom_allow.contains(d))
         .collect();
 
-    let client = reqwest::Client::builder()
-        .user_agent(crate::net::USER_AGENT)
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .expect("reqwest client always builds");
-
     let mut lists = Vec::new();
     let feed_dir = state.dns_feed_dir.as_path();
 
     for list in &blocklists {
-        let fetched = fetch_feed(&client, &list.url).await.and_then(|text| {
-            let domains = parse_feed(&text);
-            if domains.is_empty() {
-                Err(FeedFailure::NotAList)
-            } else {
-                Ok(domains)
-            }
-        });
+        let fetched = fetch_feed(state.blocklist_fetch.as_ref(), &list.url)
+            .await
+            .and_then(|text| {
+                let domains = parse_feed(&text);
+                if domains.is_empty() {
+                    Err(FeedFailure::NotAList)
+                } else {
+                    Ok(domains)
+                }
+            });
         let scope = format!("feed:{}", list.id);
         match &fetched {
             Ok(_) => crate::integration_health::ok(&state.db, "blocklist", &scope).await,
@@ -254,6 +251,9 @@ pub enum FeedFailure {
     TooBig,
     /// Nothing in it that looks like a domain (a captive portal's page).
     NotAList,
+    /// Not asked or not followed: a private, tailnet or loopback address, a redirect away from https, more than 5
+    /// redirects, not a link.
+    Refused(String),
 }
 
 impl std::fmt::Display for FeedFailure {
@@ -266,6 +266,7 @@ impl std::fmt::Display for FeedFailure {
             },
             FeedFailure::TooBig => write!(f, "larger than {} MB", MAX_FEED_BYTES / (1024 * 1024)),
             FeedFailure::NotAList => write!(f, "no domains in it"),
+            FeedFailure::Refused(why) => write!(f, "not fetched: {why}"),
         }
     }
 }
@@ -278,6 +279,7 @@ impl FeedFailure {
             FeedFailure::Status(status) => format!("http_{status}"),
             FeedFailure::TooBig => "too_big".to_string(),
             FeedFailure::NotAList => "not_a_list".to_string(),
+            FeedFailure::Refused(_) => "refused".to_string(),
         }
     }
 
@@ -288,40 +290,57 @@ impl FeedFailure {
             FeedFailure::Status(status) if *status >= 500 || matches!(status, 408 | 429) => {
                 Transient
             }
-            FeedFailure::Status(_) | FeedFailure::TooBig | FeedFailure::NotAList => Parent,
+            FeedFailure::Status(_)
+            | FeedFailure::TooBig
+            | FeedFailure::NotAList
+            | FeedFailure::Refused(_) => Parent,
         }
     }
 }
 
-/// One feed's body: a 2xx answer, at most [MAX_FEED_BYTES] (decompressed).
-async fn fetch_feed(client: &reqwest::Client, url: &str) -> Result<String, FeedFailure> {
-    let mut response = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|err| FeedFailure::Network(err.to_string()))?;
-    let status = response.status();
-    if !status.is_success() {
-        return Err(FeedFailure::Status(status.as_u16()));
-    }
-    if response
-        .content_length()
-        .is_some_and(|length| length > MAX_FEED_BYTES as u64)
-    {
-        return Err(FeedFailure::TooBig);
-    }
-    let mut body = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|err| FeedFailure::Network(err.to_string()))?
-    {
-        if body.len() + chunk.len() > MAX_FEED_BYTES {
+/// One feed's body: a 2xx answer, at most [MAX_FEED_BYTES] (decompressed), through `music_net` with
+/// [Reach::Public] - a list never takes the server to a private, tailnet or loopback address (its resolver drops
+/// such answers, a literal is refused before the request) and never through a proxy from the environment. Redirects
+/// are followed here one hop at a time, at most 5, and only to https. A list saved with an `http://` address before
+/// the form asked for https is still asked at that address.
+async fn fetch_feed(source: &dyn Source, url: &str) -> Result<String, FeedFailure> {
+    let mut current =
+        reqwest::Url::parse(url).map_err(|_| FeedFailure::Refused("not a link".to_string()))?;
+    for hop in 0..=5 {
+        let mut request = SourceRequest::new(current.as_str(), Kind::Blocklist, Reach::Public);
+        request.follow = false;
+        let answer = source.get(request).await.map_err(|err| match err {
+            FetchError::Refused(why) => FeedFailure::Refused(why),
+            other => FeedFailure::Network(other.message()),
+        })?;
+        let location = answer
+            .location
+            .as_deref()
+            .filter(|_| matches!(answer.status, 301 | 302 | 303 | 307 | 308));
+        if let Some(location) = location {
+            if hop == 5 {
+                break;
+            }
+            let next = current
+                .join(location)
+                .map_err(|_| FeedFailure::Refused("a redirect that isn't a link".to_string()))?;
+            if next.scheme() != "https" {
+                return Err(FeedFailure::Refused(
+                    "a redirect to an address that isn't https".to_string(),
+                ));
+            }
+            current = next;
+            continue;
+        }
+        if !(200..300).contains(&answer.status) {
+            return Err(FeedFailure::Status(answer.status));
+        }
+        if answer.truncated {
             return Err(FeedFailure::TooBig);
         }
-        body.extend_from_slice(&chunk);
+        return Ok(String::from_utf8_lossy(&answer.body).into_owned());
     }
-    Ok(String::from_utf8_lossy(&body).into_owned())
+    Err(FeedFailure::Refused("more than 5 redirects".to_string()))
 }
 
 /// The domains in a hosts-format feed: `domain` or `0.0.0.0 domain` lines, `#` comments; only

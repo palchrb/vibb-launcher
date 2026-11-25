@@ -1947,6 +1947,10 @@ struct FilterTemplate {
     /// Design 116 §3.4: "Down for 25 min" (" · at last report" while the phone is Offline or Disconnected) - the
     /// Attention row's fact as this page's orange line; `None` while the filter isn't down.
     filter_down: Option<String>,
+    /// The filter switch is on but the phone's latest report is paused (the setup hold or a pause,
+    /// `DeviceStatus::paused_at`): the row's quiet value, "Off until 14:30" ("Off" when the end
+    /// isn't known). The parent's choice, never orange.
+    paused_value: Option<String>,
 }
 crate::i18n::words!(FilterTemplate);
 
@@ -2093,6 +2097,24 @@ pub async fn view_filter(
         Ok(latest) => latest,
         Err(err) => return read_failed(lang, id, "the last report", err),
     };
+    let paused = policy.vpn_filter_enabled
+        && latest
+            .as_ref()
+            .is_some_and(|s| s.paused_at(now.timestamp_millis()));
+    let paused_value = if paused {
+        match crate::handlers::quick_actions::setup_until(&state.db, id, latest.as_ref(), now).await
+        {
+            Ok(Some(at)) => Some(crate::i18n::t_params(
+                lang,
+                "device.filter.off_until",
+                &[("at", &zone.clock(at))],
+            )),
+            Ok(None) => Some(t(lang, "device.filter.off").to_string()),
+            Err(err) => return read_failed(lang, id, "the pause's end", err),
+        }
+    } else {
+        None
+    };
     let filter_down =
         crate::mobile_network::filter_down(&policy, latest.as_ref(), now.timestamp_millis()).map(
             |report| {
@@ -2144,6 +2166,7 @@ pub async fn view_filter(
             events,
             logins_sub: crate::handlers::logins::row_sub(lang, &policy),
             filter_down,
+            paused_value,
             device,
         }
         .render()

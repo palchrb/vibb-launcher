@@ -189,7 +189,7 @@ pub(crate) struct Inputs<'a> {
 
 /// The opening's end: the setup hold's (design 114 §5.2, from the latest report), else the newest `start_pause` the
 /// phone answered while its pause still runs - two hours after the answer (the phone's own pause length).
-async fn setup_until(
+pub(crate) async fn setup_until(
     db: &sqlx::SqlitePool,
     device_id: i64,
     latest: Option<&DeviceStatus>,

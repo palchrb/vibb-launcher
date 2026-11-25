@@ -176,15 +176,16 @@ async fn typed_guesses_without_a_live_typed_code_count_for_nothing() {
 }
 
 #[tokio::test]
-async fn twenty_typed_failures_pause_typed_codes_but_never_qr_codes() {
+async fn typed_failures_from_many_clients_pause_typed_codes_but_never_qr_codes() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (typed_device, _) = app.create_device("typed").await;
     app.set_parent_pin(typed_device).await;
     let typed = app.new_code(typed_device, Kind::Typed).await;
-    // Spread over many addresses, so no client's own bucket fills.
+    // Spread over several addresses, so no client's own pause or bucket fills.
+    let each = enrollment::TYPED_CLIENT_FAILURES - 1;
     for n in 0..TYPED_PAUSE_FAILURES {
-        let res = enroll_from(&app, &format!("198.51.100.{}", n + 1), "WXYZ-2345").await;
+        let res = enroll_from(&app, &format!("198.51.100.{}", n / each + 1), "WXYZ-2345").await;
         assert_eq!(res.status, StatusCode::UNAUTHORIZED, "failure {n}");
     }
     // Paused: even the right typed code gets 429 now.
@@ -247,7 +248,7 @@ async fn typed_failures_fill_the_clients_failure_bucket() {
     let (id, _) = app.create_device("phone").await;
     app.set_parent_pin(id).await;
     // Typed failures and bad device tokens fill the same bucket (5 typed ones stay under the
-    // server-wide pause of 20).
+    // client's own typed pause and the server-wide one).
     let typed = app.new_code(id, Kind::Typed).await;
     for _ in 0..(crate::limits::IP_FAILURES - 5) {
         let request = Request::builder()
@@ -512,4 +513,107 @@ async fn the_setup_qr_carries_a_qr_code() {
         StatusCode::UNAUTHORIZED,
         "the QR page replaced it"
     );
+}
+
+/// An enrollment whose body never comes, from `client`: it holds what it took until the body's 5 s are up.
+fn slow_enrollment(
+    router: &axum::Router,
+    client: &str,
+) -> tokio::task::JoinHandle<axum::http::StatusCode> {
+    use tower::ServiceExt;
+    let mut request = Request::builder()
+        .method(Method::POST)
+        .uri("/api/devices/enroll")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from_stream(tokio_stream::pending::<
+            Result<axum::body::Bytes, std::io::Error>,
+        >()))
+        .unwrap();
+    request
+        .extensions_mut()
+        .insert(axum::extract::ConnectInfo(peer(client)));
+    let router = router.clone();
+    tokio::spawn(async move { router.oneshot(request).await.unwrap().status() })
+}
+
+/// Slow bodies hold no code check: eight from one client (two let in, the rest refused at once) or eight from eight
+/// clients leave a ninth client's enrollment served.
+#[tokio::test]
+async fn slow_bodies_leave_another_client_served() {
+    let app = TestApp::new().await;
+    let router = app.device_router();
+    for (round, clients) in [
+        ("one client", vec!["203.0.113.9".to_string(); 8]),
+        (
+            "eight clients",
+            (1..=8).map(|n| format!("203.0.113.{}", 20 + n)).collect(),
+        ),
+    ] {
+        let slow: Vec<_> = clients
+            .iter()
+            .map(|c| slow_enrollment(&router, c))
+            .collect();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let (id, qr) = app.create_device(&format!("phone {round}")).await;
+        app.set_parent_pin(id).await;
+        let res = enroll_from(&app, "198.51.100.77", &qr).await;
+        assert_eq!(res.status, StatusCode::OK, "{round}: {}", res.text());
+        let mut refused = 0;
+        let mut waiting = 0;
+        for task in slow {
+            if task.is_finished() {
+                assert_eq!(
+                    task.await.unwrap(),
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "{round}"
+                );
+                refused += 1;
+            } else {
+                waiting += 1;
+                task.abort();
+            }
+        }
+        let share = if round == "one client" {
+            enrollment::PER_CLIENT
+        } else {
+            8
+        };
+        assert_eq!((waiting, refused), (share, 8 - share), "{round}");
+    }
+}
+
+/// One client's typed misses pause that client, never another client's typed code; the server-wide pause is the
+/// backstop at a higher count.
+#[tokio::test]
+async fn one_clients_typed_misses_dont_pause_another_clients_code() {
+    let app = TestApp::new().await;
+    let (id, _) = app.create_device("phone").await;
+    app.set_parent_pin(id).await;
+    let typed = app.new_code(id, Kind::Typed).await;
+    let mut statuses = Vec::new();
+    for _ in 0..20 {
+        statuses.push(enroll_from(&app, "203.0.113.7", "WXYZ-2345").await.status);
+    }
+    let misses = enrollment::TYPED_CLIENT_FAILURES as usize;
+    assert!(
+        statuses[..misses]
+            .iter()
+            .all(|s| *s == StatusCode::UNAUTHORIZED),
+        "{statuses:?}"
+    );
+    assert!(
+        statuses[misses..]
+            .iter()
+            .all(|s| *s == StatusCode::TOO_MANY_REQUESTS),
+        "{statuses:?}"
+    );
+    // That client's right code waits too; another client's goes through.
+    let res = enroll_from(&app, "203.0.113.7", &typed).await;
+    assert_eq!(res.status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(
+        app.state.enrollment.typed_paused_until(chrono::Utc::now()),
+        None
+    );
+    let res = enroll_from(&app, "203.0.113.8", &typed).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
 }

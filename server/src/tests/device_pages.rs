@@ -471,8 +471,10 @@ async fn a_live_code_shows_on_connection_without_the_code() {
 
     // Typed codes paused (too many wrong ones this hour): a warning on Connection, with the end.
     let now = chrono::Utc::now();
-    for _ in 0..crate::enrollment::TYPED_PAUSE_FAILURES {
-        app.state.enrollment.typed_failed(now);
+    for n in 0..crate::enrollment::TYPED_PAUSE_FAILURES {
+        app.state
+            .enrollment
+            .typed_failed(&format!("client {n}"), now);
     }
     assert!(app.state.enrollment.typed_paused_until(now).is_some());
     let html = app
@@ -3621,4 +3623,51 @@ async fn apps_from_the_apps_tab_go_back_there() {
         html.contains("data-flash=\"app-io.element.android.x\""),
         "{html}"
     );
+}
+
+/// Web Filter says when a hold or pause has it off: the filter row's quiet value "Off until HH:MM" while the switch is
+/// on and the latest report is paused; nothing without a hold, nothing with the switch off, never orange.
+#[tokio::test]
+async fn the_filter_row_says_when_a_hold_has_it_off() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("Anna").await;
+    let page = device_page(id, Section::Filter);
+    let value = |html: &str| {
+        html.find("data-value=\"filter-paused\"").map(|at| {
+            let rest = &html[at..];
+            rest[rest.find('>').unwrap() + 1..rest.find("</span>").unwrap()].to_string()
+        })
+    };
+
+    app.post_status(&token, json!({})).await;
+    let html = app.get_page(&page, &cookie).await.text();
+    assert_eq!(value(&html), None, "no hold");
+
+    let now = chrono::Utc::now().timestamp_millis();
+    app.post_status(
+        &token,
+        json!({"restrictions_paused": true,
+               "setup": {"hold_until_ms": now + 3_600_000, "hold_left_ms": 3_600_000}}),
+    )
+    .await;
+    let html = app.get_page(&page, &cookie).await.text();
+    let shown = value(&html).expect("the value");
+    assert!(shown.starts_with("Off until "), "{shown}");
+    assert!(shown[10..].contains(':'), "{shown}");
+    let row = &html[html.find("data-value=\"filter-paused\"").unwrap() - 200..];
+    assert!(!row[..400].contains("text-alarm"), "{row}");
+    let nb = app
+        .get_page(&format!("{page}?lang=nb"), &cookie)
+        .await
+        .text();
+    assert!(value(&nb).unwrap().starts_with("Av til "), "{nb}");
+
+    sqlx::query("UPDATE device_policy SET vpn_filter_enabled = 0 WHERE device_id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let html = app.get_page(&page, &cookie).await.text();
+    assert_eq!(value(&html), None, "the filter switched off");
 }

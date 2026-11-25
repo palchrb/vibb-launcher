@@ -354,7 +354,9 @@ family's one backup row (`backups::backup_state`, `#backup-warning`, to `/backup
   while 24 h or 12 h is chosen and the last report says `clock_format_applied` false. A failed wallpaper read is a
   500, never an empty grid (its Save would untick everything).
 - **Web Filter** (`GET /devices/{id}/filter`, `device_pages::view_filter`, `device_filter.html`; row "Web Filter ·
-  On/Off"): the Web filter switch (`/policy` with `section=filter`); Blocklists, one inline select each - "As for
+  On/Off"): the Web filter switch (`/policy` with `section=filter`) - while it is on and the latest report is paused
+  (`DeviceStatus::paused_at`: the setup hold or a pause) its row has the quiet value "Off until HH:MM" (the end from
+  `quick_actions::setup_until`; "Off" when it isn't known), never orange (2026-11-25); Blocklists, one inline select each - "As for
   everyone (On|Off)" (the list as everyone has it; "Default (On)" until 2026-11-01) / On / Off, the footer "As for
   everyone follows the switch in Settings › Web Filter." (`device.filter.*`) (`/dns/devices/{id}/blocklists/{list}/override`, `setting=default|on|off`; 400
   other values or none, 404 unknown phone or list), with the list's download
@@ -946,8 +948,10 @@ Tilgang): the "camera" words here are history.
   its page** (`?notice=parent_pin_invalid`, the Child PIN's, `revoke_unconfirmed`, `toggle_app`'s, the DNS
   `bad_list`/`not_a_domain_*`, `music_notice=`, a gone contact, rule or parent, the push refusals, a refused avatar)
   carries `settings_log::Refused` in its extensions (`settings_log::refused(...)`) - **a new refusal by redirect must
-  be marked so** - and **a save whose handler wrote its own security event** (any kind but `settings_saved`, by the
-  same parent, during the request: `music_sweep_saved`, `override_pin_changed`, ...) gets no second row; a success
+  be marked so** - and **a save whose handler wrote its own security event** (any kind but `settings_saved`, written by
+  that request: `music_sweep_saved`, `override_pin_changed`, ...) gets no second row - a save is matched to its own
+  request (`settings_log::request_id`, a random id set around the handler and stored in `security_events.request_id`,
+  migration 0177), never to another request of the same parent at the same time; a success
   with a notice (`notice=uploaded`) is a save. Tests: `tests::settings_log`, `settings_log::tests`.
 - **Notifications (design 45, server round 5)**: the hub's Notifications row leads to Notification Settings
   (`/notifications/settings`: This Device, Getting Notifications, Notify Me About), while the bell on the tab pages leads
