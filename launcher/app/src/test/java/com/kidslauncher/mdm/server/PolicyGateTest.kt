@@ -279,7 +279,11 @@ class PolicyGateTest {
         assertTrue("EnrolmentWitness.recordPolicyApplied(context, LauncherPreferences.mdm().serverUrl())" in sync.substringAfter("private fun storeAcceptedPolicy("))
         val enrol = src("server/Enrollment.kt")
         assertTrue("everManaged(mdmBefore.policyEverApplied(), EnrolmentWitness.policyApplied(context))" in enrol)
-        assertTrue("mdm.enrolled(true)\n            EnrolmentWitness.recordEnrolled(context, serverUrl)" in enrol)
+        // Code QA L1 of koble-til-key: `enrolled` committed (never the generated setter's apply()) before the witness.
+        val committed = enrol.indexOf("putBoolean(mdm.keys().enrolled(), true).commit()")
+        assertTrue(committed > 0)
+        assertTrue(committed < enrol.indexOf("EnrolmentWitness.recordEnrolled(context, serverUrl)"))
+        assertTrue("mdm.enrolled(true)" !in enrol)
         assertTrue("EnrolmentWitness.policyApplied(this)" in src("ui/settings/SettingsActivity.kt").substringAfter("private fun currentAccess()"))
     }
 
