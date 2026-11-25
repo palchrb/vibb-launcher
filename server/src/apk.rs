@@ -1,7 +1,7 @@
 //! What an APK says it is (security review M10): its package name, versionCode and versionName, from
 //! the binary `AndroidManifest.xml`, and the SHA-256 of its signing certificate, from the APK Signing
-//! Block (scheme v3, else v2). The catalog pins the package and the signer from an app's first
-//! release and refuses a later release that differs (`handlers::tracked_apps`); the phones get
+//! Block (the v3 signer Android 14 to 17 pick, or v2 without a v3 block; [phone_signer]). The
+//! catalog pins the package and the signer from an app's first release and refuses a later release that differs (`handlers::tracked_apps`); the phones get
 //! them with the app list. The versionCode is how a phone's report is known to run the stored
 //! release (`app_updated`). The versionName is what the setup QR's check shows (design 86,
 //! `launcher_check`). The permissions it declares are what an update may newly ask for (design 90,
@@ -24,6 +24,8 @@ const MAX_SIGNING_BLOCK_BYTES: u64 = 16 * 1024 * 1024;
 const SIGNING_BLOCK_MAGIC: &[u8; 16] = b"APK Sig Block 42";
 const V2_BLOCK_ID: u32 = 0x7109_871a;
 const V3_BLOCK_ID: u32 = 0xf053_68c0;
+/// APK Signature Scheme v3.1 (a key rotated for newer SDKs): not read, only seen.
+const V31_BLOCK_ID: u32 = 0x1b93_ad61;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct ApkIdentity {
@@ -39,8 +41,10 @@ pub struct ApkIdentity {
     /// `<uses-sdk android:minSdkVersion>`: the oldest Android API level the app installs on (34 =
     /// Android 14); `None` when it is a codename or unread.
     pub min_sdk: Option<u32>,
-    /// SHA-256 (lower-case hex) of the first signer's certificate; `None` without a v2/v3
-    /// signature (a v1-only APK) or when the block couldn't be read.
+    /// SHA-256 (lower-case hex) of the certificate Android 14 to 17 verify the APK by
+    /// ([phone_signer]); `None` without a v2/v3 signature (a v1-only APK), when the block couldn't
+    /// be read or holds two v2 or two v3 blocks, or when that certificate differs between those
+    /// Android versions.
     pub signer_sha256: Option<String>,
     /// Every permission the manifest declares (design 90 §4): each `<uses-permission>`,
     /// `<uses-permission-sdk-23>` and `<uses-permission-sdk-m>` anywhere (one whose
@@ -53,6 +57,10 @@ pub struct ApkIdentity {
     /// The target SDK the split permissions were added for (`<uses-sdk>`'s, [target_sdk]); `None`
     /// when `permissions` is.
     pub split_target: Option<i64>,
+    /// `<manifest android:sharedUserId>` is there (by resource id or by name, any value): the app
+    /// would run as one user ID with other apps of its key and share their permissions, so its
+    /// own list doesn't say what it can do (`catalog_holds::judged_permissions`).
+    pub shared_user_id: bool,
 }
 
 /// Reads the facts; a file that isn't a zip at all is an error, a part that can't be read is
@@ -85,6 +93,7 @@ pub fn read_identity(path: &Path) -> Result<ApkIdentity, String> {
         signer_sha256,
         permissions: manifest.permissions,
         split_target: manifest.split_target,
+        shared_user_id: manifest.shared_user_id,
     })
 }
 
@@ -106,7 +115,7 @@ fn u64_at(bytes: &[u8], at: usize) -> Option<u64> {
     ))
 }
 
-/// The DER certificate of the first signer in the v3 block, else the v2 block.
+/// The DER certificate Android verifies the APK by on our phones ([phone_signer]).
 fn signing_certificate(file: &mut std::fs::File) -> Option<Vec<u8>> {
     let len = file.metadata().ok()?.len();
     // The End of Central Directory record: 22 bytes plus a comment of up to 64 KiB.
@@ -140,21 +149,111 @@ fn signing_certificate(file: &mut std::fs::File) -> Option<Vec<u8>> {
         return None;
     }
 
-    // ID-value pairs between the leading size and the footer.
+    // ID-value pairs between the leading size and the footer. Android takes the first pair of an
+    // id; a second v2, v3 or v3.1 pair could be another reader's, so the block is unreadable.
     let pairs = block.get(8..block.len() - 24)?;
-    let (mut v2, mut v3) = (None, None);
+    let (mut v2, mut v3, mut v31) = (None, None, None);
     let mut at = 0usize;
     while at < pairs.len() {
         let pair_len = usize::try_from(u64_at(pairs, at)?).ok()?;
         let value = pairs.get(at.checked_add(12)?..at.checked_add(8)?.checked_add(pair_len)?)?;
-        match u32_at(pairs, at + 8)? {
-            V2_BLOCK_ID => v2 = Some(value),
-            V3_BLOCK_ID => v3 = Some(value),
-            _ => {}
+        let slot = match u32_at(pairs, at + 8)? {
+            V2_BLOCK_ID => Some(&mut v2),
+            V3_BLOCK_ID => Some(&mut v3),
+            V31_BLOCK_ID => Some(&mut v31),
+            _ => None,
+        };
+        if let Some(slot) = slot {
+            if slot.is_some() {
+                return None;
+            }
+            *slot = Some(value);
         }
         at = at.checked_add(8)?.checked_add(pair_len)?;
     }
-    first_certificate(v3.or(v2)?)
+    phone_signer(v2, v3, v31.is_some())
+}
+
+/// The SDKs our phones run: Android 14 to 17.
+const PHONE_SDKS: std::ops::RangeInclusive<i32> =
+    crate::catalog_holds::PHONE_MIN_SDK as i32..=crate::catalog_holds::PHONE_MAX_SDK as i32;
+
+/// The certificate Android verifies the APK by on every one of [PHONE_SDKS], as its verifier
+/// picks it: with no v3 block, the v2 block's first signer; with one, the one v3 signer whose SDK
+/// range holds the SDK - none is "No signers found" there, so `None` here, unless a v3.1 block is
+/// present (Android tries v3.1 first and verifies by its rotated key). The v3.1 block isn't read:
+/// beside it the original key stands as the pin (the v3 signer for the SDK if any, else v2's, else
+/// the v3 block's only signer), and the phone's `CatalogApkCheck` takes the rotated key only
+/// through that key's lineage (`signingCertificateHistory`) - that check is the gate for the v3.1
+/// key. (A v3.1 signer may target a development release, which a released build of that SDK
+/// skips for v3; either way the key is the original or one in its lineage.) `None` also when the
+/// keys differ between those SDKs (the key a phone checks would depend on its Android), when two
+/// v3 signers hold one SDK (Android refuses that), or when what is needed can't be read.
+fn phone_signer(v2: Option<&[u8]>, v3: Option<&[u8]>, v31: bool) -> Option<Vec<u8>> {
+    let v3 = match v3 {
+        Some(block) => Some(v3_signers(block)?),
+        None => None,
+    };
+    let mut chosen: Option<Vec<u8>> = None;
+    for sdk in PHONE_SDKS {
+        let certificate = match &v3 {
+            None => first_certificate(v2?)?,
+            Some(signers) => {
+                let mut holding = signers
+                    .iter()
+                    .filter(|(min, max, _)| *min <= sdk && sdk <= *max);
+                match (holding.next(), holding.next()) {
+                    (Some(_), Some(_)) => return None,
+                    (Some((_, _, signer)), None) => v3_certificate(signer)?,
+                    (None, _) if !v31 => return None,
+                    (None, _) => match (v2, signers.as_slice()) {
+                        (Some(v2), _) => first_certificate(v2)?,
+                        (None, [(_, _, only)]) => v3_certificate(only)?,
+                        (None, _) => return None,
+                    },
+                }
+            }
+        };
+        match &chosen {
+            Some(earlier) if *earlier != certificate => return None,
+            Some(_) => {}
+            None => chosen = Some(certificate),
+        }
+    }
+    chosen
+}
+
+/// A v3 block's signers, each as `(minSdk, maxSdk, signer)`: the range outside the signed data,
+/// which Android reads (as Java `int`s) to pick the signer for its SDK. `None` when the list
+/// can't be read.
+fn v3_signers(block: &[u8]) -> Option<Vec<(i32, i32, &[u8])>> {
+    let (signers, _) = prefixed(block, 0)?;
+    let mut found = Vec::new();
+    let mut at = 0usize;
+    while at < signers.len() {
+        let (signer, next) = prefixed(signers, at)?;
+        let (_signed_data, after) = prefixed(signer, 0)?;
+        let min = i32::from_le_bytes(u32_at(signer, after)?.to_le_bytes());
+        let max = i32::from_le_bytes(u32_at(signer, after.checked_add(4)?)?.to_le_bytes());
+        found.push((min, max, signer));
+        at = next;
+    }
+    Some(found)
+}
+
+/// A v3 signer's first certificate, its signed data's SDK range the same as the one outside it
+/// (Android refuses the APK otherwise).
+fn v3_certificate(signer: &[u8]) -> Option<Vec<u8>> {
+    let (signed_data, after) = prefixed(signer, 0)?;
+    let outside = signer.get(after..after.checked_add(8)?)?;
+    let (_digests, next) = prefixed(signed_data, 0)?;
+    let (certificates, next) = prefixed(signed_data, next)?;
+    let inside = signed_data.get(next..next.checked_add(8)?)?;
+    if inside != outside {
+        return None;
+    }
+    let (certificate, _) = prefixed(certificates, 0)?;
+    (!certificate.is_empty()).then(|| certificate.to_vec())
 }
 
 /// A u32-length-prefixed slice at `at`, and where the next one starts.
@@ -165,8 +264,8 @@ fn prefixed(bytes: &[u8], at: usize) -> Option<(&[u8], usize)> {
     Some((bytes.get(start..end)?, end))
 }
 
-/// v2 and v3 share the start: signers (prefixed) > first signer (prefixed) > signed data
-/// (prefixed) > digests (prefixed), then certificates (prefixed) > first certificate (prefixed).
+/// A v2 block: signers (prefixed) > first signer (prefixed) > signed data (prefixed) > digests
+/// (prefixed), then certificates (prefixed) > first certificate (prefixed).
 fn first_certificate(scheme_block: &[u8]) -> Option<Vec<u8>> {
     let (signers, _) = prefixed(scheme_block, 0)?;
     let (signer, _) = prefixed(signers, 0)?;
@@ -197,6 +296,9 @@ const ATTR_VERSION_NAME: u32 = 0x0101_021c;
 const ATTR_MIN_SDK_VERSION: u32 = 0x0101_020c;
 const ATTR_TARGET_SDK_VERSION: u32 = 0x0101_0270;
 const ATTR_VERSION_CODE_MAJOR: u32 = 0x0101_0576;
+/// `android.R.attr.sharedUserId` and `sharedUserMaxSdkVersion`, on `<manifest>`.
+const ATTR_SHARED_USER_ID: u32 = 0x0101_000b;
+const ATTR_SHARED_USER_MAX_SDK_VERSION: u32 = 0x0101_064d;
 /// `android.R.attr.name`, `permission` and `maxSdkVersion` (design 90 §4).
 const ATTR_NAME: u32 = 0x0101_0003;
 const ATTR_PERMISSION: u32 = 0x0101_0006;
@@ -321,6 +423,10 @@ struct Manifest {
     permissions: Option<Vec<String>>,
     /// [ApkIdentity::split_target].
     split_target: Option<i64>,
+    /// [ApkIdentity::shared_user_id].
+    shared_user_id: bool,
+    /// Every attribute of `<manifest>` was read (a damaged one ends the reading).
+    attributes_whole: bool,
 }
 
 /// The `package`, `android:versionCode`, `android:versionName` and `android:versionCodeMajor` attributes of the binary
@@ -336,6 +442,8 @@ fn read_manifest(xml: &[u8]) -> Option<Manifest> {
     let mut manifest = found?;
     // No `<uses-sdk>`: Android's target is 0, below every split.
     let target = target.unwrap_or(0);
+    // A `<manifest>` whose attributes couldn't all be read may hide a shared user ID.
+    let whole = whole && manifest.attributes_whole;
     manifest.permissions = permissions.filter(|_| whole).map(|mut names| {
         with_split_permissions(&mut names, target);
         names.sort();
@@ -435,6 +543,9 @@ fn walk_manifest(
             let mut manifest = Manifest::default();
             let (mut code, mut major) = (None, None);
             let mut package_seen = false;
+            // `android:sharedUserMaxSdkVersion` by resource id: every plain number read.
+            let mut shared_max: Vec<Option<u32>> = Vec::new();
+            manifest.attributes_whole = true;
             for index in 0..count {
                 // A short or damaged attribute ends the reading; what was read stays (the
                 // package reads as it always did: the first `package`, or none).
@@ -443,10 +554,12 @@ fn walk_manifest(
                     .and_then(|offset| attribute_start.checked_add(offset))
                     .and_then(|start| ext.get(start..))
                 else {
+                    manifest.attributes_whole = false;
                     break;
                 };
                 let (Some(namespace), Some(name)) = (u32_at(attribute, 0), u32_at(attribute, 4))
                 else {
+                    manifest.attributes_whole = false;
                     break;
                 };
                 let named = |wanted: &str| pool_string(pool, name).as_deref() == Some(wanted);
@@ -455,8 +568,18 @@ fn walk_manifest(
                     TYPE_INT_DEC | TYPE_INT_HEX => u32_at(attribute, 16),
                     _ => None,
                 };
+                let id = resource_ids.and_then(|ids| u32_at(ids, (name as usize).checked_mul(4)?));
+                // Counted by its id or its name, in any namespace: more than Android reads, never
+                // less.
+                if id == Some(ATTR_SHARED_USER_ID) || named("sharedUserId") {
+                    manifest.shared_user_id = true;
+                }
+                if id == Some(ATTR_SHARED_USER_MAX_SDK_VERSION) {
+                    shared_max.push(int());
+                }
                 if namespace == NO_INDEX {
                     let Some(attribute_name) = pool_string(pool, name) else {
+                        manifest.attributes_whole = false;
                         break;
                     };
                     if attribute_name == "package" && !package_seen {
@@ -465,7 +588,6 @@ fn walk_manifest(
                     }
                     continue;
                 }
-                let id = resource_ids.and_then(|ids| u32_at(ids, (name as usize).checked_mul(4)?));
                 let is =
                     |attr: u32, wanted: &str| id.map_or_else(|| named(wanted), |id| id == attr);
                 if is(ATTR_VERSION_CODE, "versionCode") {
@@ -475,6 +597,14 @@ fn walk_manifest(
                 } else if is(ATTR_VERSION_NAME, "versionName") {
                     manifest.version_name = string_value(pool, attribute);
                 }
+            }
+            // A shared user ID capped below our phones' Android (`sharedUserMaxSdkVersion`, given
+            // once as a plain number, not 0) isn't joined on a new install there.
+            if let [Some(max)] = shared_max[..]
+                && max != 0
+                && max < crate::catalog_holds::PHONE_MIN_SDK
+            {
+                manifest.shared_user_id = false;
             }
             manifest.version_code = code.and_then(|code| long_version_code(code, major));
             *found = Some(manifest);
@@ -724,7 +854,7 @@ fn pool_string(pool: &[u8], index: u32) -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     const KEY1: &str = "0796f1809e476a2ce724f1341bcb32d03185b7a202c3469787c5775d65ef4be3";
@@ -745,6 +875,7 @@ mod tests {
                 signer_sha256: Some(KEY1.to_string()),
                 permissions: Some(Vec::new()),
                 split_target: Some(36),
+                shared_user_id: false,
             }
         );
         assert_eq!(read("fixture-key1-v2.apk").version_code, Some(2));
@@ -775,6 +906,7 @@ mod tests {
                 signer_sha256: None,
                 permissions: Some(Vec::new()),
                 split_target: Some(36),
+                shared_user_id: false,
             }
         );
     }
@@ -919,6 +1051,8 @@ mod tests {
                 min_sdk: None,
                 permissions: Some(Vec::new()),
                 split_target: Some(0),
+                shared_user_id: false,
+                attributes_whole: true,
             })
         );
         assert_eq!(
@@ -930,6 +1064,8 @@ mod tests {
                 min_sdk: None,
                 permissions: Some(Vec::new()),
                 split_target: Some(0),
+                shared_user_id: false,
+                attributes_whole: true,
             }),
             "a versionCode outside the android namespace isn't the code"
         );
@@ -1352,5 +1488,354 @@ mod tests {
         assert_eq!(long_version_code(7, Some(1)), Some((1 << 32) + 7));
         assert_eq!(long_version_code(u32::MAX, None), Some(0xffff_ffff));
         assert_eq!(long_version_code(0, Some(u32::MAX)), None);
+    }
+
+    /// The ID-value pairs of an APK's signing block, in order.
+    fn signing_pairs(apk: &[u8]) -> Vec<(u32, Vec<u8>)> {
+        let (block_start, central_directory, _) = block_bounds(apk);
+        let pairs = &apk[block_start + 8..central_directory - 24];
+        let mut found = Vec::new();
+        let mut at = 0;
+        while at < pairs.len() {
+            let len = u64_at(pairs, at).unwrap() as usize;
+            found.push((
+                u32_at(pairs, at + 8).unwrap(),
+                pairs[at + 12..at + 8 + len].to_vec(),
+            ));
+            at += 8 + len;
+        }
+        found
+    }
+
+    /// Where an APK's signing block starts, where its central directory starts, and where the
+    /// End of Central Directory record is.
+    fn block_bounds(apk: &[u8]) -> (usize, usize, usize) {
+        let eocd = (0..=apk.len() - 22)
+            .rev()
+            .find(|&at| apk[at..at + 4] == [0x50, 0x4b, 0x05, 0x06])
+            .unwrap();
+        let central_directory = u32_at(apk, eocd + 16).unwrap() as usize;
+        let size = u64_at(apk, central_directory - 24).unwrap() as usize;
+        (central_directory - size - 8, central_directory, eocd)
+    }
+
+    /// A test APK: `apk` (or a zip without a signing block, which then gets one) with its signing
+    /// block replaced by one of `pairs`, the central directory's offset moved to match. The
+    /// signatures in it are never checked here; only what the reader picks.
+    pub(crate) fn with_signing_pairs(apk: &[u8], pairs: &[(u32, Vec<u8>)]) -> Vec<u8> {
+        let eocd = (0..=apk.len() - 22)
+            .rev()
+            .find(|&at| apk[at..at + 4] == [0x50, 0x4b, 0x05, 0x06])
+            .unwrap();
+        let central_directory = u32_at(apk, eocd + 16).unwrap() as usize;
+        let signed = central_directory >= 24
+            && &apk[central_directory - 16..central_directory] == SIGNING_BLOCK_MAGIC;
+        let block_start = if signed {
+            block_bounds(apk).0
+        } else {
+            central_directory
+        };
+        let mut body = Vec::new();
+        for (id, value) in pairs {
+            body.extend(((value.len() + 4) as u64).to_le_bytes());
+            body.extend(id.to_le_bytes());
+            body.extend(value);
+        }
+        let size = (body.len() + 24) as u64;
+        let mut block = size.to_le_bytes().to_vec();
+        block.extend(body);
+        block.extend(size.to_le_bytes());
+        block.extend(SIGNING_BLOCK_MAGIC);
+        let mut out = apk[..block_start].to_vec();
+        out.extend(&block);
+        let new_directory = out.len() as u32;
+        out.extend(&apk[central_directory..]);
+        let eocd = eocd - central_directory + new_directory as usize;
+        out[eocd + 16..eocd + 20].copy_from_slice(&new_directory.to_le_bytes());
+        out
+    }
+
+    /// `bytes` with its u32 length before it.
+    fn with_length(bytes: &[u8]) -> Vec<u8> {
+        let mut out = (bytes.len() as u32).to_le_bytes().to_vec();
+        out.extend(bytes);
+        out
+    }
+
+    /// A v3 signer for `certificate` over `min..=max` (outside the signed data; `inside` the
+    /// signed data's own range), with no digests, signatures or key - never checked here.
+    fn v3_signer(certificate: &[u8], (min, max): (i32, i32), inside: (i32, i32)) -> Vec<u8> {
+        let mut signed_data = with_length(&[]);
+        signed_data.extend(with_length(&with_length(certificate)));
+        signed_data.extend(inside.0.to_le_bytes());
+        signed_data.extend(inside.1.to_le_bytes());
+        signed_data.extend(with_length(&[]));
+        let mut signer = with_length(&signed_data);
+        signer.extend(min.to_le_bytes());
+        signer.extend(max.to_le_bytes());
+        signer.extend(with_length(&[]));
+        signer.extend(with_length(&[]));
+        signer
+    }
+
+    /// A v3 block of `signers`, each `(certificate, range)`.
+    fn v3_block(signers: &[(&[u8], (i32, i32))]) -> Vec<u8> {
+        let all: Vec<u8> = signers
+            .iter()
+            .flat_map(|(certificate, range)| with_length(&v3_signer(certificate, *range, *range)))
+            .collect();
+        with_length(&all)
+    }
+
+    /// The signer read from `fixture-key1.apk` with its signing block made of `pairs`.
+    fn signer_with(pairs: &[(u32, Vec<u8>)]) -> Option<String> {
+        let apk = with_signing_pairs(
+            &std::fs::read("testdata/apk/fixture-key1.apk").unwrap(),
+            pairs,
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.apk");
+        std::fs::write(&path, apk).unwrap();
+        read_identity(&path).unwrap().signer_sha256
+    }
+
+    /// One block of each kind: a second v2, v3 or v3.1 block (Android reads the first) makes the signer
+    /// unreadable; another id beside them changes nothing.
+    #[test]
+    fn a_second_signing_block_of_a_kind_is_unreadable() {
+        let pairs = signing_pairs(&std::fs::read("testdata/apk/fixture-key1.apk").unwrap());
+        let ids: Vec<u32> = pairs.iter().map(|(id, _)| *id).collect();
+        assert!(
+            ids.contains(&V2_BLOCK_ID) && ids.contains(&V3_BLOCK_ID),
+            "{ids:x?}"
+        );
+        assert_eq!(signer_with(&pairs).as_deref(), Some(KEY1), "unchanged");
+        let mut other = pairs.clone();
+        other.push((0x4242_4242, vec![0; 16]));
+        assert_eq!(signer_with(&other).as_deref(), Some(KEY1));
+        let mut with_v31 = pairs.clone();
+        with_v31.push((V31_BLOCK_ID, vec![0; 16]));
+        assert_eq!(signer_with(&with_v31).as_deref(), Some(KEY1), "one v3.1");
+        with_v31.push((V31_BLOCK_ID, vec![0; 16]));
+        assert_eq!(signer_with(&with_v31), None, "two v3.1");
+        for id in [V2_BLOCK_ID, V3_BLOCK_ID] {
+            let mut twice = pairs.clone();
+            let again = pairs.iter().find(|(pair, _)| *pair == id).unwrap().clone();
+            twice.push(again);
+            assert_eq!(signer_with(&twice), None, "{id:x}");
+        }
+    }
+
+    /// The v3 signer is the one Android picks on each SDK our phones run (34 to 37), else v2's:
+    /// one certificate for all four, or none.
+    #[test]
+    fn the_signer_is_the_one_android_picks_on_every_phone_sdk() {
+        let first = |name: &str| {
+            let pairs = signing_pairs(&std::fs::read(format!("testdata/apk/{name}")).unwrap());
+            let v2 = pairs
+                .iter()
+                .find(|(id, _)| *id == V2_BLOCK_ID)
+                .unwrap()
+                .1
+                .clone();
+            (first_certificate(&v2).unwrap(), v2)
+        };
+        let (key1, v2_key1) = first("fixture-key1.apk");
+        let (key2, v2_key2) = first("fixture-key2.apk");
+        let digest = |certificate: &[u8]| hex::encode(Sha256::digest(certificate));
+        assert_eq!(digest(&key1), KEY1);
+        assert_eq!(digest(&key2), KEY2);
+        let max = i32::MAX;
+        let read = |v2: Option<&Vec<u8>>, signers: &[(&[u8], (i32, i32))]| {
+            let mut pairs = Vec::new();
+            if let Some(v2) = v2 {
+                pairs.push((V2_BLOCK_ID, v2.clone()));
+            }
+            pairs.push((V3_BLOCK_ID, v3_block(signers)));
+            signer_with(&pairs)
+        };
+        let k1: &[u8] = &key1;
+        let k2: &[u8] = &key2;
+        // One signer for our SDKs, another for older ones.
+        assert_eq!(
+            read(Some(&v2_key1), &[(k1, (24, 33)), (k2, (34, max))]).as_deref(),
+            Some(KEY2)
+        );
+        // Android 14 would check one key, 15 to 17 another: refused.
+        assert_eq!(
+            read(Some(&v2_key1), &[(k1, (28, 34)), (k2, (35, max))]),
+            None
+        );
+        assert_eq!(
+            read(Some(&v2_key1), &[(k2, (28, 36)), (k1, (37, max))]),
+            None
+        );
+        // Two signers for one SDK: Android refuses the APK, the same key or not.
+        assert_eq!(
+            read(Some(&v2_key1), &[(k1, (28, max)), (k1, (34, 34))]),
+            None
+        );
+        assert_eq!(
+            read(Some(&v2_key1), &[(k1, (28, max)), (k2, (37, max))]),
+            None
+        );
+        // A v3 block with no signer for an SDK: Android finds no signer there (never v2's).
+        assert_eq!(read(Some(&v2_key1), &[(k1, (28, 33))]), None);
+        assert_eq!(read(None, &[(k1, (28, 33))]), None, "and no v2");
+        assert_eq!(read(Some(&v2_key1), &[(k1, (28, 35))]), None, "36 and 37");
+        // The range as Android's Java `int`: a max of 0xffffffff is -1, holding no SDK.
+        assert_eq!(read(Some(&v2_key1), &[(k1, (28, -1))]), None);
+        // With a v3.1 block (a key rotated for newer SDKs, not read) the original key stands:
+        // the v3 signer where it holds the SDK, else v2's, else the v3 block's only signer.
+        let rotated = |v2: Option<&Vec<u8>>, signers: &[(&[u8], (i32, i32))]| {
+            let mut pairs = Vec::new();
+            if let Some(v2) = v2 {
+                pairs.push((V2_BLOCK_ID, v2.clone()));
+            }
+            pairs.push((V3_BLOCK_ID, v3_block(signers)));
+            pairs.push((V31_BLOCK_ID, v3_block(&[(k2, (34, max))])));
+            signer_with(&pairs)
+        };
+        assert_eq!(
+            rotated(Some(&v2_key1), &[(k1, (28, 33))]).as_deref(),
+            Some(KEY1)
+        );
+        assert_eq!(rotated(None, &[(k1, (28, 33))]).as_deref(), Some(KEY1));
+        assert_eq!(
+            rotated(Some(&v2_key1), &[(k1, (28, 35))]).as_deref(),
+            Some(KEY1)
+        );
+        assert_eq!(rotated(Some(&v2_key2), &[(k1, (28, 35))]), None, "two keys");
+        // The signed data's range must be the one outside it.
+        let mismatched = with_length(&with_length(&v3_signer(k1, (28, max), (28, 33))));
+        assert_eq!(
+            signer_with(&[(V2_BLOCK_ID, v2_key1.clone()), (V3_BLOCK_ID, mismatched)]),
+            None
+        );
+    }
+
+    /// A test APK of `base`'s signing block with a manifest of package `package` declaring a
+    /// shared user ID and `INTERNET` (built by hand here: no build tool or key is involved).
+    pub(crate) fn shared_user_apk(base: &[u8], package: &str) -> Vec<u8> {
+        const ANDROID: u32 = 4;
+        let manifest = xml_doc(
+            &[
+                "sharedUserId",
+                "name",
+                "manifest",
+                "package",
+                "http://schemas.android.com/apk/res/android",
+                "uses-permission",
+                "android.permission.INTERNET",
+                "me.vibb.shared",
+                package,
+            ],
+            &[ATTR_SHARED_USER_ID, ATTR_NAME],
+            &[
+                (
+                    2,
+                    vec![
+                        [ANDROID, 0, 7, u32::from(TYPE_STRING), 7],
+                        [NO_INDEX, 3, 8, u32::from(TYPE_STRING), 8],
+                    ],
+                    2,
+                ),
+                (5, vec![[ANDROID, 1, 6, u32::from(TYPE_STRING), 6]], 1),
+            ],
+        );
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let stored = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        zip.start_file("AndroidManifest.xml", stored).unwrap();
+        std::io::Write::write_all(&mut zip, &manifest).unwrap();
+        let unsigned = zip.finish().unwrap().into_inner();
+        with_signing_pairs(&unsigned, &signing_pairs(base))
+    }
+
+    /// `android:sharedUserId` on `<manifest>`, by its resource id or by its name: declared, and
+    /// the permission list is held as unreadable; a `<manifest>` whose attributes can't all be
+    /// read could hide one, so its list is unreadable too.
+    #[test]
+    fn a_shared_user_id_is_read_from_the_manifest() {
+        let base = std::fs::read("testdata/apk/perms-key3-v1.apk").unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("shared.apk");
+        std::fs::write(&path, shared_user_apk(&base, "me.vibb.permfixture")).unwrap();
+        let shared = read_identity(&path).unwrap();
+        assert!(shared.shared_user_id);
+        assert_eq!(shared.package.as_deref(), Some("me.vibb.permfixture"));
+        assert_eq!(
+            shared.signer_sha256,
+            read_identity(Path::new("testdata/apk/perms-key3-v1.apk"))
+                .unwrap()
+                .signer_sha256
+        );
+        assert_eq!(
+            shared.permissions,
+            Some(vec!["android.permission.INTERNET".to_string()])
+        );
+        assert_eq!(crate::catalog_holds::judged_permissions(&shared), None);
+        let plain = read_identity(Path::new("testdata/apk/perms-key3-v1.apk")).unwrap();
+        assert!(!plain.shared_user_id);
+        assert_eq!(
+            crate::catalog_holds::judged_permissions(&plain),
+            plain.permissions.as_deref()
+        );
+
+        // By name alone (no resource map), in any namespace.
+        let strings = [
+            "manifest",
+            "package",
+            "me.vibb.testfixture",
+            "sharedUserId",
+            "x",
+        ];
+        let package = [NO_INDEX, 1, 2, u32::from(TYPE_STRING), 2];
+        for namespace in [NO_INDEX, 9] {
+            let shared = [namespace, 3, 4, u32::from(TYPE_STRING), 4];
+            let read = read_manifest(&xml_doc(&strings, &[], &[(0, vec![package, shared], 2)]));
+            assert!(read.unwrap().shared_user_id, "{namespace}");
+        }
+        // Capped below our phones' Android by `sharedUserMaxSdkVersion` (by resource id, once, a
+        // plain number): not joined there. Capped at 34 or above, 0, twice, or by name: joined.
+        let capped = [
+            "sharedUserMaxSdkVersion",
+            "manifest",
+            "package",
+            "me.vibb.testfixture",
+            "sharedUserId",
+            "x",
+        ];
+        let joins = |caps: &[u32], ids: &[u32]| {
+            let mut attributes = vec![
+                [NO_INDEX, 2, 3, u32::from(TYPE_STRING), 3],
+                [9, 4, 5, u32::from(TYPE_STRING), 5],
+            ];
+            attributes.extend(
+                caps.iter()
+                    .map(|cap| [9, 0, NO_INDEX, u32::from(TYPE_INT_DEC), *cap]),
+            );
+            let count = attributes.len() as u16;
+            read_manifest(&xml_doc(&capped, ids, &[(1, attributes, count)]))
+                .unwrap()
+                .shared_user_id
+        };
+        let cap_id = [ATTR_SHARED_USER_MAX_SDK_VERSION];
+        assert!(!joins(&[32], &cap_id));
+        assert!(!joins(&[33], &cap_id));
+        for (caps, ids) in [
+            (&[34][..], &cap_id[..]),
+            (&[37], &cap_id),
+            (&[0], &cap_id),
+            (&[32, 32], &cap_id),
+            (&[32], &[]),
+        ] {
+            assert!(joins(caps, ids), "{caps:?} {ids:x?}");
+        }
+        // Claiming more attributes than are there: the list is unreadable.
+        let cut = read_manifest(&xml_doc(&strings, &[], &[(0, vec![package], 3)])).unwrap();
+        assert_eq!(cut.package.as_deref(), Some("me.vibb.testfixture"));
+        assert!(!cut.shared_user_id);
+        assert_eq!(cut.permissions, None);
     }
 }

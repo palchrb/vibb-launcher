@@ -458,7 +458,15 @@ Install Now), so a held or waiting release never reaches them and no contract ch
 - **The verdict** (`catalog_holds::judge`, pure): ours (`ours`, by the row - code QA L4: `is_launcher`, or the music
   app's row: a package in `music::MUSIC_PACKAGES`, `music-v` releases, from this server's own repo -
   `SERVER_RELEASE_REPO` or `LAUNCHER_APK_URL`'s, `tracked_apps::our_repos`) and a manual row are never judged (`holds_apply`); an unreadable list
-  holds (`unreadable`); sensitive names outside the set hold (`permissions`, the new names kept); "Ask me before every
+  holds (`unreadable`) - so does a release that declares `android:sharedUserId` on `<manifest>` (by resource id
+  `0x0101000b` or by name, any value; `ApkIdentity.shared_user_id`, `catalog_holds::judged_permissions`): an app in a
+  shared user ID shares the other apps' permissions, which its own list doesn't show, and a `<manifest>` whose
+  attributes can't all be read makes the list unreadable for the same reason. A first release (or one pinning the
+  package anew) that declares one is refused for any app but ours (`check_new_package`, `CantCheck`), so only an
+  update joining one waits for the parent. So an app that joins a shared user ID (the Termux plugins, for one) can't
+  be added to the catalog. One capped below 34 by `android:sharedUserMaxSdkVersion` (`0x0101064d`, by resource id,
+  once, a plain number other than 0) isn't counted: a new install on our phones doesn't join it. Sensitive names
+  outside the set hold (`permissions`, the new names kept); "Ask me before every
   update" (`always_ask`, D9) holds the rest (`always_ask`); else served. The pins are checked before (a release with
   another key is still refused, never offered for approval).
 - **The wait** (`tracked_apps.release_wait_hours`, 0-336, 48 for every GitHub and F-Droid row - f-droid.org's too, a

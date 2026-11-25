@@ -14,6 +14,9 @@ use crate::models::TrackedApp;
 /// The oldest Android our phones run (34 = Android 14, the launcher's `minSdk`): a
 /// `<uses-permission>` capped below it (`android:maxSdkVersion`) is never requested here (§3).
 pub const PHONE_MIN_SDK: u32 = 34;
+/// The newest Android our phones run (37 = Android 17): the APK's signer is the one Android picks
+/// on every SDK from [PHONE_MIN_SDK] to this (`apk::phone_signer`).
+pub const PHONE_MAX_SDK: u32 = 37;
 
 /// The wait the Add App form suggests for every source, f-droid.org included (§17.1 D2).
 pub const DEFAULT_WAIT_HOURS: i64 = 48;
@@ -370,6 +373,18 @@ pub fn judge(
         return Verdict::Hold(Reason::AlwaysAsk, Vec::new());
     }
     Verdict::Serve
+}
+
+/// The permission list [judge] takes for a release: `None` (unreadable, so held) while it declares
+/// a shared user ID - an app that joins one shares the permissions of the other apps in it, which
+/// its own list doesn't show. Only a first release could have one (`tracked_apps` refuses a first
+/// release with it for any app but ours), so a later release that declares one waits for the
+/// parent.
+pub fn judged_permissions(identity: &crate::apk::ApkIdentity) -> Option<&[String]> {
+    identity
+        .permissions
+        .as_deref()
+        .filter(|_| !identity.shared_user_id)
 }
 
 /// Ours (§2, QA L4), by the row: the launcher's row, or the music app's - its package, or none
