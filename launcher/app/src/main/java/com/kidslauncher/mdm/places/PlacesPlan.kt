@@ -1082,8 +1082,8 @@ enum class LinkSecurity {
     }
 }
 
-/** What a link is bound to of the security (code QA H1): Vibb saves a secured network as WPA2 and WPA3 at once, and a
- * mesh node or a band may negotiate either - one class. */
+/** What a link is bound to of the security (code QA H1): Vibb saves a WPA2 network with Android's WPA3 upgrade
+ * (`joinSecurityType`), and a mesh node or a band may negotiate either - one class. */
 enum class LinkClass(val code: Int) { NONE(0), PERSONAL(1), ENTERPRISE(2) }
 
 /** A still vouch a Wi-Fi fix is compared with: a `gps` fix of teaching quality (<= 25 m, >= 5 satellites, not mock in a

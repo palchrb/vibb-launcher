@@ -206,7 +206,9 @@ class WifiNetworksActivity : KidPageActivity() {
         if (network.isConnected || network.ssid == connectingSsid) return
         // Already-saved networks (including ones we just connected to before) reconnect straight
         // away via their existing config - only ask for a password the first time.
-        if (network.savedNetworkId != null || !network.secured) {
+        // The 131 gate: an enterprise or WEP network is shown as not supported and never saved.
+        if (network.savedNetworkId == null && network.security == com.kidslauncher.mdm.server.WifiSecurity.UNSUPPORTED) return
+        if (network.savedNetworkId != null || !network.security.secured) {
             connect(network, password = null)
             return
         }
@@ -226,7 +228,7 @@ class WifiNetworksActivity : KidPageActivity() {
         // Design 126 code QA L2: no Connect without a password - an empty one would save an open profile.
         val connectButton = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
         connectButton.isEnabled = false
-        input.doAfterTextChanged { connectButton.isEnabled = joinAllowed(network.secured, it?.toString()) }
+        input.doAfterTextChanged { connectButton.isEnabled = joinAllowed(network.security, it?.toString()) }
     }
 
     /**
@@ -244,7 +246,7 @@ class WifiNetworksActivity : KidPageActivity() {
             this,
             network.ssid,
             password,
-            network.secured,
+            network.security,
             network.savedNetworkId,
         )
         if (accepted) {

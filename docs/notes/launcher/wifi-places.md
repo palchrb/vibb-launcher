@@ -266,9 +266,10 @@ glue in `WifiPlaces.attempt`/`judged`.
 - **Saved networks** (D11): `AppEnforcer.applySavedNetworksLock` sets `setConfiguredNetworksLockdownState` by its own
   plan flag (`EnforcementPlan.lockSavedNetworks`): while managed, or while the zones and Wi-Fi places watch (Regularly);
   lifted by the override and the pause. Android's screens can't change or forget a network Vibb saved. Vibb's own Wi-Fi
-  page adds a new network (a new id) and never edits one; `DISALLOW_CONFIG_WIFI` is not set. A secured network is
-  added as WPA2 personal (`joinSecurityType`: `SECURITY_TYPE_PSK`, Android keeps its WPA3 upgrade beside it); until the
-  gate's run of 2026-11-25 both key-management bits were set, which Android read as WPA3 alone - a WPA2-only router
+  page adds a new network (a new id) and never edits one; `DISALLOW_CONFIG_WIFI` is not set. The security comes from the
+  scan (`wifiSecurityOf`, `joinSecurityType`): WPA2 (WPA3 beside it or not) as `SECURITY_TYPE_PSK`, Android keeps its
+  WPA3 upgrade beside it; WPA3 alone as `SECURITY_TYPE_SAE`; open and OWE open; an enterprise, WEP or WAPI network
+  shows "Not supported" / "Støttes ikke" and is never saved. Until the gate's run of 2026-11-25 both key-management bits were set, which Android read as WPA3 alone - a WPA2-only router
   never matched it. The lockdown is the global setting `wifi_device_owner_configs_lockdown` (1 while it holds).
 - **The emulator**: the debug build's `PlacesDebugReceiver` (src/debug) hands the places a made-up scan and connection;
   rows in `docs/testing/emulator.md` §6bn.

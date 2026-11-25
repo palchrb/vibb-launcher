@@ -1130,6 +1130,10 @@ class PlacesTest {
         assertEquals(3 to 1, savedNetworkCounts(listed, "Hjemme"))
         assertEquals(3 to 0, savedNetworkCounts(listed, "Gammel"))
         assertEquals("two saved networks of that name", 4 to 2, savedNetworkCounts(listed + ("Hjemme" to 4), "Hjemme"))
+        // One id under two types, and a second id of the same name under another type: two networks of that name.
+        val twoOfAName = listOf("Hjemme" to 1, "Hjemme" to 1, "Hjemme" to 5)
+        assertEquals(2 to 2, savedNetworkCounts(twoOfAName, "Hjemme"))
+        assertFalse(rebindAllowed(4, 2, 5, savedNetworkCounts(twoOfAName, "Hjemme").first, savedNetworkCounts(twoOfAName, "Hjemme").second))
         val v = Vouched(north(20.0), lng0, 15.0)
         assertTrue(linkRenews(rows, linkZones, v, net, still = true, refreshDue = false, nowMin = now, binding = binding))
         assertFalse(linkRenews(rows, linkZones, v, net, still = true, refreshDue = false, nowMin = now, binding = other))

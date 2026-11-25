@@ -58,13 +58,15 @@ class WifiNetworkAdapter(
         binding.wifiNetworkSignal.setImageResource(WifiSignal.drawable(network.signalLevel))
         binding.wifiNetworkSignal.contentDescription =
             context.getString(R.string.wifi_networks_signal, WifiSignal.level(network.signalLevel), WifiSignal.MAX_LEVEL)
-        binding.wifiNetworkLockIcon.visibility = if (network.secured) View.VISIBLE else View.GONE
+        binding.wifiNetworkLockIcon.visibility = if (network.security.secured) View.VISIBLE else View.GONE
 
         val statusText = when {
             network.ssid == connectingSsid -> context.getString(R.string.wifi_networks_connecting)
             network.isConnected && network.ssid == captiveSsid -> context.getString(R.string.wifi_networks_connected_sign_in)
             network.isConnected -> context.getString(R.string.wifi_networks_connected)
             network.savedNetworkId != null -> context.getString(R.string.wifi_networks_saved)
+            // The 131 gate: an enterprise or WEP network - a password alone never joins it.
+            network.security == com.kidslauncher.mdm.server.WifiSecurity.UNSUPPORTED -> context.getString(R.string.wifi_networks_unsupported)
             else -> null
         }
         binding.wifiNetworkStatus.text = statusText

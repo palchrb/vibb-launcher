@@ -444,6 +444,7 @@
     <string name="wifi_networks_scan">Scan</string>
     <string name="wifi_networks_connected">Connected</string>
     <string name="wifi_networks_saved">Saved</string>
+    <string name="wifi_networks_unsupported">Not supported</string>
     <string name="wifi_networks_connecting">Connecting…</string>
     <string name="wifi_networks_connect_failed">Couldn\'t connect. Check the password and try again.</string>
     <string name="wifi_networks_password_title">Enter password</string>

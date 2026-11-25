@@ -395,6 +395,7 @@
     <string name="wifi_networks_scan">Søk</string>
     <string name="wifi_networks_connected">Tilkoblet</string>
     <string name="wifi_networks_saved">Lagret</string>
+    <string name="wifi_networks_unsupported">Støttes ikke</string>
     <string name="wifi_networks_connecting">Kobler til …</string>
     <string name="wifi_networks_connect_failed">Klarte ikke å koble til. Sjekk passordet og prøv igjen.</string>
     <string name="wifi_networks_password_title">Skriv inn passord</string>

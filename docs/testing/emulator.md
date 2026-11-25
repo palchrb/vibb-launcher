@@ -5809,7 +5809,9 @@ Fixes (this branch):
 2. **Vibb's Wi-Fi page saved a secured network as WPA3 alone** (`joinSecurityType`, `JoinMacSettingTest`): with both
    `WPA_PSK` and `SAE` in `allowedKeyManagement` Android keeps only SAE (`cmd wifi list-networks`: `wpa3-sae`;
    Android's Settings: "WPA3-Personal", a row apart from the router's WPA2 one) - a WPA2-only router would never join.
-   Now `setSecurityParams(SECURITY_TYPE_PSK)`: `wpa2-psk` with Android's `wpa3-sae^` upgrade.
+   Now the scan's capabilities pick it (`wifiSecurityOf`): WPA2 `setSecurityParams(SECURITY_TYPE_PSK)` - `wpa2-psk`
+   with Android's `wpa3-sae^` upgrade -, WPA3 alone `SECURITY_TYPE_SAE`, open open; an enterprise or WEP network shows
+   "Not supported" and is never saved (code QA of the gate).
 3. The satellite feed in the debug receiver (above), since `geo fix` never teaches.
 
 Findings: the emulator's `geo fix` has no satellites (above); a far satellite fix heard passively before an attempt
