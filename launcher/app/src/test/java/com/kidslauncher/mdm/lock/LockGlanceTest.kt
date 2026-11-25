@@ -24,57 +24,33 @@ class LockGlanceTest {
     fun `every lock-up is the glance page, without a target - music or not`() {
         for (from in listOf(
             GlanceStageState.GLANCE,
-            GlanceStageState(LockStage.KEYPAD, null),
-            GlanceStageState(LockStage.KEYPAD, conversation),
-            GlanceStageState(LockStage.KEYPAD, GlanceTarget.MissedCalls("+4790000002")),
+            GlanceStageState(LockStage.ASK, null),
+            GlanceStageState(LockStage.ASK, conversation),
+            GlanceStageState(LockStage.ASK, GlanceTarget.MissedCalls("+4790000002")),
         )) {
             assertEquals(GlanceStageState.GLANCE, glanceStageStep(from, GlanceStageEvent.LockUp))
         }
     }
 
+    /** Design 59d step B (Q59d-6): the ask comes from the glance page - the ASK stage (design 132: the only one). */
     @Test
-    fun `Lås opp and a row lead to the keypad, the arrow back drops the target`() {
-        assertEquals(GlanceStageState(LockStage.KEYPAD, null), glanceStageStep(GlanceStageState.GLANCE, GlanceStageEvent.Unlock))
-        assertEquals(GlanceStageState(LockStage.KEYPAD, conversation), glanceStageStep(GlanceStageState.GLANCE, GlanceStageEvent.Row(conversation)))
-        assertEquals("no target may be taken", GlanceStageState(LockStage.KEYPAD, null), glanceStageStep(GlanceStageState.GLANCE, GlanceStageEvent.Row(null)))
-        val keypad = GlanceStageState(LockStage.KEYPAD, conversation)
-        assertEquals(GlanceStageState.GLANCE, glanceStageStep(keypad, GlanceStageEvent.Back))
-        assertEquals(GlanceStageState.GLANCE, glanceStageStep(GlanceStageState.GLANCE, GlanceStageEvent.Back))
-        // "Lås opp" after a row's tap (the arrow first) is the plain keypad.
-        assertEquals(GlanceStageState(LockStage.KEYPAD, null), glanceStageStep(glanceStageStep(keypad, GlanceStageEvent.Back), GlanceStageEvent.Unlock))
-    }
-
-    /** Design 59d step B (Q59d-6): as Android's face the ask comes from the glance page - the ASK stage. */
-    @Test
-    fun `as the face Lås opp and a row lead to ASK, every way back is GLANCE without the target`() {
-        val face = true
-        assertEquals(GlanceStageState(LockStage.ASK, null), glanceStageStep(GlanceStageState.GLANCE, GlanceStageEvent.Unlock, face))
-        val ask = glanceStageStep(GlanceStageState.GLANCE, GlanceStageEvent.Row(conversation), face)
+    fun `Lås opp and a row lead to ASK, every way back is GLANCE without the target`() {
+        assertEquals(GlanceStageState(LockStage.ASK, null), glanceStageStep(GlanceStageState.GLANCE, GlanceStageEvent.Unlock))
+        val ask = glanceStageStep(GlanceStageState.GLANCE, GlanceStageEvent.Row(conversation))
         assertEquals(GlanceStageState(LockStage.ASK, conversation), ask)
+        assertEquals("no target may be taken", GlanceStageState(LockStage.ASK, null), glanceStageStep(GlanceStageState.GLANCE, GlanceStageEvent.Row(null)))
         val missed = GlanceTarget.MissedCalls(null)
-        assertEquals("a row tap in ASK replaces the target", GlanceStageState(LockStage.ASK, missed), glanceStageStep(ask, GlanceStageEvent.Row(missed), face))
+        assertEquals("a row tap in ASK replaces the target", GlanceStageState(LockStage.ASK, missed), glanceStageStep(ask, GlanceStageEvent.Row(missed)))
         // Back stands for the pad's cancel, an error, the dead ask's recovery and STAY; LockUp for a screen-off.
-        assertEquals(GlanceStageState.GLANCE, glanceStageStep(ask, GlanceStageEvent.Back, face))
-        assertEquals(GlanceStageState.GLANCE, glanceStageStep(ask, GlanceStageEvent.LockUp, face))
-        assertEquals("OWN_KEYPAD: our keys, the target kept", GlanceStageState(LockStage.KEYPAD, conversation), glanceStageStep(ask, GlanceStageEvent.OwnKeypad, face))
-        assertEquals(GlanceStageState.GLANCE, glanceStageStep(GlanceStageState.GLANCE, GlanceStageEvent.OwnKeypad, face))
-    }
-
-    @Test
-    fun `own mode never enters ASK - its rows unchanged`() {
-        val states = listOf(GlanceStageState.GLANCE, GlanceStageState(LockStage.KEYPAD, null), GlanceStageState(LockStage.KEYPAD, conversation))
-        val events = listOf(GlanceStageEvent.LockUp, GlanceStageEvent.Unlock, GlanceStageEvent.Row(conversation), GlanceStageEvent.Row(null), GlanceStageEvent.Back, GlanceStageEvent.OwnKeypad)
-        for (state in states) for (event in events) {
-            val next = glanceStageStep(state, event, face = false)
-            assertEquals(glanceStageStep(state, event), next)
-            assertTrue(next.stage != LockStage.ASK)
-        }
+        assertEquals(GlanceStageState.GLANCE, glanceStageStep(ask, GlanceStageEvent.Back))
+        assertEquals(GlanceStageState.GLANCE, glanceStageStep(ask, GlanceStageEvent.LockUp))
+        assertEquals(GlanceStageState.GLANCE, glanceStageStep(GlanceStageState.GLANCE, GlanceStageEvent.Back))
     }
 
     /** Design 59d step B (the user's rc.2 recording): the page stays under the pad, only the leave hides its content. */
     @Test
     fun `LEAVE hides the page's content, ASK shows it`() {
-        val ask = glanceStageStep(GlanceStageState.GLANCE, GlanceStageEvent.Unlock, face = true)
+        val ask = glanceStageStep(GlanceStageState.GLANCE, GlanceStageEvent.Unlock)
         assertEquals(LockStage.ASK, ask.stage)
         assertTrue("the pad over our own lock", glancePageShown(ask.stage) && glanceContentShown(leaving = false))
         assertFalse("the leave: only the ground", glanceContentShown(leaving = true))
@@ -123,22 +99,18 @@ class LockGlanceTest {
         assertTrue(swipe.substringAfter("action == MotionEvent.ACTION_CANCEL) {").substringBefore("}").contains("return SwipeTouch.PASS"))
     }
 
-    /** The user (2026-10-24): back on the glance from our keypad or Android's pad, the page starts at the top. */
+    /** The user (2026-10-24): back on the glance from Android's pad, the page starts at the top. */
     @Test
     fun `a step back onto the glance page starts it at the top - staying on it doesn't`() {
-        assertTrue(glanceBackToTop(LockStage.KEYPAD, LockStage.GLANCE))
         assertTrue("the pad cancelled", glanceBackToTop(LockStage.ASK, LockStage.GLANCE))
         assertFalse("no move", glanceBackToTop(LockStage.GLANCE, LockStage.GLANCE))
-        assertFalse("off the page", glanceBackToTop(LockStage.GLANCE, LockStage.KEYPAD))
         assertFalse(glanceBackToTop(LockStage.GLANCE, LockStage.ASK))
-        assertFalse(glanceBackToTop(LockStage.ASK, LockStage.KEYPAD))
-        // Every way back is one of those: the arrow and the pad's cancel (Back) from the keypad or ASK.
-        for (from in listOf(GlanceStageState(LockStage.KEYPAD, null), GlanceStageState(LockStage.ASK, conversation))) {
-            assertTrue(glanceBackToTop(from.stage, glanceStageStep(from, GlanceStageEvent.Back, face = true).stage))
-        }
-        // The "more" line's tap is a row without a target: the keypad, the plain prompt.
-        assertEquals(GlanceStageState(LockStage.KEYPAD, null), glanceStageStep(GlanceStageState.GLANCE, GlanceStageEvent.Row(null)))
-        assertEquals(GlancePrompt.PLAIN, glancePrompt(true, false, false, false, null, androidFace = false))
+        // Every way back is the pad's cancel (Back) from ASK.
+        val from = GlanceStageState(LockStage.ASK, conversation)
+        assertTrue(glanceBackToTop(from.stage, glanceStageStep(from, GlanceStageEvent.Back).stage))
+        // The "more" line's tap is a row without a target: the ask, the plain prompt.
+        assertEquals(GlanceStageState(LockStage.ASK, null), glanceStageStep(GlanceStageState.GLANCE, GlanceStageEvent.Row(null)))
+        assertEquals(GlancePrompt.PLAIN, glancePrompt(null))
     }
 
     /** Design r11 §3.2: the first movement past the touch slop decides the axis; a tie is vertical. */
@@ -499,8 +471,8 @@ class LockGlanceTest {
 
     @Test
     fun `the timer tile's tap - the keypad with the clock app, its hint, and a time rule's usable apps (design 42)`() {
-        assertEquals(GlanceStageState(LockStage.KEYPAD, GlanceTarget.ClockApp), glanceStageStep(GlanceStageState.GLANCE, GlanceStageEvent.Row(GlanceTarget.ClockApp)))
-        assertEquals(GlancePrompt.OPEN_APP, glancePrompt(true, false, false, false, GlanceTarget.ClockApp, androidFace = false))
+        assertEquals(GlanceStageState(LockStage.ASK, GlanceTarget.ClockApp), glanceStageStep(GlanceStageState.GLANCE, GlanceStageEvent.Row(GlanceTarget.ClockApp)))
+        assertEquals(GlancePrompt.OPEN_APP, glancePrompt(GlanceTarget.ClockApp))
         assertEquals("org.fossify.clock", GlanceTarget.ClockApp.appPackage)
         val rule = com.kidslauncher.mdm.timerules.TimeLock(com.kidslauncher.mdm.server.LockReason.BEDTIME, callsAllowed = true, usableApps = setOf("org.fossify.clock"))
         assertTrue(glanceUsableUnderLock(rule, GlanceTarget.ClockApp, callsManaged = true))
@@ -559,26 +531,14 @@ class LockGlanceTest {
     // ---- 3b: the hint and the open ---------------------------------------------------------------
 
     @Test
-    fun `the keypad's prompt - the usual texts first, then the target's hint`() {
-        assertEquals(GlancePrompt.UNUSABLE, glancePrompt(usable = false, waiting = true, checking = true, wrong = true, target = conversation, androidFace = false))
-        assertEquals(GlancePrompt.WAIT, glancePrompt(true, waiting = true, checking = true, wrong = true, target = conversation, androidFace = false))
-        assertEquals(GlancePrompt.CHECKING, glancePrompt(true, false, checking = true, wrong = true, target = conversation, androidFace = false))
-        assertEquals(GlancePrompt.WRONG, glancePrompt(true, false, false, wrong = true, target = conversation, androidFace = false))
-        assertEquals(GlancePrompt.OPEN_APP, glancePrompt(true, false, false, false, conversation, androidFace = false))
-        assertEquals(GlancePrompt.SEE_MISSED, glancePrompt(true, false, false, false, GlanceTarget.MissedCalls(null), androidFace = false))
-        assertEquals(GlancePrompt.PLAIN, glancePrompt(true, false, false, false, null, androidFace = false))
-    }
-
-    /** r10 run F1: as Android's face the kid PIN opens Android's pad, so an unusable kid hash is no "parent code only". */
-    @Test
-    fun `the unusable prompt only in own mode - Android's face shows the normal hint`() {
-        assertEquals(GlancePrompt.PLAIN, glancePrompt(usable = false, waiting = false, checking = false, wrong = false, target = null, androidFace = true))
-        assertEquals(GlancePrompt.OPEN_APP, glancePrompt(false, false, false, false, conversation, androidFace = true))
-        assertEquals(GlancePrompt.SEE_MISSED, glancePrompt(false, false, false, false, GlanceTarget.MissedCalls(null), androidFace = true))
-        assertEquals("own mode keeps it", GlancePrompt.UNUSABLE, glancePrompt(false, false, false, false, null, androidFace = false))
+    fun `the lock's prompt - the target's hint, else the plain prompt, no keypad texts (design 132)`() {
+        assertEquals(GlancePrompt.OPEN_APP, glancePrompt(conversation))
+        assertEquals(GlancePrompt.SEE_MISSED, glancePrompt(GlanceTarget.MissedCalls(null)))
+        assertEquals(GlancePrompt.PLAIN, glancePrompt(null))
+        assertEquals(setOf(GlancePrompt.OPEN_APP, GlancePrompt.SEE_MISSED, GlancePrompt.PLAIN), GlancePrompt.entries.toSet())
         val activity = listOf(File("src/main/java/com/kidslauncher/mdm/lock/PinLockActivity.kt"), File("app/src/main/java/com/kidslauncher/mdm/lock/PinLockActivity.kt"))
             .first { it.exists() }.readText()
-        assertTrue(activity.contains("glancePrompt(PinLockRuntime.pinUsable && !unusableShown, waitMs > 0L, checking, wrongShown, glance?.state?.target, androidFace = AndroidLock.faceOn)"))
+        assertTrue(activity.contains("glancePrompt(glance?.state?.target)"))
     }
 
     @Test
@@ -700,7 +660,7 @@ class LockGlanceTest {
         val thread = GlanceTarget.Thread("01HZXTHREAD")
         assertEquals(null, thread.appPackage)
         assertFalse(thread.toString().contains("01HZ"))
-        assertEquals(GlancePrompt.OPEN_APP, glancePrompt(true, false, false, false, thread, androidFace = false))
+        assertEquals(GlancePrompt.OPEN_APP, glancePrompt(thread))
         val school = com.kidslauncher.mdm.timerules.TimeLock(com.kidslauncher.mdm.server.LockReason.SCHOOL, callsAllowed = false)
         assertFalse(glanceUsableUnderLock(school, thread, callsManaged = true))
         assertTrue("calls not managed: the screens still follow the rule's calls", glanceUsableUnderLock(school.copy(callsAllowed = true), thread, callsManaged = false))
@@ -717,7 +677,7 @@ class LockGlanceTest {
     fun `Dagen's target - the keypad's prompt, under a time rule only when it allows Kalender, the open (design 69 §2_2)`() {
         val day = GlanceTarget.Day(20_752)
         assertEquals(null, day.appPackage)
-        assertEquals(GlancePrompt.OPEN_APP, glancePrompt(true, false, false, false, day, androidFace = false))
+        assertEquals(GlancePrompt.OPEN_APP, glancePrompt(day))
         val locked = com.kidslauncher.mdm.timerules.TimeLock(com.kidslauncher.mdm.server.LockReason.SCHOOL, callsAllowed = true)
         assertFalse(glanceUsableUnderLock(locked, day, callsManaged = true))
         assertTrue(glanceUsableUnderLock(locked.copy(calendarUsable = true), day, callsManaged = false))
@@ -976,7 +936,7 @@ class LockMediaGuardTest {
         // swipe asks again, as the button's second tap did.
         val down = glance.substringAfter("if (action == MotionEvent.ACTION_DOWN) {").substringBefore("return SwipeTouch.PASS")
         assertTrue(down, down.contains("covered || !started || leaving || !glancePageShown(state.stage)"))
-        assertTrue(glancePageShown(LockStage.ASK) && !glancePageShown(LockStage.KEYPAD))
+        assertTrue(glancePageShown(LockStage.ASK) && glancePageShown(LockStage.GLANCE))
         // The swipe's only step is Unlock - the same ask as the button was; the activity feeds it every touch first.
         val swipe = glance.substringAfter("private fun swipeNow(").substringBefore("private fun swipeReset(")
         assertEquals(listOf("step(GlanceStageEvent.Unlock)"), Regex("""\bstep\([^)]*\)""").findAll(swipe).map { it.value }.toList())

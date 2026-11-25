@@ -1,14 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- lock.PinLockActivity's keypad stage, handy's own PIN lock (design 10-lock-and-call-ui.md, mockup
-     Lock.dc.html, 320x568 dp; since design 25 mockup LockGlance.dc.html C; since design 34 P7 mockups
-     05/05b): one column with nothing overlaid - the back arrow to the glance page by the prompt, the
-     dots, the keypad, a gap of at least 16 dp, Emergency call (the tonal pill, at least 48 dp, wraps and
-     grows with the font scale), the Parent code link (at least 48 dp since screen-size fix S8, its target reaching the inset; always
-     there), the inset. Only the keys give way: lock.PinKeypadLayout sizes them from the keypad's
-     measured height, min(72, (h - 3 x gap) / 4) dp, at the last resort down to 32 dp. No clock or
-     date - the glance page (view_lock_glance.xml, over this stage) has them. Android draws the status
-     line above. PinLockLayoutTest checks the budget from this file at font scale 1.0, 1.3 and 2.0 -
-     keep it in step. -->
+<!-- lock.PinLockActivity's ground under the glance page (view_lock_glance.xml, over this): the prompt (read out for
+     accessibility) and Emergency call (the tonal pill, at least 48 dp, design 34 P7), which the glance's own Emergency
+     call clicks. Design 132: no keypad, dots, back arrow or Parent code - Android's PIN pad is the only unlock. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/pin_root"
     android:layout_width="match_parent"
@@ -21,23 +14,12 @@
     android:paddingEnd="16dp"
     android:paddingBottom="0dp">
 
-    <!-- The prompt between the back arrow's columns (two lines at most, qa-21-step4-code L5 and
-         design 25 QA Low 5): the arrow always leads back to the glance page. -->
+    <!-- The prompt (two lines at most, qa-21-step4-code L5 and design 25 QA Low 5). -->
     <FrameLayout
         android:id="@+id/pin_prompt_row"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="4dp">
-
-        <ImageButton
-            android:id="@+id/pin_back"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
-            android:layout_gravity="start|center_vertical"
-            android:background="@drawable/bg_lock_media_back"
-            android:contentDescription="@string/lock_media_back"
-            android:src="@drawable/ic_kid_back"
-            android:tint="@color/kid_core" />
 
         <TextView
             android:id="@+id/pin_prompt"
@@ -56,23 +38,7 @@
             android:textSize="16sp" />
     </FrameLayout>
 
-    <LinearLayout
-        android:id="@+id/pin_dots"
-        android:layout_width="wrap_content"
-        android:layout_height="14dp"
-        android:layout_marginTop="8dp"
-        android:orientation="horizontal" />
-
-    <LinearLayout
-        android:id="@+id/pin_keypad"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_marginTop="6dp"
-        android:layout_weight="1"
-        android:gravity="center"
-        android:orientation="vertical" />
-
-    <!-- Design 34 P7: the tonal pill (#3A1E24 under #FF8A8A, 6.6:1), 16 dp below the keypad. The label
+    <!-- Design 34 P7: the tonal pill (#3A1E24 under #FF8A8A, 6.6:1). The label
          wraps rather than cuts at a large font scale, and the pill grows with it. -->
     <LinearLayout
         android:id="@+id/pin_emergency"
@@ -109,20 +75,5 @@
             android:textColor="@color/kid_emergency_text"
             android:textSize="15sp" />
     </LinearLayout>
-
-    <TextView
-        android:id="@+id/pin_parent_code"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:alpha="0.75"
-        android:background="?android:attr/selectableItemBackground"
-        android:fontFamily="@font/nunito_bold"
-        android:gravity="center"
-        android:minHeight="48dp"
-        android:paddingStart="16dp"
-        android:paddingEnd="16dp"
-        android:text="@string/pin_lock_parent_code"
-        android:textColor="@color/kid_ink"
-        android:textSize="13sp" />
 
 </LinearLayout>

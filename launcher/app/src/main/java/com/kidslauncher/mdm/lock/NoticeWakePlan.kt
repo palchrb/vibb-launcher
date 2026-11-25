@@ -10,9 +10,6 @@ package com.kidslauncher.mdm.lock
 /** Why [PinLockRuntime.show] turns the screen on: a VoIP ring (design 17) or a notice (round 7 §3). */
 enum class WakeKind { VOIP, NOTICE }
 
-/** A woken screen goes off after this long untouched ([noticeWakeOffDue]). */
-const val NOTICE_WAKE_ON_MS = 15_000L
-
 /** At least this long between two notice wakes (in memory: a new process starts over). */
 const val WAKE_GAP_MS = 30_000L
 
@@ -42,11 +39,10 @@ data class NoticeBusy(
     val voip: Boolean = false,
     val emergencyFlow: Boolean = false,
     val alarm: Boolean = false,
-    val bootMark: Boolean = false,
     val sinceProcessStartMs: Long = Long.MAX_VALUE,
 ) {
     val any: Boolean
-        get() = ourCall || systemCall || voip || emergencyFlow || alarm || bootMark || sinceProcessStartMs < NOTICE_AFTER_START_MS
+        get() = ourCall || systemCall || voip || emergencyFlow || alarm || sinceProcessStartMs < NOTICE_AFTER_START_MS
 }
 
 /**
@@ -81,39 +77,3 @@ fun wakesInHour(wakes: List<Long>, now: Long): List<Long> = wakes.filter { now -
 
 /** A proximity [value] (cm) from a sensor whose range is [maxRange]: near (the phone in a pocket). */
 fun proximityNear(value: Float, maxRange: Float): Boolean = value < minOf(maxRange, PROXIMITY_NEAR_CM)
-
-/** A screen-on this long after a notice wake is not the wake's own: the kid pressed power ([noticeWakeEndsAtScreenOn]). */
-const val NOTICE_WAKE_SCREEN_ON_GRACE_MS = 2_000L
-
-/** A screen-on at [nowMs] ends the notice wake of [wokeAtMs]: it came well after the wake's own screen-on, so the
- * screen is the kid's now (qa-l7-b-code 3). */
-fun noticeWakeEndsAtScreenOn(wokeAtMs: Long?, nowMs: Long): Boolean =
-    wokeAtMs != null && nowMs - wokeAtMs > NOTICE_WAKE_SCREEN_ON_GRACE_MS
-
-/**
- * A notice-woken screen goes off now: the wake at [wokeAtMs] (elapsed) is [NOTICE_WAKE_ON_MS] old,
- * nothing [touched] the lock since, the screen is still on ([interactive]), the lock still LOCKED
- * and in front ([lockResumed]), nothing [busy] came meanwhile (a call's screen is never turned
- * off), none of the lock's own dialogs is open ([dialogOpen]: Foreldrekode, the emergency confirm - their touches
- * never reach the activity's onUserInteraction) and touch exploration is off ([touchExploration]: TalkBack's hovers
- * and clicks don't either) - qa-l7-b-code 2. A touch hands the screen back to the phone's own timeout.
- *
- * Design 59d step E (the user's Q2, Q59d-2): as Android's face ([face]) never - `lockNow` is the wake's only screen-off
- * and it costs the fingerprint until the next PIN (`STRONG_AUTH_REQUIRED_AFTER_DPM_LOCK_NOW`). The glance stays lit until
- * the phone's own screen timeout (the parent's `screen_timeout_seconds`); Android's keyguard is locked for the whole
- * wake (`noticeWakeAllowed` needs LOCKED, the glance only occludes it). Own mode keeps its 15 s `lockNow`.
- */
-fun noticeWakeOffDue(
-    wokeAtMs: Long?,
-    touched: Boolean,
-    interactive: Boolean,
-    locked: Boolean,
-    lockResumed: Boolean,
-    busy: Boolean,
-    dialogOpen: Boolean,
-    touchExploration: Boolean,
-    nowMs: Long,
-    face: Boolean = false,
-): Boolean =
-    !face && wokeAtMs != null && !touched && interactive && locked && lockResumed && !busy && !dialogOpen && !touchExploration &&
-        nowMs - wokeAtMs >= NOTICE_WAKE_ON_MS

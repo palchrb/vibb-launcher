@@ -529,17 +529,11 @@ class VoipCallPlanTest {
     }
 
     @Test
-    fun `qa-17b-code 5 - which pauses count as the app's screen having come up`() {
+    fun `qa-17b-code 5 - which pauses count as the app's screen having come up - the wake covered only (design 132)`() {
         val now = 100_000L
-        assertFalse("our wake activity going over the settling lock",
-            pauseIsTry(sendPending = true, wakeCovered = false, wakeAskedAtElapsedMs = now - 50, wakeGone = false, nowElapsedMs = now))
-        assertTrue("SystemUI's launch (or power) while the send settles - the wake is long gone",
-            pauseIsTry(sendPending = true, wakeCovered = false, wakeAskedAtElapsedMs = now - 900, wakeGone = true, nowElapsedMs = now))
-        assertTrue("no wake asked for", pauseIsTry(true, false, null, wakeGone = true, nowElapsedMs = now))
-        assertTrue("a wake that never came, past the window",
-            pauseIsTry(true, false, now - VOIP_WAKE_WINDOW_MS, wakeGone = false, nowElapsedMs = now))
-        assertTrue("the wake was covered before it finished itself", pauseIsTry(false, wakeCovered = true, wakeAskedAtElapsedMs = now - 50, wakeGone = false, nowElapsedMs = now))
-        assertFalse("no send settling, the wake not covered", pauseIsTry(false, false, null, true, now))
+        assertTrue("the wake was covered before it finished itself", pauseIsTry(wakeCovered = true, wakeAskedAtElapsedMs = now - 50, wakeGone = false, nowElapsedMs = now))
+        assertFalse("the lock's own pause: no send of ours to come up", pauseIsTry(false, null, true, now))
+        assertFalse(pauseIsTry(false, now - 900, wakeGone = true, nowElapsedMs = now))
     }
 
     @Test
@@ -554,26 +548,9 @@ class VoipCallPlanTest {
             voipTryAfterPause(sent, 2L, pauseIsTry = true, nowElapsedMs = now))
         assertNull("the wake's own pause: still no try", voipTryAfterPause(null, 1L, pauseIsTry = false, nowElapsedMs = now))
         assertEquals("no ring", sent, voipTryAfterPause(sent, null, pauseIsTry = true, nowElapsedMs = now))
-        // Then: never our send again for that ring, the card on the next resume.
+        // Then: the card on the next resume.
         val byItself = voipTryAfterPause(null, 1L, pauseIsTry = true, nowElapsedMs = now)
-        assertFalse(voipFsiDue(1L, locked = true, dismissed = false, otherScreen = false, hasFullScreen = true, last = byItself))
         assertEquals(VoipRingUi.CARD, voipRingUi(1L, true, false, false, true, byItself, now))
-    }
-
-    private fun due(ringId: Long? = 1L, locked: Boolean = true, dismissed: Boolean = false, other: Boolean = false, fsi: Boolean = true, last: VoipFsiTry? = null) =
-        voipFsiDue(ringId, locked, dismissed, other, fsi, last)
-
-    @Test
-    fun `17b - the lock sends the app's ring screen once per ring, never over another call, the emergency flow or an alarm`() {
-        assertTrue(due())
-        assertFalse("no ring", due(ringId = null))
-        assertFalse("unlocked: the app's own notification", due(locked = false))
-        assertFalse("after Avvis", due(dismissed = true))
-        assertFalse("a phone call, emergency, the emergency flow or an alarm is on (QA 5)", due(other = true))
-        assertFalse("no full-screen intent: the card", due(fsi = false))
-        assertFalse("tried for this ring - never a second time", due(last = VoipFsiTry(1L, 0L, sent = true)))
-        assertFalse(due(last = VoipFsiTry(1L, 0L, sent = false)))
-        assertTrue("a new ring tries again", due(ringId = 2L, last = VoipFsiTry(1L, 0L, sent = true, left = true)))
     }
 
     private fun ui(now: Long, last: VoipFsiTry?, ringId: Long? = 1L, locked: Boolean = true, dismissed: Boolean = false, other: Boolean = false, fsi: Boolean = true) =
@@ -609,23 +586,20 @@ class VoipCallPlanTest {
         assertFalse("the lock left the front: it came up", voipStartOverdue(1_000L, lockLeft = true, nowElapsedMs = 60_000L))
         assertTrue("a clock going backwards never hides the card", voipStartOverdue(1_000L, false, 999L))
         assertEquals(1_500L, VOIP_FSI_CHECK_MS)
-        assertTrue("the settle is well inside the check", VOIP_FSI_SETTLE_MS in 1 until VOIP_FSI_CHECK_MS)
     }
 
     // ---- design 59b §4: the platform's ring as Android's face ----------------------------------------------------
 
     @Test
     fun `59b - as the face with Android locked a ring with its full-screen intent gets no lock-up or wake of ours`() {
-        assertTrue(voipPlatformRing(face = true, androidLocked = true, hasFullScreen = true))
-        assertFalse("FSI_DENIED: the card at once, as before", voipPlatformRing(true, true, hasFullScreen = false))
-        assertFalse("Android open", voipPlatformRing(true, androidLocked = false, hasFullScreen = true))
-        assertFalse("own mode", voipPlatformRing(face = false, androidLocked = true, hasFullScreen = true))
+        assertTrue(voipPlatformRing(androidLocked = true, hasFullScreen = true))
+        assertFalse("FSI_DENIED: the card at once, as before", voipPlatformRing(true, hasFullScreen = false))
+        assertFalse("Android open", voipPlatformRing(androidLocked = false, hasFullScreen = true))
         assertEquals(LockStep(LockMode.LOCKED), step(LockMode.LOCKED, LockEvent.VoipRinging(platformRing = true)))
         assertEquals("another call still wins", LockStep(LockMode.LOCKED, recheck = true), step(LockMode.LOCKED, LockEvent.VoipRinging(ourCall = true, platformRing = true)))
-        assertEquals("own mode unchanged", LockStep(LockMode.LOCKED, showLock = true, wake = true), step(LockMode.LOCKED, LockEvent.VoipRinging()))
-        // Never the resumed lock's 17b send for the platform's ring; own mode's due as before.
-        assertFalse(voipFsiDue(5L, locked = true, dismissed = false, otherScreen = false, hasFullScreen = true, last = null, platformRing = true))
-        assertTrue(voipFsiDue(5L, locked = true, dismissed = false, otherScreen = false, hasFullScreen = true, last = null))
+        assertEquals("Android open: the lock's wake and card", LockStep(LockMode.LOCKED, showLock = true, wake = true), step(LockMode.LOCKED, LockEvent.VoipRinging()))
+        // Design 132: no resumed lock's 17b send at all.
+        assertFalse(src("lock/PinLockRuntime.kt").contains("voipFsiDue"))
     }
 
     private fun grace(
@@ -662,7 +636,6 @@ class VoipCallPlanTest {
         // What the grace writes: sent = false is CARD at once and never a later send.
         val platformTry = VoipFsiTry(1_000L, 4_000L, sent = false)
         assertEquals(VoipRingUi.CARD, voipRingUi(1_000L, true, false, false, true, platformTry, 4_001L))
-        assertFalse(voipFsiDue(1_000L, true, false, false, true, platformTry))
         assertEquals("during the grace the plain glance", VoipRingUi.WAIT, voipRingUi(1_000L, true, false, false, true, null, 2_000L))
     }
 
@@ -671,18 +644,14 @@ class VoipCallPlanTest {
         val runtime = src("lock/PinLockRuntime.kt")
         val phase = runtime.substringAfter("fun onVoipPhase(").substringBefore("\n    }\n")
         assertTrue(phase.contains("if (after != VoipPhase.RINGING) handler.removeCallbacks(voipGrace)"))
-        assertTrue(phase.contains("val platform = voipPlatformRing(AndroidLock.faceOn, AndroidLock.refrontHeld(app), VoipCalls.ringHasFullScreen)"))
+        assertTrue(phase.contains("val platform = voipPlatformRing(AndroidLock.refrontHeld(app), VoipCalls.ringHasFullScreen)"))
         assertTrue(phase.contains("LockEvent.VoipRinging(ours, !ours && telecom, emergency, alarm, platformRing = platform)"))
         assertTrue(phase.contains("if (platform) handler.postDelayed(voipGrace, VOIP_PLATFORM_GRACE_MS)"))
-        assertTrue(runtime.contains("platformRing = ringId == voipPlatformRingId,"))
         val grace = runtime.substringAfter("private val voipGrace: Runnable = Runnable {").substringBefore("\n    }\n")
         assertTrue(grace.contains("VoipGraceAct.WAIT -> handler.postDelayed(voipGrace, grace.waitMs)"))
         assertTrue(grace.contains("resumedSinceRing = lockResumed && (lockPausedAt ?: Long.MIN_VALUE) < ringId,"))
         assertTrue(grace.contains("show(app, wake = WakeKind.VOIP)"))
-        // Q59b-9: as the face the reopen needs IN_COMMUNICATION; own mode always.
-        assertTrue(voipReopenDue(face = false, audioInCommunication = false))
-        assertTrue(voipReopenDue(face = true, audioInCommunication = true))
-        assertFalse(voipReopenDue(face = true, audioInCommunication = false))
-        assertTrue(runtime.contains("if (!voipReopenDue(AndroidLock.faceOn, VoipCalls.inCommunication(it))) {"))
+        // Q59b-9: the reopen needs IN_COMMUNICATION.
+        assertTrue(runtime.contains("if (!VoipCalls.inCommunication(context)) {"))
     }
 }

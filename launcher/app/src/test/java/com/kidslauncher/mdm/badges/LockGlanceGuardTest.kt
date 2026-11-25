@@ -593,7 +593,7 @@ class LockGlanceGuardTest {
         // E7b's L1: the time-rule screen's send skips a ring it already sent this screen-on, whatever its instance.
         assertTrue(send.contains("reader.screenKey(clocks, inYield = !timeRuleScreen, timeRule = timeRuleScreen)"))
         assertTrue(body(alarmReader, "screenKey").contains("val kept = if (timeRule) screens.keys - notices.timeRuleSent else screens.keys"))
-        assertTrue(send.contains("typing = typing, coverWaits = key != null && KeyguardCover.mustWait(context),"))
+        assertTrue(send.contains("typing = typing, coverWaits = false,"))
         assertTrue(send.contains("reader.sendScreen(context, key, clocks)"))
         assertTrue(send.indexOf("noteOwnStart(") in 0 until send.indexOf("reader.sendScreen(context, key, clocks)"))
         assertTrue(body(runtime, "alarmScreenCheck").contains("if (!lockResumed) return"))
@@ -606,7 +606,7 @@ class LockGlanceGuardTest {
         assertTrue(body(activity, "onResume").contains("handler.postDelayed(alarmScreenSend, ALARM_SCREEN_SETTLE_MS)"))
         assertTrue(body(activity, "onPause").contains("handler.removeCallbacks(alarmScreenSend)"))
         assertTrue(body(activity, "onPause").contains("handler.removeCallbacks(alarmScreenCheck)"))
-        assertTrue(activity.contains("PinLockRuntime.sendAlarmScreen(this@PinLockActivity, typing = entered.isNotEmpty())"))
+        assertTrue(activity.contains("PinLockRuntime.sendAlarmScreen(this@PinLockActivity, typing = false)"))
         assertTrue(activity.contains("AlarmScreenStep.SEND -> handler.postDelayed(alarmScreenCheck, ALARM_SCREEN_CHECK_MS)"))
         assertTrue(activity.contains("PinLockRuntime.addScreenOnListener(alarmScreenOn)") && activity.contains("PinLockRuntime.removeScreenOnListener(alarmScreenOn)"))
         assertTrue(activity.contains("if (!resumed || !openDialogs.isEmpty()) return"))

@@ -80,11 +80,11 @@ object AndroidLock {
 
     /**
      * [PinLockRuntime.configure] (every apply, background thread), before the keyguard is written: the reset token kept
-     * active in every state ([WindowRelock.ensureAndroidResetToken], §3.6, design 132 §7.1), and the owned flag - owned
-     * with no credential left (removed on the phone) goes, and its rev. Returns whether we still own Android's
-     * credential. Android's PIN is never cleared here (Q1 (a)).
+     * active in every state ([WindowRelock.ensureAndroidResetToken], §3.6, design 132 §7.1), the owned flag - owned
+     * with no credential left (removed on the phone) goes, and its rev - and the password quality ([passwordQualityNow]).
+     * Returns whether we still own Android's credential. Android's PIN is never cleared here (Q1 (a)).
      */
-    fun configure(context: Context): Boolean = synchronized(this) {
+    fun configure(context: Context, dpm: DevicePolicyManager, admin: ComponentName, managed: Boolean): Boolean = synchronized(this) {
         val app = context.applicationContext
         val owned = try {
             PinLockStore.keyguardAndroid(app)
@@ -92,12 +92,42 @@ object AndroidLock {
             false
         }
         WindowRelock.ensureAndroidResetToken(app)
-        if (owned && !deviceSecure(app)) {
+        val secure = deviceSecure(app)
+        val stillOwned = if (owned && !secure) {
             val ok = PinLockStore.saveAndroid(app, owned = false, rev = null)
             Log.i(ANDROID_LOCK_TAG, "Android's PIN is gone - ours no more (stored: $ok)")
-            return@synchronized false
+            false
+        } else {
+            owned
         }
-        owned
+        passwordQualityNow(dpm, admin, passwordQuality(managed, stillOwned, secure))
+        stillOwned
+    }
+
+    /**
+     * Design 132 §4.5 (QA H1): `setPasswordQuality` written and read back - NUMERIC once Android has the Child PIN, so
+     * Settings › Screen lock offers no "None", "Swipe" or pattern; UNSPECIFIED otherwise. Deprecated for a plain device
+     * admin, supported for a Device Owner on API 34-37 (API 8, no SDK gate). A mismatch or a failure is logged; the next
+     * apply writes it again.
+     */
+    @Suppress("DEPRECATION") // setPasswordQuality: deprecated for device admins, still the Device Owner's call (design 132 §4.5).
+    private fun passwordQualityNow(dpm: DevicePolicyManager, admin: ComponentName, quality: Int) {
+        try {
+            if (dpm.getPasswordQuality(admin) != quality) {
+                dpm.setPasswordQuality(admin, quality)
+                Log.i(ANDROID_LOCK_TAG, "password quality: ${qualityName(quality)}")
+            }
+            val read = dpm.getPasswordQuality(admin)
+            if (read != quality) Log.w(ANDROID_LOCK_TAG, "password quality read back ${qualityName(read)}, wanted ${qualityName(quality)}")
+        } catch (e: Exception) {
+            Log.w(ANDROID_LOCK_TAG, "password quality ${qualityName(quality)} failed: ${e.javaClass.simpleName}")
+        }
+    }
+
+    private fun qualityName(quality: Int): String = when (quality) {
+        PASSWORD_QUALITY_NUMERIC -> "NUMERIC"
+        PASSWORD_QUALITY_UNSPECIFIED -> "UNSPECIFIED"
+        else -> "0x" + Integer.toHexString(quality)
     }
 
     /**
@@ -230,8 +260,8 @@ object AndroidLock {
     }
 
     /** What Settings' "Fingerprint" row asks of Android's lock ([com.kidslauncher.mdm.server.fingerprintRowShown]):
-     * CE `keyguard_android`, a secure keyguard, the stored `android_pin_rev` (null after a change on the phone, §3.7)
-     * and `keyguard_requested`. Anything unreadable counts against the row. */
+     * CE `keyguard_android`, a secure keyguard and the stored `android_pin_rev` (null after a change on the phone,
+     * §3.7). Anything unreadable counts against the row. */
     fun fingerprintLockState(context: Context): com.kidslauncher.mdm.server.FingerprintLockState {
         val app = context.applicationContext
         val pinRevKnown = try {
@@ -239,14 +269,7 @@ object AndroidLock {
         } catch (e: Exception) {
             false
         }
-        val requested = try {
-            PinLockStore.keyguardRequested(app)
-        } catch (e: Exception) {
-            false
-        }
-        return com.kidslauncher.mdm.server.FingerprintLockState(
-            owned = owned(app), deviceSecure = deviceSecure(app), pinRevKnown = pinRevKnown, requested = requested,
-        )
+        return com.kidslauncher.mdm.server.FingerprintLockState(owned = owned(app), deviceSecure = deviceSecure(app), pinRevKnown = pinRevKnown)
     }
 
     /** CE `keyguard_android`; unreadable = not ours. */

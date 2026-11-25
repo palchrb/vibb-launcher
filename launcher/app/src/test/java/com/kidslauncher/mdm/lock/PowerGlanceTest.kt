@@ -116,7 +116,7 @@ class PowerGlanceTest {
         assertTrue(receiver.contains("handler.postDelayed(powerCheck, POWER_RECHECK_MS)"))
         val check = runtime.substringAfter("private val powerCheck").substringBefore("\n    }\n")
         assertTrue(check.contains("powerRecheck(chromeLocked, lockResumed, powerAt, lockPausedAt, powerWake = wake, sosMarked = marked)"))
-        assertTrue("own mode keeps its back-off", check.contains("if (AndroidLock.faceOn) refrontAttempt = 0"))
+        assertTrue(check.contains("refrontAttempt = 0"))
         // A yield's pending recheck is replaced, not doubled: removed, then the check (which reposts one).
         assertTrue(check.indexOf("handler.removeCallbacks(refrontCheck)") in 0 until check.indexOf("markAndroidLoss()"))
         assertTrue(check.indexOf("markAndroidLoss()") < check.indexOf("runRefrontCheck()"))

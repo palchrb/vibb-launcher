@@ -1,6 +1,7 @@
 package com.kidslauncher.mdm.server
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -77,7 +78,7 @@ class ParentPinCallersTest {
         val pinTexts = listOf(
             "lock_unlock_code_wrong", "lock_unlock_code_locked_out",
             "settings_gate_no_pin", "toast_mdm_pause_needs_pin", "toast_play_install_mode_needs_pin",
-            "pin_lock_parent_wrong", "pin_lock_parent_locked_out", "parent_pin_",
+            "parent_pin_",
         )
         for ((path, text) in sources) {
             for (toast in Regex("Toast\\.makeText\\(([^)]*)\\)").findAll(text)) {
@@ -104,7 +105,8 @@ class ParentPinCallersTest {
         // Every entry opens through the one pre-check and shows its line: the four dialogs and the PIN lock.
         assertTrue("status.foreignAccess ->" in sources.getValue("ui/ParentPinDialog.kt"))
         assertTrue("ParentPinResult.ForeignAccessOn ->" in sources.getValue("ui/ParentPinDialog.kt"))
-        assertTrue("ParentPinDialog.opening(" in sources.getValue("lock/PinLockActivity.kt"))
+        // Design 132: the lock has no parent code any more.
+        assertFalse("ParentPin" in sources.getValue("lock/PinLockActivity.kt"))
         assertTrue("ParentPinDialog.show(" in sources.getValue("ui/settings/SettingsActivity.kt"))
         // The time-rule screen asks for no code (2026-11-01, PWA only).
         assertTrue("ParentPinDialog" !in sources.getValue("ui/LockActivity.kt"))

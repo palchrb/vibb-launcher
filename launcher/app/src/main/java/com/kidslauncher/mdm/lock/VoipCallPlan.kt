@@ -205,10 +205,6 @@ fun answerSilences(sent: VoipAnswerSent): Boolean = sent == VoipAnswerSent.ANSWE
 fun silenceAfterRefusedAnswer(silencedRing: Long?, answeredRing: Long?, silencedBeforeAnswer: Long?): Long? =
     if (answeredRing != null && silencedRing == answeredRing) silencedBeforeAnswer else silencedRing
 
-/** The lock has been resumed this long before it sends the ring's full-screen intent (17b QA #2):
- * the wake activity goes on top of it right after its first resume. */
-const val VOIP_FSI_SETTLE_MS = 300L
-
 /** A send from the lock "came up" if the lock left the front within this (17b): a refused
  * background start is silent. */
 const val VOIP_FSI_CHECK_MS = 1_500L
@@ -228,24 +224,17 @@ data class VoipFsiTry(
 const val VOIP_WAKE_WINDOW_MS = 2_000L
 
 /**
- * A pause that means the app's ring screen came up without our send (qa-17b-code #5): the lock
- * paused while its send was still settling ([sendPending]), or the wake activity was covered before
- * it finished itself ([wakeCovered]) - SystemUI launching the full-screen intent itself, or the
- * screen going off. Never our own wake activity going over the lock: asked for less than
- * [VOIP_WAKE_WINDOW_MS] ago and not gone yet.
+ * A pause that means the app's ring screen came up without our send (qa-17b-code #5): the wake activity was covered
+ * before it finished itself ([wakeCovered]) - SystemUI launching the full-screen intent itself, or the screen going
+ * off. Design 132: the resumed lock's own 17b send is gone, so a pause of the lock alone is never one.
  */
+@Suppress("UNUSED_PARAMETER")
 fun pauseIsTry(
-    sendPending: Boolean,
     wakeCovered: Boolean,
     wakeAskedAtElapsedMs: Long?,
     wakeGone: Boolean,
     nowElapsedMs: Long,
-): Boolean {
-    if (wakeCovered) return true
-    if (!sendPending) return false
-    val wakeComing = wakeAskedAtElapsedMs != null && !wakeGone && nowElapsedMs - wakeAskedAtElapsedMs in 0 until VOIP_WAKE_WINDOW_MS
-    return !wakeComing
-}
+): Boolean = wakeCovered
 
 /** The try after the lock (or the wake) left the front: this ring's try is marked left; with none
  * yet, a pause that [pauseIsTry] is one that came up by itself - nothing sent, the card from then on,
@@ -267,30 +256,12 @@ fun voipStartOverdue(sentAtElapsedMs: Long, lockLeft: Boolean, nowElapsedMs: Lon
     !lockLeft && nowElapsedMs - sentAtElapsedMs !in 0 until VOIP_FSI_CHECK_MS
 
 /**
- * Design 17b: a ring over the LOCKED lock shows the app's own ring screen first - the resumed lock
- * sends its full-screen intent once per ring - and our card only as the fallback. Never over
- * another call (ours or Telecom's, emergency included), the emergency flow or an alarm
- * ([otherScreen], 17b QA #5), never after Avvis ([dismissed]).
- */
-fun voipFsiDue(
-    ringId: Long?,
-    locked: Boolean,
-    dismissed: Boolean,
-    otherScreen: Boolean,
-    hasFullScreen: Boolean,
-    last: VoipFsiTry?,
-    /** Design 59b §4: the platform's ring ([voipPlatformRing]) - never the resumed lock's send; the grace
-     * ([voipRingStep]) writes this ring's try. */
-    platformRing: Boolean = false,
-): Boolean = ringId != null && locked && !dismissed && !otherScreen && hasFullScreen && last?.ringId != ringId && !platformRing
-
-/**
- * Design 59b §4 (the WhatsApp black screen, a race): as Android's face ([face]) with Android's secure keyguard locked
+ * Design 59b §4 (the WhatsApp black screen, a race): with Android's secure keyguard locked under the face
  * ([androidLocked]), a ring with its full-screen intent ([hasFullScreen]) is the platform's - SystemUI launches it
  * itself (`FullScreenIntentDecisionProvider`: not interactive, or the keyguard showing or occluded) and wakes the
- * screen; our lock-up, wake and 17b send would move the same activity again while it starts. Own mode: never.
+ * screen; our lock-up and wake would move the same activity again while it starts.
  */
-fun voipPlatformRing(face: Boolean, androidLocked: Boolean, hasFullScreen: Boolean): Boolean = face && androidLocked && hasFullScreen
+fun voipPlatformRing(androidLocked: Boolean, hasFullScreen: Boolean): Boolean = androidLocked && hasFullScreen
 
 /** Design 59b §4: how long the platform has for a ring's full-screen intent before the lock acts ([voipRingStep]). */
 const val VOIP_PLATFORM_GRACE_MS = 3_000L
@@ -342,14 +313,6 @@ fun voipRingStep(
     resumedSinceRing && androidLocked -> VoipGrace(VoipGraceAct.SEND)
     else -> VoipGrace(VoipGraceAct.PLATFORM)
 }
-
-/**
- * Design 59b §4 (Q59b-9): the lock's resume during a VoIP call sends the call screen again only with the audio in
- * `IN_COMMUNICATION` as Android's face - that tells the call from a ring that flipped to IN_CALL (a re-posted ring
- * notice) and never moves a ring screen again; a Back within the grace still gets the call screen back. Own mode:
- * as before.
- */
-fun voipReopenDue(face: Boolean, audioInCommunication: Boolean): Boolean = !face || audioInCommunication
 
 /**
  * The card is the fallback (17b): at once without a full-screen intent (Android dropped it), else

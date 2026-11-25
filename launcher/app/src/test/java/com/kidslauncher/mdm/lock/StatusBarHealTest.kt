@@ -371,8 +371,6 @@ class StatusBarHealTest {
         // the heal never replaces it.
         // (16e, qa-16e-code #3: before show while the boot's mark may hold the lock, after it otherwise.)
         val dispatch = body(runtime, "dispatch")
-        assertTrue(dispatch.contains("val chromeFirst = lockedEdge && bootMark != BootMarkState.Over"))
-        assertTrue(dispatch.contains("if (chromeFirst) refreshChromeNow(context)"))
-        assertTrue(dispatch.contains("if (lockedEdge && !chromeFirst) refreshChromeNow(context)"))
+        assertTrue(dispatch.contains("if (lockedEdge) refreshChromeNow(context)"))
     }
 }

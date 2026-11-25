@@ -13,13 +13,16 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.content.res.ResourcesCompat
 import com.kidslauncher.mdm.R
-import com.kidslauncher.mdm.lock.PinKeypadLayout
 
 /** Up to this many digits: parent PINs saved before design 24's 10-digit bound can be longer. */
 const val PARENT_PIN_MAX_DIGITS = 32
 
 /** The dot row shows this many dots at most, then "+n". */
 private const val DOTS_SHOWN = 12
+
+/** The keys: at least 48 dp (+4), 6 dp between the rows - the numbers of the lock's old keypad (PinKeypadLayout, gone with design 132). */
+private const val KEY_MIN_DP = 48f
+private const val KEY_GAP_DP = 6f
 
 /** One more digit, never past [PARENT_PIN_MAX_DIGITS]; only 0-9. */
 fun appendParentDigit(pin: String, digit: Char): String =
@@ -72,12 +75,12 @@ class ParentPinKeypad private constructor(private val root: View) {
     private fun build(container: LinearLayout) {
         val context = root.context
         val bold = ResourcesCompat.getFont(context, R.font.nunito_bold)
-        val size = dp(PinKeypadLayout.MIN_DP + 4f)
+        val size = dp(KEY_MIN_DP + 4f)
         listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "del").chunked(3).forEachIndexed { rowIndex, row ->
             val rowView = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-                    .apply { if (rowIndex > 0) topMargin = dp(PinKeypadLayout.GAP_DP) }
+                    .apply { if (rowIndex > 0) topMargin = dp(KEY_GAP_DP) }
             }
             for (label in row) {
                 val cell = FrameLayout(context).apply {

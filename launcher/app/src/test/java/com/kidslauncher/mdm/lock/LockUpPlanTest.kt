@@ -163,16 +163,6 @@ class LockUpPlanTest {
         assertTrue(dispatch.substring(unshown).substringBefore("\n        }").contains("lockOnTop = lockOnTopAfter(lockOnTop, LockTopEvent.SCREEN_ON_UNSHOWN)"))
     }
 
-    // ---- homeDarkResume -------------------------------------------------------------------------
-
-    @Test
-    fun `Home's dark resume - only after a dark lock-up, with the screen off, while LOCKED`() {
-        assertTrue(homeDarkResume(darkLockUp = true, interactive = false, locked = true))
-        assertFalse(homeDarkResume(darkLockUp = false, interactive = false, locked = true))
-        assertFalse("the screen is on", homeDarkResume(darkLockUp = true, interactive = true, locked = true))
-        assertFalse("not LOCKED", homeDarkResume(darkLockUp = true, interactive = false, locked = false))
-    }
-
     // ---- source pins (QA L6) --------------------------------------------------------------------
 
     @Test
@@ -209,7 +199,7 @@ class LockUpPlanTest {
         val clear = show.indexOf("lockOnTop = lockOnTopAfter(lockOnTop, LockTopEvent.START, sameLockUp = sameLockUp)")
         assertTrue(show, guard >= 0 && clear > guard)
         assertEquals(show, -1, show.substring(guard, clear).indexOf("}"))
-        assertTrue(clear < show.indexOf("bootMarkHolds("))
+        assertFalse(show.contains("bootMarkHolds("))
         assertEquals(1, Regex("fromLockUp = true").findAll(runtime).count())
         assertEquals(1, Regex("sameLockUp = event is LockEvent.ScreenOn").findAll(runtime).count())
     }
@@ -233,7 +223,7 @@ class LockUpPlanTest {
     @Test
     fun `the unlock never lands on Home over a live call - the wiring`() {
         val activity = code("java/com/kidslauncher/mdm/lock/PinLockActivity.kt")
-        assertTrue(body(activity, "leave").contains("go(lockLeave(kioskOn, startedLockTask, lockTaskRunning(), PinLockRuntime.callLiveNow(this), glanceInFront = inFront, androidFace = AndroidLock.faceOn))"))
+        assertTrue(body(activity, "leave").contains("go(lockLeave(kioskOn, startedLockTask, lockTaskRunning(), PinLockRuntime.callLiveNow(this), glanceInFront = inFront))"))
         assertEquals(1, Regex("lockLeave\\(").findAll(body(activity, "leave")).count())
         val live = body(runtime, "callLiveNow")
         assertTrue(live, live.contains("ourCall() || telecomInCall(context.applicationContext) || VoipCalls.phase != VoipPhase.NONE"))
@@ -258,40 +248,7 @@ class LockUpPlanTest {
         assertTrue(body(rt, "onLockDestroyed").contains("lockOnTop = lockOnTopAfter(lockOnTop, LockTopEvent.DESTROY)"))
         assertTrue(body(rt, "dispatch").contains("if (result.mode != LockMode.LOCKED) lockOnTop = lockOnTopAfter(lockOnTop, LockTopEvent.UNLOCKED)"))
         assertTrue(body(code("java/com/kidslauncher/mdm/lock/PinLockActivity.kt"), "onDestroy").contains("PinLockRuntime.onLockDestroyed()"))
-        // The dark mark ends at an interactive resume of the lock or Home.
-        assertTrue(body(rt, "onLockResumed").contains("val interactiveNow = interactive(context)"))
-        assertTrue(body(rt, "onLockResumed").contains("if (interactiveNow) darkLockUp = false"))
-        assertTrue(body(rt, "onHomeResumed").contains("if (interactive) darkLockUp = false"))
-    }
-
-    @Test
-    fun `Home's resume while dark - the night ground, nothing else, first`() {
-        val home = code("java/com/kidslauncher/mdm/ui/HomeActivity.kt")
-        assertTrue(body(home, "darkUnderLock").contains("homeDarkResume(PinLockRuntime.darkLockUp, interactive(), PinLockRuntime.mode == LockMode.LOCKED)"))
-        val resume = body(home, "onResume")
-        val branch = resume.indexOf("if (darkUnderLock()) {")
-        assertTrue(resume, branch >= 0)
-        val before = resume.substring(0, branch)
-        assertEquals("super.onResume(), resumedNow only", listOf("super.onResume()", "resumedNow = true"),
-            before.substringAfter("{").lines().map { it.trim() }.filter { it.isNotEmpty() })
-        val dark = resume.substring(branch).substringAfter("{").substringBefore("}")
-        // qa-32-s1-code L1: no lock task here - the lock's task is the focused one by then.
-        assertEquals(listOf("showNight()", "return"), dark.lines().map { it.trim() }.filter { it.isNotEmpty() })
-        // Everything else comes after it: the boot mark, the update fence, the time-rule screen, the lock.
-        for (after in listOf("PinLockRuntime.onHomeResumed(interactive())", "UpdateFence.onFront", "redirectToLockScreenIfLocked()",
-            "PinLockRuntime.show(", "PinLockRuntime.onHomeMarkUp()", "TsnetClient.connectFromPreferences")) {
-            assertTrue(after, resume.indexOf(after) > branch)
-        }
-        // onStart skips its renders and listeners on the same condition; they come at the next
-        // interactive start or resume.
-        val start = body(home, "onStart")
-        assertTrue(start, start.indexOf("if (darkUnderLock()) return") in 0 until start.indexOf("startWork()"))
-        assertTrue(resume.indexOf("startWork()") > branch)
-        val work = body(home, "startWork")
-        assertTrue(work.contains("if (started) return"))
-        for (part in listOf("BadgeStore.addListener(badgeListener)", "renderCallCard()", "renderMusicCard()", "registerContentObserver(")) {
-            assertTrue(part, work.contains(part))
-        }
+        assertFalse(rt.contains("darkLockUp"))
     }
 
     @Test

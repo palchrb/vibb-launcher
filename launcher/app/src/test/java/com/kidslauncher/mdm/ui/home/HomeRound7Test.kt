@@ -70,12 +70,11 @@ class HomeRound7Test {
 
     @Test
     fun `a Home press scrolls to the top only when it is the kid's press on Home's shown content`() {
-        assertTrue(homePressToTop(broughtByUs = false, contentWasUp = true, contentShown = true, darkLockUp = false, locked = false))
-        assertFalse("our own start (the lock leaving, the boot, an update)", homePressToTop(true, true, true, false, false))
-        assertFalse("Home wasn't up in front (a press from another app)", homePressToTop(false, false, true, false, false))
-        assertFalse("the night ground", homePressToTop(false, true, false, false, false))
-        assertFalse("a dark lock-up", homePressToTop(false, true, true, true, false))
-        assertFalse("LOCKED", homePressToTop(false, true, true, false, true))
+        assertTrue(homePressToTop(broughtByUs = false, contentWasUp = true, contentShown = true, locked = false))
+        assertFalse("our own start (the lock leaving, the boot, an update)", homePressToTop(true, true, true, false))
+        assertFalse("Home wasn't up in front (a press from another app)", homePressToTop(false, false, true, false))
+        assertFalse("the night ground", homePressToTop(false, true, false, false))
+        assertFalse("LOCKED", homePressToTop(false, true, true, true))
     }
 
     @Test
@@ -86,7 +85,7 @@ class HomeRound7Test {
         val onNewIntent = home.substringAfter("override fun onNewIntent(intent: Intent) {").substringBefore("\n    }\n")
         for (needed in listOf(
             "intent.getBooleanExtra(HomeFront.EXTRA_BROUGHT, false)", "contentWasUp = contentUp", "contentShown = contentShown",
-            "darkLockUp = PinLockRuntime.darkLockUp", "locked = PinLockRuntime.mode == LockMode.LOCKED",
+            "locked = PinLockRuntime.mode == LockMode.LOCKED",
             "if (!toTop) return", "closeOverlays()", "binding.homeGrid.smoothScrollToPosition(0)", "binding.homeContactsScroll.smoothScrollTo(0, 0)",
         )) {
             assertTrue(needed, onNewIntent.contains(needed))

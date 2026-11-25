@@ -27,11 +27,9 @@ const val PARENT_LEVEL_DECAY_MS = 24 * 60 * 60_000L
 const val PARENT_LEVEL_MAX = 8
 
 /** Where the parent PIN was typed (`entry` on the wire, design 24 §1). The time lock's `override` (its "Enter
- * unlock code") went on 2026-11-01 - the parent lifts a rule from the PWA only; the server still words older events. */
+ * unlock code") went on 2026-11-01 - the parent lifts a rule from the PWA only - and the PIN lock's "Parent code"
+ * (`pin_lock`) with design 132; the server still words older events. */
 enum class ParentPinEntry(val wire: String) {
-    /** The PIN lock's "Parent code": opens that lock only. */
-    PIN_LOCK("pin_lock"),
-
     /** The launcher's Settings gate. */
     SETTINGS("settings"),
 

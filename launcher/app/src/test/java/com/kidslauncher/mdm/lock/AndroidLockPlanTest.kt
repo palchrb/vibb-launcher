@@ -54,9 +54,9 @@ class AndroidLockPlanTest {
         }
         // configure derives the face from the policy's kid_lock and Android's credential; nothing reads kid_lock.keyguard.
         val configure = body(code("$lock/PinLockRuntime.kt"), "configure")
-        assertTrue(configure.contains("AndroidLock.face(app, dpm, admin, managed, newConfig != null, deviceSecure)"))
+        assertTrue(configure.contains("AndroidLock.face(app, dpm, admin, managed, kidPin, deviceSecure)"))
         assertTrue(body(code("$lock/AndroidLock.kt"), "face").contains("val face = androidFace(managed, hasKidPin, deviceSecure)"))
-        assertTrue(configure.indexOf("AndroidLock.configure(app)") in 0 until configure.indexOf("val deviceSecure ="))
+        assertTrue(configure.indexOf("AndroidLock.configure(app, dpm, admin, managed)") in 0 until configure.indexOf("val deviceSecure ="))
         val all = file("main/java").walk().filter { it.isFile && it.extension == "kt" }.map { code(it.path.substringAfter("src/")) }.joinToString("\n")
         assertFalse(all.contains("keyguard == \"android\""))
     }
@@ -182,7 +182,7 @@ class AndroidLockPlanTest {
         assertFalse(android.contains("reset(app, null"))
         assertEquals(1, Regex("""\breset\(app, """).findAll(android).count())
         val configure = body(android, "configure")
-        assertTrue(configure.contains("if (owned && !deviceSecure(app)) {"))
+        assertTrue(configure.contains("val stillOwned = if (owned && !secure) {"))
         assertEquals(1, Regex("owned = false").findAll(android).count())
         // Step 4's command, its reset failed, gives back exactly what it wrote ahead (a credential not ours stays not ours).
         assertTrue(body(android, "setFromCommand").contains("PinLockStore.saveAndroid(app, owned = owned, rev = before)"))
@@ -194,8 +194,8 @@ class AndroidLockPlanTest {
         assertEquals(KeyguardMode.ANDROID, keyguardMode(managed = true, deviceSecure = true))
         assertEquals(KeyguardMode.UNTOUCHED, keyguardMode(managed = true, deviceSecure = false))
         assertTrue(body(code("$lock/PinLockRuntime.kt"), "configure")
-            .contains("KeyguardCover.configure(app, dpm, admin, managed, newConfig != null, deviceSecure, guard.trippedAtMs != null)"))
-        assertTrue(code("$lock/KeyguardCover.kt").contains("keyguardMode(i.managed, i.deviceSecure)"))
+            .contains("KeyguardCover.configure(app, dpm, admin, managed, kidPin, deviceSecure, guard.trippedAtMs != null)"))
+        assertTrue(code("$lock/KeyguardCover.kt").contains("val wanted = keyguardMode(managed, deviceSecure)"))
     }
 
     @Test
@@ -331,16 +331,13 @@ class AndroidLockPlanTest {
     @Test
     fun `the features - Android mode's bits added and recorded, a parent's kept, the switch back takes out exactly ours`() {
         val parent = 0x40
-        val (on, added) = keyguardDisabledFeatures(parent, managed = true, cover = false, coverAdded = 0, android = true)
+        val (on, added) = keyguardDisabledFeatures(parent, managed = true, coverAdded = 0, android = true)
         assertEquals(parent or ANDROID_KEYGUARD_FEATURES or 2, on)
         assertEquals(ANDROID_KEYGUARD_FEATURES, added)
-        assertEquals("again: stable", on to added, keyguardDisabledFeatures(on, true, false, added, android = true))
-        val (off, after) = keyguardDisabledFeatures(on, managed = true, cover = false, coverAdded = added)
+        assertEquals("again: stable", on to added, keyguardDisabledFeatures(on, true, added, android = true))
+        val (off, after) = keyguardDisabledFeatures(on, managed = true, coverAdded = added, android = false)
         assertEquals(parent or 2, off)
         assertEquals(0, after)
-        val (fromCover, addedFromCover) = keyguardDisabledFeatures(KEYGUARD_FEATURES_ALL, true, false, KEYGUARD_FEATURES_ALL, android = true)
-        assertEquals(ANDROID_KEYGUARD_FEATURES or 2, fromCover)
-        assertEquals(ANDROID_KEYGUARD_FEATURES, addedFromCover)
     }
 
     private class FakePolicy(var features: Int = 0, var t: Long = 0L, var disabled: Boolean? = null, val failFeatures: Boolean = false, val dropCamera: Boolean = false) : KeyguardPolicy {
@@ -367,30 +364,28 @@ class AndroidLockPlanTest {
     fun `writeKeyguard ANDROID - the keyguard on, features recorded first, T, never setKeyguardDisabled(true)`() {
         val p = FakePolicy()
         var stored = -1
-        val flags = mutableListOf<Boolean>()
         val w = writeKeyguard(p, KeyguardMode.ANDROID, managed = true, coverAdded = 0, timeoutMs = { 30_000L },
-            storeCoverAdded = { check("features" !in p.writes); stored = it; true }, storeWritten = { flags += it; true })
+            storeCoverAdded = { check("features" !in p.writes); stored = it; true })
         assertEquals(KeyguardMode.ANDROID, w.mode)
-        assertTrue(w.lockMayRun)
-        assertNull(w.coverFailed)
+        assertNull(w.failed)
         assertEquals(listOf("disabled=false", "features", "t"), p.writes)
         assertEquals(ANDROID_KEYGUARD_FEATURES or 2, p.features)
         assertEquals(30_000L, p.t)
-        assertTrue("the cover's flag is never set", flags.isEmpty())
         assertTrue(secureCameraHeld(true, w.features))
         // Failing steps: reported, never a fallback, never disabled.
         for (q in listOf(FakePolicy(failFeatures = true), FakePolicy(dropCamera = true))) {
             val failed = writeKeyguard(q, KeyguardMode.ANDROID, true, 0, { null }, { true })
             assertEquals(KeyguardMode.ANDROID, failed.mode)
-            assertEquals("features", failed.coverFailed)
+            assertEquals("features", failed.failed)
             assertNull("the camera lock stays engaged", failed.features)
             assertFalse(q.writes.contains("disabled=true"))
         }
-        // Back to DISABLED (the rollback's apply): exactly ours out, T 0.
-        val back = writeKeyguard(p, KeyguardMode.DISABLED, true, stored, { 30_000L }, { stored = it; true })
+        // Back to UNTOUCHED (the credential gone): exactly ours out, T 0, the keyguard never disabled (design 132).
+        val back = writeKeyguard(p, KeyguardMode.UNTOUCHED, true, stored, { 30_000L }, { stored = it; true })
         assertEquals(2, p.features)
         assertEquals(0L, p.t)
-        assertEquals(true, back.disabled)
+        assertEquals(false, back.disabled)
+        assertFalse(p.writes.contains("disabled=true"))
     }
 
     // ---- pins -------------------------------------------------------------------------------------------------------
@@ -416,7 +411,7 @@ class AndroidLockPlanTest {
     fun `the glance's way out is Android's verdict - every leave as the face goes through faceStep with live reads`() {
         val activity = code("$lock/PinLockActivity.kt")
         // The face's unlock() calls: only from actAsFace's LEAVE and the pad's success.
-        val face = activity.substringAfter("fun closeAsk(").substringBefore("private val waitTicker")
+        val face = activity.substringAfter("fun closeAsk(").substringBefore("override fun onCreate(")
         assertEquals(2, Regex("unlock\\(").findAll(face).count())
         assertTrue(body(activity, "androidAnswered").contains("if (offs == PinLockRuntime.screenOffs && AndroidLock.step(this, FaceTrigger.PAD_SUCCEEDED) == FaceStep.LEAVE) {\n                leaveFromAsk = true\n                unlock(offs)\n            } else {\n                glance?.back()"))
         assertTrue(body(activity, "actAsFace").contains("FaceStep.LEAVE -> {"))
@@ -665,6 +660,22 @@ class AndroidLockPlanTest {
         }
         assertFalse(numericQualityMet("123"))
         assertFalse(numericQualityMet("12a4"))
+    }
+
+
+    @Test
+    fun `the quality is written at every apply, read back, the deprecation suppressed at that one call (§4_5)`() {
+        val android = code("$lock/AndroidLock.kt")
+        assertTrue(body(android, "configure").contains("passwordQualityNow(dpm, admin, passwordQuality(managed, stillOwned, secure))"))
+        val write = body(android, "passwordQualityNow")
+        assertTrue(write.contains("dpm.setPasswordQuality(admin, quality)"))
+        assertTrue(write.contains("val read = dpm.getPasswordQuality(admin)"))
+        val all = file("main/java").walk().filter { it.isFile && it.extension == "kt" }.toList()
+        assertEquals(listOf("AndroidLock.kt"), all.filter { code(it.path.substringAfter("src/")).contains("setPasswordQuality(") }.map { it.name })
+        // The suppression names deprecation only, never NewApi.
+        val raw = file("$lock/AndroidLock.kt").readText()
+        assertTrue(raw.contains("@Suppress(\"DEPRECATION\") // setPasswordQuality"))
+        assertFalse(raw.contains("NewApi"))
     }
 
 }

@@ -64,11 +64,11 @@ class PageLookScanTest {
         assertEquals(1, app.split("LauncherLocales.atUnlockedStart(").size - 1)
         val language = unlocked.indexOf("com.kidslauncher.mdm.ui.LauncherLocales.atUnlockedStart(this)")
         assertTrue(language in 0 until unlocked.indexOf("val setupStart"))
-        // Home: once, in onResume, after the lock's dark return.
+        // Home: once, in onResume.
         val home = sources.getValue("$root/ui/HomeActivity.kt")
         assertEquals(1, Regex("""\bPageLook\b""").findAll(home).count())
         val resume = home.substringAfter("override fun onResume()").substringBefore("\n    }\n")
-        assertTrue(resume.indexOf("if (darkUnderLock())") in 0 until resume.indexOf("PageLook.onHomeResumed(this)"))
+        assertTrue(resume.contains("PageLook.onHomeResumed(this)"))
         // Kid Settings: since step 2 the row is shown, and listens, in every build - in the layout as it is, never
         // hidden or gated on the build type.
         val settings = sources.getValue("$root/ui/kidsettings/KidSettingsActivity.kt")

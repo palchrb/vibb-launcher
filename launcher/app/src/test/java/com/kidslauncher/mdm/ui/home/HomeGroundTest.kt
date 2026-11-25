@@ -90,8 +90,8 @@ class HomeGroundTest {
         val night = body(home, "private fun showNight() {")
         assertTrue(night.contains("contentShown = false"))
         assertTrue(night.contains("setContentView(ground.root)"))
-        val dark = body(home, "override fun onResume() {")
-        assertTrue(dark.indexOf("if (darkUnderLock()) {") in 0 until dark.indexOf("startWork()"))
+        // Design 132: no dark lock-up brings Home under the lock any more.
+        assertFalse(home.contains("darkUnderLock"))
         val create = body(home, "override fun onCreate(")
         assertTrue(create.contains("setRecentsScreenshotEnabled(false)"))
         assertTrue(create.contains(".setBackgroundColor(Color.BLACK)"))

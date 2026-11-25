@@ -110,13 +110,3 @@ fun newIntentPauseKept(wasOnTop: Boolean, backstopAtMs: Long?, nowMs: Long): Boo
 fun screenOnUnshown(event: LockEvent, showLock: Boolean): Boolean =
     event is LockEvent.ScreenOn && !event.lockShowing && !showLock &&
         !(event.faceOnTop && !event.systemCall && event.voip == VoipPhase.NONE)
-
-/**
- * Design 32 step 1 item 3 (QA M1): Home brought under the lock while dark only shows its night
- * ground - no lock task (qa-32-s1-code L1: the lock's task is focused by then), no update fence, no
- * time-rule screen over the lock, no lock start and no boot-mark calls before the lock's own
- * creation. [darkLockUp]: a HOME_THEN_LOCK
- * lock-up since the last interactive resume of the lock or Home.
- */
-fun homeDarkResume(darkLockUp: Boolean, interactive: Boolean, locked: Boolean): Boolean =
-    darkLockUp && !interactive && locked
