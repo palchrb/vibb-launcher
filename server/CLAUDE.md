@@ -81,8 +81,10 @@ No prior programming experience - build features directly rather than explaining
   inbox events an hourly one (L1, `security::record_phone_event`, `parent_events::EVENTS_AN_HOUR`).
 - **A catalog app is pinned to its package and signing key (security review M10, server part).** `src/apk.rs` reads
   an APK's manifest `package` (binary XML) and its signer (SHA-256 hex of the first certificate of the v3 signer
-  Android picks for each SDK 34 to 37, else of the v2 block's first signer - one certificate for all four, else
-  unreadable; a second v2 or v3 block is unreadable too, `apk::phone_signer` - what `apksigner --print-certs` and the
+  Android picks for each SDK 34 to 37, or of the v2 block's first signer when there is no v3 block - one
+  certificate for all four, else unreadable; a v3 block with no signer for one of them is unreadable unless a v3.1
+  block is there, which keeps the original key as the pin; a second v2, v3 or v3.1 block is unreadable too,
+  `apk::phone_signer` - what `apksigner --print-certs` and the
   launcher's `SelfUpdate.signers` give). `tracked_apps`
   `sync_one_app` and the manual upload refuse a release whose package differs from `package_name` or whose signer
   differs from `signer_sha256` (migration 0062), and pin what the first release has (`store_pins`); our own two rows

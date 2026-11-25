@@ -463,7 +463,10 @@ Install Now), so a held or waiting release never reaches them and no contract ch
   shared user ID shares the other apps' permissions, which its own list doesn't show, and a `<manifest>` whose
   attributes can't all be read makes the list unreadable for the same reason. A first release (or one pinning the
   package anew) that declares one is refused for any app but ours (`check_new_package`, `CantCheck`), so only an
-  update joining one waits for the parent; sensitive names outside the set hold (`permissions`, the new names kept); "Ask me before every
+  update joining one waits for the parent. So an app that joins a shared user ID (the Termux plugins, for one) can't
+  be added to the catalog. One capped below 34 by `android:sharedUserMaxSdkVersion` (`0x0101064d`, by resource id,
+  once, a plain number other than 0) isn't counted: a new install on our phones doesn't join it. Sensitive names
+  outside the set hold (`permissions`, the new names kept); "Ask me before every
   update" (`always_ask`, D9) holds the rest (`always_ask`); else served. The pins are checked before (a release with
   another key is still refused, never offered for approval).
 - **The wait** (`tracked_apps.release_wait_hours`, 0-336, 48 for every GitHub and F-Droid row - f-droid.org's too, a
