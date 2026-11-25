@@ -125,6 +125,12 @@ impl Schema {
 /// SQL text as the comparison reads it: comments and whitespace dropped, quoted identifiers (`"x"`, `` `x` ``,
 /// `[x]`) unquoted, everything lowercased but a string literal's content.
 pub(crate) fn normalise(sql: &str) -> String {
+    normalise_with(sql, false)
+}
+
+/// [normalise], with `spaces` a whitespace run (or a comment) between two tokens kept as one space - for finding a
+/// keyword at a word's edge ([check_clauses]).
+fn normalise_with(sql: &str, spaces: bool) -> String {
     let mut out = String::with_capacity(sql.len());
     let chars: Vec<char> = sql.chars().collect();
     let mut i = 0;
@@ -181,7 +187,12 @@ pub(crate) fn normalise(sql: &str) -> String {
                 }
                 i += 2;
             }
-            c if c.is_whitespace() => i += 1,
+            c if c.is_whitespace() => {
+                if spaces && !out.is_empty() && !out.ends_with(' ') {
+                    out.push(' ');
+                }
+                i += 1;
+            }
             c => {
                 out.extend(c.to_lowercase());
                 i += 1;
@@ -191,34 +202,54 @@ pub(crate) fn normalise(sql: &str) -> String {
     out
 }
 
-/// The content of every `CHECK (...)` in a normalised `CREATE TABLE`, in order.
-fn check_clauses(normalised: &str) -> Vec<String> {
+/// The content of every `CHECK (...)` in a `CREATE TABLE`, normalised, in order. Found in the spaced form, so `CHECK`
+/// is a word of its own (not the end of `recheck` or of a type run into it).
+fn check_clauses(sql: &str) -> Vec<String> {
+    let spaced = normalise_with(sql, true);
+    let bytes = spaced.as_bytes();
+    let word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
     let mut out = Vec::new();
-    let bytes = normalised.as_bytes();
     let mut from = 0;
-    while let Some(at) = normalised[from..].find("check(") {
-        let start = from + at + "check(".len();
-        // Not the end of a longer word (a column named `recheck`).
-        let word_before = from + at > 0 && {
-            let b = bytes[from + at - 1];
-            b.is_ascii_alphanumeric() || b == b'_'
-        };
+    let mut in_string = false;
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\'' {
+            in_string = !in_string;
+            i += 1;
+            continue;
+        }
+        let at_check = !in_string
+            && spaced[i..].starts_with("check")
+            && (i == 0 || !word(bytes[i - 1]))
+            && i >= from;
+        if !at_check {
+            i += 1;
+            continue;
+        }
+        let mut open = i + "check".len();
+        if bytes.get(open) == Some(&b' ') {
+            open += 1;
+        }
+        if bytes.get(open) != Some(&b'(') {
+            i += 1;
+            continue;
+        }
+        let start = open + 1;
         let mut depth = 1;
         let mut end = start;
-        let mut in_string = false;
+        let mut quoted = false;
         while end < bytes.len() && depth > 0 {
             match bytes[end] {
-                b'\'' => in_string = !in_string,
-                b'(' if !in_string => depth += 1,
-                b')' if !in_string => depth -= 1,
+                b'\'' => quoted = !quoted,
+                b'(' if !quoted => depth += 1,
+                b')' if !quoted => depth -= 1,
                 _ => {}
             }
             end += 1;
         }
-        if !word_before {
-            out.push(normalised[start..end.saturating_sub(1)].to_string());
-        }
-        from = end.max(start);
+        out.push(normalise(&spaced[start..end.saturating_sub(1)]));
+        from = end;
+        i = end;
     }
     out
 }
@@ -242,21 +273,21 @@ pub(crate) async fn read(conn: &mut sqlx::SqliteConnection) -> Result<Schema, sq
     .fetch_all(&mut *conn)
     .await?;
     let mut schema = Schema::default();
-    for (kind, name, sql) in objects {
-        let sql = normalise(sql.as_deref().unwrap_or_default());
+    for (kind, name, raw) in objects {
+        let raw = raw.unwrap_or_default();
         match kind.as_str() {
             "trigger" => {
-                schema.triggers.insert(fold(&name), sql);
+                schema.triggers.insert(fold(&name), normalise(&raw));
             }
             "view" => {
-                schema.views.insert(fold(&name), sql);
+                schema.views.insert(fold(&name), normalise(&raw));
             }
             _ => {
                 let lower = fold(&name);
                 if lower.starts_with("sqlite_") || lower == "_sqlx_migrations" {
                     continue;
                 }
-                let table = read_table(conn, &name, &sql).await?;
+                let table = read_table(conn, &name, &raw).await?;
                 schema.tables.insert(lower, table);
             }
         }
@@ -267,7 +298,7 @@ pub(crate) async fn read(conn: &mut sqlx::SqliteConnection) -> Result<Schema, sq
 async fn read_table(
     conn: &mut sqlx::SqliteConnection,
     name: &str,
-    normalised_sql: &str,
+    sql: &str,
 ) -> Result<Table, sqlx::Error> {
     let columns: Vec<(String, String, i64, Option<String>, i64, i64)> = sqlx::query_as(
         "SELECT name, type, \"notnull\", dflt_value, pk, hidden FROM pragma_table_xinfo(?) ORDER BY cid",
@@ -355,7 +386,7 @@ async fn read_table(
         columns,
         indexes,
         foreign_keys,
-        checks: check_clauses(normalised_sql),
+        checks: check_clauses(sql),
     })
 }
 
@@ -407,10 +438,10 @@ mod tests {
         );
         assert_eq!(normalise("'it''s'"), "'it''s'");
         assert_eq!(
-            check_clauses(&normalise(
-                "CREATE TABLE t (a INT CHECK (a IN (1, 2)), recheck(x) INT, CHECK(a > 0))"
-            )),
-            ["ain(1,2)", "a>0"]
+            check_clauses(
+                "CREATE TABLE t (a INT CHECK (a IN (1, 2)), recheck INT, b TEXT CHECK(b != 'check(x)'), CHECK(a > 0))"
+            ),
+            ["ain(1,2)", "b!='check(x)'", "a>0"]
         );
         assert_eq!(
             where_clause(&normalise("CREATE INDEX i ON t (a, b) WHERE a IS NOT NULL")),
@@ -447,8 +478,8 @@ mod tests {
         let written = schema_after(&[
             "CREATE TABLE \"owners\" (\"id\" INTEGER PRIMARY KEY)",
             "CREATE TABLE \"items\" (\"id\" INTEGER PRIMARY KEY, \"title\" TEXT NOT NULL,\n\
-             \"kind\" TEXT DEFAULT 'a' CHECK (\"kind\" IN ('a', 'b')), UNIQUE (\"title\", \"kind\"),\n\
-             \"owner_id\" INTEGER REFERENCES \"owners\" (\"id\") ON DELETE CASCADE)",
+             \"kind\" TEXT DEFAULT 'a' CHECK (\"kind\" IN ('a', 'b')),\n\
+             \"owner_id\" INTEGER REFERENCES \"owners\" (\"id\") ON DELETE CASCADE, UNIQUE (\"title\", \"kind\"))",
             "CREATE INDEX \"items_by_owner\" ON \"items\" (\"owner_id\") WHERE \"owner_id\" IS NOT NULL",
             "CREATE TRIGGER \"items_gone\" AFTER DELETE ON \"owners\" BEGIN \
              DELETE FROM \"items\" WHERE \"owner_id\" = old.\"id\"; END",
