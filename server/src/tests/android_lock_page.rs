@@ -135,6 +135,14 @@ async fn one_lock_no_switch() {
     assert!(res.status.is_redirection());
     app.assert_lands(&res, &cookie).await;
     assert_eq!(pin_rows(&app, id).await.len(), 1, "the PIN goes out");
+    let by: Option<i64> = sqlx::query_scalar(
+        "SELECT requested_by FROM device_commands WHERE device_id = ? AND command = 'set_kid_pin'",
+    )
+    .bind(id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert!(by.is_some(), "the save's row names the parent");
     let policy = app.policy(&token).await;
     assert_eq!(policy["kid_lock"]["keyguard"], "android");
     let html = page(&app, &cookie, id).await;
@@ -511,6 +519,24 @@ async fn the_page_has_no_own_mode_words() {
         assert!(!html.contains(gone), "{gone}: {html}");
     }
     assert!(html.contains("android_credential"), "behind the ⓘ: {html}");
+
+    // Without the token (code QA M1): the fix alone, no "switch back"; relocks worded for Android's lock.
+    let mut state = lock_state("android", json!(1), false);
+    state["keyguard_relocks"] = json!(2);
+    report(&app, &token, &CAPS, state).await;
+    let html = page(&app, &cookie, id).await;
+    assert!(
+        html.contains("Vibb One can't change Android's PIN"),
+        "{html}"
+    );
+    assert!(html.contains("Unlock the phone once first."), "{html}");
+    assert!(
+        html.contains("Android's lock was open behind the lock screen"),
+        "{html}"
+    );
+    for gone in ["switch back", "its own lock", "Vibb One's lock"] {
+        assert!(!html.contains(gone), "{gone}: {html}");
+    }
 }
 
 /// A phone added on the Devices tab: without a Child PIN the policy has no `kid_lock` (no lock at all) and the page
@@ -1234,8 +1260,9 @@ mod queue {
         report(&app, &token, &CAPS, lock_state("android", json!(1))).await;
         let rows = pin_rows(&app, id).await;
         assert_eq!(rows.len(), 4);
-        // Refused: the parent's button retries, not the intake.
-        answer(&app, &token, rows[3].0, false, "refused: no_token").await;
+        // Refused: the parent's button retries, not the intake (a `no_token` refusal gets one retry once the token is
+        // on: `a_no_token_refusal_is_retried_once_when_the_token_comes_on`).
+        answer(&app, &token, rows[3].0, false, "refused: failed").await;
         report(&app, &token, &CAPS, lock_state("android", json!(1))).await;
         assert_eq!(pin_rows(&app, id).await.len(), 4);
     }
@@ -1316,6 +1343,77 @@ mod queue {
         assert_eq!(pin_rows(&app, id).await.len(), 2);
         assert_eq!(lock_page(&app, &cookie, id).await.matches(line).count(), 1);
         assert!(summary(&app, &cookie, id).await.contains(alarm));
+    }
+
+    /// Code QA L2 (design 132 §7.1, Koble til): a `set_kid_pin` refused `no_token` is tried once more by the intake when
+    /// the phone then reports its token on - and only once: a second `no_token` in a row waits for the parent.
+    #[tokio::test]
+    async fn a_no_token_refusal_is_retried_once_when_the_token_comes_on() {
+        let (app, cookie, id, token) = setup().await;
+        // Koble til with a screen lock from the setup wizard: Android's PIN isn't ours, the token escrowed.
+        let wizard = || lock_state_token("android", Value::Null, false);
+        report(&app, &token, &CAPS, wizard()).await;
+        save(&app, &cookie, id, "1357").await;
+        let sent = fetch(&app, &token).await.json()["pending_command"].clone();
+        answer(
+            &app,
+            &token,
+            sent["id"].as_i64().unwrap(),
+            false,
+            "refused: no_token",
+        )
+        .await;
+        // Still no token: nothing.
+        report(&app, &token, &CAPS, wizard()).await;
+        assert_eq!(pin_rows(&app, id).await.len(), 1);
+        // Unlocked once: the token is on - one retry, which heals.
+        let unlocked = || lock_state_token("android", Value::Null, true);
+        report(&app, &token, &CAPS, unlocked()).await;
+        assert_eq!(pin_rows(&app, id).await.len(), 2, "the retry");
+        report(&app, &token, &CAPS, unlocked()).await;
+        assert_eq!(pin_rows(&app, id).await.len(), 2, "waiting: no duplicate");
+        let sent = fetch(&app, &token).await.json()["pending_command"].clone();
+        assert_eq!(sent["pin"], "1357");
+        // Refused no_token again (the token went again): no second retry, whatever the report says.
+        answer(
+            &app,
+            &token,
+            sent["id"].as_i64().unwrap(),
+            false,
+            "refused: no_token",
+        )
+        .await;
+        report(&app, &token, &CAPS, unlocked()).await;
+        report(&app, &token, &CAPS, unlocked()).await;
+        assert_eq!(pin_rows(&app, id).await.len(), 2, "no loop");
+        // The phone that runs the current PIN never gets one.
+        let (app, cookie, id, token) = setup().await;
+        report(&app, &token, &CAPS, wizard()).await;
+        save(&app, &cookie, id, "1357").await;
+        let sent = fetch(&app, &token).await.json()["pending_command"].clone();
+        answer(
+            &app,
+            &token,
+            sent["id"].as_i64().unwrap(),
+            false,
+            "refused: no_token",
+        )
+        .await;
+        report(
+            &app,
+            &token,
+            &CAPS,
+            lock_state_token("android", json!(1), true),
+        )
+        .await;
+        assert_eq!(pin_rows(&app, id).await.len(), 1);
+    }
+
+    fn lock_state_token(keyguard: &str, pin_rev: Value, reset_token: bool) -> Option<Value> {
+        Some(
+            json!({ "active": true, "locked": true, "keyguard": keyguard, "pin_rev": pin_rev,
+                 "reset_token": reset_token }),
+        )
     }
 
     async fn lock_page(app: &TestApp, cookie: &str, id: i64) -> String {

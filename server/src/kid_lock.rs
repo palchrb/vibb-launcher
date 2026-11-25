@@ -20,6 +20,8 @@ pub const ANDROID_KEYGUARD_CAPABILITY: &str = "android_keyguard_v1";
 /// It never expires (like `lock`) and its row holds no PIN (`pending_command.pin` is filled at
 /// delivery).
 pub const SET_KID_PIN: &str = "set_kid_pin";
+/// The phone's answer to [SET_KID_PIN] while its reset token isn't active ([PinAnswer::NoToken]).
+const NO_TOKEN_ANSWER: &str = "refused: no_token";
 /// `kid_lock.keyguard`, always (design 132: an older launcher never falls back to its own lock), and a report's
 /// `lock_state.keyguard` while Android's PIN is the phone's gate.
 pub const KEYGUARD_ANDROID: &str = "android";
@@ -75,7 +77,9 @@ fn waiting_pin_row() -> String {
 /// enrollment is neither in flight (delivered within the re-delivery window and not used up, no
 /// answer yet: no duplicate) nor answered (a refusal, or an answer that didn't change the report,
 /// e.g. an unmanaged phone keeps reporting its own lock: never a loop; the parent's "Send again"
-/// retries). An answered row carried the PIN of the rev stored when it went out: the pop hands a
+/// retries). One exception (design 132 §7.1, Koble til): a newest row refused `no_token` is tried
+/// once more by a report whose `reset_token` is on and whose rev isn't the current one - unless the
+/// row before it was refused `no_token` too, so a token that keeps failing never loops. An answered row carried the PIN of the rev stored when it went out: the pop hands a
 /// row out only at the rev it read (S59-1). Reports and rows from before the enrollment are an
 /// earlier install's (S59-2, S59-3). One statement, so a save can run it in its own transaction.
 /// Returns whether a row was made.
@@ -85,10 +89,16 @@ pub async fn queue_pin_command<'e, E: sqlx::SqliteExecutor<'e>>(
     report: Option<&LockState>,
     requested_by: Option<i64>,
 ) -> Result<bool, sqlx::Error> {
+    // The newest row of this enrolment.
+    let newest = format!(
+        "(SELECT MAX(id) FROM device_commands WHERE device_id = ?1 AND command = ?2 \
+         AND requested_at >= {})",
+        crate::models::ENROLLED_AT
+    );
     // The last report's capabilities, as `device_api::last_capabilities` reads them.
     let sql = format!(
         "INSERT INTO device_commands (device_id, command, requested_by) \
-         SELECT device_id, ?2, ?10 FROM device_policy \
+         SELECT device_id, ?2, ?9 FROM device_policy \
          WHERE device_id = ?1 AND kid_pin_sealed IS NOT NULL \
            AND EXISTS (SELECT 1 FROM device_status s, json_each(CASE \
                WHEN json_valid(s.capabilities_json) THEN s.capabilities_json ELSE '[]' END) c \
@@ -97,12 +107,18 @@ pub async fn queue_pin_command<'e, E: sqlx::SqliteExecutor<'e>>(
                AND c.value = ?7) \
            AND NOT EXISTS (SELECT 1 FROM device_commands WHERE {waiting}) \
            AND (NOT ?3 OR ((?4 OR (?5 IS NOT NULL AND ?5 != kid_pin_rev)) \
-             AND NOT EXISTS (SELECT 1 FROM device_commands WHERE id = \
-               (SELECT MAX(id) FROM device_commands WHERE device_id = ?1 AND command = ?2 \
-                 AND requested_at >= {enrolled}) \
+             AND NOT EXISTS (SELECT 1 FROM device_commands WHERE id = {newest} \
                AND (acknowledged_at IS NOT NULL OR (cancelled_at IS NULL AND deliveries < ?8 \
-                    AND first_delivered_at > datetime('now', ?6))))))",
+                    AND first_delivered_at > datetime('now', ?6))))) \
+             OR (?10 AND (?5 IS NULL OR ?5 != kid_pin_rev) \
+               AND EXISTS (SELECT 1 FROM device_commands WHERE id = {newest} \
+                 AND acknowledged_at IS NOT NULL AND TRIM(result) = ?11) \
+               AND NOT EXISTS (SELECT 1 FROM device_commands WHERE id = \
+                 (SELECT MAX(id) FROM device_commands WHERE device_id = ?1 AND command = ?2 \
+                   AND requested_at >= {enrolled} AND id < {newest}) \
+                 AND TRIM(COALESCE(result, '')) = ?11)))",
         waiting = waiting_pin_row(),
+        newest = newest,
         enrolled = crate::models::ENROLLED_AT
     );
     let done = sqlx::query(&sql)
@@ -118,6 +134,8 @@ pub async fn queue_pin_command<'e, E: sqlx::SqliteExecutor<'e>>(
         .bind(ANDROID_KEYGUARD_CAPABILITY)
         .bind(crate::models::MAX_COMMAND_DELIVERIES)
         .bind(requested_by)
+        .bind(report.is_some_and(|r| r.reset_token))
+        .bind(NO_TOKEN_ANSWER)
         .execute(db)
         .await?;
     Ok(done.rows_affected() > 0)
@@ -360,16 +378,15 @@ pub struct LockCard {
     pub notes: Vec<LockNote>,
 }
 
-/// Why the phone's lock is off (`lock_state.inactive`). `no_pin` (no Child PIN yet) is none.
+/// Why the phone's lock is off (`lock_state.inactive`). `no_pin` (no Child PIN yet) is none, and
+/// so is design 132's `no_android_pin`: [lock_card] says it as [LockNote::NoAndroidPin] from
+/// [LockState::no_android_pin], quiet while the PIN is on its way (§4.5).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Inactive {
     /// Not managed: no app list and calls not managed.
     Unmanaged,
     /// The lock crashed several times in a row.
     CrashGuard,
-    /// Design 132: a Child PIN is stored and Android has no credential - [lock_card] says it as
-    /// [LockNote::NoAndroidPin], quiet while the PIN is on its way (§4.5), never as `Off`.
-    NoAndroidPin,
     /// A reason this server doesn't know (at most 64 characters, as stored), and own mode's
     /// words from an older launcher (`android_credential`, `keyguard_not_disabled`, `bad_hash`).
     Other(String),
@@ -378,10 +395,9 @@ pub enum Inactive {
 impl Inactive {
     pub fn parse(code: &str) -> Option<Inactive> {
         Some(match code {
-            "no_pin" => return None,
+            "no_pin" | "no_android_pin" => return None,
             "unmanaged" => Inactive::Unmanaged,
             "crash_guard" => Inactive::CrashGuard,
-            "no_android_pin" => Inactive::NoAndroidPin,
             other => Inactive::Other(other.to_string()),
         })
     }
@@ -468,7 +484,7 @@ impl PinAnswer {
         Some(match raw.trim() {
             "pin set" => PinAnswer::Set,
             "own lock" => PinAnswer::OwnLock,
-            "refused: no_token" => PinAnswer::NoToken,
+            NO_TOKEN_ANSWER => PinAnswer::NoToken,
             "refused: mismatch" => PinAnswer::Mismatch,
             "refused: no_pin" => PinAnswer::NoPin,
             "refused: failed" => PinAnswer::Failed,
@@ -610,15 +626,16 @@ impl LockNote {
                 None,
             ),
             // The fix behind the ⓘ alone (design 132 §4.4): send the kept copy again, or save the PIN again.
-            LockNote::Off(Inactive::NoAndroidPin) | LockNote::NoAndroidPin { .. } => Note {
+            LockNote::NoAndroidPin { stored } => Note {
                 warning: true,
                 title: w("device.lock.no_pin"),
                 value: None,
                 sub: None,
                 detail: None,
-                fix: Some(w(match self {
-                    LockNote::NoAndroidPin { stored: true } => "device.lock.no_pin_send",
-                    _ => "device.lock.no_pin_save",
+                fix: Some(w(if *stored {
+                    "device.lock.no_pin_send"
+                } else {
+                    "device.lock.no_pin_save"
                 })),
             },
             LockNote::Off(Inactive::Other(code)) => warning(
@@ -796,6 +813,9 @@ pub struct PhoneLock<'a> {
     pub android_capable: bool,
     /// Design 132 §4.5: a [SET_KID_PIN] of this enrolment is waiting or in flight ([on_its_way]).
     pub pin_on_its_way: bool,
+    /// The report is this enrolment's (`reported_at >= devices.enrolled_at`, as the queue rule reads
+    /// it; qa-59-step2-code S2P-4): only then is "Send again" offered.
+    pub this_enrolment: bool,
     /// Design 114b (code QA L1): the report's `setup.child_pin` says the phone has no PIN at all - the setup step
     /// `child_pin` and Lock Screen & PINs' no-PIN line say it, so [LockNote::PinNotChildPin] doesn't too.
     pub no_pin: bool,
@@ -840,13 +860,13 @@ pub fn lock_card(policy: &DevicePolicy, phone: &PhoneLock) -> LockCard {
         return card;
     };
     let runs_android = phone.runs_android();
-    match state.inactive.as_deref().and_then(Inactive::parse) {
-        None | Some(Inactive::NoAndroidPin) => {}
-        Some(off) => card.notes.push(LockNote::Off(off)),
+    if let Some(off) = state.inactive.as_deref().and_then(Inactive::parse) {
+        card.notes.push(LockNote::Off(off));
     }
     if state.no_android_pin() && !phone.pin_on_its_way {
+        // Code QA L4: "send again below" only where the button is.
         card.notes.push(LockNote::NoAndroidPin {
-            stored: policy.kid_pin_sealed.is_some(),
+            stored: offers_send_again(policy, phone),
         });
     }
     card.notes.extend(
@@ -903,7 +923,8 @@ pub fn pin_changed_on_phone(policy: &DevicePolicy, phone: &PhoneLock) -> bool {
         .any(|n| matches!(n, LockNote::PinNotChildPin { .. }))
 }
 
-/// "Send the Child PIN again" (design 59 §2.3): the phone can take the PIN, this server keeps a
+/// "Send the Child PIN again" (design 59 §2.3): the phone can take the PIN (a report of this
+/// enrolment with [ANDROID_KEYGUARD_CAPABILITY]), this server keeps a
 /// copy, the phone doesn't run the current one (it has no Android PIN, a PIN changed on the phone
 /// or another rev) and no command is waiting or in flight - the newest was answered (a refusal, or
 /// a success the phone's report didn't follow), never confirmed, or there is none.
@@ -915,6 +936,7 @@ pub fn offers_send_again(policy: &DevicePolicy, phone: &PhoneLock) -> bool {
         && state.pin_rev == Some(policy.kid_pin_rev);
     policy_kid_lock(policy).is_some()
         && policy.kid_pin_sealed.is_some()
+        && phone.this_enrolment
         && phone.android_capable
         && !phone.pin_on_its_way
         && !current
@@ -1547,6 +1569,7 @@ mod tests {
             state: Some(state),
             android_capable: true,
             pin_on_its_way: false,
+            this_enrolment: true,
             no_pin: false,
         }
     }
