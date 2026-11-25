@@ -1449,6 +1449,7 @@
 
   "device.filter.label": "Nettfilter",
   "device.filter.down": "Nede i {duration}",
+  "device.filter.off_until": "Av til {at}",
   "device.filter.down_info": "Telefonen prøver igjen selv. Hjelper det ikke, start telefonen på nytt.",
   "device.filter.info_label": "Om nettfilteret",
   "device.filter.info.before": "Det virker på alle nettverk, og barnet kan ikke slå det av. Listene for alle telefoner er under",

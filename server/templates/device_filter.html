@@ -30,6 +30,7 @@
                 <input type="hidden" name="section" value="filter">
                 <label class="row">
                     <span class="row-label">{{ self.t("device.filter.label") }}</span>
+                    {% if let Some(value) = paused_value %}<span class="row-value" data-value="filter-paused">{{ value }}</span>{% endif %}
                     <input type="checkbox" role="switch" class="sw" name="vpn_filter_enabled" value="on"{% if filter_on %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                 </label>
                 <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
