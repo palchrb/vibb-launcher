@@ -80,6 +80,55 @@ class BuildChainTest {
         }
     }
 
+    /** The files under [dir], relative to it ('/'-separated); none when it doesn't exist. */
+    private fun filesUnder(dir: File): List<String> =
+        if (!dir.isDirectory) emptyList()
+        else dir.walkTopDown().filter { it.isFile }.map { it.relativeTo(dir).invariantSeparatorsPath }.toList()
+
+    private fun workflowFilter(workflow: String): Regex {
+        val line = repo(".github/workflows/$workflow").readText()
+            .lineSequence().first { "git diff --name-only" in it && "grep -qE" in it }
+        return Regex(line.substringAfter("grep -qE '").substringBefore("'; then"))
+    }
+
+    /** Design 133 §6.2: a change to any contract runs the launcher's build, and one to a file the music app reads
+     * (contracts/music/, contracts/shipped/bridge-aidl/) runs the music app's. */
+    @Test
+    fun `the filters match every file under contracts`() {
+        val launcher = workflowFilter("launcher.yml")
+        val music = workflowFilter("music.yml")
+        val all = filesUnder(repo("contracts")).map { "contracts/$it" }
+        assertTrue("contracts/ has its README", "contracts/README.md" in all)
+        for (path in all) {
+            assertTrue("launcher.yml's filter covers $path", launcher.containsMatchIn(path))
+            val musicReads = path.startsWith("contracts/music/") || path.startsWith("contracts/shipped/bridge-aidl/")
+            if (musicReads) assertTrue("music.yml's filter covers $path", music.containsMatchIn(path))
+        }
+        assertTrue("music.yml's filter covers a new music contract", music.containsMatchIn("contracts/music/x.json"))
+        assertTrue(music.containsMatchIn("contracts/shipped/bridge-aidl/me/vibb/bridge/X.aidl"))
+    }
+
+    /** Design 133 §6.2: no file of a contract root has a copy in the module's own source sets, where it would shadow
+     * the contract (a leftover or re-added copy). The music app's ContractFilesTest checks its own module. */
+    @Test
+    fun `no contract has a copy in the launcher or music source sets`() {
+        val contracts = repo("contracts")
+        val src = module("src")
+        val musicSrc = File(repo("music"), "app/src")
+        for (root in listOf("core", "integrations", "music")) {
+            for (name in filesUnder(File(contracts, root))) {
+                assertFalse("$root/$name has a copy in test resources", File(src, "test/resources/$name").exists())
+            }
+        }
+        for (name in filesUnder(File(contracts, "shipped/launcher-assets"))) {
+            assertFalse("shipped/launcher-assets/$name has a copy in assets", File(src, "main/assets/$name").exists())
+        }
+        for (name in filesUnder(File(contracts, "shipped/bridge-aidl"))) {
+            assertFalse("$name has a copy in the launcher's aidl", File(src, "main/aidl/$name").exists())
+            assertFalse("$name has a copy in the music app's aidl", File(musicSrc, "main/aidl/$name").exists())
+        }
+    }
+
     /** L9: dependency verification (gradle/verification-metadata.xml): every artifact's SHA-256 is
      * checked, including the x86_64 CI's aapt2 that a local build never resolves. */
     @Test

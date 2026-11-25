@@ -262,6 +262,35 @@ fn server_workflows_pin_rust_and_build_natively() {
     }
 }
 
+/// Design 133 §6.2: a change to any file under `contracts/` the server reads runs its build (the bridge's AIDL is the
+/// one it doesn't read; the filter takes it too, which costs a run, not a miss).
+#[test]
+fn the_build_filter_matches_every_contract() {
+    let workflow = include_str!("../../../.github/workflows/server-ci.yml");
+    let line = workflow
+        .lines()
+        .find(|l| l.contains("grep -qE '^(server/"))
+        .expect("server-changes' build filter");
+    let pattern = line
+        .split("grep -qE '")
+        .nth(1)
+        .and_then(|rest| rest.split('\'').next())
+        .unwrap();
+    let filter = regex::Regex::new(pattern).unwrap();
+    let files = crate::contracts::all_files();
+    assert!(files.contains("README.md"));
+    for file in files {
+        if file.starts_with("shipped/bridge-aidl/") {
+            continue;
+        }
+        let path = format!("contracts/{file}");
+        assert!(
+            filter.is_match(&path),
+            "server-ci.yml's filter misses {path}"
+        );
+    }
+}
+
 /// Security review M2: data/ and what the server writes are the service user's alone, on a new
 /// install and after an update.
 #[test]

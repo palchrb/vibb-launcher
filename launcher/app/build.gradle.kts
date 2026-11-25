@@ -85,6 +85,9 @@ val versionCodeOverride = providers.gradleProperty("versionCode").orNull?.let {
 }
 val versionNameOverride = providers.gradleProperty("versionName").orNull
 
+// Design 133: the repo's one contracts/ folder (read below as source directories, never copied).
+val contracts = rootProject.layout.projectDirectory.dir("../contracts")
+
 android {
     namespace = "com.kidslauncher.mdm"
     compileSdk = 36
@@ -146,6 +149,15 @@ android {
     // review L13): checkReleaseHasTsnet fails it before anything compiles.
     if (!hasTsnet) {
         sourceSets.getByName("debug").java.srcDir("src/tsnetStub/java")
+    }
+
+    // Design 133: the files the server, the launcher and the music app share live once in the repo's contracts/
+    // folder (contracts/README.md). The test roots are test resources by their bare names; shipped/ holds what a
+    // release build compiles in (the bridge's AIDL, the built-in secure-DNS hosts asset).
+    sourceSets {
+        getByName("test").resources.srcDirs(contracts.dir("core"), contracts.dir("integrations"), contracts.dir("music"))
+        getByName("main").aidl.srcDir(contracts.dir("shipped/bridge-aidl"))
+        getByName("main").assets.srcDir(contracts.dir("shipped/launcher-assets"))
     }
 
     compileOptions {

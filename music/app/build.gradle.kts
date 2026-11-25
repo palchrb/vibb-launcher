@@ -27,6 +27,9 @@ val versionCodeOverride = providers.gradleProperty("versionCode").orNull?.let {
 }
 val versionNameOverride = providers.gradleProperty("versionName").orNull
 
+// Design 133: the repo's one contracts/ folder (read below as source directories, never copied).
+val contracts = rootProject.layout.projectDirectory.dir("../contracts")
+
 android {
     namespace = "me.vibb.music"
     compileSdk = 36
@@ -105,6 +108,13 @@ android {
         // ReportTest builds Media3's PlaybackException, whose constructor reads SystemClock (a stub
         // in JVM tests). No other test touches Android.
         unitTests.isReturnDefaultValues = true
+    }
+
+    // Design 133: what the music app shares with the server and the launcher lives once in the repo's contracts/
+    // folder (contracts/README.md): music/ as test resources by their bare names, the bridge's AIDL as main source.
+    sourceSets {
+        getByName("test").resources.srcDir(contracts.dir("music"))
+        getByName("main").aidl.srcDir(contracts.dir("shipped/bridge-aidl"))
     }
 }
 

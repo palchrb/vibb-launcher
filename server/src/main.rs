@@ -20,6 +20,8 @@ mod calendar_kid_events;
 mod catalog_holds;
 mod clock_skew;
 mod config;
+#[cfg(test)]
+mod contracts;
 mod crashes;
 mod device_key;
 mod device_routes;
