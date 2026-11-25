@@ -399,12 +399,13 @@ data class MotionFlags(
      * genuinely fresh fix ([freshFixMs], its time; `null` = none) clears both, whatever asked for it,
      * and [moving] says whether it was taken on the move. A failure clears [movedSinceTry] only after
      * the heartbeat's own `FIX` ([heartbeat]; L7: a failed `locate`, low-battery or crossing fix
-     * clears nothing) - the phone still from [nowMs] when it had moved before.
+     * clears nothing) - the phone still from [nowMs] when it had moved before. Design 134 D4: a [withheld] try (its scan
+     * inconclusive after a move, no fresh fix) is no failure - nothing clears.
      */
-    fun afterTry(firesAtStart: Int, freshFixMs: Long?, heartbeat: Boolean, nowMs: Long, moving: Boolean = false): MotionFlags = when {
+    fun afterTry(firesAtStart: Int, freshFixMs: Long?, heartbeat: Boolean, nowMs: Long, moving: Boolean = false, withheld: Boolean = false): MotionFlags = when {
         fires != firesAtStart -> this
         freshFixMs != null -> copy(movedSinceFresh = false, movedSinceTry = false, stillSinceMs = freshFixMs, movingAtFresh = moving)
-        !heartbeat || !movedSinceTry -> this
+        !heartbeat || withheld || !movedSinceTry -> this
         else -> copy(movedSinceTry = false, stillSinceMs = nowMs)
     }
 

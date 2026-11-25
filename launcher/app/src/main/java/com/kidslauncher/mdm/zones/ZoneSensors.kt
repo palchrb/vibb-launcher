@@ -161,10 +161,11 @@ object MotionGate {
     /** After one of our own attempts ([MotionFlags.afterTry]): a genuinely fresh fix ([freshFixMs])
      * or the heartbeat's try ([heartbeat]) arms the trigger again. One monitor with [fired]'s. True
      * when no fire came during the attempt (the count held). [moving]: the fresh fix was on the move
-     * ([fixMoving]) - no `STILL` or `QUIET` until one at rest. */
-    fun afterTry(context: Context, firesAtStart: Int, freshFixMs: Long?, heartbeat: Boolean, nowMs: Long, moving: Boolean): Boolean {
+     * ([fixMoving]) - no `STILL` or `QUIET` until one at rest. [withheld]: design 134 D4's inconclusive try - the flags
+     * stay, the trigger is armed again as after any heartbeat try. */
+    fun afterTry(context: Context, firesAtStart: Int, freshFixMs: Long?, heartbeat: Boolean, nowMs: Long, moving: Boolean, withheld: Boolean = false): Boolean {
         val held = synchronized(this) {
-            flags = flags.afterTry(firesAtStart, freshFixMs, heartbeat, nowMs, moving)
+            flags = flags.afterTry(firesAtStart, freshFixMs, heartbeat, nowMs, moving, withheld)
             flags.fires == firesAtStart
         }
         if (freshFixMs != null || heartbeat) ensureArmed(context, if (freshFixMs != null) "fresh" else "try")

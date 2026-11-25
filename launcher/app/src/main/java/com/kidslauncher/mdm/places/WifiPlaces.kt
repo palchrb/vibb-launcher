@@ -139,7 +139,10 @@ object WifiPlaces {
      * ([appleStillMotion]), the [stillVouch] an Apple fix may only renew (design 125 A9, H2). The attempt answers in
      * [renewed] (the vouched fix re-sent with `still: true`) and [notFresh] (a 2-min fallback fix or a cell fix:
      * reported, never fresh, M2, design 125b C9.4). [lastFresh]: the last fresh fix, whatever the motion - a cell fix
-     * inside its circle while it is under 4 h old is not reported (design 125b C9.3).
+     * inside its circle while it is under 4 h old is not reported (design 125b C9.3). Design 134: [heartbeat] - the
+     * heartbeat's own `FIX`; [mayWithhold] - after a move an inconclusive try may be withheld (D4, `mayWithhold`); the
+     * attempt answers in [inconclusive] (its last scan said nothing about the place, D2) and [withheld] (nothing
+     * reported: the scan was inconclusive and no fresh fix came, D4).
      */
     class Ask(
         val motion: Motion,
@@ -147,6 +150,8 @@ object WifiPlaces {
         val vouched: Location? = null,
         val stillVouch: Location? = null,
         val lastFresh: Location? = null,
+        val heartbeat: Boolean = false,
+        val mayWithhold: Boolean = false,
     ) {
         @Volatile var renewed = false
 
@@ -154,6 +159,10 @@ object WifiPlaces {
         @Volatile var renewedByApple = false
 
         @Volatile var notFresh = false
+
+        @Volatile var inconclusive: Inconclusive? = null
+
+        @Volatile var withheld = false
     }
 
     private val lock = Any()
@@ -308,8 +317,18 @@ object WifiPlaces {
     // --- Reading the radio (D10, D13, D17) ---
 
     /** What one read of the radio heard: the Wi-Fi results, the connected network, the usable cells (design 125b C2:
-     * registered first, at most 12). Never stored. */
-    private class Snapshot(val results: List<ScanAp>, val connected: Connected?, val cells: List<Heard>)
+     * registered first, at most 12) and, for a scan of an attempt, which results answer its request (design 134 D1,
+     * D2; `null` without a scan). Never stored. */
+    private class Snapshot(
+        val results: List<ScanAp>,
+        val connected: Connected?,
+        val cells: List<Heard>,
+        val answer: ScanAnswer? = null,
+        val request: ScanRequest? = null,
+    )
+
+    /** A scan's results and its request (design 134 D1). */
+    private class Scan(val results: List<ScanAp>, val request: ScanRequest)
 
     private fun wifi(context: Context) = context.applicationContext.getSystemService(WifiManager::class.java)
 
@@ -346,14 +365,17 @@ object WifiPlaces {
     )
 
     /** D13: the cached results when D9's fresh rule holds (>= 3 usable within 30 s, after the last move); else one
-     * `startScan` and its results within [SCAN_WAIT_MS] - refused or no answer: the cache (the 2-min fallback). */
-    private suspend fun scanNow(context: Context, movedAtElapsedMs: Long): List<ScanAp> {
+     * `startScan` and its results within [SCAN_WAIT_MS] - refused or no answer: the cache (the 2-min fallback). Design
+     * 134 D1: with the request's elapsed time and how it went, so the results that answer it can be told. */
+    private suspend fun scanNow(context: Context, movedAtElapsedMs: Long): Scan {
         val now = SystemClock.elapsedRealtime()
         val before = cached(context)
         val list = moving(context)
         val fresh = before.count { now - it.elapsedMs in 0..SCAN_FRESH_MS && it.elapsedMs > movedAtElapsedMs && usableAp(it.bssid, it.ssid, list) }
-        if (fresh >= SCAN_RESULTS_MIN) return before
-        val wm = wifi(context) ?: return before
+        if (fresh >= SCAN_RESULTS_MIN) return Scan(before, ScanRequest(now, ScanAsk.CACHE))
+        val wm = wifi(context) ?: return Scan(before, ScanRequest(now, ScanAsk.REFUSED))
+        var ask = ScanAsk.ANSWERED
+        val requestAt = SystemClock.elapsedRealtime()
         val done = CompletableDeferred<Unit>()
         val callback = object : WifiManager.ScanResultsCallback() {
             override fun onScanResultsAvailable() {
@@ -365,17 +387,26 @@ object WifiPlaces {
             // A debug build's hook may count the scan as throttled (design 134 §7); a release build always asks.
             @Suppress("DEPRECATION")
             when {
-                PlacesDebugHooks.scanRefused() || !wm.startScan() -> refused(if (wm.isWifiEnabled) "throttled" else "wifioff")
-                withTimeoutOrNull(SCAN_WAIT_MS) { done.await() } == null -> refused("unanswered")
+                PlacesDebugHooks.scanRefused() || !wm.startScan() -> {
+                    val on = wm.isWifiEnabled
+                    refused(if (on) "throttled" else "wifioff")
+                    ask = if (on) ScanAsk.REFUSED else ScanAsk.WIFI_OFF
+                }
+                withTimeoutOrNull(SCAN_WAIT_MS) { done.await() } == null -> {
+                    refused("unanswered")
+                    ask = ScanAsk.UNANSWERED
+                }
             }
         } catch (e: SecurityException) {
             refused("permission")
+            ask = ScanAsk.REFUSED
         } catch (e: Exception) {
             refused("failed")
+            ask = ScanAsk.REFUSED
         } finally {
             runCatching { wm.unregisterScanResultsCallback(callback) }
         }
-        return cached(context)
+        return Scan(cached(context), ScanRequest(requestAt, ask))
     }
 
     /** D4, D17: the connected network, with its metering from the active network's capabilities (merged through our VPN);
@@ -497,9 +528,20 @@ object WifiPlaces {
 
     private suspend fun snapshot(context: Context, keys: PlaceKeys, movedAtElapsedMs: Long): Snapshot = coroutineScope {
         val cells = async { readCells(context, keys) }
-        val results = scanNow(context, movedAtElapsedMs)
-        Snapshot(results, connected(context), cells.await())
+        val scan = scanNow(context, movedAtElapsedMs)
+        answered(scan, connected(context), cells.await(), movedAtElapsedMs)
     }
+
+    /** Design 134 D1, D2: [scan] as a snapshot with the results that answer its request; the connection read after the
+     * scan (a live BSSID must be among the answer). */
+    private fun answered(scan: Scan, connected: Connected?, cells: List<Heard>, movedAtElapsedMs: Long): Snapshot {
+        val answer = scanAnswer(scan.results, scan.request, connectedBssid(connected?.bssid), movedAtElapsedMs, SystemClock.elapsedRealtime())
+        return Snapshot(scan.results, connected, cells, answer, scan.request)
+    }
+
+    /** Design 134 D3: one more scan for [first]'s attempt, its cells kept. */
+    private suspend fun rescan(context: Context, first: Snapshot, movedAtElapsedMs: Long): Snapshot =
+        answered(scanNow(context, movedAtElapsedMs), connected(context), first.cells, movedAtElapsedMs)
 
     private fun hearing(context: Context, store: Store, snap: Snapshot, remember: Boolean): Hearing {
         val h = hear(snap.results, snap.connected, store.keys, moving(context), readings, SystemClock.elapsedRealtime())
@@ -962,7 +1004,7 @@ object WifiPlaces {
                 val streamMs = stream.all().map { it.elapsedRealtimeNanos / 1_000_000 }
                 if (snap.results.none { r -> streamMs.any { abs(it - r.elapsedMs) <= PAIR_STREAM_MS } } && networkOff(lm)) {
                     // Every cached result counts as before the move: the platform scans now.
-                    snap = Snapshot(scanNow(context, SystemClock.elapsedRealtime()), snap.connected, snap.cells)
+                    snap = Snapshot(scanNow(context, SystemClock.elapsedRealtime()).results, snap.connected, snap.cells)
                 }
                 taught = teachWith(context, store, snap, teaching(stream.all()), PAIR_STREAM_MS, movedAtElapsedMs, disagreement)
             }
@@ -1007,7 +1049,7 @@ object WifiPlaces {
             return coroutineScope {
                 // Without the table (a Keystore error) nothing is scanned, used or taught: GPS as before.
                 val snap = async { if (store == null) Snapshot(emptyList(), null, emptyList()) else snapshot(app, store.keys, ask.movedAtElapsedMs) }
-                suspend fun learned(): LearnedFix? = store?.let { lookup(app, it, snap.await(), ask.movedAtElapsedMs, disagreement) }
+                suspend fun learned(on: Snapshot? = null): LearnedFix? = store?.let { lookup(app, it, on ?: snap.await(), ask.movedAtElapsedMs, disagreement) }
                     ?.takeIf { standsAlone(it, movedSinceFresh) }
                 suspend fun gps(boundMs: Long, shortMs: Long = boundMs, stopEarly: suspend () -> Boolean = { false }) =
                     gpsTry(app, lm, store, snap, ask.movedAtElapsedMs, boundMs, accept, shortMs, stopEarly, disagreement = disagreement).fix
@@ -1019,18 +1061,18 @@ object WifiPlaces {
                 // wait for its fixed answer time; it is awaited only before [cellOnly].
                 val cellAsk = java.util.concurrent.atomic.AtomicReference<Deferred<Boolean>?>(null)
                 val askCells = cellAskAllowed(appleStillMotion(ask.motion), plan == AttemptPlan.LOCATE)
-                suspend fun appleFix(): LearnedFix? {
+                suspend fun appleFix(on: Snapshot? = null): LearnedFix? {
                     if (store == null || !appleAllowed(app)) return null
-                    val s = snap.await()
+                    val s = on ?: snap.await()
                     val (wifiAsked, cells) = askBeside(scope, if (askCells) ({ askAppleCells(app, store, s) }) else null) {
                         askApple(app, store, s, ask.movedAtElapsedMs)
                     }
-                    cellAsk.set(cells)
+                    if (cellAsk.get() == null) cellAsk.set(cells)
                     if (!wifiAsked) return null
                     return open(app)?.let { lookup(app, it, s, ask.movedAtElapsedMs, disagreement) }?.takeIf { standsAlone(it, movedSinceFresh) }
                 }
                 // Design 131: what confirmed the Wi-Fi fix, and what may become of it before GPS has a say.
-                suspend fun judge(fix: LearnedFix?): Judged? = fix?.let { judged(app, store, snap.await(), it, ask, disagreement) }
+                suspend fun judge(fix: LearnedFix?, on: Snapshot? = null): Judged? = fix?.let { judged(app, store, on ?: snap.await(), it, ask, disagreement) }
                 fun report(j: Judged, check: FixCheck?): Location? =
                     location(j.fix, check).takeIf(accept)?.also { ask.notFresh = !wifiFresh(j.fix, check) }
                 // A9 (H2): still means still - the vouch renewed, never replaced; with its own check (never a better one).
@@ -1052,11 +1094,28 @@ object WifiPlaces {
                         Kept.NONE -> null
                     }
                 }
+                // Design 134 D3: the snapshot whose answer the attempt ends with (the second scan's when it ran).
+                var last: Snapshot? = null
                 val kept = when (plan) {
                     // The lookup runs on the first scan beside GPS (code QA L5): independent of what the GPS teaches.
                     AttemptPlan.TOGETHER -> {
                         val early = async { judge(learned() ?: appleFix()) }
-                        keep(gps(GPS_MS), early.await())
+                        val first = keep(gps(GPS_MS), early.await())
+                        val s = snap.await()
+                        // Design 134 D3: after a move, an inconclusive first scan and no fresh fix - one more scan when a
+                        // fresh one could decide (the table's trusted networks, or the Apple lookup).
+                        val freshFirst = first != null && !ask.notFresh && !ask.renewed
+                        val appleMay = appleAllowed(app) && appleMayAskNow(app, KEY_APPLE_WAIT)
+                        val afterMove = ask.heartbeat && ask.motion == Motion.MOVED
+                        if (store != null && secondScanWorth(afterMove, s.answer, freshFirst, trustedNetworkCount(store.rows, nowMin()), appleMay)) {
+                            delay(secondScanWaitMs(s.request?.atElapsedMs ?: 0L, SystemClock.elapsedRealtime()))
+                            val again = rescan(app, s, ask.movedAtElapsedMs)
+                            last = again
+                            Log.i(LOG_TAG, "second scan " + (again.answer?.inconclusive?.wire ?: "conclusive"))
+                            keep(null, judge(learned(again) ?: appleFix(again), again)) ?: first
+                        } else {
+                            first
+                        }
                     }
                     AttemptPlan.LEARNED_FIRST -> {
                         val judged = judge(learned())
@@ -1082,6 +1141,14 @@ object WifiPlaces {
                         }
                         keep(fix, early.await())
                     }
+                }
+                // Design 134 D2, D4: the attempt's last scan said nothing and no fresh fix came - after a move nothing is
+                // reported (no cell fix, no unchecked or fallback fix, no last-known), and the flags stay as they were.
+                ask.inconclusive = (last ?: snap.await()).answer?.inconclusive
+                if (withheld(ask.mayWithhold, ask.inconclusive, kept != null && !ask.notFresh && !ask.renewed)) {
+                    ask.withheld = true
+                    Log.i(LOG_TAG, "attempt path=$plan result=withheld reason=${ask.inconclusive?.wire}")
+                    return@coroutineScope null
                 }
                 val result = kept ?: run {
                     cellAsk.get()?.await()

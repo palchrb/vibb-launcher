@@ -47,6 +47,9 @@ private const val KEY_FRESH_FIX = "fresh_fix_v1"
 private const val KEY_WIFI_DISAGREED = "wifi_disagreed"
 private const val KEY_RENEWED = "vouch_renewed_ms"
 private const val KEY_CAP_FAILS = "still_cap_fails_v1"
+
+/** Design 134 D4: the heartbeat's inconclusive tries after a move withheld in a row. */
+private const val KEY_INCONCLUSIVE = "inconclusive_tries"
 private const val KEY_BUDGET = "series_budget_v1"
 private const val KEY_CONTRADICTIONS = "motion_contradictions_v1"
 private const val KEY_DISTRUST_UNTIL = "motion_distrust_until_ms"
@@ -173,7 +176,7 @@ object ZoneWatch {
                     .remove(KEY_FENCES).remove(KEY_QUEUE).remove(KEY_LAST_BEAT)
                     .remove(KEY_MOCK_IGNORED).remove(KEY_MOCK_LAST).remove(KEY_MOCK_KEYS)
                     .remove(KEY_LAST_FRESH_FIX).remove(KEY_LAST_TRY).remove(KEY_BUDGET).remove(KEY_RENEWED)
-                    .remove(KEY_FRESH_FIX).remove(KEY_WIFI_DISAGREED).remove(KEY_CAP_FAILS)
+                    .remove(KEY_FRESH_FIX).remove(KEY_WIFI_DISAGREED).remove(KEY_CAP_FAILS).remove(KEY_INCONCLUSIVE)
                     .commit()
             }
         } catch (e: Exception) {
@@ -265,7 +268,7 @@ object ZoneWatch {
     /** A genuinely fresh fix: the vouch from now on; the cap's failed tries start over ([stillCapFailsAfter]). */
     fun stampFreshFix(context: Context, fix: QueuedFix) {
         prefs(context).edit().putLong(KEY_LAST_FRESH_FIX, fix.timeMs).putString(KEY_FRESH_FIX, ServerJson.encodeToString(QueuedFix.serializer(), fix))
-            .remove(KEY_CAP_FAILS).commit()
+            .remove(KEY_CAP_FAILS).remove(KEY_INCONCLUSIVE).commit()
     }
 
     /** Design 131: the last fresh fix while it is the one [lastFreshFixMs] names - the still vouch of a Wi-Fi fix (a
@@ -302,6 +305,15 @@ object ZoneWatch {
 
     fun stampStillCapFails(context: Context, fails: Int) {
         prefs(context).edit().putInt(KEY_CAP_FAILS, fails).commit()
+    }
+
+    /** Design 134 D4: the heartbeat's inconclusive tries after a move withheld in a row (0 = none); cleared by a fresh
+     * fix, a conclusive try, the try after [com.kidslauncher.mdm.places.INCONCLUSIVE_TRIES_MAX] and [forget]. */
+    fun inconclusiveTries(context: Context): Int = prefs(context).getInt(KEY_INCONCLUSIVE, 0)
+
+    fun stampInconclusiveTries(context: Context, tries: Int) {
+        val edit = prefs(context).edit()
+        (if (tries > 0) edit.putInt(KEY_INCONCLUSIVE, tries) else edit.remove(KEY_INCONCLUSIVE)).commit()
     }
 
     // --- A sensor that lies (design 124 D7) ---

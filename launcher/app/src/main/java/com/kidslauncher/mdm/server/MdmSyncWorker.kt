@@ -935,6 +935,8 @@ private suspend fun currentLocationReport(
     val stillFrom = if (stillOn) maxOf(lastFreshFix, ZoneWatch.vouchRenewedMs(context)) else lastOwnFix
     // Design 124 D5 (amended 2026-11-25): the failed tries since the vouch's 4 h ran out.
     val capFails = if (stillOn) ZoneWatch.stillCapFails(context) else 0
+    // Design 134 D4: the inconclusive tries after a move withheld in a row.
+    val inconclusiveTries = if (stillOn) ZoneWatch.inconclusiveTries(context) else 0
     val sync = syncLocationAction(
         policy = policy,
         stillOn = stillOn,
@@ -1009,6 +1011,8 @@ private suspend fun currentLocationReport(
         renewable?.let(::asLocation),
         stillVouch?.let(::asLocation),
         lastFreshSeen,
+        heartbeat = beat == Heartbeat.FIX,
+        mayWithhold = motionNow != null && com.kidslauncher.mdm.places.mayWithhold(beat == Heartbeat.FIX, motion, inconclusiveTries),
     )
     // The parent's `locate` waits up to EXPLICIT_FIX_BOUND_MS here, under the sync mutex: rare and asked for, and its
     // fix goes into this report; every other fix keeps its 15 s (preciseFix).
@@ -1034,7 +1038,14 @@ private suspend fun currentLocationReport(
         val moving = fresh != null &&
             fixMoving(if (fresh.hasSpeed()) fresh.speed else null, fresh.toQueued(), lastFreshQueued, intervalMs)
         // Only the heartbeat's own try clears "moved since try" on a failure (L7).
-        val held = MotionGate.afterTry(context, motionNow.fires, fresh?.time, heartbeat = beat == Heartbeat.FIX, nowMs = now, moving = moving)
+        val held = MotionGate.afterTry(context, motionNow.fires, fresh?.time, heartbeat = beat == Heartbeat.FIX, nowMs = now, moving = moving, withheld = places.withheld)
+        // Design 134 D4: the withheld tries in a row after a move; a conclusive try or a fresh fix ends the run.
+        val triesNow = if (beat == Heartbeat.FIX && motion == Motion.MOVED) {
+            com.kidslauncher.mdm.places.inconclusiveTriesAfter(inconclusiveTries, places.withheld)
+        } else {
+            inconclusiveTries
+        }
+        if (triesNow != inconclusiveTries) ZoneWatch.stampInconclusiveTries(context, triesNow)
         // A move during the attempt explains the distance: no contradiction then (QA L1); a learned fix is never the
         // new side of one (design 125 D15: a wrong Wi-Fi fix must not distrust the sensor).
         val satellite = fresh?.provider in VOUCHING_PROVIDERS
@@ -1051,6 +1062,7 @@ private suspend fun currentLocationReport(
             val result = when {
                 places.renewed -> "renewed"
                 fresh != null -> "fresh"
+                places.withheld -> "inconclusive reason=${places.inconclusive?.wire} n=$triesNow/${com.kidslauncher.mdm.places.INCONCLUSIVE_TRIES_MAX}"
                 else -> "none"
             }
             Log.i(ZONE_LOG_TAG, "Location heartbeat: ${beat ?: "forced"} result=$result moving=$moving")

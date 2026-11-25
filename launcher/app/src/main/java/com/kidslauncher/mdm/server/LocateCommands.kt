@@ -237,6 +237,11 @@ object LocateCommands {
             action == LocationAction.FRESH_BALANCED -> balancedFirst(context, lm)
             else -> requestFreshFix(context, lm, preciseFix(explicit && action == LocationAction.FRESH))?.takeIf { ZoneWatch.accept(context, it) }
         }
+        // Design 134 D4: an inconclusive try after a move is withheld - no last-known, no cached fix, nothing reported.
+        if (places?.withheld == true) {
+            TrustedClock.readGnss(context)
+            return null
+        }
         if (capTryAtMs != null) {
             val takes = com.kidslauncher.mdm.zones.capTryTakes(requested?.time, capTryAtMs, places?.notFresh == true, places?.renewed == true)
             if (takes && requested != null) saveCachedFix(context, requested)
