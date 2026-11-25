@@ -345,8 +345,9 @@ androidComponents {
 tasks.withType<Test>().configureEach {
     inputs.dir("src/release").withPathSensitivity(PathSensitivity.RELATIVE)
     inputs.dir("src/debug").withPathSensitivity(PathSensitivity.RELATIVE)
-    // Design 133: DnsFilterEngineTest reads the built-in secure-DNS hosts asset by path.
+    // Design 133: DnsFilterEngineTest reads the built-in secure-DNS hosts asset by path, MusicPlanTest the bridge's AIDL.
     inputs.dir(contracts.dir("shipped/launcher-assets")).withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.dir(contracts.dir("shipped/bridge-aidl")).withPathSensitivity(PathSensitivity.RELATIVE)
 }
 
 dependencies {

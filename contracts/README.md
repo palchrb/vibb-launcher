@@ -81,3 +81,6 @@ Prose written before 2026-11-25 names `server/testdata/<file>` (and the apps' co
 | `music/spotify_hosts.json` | 26c §6.2 | by hand (provisional until the DNS capture) | server `spotify::tests`; launcher `SpotifyHostsTest`; music `SpotifyHostsTest` |
 | `music/storytel_token_answers.json` | 58 §2.2 | by hand | server `tests::music_storytel`; launcher `StorytelTokenCourierTest`; music `StorytelBridgeTokenTest`; `scripts/fake-storytel.py` |
 | `shipped/launcher-assets/dns/doh_hosts.txt` | 67 §2.2 | by hand | launcher: the asset `dns/doh_hosts.txt` (`DnsFilterEngine`, a release build fails without it), `DnsFilterEngineTest`; server: compiled in (`dns_server::is_builtin_doh_host`), `dns_server::tests` |
+| `shipped/bridge-aidl/me/vibb/bridge/IMusicBridge.aidl` | 21 §2, 26c, 58 | by hand: append, never reorder | launcher and music AIDL source sets; launcher `MusicPlanTest` (method order), music `EpisodeArtTest` |
+| `shipped/bridge-aidl/me/vibb/bridge/ISpotifyTokenCallback.aidl` | 26c §5.5 | by hand | launcher and music AIDL source sets |
+| `shipped/bridge-aidl/me/vibb/bridge/IStorytelTokenCallback.aidl` | 58 §3 | by hand | launcher and music AIDL source sets |

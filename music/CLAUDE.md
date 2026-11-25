@@ -166,7 +166,8 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   own Sonos volume sets, design 26a §5.3) are read live from the managed config. The report always carries
   `audio_bytes` (the audio cache: what the limit counts) and `extra_bytes` (the played extras now, from the
   report's own plan, so the job's report says it too). The AIDL is
-  byte-identical with `launcher/` - append, never reorder; shared names are in `bridge_contract.json`.
+  the launcher's own, `../contracts/shipped/bridge-aidl/` (design 133) - append, never reorder; shared names are in
+  `../contracts/music/bridge_contract.json`.
 - The session gives another app's controller (the launcher, the system UI, Bluetooth, any app) the transport only:
   no `COMMAND_SET_MEDIA_ITEM`/`COMMAND_CHANGE_MEDIA_ITEMS`, and `onAddMediaItems`/`onSetMediaItems` refuse every
   package but ours (security review S-L2, `foreignPlayerCommands`, `mayChangeItems`). Only a trusted controller reads

@@ -603,7 +603,7 @@ class SourceScanTest {
         assertTrue(renderer.contains("val host = RemoteSpotifyHost(AndroidWebConnector(app), ports::after, { SpotifyEndpoints.webBase() }, log)"))
         assertFalse("the main process makes no web host", renderer.contains("SpotifyWebHost(app"))
         assertTrue(moduleFile("src/main/aidl/me/vibb/music/spotify/web/ISpotifyWeb.aidl").isFile)
-        assertFalse("never in the launcher bridge's folder", moduleFile("src/main/aidl/me/vibb/bridge").list().orEmpty().any { it.startsWith("ISpotifyWeb") })
+        assertFalse("never in the launcher bridge's folder", me.vibb.music.Fixtures.contractFile("shipped/bridge-aidl/me/vibb/bridge").list().orEmpty().any { it.startsWith("ISpotifyWeb") })
     }
 
     /** qa-26c-step5b-code M2: the WebView's console never reaches logcat; L2: the debug switch never meets a real token. */

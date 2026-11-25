@@ -138,9 +138,8 @@ directories in the same commit. The music library and an entry's episode list ar
 `music_listing_snapshot`, regenerated with `MUSIC_LIBRARY_SNAPSHOT_WRITE=1` / `MUSIC_LISTING_SNAPSHOT_WRITE=1`); the
 music app keeps byte-identical copies in `music/app/src/test/resources/` (with `music_icons.json`;
 `ContractFilesTest`), and a change goes into both in one commit. The launcher-music bridge's AIDL
-(`*/app/src/main/aidl/me/vibb/bridge/`) and the names both apps spell (`bridge_contract.json` in both apps'
-test resources) are byte-identical in `launcher/` and `music/` (`MusicPlanTest`, `BridgeTest`); new methods are
-appended. `contracts/music/music_state.json` is every `music_state` field: the server keeps them all, the launcher
+(`contracts/shipped/bridge-aidl/me/vibb/bridge/`, both apps' AIDL source directory) and the names both apps spell
+(`contracts/music/bridge_contract.json`) are kept once (`MusicPlanTest`, `BridgeTest`); new methods are appended. `contracts/music/music_state.json` is every `music_state` field: the server keeps them all, the launcher
 keeps the music app's, the music app sends exactly those. Spotify's host list `contracts/music/spotify_hosts.json`
 (design 26c §6.2; provisional until the DNS capture) is byte-identical in both apps' test resources
 (`spotify::tests::hosts_match_the_contract`, `ContractFilesTest`, `MusicPlanTest`); a change goes into all three in

@@ -118,6 +118,11 @@ android {
     }
 }
 
+// Design 133: EpisodeArtTest and SourceScanTest read the bridge's AIDL by path - an input of every unit test task.
+tasks.withType<Test>().configureEach {
+    inputs.dir(contracts.dir("shipped/bridge-aidl")).withPathSensitivity(PathSensitivity.RELATIVE)
+}
+
 kotlin {
     compilerOptions {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
