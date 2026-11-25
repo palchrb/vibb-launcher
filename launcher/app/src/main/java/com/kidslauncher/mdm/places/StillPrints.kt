@@ -141,7 +141,7 @@ internal object StillPrints {
         print = p
         printRead = true
         changeRing(context, ::ringTaken)
-        Log.i(LOG_TAG, "taken devices=${p.devices.size} cells=${p.cellCount}")
+        Log.i(LOG_TAG, "taken devices=${p.devices.size}")
     }
 
     /** D8 (QA M5): the print grown at a renewal where the rule held. */

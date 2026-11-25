@@ -1246,14 +1246,18 @@ object WifiPlaces {
                         val v = ask.vouchFix
                         val far = fresh && v != null &&
                             distanceM(v.latitude, v.longitude, result.latitude, result.longitude) > (v.accuracy ?: 0f) + (if (result.hasAccuracy()) result.accuracy else 0f)
-                        verdictEvent(print, shadowVerdict(print, printScan(material.heard, material.settled, material.cells), ask.elsewhere || far), at)
+                        verdictEvent(print, shadowVerdict(print, printScan(material.heard, material.settled), ask.elsewhere || far), at)
                     }
                     StillPrints.record(context, event)
                 }
                 Motion.STILL -> {
                     material ?: return
-                    val scan = printScan(material.heard, material.settled, material.cells)
-                    val clause = if (fresh) null else printMismatch(print, scan)
+                    val scan = printScan(material.heard, material.settled)
+                    // D15 (the owner's refinement): the registered cell counts only by a position the table already holds
+                    // (an own cell row, or an Apple cell row from design 125b's answers) - never a lookup for this.
+                    val vouch = ask.vouchFix?.let { VouchPoint((it.timeMs / 60_000).toInt(), it.latitude, it.longitude, it.accuracy ?: 0f) }
+                    val cellAway = !fresh && cellElsewhere(material.cells, open(context)?.rows ?: store.rows, now, vouch)
+                    val clause = if (fresh) null else printMismatch(print, scan, cellAway)
                     if (clause != null) {
                         // Code QA M1 (D16): a renewal in the same attempt is positive evidence of the place - it vetoes the
                         // mismatch, which is still recorded (flagged) for the owner's record.
@@ -1294,7 +1298,7 @@ object WifiPlaces {
             // Without a trusted sensor no heartbeat could use a print (D14): none is taken.
             val sensor = ask.motion != Motion.NO_SENSOR
             val taken = if (sensor && refusal == null && material != null && elapsed != null) {
-                takePrint(fresh.timeMs, elapsed, BootClock.bootCount(), SystemClock.elapsedRealtime(), nowMin, material.heard, material.settled, material.cells)
+                takePrint(fresh.timeMs, elapsed, BootClock.bootCount(), SystemClock.elapsedRealtime(), nowMin, material.heard, material.settled)
             } else {
                 null
             }

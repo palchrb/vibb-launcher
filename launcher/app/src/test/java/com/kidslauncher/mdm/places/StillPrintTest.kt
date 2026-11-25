@@ -35,7 +35,6 @@ class StillPrintTest {
 
     /** Home: our router in the living room, a mesh node, two neighbours' routers we hear every day. */
     private val settled = setOf("router-a", "mesh-a", "nb1-a", "nb2-a")
-    private val homeCells = listOf(cell("c-home", true), cell("c-n1", false), cell("c-n2", false))
 
     private fun homeScan(at: Long = 0L) = listOf(
         heard("router", level(2.5), at),
@@ -49,9 +48,9 @@ class StillPrintTest {
     private val fixTime = 1_800_000_000_000L - 1_800_000_000_000L % (24 * 60 * minute) + (7 * 60 + 30) * minute
 
     private fun homePrint(): StillPrint =
-        takePrint(fixTime, fixElapsed, boot, fixElapsed + 1_000, (fixTime / minute).toInt(), homeScan(fixElapsed), settled, homeCells)!!
+        takePrint(fixTime, fixElapsed, boot, fixElapsed + 1_000, (fixTime / minute).toInt(), homeScan(fixElapsed), settled)!!
 
-    private fun scan(list: List<Heard>, cells: List<Heard> = homeCells) = printScan(list, settled, cells)
+    private fun scan(list: List<Heard>) = printScan(list, settled)
 
     private fun at(m: Int) = EventAt((fixTime / minute).toInt() + m, fixElapsed + m * minute, boot)
 
@@ -79,9 +78,9 @@ class StillPrintTest {
         assertEquals(PrintRefusal.SCAN, printRefusal("gps", null, 8f, false, false, true, conclusive = false))
         // Paired within +-30 s of the fix: 30 s in, 31 s out.
         val list = listOf(heard("router", -45, fixElapsed + 30_000), heard("mesh", -55, fixElapsed - 31_000))
-        val p = takePrint(fixTime, fixElapsed, boot, fixElapsed, 0, list, settled, emptyList())!!
+        val p = takePrint(fixTime, fixElapsed, boot, fixElapsed, 0, list, settled)!!
         assertEquals(listOf("router"), p.devices.map { it.device })
-        assertNull(takePrint(fixTime, fixElapsed, boot, fixElapsed, 0, listOf(heard("router", -45, fixElapsed + 31_000)), settled, emptyList()))
+        assertNull(takePrint(fixTime, fixElapsed, boot, fixElapsed, 0, listOf(heard("router", -45, fixElapsed + 31_000)), settled))
         // Settled: days >= 2, never moved, not blocked, own Wi-Fi rows only.
         val rows = listOf(
             PlaceRow(RowKind.WIFI, "a", days = 2),
@@ -95,12 +94,11 @@ class StillPrintTest {
         val bands = listOf(heard("router", -50, key = "router-a"), heard("router", -44, key = "router-b"), heard("other", -30, key = "other-a"))
         assertEquals(listOf(PrintDevice("router", "net-router", -44, 2)), settledDevices(bands, setOf("router-a")))
         val many = (1..15).map { heard("d$it", -40 - it) }
-        val twelve = takePrint(fixTime, 0, boot, 0, 0, many, many.map { it.key }.toSet(), emptyList())!!
+        val twelve = takePrint(fixTime, 0, boot, 0, 0, many, many.map { it.key }.toSet())!!
         assertEquals((1..12).map { "d$it" }, twelve.devices.map { it.device })
-        // The home print: four devices, the serving cell and its neighbours.
+        // The home print: four devices, no cells (D15's cell witness is a position, not an id).
         val home = homePrint()
         assertEquals(listOf("router", "mesh", "nb1", "nb2"), home.devices.map { it.device })
-        assertEquals(PrintCells("c-home", "lte", listOf("c-n1", "c-n2")), home.cells)
     }
 
     @Test
@@ -189,11 +187,11 @@ class StillPrintTest {
         // Seen at home and at the school: it moved, so its row has a move and never makes a device settled.
         val rows = listOf(PlaceRow(RowKind.WIFI, "car-a", days = 9, moves = 1), PlaceRow(RowKind.WIFI, "router-a", days = 9))
         val keys = settledKeys(rows, 0)
-        val p = takePrint(fixTime, 0, boot, 0, 0, listOf(heard("car", -35), heard("router", -50)), keys, emptyList())!!
+        val p = takePrint(fixTime, 0, boot, 0, 0, listOf(heard("car", -35), heard("router", -50)), keys)!!
         assertEquals(listOf("router"), p.devices.map { it.device })
         // In the car 2 km on: would not (thin).
-        assertEquals(PrintReason.THIN, shadowVerdict(p, printScan(listOf(heard("car", -35)), keys, emptyList()), false).reason)
-        assertNull(printMismatch(p, printScan(listOf(heard("x", -60), heard("y", -62), heard("z", -70)), keys, emptyList())))
+        assertEquals(PrintReason.THIN, shadowVerdict(p, printScan(listOf(heard("car", -35)), keys), false).reason)
+        assertNull(printMismatch(p, printScan(listOf(heard("x", -60), heard("y", -62), heard("z", -70)), keys), cellElsewhere = true))
     }
 
     @Test
@@ -217,8 +215,8 @@ class StillPrintTest {
         val one = scanAnswer(listOf(ScanAp("00:00:5e:00:53:01", "Hytta", null, 2437, -60, 1_500)), ScanRequest(1_000, ScanAsk.ANSWERED), null, 0, 2_000)
         assertTrue(one.conclusive)
         assertFalse(secondScanWorth(true, one, false, 5, true))
-        val cabin = takePrint(fixTime, 0, boot, 0, 0, listOf(heard("cabin", -60)), setOf("cabin-a"), emptyList())!!
-        assertEquals(PrintReason.THIN, shadowVerdict(cabin, printScan(listOf(heard("cabin", -60)), setOf("cabin-a"), emptyList()), false).reason)
+        val cabin = takePrint(fixTime, 0, boot, 0, 0, listOf(heard("cabin", -60)), setOf("cabin-a"))!!
+        assertEquals(PrintReason.THIN, shadowVerdict(cabin, printScan(listOf(heard("cabin", -60)), setOf("cabin-a")), false).reason)
         // A friend's house, not connected: five unknown APs, a fresh answer - conclusive, no second scan.
         val five = (1..5).map { ScanAp("00:00:5e:00:54:%02x".format(it), "F$it", null, 5180, -60 - it, 1_500) }
         assertTrue(scanAnswer(five, ScanRequest(1_000, ScanAsk.ANSWERED), null, 0, 2_000).conclusive)
@@ -248,8 +246,8 @@ class StillPrintTest {
     fun `rows 10 to 12 - a scan mismatch ends STILL, the Jelly's poor scan and an AP reboot don't`() {
         val p = homePrint()
         // Row 10: the friend's house 3 km off after a car ride the sensor missed - five unknown APs: a wifi mismatch.
-        val friends = scan((1..5).map { heard("f$it", -55 - 3 * it) }, cells = listOf(cell("c-far", true), cell("c-far2", false)))
-        assertEquals(MismatchClause.WIFI, printMismatch(p, friends))
+        val friends = scan((1..5).map { heard("f$it", -55 - 3 * it) })
+        assertEquals(MismatchClause.WIFI, printMismatch(p, friends, cellElsewhere = false))
         val e = mismatchEvent(p, MismatchClause.WIFI, friends, at(241))
         assertEquals("mismatch clause=wifi devices=0/4", eventText(e))
         // STILL ends: moved since the fresh fix, not since the try - no still, and the next try runs as after a fire.
@@ -277,29 +275,46 @@ class StillPrintTest {
         assertEquals(OutcomeClass.UNJUDGED, ringAfterFix(ring, fixAt(272, 3_000.0, movedAt = (fixElapsed + 250 * minute)), vouch, p.fixMin).events.single().outcome)
         // Row 11: the Jelly Star's day - a poor scan older than the request is inconclusive (no mismatch is asked);
         // a fresh answer of one AP that isn't the print's is too thin to say elsewhere; four home devices: none.
-        assertNull(printMismatch(p, scan(listOf(heard("x", -80)))))
-        assertNull(printMismatch(p, scan(homeScan())))
+        assertNull(printMismatch(p, scan(listOf(heard("x", -80))), false))
+        assertNull(printMismatch(p, scan(homeScan()), false))
         // Row 12: one device rebooting, the others heard - no mismatch; all four gone, three neighbours heard - wifi.
-        assertNull(printMismatch(p, scan(homeScan().filter { it.device != "router" })))
-        assertEquals(MismatchClause.WIFI, printMismatch(p, scan(listOf(heard("x", -60), heard("y", -70), heard("z", -75)))))
+        assertNull(printMismatch(p, scan(homeScan().filter { it.device != "router" }), false))
+        assertEquals(MismatchClause.WIFI, printMismatch(p, scan(listOf(heard("x", -60), heard("y", -70), heard("z", -75))), false))
         // Guards: a print of fewer than 3 devices never decides.
-        assertNull(printMismatch(p.copy(devices = p.devices.take(2)), friends))
-        // Code QA H1: cells only back a Wi-Fi absence - home's Wi-Fi heard and every cell new (a still phone's serving
-        // cell flips): no mismatch.
-        val homeWifi = homeScan()
-        assertNull(printMismatch(p, scan(homeWifi, listOf(cell("c-x", true), cell("c-y", false)))))
-        // A thin answer without any of home's devices (a cabin of one or two networks after a missed car ride): the cells
-        // decide - the same radio, none shared.
+        assertNull(printMismatch(p.copy(devices = p.devices.take(2)), friends, cellElsewhere = true))
+        // Code QA H1: cells only back a Wi-Fi absence - home's Wi-Fi heard, the cell placed far away: no mismatch.
+        assertNull(printMismatch(p, scan(homeScan()), cellElsewhere = true))
+        // A thin answer without any of home's devices (a cabin of one or two networks after a missed car ride): the cell
+        // decides, by its position only.
         val thin = listOf(heard("cabin", -60), heard("cabin2", -75))
-        assertEquals(MismatchClause.CELL, printMismatch(p, scan(thin, listOf(cell("c-x", true), cell("c-y", false)))))
-        assertNull(printMismatch(p, scan(thin, listOf(cell("c-x", true, radio = "nr"), cell("c-y", false)))))
-        assertNull(printMismatch(p, scan(thin, listOf(cell("c-x", true), cell("c-n2", false)))))
-        assertNull(printMismatch(p, scan(thin, listOf(cell("c-x", false)))))
-        assertNull(printMismatch(p.copy(cells = PrintCells()), scan(thin, listOf(cell("c-x", true)))))
-        assertNull(printMismatch(p, scan(thin)))
+        assertEquals(MismatchClause.CELL, printMismatch(p, scan(thin), cellElsewhere = true))
+        assertNull(printMismatch(p, scan(thin), cellElsewhere = false))
+        // The owner's refinement: the registered cell is elsewhere only by a known position further than its range, the
+        // vouch's accuracy and 1 km - another cell id at the same place is not.
+        val now = (fixTime / minute).toInt()
+        fun cellRow(key: String, metresNorth: Double, range: Float, apple: Boolean = false) = PlaceRow(
+            if (apple) RowKind.APPLE_CELL else RowKind.CELL, key, lat = north(metresNorth), lng = 0.0, rangeM = range,
+            occasions = if (apple) 0 else CELL_OCCASIONS, lastTeachMin = if (apple) now + 60 * 24 * 30 else 0,
+        )
+        val rows = listOf(cellRow("c-home", 300.0, 800f), cellRow("c-flip", 600.0, 1_200f), cellRow("c-far", 5_000.0, 800f, apple = true))
+        // A different cell at the same place (a still phone's serving cell flipped): not elsewhere - no mismatch.
+        assertFalse(cellElsewhere(listOf(cell("c-flip", true)), rows, now, vouch))
+        assertNull(printMismatch(p, scan(thin), cellElsewhere(listOf(cell("c-flip", true)), rows, now, vouch)))
+        // A cell placed 5 km away (Apple's answer, already in the table) with no home Wi-Fi: a cell mismatch.
+        assertTrue(cellElsewhere(listOf(cell("c-far", true), cell("c-home", false)), rows, now, vouch))
+        assertEquals(MismatchClause.CELL, printMismatch(p, scan(thin), cellElsewhere(listOf(cell("c-far", true)), rows, now, vouch)))
+        // Just past range + accuracy + 1 km counts, just within doesn't (800 + 10 + 1000 = 1810 m).
+        assertTrue(cellElsewhere(listOf(cell("c-x", true)), listOf(cellRow("c-x", 1_811.0, 800f)), now, vouch))
+        assertFalse(cellElsewhere(listOf(cell("c-x", true)), listOf(cellRow("c-x", 1_809.0, 800f)), now, vouch))
+        // Unknown position (no row, an untrusted own row, Apple's stale), no registered cell, no vouch: never.
+        assertFalse(cellElsewhere(listOf(cell("c-unknown", true)), rows, now, vouch))
+        assertFalse(cellElsewhere(listOf(cell("c-x", true)), listOf(cellRow("c-x", 9_000.0, 800f).copy(occasions = 1)), now, vouch))
+        assertFalse(cellElsewhere(listOf(cell("c-far", true)), rows.map { it.copy(lastTeachMin = now - 1) }, now, vouch))
+        assertFalse(cellElsewhere(listOf(cell("c-far", false)), rows, now, vouch))
+        assertFalse(cellElsewhere(listOf(cell("c-far", true)), rows, now, null))
         // Code QA L4: three APs of one router are one device - too thin for the wifi clause.
         val oneRouter = listOf(heard("r", -60, key = "r-a"), heard("r", -62, key = "r-b"), heard("r", -70, key = "r-c"))
-        assertNull(printMismatch(p, scan(oneRouter)))
+        assertNull(printMismatch(p, scan(oneRouter), false))
         // Code QA M1: a renewal vetoes it - recorded, flagged, judged as any mismatch, but it ended nothing.
         val vetoed = mismatchEvent(p, MismatchClause.WIFI, friends, at(241), vetoed = true)
         assertEquals("mismatch clause=wifi devices=0/4 vetoed", eventText(vetoed))
@@ -341,7 +356,7 @@ class StillPrintTest {
         assertTrue(encodeRing(full).size < 20_000)
         assertEquals(p, decodePrint(encodePrint(p)))
         assertTrue(encodePrint(p.copy(devices = (1..12).map { PrintDevice("%016x".format(it), "%016x".format(it), -50, 2) })).size < 1024)
-        val bumped = encodePrint(p).also { it[3] = 2 }
+        val bumped = encodePrint(p).also { it[3] = (PRINT_FORMAT_VERSION + 1).toByte() }
         assertNull(decodePrint(bumped))
         assertNull(decodeRing(encodePrint(p)))
         assertNull(decodePrint(ByteArray(5)))
@@ -357,7 +372,7 @@ class StillPrintTest {
         ring = ringWith(ring, mismatchEvent(p, MismatchClause.WIFI, scan(listOf(heard("x", -60))), at(30)), at(30).atMin)
         ring = ringDropped(ring, DropReason.REPLACED)
         val lines = dumpLines(p, ring, at(40).atMin, fixElapsed + 41 * minute)
-        assertEquals("still-print (design 134): print devices=4 cells=3 age=40 min", lines[0])
+        assertEquals("still-print (design 134): print devices=4 age=40 min", lines[0])
         assertTrue(lines[1], lines[1].startsWith("prints taken=1 dropped boot=0 gla=0 rule=0 distrust=0 replaced=1"))
         assertEquals("verdicts=1 would=yes confirmed=0 contradicted=0 unjudged=0 pending=1", lines[2])
         assertTrue(lines[4], lines[4].startsWith("inconclusive=1 refused=0 old=1"))

@@ -138,9 +138,6 @@ fun inconclusiveTriesAfter(tries: Int, withheld: Boolean): Int = if (withheld) t
 /** D7: a print keeps at most this many settled devices (the strongest). */
 const val PRINT_DEVICES_MAX = 12
 
-/** Revision 3 (D7): ... and at most this many other cells beside the serving one. */
-const val PRINT_CELLS_MAX = 12
-
 /** D8: a print is taken only with a fix this accurate or better. */
 const val PRINT_ACCURACY_MAX_M = 50f
 
@@ -181,13 +178,10 @@ val PRINT_WIFI_PROVIDERS = setOf(PROVIDER_WIFI, PROVIDER_APPLE)
  * of its APs were heard. */
 data class PrintDevice(val device: String, val network: String, val dbm: Int, val aps: Int)
 
-/** Revision 3 (D7): the cells read with a print or a scan - the registered (serving) cell's key and radio, the other
- * cells' keys. */
-data class PrintCells(val serving: String? = null, val radio: String? = null, val others: List<String> = emptyList())
-
 /**
  * D7: the fingerprint of one vouch - the vouch's time ([fixTimeMs]), when it was taken (elapsed realtime and minutes),
- * the boot, up to [PRINT_DEVICES_MAX] settled devices and (revision 3) the cells. No SSID, BSSID or position.
+ * the boot, up to [PRINT_DEVICES_MAX] settled devices. No SSID, BSSID, cell or position (the owner's refinement of
+ * code QA H1: D15's cell witness is the serving cell's own position, not its id, so a print keeps no cells).
  */
 data class StillPrint(
     val fixTimeMs: Long,
@@ -195,12 +189,8 @@ data class StillPrint(
     val takenMin: Int,
     val bootCount: Int,
     val devices: List<PrintDevice>,
-    val cells: PrintCells = PrintCells(),
 ) {
     val fixMin: Int get() = (fixTimeMs / 60_000).toInt()
-
-    /** The cells it holds, the serving one and the others - a count for the log and the dump. */
-    val cellCount: Int get() = (if (cells.serving != null) 1 else 0) + cells.others.size
 }
 
 /** D7 (QA H3): the keys of the own Wi-Fi rows that make a device settled - seen on [SETTLED_DAYS_MIN] local days,
@@ -216,15 +206,6 @@ fun settledDevices(heard: List<Heard>, settled: Set<String>): List<PrintDevice> 
     return wifi.filter { it.device in devices }.groupBy { it.device }
         .map { (device, aps) -> aps.maxBy { it.rssi }.let { PrintDevice(device, it.network, it.rssi, aps.size) } }
         .sortedWith(compareByDescending<PrintDevice> { it.dbm }.thenBy { it.device })
-}
-
-/** Revision 3: the cells of a read (registered first, design 125b C2) - the first registered one serves, its radio
- * from the wire form; the rest by key, at most [PRINT_CELLS_MAX]. */
-fun printCells(cells: List<Heard>): PrintCells {
-    val all = cells.filter { it.kind == RowKind.CELL }
-    val serving = all.firstOrNull { it.registered }
-    val others = all.filter { it !== serving }.map { it.key }.distinct().take(PRINT_CELLS_MAX)
-    return PrintCells(serving?.key, serving?.let { parseCellWire(it.wire)?.radio?.word }, others)
 }
 
 /** Why a fresh fix that becomes the vouch takes no print (D8) - the old one is dropped either way. */
@@ -254,12 +235,11 @@ fun takePrint(
     nowMin: Int,
     heard: List<Heard>,
     settled: Set<String>,
-    cells: List<Heard>,
 ): StillPrint? {
     val paired = heard.filter { abs(it.elapsedMs - fixElapsedMs) <= PRINT_PAIR_MS }
     val devices = settledDevices(paired, settled).take(PRINT_DEVICES_MAX)
     if (devices.isEmpty()) return null
-    return StillPrint(fixTimeMs, nowElapsedMs, nowMin, bootCount, devices, printCells(cells))
+    return StillPrint(fixTimeMs, nowElapsedMs, nowMin, bootCount, devices)
 }
 
 /** D8 (QA M5): at a renewal while still whose scan was conclusive and where the strict rule held, the print gains the
@@ -302,24 +282,22 @@ fun printStale(print: StillPrint, nowBoot: Int, nowElapsedMs: Long): DropReason?
 
 /** What a conclusive scan heard, as the print sees it: the settled devices now ([devices], D7), every usable device
  * heard now ([heardDevices]), the usable APs' count, the device of the strongest usable result ([strongestDevice],
- * settled or not - QA H1) and the cells. */
+ * settled or not - QA H1). */
 data class PrintScan(
     val devices: List<PrintDevice>,
     val heardDevices: Set<String>,
     val usable: Int,
     val strongestDevice: String?,
-    val cells: PrintCells = PrintCells(),
 )
 
-/** D9: a conclusive answer's usable Wi-Fi results ([heard]) against the table's [settled] keys, with the cells read. */
-fun printScan(heard: List<Heard>, settled: Set<String>, cells: List<Heard>): PrintScan {
+/** D9: a conclusive answer's usable Wi-Fi results ([heard]) against the table's [settled] keys. */
+fun printScan(heard: List<Heard>, settled: Set<String>): PrintScan {
     val wifi = heard.filter { it.kind == RowKind.WIFI }
     return PrintScan(
         devices = settledDevices(wifi, settled),
         heardDevices = wifi.map { it.device }.toSet(),
         usable = wifi.size,
         strongestDevice = wifi.maxWithOrNull(compareBy<Heard> { it.rssi }.thenByDescending { it.key })?.device,
-        cells = printCells(cells),
     )
 }
 
@@ -406,29 +384,43 @@ enum class MismatchClause(val code: Int, val wire: String) {
 }
 
 /**
- * D15, D17 (code QA H1): a conclusive scan of a cap try or retry while `STILL` clearly isn't the place of [print] -
- * `null` when it may be. Never with a print of fewer than [PRINT_DEVICES_MIN] settled devices, and always only when
- * **none** of the print's devices is heard at all; then it is clearly elsewhere when the answer holds at least
- * [MISMATCH_DEVICES_MIN] distinct devices ([MismatchClause.WIFI]; code QA L4: devices, not APs - one router's bands are
- * one witness), or - a thinner answer - when the cells differ ([MismatchClause.CELL]: a registered cell on both sides of
- * the same radio, and no cell read now, serving or other, is any of the print's). Cells only back a Wi-Fi absence: a
- * still phone changes its serving cell often. The caller passes only a fresh, conclusive answer (D2).
+ * D15, D17 (code QA H1 and the owner's refinement): a conclusive scan of a cap try or retry while `STILL` clearly isn't
+ * the place of [print] - `null` when it may be. Never with a print of fewer than [PRINT_DEVICES_MIN] settled devices,
+ * and always only when **none** of the print's devices is heard at all; then it is clearly elsewhere when the answer
+ * holds at least [MISMATCH_DEVICES_MIN] distinct devices ([MismatchClause.WIFI]; code QA L4: devices, not APs - one
+ * router's bands are one witness), or - a thinner answer - when the registered cell is placed away from the vouch
+ * ([cellElsewhere], [MismatchClause.CELL]). Cells only back a Wi-Fi absence, and only by a known position: another cell
+ * id at the same place (a still phone's serving cell flips) is no witness. The caller passes only a fresh, conclusive
+ * answer (D2).
  */
-fun printMismatch(print: StillPrint, now: PrintScan): MismatchClause? {
+fun printMismatch(print: StillPrint, now: PrintScan, cellElsewhere: Boolean): MismatchClause? {
     if (print.devices.size < PRINT_DEVICES_MIN) return null
     if (print.devices.any { it.device in now.heardDevices }) return null
     if (now.heardDevices.size >= MISMATCH_DEVICES_MIN) return MismatchClause.WIFI
-    return if (cellsDiffer(print.cells, now.cells)) MismatchClause.CELL else null
+    return if (cellElsewhere) MismatchClause.CELL else null
 }
 
-/** D15's cell witness: both sides have a registered cell of the same radio and no cell read now is any of the
- * print's. */
-fun cellsDiffer(print: PrintCells, now: PrintCells): Boolean {
-    val before = print.serving ?: return false
-    val serving = now.serving ?: return false
-    if (print.radio == null || print.radio != now.radio) return false
-    val printCells = setOf(before) + print.others
-    return (listOf(serving) + now.others).none { it in printCells }
+/** D15: the margin past both accuracies a registered cell's position must lie from the vouch to say "elsewhere". A cell
+ * row's range is already its reach (own rows floored at 500 m, Apple's `max(500 m, acc)`), so range + the vouch's
+ * accuracy bounds where a phone at the vouch may hear it; 1 km more covers a serving cell kept past that reach (handover
+ * hysteresis, an edge flip) and a centroid error, while a car ride of a few km to a town house is still caught. Less
+ * than the 2 km of a cell fix's veto (design 125b) because here a Wi-Fi absence must hold too: two witnesses. */
+const val CELL_ELSEWHERE_MARGIN_M = 1_000.0
+
+/**
+ * D15's cell witness (the owner's refinement of code QA H1): the registered cell read now ([cells], registered first)
+ * has a position - a trusted own cell row or a live Apple cell row from design 125b's answers already in [rows]
+ * ([chooseCellRow]; never a lookup started for this) - further from the vouch ([vouch]) than the cell's range, the
+ * vouch's accuracy and [CELL_ELSEWHERE_MARGIN_M]. An unknown position (no row, not looked up, the lookup off), no
+ * registered cell or no vouch: `false`.
+ */
+fun cellElsewhere(cells: List<Heard>, rows: List<PlaceRow>, nowMin: Int, vouch: VouchPoint?): Boolean {
+    vouch ?: return false
+    val serving = cells.firstOrNull { it.kind == RowKind.CELL && it.registered } ?: return false
+    val own = rows.firstOrNull { it.kind == RowKind.CELL && it.key == serving.key }
+    val apple = rows.firstOrNull { it.kind == RowKind.APPLE_CELL && it.key == serving.key }
+    val (row, _) = chooseCellRow(own, apple, nowMin) ?: return false
+    return com.kidslauncher.mdm.zones.distanceM(row.lat, row.lng, vouch.lat, vouch.lng) > row.rangeM + vouch.accuracyM + CELL_ELSEWHERE_MARGIN_M
 }
 
 // --- D10-D12, D19: events, outcomes and the ring ---
@@ -614,7 +606,7 @@ fun ringDropped(ring: PrintRing, reason: DropReason): PrintRing = ring.copy(drop
 // --- P1: the sealed files' formats ---
 
 /** P1: another format version drops the old file (the no-compat rule). */
-const val PRINT_FORMAT_VERSION = 1
+const val PRINT_FORMAT_VERSION = 2
 private val PRINT_MAGIC = "VSP".toByteArray(Charsets.US_ASCII)
 private val RING_MAGIC = "VSR".toByteArray(Charsets.US_ASCII)
 
@@ -649,16 +641,12 @@ private fun <T> decoded(bytes: ByteArray, magic: ByteArray, body: DataInputStrea
     null
 }
 
-/** P1: the print (< 1 KB): the times, the boot, the cells and the devices - keys and levels only. */
+/** P1: the print (< 1 KB): the times, the boot and the devices - keys and levels only (version 2: no cells). */
 fun encodePrint(p: StillPrint): ByteArray = encoded(PRINT_MAGIC) {
     writeLong(p.fixTimeMs)
     writeLong(p.takenElapsedMs)
     writeInt(p.takenMin)
     writeInt(p.bootCount)
-    text(p.cells.serving)
-    text(p.cells.radio)
-    writeByte(p.cells.others.size)
-    p.cells.others.forEach { text(it) }
     writeByte(p.devices.size)
     for (d in p.devices) {
         text(d.device)
@@ -673,14 +661,11 @@ fun decodePrint(bytes: ByteArray): StillPrint? = decoded(bytes, PRINT_MAGIC) {
     val taken = readLong()
     val takenMin = readInt()
     val boot = readInt()
-    val serving = text().ifEmpty { null }
-    val radio = text().ifEmpty { null }
-    val others = List(readUnsignedByte()) { text() }
     val devices = List(readUnsignedByte()) { PrintDevice(text(), text(), readShort().toInt(), readUnsignedByte()) }
-    StillPrint(fix, taken, takenMin, boot, devices, PrintCells(serving, radio, others))
+    StillPrint(fix, taken, takenMin, boot, devices)
 }
 
-/** P1: the ring (~37 bytes an event, ~19 KB at 500) with the taken and dropped counts. */
+/** P1: the ring (37 bytes an event, ~18.5 KB at 500) with the taken and dropped counts. */
 fun encodeRing(r: PrintRing): ByteArray = encoded(RING_MAGIC) {
     writeInt(r.taken)
     writeByte(r.drops.size)
@@ -763,7 +748,7 @@ fun dumpLines(print: StillPrint?, ring: PrintRing, nowMin: Int, nowElapsedMs: Lo
     out += "still-print (design 134): " + if (print == null) {
         "no print"
     } else {
-        "print devices=${print.devices.size} cells=${print.cellCount} " +
+        "print devices=${print.devices.size} " +
             "age=${(nowElapsedMs - print.takenElapsedMs) / 60_000} min" + (stale?.let { " (stale: ${it.wire}, dropped at its next use)" } ?: "")
     }
     out += "prints taken=${ring.taken} dropped " + DropReason.entries.joinToString(" ") { "${it.wire}=${ring.drops[it] ?: 0}" }

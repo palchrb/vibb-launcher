@@ -219,7 +219,9 @@ class StillPlanTest {
         assertTrue(glue.contains("\"scan answer \${answer.answering.size}/\${scan.results.size} ask=\${scan.request.ask.wire}\""))
         // Code QA L6: the run reset when the motion isn't MOVED.
         assertTrue(source("server/MdmSyncWorker.kt").contains("val inconclusiveTries = com.kidslauncher.mdm.places.inconclusiveTriesNow(storedTries, motion)"))
-        assertTrue(glue.contains("val clause = if (fresh) null else printMismatch(print, scan)"))
+        assertTrue(glue.contains("val clause = if (fresh) null else printMismatch(print, scan, cellAway)"))
+        // The owner's refinement of H1: the cell witness by the position the table already holds - no lookup for it.
+        assertTrue(glue.contains("val cellAway = !fresh && cellElsewhere(material.cells, open(context)?.rows ?: store.rows, now, vouch)"))
         // D6: the shadow never touches the report, the flags or the disagreement count - its only outputs are the ring,
         // the print and ask.mismatch (which only stops a vouch).
         val shadow = Regex("""private fun shadow\([\s\S]*?\n    }\n""").find(glue)!!.value
