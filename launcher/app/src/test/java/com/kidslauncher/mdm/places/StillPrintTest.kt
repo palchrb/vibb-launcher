@@ -282,14 +282,28 @@ class StillPrintTest {
         // Row 12: one device rebooting, the others heard - no mismatch; all four gone, three neighbours heard - wifi.
         assertNull(printMismatch(p, scan(homeScan().filter { it.device != "router" })))
         assertEquals(MismatchClause.WIFI, printMismatch(p, scan(listOf(heard("x", -60), heard("y", -70), heard("z", -75)))))
-        // Guards: a print of fewer than 3 devices never decides; the cell clause only on the same radio, none shared.
+        // Guards: a print of fewer than 3 devices never decides.
         assertNull(printMismatch(p.copy(devices = p.devices.take(2)), friends))
+        // Code QA H1: cells only back a Wi-Fi absence - home's Wi-Fi heard and every cell new (a still phone's serving
+        // cell flips): no mismatch.
         val homeWifi = homeScan()
-        assertEquals(MismatchClause.CELL, printMismatch(p, scan(homeWifi, listOf(cell("c-x", true), cell("c-y", false)))))
-        assertNull(printMismatch(p, scan(homeWifi, listOf(cell("c-x", true, radio = "nr"), cell("c-y", false)))))
-        assertNull(printMismatch(p, scan(homeWifi, listOf(cell("c-x", true), cell("c-n2", false)))))
-        assertNull(printMismatch(p, scan(homeWifi, listOf(cell("c-x", false)))))
-        assertNull(printMismatch(p.copy(cells = PrintCells()), scan(homeWifi, listOf(cell("c-x", true)))))
+        assertNull(printMismatch(p, scan(homeWifi, listOf(cell("c-x", true), cell("c-y", false)))))
+        // A thin answer without any of home's devices (a cabin of one or two networks after a missed car ride): the cells
+        // decide - the same radio, none shared.
+        val thin = listOf(heard("cabin", -60), heard("cabin2", -75))
+        assertEquals(MismatchClause.CELL, printMismatch(p, scan(thin, listOf(cell("c-x", true), cell("c-y", false)))))
+        assertNull(printMismatch(p, scan(thin, listOf(cell("c-x", true, radio = "nr"), cell("c-y", false)))))
+        assertNull(printMismatch(p, scan(thin, listOf(cell("c-x", true), cell("c-n2", false)))))
+        assertNull(printMismatch(p, scan(thin, listOf(cell("c-x", false)))))
+        assertNull(printMismatch(p.copy(cells = PrintCells()), scan(thin, listOf(cell("c-x", true)))))
+        assertNull(printMismatch(p, scan(thin)))
+        // Code QA L4: three APs of one router are one device - too thin for the wifi clause.
+        val oneRouter = listOf(heard("r", -60, key = "r-a"), heard("r", -62, key = "r-b"), heard("r", -70, key = "r-c"))
+        assertNull(printMismatch(p, scan(oneRouter)))
+        // Code QA M1: a renewal vetoes it - recorded, flagged, judged as any mismatch, but it ended nothing.
+        val vetoed = mismatchEvent(p, MismatchClause.WIFI, friends, at(241), vetoed = true)
+        assertEquals("mismatch clause=wifi devices=0/4 vetoed", eventText(vetoed))
+        assertEquals(OutcomeClass.CONTRADICTED, ringAfterFix(PrintRing(listOf(vetoed)), fixAt(272, 20.0), vouch, p.fixMin).events.single().outcome)
     }
 
     // --- D11, D12: outcomes and the ring ---
@@ -320,7 +334,7 @@ class StillPrintTest {
         assertEquals(0, ringWith(PrintRing(listOf(base)), base.copy(atMin = base.atMin + RING_KEEP_MIN + 1), base.atMin + RING_KEEP_MIN + 1).events.count { it.atMin == base.atMin })
         // The codecs.
         val full = ringDropped(ringDropped(ringTaken(ring), DropReason.BOOT), DropReason.BOOT).copy(
-            events = ring.events.dropLast(2) + mismatchEvent(p, MismatchClause.CELL, scan(homeScan()), at(5)) +
+            events = ring.events.dropLast(2) + mismatchEvent(p, MismatchClause.CELL, scan(homeScan()), at(5), vetoed = true) +
                 ringAfterFix(PrintRing(listOf(inconclusiveEvent(p, Inconclusive.NO_CONNECTED, at(6)))), fixAt(9, 40.0), vouch, p.fixMin).events,
         )
         assertEquals(full, decodeRing(encodeRing(full)))
@@ -347,7 +361,9 @@ class StillPrintTest {
         assertTrue(lines[1], lines[1].startsWith("prints taken=1 dropped boot=0 gla=0 rule=0 distrust=0 replaced=1"))
         assertEquals("verdicts=1 would=yes confirmed=0 contradicted=0 unjudged=0 pending=1", lines[2])
         assertTrue(lines[4], lines[4].startsWith("inconclusive=1 refused=0 old=1"))
-        assertTrue(lines[5], lines[5].startsWith("mismatches=1 wifi=1 cell=0"))
+        assertTrue(lines[5], lines[5].startsWith("mismatches=1 wifi=1 cell=0 vetoed=0"))
+        // Code QA L5: a stale print is shown as stale (the dump drops nothing).
+        assertTrue(dumpLines(p, ring, at(40).atMin, fixElapsed + 41 * minute, DropReason.BOOT)[0].endsWith("(stale: boot, dropped at its next use)"))
         assertTrue(lines[7], lines[7].contains(" mismatch clause=wifi devices=0/4 -> pending"))
         assertTrue(lines.last(), lines.last().contains(" inconclusive reason=old"))
         val text = lines.joinToString("\n")

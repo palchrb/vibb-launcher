@@ -936,8 +936,11 @@ private suspend fun currentLocationReport(
     val stillFrom = if (stillOn) maxOf(lastFreshFix, ZoneWatch.vouchRenewedMs(context)) else lastOwnFix
     // Design 124 D5 (amended 2026-11-25): the failed tries since the vouch's 4 h ran out.
     val capFails = if (stillOn) ZoneWatch.stillCapFails(context) else 0
-    // Design 134 D4: the inconclusive tries after a move withheld in a row.
-    val inconclusiveTries = if (stillOn) ZoneWatch.inconclusiveTries(context) else 0
+    // Design 134 D4: the inconclusive tries after a move withheld in a row; code QA L6: a run belongs to one move - any
+    // other motion (still, a failed try's, no sensor or a distrusted one) ends it.
+    val storedTries = if (stillOn) ZoneWatch.inconclusiveTries(context) else 0
+    val inconclusiveTries = com.kidslauncher.mdm.places.inconclusiveTriesNow(storedTries, motion)
+    if (inconclusiveTries != storedTries) ZoneWatch.stampInconclusiveTries(context, inconclusiveTries)
     val sync = syncLocationAction(
         policy = policy,
         stillOn = stillOn,

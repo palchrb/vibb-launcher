@@ -57,7 +57,13 @@ class StillPlanTest {
         // Results from before the last fire never answer (design 125 D9), even heard after the request.
         assertEquals(Inconclusive.OLD, scanAnswer(listOf(ap(1, asked + 10)), ScanRequest(asked, ScanAsk.ANSWERED), null, asked + 20, now).inconclusive)
         // The wire words of the log line.
-        assertEquals(listOf("refused", "old", "unanswered", "noconnected"), Inconclusive.entries.map { it.wire })
+        assertEquals(listOf("refused", "old", "unanswered", "noconnected", "timebase"), Inconclusive.entries.map { it.wire })
+        // Code QA L1: the cache path counts its 30 s from the request (the instant scanNow judged the cache), not now.
+        assertTrue(scanAnswer(listOf(ap(1, asked - 30_000), ap(2, asked - 29_000), ap(3, asked - 1)), ScanRequest(asked, ScanAsk.CACHE), null, moved, asked + 20_000).conclusive)
+        assertEquals(Inconclusive.OLD, scanAnswer(listOf(ap(1, asked - 30_001)), ScanRequest(asked, ScanAsk.CACHE), null, moved, asked).inconclusive)
+        // Code QA L2: a result heard more than a minute in the future - the time base isn't boottime: inconclusive.
+        assertEquals(Inconclusive.TIME_BASE, answer(listOf(ap(1, now + TIME_BASE_SLACK_MS + 1)), ScanAsk.ANSWERED).inconclusive)
+        assertTrue(answer(listOf(ap(1, now + TIME_BASE_SLACK_MS)), ScanAsk.ANSWERED).conclusive)
     }
 
     // --- D3 ---
@@ -158,6 +164,9 @@ class StillPlanTest {
         assertFalse(withheld(true, null, freshFix = false))
         assertFalse(withheld(true, Inconclusive.REFUSED, freshFix = true))
         assertFalse(withheld(false, Inconclusive.REFUSED, freshFix = false))
+        // Code QA L6: a run belongs to one move - any other motion ends it, a fire after it starts a new one.
+        assertEquals(2, inconclusiveTriesNow(2, Motion.MOVED))
+        for (m in listOf(Motion.STILL, Motion.STILL_SINCE_TRY, Motion.NO_SENSOR)) assertEquals(m.name, 0, inconclusiveTriesNow(2, m))
         // D4 keeps the flags: movedSinceTry stays set, so MOVED.
         val moved = MotionFlags().moved(5)
         assertEquals(moved, moved.afterTry(moved.fires, null, heartbeat = true, nowMs = 9, withheld = true))
@@ -200,7 +209,16 @@ class StillPlanTest {
         val sync = source("server/MdmSyncWorker.kt")
         // D10, D15: the shadow runs at the attempt's end, the withheld path too; a mismatch cancels a renewal.
         assertEquals(2, Regex("""shadow\(app, store, print, ask, ended, """).findAll(glue).count())
-        assertTrue(Regex("""if \(ask\.mismatch != null && ask\.renewed\) \{\s+ask\.renewed = false\s+ask\.renewedByApple = false\s+result = null""").containsMatchIn(glue))
+        // Code QA M1: a renewal vetoes the mismatch (recorded, flagged); nothing un-renews.
+        assertTrue(glue.contains("if (!ask.renewed) ask.mismatch = clause"))
+        assertTrue(glue.contains("StillPrints.record(context, mismatchEvent(print, clause, scan, at, vetoed = ask.renewed))"))
+        assertFalse(glue.contains("ask.renewed = false"))
+        // Code QA M2: a callback whose results are all older than the request isn't the answer - wait on within 8 s.
+        assertTrue(glue.contains("answered = heard.isEmpty() || heard.any { it.elapsedMs > requestAt }"))
+        // Code QA L2: the answer's log line.
+        assertTrue(glue.contains("\"scan answer \${answer.answering.size}/\${scan.results.size} ask=\${scan.request.ask.wire}\""))
+        // Code QA L6: the run reset when the motion isn't MOVED.
+        assertTrue(source("server/MdmSyncWorker.kt").contains("val inconclusiveTries = com.kidslauncher.mdm.places.inconclusiveTriesNow(storedTries, motion)"))
         assertTrue(glue.contains("val clause = if (fresh) null else printMismatch(print, scan)"))
         // D6: the shadow never touches the report, the flags or the disagreement count - its only outputs are the ring,
         // the print and ask.mismatch (which only stops a vouch).

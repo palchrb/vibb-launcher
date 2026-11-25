@@ -35,13 +35,13 @@ internal object StillPrints {
 
     /** A sealed file's bytes: `null` when there is none, or when it can't be opened now (a broken one is deleted -
      * `unreadable`; a transient error keeps it and [ok] says so). */
-    private fun read(context: Context, name: String, ok: (Boolean) -> Unit = {}): ByteArray? {
+    private fun read(context: Context, name: String, keep: Boolean = false, ok: (Boolean) -> Unit = {}): ByteArray? {
         val f = file(context, name)
         if (!f.baseFile.exists()) return null
         return try {
             Secrets.box.open(name, f.readFully())
         } catch (e: Exception) {
-            if (e is AEADBadTagException || e is IllegalArgumentException || Secrets.box.keyBroken()) {
+            if (!keep && (e is AEADBadTagException || e is IllegalArgumentException || Secrets.box.keyBroken())) {
                 f.delete()
                 Log.i(LOG_TAG, "$name dropped (unreadable)")
             } else {
@@ -109,11 +109,14 @@ internal object StillPrints {
         return print
     }
 
-    /** Under [lock]: the print goes, counted by [reason] and logged. */
+    /** Under [lock]: the print goes, counted by [reason] and logged - its file deleted whether or not it can be opened now
+     * (code QA L3: a print that can't be read must not outlive its drop). */
     private fun dropLocked(context: Context, reason: DropReason) {
-        if (printLocked(context) == null) return
+        val had = (printRead && print != null) || file(context, FILE_PRINT).baseFile.exists()
+        if (!had) return
         write(context, FILE_PRINT, null)
         print = null
+        printRead = true
         changeRing(context) { ringDropped(it, reason) }
         Log.i(LOG_TAG, "print dropped (${reason.wire})")
     }
@@ -190,10 +193,13 @@ internal object StillPrints {
             writer.println("Vibb: the place fingerprint's record needs the argument still-print")
             return
         }
+        // Code QA L5: read only - nothing dropped, deleted or written, so a dump never changes what it shows (a stale print
+        // is shown as stale). At most two Keystore opens on the dump's thread (the main one): adb-only, never a user's.
         val lines = synchronized(lock) {
-            val p = current(context)
-            val r = ringLocked(context)
-            if (r == null) listOf("still-print: the record can't be opened now") else dumpLines(p, r, (System.currentTimeMillis() / 60_000).toInt(), SystemClock.elapsedRealtime())
+            val p = if (printRead) print else read(context, FILE_PRINT, keep = true)?.let { decodePrint(it) }
+            val r = ring ?: read(context, FILE_RING, keep = true)?.let { decodeRing(it) } ?: if (file(context, FILE_RING).baseFile.exists()) null else PrintRing()
+            val stale = p?.let { printStale(it, BootClock.bootCount(), SystemClock.elapsedRealtime()) }
+            if (r == null) listOf("still-print: the record can't be opened now") else dumpLines(p, r, (System.currentTimeMillis() / 60_000).toInt(), SystemClock.elapsedRealtime(), stale)
         }
         lines.forEach(writer::println)
     }

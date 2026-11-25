@@ -61,6 +61,7 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -393,10 +394,10 @@ object WifiPlaces {
         val wm = wifi(context) ?: return Scan(before, ScanRequest(now, ScanAsk.REFUSED))
         var ask = ScanAsk.ANSWERED
         val requestAt = SystemClock.elapsedRealtime()
-        val done = CompletableDeferred<Unit>()
+        val updates = Channel<Unit>(Channel.CONFLATED)
         val callback = object : WifiManager.ScanResultsCallback() {
             override fun onScanResultsAvailable() {
-                done.complete(Unit)
+                updates.trySend(Unit)
             }
         }
         try {
@@ -409,9 +410,23 @@ object WifiPlaces {
                     refused(if (on) "throttled" else "wifioff")
                     ask = if (on) ScanAsk.REFUSED else ScanAsk.WIFI_OFF
                 }
-                withTimeoutOrNull(SCAN_WAIT_MS) { done.await() } == null -> {
-                    refused("unanswered")
-                    ask = ScanAsk.UNANSWERED
+                // Code QA M2: a callback whose results are all older than the request (another app's scan, a cache
+                // refresh) isn't our answer - wait on within the 8 s for one that is. An empty cache after a callback is
+                // an honest "nothing heard" (the cabin). A callback came but no answer in time: old, not unanswered.
+                else -> {
+                    var called = false
+                    var answered = false
+                    while (!answered) {
+                        val left = requestAt + SCAN_WAIT_MS - SystemClock.elapsedRealtime()
+                        if (left <= 0 || withTimeoutOrNull(left) { updates.receive() } == null) break
+                        called = true
+                        val heard = cached(context)
+                        answered = heard.isEmpty() || heard.any { it.elapsedMs > requestAt }
+                    }
+                    if (!called) {
+                        refused("unanswered")
+                        ask = ScanAsk.UNANSWERED
+                    }
                 }
             }
         } catch (e: SecurityException) {
@@ -553,6 +568,8 @@ object WifiPlaces {
      * scan (a live BSSID must be among the answer). */
     private fun answered(scan: Scan, connected: Connected?, cells: List<Heard>, movedAtElapsedMs: Long): Snapshot {
         val answer = scanAnswer(scan.results, scan.request, connectedBssid(connected?.bssid), movedAtElapsedMs, SystemClock.elapsedRealtime())
+        // Code QA L2: how many results answered the request, and how it was asked; a time base that isn't boottime shows.
+        Log.i(LOG_TAG, "scan answer ${answer.answering.size}/${scan.results.size} ask=${scan.request.ask.wire}" + (answer.inconclusive?.let { " ${it.wire}" } ?: ""))
         return Snapshot(scan.results, connected, cells, answer, scan.request)
     }
 
@@ -1171,6 +1188,7 @@ object WifiPlaces {
                 // Design 134 D2, D4: the attempt's last scan said nothing and no fresh fix came - after a move nothing is
                 // reported (no cell fix, no unchecked or fallback fix, no last-known), and the flags stay as they were.
                 val ended = last ?: snap.await()
+                // Code QA M1: a renewal in this attempt (a zone link, an Apple fix within the vouch) vetoes a mismatch.
                 ask.inconclusive = ended.answer?.inconclusive
                 if (withheld(ask.mayWithhold, ask.inconclusive, kept != null && !ask.notFresh && !ask.renewed)) {
                     ask.withheld = true
@@ -1178,17 +1196,11 @@ object WifiPlaces {
                     shadow(app, store, print, ask, ended, null)
                     return@coroutineScope null
                 }
-                var result = kept ?: run {
+                val result = kept ?: run {
                     cellAsk.get()?.await()
                     cellOnly(app, store, snap.await(), ask, plan == AttemptPlan.LOCATE, accept)
                 }
                 shadow(app, store, print, ask, ended, result)
-                // Revision 3 (D16): a mismatch stops the vouch - a renewal in the same attempt is not sent.
-                if (ask.mismatch != null && ask.renewed) {
-                    ask.renewed = false
-                    ask.renewedByApple = false
-                    result = null
-                }
                 Log.i(LOG_TAG, "attempt path=$plan result=${if (ask.renewed) "renewed" else result?.provider ?: "none"}")
                 result
             }
@@ -1243,8 +1255,10 @@ object WifiPlaces {
                     val scan = printScan(material.heard, material.settled, material.cells)
                     val clause = if (fresh) null else printMismatch(print, scan)
                     if (clause != null) {
-                        ask.mismatch = clause
-                        StillPrints.record(context, mismatchEvent(print, clause, scan, at))
+                        // Code QA M1 (D16): a renewal in the same attempt is positive evidence of the place - it vetoes the
+                        // mismatch, which is still recorded (flagged) for the owner's record.
+                        if (!ask.renewed) ask.mismatch = clause
+                        StillPrints.record(context, mismatchEvent(print, clause, scan, at, vetoed = ask.renewed))
                     } else if (ask.renewed && shadowVerdict(print, scan, veto = false).would) {
                         StillPrints.grow(context, print, grownPrint(print, scan.devices))
                     }

@@ -47,7 +47,13 @@ enum class Inconclusive(val wire: String) {
     OLD("old"),
     UNANSWERED("unanswered"),
     NO_CONNECTED("noconnected"),
+
+    /** Code QA L2: a result heard later than now - the results' time base isn't elapsed realtime here. */
+    TIME_BASE("timebase"),
 }
+
+/** Code QA L2: a result's `timestamp` this far past now means the time base isn't boottime (never seen; logged). */
+const val TIME_BASE_SLACK_MS = 60_000L
 
 /** The results that answer the request ([answering]) and, when the scan says nothing, why ([inconclusive]). */
 data class ScanAnswer(val answering: List<ScanAp>, val inconclusive: Inconclusive?) {
@@ -56,8 +62,10 @@ data class ScanAnswer(val answering: List<ScanAp>, val inconclusive: Inconclusiv
 
 /**
  * D1, D2: which of [results] answer [request] - a result heard after the request (its `timestamp` against the
- * request's elapsed time), or with [ScanAsk.CACHE] at most [CACHE_ANSWER_MS] old at [nowElapsedMs]; both also after
- * the last fire ([movedAtElapsedMs], design 125 D9). Inconclusive: refused ([Inconclusive.REFUSED]); answered but no
+ * request's elapsed time), or with [ScanAsk.CACHE] at most [CACHE_ANSWER_MS] older than the request (code QA L1: the
+ * same instant `scanNow` judged the cache by); both also after the last fire ([movedAtElapsedMs], design 125 D9). A
+ * result heard more than [TIME_BASE_SLACK_MS] after [nowElapsedMs] says the time base is unknown: inconclusive
+ * ([Inconclusive.TIME_BASE], code QA L2). Inconclusive: refused ([Inconclusive.REFUSED]); answered but no
  * result answers it while the cache holds some ([Inconclusive.OLD] - an empty cache after an answered scan is an honest
  * "nothing heard"); not answered in time and no result answers it ([Inconclusive.UNANSWERED]); the phone connected
  * ([connectedBssid], a live BSSID) to an AP none of the answering results contains ([Inconclusive.NO_CONNECTED]: the
@@ -66,10 +74,11 @@ data class ScanAnswer(val answering: List<ScanAp>, val inconclusive: Inconclusiv
  */
 fun scanAnswer(results: List<ScanAp>, request: ScanRequest, connectedBssid: String?, movedAtElapsedMs: Long, nowElapsedMs: Long): ScanAnswer {
     fun answers(r: ScanAp): Boolean {
-        val heardAfterAsk = if (request.ask == ScanAsk.CACHE) nowElapsedMs - r.elapsedMs in 0..CACHE_ANSWER_MS else r.elapsedMs > request.atElapsedMs
+        val heardAfterAsk = if (request.ask == ScanAsk.CACHE) request.atElapsedMs - r.elapsedMs in 0..CACHE_ANSWER_MS else r.elapsedMs > request.atElapsedMs
         return heardAfterAsk && r.elapsedMs > movedAtElapsedMs
     }
     val answering = results.filter(::answers)
+    if (results.any { it.elapsedMs > nowElapsedMs + TIME_BASE_SLACK_MS }) return ScanAnswer(answering, Inconclusive.TIME_BASE)
     val reason = when (request.ask) {
         ScanAsk.REFUSED -> Inconclusive.REFUSED
         ScanAsk.WIFI_OFF -> return ScanAnswer(answering, null)
@@ -116,6 +125,10 @@ fun mayWithhold(heartbeatFix: Boolean, motion: Motion, tries: Int): Boolean =
  * brought no genuinely fresh fix ([freshFix]): nothing is reported, the flags stay as they were. */
 fun withheld(mayWithhold: Boolean, inconclusive: Inconclusive?, freshFix: Boolean): Boolean = mayWithhold && inconclusive != null && !freshFix
 
+/** D4 (code QA L6): the run of withheld tries belongs to one move - any motion but `MOVED` (still, a failed try's
+ * `STILL_SINCE_TRY`, no sensor or a distrusted one) ends it. */
+fun inconclusiveTriesNow(tries: Int, motion: Motion): Int = if (motion == Motion.MOVED) tries else 0
+
 /** D4: the withheld tries in a row after the heartbeat's `FIX` after a move: one more when [withheld]; else none (a
  * conclusive try, a fresh fix, or the 4th - an ordinary failed try ends the run). */
 fun inconclusiveTriesAfter(tries: Int, withheld: Boolean): Int = if (withheld) tries + 1 else 0
@@ -158,8 +171,8 @@ const val ABSENT_DB = 30
 /** D9.4: the mean difference over the near devices is at most this. */
 const val SIMILAR_DB = 12.0
 
-/** D17: a `wifi` mismatch needs at least this many usable APs in the fresh answer. */
-const val MISMATCH_USABLE_MIN = 3
+/** D17: a `wifi` mismatch needs at least this many distinct devices in the fresh answer (code QA L4). */
+const val MISMATCH_DEVICES_MIN = 3
 
 /** D8: the providers of a Wi-Fi fix a print may be taken with, when it is checked (design 131). */
 val PRINT_WIFI_PROVIDERS = setOf(PROVIDER_WIFI, PROVIDER_APPLE)
@@ -393,20 +406,29 @@ enum class MismatchClause(val code: Int, val wire: String) {
 }
 
 /**
- * D15, D17: a conclusive scan of a cap try or retry while `STILL` clearly isn't the place of [print] - `null` when it
- * may be. Never with a print of fewer than [PRINT_DEVICES_MIN] settled devices. [MismatchClause.WIFI]: none of the
- * print's devices heard at all, the answer holding at least [MISMATCH_USABLE_MIN] usable APs; [MismatchClause.CELL]:
- * the print and the read both have a registered cell of the same radio, and no cell read now (serving or other) is
- * any cell of the print's. The caller passes only a fresh, conclusive answer (D2): an inconclusive one never counts.
+ * D15, D17 (code QA H1): a conclusive scan of a cap try or retry while `STILL` clearly isn't the place of [print] -
+ * `null` when it may be. Never with a print of fewer than [PRINT_DEVICES_MIN] settled devices, and always only when
+ * **none** of the print's devices is heard at all; then it is clearly elsewhere when the answer holds at least
+ * [MISMATCH_DEVICES_MIN] distinct devices ([MismatchClause.WIFI]; code QA L4: devices, not APs - one router's bands are
+ * one witness), or - a thinner answer - when the cells differ ([MismatchClause.CELL]: a registered cell on both sides of
+ * the same radio, and no cell read now, serving or other, is any of the print's). Cells only back a Wi-Fi absence: a
+ * still phone changes its serving cell often. The caller passes only a fresh, conclusive answer (D2).
  */
 fun printMismatch(print: StillPrint, now: PrintScan): MismatchClause? {
     if (print.devices.size < PRINT_DEVICES_MIN) return null
-    if (now.usable >= MISMATCH_USABLE_MIN && print.devices.none { it.device in now.heardDevices }) return MismatchClause.WIFI
-    val before = print.cells.serving ?: return null
-    val serving = now.cells.serving ?: return null
-    if (print.cells.radio == null || print.cells.radio != now.cells.radio) return null
-    val printCells = setOf(before) + print.cells.others
-    return if ((listOf(serving) + now.cells.others).none { it in printCells }) MismatchClause.CELL else null
+    if (print.devices.any { it.device in now.heardDevices }) return null
+    if (now.heardDevices.size >= MISMATCH_DEVICES_MIN) return MismatchClause.WIFI
+    return if (cellsDiffer(print.cells, now.cells)) MismatchClause.CELL else null
+}
+
+/** D15's cell witness: both sides have a registered cell of the same radio and no cell read now is any of the
+ * print's. */
+fun cellsDiffer(print: PrintCells, now: PrintCells): Boolean {
+    val before = print.serving ?: return false
+    val serving = now.serving ?: return false
+    if (print.radio == null || print.radio != now.radio) return false
+    val printCells = setOf(before) + print.others
+    return (listOf(serving) + now.others).none { it in printCells }
 }
 
 // --- D10-D12, D19: events, outcomes and the ring ---
@@ -485,6 +507,8 @@ data class PrintEvent(
     val accClass: Int = -1,
     val movedAfter: Boolean = false,
     val within: Boolean = false,
+    /** Code QA M1: a mismatch a renewal in the same attempt vetoed - recorded, judged, but it ended nothing. */
+    val vetoed: Boolean = false,
 ) {
     /** The reason's word for the log and the dump. */
     val reasonWire: String get() = when (kind) {
@@ -511,10 +535,10 @@ fun inconclusiveEvent(print: StillPrint, reason: Inconclusive, at: EventAt): Pri
 )
 
 /** D19: a mismatch's event - its clause, the print's devices and how many of them were heard. */
-fun mismatchEvent(print: StillPrint, clause: MismatchClause, now: PrintScan, at: EventAt): PrintEvent = PrintEvent(
+fun mismatchEvent(print: StillPrint, clause: MismatchClause, now: PrintScan, at: EventAt, vetoed: Boolean = false): PrintEvent = PrintEvent(
     at.atMin, (at.atElapsedMs / 1000).toInt(), at.boot, print.fixMin, EventKind.MISMATCH, reason = clause.code,
     printDevices = print.devices.size, nowDevices = print.devices.count { it.device in now.heardDevices },
-    printNear = print.devices.count { it.dbm >= NEAR_DBM },
+    printNear = print.devices.count { it.dbm >= NEAR_DBM }, vetoed = vetoed,
 )
 
 /** The fix that may be an outcome (D11): its position (never stored), accuracy, time, boot and the motion gate's last
@@ -671,7 +695,7 @@ fun encodeRing(r: PrintRing): ByteArray = encoded(RING_MAGIC) {
         writeInt(e.boot)
         writeInt(e.printMin)
         writeByte(e.kind.code)
-        writeByte((if (e.would) 1 else 0) or (if (e.movedAfter) 2 else 0) or (if (e.within) 4 else 0))
+        writeByte((if (e.would) 1 else 0) or (if (e.movedAfter) 2 else 0) or (if (e.within) 4 else 0) or (if (e.vetoed) 8 else 0))
         writeByte(e.reason)
         writeByte(e.j100.coerceIn(0, 100))
         writeShort(e.diff10.coerceIn(-1, Short.MAX_VALUE.toInt()))
@@ -702,7 +726,7 @@ fun decodeRing(bytes: ByteArray): PrintRing? = decoded(bytes, RING_MAGIC) {
             atMin, atElapsedS, boot, printMin, kind, flags and 1 != 0, reason, j100, diff10,
             counts[0], counts[1], counts[2], counts[3], counts[4], outcome,
             distance10 = readInt(), afterMin = readInt(), accClass = readUnsignedByte() - 1,
-            movedAfter = flags and 2 != 0, within = flags and 4 != 0,
+            movedAfter = flags and 2 != 0, within = flags and 4 != 0, vetoed = flags and 8 != 0,
         )
     }
     PrintRing(events, taken, drops)
@@ -717,7 +741,7 @@ fun eventText(e: PrintEvent): String = when (e.kind) {
     EventKind.VERDICT -> "verdict would=${if (e.would) "yes" else "no reason=${e.reasonWire}"} j=${"%d.%02d".format(e.j100 / 100, e.j100 % 100)}" +
         " diff=${if (e.diff10 < 0) "-" else oneDecimal(e.diff10)} devices=${e.printDevices}/${e.nowDevices} near=${e.printNear}/${e.nowNear} agree=${e.agree}"
     EventKind.INCONCLUSIVE -> "inconclusive reason=${e.reasonWire} devices=${e.printDevices}"
-    EventKind.MISMATCH -> "mismatch clause=${e.reasonWire} devices=${e.nowDevices}/${e.printDevices}"
+    EventKind.MISMATCH -> "mismatch clause=${e.reasonWire} devices=${e.nowDevices}/${e.printDevices}" + if (e.vetoed) " vetoed" else ""
 }
 
 /** An event's outcome as the log (`StillPrint: outcome ...`) and the dump say it. */
@@ -734,13 +758,13 @@ fun outcomeText(e: PrintEvent): String {
  * reason, the verdicts by class (would-not by reason), the inconclusive tries by reason, the mismatches by clause and
  * outcome (revision 3), then the ring, newest first. No key, BSSID, SSID or coordinate.
  */
-fun dumpLines(print: StillPrint?, ring: PrintRing, nowMin: Int, nowElapsedMs: Long): List<String> {
+fun dumpLines(print: StillPrint?, ring: PrintRing, nowMin: Int, nowElapsedMs: Long, stale: DropReason? = null): List<String> {
     val out = mutableListOf<String>()
     out += "still-print (design 134): " + if (print == null) {
         "no print"
     } else {
         "print devices=${print.devices.size} cells=${print.cellCount} " +
-            "age=${(nowElapsedMs - print.takenElapsedMs) / 60_000} min"
+            "age=${(nowElapsedMs - print.takenElapsedMs) / 60_000} min" + (stale?.let { " (stale: ${it.wire}, dropped at its next use)" } ?: "")
     }
     out += "prints taken=${ring.taken} dropped " + DropReason.entries.joinToString(" ") { "${it.wire}=${ring.drops[it] ?: 0}" }
     val events = ringAged(ring, nowMin).events
@@ -756,7 +780,8 @@ fun dumpLines(print: StillPrint?, ring: PrintRing, nowMin: Int, nowElapsedMs: Lo
     val inconclusive = events.filter { it.kind == EventKind.INCONCLUSIVE }
     out += "inconclusive=${inconclusive.size} " + Inconclusive.entries.joinToString(" ") { r -> "${r.wire}=${inconclusive.count { it.reason == r.ordinal + 1 }}" }
     val mismatches = events.filter { it.kind == EventKind.MISMATCH }
-    out += "mismatches=${mismatches.size} " + MismatchClause.entries.joinToString(" ") { c -> "${c.wire}=${mismatches.count { it.reason == c.code }}" } + " " +
+    out += "mismatches=${mismatches.size} " + MismatchClause.entries.joinToString(" ") { c -> "${c.wire}=${mismatches.count { it.reason == c.code }}" } +
+        " vetoed=${mismatches.count { it.vetoed }} " +
         listOf(OutcomeClass.CONFIRMED, OutcomeClass.CONTRADICTED, OutcomeClass.UNJUDGED, OutcomeClass.PENDING)
             .joinToString(" ") { c -> "${c.wire}=${count(EventKind.MISMATCH, c)}" }
     out += "ring (newest first, ${events.size} of $RING_MAX):"
