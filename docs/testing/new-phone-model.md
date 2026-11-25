@@ -51,6 +51,21 @@ Run it with a signed release build (never a debug APK on a kid's phone), on the 
   6. Wi-Fi off with Location -> Wi-Fi scanning on, then off (no learned fix); location Off from the PWA:
      `WifiPlaces: cleared (off)`.
   7. `adb shell dumpsys batterystats me.vibb.launcher`: Wi-Fi scans and GPS time against design 124's day.
+- [ ] After a small move (design 134 §9, the same setup, for 2-4 weeks):
+  1. The Wi-Fi mainline module's version: `adb shell pm list packages --apex-only --show-versioncode | grep -i wifi`
+     and `adb shell dumpsys package com.google.android.wifi | grep -i version` - noted with the run.
+  2. Inconclusive tries per day by reason: `adb logcat -s ZoneWatch WifiPlaces StillPrint` (`result=inconclusive
+     reason=...`, `second scan ...`, the `scan refusals` line) and the dump's `inconclusive=` line; whether a second scan
+     brings the place back.
+  2a. The results' time base: the `scan answer n/m ask=answered` lines show `n > 0` on a fresh scan and never
+     `timebase`; a result's timestamp in `adb shell dumpsys wifi` ("Latest scan results") against `adb shell cat
+     /proc/uptime` across a deep sleep (boottime counts it, uptime doesn't) - noted with item 1's module version.
+  3. After 2-4 weeks: `adb shell dumpsys activity service
+     me.vibb.launcher/com.kidslauncher.mdm.server.CommandListenerService still-print` - verdicts confirmed,
+     contradicted, would-not by reason (and `within`), the contradicted ones' distances; revision 3's `mismatches=`
+     line: how often a scan mismatch ended "Hasn't moved since" and whether the next fix said it was right
+     (`confirmed`) or wrong (`contradicted`).
+  4. Cells: whether the phone has a SIM (the mismatch's `cell` clause needs one).
 - [ ] Apple's cell lookup (design 125b §9; needs a SIM, "Oppslag hos Apple" on):
   1. `adb shell dumpsys telephony.registry | grep -i -m5 cellinfo`: the registered cell's identity, which neighbours
      carry one, NR (NSA or SA), whether the timestamps move after a refresh, both slots' registered flags.

@@ -6078,3 +6078,39 @@ Music: another app's controller (squeue 18; `music/CLAUDE.md`). The probe app's 
 | A WPA3-only (SAE) network | **Pass.** Saved as `wpa3-sae` alone; the join `connectToNetwork "GateSae"SAE` (the network isn't there, so not found); a WPA2 one saves as `wpa2-psk` with `wpa3-sae^` | **Pass** (the SAE part) |
 
 Not run here: the QR (row 1 of §6bp, §6bq's baseline through a real QR), Android 17 (no working image).
+
+## 6bs. After a small move: inconclusive scans, the shadow fingerprint, a mismatch ends still (design 134, branch `still-print`) - written, not run
+
+`docs/design/134-still-place-fingerprint.md` §8 and revision 3's row (j): on **Android 14 and 16** with the owner's
+OK (the 17 images don't run; 17 is read from its behaviour-change list; the Jelly Star is on 16), a debug and a release
+build. The setup is §6bn's: the debug launcher, Regularly, Google's location accuracy off (the `network` provider off -
+on the Google APIs image `adb shell cmd location providers add-test-provider network` and `set-test-provider-enabled
+network false`, again after every boot), Location on, `adb shell appops set me.vibb.launcher.debug
+android:mock_location allow`, the satellite feed (`--es gps "<lat>,<lng>,<accuracy>,<satellites>[,<seconds>]"`) and the
+made-up scan and connection of `PlacesDebugReceiver`. **Settled rows first**: home's three networks of their own
+devices (`00:00:5e:00:53:01`/`:02` Hjemme 5 and 2.4 GHz, `00:00:5e:00:54:03` Nabo, `00:00:5e:00:55:04` Naboen) taught on
+three occasions over two local days by §6bn's time-zone step - a device is settled once one of its APs has a row on
+two local days, never moved. Design 134's hooks (debug only): `--ei scan_age_s N` (the made-up results heard N s ago),
+`--ez refuse_scan true|false` (every `startScan` throttled), `--es motion sensor|fire|off` (a fake significant-motion
+trigger: `sensor` stands it in, armed at the next sync, `fire` fires it, `off` the real sensor again - the emulator
+has none). Logs: `adb logcat -s WifiPlaces ZoneWatch StillPrint PlacesDebug`. The record: `adb shell dumpsys activity
+service me.vibb.launcher.debug/com.kidslauncher.mdm.server.CommandListenerService still-print` (the release build:
+`me.vibb.launcher/...`). Locate stands in for a heartbeat only where a row says so: the rows below need the heartbeat's
+own `FIX` (wait for the beat, or `am broadcast` a sync and let the beat be due).
+
+| # | Step | Expect |
+|---|---|---|
+| a | `motion sensor`, a sync; a satellite feed fix (8 satellites, 10 m) at home with home's scan, fresh | `Motion trigger armed`; `StillPrint: taken devices=3` |
+| b | `motion fire`, GPS silent, home's scan with `scan_age_s 600`, the next beat | `scan answer 0/4 ask=answered old` (the attempt waits its 8 s past the emulator's own callback, code QA M2), `second scan old` (`refuse_scan` off), `attempt path=TOGETHER result=withheld reason=old`, `Location heartbeat: FIX result=inconclusive reason=old n=1/3`; nothing reported (Locate unchanged); `StillPrint: inconclusive reason=old devices=3`; the next beat tries again (`n=2/3`, `n=3/3`); the 4th logs `result=none` and the beats after it `QUIET` |
+| c | As (b) with `refuse_scan true` | `scan refusals throttled=..`, `reason=refused`, no `second scan` line |
+| d | `refuse_scan false`, `scan_age_s 0`, `motion fire`, GPS silent, home's scan fresh | `StillPrint: verdict would=yes ...`; nothing renewed, no `still` (Locate as today); then the feed at home (10 m): `StillPrint: outcome confirmed d=.. after=..`, and a new print (`taken`) after `print dropped (replaced)` |
+| e | `motion fire`, a neighbour's scan (their own device strongest, home's 18 dB weaker) | `StillPrint: verdict would=no reason=anchor` |
+| f | `motion fire`, one made-up AP, fresh | no `second scan`, no `withheld`; `would=no reason=` as the print says (a print of one device: `thin`) |
+| g | `adb reboot`, the first heartbeat try after it | `print dropped (boot)`; no verdict event at that try |
+| h | The release build (installed over adb as §6bn's note says, never on a kid's phone): the dump with and without `still-print`; `./gradlew assembleRelease` | the summary (`prints taken=.. dropped ..`, `verdicts=..`, `inconclusive=..`, `mismatches=..`) and the ring newest first, no key, BSSID, SSID or position; without the argument one line; `checkReleaseHasNoDebugHook` passes; `PlacesDebugReceiver`'s extras do nothing (no receiver) |
+| i | Location Off from the PWA | `WifiPlaces: cleared (off)` and `StillPrint: print dropped (off)`; `run-as me.vibb.launcher.debug ls no_backup` has neither `still_print_v1` nor `still_print_ring_v1`; the dump's ring empty |
+| j | (revision 3) `motion sensor`, a fresh print at home (a), no fire; the clock 4 h on (an image with `adb root`: `adb shell date MMDDhhmm`; else this row is the Jelly Star's), a neighbour's scan without home's devices (3 APs of their own prefixes), GPS silent, the cap try | `Location heartbeat: STILL ended by a scan mismatch clause=wifi`, `StillPrint: mismatch clause=wifi devices=0/3`, no `still` and no fix in the report; the next beat a `FIX` (GPS), `QUIET` between the later failed tries; the dump's `mismatches=1 wifi=1`. Again with home's scan but one device missing: no mismatch, `cap try failed fails=1 vouch=re-sent`, `STILL fails=1 retry=..`. With zones, the neighbour's scan while connected to the linked home network (§6bn's link): `StillPrint: mismatch clause=wifi devices=0/3 vetoed`, `STILL renewed by a zone link`, `STILL` goes on. A scan of one neighbour device only (the owner's refinement of code QA H1): no mismatch while the emulator modem's registered cell has no row or a row near home; once the modem's registered cell has an Apple cell row 5 km off (§6bk's fake answer, stored by a Locate with the switch on before the clock step), `StillPrint: mismatch clause=cell devices=0/3` |
+
+What can't be faked here: real room-to-room levels, real neighbours and flats, the HAL's behaviour in deep Doze, the
+real throttle under the anchor's importance with other apps scanning, a real sensor's delay - the Jelly Star's §9
+(`docs/testing/new-phone-model.md` §2).

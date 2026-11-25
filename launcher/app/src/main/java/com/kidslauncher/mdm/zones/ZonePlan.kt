@@ -380,7 +380,8 @@ fun reportStill(
  * failed try after a move -, what [stillBackoffMs] counts from; [movingAtFresh]: the last fresh fix
  * says the phone was moving ([fixMoving]) - a car the sensor may not hear, so no `STILL` or `QUIET`
  * until a fresh fix at rest; [movedAtElapsedMs]: when (elapsed realtime) the last fire or mark came - design 125 D9
- * uses no scan result from before it.
+ * uses no scan result from before it; [mismatchSinceFresh]: design 134 D16 - a scan mismatch ended `STILL` and no fire
+ * came since the vouch, so the next fresh fix is still design 124 D7's evidence (D18).
  */
 data class MotionFlags(
     val movedSinceFresh: Boolean = true,
@@ -389,22 +390,33 @@ data class MotionFlags(
     val stillSinceMs: Long = 0,
     val movingAtFresh: Boolean = false,
     val movedAtElapsedMs: Long = 0,
+    val mismatchSinceFresh: Boolean = false,
 ) {
     /** A fire, or other evidence of a move (a crossing, a side change, Off, the anchor gone), at [atElapsedMs]. */
     fun moved(atElapsedMs: Long): MotionFlags =
-        copy(movedSinceFresh = true, movedSinceTry = true, fires = fires + 1, movedAtElapsedMs = atElapsedMs)
+        copy(movedSinceFresh = true, movedSinceTry = true, fires = fires + 1, movedAtElapsedMs = atElapsedMs, mismatchSinceFresh = false)
+
+    /**
+     * Design 134 D16 (revision 3): the cap try's conclusive scan clearly isn't the vouch's place - `STILL` ends as if
+     * the sensor had fired before the try and the try had failed: moved since the fresh fix (`STILL_SINCE_TRY`, so
+     * design 124's `QUIET` back-off from [nowMs]), not since the try. No fire is counted (the sensor didn't fire) and
+     * [mismatchSinceFresh] keeps D7 for the next fresh fix. With a fire during the attempt ([firesAtStart]) nothing.
+     */
+    fun scanMismatch(firesAtStart: Int, nowMs: Long): MotionFlags =
+        if (fires != firesAtStart) this else copy(movedSinceFresh = true, movedSinceTry = false, stillSinceMs = nowMs, mismatchSinceFresh = true)
 
     /**
      * After one of our own attempts begun at [firesAtStart]: with a fire since, nothing clears. A
      * genuinely fresh fix ([freshFixMs], its time; `null` = none) clears both, whatever asked for it,
      * and [moving] says whether it was taken on the move. A failure clears [movedSinceTry] only after
      * the heartbeat's own `FIX` ([heartbeat]; L7: a failed `locate`, low-battery or crossing fix
-     * clears nothing) - the phone still from [nowMs] when it had moved before.
+     * clears nothing) - the phone still from [nowMs] when it had moved before. Design 134 D4: a [withheld] try (its scan
+     * inconclusive after a move, no fresh fix) is no failure - nothing clears.
      */
-    fun afterTry(firesAtStart: Int, freshFixMs: Long?, heartbeat: Boolean, nowMs: Long, moving: Boolean = false): MotionFlags = when {
+    fun afterTry(firesAtStart: Int, freshFixMs: Long?, heartbeat: Boolean, nowMs: Long, moving: Boolean = false, withheld: Boolean = false): MotionFlags = when {
         fires != firesAtStart -> this
-        freshFixMs != null -> copy(movedSinceFresh = false, movedSinceTry = false, stillSinceMs = freshFixMs, movingAtFresh = moving)
-        !heartbeat || !movedSinceTry -> this
+        freshFixMs != null -> copy(movedSinceFresh = false, movedSinceTry = false, stillSinceMs = freshFixMs, movingAtFresh = moving, mismatchSinceFresh = false)
+        !heartbeat || withheld || !movedSinceTry -> this
         else -> copy(movedSinceTry = false, stillSinceMs = nowMs)
     }
 
@@ -445,8 +457,14 @@ fun fixMoving(speedMps: Float?, fix: QueuedFix, previousFresh: QueuedFix?, windo
 
 /** What an attempt reads before its LocationManager call, together (M1): the motion, the fire count
  * it compares after, [MotionFlags.stillSinceMs] for the back-off and [MotionFlags.movedAtElapsedMs] for design 125's
- * scan rule. */
-data class MotionSnapshot(val motion: Motion, val fires: Int, val stillSinceMs: Long, val movedAtElapsedMs: Long = 0)
+ * scan rule; [mismatched]: design 134 D18 - `STILL_SINCE_TRY` only because a scan mismatch ended `STILL`, no fire since
+ * the vouch: design 124 D7 checks a fresh fix as if `STILL`. */
+data class MotionSnapshot(val motion: Motion, val fires: Int, val stillSinceMs: Long, val movedAtElapsedMs: Long = 0, val mismatched: Boolean = false)
+
+/** Design 134 D18: a fresh fix taken now is design 124 D7's evidence - the gate said `STILL`, or `STILL_SINCE_TRY` only
+ * because a scan mismatch ended it with no fire since the vouch ([MotionFlags.mismatchSinceFresh]). */
+fun d7Applies(motion: Motion, mismatchSinceFresh: Boolean): Boolean =
+    motion == Motion.STILL || (motion == Motion.STILL_SINCE_TRY && mismatchSinceFresh)
 
 /** A sensor caught lying is distrusted this long, and two contradictions count within it (D7). */
 const val MOTION_DISTRUST_MS = 7 * 24 * 60 * 60_000L

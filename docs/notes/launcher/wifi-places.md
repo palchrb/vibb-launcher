@@ -271,5 +271,86 @@ glue in `WifiPlaces.attempt`/`judged`.
   WPA3 upgrade beside it; WPA3 alone as `SECURITY_TYPE_SAE`; open and OWE open; an enterprise, WEP or WAPI network
   shows "Not supported" / "Støttes ikke" and is never saved. Until the gate's run of 2026-11-25 both key-management bits were set, which Android read as WPA3 alone - a WPA2-only router
   never matched it. The lockdown is the global setting `wifi_device_owner_configs_lockdown` (1 while it holds).
-- **The emulator**: the debug build's `PlacesDebugReceiver` (src/debug) hands the places a made-up scan and connection;
-  rows in `docs/testing/emulator.md` §6bn.
+- **The emulator**: the debug build's `PlacesDebugReceiver` (src/debug) hands the places a made-up scan and connection
+  through `PlacesDebugHooks` (design 134 §7, below); rows in `docs/testing/emulator.md` §6bn.
+
+## After a small move: inconclusive scans and the shadow fingerprint (design 134, `docs/design/134-still-place-fingerprint.md`)
+
+Pure rules in `places/StillPlan.kt` (`StillPlanTest`, `StillPrintTest` with the note's binding rows 1-12), the store in
+`places/StillPrints.kt`, the glue at the end of `WifiPlaces.attempt` (`shadow`, `afterFreshFix`) and in the sync. Log
+tags `WifiPlaces`, `ZoneWatch`, `StillPrint`. No server or contract change.
+
+- **Which results answer a scan** (D1, D2; `scanAnswer`): `scanNow` keeps its request's elapsed time and outcome
+  (`cache`, `answered`, `refused` - throttled, no permission, failed -, `unanswered`, `wifioff`); a callback whose
+  results are all older than the request isn't the answer - it waits on within the 8 s (code QA M2), and with only
+  such callbacks it reads as `old`. A result answers when heard after the request (`ScanResult.timestamp`), on the
+  cache path when at most 30 s older than the request, and after the last fire. Logged `scan answer n/m ask=answered`
+  (`n` answering of `m` cached); a result over 60 s in the future means the time base isn't boottime - inconclusive,
+  `timebase` (code QA L2).
+  **Inconclusive** (says nothing about the place): refused; answered but every cached result older (`old`); not
+  answered in 8 s and nothing new (`unanswered`); connected (a live BSSID) to an AP the answer lacks (`noconnected`,
+  checked before `hear` adds the connected AP; a metered hotspot's BSSID too). Conclusive: a fresh answer of one AP or
+  none (the cabin), and a refusal with Wi-Fi off (nothing to hear). The count of results never decides.
+- **After a move** (the heartbeat's `FIX` while `MOVED`): an inconclusive first scan with no fresh fix takes **one more
+  scan** 10 s after the first request when the table's trusted networks (>= 2) or the Apple lookup could decide - not
+  after a throttled refusal (the throttle refuses it again within its window) (D3, `secondScanWorth`, logged `second
+  scan conclusive|old|...`). Still inconclusive and no fresh fix: the attempt is **withheld** (D4) - nothing reported
+  (no cell, unchecked or fallback fix, no last-known: `LocateCommands.freshOrLastKnown` returns nothing), and
+  `MotionFlags.afterTry(.., withheld = true)` keeps the flags, so the next beat tries again (`MOVED`, no back-off).
+  Three in a row (`zone_watch` `inconclusive_tries`, cleared by a fresh fix, a conclusive try, the fourth, and
+  whenever the motion isn't `MOVED` - code QA L6); the
+  fourth is an ordinary failed try. Logged `ZoneWatch: Location heartbeat: FIX result=inconclusive reason=old n=1/3`
+  and `WifiPlaces: attempt path=TOGETHER result=withheld reason=old`. While `STILL` an inconclusive cap try is part
+  A's cap fail (D5, `zones-and-power.md`); `locate`, a crossing's and the low-battery fix are unchanged.
+- **The fingerprint** (D7, D8): at a genuinely fresh fix that becomes the vouch (`afterFreshFix`) - `gps` or a checked
+  Wi-Fi fix, <= 50 m, not moving, not mock in a release build, its attempt's scan conclusive, a trusted sensor - the
+  print of its **settled** devices heard within +-30 s: a device (design 125's device key) one of whose APs has an own
+  row on >= 2 local days, never moved, not blocked (Apple rows never); the strongest 12 by level, their network key
+  and AP count. No SSID, BSSID, cell or position. Logged `StillPrint: taken devices=4` or `not taken (provider|accuracy|moving|mock|scan|pair)`. It
+  grows only at a renewal while still whose scan was conclusive and where the strict rule held (never a device
+  dropped or a level changed). **Dropped** (logged `print dropped (<reason>)`, counted): `boot` and `expired` (72 h) at
+  use, `gla` (the `network` provider on at an attempt), `rule` (the still rule off, `ZoneWatch.apply`), `distrust`
+  (design 124 D7's distrust starting) and `nosensor`, `replaced` (a new vouch), `notfresh` (a reported fix that isn't
+  the vouch); with every Wi-Fi places clear both files go (`off`, `unenrol`, ...).
+- **The shadow verdict** (D6, D9, D10): at every heartbeat `FIX` after a move with a print, a conclusive scan records
+  whether the strict rule *would* renew - `thin` (< 3 devices), `anchor` (the print's strongest device within 15 dB,
+  and the strongest usable result now one of its two strongest), `agree` (2 devices of -70 dBm or stronger within
+  15 dB), `similar` (their mean difference, an absent one 30 dB, <= 12 dB), `veto` (a Wi-Fi fix outside the vouch, an
+  impossible jump, a cell fix past it + 2 km, a fresh fix outside it) - with `J` (weighted Jaccard, weight
+  `max(0, dBm + 100)`) and the counts; an inconclusive one an `inconclusive` event. **It never acts**: no renewal, no
+  `still`, no flag, no report, no `wifi_disagreed`. Logged `StillPrint: verdict would=yes j=0.81 diff=9.0
+  devices=4/4 near=2/2 agree=2`.
+- **A scan mismatch ends `STILL`** (revision 3, D15-D19, acts): while `STILL`, the cap try's or a retry's conclusive
+  scan with no fresh fix that clearly isn't the print's place - none of its devices heard at all, and then `wifi`: at
+  least 3 distinct devices heard, or `cell`: a thinner answer whose registered cell is placed away (`cellElsewhere`: a
+  trusted own cell row or a live Apple cell row already in the table, further from the vouch than its range + the
+  vouch's accuracy + 1 km; unknown counts for nothing, no lookup is started for it; code QA H1 and the owner's
+  refinement: cells only back a Wi-Fi absence, by position - a still phone's serving cell flips) - with a print of >= 3
+  devices sets
+  `Ask.mismatch`. A renewal in the same attempt (a zone link, an Apple fix within the vouch) vetoes it (code QA M1):
+  `STILL` stays, the event is recorded flagged `vetoed`. The sync then ends `STILL` (`MotionGate.scanMismatch`, `zones-and-power.md`),
+  reports nothing and logs `ZoneWatch: Location heartbeat: STILL ended by a scan mismatch clause=wifi` and
+  `StillPrint: mismatch clause=wifi devices=0/4`. Not a design 124 D7 contradiction.
+- **Outcomes and the ring** (D11, D12): the next genuinely fresh fix of <= 100 m (`gps`, a checked Wi-Fi fix) judges
+  the pending events, the distance from the vouch rounded to 10 m: a would-renew `confirmed` (within both accuracies +
+  50 m) or `contradicted`; a would-not keeps its distance (`within` or not); a mismatch `confirmed` when the phone had
+  moved past that, else `contradicted`; `noted` for an inconclusive event; `unjudged` after a fire or a boot between,
+  24 h, or the print gone. Logged `StillPrint: outcome confirmed d=20 after=113 acc<=25`. The ring keeps the last 500
+  events of 60 days (~37 bytes each) and the taken/dropped counts.
+- **Storage and privacy** (P1-P5): `noBackupFilesDir/still_print_v1` and `still_print_ring_v1`, each an `AtomicFile`
+  sealed whole with `Secrets.box` under its own AAD (the file's name); keys are the places table's HMACs; another
+  format version is dropped; written only on a change. Never sent; logs and the dump carry counts, levels, `J`,
+  rounded distances and times (`StillPlanTest` checks every `Log` call and the dump's lines).
+- **Reading it** (D13): `adb shell dumpsys activity service
+  me.vibb.launcher/com.kidslauncher.mdm.server.CommandListenerService still-print` (debug: `me.vibb.launcher.debug/...`)
+  - `CommandListenerService.dump`: the print in force, prints taken and dropped by reason, verdicts by class (would-not
+  by reason), inconclusive tries by reason, mismatches by clause and outcome, then the ring, newest first. Without
+  the argument one line (a bug report carries none of it). Works on a release build: the framework only asks for
+  `DUMP`, which adb's shell holds. It only reads (code QA L5): a stale print is shown `(stale: boot)`, nothing is
+  dropped or written; at most two Keystore opens on the main thread (adb-only). The ring is ~18.5 KB at 500 events.
+  A drop deletes the print's file even when it can't be opened (code QA L3).
+- **Debug hooks** (§7, src/debug only, `PlacesDebugHooks` with a no-op twin in src/release; `DebugHookAbsentTest`,
+  `checkReleaseHasNoDebugHook`): `PlacesDebugReceiver`'s `--ei scan_age_s N` (the made-up results heard N s ago),
+  `--ez refuse_scan true` (every `startScan` throttled until false or `clear`) and `--es motion sensor|fire|off` (a
+  fake significant-motion trigger `MotionGate` arms and fires as the real one). Gate: `docs/testing/emulator.md` §6bs.
+- Not device-tested: the note's §9 on the Jelly Star (`docs/testing/new-phone-model.md` §2) and §6bs.

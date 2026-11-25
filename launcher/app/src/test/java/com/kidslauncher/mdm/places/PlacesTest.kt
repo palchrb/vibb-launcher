@@ -945,7 +945,7 @@ class PlacesTest {
         // H1: the attempt (and every scan) only with the network provider off; the teaching fix checks it too.
         assertTrue(source("server/LocateCommands.kt").contains("places != null && WifiPlaces.networkOff(lm) ->"))
         assertEquals(1, Regex("""wm\.startScan\(\)""").findAll(glue).count())
-        assertEquals(3, Regex("""scanNow\(""").findAll(glue).count())
+        assertEquals(4, Regex("""scanNow\(""").findAll(glue).count())
         assertTrue(glue.contains("if (snap.results.none { r -> streamMs.any { abs(it - r.elapsedMs) <= PAIR_STREAM_MS } } && networkOff(lm)) {"))
         assertTrue(glue.contains("ZoneWatch.stillOn(context, currentPolicyDecision().policy) && QuickControls.isLocationEnabled(context) && networkOff(lm)"))
         assertEquals("armed and run only when allowed (L2)", 2, Regex("""if \(!teachAllowed\(app, lm\)""").findAll(glue).count())

@@ -332,7 +332,7 @@ androidComponents {
         val check = tasks.register<CheckDebugHook>(if (release) "check${cap}HasNoDebugHook" else "check${cap}HasDebugHook") {
             manifest.set(variant.artifacts.get(SingleArtifact.MERGED_MANIFEST))
             apkDir.set(variant.artifacts.get(SingleArtifact.APK))
-            names.set(listOf("LockTaskOverride", "lock_task_debug_override", "PinVaultKeyReceiver", "HeadsetDebugReceiver", "MmsDebugReceiver", "ElementCallDebugReceiver", "UpDebugReceiver", "BtPairingDebugReceiver", "PlacesDebugReceiver", "push_hex"))
+            names.set(listOf("LockTaskOverride", "lock_task_debug_override", "PinVaultKeyReceiver", "HeadsetDebugReceiver", "MmsDebugReceiver", "ElementCallDebugReceiver", "UpDebugReceiver", "BtPairingDebugReceiver", "PlacesDebugReceiver", "push_hex", "fakeMotion", "scanAgeS", "refuseScan", "scan_age_s", "refuse_scan"))
             expectPresent.set(!release)
             requiredEntries.set(listOf("assets/dns/doh_hosts.txt"))
         }

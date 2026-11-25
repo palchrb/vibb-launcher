@@ -306,7 +306,29 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   (`afterTry`'s answer, QA L1), is a contradiction (`ZoneWatch.noteContradiction`, CE prefs `zone_watch`
   `motion_contradictions_v1`); the second within 7 days (`trustAfterContradiction`) sets `motion_distrust_until_ms` 7
   days on - `NO_SENSOR` meanwhile and `zone_watch.motion_sensor: false` (`ZoneWatch.motionTrusted`). Kept across a new
-  enrollment: it is the hardware's.
+  enrollment: it is the hardware's. The distrust's start also drops design 134's fingerprint.
+- **An inconclusive scan** (design 134 D1-D5, `docs/notes/launcher/wifi-places.md` "After a small move"): with the
+  network provider off, the heartbeat's `FIX` while `MOVED` whose scan said nothing about the place (refused, older
+  than the request, unanswered, the connected AP missing) and brought no fresh fix is **withheld**: nothing reported,
+  `MotionGate.afterTry(.., withheld = true)` keeps the flags (still `MOVED`, no `QUIET`, no back-off), the next beat
+  tries again - three in a row (`zone_watch` `inconclusive_tries`, reset whenever the motion isn't `MOVED`), the
+  fourth an ordinary failed try. Logged
+  `Location heartbeat: FIX result=inconclusive reason=old n=1/3`. While `STILL` an inconclusive cap try is part A's
+  cap fail (the retries above).
+- **A scan mismatch ends `STILL`** (design 134 revision 3, D15-D18): a cap try or retry while `STILL` whose fresh,
+  conclusive scan clearly isn't the place of the fingerprint (none of its >= 3 settled devices heard, and either >= 3
+  other devices heard or the registered cell's known position more than its range + 1 km from the vouch - code QA H1
+  and the owner's refinement: cells only back a Wi-Fi absence, by position), with no
+  fresh fix and no renewal in the attempt (a renewal vetoes it, code QA M1), ends `STILL` at once - no GPS
+  needed: `MotionGate.scanMismatch` (`MotionFlags.scanMismatch`: `movedSinceFresh` set, `movedSinceTry` clear,
+  `stillSinceMs` the try - `STILL_SINCE_TRY`, so the heartbeat's back-off counts from it and the waits between the
+  next tries are `QUIET`), part A's count cleared, no re-send (`capResend` false: no fix, no `still`; the PWA shows the
+  vouch's age). Logged `Location heartbeat: STILL ended by a scan mismatch
+  clause=wifi|cell`. It never vouches or moves a position. **Not a D7 contradiction** (a swapped router would cost a
+  week of GPS starts): but `MotionFlags.mismatchSinceFresh` (cleared by a fire or a fresh fix; `MotionSnapshot.mismatched`)
+  keeps D7 for the next fresh fix as if `STILL` (`d7Applies`), so a car ride the sensor missed still counts once the
+  satellites say so. No print, a print of < 3 devices, an inconclusive scan: part A alone; the 24-h ceiling stays the
+  last backstop.
 - **Unchanged**: `locate`, the low-battery fix, crossings, P-L3's age limit (a `still` re-send has none), no new
   report field, no contract change. The server takes a `still` re-send of any age (2026-11-25, `docs/notes/server/zones.md`:
   `intake` stamps the row's `resent_at`; the fix's age is bounded only by `MAX_FIX_AGE_MS`, 400 days), so the amended

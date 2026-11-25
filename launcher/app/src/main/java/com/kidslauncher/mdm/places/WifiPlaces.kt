@@ -61,6 +61,7 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -139,7 +140,12 @@ object WifiPlaces {
      * ([appleStillMotion]), the [stillVouch] an Apple fix may only renew (design 125 A9, H2). The attempt answers in
      * [renewed] (the vouched fix re-sent with `still: true`) and [notFresh] (a 2-min fallback fix or a cell fix:
      * reported, never fresh, M2, design 125b C9.4). [lastFresh]: the last fresh fix, whatever the motion - a cell fix
-     * inside its circle while it is under 4 h old is not reported (design 125b C9.3).
+     * inside its circle while it is under 4 h old is not reported (design 125b C9.3). Design 134: [heartbeat] - the
+     * heartbeat's own `FIX`; [mayWithhold] - after a move an inconclusive try may be withheld (D4, `mayWithhold`); the
+     * attempt answers in [inconclusive] (its last scan said nothing about the place, D2) and [withheld] (nothing
+     * reported: the scan was inconclusive and no fresh fix came, D4). [vouchFix]: the last fresh fix, the fingerprint's
+     * vouch (D9's veto, D11's distances); the attempt answers in [mismatch] (revision 3, D15: the cap try's conclusive
+     * scan clearly isn't the print's place - `STILL` ends) and [material] (D8: what a print may be taken from).
      */
     class Ask(
         val motion: Motion,
@@ -147,13 +153,28 @@ object WifiPlaces {
         val vouched: Location? = null,
         val stillVouch: Location? = null,
         val lastFresh: Location? = null,
+        val heartbeat: Boolean = false,
+        val mayWithhold: Boolean = false,
+        val vouchFix: com.kidslauncher.mdm.zones.QueuedFix? = null,
     ) {
+        @Volatile var mismatch: MismatchClause? = null
+
+        /** D9.5: something in the attempt says elsewhere (a Wi-Fi fix outside the vouch, an impossible jump, a cell fix
+         * past it + 2 km). */
+        @Volatile var elsewhere = false
+
+        @Volatile internal var material: PrintMaterial? = null
+
         @Volatile var renewed = false
 
         /** The renewal came from an Apple fix within the vouch, not a zone link (A9). */
         @Volatile var renewedByApple = false
 
         @Volatile var notFresh = false
+
+        @Volatile var inconclusive: Inconclusive? = null
+
+        @Volatile var withheld = false
     }
 
     private val lock = Any()
@@ -177,12 +198,6 @@ object WifiPlaces {
     private val refusals = sortedMapOf<String, Int>()
 
     @Volatile private var moving: MovingSsids? = null
-
-    /** Debug builds only (the emulator gate's receiver, design 131 §7): a made-up scan and connection in place
-     * of the radio's - the emulator's own Wi-Fi is open and hears no other network. Nothing sets them in a release build. */
-    @Volatile internal var debugResults: List<ScanAp>? = null
-
-    @Volatile internal var debugConnected: Connected? = null
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val executor = Executors.newSingleThreadExecutor()
@@ -305,6 +320,8 @@ object WifiPlaces {
         keys = null
         readings = emptyMap()
         lastLearned = null
+        // Design 134 P4: the fingerprint and its ring go with the table.
+        StillPrints.clear(context, reason)
         if (!had) return
         f.delete()
         p.edit().clear().commit()
@@ -314,8 +331,22 @@ object WifiPlaces {
     // --- Reading the radio (D10, D13, D17) ---
 
     /** What one read of the radio heard: the Wi-Fi results, the connected network, the usable cells (design 125b C2:
-     * registered first, at most 12). Never stored. */
-    private class Snapshot(val results: List<ScanAp>, val connected: Connected?, val cells: List<Heard>)
+     * registered first, at most 12) and, for a scan of an attempt, which results answer its request (design 134 D1,
+     * D2; `null` without a scan). Never stored. */
+    private class Snapshot(
+        val results: List<ScanAp>,
+        val connected: Connected?,
+        val cells: List<Heard>,
+        val answer: ScanAnswer? = null,
+        val request: ScanRequest? = null,
+    )
+
+    /** A scan's results and its request (design 134 D1). */
+    private class Scan(val results: List<ScanAp>, val request: ScanRequest)
+
+    /** Design 134 D8: a conclusive answer's usable results by their keys, the table's settled keys and the cells - what
+     * a print may be taken from once the sync knows the fix. Memory only, for the attempt's sync. */
+    internal class PrintMaterial(val heard: List<Heard>, val settled: Set<String>, val cells: List<Heard>)
 
     private fun wifi(context: Context) = context.applicationContext.getSystemService(WifiManager::class.java)
 
@@ -328,10 +359,11 @@ object WifiPlaces {
         Log.i(LOG_TAG, "scan refusals $line")
     }
 
-    private fun cached(context: Context): List<ScanAp> = debugResults?.let { list ->
-        // Heard now: a made-up scan is always fresh.
-        val now = SystemClock.elapsedRealtime()
-        list.map { it.copy(elapsedMs = now) }
+    /** The cached results. Debug builds only ([PlacesDebugHooks], design 131 §7, design 134 §7): a made-up scan, heard
+     * now or the hook's age ago, in place of the radio's - the emulator's own Wi-Fi is open and hears no other network. */
+    private fun cached(context: Context): List<ScanAp> = PlacesDebugHooks.madeUpResults()?.let { list ->
+        val heardAt = SystemClock.elapsedRealtime() - PlacesDebugHooks.resultsAgeMs()
+        list.map { it.copy(elapsedMs = heardAt) }
     } ?: try {
         wifi(context)?.scanResults.orEmpty().map(::scanAp)
     } catch (e: SecurityException) {
@@ -351,40 +383,67 @@ object WifiPlaces {
     )
 
     /** D13: the cached results when D9's fresh rule holds (>= 3 usable within 30 s, after the last move); else one
-     * `startScan` and its results within [SCAN_WAIT_MS] - refused or no answer: the cache (the 2-min fallback). */
-    private suspend fun scanNow(context: Context, movedAtElapsedMs: Long): List<ScanAp> {
+     * `startScan` and its results within [SCAN_WAIT_MS] - refused or no answer: the cache (the 2-min fallback). Design
+     * 134 D1: with the request's elapsed time and how it went, so the results that answer it can be told. */
+    private suspend fun scanNow(context: Context, movedAtElapsedMs: Long): Scan {
         val now = SystemClock.elapsedRealtime()
         val before = cached(context)
         val list = moving(context)
         val fresh = before.count { now - it.elapsedMs in 0..SCAN_FRESH_MS && it.elapsedMs > movedAtElapsedMs && usableAp(it.bssid, it.ssid, list) }
-        if (fresh >= SCAN_RESULTS_MIN) return before
-        val wm = wifi(context) ?: return before
-        val done = CompletableDeferred<Unit>()
+        if (fresh >= SCAN_RESULTS_MIN) return Scan(before, ScanRequest(now, ScanAsk.CACHE))
+        val wm = wifi(context) ?: return Scan(before, ScanRequest(now, ScanAsk.REFUSED))
+        var ask = ScanAsk.ANSWERED
+        val requestAt = SystemClock.elapsedRealtime()
+        val updates = Channel<Unit>(Channel.CONFLATED)
         val callback = object : WifiManager.ScanResultsCallback() {
             override fun onScanResultsAvailable() {
-                done.complete(Unit)
+                updates.trySend(Unit)
             }
         }
         try {
             wm.registerScanResultsCallback(executor, callback)
+            // A debug build's hook may count the scan as throttled (design 134 §7); a release build always asks.
             @Suppress("DEPRECATION")
             when {
-                !wm.startScan() -> refused(if (wm.isWifiEnabled) "throttled" else "wifioff")
-                withTimeoutOrNull(SCAN_WAIT_MS) { done.await() } == null -> refused("unanswered")
+                PlacesDebugHooks.scanRefused() || !wm.startScan() -> {
+                    val on = wm.isWifiEnabled
+                    refused(if (on) "throttled" else "wifioff")
+                    ask = if (on) ScanAsk.REFUSED else ScanAsk.WIFI_OFF
+                }
+                // Code QA M2: a callback whose results are all older than the request (another app's scan, a cache
+                // refresh) isn't our answer - wait on within the 8 s for one that is. An empty cache after a callback is
+                // an honest "nothing heard" (the cabin). A callback came but no answer in time: old, not unanswered.
+                else -> {
+                    var called = false
+                    var answered = false
+                    while (!answered) {
+                        val left = requestAt + SCAN_WAIT_MS - SystemClock.elapsedRealtime()
+                        if (left <= 0 || withTimeoutOrNull(left) { updates.receive() } == null) break
+                        called = true
+                        val heard = cached(context)
+                        answered = heard.isEmpty() || heard.any { it.elapsedMs > requestAt }
+                    }
+                    if (!called) {
+                        refused("unanswered")
+                        ask = ScanAsk.UNANSWERED
+                    }
+                }
             }
         } catch (e: SecurityException) {
             refused("permission")
+            ask = ScanAsk.REFUSED
         } catch (e: Exception) {
             refused("failed")
+            ask = ScanAsk.REFUSED
         } finally {
             runCatching { wm.unregisterScanResultsCallback(callback) }
         }
-        return cached(context)
+        return Scan(cached(context), ScanRequest(requestAt, ask))
     }
 
     /** D4, D17: the connected network, with its metering from the active network's capabilities (merged through our VPN);
      * design 131: its security (`getCurrentSecurityType`, API 31) and Android's id of the saved network. */
-    private fun connected(context: Context): Connected? = debugConnected ?: try {
+    private fun connected(context: Context): Connected? = PlacesDebugHooks.madeUpConnected() ?: try {
         @Suppress("DEPRECATION")
         val info = wifi(context)?.connectionInfo
         val bssid = connectedBssid(info?.bssid)
@@ -501,9 +560,22 @@ object WifiPlaces {
 
     private suspend fun snapshot(context: Context, keys: PlaceKeys, movedAtElapsedMs: Long): Snapshot = coroutineScope {
         val cells = async { readCells(context, keys) }
-        val results = scanNow(context, movedAtElapsedMs)
-        Snapshot(results, connected(context), cells.await())
+        val scan = scanNow(context, movedAtElapsedMs)
+        answered(scan, connected(context), cells.await(), movedAtElapsedMs)
     }
+
+    /** Design 134 D1, D2: [scan] as a snapshot with the results that answer its request; the connection read after the
+     * scan (a live BSSID must be among the answer). */
+    private fun answered(scan: Scan, connected: Connected?, cells: List<Heard>, movedAtElapsedMs: Long): Snapshot {
+        val answer = scanAnswer(scan.results, scan.request, connectedBssid(connected?.bssid), movedAtElapsedMs, SystemClock.elapsedRealtime())
+        // Code QA L2: how many results answered the request, and how it was asked; a time base that isn't boottime shows.
+        Log.i(LOG_TAG, "scan answer ${answer.answering.size}/${scan.results.size} ask=${scan.request.ask.wire}" + (answer.inconclusive?.let { " ${it.wire}" } ?: ""))
+        return Snapshot(scan.results, connected, cells, answer, scan.request)
+    }
+
+    /** Design 134 D3: one more scan for [first]'s attempt, its cells kept. */
+    private suspend fun rescan(context: Context, first: Snapshot, movedAtElapsedMs: Long): Snapshot =
+        answered(scanNow(context, movedAtElapsedMs), connected(context), first.cells, movedAtElapsedMs)
 
     private fun hearing(context: Context, store: Store, snap: Snapshot, remember: Boolean): Hearing {
         val h = hear(snap.results, snap.connected, store.keys, moving(context), readings, SystemClock.elapsedRealtime())
@@ -547,6 +619,8 @@ object WifiPlaces {
         val store = open(context) ?: return null
         val fix = cellFix(snap.cells, store.rows, nowMin()) ?: return null
         save(context, store.generation) { touchSeen(it, fix.keys, nowMin()) }
+        // Design 134 D9.5: a cell fix past the vouch's accuracy + 2 km says elsewhere.
+        ask.vouchFix?.let { v -> if (distanceM(v.latitude, v.longitude, fix.lat, fix.lng) > fix.accuracyM + (v.accuracy ?: 0f) + CELL_VETO_SLACK_M) ask.elsewhere = true }
         // Code QA L4: the fixes' ages by elapsed realtime, never the wall clock (none set: another boot's fix, unknown).
         fun seen(l: Location?) = l?.let {
             SeenFix(it.latitude, it.longitude, if (it.hasAccuracy()) it.accuracy.toDouble() else 0.0, (it.elapsedRealtimeNanos / 1_000_000).takeIf { e -> e > 0 })
@@ -966,7 +1040,7 @@ object WifiPlaces {
                 val streamMs = stream.all().map { it.elapsedRealtimeNanos / 1_000_000 }
                 if (snap.results.none { r -> streamMs.any { abs(it - r.elapsedMs) <= PAIR_STREAM_MS } } && networkOff(lm)) {
                     // Every cached result counts as before the move: the platform scans now.
-                    snap = Snapshot(scanNow(context, SystemClock.elapsedRealtime()), snap.connected, snap.cells)
+                    snap = Snapshot(scanNow(context, SystemClock.elapsedRealtime()).results, snap.connected, snap.cells)
                 }
                 taught = teachWith(context, store, snap, teaching(stream.all()), PAIR_STREAM_MS, movedAtElapsedMs, disagreement)
             }
@@ -1005,13 +1079,20 @@ object WifiPlaces {
         val disagreement = Disagreement()
         try {
             val store = open(app)
+            // Design 134 D14: the print in force (dropped at a boot or after 72 h); without a trusted sensor it describes
+            // nothing the heartbeat could use.
+            var print = if (store != null) StillPrints.current(app) else null
+            if (print != null && ask.motion == Motion.NO_SENSOR) {
+                StillPrints.drop(app, if (ZoneWatch.motionTrusted(app)) DropReason.NO_SENSOR else DropReason.DISTRUST)
+                print = null
+            }
             val movedSinceFresh = ask.motion != Motion.STILL
             val refresh = refreshDue(prefs(app).getLong(KEY_LAST_GPS_TRY, 0L), System.currentTimeMillis())
             val plan = attemptPlan(path, ask.motion, refresh)
             return coroutineScope {
                 // Without the table (a Keystore error) nothing is scanned, used or taught: GPS as before.
                 val snap = async { if (store == null) Snapshot(emptyList(), null, emptyList()) else snapshot(app, store.keys, ask.movedAtElapsedMs) }
-                suspend fun learned(): LearnedFix? = store?.let { lookup(app, it, snap.await(), ask.movedAtElapsedMs, disagreement) }
+                suspend fun learned(on: Snapshot? = null): LearnedFix? = store?.let { lookup(app, it, on ?: snap.await(), ask.movedAtElapsedMs, disagreement) }
                     ?.takeIf { standsAlone(it, movedSinceFresh) }
                 suspend fun gps(boundMs: Long, shortMs: Long = boundMs, stopEarly: suspend () -> Boolean = { false }) =
                     gpsTry(app, lm, store, snap, ask.movedAtElapsedMs, boundMs, accept, shortMs, stopEarly, disagreement = disagreement).fix
@@ -1023,18 +1104,18 @@ object WifiPlaces {
                 // wait for its fixed answer time; it is awaited only before [cellOnly].
                 val cellAsk = java.util.concurrent.atomic.AtomicReference<Deferred<Boolean>?>(null)
                 val askCells = cellAskAllowed(appleStillMotion(ask.motion), plan == AttemptPlan.LOCATE)
-                suspend fun appleFix(): LearnedFix? {
+                suspend fun appleFix(on: Snapshot? = null): LearnedFix? {
                     if (store == null || !appleAllowed(app)) return null
-                    val s = snap.await()
+                    val s = on ?: snap.await()
                     val (wifiAsked, cells) = askBeside(scope, if (askCells) ({ askAppleCells(app, store, s) }) else null) {
                         askApple(app, store, s, ask.movedAtElapsedMs)
                     }
-                    cellAsk.set(cells)
+                    if (cellAsk.get() == null) cellAsk.set(cells)
                     if (!wifiAsked) return null
                     return open(app)?.let { lookup(app, it, s, ask.movedAtElapsedMs, disagreement) }?.takeIf { standsAlone(it, movedSinceFresh) }
                 }
                 // Design 131: what confirmed the Wi-Fi fix, and what may become of it before GPS has a say.
-                suspend fun judge(fix: LearnedFix?): Judged? = fix?.let { judged(app, store, snap.await(), it, ask, disagreement) }
+                suspend fun judge(fix: LearnedFix?, on: Snapshot? = null): Judged? = fix?.let { judged(app, store, on ?: snap.await(), it, ask, disagreement) }
                 fun report(j: Judged, check: FixCheck?): Location? =
                     location(j.fix, check).takeIf(accept)?.also { ask.notFresh = !wifiFresh(j.fix, check) }
                 // A9 (H2): still means still - the vouch renewed, never replaced; with its own check (never a better one).
@@ -1056,11 +1137,28 @@ object WifiPlaces {
                         Kept.NONE -> null
                     }
                 }
+                // Design 134 D3: the snapshot whose answer the attempt ends with (the second scan's when it ran).
+                var last: Snapshot? = null
                 val kept = when (plan) {
                     // The lookup runs on the first scan beside GPS (code QA L5): independent of what the GPS teaches.
                     AttemptPlan.TOGETHER -> {
                         val early = async { judge(learned() ?: appleFix()) }
-                        keep(gps(GPS_MS), early.await())
+                        val first = keep(gps(GPS_MS), early.await())
+                        val s = snap.await()
+                        // Design 134 D3: after a move, an inconclusive first scan and no fresh fix - one more scan when a
+                        // fresh one could decide (the table's trusted networks, or the Apple lookup).
+                        val freshFirst = first != null && !ask.notFresh && !ask.renewed
+                        val appleMay = appleAllowed(app) && appleMayAskNow(app, KEY_APPLE_WAIT)
+                        val afterMove = ask.heartbeat && ask.motion == Motion.MOVED
+                        if (store != null && secondScanWorth(afterMove, s.answer, freshFirst, trustedNetworkCount(store.rows, nowMin()), appleMay)) {
+                            delay(secondScanWaitMs(s.request?.atElapsedMs ?: 0L, SystemClock.elapsedRealtime()))
+                            val again = rescan(app, s, ask.movedAtElapsedMs)
+                            last = again
+                            Log.i(LOG_TAG, "second scan " + (again.answer?.inconclusive?.wire ?: "conclusive"))
+                            keep(null, judge(learned(again) ?: appleFix(again), again)) ?: first
+                        } else {
+                            first
+                        }
                     }
                     AttemptPlan.LEARNED_FIRST -> {
                         val judged = judge(learned())
@@ -1087,10 +1185,22 @@ object WifiPlaces {
                         keep(fix, early.await())
                     }
                 }
+                // Design 134 D2, D4: the attempt's last scan said nothing and no fresh fix came - after a move nothing is
+                // reported (no cell fix, no unchecked or fallback fix, no last-known), and the flags stay as they were.
+                val ended = last ?: snap.await()
+                // Code QA M1: a renewal in this attempt (a zone link, an Apple fix within the vouch) vetoes a mismatch.
+                ask.inconclusive = ended.answer?.inconclusive
+                if (withheld(ask.mayWithhold, ask.inconclusive, kept != null && !ask.notFresh && !ask.renewed)) {
+                    ask.withheld = true
+                    Log.i(LOG_TAG, "attempt path=$plan result=withheld reason=${ask.inconclusive?.wire}")
+                    shadow(app, store, print, ask, ended, null)
+                    return@coroutineScope null
+                }
                 val result = kept ?: run {
                     cellAsk.get()?.await()
                     cellOnly(app, store, snap.await(), ask, plan == AttemptPlan.LOCATE, accept)
                 }
+                shadow(app, store, print, ask, ended, result)
                 Log.i(LOG_TAG, "attempt path=$plan result=${if (ask.renewed) "renewed" else result?.provider ?: "none"}")
                 result
             }
@@ -1103,6 +1213,102 @@ object WifiPlaces {
             ownTeaching.decrementAndGet()
             // Design 131: however many rules saw it, one rise an attempt.
             ZoneWatch.countWifiDisagreed(app, disagreement.rise())
+        }
+    }
+
+    /**
+     * Design 134 at an attempt's end, with its last scan [s]: a conclusive answer's material for a print (D8); then, with
+     * a print in force and the heartbeat's own `FIX` - after a move (`MOVED`) the shadow verdict or an inconclusive
+     * event (D10; it never acts, D6); while `STILL` (a cap try or retry) revision 3's mismatch (D15: only with no fresh
+     * fix; recorded, D19) or, at a renewal where the rule held, the print grown (D8, QA M5). The still tier records no
+     * verdict. Never throws into the attempt.
+     */
+    private fun shadow(context: Context, store: Store?, print: StillPrint?, ask: Ask, s: Snapshot, result: Location?) {
+        try {
+            store ?: return
+            val answer = s.answer ?: return
+            val now = nowMin()
+            val material = if (answer.conclusive) {
+                val heard = hear(answer.answering, null, store.keys, moving(context), emptyMap(), SystemClock.elapsedRealtime()).heard
+                PrintMaterial(heard, settledKeys(store.rows, now), s.cells).also { ask.material = it }
+            } else {
+                null
+            }
+            if (print == null || !ask.heartbeat) return
+            val at = EventAt(now, SystemClock.elapsedRealtime(), BootClock.bootCount())
+            val fresh = result != null && !ask.notFresh && !ask.renewed
+            when (ask.motion) {
+                Motion.MOVED -> {
+                    val event = if (material == null) {
+                        inconclusiveEvent(print, answer.inconclusive ?: return, at)
+                    } else {
+                        // D9.5: a fresh fix of this attempt outside both accuracies of the vouch says elsewhere too.
+                        val v = ask.vouchFix
+                        val far = fresh && v != null &&
+                            distanceM(v.latitude, v.longitude, result.latitude, result.longitude) > (v.accuracy ?: 0f) + (if (result.hasAccuracy()) result.accuracy else 0f)
+                        verdictEvent(print, shadowVerdict(print, printScan(material.heard, material.settled), ask.elsewhere || far), at)
+                    }
+                    StillPrints.record(context, event)
+                }
+                Motion.STILL -> {
+                    material ?: return
+                    val scan = printScan(material.heard, material.settled)
+                    // D15 (the owner's refinement): the registered cell counts only by a position the table already holds
+                    // (an own cell row, or an Apple cell row from design 125b's answers) - never a lookup for this.
+                    val vouch = ask.vouchFix?.let { VouchPoint((it.timeMs / 60_000).toInt(), it.latitude, it.longitude, it.accuracy ?: 0f) }
+                    val cellAway = !fresh && cellElsewhere(material.cells, open(context)?.rows ?: store.rows, now, vouch)
+                    val clause = if (fresh) null else printMismatch(print, scan, cellAway)
+                    if (clause != null) {
+                        // Code QA M1 (D16): a renewal in the same attempt is positive evidence of the place - it vetoes the
+                        // mismatch, which is still recorded (flagged) for the owner's record.
+                        if (!ask.renewed) ask.mismatch = clause
+                        StillPrints.record(context, mismatchEvent(print, clause, scan, at, vetoed = ask.renewed))
+                    } else if (ask.renewed && shadowVerdict(print, scan, veto = false).would) {
+                        StillPrints.grow(context, print, grownPrint(print, scan.devices))
+                    }
+                }
+                else -> {}
+            }
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "fingerprint skipped: ${e.javaClass.simpleName}")
+        }
+    }
+
+    /**
+     * Design 134 after an attempt's sync: [fresh] - the genuinely fresh fix that is now the vouch (`null` none) - judges
+     * the ring's pending events (D11: `gps` or a checked Wi-Fi fix, the distances from the vouch before it, [ask]'s
+     * `vouchFix`), then replaces the print: the old one dropped, a new one taken when [printRefusal] allows (D8). [moving]:
+     * the fix was on the move. Never throws.
+     */
+    fun afterFreshFix(context: Context, ask: Ask, fresh: com.kidslauncher.mdm.zones.QueuedFix, moving: Boolean) {
+        try {
+            val app = context.applicationContext
+            val nowMin = nowMin()
+            val outcome = fresh.provider == "gps" || (fresh.provider in PRINT_WIFI_PROVIDERS && fresh.check != null)
+            val acc = fresh.accuracy
+            if (outcome && acc != null) {
+                val vouch = ask.vouchFix?.let { VouchPoint((it.timeMs / 60_000).toInt(), it.latitude, it.longitude, it.accuracy ?: 0f) }
+                StillPrints.afterFix(app, OutcomeFix(fresh.latitude, fresh.longitude, acc, nowMin, BootClock.bootCount(), MotionGate.snapshot(app).movedAtElapsedMs), vouch)
+            }
+            val old = StillPrints.current(app)
+            if (old != null && old.fixTimeMs != fresh.timeMs) StillPrints.drop(app, DropReason.REPLACED)
+            val material = ask.material
+            val refusal = printRefusal(fresh.provider, fresh.check, acc, moving, fresh.mock, release, material != null)
+            val elapsed = fresh.elapsedMs
+            // Without a trusted sensor no heartbeat could use a print (D14): none is taken.
+            val sensor = ask.motion != Motion.NO_SENSOR
+            val taken = if (sensor && refusal == null && material != null && elapsed != null) {
+                takePrint(fresh.timeMs, elapsed, BootClock.bootCount(), SystemClock.elapsedRealtime(), nowMin, material.heard, material.settled)
+            } else {
+                null
+            }
+            if (taken != null) {
+                StillPrints.take(app, taken)
+            } else if (sensor && material != null) {
+                Log.i("StillPrint", "not taken (${(refusal ?: PrintRefusal.PAIR).wire})")
+            }
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "fingerprint skipped: ${e.javaClass.simpleName}")
         }
     }
 
@@ -1129,7 +1335,11 @@ object WifiPlaces {
             else -> null
         }
         val vouch = ask.stillVouch?.let { Vouched(it.latitude, it.longitude, if (it.hasAccuracy()) it.accuracy.toDouble() else 0.0) }
-        val verdict = wifiVerdict(fix, check, ask.motion, vouch, jumpGate(fix, gnss, TrustedClock.nowMs(), nowElapsed, boot))
+        val jump = jumpGate(fix, gnss, TrustedClock.nowMs(), nowElapsed, boot)
+        val verdict = wifiVerdict(fix, check, ask.motion, vouch, jump)
+        // Design 134 D9.5: a Wi-Fi fix outside both accuracies of the vouch, or an impossible jump, says elsewhere.
+        val v = ask.vouchFix
+        if (jump == Jump.IMPOSSIBLE || (v != null && distanceM(v.latitude, v.longitude, fix.lat, fix.lng) > fix.accuracyM + (v.accuracy ?: 0f))) ask.elsewhere = true
         Log.i(LOG_TAG, "wifi fix check=${check?.wire ?: "none"} step=${verdict.step}")
         if (verdict.disagreed) {
             disagreement.mark()

@@ -45,6 +45,7 @@ import com.kidslauncher.mdm.zones.heartbeatDue
 import com.kidslauncher.mdm.zones.fixMoving
 import com.kidslauncher.mdm.zones.motionContradiction
 import com.kidslauncher.mdm.zones.capTryResends
+import com.kidslauncher.mdm.zones.d7Applies
 import com.kidslauncher.mdm.zones.reportStill
 import com.kidslauncher.mdm.zones.stillVouched
 import com.kidslauncher.mdm.zones.stillCapFailsAfter
@@ -935,6 +936,11 @@ private suspend fun currentLocationReport(
     val stillFrom = if (stillOn) maxOf(lastFreshFix, ZoneWatch.vouchRenewedMs(context)) else lastOwnFix
     // Design 124 D5 (amended 2026-11-25): the failed tries since the vouch's 4 h ran out.
     val capFails = if (stillOn) ZoneWatch.stillCapFails(context) else 0
+    // Design 134 D4: the inconclusive tries after a move withheld in a row; code QA L6: a run belongs to one move - any
+    // other motion (still, a failed try's, no sensor or a distrusted one) ends it.
+    val storedTries = if (stillOn) ZoneWatch.inconclusiveTries(context) else 0
+    val inconclusiveTries = com.kidslauncher.mdm.places.inconclusiveTriesNow(storedTries, motion)
+    if (inconclusiveTries != storedTries) ZoneWatch.stampInconclusiveTries(context, inconclusiveTries)
     val sync = syncLocationAction(
         policy = policy,
         stillOn = stillOn,
@@ -973,7 +979,8 @@ private suspend fun currentLocationReport(
     // against, and what the moving-car rule measures a fix without a speed from.
     val lastFreshQueued = if (motionNow != null && action.fresh) LocateCommands.cachedQueued()?.takeIf { it.timeMs == lastFreshFix } else null
     // Design 125 D15: only a satellite fix is a vouch D7 compares with.
-    val vouched = lastFreshQueued?.takeIf { motion == Motion.STILL && it.provider in VOUCHING_PROVIDERS }
+    // Design 134 D18: after a scan mismatch with no fire since the vouch, the next fresh fix is D7's evidence as if STILL.
+    val vouched = lastFreshQueued?.takeIf { d7Applies(motion, motionNow?.mismatched == true) && it.provider in VOUCHING_PROVIDERS }
     // Design 125 D12: the heartbeat's 4-h cap try (motion STILL, so a fix is due only because the cap ran out) may renew
     // the vouch through a zone link instead of a new position.
     val renewable = if (zonesOn && beat == Heartbeat.FIX && motion == Motion.STILL) lastFreshQueued else null
@@ -1009,6 +1016,9 @@ private suspend fun currentLocationReport(
         renewable?.let(::asLocation),
         stillVouch?.let(::asLocation),
         lastFreshSeen,
+        heartbeat = beat == Heartbeat.FIX,
+        vouchFix = if (stillOn) ZoneWatch.lastFreshFix(context) else null,
+        mayWithhold = motionNow != null && com.kidslauncher.mdm.places.mayWithhold(beat == Heartbeat.FIX, motion, inconclusiveTries),
     )
     // The parent's `locate` waits up to EXPLICIT_FIX_BOUND_MS here, under the sync mutex: rare and asked for, and its
     // fix goes into this report; every other fix keeps its 15 s (preciseFix).
@@ -1033,8 +1043,20 @@ private suspend fun currentLocationReport(
         val intervalMs = (policy ?: LocationPolicy()).intervalMinutes.coerceAtLeast(MIN_LOCATION_INTERVAL_MINUTES) * 60_000L
         val moving = fresh != null &&
             fixMoving(if (fresh.hasSpeed()) fresh.speed else null, fresh.toQueued(), lastFreshQueued, intervalMs)
+        // Design 134: the fresh fix judges the fingerprint's pending events and takes the new vouch's print (D8, D11).
+        if (fresh != null) WifiPlaces.afterFreshFix(context, places, fresh.toQueued(LocateCommands.providerOf(fresh)), moving)
+        // Design 134 revision 3 (D15, D16): the cap try's conclusive scan clearly isn't the vouch's place and no fresh fix
+        // came - STILL ends now, no GPS needed; it reports nothing and never vouches.
+        val mismatch = places.mismatch?.takeIf { capTry && fresh == null }
         // Only the heartbeat's own try clears "moved since try" on a failure (L7).
-        val held = MotionGate.afterTry(context, motionNow.fires, fresh?.time, heartbeat = beat == Heartbeat.FIX, nowMs = now, moving = moving)
+        val held = MotionGate.afterTry(context, motionNow.fires, fresh?.time, heartbeat = beat == Heartbeat.FIX, nowMs = now, moving = moving, withheld = places.withheld)
+        // Design 134 D4: the withheld tries in a row after a move; a conclusive try or a fresh fix ends the run.
+        val triesNow = if (beat == Heartbeat.FIX && motion == Motion.MOVED) {
+            com.kidslauncher.mdm.places.inconclusiveTriesAfter(inconclusiveTries, places.withheld)
+        } else {
+            inconclusiveTries
+        }
+        if (triesNow != inconclusiveTries) ZoneWatch.stampInconclusiveTries(context, triesNow)
         // A move during the attempt explains the distance: no contradiction then (QA L1); a learned fix is never the
         // new side of one (design 125 D15: a wrong Wi-Fi fix must not distrust the sensor).
         val satellite = fresh?.provider in VOUCHING_PROVIDERS
@@ -1042,15 +1064,22 @@ private suspend fun currentLocationReport(
         // Design 124 D5 (amended 2026-11-25): a failed try past the cap counts towards the retry's back-off.
         val capFailsNow = stillCapFailsAfter(capFails, beat, motion, fresh != null, places.renewed, held)
         if (capFailsNow > capFails) ZoneWatch.stampStillCapFails(context, capFailsNow)
+        if (mismatch != null) {
+            MotionGate.scanMismatch(context, motionNow.fires, now)
+            ZoneWatch.stampStillCapFails(context, 0)
+            Log.i(ZONE_LOG_TAG, "Location heartbeat: STILL ended by a scan mismatch clause=${mismatch.wire}")
+        }
         capFailed = capTry && fresh == null && !places.renewed
         if (capFailed) {
-            capResend = capTryResends(LocateCommands.cachedQueued()?.timeMs, lastFreshFix, held, stillVouched(motion, now, stillFrom, capFailsNow))
+            capResend = mismatch == null &&
+                capTryResends(LocateCommands.cachedQueued()?.timeMs, lastFreshFix, held, stillVouched(motion, now, stillFrom, capFailsNow))
             Log.i(ZONE_LOG_TAG, "Location heartbeat: cap try failed fails=$capFailsNow vouch=" + if (capResend) "re-sent" else "dropped")
         }
         if (beat == Heartbeat.FIX || moving) {
             val result = when {
                 places.renewed -> "renewed"
                 fresh != null -> "fresh"
+                places.withheld -> "inconclusive reason=${places.inconclusive?.wire} n=$triesNow/${com.kidslauncher.mdm.places.INCONCLUSIVE_TRIES_MAX}"
                 else -> "none"
             }
             Log.i(ZONE_LOG_TAG, "Location heartbeat: ${beat ?: "forced"} result=$result moving=$moving")
@@ -1058,6 +1087,11 @@ private suspend fun currentLocationReport(
     }
     val location = attempted?.takeIf { !capFailed || capResend }
     val still = stillBeat || places.renewed || capResend
+    // Design 134 D14: a fix reported after the vouch that isn't it (a cell fix, an unchecked or fallback Wi-Fi fix, a
+    // promoted kept fix) drops the fingerprint.
+    if (stillOn && location != null && location.time != ZoneWatch.lastFreshFixMs(context)) {
+        com.kidslauncher.mdm.places.StillPrints.drop(context, com.kidslauncher.mdm.places.DropReason.NOT_FRESH)
+    }
     location ?: return LocationOutcome(action, null, null, null)
     val accuracy = if (location.hasAccuracy()) location.accuracy else null
     return LocationOutcome(

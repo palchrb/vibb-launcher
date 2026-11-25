@@ -20,6 +20,10 @@ import android.util.Log
  * `bssid,ssid,psk|sae|eap|open,networkId,MHz` (unmetered); `--ez clear true` clears both. Every scan, attempt and teach
  * reads them (heard now) until cleared or the process restarts. Exported for the shell, guarded by DUMP.
  *
+ * Design 134 §7: `--ei scan_age_s N` - the made-up results were heard N s before each read (0 now); `--ez refuse_scan
+ * true` - every `startScan` counts as throttled until `false` or `clear`; `--es motion sensor|fire|off` - a fake
+ * significant-motion trigger the motion gate arms as the real one ([PlacesDebugHooks]; none of it in a release build).
+ *
  * Satellite fixes (the 131 gate, 2026-11-25): the emulator's GNSS marks no satellite as used in a fix (`satellites=0`
  * in the extras of every `geo fix`, whatever its count), so none of its fixes teaches. `--es gps "lat,lng,accuracy,
  * satellites[,seconds]"` makes `gps` a test provider (after `adb shell appops set <package> android:mock_location
@@ -28,6 +32,10 @@ import android.util.Log
  */
 class PlacesDebugReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
+        intent.getStringExtra("motion")?.let { m ->
+            resultData = motion(m)
+            return
+        }
         if (intent.getBooleanExtra("gps_off", false)) {
             resultData = gpsFeed(context, null)
             return
@@ -37,14 +45,16 @@ class PlacesDebugReceiver : BroadcastReceiver() {
             return
         }
         if (intent.getBooleanExtra("clear", false)) {
-            WifiPlaces.debugResults = null
-            WifiPlaces.debugConnected = null
+            PlacesDebugHooks.madeUpAps = null
+            PlacesDebugHooks.madeUpConnection = null
+            PlacesDebugHooks.scanAgeS = 0
+            PlacesDebugHooks.refuseScan = false
             Log.i(TAG, "made-up scan and connection cleared")
             resultData = "cleared"
             return
         }
         intent.getStringExtra("aps")?.let { aps ->
-            WifiPlaces.debugResults = aps.split(';').mapNotNull { ap ->
+            PlacesDebugHooks.madeUpAps = aps.split(';').mapNotNull { ap ->
                 val p = ap.split(',').map { it.trim() }
                 if (p.size < 4) return@mapNotNull null
                 ScanAp(p[0], p[1].ifEmpty { null }, null, p[2].toIntOrNull() ?: return@mapNotNull null, p[3].toIntOrNull() ?: return@mapNotNull null, 0L)
@@ -52,7 +62,7 @@ class PlacesDebugReceiver : BroadcastReceiver() {
         }
         intent.getStringExtra("connect")?.let { c ->
             val p = c.split(',').map { it.trim() }
-            WifiPlaces.debugConnected = if (p.size < 5) {
+            PlacesDebugHooks.madeUpConnection = if (p.size < 5) {
                 null
             } else {
                 val security = when (p[2]) {
@@ -64,13 +74,37 @@ class PlacesDebugReceiver : BroadcastReceiver() {
                 Connected(p[0], p[1].ifEmpty { null }, -45, p[4].toIntOrNull() ?: 2437, true, security, p[3].toIntOrNull() ?: -1)
             }
         }
-        val line = "made-up scan aps=${WifiPlaces.debugResults?.size ?: 0} connected=${WifiPlaces.debugConnected?.security ?: "none"}"
+        if (intent.hasExtra("scan_age_s")) PlacesDebugHooks.scanAgeS = intent.getIntExtra("scan_age_s", 0).coerceAtLeast(0).toLong()
+        if (intent.hasExtra("refuse_scan")) PlacesDebugHooks.refuseScan = intent.getBooleanExtra("refuse_scan", false)
+        val h = PlacesDebugHooks
+        val line = "made-up scan aps=${h.madeUpAps?.size ?: 0} connected=${h.madeUpConnection?.security ?: "none"} " +
+            "age=${h.scanAgeS}s refuse=${h.refuseScan} motion=${h.fakeMotion ?: "real"}"
         Log.i(TAG, line)
         resultData = line
     }
 
     private companion object {
         const val TAG = "PlacesDebug"
+
+        /** Design 134 §7: `sensor` - the fake trigger stands in for the sensor (armed at the next sync or try), `fire` -
+         * it fires as the real one would, `off` - the real sensor (none on the emulator) again. */
+        fun motion(m: String): String {
+            val line = when (m) {
+                "sensor" -> {
+                    PlacesDebugHooks.fakeMotion = "sensor"
+                    "fake motion trigger on (armed at the next sync)"
+                }
+                "fire" -> if (PlacesDebugHooks.fireTrigger()) "fake motion trigger fired" else "fake motion trigger not armed"
+                "off" -> {
+                    PlacesDebugHooks.fakeMotion = null
+                    PlacesDebugHooks.disarmTrigger()
+                    "fake motion trigger off"
+                }
+                else -> "motion needs sensor|fire|off"
+            }
+            Log.i(TAG, line)
+            return line
+        }
 
         /** The running feed's number: a new command ends the one before. */
         @Volatile var feed = 0

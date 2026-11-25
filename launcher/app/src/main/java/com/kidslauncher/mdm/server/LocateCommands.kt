@@ -225,6 +225,8 @@ object LocateCommands {
         // Design 64 §4.4, design 124 D9: the heartbeat, a crossing's first fix and the low-battery
         // fix take the balanced path ([balancedFirst]); the rest the precise one. Design 125 D14: with the network
         // provider off (Google's location accuracy off) the Wi-Fi places' attempt instead - a scan beside GPS.
+        // Design 134 D14: Google's location accuracy on - the fingerprint goes (nothing here scans, H1).
+        if (places != null && !WifiPlaces.networkOff(lm)) com.kidslauncher.mdm.places.StillPrints.drop(context, com.kidslauncher.mdm.places.DropReason.GLA)
         val requested = when {
             places != null && WifiPlaces.networkOff(lm) -> {
                 val path = when {
@@ -236,6 +238,11 @@ object LocateCommands {
             }
             action == LocationAction.FRESH_BALANCED -> balancedFirst(context, lm)
             else -> requestFreshFix(context, lm, preciseFix(explicit && action == LocationAction.FRESH))?.takeIf { ZoneWatch.accept(context, it) }
+        }
+        // Design 134 D4: an inconclusive try after a move is withheld - no last-known, no cached fix, nothing reported.
+        if (places?.withheld == true) {
+            TrustedClock.readGnss(context)
+            return null
         }
         if (capTryAtMs != null) {
             val takes = com.kidslauncher.mdm.zones.capTryTakes(requested?.time, capTryAtMs, places?.notFresh == true, places?.renewed == true)

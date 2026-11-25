@@ -12,6 +12,7 @@ import android.location.LocationRequest
 import android.os.SystemClock
 import android.util.Log
 import com.kidslauncher.mdm.BuildConfig
+import com.kidslauncher.mdm.places.PlacesDebugHooks
 import com.kidslauncher.mdm.server.LocateCommands
 import java.util.concurrent.Executors
 
@@ -133,17 +134,28 @@ object MotionGate {
     private var listener: TriggerEventListener? = null
     private var armedHere = false
 
+    /** Debug builds only: the emulator gate's made-up trigger is armed (design 134 §7, [PlacesDebugHooks]). */
+    private var fakeArmed = false
+
     private fun sensor(context: Context): Sensor? =
         context.getSystemService(SensorManager::class.java)?.getDefaultSensor(Sensor.TYPE_SIGNIFICANT_MOTION)
 
-    fun hasSensor(context: Context): Boolean = sensor(context) != null
+    /** The phone has the sensor - or, in a debug build only, the emulator gate's made-up trigger stands in for it. */
+    fun hasSensor(context: Context): Boolean = sensor(context) != null || PlacesDebugHooks.motionSensor()
 
     /** What an attempt reads before its LocationManager call, in one go (M1). */
     @Synchronized
     fun snapshot(context: Context): MotionSnapshot {
         val trusted = hasSensor(context) && ZoneWatch.motionTrusted(context)
         val motion = flags.motion(trusted, com.kidslauncher.mdm.server.CommandListenerService.isRunning)
-        return MotionSnapshot(motion, flags.fires, flags.stillSinceMs, flags.movedAtElapsedMs)
+        return MotionSnapshot(motion, flags.fires, flags.stillSinceMs, flags.movedAtElapsedMs, mismatched = flags.mismatchSinceFresh)
+    }
+
+    /** Design 134 D16 (revision 3): the cap try's scan clearly isn't the vouch's place - `STILL` ends
+     * ([MotionFlags.scanMismatch]); with a fire during the attempt nothing changes. */
+    @Synchronized
+    fun scanMismatch(context: Context, firesAtStart: Int, nowMs: Long) {
+        flags = flags.scanMismatch(firesAtStart, nowMs)
     }
 
     /** Regularly as device owner (D2): armed now if it isn't - at every process's first sync -, and
@@ -156,10 +168,11 @@ object MotionGate {
     /** After one of our own attempts ([MotionFlags.afterTry]): a genuinely fresh fix ([freshFixMs])
      * or the heartbeat's try ([heartbeat]) arms the trigger again. One monitor with [fired]'s. True
      * when no fire came during the attempt (the count held). [moving]: the fresh fix was on the move
-     * ([fixMoving]) - no `STILL` or `QUIET` until one at rest. */
-    fun afterTry(context: Context, firesAtStart: Int, freshFixMs: Long?, heartbeat: Boolean, nowMs: Long, moving: Boolean): Boolean {
+     * ([fixMoving]) - no `STILL` or `QUIET` until one at rest. [withheld]: design 134 D4's inconclusive try - the flags
+     * stay, the trigger is armed again as after any heartbeat try. */
+    fun afterTry(context: Context, firesAtStart: Int, freshFixMs: Long?, heartbeat: Boolean, nowMs: Long, moving: Boolean, withheld: Boolean = false): Boolean {
         val held = synchronized(this) {
-            flags = flags.afterTry(firesAtStart, freshFixMs, heartbeat, nowMs, moving)
+            flags = flags.afterTry(firesAtStart, freshFixMs, heartbeat, nowMs, moving, withheld)
             flags.fires == firesAtStart
         }
         if (freshFixMs != null || heartbeat) ensureArmed(context, if (freshFixMs != null) "fresh" else "try")
@@ -169,9 +182,19 @@ object MotionGate {
     @Synchronized
     private fun ensureArmed(context: Context, reason: String) {
         val manager = context.getSystemService(SensorManager::class.java) ?: return
-        val sensor = sensor(context) ?: return
         app = context.applicationContext
-        if (listener != null) return
+        if (listener != null || fakeArmed) return
+        val sensor = sensor(context)
+        if (sensor == null) {
+            // Design 134 §7: the debug build's made-up trigger, armed and fired as the real one; a release build's
+            // twin arms nothing.
+            if (PlacesDebugHooks.armTrigger { fired() }) {
+                fakeArmed = true
+                armedHere = true
+                Log.i(LOG_TAG, "Motion trigger armed ($reason)")
+            }
+            return
+        }
         val l = object : TriggerEventListener() {
             override fun onTrigger(event: TriggerEvent?) = fired()
         }
@@ -198,6 +221,7 @@ object MotionGate {
         val context = synchronized(this) {
             flags = flags.moved(SystemClock.elapsedRealtime())
             listener = null
+            fakeArmed = false
             app
         }
         Log.i(LOG_TAG, "Motion trigger fired")
@@ -236,6 +260,8 @@ object MotionGate {
         val l = listener
         listener = null
         flags = flags.moved(SystemClock.elapsedRealtime())
+        if (fakeArmed) PlacesDebugHooks.disarmTrigger()
+        fakeArmed = false
         if (l == null) return
         try {
             val manager = context.getSystemService(SensorManager::class.java)
