@@ -1,8 +1,8 @@
 # 134 - After a small move: honest scans now, a fingerprint in shadow
 
 Status: **design, revision 2**, 2026-11-25 (branch `design-134`), read against `main` d036f5b33. Revision 1 was
-5e980281a; revision 2 applies the owner's scope decisions of 2026-11-25 and the design QA findings named in them (H1,
-H3, M1-M6, L1-L3; §11). Part (B) of PLAN's item 1b. Part (A) ships apart on branch `still-keeps`: while the sensor
+5e980281a; revision 2 applies the owner's scope decisions of 2026-11-25 and the design QA findings (H1-H3,
+M1-M6, L1-L5; §11). Part (B) of PLAN's item 1b. Part (A) ships apart on branch `still-keeps`: while the sensor
 hasn't fired, a failed cap try no longer ends `STILL`; `still` keeps being sent and the fresh fix is retried at **the
 next two beats, then after 1 h, 2 h, and then every 4 h**. Asked by the owner on 2026-11-25: "med lite (ikke null)
 bevegelse kan den jo fortsatt være i huset og så vil vi jo helst ikke feile lokasjon da". A launcher round; no server
@@ -130,7 +130,7 @@ D10. **When an event is recorded.** At every heartbeat `FIX` after a move (`MOVE
     (leave-one-out).
 D11. **The outcome.** The next genuinely fresh fix of accuracy <= 100 m (GPS, a checked Wi-Fi fix) after an event is its
     outcome: the distance from the vouch rounded to 10 m, the minutes since the event, the fix's accuracy class, and
-    whether a fire came between (`moved_after`). Classes: **confirmed** - would-renew, no fire between, distance <=
+    whether a fire or a boot came between (`moved_after`). Classes: **confirmed** - would-renew, no fire between, distance <=
     both accuracies + 50 m; **contradicted** - would-renew, no fire between, further; **would-not** - with the same
     distance kept, so a too-strict rule shows too; **unjudged** - a fire between, no outcome within 24 h, or the
     fingerprint dropped first.
@@ -149,7 +149,8 @@ D13. **Reading it on the release build.** `CommandListenerService` (the anchor, 
     `adb shell dumpsys activity service me.vibb.launcher/com.kidslauncher.mdm.server.CommandListenerService still-print`.
 D14. **Dropped** (QA M3): at a boot (`BootClock.bootCount()` other than the print's), at GLA on (the `network`
     provider enabled at an attempt), when the still rule is off (not Regularly, unmanaged), at sensor distrust (124
-    D7), when its vouch is replaced, when something not fresh was reported after its vouch, 7 days after it was taken,
+    D7), when its vouch is replaced, when something not fresh was reported after its vouch, **72 h** after it was taken
+    (QA L4: a print describes the place of one vouch, so its life is short; the ring of outcome events keeps 60 days),
     and at every Wi-Fi places clear. Each drop logged with its reason.
 
 ## 4. Storage and privacy
@@ -223,8 +224,8 @@ through `PlacesDebugHooks`, an object with a debug implementation in `src/debug`
 | Step | What | Size |
 |---|---|---|
 | **L1** (launcher, one commit, after `still-keeps` is merged) | D1-D5: `scanNow`'s request time and outcome, the pure `scanAnswer` (D1, D2), D3's second scan, D4's withheld report and `afterTry` keep, `inconclusive_tries` in `heartbeatDue`'s caller; D6-D14: the pure `StillPrint`, `shadowVerdict`, outcome and ring codecs (`places/StillPlan.kt`), the glue in `WifiPlaces` (take, grow, drop, record, outcome), `CommandListenerService.dump`; §7's hooks and guards | ~350 lines of code + ~400 of tests |
-| **Docs** (same commit) | `docs/notes/launcher/wifi-places.md` (a section "After a small move: inconclusive scans and the shadow fingerprint"), `zones-and-power.md`'s still section (D4, D5), `docs/testing/new-phone-model.md` §2 (§9), `docs/testing/emulator.md` §6bo | - |
-| **E** (the owner's OK) | §6bo on Android 14 and 17, a debug and a release build | - |
+| **Docs** (same commit) | `docs/notes/launcher/wifi-places.md` (a section "After a small move: inconclusive scans and the shadow fingerprint"), `zones-and-power.md`'s still section (D4, D5), `docs/testing/new-phone-model.md` §2 (§9), `docs/testing/emulator.md` §6br | - |
+| **E** (the owner's OK) | §6br on Android 14 and 16 (the 17 images don't run; the Jelly Star is on 16), a debug and a release build | - |
 | **J** | the Jelly Star (§9) for 2-4 weeks; the owner reads the dump | - |
 | **Later** | a revision 3 decides from the data whether the moved tier may renew | - |
 
@@ -263,8 +264,19 @@ shadowing, rooms added):
 5. **Boot.** A print, a reboot, the first try after it: `print dropped (boot)`, no verdict event.
 6. **The cabin.** One AP, a fresh answer to the request: conclusive, no second scan, no retry, today's outcome; no
    print qualifies (`thin`).
+7. **A would-renew, then a failed re-check** (QA L5, H2). A `would=yes` event after a move; GPS gave nothing, so the
+   attempt ends as today - design 124's `QUIET` back-off and the fix's age; the later tries (and, once still, (A)'s
+   ladder) fail too. The event stays `unjudged` until a fresh fix or 24 h; no `still: true` is ever sent because of it,
+   and (A)'s open-ended still never starts from a print.
+8. **Power-off and boot** (QA L5): the phone off for an hour at home, then on - `print dropped (boot)` at the first
+   try, which runs as after any move; the ring and its pending outcomes survive (an outcome after the boot is judged
+   with `moved_after` set, so `unjudged`).
+9. **A place with no saved network** (QA L5), a friend's house, not connected: D2's connected rule doesn't apply; a
+   fresh answer of five unknown APs is conclusive - no second scan, no retry, today's outcome; with no print there, no
+   event. Connected to a metered phone hotspot (locally administered, never usable) the rule looks for the hotspot's
+   BSSID in the answer as for any connection.
 
-**The emulator gate** (`docs/testing/emulator.md` §6bo; Android 14 and 17; settled rows taught as in §6bn - three
+**The emulator gate** (`docs/testing/emulator.md` §6br; Android 14 and 16 - the 17 images don't run, 17 is covered by reading its behaviour-change list (§6); settled rows taught as in §6bn - three
 networks of their own devices, three occasions over two local days by the time-zone step):
 
 | # | Step | Expect |
@@ -310,4 +322,5 @@ distrust (D14); **M4** 50 m and +-30 s (D8); **M5** additions only on a conclusi
 **M6** the release guards (§7); **L1** the full-band cache and the partial scans' LRU (§1, §6); **L2** no
 `wifi_disagreed` from the shadow (D6); **L3** the sealing wording (P1). Revision 1's still tier, its renewals, its
 clear-mismatch rule, its connection and cell witnesses, the one-interval hold and the print contradiction are cut with
-the renewals.
+the renewals. **H2** (a print renewal followed by (A)'s open-ended still) is moot: the print never acts (D6; binding
+row 7). **L4**: the print lives 72 h (D14). **L5**: binding rows 7-9.
