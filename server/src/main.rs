@@ -49,6 +49,7 @@ mod lock;
 mod lock_glance;
 mod lock_now;
 mod logins;
+mod map_tiles;
 mod mmsc_hosts;
 mod mobile_network;
 mod models;
@@ -234,6 +235,11 @@ pub struct AppState {
     /// The web filter's list downloads (`dns_engine::compile_blocklist`): their own `music_net::HttpSource`, public
     /// addresses only, never the music fetch's gate (a 30 MB list must not hold a cover); canned in the tests.
     pub blocklist_fetch: std::sync::Arc<dyn music_net::Source>,
+    /// The PWA's map tiles from OpenStreetMap (`map_tiles`): their own `music_net::HttpSource`, public addresses
+    /// only; canned in the tests.
+    pub tile_fetch: std::sync::Arc<dyn music_net::Source>,
+    /// The map tile cache's download gate and budget (`map_tiles::MapTiles`).
+    pub map_tiles: std::sync::Arc<map_tiles::MapTiles>,
     /// The weather's caches in memory, its locks and the phones' ask limits
     /// (`weather_cache::Weather`).
     pub weather: std::sync::Arc<weather_cache::Weather>,
@@ -599,6 +605,8 @@ async fn main() {
         )),
         weather: Default::default(),
         blocklist_fetch: std::sync::Arc::new(music_net::HttpSource::new()),
+        tile_fetch: std::sync::Arc::new(music_net::HttpSource::new()),
+        map_tiles: Default::default(),
         unified_push: Default::default(),
         integrations: Default::default(),
     };
@@ -1500,6 +1508,8 @@ pub fn build_admin_router(
             "/devices/{id}/locations.json",
             get(handlers::locate::locations_json),
         )
+        // The maps' tiles through the server's cache (`map_tiles`): OpenStreetMap sees the server, never the parent.
+        .route("/map-tiles/{z}/{x}/{file}", get(map_tiles::tile))
         .route(
             "/devices/{id}/locations",
             get(handlers::locate::show_locations),

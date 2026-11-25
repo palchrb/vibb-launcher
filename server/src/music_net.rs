@@ -58,6 +58,8 @@ pub enum Kind {
     AppleWps,
     /// A web filter list (`dns_engine`): the list's own cap, `dns_engine::MAX_FEED_BYTES`, and 30 s in all.
     Blocklist,
+    /// A map tile from OpenStreetMap (`map_tiles`): `map_tiles::MAX_TILE_BYTES`, 15 s in all.
+    MapTile,
 }
 
 impl Kind {
@@ -76,6 +78,7 @@ impl Kind {
             Kind::PlacePreview => 256_000,
             Kind::AppleWps => 256_000,
             Kind::Blocklist => crate::dns_engine::MAX_FEED_BYTES,
+            Kind::MapTile => crate::map_tiles::MAX_TILE_BYTES,
         }
     }
 
@@ -94,6 +97,7 @@ impl Kind {
             Kind::PlacePreview => 4,
             Kind::AppleWps => 5,
             Kind::Blocklist => 30,
+            Kind::MapTile => 15,
         })
     }
 

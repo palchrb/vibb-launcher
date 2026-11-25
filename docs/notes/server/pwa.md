@@ -829,13 +829,21 @@ Tilgang): the "camera" words here are history.
   `<details>` confirm with the type-the-name field; the footer with Lock's note behind ⓘ; **Recent** (the 10 newest:
   "Lock" · "10:58 · Done", the line under it, **Cancel** while it waits); **Location Settings** (When to locate +
   Every as one form - `location-policy` needs the mode on every post -, Keep history for, both auto-saving).
-- **What OpenStreetMap sees** (security review P8, re-checked 2026-10-26, accepted - design 33): the tiles are
-  `https://tile.openstreetmap.org/{z}/{x}/{y}.png`, no query string, so the request carries the area looked at (z/x/y),
-  the parent's IP and browser User-Agent, and `Referer: <the PWA's origin>/` (the tailnet host name; never a path or
-  a `?device=`). `no-referrer` isn't an option: OSM answers a browser tile request without a Referer with "403 Access
-  blocked", and its tile policy forbids stripping it and discourages a proxy (design 33's two options). No
-  `crossorigin`: the tiles are plain images, sent without CORS, and no OSM cookie reaches `tile.`. A self-hosted tile
-  source stays out of scope.
+- **What OpenStreetMap sees** (2026-11-25, the owner's choice; it replaces design 33's origin-only `Referer`): only
+  the server. Every map (Locate, Locate's "Alle", the zone editor) asks `/map-tiles/{z}/{x}/{y}.png` on the parent's
+  session (`map_tiles::tile`, inside `require_full_auth` and the app lock); the server answers from its cache
+  (`data/map_tiles/<z>/<x>/<y>.png`) or fetches `https://tile.openstreetmap.org/{z}/{x}/{y}.png` once through its own
+  `music_net::HttpSource` (`AppState::tile_fetch`, `Reach::Public`, `Kind::MapTile`: 512 KB, 15 s). Only the tile
+  pattern (`map_tiles::parse_tile`: `z` 0-19, `x`/`y` below `2^z`, plain digits; the upstream address built from the
+  numbers), never an open proxy. OpenStreetMap's tile policy: its own User-Agent (`map_tiles::user_agent`,
+  `vibb-server/<version> (self-hosted map tile cache)` - the software, never the owner), a tile kept 7 days before it
+  is asked again (`FRESH`), at most 2 downloads at once and 3000 an hour (past it only the cache answers), nothing
+  fetched ahead. Bounded: only a PNG is kept, a tile older than 30 days is deleted (`KEEP`; until then a stale one is
+  served while OSM can't be reached), and every 200 stored tiles (and the first after a start) `map_tiles::sweep`
+  trims the cache to under 256 MB, oldest first. The browser keeps a tile a day (`private, max-age=86400`). The CSP's
+  `img-src` is `'self' data: blob:` - no outside image host. Answers: 404 for an address that isn't a tile or a tile OSM
+  lacks, 503 when there is neither a new nor a kept tile. Tests `locations::the_maps_load_their_tiles_through_the_server`
+  and `map_tiles::tests`.
 - **Where the forms return** (§5.1, `tests::locate_page::every_form_on_the_locate_page_returns_to_its_group`, built
   from the rendered forms): Update Location → `?device={id}&requested=1#location` (the map and the wait in view; the
   poll's reload goes to `#location` too), Ring / Stop Ringing / Lock / Erase → `#actions` (Recent right under it),

@@ -155,11 +155,9 @@
         var chips = box.hasAttribute("data-chips");
         var map = L.map(box.querySelector("#map"), mark ? { preferCanvas: true, zoomControl: false } : { preferCanvas: true });
         if (mark) L.control.zoom({ position: "bottomright" }).addTo(map);
-        // OSM refuses tile requests without a Referer, and the page's own Referrer-Policy is
-        // same-origin: the tiles alone send our origin (no path) - design 33.
-        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        // OpenStreetMap's tiles through the server's cache (`map_tiles`): OSM sees the server, never this browser.
+        L.tileLayer('/map-tiles/{z}/{x}/{y}.png', {
             maxZoom: 19,
-            referrerPolicy: 'strict-origin-when-cross-origin',
             attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
         }).addTo(map);
         // Leaflet's default marker icon from our own vendored images: Icon.Default prepends
