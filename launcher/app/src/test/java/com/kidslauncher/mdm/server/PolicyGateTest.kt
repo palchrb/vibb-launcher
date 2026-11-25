@@ -110,10 +110,55 @@ class PolicyGateTest {
 
     // choosePolicy
 
+    // judgeCached
+
+    @Test
+    fun `a saved copy without an app list on a managed phone counts as unreadable`() {
+        val cached = CachedPolicy.Ok(PolicyResponse())
+        val judged = judgeCached(cached, policyEverApplied = true, lastEnforced = LastEnforcedPlan.of(managed))
+        assertEquals(CachedPolicy.Corrupt("no_allowlist"), judged)
+        // ... and the sync enforces the last-enforced plan, reported as cache_corrupt.
+        val plan = LastEnforcedPlan.of(managed)
+        assertEquals(PolicyToApply.Fallback(plan.toPolicy()), choosePolicy(null, judged, true, plan))
+        assertEquals("cache_corrupt", policyState(FreshOutcome.UNREACHABLE, judged, true))
+        // A missing or unreadable plan after a policy was applied: unreadable too, nothing allowed.
+        assertEquals(CachedPolicy.Corrupt("no_allowlist"), judgeCached(cached, true, null))
+        assertEquals(PolicyToApply.Fallback(NOTHING_ALLOWED_FALLBACK), choosePolicy(null, judgeCached(cached, true, null), true, null))
+        // A fresh policy without an app list is then not accepted either.
+        assertEquals(FreshVerdict.REJECT_SUSPECT, judgeFresh(unmanaged, judged, policyEverApplied = true))
+    }
+
+    @Test
+    fun `a saved copy without an app list stays usable where apps were never managed`() {
+        val cached = CachedPolicy.Ok(unmanaged)
+        // A phone that has never had a policy: setup still works.
+        assertEquals(cached, judgeCached(cached, policyEverApplied = false, lastEnforced = null))
+        assertEquals(PolicyToApply.Apply(unmanaged), choosePolicy(null, judgeCached(cached, false, null), false, null))
+        // Apps unmanaged by the parent: the plan written with the copy has no app list either.
+        assertEquals(cached, judgeCached(cached, policyEverApplied = true, lastEnforced = LastEnforcedPlan.of(unmanaged)))
+        assertEquals("ok", policyState(FreshOutcome.UNREACHABLE, judgeCached(cached, true, LastEnforcedPlan.of(unmanaged)), true))
+    }
+
+    @Test
+    fun `a saved copy with an app list applies`() {
+        val cached = CachedPolicy.Ok(managed)
+        assertEquals(cached, judgeCached(cached, policyEverApplied = true, lastEnforced = null))
+        assertEquals(PolicyToApply.Apply(managed), choosePolicy(null, judgeCached(cached, true, null), true, null))
+        assertEquals(CachedPolicy.Absent, judgeCached(CachedPolicy.Absent, true, null))
+        assertEquals(CachedPolicy.Corrupt("x"), judgeCached(CachedPolicy.Corrupt("x"), true, null))
+    }
+
+    @Test
+    fun `the sync and the time rules read the saved copy through judgeCached`() {
+        val root = java.io.File("src/main/java/com/kidslauncher/mdm").takeIf { it.exists() } ?: java.io.File("app/src/main/java/com/kidslauncher/mdm")
+        assertTrue(root.resolve("server/MdmSyncWorker.kt").readText().contains("return judgeCached(decoded, LauncherPreferences.mdm().policyEverApplied(), lastEnforcedPlan())"))
+        assertTrue(root.resolve("timerules/TimeRulesStore.kt").readText().contains("judgeCached(decodeCached("))
+    }
+
     @Test
     fun `fresh policy wins`() {
         assertEquals(
-            PolicyToApply.Apply(nothingAllowed),
+            PolicyToApply.Apply(nothingAllowed, fromServer = true),
             choosePolicy(nothingAllowed, CachedPolicy.Ok(managed), policyEverApplied = true, lastEnforced = null)
         )
     }

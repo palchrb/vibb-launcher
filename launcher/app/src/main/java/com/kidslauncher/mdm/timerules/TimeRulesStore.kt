@@ -9,6 +9,7 @@ import com.kidslauncher.mdm.server.KidModeEnforcer
 import com.kidslauncher.mdm.server.LastEnforcedPlan
 import com.kidslauncher.mdm.server.choosePolicy
 import com.kidslauncher.mdm.server.decodeCached
+import com.kidslauncher.mdm.server.judgeCached
 import java.time.LocalDateTime
 
 private const val LOG_TAG = "TimeRulesStore"
@@ -58,11 +59,13 @@ object TimeRulesStore {
             return
         }
         val prefs = PreferenceManager.getDefaultSharedPreferences(context)
+        val everApplied = prefs.getBoolean(context.getString(R.string.settings_mdm_policy_ever_applied_key), false)
+        val lastEnforced = LastEnforcedPlan.decode(prefs.getString(context.getString(R.string.settings_mdm_last_enforced_plan_key), null))
         val decision = choosePolicy(
             null,
-            decodeCached(prefs.getString(context.getString(R.string.settings_mdm_kid_mode_policy_key), null)),
-            prefs.getBoolean(context.getString(R.string.settings_mdm_policy_ever_applied_key), false),
-            LastEnforcedPlan.decode(prefs.getString(context.getString(R.string.settings_mdm_last_enforced_plan_key), null)),
+            judgeCached(decodeCached(prefs.getString(context.getString(R.string.settings_mdm_kid_mode_policy_key), null)), everApplied, lastEnforced),
+            everApplied,
+            lastEnforced,
         )
         policy = KidModeEnforcer.timePolicyOf(decision.policy)
         source = TimeRulesSource.CE

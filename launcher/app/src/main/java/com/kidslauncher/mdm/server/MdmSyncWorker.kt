@@ -1561,13 +1561,13 @@ fun cachedPolicy(): CachedPolicy {
     // One decode per cached string (design 16c): the start-up path - the time-rule re-check, the
     // screen-time timer, the boundary alarm, Home - decoded the same JSON several times on the main
     // thread before the lock was up. The DTOs are immutable, so the copy is shared.
-    cachedPolicyMemo?.let { memo -> if (memo.raw == raw) return memo.decoded }
-    val cached = decodeCached(raw)
-    if (cached is CachedPolicy.Corrupt) {
-        Log.w(LOG_TAG, "Cached policy doesn't decode: ${cached.error}")
+    val decoded = cachedPolicyMemo?.takeIf { it.raw == raw }?.decoded ?: decodeCached(raw).also { cached ->
+        if (cached is CachedPolicy.Corrupt) Log.w(LOG_TAG, "Cached policy doesn't decode: ${cached.error}")
+        cachedPolicyMemo = CachedPolicyMemo(raw, cached)
     }
-    cachedPolicyMemo = CachedPolicyMemo(raw, cached)
-    return cached
+    // A saved copy without an app list on a managed phone counts as unreadable (judgeCached); the plan is read only then.
+    if (decoded !is CachedPolicy.Ok || decoded.policy.allowlist != null) return decoded
+    return judgeCached(decoded, LauncherPreferences.mdm().policyEverApplied(), lastEnforcedPlan())
 }
 
 private class CachedPolicyMemo(val raw: String?, val decoded: CachedPolicy)
