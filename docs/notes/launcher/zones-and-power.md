@@ -331,11 +331,18 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   last backstop.
 - **The connected router renews `STILL`** (design 134 revision 4, D20-D25; `docs/notes/launcher/wifi-places.md` "After
   a small move"): a cap try or retry while `STILL` whose attempt brings no learned fix renews the vouch, as a zone link
-  does but on every Regularly phone (`renewable` is `stillOn`'s), when the phone is connected to the same bound,
-  settled device it was connected to at the vouch's fix, its level within 15 dB of then - the Jelly Star's 15:31 and
-  22:25 cap tries, poor lists without the router, would have renewed. Only the still-ness: `places.renewed`, part A's
-  count cleared, `stampVouchRenewed`, `Location heartbeat: STILL renewed by the connected AP`. Never after a fire
-  (`MOVED`, `STILL_SINCE_TRY`, no sensor), and such an AP vetoes a scan mismatch.
+  does but on every Regularly phone (`renewable` is `stillOn`'s), when the phone is connected to the same bound AP
+  (or MLO device), settled, it was connected to at the vouch's fix, its level within 15 dB of then (stale while the
+  screen is off - the owner's open (a)/(b), design 134 §13b) - the Jelly Star's 15:31 and 22:25 cap tries, poor lists
+  without the router, would have renewed. Only the still-ness: `places.renewed`, part A's count cleared, the 4-h skip
+  counted from it (`stampVouchRenewed(.., movesCeiling = false)`), `Location heartbeat: STILL renewed by the connected
+  AP`. **It never moves the 24-h ceiling** (code QA M1): `STILL_CEILING_MS` counts from `ceilingFrom` - the last fresh
+  fix or a renewal by a zone link or an Apple fix (`ZoneWatch.ceilingRenewedMs`, CE prefs `zone_watch`
+  `vouch_ceiling_renewed_ms`, cleared by `forget`) - passed to `heartbeatDue`, `reportStill` and `stillVouched` as
+  `ceilingFromMs` (`stillCeilingPassed`); past it no beat is `STILL` whatever the 4-h skip says, the witness refuses
+  (`reason=ceiling`), the try runs as any and the waits after it are `QUIET`. So a phone lying on its router with no
+  fresh fix goes `QUIET` at 24 h. Never after a fire (`MOVED`, `STILL_SINCE_TRY`, no sensor); a renewing or a
+  stronger witness vetoes a scan mismatch.
 - **Unchanged**: `locate`, the low-battery fix, crossings, P-L3's age limit (a `still` re-send has none), no new
   report field, no contract change. The server takes a `still` re-send of any age (2026-11-25, `docs/notes/server/zones.md`:
   `intake` stamps the row's `resent_at`; the fix's age is bounded only by `MAX_FIX_AGE_MS`, 400 days), so the amended

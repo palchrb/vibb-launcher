@@ -46,6 +46,9 @@ private const val KEY_FRESH_FIX = "fresh_fix_v1"
 /** Design 131: the attempts in which Wi-Fi and the satellites disagreed, a running count (`zone_watch.wifi_disagreed`). */
 private const val KEY_WIFI_DISAGREED = "wifi_disagreed"
 private const val KEY_RENEWED = "vouch_renewed_ms"
+
+/** Design 134 revision 4 (code QA M1): the last renewal that also moves the 24-h ceiling - a zone link or an Apple fix. */
+private const val KEY_CEILING_RENEWED = "vouch_ceiling_renewed_ms"
 private const val KEY_CAP_FAILS = "still_cap_fails_v1"
 
 /** Design 134 D4: the heartbeat's inconclusive tries after a move withheld in a row. */
@@ -181,7 +184,7 @@ object ZoneWatch {
                 prefs(app).edit()
                     .remove(KEY_FENCES).remove(KEY_QUEUE).remove(KEY_LAST_BEAT)
                     .remove(KEY_MOCK_IGNORED).remove(KEY_MOCK_LAST).remove(KEY_MOCK_KEYS)
-                    .remove(KEY_LAST_FRESH_FIX).remove(KEY_LAST_TRY).remove(KEY_BUDGET).remove(KEY_RENEWED)
+                    .remove(KEY_LAST_FRESH_FIX).remove(KEY_LAST_TRY).remove(KEY_BUDGET).remove(KEY_RENEWED).remove(KEY_CEILING_RENEWED)
                     .remove(KEY_FRESH_FIX).remove(KEY_WIFI_DISAGREED).remove(KEY_CAP_FAILS).remove(KEY_INCONCLUSIVE)
                     .commit()
             }
@@ -300,9 +303,17 @@ object ZoneWatch {
      * 4 h from the later of it and [lastFreshFixMs] - the vouched fix itself stays the last fresh one. */
     fun vouchRenewedMs(context: Context): Long = prefs(context).getLong(KEY_RENEWED, 0L)
 
-    /** The vouch renewed at [nowMs]: a new 4 h from it, and the cap's failed tries start over ([stillCapFailsAfter]). */
-    fun stampVouchRenewed(context: Context, nowMs: Long) {
-        prefs(context).edit().putLong(KEY_RENEWED, nowMs).remove(KEY_CAP_FAILS).commit()
+    /** Wall time of the last renewal by a zone link or an Apple fix (0 = none): with [lastFreshFixMs], what (A)'s 24-h
+     * ceiling counts from (`stillCeilingPassed`) - a renewal by the connected AP never moves it (design 134 revision 4,
+     * code QA M1). */
+    fun ceilingRenewedMs(context: Context): Long = prefs(context).getLong(KEY_CEILING_RENEWED, 0L)
+
+    /** The vouch renewed at [nowMs]: a new 4 h from it, and the cap's failed tries start over ([stillCapFailsAfter]);
+     * the 24-h ceiling's start too unless the connected AP renewed it ([movesCeiling] false, code QA M1). */
+    fun stampVouchRenewed(context: Context, nowMs: Long, movesCeiling: Boolean = true) {
+        val e = prefs(context).edit().putLong(KEY_RENEWED, nowMs).remove(KEY_CAP_FAILS)
+        if (movesCeiling) e.putLong(KEY_CEILING_RENEWED, nowMs)
+        e.commit()
     }
 
     /** The heartbeat's failed tries since the still vouch's 4 h ran out (design 124 D5, amended 2026-11-25; 0 = none):

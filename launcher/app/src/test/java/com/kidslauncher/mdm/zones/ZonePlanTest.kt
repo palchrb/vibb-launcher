@@ -898,12 +898,12 @@ class ZonePlanTest {
         // Q-3: the still flag rides the report.
         assertTrue(sync.contains("zoneWatch = ZoneWatch.report(context, still = location.still),"))
         assertTrue(sync.contains("val cachedIsVouch = LocateCommands.cachedQueued()?.timeMs == lastFreshFix"))
-        assertTrue(sync.contains("val stillBeat = reportStill(stillOn, action, motion, now, stillFrom, capFails, cachedIsVouch)"))
+        assertTrue(sync.contains("val stillBeat = reportStill(stillOn, action, motion, now, stillFrom, capFails, cachedIsVouch, ceilingFrom)"))
         // Code QA H1: the cap try keeps the vouch (LocateCommands' cap branch) and, failed, re-sends it or drops the fix.
         assertTrue(sync.contains("val capTry = beat == Heartbeat.FIX && motion == Motion.STILL"))
         assertTrue(sync.contains("capTryAtMs = if (capTry) now else null,"))
         assertTrue(sync.contains("capFailed = capTry && fresh == null && !places.renewed"))
-        assertTrue(sync.contains("capTryResends(LocateCommands.cachedQueued()?.timeMs, lastFreshFix, held, stillVouched(motion, now, stillFrom, capFailsNow))"))
+        assertTrue(sync.contains("capTryResends(LocateCommands.cachedQueued()?.timeMs, lastFreshFix, held, stillVouched(motion, now, stillFrom, capFailsNow, ceilingFromMs = ceilingFrom))"))
         assertTrue(sync.contains("val location = attempted?.takeIf { !capFailed || capResend }"))
         assertTrue(sync.contains("val still = stillBeat || places.renewed || capResend"))
         val locateSource = source("server/LocateCommands.kt")
@@ -915,7 +915,9 @@ class ZonePlanTest {
         assertTrue(sync.contains("capFails = capFails,"))
         assertTrue(sync.contains("val capFailsNow = stillCapFailsAfter(capFails, beat, motion, fresh != null, places.renewed, held)"))
         assertTrue(Regex("""fun stampFreshFix\(context: Context, fix: QueuedFix\) \{[\s\S]{0,250}.remove\(KEY_CAP_FAILS\)\.remove\(KEY_INCONCLUSIVE\)\.commit\(\)""").containsMatchIn(watch))
-        assertTrue(watch.contains("prefs(context).edit().putLong(KEY_RENEWED, nowMs).remove(KEY_CAP_FAILS).commit()"))
+        assertTrue(watch.contains("val e = prefs(context).edit().putLong(KEY_RENEWED, nowMs).remove(KEY_CAP_FAILS)"))
+        // Design 134 revision 4 (code QA M1): a renewal moves the 24-h ceiling's anchor unless the connected AP made it.
+        assertTrue(watch.contains("if (movesCeiling) e.putLong(KEY_CEILING_RENEWED, nowMs)"))
         assertTrue(sync.contains("still = still,"))
         // Q-5: Off (and no zones) clears the queue before the report and sends no extras.
         assertTrue(sync.contains("if (queueOff) ZoneWatch.clearQueue(context)"))

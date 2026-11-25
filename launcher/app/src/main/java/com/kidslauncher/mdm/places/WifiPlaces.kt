@@ -161,6 +161,7 @@ object WifiPlaces {
         val heartbeat: Boolean = false,
         val mayWithhold: Boolean = false,
         val vouchFix: com.kidslauncher.mdm.zones.QueuedFix? = null,
+        val stillCeilingPassed: Boolean = false,
     ) {
         @Volatile var mismatch: MismatchClause? = null
 
@@ -1261,7 +1262,7 @@ object WifiPlaces {
                 // reported (no cell fix, no unchecked or fallback fix, no last-known), and the flags stay as they were.
                 val ended = last ?: snap.await()
                 // Design 134 revision 4 (D20.1): the connected AP this attempt read - the vouch's link if its fix becomes one.
-                ask.linkAp = store?.let { linkAp(ended.link, ended.connected, it.keys).ap }
+                ask.linkAp = store?.let { linkAp(ended.link, ended.connected, it.keys, ended.answer?.answering.orEmpty()).ap }
                 // Code QA M1: a renewal in this attempt (a zone link, an Apple fix within the vouch) vetoes a mismatch.
                 ask.inconclusive = ended.answer?.inconclusive
                 if (withheld(ask.mayWithhold, ask.inconclusive, kept != null && !ask.notFresh && !ask.renewed)) {
@@ -1368,7 +1369,7 @@ object WifiPlaces {
             }
             // Revision 4 (D20.1): the connected AP read with the new vouch, in memory; none on the move or not connected.
             vouchLink = vouchLinkOf(fresh.timeMs, BootClock.bootCount(), ask.linkAp, moving)
-            Log.i(LOG_TAG, "vouch link " + if (vouchLink != null) "read" else "none")
+            Log.i(LOG_TAG, "vouch link " + if (vouchLink != null) "read level=" + (if (ask.linkAp?.fresh == true) "scan" else "link") else "none")
             val old = StillPrints.current(app)
             if (old != null && old.fixTimeMs != fresh.timeMs) StillPrints.drop(app, DropReason.REPLACED)
             val material = ask.material
@@ -1444,14 +1445,22 @@ object WifiPlaces {
      */
     private fun witness(context: Context, store: Store, snap: Snapshot, ask: Ask): StillWitness {
         ask.witness?.let { return it }
-        val now = linkAp(snap.link, snap.connected, store.keys)
+        val now = linkAp(snap.link, snap.connected, store.keys, snap.answer?.answering.orEmpty())
         val link = vouchLink
-        val w = stillWitness(ask.motion, ask.vouched?.time, BootClock.bootCount(), link, now, open(context)?.rows ?: store.rows, nowMin())
+        val w = stillWitness(
+            ask.motion, ask.vouched?.time, BootClock.bootCount(), link, now, open(context)?.rows ?: store.rows, nowMin(), ask.stillCeilingPassed,
+        )
         ask.witness = w
-        if (w != StillWitness.RENEWS) {
-            val diff = if (w == StillWitness.LEVEL && link != null && now.ap != null) " diff=${abs(now.ap.rssi - link.rssi)}" else ""
-            Log.i(LOG_TAG, "connected witness no reason=${w.wire}$diff")
+        // Code QA H1: whether the level is the answering scan's (fresh) or the connection's (stale while the screen is off).
+        val ap = now.ap
+        val rssi = ap?.rssi
+        val level = if (ap == null || rssi == null || link == null) {
+            ""
+        } else {
+            val screen = if (context.getSystemService(PowerManager::class.java)?.isInteractive == true) "on" else "off"
+            " level=${if (ap.fresh) "scan" else "link"} screen=$screen dbm=$rssi vouch=${link.rssi} diff=${rssi - link.rssi}"
         }
+        Log.i(LOG_TAG, "connected witness " + (if (w == StillWitness.RENEWS) "renews" else "no reason=${w.wire}") + level)
         return w
     }
 

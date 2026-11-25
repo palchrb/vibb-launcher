@@ -331,24 +331,32 @@ tags `WifiPlaces`, `ZoneWatch`, `StillPrint`. No server or contract change.
   `STILL` stays, the event is recorded flagged `vetoed`. The sync then ends `STILL` (`MotionGate.scanMismatch`, `zones-and-power.md`),
   reports nothing and logs `ZoneWatch: Location heartbeat: STILL ended by a scan mismatch clause=wifi` and
   `StillPrint: mismatch clause=wifi devices=0/4`. Not a design 124 D7 contradiction.
-- **The connected router as a still witness** (revision 4, D20-D25, acts): while `STILL`, the cap try or a retry in
-  `LEARNED_FIRST` with no learned fix judged renews the vouch beside the zone link (`judged == null && (renews ||
-  witness)`, no zone needed: the sync hands every Regularly phone's cap try its vouch, `renewable`) when the pure
-  `stillWitness` says `RENEWS`: the phone is connected now to a readable, globally administered BSSID under design
-  131's binding (`linkAp`: `linkConn` - unmetered, saved-network id - and `linkSecurityHolds`, taken out of
-  `linkConfirms`; open/OWE never), the **same binding and device** (design 125 D5's key, the MLO address from
-  `WifiInfo.getApMldMacAddress()`) as the attempt read when the vouch's fix was taken (`VouchLink`, memory only, set
-  in `afterFreshFix` by `vouchLinkOf` - none on the move -, cleared with the table; a new process starts `MOVED`), that
-  device **settled** (`deviceSettled`: a row trusted and on >= 2 days, none moved or blocked), and its level within
-  15 dB of the vouch's. It renews only the still-ness (`Ask.renewedBy = CONNECTED`; the sync logs `ZoneWatch: Location
-  heartbeat: STILL renewed by the connected AP`); otherwise `WifiPlaces: connected witness no
-  reason=moved|novouch|none|unreadable|local|binding|nolink|other|unsettled|level` (`diff=N` dB for `level`), never a
-  BSSID. Such an AP - renewing or refused by its level alone - also **vetoes a mismatch** (`mismatchVetoed`, D23,
-  recorded `vetoed`). The read (D25): `getConnectionInfo()` (deprecated in 31, served on 14-17 with fine and
-  background location and Location on); when it gives no BSSID while the active network carries Wi-Fi, one
-  `NetworkCallback(FLAG_INCLUDE_LOCATION_INFO)` for Wi-Fi, up to 1 s (`connectedNow`, logged `connection read by
-  callback yes|no`); `getNetworkCapabilities()` alone always redacts. No SDK gate (all at or under minSdk 34).
-  `StillWitnessTest` (rows 13-18).
+- **The connected router as a still witness** (revision 4, D20-D25, acts; its code QA applied, design 134 §13a): while
+  `STILL`, the cap try or a retry in `LEARNED_FIRST` with no learned fix judged renews the vouch beside the zone link
+  (`judged == null && (renews || witness)`, no zone needed: the sync hands every Regularly phone's cap try its vouch,
+  `renewable`) when the pure `stillWitness` says `RENEWS`: under (A)'s 24-h ceiling (`Ask.stillCeilingPassed`;
+  this renewal never moves the ceiling's anchor, `ZoneWatch.ceilingRenewedMs` - code QA M1), the phone connected now
+  to a readable, globally administered BSSID under design 131's binding (`linkAp`: `linkConn` - unmetered,
+  saved-network id - and `linkSecurityHolds`, taken out of `linkConfirms`; open/OWE never), the **same binding and the
+  same AP** (its key, or another link of the same MLO device - `WifiInfo.getApMldMacAddress()`; the other band or a
+  mesh node is not, code QA M2) as the attempt read when the vouch's fix was taken (`VouchLink`, memory only, set in
+  `afterFreshFix` by `vouchLinkOf` - none on the move or with an unknown level -, cleared with the table; a new process
+  starts `MOVED`), its device **settled** (`deviceSettled`: a row trusted and on >= 2 days, none moved or blocked),
+  and its level known (-126..0; `INVALID_RSSI` refuses, code QA L2) and within 15 dB of the vouch's. The levels are the
+  connected BSSID's own entry in the attempt's answering scan when there, else `WifiInfo.getRssi()` - **stale while
+  the screen is off** (code QA H1; the bound is then the AP's range, guarded by the sensor - design 134 D22, the
+  owner's (a)/(b) in §13b). It renews only the still-ness (`Ask.renewedBy = CONNECTED`; the sync logs `ZoneWatch:
+  Location heartbeat: STILL renewed by the connected AP`, `stampVouchRenewed(.., movesCeiling = false)`). Logged
+  `WifiPlaces: connected witness renews|no reason=moved|novouch|ceiling|none|unreadable|local|binding|nolink|other|
+  unsettled|nolevel|level|stronger level=scan|link screen=on|off dbm=N vouch=N diff=N` and at the vouch `vouch link
+  read level=scan|link` or `none`; never a BSSID. A witness that renews or is more than 15 dB stronger than at the
+  vouch (not weaker, code QA L1) also **vetoes a mismatch** (`mismatchVetoed`, D23, recorded `vetoed`). The read
+  (D25): `getConnectionInfo()` (deprecated in 31, served on 14-17 with fine and background location and Location on);
+  when it gives no BSSID while the active network carries Wi-Fi, the attempt's scans (`connectedNow`) register one
+  `NetworkCallback(FLAG_INCLUDE_LOCATION_INFO)` for Wi-Fi, up to 1 s (logged `connection read by callback yes|no`;
+  its `unmetered` that Wi-Fi network's own), and that read also feeds D2's `noconnected`, the zone link and `hear()`
+  (code QA L4); `getNetworkCapabilities()` alone always redacts. No SDK gate (all at or under minSdk 34).
+  `StillWitnessTest` (rows 13-19).
 - **Outcomes and the ring** (D11, D12): the next genuinely fresh fix of <= 100 m (`gps`, a checked Wi-Fi fix) judges
   the pending events, the distance from the vouch rounded to 10 m: a would-renew `confirmed` (within both accuracies +
   50 m) or `contradicted`; a would-not keeps its distance (`within` or not); a mismatch `confirmed` when the phone had

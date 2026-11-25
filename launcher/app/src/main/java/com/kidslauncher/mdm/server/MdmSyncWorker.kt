@@ -934,6 +934,9 @@ private suspend fun currentLocationReport(
     // its vouch (design 125 D12).
     val lastFreshFix = if (stillOn) ZoneWatch.lastFreshFixMs(context) else lastOwnFix
     val stillFrom = if (stillOn) maxOf(lastFreshFix, ZoneWatch.vouchRenewedMs(context)) else lastOwnFix
+    // Design 134 revision 4 (code QA M1): (A)'s 24-h ceiling counts from the last fresh fix or a renewal by a zone link or
+    // an Apple fix - never the connected AP's.
+    val ceilingFrom = if (stillOn) maxOf(lastFreshFix, ZoneWatch.ceilingRenewedMs(context)) else lastOwnFix
     // Design 124 D5 (amended 2026-11-25): the failed tries since the vouch's 4 h ran out.
     val capFails = if (stillOn) ZoneWatch.stillCapFails(context) else 0
     // Design 134 D4: the inconclusive tries after a move withheld in a row; code QA L6: a run belongs to one move - any
@@ -955,6 +958,7 @@ private suspend fun currentLocationReport(
         lastFreshFixMs = stillFrom,
         stillSinceMs = motionNow?.stillSinceMs ?: 0L,
         capFails = capFails,
+        ceilingFromMs = ceilingFrom,
     )
     val action = withLowBatteryFix(sync.action, lowBatteryFix)
     val beat = sync.beat
@@ -968,7 +972,7 @@ private suspend fun currentLocationReport(
     // P-L3: a cached fix older than the interval is never reported - but the still heartbeat's re-send (Q-3); past the
     // cap only the vouch itself (code QA L4: never a promoted kept fix or a fallback).
     val cachedIsVouch = LocateCommands.cachedQueued()?.timeMs == lastFreshFix
-    val stillBeat = reportStill(stillOn, action, motion, now, stillFrom, capFails, cachedIsVouch)
+    val stillBeat = reportStill(stillOn, action, motion, now, stillFrom, capFails, cachedIsVouch, ceilingFrom)
     if (beat == Heartbeat.STILL && capFails > 0) {
         val vouch = if (stillBeat) "" else " not the vouch"
         Log.i(ZONE_LOG_TAG, "Location heartbeat: STILL fails=$capFails retry=${sync.backoffMs / 60_000} min$vouch")
@@ -1020,6 +1024,7 @@ private suspend fun currentLocationReport(
         heartbeat = beat == Heartbeat.FIX,
         vouchFix = if (stillOn) ZoneWatch.lastFreshFix(context) else null,
         mayWithhold = motionNow != null && com.kidslauncher.mdm.places.mayWithhold(beat == Heartbeat.FIX, motion, inconclusiveTries),
+        stillCeilingPassed = stillOn && com.kidslauncher.mdm.zones.stillCeilingPassed(now, ceilingFrom),
     )
     // The parent's `locate` waits up to EXPLICIT_FIX_BOUND_MS here, under the sync mutex: rare and asked for, and its
     // fix goes into this report; every other fix keeps its 15 s (preciseFix).
@@ -1032,7 +1037,7 @@ private suspend fun currentLocationReport(
     var capFailed = false
     var capResend = false
     if (places.renewed) {
-        ZoneWatch.stampVouchRenewed(context, now)
+        ZoneWatch.stampVouchRenewed(context, now, movesCeiling = places.renewedBy != com.kidslauncher.mdm.places.Renewal.CONNECTED)
         Log.i(ZONE_LOG_TAG, "Location heartbeat: STILL renewed by " + places.renewedBy.phrase)
     }
     if (motionNow != null && action.fresh) {
@@ -1073,7 +1078,7 @@ private suspend fun currentLocationReport(
         capFailed = capTry && fresh == null && !places.renewed
         if (capFailed) {
             capResend = mismatch == null &&
-                capTryResends(LocateCommands.cachedQueued()?.timeMs, lastFreshFix, held, stillVouched(motion, now, stillFrom, capFailsNow))
+                capTryResends(LocateCommands.cachedQueued()?.timeMs, lastFreshFix, held, stillVouched(motion, now, stillFrom, capFailsNow, ceilingFromMs = ceilingFrom))
             Log.i(ZONE_LOG_TAG, "Location heartbeat: cap try failed fails=$capFailsNow vouch=" + if (capResend) "re-sent" else "dropped")
         }
         if (beat == Heartbeat.FIX || moving) {
