@@ -329,6 +329,13 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   keeps D7 for the next fresh fix as if `STILL` (`d7Applies`), so a car ride the sensor missed still counts once the
   satellites say so. No print, a print of < 3 devices, an inconclusive scan: part A alone; the 24-h ceiling stays the
   last backstop.
+- **The connected router renews `STILL`** (design 134 revision 4, D20-D25; `docs/notes/launcher/wifi-places.md` "After
+  a small move"): a cap try or retry while `STILL` whose attempt brings no learned fix renews the vouch, as a zone link
+  does but on every Regularly phone (`renewable` is `stillOn`'s), when the phone is connected to the same bound,
+  settled device it was connected to at the vouch's fix, its level within 15 dB of then - the Jelly Star's 15:31 and
+  22:25 cap tries, poor lists without the router, would have renewed. Only the still-ness: `places.renewed`, part A's
+  count cleared, `stampVouchRenewed`, `Location heartbeat: STILL renewed by the connected AP`. Never after a fire
+  (`MOVED`, `STILL_SINCE_TRY`, no sensor), and such an AP vetoes a scan mismatch.
 - **Unchanged**: `locate`, the low-battery fix, crossings, P-L3's age limit (a `still` re-send has none), no new
   report field, no contract change. The server takes a `still` re-send of any age (2026-11-25, `docs/notes/server/zones.md`:
   `intake` stamps the row's `resent_at`; the fix's age is bounded only by `MAX_FIX_AGE_MS`, 400 days), so the amended

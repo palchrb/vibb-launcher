@@ -17,7 +17,8 @@ import android.util.Log
  * `adb shell am broadcast -n me.vibb.launcher.debug/com.kidslauncher.mdm.places.PlacesDebugReceiver
  * --es aps "00:00:5e:00:53:01,Hjemme,5180,-50;00:00:5e:00:53:02,Nabo,2437,-70"
  * [--es connect "00:00:5e:00:53:01,Hjemme,psk,7,5180"]` - each AP `bssid,ssid,MHz,dBm`, the connection
- * `bssid,ssid,psk|sae|eap|open,networkId,MHz` (unmetered); `--ez clear true` clears both. Every scan, attempt and teach
+ * `bssid,ssid,psk|sae|eap|open,networkId,MHz[,dBm]` (unmetered; -45 dBm unless given - design 134 revision 4's level);
+ * `--ez clear true` clears both. Every scan, attempt and teach
  * reads them (heard now) until cleared or the process restarts. Exported for the shell, guarded by DUMP.
  *
  * Design 134 §7: `--ei scan_age_s N` - the made-up results were heard N s before each read (0 now); `--ez refuse_scan
@@ -71,7 +72,7 @@ class PlacesDebugReceiver : BroadcastReceiver() {
                     "eap" -> LinkSecurity.EAP
                     else -> LinkSecurity.OTHER
                 }
-                Connected(p[0], p[1].ifEmpty { null }, -45, p[4].toIntOrNull() ?: 2437, true, security, p[3].toIntOrNull() ?: -1)
+                Connected(p[0], p[1].ifEmpty { null }, p.getOrNull(5)?.toIntOrNull() ?: -45, p[4].toIntOrNull() ?: 2437, true, security, p[3].toIntOrNull() ?: -1)
             }
         }
         if (intent.hasExtra("scan_age_s")) PlacesDebugHooks.scanAgeS = intent.getIntExtra("scan_age_s", 0).coerceAtLeast(0).toLong()

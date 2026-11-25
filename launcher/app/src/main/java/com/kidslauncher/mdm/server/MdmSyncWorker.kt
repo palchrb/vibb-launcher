@@ -982,8 +982,9 @@ private suspend fun currentLocationReport(
     // Design 134 D18: after a scan mismatch with no fire since the vouch, the next fresh fix is D7's evidence as if STILL.
     val vouched = lastFreshQueued?.takeIf { d7Applies(motion, motionNow?.mismatched == true) && it.provider in VOUCHING_PROVIDERS }
     // Design 125 D12: the heartbeat's 4-h cap try (motion STILL, so a fix is due only because the cap ran out) may renew
-    // the vouch through a zone link instead of a new position.
-    val renewable = if (zonesOn && beat == Heartbeat.FIX && motion == Motion.STILL) lastFreshQueued else null
+    // the vouch through a zone link instead of a new position; design 134 revision 4 (D24) through the connected router
+    // on every Regularly phone, zones or not (zonesOn is stillOn with zones; without one the zone link renews nothing).
+    val renewable = if (stillOn && beat == Heartbeat.FIX && motion == Motion.STILL) lastFreshQueued else null
     // Design 131: a renewal re-sends the vouch with the vouch's own check - never a better one.
     fun asLocation(q: QueuedFix) = android.location.Location(q.provider ?: "cached").apply {
         latitude = q.latitude
@@ -1032,7 +1033,7 @@ private suspend fun currentLocationReport(
     var capResend = false
     if (places.renewed) {
         ZoneWatch.stampVouchRenewed(context, now)
-        Log.i(ZONE_LOG_TAG, "Location heartbeat: STILL renewed by " + if (places.renewedByApple) "an Apple fix" else "a zone link")
+        Log.i(ZONE_LOG_TAG, "Location heartbeat: STILL renewed by " + places.renewedBy.phrase)
     }
     if (motionNow != null && action.fresh) {
         // A genuinely fresh fix of our own (not the cached or an old last-known fallback, Q-6; not a learned fix from

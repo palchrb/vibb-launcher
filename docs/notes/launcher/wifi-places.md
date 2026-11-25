@@ -331,6 +331,24 @@ tags `WifiPlaces`, `ZoneWatch`, `StillPrint`. No server or contract change.
   `STILL` stays, the event is recorded flagged `vetoed`. The sync then ends `STILL` (`MotionGate.scanMismatch`, `zones-and-power.md`),
   reports nothing and logs `ZoneWatch: Location heartbeat: STILL ended by a scan mismatch clause=wifi` and
   `StillPrint: mismatch clause=wifi devices=0/4`. Not a design 124 D7 contradiction.
+- **The connected router as a still witness** (revision 4, D20-D25, acts): while `STILL`, the cap try or a retry in
+  `LEARNED_FIRST` with no learned fix judged renews the vouch beside the zone link (`judged == null && (renews ||
+  witness)`, no zone needed: the sync hands every Regularly phone's cap try its vouch, `renewable`) when the pure
+  `stillWitness` says `RENEWS`: the phone is connected now to a readable, globally administered BSSID under design
+  131's binding (`linkAp`: `linkConn` - unmetered, saved-network id - and `linkSecurityHolds`, taken out of
+  `linkConfirms`; open/OWE never), the **same binding and device** (design 125 D5's key, the MLO address from
+  `WifiInfo.getApMldMacAddress()`) as the attempt read when the vouch's fix was taken (`VouchLink`, memory only, set
+  in `afterFreshFix` by `vouchLinkOf` - none on the move -, cleared with the table; a new process starts `MOVED`), that
+  device **settled** (`deviceSettled`: a row trusted and on >= 2 days, none moved or blocked), and its level within
+  15 dB of the vouch's. It renews only the still-ness (`Ask.renewedBy = CONNECTED`; the sync logs `ZoneWatch: Location
+  heartbeat: STILL renewed by the connected AP`); otherwise `WifiPlaces: connected witness no
+  reason=moved|novouch|none|unreadable|local|binding|nolink|other|unsettled|level` (`diff=N` dB for `level`), never a
+  BSSID. Such an AP - renewing or refused by its level alone - also **vetoes a mismatch** (`mismatchVetoed`, D23,
+  recorded `vetoed`). The read (D25): `getConnectionInfo()` (deprecated in 31, served on 14-17 with fine and
+  background location and Location on); when it gives no BSSID while the active network carries Wi-Fi, one
+  `NetworkCallback(FLAG_INCLUDE_LOCATION_INFO)` for Wi-Fi, up to 1 s (`connectedNow`, logged `connection read by
+  callback yes|no`); `getNetworkCapabilities()` alone always redacts. No SDK gate (all at or under minSdk 34).
+  `StillWitnessTest` (rows 13-18).
 - **Outcomes and the ring** (D11, D12): the next genuinely fresh fix of <= 100 m (`gps`, a checked Wi-Fi fix) judges
   the pending events, the distance from the vouch rounded to 10 m: a would-renew `confirmed` (within both accuracies +
   50 m) or `contradicted`; a would-not keeps its distance (`within` or not); a mismatch `confirmed` when the phone had
@@ -352,5 +370,6 @@ tags `WifiPlaces`, `ZoneWatch`, `StillPrint`. No server or contract change.
 - **Debug hooks** (§7, src/debug only, `PlacesDebugHooks` with a no-op twin in src/release; `DebugHookAbsentTest`,
   `checkReleaseHasNoDebugHook`): `PlacesDebugReceiver`'s `--ei scan_age_s N` (the made-up results heard N s ago),
   `--ez refuse_scan true` (every `startScan` throttled until false or `clear`) and `--es motion sensor|fire|off` (a
-  fake significant-motion trigger `MotionGate` arms and fires as the real one). Gate: `docs/testing/emulator.md` §6bs.
+  fake significant-motion trigger `MotionGate` arms and fires as the real one); `--es connect`'s optional sixth field
+  is the made-up connection's level (revision 4; -45 dBm unless given). Gate: `docs/testing/emulator.md` §6bs.
 - Not device-tested: the note's §9 on the Jelly Star (`docs/testing/new-phone-model.md` §2) and §6bs.

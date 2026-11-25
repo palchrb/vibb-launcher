@@ -423,6 +423,113 @@ fun cellElsewhere(cells: List<Heard>, rows: List<PlaceRow>, nowMin: Int, vouch: 
     return com.kidslauncher.mdm.zones.distanceM(row.lat, row.lng, vouch.lat, vouch.lng) > row.rangeM + vouch.accuracyM + CELL_ELSEWHERE_MARGIN_M
 }
 
+// --- Revision 4 (D20-D25): the connected router as a still witness ---
+
+/** D25: how the attempt read the connection - not on Wi-Fi ([NONE]), on Wi-Fi with no readable BSSID ([UNREADABLE]:
+ * redacted, `02:00:00:00:00:00`, none), or read ([READ]). */
+enum class LinkRead { NONE, UNREADABLE, READ }
+
+/** D20.1: the connected AP the attempt read at the fresh fix that became the vouch ([fixTimeMs], in [bootCount]) - its
+ * device key, binding and level. Memory only, never stored or logged. */
+data class VouchLink(val fixTimeMs: Long, val bootCount: Int, val device: String, val binding: String, val rssi: Int)
+
+/** D20.2, D20.3: the connected AP as a witness - its device key (design 125 D5), its binding (design 131) and level. */
+data class LinkAp(val device: String, val binding: String, val rssi: Int)
+
+/** The connected AP ([ap]) when it may witness, else why not ([refusal]). */
+data class LinkApRead(val ap: LinkAp?, val refusal: StillWitness?)
+
+/** Revision 4's answer (D20, D21) - the log's `reason=`. */
+enum class StillWitness(val wire: String) {
+    RENEWS("renews"),
+    MOVED("moved"),
+    NO_VOUCH("novouch"),
+    NONE("none"),
+    UNREADABLE("unreadable"),
+    LOCAL("local"),
+    BINDING("binding"),
+    NO_LINK("nolink"),
+    OTHER("other"),
+    UNSETTLED("unsettled"),
+    LEVEL("level"),
+    ;
+
+    /** D23: a connected, bound, settled AP of the vouch - renewing, or refused by its level alone. */
+    val home: Boolean get() = this == RENEWS || this == LEVEL
+}
+
+/** Design 131's security part of a link check, shared by [linkConfirms] and the witness (D24): WPA2/WPA3 personal, or
+ * an enterprise network when the connected AP itself is known ([apOwn]: one of the fix's rows, or the witness's settled
+ * device); open and OWE never. */
+fun linkSecurityHolds(conn: LinkConn, apOwn: Boolean): Boolean = when (conn.security) {
+    LinkSecurity.PSK, LinkSecurity.SAE -> true
+    LinkSecurity.EAP -> apOwn
+    LinkSecurity.OTHER -> false
+}
+
+/**
+ * D20.2, D20.3: the connection read ([read], [connected]) as a witness: a readable BSSID ([connectedBssid]), not locally
+ * administered ([usableBssid]: a hotspot, a virtual BSSID), and design 131's binding ([linkConn]: unmetered, Android's
+ * saved-network id known; [linkSecurityHolds]) - the AP's device key (the MLO address when set) and its level.
+ */
+fun linkAp(read: LinkRead, connected: Connected?, keys: PlaceKeys): LinkApRead {
+    if (connected == null) return LinkApRead(null, if (read == LinkRead.UNREADABLE) StillWitness.UNREADABLE else StillWitness.NONE)
+    val bssid = connectedBssid(connected.bssid) ?: return LinkApRead(null, StillWitness.UNREADABLE)
+    if (usableBssid(bssid) == null) return LinkApRead(null, StillWitness.LOCAL)
+    val conn = linkConn(connected, keys)?.takeIf { linkSecurityHolds(it, apOwn = true) } ?: return LinkApRead(null, StillWitness.BINDING)
+    return LinkApRead(LinkAp(keys.device(bssid, connected.mld), conn.binding, connected.rssi), null)
+}
+
+/** D20.1: the link a fresh fix at [fixTimeMs] (in [bootCount]) leaves for its vouch: its attempt's connected AP ([ap]),
+ * none when it was on the move ([moving]) or not connected to a bound AP. */
+fun vouchLinkOf(fixTimeMs: Long, bootCount: Int, ap: LinkAp?, moving: Boolean): VouchLink? =
+    if (ap == null || moving) null else VouchLink(fixTimeMs, bootCount, ap.device, ap.binding, ap.rssi)
+
+/** D20.5: [device] is settled - one of its own Wi-Fi rows trusted and seen on [SETTLED_DAYS_MIN] local days, and none
+ * of its rows moved or blocked (stricter than D7: one moved AP and the device never witnesses). */
+fun deviceSettled(rows: List<PlaceRow>, device: String, nowMin: Int): Boolean {
+    val own = rows.filter { it.kind == RowKind.WIFI && it.device == device }
+    return own.none { it.moves > 0 || it.blocked(nowMin) } && own.any { it.trusted(nowMin) && it.days >= SETTLED_DAYS_MIN }
+}
+
+/**
+ * D20: the connected router witnesses the still vouch - [StillWitness.RENEWS] while [motion] is `STILL`, with a vouch
+ * ([vouchTimeMs]) whose link ([link], this boot) is the connected AP now ([now]): the same binding and device, the
+ * device settled in [rows] ([deviceSettled]), its level within [PRINT_LEVEL_DB] of the vouch's. Else the first reason
+ * that fails (D21). It renews the still-ness only: never a position, never a fresh fix.
+ */
+fun stillWitness(
+    motion: Motion,
+    vouchTimeMs: Long?,
+    bootCount: Int,
+    link: VouchLink?,
+    now: LinkApRead,
+    rows: List<PlaceRow>,
+    nowMin: Int,
+): StillWitness {
+    if (motion != Motion.STILL) return StillWitness.MOVED
+    if (vouchTimeMs == null) return StillWitness.NO_VOUCH
+    now.refusal?.let { return it }
+    val ap = now.ap ?: return StillWitness.NONE
+    if (link == null || link.fixTimeMs != vouchTimeMs || link.bootCount != bootCount) return StillWitness.NO_LINK
+    if (ap.binding != link.binding) return StillWitness.BINDING
+    if (ap.device != link.device) return StillWitness.OTHER
+    if (!deviceSettled(rows, ap.device, nowMin)) return StillWitness.UNSETTLED
+    if (abs(ap.rssi - link.rssi) > PRINT_LEVEL_DB) return StillWitness.LEVEL
+    return StillWitness.RENEWS
+}
+
+/** D16 (code QA M1) and D23: a mismatch is vetoed by a renewal in the same attempt ([renewed]) or a connected, bound,
+ * settled AP of the vouch ([witness]'s [StillWitness.home]). */
+fun mismatchVetoed(renewed: Boolean, witness: StillWitness?): Boolean = renewed || witness?.home == true
+
+/** What renewed the still vouch - the sync's `STILL renewed by ...` line. */
+enum class Renewal(val phrase: String) {
+    LINK("a zone link"),
+    APPLE("an Apple fix"),
+    CONNECTED("the connected AP"),
+}
+
 // --- D10-D12, D19: events, outcomes and the ring ---
 
 /** An event's kind (D10, D19). */

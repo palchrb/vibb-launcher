@@ -285,7 +285,8 @@ data class ScanAp(val bssid: String, val ssid: String?, val mld: String?, val fr
 
 /** The connected network (`WifiInfo` with the active network's `NOT_METERED`); never stored. Design 131: its security
  * ([LinkSecurity], from `WifiInfo.getCurrentSecurityType()`) and Android's id of the saved network
- * (`WifiInfo.getNetworkId()`, -1 unknown) - what a zone link is bound to. */
+ * (`WifiInfo.getNetworkId()`, -1 unknown) - what a zone link is bound to. Design 134 revision 4: the AP's MLO address
+ * ([mld], `WifiInfo.getApMldMacAddress()`, API 33), its device key's part as a scan result's. */
 data class Connected(
     val bssid: String?,
     val ssid: String?,
@@ -294,6 +295,7 @@ data class Connected(
     val unmetered: Boolean,
     val security: LinkSecurity = LinkSecurity.OTHER,
     val networkId: Int = -1,
+    val mld: String? = null,
 )
 
 /** A usable result by its keys; [suspect]: its level repeats the previous scan's (D9's stale guard). [bssid] is held in
@@ -1152,11 +1154,7 @@ fun linkConn(connected: Connected?, keys: PlaceKeys): LinkConn? {
  */
 fun linkConfirms(fix: LearnedFix, conn: LinkConn?, rows: List<PlaceRow>, zones: List<LinkZone>, nowMin: Int): Boolean {
     conn ?: return false
-    when (conn.security) {
-        LinkSecurity.PSK, LinkSecurity.SAE -> {}
-        LinkSecurity.EAP -> if (conn.apKey == null || conn.apKey !in fix.keys) return false
-        LinkSecurity.OTHER -> return false
-    }
+    if (!linkSecurityHolds(conn, apOwn = conn.apKey != null && conn.apKey in fix.keys)) return false
     return zones.any { z ->
         distanceM(fix.lat, fix.lng, z.zone.latitude, z.zone.longitude) + fix.accuracyM <= z.zone.radiusM &&
             rows.any { it.kind == RowKind.LINK && it.key == z.key && it.network == conn.network && it.device == conn.binding && it.linked(nowMin) }
