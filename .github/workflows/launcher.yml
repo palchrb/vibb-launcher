@@ -4,7 +4,8 @@ name: Launcher
 # - Every push to master/main and every PR that touches launcher/, contracts/ (the files the server, the
 #   launcher and the music app read once, design 133), this workflow, the build-tsnet action, music's Gradle
 #   wrapper and verification metadata, music.yml and music's manifest (BuildChainTest and MusicPlanTest read
-#   them; security review L9), the fake portal (scripts/fake-portal.py) or the weather symbols' converter
+#   them; security review L9), scripts/material-symbols.sh (TimeLockModelTest reads it), the fake portal
+#   (scripts/fake-portal.py) or the weather symbols' converter
 #   (scripts/yr-symbols.py and its vendored 11.svg; both --selftests run in the always-run changes job): build
 #   and test (debug, unsigned release, lint, unit tests) and upload the debug APK as a workflow artifact.
 #   Nothing is published, no secrets.
@@ -71,7 +72,7 @@ jobs:
         # No usable base (manual run, new branch, force push): build.
         if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
           changed=true
-        elif git diff --name-only "$base" "$GITHUB_SHA" | grep -qE '^(launcher/|contracts/|\.github/workflows/launcher\.yml$|\.github/workflows/music\.yml$|\.github/actions/build-tsnet/|music/gradle/|music/app/src/main/AndroidManifest\.xml$|scripts/yr-symbols(\.py|-11\.svg)$|scripts/fake-portal\.py$)'; then
+        elif git diff --name-only "$base" "$GITHUB_SHA" | grep -qE '^(launcher/|contracts/|\.github/workflows/launcher\.yml$|\.github/workflows/music\.yml$|\.github/actions/build-tsnet/|music/gradle/|music/app/src/main/AndroidManifest\.xml$|scripts/yr-symbols(\.py|-11\.svg)$|scripts/fake-portal\.py$|scripts/material-symbols\.sh$)'; then
           changed=true
         else
           changed=false

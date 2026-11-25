@@ -146,13 +146,15 @@ contract gets a README row (the server's test checks). The policy JSON shape sta
   `music.yml` on `contracts/music/` and `contracts/shipped/bridge-aidl/`; `BuildChainTest` and
   `tests::deploy_scripts` check the filters cover them; `launcher.yml` also on `.github/actions/build-tsnet/`,
   `music/gradle/`, music's manifest and `music.yml`, and `scripts/yr-symbols.py` with its vendored
-  `yr-symbols-11.svg` and `scripts/fake-portal.py` (the changes job runs both `--selftest`s always); `music.yml`
+  `yr-symbols-11.svg`, `scripts/fake-portal.py` (the changes job runs both `--selftest`s always) and
+  `scripts/material-symbols.sh`; `music.yml`
   also on `server/testdata/spotify/`, `server/testdata/storytel/`, `scripts/fake-sonos.py`,
   `scripts/fake-storytel.py`, `scripts/fake-spotify.py`, `scripts/fake-audio.py`, `scripts/music-splash.py`
   (with the launcher's `splash_vibb_breathe.xml` it draws from), `scripts/music-icon.py` (with the launcher's
   `ic_launcher_foreground.xml` it reads the rings from) and `scripts/sonos-ws-probe.py` (its capture
   scrubber), whose `--selftest`s it runs after the build; `server-ci.yml`'s build job also on the launcher's
-  `ui/home/HomeModel.kt` (the avatar palette the PWA mirrors), `scripts/wifi-lookup-fixtures.py` (the changes job
+  `ui/home/HomeModel.kt` (the avatar palette the PWA mirrors), `app/build.gradle.kts` and `calendar/CalendarStore.kt`
+  (the server's tests read them), `scripts/wifi-lookup-fixtures.py` (the changes job
   runs its `--selftest` always), design 129's scripts, and
   `scripts/mmsc-hosts.py` with its `scripts/mmsc-hosts-sample.xml` (the changes job runs its `--selftest` always, and `server/deploy/update-image.sh --selftest`, after a bounded `apt-get install minisign`: the signed image statement's checks with a throwaway key, the image update's release pick and version rules, DEPLOY.md "Automatic, verified updates", with `deploy/handy-update.service`/`.timer`);
   `server-ci.yml`'s

@@ -47,14 +47,15 @@ jobs:
           files="$(git diff --name-only "$base" "$GITHUB_SHA")"
           # Plus contracts/, which both sides read (design 133; the bridge's AIDL in it is the one file the
           # server doesn't read - a run more, never one missed); the launcher's HomeModel.kt (the avatar palette
-          # the PWA mirrors); the MMS servers' generator and its sample (design 83, scripts/mmsc-hosts.py; its
+          # the PWA mirrors), build.gradle.kts (catalog_holds reads its minSdk) and CalendarStore.kt (calendar reads
+          # its local key); the MMS servers' generator and its sample (design 83, scripts/mmsc-hosts.py; its
           # output server/testdata/mmsc_hosts.txt is compiled in); the Apple Wi-Fi lookup's fixtures script
           # (scripts/wifi-lookup-fixtures.py, which wrote server/testdata/wifi_lookup/server.json); and design
           # 129's scripts: the GrapheneOS boot keys (scripts/grapheneos-boot-keys.py and its sample; its output
           # src/attestation/grapheneos_boot_keys.json is compiled in), the phone key's contract vectors
           # (scripts/device-key-vectors.py, which wrote contracts/core/device_key.json) and the emulator profile's
           # vectors (scripts/emulator-attestation-vectors.py, design 129b §7: server/testdata/attestation/emulator/).
-          if grep -qE '^(server/|contracts/|\.github/workflows/server-ci\.yml$|launcher/app/src/main/java/com/kidslauncher/mdm/ui/home/HomeModel\.kt$|scripts/mmsc-hosts(\.py|-sample\.xml)$|scripts/wifi-lookup-fixtures\.py$|scripts/grapheneos-boot-keys(\.py|-sample/.*)$|scripts/(device-key|emulator-attestation)-vectors\.py$|scripts/emulator-attestation-captures/)' <<<"$files"; then
+          if grep -qE '^(server/|contracts/|\.github/workflows/server-ci\.yml$|launcher/app/src/main/java/com/kidslauncher/mdm/ui/home/HomeModel\.kt$|launcher/app/build\.gradle\.kts$|launcher/app/src/main/java/com/kidslauncher/mdm/calendar/CalendarStore\.kt$|scripts/mmsc-hosts(\.py|-sample\.xml)$|scripts/wifi-lookup-fixtures\.py$|scripts/grapheneos-boot-keys(\.py|-sample/.*)$|scripts/(device-key|emulator-attestation)-vectors\.py$|scripts/emulator-attestation-captures/)' <<<"$files"; then
             changed=true
           else
             changed=false

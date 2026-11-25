@@ -1207,6 +1207,8 @@ newest 3), a backup that won't open is undone, and everyone signs in again. A re
 indexes or triggers differ from what this server makes ("Not a Vibb backup"), or that can't be updated to this
 server's version: the database stays as it was, the Security Log says "Backup restore refused" with the file and the
 reason, and the Backups page shows it at that backup. An upload of a file that isn't a Vibb backup is refused at once.
+A zip made by hand must hold a stopped server's `kidphone.db` or a `VACUUM INTO` copy: a copy of a running server's
+file without its `-wal` loses the rows still in the `-wal`.
 
 **Checking a backup by hand.** `check-backup` runs the same check a restore runs, on a copy in a new folder under the
 system's temporary folder that it deletes afterwards; it reads nothing else and writes nothing else - not the
