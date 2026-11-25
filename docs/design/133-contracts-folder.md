@@ -1,6 +1,6 @@
 # Design 133: One `contracts/` folder both builds read (C4, audit R3)
 
-Status: design, 2026-11-25. No code. Base: `main` at `311bd1019`. Source: the maintenance audit's R3
+Status: design, 2026-11-25, revision 2 (design QA: 0 H, 2 M, 6 L, all taken - §11). No code. Base: `main` at `311bd1019`. Source: the maintenance audit's R3
 (`docs/review/2026-11-17-maintenance-audit.md` §5: "Move the 33 shared pairs and the music copies into `contracts/`
 (`core/`, `integrations/<key>/`), read in place by Gradle and Rust. Delete the copies and the compare tests. CI filters
 on `contracts/**`. The root CLAUDE.md's contract section becomes one paragraph plus `contracts/README.md`.") The audit
@@ -17,7 +17,7 @@ counted 33 pairs on 2026-11-17; the tree now holds more (§1).
   bridge AIDL and the built-in secure-DNS hosts). Everything outside `shipped/` is test data only.
 - Gradle reads the roots as extra test-resource source directories, so every `getResource("x.json")` stays as it is
   (§3.2). Rust reads them through one macro and one path function rooted at `CARGO_MANIFEST_DIR/../contracts` (§3.1).
-- 48 data files and 3 AIDL files stay; 49 copies go (51 files instead of 100). 72 copy-compare tests go (32 server,
+- 48 data files and 3 AIDL files stay; 52 copies go (49 data, 3 AIDL): 51 files instead of 103. 72 copy-compare tests go (32 server,
   38 launcher, 2 music); 19 tests lose their compare lines and keep the rest (§6).
 - Three guards replace them: a README test (every file under `contracts/` has a row, every row a file), a shadow test
   in each app (no file name exists both in a root and in the module's own `src/test/resources/`) and the CI filter
@@ -185,25 +185,31 @@ Decisions:
 
 ### 3.1 Server (Cargo)
 
-A new `src/contracts.rs`, `#[cfg(test)]` except the one production constant:
+A new module `src/contracts.rs`, declared `#[cfg(test)] mod contracts;` in `main.rs` - the whole module is test-only:
 
 ```rust
-/// A contract file's text, compiled in: `contract!("core/weather.json")`.
+/// A contract file's text, compiled in: `crate::contracts::contract!("core/weather.json")`.
 macro_rules! contract {
     ($p:literal) => { include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../contracts/", $p)) };
 }
+pub(crate) use contract;
+
 /// A contract file's path, for the tests that read or write it at run time.
-pub fn path(p: &str) -> std::path::PathBuf {
+pub(crate) fn path(p: &str) -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../contracts").join(p)
 }
 ```
 
-- Every `include_str!("../testdata/<f>")` / `"../../testdata/<f>"` of a moved file becomes `contract!("core/<f>")`
+`pub(crate) use contract;` re-exports the macro by path, as `i18n.rs` does with `pub(crate) use words;`; callers write
+`crate::contracts::contract!(...)` (or import it) and never depend on textual macro order.
+
+- Every `include_str!("../testdata/<f>")` / `"../../testdata/<f>"` of a moved file becomes
+  `crate::contracts::contract!("core/<f>")`
   (about 45 sites); every `std::fs::read("testdata/<f>")` and `CARGO_MANIFEST_DIR.join("testdata/<f>")` becomes
   `contracts::path("core/<f>")` (about 20 sites, the four `*_WRITE` writers among them). A run-time path no longer
   depends on the test's working directory.
 - `dns_server.rs` (production): `const BUILTIN_DOH_HOSTS: &str = include_str!("../../contracts/shipped/launcher-assets/dns/doh_hosts.txt");`
-  - a literal relative to the source file, not the macro, so it reads plainly and is not test-gated.
+  - a literal `include_str!` relative to the source file; it does not use the test-only module.
 - rustc records every `include_str!` target in the dep-info, so `cargo test` and `cargo build` rebuild when a contract
   changes, inside the crate or not. No `build.rs` is needed.
 - `server/Cargo.toml` has no `include`/`exclude`, and nothing runs `cargo package` or `cargo publish`; a crate that
@@ -236,7 +242,11 @@ android {
   inputs (`processDebugUnitTestJavaRes`, `testDebugUnitTest`), as a changed copy does today.
 - The tests that read a file by repo path switch to the class loader: `MusicPlanTest` and `BridgeTest`
   (`music_library.json`, `music_listing.json`, `music_state.json`), and `DnsFilterEngineTest` reads
-  `contracts/shipped/launcher-assets/dns/doh_hosts.txt` by path (an asset is not on the test classpath). The launcher's
+  `contracts/shipped/launcher-assets/dns/doh_hosts.txt` by path (an asset is not on the test classpath). A by-path read
+  is not a task input, so `build.gradle.kts` declares the directory one: `tasks.withType<Test>().configureEach {
+  inputs.dir(contracts.dir("shipped/launcher-assets")).withPathSensitivity(PathSensitivity.RELATIVE) }`, and a changed
+  list re-runs the test instead of reading as up to date. The same applies to `contracts.dir("shipped/bridge-aidl")`
+  for the launcher's AIDL method-order check, which also reads by path. The launcher's
   AIDL method-order check reads `contracts/shipped/bridge-aidl/...` by path.
 - Both modules' unit tests already run with `launcher/app/` (or `music/app/`) as the working directory and already
   read `../../server/...`; nothing new about reaching outside the module.
@@ -257,7 +267,8 @@ android {
 - `server/Dockerfile` copies only `dist/<arch>/kid_phone_server`, `dist/static`, `dist/NOTICE.md`, `dist/LICENSES` and
   `deploy/distrusted-roots.txt`; `.dockerignore` sends nothing else. No Rust is compiled in the image, so no contract
   is read there. Unchanged.
-- The binary is built by `cargo build --release` in `server-ci.yml` and `server-release.yml`, each after a full
+- The binary is built by `cargo build --release` in `server-ci.yml` (`server-build`, and `server-image-context`, which
+  builds the binary the image job's context holds) and `server-release.yml` (`server-release-build`), each after a full
   `actions/checkout` (the only `sparse-checkout` in the workflows is `server-release-scripts`, which uploads
   `server/deploy/` scripts and builds nothing). `scripts/dev-rebuild.sh` builds from the repo. All three see
   `contracts/`.
@@ -277,24 +288,47 @@ from the server's test folder.
 The three changes jobs' `grep -qE` alternatives today list every copy by name (launcher.yml's filter line is about
 1.6 KB, with a matching comment block of about 20 lines). After:
 
-| Workflow | Build job runs on (contract part) |
-|---|---|
-| `launcher.yml` | `contracts/` (it reads all four roots) |
-| `server-ci.yml` | `contracts/` (it reads `core/`, `integrations/`, `music/`, `shipped/launcher-assets/`; the AIDL is the one file it doesn't read, and one extra server run on an AIDL change is cheaper than a second rule) |
-| `music.yml` | `contracts/(music|shipped/bridge-aidl)/` |
+Each workflow's whole filter after step 8, literally (the `grep -qE` pattern; the non-contract alternatives are
+today's, unchanged):
 
-Removed from the filters: every `server/testdata/<contract>`, `launcher/app/src/test/resources/<contract>`,
+`launcher.yml` (`launcher-changes`) - it reads all four roots:
+
+```
+^(launcher/|contracts/|\.github/workflows/launcher\.yml$|\.github/workflows/music\.yml$|\.github/actions/build-tsnet/|music/gradle/|music/app/src/main/AndroidManifest\.xml$|scripts/yr-symbols(\.py|-11\.svg)$|scripts/fake-portal\.py$)
+```
+
+`server-ci.yml` (`server-changes`, the build pattern) - it reads `core/`, `integrations/`, `music/` and
+`shipped/launcher-assets/`; the AIDL is the one file it doesn't read, and an extra server run on an AIDL change is
+cheaper than a second rule:
+
+```
+^(server/|contracts/|\.github/workflows/server-ci\.yml$|launcher/app/src/main/java/com/kidslauncher/mdm/ui/home/HomeModel\.kt$|scripts/mmsc-hosts(\.py|-sample\.xml)$|scripts/wifi-lookup-fixtures\.py$|scripts/grapheneos-boot-keys(\.py|-sample/.*)$|scripts/(device-key|emulator-attestation)-vectors\.py$|scripts/emulator-attestation-captures/)
+```
+
+`server-ci.yml`'s image pattern is unchanged.
+
+`music.yml` (`music-changes`) - `server/testdata/spotify/` and `server/testdata/storytel/` stay: they are not
+contracts, but `scripts/fake-spotify.py` and `scripts/fake-storytel.py` read them and their `--selftest`s run after the
+build:
+
+```
+^(music/|contracts/(music|shipped/bridge-aidl)/|\.github/workflows/music\.yml$|server/testdata/spotify/|server/testdata/storytel/|scripts/fake-sonos\.py$|scripts/fake-storytel\.py$|scripts/fake-spotify\.py$|scripts/fake-audio\.py$|scripts/music-splash\.py$|launcher/app/src/main/res/drawable/splash_vibb_breathe\.xml$|scripts/music-icon\.py$|launcher/app/src/main/res/drawable/ic_launcher_foreground\.xml$)
+```
+
+Removed: every `server/testdata/<contract>`, `launcher/app/src/test/resources/<contract>`,
 `music/app/src/test/resources/<contract>`, `launcher/app/src/main/aidl/`, `music/app/src/main/aidl/`,
-`launcher/app/src/main/assets/dns/doh_hosts.txt` and `server/testdata/doh_hosts.txt` alternative. Kept: the non-contract
-cross reads (`music/gradle/`, music's manifest, `HomeModel.kt`, the launcher drawables the music scripts read, the
-scripts with `--selftest`s). The comment blocks at the top of `launcher.yml` and in `server-ci.yml` shrink to one
-sentence ("and `contracts/`, which both sides read").
+`launcher/app/src/main/assets/dns/doh_hosts.txt` and `server/testdata/doh_hosts.txt` alternative. The comment blocks at
+the top of `launcher.yml` and in `server-ci.yml` shrink to one sentence ("and `contracts/`, which both sides read"), and
+`server-build`'s comment "The full checkout matters: phone::tests compares testdata/phone_vectors.json with the
+launcher's copy" says the tests read `../contracts/`.
 
 ### 5.1 Gaps the change closes
 
 - `app_icons.json`: neither `launcher.yml` lists `server/testdata/app_icons.json` nor `server-ci.yml` lists the
   launcher's copy, so a one-sided edit runs only one compare. One copy and `contracts/` close it.
 - `music_icons.json`: `server-ci.yml` does not list music's copy.
+- `phone_vectors.json`: neither `launcher.yml` lists `server/testdata/phone_vectors.json` nor `server-ci.yml` the
+  launcher's copy.
 
 ## 6. Tests
 
@@ -345,7 +379,9 @@ instead of shipping a launcher without its built-in DoH blocks.
   rows each test runs) is not carried over: it is in each design note and in each test's doc comment, and the README
   row points at the design section.
 - **`contracts/README.md`**: the layout rule of §2, the "build from the monorepo" rule of §4.1, and a table
-  `file | design | written by | read by` (one row per file, at most two lines).
+  `file | design | written by | read by` (one row per file, at most two lines). Readers include scripts and release
+  workflows: `launcher_tag_codes.json`'s row names the server, the launcher and `scripts/release-version.sh`, through
+  which both the launcher's and the music app's release workflows read it (its launcher and music rows).
 - **`server/CLAUDE.md`, `launcher/CLAUDE.md`, `music/CLAUDE.md`**: the sentences on byte-identical copies become
   pointers to `contracts/` (music's "Build and test" paragraph, launcher's "Release builds" mention of
   `launcher_tag_codes.json`, music's bridge rule "The AIDL is byte-identical with `launcher/`").
@@ -375,14 +411,23 @@ before the push. A step that touches files on two sides triggers both builds, so
 4. **`integrations/`**: the two `contract.json`s; `integrations/mod.rs`'s doc on where a contract folder lives.
 5. **`music/`**: the 7 files from server, launcher and music; `ContractFilesTest`'s compare becomes the shadow test;
    `MusicPlanTest` and `BridgeTest` read through the class loader; `MUSIC_*_SNAPSHOT_WRITE`, `fake-spotify.py`,
-   `fake-storytel.py`, `material-symbols.sh`'s music copy line.
+   `fake-storytel.py`, `material-symbols.sh`'s music copy line. `music.yml` keeps `server/testdata/spotify/` and
+   `server/testdata/storytel/` (the fakes' own fixtures, not moved).
 6. **`shipped/launcher-assets/`**: `doh_hosts.txt`, the launcher's `assets.srcDir`, `dns_server.rs`'s `include_str!`,
    the APK asset check, `DnsFilterEngineTest`'s path; `assembleRelease` and `unzip -l` on the APK checked by hand once.
 7. **`shipped/bridge-aidl/`**: the three AIDL files, both apps' `aidl.srcDir`, the AIDL compares go, the launcher's
    method-order check reads the one file. Both apps' `assembleRelease` checked.
-8. **Filters and docs**: the old alternatives leave the three filters (they name paths that no longer exist), the
-   workflow comments shrink, the root `CLAUDE.md` section and the three app `CLAUDE.md`s rewritten, `docs/notes/` and
-   `docs/testing/emulator.md` paths updated, the README table complete.
+8. **Filters and docs**: the old alternatives leave the three filters (they name paths that no longer exist) and each
+   becomes §5's literal pattern, the workflow comments shrink, the root `CLAUDE.md` section is replaced by §7's
+   paragraph, the README table is checked complete. The per-file doc lines are already done by then (below).
+
+**In every move step (2 to 7)**, for each file it moves, the same commit also changes: the file's own text that names
+its location (an `about`/`_doc` key or comment inside it, where it has one); the doc comments in the code that read it
+("byte-identical in the launcher's test resources" becomes "`contracts/core/<f>`"); the script strings that name it
+(e.g. `scripts/device-key-vectors.py`'s docstring, usage line and `SystemExit` message with
+`server/testdata/device_key.json`); and its lines in the root `CLAUDE.md`, the app `CLAUDE.md`s, `docs/notes/` and
+`docs/testing/emulator.md`. Step 8 then only rewrites the root section as a whole, and no doc names a deleted path
+between steps.
 
 Steps 2 to 7 are independent of each other and could be reordered; 1 comes first and 8 last. Each is mechanical and
 fits one review. Old filter alternatives stay until step 8 so a half-moved tree never skips a build.
@@ -398,9 +443,23 @@ fits one review. Old filter alternatives stay until step 8 so a half-moved tree 
 | Opening `launcher/` or `music/` alone in an IDE, or building `server/` from a copy of its folder | The external roots resolve as long as the repo is checked out whole, which every build does (§4). `contracts/README.md` and `server/CLAUDE.md` say so. The gitignored old standalone clones (`kids-launcher-mdm/`, `kid-phone-server/`) are not built. |
 | `git log` of a moved file stops at the move | `git mv` keeps it findable with `--follow`; the README's one-line mapping covers prose that names old paths. |
 | Branches in flight (worktrees) that edit a copy | They conflict at the merge on a deleted file; the fix is to apply the edit to `contracts/`. Steps are best merged when few branches touch contracts, and each step's commit message names the files it moved. |
-| AGP or Kotlin warns about a source directory outside the module | `-PwarningsAsErrors` covers Kotlin compile warnings only; AGP 8.13 accepts external `srcDir`s (the launcher already adds `src/tsnetStub/java` conditionally). Step 1 shows it before anything moves. |
+| AGP or Kotlin warns about a source directory outside the module | `-PwarningsAsErrors` covers Kotlin compile warnings only; step 1 adds the `srcDir`s before anything moves, and its build with `-PwarningsAsErrors=true` shows any warning. |
 
 ## 10. Questions for the owner
 
 None. The change has no visible cost on a phone, in the PWA or in a release; it moves test data and two build inputs,
 and every build reads the same bytes as before.
+
+## 11. Revision 2: the design QA
+
+| QA | Taken |
+|---|---|
+| M1 | `music.yml` keeps `server/testdata/spotify/` and `server/testdata/storytel/`; §5 states each workflow's whole after-filter literally; §8 step 5. |
+| M2 | §3.1: the whole `contracts` module is `#[cfg(test)]`, the macro re-exported with `pub(crate) use contract;` and called as `crate::contracts::contract!`; `dns_server.rs` keeps a literal `include_str!`. |
+| L1 | §5.1 adds `phone_vectors.json`. |
+| L2 | §0: 103 files today, 52 copies go (49 data, 3 AIDL), 51 stay. |
+| L3 | §8: each move step also changes the file's own about/comment text and the script strings that name it (`device-key-vectors.py`). |
+| L4 | §3.2: the by-path reads (`DnsFilterEngineTest`, the AIDL method order) get their `contracts/shipped/` directories as test task inputs. |
+| L5 | §9: the tsnetStub example is dropped; step 1's build is the check. |
+| L6 | §8: each moved file's `CLAUDE.md`/notes lines change in its own step, not in step 8. |
+| Also | §4 names `server-image-context`; §7's README row for `launcher_tag_codes.json` names `release-version.sh` and the music release. |
