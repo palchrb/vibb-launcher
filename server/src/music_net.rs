@@ -56,6 +56,8 @@ pub enum Kind {
     /// Apple's Wi-Fi location service (design 125 A7): cut at 256 KB (an answer past it doesn't read); 3 s to connect
     /// and 5 s in all direct, [PROXIED] through a proxy.
     AppleWps,
+    /// A web filter list (`dns_engine`): the list's own cap, `dns_engine::MAX_FEED_BYTES`, and 30 s in all.
+    Blocklist,
 }
 
 impl Kind {
@@ -73,6 +75,7 @@ impl Kind {
             Kind::ShortLink => 16_000,
             Kind::PlacePreview => 256_000,
             Kind::AppleWps => 256_000,
+            Kind::Blocklist => crate::dns_engine::MAX_FEED_BYTES,
         }
     }
 
@@ -90,6 +93,7 @@ impl Kind {
             Kind::ShortLink => 5,
             Kind::PlacePreview => 4,
             Kind::AppleWps => 5,
+            Kind::Blocklist => 30,
         })
     }
 

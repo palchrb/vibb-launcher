@@ -1,7 +1,5 @@
-//! Security review M6: the DNS blocklist fails closed, per feed.
-
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, Ordering};
+//! Security review M6: the DNS blocklist fails closed, per feed. The lists are fetched through `music_net` with
+//! public reach and https-only redirects, answered here by the canned fetch.
 
 use axum::http::{Method, StatusCode};
 
@@ -13,37 +11,32 @@ const SERVER_ERROR: u8 = 1;
 const PORTAL_PAGE: u8 = 2;
 const TOO_BIG: u8 = 3;
 
-/// A feed server whose answer the test switches: returns its URL and the switch.
-async fn feed_server() -> (String, Arc<AtomicU8>) {
-    let mode = Arc::new(AtomicU8::new(GOOD));
-    let served = mode.clone();
-    let app = axum::Router::new().route(
-        "/feed",
-        axum::routing::get(move || {
-            let mode = served.load(Ordering::SeqCst);
-            async move {
-                match mode {
-                    GOOD => (
-                        StatusCode::OK,
-                        "# a hosts file\n0.0.0.0 ads.example\ntracker.example.\n".to_string(),
-                    ),
-                    SERVER_ERROR => (StatusCode::INTERNAL_SERVER_ERROR, "oops".to_string()),
-                    PORTAL_PAGE => (
-                        StatusCode::OK,
-                        "<html><body>Sign in to the Wi-Fi</body></html>\n".to_string(),
-                    ),
-                    _ => (
-                        StatusCode::OK,
-                        "a.example\n".repeat(dns_engine::MAX_FEED_BYTES / 10 + 1),
-                    ),
-                }
-            }
-        }),
-    );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}/feed", listener.local_addr().unwrap());
-    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    (url, mode)
+const FEED: &str = "https://lists.example/feed";
+
+/// The feed's answer from now on.
+fn serve(app: &TestApp, mode: u8) {
+    let (status, body) = match mode {
+        GOOD => (
+            200,
+            "# a hosts file\n0.0.0.0 ads.example\ntracker.example.\n".to_string(),
+        ),
+        SERVER_ERROR => (500, "oops".to_string()),
+        PORTAL_PAGE => (
+            200,
+            "<html><body>Sign in to the Wi-Fi</body></html>\n".to_string(),
+        ),
+        _ => (
+            200,
+            "a.example\n".repeat(dns_engine::MAX_FEED_BYTES / 10 + 1),
+        ),
+    };
+    app.fetch.answer(FEED, status, body);
+}
+
+/// The feed at [FEED], answering well: returns its URL.
+fn feed_server(app: &TestApp) -> String {
+    serve(app, GOOD);
+    FEED.to_string()
 }
 
 async fn add_feed(app: &TestApp, name: &str, url: &str) -> i64 {
@@ -73,7 +66,7 @@ async fn a_failing_feed_keeps_its_domains_and_one_never_loaded_is_left_out() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (phone, token) = app.enrolled_device("phone").await;
-    let (url, mode) = feed_server().await;
+    let url = feed_server(&app);
     let ads = add_feed(&app, "Ads", &url).await;
 
     // Before the first load the feed has nothing: left out, the list answered all the same.
@@ -96,7 +89,7 @@ async fn a_failing_feed_keeps_its_domains_and_one_never_loaded_is_left_out() {
         (PORTAL_PAGE, "no domains"),
         (TOO_BIG, "larger than"),
     ] {
-        mode.store(bad, Ordering::SeqCst);
+        serve(&app, bad);
         compile(&app).await;
         let (status, body) = blocklist(&app, &token).await;
         assert_eq!(status, StatusCode::OK, "{why}");
@@ -137,7 +130,7 @@ async fn a_failing_feed_keeps_its_domains_and_one_never_loaded_is_left_out() {
     .execute(&app.db)
     .await
     .unwrap();
-    mode.store(GOOD, Ordering::SeqCst);
+    serve(&app, GOOD);
     compile(&app).await;
     let (status, body) = blocklist(&app, &token).await;
     assert_eq!(status, StatusCode::OK);
@@ -175,10 +168,10 @@ async fn a_phones_filter_page_names_a_failing_list_without_the_error() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (phone, _) = app.enrolled_device("phone").await;
-    let (url, mode) = feed_server().await;
+    let url = feed_server(&app);
     add_feed(&app, "Ads", &url).await;
     compile(&app).await;
-    mode.store(SERVER_ERROR, Ordering::SeqCst);
+    serve(&app, SERVER_ERROR);
     compile(&app).await;
     let page = app
         .get_page(&super::device_page(phone, super::Section::Filter), &cookie)
@@ -201,7 +194,7 @@ async fn a_feed_keeps_its_domains_across_a_restart() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (_, token) = app.enrolled_device("phone").await;
-    let (url, mode) = feed_server().await;
+    let url = feed_server(&app);
     let feed = add_feed(&app, "Ads", &url).await;
     compile(&app).await;
     let saved = app.state.dns_feed_dir.join(format!("{feed}.txt"));
@@ -216,7 +209,7 @@ async fn a_feed_keeps_its_domains_across_a_restart() {
             .ok()
             .unwrap()
             .into_inner();
-    mode.store(SERVER_ERROR, Ordering::SeqCst);
+    serve(&app, SERVER_ERROR);
     compile(&app).await;
     let (status, body) = blocklist(&app, &token).await;
     assert_eq!(status, StatusCode::OK);
@@ -237,7 +230,7 @@ async fn a_feed_keeps_its_domains_across_a_restart() {
 async fn database_errors_never_shrink_the_list() {
     let app = TestApp::new().await;
     let (_, token) = app.enrolled_device("phone").await;
-    let (url, _) = feed_server().await;
+    let url = feed_server(&app);
     add_feed(&app, "Ads", &url).await;
     compile(&app).await;
     let hash = app.state.dns_compiled.read().await.content_hash.clone();
@@ -290,6 +283,7 @@ fn every_feed_failure_is_classed() {
         (FeedFailure::Status(410), Parent),
         (FeedFailure::TooBig, Parent),
         (FeedFailure::NotAList, Parent),
+        (FeedFailure::Refused("private".into()), Parent),
     ] {
         assert_eq!(failure.class(), class, "{failure:?}");
     }
@@ -376,4 +370,116 @@ async fn a_new_phone_gets_the_ads_list_on() {
         .await
         .unwrap();
     assert_eq!(new_phone("Ola").await, []);
+}
+
+/// A list is fetched from public addresses only and its redirects only to https: a hop to a tailnet literal, to
+/// `http://` or to a name with only private answers is refused (the list stays not loaded, its health the parent's);
+/// a hop to another https address is followed; a list saved with an `http://` address is still asked there.
+#[tokio::test]
+async fn a_list_is_fetched_over_https_from_public_addresses_only() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let body = "0.0.0.0 ads.example\n";
+    app.fetch.redirect(
+        "https://lists.example/tailnet",
+        302,
+        "https://100.64.0.1/hosts",
+    );
+    app.fetch.redirect(
+        "https://lists.example/plain",
+        301,
+        "http://mirror.example/hosts",
+    );
+    app.fetch.redirect(
+        "https://lists.example/lan",
+        302,
+        "https://lan.example/hosts",
+    );
+    app.fetch.dns("lan.example", &["192.168.1.20"]);
+    app.fetch.answer("https://lan.example/hosts", 200, body);
+    app.fetch.answer("https://100.64.0.1/hosts", 200, body);
+    app.fetch.answer("http://mirror.example/hosts", 200, body);
+    app.fetch
+        .redirect("https://lists.example/moved", 308, "/v2/hosts");
+    app.fetch
+        .answer("https://lists.example/v2/hosts", 200, body);
+    app.fetch.answer("http://old.example/hosts", 200, body);
+    let refused = [
+        add_feed(&app, "Tailnet", "https://lists.example/tailnet").await,
+        add_feed(&app, "Plain", "https://lists.example/plain").await,
+        add_feed(&app, "Lan", "https://lists.example/lan").await,
+    ];
+    let moved = add_feed(&app, "Moved", "https://lists.example/moved").await;
+    let old = add_feed(&app, "Old", "http://old.example/hosts").await;
+    compile(&app).await;
+
+    {
+        let compiled = app.state.dns_compiled.read().await;
+        let list = |id: i64| {
+            compiled
+                .lists
+                .iter()
+                .find(|l| l.blocklist_id == id)
+                .unwrap()
+        };
+        for id in refused {
+            let list = list(id);
+            assert!(
+                !list.loaded && list.domains.is_empty(),
+                "{:?}",
+                list.last_error
+            );
+            assert!(
+                list.last_error
+                    .as_deref()
+                    .unwrap_or_default()
+                    .starts_with("not fetched: "),
+                "{:?}",
+                list.last_error
+            );
+        }
+        assert!(list(moved).loaded && list(moved).domains.contains("ads.example"));
+        assert!(list(old).loaded && list(old).domains.contains("ads.example"));
+    }
+    for id in refused {
+        let health = crate::integration_health::row(&app.db, "blocklist", &format!("feed:{id}"))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (health.class, health.error.as_deref()),
+            (
+                Some(crate::integration_health::Class::Parent),
+                Some("refused")
+            )
+        );
+    }
+    // The private answers are refused by the fetch itself (its resolver, the literal check); the http hop is never
+    // asked.
+    let requests = app.fetch.requests.lock().unwrap().clone();
+    assert!(!requests.iter().any(|r| r.url.starts_with("http://mirror")));
+    assert!(requests.iter().all(|r| !r.follow));
+
+    // A new list must be https (the form's refusal); nothing is added.
+    let count = || async {
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM dns_blocklists")
+            .fetch_one(&app.db)
+            .await
+            .unwrap()
+    };
+    let lists = count().await;
+    let res = app
+        .request_form(
+            Method::POST,
+            "/dns/blocklists/new",
+            Some(&cookie),
+            &[("name", "Mine"), ("url", "http://lists.example/hosts")],
+        )
+        .await;
+    let location = res.location().unwrap_or_default();
+    assert!(
+        location.starts_with("/dns?notice=bad_list&name="),
+        "{location}"
+    );
+    assert_eq!(count().await, lists);
 }

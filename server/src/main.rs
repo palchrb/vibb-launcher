@@ -231,6 +231,9 @@ pub struct AppState {
     /// MET's requests (design 75 §3.3): their own `music_net::HttpSource` behind their own gate, never the music
     /// fetch's (a card's nowcast must not queue behind a 120 s feed); canned in the tests.
     pub weather_fetch: std::sync::Arc<dyn music_net::Source>,
+    /// The web filter's list downloads (`dns_engine::compile_blocklist`): their own `music_net::HttpSource`, public
+    /// addresses only, never the music fetch's gate (a 30 MB list must not hold a cover); canned in the tests.
+    pub blocklist_fetch: std::sync::Arc<dyn music_net::Source>,
     /// The weather's caches in memory, its locks and the phones' ask limits
     /// (`weather_cache::Weather`).
     pub weather: std::sync::Arc<weather_cache::Weather>,
@@ -595,6 +598,7 @@ async fn main() {
             music_net::REQUEST_SPACING,
         )),
         weather: Default::default(),
+        blocklist_fetch: std::sync::Arc::new(music_net::HttpSource::new()),
         unified_push: Default::default(),
         integrations: Default::default(),
     };
