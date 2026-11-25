@@ -343,14 +343,19 @@ async fn main() {
     // SSH on a systemd install): applied before the database is opened, and undone if the
     // restored one won't open.
     let db_path = startup::sqlite_path(&database_url);
+    // A backup whose database this server doesn't make: logged in the live database once it is open.
+    let mut refused_not_vibb = None;
     let restored = match &db_path {
-        Some(path) => match startup::apply_restore_request(std::path::Path::new("data"), path) {
-            Ok(restored) => restored,
-            Err(err) => {
-                tracing::error!("restore refused, the database is unchanged: {err}");
-                None
+        Some(path) => {
+            match startup::apply_restore_request(std::path::Path::new("data"), path).await {
+                Ok(restored) => restored,
+                Err(err) => {
+                    tracing::error!("restore refused, the database is unchanged: {err}");
+                    refused_not_vibb = err.not_vibb;
+                    None
+                }
             }
-        },
+        }
         None => None,
     };
     let (db, restored) = match try_connect_db(&database_url).await {
@@ -377,6 +382,9 @@ async fn main() {
     if let Some(restore) = &restored {
         tracing::info!("restored the backup {}", restore.filename);
         startup::record_restore(&db, restore).await;
+    }
+    if let Some((filename, by)) = &refused_not_vibb {
+        startup::record_restore_refused(&db, filename, by.as_deref()).await;
     }
 
     security::bootstrap_admin(&db, std::path::Path::new("data")).await;

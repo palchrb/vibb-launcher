@@ -193,8 +193,10 @@ No prior programming experience - build features directly rather than explaining
   backup form still accepts only `HH:MM` times (`security::valid_clock_time`, 400 and nothing written otherwise).
   A restore is the server's own (`startup::apply_restore_request` at the start, from `data/restore_request`: the
   PWA's in the container, the owner's over SSH on a systemd install - DEPLOY.md, "Backups"): only the zip's
-  `kidphone.db`, at most 1 GiB, the replaced database kept in `data/backups/prerestore-<time>/` (3 kept), undone when
-  the restored one won't open.
+  `kidphone.db`, at most 1 GiB, passing the backup check before the swap (`backups::check_extracted` on a scratch copy,
+  the bullet below; refused: the live database untouched, its `backup_restore_refused` line for a schema this server
+  doesn't make, `startup::record_restore_refused`), the replaced database kept in `data/backups/prerestore-<time>/`
+  (3 kept), undone when the restored one won't open.
 - **No admin session leaves the live database (security review M2).** Every copy goes through
   `backups::snapshot(db, scratch, target)`: `VACUUM INTO` a scratch file in `data/` (never `data/backups/`, where only
   finished copies are listed), `DELETE FROM tower_sessions` and a blanked
@@ -208,7 +210,12 @@ No prior programming experience - build features directly rather than explaining
 - **Every backup is checked (design 116 §4).** After each backup (a task of its own) and at startup for the newest
   without a row, `backups::check_file` opens the zip's `kidphone.db` as a restore would (1 GiB cap, a scratch
   `data/backup-check-*.db` deleted after and swept at startup, read-only and immutable): `integrity_check`, every
-  `_sqlx_migrations` row known to this binary with its checksum and none newer, `devices` read. Recorded as
+  `_sqlx_migrations` row known to this binary with its checksum and none newer, `devices` read, and then the schema:
+  a restore takes only a database whose schema is exactly what the migrations make (`backups::schema_matches`: the
+  scratch copy migrated as the start would, with the session store's table, and its `sqlite_master` - `type`, `name`,
+  `tbl_name`, the `sql` with its whitespace as one space; SQLite's own tables and indexes and `_sqlx_migrations`
+  aside, never a view or trigger - equal to a fresh in-memory database's, made once per process; code `schema`, the
+  Backups page's "Not a Vibb backup"; an upload that fails it is refused and deleted at once). Recorded as
   `integration_health('backup', 'file:<name>')` (a failed backup: `('backup', '')`); the Backups page's quiet
   "checked", its orange line and the Devices list's family row read `backups::backup_state`. In Docker `data/backups`
   is `./backups` on the host (`deploy/compose.yaml`): `snapshot` copies across filesystems on `EXDEV` (a `.partial`,

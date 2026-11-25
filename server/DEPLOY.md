@@ -520,7 +520,8 @@ initial-admin-password`. Sign in as `admin` and change it - the server deletes i
 - **Restoring a backup** from the Backups page works in the container too: the server stops, swaps in the backup at
   its next start (Docker's restart policy brings it back), and keeps the previous database in
   `data/backups/prerestore-<time>/` (the newest 3 are kept); if the backup won't open, the previous database goes
-  back. A backup whose database is over 1 GiB is refused.
+  back. A backup whose database is over 1 GiB is refused, and so is one whose tables, indexes or triggers differ from
+what this server makes.
 - **The host's backup takes `./backups`**: the server never copies anything off the machine. Keep that folder as safe
   as the admin password: it holds full copies of the family's database.
 - **Moving the backups out of the named volume** (an install from before design 116, once, when the new
@@ -1193,7 +1194,9 @@ sudo systemctl restart kid-phone-server.service
 
 The server takes the marker at its next start (the same restore as the container's): the backup's `kidphone.db` must
 be an SQLite database of at most 1 GiB, the database it replaces is kept in `data/backups/prerestore-<time>/` (the
-newest 3), a backup that won't open is undone, and everyone signs in again. A backup that isn't in
+newest 3), a backup that won't open is undone, and everyone signs in again. A restore refuses a file whose tables,
+indexes or triggers differ from what this server makes: the database stays as it was, the Security Log says "Restore
+refused: not a Vibb backup", and an upload of such a file is refused at once ("Not a Vibb backup"). A backup that isn't in
 `data/backups/` yet goes there first (Upload a Backup…, or copy it in as the `kidphone` user). In Docker Restore…
 asks for the file name and restarts the container itself ("Docker" above).
 
