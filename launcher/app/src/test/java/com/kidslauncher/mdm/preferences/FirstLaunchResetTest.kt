@@ -47,7 +47,8 @@ class FirstLaunchResetTest {
         assertTrue("Enrollment.enroll(" in src("ui/settings/launcher/SettingsFragmentLauncher.kt").substringAfter("private fun enrollWithServer("))
         val success = src("server/Enrollment.kt").substringAfter("isSuccessful")
         assertTrue("DeviceToken.set(" in success)
-        assertTrue("mdm.enrolled(true)" in success)
+        // Committed, before the witness (code QA L1 of koble-til-key; PolicyGateTest pins the order).
+        assertTrue("putBoolean(mdm.keys().enrolled(), true).commit()" in success)
         // started_before stays Home's to set (with its first-launch work).
         assertTrue("LauncherPreferences.internal().started(true)" in src("ui/HomeActivity.kt"))
         assertFalse("internal().started(true)" in src("server/Provisioning.kt"))
