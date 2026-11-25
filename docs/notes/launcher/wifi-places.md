@@ -306,8 +306,7 @@ tags `WifiPlaces`, `ZoneWatch`, `StillPrint`. No server or contract change.
   Wi-Fi fix, <= 50 m, not moving, not mock in a release build, its attempt's scan conclusive, a trusted sensor - the
   print of its **settled** devices heard within +-30 s: a device (design 125's device key) one of whose APs has an own
   row on >= 2 local days, never moved, not blocked (Apple rows never); the strongest 12 by level, their network key
-  and AP count; since revision 3 the registered cell's key and radio and the other cells' keys. No SSID, BSSID or
-  position. Logged `StillPrint: taken devices=4 cells=3` or `not taken (provider|accuracy|moving|mock|scan|pair)`. It
+  and AP count. No SSID, BSSID, cell or position. Logged `StillPrint: taken devices=4` or `not taken (provider|accuracy|moving|mock|scan|pair)`. It
   grows only at a renewal while still whose scan was conclusive and where the strict rule held (never a device
   dropped or a level changed). **Dropped** (logged `print dropped (<reason>)`, counted): `boot` and `expired` (72 h) at
   use, `gla` (the `network` provider on at an attempt), `rule` (the still rule off, `ZoneWatch.apply`), `distrust`
@@ -323,8 +322,11 @@ tags `WifiPlaces`, `ZoneWatch`, `StillPrint`. No server or contract change.
   devices=4/4 near=2/2 agree=2`.
 - **A scan mismatch ends `STILL`** (revision 3, D15-D19, acts): while `STILL`, the cap try's or a retry's conclusive
   scan with no fresh fix that clearly isn't the print's place - none of its devices heard at all, and then `wifi`: at
-  least 3 distinct devices heard, or `cell`: a thinner answer whose cells differ (the same radio, no cell shared; code
-  QA H1: cells only back a Wi-Fi absence, a still phone's serving cell flips) - with a print of >= 3 devices sets
+  least 3 distinct devices heard, or `cell`: a thinner answer whose registered cell is placed away (`cellElsewhere`: a
+  trusted own cell row or a live Apple cell row already in the table, further from the vouch than its range + the
+  vouch's accuracy + 1 km; unknown counts for nothing, no lookup is started for it; code QA H1 and the owner's
+  refinement: cells only back a Wi-Fi absence, by position - a still phone's serving cell flips) - with a print of >= 3
+  devices sets
   `Ask.mismatch`. A renewal in the same attempt (a zone link, an Apple fix within the vouch) vetoes it (code QA M1):
   `STILL` stays, the event is recorded flagged `vetoed`. The sync then ends `STILL` (`MotionGate.scanMismatch`, `zones-and-power.md`),
   reports nothing and logs `ZoneWatch: Location heartbeat: STILL ended by a scan mismatch clause=wifi` and

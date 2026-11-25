@@ -317,7 +317,8 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   cap fail (the retries above).
 - **A scan mismatch ends `STILL`** (design 134 revision 3, D15-D18): a cap try or retry while `STILL` whose fresh,
   conclusive scan clearly isn't the place of the fingerprint (none of its >= 3 settled devices heard, and either >= 3
-  other devices heard or no cell shared on the same radio - code QA H1: cells only back a Wi-Fi absence), with no
+  other devices heard or the registered cell's known position more than its range + 1 km from the vouch - code QA H1
+  and the owner's refinement: cells only back a Wi-Fi absence, by position), with no
   fresh fix and no renewal in the attempt (a renewal vetoes it, code QA M1), ends `STILL` at once - no GPS
   needed: `MotionGate.scanMismatch` (`MotionFlags.scanMismatch`: `movedSinceFresh` set, `movedSinceTry` clear,
   `stillSinceMs` the try - `STILL_SINCE_TRY`, so the heartbeat's back-off counts from it and the waits between the
