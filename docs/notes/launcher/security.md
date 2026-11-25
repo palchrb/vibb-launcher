@@ -323,7 +323,8 @@ bearer - nothing here can lock a phone out.
   `unknown_key` (`wake`, only outside the backoff - the gate's finding 1: every SSE retry was a step 1), and its
   backoff lives in memory (a process start may try once more). Its own calls never wake it.
 - **The enrolment** (`Enrollment.enroll`, §5.1): the key is attested for `SHA-256("vibb-enroll-v1" || 0x00 ||
-  normalised code)`; a retry with the same code reuses that key (the book keeps each enrolment key's challenge) and
+  normalised code)`; a retry with the same code reuses that key (the book keeps each enrolment key's challenge; never
+  the adopted key, `enrolKeyAlias` - a phone back through Koble til with its old code must not lose it to a refusal) and
   signs a new `enroll` proof every attempt (S1 refuses a repeated ECDSA `r`). The body carries `chain` and `proof` only
   when a key was made; no key (a Keystore failure, an empty pool) enrols on the bearer alone. A refused code deletes
   that key at once. On success the old enrolment's key stops being the credential before the new token is stored, then

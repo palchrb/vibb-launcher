@@ -5938,7 +5938,11 @@ Findings:
    and 16: enrol (key bound), `run-as` cut `shared_prefs/me.vibb.launcher.debug_preferences.xml` to 200 bytes, reboot,
    unlock. With the key book also removed (6') the flow works as designed. Likely fix: let the witness's "enrolled"
    win over a stored key when the main file says never enrolled (or count only the token there), and drop the
-   orphaned key book at the new enrolment. Not fixed here.
+   orphaned key book at the new enrolment. Not fixed here. **Fixed on branch `koble-til-key`**: `connectScreenDue`
+   takes the token and the adopted key apart; with the witness enrolled and `enrolled` gone, an adopted key no longer
+   holds Koble til back (a token still does). The key stays until the new enrolment succeeds, which binds a fresh key
+   and drops the old one (`enrolmentDrops`); the adopted key is never reused for an enrolment (`enrolKeyAlias`). Rows
+   6-13 to run again with the key book kept (not 6').
 
 ## 6bq. User certificates, the provisioning baseline, storage full (branch `storage-certs-baseline`) - run 2026-11-25
 

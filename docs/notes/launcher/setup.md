@@ -104,8 +104,9 @@
   Home's resume (`setup/ConnectActivity.kt`, past the gate and the lock, before the hold's flow): the server address
   (the stored one filled in), "Oppsettkode", one line where the parent finds the code (the phone's page in the parent
   app › Avansert › Ny oppsettkode) and the button. Pure `connectScreenDue` (`ConnectScreen.kt`): Device Owner, neither
-  `enrolled` nor a stored token, and `settingsAccess` OPEN (no policy ever applied) - never wider than the Settings
-  gate; checked again at every start, so an enrolment by any path closes it.
+  `enrolled` nor a stored token nor an adopted hardware key, and `settingsAccess` OPEN (no policy ever applied) - never
+  wider than the Settings gate (the lost preferences below are the one exception); checked again at every start, so an
+  enrolment by any path closes it.
 - The button runs S-M1's `serverUrlUsable` first (`server_url_refused`, the whole reason), then `QrExtras.enrolTyped`
   on the process's scope: the QR's one `applyProvisioningExtras` under `QrExtras`' mutex (a kept QR retry never runs
   beside it; its tailnet key is used, the kept extras dropped once enrolled), and on an enrolled phone nothing is sent
@@ -130,9 +131,17 @@
   open). Either fact keeps the first-launch reset away and makes Koble til due although a policy was applied
   (`connectScreenDue`'s `witnessEnrolled`), the witness's address filled in; it takes only an address on that host
   (`connectUrlAllowed`, refused with `server_url_refused`): a new code from the parent for the same server is the way
-  back. A witness that is there but doesn't read counts as both facts. A phone with an adopted
-  hardware key keeps its enrolment anyway (`DeviceCredentials.stored`, the key book's own file). `PolicyGateTest`,
-  `ConnectScreenTest`, `FirstLaunchResetTest`.
+  back. A witness that is there but doesn't read counts as both facts. A phone with an adopted hardware key (design
+  129/129b: every enrolled phone since 129b) gets Koble til the same way (the gate of 2026-11-25, §6bp row 6): the key
+  book lives in its own files (`device_key`, the device-protected mirror `device_key_adopted`) and outlives the cut, but
+  the server address and `enrolled` went with the main file, so the key can't reach its server. `connectScreenDue` takes
+  the token and the key apart: a stored token (`DeviceCredentials.tokenStored`, in the main file) still holds the
+  screen back; an adopted key (`KeyBook.adoptedStored`) holds it back only without the witness (a phone the witness
+  never saw enrolled, today's rule). The key is not dropped by the rule: it stays until a new enrolment succeeds, which
+  attests a fresh key for the new code (`enrolKeyAlias` never hands the adopted key to an enrolment, so an old code
+  typed again and refused can't delete it), then drops every other key, the old one included (`enrolmentDrops`), as
+  every new enrolment does (design 129 §5.1). A healthy enrolled phone (`enrolled` set) never gets the screen.
+  `PolicyGateTest`, `ConnectScreenTest`, `FirstLaunchResetTest`, `DeviceKeyContractTest`.
 - Back closes it for that one resume of Home; it comes back the next time Home comes to the front. Not exported, out
   of Recents, `FLAG_SECURE`. `ConnectScreenTest`.
 

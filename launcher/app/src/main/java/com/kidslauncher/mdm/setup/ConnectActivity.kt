@@ -19,6 +19,7 @@ import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.calls.EmergencyCall
 import com.kidslauncher.mdm.server.DeviceCredentials
 import com.kidslauncher.mdm.server.EnrolmentWitness
+import com.kidslauncher.mdm.server.KeyBook
 import com.kidslauncher.mdm.server.QrExtras
 import com.kidslauncher.mdm.server.EnrolWait
 import com.kidslauncher.mdm.server.enrolFailureLine
@@ -36,8 +37,8 @@ private const val LOG_TAG = "ConnectActivity"
 /**
  * "Koble til" (2026-11-20, the user): Home's resume brings it up on a Device Owner phone that isn't enrolled
  * ([connectScreenDue] - only before the first policy, never wider than the Settings gate; or when the enrolment's
- * witness says managed and the preferences were lost). An emergency button opens [EmergencyCall.confirm]. The server address (the
- * stored one filled in), the setup code, one button: S-M1's rule first ([serverUrlUsable], the whole reason as
+ * witness says managed and the preferences were lost, an adopted hardware key or not). An emergency button opens
+ * [EmergencyCall.confirm]. The server address (the stored one filled in), the setup code, one button: S-M1's rule first ([serverUrlUsable], the whole reason as
  * `server_url_refused`), then the QR's one apply through [QrExtras.enrolTyped] on the process's scope (a one-shot code
  * the server consumed is never lost to the screen going away). Enrolled, it finishes and Home's resume leads on to the
  * setup flow (the hold starts at the enrolment).
@@ -177,7 +178,8 @@ class ConnectActivity : UIObjectActivity() {
             connectScreenDue(
                 deviceOwner = SetupReadings.deviceOwner(context),
                 enrolled = mdm.enrolled(),
-                tokenStored = DeviceCredentials.stored(context),
+                tokenStored = DeviceCredentials.tokenStored(),
+                keyAdopted = KeyBook.adoptedStored(context),
                 policyEverApplied = mdm.policyEverApplied(),
                 witnessEnrolled = EnrolmentWitness.enrolled(context),
             )

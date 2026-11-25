@@ -246,6 +246,37 @@ class DeviceKeyContractTest {
     }
 
     @Test
+    fun `a phone that lost its preferences re-enrols with a fresh key, the old one goes only at success`() {
+        // §6bp row 6: the key book outlived the cut - one adopted, named key, its enrolment challenge still recorded.
+        val oldChallenge = "old-code-challenge"
+        val orphaned = KeyBookState(
+            next = 2,
+            keys = listOf(KeyAlias("device_key_1", 10L, 20L, named = true)),
+            adopted = AdoptedKey("device_key_1", "key-1", "bound"),
+            enrolChallenges = mapOf("device_key_1" to oldChallenge),
+        )
+        // A new code: no key to reuse, and the cap has room - a fresh key is made for the new code's challenge.
+        assertEquals(null, enrolKeyAlias(orphaned, "new-code-challenge"))
+        assertEquals(emptyList<String>(), keyCapPlan(orphaned.keys, 1_000L))
+        // The old code typed again: never the adopted key (a refusal deletes the attempt's key), a fresh one instead.
+        assertEquals(null, enrolKeyAlias(orphaned, oldChallenge))
+        // A retried enrolment with the same new code reuses its own, not yet adopted, key.
+        val made = orphaned.copy(
+            next = 3,
+            keys = orphaned.keys + KeyAlias("device_key_2", 1_000L, 2_000L),
+            enrolChallenges = orphaned.enrolChallenges + ("device_key_2" to "new-code-challenge"),
+        )
+        assertEquals("device_key_2", enrolKeyAlias(made, "new-code-challenge"))
+        // Success: every key but the new one goes, the old adopted key with them; the book starts over.
+        assertEquals(listOf("device_key_1"), enrolmentDrops(made, keep = "device_key_2"))
+        // Enrolled without a kept key (exempt or refused): the old key goes as well.
+        assertEquals(listOf("device_key_1", "device_key_2"), enrolmentDrops(made, keep = null))
+        val fresh = newEnrolmentBook(made.copy(adopted = null))
+        assertEquals(null, fresh.adopted)
+        assertEquals(false, fresh.lost)
+    }
+
+    @Test
     fun `every no-key path names why`() {
         assertEquals("cap", noKeyReason(bookCorrupt = false, failure = null))
         assertEquals("keystore", noKeyReason(bookCorrupt = true, failure = null))

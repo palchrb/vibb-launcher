@@ -334,6 +334,19 @@ fun newEnrolmentBook(book: KeyBookState): KeyBookState = book.copy(
     enrolAttempts = emptyMap(), exemptTriedMs = null,
 )
 
+/**
+ * §5.1: the key made earlier for the enrolment [challenge] (Base64url) - a retried enrolment with the same code reuses
+ * it - but never the adopted key: that one belongs to the enrolment that took it. A phone whose preferences were lost
+ * keeps its key book, and the old code typed again on Koble til must make a key of its own, so the refusal (which
+ * deletes the attempt's key) can't take the adopted one.
+ */
+fun enrolKeyAlias(book: KeyBookState, challenge: String): String? =
+    book.enrolChallenges.entries.firstOrNull { it.value == challenge && it.key != book.adopted?.alias }?.key
+
+/** §5.1: the keys a successful enrolment deletes - every one but [keep], this enrolment's own; the old enrolment's
+ * adopted key with them (a phone that lost its preferences and came back through Koble til). */
+fun enrolmentDrops(book: KeyBookState, keep: String?): List<String> = book.keys.map { it.alias }.filter { it != keep }.distinct()
+
 /** Design 129b D2 (M3): why an enrolment has no key - `make` gave none ([failure] `null`): the book doesn't read
  * (`keystore`) or the cap left no room (`cap`); an empty attestation-key pool is `keys_unavailable`; anything else
  * `keystore`. */
@@ -431,11 +444,12 @@ object DeviceKeys {
         return MadeKey(alias, chain, spki)
     }
 
-    /** §5.1: a key made earlier for the same enrolment challenge (a retried enrolment), still in the Keystore. */
+    /** §5.1: a key made earlier for the same enrolment challenge (a retried enrolment), still in the Keystore; never
+     * the adopted key ([enrolKeyAlias]). */
     fun enrolKeyFor(context: Context, challenge: String, nowMs: Long): MadeKey? {
         val hw = hardware(context)
         val book = reconcile(context, hw, nowMs)
-        val alias = book.enrolChallenges.entries.firstOrNull { it.value == challenge }?.key ?: return null
+        val alias = enrolKeyAlias(book, challenge) ?: return null
         val chain = hw.chain(alias) ?: return null
         val spki = book.spki[alias] ?: leafSpkiSha256(chain) ?: return null
         return MadeKey(alias, chain, spki)
@@ -529,7 +543,7 @@ object DeviceKeys {
     fun newEnrolment(context: Context, keep: String?) {
         val hw = hardware(context)
         if (KeyBook.read(context).corrupt) KeyBook.reset(context, nextPast(context))
-        for (key in reconcile(context, hw).keys) if (key.alias != keep) forget(context, hw, key.alias)
+        for (alias in enrolmentDrops(reconcile(context, hw), keep)) forget(context, hw, alias)
         KeyBook.update(context, ::newEnrolmentBook)
         synchronized(fallbackAttempts) { fallbackAttempts.clear() }
     }

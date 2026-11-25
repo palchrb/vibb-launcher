@@ -13,31 +13,54 @@ class ConnectScreenTest {
 
     @Test
     fun `due only on an unenrolled Device Owner phone before the first policy`() {
-        assertTrue(connectScreenDue(deviceOwner = true, enrolled = false, tokenStored = false, policyEverApplied = false, witnessEnrolled = false))
+        assertTrue(connectScreenDue(deviceOwner = true, enrolled = false, tokenStored = false, keyAdopted = false, policyEverApplied = false, witnessEnrolled = false))
         // Not Device Owner (a plain install, adb before set-device-owner): Settings is the way, as before.
-        assertFalse(connectScreenDue(deviceOwner = false, enrolled = false, tokenStored = false, policyEverApplied = false, witnessEnrolled = false))
+        assertFalse(connectScreenDue(deviceOwner = false, enrolled = false, tokenStored = false, keyAdopted = false, policyEverApplied = false, witnessEnrolled = false))
         // Never on an enrolled phone, whichever of the enrolment's two writes is seen (an unreadable token counts).
-        assertFalse(connectScreenDue(deviceOwner = true, enrolled = true, tokenStored = true, policyEverApplied = false, witnessEnrolled = false))
-        assertFalse(connectScreenDue(deviceOwner = true, enrolled = true, tokenStored = false, policyEverApplied = false, witnessEnrolled = false))
-        assertFalse(connectScreenDue(deviceOwner = true, enrolled = false, tokenStored = true, policyEverApplied = false, witnessEnrolled = false))
+        assertFalse(connectScreenDue(deviceOwner = true, enrolled = true, tokenStored = true, keyAdopted = false, policyEverApplied = false, witnessEnrolled = false))
+        assertFalse(connectScreenDue(deviceOwner = true, enrolled = true, tokenStored = false, keyAdopted = false, policyEverApplied = false, witnessEnrolled = false))
+        assertFalse(connectScreenDue(deviceOwner = true, enrolled = false, tokenStored = true, keyAdopted = false, policyEverApplied = false, witnessEnrolled = false))
         // Never wider than the Settings gate: once a policy was applied, Settings needs the parent PIN - no screen.
-        assertFalse(connectScreenDue(deviceOwner = true, enrolled = false, tokenStored = false, policyEverApplied = true, witnessEnrolled = false))
+        assertFalse(connectScreenDue(deviceOwner = true, enrolled = false, tokenStored = false, keyAdopted = false, policyEverApplied = true, witnessEnrolled = false))
     }
 
     @Test
     fun `a managed phone whose preferences were lost gets the screen, with Settings still gated`() {
         // The witness says managed, the preferences say never enrolled: due even though a policy was applied.
-        assertTrue(connectScreenDue(deviceOwner = true, enrolled = false, tokenStored = false, policyEverApplied = true, witnessEnrolled = true))
-        assertTrue(connectScreenDue(deviceOwner = true, enrolled = false, tokenStored = false, policyEverApplied = false, witnessEnrolled = true))
+        assertTrue(connectScreenDue(deviceOwner = true, enrolled = false, tokenStored = false, keyAdopted = false, policyEverApplied = true, witnessEnrolled = true))
+        assertTrue(connectScreenDue(deviceOwner = true, enrolled = false, tokenStored = false, keyAdopted = false, policyEverApplied = false, witnessEnrolled = true))
         // Settings' gate reads the witness as "a policy was applied": the parent code, never open.
         assertEquals(
             com.kidslauncher.mdm.ui.settings.SettingsAccess.REFUSE_NO_PIN,
             com.kidslauncher.mdm.ui.settings.settingsAccess(policyEverApplied = true, pinConfigured = false, lockedOut = false),
         )
         // Still never on an enrolled phone or off Device Owner.
-        assertFalse(connectScreenDue(deviceOwner = true, enrolled = true, tokenStored = false, policyEverApplied = true, witnessEnrolled = true))
-        assertFalse(connectScreenDue(deviceOwner = true, enrolled = false, tokenStored = true, policyEverApplied = true, witnessEnrolled = true))
-        assertFalse(connectScreenDue(deviceOwner = false, enrolled = false, tokenStored = false, policyEverApplied = true, witnessEnrolled = true))
+        assertFalse(connectScreenDue(deviceOwner = true, enrolled = true, tokenStored = false, keyAdopted = false, policyEverApplied = true, witnessEnrolled = true))
+        assertFalse(connectScreenDue(deviceOwner = true, enrolled = false, tokenStored = true, keyAdopted = false, policyEverApplied = true, witnessEnrolled = true))
+        assertFalse(connectScreenDue(deviceOwner = false, enrolled = false, tokenStored = false, keyAdopted = false, policyEverApplied = true, witnessEnrolled = true))
+    }
+
+    @Test
+    fun `a phone with a hardware key that lost its preferences gets the screen`() {
+        // §6bp row 6 (2026-11-25): the key book outlives the cut; the server address and the enrolment didn't. Due.
+        assertTrue(connectScreenDue(deviceOwner = true, enrolled = false, tokenStored = false, keyAdopted = true, policyEverApplied = true, witnessEnrolled = true))
+        // Enrolled before its first policy, then cut (§6bp row 13 with a key): due as well.
+        assertTrue(connectScreenDue(deviceOwner = true, enrolled = false, tokenStored = false, keyAdopted = true, policyEverApplied = false, witnessEnrolled = true))
+        // A healthy enrolled phone with its key: never.
+        assertFalse(connectScreenDue(deviceOwner = true, enrolled = true, tokenStored = false, keyAdopted = true, policyEverApplied = true, witnessEnrolled = true))
+        assertFalse(connectScreenDue(deviceOwner = true, enrolled = true, tokenStored = true, keyAdopted = true, policyEverApplied = false, witnessEnrolled = true))
+        // A stored token means the preferences are there (or an enrolment is mid-write): never.
+        assertFalse(connectScreenDue(deviceOwner = true, enrolled = false, tokenStored = true, keyAdopted = true, policyEverApplied = true, witnessEnrolled = true))
+        // Not Device Owner: never.
+        assertFalse(connectScreenDue(deviceOwner = false, enrolled = false, tokenStored = false, keyAdopted = true, policyEverApplied = true, witnessEnrolled = true))
+        // No witness (never enrolled by it): an adopted key holds the screen back, as before.
+        assertFalse(connectScreenDue(deviceOwner = true, enrolled = false, tokenStored = false, keyAdopted = true, policyEverApplied = false, witnessEnrolled = false))
+        assertFalse(connectScreenDue(deviceOwner = true, enrolled = false, tokenStored = false, keyAdopted = true, policyEverApplied = true, witnessEnrolled = false))
+        // The live inputs: the token and the key apart, the key from its own book.
+        val due = code("setup/ConnectActivity.kt").substringAfter("fun due(context: Context)").substringBefore("} catch")
+        assertTrue("tokenStored = DeviceCredentials.tokenStored()," in due)
+        assertTrue("keyAdopted = KeyBook.adoptedStored(context)," in due)
+        assertFalse("DeviceCredentials.stored(" in due)
     }
 
     @Test
