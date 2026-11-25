@@ -36,6 +36,11 @@ const val CONFIRM_DELAY_MS = 2 * 60_000L
  * fix of our own (decision 11): a sensor that never fires can't freeze the trail. */
 const val STILL_SKIP_MAX_MS = 4 * 60 * 60_000L
 
+/** Design 124 D5 amended 2026-11-25 (code QA M1): past the cap a failed try keeps the vouch, but at most this long since
+ * the vouch (the last fresh fix or its renewal) - a sensor that misses a fire and tries that all fail can't vouch for
+ * good. Then `QUIET`: the PWA shows the fix's own age. Provisional: the owner may change it. */
+const val STILL_CEILING_MS = 24 * 60 * 60_000L
+
 /** The fences we registered (CE prefs `zone_fences`): the policy's zones as registered, their
  * ids, and when (elapsed realtime) - the echo window counts from there. */
 @Serializable
@@ -223,13 +228,14 @@ enum class Heartbeat {
     KEPT,
 
     /** Due, the phone hasn't moved since our last fresh fix and that was under 4 h ago - or the 4 h ran
-     * out, the tries since failed and the next one isn't due ([capRetryMs]): report the cached fix as
-     * still current, no LocationManager call. */
+     * out, the tries since failed, the next one isn't due ([capRetryMs]) and the vouch is under
+     * [STILL_CEILING_MS] old: report the cached fix as still current, no LocationManager call. */
     STILL,
 
     /** Due, the sensor fired since our last fresh fix but not since our last try (which failed) and the
-     * back-off ([stillBackoffMs]) hasn't passed: the cached fix with its own age - no `still`, no
-     * LocationManager call (design 124 D5). */
+     * back-off ([stillBackoffMs]) hasn't passed - or it hasn't fired, the vouch is past [STILL_CEILING_MS]
+     * and the next try isn't due: the cached fix with its own age - no `still`, no LocationManager call
+     * (design 124 D5). */
     QUIET,
 }
 
@@ -241,7 +247,9 @@ enum class Heartbeat {
  * phone hasn't moved since our last genuinely fresh fix ([lastFreshFixMs]) and that is under
  * [STILL_SKIP_MAX_MS] old - `STILL`. Past the 4 h with no fire (amended 2026-11-25): a failed try is
  * no evidence of a move, so after [capFails] failed tries `STILL` goes on until the next one is due
- * ([capRetryMs] from [lastTryMs]) - then `FIX`; the first try at the cap is due at once. When it fired
+ * ([capRetryMs] from [lastTryMs]) - then `FIX`; the first try at the cap is due at once; past
+ * [STILL_CEILING_MS] from the vouch the waits are `QUIET` (code QA M1). A try killed mid-attempt stamped
+ * [lastTryMs] but counted nothing: the next waits the same step again (code QA L5). When it fired
  * since the fresh fix but not since our last try ([lastTryMs], `STILL_SINCE_TRY`) and the back-off
  * ([stillBackoffMs] from [stillSinceMs]) hasn't passed since it - `QUIET`. Each due call counts as a
  * heartbeat (the caller stamps it), so a skip waits a whole interval, never the backstop's 9-minute
@@ -263,8 +271,12 @@ fun heartbeatDue(
     if (keptFixAgeMs != null && keptFixAgeMs in 0 until intervalMs) return Heartbeat.KEPT
     if (stillSinceOwnFix(motion, nowMs, lastFreshFixMs)) return Heartbeat.STILL
     if (motion == Motion.STILL) {
-        val waiting = stillVouched(motion, nowMs, lastFreshFixMs, capFails) && nowMs - lastTryMs in 0 until capRetryMs(intervalMs, capFails)
-        return if (waiting) Heartbeat.STILL else Heartbeat.FIX
+        val waiting = capFails > 0 && nowMs >= lastFreshFixMs && nowMs - lastTryMs in 0 until capRetryMs(intervalMs, capFails)
+        return when {
+            !waiting -> Heartbeat.FIX
+            nowMs - lastFreshFixMs < STILL_CEILING_MS -> Heartbeat.STILL
+            else -> Heartbeat.QUIET
+        }
     }
     if (motion == Motion.STILL_SINCE_TRY && nowMs - lastTryMs in 0 until stillBackoffMs(intervalMs, lastTryMs, stillSinceMs)) return Heartbeat.QUIET
     return Heartbeat.FIX
@@ -299,17 +311,39 @@ fun stillCapFailsAfter(fails: Int, beat: Heartbeat?, motion: Motion, fresh: Bool
 /**
  * The phone may say its reported fix is still current ([reportStill], the heartbeat's `STILL`): the
  * sensor hasn't fired since the vouch ([stillFromMs], the last fresh fix or its renewal) and the vouch
- * is under 4 h old ([stillSinceOwnFix]) - or older, and the tries since failed ([capFails] > 0; amended
- * 2026-11-25: a failed try is no evidence of a move).
+ * is under 4 h old ([stillSinceOwnFix]) - or older but under [STILL_CEILING_MS], the tries since failed
+ * ([capFails] > 0; amended 2026-11-25: a failed try is no evidence of a move) and the fix it re-sends is
+ * the vouch itself ([cachedIsVouch]: never a promoted kept fix or a fallback, code QA L4).
  */
-fun stillVouched(motion: Motion, nowMs: Long, stillFromMs: Long, capFails: Int): Boolean =
-    stillSinceOwnFix(motion, nowMs, stillFromMs) || (motion == Motion.STILL && capFails > 0 && nowMs >= stillFromMs)
+fun stillVouched(motion: Motion, nowMs: Long, stillFromMs: Long, capFails: Int, cachedIsVouch: Boolean = true): Boolean =
+    stillSinceOwnFix(motion, nowMs, stillFromMs) ||
+        (motion == Motion.STILL && capFails > 0 && cachedIsVouch && nowMs - stillFromMs in 0 until STILL_CEILING_MS)
 
 /**
- * Design 124 D5: how long the heartbeat waits after a try while the phone hasn't moved - as long as
- * it had already been still at that try ([lastTryMs] - [stillSinceMs]), at least the interval, at
- * most [STILL_SKIP_MAX_MS]. Failures from 20:30 try at 20:30, 21:00, 21:30, 22:30, 00:30, 04:30;
- * after a good fix at 20:30, `STILL` to 00:30, then one try per 4 h.
+ * Code QA H1: what a cap try (the heartbeat's `FIX` while the motion is `STILL`) takes from its attempt -
+ * the fix it asked for only when genuinely fresh ([fixTimeMs] at [requestedAtMs], [freshOwnFix]) and not
+ * one the Wi-Fi places call not fresh ([notFresh]: an unchecked or fallback learned fix, a cell fix), or
+ * the renewed vouch ([renewed]); `null` [fixTimeMs] = none. Anything else - and never a last-known
+ * fallback - leaves the vouch the cached fix.
+ */
+fun capTryTakes(fixTimeMs: Long?, requestedAtMs: Long, notFresh: Boolean, renewed: Boolean): Boolean =
+    renewed || (fixTimeMs != null && !notFresh && freshOwnFix(fixTimeMs, requestedAtMs))
+
+/**
+ * Code QA H1: a cap try that took nothing ([capTryTakes] false) re-sends the vouch with `still` when the
+ * cached fix is the vouch ([cachedTimeMs] = [vouchTimeMs], the last fresh fix's time), no fire came during
+ * the attempt ([held]) and [stillVouched] holds with the count after it ([vouched]); else it reports no fix
+ * (P-L3: an old fix is never sent without `still`).
+ */
+fun capTryResends(cachedTimeMs: Long?, vouchTimeMs: Long, held: Boolean, vouched: Boolean): Boolean =
+    held && vouched && cachedTimeMs == vouchTimeMs
+
+/**
+ * Design 124 D5: how long the heartbeat waits after a failed try once the sensor fired since the last
+ * fresh fix (`STILL_SINCE_TRY`; past the cap while `STILL` it is [capRetryMs] since 2026-11-25) - as
+ * long as it had already been still at that try ([lastTryMs] - [stillSinceMs]), at least the interval,
+ * at most [STILL_SKIP_MAX_MS]. After a move at 20:10, failures from 20:30 try at 20:30, 21:00, 21:30,
+ * 22:30, 00:30, 04:30.
  */
 fun stillBackoffMs(intervalMs: Long, lastTryMs: Long, stillSinceMs: Long): Long =
     (lastTryMs - stillSinceMs).coerceAtMost(STILL_SKIP_MAX_MS).coerceAtLeast(intervalMs)
@@ -326,8 +360,16 @@ fun stillSinceOwnFix(motion: Motion, nowMs: Long, lastFreshFixMs: Long): Boolean
  * since" count from this report - the fix's own time is never rewritten. A fresh fix is current
  * anyway; never without the still rule ([stillOn]).
  */
-fun reportStill(stillOn: Boolean, action: com.kidslauncher.mdm.server.LocationAction, motion: Motion, nowMs: Long, lastFreshFixMs: Long, capFails: Int = 0): Boolean =
-    stillOn && action == com.kidslauncher.mdm.server.LocationAction.CACHED && stillVouched(motion, nowMs, lastFreshFixMs, capFails)
+fun reportStill(
+    stillOn: Boolean,
+    action: com.kidslauncher.mdm.server.LocationAction,
+    motion: Motion,
+    nowMs: Long,
+    lastFreshFixMs: Long,
+    capFails: Int = 0,
+    cachedIsVouch: Boolean = true,
+): Boolean = stillOn && action == com.kidslauncher.mdm.server.LocationAction.CACHED &&
+    stillVouched(motion, nowMs, lastFreshFixMs, capFails, cachedIsVouch)
 
 /**
  * The motion gate's state (design 124 D3), in memory only: a new process starts moved.

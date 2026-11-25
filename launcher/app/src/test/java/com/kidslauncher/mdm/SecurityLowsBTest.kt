@@ -279,7 +279,11 @@ class SecurityLowsBTest {
         // Every way a stored fix leaves currentLocation goes through the age check.
         val locate = src("java/com/kidslauncher/mdm/server/LocateCommands.kt").readText()
         val body = locate.substringAfter("suspend fun currentLocation(").substringBefore("fun clearCachedFix(")
-        assertEquals(2, Regex("""loadCachedFix\(\)\?\.takeIf\((::)?reportable\)""").findAll(body).count())
+        // Three: the not-due path, the fallback, and a cap try's vouch (design 124 D5, code QA H1).
+        assertEquals(3, Regex("""loadCachedFix\(\)\?\.takeIf\((::)?reportable\)""").findAll(body).count())
+        // A cap try asks with no age limit only because its cached answer goes out with `still` or not at all.
+        assertTrue(sync.contains("cachedFixMaxAgeMs(policy, stillBeat || capTry)"))
+        assertTrue(sync.contains("val location = attempted?.takeIf { !capFailed || capResend }"))
         assertFalse(Regex("""loadCachedFix\(\)\s*(\n|$|\})""").containsMatchIn(body))
     }
 

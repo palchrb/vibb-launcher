@@ -222,14 +222,27 @@ class ZonePlanTest {
         assertEquals(Heartbeat.FIX, heartbeatDue(now, now - interval, interval, Motion.STILL_SINCE_TRY, 0, null, now + minute, now))
     }
 
+    /** What a heartbeat try's attempt brings: a genuinely fresh fix; nothing; an unchecked Wi-Fi fix (`notFresh`); a
+     * last-known fallback (a fix of another app's, 5 min old). */
+    private enum class TryResult { FRESH, NONE, UNCHECKED_WIFI, LAST_KNOWN }
+
+    /** One beat of [stillDay]: minutes from 07:30, the beat's own `HHmm`, its verdict, whether its report says `still`,
+     * and the cap's failed tries after it. */
+    private data class StillBeat(val m: Int, val at: Int, val beat: Heartbeat, val still: Boolean, val fails: Int)
+
     /**
      * Design 124 D5 amended 2026-11-25, the owner's still day (a regression row): a fresh fix at 07:30 and then no
      * fire; beats every 10 min, each a few seconds late (the backstop's wake), so 24 beats are 4 h 1 min. The cap's
-     * try at 11:31 renews the vouch, the one at 15:32 fails - and every try after it. [fixAt]/[fireAt]: the beat
-     * (minutes from 07:30, as the beat's own HHmm) whose try finds a fresh fix, before which the sensor fires.
-     * Each beat as `HHmm` to its verdict and whether its report says `still`.
+     * try at 11:31 renews the vouch, the one at 15:32 fails - and every try after it unless [results] says otherwise
+     * (by the beat's own HHmm); [fireAt]: the beats before which the sensor fires. The glue as the sync runs it: the
+     * cached fix (a cap try keeps the vouch unless [capTryTakes], code QA H1; another try caches what it brings), the
+     * failed cap try's re-send ([capTryResends]) and `still` between beats only with the vouch itself (code QA L4).
      */
-    private fun stillDay(fixAt: Set<Int> = emptySet(), fireAt: Set<Int> = emptySet()): List<Triple<Int, Heartbeat, Boolean>> {
+    private fun stillDay(
+        results: Map<Int, TryResult> = emptyMap(),
+        fireAt: Set<Int> = emptySet(),
+        hours: Int = 24,
+    ): List<StillBeat> {
         val interval = 10 * minute
         val step = interval + 2_500
         val base = 1_800_000_000_000L - 1_800_000_000_000L % (24 * 60 * minute) + (7 * 60 + 30) * minute
@@ -238,29 +251,49 @@ class ZonePlanTest {
         var lastBeat = base
         var lastTry = base
         var lastFresh = base
+        var cached = base
         var renewedAt = 0L
         var capFails = 0
-        val out = mutableListOf<Triple<Int, Heartbeat, Boolean>>()
+        val out = mutableListOf<StillBeat>()
         var t = base
-        while (t < base + 24 * 60 * minute) {
+        while (t < base + hours * 60 * minute) {
             t += step
             val at = hhmm(t)
             if (at in fireAt) flags = flags.moved(0)
             val motion = flags.motion(sensor = true, anchor = true)
             val stillFrom = maxOf(lastFresh, renewedAt)
             val beat = heartbeatDue(t, lastBeat, interval, motion, stillFrom, null, lastTry, flags.stillSinceMs, capFails)
-            val action = if (beat == Heartbeat.FIX) L.FRESH_BALANCED else L.CACHED
-            out += Triple(at, beat, reportStill(true, action, motion, t, stillFrom, capFails))
             lastBeat = t
-            if (beat != Heartbeat.FIX) continue
+            if (beat != Heartbeat.FIX) {
+                val still = reportStill(true, L.CACHED, motion, t, stillFrom, capFails, cachedIsVouch = cached == lastFresh)
+                out += StillBeat(((t - base) / minute).toInt(), at, beat, still, capFails)
+                continue
+            }
             lastTry = t
             // The Jelly's 11:31: an Apple fix renewed the vouch (no fresh fix).
             val renewed = at == 1131
-            val fresh = if (at in fixAt) t else null
+            val result = results[at] ?: TryResult.NONE
+            val capTry = motion == Motion.STILL
+            val fixTime = when (result) {
+                TryResult.FRESH, TryResult.UNCHECKED_WIFI -> t
+                // A cap try never falls back to a last-known fix; another try does.
+                TryResult.LAST_KNOWN -> if (capTry) null else t - 5 * minute
+                TryResult.NONE -> null
+            }
+            val notFresh = result == TryResult.UNCHECKED_WIFI
+            if (capTry) {
+                if (capTryTakes(fixTime, t, notFresh, renewed) && !renewed && fixTime != null) cached = fixTime
+            } else if (fixTime != null) {
+                cached = fixTime
+            }
+            val fresh = if (result == TryResult.FRESH) t else null
             if (renewed) renewedAt = t
             if (fresh != null) lastFresh = fresh
             flags = flags.afterTry(flags.fires, fresh, heartbeat = true, nowMs = t)
             capFails = stillCapFailsAfter(capFails, beat, motion, fresh != null, renewed, held = true)
+            val capFailed = capTry && fresh == null && !renewed
+            val resend = capFailed && capTryResends(cached, lastFresh, held = true, stillVouched(motion, t, maxOf(lastFresh, renewedAt), capFails))
+            out += StillBeat(((t - base) / minute).toInt(), at, beat, renewed || resend, capFails)
         }
         return out
     }
@@ -269,20 +302,41 @@ class ZonePlanTest {
     fun `a failed try at the cap is no move - STILL goes on, the tries back off`() {
         val day = stillDay()
         // The tries: the cap's at 11:31 (renewed) and 15:32 (failed), then the next two beats, 1 h, 2 h, every 4 h.
-        assertEquals(listOf(1131, 1532, 1542, 1552, 1652, 1852, 2253, 254, 655), day.filter { it.second == Heartbeat.FIX }.map { it.first })
-        // Every other beat is STILL and says so - no QUIET, the PWA's "Hasn't moved since" never lapses.
-        assertTrue(day.filter { it.second != Heartbeat.FIX }.all { it.second == Heartbeat.STILL && it.third })
-        assertTrue(day.none { it.second == Heartbeat.FIX && it.third })
+        assertEquals(listOf(1131, 1532, 1542, 1552, 1652, 1852, 2253, 254, 655), day.filter { it.beat == Heartbeat.FIX }.map { it.at })
+        // Every beat says still - the failed tries re-send the vouch too (code QA H1); no QUIET, the PWA's "Hasn't
+        // moved since" never lapses.
+        assertTrue(day.all { it.still })
+        assertTrue(day.filter { it.beat != Heartbeat.FIX }.all { it.beat == Heartbeat.STILL })
+        assertEquals(1, day.single { it.at == 1532 }.fails)
+        // Code QA H1: an unchecked Wi-Fi fix or a last-known fix at 15:32 never replaces the vouch - it is re-sent with
+        // still, the count 1, and the day goes on exactly as with nothing.
+        for (result in listOf(TryResult.UNCHECKED_WIFI, TryResult.LAST_KNOWN)) {
+            val other = stillDay(results = mapOf(1532 to result))
+            val tried = other.single { it.at == 1532 }
+            assertTrue(result.name, tried.beat == Heartbeat.FIX && tried.still && tried.fails == 1)
+            assertEquals(result.name, day, other)
+        }
         // A good fix starts it over: the 16:52 try finds one - STILL to 20:53, the cap's try, then the next two beats.
-        val good = stillDay(fixAt = setOf(1652)).filter { it.second == Heartbeat.FIX }.map { it.first }
-        assertEquals(listOf(1131, 1532, 1542, 1552, 1652, 2053, 2103, 2113, 2213), good.take(9))
+        val good = stillDay(results = mapOf(1652 to TryResult.FRESH))
+        assertEquals(listOf(1131, 1532, 1542, 1552, 1652, 2053, 2103, 2113, 2213), good.filter { it.beat == Heartbeat.FIX }.map { it.at }.take(9))
+        assertEquals(0, good.single { it.at == 1652 }.fails)
         // A fire: the next beat tries (MOVED), its failures back off as before (QUIET, no still) until a fresh fix;
         // after it the cap's failures count from none again.
-        val fired = stillDay(fireAt = setOf(1702), fixAt = setOf(1822))
-        val firedTries = fired.filter { it.second == Heartbeat.FIX }.map { it.first }
+        val fired = stillDay(results = mapOf(1822 to TryResult.FRESH), fireAt = setOf(1702))
+        val firedTries = fired.filter { it.beat == Heartbeat.FIX }.map { it.at }
         assertEquals(listOf(1131, 1532, 1542, 1552, 1652, 1702, 1712, 1722, 1742, 1822, 2223, 2233, 2243, 2344), firedTries.take(14))
-        assertTrue(fired.filter { it.first in 1703..1821 && it.second != Heartbeat.FIX }.all { it.second == Heartbeat.QUIET && !it.third })
-        assertTrue(fired.filter { it.first in 1823..2222 }.all { it.second == Heartbeat.STILL && it.third })
+        assertTrue(fired.filter { it.at in 1703..1821 && it.beat != Heartbeat.FIX }.all { it.beat == Heartbeat.QUIET && !it.still })
+        assertTrue(fired.filter { it.at in 1823..2222 }.all { it.beat == Heartbeat.STILL && it.still })
+        assertEquals(1, fired.single { it.at == 2223 }.fails)
+        // Code QA M1: the vouch (renewed at 11:31, 241 min after 07:30) keeps still for STILL_CEILING_MS at most; then
+        // QUIET with the fix's own age, and the tries go on every 4 h without still.
+        val ceiling = 241 + (STILL_CEILING_MS / minute).toInt()
+        val long = stillDay(hours = 32)
+        assertTrue(long.filter { it.m < ceiling }.all { it.still })
+        assertTrue(long.filter { it.m >= ceiling }.none { it.still })
+        assertTrue(long.filter { it.m >= ceiling && it.beat != Heartbeat.FIX }.all { it.beat == Heartbeat.QUIET })
+        assertEquals(1, long.count { it.m >= ceiling && it.beat == Heartbeat.FIX })
+        assertEquals(24 * 60 * minute, STILL_CEILING_MS)
         // The schedule: the next two beats, 1 h, 2 h, then 4 h; never under the interval.
         val interval = 10 * minute
         assertEquals(listOf(interval, interval, 60 * minute, 120 * minute, STILL_SKIP_MAX_MS, STILL_SKIP_MAX_MS), (1..6).map { capRetryMs(interval, it) })
@@ -301,8 +355,39 @@ class ZonePlanTest {
         assertEquals(Heartbeat.FIX, heartbeatDue(now, now - interval, interval, Motion.NO_SENSOR, vouch, null, now - minute, vouch, capFails = 3))
         assertEquals(Heartbeat.FIX, heartbeatDue(now, now - interval, interval, Motion.MOVED, vouch, null, now - minute, vouch, capFails = 3))
         assertEquals(Heartbeat.QUIET, heartbeatDue(now, now - interval, interval, Motion.STILL_SINCE_TRY, vouch, null, now - minute, vouch - minute, capFails = 3))
+        // The ceiling: waiting past it is QUIET, a due try still a FIX.
+        val old = now - STILL_CEILING_MS
+        assertEquals(Heartbeat.STILL, heartbeatDue(now, now - interval, interval, Motion.STILL, old + minute, null, now - minute, old, capFails = 5))
+        assertEquals(Heartbeat.QUIET, heartbeatDue(now, now - interval, interval, Motion.STILL, old, null, now - minute, old, capFails = 5))
+        assertEquals(Heartbeat.FIX, heartbeatDue(now, now - interval, interval, Motion.STILL, old, null, now - STILL_SKIP_MAX_MS, old, capFails = 5))
         // The clock set back before the vouch: due.
         assertEquals(Heartbeat.FIX, heartbeatDue(now, now - interval, interval, Motion.STILL, now + minute, null, now - minute, now, capFails = 3))
+    }
+
+    @Test
+    fun `a cap try keeps the vouch unless it brings a genuinely fresh fix`() {
+        val now = 1_800_000_000_000L
+        // Code QA H1: what the cap try takes - a fix made for the request, or the renewed vouch.
+        assertTrue(capTryTakes(now + 5_000, now, notFresh = false, renewed = false))
+        assertTrue(capTryTakes(null, now, notFresh = false, renewed = true))
+        assertFalse(capTryTakes(now + 5_000, now, notFresh = true, renewed = false))
+        assertFalse(capTryTakes(now - FRESH_FIX_SLACK_MS - 1, now, notFresh = false, renewed = false))
+        assertFalse(capTryTakes(null, now, notFresh = false, renewed = false))
+        // Failed, it re-sends the vouch with still only when the cached fix is the vouch, no fire came and the vouch
+        // holds; else no fix at all (P-L3).
+        val vouch = now - 9 * 60 * minute
+        assertTrue(capTryResends(vouch, vouch, held = true, vouched = true))
+        assertFalse(capTryResends(vouch + minute, vouch, held = true, vouched = true))
+        assertFalse(capTryResends(null, vouch, held = true, vouched = true))
+        assertFalse(capTryResends(vouch, vouch, held = false, vouched = true))
+        assertFalse(capTryResends(vouch, vouch, held = true, vouched = false))
+        // Code QA L4: past the cap still goes only with the vouch itself (never a promoted kept fix); within the 4 h as
+        // before.
+        assertFalse(reportStill(true, L.CACHED, Motion.STILL, now, vouch, capFails = 1, cachedIsVouch = false))
+        assertTrue(reportStill(true, L.CACHED, Motion.STILL, now, vouch, capFails = 1, cachedIsVouch = true))
+        assertTrue(reportStill(true, L.CACHED, Motion.STILL, now, now - minute, capFails = 0, cachedIsVouch = false))
+        assertFalse(stillVouched(Motion.STILL, now, now - STILL_CEILING_MS, capFails = 1))
+        assertTrue(stillVouched(Motion.STILL, now, now - STILL_CEILING_MS + 1, capFails = 1))
     }
 
     @Test
@@ -758,7 +843,7 @@ class ZonePlanTest {
         // The moving car: a series check's fix on the move vouches for nothing either.
         assertTrue(seriesSource.contains("val moving = fixMoving(if (location.hasSpeed()) location.speed else null, fix, lastFresh, CHECK_MAX_DELAY_MS)"))
         assertTrue(Regex("""val lastFresh = previous\?\.takeIf \{ it\.timeMs == ZoneWatch\.lastFreshFixMs\(context\) \}\s+if \(fresh\) ZoneWatch\.stampFreshFix""").containsMatchIn(seriesSource))
-        assertTrue(Regex("""val motionNow = if \(stillOn\) MotionGate\.snapshot\(context\) else null[\s\S]*val location = LocateCommands\.currentLocation\(""").containsMatchIn(sync))
+        assertTrue(Regex("""val motionNow = if \(stillOn\) MotionGate\.snapshot\(context\) else null[\s\S]*val attempted = LocateCommands\.currentLocation\(""").containsMatchIn(sync))
         assertTrue(sync.contains("val held = MotionGate.afterTry(context, motionNow.fires, fresh?.time, heartbeat = beat == Heartbeat.FIX, nowMs = now, moving = moving)"))
         // The moving car: a fresh fix's speed, else its distance from the last fresh fix within the interval.
         assertTrue(sync.contains("fixMoving(if (fresh.hasSpeed()) fresh.speed else null, fresh.toQueued(), lastFreshQueued, intervalMs)"))
@@ -768,7 +853,7 @@ class ZonePlanTest {
         assertTrue(Regex("""MotionGate\.markMoved\(\)\s+LocateCommands\.promoteKept\(context\)""").containsMatchIn(seriesSource))
         assertTrue(seriesSource.contains("if (fresh) ZoneWatch.stampFreshFix(context, fix)"))
         // Design 125 M2: a learned fix from the 2-min fallback and a renewed vouch are no fresh fix.
-        assertTrue(sync.contains("val fresh = location?.takeIf { freshOwnFix(it.time, now) && !places.notFresh && !places.renewed }\n        if (fresh != null) ZoneWatch.stampFreshFix(context, fresh.toQueued(LocateCommands.providerOf(fresh)))"))
+        assertTrue(sync.contains("val fresh = attempted?.takeIf { freshOwnFix(it.time, now) && !places.notFresh && !places.renewed }\n        if (fresh != null) ZoneWatch.stampFreshFix(context, fresh.toQueued(LocateCommands.providerOf(fresh)))"))
         assertTrue(sync.contains("val lastFreshFix = if (stillOn) ZoneWatch.lastFreshFixMs(context) else lastOwnFix"))
         // Design 125 D12: the still skip counts from the later of the fresh fix and a zone link's renewal.
         assertTrue(sync.contains("val stillFrom = if (stillOn) maxOf(lastFreshFix, ZoneWatch.vouchRenewedMs(context)) else lastOwnFix"))
@@ -812,7 +897,18 @@ class ZonePlanTest {
         assertEquals(1, Regex("""promoteKept\(""").findAll(sync).count())
         // Q-3: the still flag rides the report.
         assertTrue(sync.contains("zoneWatch = ZoneWatch.report(context, still = location.still),"))
-        assertTrue(sync.contains("val stillBeat = reportStill(stillOn, action, motion, now, stillFrom, capFails)"))
+        assertTrue(sync.contains("val cachedIsVouch = LocateCommands.cachedQueued()?.timeMs == lastFreshFix"))
+        assertTrue(sync.contains("val stillBeat = reportStill(stillOn, action, motion, now, stillFrom, capFails, cachedIsVouch)"))
+        // Code QA H1: the cap try keeps the vouch (LocateCommands' cap branch) and, failed, re-sends it or drops the fix.
+        assertTrue(sync.contains("val capTry = beat == Heartbeat.FIX && motion == Motion.STILL"))
+        assertTrue(sync.contains("capTryAtMs = if (capTry) now else null,"))
+        assertTrue(sync.contains("capFailed = capTry && fresh == null && !places.renewed"))
+        assertTrue(sync.contains("capResend = capTryResends(LocateCommands.cachedQueued()?.timeMs, lastFreshFix, held, stillVouched(motion, now, stillFrom, capFailsNow))"))
+        assertTrue(sync.contains("val location = attempted?.takeIf { !capFailed || capResend }"))
+        assertTrue(sync.contains("val still = stillBeat || places.renewed || capResend"))
+        val locateSource = source("server/LocateCommands.kt")
+        assertTrue(locateSource.contains("return freshOrLastKnown(context, action, explicit, ::reportable, places, capTryAtMs)"))
+        assertTrue(Regex("""if \(capTryAtMs != null\) \{\s+val takes = com\.kidslauncher\.mdm\.zones\.capTryTakes\(requested\?\.time, capTryAtMs, places\?\.notFresh == true, places\?\.renewed == true\)\s+if \(takes && requested != null\) saveCachedFix\(context, requested\)\s+TrustedClock\.readGnss\(context\)\s+return if \(takes\) requested else loadCachedFix\(\)\?\.takeIf\(reportable\)\s+\}\s+val fresh = requested \?: try \{""").containsMatchIn(locateSource))
         // Design 124 D5 amended 2026-11-25: the cap's failed tries, read before the decision, counted after the
         // attempt; a fresh fix and a renewal clear them.
         assertTrue(sync.contains("val capFails = if (stillOn) ZoneWatch.stillCapFails(context) else 0"))
@@ -820,7 +916,6 @@ class ZonePlanTest {
         assertTrue(sync.contains("val capFailsNow = stillCapFailsAfter(capFails, beat, motion, fresh != null, places.renewed, held)"))
         assertTrue(Regex("""fun stampFreshFix\(context: Context, fix: QueuedFix\) \{[\s\S]{0,250}\.remove\(KEY_CAP_FAILS\)\.commit\(\)""").containsMatchIn(watch))
         assertTrue(watch.contains("prefs(context).edit().putLong(KEY_RENEWED, nowMs).remove(KEY_CAP_FAILS).commit()"))
-        assertTrue(sync.contains("val still = stillBeat || places.renewed"))
         assertTrue(sync.contains("still = still,"))
         // Q-5: Off (and no zones) clears the queue before the report and sends no extras.
         assertTrue(sync.contains("if (queueOff) ZoneWatch.clearQueue(context)"))

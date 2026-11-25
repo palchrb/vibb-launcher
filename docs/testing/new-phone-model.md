@@ -35,7 +35,8 @@ Run it with a signed release build (never a debug APK on a kid's phone), on the 
 - [ ] After at least an hour screen-off (deep Doze): a walk of a minute logs `Motion trigger fired`, and the next beat
   logs `Location heartbeat: FIX` with `Fresh fix path=...`. A still evening: the PWA's Locate says "Hasn't moved since",
   and overnight `dumpsys location` shows the 4-hour tries, after a failed one the next two beats, 1 h, 2 h, then 4 h
-  (`Location heartbeat: STILL` between them, `STILL fails=N retry=M min` after a failure; "Hasn't moved since" stays).
+  (`Location heartbeat: STILL` between them, `STILL fails=N retry=M min` after a failure; "Hasn't moved since" stays up
+  to 24 h from the last good fix or renewal).
 - [ ] Wi-Fi places (design 125 §8, a release build, Google Location Accuracy **off**, location Regularly):
   1. `adb shell dumpsys location | grep -iE "network|satellites"`: the `network` provider disabled; a GPS fix's extras
      carry `satellites` (no teaching without it, design 125 D1).
