@@ -281,8 +281,12 @@ Pure rules in `places/StillPlan.kt` (`StillPlanTest`, `StillPrintTest` with the 
 tags `WifiPlaces`, `ZoneWatch`, `StillPrint`. No server or contract change.
 
 - **Which results answer a scan** (D1, D2; `scanAnswer`): `scanNow` keeps its request's elapsed time and outcome
-  (`cache`, `answered`, `refused` - throttled, no permission, failed -, `unanswered`, `wifioff`). A result answers when
-  heard after the request (`ScanResult.timestamp`), on the cache path when at most 30 s old, and after the last fire.
+  (`cache`, `answered`, `refused` - throttled, no permission, failed -, `unanswered`, `wifioff`); a callback whose
+  results are all older than the request isn't the answer - it waits on within the 8 s (code QA M2), and with only
+  such callbacks it reads as `old`. A result answers when heard after the request (`ScanResult.timestamp`), on the
+  cache path when at most 30 s older than the request, and after the last fire. Logged `scan answer n/m ask=answered`
+  (`n` answering of `m` cached); a result over 60 s in the future means the time base isn't boottime - inconclusive,
+  `timebase` (code QA L2).
   **Inconclusive** (says nothing about the place): refused; answered but every cached result older (`old`); not
   answered in 8 s and nothing new (`unanswered`); connected (a live BSSID) to an AP the answer lacks (`noconnected`,
   checked before `hear` adds the connected AP; a metered hotspot's BSSID too). Conclusive: a fresh answer of one AP or
@@ -293,7 +297,8 @@ tags `WifiPlaces`, `ZoneWatch`, `StillPrint`. No server or contract change.
   scan conclusive|old|...`). Still inconclusive and no fresh fix: the attempt is **withheld** (D4) - nothing reported
   (no cell, unchecked or fallback fix, no last-known: `LocateCommands.freshOrLastKnown` returns nothing), and
   `MotionFlags.afterTry(.., withheld = true)` keeps the flags, so the next beat tries again (`MOVED`, no back-off).
-  Three in a row (`zone_watch` `inconclusive_tries`, cleared by a fresh fix, a conclusive try and the fourth); the
+  Three in a row (`zone_watch` `inconclusive_tries`, cleared by a fresh fix, a conclusive try, the fourth, and
+  whenever the motion isn't `MOVED` - code QA L6); the
   fourth is an ordinary failed try. Logged `ZoneWatch: Location heartbeat: FIX result=inconclusive reason=old n=1/3`
   and `WifiPlaces: attempt path=TOGETHER result=withheld reason=old`. While `STILL` an inconclusive cap try is part
   A's cap fail (D5, `zones-and-power.md`); `locate`, a crossing's and the low-battery fix are unchanged.
@@ -317,9 +322,11 @@ tags `WifiPlaces`, `ZoneWatch`, `StillPrint`. No server or contract change.
   `still`, no flag, no report, no `wifi_disagreed`. Logged `StillPrint: verdict would=yes j=0.81 diff=9.0
   devices=4/4 near=2/2 agree=2`.
 - **A scan mismatch ends `STILL`** (revision 3, D15-D19, acts): while `STILL`, the cap try's or a retry's conclusive
-  scan with no fresh fix that clearly isn't the print's place - `wifi`: none of its devices heard among at least 3
-  usable APs; `cell`: the same radio, no cell shared - with a print of >= 3 devices sets `Ask.mismatch`; a renewal in
-  the same attempt yields to it. The sync then ends `STILL` (`MotionGate.scanMismatch`, `zones-and-power.md`),
+  scan with no fresh fix that clearly isn't the print's place - none of its devices heard at all, and then `wifi`: at
+  least 3 distinct devices heard, or `cell`: a thinner answer whose cells differ (the same radio, no cell shared; code
+  QA H1: cells only back a Wi-Fi absence, a still phone's serving cell flips) - with a print of >= 3 devices sets
+  `Ask.mismatch`. A renewal in the same attempt (a zone link, an Apple fix within the vouch) vetoes it (code QA M1):
+  `STILL` stays, the event is recorded flagged `vetoed`. The sync then ends `STILL` (`MotionGate.scanMismatch`, `zones-and-power.md`),
   reports nothing and logs `ZoneWatch: Location heartbeat: STILL ended by a scan mismatch clause=wifi` and
   `StillPrint: mismatch clause=wifi devices=0/4`. Not a design 124 D7 contradiction.
 - **Outcomes and the ring** (D11, D12): the next genuinely fresh fix of <= 100 m (`gps`, a checked Wi-Fi fix) judges
@@ -337,7 +344,9 @@ tags `WifiPlaces`, `ZoneWatch`, `StillPrint`. No server or contract change.
   - `CommandListenerService.dump`: the print in force, prints taken and dropped by reason, verdicts by class (would-not
   by reason), inconclusive tries by reason, mismatches by clause and outcome, then the ring, newest first. Without
   the argument one line (a bug report carries none of it). Works on a release build: the framework only asks for
-  `DUMP`, which adb's shell holds.
+  `DUMP`, which adb's shell holds. It only reads (code QA L5): a stale print is shown `(stale: boot)`, nothing is
+  dropped or written; at most two Keystore opens on the main thread (adb-only). The ring is ~18.5 KB at 500 events.
+  A drop deletes the print's file even when it can't be opened (code QA L3).
 - **Debug hooks** (§7, src/debug only, `PlacesDebugHooks` with a no-op twin in src/release; `DebugHookAbsentTest`,
   `checkReleaseHasNoDebugHook`): `PlacesDebugReceiver`'s `--ei scan_age_s N` (the made-up results heard N s ago),
   `--ez refuse_scan true` (every `startScan` throttled until false or `clear`) and `--es motion sensor|fire|off` (a

@@ -311,16 +311,18 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   network provider off, the heartbeat's `FIX` while `MOVED` whose scan said nothing about the place (refused, older
   than the request, unanswered, the connected AP missing) and brought no fresh fix is **withheld**: nothing reported,
   `MotionGate.afterTry(.., withheld = true)` keeps the flags (still `MOVED`, no `QUIET`, no back-off), the next beat
-  tries again - three in a row (`zone_watch` `inconclusive_tries`), the fourth an ordinary failed try. Logged
+  tries again - three in a row (`zone_watch` `inconclusive_tries`, reset whenever the motion isn't `MOVED`), the
+  fourth an ordinary failed try. Logged
   `Location heartbeat: FIX result=inconclusive reason=old n=1/3`. While `STILL` an inconclusive cap try is part A's
   cap fail (the retries above).
 - **A scan mismatch ends `STILL`** (design 134 revision 3, D15-D18): a cap try or retry while `STILL` whose fresh,
-  conclusive scan clearly isn't the place of the fingerprint (none of its >= 3 settled devices heard among >= 3
-  usable APs, or no cell shared on the same radio), with no fresh fix in the attempt, ends `STILL` at once - no GPS
+  conclusive scan clearly isn't the place of the fingerprint (none of its >= 3 settled devices heard, and either >= 3
+  other devices heard or no cell shared on the same radio - code QA H1: cells only back a Wi-Fi absence), with no
+  fresh fix and no renewal in the attempt (a renewal vetoes it, code QA M1), ends `STILL` at once - no GPS
   needed: `MotionGate.scanMismatch` (`MotionFlags.scanMismatch`: `movedSinceFresh` set, `movedSinceTry` clear,
   `stillSinceMs` the try - `STILL_SINCE_TRY`, so the heartbeat's back-off counts from it and the waits between the
   next tries are `QUIET`), part A's count cleared, no re-send (`capResend` false: no fix, no `still`; the PWA shows the
-  vouch's age), a renewal in the same attempt not sent. Logged `Location heartbeat: STILL ended by a scan mismatch
+  vouch's age). Logged `Location heartbeat: STILL ended by a scan mismatch
   clause=wifi|cell`. It never vouches or moves a position. **Not a D7 contradiction** (a swapped router would cost a
   week of GPS starts): but `MotionFlags.mismatchSinceFresh` (cleared by a fire or a fresh fix; `MotionSnapshot.mismatched`)
   keeps D7 for the next fresh fix as if `STILL` (`d7Applies`), so a car ride the sensor missed still counts once the

@@ -27,7 +27,8 @@ Two parts, one build:
    revision.
 3. **Built to act (revision 3): a scan mismatch ends `STILL`.** While the phone says `STILL`, a cap try or retry
    ((A)'s ladder) whose scan is fresh and conclusive and **clearly isn't the place** - none of the fingerprint's
-   settled devices heard at all, or every cell differs - ends `STILL` at once: no `still`, the PWA shows the fix's
+   settled devices heard at all, and either 3 other devices heard or every cell different (code QA H1: cells only
+   back a Wi-Fi absence) - and that no renewal in the same attempt contradicts (code QA M1) ends `STILL` at once: no `still`, the PWA shows the fix's
    age, `QUIET` with design 124's back-off, and the next tries run GPS as after a fire. No satellite fix is needed to
    stop vouching. It never vouches, renews or moves a position; a match still decides nothing (2). (A)'s 24-h ceiling
    stays the last backstop.
@@ -145,7 +146,7 @@ D11. **The outcome.** The next genuinely fresh fix of accuracy <= 100 m (GPS, a 
     both accuracies + 50 m; **contradicted** - would-renew, no fire between, further; **would-not** - with the same
     distance kept, so a too-strict rule shows too; **unjudged** - a fire between, no outcome within 24 h, or the
     fingerprint dropped first.
-D12. **The ring** (sealed, on the phone): the last **500** events, ~30 bytes each (`still_print_ring_v1`, D16);
+D12. **The ring** (sealed, on the phone): the last **500** events, 37 bytes each (`still_print_ring_v1`, ~18.5 KB at 500, P1);
     events older than 60 days drop out. Each holds the time (minutes), the kind (`verdict`, `inconclusive`, and since
     revision 3 `mismatch` - D19), would
     yes/no and the reason, `J` and the mean difference to one decimal, the device and near-device counts on both
@@ -173,12 +174,16 @@ The owner, 2026-11-25 evening: the mismatch direction may act; the match directi
 D15. **The rule.** While `motion` is `STILL` the heartbeat's `FIX` (the cap try at 4 h and every retry of (A)'s
     ladder) scans as today. When that scan is **fresh and conclusive** (D1, D2) and **clearly isn't the place** of
     the fingerprint (`printMismatch`, pure, `places/StillPlan.kt`), and the attempt brings no genuinely fresh fix,
-    `STILL` ends at once - before a GPS fix, and without one. Clearly not the place is one of:
-    1. `wifi` - **none** of the print's settled devices is heard at all (any level) among the answering results' usable
-       APs, and the answer holds at least **3 usable APs**;
-    2. `cell` - the print has a registered cell, a registered cell is read now with the **same radio** (LTE, NR, ...),
-       and the serving cell and every other cell read now differ from **every** cell of the print (its serving cell and
-       its neighbours).
+    `STILL` ends at once - before a GPS fix, and without one. Clearly not the place (code QA H1, approved by the
+    coordinator: `wifiNone && (devicesHeard >= 3 || cellsDiffer)`) needs **none** of the print's settled devices heard
+    at all (any level) among the answering results' usable APs, and then one of:
+    1. `wifi` - the answer holds at least **3 distinct devices** (code QA L4: one router's bands and links are one);
+    2. `cell` - a thinner answer (a cabin of one or two networks), and the cells differ: the print has a registered
+       cell, a registered cell is read now with the **same radio** (LTE, NR, ...), and the serving cell and every other
+       cell read now differ from **every** cell of the print (its serving cell and its neighbours).
+    Cells only back a Wi-Fi absence, never decide alone: a still phone changes its serving cell often (a carrier or an
+    edge flip), and the read keeps only cells with a full identity, so a print's cells are in practice its serving
+    cell.
     Logged `ZoneWatch: Location heartbeat: STILL ended by a scan mismatch` (with the clause, `wifi|cell`; counts only).
 D16. **What ending means.** The same as a fire seen at that try, then the try failing: `MotionFlags.scanMismatch`
     sets `movedSinceFresh` (so `motion` is `STILL_SINCE_TRY`), keeps `movedSinceTry` clear and sets `stillSinceMs` to
@@ -187,18 +192,20 @@ D16. **What ending means.** The same as a fire seen at that try, then the try fa
     That try reports **no fix** and no `still` (`capTryResends` false): the server keeps the vouch, the PWA shows its
     age. (A)'s count (`still_cap_fails_v1`) is cleared. It never vouches, never renews, never moves a position, never
     reports a fix: it only stops vouching. A fresh fix in the same attempt wins (it is the new vouch, design 124 D7
-    checks it as before); a renewal in the same attempt (a zone link, an Apple fix within the vouch) yields to the
-    mismatch - it is not sent, and `vouch_renewed_ms` isn't stamped.
+    checks it as before). **A renewal vetoes it** (code QA M1, approved by the coordinator): a zone link or an Apple fix
+    within the vouch in the same attempt is positive evidence of the place, so the renewal goes as (A) says and
+    `STILL` stays; the mismatch is still recorded in the ring, flagged `vetoed` (D19), and judged by the next fix.
 D17. **Guards.**
     - An **inconclusive** scan never counts (D2): it stays (A)'s cap fail (D5) - the Jelly Star's 15:31.
     - A print of **fewer than 3** settled devices never decides a mismatch, by either clause.
     - **No print** (none taken, dropped, GLA on, Off, a boot): (A)'s rules alone.
-    - `wifi` needs at least 3 usable APs in the fresh answer (D15.1): a full scan that heard little (§1: a short dwell
-      or a busy radio in deep Doze) says nothing about "elsewhere". Added at the build, stricter than the owner's words:
-      it can only make the rule act less often (a cabin of 0-2 networks after a missed car ride keeps `STILL` - up to
-      the 24-h ceiling).
-    - `cell` needs the same radio now as the print's serving cell: an LTE print against an NR SA serving cell (other
-      ids by design) decides nothing.
+    - `wifi` needs at least 3 distinct devices in the fresh answer (D15.1): a full scan that heard little (§1: a short
+      dwell or a busy radio in deep Doze) says nothing about "elsewhere" by itself. A thinner answer (a cabin of 1-2
+      networks after a missed car ride) ends `STILL` only when the cells differ; with no SIM it keeps `STILL` up to the
+      24-h ceiling.
+    - `cell` never decides while any of the print's devices is heard (H1), and needs the same radio now as the
+      print's serving cell: an LTE print against an NR SA serving cell (other ids by design) decides nothing.
+    - A renewal in the same attempt vetoes it (M1, D16).
 D18. **Not a D7 contradiction.** The mismatch is not a satellite fix: it has no position and no distance, and a
     router swapped or switched off, a neighbour's mesh renamed, or the operator renumbering its cells can all make a
     conclusive scan miss the print at home. Counting it toward design 124 D7's distrust (two in 7 days -> `NO_SENSOR`
@@ -207,10 +214,10 @@ D18. **Not a D7 contradiction.** The mismatch is not a satellite fix: it has no 
     vouch** (`MotionFlags.mismatchSinceFresh`, cleared by a fire or a fresh fix), is checked by D7 against the vouch as
     if the gate still said `STILL` - the satellites are the contradiction, the scan only made the try come sooner.
 D19. **Recorded** in the ring (D12) as kind `mismatch` with its clause (`wifi`, `cell`), the devices heard now and the
-    print's, at every mismatch; its outcome is the next genuinely fresh fix of accuracy <= 100 m (D11): **confirmed**
+    print's, at every mismatch - a vetoed one too, flagged `vetoed` (D16); its outcome is the next genuinely fresh fix of accuracy <= 100 m (D11): **confirmed**
     (it was right: further from the vouch than both accuracies + 50 m, no fire between), **contradicted** (it was wrong:
     within that), or **unjudged** (a fire or a boot between, none within 24 h, the print dropped first). The dump's
-    summary shows mismatches by clause and outcome, so the owner's adb check says how often it fired and whether it
+    summary shows mismatches by clause, vetoed and outcome, so the owner's adb check says how often it fired and whether it
     was right. The log: `StillPrint: mismatch clause=wifi devices=0/4` and `StillPrint: outcome confirmed d=3000 after=95`.
     The 24-h ceiling of (A) (`STILL_CEILING_MS`) stays the last backstop: a mismatch only ends `STILL` sooner.
 
@@ -218,7 +225,8 @@ D19. **Recorded** in the ring (D12) as kind `mismatch` with its clause (`wifi`, 
 
 P1. **Sealing** (QA L3). Two files in credential-encrypted `noBackupFilesDir`, each an `AtomicFile` **sealed whole with
     AES-GCM through `Secrets.box`** - the AndroidKeyStore secrets key the places table uses - under its own AAD:
-    `still_print_v1` (the fingerprint, < 1 KB) and `still_print_ring_v1` (the ring, ~15 KB at 500). The device and
+    `still_print_v1` (the fingerprint, < 1 KB: ~40 bytes and 37 a device, at most 12, and the cells' keys) and
+    `still_print_ring_v1` (the ring, 37 bytes an event: ~18.5 KB at 500, plus the AES-GCM tag and nonce). The device and
     network keys inside are HMACs under the places table's per-install HMAC key (itself sealed in CE prefs), so they
     compare with a scan's keys directly and mean nothing without it. A new format version drops the old file (the
     no-compat rule). Written only on a change (a fingerprint taken or grown, an event, an outcome).
@@ -245,9 +253,11 @@ P5. The ring is a record of when the phone moved a little and how far it was fro
 | A neighbour's house or an adjacent flat (QA H1) | their own router is the strongest result: `anchor` fails | recorded would-not |
 | The shadow verdict is wrong | nothing acts on it | the data shows it |
 | A boot, GLA on, Off | the print is dropped | D14 |
-| A car ride the sensor missed, still at the friend's house (revision 3) | the cap try's fresh scan hears none of home's devices: `STILL` ends, `QUIET`, the age shows, GPS at the next tries | D15; a cabin of 0-2 networks: (A)'s 24-h ceiling |
+| A car ride the sensor missed, still at the friend's house (revision 3) | the cap try's fresh scan hears none of home's devices: `STILL` ends, `QUIET`, the age shows, GPS at the next tries | D15; a cabin of 1-2 networks: only when the cells differ (H1), else (A)'s 24-h ceiling |
 | An AP rebooting at home while still | the other settled devices are heard: no mismatch | D15.1: none heard at all |
-| A thin fresh scan at home (a short dwell) | fewer than 3 usable APs: no mismatch | D17 |
+| A thin fresh scan at home (a short dwell) | fewer than 3 devices and the home cell read: no mismatch | D17 |
+| A still phone's serving cell flips at home | home's Wi-Fi heard: the cells never decide (code QA H1) | D15 |
+| A zone link or an Apple fix renews while the scan misses the print | the renewal vetoes the mismatch: `STILL` stays, the event recorded `vetoed` (code QA M1) | D16 |
 | A router swapped, every home device new | a false mismatch: `STILL` ends at home, one `QUIET` back-off and a GPS try; recorded `contradicted` once a fix comes | the ring shows it; never a D7 contradiction (D18) |
 
 ## 6. Android 14-17
@@ -352,11 +362,13 @@ shadowing, rooms added):
     contradiction (no fire since the vouch).
 11. **The Jelly Star's own day under the rule** (revision 3). 15:31's cap try with a list older than the request:
     inconclusive - no mismatch, (A)'s cap fail, `STILL` goes on (the retries at the next two beats, 1 h, 2 h). The same
-    try with a fresh answer of one usable AP that isn't the print's: no mismatch (D17's 3 APs). A fresh answer of 4
-    home devices: no mismatch.
+    try with a fresh answer of one usable AP that isn't the print's: no mismatch (D17's 3 devices; no SIM, so no cell
+    witness - with a SIM and every cell different it would be a `cell` mismatch). A fresh answer of 4 home devices: no
+    mismatch, whatever the cells say (H1).
 12. **An AP reboot at home** (revision 3). A print of 4 settled devices; at the cap try one of them is off (rebooting),
-    the other three heard: no mismatch, the cap try as (A) says. All four gone but the scan holds three neighbours' APs:
-    a `wifi` mismatch (the known cost, §5's router row).
+    the other three heard: no mismatch, the cap try as (A) says - also when the serving cell flipped meanwhile (H1). All
+    four gone but the scan holds three neighbours' devices: a `wifi` mismatch (the known cost, §5's router row); with
+    the zone link renewing in the same attempt, the mismatch is vetoed (M1).
 
 **The emulator gate** (`docs/testing/emulator.md` §6br; Android 14 and 16 - the 17 images don't run, 17 is covered by reading its behaviour-change list (§6); settled rows taught as in §6bn - three
 networks of their own devices, three occasions over two local days by the time-zone step):
@@ -372,7 +384,7 @@ networks of their own devices, three occasions over two local days by the time-z
 | g | `adb reboot` | `print dropped (boot)` |
 | h | The release build | `dumpsys activity service ... still-print` prints the summary and ring; without the argument one line; `checkReleaseHasNoDebugHook` passes; the receiver's extras do nothing (no receiver) |
 | i | Location Off from the PWA | both files gone, `print dropped (off)`, the dump's ring empty |
-| j | (revision 3) `motion sensor`, a fresh print at home (a), the clock 4 h on (an image with `adb root`: `date`), a neighbour's scan without home's devices, GPS silent | `Location heartbeat: STILL ended by a scan mismatch`, `StillPrint: mismatch clause=wifi`, no `still` in the report, the next beat a `FIX` (GPS), `QUIET` between the later tries; the same with home's scan and one device missing: no mismatch, `STILL ... fails=1` |
+| j | (revision 3) `motion sensor`, a fresh print at home (a), the clock 4 h on (an image with `adb root`: `date`), a neighbour's scan without home's devices, GPS silent | `Location heartbeat: STILL ended by a scan mismatch`, `StillPrint: mismatch clause=wifi`, no `still` in the report, the next beat a `FIX` (GPS), `QUIET` between the later tries; the same with home's scan and one device missing: no mismatch, `STILL ... fails=1`; the neighbour's scan with the zone link's connection (D12) renewing: `StillPrint: mismatch clause=wifi devices=0/3 vetoed`, `STILL renewed by a zone link`, no end of `STILL` |
 
 **What can't be faked there**: real room-to-room levels, real neighbours and flats, the HAL's behaviour in deep Doze,
 the real throttle under the anchor's importance with other apps scanning, a real sensor's delay.
@@ -384,6 +396,10 @@ the real throttle under the anchor's importance with other apps scanning, a real
    `ScanRequestProxy` done at that version.
 2. **Inconclusive tries**: per day, by reason, from the dump's summary and `adb logcat -s ZoneWatch WifiPlaces
    StillPrint`; the `scan refusals` line; whether a second scan brings the place back.
+2a. **The results' time base** (code QA L2): `ScanResult.timestamp` must be boottime microseconds - the `WifiPlaces:
+   scan answer n/m ask=answered` lines show `n > 0` on a fresh scan and never `timebase`; compare a result's
+   `timestamp` in `adb shell dumpsys wifi` (its "Latest scan results") with `adb shell cat /proc/uptime` around the
+   suspend gap (boottime counts deep sleep, uptime doesn't), noted with the module version of item 1.
 3. **The shadow record after 2-4 weeks**: `adb shell dumpsys activity service
    me.vibb.launcher/com.kidslauncher.mdm.server.CommandListenerService still-print` - confirmed, contradicted,
    would-not by reason, and the distances of the contradicted ones.
@@ -414,5 +430,13 @@ row 7). **L4**: the print lives 72 h (D14). **L5**: binding rows 7-9.
 The owner (2026-11-25 evening) approved one more rule: the mismatch direction acts for real, the match direction
 stays shadow-only. §0 point 3; §3a D15-D19; D6, D7 (the print's cells), D12, D13, D14 amended; §5's rows; binding rows
 10-12; gate row (j). Decided at the build: the mismatch is **not** a D7 contradiction (D18) but keeps D7's own check
-for the next fix; a fresh fix wins over a mismatch and a mismatch over a renewal in the same attempt (D16); two guards
-stricter than the owner's words (D17: `wifi` needs 3 usable APs heard, `cell` the same radio).
+for the next fix; a fresh fix wins over a mismatch (D16); two guards stricter than the owner's words (D17: `wifi`
+needs 3 heard, `cell` the same radio).
+
+**Code QA of the build (2026-11-25), approved by the coordinator:** H1 - cells only back a Wi-Fi absence
+(`wifiNone && (devicesHeard >= 3 || cellsDiffer)`, D15, D17); M1 - a renewal in the same attempt vetoes the mismatch,
+recorded as `vetoed` (D16, D19; it replaced the build's "a mismatch over a renewal"); M2 - `scanNow` waits on within
+its 8 s past a callback whose results are all older than the request; L1 - the cache path's 30 s from the request; L2 -
+`scan answer n/m ask=..` logged, a result over 60 s in the future is inconclusive (`timebase`), §9 item 2a; L3 - a drop
+deletes an unreadable print; L4 - devices, not APs; L5 - the dump reads only; L6 - the withheld run ends whenever the
+motion isn't `MOVED`; L8 - D12's and P1's sizes.
