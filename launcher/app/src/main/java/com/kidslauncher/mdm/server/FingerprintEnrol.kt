@@ -8,26 +8,25 @@ import android.provider.Settings
 
 /*
  * Fingerprint enrolment without adb (the user, 2026-10-24; design 59d §8.4: the parent enrols it again during a
- * pause after an OWN_KEYPAD reset). The PIN-gated Settings' "Fingerprint" row, next to "Modify system settings",
+ * pause). The PIN-gated Settings' "Fingerprint" row, next to "Modify system settings",
  * opens Android's own enrolment - `ACTION_BIOMETRIC_ENROLL` for a strong biometric, else `ACTION_FINGERPRINT_ENROLL`
  * - on the same path as the battery row and [WriteSettingsAccess]: only an unsuspended system page, i.e. during
  * "Pause all restrictions" on a managed phone (the pause unhides Android's Settings and ends the kiosk). Android asks
- * for the device credential first - the Child PIN in android mode - and runs its own UI. Only shown while Android's
+ * for the device credential first - the Child PIN - and runs its own UI. Only shown while Android's
  * PIN is the Child PIN Vibb set and still wants ([fingerprintRowShown]) on a phone with a fingerprint sensor.
  */
 
 /** Android's lock as the "Fingerprint" row sees it ([com.kidslauncher.mdm.lock.AndroidLock.fingerprintLockState]). */
-data class FingerprintLockState(val owned: Boolean, val deviceSecure: Boolean, val pinRevKnown: Boolean, val requested: Boolean)
+data class FingerprintLockState(val owned: Boolean, val deviceSecure: Boolean, val pinRevKnown: Boolean)
 
 /**
- * The "Fingerprint" row is shown only while Android's PIN is the Child PIN Vibb set and still wants (code QA Q-4):
- * we own the live credential ([FingerprintLockState.owned] and [FingerprintLockState.deviceSecure]), its rev is known
- * (a PIN changed on the phone makes it null - Android would ask for a PIN the parent may not know, 59 §3.7), and
- * android mode is requested (in the rollback's escrow the next token clears the credential, and the fingerprint with
- * it - RC3-6, so an enrolment there is lost) - on a phone with a fingerprint sensor. Own mode never shows it.
+ * The "Fingerprint" row is shown only while Android's PIN is the Child PIN Vibb set (code QA Q-4): we own the live
+ * credential ([FingerprintLockState.owned] and [FingerprintLockState.deviceSecure]) and its rev is known (a PIN changed
+ * on the phone makes it null - Android would ask for a PIN the parent may not know, 59 §3.7) - on a phone with a
+ * fingerprint sensor.
  */
 fun fingerprintRowShown(lock: FingerprintLockState, hasSensor: Boolean): Boolean =
-    lock.owned && lock.deviceSecure && lock.pinRevKnown && lock.requested && hasSensor
+    lock.owned && lock.deviceSecure && lock.pinRevKnown && hasSensor
 
 /** What `BiometricManager.canAuthenticate(BIOMETRIC_STRONG)` tells about enrolment: true for
  * `BIOMETRIC_SUCCESS`, false for `BIOMETRIC_ERROR_NONE_ENROLLED`, null for anything else (never a count). It answers

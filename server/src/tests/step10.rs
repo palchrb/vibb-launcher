@@ -1,4 +1,4 @@
-//! Step 10 (design 10-lock-and-call-ui.md, QA 10): the kid's PIN for handy's own lock screen -
+//! Step 10 (design 10-lock-and-call-ui.md, QA 10): the Child PIN (since design 132 the PIN of Android's lock alone) -
 //! validation, the override-PIN cross-checks, the policy's `kid_lock`, the safe-boot default,
 //! the phone's `lock_state` (stored sanitized and capped) and what Lock Screen & PINs says about it
 //! (design 31 step 4; the device page's Screen lock card before).
@@ -89,10 +89,7 @@ async fn kid_pin_needs_an_override_pin_first() {
         .get_page(&device_page(id, Section::Lock), &cookie)
         .await
         .text();
-    assert!(
-        html.contains("Set a Parent PIN first: it opens the lock"),
-        "{html}"
-    );
+    assert!(html.contains("Set a Parent PIN first.</p>"), "{html}");
 }
 
 #[tokio::test]
@@ -135,7 +132,8 @@ async fn kid_pin_saved_sent_and_safe_boot_blocked() {
         keys,
         ["keyguard", "pin_hash", "pin_length", "pin_rev", "pin_salt"]
     );
-    assert_eq!(kid_lock["keyguard"], "own");
+    // Design 132: always Android's lock, so an older launcher never falls back to its own.
+    assert_eq!(kid_lock["keyguard"], "android");
     assert_eq!(kid_lock["pin_rev"], 1);
 
     // The parent switches safe-boot blocking off; changing the PIN later leaves it off.
@@ -217,13 +215,16 @@ async fn kid_and_override_pins_reject_each_other() {
     assert_ne!(app.policy(&token).await["override_pin_hash"], before);
 }
 
+/// Design 132 Q1 (a): the Child PIN is changed, never removed - a Remove from an older page is refused with nothing
+/// written, and the Parent PIN it needs stays too.
 #[tokio::test]
-async fn clearing_the_kid_pin_switches_the_lock_off() {
+async fn the_kid_pin_is_never_removed() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
     set_override(&app, &cookie, id, &[("new_pin", "246810")]).await;
     set_kid_pin(&app, &cookie, id, "1357").await;
+    let before = kid_columns(&app, id).await;
     assert!(app.policy(&token).await["kid_lock"].is_object());
 
     let res = app
@@ -236,15 +237,25 @@ async fn clearing_the_kid_pin_switches_the_lock_off() {
         .await;
     assert_redirect(
         &res,
-        &format!("{}?notice=cleared", device_page(id, Section::Lock)),
+        &format!("{}?notice=not_removed", device_page(id, Section::Lock)),
         Some("child-pin"),
     );
-    assert!(app.policy(&token).await["kid_lock"].is_null());
-    assert_eq!(kid_columns(&app, id).await, (None, None, None));
-    assert_eq!(events(&app, "kid_pin_cleared").await, 1);
-    // Now the override can go.
+    assert!(app.policy(&token).await["kid_lock"].is_object());
+    assert_eq!(kid_columns(&app, id).await, before);
+    assert_eq!(events(&app, "kid_pin_cleared").await, 0);
+    let html = app.get_page(res.location().unwrap(), &cookie).await.text();
+    assert!(
+        html.contains("Not removed: the Child PIN can be changed, not removed."),
+        "{html}"
+    );
+    assert!(!html.contains("clear_kid_pin"), "no Remove form: {html}");
+    // The Parent PIN stays: no "remove instead" on its form, and a post is refused.
+    assert!(!html.contains("name=\"clear_pin\""), "{html}");
     let location = set_override(&app, &cookie, id, &[("clear_pin", "on")]).await;
-    assert!(location.contains("notice=parent_pin_cleared"), "{location}");
+    assert!(
+        location.contains("notice=override_needed_by_lock"),
+        "{location}"
+    );
 }
 
 #[tokio::test]
@@ -302,13 +313,19 @@ async fn lock_state_is_stored_sanitized_and_capped() {
         json!({ "lock_state": {
             "active": true, "inactive": null, "locked": true, "failures": 5,
             "backoff_until_ms": 1_700_000_030_000_i64, "exempt_yields": 2,
+            "keyguard": "android", "pin_rev": 1,
             "voip_fsi_denied": ["io.element.android.x"],
             "unlocked_at_ms": 1_700_000_000_000_i64, "pin": "1234",
         }}),
     )
     .await;
     let json: Value = serde_json::from_str(&stored(&app).await.unwrap()).unwrap();
-    assert_eq!(json["failures"], 5);
+    // Design 132 §4.3: our keypad's fields from an older build are dropped.
+    assert!(
+        json.get("failures").is_none() && json.get("backoff_until_ms").is_none(),
+        "{json}"
+    );
+    assert_eq!(json["exempt_yields"], 2);
     assert_eq!(json["voip_fsi_denied"], json!(["io.element.android.x"]));
     assert_eq!(json["locked"], true);
     assert!(json.get("unlocked_at_ms").is_none(), "{json}");
@@ -342,7 +359,6 @@ async fn lock_state_is_stored_sanitized_and_capped() {
     )
     .await;
     let json: Value = serde_json::from_str(&stored(&app).await.unwrap()).unwrap();
-    assert_eq!(json["failures"], 1);
     assert_eq!(json["locked"], true);
     assert_eq!(
         json["voip_rang"],
@@ -420,41 +436,32 @@ async fn lock_page_warns_about_the_lock_state() {
 
     for (inactive, text) in [
         ("crash_guard", "Lock turned off after crashes"),
-        ("bad_hash", "Phone can&#39;t read the Child PIN"),
-        (
-            "android_credential",
-            "Android&#39;s screen lock is still on",
-        ),
+        // Own mode's words from an older build: the generic line, the word behind the ⓘ.
+        ("bad_hash", "bad_hash"),
     ] {
         app.post_status(&token, json!({ "lock_state": { "inactive": inactive } }))
             .await;
         let html = lock_page(&app, &cookie, id).await;
         assert!(child_group(&html).contains(text), "{inactive}: {html}");
-        if inactive == "bad_hash" {
-            // Design 113 QA M5: its short consequence visible under the title.
-            assert!(
-                child_group(&html)
-                    .contains("<div class=\"attention-sub\">Only the Parent PIN opens it"),
-                "{html}"
-            );
-        }
     }
-    // The last one's sentence and adb command are behind the warning's one ⓘ (design 113 D1 P1).
+    // Design 132 §4.5: no Android PIN and nothing on its way (no sealed copy without the capability's send: the
+    // plain test phone can't take one) - the orange line, its fix behind the one ⓘ.
+    app.post_status(
+        &token,
+        json!({ "lock_state": { "inactive": "no_android_pin", "keyguard": "android" } }),
+    )
+    .await;
     let html = lock_page(&app, &cookie, id).await;
     let group = child_group(&html);
-    let command = group.find("adb shell locksettings clear").expect("the fix");
-    let panel = group[..command]
-        .rfind("<div class=\"info-panel\">")
+    let title = group.find("The phone has no PIN").expect("the line");
+    let panel = group[title..]
+        .find("<div class=\"info-panel\">")
         .expect("the ⓘ");
-    let summary = group[..panel].rfind("<summary").unwrap();
     assert!(
-        group[summary..panel].contains("aria-label=\"More info\""),
+        group[title + panel..].contains("Child PIN again"),
         "{group}"
     );
-    assert!(
-        group[panel..command].contains("<p>Remove it so Vibb One&#39;s lock"),
-        "{group}"
-    );
+    assert_eq!(group.matches("The phone has no PIN").count(), 1, "{group}");
 
     app.post_status(&token,
         json!({ "lock_state": { "active": true, "locked": false, "failures": 2, "inactive": null } }),
@@ -468,15 +475,18 @@ async fn lock_page_warns_about_the_lock_state() {
         group.contains("<span class=\"row-value\">Unlocked · "),
         "{group}"
     );
-    assert!(group.contains("<span class=\"row-label\">Wrong PINs in a row</span>"));
-    assert!(group.contains("Parent code"));
+    // Design 132: our keypad's rows and own mode's words are gone.
+    for gone in [
+        "Wrong PINs in a row",
+        "Parent code",
+        "Vibb One&#39;s lock",
+        "<select",
+    ] {
+        assert!(!group.contains(gone), "{gone}: {group}");
+    }
     assert!(
-        group.contains("After 5 wrong PINs the phone waits 30 s, then longer"),
-        "qa-10-code #8"
-    );
-    assert!(
-        group.contains("It doesn&#39;t encrypt the phone&#39;s data"),
-        "qa-pwa-polish-a Q-4"
+        group.contains("After a restart the phone"),
+        "the ⓘ keeps Android's lock's words: {group}"
     );
 }
 

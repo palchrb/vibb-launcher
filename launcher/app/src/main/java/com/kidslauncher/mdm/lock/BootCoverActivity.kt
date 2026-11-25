@@ -39,17 +39,17 @@ import com.kidslauncher.mdm.R
  * - a crash counter in device-protected storage ([BootCoverGuard], installed by the process's
  *   `Application.onCreate`): the [COVER_MAX_CRASHES]th crash in a boot disables the component and
  *   trips the guard for good, until the server switch goes off and on (qa-16b-code #2);
- * - own mode: it is enabled only from shutdown to the next unlock ([bootCoverEnabled], main process), and
+ * - no Android PIN: it is enabled only from shutdown to the next unlock ([bootCoverEnabled], main process), and
  *   once unlocked and shown for [COVER_MIN_SHOWN_MS] (the boot mark's 3 s, design 16e - the main
  *   process's Home finishes them when it takes over earlier) it disables itself (DONT_KILL_APP) and finishes
  *   as soon as the disable reads back - like AOSP's FallbackHome - so the system resolves HOME again
  *   at once, to HomeActivity, HOME-typed (QA #8, qa-16b-code #1: AMS alone removes it only with the
  *   PACKAGE_CHANGED broadcast, deferred up to 10 s right after boot).
  *
- * Design 59 F3, android mode ([BootCoverGuard.androidMode]): before the PIN the BFU face over the keyguard while the
+ * Design 59 F3, Android's lock ([BootCoverGuard.androidMode]): before the PIN the BFU face over the keyguard while the
  * pad gate holds (59d step F, below), else behind it; it is what the PIN's dismissal reveals, and it waits for our main process instead of the 3 s:
  * that process writes its take-over stamp right before the boot's typed Home start (59d step M: the component stays
- * enabled in android mode, for the next boot the shutdown doesn't arm), and the cover leaves once our Home is over it
+ * enabled with Android's lock, for the next boot the shutdown doesn't arm), and the cover leaves once our Home is over it
  * (its stop) - never earlier, since below it may be the stock launcher a boot without `ACTION_SHUTDOWN` started. Its
  * own Home starts disable it first only when our typed HOME would resolve to itself ([coverHomeStartDisablesFirst]).
  * Never stranded: taken over and still in front it starts our Home itself, then leaves [COVER_TAKEOVER_GRACE_MS] after
@@ -60,7 +60,7 @@ import com.kidslauncher.mdm.R
  * is showWhenLocked at runtime ([applyLockedFace]) - the BFU face, the mark on the night ground - and it only *asks*
  * for Android's PIN pad ([askPad], `requestDismissKeyguard`) by [bootPadStep]; after a cancel "Trykk for å låse opp"
  * shows under the mark and a tap asks. It dismisses nothing itself, and once unlocked it drops the flag and runs F3's
- * wait above. Without the gate (own mode, unlocked) it is the F3/16b cover as before.
+ * wait above. Without the gate (no Android PIN, unlocked) it is the F3/16b cover as before.
  */
 class BootCoverActivity : Activity() {
     private val handler = Handler(Looper.getMainLooper())
@@ -71,7 +71,7 @@ class BootCoverActivity : Activity() {
     private var resumed = false
     private var shownMarked = false
 
-    /** F3: android mode - wait for our main process ([coverWaitStep]). Read once at create. */
+    /** F3: Android's lock - wait for our main process ([coverWaitStep]). Read once at create. */
     private var waitForLauncher = false
     private var unlockedAtElapsed = -1L
     private var takenOverAtElapsed = -1L
@@ -100,7 +100,7 @@ class BootCoverActivity : Activity() {
      * [PadEvent.RELAUNCHED]. */
     private var relaunched = false
 
-    /** M-1: android mode with a tripped crash guard - enabled as the boot's HOME, but no face, no ask, no mark. */
+    /** M-1: Android's lock with a tripped crash guard - enabled as the boot's HOME, but no face, no ask, no mark. */
     private var inert = false
 
     /** Step F: the current ask's id - an answer of an earlier one is dropped. */
@@ -143,7 +143,7 @@ class BootCoverActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val tripped = coverGuardTripped(BootCoverGuard.read(this))
-        // M-1: own mode's tripped cover goes away; android mode's stays the boot's HOME, inert (coverInert).
+        // M-1: no Android PIN's tripped cover goes away; Android's lock's stays the boot's HOME, inert (coverInert).
         // compat-fix-1: so does a persistent own-mode one, and with the switch off it is inert from the start (bare).
         val persistent = BootCoverGuard.persistent(this)
         val bare = BootCoverGuard.ownCover(this) == OwnCover.BARE
@@ -262,7 +262,7 @@ class BootCoverActivity : Activity() {
     }
 
     override fun onDestroy() {
-        // f3-run B2 as amended by step M: on every way out, once unlocked, an own-mode cover is disabled (idempotent);
+        // f3-run B2 as amended by step M: on every way out, once unlocked, a no-Android-PIN cover is disabled (idempotent);
         // an android-mode one stays enabled for the next unarmed boot. Not on a configuration change (it comes back).
         val unlocked = getSystemService(UserManager::class.java)?.isUserUnlocked == true
         if (unlocked && !isChangingConfigurations) {
@@ -290,7 +290,7 @@ class BootCoverActivity : Activity() {
         super.onDestroy()
     }
 
-    /** Unlocked: hand over to HomeActivity once shown long enough ([coverHandOverDelayMs]); in android mode the
+    /** Unlocked: hand over to HomeActivity once shown long enough ([coverHandOverDelayMs]); with Android's lock the
      * wait for our main process ([waitStep]). */
     private fun scheduleHandOver() {
         if (waitForLauncher) {
@@ -305,7 +305,7 @@ class BootCoverActivity : Activity() {
         handler.postDelayed(handOver, delay)
     }
 
-    /** F3 (android mode): one look at [coverWaitStep]; while in front, again every [COVER_WAIT_POLL_MS]. */
+    /** F3 (Android's lock): one look at [coverWaitStep]; while in front, again every [COVER_WAIT_POLL_MS]. */
     private fun waitStep(visible: Boolean) {
         val now = SystemClock.elapsedRealtime()
         val unlocked = getSystemService(UserManager::class.java)?.isUserUnlocked == true
@@ -406,7 +406,7 @@ class BootCoverActivity : Activity() {
         }
     }
 
-    /** F59d-3/6: without the gate the line is hidden and the root is no tap target or TalkBack node (own mode, F3's wait
+    /** F59d-3/6: without the gate the line is hidden and the root is no tap target or TalkBack node (no Android PIN, F3's wait
      * after the unlock); with it the root is the tap with the line's words as its label. */
     private fun faceViews(face: Boolean) {
         if (!face) tapLine?.visibility = View.GONE

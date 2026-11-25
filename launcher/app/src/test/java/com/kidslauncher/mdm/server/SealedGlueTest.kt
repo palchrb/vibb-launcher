@@ -12,17 +12,13 @@ class SealedGlueTest {
     private fun body(text: String, fn: String) = text.substringAfter("fun $fn(").substringBefore("\n    fun ").substringBefore("\n    /**")
 
     @Test
-    fun `the kid PIN's glue reads the store, keeps the fields on the crash guard and re-seals a failed write`() {
+    fun `no kid PIN material on the phone - the glue keeps none (design 132)`() {
         val runtime = src("lock/PinLockRuntime.kt")
         val configure = body(runtime, "configure")
-        assertTrue(configure.contains("kidConfigFor(kidLock, config) { runCatching { PinLockStore.config(app) }.getOrNull() }"))
-        assertTrue(configure.contains("(write is PinWrite.Write && !PinLockStore.pinStored(app))"))
-        assertTrue(configure.contains("PinLockStore.saveConfig(app, write, active, why, storedRequest)"))
-        assertTrue(body(runtime, "checkPin").contains("val cfg = config?.takeIf { it.usable } ?: runCatching { PinLockStore.config(app) }.getOrNull()"))
-        val guard = body(runtime, "guardTripped")
-        assertTrue(guard.contains("PinLockStore.saveConfig(app, PinWrite.Keep, active = false"))
-        assertFalse(guard.contains("PinWrite.Remove"))
-        assertTrue(body(runtime, "pinSetStored").contains("PinLockStore.pinStored(app)"))
+        assertTrue(configure.contains("val kidPin = policy?.kidLock != null"))
+        assertTrue(configure.contains("PinLockStore.saveConfig(app, active, why)"))
+        assertTrue(body(runtime, "guardTripped").contains("PinLockStore.saveConfig(app, active = false, inactive = LockInactive.CRASH_GUARD)"))
+        assertFalse(src("lock/PinLockStore.kt").contains("SealedPrefs"))
     }
 
     @Test

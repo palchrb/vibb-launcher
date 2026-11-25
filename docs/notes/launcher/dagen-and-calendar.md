@@ -91,10 +91,10 @@ glance's "Lås opp og åpne Kalender" (`day_title`, `glance_reminder_action`). "
   from `DayRow.calendarName`, since the policy's `calendars` rows carry no name - a link's name is the parent's, it
   becomes the provider's display name; blank = the time alone; the time first, so a long name is what is cut; TalkBack
   `glance_reminder_spoken_calendar`); never dismissable, and a sideways swipe on it does nothing - `SwipeMode.HELD`: the row gets a cancel, so no
-  tap, E5's L2; the tap is `GlanceTarget.Day` through the keypad, `GlanceOpen.DAY`, under a time rule only when every rule
+  tap, E5's L2; the tap is `GlanceTarget.Day` through Android's pad (the keypad until design 132), `GlanceOpen.DAY`, under a time rule only when every rule
   in force allows Kalender - `calendar_allowed`, PLAN 2026-11-02, `docs/notes/launcher/time-rules.md`; since 2026-11-09
   the tap also reads today and tomorrow afresh - `GlanceCalendar.refresh`, the kept days forgotten -, so an event removed
-  since leaves the row while the keypad or Android's pad is up; the target stays the day, which opens as before even
+  since leaves the row while Android's pad is up; the target stays the day, which opens as before even
   when the event is gone). The first frame at screen-on stays the last read, updated quietly when a read differs (the
   user, 2026-11-09: "vil heller ha en sjelden misfire ved at noe fjernes, enn at vi legger inn lag på hver eneste power
   on"). The "Neste" line has no tap.

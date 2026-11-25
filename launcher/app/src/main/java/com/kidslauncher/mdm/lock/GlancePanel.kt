@@ -104,10 +104,10 @@ internal fun lockTorch(context: Context): TorchPort = object : TorchPort {
  * [MissedCallNotifier] between the lock's onStart and onStop. Every time the lock comes up with the
  * screen on ([lockStageDue]) it shows the glance page.
  *
- * It weakens nothing (LockGlanceGuardTest): the swipe up (design 59d step J, [swipe]) and a row lead to the keypad, the music tile's
+ * It weakens nothing (LockGlanceGuardTest): the swipe up (design 59d step J, [swipe]) and a row ask for the unlock, the music tile's
  * controls are [MusicLockPanel]'s, "Nødsamtale" is the lock's own button ([onEmergency]), the
  * flashlight (design 41 §1.3) only toggles the torch ([torch]), the timer tile (design 42) and a
- * row lead to the keypad - nothing here opens an app, a notification or a setting. A row's tap only takes its target (§1.4: under a
+ * row ask for the unlock - nothing here opens an app, a notification or a setting. A row's tap only takes its target (§1.4: under a
  * time rule only when the rule leaves it usable, QA Q1) and the content intent it would open (kept,
  * never sent here); the unlock takes it ([takeTarget]) and [GlanceOpener] opens it after the code.
  * The one thing that changes state without the code (design r11 §3, as on Android's own lock screen): a row swiped
@@ -119,16 +119,12 @@ internal fun lockTorch(context: Context): TorchPort = object : TorchPort {
 class GlancePanel(
     private val activity: AppCompatActivity,
     frame: FrameLayout,
-    /** The keypad stage under the page: hidden from accessibility while covered. */
+    /** The lock's ground under the page (its prompt and Emergency call): hidden from accessibility while covered. */
     private val keypad: View,
-    /** The stage changed: the activity renders the keypad's prompt. */
+    /** The stage changed: the activity renders the prompt. */
     private val onStage: () -> Unit,
     /** The flashlight (design 41): the phone's `Torch` ([lockTorch]); `null` = no button. */
     private val torch: TorchPort? = lockTorch(activity),
-    /** Design 59d step B (§8.5): whether this glance is Android's face - the swipe up (step J) and a row lead to the ASK stage
-     * ([glanceStageStep]). Read at each stage step, not fixed at construction: the lock activity lives across
-     * screen-offs, and an apply may turn the face on or off under it. */
-    private val face: () -> Boolean = { false },
     private val onEmergency: () -> Unit,
 ) {
     private val glance = ViewLockGlanceBinding.inflate(activity.layoutInflater, frame, true)
@@ -195,7 +191,7 @@ class GlancePanel(
     var state = GlanceStageState.GLANCE
         private set
 
-    /** The target's content intent captured at the tap, and its label for the keypad's hint. */
+    /** The target's content intent captured at the tap, and its label for the lock's hint. */
     private var captured: PendingIntent? = null
 
     /** The keypad's hint: "Skriv koden for å åpne <this>" (cut to 20 characters, QA Low 5). */
@@ -279,7 +275,7 @@ class GlancePanel(
         glance.lockGlanceEmergency.setOnClickListener { onEmergency() }
         glance.lockGlanceTorch.setOnClickListener { torch?.toggle() }
         glance.lockTimerTile.setOnClickListener { tapClock() }
-        // The user (2026-10-24): the "more" line leads to the keypad as a row without a target does (Home after the
+        // The user (2026-10-24): the "more" line asks for the unlock as a row without a target does (Home after the
         // code) - a way to see the rest. It is no row: never dismissable, nothing captured.
         glance.lockGlanceMore.setOnClickListener { tapMore() }
         // Design 69 §5.1: the "Neste" line yields when the laid-out page leaves the third row too little room.
@@ -418,7 +414,7 @@ class GlancePanel(
 
     /**
      * The user's rule (2026-10-24, "må alltid komme til utgangspunktet igjen"): whenever the glance is the visible face
-     * again - a lock-up, back from the keypad or Android's pad ([glanceBackToTop]), a resume that is no lock-up, the
+     * again - a lock-up, back from Android's pad ([glanceBackToTop]), a resume that is no lock-up, the
      * VoIP ring card gone ([covered]) - the page starts at the top; a drag in progress settles first.
      */
     private fun backToTop() {
@@ -534,7 +530,7 @@ class GlancePanel(
      * ring card or a dialog is over the page): on the glance page - under Android's pad too (ASK: a second swipe asks
      * again, as the button's second tap did, JL-1) - a vertical swipe up anywhere, the handle and the bottom inset
      * included (§8.13), not on a control that keeps the touch and not a drag in the scroller while it can scroll
-     * ([glanceSwipeBlocked]), is "Lås opp" ([glanceSwipeStep]: the ASK stage as the face, our keypad in own mode). The
+     * ([glanceSwipeBlocked]), is "Lås opp" ([glanceSwipeStep]: the ASK stage). The
      * system taking the gesture sends ACTION_CANCEL, which ends it with nothing asked. It only asks; a row's tap and the
      * tile's controls are unchanged. Design r11 §3.2: the gesture's first movement past the touch slop decides its axis
      * ([glanceTouchAxis]) - sideways on a row (the GLANCE stage only) is that row's dismiss ([dismissTouch]); a sideways
@@ -561,7 +557,7 @@ class GlancePanel(
             swipeReset()
             flushRender()
             val root = glance.root
-            if (covered || !started || leaving || !glancePageShown(state.stage) || root.visibility != View.VISIBLE || root.height <= 0) {
+            if (covered || !started || leaving || root.visibility != View.VISIBLE || root.height <= 0) {
                 return SwipeTouch.PASS
             }
             val scroll = glance.lockGlanceScroll
@@ -1047,11 +1043,8 @@ class GlancePanel(
         }
     }
 
-    /** The keypad's back arrow (as the face also the pad's cancel, an error, the recovery, STAY): the glance page again. */
+    /** The pad's cancel, an error, the recovery, STAY: the glance page again. */
     fun back() = step(GlanceStageEvent.Back)
-
-    /** Design 59d step B: as the face with no Android credential at the tap - our keys, the target kept. */
-    fun ownKeypad() = step(GlanceStageEvent.OwnKeypad)
 
     /** Design 59d step B: the glance leaves as the face, in front - its content goes before Home ([glanceLeaveHides]);
      * the root keeps its ground (the lock wallpaper under its scrim), and the window stays visible (a row's `PendingIntent` send needs it). */
@@ -1081,22 +1074,20 @@ class GlancePanel(
 
     /**
      * Design 59d §8.16: a home gesture got through and the system's Home brought the lock back - the page asks for the
-     * unlock as the handle's swipe does ([GlanceStageEvent.Unlock]: Android's pad as the face, our keypad in own mode),
+     * unlock as the handle's swipe does ([GlanceStageEvent.Unlock]: Android's pad),
      * only while the page shows and isn't leaving.
      */
     fun askAfterGesture() = guarded("gesture ask") {
-        if (leaving || !glancePageShown(state.stage)) return@guarded
+        if (leaving) return@guarded
         Log.i(LOG_TAG, "Glance: a home gesture got through - unlock asked")
         step(GlanceStageEvent.Unlock)
     }
 
     private fun step(event: GlanceStageEvent) = guarded("stage") {
         val from = state.stage
-        state = glanceStageStep(state, event, face())
-        // The user (2026-10-24): back on the glance from the keypad or Android's pad, the page starts at the top.
+        state = glanceStageStep(state, event)
+        // The user (2026-10-24): back on the glance from Android's pad, the page starts at the top.
         if (glanceBackToTop(from, state.stage)) backToTop()
-        // Design 75: the weather's card folds when the page goes (the keypad, Android's pad).
-        if (!glancePageShown(state.stage)) weather.leftPage()
         dropTargetIfGone()
         renderNow()
         onStage()
@@ -1175,14 +1166,13 @@ class GlancePanel(
         musicDirty = false
         clockDirty = false
         if (!started) return@guarded
-        val page = glancePageShown(state.stage)
         if (musicChanged) {
             tileUp = glanceTile(music.lookUp())
-            music.show(shownTile(), page)
+            music.show(shownTile(), true)
         }
         if (clockChanged) {
             clockUp = clock.up
-            clock.show(shownClock(), page)
+            clock.show(shownClock(), true)
         }
         val layout = glanceLayout(tileUp, rows.size, clockUp, ruleCard != null)
         placeList(layout)
@@ -1313,12 +1303,11 @@ class GlancePanel(
     }
 
     private fun renderNow() {
-        val shown = glancePageShown(state.stage)
-        glance.root.visibility = if (shown) View.VISIBLE else View.GONE
+        // Design 132: the page shows in every stage (the keypad stage was the one without it).
+        glance.root.visibility = View.VISIBLE
         // Design 59d step B: while the glance leaves, only the root's ground.
         showContent()
-        keypad.importantForAccessibility =
-            if (shown) View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS else View.IMPORTANT_FOR_ACCESSIBILITY_AUTO
+        keypad.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
         tileUp = glanceTile(music.lookUp())
         clockUp = clock.up
         // r11 §3.3: while a row is dragged or dismissed everything but the rows and the layout is bound; the rest waits
@@ -1345,8 +1334,8 @@ class GlancePanel(
         calendar.armBoundary()
         bindRuleCard()
         // The tiles by the rule, then the layout (and the profile's placement once the page has its room).
-        music.show(shownTile(), page = shown)
-        clock.show(shownClock(), page = shown)
+        music.show(shownTile(), page = true)
+        clock.show(shownClock(), page = true)
         if (busy) return
         placedFor = 0
         layoutNow()
@@ -1736,9 +1725,8 @@ class GlancePanel(
     }
 
     private fun apply(layout: GlanceLayout) {
-        val page = glancePageShown(state.stage)
-        music.show(layout.tile, page)
-        clock.show(layout.timer, page)
+        music.show(layout.tile, true)
+        clock.show(layout.timer, true)
         placeList(layout)
         rowViews.forEachIndexed { i, view -> view.root.visibility = if (i < layout.rows) View.VISIBLE else View.GONE }
         val more = glance.lockGlanceMore

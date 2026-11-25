@@ -12,14 +12,11 @@
     {% call band::phone(self.t("device.page.lock"), "/devices/" ~ device.id, device.name, who) %}{% endcall %}
     <div class="sheet">
 
-    {#- Child PIN: the row opens the change form (a Save button: a PIN is typed, not toggled);
-        Remove is a confirm (M6) - while Vibb One's lock is chosen only: Android's lock needs a Child PIN, so with it a
-        row says so instead (2026-11-16); the flash sits in the group, its id is the redirect's anchor.
-        Design 59: the lock switch (an auto-saving select, back to its row #lock-keyguard; Android's lock for a new
-        phone, and with no Child PIN the choice waits for one), "Show Child PIN…"
-        (posts to this page's own path and is answered with this page - no redirect, no anchor,
-        so the PIN is in no address and scroll-restore.js keeps the place) and "Send the Child PIN
-        again" (back to #child-pin). -#}
+    {#- Child PIN, the PIN of Android's lock (design 132: the only lock): the row opens the change form (a Save
+        button: a PIN is typed, not toggled); it is changed, never removed (Q1 (a)); the flash sits in the group, its
+        id is the redirect's anchor. Design 59: "Show Child PIN…" (posts to this page's own path and is answered with
+        this page - no redirect, no anchor, so the PIN is in no address and scroll-restore.js keeps the place) and
+        "Send the Child PIN again" (back to #child-pin). -#}
     <section id="child-pin" aria-labelledby="child-pin-title">
         <h2 class="group-header" id="child-pin-title">{{ self.t("device.lock.child_pin") }}</h2>
         {% for note in child_warnings %}
@@ -42,16 +39,6 @@
                     <button type="submit" class="button-wide">{{ self.t("device.lock.save_child_pin") }}</button>
                 </form>
             </details>
-            <form method="post" action="/devices/{{ device.id }}/kid-lock/keyguard#lock-keyguard" class="cell" id="lock-keyguard">
-                <label class="row">
-                    <span class="row-label">{{ self.t("device.lock.lock") }}{% if !child.pin_set %}<span class="row-sub">{{ self.t("device.lock.lock_after_pin") }}</span>{% endif %}</span>
-                    <select class="pick" name="keyguard" data-autosave>
-                        <option value="own"{% if !keyguard_android %} selected{% endif %}>{{ self.t("device.lock.own_lock") }}</option>
-                        <option value="android"{% if keyguard_android %} selected{% endif %}>{{ self.t("device.lock.android_lock") }}</option>
-                    </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                </label>
-                <noscript><button type="submit" class="row row-button">{{ self.t("device.lock.save_lock") }}</button></noscript>
-            </form>
             {% if child.pin_set %}
             {%- if let Some(r) = reveal_shown %}
             {#- The answer to Show Child PIN: not a <details> (closing and opening one would
@@ -95,19 +82,6 @@
                 <button type="submit" class="row row-button">{{ self.t("device.lock.send_again") }}</button>
             </form>
             {% endif %}
-            {% if child.pin_set && keyguard_android %}
-            <p class="row row-note" data-row="remove-needs-pin">{{ self.t("device.lock.remove_needs_pin") }}</p>
-            {% else if child.pin_set %}
-            <details class="confirm cell">
-                <summary class="row">{{ self.t("device.lock.remove_child_pin") }}&hellip;</summary>
-                <form method="post" action="/devices/{{ device.id }}/kid-lock#child-pin" class="confirm-body">
-                    <input type="hidden" name="clear_kid_pin" value="on">
-                    <p>{{ self.tp("device.lock.remove_child_confirm", [("name", device.name.as_str())]) }}</p>
-                    <button type="submit" class="button-destructive">{{ self.t("device.lock.remove_child_pin") }}</button>
-                    {% include "partials/confirm_cancel.html" %}
-                </form>
-            </details>
-            {% endif %}
             {% if let Some((text, refused)) = child_flash %}
             <p class="flash{% if refused %} flash-error{% endif %}" role="status" data-flash="child-pin">{{ text }}</p>
             {% endif %}
@@ -115,14 +89,9 @@
         <div class="group-footer">
             <details class="info">
                 <summary aria-label="{{ self.t("device.lock.child_info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
-                <div class="info-panel" data-privacy="{% if keyguard_android %}android{% else %}own{% endif %}">
-                    {% if keyguard_android %}
+                <div class="info-panel" data-privacy="android">
                     <p>{{ self.t("device.lock.footer_android") }}</p>
                     <p>{{ self.t("device.lock.child_info_android") }}</p>
-                    {% else %}
-                    <p>{{ self.t("device.lock.footer_own") }}</p>
-                    <p>{{ self.t("device.lock.child_info_own") }}</p>
-                    {% endif %}
                 </div>
             </details>
         </div>
@@ -153,10 +122,11 @@
                     <details class="info field-info"><summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("device.lock.parent_pin_advice") }}</p></div></details>
                     <input type="password" id="new_pin" name="new_pin" inputmode="numeric" pattern="[0-9]{6,10}" maxlength="10" autocomplete="new-password" aria-describedby="new_pin-hint">
                     <p class="field-hint" id="new_pin-hint">{{ self.t("device.lock.parent_pin_hint") }}</p>
-                    {% if parent.pin_set %}
+                    {#- Design 132: a phone with a Child PIN keeps its Parent PIN (the Child PIN is never removed). -#}
+                    {% if parent.pin_set && !child.pin_set %}
                     <label class="checkbox-row">
                         <input type="checkbox" name="clear_pin" value="on">
-                        <span>{% if child.pin_set %}{{ self.t("device.lock.remove_instead_child") }}{% else %}{{ self.t("device.lock.remove_instead") }}{% endif %}</span>
+                        <span>{{ self.t("device.lock.remove_instead") }}</span>
                     </label>
                     {% endif %}
                     <button type="submit" class="button-wide">{{ self.t("device.lock.save_parent_pin") }}</button>

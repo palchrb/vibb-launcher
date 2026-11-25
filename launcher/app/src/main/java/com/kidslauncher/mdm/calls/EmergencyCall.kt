@@ -16,7 +16,7 @@ import com.kidslauncher.mdm.ui.look.nightOver
 import com.kidslauncher.mdm.ui.look.showNight
 
 /**
- * "Emergency call" on the time-rule screen, handy's PIN lock (its keypad, its glance, its VoIP ring card) and the
+ * "Emergency call" on the time-rule screen, the lock's glance (and its VoIP ring card) and the
  * phone book's fail-closed 112 tile. Since design 73 it shows the parent's emergency menu ([emergencyMenu], from
  * `call_policy.emergency_menu`): with one number - the default, 112 - exactly the old confirmation ("Call 112?"),
  * with more the sheet ([EmergencySheet]), where one tap calls. A real emergency number goes through Telecom -

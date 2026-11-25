@@ -763,8 +763,8 @@ pub fn inputs_of(policy: &DevicePolicy, latest: Option<&DeviceStatus>, part: &Se
         mask: policy.quick_controls_mask,
         clock_format: crate::models::clock_format(&policy.clock_format).to_string(),
         calls_managed: policy.calls_managed(),
-        android_lock: crate::kid_lock::policy_kid_lock(policy)
-            .is_some_and(|lock| lock.keyguard == crate::kid_lock::KEYGUARD_ANDROID),
+        // Design 132 §7.3: `when: android_lock` means "a Child PIN is stored".
+        android_lock: crate::kid_lock::policy_kid_lock(policy).is_some(),
         map_links_on: part.inputs.contains(&"map_links"),
         map_app_installed,
         link_gate: browser_role(latest).is_some(),

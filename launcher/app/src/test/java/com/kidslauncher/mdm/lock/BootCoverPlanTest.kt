@@ -227,7 +227,6 @@ class BootCoverPlanTest {
         assertEquals(0L, coverHandOverDelayMs(unlocked = true, shownForMs = 5_000))
         assertEquals(2_700L, coverHandOverDelayMs(unlocked = true, shownForMs = 300))
         assertEquals("not drawn yet: the whole minimum", COVER_MIN_SHOWN_MS, coverHandOverDelayMs(unlocked = true, shownForMs = -1))
-        assertEquals("the boot mark's 3 s, shared with Home's mark", BOOT_MARK_MS, COVER_MIN_SHOWN_MS)
         assertEquals(3_000L, COVER_MIN_SHOWN_MS)
     }
 

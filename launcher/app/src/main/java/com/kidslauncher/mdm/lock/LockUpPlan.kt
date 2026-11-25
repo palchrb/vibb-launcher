@@ -18,47 +18,26 @@ enum class LockUpStart {
      * task already - a start then is only `START_DELIVERED_TO_TOP` (§1, §5 H2). */
     NONE,
 
-    /** The lock alone: the screen is on again, or a call is live (Home must never cover a call). */
+    /** The lock alone (design 132: always - our lock is Android's face, whose locked keyguard hides what is under it). */
     LOCK,
-
-    /** Home (typed HOME, no animation), then the lock: what lies under the lock is Home, not an app. */
-    HOME_THEN_LOCK,
 }
 
 /**
- * [showLock]: the state machine shows the lock for this screen-off ([step]); [lockOnTop]: the lock is
- * the top task since the last lock-up (best effort, [lockOnTopAfter]); [callLive]: our call,
- * Telecom's or a VoIP phase other than NONE; [interactive]: the screen is on - a `SCREEN_OFF` that
- * waited in the broadcast queue past the next wake (QA L1) starts no visible Home.
- * [coverLocked]: design 32 step 2's keyguard cover is in force (debug switch) **and** its keyguard is
- * locked at this sleep (read at the screen-off, qa-32-s2-code L4) - the lock alone, no Home under it:
- * while the keyguard is locked nothing that isn't showWhenLocked can be on screen, so Home's stand-in
- * adds nothing, and its start (a binder call, a transition) before the lock's would only widen the
- * window in which SystemUI's lockscreen shows un-occluded at a quick wake. Not locked (an app's
- * `KeyguardLock`, T briefly above the setting, a SystemUI restart): step 1's Home, the safe direction.
+ * [showLock]: the state machine shows the lock for this screen-off ([step]); [lockOnTop]: the lock is the top task since
+ * the last lock-up (best effort, [lockOnTopAfter]) - then nothing starts it again, unless the screen is on again or a
+ * call is live ([callLive]: ours, Telecom's or a VoIP phase other than NONE; [interactive]: a `SCREEN_OFF` that waited
+ * in the broadcast queue past the next wake, QA L1). Design 132: the lock alone, never Home under it (design 59d step C
+ * made it the face's rule; the sleep check relocks an open Android 1 s later).
  */
-fun lockUpStarts(
-    showLock: Boolean,
-    lockOnTop: Boolean,
-    callLive: Boolean,
-    interactive: Boolean,
-    coverLocked: Boolean = false,
-    /** Design 59d step C: our lock is Android's face - the lock alone whatever the keyguard read (no HOME_THEN_LOCK; the
-     * sleep check relocks an open Android 1 s later). Accepted cost: Android open at the screen-off and a wake inside that
-     * second shows the app's snapshot for a frame (design 32's flash, Q59d-12). */
-    face: Boolean = false,
-): LockUpStart = when {
+fun lockUpStarts(showLock: Boolean, lockOnTop: Boolean, callLive: Boolean, interactive: Boolean): LockUpStart = when {
     !showLock -> LockUpStart.NONE
-    interactive -> LockUpStart.LOCK
-    callLive -> LockUpStart.LOCK
-    lockOnTop -> LockUpStart.NONE
-    coverLocked || face -> LockUpStart.LOCK
-    else -> LockUpStart.HOME_THEN_LOCK
+    lockOnTop && !interactive && !callLive -> LockUpStart.NONE
+    else -> LockUpStart.LOCK
 }
 
 /** What can change whether the lock is still the top task since its lock-up ([lockOnTopAfter]). */
 enum class LockTopEvent {
-    /** [PinLockRuntime.lockUp] started the lock (LOCK or HOME_THEN_LOCK). */
+    /** [PinLockRuntime.lockUp] started the lock. */
     LOCK_UP,
 
     /** Any other start of the lock ([PinLockRuntime.show]): a re-front, `TimeRuleShown`,
@@ -131,13 +110,3 @@ fun newIntentPauseKept(wasOnTop: Boolean, backstopAtMs: Long?, nowMs: Long): Boo
 fun screenOnUnshown(event: LockEvent, showLock: Boolean): Boolean =
     event is LockEvent.ScreenOn && !event.lockShowing && !showLock &&
         !(event.faceOnTop && !event.systemCall && event.voip == VoipPhase.NONE)
-
-/**
- * Design 32 step 1 item 3 (QA M1): Home brought under the lock while dark only shows its night
- * ground - no lock task (qa-32-s1-code L1: the lock's task is focused by then), no update fence, no
- * time-rule screen over the lock, no lock start and no boot-mark calls before the lock's own
- * creation. [darkLockUp]: a HOME_THEN_LOCK
- * lock-up since the last interactive resume of the lock or Home.
- */
-fun homeDarkResume(darkLockUp: Boolean, interactive: Boolean, locked: Boolean): Boolean =
-    darkLockUp && !interactive && locked

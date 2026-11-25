@@ -371,12 +371,7 @@ object TimeRulesRuntime {
             // A silent rule's Do Not Disturb follows the same lock (server 0121), at every boundary and screen-on.
             ZenRuleRuntime.follow(context, snap.lock, snap.clocks.elapsedMs)
             if (changedTo != null && changedTo != LockReason.NONE && !OngoingCalls.hasLiveCall) {
-                // Design 32 step 2 (M5): not while the keyguard cover is locked (the screen-on's start
-                // under the lock) - it would un-occlude it; at once without the cover.
-                // When it runs later, only if a rule still locks and no call came (qa-32-s2-code L5).
-                com.kidslauncher.mdm.lock.KeyguardCover.whenUnlocked(context, "the time-rule screen") {
-                    if (LauncherPreferences.mdm().lockReason() != LockReason.NONE && !OngoingCalls.hasLiveCall) LockActivity.start(it)
-                }
+                LockActivity.start(context)
             }
             // Design r13 §2.3 (R13-3): the anchor's notice from the same snapshot, counting or not.
             try {

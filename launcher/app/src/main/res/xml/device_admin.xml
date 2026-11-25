@@ -7,8 +7,8 @@
 <device-admin xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-policies>
         <!-- DeviceAdminReceiver.onPasswordChanged: AOSP sends ACTION_PASSWORD_CHANGED only to
-             admins with limit-password (not watch-login, as this file used to say). An Android
-             screen lock removed switches handy's own lock on at once (QA 10 #15). -->
+             admins with limit-password (not watch-login, as this file used to say). Our own changes
+             to Android's PIN and the kid's are told apart there (design 59 §3.7). -->
         <limit-password />
         <!-- DevicePolicyManager.lockNow (Find My Device's lock), and setMaximumTimeToLock under
              design 32 step 2's keyguard cover (the lock delay 0, debug switch only). -->

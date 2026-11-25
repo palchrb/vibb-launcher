@@ -57,7 +57,7 @@ internal class GlanceCalendar(private val activity: Activity, private val change
     private class Loaded(val today: TodayCalendar?, val day: LocalDate)
 
     /** The reminder row tapped (2026-11-09): today and tomorrow read from the provider again, not the kept days, so a
-     * removed or moved event leaves the row while the keypad or Android's pad is up. The tap's target (the day) stays. */
+     * removed or moved event leaves the row while Android's pad is up. The tap's target (the day) stays. */
     fun refresh() = load(fresh = true)
 
     fun load(fresh: Boolean = false) {

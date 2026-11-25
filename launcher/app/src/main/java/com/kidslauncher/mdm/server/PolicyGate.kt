@@ -276,17 +276,6 @@ sealed interface PolicyToApply {
      * [Fallback] (the last-enforced plan has no `kid_lock`) nor `Apply(null)`. */
     val carriesParentChoice: Boolean get() = this is Apply && policy != null
 
-    /** Where [policy] came from; Android's PIN is rolled back only on [PolicySource.SERVER] ([rollbackAllowed]). */
-    val source: PolicySource
-        get() = when (this) {
-            is Apply -> when {
-                policy == null -> PolicySource.NONE
-                fromServer -> PolicySource.SERVER
-                else -> PolicySource.CACHE
-            }
-            is Fallback -> PolicySource.FALLBACK
-        }
-
     /** A real policy (fresh or cached), or `null` on a phone that has never had one. [fromServer]: the server sent it
      * in this sync (accepted by [judgeFresh]); `false` for the cache. */
     data class Apply(override val policy: PolicyResponse?, val fromServer: Boolean = false) : PolicyToApply
@@ -298,16 +287,6 @@ sealed interface PolicyToApply {
      */
     data class Fallback(override val policy: PolicyResponse) : PolicyToApply
 }
-
-/** Where an enforced policy came from. */
-enum class PolicySource { SERVER, CACHE, FALLBACK, NONE }
-
-/**
- * Android's PIN is cleared ([com.kidslauncher.mdm.lock.rollbackDue]) only by the server's own choice: a policy it sent
- * in this sync without `kid_lock`'s Android keyguard. A saved copy, the last-enforced plan or no policy never clears it -
- * a saved copy can be older than the server's choice, or changed on the phone.
- */
-fun rollbackAllowed(source: PolicySource): Boolean = source == PolicySource.SERVER
 
 /** Used when neither the cache nor the last-enforced plan can be read: only our own package. */
 val NOTHING_ALLOWED_FALLBACK: PolicyResponse = LastEnforcedPlan().toPolicy()

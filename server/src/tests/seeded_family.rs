@@ -472,7 +472,7 @@ pub async fn seed(app: &TestApp, lang: crate::i18n::Lang) -> Family {
         .unwrap();
     }
 
-    // Ola: a Parent and a Child PIN through their forms (worded security lines), Android's lock chosen, and the
+    // Ola: a Parent and a Child PIN through their forms (worded security lines), and the
     // Child PIN's command answered with a refusal (Activity's line, the Lock page's row); Anna's sent one waits.
     for (path, field, pin) in [
         ("parent-pin", "new_pin", "246810"),
@@ -488,12 +488,6 @@ pub async fn seed(app: &TestApp, lang: crate::i18n::Lang) -> Family {
             .await;
         assert!(res.status.is_redirection(), "{path}: {}", res.text());
     }
-    sqlx::query("UPDATE device_policy SET kid_keyguard = 'android' WHERE device_id IN (?, ?)")
-        .bind(ola)
-        .bind(anna)
-        .execute(&app.db)
-        .await
-        .unwrap();
     sqlx::query(
         "INSERT INTO device_commands (device_id, command, requested_at, delivered_at, first_delivered_at, \
          deliveries, received_at, acknowledged_at, result, succeeded) VALUES \

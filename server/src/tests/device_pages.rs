@@ -636,10 +636,9 @@ async fn lock_screen_and_pins_holds_the_moved_forms() {
     assert!(html.contains("<span class=\"row-value\" data-value=\"parent-pin\">Set</span>"));
 }
 
-/// Remove Child PIN… is a `<details>` confirm (M6): the summary is the button, the form inside
-/// names the action.
+/// Design 132 Q1 (a): no Remove Child PIN on the page - the Child PIN is changed, never removed.
 #[tokio::test]
-async fn removing_the_child_pin_confirms_with_details() {
+async fn the_child_pin_has_no_remove() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("Anna").await;
@@ -648,19 +647,8 @@ async fn removing_the_child_pin_confirms_with_details() {
         .get_page(&device_page(id, Section::Lock), &cookie)
         .await
         .text();
-    let hidden = html
-        .find("name=\"clear_kid_pin\"")
-        .expect("the remove form");
-    let details = html[..hidden]
-        .rfind("<details class=\"confirm cell\">")
-        .unwrap();
-    let inside = &html[details..hidden];
-    assert!(!inside.contains("</details>"), "{inside}");
-    assert!(inside.contains("<summary class=\"row\">Remove Child PIN&hellip;</summary>"));
-    assert!(inside.contains(&format!("action=\"/devices/{id}/kid-lock#child-pin\"")));
-    let form = &html[hidden..hidden + html[hidden..].find("</form>").unwrap()];
-    assert!(form.contains("Remove Anna&#39;s Child PIN?"), "{form}");
-    assert!(form.contains("class=\"button-destructive\">Remove Child PIN</button>"));
+    assert!(!html.contains("name=\"clear_kid_pin\""), "{html}");
+    assert!(!html.contains("Remove Child PIN"), "{html}");
 }
 
 /// §5.1's redirect table for Lock Screen & PINs: every form on the page, posted with valid values,
@@ -680,18 +668,11 @@ async fn lock_forms_return_to_the_page() {
     let lock = device_page(id, Section::Lock);
     // (route, the fields a parent sends, the expected Location: path and fragment).
     type Row<'a> = (&'a str, &'a [(&'a str, &'a str)], (String, Option<&'a str>));
-    let table: [Row; 11] = [
+    let table: [Row; 9] = [
         (
             "kid-lock#child-pin",
             &[("new_kid_pin", "7391")],
             (format!("{lock}?notice=saved"), Some("child-pin")),
-        ),
-        // Design 59: the lock switch, back to its row (Vibb One's lock kept: with Android's, Remove Child PIN
-        // below is refused since 2026-11-16).
-        (
-            "kid-lock/keyguard#lock-keyguard",
-            &[("keyguard", "own")],
-            (lock.clone(), Some("lock-keyguard")),
         ),
         // "Show Child PIN…": answered with the page itself on its own path (no redirect, the
         // PIN in no address), the form at its own row's fragment (qa-59-step2-code S2P-3).
@@ -699,12 +680,6 @@ async fn lock_forms_return_to_the_page() {
             "lock#show-pin",
             &[("password", "correct horse battery staple")],
             (lock.clone(), Some("show-pin")),
-        ),
-        // Remove Child PIN… (its hidden `clear_kid_pin`).
-        (
-            "kid-lock#child-pin",
-            &[],
-            (format!("{lock}?notice=cleared"), Some("child-pin")),
         ),
         (
             "parent-pin#parent-pin",
@@ -791,8 +766,8 @@ async fn lock_forms_return_to_the_page() {
         .await
         .unwrap();
     assert_eq!(
-        (kid, timeout, text, wake, alert.as_str()),
-        (None, 120, true, true, "sound")
+        (kid.is_some(), timeout, text, wake, alert.as_str()),
+        (true, 120, true, true, "sound")
     );
 }
 

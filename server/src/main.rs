@@ -400,6 +400,8 @@ async fn main() {
     }
 
     security::bootstrap_admin(&db, std::path::Path::new("data")).await;
+    // Design 132 §4.2: the Child PINs this server can never send to Android's lock, counted once.
+    kid_lock::log_legacy_pins(&db).await;
 
     let session_store = SqliteStore::new(db.clone());
     session_store
@@ -483,7 +485,8 @@ async fn main() {
     };
 
     // The Child PIN's key (design 59 §2.1): its own file in data/keys/, made on the first start; a
-    // file that doesn't parse leaves the PINs without a sealed copy, never replaced.
+    // file that doesn't parse is never replaced, and a Child PIN can't be saved until it reads
+    // (design 132 §4.2).
     let kid_pin_key = match kid_pin::load(std::path::Path::new(kid_pin::DEFAULT_KEY_FILE)) {
         Ok(key) => Some(std::sync::Arc::new(key)),
         Err(err) => {
@@ -1302,10 +1305,6 @@ pub fn build_admin_router(
         .route(
             "/devices/{id}/kid-lock",
             post(handlers::devices::update_kid_lock),
-        )
-        .route(
-            "/devices/{id}/kid-lock/keyguard",
-            post(handlers::devices::update_kid_keyguard),
         )
         .route(
             "/devices/{id}/kid-pin/send",

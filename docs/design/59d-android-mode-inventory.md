@@ -4,6 +4,8 @@ Status: audit, 2026-10-22, read-only (no code changed). Base: `main` at `d88509a
 but not built), and `fix-f3-boot-cover` at `2483caf8` for the boot cover. Launcher paths are under
 `launcher/app/src/main/java/com/kidslauncher/mdm/` and `lock/` unless named.
 
+Superseded in part by design 132 (`132-phase-d-android-lock-only.md`): Android's PIN lock is the only lock.
+
 The user's direction (2026-10-22): keep our own lock face (the hybrid), get rid of SystemUI's clock screen, make it
 feel good, and take out the inefficiencies we built to steer things ourselves. **The principle for android mode:
 Android gates, we only draw the face and curate rows; we never fight the keyguard.** A start of ours that isn't
