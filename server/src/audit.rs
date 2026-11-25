@@ -236,13 +236,14 @@ async fn insert(
 ) -> Option<i64> {
     let (facts, params) = detail.columns();
     sqlx::query_scalar(
-        "INSERT INTO security_events (event_type, username, ip_address, detail, params) \
-         VALUES (?, NULL, ?, ?, ?) RETURNING id",
+        "INSERT INTO security_events (event_type, username, ip_address, detail, params, request_id) \
+         VALUES (?, NULL, ?, ?, ?, ?) RETURNING id",
     )
     .bind(event_type)
     .bind(ip)
     .bind(facts)
     .bind(params)
+    .bind(crate::settings_log::request_id())
     .fetch_one(db)
     .await
     .ok()

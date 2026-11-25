@@ -946,8 +946,10 @@ Tilgang): the "camera" words here are history.
   its page** (`?notice=parent_pin_invalid`, the Child PIN's, `revoke_unconfirmed`, `toggle_app`'s, the DNS
   `bad_list`/`not_a_domain_*`, `music_notice=`, a gone contact, rule or parent, the push refusals, a refused avatar)
   carries `settings_log::Refused` in its extensions (`settings_log::refused(...)`) - **a new refusal by redirect must
-  be marked so** - and **a save whose handler wrote its own security event** (any kind but `settings_saved`, by the
-  same parent, during the request: `music_sweep_saved`, `override_pin_changed`, ...) gets no second row; a success
+  be marked so** - and **a save whose handler wrote its own security event** (any kind but `settings_saved`, written by
+  that request: `music_sweep_saved`, `override_pin_changed`, ...) gets no second row - a save is matched to its own
+  request (`settings_log::request_id`, a random id set around the handler and stored in `security_events.request_id`,
+  migration 0177), never to another request of the same parent at the same time; a success
   with a notice (`notice=uploaded`) is a save. Tests: `tests::settings_log`, `settings_log::tests`.
 - **Notifications (design 45, server round 5)**: the hub's Notifications row leads to Notification Settings
   (`/notifications/settings`: This Device, Getting Notifications, Notify Me About), while the bell on the tab pages leads

@@ -750,12 +750,15 @@ async fn log_conversion(
     detail: crate::security::Detail,
 ) -> Result<(), sqlx::Error> {
     let (facts, params) = detail.columns();
-    sqlx::query("INSERT INTO security_events (event_type, detail, params) VALUES (?, ?, ?)")
-        .bind(event)
-        .bind(facts)
-        .bind(params)
-        .execute(&mut *conn)
-        .await?;
+    sqlx::query(
+        "INSERT INTO security_events (event_type, detail, params, request_id) VALUES (?, ?, ?, ?)",
+    )
+    .bind(event)
+    .bind(facts)
+    .bind(params)
+    .bind(crate::settings_log::request_id())
+    .execute(&mut *conn)
+    .await?;
     Ok(())
 }
 

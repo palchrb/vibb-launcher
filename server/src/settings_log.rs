@@ -10,7 +10,10 @@
 //! Two answers that look like a save aren't one (code QA M1, L2): a refusal that goes back to its
 //! page with a 303 and its reason in the query (`?notice=parent_pin_invalid`) carries [Refused] in
 //! its extensions ([refused]), and a save whose handler wrote its own security event (any kind but
-//! this one, by the same parent, during the request) already says what changed.
+//! this one) already says what changed. That event is the request's own: the middleware gives each
+//! request a random id ([REQUEST_ID], `security_events.request_id`, migration 0177) that every line
+//! written during it carries ([request_id]) - another request of the same parent at the same time
+//! (a refused re-auth in another tab) never counts as this save's line.
 
 use axum::extract::{MatchedPath, Request, State};
 use axum::http::{Method, StatusCode, header};
@@ -70,6 +73,29 @@ const NOT_SAVES: &[&str] = &[
 /// One write at a time, so two saves at once can't both start a row or lose a count.
 static WRITES: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+tokio::task_local! {
+    /// The signed-in request being answered ([log_saves] sets it around the handler).
+    static REQUEST_ID: i64;
+}
+
+/// The id of the signed-in request this task answers, for the security-log line it writes; `None`
+/// outside one (a phone's request, a background job, a task the handler spawned).
+pub fn request_id() -> Option<i64> {
+    REQUEST_ID.try_with(|id| *id).ok()
+}
+
+/// A random, positive request id.
+fn new_request_id() -> i64 {
+    use ring::rand::SecureRandom;
+    let mut bytes = [0u8; 8];
+    if ring::rand::SystemRandom::new().fill(&mut bytes).is_err() {
+        // No randomness: a count still tells this process's requests apart.
+        static NEXT: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(1);
+        return NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+    (u64::from_le_bytes(bytes) >> 1) as i64
+}
+
 /// The mark of a refusal answered with a 303 back to its page: not a save (code QA M1).
 #[derive(Clone, Copy, Debug)]
 pub struct Refused;
@@ -101,13 +127,9 @@ pub async fn log_saves(State(state): State<AppState>, request: Request, next: Ne
                 .then(|| (actor, entry(&route, request.uri().path())))
         })
         .flatten();
-    // The newest event before the handler runs: one it writes itself is above it.
-    let before = match saved {
-        Some(_) => newest_event(&state.db).await,
-        None => None,
-    };
-    let response = next.run(request).await;
-    let (Some((actor, entry)), Some(before)) = (saved, before) else {
+    let request_id = new_request_id();
+    let response = REQUEST_ID.scope(request_id, next.run(request)).await;
+    let Some((actor, entry)) = saved else {
         return response;
     };
     let Some(page) = page_of(&response) else {
@@ -118,7 +140,7 @@ pub async fn log_saves(State(state): State<AppState>, request: Request, next: Ne
     }
     let _guard = WRITES.lock().await;
     let result = async {
-        if !logged_since(&state.db, &actor, before).await? {
+        if !logged_by(&state.db, request_id).await? {
             record(&state.db, &actor, &page, &entry).await?;
         }
         Ok::<_, sqlx::Error>(())
@@ -130,27 +152,13 @@ pub async fn log_saves(State(state): State<AppState>, request: Request, next: Ne
     response
 }
 
-/// The id of the newest security event (0 for none); `None` (logged) when it can't be read.
-async fn newest_event(db: &sqlx::SqlitePool) -> Option<i64> {
-    sqlx::query_scalar("SELECT COALESCE(MAX(id), 0) FROM security_events")
-        .fetch_one(db)
-        .await
-        .map_err(|err| tracing::error!(%err, "couldn't read the security log"))
-        .ok()
-}
-
-/// Whether `actor`'s request wrote an event of its own after the event `before` (code QA L2).
-async fn logged_since(
-    db: &sqlx::SqlitePool,
-    actor: &str,
-    before: i64,
-) -> Result<bool, sqlx::Error> {
+/// Whether the request `request_id` wrote a security event of its own (code QA L2).
+async fn logged_by(db: &sqlx::SqlitePool, request_id: i64) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM security_events WHERE id > ? AND username = ? \
+        "SELECT EXISTS(SELECT 1 FROM security_events WHERE request_id = ? \
          AND event_type <> 'settings_saved')",
     )
-    .bind(before)
-    .bind(actor)
+    .bind(request_id)
     .fetch_one(db)
     .await
 }

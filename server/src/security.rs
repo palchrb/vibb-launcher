@@ -477,14 +477,15 @@ pub async fn record_security_event(
 ) {
     let (facts, params) = detail.map(|d| d.columns()).unwrap_or_default();
     sqlx::query(
-        "INSERT INTO security_events (event_type, username, ip_address, detail, params) \
-         VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO security_events (event_type, username, ip_address, detail, params, request_id) \
+         VALUES (?, ?, ?, ?, ?, ?)",
     )
     .bind(event_type)
     .bind(username)
     .bind(ip)
     .bind(facts)
     .bind(params)
+    .bind(crate::settings_log::request_id())
     .execute(db)
     .await
     .ok();
