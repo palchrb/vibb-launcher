@@ -268,14 +268,38 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   the last fresh fix taken within the interval - the series' checks: within `CHECK_MAX_DELAY_MS`) sets
   `movingAtFresh`, so the gate stays `MOVED` - no `STILL`, no `QUIET`, every due beat fixes - until a fresh fix at
   rest. Logged `Location heartbeat: ... moving=true`.
-- **The heartbeat** (D5): `NOT_DUE`; `KEPT`; `STILL` (no fix, `still: true`) while `STILL` and the last fresh fix is
-  under 4 h old; `QUIET` (no fix, no `still`: the PWA shows the fix's own age) while `STILL`/`STILL_SINCE_TRY` and the
-  last try is younger than `stillBackoffMs` = (last try - `stillSinceMs`) within the interval and 4 h; else `FIX`. The
-  last try is `ZoneWatch.lastTryMs` (CE prefs `zone_watch` `last_try_ms`), stamped by every sync that takes a fix with
-  the beat's own `now` in the beat's write (`stampBeat(.., tried)`) - not LocationManager's later stamp, which made a
-  beat one interval on `QUIET` by a few ms (code QA M1). A failed evening try indoors gives ~6 tries a night instead of
-  18; after a good fix, one try per 4 h. Logged under `ZoneWatch`: `Location heartbeat: QUIET backoff=N min`,
-  `Location heartbeat: STILL|KEPT`, and `Fresh fix path=...` then `Location heartbeat: FIX result=fresh|none`.
+- **The heartbeat** (D5, amended 2026-11-25): `NOT_DUE`; `KEPT`; `STILL` (no fix, `still: true`) while `STILL` and the
+  vouch (the last fresh fix or its renewal, `stillFrom`) is under 4 h old; past the 4 h while `STILL` the cap's try
+  (`FIX`, due at once) and, after it fails, `STILL` again until the next try - a failed try is no evidence of a move
+  (`stillVouched`): `capRetryMs` after the n-th failed try = the next two beats (one interval each), then 1 h, 2 h,
+  then every 4 h, never under the interval, counted from the last try. The count is `ZoneWatch.stillCapFails` (CE
+  prefs `zone_watch` `still_cap_fails_v1`, `stillCapFailsAfter`: the heartbeat's own `FIX` while `STILL`, failed - no
+  fresh fix, no renewal - with no fire during it); a fresh fix (`stampFreshFix`) and a renewal (`stampVouchRenewed`)
+  clear it, and a fire leaves `STILL` until a fresh fix, so it starts over too. A cap try failed at 15:32 on a 10-min
+  interval tries again at 15:42, 15:52, 16:52, 18:52, then every 4 h, `still: true` at every beat between (the owner's
+  Jelly Star lost "Hasn't moved since" for 4 h there). **The cap try keeps the vouch** (code QA H1): `currentLocation`'s
+  `capTryAtMs` makes `freshOrLastKnown` take only a fix `capTryTakes` (genuinely fresh by `freshOwnFix` and not
+  `places.notFresh` - never an unchecked Wi-Fi fix, a fallback learned fix or a cell fix -, or the renewed vouch), never
+  a last-known fallback; else it returns the cached fix and leaves the cache alone (no age limit: the sync asks as for
+  a still re-send, `cachedFixMaxAgeMs(.., stillBeat || capTry)`, `SecurityLowsBTest` P-L3). Failed, the sync re-sends
+  it with `still: true` when it is the vouch, no fire came during the attempt and the vouch holds (`capTryResends`),
+  else reports no fix (P-L3). The server takes that re-send as the same row (`SAME_FIX`, `mark_resent`). **`still` past
+  the cap goes only with the vouch itself** (code QA L4): `reportStill`'s `cachedIsVouch` (the cached fix's time is the
+  last fresh fix's), so a `KEPT` beat's promoted passive fix or a `locate`'s fallback is never vouched; within the 4 h
+  as before. **The ceiling** (code QA M1): `STILL_CEILING_MS` (24 h, provisional) from the vouch - past it the waits
+  between tries are `QUIET` (no `still`, the fix's own age) and a failed try drops its fix; the tries go on every 4 h.
+  A try killed mid-attempt (process death) stamped the try but counted nothing: the next waits the same step again
+  (code QA L5). `QUIET` (no fix, no `still`: the PWA shows the fix's own age)
+  otherwise only while `STILL_SINCE_TRY` (it fired since the fresh fix, not since the try) and the last try is younger than
+  `stillBackoffMs` = (last try - `stillSinceMs`) within the interval and 4 h; else `FIX`. `NO_SENSOR` (distrusted
+  too) and `MOVED` fix at every due beat, as before. The last try is `ZoneWatch.lastTryMs` (CE prefs `zone_watch`
+  `last_try_ms`), stamped by every sync that takes a fix (a failed `locate` too) with the beat's own `now` in the
+  beat's write (`stampBeat(.., tried)`) - not LocationManager's later stamp, which made a beat one interval on `QUIET`
+  by a few ms (code QA M1). A failed evening try indoors after a move gives ~6 tries a night instead of 18; after a
+  good fix, the cap's try and its retries. Logged under `ZoneWatch`: `Location heartbeat: QUIET backoff=N min`,
+  `Location heartbeat: STILL fails=N retry=M min[ not the vouch]` (past the cap), `Location heartbeat: cap try failed
+  fails=N vouch=re-sent|dropped`, `Location heartbeat: STILL|KEPT`, and
+  `Fresh fix path=...` then `Location heartbeat: FIX result=fresh|renewed|none`.
 - **A sensor that lies** (D7): a genuinely fresh fix taken while `motion` was `STILL` (a cap try, a `locate`, a
   low-battery fix) further from the vouched fix (the reported one, only while it is the last fresh fix - QA L2) than
   both accuracies + 200 m, both known and <= 100 m (`motionContradiction`), with no fire during the attempt
@@ -284,14 +308,19 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   days on - `NO_SENSOR` meanwhile and `zone_watch.motion_sensor: false` (`ZoneWatch.motionTrusted`). Kept across a new
   enrollment: it is the hardware's.
 - **Unchanged**: `locate`, the low-battery fix, crossings, P-L3's age limit (a `still` re-send has none), no new
-  report field, no contract change. Since design 125 the fix paths with the network provider off are the Wi-Fi
+  report field, no contract change. The server takes a `still` re-send of any age (2026-11-25, `docs/notes/server/zones.md`:
+  `intake` stamps the row's `resent_at`; the fix's age is bounded only by `MAX_FIX_AGE_MS`, 400 days), so the amended
+  D5 needs no server change. Since design 125 the fix paths with the network provider off are the Wi-Fi
   places' (`docs/notes/launcher/wifi-places.md`): a learned fix counts as fresh (not from the 2-min fallback), D7
   compares only a `gps`/`fused` vouch and never a learned fix, and a zone link may renew the still vouch at the 4-h
   cap (`ZoneWatch.vouchRenewedMs`). On a GLA-off phone indoor zone arrivals depend on learned fixes of ~100 m or better
   (design 125 L9). `MotionFlags.movedAtElapsedMs` is the last fire's time (no scan result from before it is used), and
   the passive feed runs on every Regularly phone (it teaches; the kept slot stays zones-only). The server's weather counts a fix from its `resent_at` too (design 124 D13).
 - Tests: `ZonePlanTest` (the gates, `MotionFlags`' transitions with a fire during an attempt, the heartbeat with `QUIET`
-  and D5's evenings beat by beat with the §1 cap gap as a regression row, the back-off, the contradiction rule, D9's
+  and D5's evenings beat by beat with the §1 cap gap as a regression row, the owner's still day beat by beat (07:30
+  fix, 11:31 renewal, 15:32 failed cap try: `STILL` all day, the retries, a good fix and a fire starting over, an
+  unchecked Wi-Fi or a last-known result at 15:32 keeping the vouch, the 24-h ceiling; `capTryTakes`, `capTryResends`), the
+  back-off, the contradiction rule, D9's
   provider choice and keep-the-better, the glue by source). Not device-tested: the note's §7 on the Jelly Star (our
   uid's registration in `dumpsys sensorservice`, a fire after deep Doze, a still evening's "Hasn't moved since";
   `docs/testing/new-phone-model.md` §2).

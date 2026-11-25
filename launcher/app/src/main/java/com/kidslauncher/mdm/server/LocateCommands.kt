@@ -100,6 +100,8 @@ object LocateCommands {
      * is never reported ([cachedFixMaxAgeMs]; `null` = any age). [explicit]: the parent's `locate` - a
      * [LocationAction.FRESH] fix then takes [preciseFix]'s longer, fused-first path. [places]: design 125's attempt
      * with the `network` provider off (the Wi-Fi places, [WifiPlaces.attempt]); its answers come back in it.
+     * [capTryAtMs]: the heartbeat's cap try (design 124 D5, code QA H1), requested at that instant - the vouch stays
+     * the cached fix unless the attempt brings a genuinely fresh fix or renews it ([capTryTakes]).
      */
     suspend fun currentLocation(
         context: Context,
@@ -110,6 +112,7 @@ object LocateCommands {
         maxCachedAgeMs: Long?,
         explicit: Boolean = false,
         places: WifiPlaces.Ask? = null,
+        capTryAtMs: Long? = null,
     ): Location? {
         // Off: no permission grants, no Location toggle, no LocationManager - nothing at all.
         if (action == LocationAction.NONE) return null
@@ -160,7 +163,7 @@ object LocateCommands {
             QuickControls.setLocationEnabled(dpm, admin, true)
         }
         try {
-            return freshOrLastKnown(context, action, explicit, ::reportable, places)
+            return freshOrLastKnown(context, action, explicit, ::reportable, places, capTryAtMs)
         } finally {
             if (locationBackOff(switchedOn, staysOn)) {
                 Log.i(LOG_TAG, "Location back off after the fix")
@@ -191,13 +194,16 @@ object LocateCommands {
     }
 
     /** [currentLocation]'s fix with Location on: a fresh one, else the newest last-known, else the cached one - the
-     * last two only when [reportable]. A fresh or last-known fix becomes the cached one. */
+     * last two only when [reportable]. A fresh or last-known fix becomes the cached one. At a cap try ([capTryAtMs],
+     * code QA H1) only a fix [capTryTakes] does; else the cached fix - the vouch; the caller asks with no age limit, as
+     * for a still re-send - the cache untouched and no last-known fallback (the caller re-sends it with `still` or drops it). */
     private suspend fun freshOrLastKnown(
         context: Context,
         action: LocationAction,
         explicit: Boolean,
         reportable: (Location) -> Boolean,
         places: WifiPlaces.Ask?,
+        capTryAtMs: Long?,
     ): Location? {
         val lm = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
 
@@ -230,6 +236,12 @@ object LocateCommands {
             }
             action == LocationAction.FRESH_BALANCED -> balancedFirst(context, lm)
             else -> requestFreshFix(context, lm, preciseFix(explicit && action == LocationAction.FRESH))?.takeIf { ZoneWatch.accept(context, it) }
+        }
+        if (capTryAtMs != null) {
+            val takes = com.kidslauncher.mdm.zones.capTryTakes(requested?.time, capTryAtMs, places?.notFresh == true, places?.renewed == true)
+            if (takes && requested != null) saveCachedFix(context, requested)
+            TrustedClock.readGnss(context)
+            return if (takes) requested else loadCachedFix()?.takeIf(reportable)
         }
         val fresh = requested ?: try {
             val providers = mutableListOf(LocationManager.NETWORK_PROVIDER, LocationManager.GPS_PROVIDER)

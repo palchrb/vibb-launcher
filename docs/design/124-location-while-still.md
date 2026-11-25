@@ -10,6 +10,15 @@ Wi-Fi witness**, phones without zones show "Hasn't moved since", balanced first 
 Revision 2 applies the design QA (H1-H2, M1-M3, L1-L8; §9) and the Jelly Star's `dumpsys location` of 2026-11-21/22.
 Launcher round plus a small server change; no contract file changes. Read against `main` 2e3796699.
 
+Amended 2026-11-25 (D5, the owner's decision after a still day on the Jelly Star): a failed try at or past the 4-h cap
+while the sensor hasn't fired is no evidence of a move - `STILL` (`still: true`) goes on, the next try after the next
+two beats, then 1 h, 2 h, every 4 h, starting over at a fresh fix, a renewal or a fire. The cap try keeps the vouch as
+the reported fix unless it brings a genuinely fresh fix (never an unchecked Wi-Fi fix or a last-known fallback) and,
+failed, re-sends it with `still`. The bound on trust is now **24 h** (`STILL_CEILING_MS`, provisional - the owner may
+change it) from the last fresh fix or renewal: past it with every try failed, `QUIET` and the fix's own age, the tries
+going on every 4 h. D6's 4 h is now when the vouch must be checked, not how long it may hold. `QUIET` otherwise only
+after a fire. `docs/notes/launcher/zones-and-power.md` has the rule.
+
 ## 0. Short answer
 
 Today's 30-min fix costs roughly **12-19 mAh a day (0.6-1 % of 2000 mAh)** - an estimate, not a measurement. It is
@@ -84,9 +93,13 @@ only when `fences > 0`. One reader ignores `resent_at`: the weather's fix (`hand
    still waits as long as the phone has already been still and failing - after a move at 20:10 and failures from 20:30
    (`stillSinceMs` 20:30), tries at 20:30, 21:00, 21:30, 22:30, 00:30, 04:30 instead of every 30 min; after a good fix
    at 20:30, `STILL` to 00:30, then one try per 4 h (00:30, 04:30). `reportStill` = `CACHED` while the `STILL` condition holds (between beats too, as today). A move
-   (a fire) always gives a try at the next beat.
+   (a fire) always gives a try at the next beat. *Superseded in part 2026-11-25 (the amendment above): past the cap
+   while `STILL` a failed try no longer leads to `QUIET` - `STILL` goes on with its own retries up to 24 h; the
+   back-off here is now `STILL_SINCE_TRY`'s alone.*
 6. **The cap stays 4 h**, no night rule, not tied to the interval (a clock rule is wrong at a sleepover; an
-   interval-tied cap is 10 min at the floor). It bounds trust in a sensor that might not fire.
+   interval-tied cap is 10 min at the floor). Since the 2026-11-25 amendment it is when the vouch is checked (a fresh
+   fix, D7's distance check on it, or a renewal); while those tries fail, the vouch holds up to `STILL_CEILING_MS`
+   (24 h) - that is the bound on trust in a sensor that might not fire.
 7. **A sensor that lies is caught** (L4): a genuinely fresh own fix taken while `motion()` said `STILL` (a cap try, a
    `locate`, a low-battery fix) whose distance from the vouched fix exceeds `accOld + accNew + 200 m`, both accuracies
    known and <= 100 m, is a contradiction. **Two within 7 days** (CE prefs `zone_watch` `motion_contradictions_v1`:
@@ -122,14 +135,14 @@ only when `fences > 0`. One reader ignores `resent_at`: the weather's fix (`hand
 | Case | What happens | Bound |
 |---|---|---|
 | No sensor | `NO_SENSOR`: fixes every beat | today's behaviour |
-| Sensor never fires (broken, OEM batching, UID idle) | `STILL` vouches a fix that may be wrong | 4 h after the last good fix; two contradictions distrust it for 7 days |
+| Sensor never fires (broken, OEM batching, UID idle, a fire missed in deep Doze) | `STILL` vouches a fix that may be wrong | a try every 4 h: a good fix replaces the vouch (and two contradictions distrust the sensor for 7 days); while every try fails, up to 24 h (`STILL_CEILING_MS`, amended 2026-11-25), then the age |
 | Registration refused / anchor not running | `MOVED`: fixes | today's behaviour, logged |
 | Process death, reboot, night self-update | moved; one try; the vouch ends | the age shows until the next good fix |
 | A fire during the 15-60 s attempt | the counter keeps it moved | M1 |
 | Evening walk home, then the indoor try fails | `QUIET` with back-off, no vouch; the PWA shows the last good fix's age | ~6 tries a night instead of 18 |
 | In a car, phone "still" in a pocket | the walk to the car fires the one-shot; AOSP's HAL definition counts "sitting in a moving car, coach or train" | if missed: the cap and D7 |
 | Moving car, sensor silent (a vendor's sensor re-armed mid-trip misses a smooth drive) | a fresh fix on the move - speed over 1.5 m/s, or without a speed more than 200 m + both accuracies from the last fresh fix within the interval (`fixMoving`) - leaves the gate `MOVED`: no `STILL`, no `QUIET`, every due beat fixes | until a fresh fix at rest (added before the merge, the user's question) |
-| Phone left at a friend's | still: "Hasn't moved since" is true for 4 h, then the age | - |
+| Phone left at a friend's | still: "Hasn't moved since" is true; the 4-h tries renew it, and while they fail it holds up to 24 h, then the age | `STILL_CEILING_MS` |
 | Clock set back | negative ages count as due / old, as today | - |
 | Zones crossing | `markMoved`, fixes as today | - |
 
@@ -151,7 +164,7 @@ counted; the trigger ~0). Network location on (the Jelly Star), 30-min interval.
 
 | Case | Today | Step 1 |
 |---|---|---|
-| Night 22-07 (18 beats), the evening fix succeeded | 18 GPS starts: 4.5-7 mAh; the age shows | 2 cap tries (00:30, 04:30): 0.5-0.8 mAh; "Hasn't moved since" until ~00:30, then the age |
+| Night 22-07 (18 beats), the evening fix succeeded | 18 GPS starts: 4.5-7 mAh; the age shows | 2 cap tries (00:30, 04:30) when they succeed: 0.5-0.8 mAh; when they fail (amended 2026-11-25) 5 tries (00:30, 01:00, 01:30, 02:30, 04:30): 1.3-2 mAh; "Hasn't moved since" all night |
 | Night, the evening try after the walk home failed | 18 GPS starts: 4.5-7 mAh | ~6 tries with back-off: 1.5-2.4 mAh; the age shows |
 | Night with a self-update at 03:00 | as above | + one try |
 | School day 08-15 (14 beats) | 14 GPS starts: 3.5-5.5 mAh | ~4-6 tries after walks, the rest `STILL`/`QUIET`: 0.5-2 mAh |

@@ -44,7 +44,10 @@ import com.kidslauncher.mdm.zones.freshOwnFix
 import com.kidslauncher.mdm.zones.heartbeatDue
 import com.kidslauncher.mdm.zones.fixMoving
 import com.kidslauncher.mdm.zones.motionContradiction
+import com.kidslauncher.mdm.zones.capTryResends
 import com.kidslauncher.mdm.zones.reportStill
+import com.kidslauncher.mdm.zones.stillVouched
+import com.kidslauncher.mdm.zones.stillCapFailsAfter
 import com.kidslauncher.mdm.zones.syncLocationAction
 import com.kidslauncher.mdm.zones.toQueued
 import com.kidslauncher.mdm.zones.toReport
@@ -898,6 +901,11 @@ private class LocationOutcome(
  * attempt is the Wi-Fi places' ([WifiPlaces.Ask]) - a learned fix from the 2-min fallback is reported but not fresh,
  * and the 4-h cap try may renew the still vouch through a zone link (D12: `still: true`, a new 4-h step from
  * `ZoneWatch.vouchRenewedMs`); a learned fix never contradicts the sensor and is never the vouched side (D15).
+ * Design 124 D5 amended 2026-11-25: a failed try at or past the cap with no fire is no move - `STILL` goes on, the
+ * next try after `capRetryMs` (`ZoneWatch.stillCapFails`, counted here, cleared by a fresh fix or a renewal), up to
+ * `STILL_CEILING_MS` from the vouch. The cap try itself keeps the vouch as the cached fix unless it brings a genuinely
+ * fresh fix (code QA H1, `capTryTakes`) and, failed, re-sends it with `still` (`capTryResends`) or reports none; `still`
+ * past the cap goes only with the vouch itself (code QA L4).
  */
 private suspend fun currentLocationReport(
     context: Context,
@@ -925,6 +933,8 @@ private suspend fun currentLocationReport(
     // its vouch (design 125 D12).
     val lastFreshFix = if (stillOn) ZoneWatch.lastFreshFixMs(context) else lastOwnFix
     val stillFrom = if (stillOn) maxOf(lastFreshFix, ZoneWatch.vouchRenewedMs(context)) else lastOwnFix
+    // Design 124 D5 (amended 2026-11-25): the failed tries since the vouch's 4 h ran out.
+    val capFails = if (stillOn) ZoneWatch.stillCapFails(context) else 0
     val sync = syncLocationAction(
         policy = policy,
         stillOn = stillOn,
@@ -938,18 +948,27 @@ private suspend fun currentLocationReport(
         keptFixAgeMs = kept?.let { now - it.timeMs },
         lastFreshFixMs = stillFrom,
         stillSinceMs = motionNow?.stillSinceMs ?: 0L,
+        capFails = capFails,
     )
     val action = withLowBatteryFix(sync.action, lowBatteryFix)
     val beat = sync.beat
     if (stillOn) {
         if (beat == Heartbeat.QUIET) Log.i(ZONE_LOG_TAG, "Location heartbeat: QUIET backoff=${sync.backoffMs / 60_000} min")
-        if (beat == Heartbeat.STILL || beat == Heartbeat.KEPT) Log.i(ZONE_LOG_TAG, "Location heartbeat: $beat")
+        if (beat == Heartbeat.KEPT || (beat == Heartbeat.STILL && capFails == 0)) Log.i(ZONE_LOG_TAG, "Location heartbeat: $beat")
         if (action.fresh || (beat != null && beat != Heartbeat.NOT_DUE)) ZoneWatch.stampBeat(context, now, tried = action.fresh)
         // The kept fix (passive, a series check's) becomes the reported one only here (Q-1).
         if (beat == Heartbeat.KEPT || crossing) LocateCommands.promoteKept(context)
     }
-    // P-L3: a cached fix older than the interval is never reported - but the still heartbeat's re-send (Q-3).
-    val stillBeat = reportStill(stillOn, action, motion, now, stillFrom)
+    // P-L3: a cached fix older than the interval is never reported - but the still heartbeat's re-send (Q-3); past the
+    // cap only the vouch itself (code QA L4: never a promoted kept fix or a fallback).
+    val cachedIsVouch = LocateCommands.cachedQueued()?.timeMs == lastFreshFix
+    val stillBeat = reportStill(stillOn, action, motion, now, stillFrom, capFails, cachedIsVouch)
+    if (beat == Heartbeat.STILL && capFails > 0) {
+        val vouch = if (stillBeat) "" else " not the vouch"
+        Log.i(ZONE_LOG_TAG, "Location heartbeat: STILL fails=$capFails retry=${sync.backoffMs / 60_000} min$vouch")
+    }
+    // Design 124 D5 (code QA H1): the cap's try - its attempt may replace the vouch only with a genuinely fresh fix.
+    val capTry = beat == Heartbeat.FIX && motion == Motion.STILL
     // The last fresh fix, while it is the reported one (QA L2): what D7 checks a fix taken while the gate says STILL
     // against, and what the moving-car rule measures a fix without a speed from.
     val lastFreshQueued = if (motionNow != null && action.fresh) LocateCommands.cachedQueued()?.takeIf { it.timeMs == lastFreshFix } else null
@@ -993,10 +1012,14 @@ private suspend fun currentLocationReport(
     )
     // The parent's `locate` waits up to EXPLICIT_FIX_BOUND_MS here, under the sync mutex: rare and asked for, and its
     // fix goes into this report; every other fix keeps its 15 s (preciseFix).
-    val location = LocateCommands.currentLocation(
-        context, dpm, admin, action, staysOn, cachedFixMaxAgeMs(policy, stillBeat), explicit = explicit, places = places,
+    // P-L3: a cap try's only cached answer is the vouch, re-sent with `still` or dropped below - no age limit, as a still beat's.
+    val attempted = LocateCommands.currentLocation(
+        context, dpm, admin, action, staysOn, cachedFixMaxAgeMs(policy, stillBeat || capTry), explicit = explicit, places = places,
+        capTryAtMs = if (capTry) now else null,
     )
-    val still = stillBeat || places.renewed
+    // A failed cap try (no fresh fix, no renewal): the vouch re-sent with `still` (capTryResends), else no fix (P-L3).
+    var capFailed = false
+    var capResend = false
     if (places.renewed) {
         ZoneWatch.stampVouchRenewed(context, now)
         Log.i(ZONE_LOG_TAG, "Location heartbeat: STILL renewed by " + if (places.renewedByApple) "an Apple fix" else "a zone link")
@@ -1004,7 +1027,7 @@ private suspend fun currentLocationReport(
     if (motionNow != null && action.fresh) {
         // A genuinely fresh fix of our own (not the cached or an old last-known fallback, Q-6; not a learned fix from
         // the 2-min fallback or a renewed vouch, design 125 M2).
-        val fresh = location?.takeIf { freshOwnFix(it.time, now) && !places.notFresh && !places.renewed }
+        val fresh = attempted?.takeIf { freshOwnFix(it.time, now) && !places.notFresh && !places.renewed }
         if (fresh != null) ZoneWatch.stampFreshFix(context, fresh.toQueued(LocateCommands.providerOf(fresh)))
         // The moving car: a fix on the move vouches for nothing - every due beat fixes until one at rest.
         val intervalMs = (policy ?: LocationPolicy()).intervalMinutes.coerceAtLeast(MIN_LOCATION_INTERVAL_MINUTES) * 60_000L
@@ -1016,6 +1039,14 @@ private suspend fun currentLocationReport(
         // new side of one (design 125 D15: a wrong Wi-Fi fix must not distrust the sensor).
         val satellite = fresh?.provider in VOUCHING_PROVIDERS
         if (held && fresh != null && satellite && motionContradiction(vouched, fresh.toQueued())) ZoneWatch.noteContradiction(context)
+        // Design 124 D5 (amended 2026-11-25): a failed try past the cap counts towards the retry's back-off.
+        val capFailsNow = stillCapFailsAfter(capFails, beat, motion, fresh != null, places.renewed, held)
+        if (capFailsNow > capFails) ZoneWatch.stampStillCapFails(context, capFailsNow)
+        capFailed = capTry && fresh == null && !places.renewed
+        if (capFailed) {
+            capResend = capTryResends(LocateCommands.cachedQueued()?.timeMs, lastFreshFix, held, stillVouched(motion, now, stillFrom, capFailsNow))
+            Log.i(ZONE_LOG_TAG, "Location heartbeat: cap try failed fails=$capFailsNow vouch=" + if (capResend) "re-sent" else "dropped")
+        }
         if (beat == Heartbeat.FIX || moving) {
             val result = when {
                 places.renewed -> "renewed"
@@ -1025,6 +1056,8 @@ private suspend fun currentLocationReport(
             Log.i(ZONE_LOG_TAG, "Location heartbeat: ${beat ?: "forced"} result=$result moving=$moving")
         }
     }
+    val location = attempted?.takeIf { !capFailed || capResend }
+    val still = stillBeat || places.renewed || capResend
     location ?: return LocationOutcome(action, null, null, null)
     val accuracy = if (location.hasAccuracy()) location.accuracy else null
     return LocationOutcome(
