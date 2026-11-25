@@ -35,7 +35,7 @@ findings, merge to `main`, full suite once.
   owner and I have discussed where it goes.
   1. Squeue 11: 129b (E1, L2, E2) MERGED and gated 2026-11-24/25; launcher rc.3 tagged, waiting for the owner's signing, then the Jelly, a stable 0.43.0, the server tag, then S2.
   2. Squeue 7 MERGED and gated 2026-11-25 (the owner's Jelly + stick test later); squeue 12 split into 15-34: 15 (part), 16-21 merged; 22 (https part)-27 and 32 merged; the owner answered 2026-11-25: 28 (his variant), 29, 31, 22's http part and 33 to build, 30 and 15's row dropped; 32b (the token in its own file) SOON, after the owner's Jelly testing (one re-enrolment per phone);  34 the owner's.
-  3. C3 / Phase D: Vibb's own PIN lock removed (own-mode code still in the launcher).
+  3. C3 / Phase D: Vibb's own PIN lock removed - design 132 rev 2 MERGED as a doc 2026-11-25 (design QA 1H 5M 6L taken); waiting for the owner's Q1 ("Fjern barne-PIN") and Q2 (before design 91), then D1 server first.
   4. C4: one `contracts/` folder both builds read (not started).
   5. Zones shared by the family, picked per phone (a design 64 revision; not started).
   6. CalDAV accounts belong to a phone, "Delt i familien" a choice (a design 72/72b revision; not started).
