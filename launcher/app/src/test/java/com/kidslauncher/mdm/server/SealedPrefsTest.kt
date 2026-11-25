@@ -189,6 +189,8 @@ class SealedPrefsTest {
         assertEquals(setOf("main/server/WindowRelockStore.kt"), owners("\"window_relock/token\""))
         assertEquals(setOf("main/lock/PinLockStore.kt"), owners("\"pin_lock_state/"))
         assertEquals(setOf("main/server/SealedPrefs.kt"), all.filterValues { Regex("""\bdeviceToken\(""").containsMatchIn(it) }.keys)
+        assertEquals(setOf("main/server/TailnetAuthKey.kt"), owners("mdm.tailscale_auth_key"))
+        assertEquals(setOf("main/server/TailnetAuthKey.kt"), all.filterValues { Regex("""\btailscaleAuthKey\(""").containsMatchIn(it) }.keys)
         for ((path, text) in all.filterValues { "\"window_relock\"" in it }) {
             for (raw in listOf("getString(\"token\"", "putString(\"token\"")) assertFalse("$path: $raw", raw in text)
         }

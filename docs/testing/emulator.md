@@ -5853,3 +5853,17 @@ These rows confirm it on the two versions.
 | 3 | Open the photo's properties in the gallery (or the test app's `getLatLong`) | no position (the EXIF GPS fields read empty or zero); the rest of the photo is there |
 | 4 | Revoke and grant the photos access again in Android's app info (the pause on, Settings shown) | `ACCESS_MEDIA_LOCATION` comes back `granted=true` only during the pause (it lifts every key); after the pause ends, `granted=false` with `POLICY_FIXED` again |
 | 5 | Posisjon on again in the PWA, a sync | the flag is gone (`POLICY_FIXED` cleared), the permission back to what the user gave; the gallery shows the coordinates once its photos access is granted again |
+
+## 6bp. The Tailscale key sealed; Koble til after lost settings (branch `launcher-edges`) - written, not run
+
+On **Android 14 and 16** with the user's OK. The debug launcher of this branch as Device Owner, a server of `main`
+with a tailnet key for the phone (a reusable test key from the admin console, never a real one in a doc). Logcat
+`TsnetClient`, `Provisioning`, `SealedPrefs`. The prefs file is read with `adb shell run-as me.vibb.launcher.debug cat
+shared_prefs/me.vibb.launcher.debug_preferences.xml`.
+
+| # | Step | Expect |
+|---|---|---|
+| 1 | A setup QR with `tailscale_auth_key` on a fresh emulator; read the prefs file before the join finishes (or with the network off, so the join fails) | `mdm.tailscale_auth_key` holds `ks1:` and a Base64 blob - never the key; Settings' Tailscale row shows `••••••••` and the last four |
+| 2 | The network on; the next Home resume or sync | the node joins (the PWA's Device › Tailscale row); the key is gone from the file, `tsnet_node_joined` true; Settings: "On the tailnet" |
+| 3 | Settings › Tailscale key, type a key while not joined (a fresh emulator, setup by Server URL + code) | the row's summary shows the masked key at once; the file holds `ks1:` |
+| 4 | Write a plain value by hand (`run-as ... sed` the line to a bare string), force-stop, open Settings | the row says not set, the line is gone from the file; no join is tried with it |

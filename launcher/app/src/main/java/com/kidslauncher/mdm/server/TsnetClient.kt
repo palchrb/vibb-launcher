@@ -233,7 +233,7 @@ object TsnetClient {
             return null
         }
 
-        val storedKey = LauncherPreferences.mdm().tailscaleAuthKey()
+        val storedKey = TailnetAuthKey.get()
         val authKey = when (val step = tailnetConnect(storedKey, prefs.getBoolean(TAILNET_JOINED_KEY, false), connected)) {
             TailnetConnect.Nothing -> return null
             TailnetConnect.Connected -> {
@@ -297,22 +297,21 @@ object TsnetClient {
             return leaveTailnetRefusal()
         }
         val prefs = PreferenceManager.getDefaultSharedPreferences(context)
-        val keyName = LauncherPreferences.mdm().keys().tailscaleAuthKey()
         val stateDir = context.filesDir.resolve("tailscale")
         val wasOn = client != null || prefs.getBoolean(TAILNET_JOINED_KEY, false) ||
-            !prefs.getString(keyName, null).isNullOrBlank() || stateDir.exists()
+            TailnetAuthKey.present() || stateDir.exists()
         close()
         // Nothing answers for the closed proxy's port any more (the fix round's nit 1).
         Authenticator.setDefault(null)
         // The marks first: a death mid-way leaves a phone that doesn't start tsnet, never one that rejoins.
-        val saved = prefs.edit()
-            .remove(TAILNET_JOINED_KEY)
-            .remove(keyName)
-            .remove(CRASH_GUARD_PENDING_KEY)
-            .remove(CRASH_COUNT_KEY)
-            .remove(LAST_CRASH_AT_KEY)
-            .remove(CONNECT_RETURNED_AT_KEY)
-            .commit()
+        val saved = Secrets.prefs.edit(prefs) {
+            it.raw.remove(TAILNET_JOINED_KEY)
+                .remove(CRASH_GUARD_PENDING_KEY)
+                .remove(CRASH_COUNT_KEY)
+                .remove(LAST_CRASH_AT_KEY)
+                .remove(CONNECT_RETURNED_AT_KEY)
+            TailnetAuthKey.remove(it)
+        }
         val deleted = !stateDir.exists() || stateDir.deleteRecursively()
         val answer = leaveTailnetAnswer(wasOn, saved && deleted)
         Log.i(LOG_TAG, "Leave tailnet: ${answer.second}")
@@ -333,9 +332,11 @@ object TsnetClient {
         val prefs = PreferenceManager.getDefaultSharedPreferences(context)
         val forget = forgetTailnetKey(storedKey, connected)
         if (!forget && prefs.getBoolean(TAILNET_JOINED_KEY, false)) return
-        val edit = prefs.edit().putBoolean(TAILNET_JOINED_KEY, true)
-        if (forget) edit.remove(LauncherPreferences.mdm().keys().tailscaleAuthKey())
-        if (edit.commit()) {
+        val committed = Secrets.prefs.edit(prefs) {
+            it.raw.putBoolean(TAILNET_JOINED_KEY, true)
+            if (forget) TailnetAuthKey.remove(it)
+        }
+        if (committed) {
             if (forget) Log.i(LOG_TAG, "On the tailnet - the auth key is deleted (the node state stays)")
         } else {
             Log.w(LOG_TAG, "Couldn't delete the auth key - tried again at the next connect")
