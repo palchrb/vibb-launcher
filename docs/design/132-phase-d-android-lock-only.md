@@ -441,6 +441,8 @@ Jelly Star row (not the emulator):
 
 ## 13. Questions for the owner (visible cost only)
 
+**Decided 2026-11-25 (the owner): Q1 (a) - "barne-pin er et must og ikke et valg": Remove goes, the PIN can be changed, never removed. Q2: phase D before design 91.**
+
 **Q1 - "Fjern barne-PIN" after phase D.** Today Remove is refused while Android's lock is chosen, and the way round is
 to choose Vibb One's lock first - which goes. Two ways:
 - **(a) Remove goes** (recommended): a Child PIN can be changed, not removed; the phone always has Android's lock once
