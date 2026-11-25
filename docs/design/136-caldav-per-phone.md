@@ -1,37 +1,39 @@
 # 136 - CalDAV accounts belong to a phone; "Delt i familien" is a choice (a revision of design 72 step 2 / 72b)
 
-Status: **design, revision 1**, 2026-11-25 (branch `design-136`), read against `main` fd101bd2d. Item 6 of PLAN's
+Status: **design, revision 2**, 2026-11-25 (branch `design-136`), read against `main` fd101bd2d. Item 6 of PLAN's
 locked list, approved by the owner on 2026-11-20: "på caldav om man skal skrive så må man jo skrive inn som riktig
 bruker" and "gi valget om å dele er OK, da har man fleks til begge deler!". **Server only:** one migration (0182), the
 account pages, the Calendar page's sources group, Add Calendar's CalDAV form, the Kalender select. No launcher code, no
-contract file, and no change to the policy JSON.
+contract file, and no change to the policy JSON. Revision 1 was f7c9aad70. Revision 2 takes the design QA (1 High,
+3 Medium, 5 Low; §13). The owner has not answered §11 yet, so its defaults stand.
 
 ## 0. Short answer
 
 - **An account belongs to the phone whose page added it.** `caldav_accounts` gains `owner_device_id` and `shared`.
   An unshared account shows only on its phone's Calendar page.
-- **"Delt i familien" is a switch on the account's page.** When it is on, every phone's page shows the account, and
-  any phone may tick its calendars to read them.
+- **"Delt i familien" is a switch on the owner's page of the account.** When it is on, every phone's page shows the
+  account, and any phone may tick its calendars to read them.
 - **Only the owner's phone writes.** "Barnets avtaler skrives hit" (`kid_writes`) can be set only on a calendar of an
   account the phone owns, shared or not. A sibling never writes with another child's login. The database holds this
-  rule with triggers as well as the code.
+  rule with four triggers as well as the code.
 - **Migration 0182 gives each account an owner:**
   - Calendars ticked on exactly one phone: the account becomes that phone's, not shared. This is what the owner most
     likely has.
   - Ticked on two or more phones, or on none: the account becomes shared. Its owner is the phone that writes the kid's
     events to it, else none.
   - If two phones write with the same login today, the lower device id keeps its mark and the other mark ends.
-  - A read-only preview (§3.5) prints exactly this before the update.
+  - A read-only preview (§3.5) prints this per account before the update, for the owner to check.
 - **The phone sees nothing new.** `calendar.feeds` and `calendar.kid_caldav` keep their shape. A phone loses a
   calendar only when the parent unshares an account it read. The only other change is a second writer's mark ending at
   the migration. Both are paths the launcher already handles.
-- **The password never moves.** It stays sealed under `caldav-v1:<fingerprint>:<id>`, and the owner is not part of
-  the seal. Ownership changes in three ways only:
-  - a passing Test with the **typed** password claims an account no phone holds;
-  - the parent switches sharing off on a phone's page for an account shared with no owner;
-  - the owner phone is deleted.
+- **An owner is only ever claimed with a typed password.** The password stays sealed under
+  `caldav-v1:<fingerprint>:<id>`, and the owner is not part of the seal. Ownership changes in two ways only:
+  - A passing Test with a password **typed on that phone's page** claims an account no phone owns. That is a first
+    Test that never passed, an orphan, or a shared account with no owner. The Test can be Add Calendar's or
+    "Test på nytt…" with a typed password. A shared account stays shared.
+  - The owner phone is deleted.
 
-  The stored password is never handed from one phone to another.
+  The stored password never makes an account any phone's.
 
 ## 1. Today (design 72 §6, 72b; `docs/notes/server/calendar.md`, "CalDAV accounts")
 
@@ -59,36 +61,76 @@ contract file, and no change to the policy JSON.
 3. **Who writes: the owner's phone only, shared or not** (the PLAN entry's "read-only" applies to every other phone;
    Q1 offers the strict reading). The owner wants the kid to write as the right user. The parent states which user
    that is by adding the account on that phone's page, and sharing only widens who reads. A shared account with no
-   owner is read-only for every phone.
-4. **Who manages an account** (the sharing switch, "Fjern konto…"): the owner's page, or any page when the account is
-   shared with no owner. "Test på nytt…" works on every page that shows the account. It uses the stored or typed
-   password and never shows it, and a sibling seeing "Passordet ble avvist" can fix it where it sees it.
-5. **Sharing off removes the account's calendars from the other phones.** Their `device_calendar_feeds` rows go, and
-   the phones are nudged. Their `device_calendars` rows (settings, colours, title rules) stay by key, so sharing and
-   ticking again brings them back. The account then belongs to the page's phone: it already did, or it had no owner.
-   There is no confirm (Q3). The save's line names the phones it left.
-6. **The same login on another phone's page.** Adding an account that exists already, by `(server_url, username)`:
-   - It is shown on this phone (it is this phone's, or shared): a Test as today. A passing Test replaces the
-     password. Ownership doesn't change.
-   - No phone holds it (`principal IS NULL`: a first Test that never passed; or no owner and not shared: an orphan):
-     the Test runs. **Only a pass with the typed password** makes it this phone's.
-   - It is another phone's and not shared: refused before any request. "Kontoen hører til {phone}. Del den, eller
-     fjern den der først." Nothing is tested, and the 10 s gap is not used.
+   owner is read-only for every phone until a phone claims it (decision 6).
+4. **What each page may do with an account:**
+   - The sharing switch: only the owner's page, so only an account that has an owner.
+   - "Fjern konto…": the owner's page, or any page for a shared account with no owner (as today).
+   - "Test på nytt…": every page that shows the account. It never shows the password, and a sibling seeing
+     "Passordet ble avvist" can fix it where it sees it. With a typed password, a pass on an account with no owner
+     claims it (decision 6).
+5. **Sharing off removes the account's calendars from the other phones.**
+   - Their `device_calendar_feeds` rows go, and the phones are nudged.
+   - Their `device_calendars` rows (settings, colours, title rules) stay by key, so sharing and ticking again brings
+     them back.
+   - The owner is unchanged; only an owner can switch sharing off.
+   - There is no confirm (Q3). The save's line names the phones it left.
+   - If the owner ticks none of the account's calendars, unsharing leaves it with no source. The existing trigger then
+     stamps `unused_since`, and `caldav::sweep` deletes the account and its password a day later, unless the owner
+     ticks one first. This is today's rule for an account no phone uses.
+6. **Claims and the same login on another phone's page.**
+
+   An account is **claimable** when no phone owns it: `principal IS NULL` (a first Test that never passed), or
+   `owner_device_id IS NULL` (an orphan, or a shared account with no owner). It becomes X's only by a passing Test
+   with a password typed on X's page, from Add Calendar or from "Test på nytt…". A Test with the stored password never
+   claims. A claim leaves `shared` as it was.
+
+   Adding an account that exists already, matched by `(server_url, username)`:
+   - **It is claimable:** the Test runs, and a pass claims it.
+   - **It is shown on X and has an owner** (X's own, or another phone's shared account): a Test as today. A pass
+     replaces the password, and the owner is unchanged.
+   - **It is another phone's and not shared:** refused before any request with "Kontoen hører til {phone}.", the fix
+     behind its (i). Nothing is tested, and the 10 s gap is not used.
+
+   **The same login under another spelling** (L5): a pass on X whose discovered `principal` equals the principal of
+   another phone's unshared account is refused the same way and rolled back. An e-mail on one page and a server
+   address on another must not make a second row the sibling can use.
+
+   **The claim is conditional, inside the pass's transaction** (M1):
+   `UPDATE caldav_accounts SET owner_device_id = X WHERE id = ? AND (principal IS NULL OR owner_device_id IS NULL)`,
+   run before the pass writes `principal`.
+   - Zero rows means another phone claimed it first, so there is no claim.
+   - If the account is then not shown on X, the whole pass is rolled back and answered as "Kontoen hører til {phone}."
+   - If it is still shown on X (it is shared), the pass goes on as an ordinary Test.
 
    There is no "move" action. To move an account, the parent removes it and adds it on the other phone's page. The
    keys come back because the uid is the identity.
 7. **A deleted owner phone** sets `owner_device_id` to NULL.
    - A shared account then stays shared with no owner, and its siblings keep reading.
    - An unshared one becomes an orphan. Its calendars left with the phone, so the existing trigger stamps
-     `unused_since`, and `caldav::sweep` deletes it a day later. Within that day the re-enrolled phone can claim it by
-     a passing Test with its password (decision 6).
+     `unused_since`, and `caldav::sweep` deletes it a day later.
 8. **No change to the phone's policy or contract** (§6). `calendar.feeds` is still the phone's ticked sources, and
    `calendar.kid_caldav` is still the phone's mark.
-9. **Every form sends the values it was drawn with** (design 135 decision 12). The sharing switch posts `was_shared`,
-   and the ticks post `was_on_<id>`. A save applies only what the parent changed, so a stale tab never undoes another
-   parent's change.
+9. **Every form sends the values it was drawn with** (design 135 decision 12). A save applies only what the parent
+   changed, so a stale tab never undoes another parent's change.
+   - The sharing switch posts `was_shared`.
+   - The ticks post `was_on_<id>`.
+   - "Fjern konto…" posts `was_shared` (M3). A remove whose page showed an unshared account, while it is shared now,
+     is refused: other phones would lose calendars the confirm never named.
 10. **The cap stays the family's:** 10 accounts per server (`MAX_ACCOUNTS`, counting every account that passed a
     Test). A per-phone cap is out of scope.
+11. **A replaced or re-enrolled phone takes its account back with the app password** (H1). There are three cases:
+    - **The old phone still exists:** the account is still its. Adding it on the new phone's page answers "Kontoen
+      hører til {old phone}." The parent deletes the old phone under Enheter, or removes the account on its page,
+      then adds it on the new phone's page with the app password.
+    - **The old phone is deleted and the account was shared:** the account is shared with no owner, and the new
+      phone's page shows it. "Test på nytt…" there, with the app password typed, makes it the new phone's. Then the
+      parent picks its calendar in Kalender's "Barnets avtaler" again.
+    - **The old phone is deleted and the account wasn't shared:** it is an orphan, shown nowhere. Within the day
+      before the sweep, adding it on the new phone's page with the app password claims the same row. After the sweep
+      it is simply added anew.
+
+    Either way the calendars' keys come back by uid, so their settings and title rules return. The ticks and the
+    mark are chosen again. A new mark starts with `accepted: null` ("send it all", design 72b D1.6).
 
 ## 3. Data model and migration `0182_caldav_per_phone.sql`
 
@@ -101,9 +143,13 @@ to `main`.
 
 ### 3.1 The SQL
 
-Run by the architect with Python's `sqlite3` (SQLite 3.46) on a database made from `main`'s 0001-0179 and seeded with
-every case in §9's migration test. The owners, shares and cleared marks came out as below. `foreign_key_check` and
-`integrity_check` were clean. Each trigger refused its case, and deleting an owner phone fired none of them.
+The architect ran this with Python's `sqlite3` (SQLite 3.46) on a database made from `main`'s 0001-0179, seeded with
+every case in §9. The design QA ran revision 1's SQL (without the fourth trigger) on its own scratch database, with
+the same results. The architect's run of revision 2:
+- The owners, shares and cleared marks came out as in §9.
+- `foreign_key_check` and `integrity_check` were clean.
+- Each trigger refused its case. A second conditional claim changed no row.
+- Deleting an owner phone fired no trigger, even with its mark on the account.
 
 ```sql
 -- Design 136 (docs/design/136-caldav-per-phone.md at the monorepo root), a revision of design 72 step 2 / 72b: a
@@ -112,7 +158,8 @@ every case in §9's migration test. The owners, shares and cleared marks came ou
 -- calendars and read them. Only the owner's phone may mark one of its calendars for the kid's events (`kid_writes`),
 -- so a phone never writes with another child's login. A NULL owner is an account shared before 136 that no phone
 -- wrote to, or one whose phone was deleted (an unshared one is then hidden on every page and swept as unused,
--- `caldav::sweep`). The password stays sealed under `caldav-v1:<fingerprint>:<id>`: the owner is not in it.
+-- `caldav::sweep`); a passing Test with a password typed on a phone's page makes it that phone's. The password stays
+-- sealed under `caldav-v1:<fingerprint>:<id>`: the owner is not in it.
 ALTER TABLE caldav_accounts ADD COLUMN owner_device_id INTEGER REFERENCES devices(id) ON DELETE SET NULL;
 ALTER TABLE caldav_accounts ADD COLUMN shared INTEGER NOT NULL DEFAULT 0 CHECK (shared IN (0, 1));
 CREATE INDEX idx_caldav_accounts_owner ON caldav_accounts(owner_device_id);
@@ -153,9 +200,10 @@ WHERE kid_writes = 1 AND NOT EXISTS (
     WHERE s.id = device_calendar_feeds.source_id AND a.owner_device_id = device_calendar_feeds.device_id);
 
 -- The rules, held by the database as well as the code (the code refuses first, with words): a phone ticks a CalDAV
--- calendar only of its own account or a shared one; it marks one only of its own account; and an account is made
--- unshared only with an owner and with no other phone's calendar left. A deleted phone (`SET NULL` on the owner)
--- touches only `owner_device_id`, so none of these fires for it.
+-- calendar only of its own account or a shared one; it marks one only of its own account; an account is made
+-- unshared only with an owner and with no other phone's calendar left; and an account gets a new owner only while no
+-- other phone writes to it. A deleted phone (`SET NULL` on the owner) writes a NULL owner and touches nothing else,
+-- so none of these fires for it.
 CREATE TRIGGER caldav_tick_own_or_shared BEFORE INSERT ON device_calendar_feeds
 WHEN EXISTS (SELECT 1 FROM calendar_sources s JOIN caldav_accounts a ON a.id = s.account_id
              WHERE s.id = NEW.source_id
@@ -180,24 +228,40 @@ WHEN NEW.shared = 0 AND (NEW.owner_device_id IS NULL OR EXISTS (
 BEGIN
     SELECT RAISE(ABORT, 'design 136: unshared with another phone''s calendar left, or no owner');
 END;
+
+CREATE TRIGGER caldav_owner_keeps_marks BEFORE UPDATE OF owner_device_id ON caldav_accounts
+WHEN NEW.owner_device_id IS NOT NULL AND EXISTS (
+    SELECT 1 FROM device_calendar_feeds d JOIN calendar_sources s ON s.id = d.source_id
+    WHERE s.account_id = NEW.id AND d.kid_writes = 1 AND d.device_id IS NOT NEW.owner_device_id)
+BEGIN
+    SELECT RAISE(ABORT, 'design 136: a new owner while another phone writes to the account');
+END;
 ```
 
 ### 3.2 Notes for the implementer
 
 - **Order of the statements matters:**
   - The two event-table deletes select by `kid_writes = 1`, so they run before the flag is cleared.
-  - The triggers come last, so the migration's own UPDATE doesn't fire them.
+  - The triggers come last, so the migration's own UPDATEs don't fire them.
 - **The event tables' FKs cascade on a delete of `device_calendar_feeds`, never on an update.** Ending a mark is
   therefore three statements, exactly as `calendar_kid_events::unmark` does it. `kid_caldav_tags` stays, as at an
   unmark.
-- **Untested accounts** (`principal IS NULL`) get no ticks, so the migration makes them shared with no owner. They stay
-  hidden and are swept as today. Decision 6 lets any phone claim one.
-- **`caldav_unshare_clean` fires on `UPDATE OF shared` only.** The FK's `SET NULL` on a deleted phone writes
-  `owner_device_id` alone, so deleting a phone never aborts. The unshare handler writes `shared` and `owner_device_id`
-  in one UPDATE, after deleting the other phones' rows.
+- **Untested accounts** (`principal IS NULL`) have no ticks, so the migration makes them shared with no owner. They stay
+  hidden and are swept as today. Any phone can claim one (decision 6).
+- **No trigger fires for a deleted phone:**
+  - `caldav_unshare_clean` fires on `UPDATE OF shared` only.
+  - `caldav_owner_keeps_marks` fires only for a non-NULL new owner.
+
+  The FK's `SET NULL` writes a NULL owner and nothing else, so deleting a phone never aborts. The unshare handler
+  writes `shared` alone, after deleting the other phones' rows.
+- **The claim's `UPDATE` is conditional** (decision 6). `caldav_owner_keeps_marks` is the database's guard behind it.
+  An account with no owner can't carry a mark, so the trigger only fires on a code path that would hand a marked
+  account to another phone.
 - **The `ON CONFLICT(server_url, username) DO UPDATE`** in `test_new`'s insert must not touch the owner.
-- **`backup_schema`**: the restore check compares the schema with what the migrations make. Check that
-  `migration_trigger_and_view_names` picks up the three new triggers. `migrations_from_73_in_order` gains the file.
+- **A trigger's abort** has a message starting `design 136:`. The handlers map it to their refusal, never to a 500
+  page (§4).
+- **`backup_schema`:** the restore check compares the schema with what the migrations make. Check that
+  `migration_trigger_and_view_names` picks up the four new triggers. `migrations_from_73_in_order` gains the file.
 
 ### 3.3 What is kept
 
@@ -213,8 +277,8 @@ END;
 
 - Forward-only, like every migration.
 - `startup::pre_migration_backup` takes `data/backups/pre-migrate-<from>-<to>.db`. A rollback restores that copy
-  together with the older binary (DEPLOY.md, "Rolling back the server"). Sharing changes made since the update are
-  lost.
+  together with the older binary (DEPLOY.md, "Rolling back the server"). Sharing changes and claims made since the
+  update are lost.
 - The phones need nothing: the restored server serves the same feeds. A mark ended by the migration comes back with
   `accepted: null`, which means "send it all".
 
@@ -233,6 +297,21 @@ sudo unzip -q "backups/$f" kidphone.db -d "$d"
 sudo sqlite3 -readonly -header -column "$d/kidphone.db" < caldav-preview.sql
 sudo rm -rf "$d"
 ```
+
+**What to check** (M2):
+1. **Each part-2 row:** is the username the login of the phone named as its owner? Read "no owner" as: read by those
+   phones, written by none.
+   - A kid's own account should be owned by that kid's phone.
+   - A parent's family account should be shared, with no owner, or owned by the one phone that writes to it.
+2. **Line 6** ("write marks that end") should be 0. If it isn't, Q2 applies.
+
+**The remedy for a wrong owner**, after the update:
+- Remove the account on its owner's page ("Fjern konto…").
+- Add it on the right phone's page with its app password.
+- Tick its calendars and pick the kid's calendar in Kalender again.
+
+The calendars' keys come back by uid, so their settings and title rules return. A family account that should show on
+every phone needs no remove: switch "Delt i familien" on at its owner's page.
 
 `caldav-preview.sql` (SELECTs only):
 
@@ -291,21 +370,22 @@ On the architect's seeded copy, it printed:
 2  5  e   0  no owner, shared: no phone
 ```
 
-Line 6 should be 0 on the owner's data. If it is not, Q2 decides before the update.
-
 ## 4. The server's rules (where each is checked)
 
 | Place | Rule |
 |---|---|
 | `caldav::accounts` | takes the phone: `WHERE principal IS NOT NULL AND (owner_device_id = ? OR shared = 1)`; `AccountView` gains `owner_device_id`, `shared`. Add Calendar's `accounts_full` keeps counting the family's accounts (a `COUNT(*)` as `test_new` does), not this filtered list |
-| `caldav::test_new` | takes the phone; decision 6's three cases before `claim`; a new row inserted with `owner_device_id = X`; a claim (`UPDATE … SET owner_device_id = X`) only in `run_test`'s pass, and only for a typed password |
-| `caldav::save_ticks` | the account must be shown on X, else `TickError::Gone`; `listed` is only the ids whose `on_` differs from `was_on_` (decision 9) |
-| `caldav::set_shared` (new) | §5.3's handler logic, in one `BEGIN IMMEDIATE`; returns the phones whose calendars it removed |
-| `caldav::remove` | callers check "manages" (decision 4) first |
+| `caldav::test_new` | takes the phone and the typed password; decision 6's three cases before `claim`; a new row inserted with `owner_device_id = X` |
+| `caldav::test_again` | takes the phone; a typed password may claim (decision 6), the stored one never does |
+| `run_test`'s pass | in one transaction: L5's principal check, the conditional claim **before** `principal` is written, and the rollback with "Kontoen hører til {phone}." when the account is then not shown on X |
+| `caldav::save_ticks` | **one transaction** (L1): the account is re-read inside it and must be shown on X, else `TickError::Gone`; `listed` is only the ids whose `on_` differs from `was_on_` (decision 9); never half done |
+| `caldav::set_shared` (new) | §5.3's handler logic, in one `BEGIN IMMEDIATE`; X must be the owner, re-read inside it; returns the phones whose calendars it removed |
+| `caldav::remove` | in one `BEGIN IMMEDIATE`: X must manage it (decision 4) and `was_shared` must match (M3), both re-read inside it |
 | `show_caldav`, `test_caldav_again` | the account must be shown on X, else 303 `#sources` (as a gone account today) |
-| `remove_caldav`, the sharing POST | X must manage it, else `settings_log::refused` 303 back to the page's group |
-| `handlers::calendar::caldav_source` (`save_dagen`) | the source's account has `owner_device_id = X`, **in both branches** (the "already the pick" short cut too) |
+| `remove_caldav`, the sharing POST | a refusal is `settings_log::refused`: a 303 back to the page's group |
+| `handlers::calendar::caldav_source` (`save_dagen`) | the source's account has `owner_device_id = X`, **in both branches** (the "already the pick" short cut too); re-checked in `save_dagen`'s transaction |
 | the Kalender select's options | only CalDAV calendars whose account X owns |
+| every write above | a SQLite abort whose message starts `design 136:` (a trigger, §3.1) rolls back and answers as that route's refusal, never a 500 page (L1) |
 | `calendar_kid_events` (policy, endpoint, job) | unchanged: the triggers guarantee a mark is always the owner's |
 | `caldav::sweep`, `integration_health` | unchanged |
 
@@ -314,9 +394,10 @@ itself, because a hidden link is not a check.
 
 ## 5. The PWA
 
-Every save posts to an anchor on its own page (`#calendars`, `#sharing`, `#test`, `#dagen`), and the autosave goes
-through `scroll-restore.js`, so a save never jumps to the top. A refusal is a 303 back to its group, carrying `Refused`
-in the response's extensions (`settings_log` doesn't count it), or for Add Calendar a 400 re-render as typed.
+Every save posts to an anchor on its own page (`#calendars`, `#sharing`, `#test`, `#remove`, `#dagen`), and the
+autosave goes through `scroll-restore.js`, so a save never jumps to the top. A refusal is a 303 back to its group,
+carrying `Refused` in the response's extensions (`settings_log` doesn't count it), or for Add Calendar a 400 re-render
+as typed.
 
 ### 5.1 The Calendar page, "Hentes av serveren" (`#sources`)
 
@@ -339,8 +420,7 @@ Telefon 2 › Kalender
 
 ### 5.2 The account's page `/devices/{id}/calendar/caldav/{account}`
 
-**On the owner's phone** (or any phone when the account is shared with no owner), with a new group `#sharing` between
-the calendars and Test:
+**(a) On the owner's phone.** A new group `#sharing` sits between the calendars and Test:
 
 ```
 ‹ Kalender              bruker@example.no
@@ -367,7 +447,7 @@ the calendars and Test:
  └──────────────────────────────────────┘
 ```
 
-**On a sibling's phone**, for a shared account owned by another phone:
+**(b) On a sibling's phone**, for a shared account owned by another phone:
 - a "Hører til" row with the owner's name, linking to the owner's page of this account;
 - no sharing group, and no "Fjern konto…".
 
@@ -389,29 +469,60 @@ the calendars and Test:
  └──────────────────────────────────────┘
 ```
 
-- **The (i) under "Delt i familien"** says what it does, in one variant:
-  - With an owner: "Delt: alle telefonene kan vise kalenderne. Bare {owner} kan skrive barnets avtaler hit."
-  - With none: "Delt: alle telefonene kan vise kalenderne, men ingen skriver hit. Slår du av, hører kontoen til
-    {phone}."
+**(c) A shared account with no owner, on any phone's page** (here Telefon 2):
+- "Hører til" shows a quiet "ingen". Its (i) holds `shared_info_none`, the way to claim it.
+- No sharing switch.
+- "Fjern konto…" with the shared question.
+
+```
+‹ Kalender              familie@example.no
+ ┌──────────────────────────────────────┐
+ │ Server                Nextcloud  (i) │
+ │ Logget inn              i går 09:40  │
+ │ Hører til                ingen   (i) │   NEW
+ └──────────────────────────────────────┘
+ PÅ DENNE TELEFONEN
+ ┌──────────────────────────────────────┐
+ │ Familien                      [●══]  │
+ │ Hentet 15:10 · 31 hendelser          │
+ └──────────────────────────────────────┘
+ ┌──────────────────────────────────────┐
+ │ Test på nytt…                        │
+ └──────────────────────────────────────┘
+ ┌──────────────────────────────────────┐
+ │ Fjern konto…                         │
+ └──────────────────────────────────────┘
+```
+
+**(d) The same account seen from Telefon 3 after Telefon 2 claimed it** ("Test på nytt…" with the app password typed):
+it is drawn as (b). "Hører til" says "Telefon 2 ›", and the page has no "Fjern konto…". On Telefon 2's page it is
+drawn as (a), with "Delt i familien" on.
+
+**The (i) texts and the remove question:**
+- **The (i) under "Delt i familien"** (owner's page only): "Delt: alle telefonene kan vise kalenderne. Bare {owner}
+  kan skrive barnets avtaler hit."
+- **The (i) of "Hører til · ingen":** "Alle telefonene kan vise kalenderne, men ingen skriver hit. Test på nytt med
+  app-passordet her, så hører kontoen til {phone}."
 - **"Fjern konto…"'s question** says where the calendars go:
   - Unshared: "Kalenderne forsvinner fra telefonen, og app-passordet slettes fra serveren."
   - Shared: today's "… forsvinner fra alle telefonene …".
 
 ### 5.3 The sharing switch (`POST …/caldav/{account}/sharing`)
 
-One `data-autosave` form with a `<noscript>` Save. It carries `was_shared` (1/0) and `shared` (the switch). The
-handler runs in one `BEGIN IMMEDIATE`:
+One `data-autosave` form with a `<noscript>` Save, drawn only on the owner's page. It carries `was_shared` (1/0) and
+`shared` (the switch). The handler runs in one `BEGIN IMMEDIATE`:
 
 1. **The account is gone** (or never passed a Test): 303 to `#sources`, refused.
-2. **X doesn't manage it** (a stale tab on a sibling's page): 303 to `#sharing`, refused, and nothing is written.
+2. **X isn't its owner now** (a stale tab, or a phone deleted and the account claimed since): 303 to the account page,
+   refused, and nothing is written.
 3. **`shared` equals `was_shared`, or already equals the stored value** (another parent did it): nothing changes. The
    save lands on `#sharing` with no line.
 4. **On:** `shared = 1`. No phone's policy changes, so no nudge.
 5. **Off:** in this order:
    - read the other phones with a calendar of the account;
    - delete their `device_calendar_feeds` rows for the account's sources (the orphan trigger drops a source no phone
-     has left);
-   - `UPDATE caldav_accounts SET shared = 0, owner_device_id = COALESCE(owner_device_id, X)`;
+     has left; decision 5's sweep line);
+   - `UPDATE caldav_accounts SET shared = 0 WHERE id = ?` (the owner is unchanged);
    - commit, then nudge those phones and run `colors_after_link_save` for each;
    - land on `?notice=unshared&from=<ids>#sharing`. The line under the group is "Fjernet fra Telefon 2." It names
      only phones that still exist; with none, there is no line.
@@ -431,57 +542,69 @@ nothing lands on `#calendars` with no line.
 
 Today's notices are unchanged: `kid_caldav_ended`, `caldav_full` and the unticked-mark line.
 
-### 5.5 Add Calendar's CalDAV form
+### 5.5 "Fjern konto…" (`POST …/caldav/{account}/remove`, M3)
 
-The fields don't change, and there is no sharing choice at add: an account is shared on its page. Decision 6's
-refusal renders the form as typed (400, CalDAV chosen) with the reason under **Brukernavn**:
+The confirm's form carries `was_shared`. In one `BEGIN IMMEDIATE`:
+- **X doesn't manage it now:** refused, 303 to the account page.
+- **It is shared now and `was_shared` is 0:** refused, nothing deleted. The 303 goes to `?notice=remove_shared#remove`,
+  and the page draws the confirm open with the shared question, so the parent sees that other phones lose calendars.
+- **Otherwise:** removed as today, and every phone that had one of its calendars is nudged.
+
+### 5.6 Add Calendar's CalDAV form
+
+The fields don't change, and there is no sharing choice at add: an account is shared on its page.
+
+Decision 6's refusal renders the form as typed (400, CalDAV chosen). The reason goes under **Brukernavn**, with the fix
+behind its (i) (L3):
 
 ```
  Brukernavn
  ┌──────────────────────────────────────┐
  │ bruker@example.no                    │
  └──────────────────────────────────────┘
- Kontoen hører til Telefon 1. Del den,
- eller fjern den der først.
+ Kontoen hører til Telefon 1.        (i)
 ```
 
-### 5.6 Kalender's "Barnets avtaler" (`#dagen`)
+The (i) says: "Del den under Telefon 1, eller fjern den der og legg den til her."
+
+### 5.7 Kalender's "Barnets avtaler" (`#dagen`)
 
 The CalDAV options list only calendars ticked on X whose account X owns. Kalender's (i) (`calendar.kid_caldav.info`)
 gains one sentence: "Bare kalendere fra telefonens egen konto kan velges." A posted `caldav:<uid>` of any other account
 is today's 400 (`calendar.error.kid_calendar`).
 
-### 5.7 Routes
+### 5.8 Routes
 
 | Route | What |
 |---|---|
-| `POST /devices/{id}/calendar/caldav/{account}/sharing` | new: the switch (a save; routes and ids in the settings log, never a value) |
-| `GET …/caldav/{account}`, `POST …/test` | shown on X, else 303 `#sources` |
-| `POST …/calendars` | shown on X; `was_on_<id>` diff |
-| `POST …/remove` | managed by X |
+| `POST /devices/{id}/calendar/caldav/{account}/sharing` | new: the switch, the owner's page only (a save; routes and ids in the settings log, never a value) |
+| `GET …/caldav/{account}`, `POST …/test` | shown on X, else 303 `#sources`; a typed password may claim |
+| `POST …/calendars` | shown on X; `was_on_<id>` diff; one transaction |
+| `POST …/remove` | managed by X; `was_shared` (M3) |
 | `POST /devices/{id}/calendar/caldav` | decision 6 |
 | `POST /devices/{id}/calendar/dagen` | the owner check |
 
 Every route needs full auth and CSRF. `every_calendar_route_needs_a_session` gains the new route.
 
-### 5.8 Words (nb / en)
+### 5.9 Words (nb / en)
 
 Checked against root CLAUDE.md, "Words in the UI":
 - The label is the owner's own words.
-- Explanations sit behind the (i).
-- The state is quiet: "· delt".
+- Explanations and fixes sit behind the (i).
+- The state is quiet: "· delt", "Hører til · ingen".
 - No sharing state is a warning, because sharing is the parent's choice.
-- The one refusal says what to do.
 
 | Key | nb | en |
 |---|---|---|
 | `calendar.caldav.shared` | Delt i familien | Shared with the family |
 | `calendar.caldav.shared_info` | Delt: alle telefonene kan vise kalenderne. Bare {owner} kan skrive barnets avtaler hit. | Shared: every phone can show its calendars. Only {owner} can write the kid's events here. |
-| `calendar.caldav.shared_info_none` | Delt: alle telefonene kan vise kalenderne, men ingen skriver hit. Slår du av, hører kontoen til {phone}. | Shared: every phone can show its calendars, but none writes here. Off, the account belongs to {phone}. |
-| `calendar.caldav.unshared` | Fjernet fra {phones}. | Removed from {phones}. |
 | `calendar.caldav.owner_row` | Hører til | Belongs to |
+| `calendar.caldav.owner_none` | ingen | none |
+| `calendar.caldav.shared_info_none` | Alle telefonene kan vise kalenderne, men ingen skriver hit. Test på nytt med app-passordet her, så hører kontoen til {phone}. | Every phone can show its calendars, but none writes to them. Test again here with the app password to make the account {phone}'s. |
+| `calendar.caldav.unshared` | Fjernet fra {phones}. | Removed from {phones}. |
 | `calendar.caldav.remove_confirm_own` | Kalenderne forsvinner fra telefonen, og app-passordet slettes fra serveren. | The account's calendars leave this phone, and the app password is deleted from the server. |
-| `calendar.caldav.error.other_phone` | Kontoen hører til {phone}. Del den, eller fjern den der først. | The account belongs to {phone}. Share it, or remove it there first. |
+| `calendar.caldav.error.other_phone` | Kontoen hører til {phone}. | The account belongs to {phone}. |
+| `calendar.caldav.error.other_phone_info` | Del den under {phone}, eller fjern den der og legg den til her. | Share it on {phone}'s page, or remove it there and add it here. |
 | `calendar.sources.caldav_shared` | {sub} · delt | {sub} · shared |
 | `calendar.sources.caldav_shared_from` | {sub} · delt fra {owner} | {sub} · shared from {owner} |
 | `calendar.kid_caldav.info`, one sentence added | Bare kalendere fra telefonens egen konto kan velges. | Only calendars of this phone's own account can be picked. |
@@ -506,25 +629,33 @@ change in `docs/notes/server/calendar.md` at the build.
 
 - **The password stays sealed under `caldav-v1:<fingerprint>:<id>`** and is never rendered (unchanged). Ownership is
   not part of the seal, so no re-seal happens.
-- **An account never passes to a phone on the stored password.** A claim needs a passing Test with the typed one
-  (decision 6). Unsharing gives the page's phone only an account every phone could already read.
+- **An owner is only ever claimed with a password typed on that phone's page** (decision 6). The claim is conditional
+  in the pass's transaction, and the database refuses a new owner while another phone writes to the account. The
+  stored password never makes an account a phone's, and unsharing never changes the owner.
 - **A sibling never uses another child's login to write** (the triggers, §3.1). **It reads with it only when the
-  parent shared the account.** An unshared account is invisible on its pages and refused on its routes.
+  parent shared the account.**
+  - An unshared account is invisible on the sibling's pages and refused on its routes.
+  - The same login typed under another spelling is refused at the pass (L5).
 - **Parents see every phone's pages, as before.** The refusal "Kontoen hører til Telefon 1" tells a parent nothing
   they couldn't see.
-- **Logs:** no username, password or address in any log line. The sharing save logs route and ids only.
+- **Logs:** no username, password or address in any log line. The sharing save and the claim log route and ids only.
 
-## 8. Steps
+## 8. Steps and release
 
 | # | Step | Size |
 |---|---|---|
-| B | Server, one branch: migration 0182 (§3.1); `caldav::accounts(db, device)`, `test_new`'s three cases and the typed-password claim, `save_ticks`' visibility and `was_on_` diff, `set_shared`; the handlers' checks (§4); the sources rows' sub-lines; the account page (owner row, `#sharing`, the remove question); the Kalender options and `caldav_source`'s owner check; the route; nb/en; the tests (§9, §10); `docs/notes/server/calendar.md` ("CalDAV accounts": the family's → the phone's, sharing; "Device › Calendar's sources"; 72b's model line) | S-M |
+| B | Server, one branch: migration 0182 (§3.1); `caldav::accounts(db, device)`, `test_new`/`test_again` with the typed-password claim (conditional, in the pass's transaction) and L5's principal check, `save_ticks` in one transaction with its visibility and `was_on_` diff, `set_shared`, `remove`'s `was_shared`; the trigger aborts mapped to refusals; the handlers' checks (§4); the sources rows' sub-lines; the account page's four states (§5.2), `#sharing`, the remove question; the Kalender options and `caldav_source`'s owner check; the route; nb/en; the tests (§9, §10); `docs/notes/server/calendar.md` ("CalDAV accounts": the family's → the phone's, sharing, claims; "Device › Calendar's sources"; 72b's model line) | S-M |
 
 **No launcher step and no emulator gate.** There is no launcher change, and the phone sees only two existing paths
 (§6), which design 72's §6y and 72b's §6z cover. The implementer checks §5's pages in a browser against a seeded
-server, at phone width.
+server, at phone width, all four states of §5.2 included.
 
-**Release:** a server release ships it, after 0180 and 0181.
+**Release.** A server release ships it, after 0180 and 0181. Its release notes carry one line (M2):
+
+> CalDAV accounts now belong to the phone they were added on; one used on several phones is shared ("Delt i
+> familien"), and only its own phone writes the kid's events to it. Before updating, run the preview in design 136
+> §3.5 on a backup copy and check each account's owner; a wrong one is fixed by removing the account and adding it on
+> the right phone's page.
 
 ## 9. Migration test
 
@@ -550,13 +681,16 @@ After the migration:
 - Every phone's `calendar.feeds` equals what it was before. Every phone's `calendar.kid_caldav` equals what it was
   before, except Telefon 4's, which is `null`.
 - `foreign_key_check` is clean.
-- The three triggers refuse their cases:
+- The four triggers refuse their cases:
   - Telefon 2 ticks A;
   - Telefon 3 marks C;
   - Telefon 1 marks B;
   - B is unshared while Telefon 1 ticks it;
-  - C is unshared with no owner.
-- Deleting Telefon 1 leaves A with no owner and its `unused_since` stamped, and B unchanged.
+  - C is unshared with no owner;
+  - D is given to Telefon 4 while Telefon 3 writes to it.
+- The conditional claim makes C Telefon 2's (one row). A second claim by Telefon 3 changes no row.
+- Deleting Telefon 1 leaves A with no owner and its `unused_since` stamped, and B unchanged. Deleting Telefon 3, D's
+  writing owner, fires no trigger and leaves D shared with no owner.
 
 `migrations_from_73_in_order` gains the file.
 
@@ -569,14 +703,24 @@ After the migration:
     - POST ticks, Test, sharing and remove.
   - Telefon 2's Kalender has no option for it, and a posted `caldav:<uid>` is a 400.
 - **The same login elsewhere:**
-  - Adding Telefon 1's unshared account on Telefon 2 is the 400 with `other_phone` under Brukernavn. The fake DAV sees
-    no request, and the password and `tested_at` are unchanged.
-  - Adding a shared one on Telefon 2 runs Test. A pass replaces the password and keeps the owner.
-- **Claims:**
+  - Adding Telefon 1's unshared account on Telefon 2 is the 400 with `other_phone` under Brukernavn, with its (i). The
+    fake DAV sees no request, and the password and `tested_at` are unchanged.
+  - Adding a shared one with an owner on Telefon 2 runs Test. A pass replaces the password and keeps the owner.
+  - L5: Telefon 1's unshared account typed on Telefon 2 under another spelling (the e-mail on one page, the server
+    address on the other) passes discovery with the same principal. It is refused and rolled back, and no second row
+    stays usable on Telefon 2.
+- **Claims (H1, M1):**
   - An untested row left by a failed first Test on Telefon 1 is claimed by Telefon 2's passing add.
-  - An orphan (owner deleted, not shared) is claimed only by a passing Test with the typed password. A wrong password
+  - An orphan (owner deleted, not shared) is claimed only by a passing add with the typed password. A wrong password
     leaves it an orphan.
-  - "Test på nytt" with the stored password never claims.
+  - A shared account with no owner: on Telefon 2's page, "Test på nytt…" with the typed password makes it Telefon 2's.
+    `shared` stays 1, and Telefon 3 keeps its ticks. "Test på nytt…" with the stored password changes no owner. Its
+    page shows no sharing switch before the claim, and the switch after.
+  - Two phones' Tests race for one account with no owner: exactly one claims. The other's pass goes on as an ordinary
+    Test when the account is still shown on it, else it is rolled back with "Kontoen hører til {phone}".
+  - A replaced phone (decision 11): Telefon 1 writes to its shared account and is deleted. The new Telefon 5's page
+    shows the account with "Hører til · ingen". Telefon 5's typed-password Test claims it, and its Kalender can mark
+    the calendar again. The calendar's `device_calendars` settings come back by key.
 - **Sharing on:**
   - Telefon 2 then sees "· delt fra Telefon 1" and the "Hører til" row, and can tick a calendar. Telefon 2's
     `calendar.feeds` gains it.
@@ -587,26 +731,41 @@ After the migration:
   - Telefon 2's ticks go, Telefon 2 is nudged, and the line names Telefon 2.
   - Telefon 2's `device_calendars` rows stay, so sharing and ticking again bring the settings back.
   - Telefon 1's mark is untouched.
-  - An account shared with no owner, unshared on Telefon 3's page, becomes Telefon 3's.
+  - An account with no owner has no switch, and a forged sharing post for it is refused.
+  - L4: unsharing an account the owner ticks none of leaves no source. `unused_since` is stamped, and the sweep
+    deletes the account after `UNUSED_HOURS` unless the owner ticks one first.
 - **Stale forms:**
   - A stale tab with `was_shared = 1` posting off after another parent unshared changes nothing.
   - A stale sibling tab is refused.
   - A stale ticks tab doesn't untick a calendar ticked meanwhile, and a post that changed nothing lands on
     `#calendars`.
+  - M3: a remove posted with `was_shared = 0` after the account was shared is refused. Nothing is deleted, and the
+    page comes back at `#remove` with the shared question open.
+- **Aborts are refusals (L1):** a tick or a mark that hits a trigger (forced in the test by sharing off between the
+  page's read and the save) answers the route's refusal, not a 500, and `save_ticks` leaves no tick of that post
+  behind.
 - **Deleted owner:**
   - A shared account becomes ownerless, and the siblings keep their feeds.
   - An unshared one is hidden everywhere and swept after `UNUSED_HOURS`.
-- **Landing:** `shell::every_form_on_every_page_lands_on_its_own_group` covers `#sharing`.
+- **Landing:** `shell::every_form_on_every_page_lands_on_its_own_group` covers `#sharing` and `#remove`.
   `every_calendar_route_needs_a_session` covers the new route.
 - **The settings log:** the sharing route is a save that records route and ids only. A refusal isn't counted.
 - **`seeded_family`** gives its accounts an owner.
 
 ## 11. Open owner questions (each with a recommended default)
 
-1. **Does the owner phone keep writing when the account is shared?** Recommended: **yes**. Other phones read; only
-   the phone the parent added it on writes, as its own user. The alternative is PLAN's strict reading, "shared means
-   read-only for all": sharing an account would end its mark, and a family calendar written by one kid and read by
-   the other would need two accounts.
+The owner has not answered these yet. The build follows the defaults unless the owner says otherwise.
+
+1. **Does the owner phone keep writing when the account is shared?** Recommended: **yes**. Other phones read, and
+   only the phone the parent added the account on writes, as its own user.
+
+   The alternative is PLAN's strict reading, "shared means read-only for all". It would change exactly this:
+   - **Decision 3** becomes "a shared account is read-only for every phone, its owner included".
+   - **The migration:** every shared account that has a writer loses its mark. These are the preview's "shared, its
+     owner writes there" rows (b and d in §3.5's example). Their writing phones keep their ticks, and line 6 counts
+     them too.
+   - **After the update:** switching sharing on ends the owner's mark. That switch would then need a confirm, and a
+     calendar that one kid writes to and another reads would need two accounts.
 2. **Two phones writing with the same login today:** the lower device id keeps its mark, and the other ends at the
    update. What was written stays, and that kid's events stay on the phone. Recommended: **yes**. Line 6 of the
    preview says whether it happens at all. It is most likely 0.
@@ -619,5 +778,28 @@ After the migration:
 - Moving an account between phones without retyping its password
 - A per-phone account cap
 - A sharing choice on the add form
+- Two rows of the same login that are both shown on one phone (as today)
 - Sharing calendar links (`kind = 'ics'`; they are already per phone, the fetch shared)
 - Design 72b's write path itself (unchanged)
+
+## 13. Revision 2: the design QA (1H 3M 5L)
+
+- **H1 (claims):** an owner is claimed only by a passing Test with a typed password on that page (add, or "Test på
+  nytt…"), and `shared` stays as it was. The sharing switch is drawn only for an account with an owner. Unsharing no
+  longer sets the owner (the `COALESCE` is gone). `shared_info_none` is rewritten as the way to claim. Decision 11
+  covers the replaced or re-enrolled phone. The tests are in §10, "Claims".
+- **M1:** the claim is a conditional `UPDATE` in the pass's transaction, and a lost race means no claim. The fourth
+  trigger, `caldav_owner_keeps_marks`, refuses a new owner while another phone holds a mark on the account. Both were
+  run on the seeded database (§3.1).
+- **M2:** §3.5 asks the owner to check every part-2 row's owner, gives the remedy (remove and add on the right page;
+  the keys come back by uid), and §8 carries the release-note line.
+- **M3:** the remove form posts `was_shared`. A remove of an account shared since the page was drawn is refused, with
+  the confirm drawn again (§5.5).
+- **L1:** every write re-reads ownership inside its transaction, `save_ticks` is one transaction, and a `design 136:`
+  abort is mapped to the route's refusal.
+- **L2:** §5.2 draws (c), a shared account with no owner, and (d), that account from a sibling after a claim.
+- **L3:** the add refusal is "Kontoen hører til {phone}.", with the fix behind the (i). The English sentences are
+  fixed (§5.9).
+- **L4:** decision 5 and a test cover the one-day sweep after an unshare leaves no source.
+- **L5:** a pass whose principal equals another phone's unshared account is refused (decision 6).
+- **Owner questions:** none answered yet. Q1 now says exactly what the strict reading would change.
