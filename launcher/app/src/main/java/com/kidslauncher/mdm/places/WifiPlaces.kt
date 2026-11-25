@@ -178,12 +178,6 @@ object WifiPlaces {
 
     @Volatile private var moving: MovingSsids? = null
 
-    /** Debug builds only (the emulator gate's receiver, design 131 §7): a made-up scan and connection in place
-     * of the radio's - the emulator's own Wi-Fi is open and hears no other network. Nothing sets them in a release build. */
-    @Volatile internal var debugResults: List<ScanAp>? = null
-
-    @Volatile internal var debugConnected: Connected? = null
-
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val executor = Executors.newSingleThreadExecutor()
 
@@ -328,10 +322,11 @@ object WifiPlaces {
         Log.i(LOG_TAG, "scan refusals $line")
     }
 
-    private fun cached(context: Context): List<ScanAp> = debugResults?.let { list ->
-        // Heard now: a made-up scan is always fresh.
-        val now = SystemClock.elapsedRealtime()
-        list.map { it.copy(elapsedMs = now) }
+    /** The cached results. Debug builds only ([PlacesDebugHooks], design 131 §7, design 134 §7): a made-up scan, heard
+     * now or the hook's age ago, in place of the radio's - the emulator's own Wi-Fi is open and hears no other network. */
+    private fun cached(context: Context): List<ScanAp> = PlacesDebugHooks.madeUpResults()?.let { list ->
+        val heardAt = SystemClock.elapsedRealtime() - PlacesDebugHooks.resultsAgeMs()
+        list.map { it.copy(elapsedMs = heardAt) }
     } ?: try {
         wifi(context)?.scanResults.orEmpty().map(::scanAp)
     } catch (e: SecurityException) {
@@ -367,9 +362,10 @@ object WifiPlaces {
         }
         try {
             wm.registerScanResultsCallback(executor, callback)
+            // A debug build's hook may count the scan as throttled (design 134 §7); a release build always asks.
             @Suppress("DEPRECATION")
             when {
-                !wm.startScan() -> refused(if (wm.isWifiEnabled) "throttled" else "wifioff")
+                PlacesDebugHooks.scanRefused() || !wm.startScan() -> refused(if (wm.isWifiEnabled) "throttled" else "wifioff")
                 withTimeoutOrNull(SCAN_WAIT_MS) { done.await() } == null -> refused("unanswered")
             }
         } catch (e: SecurityException) {
@@ -384,7 +380,7 @@ object WifiPlaces {
 
     /** D4, D17: the connected network, with its metering from the active network's capabilities (merged through our VPN);
      * design 131: its security (`getCurrentSecurityType`, API 31) and Android's id of the saved network. */
-    private fun connected(context: Context): Connected? = debugConnected ?: try {
+    private fun connected(context: Context): Connected? = PlacesDebugHooks.madeUpConnected() ?: try {
         @Suppress("DEPRECATION")
         val info = wifi(context)?.connectionInfo
         val bssid = connectedBssid(info?.bssid)

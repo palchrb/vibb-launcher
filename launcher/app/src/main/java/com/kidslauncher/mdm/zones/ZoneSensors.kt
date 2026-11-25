@@ -12,6 +12,7 @@ import android.location.LocationRequest
 import android.os.SystemClock
 import android.util.Log
 import com.kidslauncher.mdm.BuildConfig
+import com.kidslauncher.mdm.places.PlacesDebugHooks
 import com.kidslauncher.mdm.server.LocateCommands
 import java.util.concurrent.Executors
 
@@ -133,10 +134,14 @@ object MotionGate {
     private var listener: TriggerEventListener? = null
     private var armedHere = false
 
+    /** Debug builds only: the emulator gate's made-up trigger is armed (design 134 §7, [PlacesDebugHooks]). */
+    private var fakeArmed = false
+
     private fun sensor(context: Context): Sensor? =
         context.getSystemService(SensorManager::class.java)?.getDefaultSensor(Sensor.TYPE_SIGNIFICANT_MOTION)
 
-    fun hasSensor(context: Context): Boolean = sensor(context) != null
+    /** The phone has the sensor - or, in a debug build only, the emulator gate's made-up trigger stands in for it. */
+    fun hasSensor(context: Context): Boolean = sensor(context) != null || PlacesDebugHooks.motionSensor()
 
     /** What an attempt reads before its LocationManager call, in one go (M1). */
     @Synchronized
@@ -169,9 +174,19 @@ object MotionGate {
     @Synchronized
     private fun ensureArmed(context: Context, reason: String) {
         val manager = context.getSystemService(SensorManager::class.java) ?: return
-        val sensor = sensor(context) ?: return
         app = context.applicationContext
-        if (listener != null) return
+        if (listener != null || fakeArmed) return
+        val sensor = sensor(context)
+        if (sensor == null) {
+            // Design 134 §7: the debug build's made-up trigger, armed and fired as the real one; a release build's
+            // twin arms nothing.
+            if (PlacesDebugHooks.armTrigger { fired() }) {
+                fakeArmed = true
+                armedHere = true
+                Log.i(LOG_TAG, "Motion trigger armed ($reason)")
+            }
+            return
+        }
         val l = object : TriggerEventListener() {
             override fun onTrigger(event: TriggerEvent?) = fired()
         }
@@ -198,6 +213,7 @@ object MotionGate {
         val context = synchronized(this) {
             flags = flags.moved(SystemClock.elapsedRealtime())
             listener = null
+            fakeArmed = false
             app
         }
         Log.i(LOG_TAG, "Motion trigger fired")
@@ -236,6 +252,8 @@ object MotionGate {
         val l = listener
         listener = null
         flags = flags.moved(SystemClock.elapsedRealtime())
+        if (fakeArmed) PlacesDebugHooks.disarmTrigger()
+        fakeArmed = false
         if (l == null) return
         try {
             val manager = context.getSystemService(SensorManager::class.java)

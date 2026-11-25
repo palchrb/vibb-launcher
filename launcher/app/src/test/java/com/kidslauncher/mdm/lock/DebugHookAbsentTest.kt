@@ -11,7 +11,9 @@ import java.io.File
  * src/main or src/release names it, the main manifest doesn't declare its receiver, and the
  * release `LockTaskDebug` passes the computed setting through. The built release APK is checked
  * too (`checkReleaseHasNoDebugHook`, a dependency of assembleRelease). The same for design 24b's
- * vault-key receiver and design 28's fake headset. The debug manifest declares exactly these receivers.
+ * vault-key receiver and design 28's fake headset. The debug manifest declares exactly these receivers. Design 134 §7:
+ * the Wi-Fi places' made-up scan age, throttled scan and motion trigger live in the debug `PlacesDebugHooks`; its
+ * release twin answers "nothing".
  */
 class DebugHookAbsentTest {
     private fun dir(path: String) = listOf("src/$path", "app/src/$path").map(::File).first { it.exists() }
@@ -29,7 +31,7 @@ class DebugHookAbsentTest {
         assertTrue(outside.size > 100)
         for (f in outside) {
             // Raw text, comments included: a KDoc naming a hook fails too (design 28 QA L3).
-            for (banned in listOf("LockTaskOverride", "lock_task_debug_override", "extra_lock_task_packages", "PinVaultKeyReceiver", "HeadsetDebugReceiver", "MmsDebugReceiver", "ElementCallDebugReceiver", "UpDebugReceiver", "BtPairingDebugReceiver", "PlacesDebugReceiver", "push_hex")) {
+            for (banned in listOf("LockTaskOverride", "lock_task_debug_override", "extra_lock_task_packages", "PinVaultKeyReceiver", "HeadsetDebugReceiver", "MmsDebugReceiver", "ElementCallDebugReceiver", "UpDebugReceiver", "BtPairingDebugReceiver", "PlacesDebugReceiver", "push_hex", "fakeMotion", "scanAgeS", "refuseScan", "scan_age_s", "refuse_scan")) {
                 assertFalse("${f.path} names $banned", f.readText().contains(banned))
             }
         }
@@ -71,6 +73,32 @@ class DebugHookAbsentTest {
         assertFalse(release.contains("var "))
         val callers = sources("main").filter { code(it).contains("MmsDebug.") }.map { it.name }.sorted()
         assertEquals(listOf("MmsRuntime.kt", "SmsRuntime.kt"), callers)
+    }
+
+    @Test
+    fun `release PlacesDebugHooks hears nothing, fakes nothing, and only the places and the motion gate call it`() {
+        // Design 134 §7: no made-up scan or connection, no age, no throttled scan, no fake trigger in a release build.
+        val release = code(dir("release/java/com/kidslauncher/mdm/places/PlacesDebugHooks.kt"))
+        assertEquals(7, Regex("\\bfun ").findAll(release).count())
+        for (line in listOf(
+            "fun madeUpResults(): List<ScanAp>? = null\n",
+            "fun madeUpConnected(): Connected? = null\n",
+            "fun resultsAgeMs(): Long = 0L\n",
+            "fun scanRefused(): Boolean = false\n",
+            "fun motionSensor(): Boolean = false\n",
+            "fun armTrigger(onFire: () -> Unit): Boolean = false\n",
+            "fun disarmTrigger() {}\n",
+        )) {
+            assertTrue(line, release.contains(line))
+        }
+        assertFalse(release.contains("var ") || release.contains("val "))
+        val callers = sources("main").filter { code(it).contains("PlacesDebugHooks") }.map { it.name }.sorted()
+        assertEquals(listOf("WifiPlaces.kt", "ZoneSensors.kt"), callers)
+        // The debug twin has every function the release one has.
+        val debug = code(dir("debug/java/com/kidslauncher/mdm/places/PlacesDebugHooks.kt"))
+        for (name in listOf("madeUpResults", "madeUpConnected", "resultsAgeMs", "scanRefused", "motionSensor", "armTrigger", "disarmTrigger")) {
+            assertTrue(name, debug.contains("fun $name("))
+        }
     }
 
     @Test
