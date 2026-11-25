@@ -106,14 +106,14 @@ async fn every_form_on_the_locate_pages_returns_to_its_group() {
     app.enrolled_device("Emil").await;
     // A zone with the phone in Only when asked (design 64, code QA Q-3): Zones' Locate Regularly
     // is on its page.
-    sqlx::query(
-        "INSERT INTO device_zones (device_id, name, latitude, longitude, radius_m) \
-         VALUES (?, 'Home', 59.9139, 10.7522, 150)",
-    )
-    .bind(id)
-    .execute(&app.db)
-    .await
-    .unwrap();
+    let link = super::zones::insert_zone(&app, id, "Home", 59.9139, 10.7522, 150).await;
+    let zone = super::zones::zone_of(&app, link).await;
+    // The Zones page's switches as drawn (checkboxes aren't hidden fields): a post that changes nothing.
+    let (use_on, arrive_on, leave_on) = (
+        format!("use_{zone}"),
+        format!("arrive_{link}"),
+        format!("leave_{link}"),
+    );
     let lock = waiting(&app, id, "lock", "datetime('now', '-1 minutes')").await;
     let mut found = Vec::new();
     for (path, html) in [
@@ -142,7 +142,7 @@ async fn every_form_on_the_locate_pages_returns_to_its_group() {
     let settings = format!("/devices/{id}/location-settings");
     // (action as rendered, the fields a parent sends, the expected Location).
     type Row<'a> = (String, &'a [(&'a str, &'a str)], (String, Option<&'a str>));
-    let table: [Row; 10] = [
+    let table: [Row; 11] = [
         (
             format!("/devices/{id}/command/locate#update-location"),
             &[],
@@ -152,6 +152,16 @@ async fn every_form_on_the_locate_pages_returns_to_its_group() {
         (
             format!("/devices/{id}/location-policy#zones"),
             &[],
+            (format!("/devices/{id}/zones"), Some("zones")),
+        ),
+        // Design 135: the Zones page's autosave form; a post that changed nothing lands on #zones.
+        (
+            format!("/devices/{id}/zones#zones"),
+            &[
+                (use_on.as_str(), "on"),
+                (arrive_on.as_str(), "on"),
+                (leave_on.as_str(), "on"),
+            ],
             (format!("/devices/{id}/zones"), Some("zones")),
         ),
         (
@@ -389,13 +399,14 @@ async fn links_to_the_moved_groups_resolve() {
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("Emma").await;
     let lock = std::fs::read_to_string("templates/device_lock.html").unwrap();
-    let zone = std::fs::read_to_string("templates/device_zone.html").unwrap();
+    let zone = std::fs::read_to_string("templates/family_zone.html").unwrap();
     for template in [&lock, &zone] {
         assert!(!template.contains("devices/locate?device="), "{template}");
     }
     assert!(lock.contains("href=\"/devices/{{ device.id }}/location-settings\""));
     assert!(lock.contains("href=\"/devices/{{ device.id }}/zones\""));
-    assert!(zone.contains("\"/devices/\" ~ device.id ~ \"/zones\""));
+    // Design 135: the editor's Back is the page it came from (`back_href`).
+    assert!(zone.contains("band::editor(title, back_href, back_label)"));
     // Show all goes to the phone's Activity page (2026-11-13), which answers while it is empty
     // too: a done ring eight days old is still Find Phone's newest Ring, past Activity's week.
     let (lily, _) = app.create_device("Lily").await;
@@ -429,7 +440,7 @@ async fn links_to_the_moved_groups_resolve() {
     assert!(page.contains("data-row=\"empty\""), "{page}");
     assert!(!page.contains("data-command="), "{page}");
     let new_zone = app
-        .get_page(&format!("/devices/{id}/zones/new"), &cookie)
+        .get_page(&format!("/zones/new?device={id}"), &cookie)
         .await
         .text();
     assert!(new_zone.contains(&format!("class=\"nav-back\" href=\"/devices/{id}/zones\"")));
@@ -1550,11 +1561,11 @@ async fn the_locate_tab_speaks_norwegian() {
     );
 
     let zone = app
-        .get_page(&format!("/devices/{id}/zones/new?lang=nb"), &cookie)
+        .get_page(&format!("/zones/new?device={id}&lang=nb"), &cookie)
         .await
         .text();
     assert!(zone.contains(r#"<html lang="nb">"#) && zone.contains("Ny sone"));
-    assert!(zone.contains(">Kommer</span>"));
+    assert!(zone.contains(">Telefoner</h2>"), "{zone}");
 
     let locations = app
         .get_page(&format!("/devices/{id}/locations?lang=nb"), &cookie)
@@ -1686,14 +1697,7 @@ async fn phones_json_tells_each_phone_fresh_or_old_by_its_own_setting() {
     only_fix(&app, emma, 31, None).await;
     assert_eq!(phone_row(&app, &cookie, "", emma).await["fresh"], false);
     // A zone the phone watches: served 30 min, fresh while younger than an hour; the zone word.
-    sqlx::query(
-        "INSERT INTO device_zones (device_id, name, latitude, longitude, radius_m) \
-         VALUES (?, 'Skolen', 59.9139, 10.7522, 150)",
-    )
-    .bind(emma)
-    .execute(&app.db)
-    .await
-    .unwrap();
+    super::zones::insert_zone(&app, emma, "Skolen", 59.9139, 10.7522, 150).await;
     app.post_status(
         &token,
         serde_json::json!({"zone_watch": {"fences": 1,
@@ -1978,14 +1982,7 @@ async fn update_location_is_the_first_row_and_the_map_has_no_box() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("Anna").await;
-    sqlx::query(
-        "INSERT INTO device_zones (device_id, name, latitude, longitude, radius_m) \
-         VALUES (?, 'School', 59.9, 10.7, 500)",
-    )
-    .bind(id)
-    .execute(&app.db)
-    .await
-    .unwrap();
+    super::zones::insert_zone(&app, id, "School", 59.9, 10.7, 500).await;
     fix(&app, id, 59.9, 10).await;
     let html = locate_page(&app, &cookie, &format!("?device={id}")).await;
     for gone in ["fix-age", "data-row=\"fix\"", "data-fix-still>"] {

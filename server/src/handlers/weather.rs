@@ -34,7 +34,7 @@ struct Settings {
 
 async fn settings(state: &AppState, device_id: i64) -> Result<Option<Settings>, sqlx::Error> {
     let row: Option<(bool, String, Option<i64>)> = sqlx::query_as(
-        "SELECT lock_weather, location_mode, weather_zone_id FROM device_policy WHERE device_id = ?",
+        "SELECT lock_weather, location_mode, weather_family_zone_id FROM device_policy WHERE device_id = ?",
     )
     .bind(device_id)
     .fetch_optional(&state.db)
@@ -75,13 +75,12 @@ async fn cell_of(
     let Some(zone_id) = settings.zone_id else {
         return Ok(None);
     };
-    let zone: Option<(f64, f64)> = sqlx::query_as(
-        "SELECT latitude, longitude FROM device_zones WHERE id = ? AND device_id = ?",
-    )
-    .bind(zone_id)
-    .bind(device_id)
-    .fetch_optional(&state.db)
-    .await?;
+    // Design 135: the family zone's centre, linked to this phone or not.
+    let zone: Option<(f64, f64)> =
+        sqlx::query_as("SELECT latitude, longitude FROM family_zones WHERE id = ?")
+            .bind(zone_id)
+            .fetch_optional(&state.db)
+            .await?;
     Ok(zone.and_then(|(lat, lon)| Cell::of(lat, lon)))
 }
 

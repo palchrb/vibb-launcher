@@ -193,11 +193,15 @@ struct LocationSettingsTemplate {
 }
 crate::i18n::words!(LocationSettingsTemplate);
 
-/// The Zones page's `#zones` (design 64 §3.5, §3.6; design 88): a row per zone, Add Zone, the line
-/// after a save or a delete, what the location settings mean for the zones.
+/// The Zones page's `#zones` (design 64 §3.5, §3.6; design 88; design 135 §5.4): a cell per family
+/// zone - its switch for this phone and, while linked, the parent's own Arrive and Leave -, Add Zone
+/// and All Zones, the line after a save or a delete, what the location settings mean for the zones.
 struct ZonesView {
+    /// One cell per family zone, in the family's order (a toggle never reorders them).
     rows: Vec<ZoneRow>,
-    /// 10 zones: Add Zone is replaced by a note, "10 zones is the most".
+    /// The phone's links ([ZoneRow::link]): what the Zones row counts, the watch's zones.
+    linked: usize,
+    /// 50 family zones: Add Zone is replaced by a note, "50 zones is the most".
     full: Option<String>,
     /// After a delete (`?zone=deleted`): the group's line.
     flash: Option<&'static str>,
@@ -220,14 +224,28 @@ struct ZonesView {
     watch_line: Option<String>,
 }
 
-/// A zone's row: "Home" over "150 m · arrive and leave", its value ([Presence]), and after its
-/// save the line under it.
+/// A family zone's cell (design 135 §5.4): "Hjem" over "150 m" and, while linked, [Presence]; the
+/// switch for this phone; the parent's Arrive and Leave while linked; after its save the line under
+/// it, or the refusal of a link over the cap.
 struct ZoneRow {
+    /// The family zone's id (the cell's anchor, `#zone-N`).
     id: i64,
     name: String,
     sub: String,
+    /// Linked to this phone: the link and the signed-in parent's switches.
+    link: Option<LinkCell>,
     presence: Presence,
     flash: Option<&'static str>,
+    /// `?refused=full` for this zone: "10 zones is the most".
+    refused: Option<String>,
+}
+
+/// A cell's link: its id (`alerts=`), and the signed-in parent's switches (`zone_alerts`, no row =
+/// on).
+struct LinkCell {
+    id: i64,
+    arrive: bool,
+    leave: bool,
 }
 
 /// What a zone's row says of the phone (code QA Q-1, Q-2).
@@ -286,26 +304,16 @@ fn fix_badge(lang: Lang, zones: &[crate::zones::Zone], fix: &DeviceLocation) -> 
     Some(t_params(lang, key, &[("zones", &inside.join(" · "))]))
 }
 
-/// What a zone's row says it notifies about.
-fn notify_words(lang: Lang, arrive: bool, leave: bool) -> &'static str {
-    t(
-        lang,
-        match (arrive, leave) {
-            (true, true) => "locate.zones.notify.both",
-            (true, false) => "locate.zones.notify.arrive",
-            (false, true) => "locate.zones.notify.leave",
-            (false, false) => "locate.zones.notify.none",
-        },
-    )
-}
-
-/// The zones' part of the page for `zones` with the location setting (`mode`, `interval` - the
-/// served one, design 64 step 2) and "Keep location on" (`locked`); `flash` is `?zone=`,
-/// `flash_zone` `?zone_id=`; `newest` the newest fix's time and `seen` the later of it and its
-/// last still re-send (Q-3); `watch` the phone's latest `zone_watch` (step 2).
+/// The zones' part of the page for the family's zones (`family`), the phone's links (`zones`) and
+/// the signed-in parent's switches (`alerts`, by link) with the location setting (`mode`,
+/// `interval` - the served one, design 64 step 2) and "Keep location on" (`locked`); `flash` is
+/// `?zone=` or `?refused=`, `flash_zone` `?zone_id=`; `newest` the newest fix's time and `seen` the
+/// later of it and its last still re-send (Q-3); `watch` the phone's latest `zone_watch` (step 2).
 #[allow(clippy::too_many_arguments)]
 fn zones_view(
+    family: &[crate::zones::FamilyZone],
     zones: &[crate::zones::Zone],
+    alerts: &HashMap<i64, (bool, bool)>,
     mode: &str,
     interval: i64,
     locked: bool,
@@ -325,35 +333,49 @@ fn zones_view(
         Some("saved") => Some(t(lang, "common.saved")),
         _ => None,
     };
-    let rows = zones
+    let refused = (flash == Some("full")).then(|| {
+        t_params(
+            lang,
+            "locate.zones.full",
+            &[("max", &crate::zones::MAX_ZONES.to_string())],
+        )
+    });
+    let rows = family
         .iter()
-        .map(|z| ZoneRow {
-            id: z.id,
-            name: z.name.clone(),
-            sub: t_params(
-                lang,
-                "locate.zones.sub",
-                &[
-                    ("radius", &z.radius_m.to_string()),
-                    (
-                        "notify",
-                        notify_words(lang, z.notify_arrive, z.notify_leave),
-                    ),
-                ],
-            ),
-            presence: match newest {
-                _ if z.here_now(fresh) => Presence::Here,
-                Some(at) if z.here_now(true) => Presence::LastSeen(t_params(
+        .map(|f| {
+            let linked = zones.iter().find(|z| z.zone_id == f.id);
+            ZoneRow {
+                id: f.id,
+                name: f.name.clone(),
+                sub: t_params(
                     lang,
-                    "locate.zones.last_seen",
-                    &[("zone", &z.name), ("at", &zone.at(at, now))],
-                )),
-                _ => Presence::None,
-            },
-            flash: row_flash.filter(|_| flash_zone == Some(z.id)),
+                    "locate.zones.radius_sub",
+                    &[("radius", &f.radius_m.to_string())],
+                ),
+                link: linked.map(|z| {
+                    let (arrive, leave) = alerts.get(&z.id).copied().unwrap_or((true, true));
+                    LinkCell {
+                        id: z.id,
+                        arrive,
+                        leave,
+                    }
+                }),
+                presence: match (linked, newest) {
+                    (Some(z), _) if z.here_now(fresh) => Presence::Here,
+                    (Some(z), Some(at)) if z.here_now(true) => Presence::LastSeen(t_params(
+                        lang,
+                        "locate.zones.last_seen",
+                        &[("zone", &z.name), ("at", &zone.at(at, now))],
+                    )),
+                    _ => Presence::None,
+                },
+                flash: row_flash.filter(|_| flash_zone == Some(f.id)),
+                refused: refused.clone().filter(|_| flash_zone == Some(f.id)),
+            }
         })
         .collect::<Vec<_>>();
-    let some = !rows.is_empty();
+    let linked = zones.len();
+    let some = linked > 0;
     // Design 64 step 2 (§3.6's last rows): a phone whose watch holds fences sends a location as
     // soon as it notices a crossing; without fences the "two intervals" timing holds.
     let watched = mode == "interval" && crate::zones::watching(watch);
@@ -374,13 +396,14 @@ fn zones_view(
     }
     .map(|key| t(lang, key).to_string());
     ZonesView {
-        full: (rows.len() as i64 >= crate::zones::MAX_ZONES).then(|| {
+        full: (family.len() as i64 >= crate::zones::MAX_FAMILY_ZONES).then(|| {
             t_params(
                 lang,
                 "locate.zones.full",
-                &[("max", &crate::zones::MAX_ZONES.to_string())],
+                &[("max", &crate::zones::MAX_FAMILY_ZONES.to_string())],
             )
         }),
+        linked,
         flash: (flash == Some("deleted")).then(|| t(lang, "locate.zones.deleted")),
         needs_regularly: some && mode == "on_request",
         location_unlocked: some && !locked && mode != "off",
@@ -390,7 +413,7 @@ fn zones_view(
             .then(|| interval_label(lang, interval * 2)),
         watch_line: watch
             .filter(|_| some && mode == "interval")
-            .and_then(|w| watch_line(lang, w, rows.len(), interval)),
+            .and_then(|w| watch_line(lang, w, linked, interval)),
         rows,
     }
 }
@@ -794,6 +817,8 @@ fn age_tag(lang: Lang, at: DateTime<Utc>, now: DateTime<Utc>) -> String {
 struct AllView {
     phones: Vec<AllPhone>,
     wait: Option<AllWait>,
+    /// Design 135 §5.1: the family's zones, the "Zones" row's value (to `/zones`).
+    zones: i64,
 }
 
 impl AllView {
@@ -1116,7 +1141,14 @@ async fn all_view(
             skipped,
         }
     });
-    Ok(AllView { phones, wait })
+    let zones: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM family_zones")
+        .fetch_one(&state.db)
+        .await?;
+    Ok(AllView {
+        phones,
+        wait,
+        zones,
+    })
 }
 
 /// A phone's answer to a command (`device_commands.result`, the launcher's words) in plain words.
@@ -1699,6 +1731,8 @@ async fn location_policy(state: &AppState, id: i64) -> Result<LocationPolicy, sq
 /// (design 125b C10: "Here now" never counts from a cell fix, `zones::newest_fine_seen`).
 struct PhoneZones {
     list: Vec<crate::zones::Zone>,
+    /// Design 135: the family's zones (the page's cells).
+    family: Vec<crate::zones::FamilyZone>,
     watch: Option<crate::zones::ZoneWatch>,
     served_interval: i64,
     fine: (Option<DateTime<Utc>>, Option<DateTime<Utc>>),
@@ -1710,6 +1744,7 @@ async fn phone_zones(
     policy: &LocationPolicy,
 ) -> Result<PhoneZones, sqlx::Error> {
     let list = crate::zones::list(&state.db, id).await?;
+    let family = crate::zones::family(&state.db).await?;
     let watch = crate::zones::last_zone_watch(&state.db, id).await?;
     let served_interval = crate::zones::served_interval(
         &policy.mode,
@@ -1720,16 +1755,18 @@ async fn phone_zones(
     let fine = crate::zones::newest_fine_seen(&state.db, id).await?;
     Ok(PhoneZones {
         list,
+        family,
         watch,
         served_interval,
         fine,
     })
 }
 
-/// The Zones part for `zones` ([zones_view]) with the newest fine fix's times; `flash` is
-/// `?zone=`, `flash_zone` `?zone_id=`.
+/// The Zones part for `zones` ([zones_view]) with the newest fine fix's times and the signed-in
+/// parent's switches (`alerts`); `flash` is `?zone=` or `?refused=`, `flash_zone` `?zone_id=`.
 fn zones_of(
     zones: &PhoneZones,
+    alerts: &HashMap<i64, (bool, bool)>,
     policy: &LocationPolicy,
     flash: Option<&str>,
     flash_zone: Option<i64>,
@@ -1737,7 +1774,9 @@ fn zones_of(
     now: DateTime<Utc>,
 ) -> ZonesView {
     zones_view(
+        &zones.family,
         &zones.list,
+        alerts,
         &policy.mode,
         zones.served_interval,
         policy.locked,
@@ -1754,7 +1793,7 @@ fn zones_of(
 /// The Zones row's value (design 88): "None yet", "3", "3 · Here now: School" (the first zone the
 /// phone is in now).
 fn zones_value(lang: Lang, view: &ZonesView) -> String {
-    let count = view.rows.len();
+    let count = view.linked;
     if count == 0 {
         return t(lang, "locate.rows.zones_none").to_string();
     }
@@ -1904,7 +1943,15 @@ async fn locate_view(
         None => None,
     };
 
-    let zones = zones_of(&phone_zones, &policy, None, None, zone, now);
+    let zones = zones_of(
+        &phone_zones,
+        &HashMap::new(),
+        &policy,
+        None,
+        None,
+        zone,
+        now,
+    );
     // Q-9: with when the count last rose.
     let mock_at = crate::zones::mock_logged_at(&state.db, id).await?;
     let mock_ignored = phone_zones
@@ -1934,7 +1981,7 @@ async fn locate_view(
         waiting_for_fix,
         location_off: policy.mode == "off",
         mock_ignored,
-        has_zones: !zones.rows.is_empty(),
+        has_zones: zones.linked > 0,
         zones_value: zones_value(lang, &zones),
         settings_value: settings_value(lang, &policy.mode, policy.interval),
     })
@@ -1957,27 +2004,47 @@ async fn phone_or_error(state: &AppState, id: i64, lang: Lang) -> Result<Device,
     }
 }
 
-/// `GET /devices/{id}/zones` (design 88; no-store, as every zones path): the phone's zones, each
-/// to its page, Locate Regularly when asked, Add Zone. A zone's save lands on its row
-/// (`?zone=added|saved&zone_id=N#zone-N`) with its line, a delete and Locate Regularly on `#zones`.
+/// `GET /devices/{id}/zones` (design 88; design 135 §5.4; no-store, as every zones path): a cell
+/// per family zone with its switch for this phone and the signed-in parent's Arrive and Leave,
+/// Locate Regularly when asked, Add Zone and All Zones. A save lands on its cell
+/// (`?zone=added|saved&zone_id=N#zone-N`) with its line, a link over the cap there with
+/// `?refused=full`, a delete and Locate Regularly on `#zones`.
 pub async fn show_zones(
     State(state): State<AppState>,
     lang: Lang,
     Path(id): Path<i64>,
+    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Response {
     let device = match phone_or_error(&state, id, lang).await {
         Ok(device) => device,
         Err(answer) => return *answer,
     };
-    let flash = params.get("zone").map(String::as_str);
+    let flash = params
+        .get("zone")
+        .or_else(|| params.get("refused"))
+        .map(String::as_str);
     let flash_zone = params.get("zone_id").and_then(|s| s.parse::<i64>().ok());
     let zone = Zone::load(&state.db, lang).await;
     let now = Utc::now();
     let view = async {
         let policy = location_policy(&state, id).await?;
         let zones = phone_zones(&state, id, &policy).await?;
-        Ok::<_, sqlx::Error>(zones_of(&zones, &policy, flash, flash_zone, &zone, now))
+        let alerts: Vec<(i64, bool, bool)> = sqlx::query_as(
+            "SELECT a.device_zone_id, a.arrive, a.leave FROM zone_alerts a \
+             JOIN device_zones d ON d.id = a.device_zone_id WHERE a.admin_id = ? AND d.device_id = ?",
+        )
+        .bind(admin.id)
+        .bind(id)
+        .fetch_all(&state.db)
+        .await?;
+        let alerts: HashMap<i64, (bool, bool)> = alerts
+            .into_iter()
+            .map(|(link, arrive, leave)| (link, (arrive, leave)))
+            .collect();
+        Ok::<_, sqlx::Error>(zones_of(
+            &zones, &alerts, &policy, flash, flash_zone, &zone, now,
+        ))
     };
     let zones = match view.await {
         Ok(zones) => zones,

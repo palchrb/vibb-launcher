@@ -49,14 +49,7 @@ async fn count(app: &TestApp, sql: &str) -> i64 {
 
 /// Home (r = 150 m) on the phone, straight into the table; its id.
 async fn add_home(app: &TestApp, device: i64) -> i64 {
-    sqlx::query_scalar(
-        "INSERT INTO device_zones (device_id, name, latitude, longitude, radius_m) \
-         VALUES (?, 'Home', 59.9139, 10.7522, 150) RETURNING id",
-    )
-    .bind(device)
-    .fetch_one(&app.db)
-    .await
-    .unwrap()
+    super::zones::insert_zone(app, device, "Home", 59.9139, 10.7522, 150).await
 }
 
 async fn set_location(app: &TestApp, device: i64, mode: &str, interval: i64) {

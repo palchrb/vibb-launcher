@@ -22,7 +22,8 @@ pub struct Family {
     /// Enrolled never: Connect This Phone.
     pub liv: i64,
     pub rule: i64,
-    pub zone: i64,
+    /// The family zone Hjemme (design 135: its editor's page).
+    pub family_zone: i64,
     pub app: i64,
     pub launcher: i64,
     pub entry: i64,
@@ -156,28 +157,29 @@ pub async fn seed(app: &TestApp, lang: crate::i18n::Lang) -> Family {
         .await
         .unwrap();
 
-    // A zone on Anna.
+    // A zone on Anna (design 135: a family zone, ticked for her phone).
     let made = app
         .request_form(
             Method::POST,
-            &format!("/devices/{anna}/zones"),
+            "/zones",
             Some(&cookie),
             &[
                 ("name", "Hjemme"),
                 ("latitude", "59.91417"),
                 ("longitude", "10.7522"),
                 ("radius_m", "150"),
-                ("notify_arrive", "on"),
-                ("notify_leave", "on"),
+                ("device", &anna.to_string()),
+                (&format!("phone_{anna}"), "on"),
             ],
         )
         .await;
     assert!(made.status.is_redirection(), "{}", made.text());
-    let zone: i64 = sqlx::query_scalar("SELECT id FROM device_zones WHERE device_id = ?")
-        .bind(anna)
-        .fetch_one(&app.db)
-        .await
-        .unwrap();
+    let (zone, family_zone): (i64, i64) =
+        sqlx::query_as("SELECT id, zone_id FROM device_zones WHERE device_id = ?")
+            .bind(anna)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
 
     // Anna: a rich report.
     let today = crate::display_time::Zone::load(&app.db, lang)
@@ -570,7 +572,7 @@ pub async fn seed(app: &TestApp, lang: crate::i18n::Lang) -> Family {
         ola,
         liv,
         rule,
-        zone,
+        family_zone,
         app: tracked,
         launcher,
         entry,

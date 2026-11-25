@@ -1648,7 +1648,7 @@ async fn render_lock(
         child_rows.push(crate::kid_lock::LockNote::PinSent(send).note(lang, None));
     }
     let parent = crate::handlers::parent_pin::card(lang, &policy, notice);
-    let weather = match crate::handlers::weather_page::card(state, id, &policy).await {
+    let weather = match crate::handlers::weather_page::card(state, &policy).await {
         Ok(weather) => weather,
         Err(err) => return read_failed(lang, id, "the phone's zones", err),
     };

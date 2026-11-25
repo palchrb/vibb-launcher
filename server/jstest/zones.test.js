@@ -1,5 +1,6 @@
-// Behaviour of static/zones.js (design 64 §3.5): a zone's page - the tap that places the centre,
-// the radius slider and its clamp, Use Phone's Location. Run: node --test jstest/zones.test.js
+// Behaviour of static/zones.js (design 64 §3.5; design 135 §5.3): a zone's page - the tap that
+// places the centre, the radius slider and its clamp, each phone's "Use {phone}'s location". Run:
+// node --test jstest/zones.test.js
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert");
@@ -58,8 +59,8 @@ function element(attrs = {}, value = "") {
     };
 }
 
-/** A zone's page: `box` = the map's attributes, the fields' values, a phone fix or none. */
-function fakePage({ box = {}, lat = "", lng = "", radius = "150", phone = null } = {}) {
+/** A zone's page: `box` = the map's attributes, the fields' values, the phones' fixes (one button each). */
+function fakePage({ box = {}, lat = "", lng = "", radius = "150", phones = [] } = {}) {
     const mapBox = element({ "data-zone-map": "", "data-min": "100", "data-max": "2000", ...box });
     mapBox.querySelector = () => ({ id: "map" });
     const fields = {
@@ -69,8 +70,9 @@ function fakePage({ box = {}, lat = "", lng = "", radius = "150", phone = null }
     };
     const slider = element({ "data-zone-slider": "" }, radius);
     const sliderRow = element({ "data-zone-slider-row": "", hidden: "" });
-    const usePhone = phone ? element({ "data-use-phone": "", "data-lat": phone[0], "data-lng": phone[1], hidden: "" }) : null;
+    const usePhones = phones.map((p) => element({ "data-use-phone": "", "data-lat": p[0], "data-lng": p[1], hidden: "" }));
     const doc = {
+        querySelectorAll: (selector) => (selector === "[data-use-phone]" ? usePhones : []),
         documentElement: {},
         querySelector: (selector) => ({
             "[data-zone-map]": mapBox,
@@ -79,11 +81,10 @@ function fakePage({ box = {}, lat = "", lng = "", radius = "150", phone = null }
             "[data-zone-radius]": fields.radius,
             "[data-zone-slider]": slider,
             "[data-zone-slider-row]": sliderRow,
-            "[data-use-phone]": usePhone,
         })[selector] || null,
     };
     const win = { document: doc, getComputedStyle: () => ({ getPropertyValue: () => "" }) };
-    return { win, fields, slider, sliderRow, usePhone };
+    return { win, fields, slider, sliderRow, usePhones };
 }
 
 test("the radius is a whole number within the range; nothing typed is no number", () => {
@@ -151,15 +152,22 @@ test("the slider and the number field redraw the circle; leaving the field clamp
     assert.strictEqual(L.drawn.circle.radius, 2000);
 });
 
-test("Use Phone's Location moves the centre to the newest fix", () => {
+test("each phone's button moves the centre to that phone's newest fix (design 135)", () => {
     const L = fakeLeaflet();
-    const page = fakePage({ box: { "data-phone-lat": "59.950000", "data-phone-lng": "10.700000" }, phone: ["59.950000", "10.700000"] });
+    const page = fakePage({
+        box: { "data-phone-lat": "59.950000", "data-phone-lng": "10.700000" },
+        phones: [["59.950000", "10.700000"], ["59.910000", "10.750000"]],
+    });
     install(page.win, L);
     assert.deepStrictEqual(L.calls[1], ["setView", [59.95, 10.7], 15], "no centre yet: the phone's fix");
-    assert.ok(!page.usePhone.hasAttribute("hidden"));
-    page.usePhone.listeners.click();
+    assert.ok(page.usePhones.every((b) => !b.hasAttribute("hidden")), "every button shows with JS");
+    page.usePhones[0].listeners.click();
     assert.deepStrictEqual([page.fields.lat.value, page.fields.lng.value], ["59.950000", "10.700000"]);
     assert.deepStrictEqual(L.drawn.circle.at, [59.95, 10.7]);
+    // The second phone's button writes its own fix into the fields.
+    page.usePhones[1].listeners.click();
+    assert.deepStrictEqual([page.fields.lat.value, page.fields.lng.value], ["59.910000", "10.750000"]);
+    assert.deepStrictEqual(L.drawn.circle.at, [59.91, 10.75]);
     // Coordinates typed off the Earth take the circle off.
     page.fields.lat.value = "95";
     page.fields.lat.listeners.change();
