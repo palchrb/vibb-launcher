@@ -2995,6 +2995,13 @@ pub async fn update_location_policy(
                 {
                     tracing::error!(device_id = id, %err, "couldn't erase the weather's caches");
                 }
+                // The Wi-Fi lookup follows the location switch: its cache goes when no phone uses it any more.
+                if before.as_deref() != Some("off") {
+                    state
+                        .integrations
+                        .prune(&state, crate::integrations::Prune::LocationOff)
+                        .await;
+                }
             }
             let _ = state.command_notify.send(id);
             let back = match form.get("back").map(String::as_str) {

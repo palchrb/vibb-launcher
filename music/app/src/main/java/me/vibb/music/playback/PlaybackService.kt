@@ -776,12 +776,13 @@ class PlaybackService : MediaSessionService() {
                 // the launcher's call rule only (design 26a §6.7, qa-26a-step3b-code H1)
                 val calls = MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS.buildUpon().apply { Commands.LAUNCHER.forEach { add(it) } }.build()
                 return MediaSession.ConnectionResult.AcceptedResultBuilder(session).setAvailableSessionCommands(calls)
-                    .setAvailablePlayerCommands(foreignPlayerCommands(MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS)).build()
+                    .setAvailablePlayerCommands(foreignPlayerCommands(MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS, trusted = true)).build()
             }
-            // S-L2: another app (the system UI, Bluetooth, a game) gets the transport, never the queue's items
+            // S-L2: another app never sets the queue's items; the system UI, Bluetooth or an app with notification
+            // access (trusted) read what plays, any other app gets the transport only
             if (controller.packageName != packageName) {
                 return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
-                    .setAvailablePlayerCommands(foreignPlayerCommands(MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS)).build()
+                    .setAvailablePlayerCommands(foreignPlayerCommands(MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS, controller.isTrusted)).build()
             }
             val commands = MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS.buildUpon().apply { Commands.ALL.forEach { add(it) } }.build()
             return MediaSession.ConnectionResult.AcceptedResultBuilder(session).setAvailableSessionCommands(commands).build()

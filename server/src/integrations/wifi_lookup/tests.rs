@@ -52,6 +52,16 @@ async fn phone_on(app: &TestApp) -> (i64, String) {
     (id, token)
 }
 
+/// The phone's location mode, written as the Location page's save would.
+async fn set_location(app: &TestApp, id: i64, mode: &str) {
+    sqlx::query("UPDATE device_policy SET location_mode = ? WHERE device_id = ?")
+        .bind(mode)
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+}
+
 /// `POST /api/devices/wifi-lookup` with `request` (a JSON string is sent as the raw body).
 async fn lookup(app: &TestApp, token: &str, request: &Value) -> (StatusCode, Value) {
     let body = match request {
@@ -181,6 +191,10 @@ async fn the_route_answers_the_contract() {
             }
             "off" => {
                 super::set_on(&app.state, id, false).await.unwrap();
+                lookup(&app, &token, request).await
+            }
+            "off_location" => {
+                set_location(&app, id, "off").await;
                 lookup(&app, &token, request).await
             }
             "limit" => {
@@ -547,7 +561,7 @@ async fn a_new_key_empties_the_cache() {
     assert!(mangled.key(&app.state).await.is_err());
     let wanted = ["00:00:5e:00:53:01".to_string()];
     assert_eq!(
-        mangled.lookup(&app.state, &wanted).await,
+        mangled.lookup(&app.state, 1, &wanted).await,
         Err(route::PAUSE_STEPS[1])
     );
     assert_eq!(mangled.health().last_error.map(|(_, c)| c), Some("key"));
@@ -567,6 +581,8 @@ async fn a_new_key_empties_the_cache() {
 #[tokio::test]
 async fn the_caps_the_lifetime_and_a_deleted_phone() {
     let app = TestApp::new().await;
+    // A phone the lookup is usable for: the sweep keeps the cache.
+    let (on_phone, _) = phone_on(&app).await;
     let key = CacheKey::from_bytes(&[9; 32]);
     let now = this_month();
     let position = codec::Position {
@@ -625,7 +641,6 @@ async fn the_caps_the_lifetime_and_a_deleted_phone() {
     ));
 
     // A deleted phone: kept while another has the switch on, emptied with the last.
-    let (on_phone, _) = phone_on(&app).await;
     let (other, _) = app.enrolled_device("other").await;
     let cookie = app.admin_cookie().await;
     for (id, left) in [(other, 4usize), (on_phone, 0)] {
@@ -721,7 +736,7 @@ async fn a_proxy_failure_is_never_a_direct_call() {
             proxy.clone(),
             std::time::Duration::from_millis(300),
         );
-        let answer = wifi.lookup(&app.state, &wanted).await;
+        let answer = wifi.lookup(&app.state, 1, &wanted).await;
         let row = integration_health::row(&app.db, super::NAME, "")
             .await
             .unwrap()
@@ -1335,4 +1350,186 @@ fn the_route_takes_only_clean_bssids() {
         route::parse(br#"{"bssids": ["00:00:5e:00:53:01", "00:00:5e:00:53:01"]}"#),
         Some(vec!["00:00:5e:00:53:01".to_string()])
     );
+}
+
+async fn cache_rows(app: &TestApp) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM wifi_lookup_aps")
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+}
+
+async fn location_off(app: &TestApp, cookie: &str, device: i64) {
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{device}/location-policy"),
+            Some(cookie),
+            &[("mode", "off")],
+        )
+        .await;
+    assert!(res.status.is_redirection(), "{}", res.text());
+}
+
+/// The lookup follows the phone's location switch: Off stops the route (cells too) and the policy says off, and the
+/// Off save empties the cache once no phone has both the switch and location on; location on again brings it back.
+#[tokio::test]
+async fn the_lookup_follows_the_location_switch() {
+    let contract = contract();
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = phone_on(&app).await;
+    let (other, _) = phone_on(&app).await;
+    app.fetch.answer(APPLE_URL, 200, apple("fresh"));
+    assert_eq!(
+        lookup(&app, &token, &contract["request"]).await.0,
+        StatusCode::OK
+    );
+    let cached = cache_rows(&app).await;
+    assert!(cached > 0);
+
+    // This phone's location off: refused and off in its policy; the other phone still uses the cache.
+    location_off(&app, &cookie, id).await;
+    let (status, body) = lookup(&app, &token, &contract["request"]).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(body, json!({"error": "off"}));
+    let (status, _) = lookup(&app, &token, &json!({"cells": ["gsm:001:01:1001:5001"]})).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(
+        app.policy(&token).await["wifi_lookup"],
+        contract["policy"]["off"]
+    );
+    assert_eq!(cache_rows(&app).await, cached);
+
+    // The last phone's location off: the cache goes.
+    location_off(&app, &cookie, other).await;
+    assert_eq!(cache_rows(&app).await, 0);
+
+    // Location on again: the lookup is back.
+    set_location(&app, id, "on_request").await;
+    assert_eq!(
+        app.policy(&token).await["wifi_lookup"],
+        contract["policy"]["on"]
+    );
+    assert_eq!(
+        lookup(&app, &token, &contract["request"]).await.0,
+        StatusCode::OK
+    );
+}
+
+/// Each phone gets its share of the hour's Apple calls: past it, it is answered from the cache alone, while another
+/// phone is still served from Apple.
+#[tokio::test]
+async fn each_phone_gets_its_share_of_the_hour() {
+    assert_eq!(route::phone_share(0), route::CALLS_AN_HOUR);
+    assert_eq!(route::phone_share(1), route::CALLS_AN_HOUR);
+    assert_eq!(route::phone_share(3), 20);
+    assert_eq!(route::phone_share(60), route::BURST_CALLS);
+
+    let app = TestApp::new().await;
+    let (first, first_token) = phone_on(&app).await;
+    let (_, second_token) = phone_on(&app).await;
+    phone_on(&app).await;
+    let wifi = app.state.integrations.wifi_lookup.clone();
+    app.fetch.answer(APPLE_URL, 200, apple("fresh"));
+
+    // A real call counts against the phone's share.
+    let request = json!({"bssids": ["00:00:5e:00:53:01"]});
+    assert_eq!(lookup(&app, &first_token, &request).await.0, StatusCode::OK);
+    assert_eq!(app.fetch.count(), 1);
+    assert!(
+        !wifi
+            .phone_calls
+            .wait_under(first, 1, Instant::now())
+            .is_zero()
+    );
+
+    // Three phones: 20 each. The first phone's share spent: the cache alone (nothing cached here, so the 503).
+    let now = Instant::now();
+    for _ in 1..route::phone_share(3) {
+        crate::music_net::PhoneAsks::record(&wifi.phone_calls, first, now);
+    }
+    let unseen = json!({"bssids": ["00:00:5e:00:53:06"]});
+    let (status, body) = lookup(&app, &first_token, &unseen).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(app.fetch.count(), 1, "Apple asked past the share");
+    // A cached BSSID still answers, with the wait.
+    let both = json!({"bssids": ["00:00:5e:00:53:01", "00:00:5e:00:53:06"]});
+    let (status, body) = lookup(&app, &first_token, &both).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["aps"].as_array().unwrap().len(), 1);
+    assert!(body["retry_after_s"].as_u64().unwrap() > 0);
+    // Cells too: the 503.
+    let (status, _) = lookup(
+        &app,
+        &first_token,
+        &json!({"cells": ["gsm:001:01:1001:5001"]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(app.fetch.count(), 1);
+
+    // The second phone is still served from Apple.
+    let (status, _) = lookup(&app, &second_token, &unseen).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(app.fetch.count(), 2);
+}
+
+/// Only a request that calls Apple counts against the phone's share: cells answered from the cache leave its Wi-Fi share.
+#[tokio::test]
+async fn cells_from_the_cache_leave_the_share() {
+    let contract = contract();
+    let app = TestApp::new().await;
+    let (first, token) = phone_on(&app).await;
+    phone_on(&app).await;
+    phone_on(&app).await;
+    let wifi = app.state.integrations.wifi_lookup.clone();
+    let cells = &contract["request_cells"];
+    app.fetch.answer(APPLE_URL, 200, apple_cell("cells_fresh"));
+    assert_eq!(lookup(&app, &token, cells).await.0, StatusCode::OK);
+    assert_eq!(app.fetch.count(), 1);
+    // One short of the share (three phones: 20), the first call included.
+    let now = Instant::now();
+    for _ in 2..route::phone_share(3) {
+        crate::music_net::PhoneAsks::record(&wifi.phone_calls, first, now);
+    }
+    // Cached cells: answered, Apple not called, nothing counted.
+    for _ in 0..2 {
+        assert_eq!(lookup(&app, &token, cells).await.0, StatusCode::OK);
+    }
+    assert_eq!(app.fetch.count(), 1);
+    // The Wi-Fi share's last call is still there.
+    app.fetch.answer(APPLE_URL, 200, apple("fresh"));
+    let (status, body) = lookup(&app, &token, &contract["request"]).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(app.fetch.count(), 2);
+    // Now spent: an uncached BSSID is the cache alone.
+    let unseen = json!({"bssids": ["00:00:5e:00:53:06"]});
+    assert_eq!(
+        lookup(&app, &token, &unseen).await.0,
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    assert_eq!(app.fetch.count(), 2);
+}
+
+/// Rows a lookup in flight wrote after the last usable phone's location Off go with the next sweep.
+#[tokio::test]
+async fn the_sweep_empties_the_cache_without_a_usable_phone() {
+    let contract = contract();
+    let app = TestApp::new().await;
+    let (id, token) = phone_on(&app).await;
+    app.fetch.answer(APPLE_URL, 200, apple("fresh"));
+    assert_eq!(
+        lookup(&app, &token, &contract["request"]).await.0,
+        StatusCode::OK
+    );
+    let wifi = app.state.integrations.wifi_lookup.clone();
+    wifi.prune(&app.state, Prune::Sweep).await;
+    let cached = cache_rows(&app).await;
+    assert!(cached > 0, "a usable phone keeps the cache");
+    // Location off without the save's emptying: the rows stand in for a late write.
+    set_location(&app, id, "off").await;
+    assert_eq!(cache_rows(&app).await, cached);
+    wifi.prune(&app.state, Prune::Sweep).await;
+    assert_eq!(cache_rows(&app).await, 0);
 }

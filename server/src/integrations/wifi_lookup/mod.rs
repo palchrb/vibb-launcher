@@ -8,7 +8,8 @@
 //! whole of it on the server.
 //!
 //! - **The switch** is the parent's, per phone, off by default (`wifi_lookup_devices.is_on`, the Location page's group,
-//!   [page]); the policy's `wifi_lookup: {"on"}`.
+//!   [page]). The lookup follows the phone's location switch: with location off it is off for that phone ([is_usable]:
+//!   the route's `409 off`, the policy's `wifi_lookup: {"on": false}`).
 //! - **No lookup log**: no device id, no lookup time, no query history - only the sealed rows with their months and
 //!   the integration's health. Logs carry counts and Apple's status, never a BSSID, a coordinate or a device id.
 //! - **The route** ([route]): `POST /api/devices/wifi-lookup`, its limits, pauses and answers.
@@ -146,6 +147,8 @@ pub struct WifiLookup {
     pub(crate) gate_wait: Duration,
     /// 30 lookups per phone an hour.
     pub(crate) phone_asks: PhoneAsks,
+    /// Each phone's Apple calls in the hour, held to its share of [route::CALLS_AN_HOUR] ([route::phone_share]).
+    pub(crate) phone_calls: PhoneAsks,
     /// 60 Apple calls an hour and 10 in any 10 minutes, server-wide.
     pub(crate) outbound: Window,
     pub(crate) burst: Window,
@@ -196,6 +199,7 @@ impl WifiLookup {
             apple: Default::default(),
             gate_wait,
             phone_asks: PhoneAsks::new(route::PHONE_LOOKUPS_AN_HOUR, Duration::from_secs(3600)),
+            phone_calls: PhoneAsks::new(route::CALLS_AN_HOUR, Duration::from_secs(3600)),
             outbound: Window::new(route::CALLS_AN_HOUR, Duration::from_secs(3600)),
             burst: Window::new(route::BURST_CALLS, route::BURST_WINDOW),
             pauses: Default::default(),
@@ -265,7 +269,7 @@ impl Integration for WifiLookup {
         device_id: i64,
     ) -> BoxFut<'a, Result<Option<(&'static str, Value)>, sqlx::Error>> {
         Box::pin(async move {
-            let on = is_on(&state.db, device_id).await?;
+            let on = is_usable(&state.db, device_id).await?;
             Ok(Some((NAME, json!({ "on": on }))))
         })
     }
@@ -306,8 +310,19 @@ impl Integration for WifiLookup {
                 }
             }
             let result = match why {
-                Prune::Sweep => cache::prune(&state.db, cache::month_of(chrono::Utc::now())).await,
-                Prune::DeviceDeleted => cache::empty_unless_used(&state.db).await,
+                // A lookup still in flight at a phone's location Off or delete may write rows after that emptying:
+                // the sweep empties the cache too while no phone can use it.
+                Prune::Sweep => {
+                    match cache::prune(&state.db, cache::month_of(chrono::Utc::now())).await {
+                        Ok(pruned) => cache::empty_unless_used(&state.db)
+                            .await
+                            .map(|emptied| pruned + emptied),
+                        Err(err) => Err(err),
+                    }
+                }
+                Prune::DeviceDeleted | Prune::LocationOff => {
+                    cache::empty_unless_used(&state.db).await
+                }
             };
             match result {
                 Ok(0) => {}
@@ -328,6 +343,29 @@ pub async fn is_on(db: &sqlx::SqlitePool, device_id: i64) -> Result<bool, sqlx::
             .unwrap_or(0)
             != 0,
     )
+}
+
+/// The phones the lookup is usable for: the switch on and the phone's location not off.
+const USABLE: &str = "FROM wifi_lookup_devices w JOIN device_policy p ON p.device_id = w.device_id \
+     WHERE w.is_on = 1 AND p.location_mode <> 'off'";
+
+/// The lookup for this phone: its switch on and its location not off (the route answers `409 off` otherwise, and the
+/// policy says off).
+pub async fn is_usable(db: &sqlx::SqlitePool, device_id: i64) -> Result<bool, sqlx::Error> {
+    Ok(
+        sqlx::query_scalar::<_, i64>(&format!("SELECT 1 {USABLE} AND w.device_id = ?"))
+            .bind(device_id)
+            .fetch_optional(db)
+            .await?
+            .is_some(),
+    )
+}
+
+/// How many phones the lookup is usable for (the hour's share, [route::phone_share]).
+pub async fn phones_usable(db: &sqlx::SqlitePool) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(*) {USABLE}"))
+        .fetch_one(db)
+        .await
 }
 
 /// Saves the switch; `false` when there is no such phone. Nudges the phone.

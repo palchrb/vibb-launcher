@@ -68,6 +68,13 @@ pub const PHONE_LOOKUPS_AN_HOUR: usize = 30;
 pub const CALLS_AN_HOUR: usize = 60;
 pub const BURST_CALLS: usize = 10;
 pub const BURST_WINDOW: Duration = Duration::from_secs(600);
+
+/// Each phone's share of the hour's Apple calls: [CALLS_AN_HOUR] split between the phones the lookup is usable for,
+/// never under [BURST_CALLS]. Past it the phone is answered from the cache alone.
+pub fn phone_share(phones: i64) -> usize {
+    let phones = usize::try_from(phones).unwrap_or(1).max(1);
+    BURST_CALLS.max(CALLS_AN_HOUR / phones)
+}
 pub const SURROUNDING: u32 = 100;
 pub const SURROUNDING_THROTTLED: u32 = 8;
 /// GrapheneOS's throttle: an answer of this many APs or more...
@@ -395,7 +402,7 @@ pub async fn route(
         (None, None) => return refusal(StatusCode::BAD_REQUEST, "invalid"),
     };
     let lookup = state.integrations.wifi_lookup.clone();
-    match super::is_on(&state.db, device.id).await {
+    match super::is_usable(&state.db, device.id).await {
         Ok(true) => {}
         Ok(false) => return refusal(StatusCode::CONFLICT, "off"),
         Err(err) => {
@@ -406,7 +413,7 @@ pub async fn route(
     if lookup.phone_asks.ask(device.id, Instant::now()).is_err() {
         return refusal(StatusCode::TOO_MANY_REQUESTS, "limit");
     }
-    match lookup.lookup(&state, &bssids).await {
+    match lookup.lookup(&state, device.id, &bssids).await {
         Ok(Some(answer)) => {
             let mut body = json!({ "aps": answer.aps, "unknown": answer.unknown });
             if let Some(wait) = answer.retry_after {
@@ -429,7 +436,7 @@ async fn cells_route(
     arrived: Instant,
 ) -> Response {
     let lookup = state.integrations.wifi_lookup.clone();
-    match super::is_on(&state.db, device).await {
+    match super::is_usable(&state.db, device).await {
         Ok(true) => {}
         Ok(false) => return refusal(StatusCode::CONFLICT, "off"),
         Err(err) => {
@@ -464,7 +471,7 @@ async fn cells_route(
     let (sent, answered) = tokio::sync::oneshot::channel();
     let task = lookup.clone();
     tokio::spawn(async move {
-        let (result, admitted) = task.lookup_cells(&state, &asked).await;
+        let (result, admitted) = task.lookup_cells(&state, device, &asked).await;
         let _ = sent.send(result);
         // The permit is held to the answer time, cached or not: the lookups in flight never say what the cache holds.
         tokio::time::sleep_until(answer_at).await;
@@ -493,6 +500,7 @@ impl WifiLookup {
     pub(crate) async fn lookup_cells(
         &self,
         state: &AppState,
+        device: i64,
         asked: &[String],
     ) -> (
         Result<CellAnswer, Duration>,
@@ -504,13 +512,14 @@ impl WifiLookup {
         let Ok(admitted) = self.admit.try_acquire() else {
             return (Err(CELL_BUSY_WAIT), None);
         };
-        let result = self.lookup_cells_admitted(state, asked).await;
+        let result = self.lookup_cells_admitted(state, device, asked).await;
         (result, Some(admitted))
     }
 
     async fn lookup_cells_admitted(
         &self,
         state: &AppState,
+        device: i64,
         asked: &[String],
     ) -> Result<CellAnswer, Duration> {
         let Ok(_one) = tokio::time::timeout(self.gate_wait, self.apple.lock()).await else {
@@ -520,13 +529,13 @@ impl WifiLookup {
         if let Some(left) = self.paused(now) {
             return Err(left);
         }
-        let slot = self.burst.wait(now).max(self.outbound.wait(now));
+        let slot = self.slot(state, device, now).await;
         if !slot.is_zero() {
             return Err(slot);
         }
-        // M1: one slot a cells request, whether Apple is called or not.
-        self.burst.take(now);
-        self.outbound.take(now);
+        // M1: one slot of the server-wide limits a cells request, whether Apple is called or not; the phone's share
+        // only when Apple is called (below). Over its share the phone is refused before the cache is read, cached or not.
+        self.take_slot(now);
         let key = match self.key(state).await {
             Ok(key) => key,
             Err(err) => {
@@ -557,6 +566,7 @@ impl WifiLookup {
             .map(|(b, _)| b.clone())
             .collect();
         if !wanted.is_empty() {
+            self.count_call(device, now);
             let fetched = self
                 .call(state, &key, &wanted, month, Call::Cells, now)
                 .await?;
@@ -605,6 +615,7 @@ impl WifiLookup {
     pub(crate) async fn lookup(
         &self,
         state: &AppState,
+        device: i64,
         bssids: &[String],
     ) -> Result<Option<Answer>, Duration> {
         let key = match self.key(state).await {
@@ -631,7 +642,7 @@ impl WifiLookup {
             .collect();
         let mut not_asked = None;
         if !wanted.is_empty() {
-            match self.fetch(state, &key, &wanted, month).await {
+            match self.fetch(state, device, &key, &wanted, month).await {
                 Ok(fetched) => {
                     for (bssid, c) in bssids.iter().zip(cached.iter_mut()) {
                         if let Some(at) = wanted.iter().position(|w| w == bssid) {
@@ -691,6 +702,33 @@ impl WifiLookup {
         }))
     }
 
+    /// How long until `device` may have an Apple call at `now` (zero: now): the server-wide limits and the phone's
+    /// share of the hour ([phone_share]). Counts nothing.
+    async fn slot(&self, state: &AppState, device: i64, now: Instant) -> Duration {
+        let phones = super::phones_usable(&state.db).await.unwrap_or_else(|err| {
+            tracing::error!(%err, "wifi_lookup: couldn't count the phones");
+            1
+        });
+        self.burst
+            .wait(now)
+            .max(self.outbound.wait(now))
+            .max(
+                self.phone_calls
+                    .wait_under(device, phone_share(phones), now),
+            )
+    }
+
+    /// One slot of the server-wide limits taken.
+    fn take_slot(&self, now: Instant) {
+        self.burst.take(now);
+        self.outbound.take(now);
+    }
+
+    /// One Apple call counted against the phone's share of the hour.
+    fn count_call(&self, device: i64, now: Instant) {
+        crate::music_net::PhoneAsks::record(&self.phone_calls, device, now);
+    }
+
     /// A key file the server can't read: `stop` at once (code QA L6); no pause - the next lookup reads the file again.
     async fn key_failed(&self, state: &AppState) {
         self.health.error(chrono::Utc::now(), "key");
@@ -703,6 +741,7 @@ impl WifiLookup {
     async fn fetch(
         &self,
         state: &AppState,
+        device: i64,
         key: &cache::CacheKey,
         wanted: &[String],
         month: i64,
@@ -736,12 +775,12 @@ impl WifiLookup {
         if still.is_empty() {
             return Ok(again);
         }
-        let slot = self.burst.wait(now).max(self.outbound.wait(now));
+        let slot = self.slot(state, device, now).await;
         if !slot.is_zero() {
             return Err(NotAsked::Wait(slot));
         }
-        self.burst.take(now);
-        self.outbound.take(now);
+        self.take_slot(now);
+        self.count_call(device, now);
         let fetched = self
             .call(state, key, &still, month, Call::Wifi, now)
             .await

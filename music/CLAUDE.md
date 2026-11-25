@@ -168,7 +168,12 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   byte-identical with `launcher/` - append, never reorder; shared names are in `bridge_contract.json`.
 - The session gives another app's controller (the launcher, the system UI, Bluetooth, any app) the transport only:
   no `COMMAND_SET_MEDIA_ITEM`/`COMMAND_CHANGE_MEDIA_ITEMS`, and `onAddMediaItems`/`onSetMediaItems` refuse every
-  package but ours (security review S-L2, `foreignPlayerCommands`, `mayChangeItems`). Nothing goes to a backup or a
+  package but ours (security review S-L2, `foreignPlayerCommands`, `mayChangeItems`). Only a trusted controller reads
+  what plays (`READ_COMMANDS`: the timeline, the metadata, the current item): the launcher (same signer) and what
+  Media3 calls trusted (`ControllerInfo.isTrusted`: the system UI, Bluetooth through the platform session, or an app
+  with notification access); any other app gets play, pause and skip without the queue. Emulator rows owed (Android 14
+  and 16): an outside app's Media3 controller gets no title or queue and can still pause; System UI's media card still
+  shows title and art; the launcher's card unchanged. Nothing goes to a backup or a
   device transfer (`data_extraction_rules.xml`, `backup_rules.xml`: every domain excluded; P-L3).
 - The launcher's media surfaces (design 21 step 4) read the platform session and `setNowPlaying` (also sent with
   every 15 s position save while playing); its Home card opens `MainActivity` with `EXTRA_OPEN` = player and, on its
