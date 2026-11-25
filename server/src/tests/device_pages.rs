@@ -471,8 +471,10 @@ async fn a_live_code_shows_on_connection_without_the_code() {
 
     // Typed codes paused (too many wrong ones this hour): a warning on Connection, with the end.
     let now = chrono::Utc::now();
-    for _ in 0..crate::enrollment::TYPED_PAUSE_FAILURES {
-        app.state.enrollment.typed_failed(now);
+    for n in 0..crate::enrollment::TYPED_PAUSE_FAILURES {
+        app.state
+            .enrollment
+            .typed_failed(&format!("client {n}"), now);
     }
     assert!(app.state.enrollment.typed_paused_until(now).is_some());
     let html = app

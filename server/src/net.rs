@@ -251,6 +251,21 @@ pub const DEFAULT_SESSION_INACTIVITY_DAYS: i64 = 30;
 /// An admin session's absolute lifetime (security review L6): one sign-in a quarter.
 pub const DEFAULT_SESSION_MAX_DAYS: i64 = 90;
 
+/// The one error line at start for [NetConfig::login_list_misplaced].
+pub const LOGIN_LIST_MISPLACED: &str = "ADMIN_TAILSCALE_USERS is set but BIND_ADDR is not a loopback address: the \
+     login list needs tailscale serve on loopback, so the admin pages refuse everyone until BIND_ADDR is 127.0.0.1 \
+     (or ADMIN_TAILSCALE_USERS is unset) - DEPLOY.md";
+
+/// A listen address on loopback: `127.0.0.0/8`, `::1` or `localhost`, with its port.
+fn bind_is_loopback(addr: &str) -> bool {
+    match addr.parse::<std::net::SocketAddr>() {
+        Ok(addr) => addr.ip().is_loopback(),
+        Err(_) => addr
+            .rsplit_once(':')
+            .is_some_and(|(host, _)| host.eq_ignore_ascii_case("localhost")),
+    }
+}
+
 /// The listener settings (design 22 §2), read once at startup and kept in `AppState.net`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NetConfig {
@@ -267,8 +282,9 @@ pub struct NetConfig {
     pub admin_public: bool,
     /// `TRUSTED_PROXIES` (default `127.0.0.1,::1`): peers whose `X-Forwarded-For` is believed.
     pub trusted_proxies: Vec<IpNet>,
-    /// `ADMIN_TAILSCALE_USERS`: when set, every admin request needs a tailnet client IP and a
-    /// `Tailscale-User-Login` in this list (only behind `tailscale serve`, which sets the header).
+    /// `ADMIN_TAILSCALE_USERS`: when set, every admin request needs a `Tailscale-User-Login` in this
+    /// list, forwarded for a tailnet client by a loopback peer (`tailscale serve` on this host, which
+    /// sets the header); `BIND_ADDR` must then be loopback ([NetConfig::login_list_misplaced]).
     pub admin_tailscale_users: Option<Vec<String>>,
     /// `SESSION_INACTIVITY_DAYS` (default 30, 1-365): an admin session's lifetime without use.
     pub session_inactivity_days: i64,
@@ -430,6 +446,13 @@ impl NetConfig {
             forwarded: header.is_some(),
             untrusted_forward: false,
         }
+    }
+
+    /// `ADMIN_TAILSCALE_USERS` with a `BIND_ADDR` that isn't loopback: the login header counts only from
+    /// tailscale serve on loopback, so the list can't be checked and the admin gate refuses every admin page
+    /// (fail closed). `main` logs [LOGIN_LIST_MISPLACED] once at start.
+    pub fn login_list_misplaced(&self) -> bool {
+        self.admin_tailscale_users.is_some() && !bind_is_loopback(&self.bind_addr)
     }
 
     /// What `main` warns about at startup (design 22 §3.1): a listener on a non-loopback address

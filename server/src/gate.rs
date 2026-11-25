@@ -9,9 +9,12 @@
 //! - A request carrying `Tailscale-Funnel-Request` is refused: whether Funnel's
 //!   `X-Forwarded-For` names the real internet client is not verified, so this is a second check.
 //! - `ADMIN_TAILSCALE_USERS`: the admin pages also need a `Tailscale-User-Login` from that list,
-//!   and the header counts only from a tailnet client (`tailscale serve` sets it and strips a
-//!   client's copy; every Caddy site in DEPLOY.md strips it too, so behind Caddy this fails
-//!   closed). The device API on the admin listener skips this check: phones are tagged nodes
+//!   and the header counts only from tailscale serve on loopback - a loopback TCP peer that
+//!   forwarded a tailnet client (`tailscale serve` sets it and strips a client's copy; every Caddy
+//!   site in DEPLOY.md strips it too, so behind Caddy this fails closed). A tailnet peer's own
+//!   header is ignored. With a `BIND_ADDR` that isn't loopback the list can't be checked, so every
+//!   admin page is refused until it is fixed (`NetConfig::login_list_misplaced`, logged once at
+//!   start). The device API on the admin listener skips this check: phones are tagged nodes
 //!   without a login and authenticate by token.
 //! - `/healthz` skips every guard.
 //!
@@ -39,7 +42,8 @@ pub enum Refusal {
     UntrustedProxy,
     /// `Tailscale-Funnel-Request` - a request from the internet through Funnel.
     Funnel,
-    /// `ADMIN_TAILSCALE_USERS` is set and the request has no listed login from a tailnet client.
+    /// `ADMIN_TAILSCALE_USERS` is set and the request has no listed login from tailscale serve on
+    /// loopback (or the admin listener isn't on loopback, where the list can't be checked).
     TailscaleUser,
 }
 
@@ -83,9 +87,15 @@ pub fn decide(
     if let Some(users) = &net.admin_tailscale_users
         && !path.starts_with("/api/devices/")
     {
-        let login = client
-            .ip
-            .is_some_and(net::is_tailnet)
+        if net.login_list_misplaced() {
+            return Err(Refusal::TailscaleUser);
+        }
+        // Only `tailscale serve`'s path: a loopback peer forwarding a tailnet client. A direct
+        // tailnet peer could send any header.
+        let from_serve = net::is_loopback(client.peer)
+            && client.forwarded
+            && client.ip.is_some_and(net::is_tailnet);
+        let login = from_serve
             .then(|| headers.get("tailscale-user-login"))
             .flatten()
             .and_then(|v| v.to_str().ok())
@@ -410,5 +420,70 @@ mod tests {
             ),
             Ok(())
         );
+    }
+
+    #[test]
+    fn the_login_header_counts_only_from_tailscale_serve_on_loopback() {
+        let net = net(&[
+            ("ADMIN_TAILSCALE_USERS", "parent@example.com"),
+            ("BIND_ADDR", "127.0.0.1:3100"),
+        ]);
+        let login = [("tailscale-user-login", "parent@example.com")];
+        // A direct tailnet peer with the header: ignored.
+        assert_eq!(
+            check(&net, "100.101.102.103", &login, "/devices"),
+            Err(Refusal::TailscaleUser)
+        );
+        // The loopback forward (tailscale serve) is unchanged.
+        assert_eq!(
+            check(
+                &net,
+                "127.0.0.1",
+                &[
+                    ("x-forwarded-for", "100.101.102.103"),
+                    ("tailscale-user-login", "parent@example.com")
+                ],
+                "/devices"
+            ),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn a_login_list_off_loopback_refuses_every_admin_page() {
+        for bind in ["0.0.0.0:3100", "100.101.102.1:3100", "[::]:3100"] {
+            let net = net(&[
+                ("ADMIN_TAILSCALE_USERS", "parent@example.com"),
+                ("BIND_ADDR", bind),
+            ]);
+            assert!(net.login_list_misplaced(), "{bind}");
+            assert_eq!(
+                check(
+                    &net,
+                    "127.0.0.1",
+                    &[
+                        ("x-forwarded-for", "100.101.102.103"),
+                        ("tailscale-user-login", "parent@example.com")
+                    ],
+                    "/devices"
+                ),
+                Err(Refusal::TailscaleUser),
+                "{bind}"
+            );
+            // Phones on the old URL still authenticate by token.
+            assert_eq!(
+                check(&net, "100.101.102.104", &[], "/api/devices/policy"),
+                Ok(()),
+                "{bind}"
+            );
+        }
+        for bind in ["127.0.0.1:3100", "[::1]:3100", "localhost:3100"] {
+            let net = net(&[
+                ("ADMIN_TAILSCALE_USERS", "parent@example.com"),
+                ("BIND_ADDR", bind),
+            ]);
+            assert!(!net.login_list_misplaced(), "{bind}");
+        }
+        assert!(!net(&[("BIND_ADDR", "0.0.0.0:3100")]).login_list_misplaced());
     }
 }

@@ -10,10 +10,11 @@
 //! `UPDATE ... RETURNING` (`handlers::device_api::enroll`).
 //!
 //! Guessing: QR-shaped codes are always checked (one hash, one indexed lookup, at most
-//! [IN_FLIGHT] at once). Typed-shaped failures count toward the client's failure bucket
-//! (`limits`), and - only while a typed code is live, since otherwise there is nothing to guess -
-//! [TYPED_PAUSE_FAILURES] of them server-wide pause typed codes for the rest of that hour
-//! ([Enrollment]).
+//! [IN_FLIGHT] at once, at most [PER_CLIENT] of them one client's). Typed-shaped failures count
+//! toward the client's failure bucket (`limits`), and - only while a typed code is live, since
+//! otherwise there is nothing to guess - [TYPED_CLIENT_FAILURES] of them from one client pause
+//! that client's typed codes for the rest of the hour, and [TYPED_PAUSE_FAILURES] server-wide
+//! (the backstop) everyone's ([Enrollment]).
 
 use std::sync::{Arc, Mutex};
 
@@ -30,11 +31,17 @@ pub const QR_ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 pub const QR_LEN: usize = 26;
 pub const QR_MINUTES: i64 = 30;
 /// Typed-shaped failures in one hour, server-wide, while a typed code is live, that pause typed
-/// codes until the hour ends.
-pub const TYPED_PAUSE_FAILURES: u32 = 20;
-/// Enrollments at once - reading the body included (QA 22 M2).
+/// codes until the hour ends - the backstop behind [TYPED_CLIENT_FAILURES].
+pub const TYPED_PAUSE_FAILURES: u32 = 60;
+/// Typed-shaped failures in one hour from one client, while a typed code is live, that pause that
+/// client's typed codes until the hour ends (another client's code still works).
+pub const TYPED_CLIENT_FAILURES: u32 = 10;
+/// Code checks at once, after the body has arrived (QA 22 M2).
 pub const IN_FLIGHT: usize = 8;
-/// How long an enrollment's body may take to arrive, once it has a slot.
+/// Enrollments one client may have at once, its body's reading included: a slow client holds at
+/// most this many, never every slot.
+pub const PER_CLIENT: usize = 2;
+/// How long an enrollment's body may take to arrive.
 pub const BODY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -152,6 +159,8 @@ pub async fn new_code(
 pub struct Enrollment {
     inner: Mutex<Inner>,
     gate: Arc<tokio::sync::Semaphore>,
+    /// Each client's enrollments in progress ([PER_CLIENT]); a key leaves at 0.
+    per_client: Mutex<std::collections::HashMap<String, usize>>,
 }
 
 impl Default for Enrollment {
@@ -159,6 +168,29 @@ impl Default for Enrollment {
         Enrollment {
             inner: Default::default(),
             gate: Arc::new(tokio::sync::Semaphore::new(IN_FLIGHT)),
+            per_client: Default::default(),
+        }
+    }
+}
+
+/// One client's enrollment in progress ([Enrollment::enter_client]); given back on drop.
+pub struct ClientSlot<'a> {
+    enrollment: &'a Enrollment,
+    key: String,
+}
+
+impl Drop for ClientSlot<'_> {
+    fn drop(&mut self) {
+        let mut slots = self
+            .enrollment
+            .per_client
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(count) = slots.get_mut(&self.key) {
+            *count -= 1;
+            if *count == 0 {
+                slots.remove(&self.key);
+            }
         }
     }
 }
@@ -166,10 +198,13 @@ impl Default for Enrollment {
 #[derive(Default)]
 struct Inner {
     typed_live_until: Option<DateTime<Utc>>,
-    /// The hour (unix seconds / 3600) `failures` counts.
+    /// The hour (unix seconds / 3600) `failures` and `client_failures` count.
     hour: i64,
     failures: u32,
     paused_hour: Option<i64>,
+    /// This hour's typed-shaped failures per client key (at most `limits::MAX_KEYS` keys: past it a
+    /// new key isn't counted on its own - the server-wide count still is).
+    client_failures: std::collections::HashMap<String, u32>,
 }
 
 fn hour_of(now: DateTime<Utc>) -> i64 {
@@ -180,6 +215,20 @@ impl Enrollment {
     /// At most [IN_FLIGHT] code checks at once.
     pub fn gate(&self) -> Arc<tokio::sync::Semaphore> {
         Arc::clone(&self.gate)
+    }
+
+    /// One of this client's [PER_CLIENT] enrollments, `None` while it has them all.
+    pub fn enter_client(&self, key: &str) -> Option<ClientSlot<'_>> {
+        let mut slots = self.per_client.lock().unwrap_or_else(|e| e.into_inner());
+        let count = slots.entry(key.to_string()).or_insert(0);
+        if *count >= PER_CLIENT {
+            return None;
+        }
+        *count += 1;
+        Some(ClientSlot {
+            enrollment: self,
+            key: key.to_string(),
+        })
     }
 
     /// Reads until when a typed code is live. A read error keeps the old value.
@@ -219,14 +268,31 @@ impl Enrollment {
         (inner.paused_hour == Some(hour_of(now))).then(|| end_of_hour(now))
     }
 
-    /// Counts one typed-shaped failure while a typed code is live; `true` when it starts the
-    /// pause.
-    pub fn typed_failed(&self, now: DateTime<Utc>) -> bool {
+    /// When this client's own typed-code pause ends, if one is on ([TYPED_CLIENT_FAILURES]).
+    pub fn client_paused_until(&self, key: &str, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
+        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        (inner.hour == hour_of(now)
+            && inner
+                .client_failures
+                .get(key)
+                .is_some_and(|n| *n >= TYPED_CLIENT_FAILURES))
+        .then(|| end_of_hour(now))
+    }
+
+    /// Counts one typed-shaped failure from `key` while a typed code is live; `true` when it
+    /// starts the server-wide pause.
+    pub fn typed_failed(&self, key: &str, now: DateTime<Utc>) -> bool {
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let hour = hour_of(now);
         if inner.hour != hour {
             inner.hour = hour;
             inner.failures = 0;
+            inner.client_failures.clear();
+        }
+        if inner.client_failures.len() < crate::limits::MAX_KEYS
+            || inner.client_failures.contains_key(key)
+        {
+            *inner.client_failures.entry(key.to_string()).or_insert(0) += 1;
         }
         inner.failures += 1;
         if inner.failures >= TYPED_PAUSE_FAILURES && inner.paused_hour != Some(hour) {
@@ -284,17 +350,63 @@ mod tests {
             .unwrap()
             .with_timezone(&Utc);
         for n in 1..TYPED_PAUSE_FAILURES {
-            assert!(!enrollment.typed_failed(now), "failure {n}");
+            assert!(
+                !enrollment.typed_failed(&format!("c{n}"), now),
+                "failure {n}"
+            );
         }
         assert_eq!(enrollment.typed_paused_until(now), None);
-        assert!(enrollment.typed_failed(now));
-        assert!(!enrollment.typed_failed(now), "starts once");
+        assert!(enrollment.typed_failed("c0", now));
+        assert!(!enrollment.typed_failed("c0", now), "starts once");
         assert_eq!(
             enrollment.typed_paused_until(now).unwrap().to_rfc3339(),
             "2026-10-09T15:00:00+00:00"
         );
         let next_hour = now + chrono::Duration::minutes(45);
         assert_eq!(enrollment.typed_paused_until(next_hour), None);
-        assert!(!enrollment.typed_failed(next_hour), "the count starts over");
+        assert!(
+            !enrollment.typed_failed("c0", next_hour),
+            "the count starts over"
+        );
+    }
+
+    #[test]
+    fn one_clients_typed_failures_pause_that_client_alone() {
+        let enrollment = Enrollment::default();
+        let now = DateTime::parse_from_rfc3339("2026-10-09T14:20:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        for _ in 1..TYPED_CLIENT_FAILURES {
+            enrollment.typed_failed("203.0.113.7", now);
+        }
+        assert_eq!(enrollment.client_paused_until("203.0.113.7", now), None);
+        enrollment.typed_failed("203.0.113.7", now);
+        assert_eq!(
+            enrollment
+                .client_paused_until("203.0.113.7", now)
+                .unwrap()
+                .to_rfc3339(),
+            "2026-10-09T15:00:00+00:00"
+        );
+        assert_eq!(enrollment.client_paused_until("203.0.113.8", now), None);
+        assert_eq!(enrollment.typed_paused_until(now), None);
+        let next_hour = now + chrono::Duration::minutes(45);
+        assert_eq!(
+            enrollment.client_paused_until("203.0.113.7", next_hour),
+            None
+        );
+    }
+
+    #[test]
+    fn a_client_holds_at_most_its_share_of_the_slots() {
+        let enrollment = Enrollment::default();
+        let held: Vec<_> = (0..PER_CLIENT)
+            .map(|_| enrollment.enter_client("a").unwrap())
+            .collect();
+        assert!(enrollment.enter_client("a").is_none());
+        assert!(enrollment.enter_client("b").is_some());
+        drop(held);
+        assert!(enrollment.enter_client("a").is_some());
+        assert!(enrollment.per_client.lock().unwrap().is_empty());
     }
 }
