@@ -2006,6 +2006,7 @@ pub async fn view_filter(
                 },
                 everyone_on,
                 problem: crate::handlers::dns_filter::FeedState::of(&compiled, list_id)
+                    .in_force(own.unwrap_or(everyone_on))
                     .problem(lang),
                 id: list_id,
                 name: crate::models::blocklist_name(lang, &name, &url),

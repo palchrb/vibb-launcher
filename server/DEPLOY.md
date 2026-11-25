@@ -982,9 +982,10 @@ Spotify client ID - each family registers its own (bring your own app, Spotify's
 
 ## The Locate map (design 33)
 
-The parent's browser loads the map's tiles directly from OpenStreetMap with an origin-only `Referer` (OSM sees
-the PWA's address, e.g. its tailnet host name, never a path), so the parent's browser needs to reach
-`tile.openstreetmap.org`; the server itself never contacts OSM.
+The map's tiles come through the server: the parent's browser asks the server, which fetches each tile from
+OpenStreetMap once and keeps it (`data/map_tiles/`, at most 256 MB, a tile asked again after 7 days and deleted
+after 30; not in a backup). So the server needs to reach `tile.openstreetmap.org` over https, and OpenStreetMap sees
+only the server's address. Nothing to set up.
 
 ## Notifications (design 35)
 

@@ -13,9 +13,18 @@ Web filter: lists are fetched over https from public addresses only. `dns_engine
 `Reach::Public` and `Kind::Blocklist` (the 32 MB cap, 30 s): no private, tailnet or loopback answer, no proxy from the
 environment. Redirects are followed one hop at a time, at most 5, and only to `https://`. A refusal is
 `FeedFailure::Refused` (health code `refused`, the parent's to mend; "not fetched: ..." behind the list's (i)). Add a
-List takes only an `https://` address (`bad_list`). A list saved earlier with an `http://` address is unchanged for now,
-waiting on the owner's decision about such lists: still fetched at that address, through the same public-only client,
-with nothing new shown on its row.
+List takes only an `https://` address (`bad_list`). A list saved earlier with an `http://` address is not fetched
+(`FeedFailure::NeedsHttps`, health code `needs_https`, the parent's; `CompiledList::needs_https`): it keeps the domains
+it had, like a failed download, and isn't retried every 5 minutes. Its row on `/dns` shows one orange line "Needs
+https" / "Må bruke https" (`FeedState::NeedsHttps`; a phone's Web Filter page the same short title). A list that is
+off for every phone (no own setting turns it on) shows nothing - the parent's choice is never a warning
+(`FeedState::in_force` -> `HttpUnused`; a phone's page the same for a list off on that phone), and Attention counts
+only lists in force on the phone (`integration_health::for_device`); behind its (i) the
+sentence and a field prefilled with the `https://` form of its address, `POST /dns/blocklists/{id}/url`
+(`set_blocklist_url`: only an `https://` address, else back to the open (i) with the typed address,
+`?notice=bad_list_url&list=<id>&url=..#lists`;
+404 for an unknown list; back to `#lists`, then the list is compiled again). Test
+`dns_blocklist::an_http_list_is_not_fetched_and_says_needs_https`.
 `tests::outbound_clients` fails on a reqwest client built outside the files it lists, each with its reason.
 
 ## A custom DNS server for the Web Filter (design 36 step 1, `docs/design/36-custom-dns.md`, migration `0079_custom_dns.sql`)

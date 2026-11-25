@@ -166,9 +166,9 @@
         var waitAt = box.hasAttribute("data-waiting") ? box.getAttribute("data-at") || "" : "";
 
         var map = L.map(box.querySelector("#map"), { zoomControl: false });
-        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        // OpenStreetMap's tiles through the server's cache (`map_tiles`), as on the Locate page.
+        L.tileLayer('/map-tiles/{z}/{x}/{y}.png', {
             maxZoom: 19,
-            referrerPolicy: 'strict-origin-when-cross-origin',
             attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
         }).addTo(map);
         // The chips have the top: the zoom at the bottom right, fit-all above it (a bottom corner

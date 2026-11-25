@@ -361,12 +361,11 @@ async fn a_stored_future_fix_is_pruned() {
     assert_eq!((left[0].1, left[0].2), (59.9, 10.7));
 }
 
-/// Design 33: OSM refuses tiles without a `Referer`, and the admin pages send `Referrer-Policy:
-/// same-origin`. The map's tile layer alone asks for `strict-origin-when-cross-origin` (Leaflet
-/// sets it on each tile's `<img>`), so OSM gets our origin and nothing more; the page's own policy
-/// and the CSP's one image host stay as they are.
+/// The maps' tiles come through the server (`map_tiles`): every map script asks `/map-tiles/{z}/{x}/{y}.png` and keeps
+/// OpenStreetMap's credit line, and the CSP lets images come from this server alone. The route answers only a tile's
+/// address, on the parent's session, from OpenStreetMap once with its own User-Agent, then from the cache.
 #[tokio::test]
-async fn the_map_loads_osm_tiles_with_an_origin_only_referer() {
+async fn the_maps_load_their_tiles_through_the_server() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (device, _) = app.create_device("Ella").await;
@@ -374,41 +373,166 @@ async fn the_map_loads_osm_tiles_with_an_origin_only_referer() {
         .get_page(&format!("/devices/locate?device={device}"), &cookie)
         .await;
     assert_eq!(page.status, StatusCode::OK);
-    // The map's script is a file since design 44, loaded by the page.
     assert!(
         page.text()
-            .contains("<script src=\"/static/locate.js?v=10\"></script>")
+            .contains("<script src=\"/static/locate.js?v=11\"></script>")
     );
-    let script = std::fs::read_to_string("static/locate.js").unwrap();
-    let layer = script
-        .split("L.tileLayer(")
-        .nth(1)
-        .and_then(|rest| rest.split("}).addTo(map)").next())
-        .expect("the tile layer");
-    assert!(
-        layer.starts_with("'https://tile.openstreetmap.org/{z}/{x}/{y}.png'"),
-        "{layer}"
-    );
-    assert!(
-        layer.contains("referrerPolicy: 'strict-origin-when-cross-origin'"),
-        "{layer}"
-    );
-    assert!(
-        layer.contains("https://www.openstreetmap.org/copyright"),
-        "{layer}"
-    );
-    let header = |name| {
-        page.headers
-            .get(name)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or_default()
-            .to_string()
+    for file in ["locate.js", "locate-all.js", "zones.js"] {
+        let script = std::fs::read_to_string(format!("static/{file}")).unwrap();
+        assert!(!script.contains("tile.openstreetmap.org"), "{file}");
+        let layer = script
+            .split("L.tileLayer(")
+            .nth(1)
+            .and_then(|rest| rest.split("}).addTo(map)").next())
+            .expect("the tile layer");
+        assert!(
+            layer.starts_with("'/map-tiles/{z}/{x}/{y}.png'"),
+            "{file}: {layer}"
+        );
+        assert!(
+            layer.contains("https://www.openstreetmap.org/copyright"),
+            "{file}: {layer}"
+        );
+    }
+    let csp = page
+        .headers
+        .get(header::CONTENT_SECURITY_POLICY)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    assert!(csp.contains("img-src 'self' data: blob:;"), "{csp}");
+    assert!(!csp.contains("openstreetmap"), "{csp}");
+
+    // One tile: fetched once, with the server's own User-Agent, then from the cache.
+    let png = b"\x89PNG\r\n\x1a\nnot really a tile".to_vec();
+    app.fetch
+        .answer("https://tile.openstreetmap.org/3/4/2.png", 200, png.clone());
+    for _ in 0..2 {
+        let res = app.get_page("/map-tiles/3/4/2.png", &cookie).await;
+        assert_eq!(res.status, StatusCode::OK);
+        assert_eq!(res.headers.get(header::CONTENT_TYPE).unwrap(), "image/png");
+        assert_eq!(
+            res.headers.get(header::CACHE_CONTROL).unwrap(),
+            "private, max-age=86400"
+        );
+        assert_eq!(res.body, png);
+    }
+    let osm = |app: &TestApp| -> Vec<super::music::Recorded> {
+        app.fetch
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|r| r.url.contains("openstreetmap"))
+            .cloned()
+            .collect()
     };
-    assert_eq!(header(header::REFERRER_POLICY), "same-origin");
-    assert!(
-        header(header::CONTENT_SECURITY_POLICY)
-            .contains("img-src 'self' data: blob: https://tile.openstreetmap.org;"),
-        "{}",
-        header(header::CONTENT_SECURITY_POLICY)
+    let asked = osm(&app);
+    assert_eq!(asked.len(), 1, "fetched once, then the cache");
+    assert_eq!(asked[0].url, "https://tile.openstreetmap.org/3/4/2.png");
+    let agent = asked[0]
+        .headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("user-agent"))
+        .map(|(_, value)| value.clone())
+        .unwrap_or_default();
+    assert_eq!(agent, crate::map_tiles::user_agent());
+    assert!(app.state.data_dir.join("map_tiles/3/4/2.png").exists());
+
+    // Not a tile's address: never asked upstream.
+    for path in [
+        "/map-tiles/20/0/0.png",
+        "/map-tiles/3/8/0.png",
+        "/map-tiles/3/0/0.jpg",
+        "/map-tiles/3/-1/0.png",
+        "/map-tiles/3/0/0.png%3Fx%3D1",
+    ] {
+        let res = app.get_page(path, &cookie).await;
+        assert_eq!(res.status, StatusCode::NOT_FOUND, "{path}");
+    }
+    assert_eq!(osm(&app).len(), 1);
+    // A tile OSM lacks: 404, remembered - not asked again.
+    app.fetch
+        .answer("https://tile.openstreetmap.org/3/0/1.png", 404, "");
+    for _ in 0..2 {
+        let res = app.get_page("/map-tiles/3/0/1.png", &cookie).await;
+        assert_eq!(res.status, StatusCode::NOT_FOUND);
+    }
+    assert_eq!(osm(&app).len(), 2);
+    // Not a PNG: no image, nothing stored, and a pause in which only the cache answers (3/0/2 isn't asked).
+    app.fetch
+        .answer("https://tile.openstreetmap.org/3/0/0.png", 200, "<html>");
+    app.fetch
+        .answer("https://tile.openstreetmap.org/3/0/2.png", 503, "");
+    for path in ["/map-tiles/3/0/0.png", "/map-tiles/3/0/2.png"] {
+        let res = app.get_page(path, &cookie).await;
+        assert_eq!(res.status, StatusCode::SERVICE_UNAVAILABLE, "{path}");
+    }
+    assert!(!app.state.data_dir.join("map_tiles/3/0/0.png").exists());
+    assert_eq!(osm(&app).len(), 3, "paused after the failure");
+    let res = app.get_page("/map-tiles/3/4/2.png", &cookie).await;
+    assert_eq!(res.status, StatusCode::OK, "the cache still answers");
+    app.state.map_tiles.unpause();
+    let res = app.get_page("/map-tiles/3/0/2.png", &cookie).await;
+    assert_eq!(res.status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(osm(&app).len(), 4);
+    app.state.map_tiles.unpause();
+
+    // One fetch per tile: two browsers asking at once get one download.
+    let tile = b"\x89PNG\r\n\x1a\nanother tile".to_vec();
+    app.fetch.answer(
+        "https://tile.openstreetmap.org/3/1/1.png",
+        200,
+        tile.clone(),
     );
+    app.fetch.hold();
+    let release = async {
+        app.fetch.wait_in_flight().await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        app.fetch.release();
+    };
+    let (first, second, ()) = tokio::join!(
+        app.get_page("/map-tiles/3/1/1.png", &cookie),
+        app.get_page("/map-tiles/3/1/1.png", &cookie),
+        release
+    );
+    assert_eq!((first.status, &first.body), (StatusCode::OK, &tile));
+    assert_eq!((second.status, &second.body), (StatusCode::OK, &tile));
+    assert_eq!(osm(&app).len(), 5, "one download for both");
+    let asked = osm(&app).len();
+
+    // A stale tile (past a week) is served at once and asked again in the background.
+    let path = app.state.data_dir.join("map_tiles/3/4/2.png");
+    let file = std::fs::File::options().write(true).open(&path).unwrap();
+    file.set_modified(
+        std::time::SystemTime::now() - crate::map_tiles::FRESH - std::time::Duration::from_secs(60),
+    )
+    .unwrap();
+    drop(file);
+    let newer = b"\x89PNG\r\n\x1a\na newer tile".to_vec();
+    app.fetch.answer(
+        "https://tile.openstreetmap.org/3/4/2.png",
+        200,
+        newer.clone(),
+    );
+    let res = app.get_page("/map-tiles/3/4/2.png", &cookie).await;
+    assert_eq!((res.status, &res.body), (StatusCode::OK, &png));
+    for _ in 0..500 {
+        if std::fs::read(&path).unwrap_or_default() == newer {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert_eq!(std::fs::read(&path).unwrap(), newer, "refreshed");
+    assert_eq!(osm(&app).len(), asked + 1);
+    let res = app.get_page("/map-tiles/3/4/2.png", &cookie).await;
+    assert_eq!((res.status, res.body), (StatusCode::OK, newer));
+    assert_eq!(osm(&app).len(), asked + 1);
+
+    // Without the parent's session: no tile, never asked.
+    let res = app
+        .request(Method::GET, "/map-tiles/3/4/2.png", None, None)
+        .await;
+    assert_ne!(res.status, StatusCode::OK);
+    assert_eq!(osm(&app).len(), asked + 1);
 }

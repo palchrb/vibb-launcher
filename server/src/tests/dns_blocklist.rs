@@ -123,7 +123,7 @@ async fn a_failing_feed_keeps_its_domains_and_one_never_loaded_is_left_out() {
     // A second feed that never loads (a mistyped URL): left out - no phone ever got it - and the
     // rest, the parent's own domains included, still reaches the phone (QA of the security wave,
     // Low 8: a 503 froze every list).
-    add_feed(&app, "Broken", "http://127.0.0.1:9/nothing").await;
+    add_feed(&app, "Broken", "https://127.0.0.1:9/nothing").await;
     sqlx::query(
         "INSERT INTO dns_custom_domains (domain, list_type) VALUES ('tiktok.com', 'block')",
     )
@@ -284,6 +284,7 @@ fn every_feed_failure_is_classed() {
         (FeedFailure::TooBig, Parent),
         (FeedFailure::NotAList, Parent),
         (FeedFailure::Refused("private".into()), Parent),
+        (FeedFailure::NeedsHttps, Parent),
     ] {
         assert_eq!(failure.class(), class, "{failure:?}");
     }
@@ -374,7 +375,7 @@ async fn a_new_phone_gets_the_ads_list_on() {
 
 /// A list is fetched from public addresses only and its redirects only to https: a hop to a tailnet literal, to
 /// `http://` or to a name with only private answers is refused (the list stays not loaded, its health the parent's);
-/// a hop to another https address is followed; a list saved with an `http://` address is still asked there.
+/// a hop to another https address is followed.
 #[tokio::test]
 async fn a_list_is_fetched_over_https_from_public_addresses_only() {
     let app = TestApp::new().await;
@@ -403,14 +404,12 @@ async fn a_list_is_fetched_over_https_from_public_addresses_only() {
         .redirect("https://lists.example/moved", 308, "/v2/hosts");
     app.fetch
         .answer("https://lists.example/v2/hosts", 200, body);
-    app.fetch.answer("http://old.example/hosts", 200, body);
     let refused = [
         add_feed(&app, "Tailnet", "https://lists.example/tailnet").await,
         add_feed(&app, "Plain", "https://lists.example/plain").await,
         add_feed(&app, "Lan", "https://lists.example/lan").await,
     ];
     let moved = add_feed(&app, "Moved", "https://lists.example/moved").await;
-    let old = add_feed(&app, "Old", "http://old.example/hosts").await;
     compile(&app).await;
 
     {
@@ -439,7 +438,6 @@ async fn a_list_is_fetched_over_https_from_public_addresses_only() {
             );
         }
         assert!(list(moved).loaded && list(moved).domains.contains("ads.example"));
-        assert!(list(old).loaded && list(old).domains.contains("ads.example"));
     }
     for id in refused {
         let health = crate::integration_health::row(&app.db, "blocklist", &format!("feed:{id}"))
@@ -482,4 +480,163 @@ async fn a_list_is_fetched_over_https_from_public_addresses_only() {
         "{location}"
     );
     assert_eq!(count().await, lists);
+}
+
+/// A list saved with an `http://` address before the form asked for https is never asked: it keeps what it had, its
+/// row says "Needs https" in orange with the fix behind its ⓘ (a field for the https address), and its health is the
+/// parent's. The new address must be https; once it is, the list loads.
+#[tokio::test]
+async fn an_http_list_is_not_fetched_and_says_needs_https() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (phone, _) = app.enrolled_device("phone").await;
+    let body = "0.0.0.0 ads.example\n";
+    app.fetch.answer("http://old.example/hosts", 200, body);
+    app.fetch.answer("https://old.example/hosts", 200, body);
+    let old = add_feed(&app, "Old", "http://old.example/hosts").await;
+    compile(&app).await;
+    {
+        let compiled = app.state.dns_compiled.read().await;
+        let list = compiled
+            .lists
+            .iter()
+            .find(|l| l.blocklist_id == old)
+            .unwrap();
+        assert!(list.needs_https && !list.loaded && list.domains.is_empty());
+    }
+    let requests = app.fetch.requests.lock().unwrap().clone();
+    assert!(
+        !requests.iter().any(|r| r.url.contains("old.example")),
+        "never asked"
+    );
+    let health = crate::integration_health::row(&app.db, "blocklist", &format!("feed:{old}"))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (health.class, health.error.as_deref()),
+        (
+            Some(crate::integration_health::Class::Parent),
+            Some("needs_https")
+        )
+    );
+
+    let problem_row = |page: &str| {
+        let row = &page[page
+            .find(&format!("data-list-problem=\"{old}\""))
+            .expect("the problem row")..];
+        row[..row.find("</details>").unwrap()].to_string()
+    };
+    let page = app.get_page("/dns", &cookie).await.text();
+    let row = problem_row(&page);
+    assert!(
+        row.contains("<span class=\"row-label tone-orange\">Needs https</span>"),
+        "{row}"
+    );
+    assert!(
+        row.contains("Lists are only fetched over https, so this one isn&#39;t updated.")
+            || row.contains("Lists are only fetched over https, so this one isn&#x27;t updated."),
+        "{row}"
+    );
+    assert!(
+        row.contains(&format!("action=\"/dns/blocklists/{old}/url#lists\""))
+            && row.contains("value=\"https://old.example/hosts\""),
+        "{row}"
+    );
+    let page = app
+        .get_page(&super::device_page(phone, super::Section::Filter), &cookie)
+        .await
+        .text();
+    assert!(
+        page.contains("<span class=\"row-sub text-alarm\">Needs https</span>"),
+        "{page}"
+    );
+    let page = app.get_page("/dns?lang=nb", &cookie).await.text();
+    assert!(page.contains(">Må bruke https<"), "{page}");
+
+    // An address that isn't https is refused back to the open ⓘ; nothing changes.
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/dns/blocklists/{old}/url"),
+            Some(&cookie),
+            &[("url", "http://typed.example/hosts")],
+        )
+        .await;
+    let location = res.location().unwrap_or_default().to_string();
+    assert_eq!(
+        location,
+        format!("/dns?notice=bad_list_url&list={old}&url=http%3A%2F%2Ftyped.example%2Fhosts#lists")
+    );
+    let page = app.get_page(&location, &cookie).await.text();
+    let row = problem_row(&page);
+    assert!(
+        row.contains(" open>")
+            && row.contains("The address must start with https://.")
+            && row.contains("value=\"http://typed.example/hosts\""),
+        "{row}"
+    );
+
+    // Off for every phone: the parent's choice - nothing on its row, on the phone's page or in Attention.
+    sqlx::query("UPDATE dns_blocklists SET enabled = 0 WHERE id = ?")
+        .bind(old)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let page = app.get_page("/dns", &cookie).await.text();
+    assert!(
+        !page.contains(&format!("data-list-problem=\"{old}\"")) && !page.contains("Needs https"),
+        "{page}"
+    );
+    let page = app
+        .get_page(&super::device_page(phone, super::Section::Filter), &cookie)
+        .await
+        .text();
+    assert!(!page.contains("Needs https"), "{page}");
+    let attention = crate::integration_health::for_device(&app.db, phone, chrono::Utc::now())
+        .await
+        .unwrap();
+    assert!(attention.is_empty(), "{attention:?}");
+    // On for one phone by its own setting: the line is back.
+    sqlx::query(
+        "INSERT INTO device_blocklist_overrides (device_id, blocklist_id, enabled) VALUES (?, ?, 1)",
+    )
+    .bind(phone)
+    .bind(old)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let page = app.get_page("/dns", &cookie).await.text();
+    assert!(
+        page.contains(&format!("data-list-problem=\"{old}\"")),
+        "{page}"
+    );
+
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/dns/blocklists/{old}/url"),
+            Some(&cookie),
+            &[("url", "https://old.example/hosts")],
+        )
+        .await;
+    assert_eq!(res.location().unwrap_or_default(), "/dns#lists");
+    {
+        let compiled = app.state.dns_compiled.read().await;
+        let list = compiled
+            .lists
+            .iter()
+            .find(|l| l.blocklist_id == old)
+            .unwrap();
+        assert!(!list.needs_https && list.loaded && list.domains.contains("ads.example"));
+    }
+    let res = app
+        .request_form(
+            Method::POST,
+            "/dns/blocklists/999999/url",
+            Some(&cookie),
+            &[("url", "https://old.example/hosts")],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND);
 }

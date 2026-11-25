@@ -853,9 +853,10 @@ fn normalize_host(host: &str) -> String {
 
 /// The admin pages' CSP (design 22 §3.2.4; phase 2, S7 and security review L5): scripts only from
 /// `/static` - no template has an inline script or an `on*=` handler
-/// (`tests::admin_auth::no_template_has_inline_script`). Inline styles stay allowed.
+/// (`tests::admin_auth::no_template_has_inline_script`). Inline styles stay allowed. Images only from
+/// this server: the maps' tiles come through its own cache (`map_tiles`).
 pub const ADMIN_CSP: &str = "default-src 'self'; script-src 'self'; \
-     style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://tile.openstreetmap.org; \
+     style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; \
      connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; \
      object-src 'none'";
 

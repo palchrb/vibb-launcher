@@ -88,10 +88,9 @@
         if (usePhone) usePhone.removeAttribute("hidden");
 
         var map = L.map(box.querySelector("#map"), { doubleClickZoom: false });
-        // OSM's tiles with our origin as the Referer (design 33), as on the Locate page.
-        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        // OpenStreetMap's tiles through the server's cache (`map_tiles`), as on the Locate page.
+        L.tileLayer('/map-tiles/{z}/{x}/{y}.png', {
             maxZoom: 19,
-            referrerPolicy: 'strict-origin-when-cross-origin',
             attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
         }).addTo(map);
         L.Icon.Default.imagePath = '/static/leaflet/images/';

@@ -313,6 +313,9 @@ impl TestApp {
             )),
             // The web filter's lists answered by the canned fetch (`fetch.answer(url, ..)`).
             blocklist_fetch: fetch.clone(),
+            // The map tiles from OpenStreetMap answered by the canned fetch.
+            tile_fetch: fetch.clone(),
+            map_tiles: Default::default(),
             weather: {
                 let mut weather = crate::weather_cache::Weather::default();
                 weather.forecast_wait = std::time::Duration::from_millis(500);
