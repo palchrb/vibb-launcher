@@ -46,6 +46,7 @@ private const val KEY_FRESH_FIX = "fresh_fix_v1"
 /** Design 131: the attempts in which Wi-Fi and the satellites disagreed, a running count (`zone_watch.wifi_disagreed`). */
 private const val KEY_WIFI_DISAGREED = "wifi_disagreed"
 private const val KEY_RENEWED = "vouch_renewed_ms"
+private const val KEY_CAP_FAILS = "still_cap_fails_v1"
 private const val KEY_BUDGET = "series_budget_v1"
 private const val KEY_CONTRADICTIONS = "motion_contradictions_v1"
 private const val KEY_DISTRUST_UNTIL = "motion_distrust_until_ms"
@@ -172,7 +173,7 @@ object ZoneWatch {
                     .remove(KEY_FENCES).remove(KEY_QUEUE).remove(KEY_LAST_BEAT)
                     .remove(KEY_MOCK_IGNORED).remove(KEY_MOCK_LAST).remove(KEY_MOCK_KEYS)
                     .remove(KEY_LAST_FRESH_FIX).remove(KEY_LAST_TRY).remove(KEY_BUDGET).remove(KEY_RENEWED)
-                    .remove(KEY_FRESH_FIX).remove(KEY_WIFI_DISAGREED)
+                    .remove(KEY_FRESH_FIX).remove(KEY_WIFI_DISAGREED).remove(KEY_CAP_FAILS)
                     .commit()
             }
         } catch (e: Exception) {
@@ -261,9 +262,10 @@ object ZoneWatch {
      * heartbeat's still skip and `still` count their 4 h from, never a failed attempt (F-3). */
     fun lastFreshFixMs(context: Context): Long = prefs(context).getLong(KEY_LAST_FRESH_FIX, 0L)
 
+    /** A genuinely fresh fix: the vouch from now on; the cap's failed tries start over ([stillCapFailsAfter]). */
     fun stampFreshFix(context: Context, fix: QueuedFix) {
         prefs(context).edit().putLong(KEY_LAST_FRESH_FIX, fix.timeMs).putString(KEY_FRESH_FIX, ServerJson.encodeToString(QueuedFix.serializer(), fix))
-            .commit()
+            .remove(KEY_CAP_FAILS).commit()
     }
 
     /** Design 131: the last fresh fix while it is the one [lastFreshFixMs] names - the still vouch of a Wi-Fi fix (a
@@ -289,8 +291,17 @@ object ZoneWatch {
      * 4 h from the later of it and [lastFreshFixMs] - the vouched fix itself stays the last fresh one. */
     fun vouchRenewedMs(context: Context): Long = prefs(context).getLong(KEY_RENEWED, 0L)
 
+    /** The vouch renewed at [nowMs]: a new 4 h from it, and the cap's failed tries start over ([stillCapFailsAfter]). */
     fun stampVouchRenewed(context: Context, nowMs: Long) {
-        prefs(context).edit().putLong(KEY_RENEWED, nowMs).commit()
+        prefs(context).edit().putLong(KEY_RENEWED, nowMs).remove(KEY_CAP_FAILS).commit()
+    }
+
+    /** The heartbeat's failed tries since the still vouch's 4 h ran out (design 124 D5, amended 2026-11-25; 0 = none):
+     * `STILL` goes on between them, the next one after [capRetryMs]. Cleared by a fresh fix, a renewal and [forget]. */
+    fun stillCapFails(context: Context): Int = prefs(context).getInt(KEY_CAP_FAILS, 0)
+
+    fun stampStillCapFails(context: Context, fails: Int) {
+        prefs(context).edit().putInt(KEY_CAP_FAILS, fails).commit()
     }
 
     // --- A sensor that lies (design 124 D7) ---

@@ -166,6 +166,7 @@ class ZonePlanTest {
         var lastBeat = at(2000)
         var lastTry = at(1800)
         var lastFresh = at(1800)
+        var capFails = 0
         val tries = mutableListOf<Int>()
         val beats = (20 * 60 + 30..30 * 60 step 30).map { m -> (m / 60 % 24) * 100 + m % 60 }
         for (hhmm in beats) {
@@ -173,7 +174,7 @@ class ZonePlanTest {
             if (hhmm in fireAt) flags = flags.moved(0)
             val motion = flags.motion(sensor = true, anchor = true)
             val fires = flags.fires
-            val beat = heartbeatDue(t, lastBeat, interval, motion, lastFresh, null, lastTry, flags.stillSinceMs)
+            val beat = heartbeatDue(t, lastBeat, interval, motion, lastFresh, null, lastTry, flags.stillSinceMs, capFails)
             if (beat != Heartbeat.NOT_DUE) lastBeat = t
             if (beat != Heartbeat.FIX) continue
             tries += hhmm
@@ -181,6 +182,7 @@ class ZonePlanTest {
             val fresh = if (hhmm in fixAt) t else null
             if (fresh != null) lastFresh = fresh
             flags = flags.afterTry(fires, fresh, heartbeat = true, nowMs = t)
+            capFails = stillCapFailsAfter(capFails, beat, motion, fresh != null, renewed = false, held = true)
         }
         return tries
     }
@@ -189,15 +191,20 @@ class ZonePlanTest {
     fun `a failed try while the phone hasn't moved backs off, up to 4 h`() {
         // The walk home, then every try indoors fails: six tries a night, not eighteen.
         assertEquals(listOf(2030, 2100, 2130, 2230, 30, 430), evening(fixAt = emptySet()))
-        // The evening's fix succeeds: STILL to 00:30, then one try per 4 h.
-        assertEquals(listOf(2030, 30, 430), evening(fixAt = setOf(2030)))
-        // A move always gives a try at the next beat, and the back-off starts over from it.
-        assertEquals(listOf(2030, 30, 200, 230, 300, 400, 600), evening(fixAt = setOf(2030), fireAt = setOf(200)))
-        // The §1 cap gap (a regression row): the cap's try failed 30 min ago - no GPS start every beat after it.
+        // The evening's fix succeeds: STILL to 00:30; the cap's try fails - the next two beats, then 1 h, 2 h, 4 h
+        // (amended 2026-11-25), STILL all along.
+        assertEquals(listOf(2030, 30, 100, 130, 230, 430), evening(fixAt = setOf(2030)))
+        // A move always gives a try at the next beat, and the back-off starts over from it (QUIET, as before).
+        assertEquals(listOf(2030, 30, 100, 130, 200, 230, 300, 400, 600), evening(fixAt = setOf(2030), fireAt = setOf(200)))
+        // The §1 cap gap (a regression row): the cap's try failed - no GPS start every beat after it: after the
+        // fourth failed try STILL waits 2 h, and never QUIET while the sensor hasn't fired.
         val now = 1_800_000_000_000L
         val interval = 30 * minute
         val fresh = now - STILL_SKIP_MAX_MS - 30 * minute
-        assertEquals(Heartbeat.QUIET, heartbeatDue(now, now - interval, interval, Motion.STILL, fresh, null, now - interval, fresh))
+        assertEquals(Heartbeat.STILL, heartbeatDue(now, now - interval, interval, Motion.STILL, fresh, null, now - interval, fresh, capFails = 4))
+        assertEquals(Heartbeat.FIX, heartbeatDue(now, now - interval, interval, Motion.STILL, fresh, null, now - interval, fresh, capFails = 1))
+        // The first try at the cap is due at once, whatever tried meanwhile (a failed locate 10 min ago).
+        assertEquals(Heartbeat.FIX, heartbeatDue(now, now - interval, interval, Motion.STILL, fresh, null, now - 10 * minute, fresh))
         // QA M1: the back-off counts from the try as the sync stamps it - the beat's own now
         // (`ZoneWatch.stampBeat(.., tried)`). A try stamped 50 ms after its beat (LocationManager's stamp)
         // would make the beat one interval on QUIET, and the evening skip whole intervals.
@@ -213,6 +220,89 @@ class ZonePlanTest {
         assertEquals(6 * 60 * minute, stillBackoffMs(6 * 60 * minute, lastTryMs = 9 * 60 * minute, stillSinceMs = 0))
         // The clock set back (the last try in the future): due.
         assertEquals(Heartbeat.FIX, heartbeatDue(now, now - interval, interval, Motion.STILL_SINCE_TRY, 0, null, now + minute, now))
+    }
+
+    /**
+     * Design 124 D5 amended 2026-11-25, the owner's still day (a regression row): a fresh fix at 07:30 and then no
+     * fire; beats every 10 min, each a few seconds late (the backstop's wake), so 24 beats are 4 h 1 min. The cap's
+     * try at 11:31 renews the vouch, the one at 15:32 fails - and every try after it. [fixAt]/[fireAt]: the beat
+     * (minutes from 07:30, as the beat's own HHmm) whose try finds a fresh fix, before which the sensor fires.
+     * Each beat as `HHmm` to its verdict and whether its report says `still`.
+     */
+    private fun stillDay(fixAt: Set<Int> = emptySet(), fireAt: Set<Int> = emptySet()): List<Triple<Int, Heartbeat, Boolean>> {
+        val interval = 10 * minute
+        val step = interval + 2_500
+        val base = 1_800_000_000_000L - 1_800_000_000_000L % (24 * 60 * minute) + (7 * 60 + 30) * minute
+        fun hhmm(t: Long) = ((t - base) / minute + 7 * 60 + 30).let { m -> (m / 60 % 24) * 100 + m % 60 }.toInt()
+        var flags = MotionFlags().afterTry(0, base, heartbeat = true, nowMs = base)
+        var lastBeat = base
+        var lastTry = base
+        var lastFresh = base
+        var renewedAt = 0L
+        var capFails = 0
+        val out = mutableListOf<Triple<Int, Heartbeat, Boolean>>()
+        var t = base
+        while (t < base + 24 * 60 * minute) {
+            t += step
+            val at = hhmm(t)
+            if (at in fireAt) flags = flags.moved(0)
+            val motion = flags.motion(sensor = true, anchor = true)
+            val stillFrom = maxOf(lastFresh, renewedAt)
+            val beat = heartbeatDue(t, lastBeat, interval, motion, stillFrom, null, lastTry, flags.stillSinceMs, capFails)
+            val action = if (beat == Heartbeat.FIX) L.FRESH_BALANCED else L.CACHED
+            out += Triple(at, beat, reportStill(true, action, motion, t, stillFrom, capFails))
+            lastBeat = t
+            if (beat != Heartbeat.FIX) continue
+            lastTry = t
+            // The Jelly's 11:31: an Apple fix renewed the vouch (no fresh fix).
+            val renewed = at == 1131
+            val fresh = if (at in fixAt) t else null
+            if (renewed) renewedAt = t
+            if (fresh != null) lastFresh = fresh
+            flags = flags.afterTry(flags.fires, fresh, heartbeat = true, nowMs = t)
+            capFails = stillCapFailsAfter(capFails, beat, motion, fresh != null, renewed, held = true)
+        }
+        return out
+    }
+
+    @Test
+    fun `a failed try at the cap is no move - STILL goes on, the tries back off`() {
+        val day = stillDay()
+        // The tries: the cap's at 11:31 (renewed) and 15:32 (failed), then the next two beats, 1 h, 2 h, every 4 h.
+        assertEquals(listOf(1131, 1532, 1542, 1552, 1652, 1852, 2253, 254, 655), day.filter { it.second == Heartbeat.FIX }.map { it.first })
+        // Every other beat is STILL and says so - no QUIET, the PWA's "Hasn't moved since" never lapses.
+        assertTrue(day.filter { it.second != Heartbeat.FIX }.all { it.second == Heartbeat.STILL && it.third })
+        assertTrue(day.none { it.second == Heartbeat.FIX && it.third })
+        // A good fix starts it over: the 16:52 try finds one - STILL to 20:53, the cap's try, then the next two beats.
+        val good = stillDay(fixAt = setOf(1652)).filter { it.second == Heartbeat.FIX }.map { it.first }
+        assertEquals(listOf(1131, 1532, 1542, 1552, 1652, 2053, 2103, 2113, 2213), good.take(9))
+        // A fire: the next beat tries (MOVED), its failures back off as before (QUIET, no still) until a fresh fix;
+        // after it the cap's failures count from none again.
+        val fired = stillDay(fireAt = setOf(1702), fixAt = setOf(1822))
+        val firedTries = fired.filter { it.second == Heartbeat.FIX }.map { it.first }
+        assertEquals(listOf(1131, 1532, 1542, 1552, 1652, 1702, 1712, 1722, 1742, 1822, 2223, 2233, 2243, 2344), firedTries.take(14))
+        assertTrue(fired.filter { it.first in 1703..1821 && it.second != Heartbeat.FIX }.all { it.second == Heartbeat.QUIET && !it.third })
+        assertTrue(fired.filter { it.first in 1823..2222 }.all { it.second == Heartbeat.STILL && it.third })
+        // The schedule: the next two beats, 1 h, 2 h, then 4 h; never under the interval.
+        val interval = 10 * minute
+        assertEquals(listOf(interval, interval, 60 * minute, 120 * minute, STILL_SKIP_MAX_MS, STILL_SKIP_MAX_MS), (1..6).map { capRetryMs(interval, it) })
+        assertEquals(90 * minute, capRetryMs(90 * minute, 3))
+        // The count: a failed try at or past the cap while STILL adds one; a fresh fix or a renewal clears it; a fire
+        // during the attempt, another motion or another beat leaves it.
+        assertEquals(3, stillCapFailsAfter(2, Heartbeat.FIX, Motion.STILL, fresh = false, renewed = false, held = true))
+        assertEquals(0, stillCapFailsAfter(2, Heartbeat.FIX, Motion.STILL, fresh = true, renewed = false, held = true))
+        assertEquals(0, stillCapFailsAfter(2, Heartbeat.FIX, Motion.STILL, fresh = false, renewed = true, held = true))
+        assertEquals(2, stillCapFailsAfter(2, Heartbeat.FIX, Motion.STILL, fresh = false, renewed = false, held = false))
+        assertEquals(2, stillCapFailsAfter(2, Heartbeat.FIX, Motion.STILL_SINCE_TRY, fresh = false, renewed = false, held = true))
+        assertEquals(2, stillCapFailsAfter(2, null, Motion.STILL, fresh = false, renewed = false, held = true))
+        // Unchanged: no sensor (or distrusted) fixes every due beat, the fired cases keep QUIET, whatever the count.
+        val now = 1_800_000_000_000L
+        val vouch = now - STILL_SKIP_MAX_MS - minute
+        assertEquals(Heartbeat.FIX, heartbeatDue(now, now - interval, interval, Motion.NO_SENSOR, vouch, null, now - minute, vouch, capFails = 3))
+        assertEquals(Heartbeat.FIX, heartbeatDue(now, now - interval, interval, Motion.MOVED, vouch, null, now - minute, vouch, capFails = 3))
+        assertEquals(Heartbeat.QUIET, heartbeatDue(now, now - interval, interval, Motion.STILL_SINCE_TRY, vouch, null, now - minute, vouch - minute, capFails = 3))
+        // The clock set back before the vouch: due.
+        assertEquals(Heartbeat.FIX, heartbeatDue(now, now - interval, interval, Motion.STILL, now + minute, null, now - minute, now, capFails = 3))
     }
 
     @Test
@@ -359,6 +449,13 @@ class ZonePlanTest {
         assertFalse(reportStill(true, L.CACHED, Motion.NO_SENSOR, now, now - minute))
         assertFalse(reportStill(true, L.FRESH_BALANCED, Motion.STILL, now, now - minute))
         assertFalse(reportStill(true, L.CACHED, Motion.STILL, now, now + minute))
+        // Amended 2026-11-25: past the 4 h after a failed try, still while the sensor hasn't fired - never otherwise.
+        assertTrue(reportStill(true, L.CACHED, Motion.STILL, now, now - 9 * 60 * minute, capFails = 1))
+        assertFalse(reportStill(true, L.CACHED, Motion.STILL_SINCE_TRY, now, now - 9 * 60 * minute, capFails = 1))
+        assertFalse(reportStill(true, L.CACHED, Motion.NO_SENSOR, now, now - 9 * 60 * minute, capFails = 1))
+        assertFalse(reportStill(true, L.FRESH_BALANCED, Motion.STILL, now, now - 9 * 60 * minute, capFails = 1))
+        assertFalse(reportStill(false, L.CACHED, Motion.STILL, now, now - 9 * 60 * minute, capFails = 1))
+        assertFalse(reportStill(true, L.CACHED, Motion.STILL, now, now + minute, capFails = 1))
     }
 
     @Test
@@ -715,7 +812,14 @@ class ZonePlanTest {
         assertEquals(1, Regex("""promoteKept\(""").findAll(sync).count())
         // Q-3: the still flag rides the report.
         assertTrue(sync.contains("zoneWatch = ZoneWatch.report(context, still = location.still),"))
-        assertTrue(sync.contains("val stillBeat = reportStill(stillOn, action, motion, now, stillFrom)"))
+        assertTrue(sync.contains("val stillBeat = reportStill(stillOn, action, motion, now, stillFrom, capFails)"))
+        // Design 124 D5 amended 2026-11-25: the cap's failed tries, read before the decision, counted after the
+        // attempt; a fresh fix and a renewal clear them.
+        assertTrue(sync.contains("val capFails = if (stillOn) ZoneWatch.stillCapFails(context) else 0"))
+        assertTrue(sync.contains("capFails = capFails,"))
+        assertTrue(sync.contains("val capFailsNow = stillCapFailsAfter(capFails, beat, motion, fresh != null, places.renewed, held)"))
+        assertTrue(Regex("""fun stampFreshFix\(context: Context, fix: QueuedFix\) \{[\s\S]{0,250}\.remove\(KEY_CAP_FAILS\)\.commit\(\)""").containsMatchIn(watch))
+        assertTrue(watch.contains("prefs(context).edit().putLong(KEY_RENEWED, nowMs).remove(KEY_CAP_FAILS).commit()"))
         assertTrue(sync.contains("val still = stillBeat || places.renewed"))
         assertTrue(sync.contains("still = still,"))
         // Q-5: Off (and no zones) clears the queue before the report and sends no extras.

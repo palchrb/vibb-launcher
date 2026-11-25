@@ -10,6 +10,11 @@ Wi-Fi witness**, phones without zones show "Hasn't moved since", balanced first 
 Revision 2 applies the design QA (H1-H2, M1-M3, L1-L8; §9) and the Jelly Star's `dumpsys location` of 2026-11-21/22.
 Launcher round plus a small server change; no contract file changes. Read against `main` 2e3796699.
 
+Amended 2026-11-25 (D5, the owner's decision after a still day on the Jelly Star): a failed try at or past the 4-h cap
+while the sensor hasn't fired is no evidence of a move - `STILL` (`still: true`) goes on, the next try after the next
+two beats, then 1 h, 2 h, every 4 h, starting over at a fresh fix, a renewal or a fire; `QUIET` only after a fire.
+D6's cap still bounds the vouch without a try. `docs/notes/launcher/zones-and-power.md` has the rule.
+
 ## 0. Short answer
 
 Today's 30-min fix costs roughly **12-19 mAh a day (0.6-1 % of 2000 mAh)** - an estimate, not a measurement. It is

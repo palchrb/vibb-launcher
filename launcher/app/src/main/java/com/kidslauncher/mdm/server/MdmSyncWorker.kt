@@ -45,6 +45,7 @@ import com.kidslauncher.mdm.zones.heartbeatDue
 import com.kidslauncher.mdm.zones.fixMoving
 import com.kidslauncher.mdm.zones.motionContradiction
 import com.kidslauncher.mdm.zones.reportStill
+import com.kidslauncher.mdm.zones.stillCapFailsAfter
 import com.kidslauncher.mdm.zones.syncLocationAction
 import com.kidslauncher.mdm.zones.toQueued
 import com.kidslauncher.mdm.zones.toReport
@@ -898,6 +899,8 @@ private class LocationOutcome(
  * attempt is the Wi-Fi places' ([WifiPlaces.Ask]) - a learned fix from the 2-min fallback is reported but not fresh,
  * and the 4-h cap try may renew the still vouch through a zone link (D12: `still: true`, a new 4-h step from
  * `ZoneWatch.vouchRenewedMs`); a learned fix never contradicts the sensor and is never the vouched side (D15).
+ * Design 124 D5 amended 2026-11-25: a failed try at or past the cap with no fire is no move - `STILL` goes on, the
+ * next try after `capRetryMs` (`ZoneWatch.stillCapFails`, counted here, cleared by a fresh fix or a renewal).
  */
 private suspend fun currentLocationReport(
     context: Context,
@@ -925,6 +928,8 @@ private suspend fun currentLocationReport(
     // its vouch (design 125 D12).
     val lastFreshFix = if (stillOn) ZoneWatch.lastFreshFixMs(context) else lastOwnFix
     val stillFrom = if (stillOn) maxOf(lastFreshFix, ZoneWatch.vouchRenewedMs(context)) else lastOwnFix
+    // Design 124 D5 (amended 2026-11-25): the failed tries since the vouch's 4 h ran out.
+    val capFails = if (stillOn) ZoneWatch.stillCapFails(context) else 0
     val sync = syncLocationAction(
         policy = policy,
         stillOn = stillOn,
@@ -938,18 +943,23 @@ private suspend fun currentLocationReport(
         keptFixAgeMs = kept?.let { now - it.timeMs },
         lastFreshFixMs = stillFrom,
         stillSinceMs = motionNow?.stillSinceMs ?: 0L,
+        capFails = capFails,
     )
     val action = withLowBatteryFix(sync.action, lowBatteryFix)
     val beat = sync.beat
     if (stillOn) {
         if (beat == Heartbeat.QUIET) Log.i(ZONE_LOG_TAG, "Location heartbeat: QUIET backoff=${sync.backoffMs / 60_000} min")
-        if (beat == Heartbeat.STILL || beat == Heartbeat.KEPT) Log.i(ZONE_LOG_TAG, "Location heartbeat: $beat")
+        if (beat == Heartbeat.STILL && capFails > 0) {
+            Log.i(ZONE_LOG_TAG, "Location heartbeat: STILL fails=$capFails retry=${sync.backoffMs / 60_000} min")
+        } else if (beat == Heartbeat.STILL || beat == Heartbeat.KEPT) {
+            Log.i(ZONE_LOG_TAG, "Location heartbeat: $beat")
+        }
         if (action.fresh || (beat != null && beat != Heartbeat.NOT_DUE)) ZoneWatch.stampBeat(context, now, tried = action.fresh)
         // The kept fix (passive, a series check's) becomes the reported one only here (Q-1).
         if (beat == Heartbeat.KEPT || crossing) LocateCommands.promoteKept(context)
     }
     // P-L3: a cached fix older than the interval is never reported - but the still heartbeat's re-send (Q-3).
-    val stillBeat = reportStill(stillOn, action, motion, now, stillFrom)
+    val stillBeat = reportStill(stillOn, action, motion, now, stillFrom, capFails)
     // The last fresh fix, while it is the reported one (QA L2): what D7 checks a fix taken while the gate says STILL
     // against, and what the moving-car rule measures a fix without a speed from.
     val lastFreshQueued = if (motionNow != null && action.fresh) LocateCommands.cachedQueued()?.takeIf { it.timeMs == lastFreshFix } else null
@@ -1016,6 +1026,9 @@ private suspend fun currentLocationReport(
         // new side of one (design 125 D15: a wrong Wi-Fi fix must not distrust the sensor).
         val satellite = fresh?.provider in VOUCHING_PROVIDERS
         if (held && fresh != null && satellite && motionContradiction(vouched, fresh.toQueued())) ZoneWatch.noteContradiction(context)
+        // Design 124 D5 (amended 2026-11-25): a failed try past the cap counts towards the retry's back-off.
+        val capFailsNow = stillCapFailsAfter(capFails, beat, motion, fresh != null, places.renewed, held)
+        if (capFailsNow > capFails) ZoneWatch.stampStillCapFails(context, capFailsNow)
         if (beat == Heartbeat.FIX || moving) {
             val result = when {
                 places.renewed -> "renewed"

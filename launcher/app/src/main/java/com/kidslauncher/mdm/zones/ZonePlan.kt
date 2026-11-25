@@ -107,7 +107,7 @@ data class SyncLocation(val action: com.kidslauncher.mdm.server.LocationAction, 
  * crossing's confirm) and the balanced one for a crossing's first fix; else [heartbeatDue] decides,
  * a `FIX` taking the balanced path. [lastOwnFixMs] is our last attempt (the back-off's last try),
  * [lastFreshFixMs] our last genuinely fresh fix (the still skip's 4 h, F-3), [stillSinceMs]
- * [MotionFlags.stillSinceMs].
+ * [MotionFlags.stillSinceMs], [capFails] the failed tries since the vouch's 4 h ran out ([stillCapFailsAfter]).
  */
 fun syncLocationAction(
     policy: com.kidslauncher.mdm.server.dto.LocationPolicy?,
@@ -121,6 +121,7 @@ fun syncLocationAction(
     keptFixAgeMs: Long?,
     lastFreshFixMs: Long,
     stillSinceMs: Long = 0,
+    capFails: Int = 0,
 ): SyncLocation {
     val today = com.kidslauncher.mdm.server.locationAction(policy, forced, nowMs - lastOwnFixMs)
     if (!stillOn || policy == null || policy.mode != "interval") return SyncLocation(today, null)
@@ -129,9 +130,10 @@ fun syncLocationAction(
         return SyncLocation(fresh, null)
     }
     val intervalMs = policy.intervalMinutes.coerceAtLeast(com.kidslauncher.mdm.server.MIN_LOCATION_INTERVAL_MINUTES) * 60_000L
-    val beat = heartbeatDue(nowMs, lastBeatMs, intervalMs, motion, lastFreshFixMs, keptFixAgeMs, lastOwnFixMs, stillSinceMs)
+    val beat = heartbeatDue(nowMs, lastBeatMs, intervalMs, motion, lastFreshFixMs, keptFixAgeMs, lastOwnFixMs, stillSinceMs, capFails)
     val action = if (beat == Heartbeat.FIX) com.kidslauncher.mdm.server.LocationAction.FRESH_BALANCED else com.kidslauncher.mdm.server.LocationAction.CACHED
-    return SyncLocation(action, beat, stillBackoffMs(intervalMs, lastOwnFixMs, stillSinceMs))
+    val backoffMs = if (motion == Motion.STILL && capFails > 0) capRetryMs(intervalMs, capFails) else stillBackoffMs(intervalMs, lastOwnFixMs, stillSinceMs)
+    return SyncLocation(action, beat, backoffMs)
 }
 
 /** What the backstop counts the next fix from: the beat on a Regularly phone (a skip waits a whole
@@ -220,11 +222,12 @@ enum class Heartbeat {
      * no LocationManager call. */
     KEPT,
 
-    /** Due, the phone hasn't moved since our last fresh fix and that was under 4 h ago: report the
-     * cached fix as still current, no LocationManager call. */
+    /** Due, the phone hasn't moved since our last fresh fix and that was under 4 h ago - or the 4 h ran
+     * out, the tries since failed and the next one isn't due ([capRetryMs]): report the cached fix as
+     * still current, no LocationManager call. */
     STILL,
 
-    /** Due, the phone hasn't moved since our last try (which failed, or the 4 h ran out) and the
+    /** Due, the sensor fired since our last fresh fix but not since our last try (which failed) and the
      * back-off ([stillBackoffMs]) hasn't passed: the cached fix with its own age - no `still`, no
      * LocationManager call (design 124 D5). */
     QUIET,
@@ -236,10 +239,13 @@ enum class Heartbeat {
  * fix when a kept fix **not yet reported** is younger than the interval ([keptFixAgeMs]: the kept
  * slot's fix, zones only; our own reported fixes never count, Q-4) - `KEPT`; when [motion] says the
  * phone hasn't moved since our last genuinely fresh fix ([lastFreshFixMs]) and that is under
- * [STILL_SKIP_MAX_MS] old - `STILL`; when it hasn't moved since our last try ([lastTryMs]) and the
- * back-off ([stillBackoffMs] from [stillSinceMs]) hasn't passed since it - `QUIET`. Each due call
- * counts as a heartbeat (the caller stamps it), so a skip waits a whole interval, never the
- * backstop's 9-minute floor. A move (a fire) always gives a try at the next due beat.
+ * [STILL_SKIP_MAX_MS] old - `STILL`. Past the 4 h with no fire (amended 2026-11-25): a failed try is
+ * no evidence of a move, so after [capFails] failed tries `STILL` goes on until the next one is due
+ * ([capRetryMs] from [lastTryMs]) - then `FIX`; the first try at the cap is due at once. When it fired
+ * since the fresh fix but not since our last try ([lastTryMs], `STILL_SINCE_TRY`) and the back-off
+ * ([stillBackoffMs] from [stillSinceMs]) hasn't passed since it - `QUIET`. Each due call counts as a
+ * heartbeat (the caller stamps it), so a skip waits a whole interval, never the backstop's 9-minute
+ * floor. A move (a fire) always gives a try at the next due beat.
  */
 fun heartbeatDue(
     nowMs: Long,
@@ -250,15 +256,54 @@ fun heartbeatDue(
     keptFixAgeMs: Long?,
     lastTryMs: Long,
     stillSinceMs: Long,
+    capFails: Int = 0,
 ): Heartbeat {
     val since = nowMs - lastBeatMs
     if (since in 0 until intervalMs) return Heartbeat.NOT_DUE
     if (keptFixAgeMs != null && keptFixAgeMs in 0 until intervalMs) return Heartbeat.KEPT
     if (stillSinceOwnFix(motion, nowMs, lastFreshFixMs)) return Heartbeat.STILL
-    val stillSinceTry = motion == Motion.STILL || motion == Motion.STILL_SINCE_TRY
-    if (stillSinceTry && nowMs - lastTryMs in 0 until stillBackoffMs(intervalMs, lastTryMs, stillSinceMs)) return Heartbeat.QUIET
+    if (motion == Motion.STILL) {
+        val waiting = stillVouched(motion, nowMs, lastFreshFixMs, capFails) && nowMs - lastTryMs in 0 until capRetryMs(intervalMs, capFails)
+        return if (waiting) Heartbeat.STILL else Heartbeat.FIX
+    }
+    if (motion == Motion.STILL_SINCE_TRY && nowMs - lastTryMs in 0 until stillBackoffMs(intervalMs, lastTryMs, stillSinceMs)) return Heartbeat.QUIET
     return Heartbeat.FIX
 }
+
+/**
+ * Design 124 D5, amended 2026-11-25: how long `STILL` waits after the [fails]-th failed try since the
+ * vouch's 4 h ran out (no fire meanwhile) before the next try - the next two beats (one interval
+ * each), then 1 h, 2 h, and every [STILL_SKIP_MAX_MS] after; never under the interval. A cap try
+ * failed at 15:32 on a 10-min interval tries again at 15:42, 15:52, 16:52, 18:52, then every 4 h.
+ */
+fun capRetryMs(intervalMs: Long, fails: Int): Long = when {
+    fails <= 2 -> intervalMs
+    fails == 3 -> 60 * 60_000L
+    fails == 4 -> 2 * 60 * 60_000L
+    else -> STILL_SKIP_MAX_MS
+}.coerceAtLeast(intervalMs)
+
+/**
+ * The failed tries since the vouch's 4 h ran out, after an attempt ([fails] before it; CE prefs
+ * `zone_watch` `still_cap_fails_v1`): a genuinely fresh fix ([fresh]) or a renewal ([renewed]) of the
+ * vouch - none; the heartbeat's own `FIX` while [motion] was `STILL` (so a try at or past the cap) that
+ * failed with no fire during it ([held]) - one more; else as before. A fire needs a fresh fix before
+ * the motion is `STILL` again, so it starts the count over too.
+ */
+fun stillCapFailsAfter(fails: Int, beat: Heartbeat?, motion: Motion, fresh: Boolean, renewed: Boolean, held: Boolean): Int = when {
+    fresh || renewed -> 0
+    beat == Heartbeat.FIX && motion == Motion.STILL && held -> fails + 1
+    else -> fails
+}
+
+/**
+ * The phone may say its reported fix is still current ([reportStill], the heartbeat's `STILL`): the
+ * sensor hasn't fired since the vouch ([stillFromMs], the last fresh fix or its renewal) and the vouch
+ * is under 4 h old ([stillSinceOwnFix]) - or older, and the tries since failed ([capFails] > 0; amended
+ * 2026-11-25: a failed try is no evidence of a move).
+ */
+fun stillVouched(motion: Motion, nowMs: Long, stillFromMs: Long, capFails: Int): Boolean =
+    stillSinceOwnFix(motion, nowMs, stillFromMs) || (motion == Motion.STILL && capFails > 0 && nowMs >= stillFromMs)
 
 /**
  * Design 124 D5: how long the heartbeat waits after a try while the phone hasn't moved - as long as
@@ -276,13 +321,13 @@ fun stillSinceOwnFix(motion: Motion, nowMs: Long, lastFreshFixMs: Long): Boolean
 
 /**
  * The report's `zone_watch.still` (qa-design-64-step2-code Q-3, design 124 D1): on a Regularly phone,
- * zones or not, a sync that re-sends the cached fix ([action] `CACHED`) while [stillSinceOwnFix] says
+ * zones or not, a sync that re-sends the cached fix ([action] `CACHED`) while [stillVouched] says
  * the phone hasn't moved tells the server the fix is still current, so "Here now" and "Hasn't moved
  * since" count from this report - the fix's own time is never rewritten. A fresh fix is current
  * anyway; never without the still rule ([stillOn]).
  */
-fun reportStill(stillOn: Boolean, action: com.kidslauncher.mdm.server.LocationAction, motion: Motion, nowMs: Long, lastFreshFixMs: Long): Boolean =
-    stillOn && action == com.kidslauncher.mdm.server.LocationAction.CACHED && stillSinceOwnFix(motion, nowMs, lastFreshFixMs)
+fun reportStill(stillOn: Boolean, action: com.kidslauncher.mdm.server.LocationAction, motion: Motion, nowMs: Long, lastFreshFixMs: Long, capFails: Int = 0): Boolean =
+    stillOn && action == com.kidslauncher.mdm.server.LocationAction.CACHED && stillVouched(motion, nowMs, lastFreshFixMs, capFails)
 
 /**
  * The motion gate's state (design 124 D3), in memory only: a new process starts moved.
