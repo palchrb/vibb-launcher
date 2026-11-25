@@ -34,7 +34,7 @@
             {% let downloading = self.refused_here("download", b.filename) %}
             <details class="edit cell" data-backup="{{ b.filename }}"{% if restoring || downloading %} open{% endif %}>
                 <summary class="row">
-                    <span class="row-label"><span{% if !b.exact.is_empty() %} title="{{ b.exact }}"{% endif %}>{{ b.when }}</span><span class="row-sub">{{ b.size_display }}{% if b.checked %} · <span data-checked>{{ self.t("settings.backups.checked") }}</span>{% endif %}</span></span>
+                    <span class="row-label"><span{% if !b.exact.is_empty() %} title="{{ b.exact }}"{% endif %}>{{ b.when }}</span><span class="row-sub">{{ b.size_display }}{% if b.checked %} · <span data-checked>{{ self.t("settings.backups.checked") }}</span>{% endif %}{% if let Some(refused) = b.refused %} · <span class="tone-orange" data-refused>{{ refused }}</span>{% endif %}</span></span>
                     <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 </summary>
                 <div class="edit-body">

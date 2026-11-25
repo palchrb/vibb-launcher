@@ -9,6 +9,7 @@ mod app_permissions;
 mod attention;
 mod attestation;
 mod audit;
+mod backup_schema;
 mod blocked_numbers;
 mod boot_witness;
 mod builtin;
@@ -343,15 +344,15 @@ async fn main() {
     // SSH on a systemd install): applied before the database is opened, and undone if the
     // restored one won't open.
     let db_path = startup::sqlite_path(&database_url);
-    // A backup whose database this server doesn't make: logged in the live database once it is open.
-    let mut refused_not_vibb = None;
+    // A backup the backup check refused: logged in the live database once it is open.
+    let mut refused_check = None;
     let restored = match &db_path {
         Some(path) => {
             match startup::apply_restore_request(std::path::Path::new("data"), path).await {
                 Ok(restored) => restored,
                 Err(err) => {
                     tracing::error!("restore refused, the database is unchanged: {err}");
-                    refused_not_vibb = err.not_vibb;
+                    refused_check = err.check;
                     None
                 }
             }
@@ -383,8 +384,8 @@ async fn main() {
         tracing::info!("restored the backup {}", restore.filename);
         startup::record_restore(&db, restore).await;
     }
-    if let Some((filename, by)) = &refused_not_vibb {
-        startup::record_restore_refused(&db, filename, by.as_deref()).await;
+    if let Some(refusal) = &refused_check {
+        startup::record_restore_refused(&db, refusal).await;
     }
 
     security::bootstrap_admin(&db, std::path::Path::new("data")).await;
@@ -721,6 +722,9 @@ async fn run_command(command: &str, args: &[String]) -> i32 {
                 }
             }
         }
+        ("check-backup", [file]) => {
+            handlers::backups::check_command(std::path::Path::new(file)).await
+        }
         (command, [username]) if is_reset_command(command) => {
             let _ = rustls::crypto::ring::default_provider().install_default();
             let database_url = std::env::var("DATABASE_URL")
@@ -750,7 +754,7 @@ async fn run_command(command: &str, args: &[String]) -> i32 {
         _ => {
             eprintln!(
                 "usage: kid_phone_server [reset-2fa <user> | reset-sign-in <user> | healthcheck | \
-                 selftest-tls]\n\
+                 selftest-tls | check-backup <file>]\n\
                  With no arguments it runs the server."
             );
             2

@@ -421,3 +421,44 @@ async fn a_parents_changes_are_never_past_a_phones_budget() {
     assert_eq!(events(&app, "app_added").await.len() as i64, n);
     assert_eq!(pushes(&app, "app_added").await, n);
 }
+
+/// An upload whose database the migrations don't make is refused and deleted at once, with a security-log line
+/// naming the code.
+#[tokio::test]
+async fn an_upload_the_migrations_dont_make_is_refused() {
+    use std::io::Write;
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let made = tempfile::tempdir().unwrap();
+    let file = made.path().join("kidphone.db");
+    let db = crate::connect_db(&format!("sqlite://{}", file.display())).await;
+    sqlx::query("CREATE TABLE notes (body TEXT)")
+        .execute(&db)
+        .await
+        .unwrap();
+    sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+        .execute(&db)
+        .await
+        .unwrap();
+    db.close().await;
+    let zip_path = made.path().join("upload.zip");
+    let mut zip = zip::ZipWriter::new(std::fs::File::create(&zip_path).unwrap());
+    zip.start_file("kidphone.db", zip::write::SimpleFileOptions::default())
+        .unwrap();
+    zip.write_all(&std::fs::read(&file).unwrap()).unwrap();
+    zip.finish().unwrap();
+    let res = upload(&app, &cookie, &std::fs::read(&zip_path).unwrap(), PASSWORD).await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    assert!(res.text().contains("Not a Vibb backup"), "{}", res.text());
+    let kept = std::fs::read_dir(app.state.data_dir.join("backups"))
+        .map(|entries| entries.filter_map(Result::ok).count())
+        .unwrap_or(0);
+    assert_eq!(kept, 0);
+    assert!(lines(&app, "backup_uploaded").await.is_empty());
+    let logged = lines(&app, "backup_upload_refused").await;
+    assert_eq!(logged.len(), 1, "{logged:?}");
+    assert!(
+        logged[0].1.as_deref().is_some_and(|d| d.contains("schema")),
+        "{logged:?}"
+    );
+}

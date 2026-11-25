@@ -326,7 +326,19 @@ async fn a_backup_the_migrations_dont_make_is_not_a_vibb_backup() {
     let list = app.get_page("/devices", &cookie).await.text();
     assert!(list.contains("id=\"backup-warning\""), "{list}");
 
-    startup::record_restore_refused(&app.db, bad, Some("parent")).await;
+    // A restore of an older backup refused at the start (here: it couldn't be updated): the live database's log has
+    // the line with the file and the code, and the page shows it at that backup's row.
+    let older = "backup-20000101-000000.zip";
+    std::fs::write(app.state.data_dir.join("backups").join(older), b"older").unwrap();
+    startup::record_restore_refused(
+        &app.db,
+        &startup::CheckRefusal {
+            filename: older.to_string(),
+            by: Some("parent".to_string()),
+            code: backups::CheckCode::Migrate,
+        },
+    )
+    .await;
     let logged: Vec<(Option<String>, Option<String>)> = sqlx::query_as(
         "SELECT username, detail FROM security_events WHERE event_type = 'backup_restore_refused'",
     )
@@ -336,7 +348,21 @@ async fn a_backup_the_migrations_dont_make_is_not_a_vibb_backup() {
     assert_eq!(logged.len(), 1, "{logged:?}");
     assert_eq!(logged[0].0.as_deref(), Some("parent"));
     assert!(
-        logged[0].1.as_deref().is_some_and(|d| d.contains(bad)),
+        logged[0]
+            .1
+            .as_deref()
+            .is_some_and(|d| d.contains(older) && d.contains("(migrate)")),
         "{logged:?}"
+    );
+    let page = app.get_page("/backups", &cookie).await.text();
+    let row = page
+        .split("data-backup=\"backup-20000101-000000.zip\"")
+        .nth(1)
+        .unwrap_or_default();
+    assert!(row.contains("data-refused"), "{page}");
+    assert!(
+        row.contains("Can&#39;t be updated to this server")
+            || row.contains("Can't be updated to this server"),
+        "{page}"
     );
 }

@@ -113,16 +113,24 @@ fn with_suffix(db: &Path, suffix: &str) -> PathBuf {
 pub struct RestoreRefused {
     /// For the server log.
     pub message: String,
-    /// The backup's database isn't one this server makes (`backups::CheckCode::Schema`): its file and who asked (the
-    /// PWA's marker's username), for the live database's `backup_restore_refused` line ([record_restore_refused]).
-    pub not_vibb: Option<(String, Option<String>)>,
+    /// The backup check refused it ([crate::handlers::backups::check_extracted]): for the live database's
+    /// `backup_restore_refused` line and the file's check row ([record_restore_refused]).
+    pub check: Option<CheckRefusal>,
+}
+
+/// A restore the backup check refused: the file, who asked (the PWA's marker's username) and the check's code.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckRefusal {
+    pub filename: String,
+    pub by: Option<String>,
+    pub code: crate::handlers::backups::CheckCode,
 }
 
 impl From<String> for RestoreRefused {
     fn from(message: String) -> Self {
         RestoreRefused {
             message,
-            not_vibb: None,
+            check: None,
         }
     }
 }
@@ -146,22 +154,26 @@ pub async fn apply_restore_request(
     apply_restore_request_capped(data_dir, db, RESTORE_MAX_BYTES).await
 }
 
-/// After a refused restore of a database this server doesn't make: the live database's security log gets a
-/// `backup_restore_refused` line, and the file's check row says so (the Backups page's "Not a Vibb backup").
-pub async fn record_restore_refused(db: &sqlx::SqlitePool, filename: &str, by: Option<&str>) {
+/// After a restore the backup check refused: the live database's security log gets a `backup_restore_refused` line
+/// with the file and the code, and the file's check row fails with the code (the Backups page's line for it).
+pub async fn record_restore_refused(db: &sqlx::SqlitePool, refusal: &CheckRefusal) {
+    let code = refusal.code.as_str();
     crate::security::record_security_event(
         db,
         "backup_restore_refused",
-        by,
+        refusal.by.as_deref(),
         None,
-        Some(crate::security::Detail::facts(filename)),
+        Some(crate::security::Detail::facts(format!(
+            "{} ({code})",
+            refusal.filename
+        ))),
     )
     .await;
     crate::integration_health::failed(
         db,
         crate::handlers::backups::CHECK_KEY,
-        &format!("file:{filename}"),
-        crate::handlers::backups::CheckCode::Schema.as_str(),
+        &format!("file:{}", refusal.filename),
+        code,
         crate::integration_health::Class::Stop,
     )
     .await;
@@ -306,19 +318,17 @@ pub(crate) async fn apply_restore_request_capped(
     let checked = crate::handlers::backups::check_extracted(data_dir, &staged).await;
     if checked != crate::handlers::backups::Checked::Ok {
         let _ = std::fs::remove_file(&staged);
-        let not_vibb = (checked
-            == crate::handlers::backups::Checked::Failed(
-                crate::handlers::backups::CheckCode::Schema,
-            ))
-        .then(|| {
-            (
-                filename.clone(),
-                by.as_ref().map(|(username, _)| username.clone()),
-            )
-        });
+        let code = match &checked {
+            crate::handlers::backups::Checked::Failed(code) => *code,
+            _ => crate::handlers::backups::CheckCode::NoRoom,
+        };
         return Err(RestoreRefused {
             message: format!("{filename}'s kidphone.db doesn't pass the backup check: {checked:?}"),
-            not_vibb,
+            check: Some(CheckRefusal {
+                filename: filename.clone(),
+                by: by.as_ref().map(|(username, _)| username.clone()),
+                code,
+            }),
         });
     }
 

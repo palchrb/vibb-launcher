@@ -194,8 +194,8 @@ No prior programming experience - build features directly rather than explaining
   A restore is the server's own (`startup::apply_restore_request` at the start, from `data/restore_request`: the
   PWA's in the container, the owner's over SSH on a systemd install - DEPLOY.md, "Backups"): only the zip's
   `kidphone.db`, at most 1 GiB, passing the backup check before the swap (`backups::check_extracted` on a scratch copy,
-  the bullet below; refused: the live database untouched, its `backup_restore_refused` line for a schema this server
-  doesn't make, `startup::record_restore_refused`), the replaced database kept in `data/backups/prerestore-<time>/`
+  the bullet below; refused: the live database and its `-wal`/`-shm` untouched, its `backup_restore_refused` line with
+  the code, `startup::record_restore_refused`), the replaced database kept in `data/backups/prerestore-<time>/`
   (3 kept), undone when the restored one won't open.
 - **No admin session leaves the live database (security review M2).** Every copy goes through
   `backups::snapshot(db, scratch, target)`: `VACUUM INTO` a scratch file in `data/` (never `data/backups/`, where only
@@ -210,12 +210,19 @@ No prior programming experience - build features directly rather than explaining
 - **Every backup is checked (design 116 §4).** After each backup (a task of its own) and at startup for the newest
   without a row, `backups::check_file` opens the zip's `kidphone.db` as a restore would (1 GiB cap, a scratch
   `data/backup-check-*.db` deleted after and swept at startup, read-only and immutable): `integrity_check`, every
-  `_sqlx_migrations` row known to this binary with its checksum and none newer, `devices` read, and then the schema:
-  a restore takes only a database whose schema is exactly what the migrations make (`backups::schema_matches`: the
-  scratch copy migrated as the start would, with the session store's table, and its `sqlite_master` - `type`, `name`,
-  `tbl_name`, the `sql` with its whitespace as one space; SQLite's own tables and indexes and `_sqlx_migrations`
-  aside, never a view or trigger - equal to a fresh in-memory database's, made once per process; code `schema`, the
-  Backups page's "Not a Vibb backup"; an upload that fails it is refused and deleted at once). Recorded as
+  `_sqlx_migrations` row known to this binary with its checksum and none newer, `devices` read, no trigger or view no
+  migration makes (read-only, `backup_schema::migration_trigger_and_view_names`), and then the schema: a restore takes
+  only a database whose schema is exactly what the migrations make (`backups::schema_matches`: the scratch copy
+  migrated as the start would, with the session store's table, compared by structure with a fresh in-memory
+  database's, made once per process - `src/backup_schema.rs`: per table, case-folded, its columns, indexes (automatic
+  ones by their columns), foreign keys and `CHECK` clauses, and every trigger and view by name and normalised SQL;
+  exact normalised text only for a partial index's `WHERE` and a `CHECK`. Code `schema` - "Not a Vibb backup" - only
+  when the comparison ran and differed; a copy that can't be opened read-write or migrated is `migrate` - "Can't be
+  updated to this server's version". An upload that fails as `schema` is refused and deleted at once, logged
+  `backup_upload_refused`; every restore the check refuses at the start logs `backup_restore_refused` with its code and
+  fails the file's row, which the Backups page shows at that backup). `kid_phone_server check-backup <file>` runs the
+  check on a copy under the system's temporary folder and prints `ok` or `refused: <code>` (DEPLOY.md, "Backups").
+  Recorded as
   `integration_health('backup', 'file:<name>')` (a failed backup: `('backup', '')`); the Backups page's quiet
   "checked", its orange line and the Devices list's family row read `backups::backup_state`. In Docker `data/backups`
   is `./backups` on the host (`deploy/compose.yaml`): `snapshot` copies across filesystems on `EXDEV` (a `.partial`,

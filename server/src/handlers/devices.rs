@@ -133,7 +133,9 @@ pub async fn list_devices(
             {
                 Some(
                     crate::handlers::backups::BackupProblem::Check
-                    | crate::handlers::backups::BackupProblem::NotVibb,
+                    | crate::handlers::backups::BackupProblem::NotVibb
+                    | crate::handlers::backups::BackupProblem::Migrate
+                    | crate::handlers::backups::BackupProblem::NoRoom,
                 ) => Some(t(lang, "devices.warning.backup_check")),
                 Some(crate::handlers::backups::BackupProblem::Run) => {
                     Some(t(lang, "devices.warning.backup_run"))

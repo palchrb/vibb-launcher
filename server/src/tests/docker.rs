@@ -846,8 +846,12 @@ async fn a_restore_refuses_a_schema_the_migrations_dont_make() {
             .await
             .expect_err(what);
         assert_eq!(
-            refused.not_vibb,
-            Some((name.clone(), Some("parent".to_string()))),
+            refused.check,
+            Some(startup::CheckRefusal {
+                filename: name.clone(),
+                by: Some("parent".to_string()),
+                code: CheckCode::Schema,
+            }),
             "{what}"
         );
         assert!(!data.join(startup::RESTORE_REQUEST).exists(), "{what}");
@@ -916,4 +920,43 @@ async fn a_backup_from_the_previous_version_restores() {
         .unwrap()
         .expect("applied");
     assert_eq!(admin_names(&url).await, ["old"]);
+}
+
+/// A refused restore leaves the live database's `-wal` and `-shm` as they were: only a swap removes them.
+#[tokio::test]
+async fn a_refused_restore_leaves_the_live_wal_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let data = dir.path().join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    let live = data.join("kidphone.db");
+    let url = format!("sqlite://{}", live.display());
+    // A write still in the -wal (no checkpoint), the pool held open as a running server's would be.
+    let db = crate::connect_db(&url).await;
+    sqlx::query("INSERT INTO admin_users (username, password_hash) VALUES ('live', 'x')")
+        .execute(&db)
+        .await
+        .unwrap();
+    let file = dir.path().join("viewed.db");
+    made_database(
+        &file,
+        "CREATE VIEW every_admin AS SELECT username FROM admin_users",
+    )
+    .await;
+    backup_zip(dir.path(), "backup-20261124-110000.zip", Some(&file));
+    let wal = |suffix: &str| std::fs::read(format!("{}{suffix}", live.display())).ok();
+    let before = (wal("-wal"), wal("-shm"));
+    assert!(
+        before.0.as_ref().is_some_and(|w| !w.is_empty()),
+        "a -wal to keep"
+    );
+    std::fs::write(
+        data.join(startup::RESTORE_REQUEST),
+        "backup-20261124-110000.zip",
+    )
+    .unwrap();
+    let refused = startup::apply_restore_request(&data, &live).await;
+    assert!(refused.is_err(), "{refused:?}");
+    assert_eq!((wal("-wal"), wal("-shm")), before);
+    db.close().await;
+    assert_eq!(admin_names(&url).await, ["live"]);
 }
