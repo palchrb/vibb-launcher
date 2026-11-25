@@ -777,9 +777,7 @@ async fn serve(state: AppState, session_layer: SessionManagerLayer<SqliteStore>)
     for warning in net.startup_warnings() {
         tracing::warn!("{warning}");
     }
-    if net.login_list_misplaced() {
-        tracing::error!("{}", net::LOGIN_LIST_MISPLACED);
-    }
+    gate::note_login_list(&state).await;
 
     let admin_listener = match tokio::net::TcpListener::bind(&net.bind_addr).await {
         Ok(listener) => {

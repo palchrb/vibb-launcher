@@ -9,13 +9,15 @@
 //! - A request carrying `Tailscale-Funnel-Request` is refused: whether Funnel's
 //!   `X-Forwarded-For` names the real internet client is not verified, so this is a second check.
 //! - `ADMIN_TAILSCALE_USERS`: the admin pages also need a `Tailscale-User-Login` from that list,
-//!   and the header counts only from tailscale serve on loopback - a loopback TCP peer that
-//!   forwarded a tailnet client (`tailscale serve` sets it and strips a client's copy; every Caddy
-//!   site in DEPLOY.md strips it too, so behind Caddy this fails closed). A tailnet peer's own
-//!   header is ignored. With a `BIND_ADDR` that isn't loopback the list can't be checked, so every
-//!   admin page is refused until it is fixed (`NetConfig::login_list_misplaced`, logged once at
-//!   start). The device API on the admin listener skips this check: phones are tagged nodes
-//!   without a login and authenticate by token.
+//!   and the header counts only when the TCP peer is a forwarder (`NetConfig::login_forwarder`:
+//!   loopback, or an exact non-tailnet `TRUSTED_PROXIES` address such as Docker's bridge gateway)
+//!   that forwarded a tailnet client (`tailscale serve` sets it and strips a client's copy; every
+//!   Caddy site in DEPLOY.md strips it too, so behind Caddy this fails closed). A tailnet peer's
+//!   own header is ignored. With a `BIND_ADDR` that isn't loopback and no forwarder named, the
+//!   list can't be checked, so every admin page is refused until it is fixed
+//!   (`NetConfig::login_list_misplaced`: one error line and one security-log line at start, and
+//!   the 403 says so in one line). The device API on the admin listener skips this check: phones
+//!   are tagged nodes without a login and authenticate by token.
 //! - `/healthz` skips every guard.
 //!
 //! Refused requests get an empty 403 and a throttled `admin_refused` event.
@@ -42,9 +44,10 @@ pub enum Refusal {
     UntrustedProxy,
     /// `Tailscale-Funnel-Request` - a request from the internet through Funnel.
     Funnel,
-    /// `ADMIN_TAILSCALE_USERS` is set and the request has no listed login from tailscale serve on
-    /// loopback (or the admin listener isn't on loopback, where the list can't be checked).
+    /// `ADMIN_TAILSCALE_USERS` is set and the request has no listed login from a forwarder.
     TailscaleUser,
+    /// `ADMIN_TAILSCALE_USERS` can't be checked on this listener (`NetConfig::login_list_misplaced`).
+    LoginListMisplaced,
 }
 
 impl Refusal {
@@ -56,6 +59,7 @@ impl Refusal {
             Refusal::UntrustedProxy => "security.detail.refused.untrusted_proxy",
             Refusal::Funnel => "security.detail.refused.funnel",
             Refusal::TailscaleUser => "security.detail.refused.tailscale_user",
+            Refusal::LoginListMisplaced => "security.detail.refused.login_list",
         }
     }
 }
@@ -88,11 +92,11 @@ pub fn decide(
         && !path.starts_with("/api/devices/")
     {
         if net.login_list_misplaced() {
-            return Err(Refusal::TailscaleUser);
+            return Err(Refusal::LoginListMisplaced);
         }
-        // Only `tailscale serve`'s path: a loopback peer forwarding a tailnet client. A direct
-        // tailnet peer could send any header.
-        let from_serve = net::is_loopback(client.peer)
+        // Only `tailscale serve`'s path: a forwarder passing on a tailnet client. A direct tailnet
+        // peer could send any header.
+        let from_serve = net.login_forwarder(client.peer)
             && client.forwarded
             && client.ip.is_some_and(net::is_tailnet);
         let login = from_serve
@@ -105,6 +109,26 @@ pub fn decide(
         }
     }
     Ok(())
+}
+
+/// At start: when the login list can't be checked ([net::NetConfig::login_list_misplaced]), one error line and one
+/// security-log line saying why every admin page is refused.
+pub async fn note_login_list(state: &AppState) {
+    if !state.net.login_list_misplaced() {
+        return;
+    }
+    tracing::error!("{}", net::LOGIN_LIST_MISPLACED);
+    crate::security::record_security_event(
+        &state.db,
+        "admin_login_list_closed",
+        None,
+        None,
+        Some(crate::security::Detail::words(
+            "security.detail.admin_login_list_closed",
+            &[],
+        )),
+    )
+    .await;
 }
 
 /// The peer address of a request; `None` only when the router was served without
@@ -158,6 +182,11 @@ pub async fn admin_gate(State(state): State<AppState>, request: Request, next: N
                     path = crate::audit::clip_path(request.uri().path(), 100),
                     "a request with a session cookie refused by the admin gate (403)"
                 );
+            }
+            if refusal == Refusal::LoginListMisplaced {
+                // The one case the parent can't fix from the browser: say where to look.
+                let lang = crate::i18n::Lang::of_headers(request.headers());
+                return crate::i18n::error(lang, StatusCode::FORBIDDEN, "error.admin_login_list");
             }
             StatusCode::FORBIDDEN.into_response()
         }
@@ -422,6 +451,63 @@ mod tests {
         );
     }
 
+    /// DEPLOY.md's "Bridge network instead": `tailscale serve` on the host reaches the container
+    /// through the bridge gateway, an exact `TRUSTED_PROXIES` entry.
+    #[test]
+    fn the_login_header_counts_from_a_trusted_bridge_gateway() {
+        let net = net(&[
+            ("ADMIN_TAILSCALE_USERS", "parent@example.com"),
+            ("BIND_ADDR", "0.0.0.0:3100"),
+            ("TRUSTED_PROXIES", "172.30.0.1"),
+        ]);
+        assert!(!net.login_list_misplaced());
+        let forwarded = [
+            ("x-forwarded-for", "100.101.102.103"),
+            ("tailscale-user-login", "parent@example.com"),
+        ];
+        assert_eq!(check(&net, "172.30.0.1", &forwarded, "/devices"), Ok(()));
+        // A public client through the gateway, another bridge address, a direct tailnet peer.
+        assert_eq!(
+            check(
+                &net,
+                "172.30.0.1",
+                &[
+                    ("x-forwarded-for", "203.0.113.7"),
+                    ("tailscale-user-login", "parent@example.com")
+                ],
+                "/devices"
+            ),
+            Err(Refusal::NotTailnet)
+        );
+        assert_eq!(
+            check(
+                &net,
+                "100.101.102.103",
+                &[("tailscale-user-login", "parent@example.com")],
+                "/devices"
+            ),
+            Err(Refusal::TailscaleUser)
+        );
+        // A trusted range is no forwarder of the header, nor a trusted tailnet address.
+        for trusted in ["172.30.0.0/16", "100.101.102.1"] {
+            let net = super::tests::net(&[
+                ("ADMIN_TAILSCALE_USERS", "parent@example.com"),
+                ("BIND_ADDR", "0.0.0.0:3100"),
+                ("TRUSTED_PROXIES", trusted),
+            ]);
+            let peer = if trusted.contains('/') {
+                "172.30.0.1"
+            } else {
+                "100.101.102.1"
+            };
+            assert_eq!(
+                check(&net, peer, &forwarded, "/devices"),
+                Err(Refusal::TailscaleUser),
+                "{trusted}"
+            );
+        }
+    }
+
     #[test]
     fn the_login_header_counts_only_from_tailscale_serve_on_loopback() {
         let net = net(&[
@@ -467,7 +553,7 @@ mod tests {
                     ],
                     "/devices"
                 ),
-                Err(Refusal::TailscaleUser),
+                Err(Refusal::LoginListMisplaced),
                 "{bind}"
             );
             // Phones on the old URL still authenticate by token.
@@ -485,5 +571,11 @@ mod tests {
             assert!(!net.login_list_misplaced(), "{bind}");
         }
         assert!(!net(&[("BIND_ADDR", "0.0.0.0:3100")]).login_list_misplaced());
+        let none_trusted = net(&[
+            ("ADMIN_TAILSCALE_USERS", "parent@example.com"),
+            ("BIND_ADDR", "0.0.0.0:3100"),
+            ("TRUSTED_PROXIES", ","),
+        ]);
+        assert!(none_trusted.login_list_misplaced());
     }
 }

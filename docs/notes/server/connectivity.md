@@ -28,9 +28,11 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   (100.64.0.0/10, fd7a:115c:a1e0::/48) clients and a trusted peer without XFF; an unknown client and any forward
   from an untrusted peer are refused (QA 22 H1); `Tailscale-Funnel-Request` is refused;
   `ADMIN_PUBLIC=on` passes everyone. `ADMIN_TAILSCALE_USERS`: admin pages also need a listed `Tailscale-User-Login`,
-  believed only from tailscale serve on loopback (a loopback peer forwarding a tailnet client; a direct tailnet
-  peer's header is ignored - 2026-11-25), and with a non-loopback `BIND_ADDR` every admin page is refused
-  (`NetConfig::login_list_misplaced`, one error line at start, fail closed); `/api/devices/*` skips that check (tagged phones have no login). `/healthz`
+  believed only from a forwarder passing on a tailnet client (`NetConfig::login_forwarder`: loopback, or an exact
+  non-tailnet `TRUSTED_PROXIES` address such as Docker's bridge gateway; a direct tailnet peer's header is ignored -
+  2026-11-25), and with a non-loopback `BIND_ADDR` and only loopback trusted every admin page is refused
+  (`NetConfig::login_list_misplaced`: one error line and one `admin_login_list_closed` security-log line per start,
+  the 403 one line pointing to the server's log; fail closed); `/api/devices/*` skips that check (tagged phones have no login). `/healthz`
   (`SELECT 1`, "ok") skips every guard. Refused: empty 403 + `admin_refused` through `AppState.audit`
   (`src/audit.rs`: one row per kind and client key per minute, counts flushed into the detail every 30 s by
   `audit::run_flusher`; at most `ROWS_PER_MINUTE` = 60 such rows per kind and minute across all keys, the rest

@@ -514,3 +514,56 @@ async fn up_routes_only_on_the_phone_listener() {
         );
     }
 }
+
+/// A login list that can't be checked closes the admin pages: one security-log line at start, and a 403 whose one
+/// line points to the server's log; the phones' API on the admin listener keeps its token check.
+#[tokio::test]
+async fn a_login_list_that_cant_be_checked_closes_the_admin_pages() {
+    let app = TestApp::with_env(&[
+        ("ADMIN_TAILSCALE_USERS", "parent@example.com"),
+        ("BIND_ADDR", "0.0.0.0:3100"),
+    ])
+    .await;
+    crate::gate::note_login_list(&app.state).await;
+    let lines: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM security_events WHERE event_type = 'admin_login_list_closed'",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(lines, 1);
+    let request = Request::builder()
+        .uri("/login")
+        .header("x-forwarded-for", "100.101.102.103")
+        .header("tailscale-user-login", "parent@example.com")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.send_via(&app.router, LOOPBACK_PEER, request).await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN);
+    assert!(res.text().contains("server's log"), "{}", res.text());
+    let request = Request::builder()
+        .uri("/api/devices/policy")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.send_via(&app.router, LOOPBACK_PEER, request).await;
+    assert_eq!(res.status, StatusCode::UNAUTHORIZED);
+
+    // The bridge setup: the gateway named in TRUSTED_PROXIES - nothing closed.
+    let bridge = TestApp::with_env(&[
+        ("ADMIN_TAILSCALE_USERS", "parent@example.com"),
+        ("BIND_ADDR", "0.0.0.0:3100"),
+        ("TRUSTED_PROXIES", "172.30.0.1"),
+    ])
+    .await;
+    crate::gate::note_login_list(&bridge.state).await;
+    let request = Request::builder()
+        .uri("/login")
+        .header("x-forwarded-for", "100.101.102.103")
+        .header("tailscale-user-login", "parent@example.com")
+        .body(Body::empty())
+        .unwrap();
+    let res = bridge
+        .send_via(&bridge.router, peer("172.30.0.1"), request)
+        .await;
+    assert_eq!(res.status, StatusCode::OK);
+}

@@ -62,6 +62,12 @@ impl IpNet {
         (prefix <= max).then_some(IpNet { addr, prefix })
     }
 
+    /// One address alone (a full-length prefix): `ip` itself.
+    pub fn is_exactly(&self, ip: IpAddr) -> bool {
+        let max = if self.addr.is_ipv4() { 32 } else { 128 };
+        self.prefix == max && self.addr == ip.to_canonical()
+    }
+
     /// Every address in it is a loopback address.
     pub fn is_loopback_only(&self) -> bool {
         let min_prefix = if self.addr.is_ipv4() { 8 } else { 128 };
@@ -252,9 +258,10 @@ pub const DEFAULT_SESSION_INACTIVITY_DAYS: i64 = 30;
 pub const DEFAULT_SESSION_MAX_DAYS: i64 = 90;
 
 /// The one error line at start for [NetConfig::login_list_misplaced].
-pub const LOGIN_LIST_MISPLACED: &str = "ADMIN_TAILSCALE_USERS is set but BIND_ADDR is not a loopback address: the \
-     login list needs tailscale serve on loopback, so the admin pages refuse everyone until BIND_ADDR is 127.0.0.1 \
-     (or ADMIN_TAILSCALE_USERS is unset) - DEPLOY.md";
+pub const LOGIN_LIST_MISPLACED: &str = "ADMIN_TAILSCALE_USERS is set, BIND_ADDR is not a loopback address and \
+     TRUSTED_PROXIES names no forwarder but loopback: the login list can't be checked, so the admin pages refuse \
+     everyone until BIND_ADDR is 127.0.0.1, TRUSTED_PROXIES names the forwarder (Docker's bridge gateway) or \
+     ADMIN_TAILSCALE_USERS is unset - DEPLOY.md";
 
 /// A listen address on loopback: `127.0.0.0/8`, `::1` or `localhost`, with its port.
 fn bind_is_loopback(addr: &str) -> bool {
@@ -283,8 +290,8 @@ pub struct NetConfig {
     /// `TRUSTED_PROXIES` (default `127.0.0.1,::1`): peers whose `X-Forwarded-For` is believed.
     pub trusted_proxies: Vec<IpNet>,
     /// `ADMIN_TAILSCALE_USERS`: when set, every admin request needs a `Tailscale-User-Login` in this
-    /// list, forwarded for a tailnet client by a loopback peer (`tailscale serve` on this host, which
-    /// sets the header); `BIND_ADDR` must then be loopback ([NetConfig::login_list_misplaced]).
+    /// list, forwarded for a tailnet client by [NetConfig::login_forwarder] (`tailscale serve`, which
+    /// sets the header); see [NetConfig::login_list_misplaced].
     pub admin_tailscale_users: Option<Vec<String>>,
     /// `SESSION_INACTIVITY_DAYS` (default 30, 1-365): an admin session's lifetime without use.
     pub session_inactivity_days: i64,
@@ -448,11 +455,23 @@ impl NetConfig {
         }
     }
 
-    /// `ADMIN_TAILSCALE_USERS` with a `BIND_ADDR` that isn't loopback: the login header counts only from
-    /// tailscale serve on loopback, so the list can't be checked and the admin gate refuses every admin page
-    /// (fail closed). `main` logs [LOGIN_LIST_MISPLACED] once at start.
+    /// `ADMIN_TAILSCALE_USERS` with a `BIND_ADDR` that isn't loopback and no `TRUSTED_PROXIES` entry but loopback
+    /// (or none): no forwarder the login header could come from is named, so the list can't be checked and the
+    /// admin gate refuses every admin page (fail closed). `main` logs [LOGIN_LIST_MISPLACED] once at start and
+    /// writes one security-log line.
     pub fn login_list_misplaced(&self) -> bool {
-        self.admin_tailscale_users.is_some() && !bind_is_loopback(&self.bind_addr)
+        self.admin_tailscale_users.is_some()
+            && !bind_is_loopback(&self.bind_addr)
+            && self.trusted_proxies.iter().all(IpNet::is_loopback_only)
+    }
+
+    /// The peer may be the forwarder of `Tailscale-User-Login`: loopback (`tailscale serve` on this host), or an
+    /// exact `TRUSTED_PROXIES` address that isn't a tailnet one (Docker's bridge gateway, with `tailscale serve` on
+    /// the host). A tailnet peer never is: it could send any header.
+    pub fn login_forwarder(&self, peer: IpAddr) -> bool {
+        let peer = peer.to_canonical();
+        is_loopback(peer)
+            || (!is_tailnet(peer) && self.trusted_proxies.iter().any(|net| net.is_exactly(peer)))
     }
 
     /// What `main` warns about at startup (design 22 §3.1): a listener on a non-loopback address

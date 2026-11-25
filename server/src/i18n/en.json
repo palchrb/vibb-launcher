@@ -831,6 +831,7 @@
   "security.detail.refused.untrusted_proxy": "Forwarded by a proxy that isn't in TRUSTED_PROXIES (from {peer})",
   "security.detail.refused.funnel": "Through Tailscale Funnel (from {peer})",
   "security.detail.refused.tailscale_user": "No allowed Tailscale-User-Login (from {peer})",
+  "security.detail.refused.login_list": "The Tailscale login list can't be checked here (from {peer})",
   "security.detail.device_auth.invalid_token": "Invalid phone key",
   "security.detail.device_auth.missing_token": "No phone key",
   "security.detail.device_auth.signature": "Signature refused: {reason}",
@@ -4543,6 +4544,7 @@
   "security_log.event": "Event",
 
   "error.busy": "Too many sign-ins at once - try again in a few seconds.",
+  "error.admin_login_list": "Closed by the server's settings - see the server's log.",
 
   "music.default_name.playlist": "Playlist",
   "music.default_name.album": "Album",
@@ -4855,10 +4857,12 @@
   "security.event.setup_tick_phone": "Setup step ticked on the phone",
   "security.detail.setup_tick.phone": "phone {device}: {step}",
   "security.event.phone_blocked_cleared": "Blocked number removed",
+  "security.event.admin_login_list_closed": "Admin pages closed",
   "security.detail.blocked_cleared.contact.one": "Block removed: {count} contact number",
   "security.detail.blocked_cleared.contact.other": "Block removed: {count} contact numbers",
   "security.detail.blocked_cleared.emergency.one": "Block removed: {count} emergency number",
   "security.detail.blocked_cleared.emergency.other": "Block removed: {count} emergency numbers",
+  "security.detail.admin_login_list_closed": "ADMIN_TAILSCALE_USERS can't be checked with this BIND_ADDR and TRUSTED_PROXIES: every admin page is refused (DEPLOY.md)",
 
   "setup.page.title": "Setup",
   "setup.summary.one": "Setup: {count} step left",
