@@ -5826,7 +5826,7 @@ Findings: the emulator's `geo fix` has no satellites (above); a far satellite fi
 makes the jump gate refuse rather than the satellites overrule (both count once); after a reboot the emulator's GNSS
 answers at its default place until the feed is back.
 
-## 6bo. Posisjon also covers the location stored in photos (branch `media-location-delete-lines`) - written, not run
+## 6bo. Posisjon also covers the location stored in photos (branch `media-location-delete-lines`) - run 2026-11-25
 
 App access's Posisjon key (design 127) also covers `android.permission.ACCESS_MEDIA_LOCATION`, the runtime permission
 (since Android 10) without which the system hands an app its photos with the position taken out. On **Android 14 and
@@ -5854,7 +5854,22 @@ These rows confirm it on the two versions.
 | 4 | Revoke and grant the photos access again in Android's app info (the pause on, Settings shown) | `ACCESS_MEDIA_LOCATION` comes back `granted=true` only during the pause (it lifts every key); after the pause ends, `granted=false` with `POLICY_FIXED` again |
 | 5 | Posisjon on again in the PWA, a sync | the flag is gone (`POLICY_FIXED` cleared), the permission back to what the user gave; the gallery shows the coordinates once its photos access is granted again |
 
-## 6bp. The Tailscale key sealed; Koble til after lost settings (branch `launcher-edges`) - written, not run
+### The run of 2026-11-25 (branch `gate-release-043`)
+
+The setup as §6bq's run below. No gallery: a throwaway probe app (`no.gate.probe`, its own throwaway key, asking for
+`READ_MEDIA_IMAGES` and `ACCESS_MEDIA_LOCATION`) reads `ExifInterface.getLatLong` from the plain MediaStore stream and
+from `MediaStore.setRequireOriginal`, allowed in the PWA. A made-up geotagged JPEG (59.9139, 10.7522, Make
+"GateTest") pushed and scanned.
+
+| Row | Android 14 | Android 16 |
+|---|---|---|
+| 1 | **Pass.** The app page's Posisjon switch (its (i): "...eller hvor bildene ble tatt"); the report `requested`; with Allow all: 59.9139,10.7522 from both streams | **Pass** |
+| 2 | **Pass.** `granted=false`, `POLICY_FIXED`; the report `admin_denied`, quiet | **Pass** |
+| 3 | **Pass.** The plain stream gives 0.0,0.0 (`GPSLatitude=0/1,0/1,0/1`), the rest of the picture (Make, size) there; the original refused ("Caller must hold ACCESS_MEDIA_LOCATION") | **Pass** |
+| 4 | **Pass.** During the pause the flag lifted; Don't allow, then Allow all in Android's app info: `granted=true`; the pause ended: `granted=false`, `POLICY_FIXED` | **Pass** |
+| 5 | **Pass.** The flag gone, `granted=false` until the photos were asked for again, then the coordinates | **Pass** |
+
+## 6bp. The Tailscale key sealed; Koble til after lost settings (branch `launcher-edges`) - run 2026-11-25
 
 On **Android 14 and 16** with the user's OK. The debug launcher of this branch as Device Owner, a server of `main`
 with a tailnet key for the phone (a reusable test key from the admin console, never a real one in a doc). Logcat
@@ -5881,14 +5896,51 @@ the main preferences).
 | 6 | The cut and the reboot; unlock with Android's PIN | Android's PIN still asked (never cleared); Home shows Koble til with the server address filled in and "Nødsamtale" under the button; logcat has no "Resetting preferences" |
 | 7 | Tap Nødsamtale | the emergency confirm ("Ring 112?") over the screen; Avbryt back to Koble til (no call placed in the test) |
 | 8 | Back gesture, then the home gesture | Koble til closes for that resume; Home shows nothing allowed (the fallback: kiosk on, no apps); the next time Home comes to the front Koble til is back |
-| 9 | The drawer's Settings (or `adb shell am start -a android.settings.APPLICATION_PREFERENCES -p me.vibb.launcher.debug`) | Settings doesn't open (no parent code stored: the gate's dialog, OK disabled) |
+| 9 | The drawer's Settings (or `adb shell am start -a android.intent.action.APPLICATION_PREFERENCES -p me.vibb.launcher.debug`) | Settings doesn't open (no parent code stored: the gate's dialog, OK disabled) |
 | 10 | adb | stays as the fallback plan leaves it (the last plan's or nothing allowed's), never opened by the lost file; `adb shell dumpsys device_policy` shows the restrictions still set |
 | 11 | A new code from the PWA (the phone's page › Avansert › Ny oppsettkode) typed on Koble til | the phone enrols, the setup hold does not start (the witness counts as applied), the server's policy applies and Home is back |
 | 12 | Before step 11: another server's address in the field (`https://other.example.org`), any code | the address rule's line ("server_url_refused"'s text), nothing sent (no request in the server's log) |
 | 13 | A fresh emulator: enrol with a code but keep the server from answering the policy (stop it right after the enrolment), cut the preferences as above, reboot | the witness holds `"enrolled":true` alone; Koble til shows (no first-launch reset), Settings opens without a code, Home is not locked down (no policy applied yet) |
 | 14 | The calendar report: a calendar named `per.hansen@example.org` (DAVx5 or a local one), and an ICSx5 subscription whose display name is cleared (`content insert`/`update` on `content://com.android.calendar/calendars`, `calendar_displayName` null) | the PWA's Calendars list shows `p…@example.org` and an empty name for the subscription (its host as the source); Dagen on the phone shows the full names |
 
-## 6bq. User certificates, the provisioning baseline, storage full (branch `storage-certs-baseline`) - written, not run
+### The run of 2026-11-25 (branch `gate-release-043`)
+
+The setup as §6bq's run below. Rows 3-4 on a fresh phone made Device Owner by adb, before its enrolment. The witness and
+the cut as above; the console (`telnet` to the emulator's console port) drove the screen whenever adb was gone.
+
+| Row | Android 14 | Android 16 |
+|---|---|---|
+| 1 | **Not run:** no QR on the VM (the admin extras can't be handed to `ADMIN_POLICY_COMPLIANCE` from adb); the sealed store itself is row 3's | Not run |
+| 2 | **Not run:** the debug build's tsnet is a stub, nothing joins | Not run |
+| 3 | **Pass.** `ks1:` and a Base64 blob in the file; the row `••••••••` | **Pass** |
+| 4 | **Pass.** Settings "Not set"; the line gone from the file at Home's resume; no tsnet line in the log | **Pass** |
+| 5 | **Pass.** `{"enrolled":true,"policy_applied":true,"server_url":"http://10.0.2.2:3150"}` | **Pass** |
+| 6 | **FAIL** (finding 1). Android's PIN asked after the reboot, but no Koble til: Home shows the nothing-allowed fallback (Phone book, Settings) at every resume, the phone sends nothing, adb is closed (`34-bp6-koble.png`) | **FAIL, the same** (`36-bp6-bug-home.png`) |
+| 6' | The variant with the key book cut too (`device_key.xml` and `device_key_adopted.xml` removed with the main file) | **Pass.** Koble til with `http://10.0.2.2:3150` filled in and Emergency call under the button (`36-bp6v-after-unlock.png`) |
+| 7 | Not reachable (finding 1) | **Pass (6').** "Call 112?" with Cancel and Call; Cancel back to Koble til (`36-bp7-emergency.png`) |
+| 8 | Not reachable | **Not run:** the console's back gesture never reached the screen |
+| 9 | Not reachable. Home's Settings tile opens the kid's Settings | **Not run** (adb gone; Home's Settings tile is the kid's) |
+| 10 | **Pass.** adb closed by the fallback after the cut, never opened | **Pass (6').** The same |
+| 11 | Not reachable | **Pass (6').** A new code typed: enrolled with the key (`device_key_bound`), no setup hold, Home back with the policy's apps (`36-bp11-enrolled.png`); adb then needed developer options turned on again |
+| 12 | Not reachable | **Pass (6').** `http://10.0.2.3:3150`: the address rule's line under the fields, no request reached the server (`36-bp12-refused.png`) |
+| 13 | **Not run:** a third wipe | Not run |
+| 14 | **Pass.** The PWA's Calendars list "p…@example.org" and "ICSx5 · ics.example.org" for the subscription with no name; Dagen "per.hansen@example.org" and the subscription's URL | **Pass, the address half.** The subscription half needs root to write a URL as the calendar's name (`content insert` can't bind a `:`) |
+
+Findings:
+
+1. **A phone with a hardware key never shows Koble til after its main preferences are lost** (launcher;
+   `setup/ConnectScreen.kt` `connectScreenDue`, `server/DeviceCredential.kt` `DeviceCredentials.stored`). Due needs
+   `!tokenStored`, and `stored()` is `DeviceToken.present() || KeyBook.adoptedStored(context)`. The adopted key lives
+   in its own preferences (`device_key.xml`, mirrored in device-protected `device_key_adopted.xml`), so it survives a cut
+   of the main file, and since design 129b every enrolled phone has one. Result: no Koble til, no server address (it was
+   in the main file), so no sync and no parent pause; Settings behind a parent code that is gone; adb closed by the
+   nothing-allowed fallback. Only the Phone book's emergency call works; a factory reset is the way back. Repro on 14
+   and 16: enrol (key bound), `run-as` cut `shared_prefs/me.vibb.launcher.debug_preferences.xml` to 200 bytes, reboot,
+   unlock. With the key book also removed (6') the flow works as designed. Likely fix: let the witness's "enrolled"
+   win over a stored key when the main file says never enrolled (or count only the token there), and drop the
+   orphaned key book at the new enrolment. Not fixed here.
+
+## 6bq. User certificates, the provisioning baseline, storage full (branch `storage-certs-baseline`) - run 2026-11-25
 
 On **Android 14 and 16** with the user's OK. The debug launcher and a server of this branch. Logcat `AppEnforcer`,
 `ProvisioningBaseline`, `Provisioning`, `TimeRulesRuntime`. Restrictions are read with `adb shell dumpsys
@@ -5932,3 +5984,93 @@ minutes). Fill `/data` until a write fails: `adb shell 'dd if=/dev/zero of=/sdca
 | 17 | More syncs the same day | no second push (one a day); the line stays |
 | 18 | `adb reboot` with the disk still full | the day's count goes back to the last saved ledger: the time used since storage filled is lost (the accepted cost); the line comes back with the first failed save after the restart |
 | 19 | Delete the fill file, use the phone a minute, a sync | the save works, `storage_full` is left out of the report, the line and the Attention row are gone; Notify Me About has the "Lagringen er full" switch, on |
+
+### The run of 2026-11-25 (16:30-18:50 UTC, branch `gate-release-043`)
+
+Main `dcb1487b9`: the debug launcher, the debug music app and a debug server (`--features emulator_keys`, with
+`LAUNCHER_DEBUG_SIGNATURE_CHECKSUM`) from the same tree; Android 14 on `compat34` (Google APIs, `-wipe-data`, twice),
+Android 16 on `jelly36` (Google Play, `-wipe-data`) and, for what needs root, `aosp36` (AOSP, `-wipe-data`). The PWA read
+as the signed-in parent (nb). Screenshots: `docs/testing/screens/2026-11-25-gate-043/` (not committed).
+
+**The provisioning baseline without a QR** (no camera QR on this VM): `dpm set-device-owner`, then, as root
+(`adb root`, Google APIs image), `am start -a android.app.action.ADMIN_POLICY_COMPLIANCE -n
+me.vibb.launcher.debug/com.kidslauncher.mdm.server.PolicyComplianceActivity` - the activity the QR's setup starts, with
+no admin extras. adb goes at once, so rows 8-12 were read and driven through the emulator console alone (`telnet` to
+the console port: `screenrecord screenshot`, `event text`, touch `event send EV_ABS:...`; `EV_KEY` key events did not
+reach the screen). Android 16 has no root on `jelly36`, and on `aosp36` the phone was already enrolled, so the baseline
+rows ran on Android 14 only.
+
+| Row | Android 14 | Android 16 |
+|---|---|---|
+| 1 | **Pass.** Install a certificate, Clear credentials, User credentials, Certificate management app greyed; Trusted credentials' switches greyed (on); `no_config_credentials` | **Pass.** The same, each row "Controlled by admin" |
+| 2 | **Pass, with a note.** "Use system certificates" with a domain saved (`cmd wifi list-networks`: `wpa2-enterprise`). The CA list still offers "Install certificates": picking it starts CertInstaller, which closes at once (refused) and the dialog stays | **Pass, the same note** |
+| 3 | **Pass.** The switch off: the restriction gone, the landing `#restrictions`, no orange line; a CA from Downloads installed (`cacerts-added/ad5d5efd.0`) | **Pass.** The same (Android 16 asks for the PIN before the file picker); "Gate Test CA Throwaway" under Trusted credentials › User |
+| 4 | **Pass.** On again: the certificate stays, Install anyway returns without the picker, the syncs go on | **Pass.** The certificate stays, Install a certificate greyed again |
+| 5 | **Pass.** With the pause on, `no_config_credentials` stays | **Pass** (the rows greyed during the pause) |
+| 6 | **Pass.** Passwords & accounts › "Passwords, passkeys and data services": the None/Google picker is enabled; only "Add account" greyed (`no_modify_accounts`) | **Pass, nothing for the owner.** Passwords, passkeys & accounts › Change: the picker enabled (`36-q6-passwords-accounts.png`, `36-q6-provider-picker.png`) |
+| 7 | **Pass.** `Admin policy compliance: baseline set` (read from the log once adb was back); `armed=true` in `provisioning_baseline.xml` (device-protected) | Not run (see above) |
+| 8 | **Pass.** `adb devices`: offline at once; Multiple users greyed; Developer options and USB debugging not found in Settings; a CA certificate: Install anyway returns without the picker. Unknown sources: `no_install_unknown_sources` was already set before the baseline; not tried from Files | Not run |
+| 9 | **Pass.** Erase all data opens its confirm with ERASE ALL DATA (not tapped) | Not run |
+| 10 | **Pass.** The quick settings' power menu: Emergency, Power off, Restart; a long touch on Power off brought no safe-mode offer | Not run |
+| 11 | **Not run:** a PIN set before the enrolment would spend the image's escrow token (§3) | Not run |
+| 12 | **Pass.** Koble til with a new code (typed through the console), the setup flow ended with Finish; with USB debugging allowed in the PWA, developer options came back (seven taps on Build number) and the USB debugging switch brought adb back; factory reset blocked by the default | Not run |
+| 13 | **Not reachable from the PWA:** calls and SMS can be set unmanaged, but apps can't - an app list set to `NULL` in the database is filled again at the phone's next report (`device_api.rs`, the first heartbeat's list), so the phone stays managed | **The same** |
+| 14 | **Pass.** No `ProvisioningBaseline` line, no `provisioning_baseline.xml`; adb stays | **Pass** |
+| 15 | **Pass.** `Couldn't save the screen-time ledger: storage full?` once in 2.5 minutes; the count went on | **Pass** |
+| 16 | **Pass.** `time_state.storage_full: true`; the summary's Attention "Lagringen er full"; Device › Tid's line with the fix behind its (i); one `parent_events` row `storage_full` (no browser subscribed, so no push was delivered) | **Pass** |
+| 17 | **Pass.** Further syncs: still one `storage_full` event that day | **Pass** |
+| 18 | **Pass.** After `adb reboot` with the disk full: the count from the last saved ledger (3 minutes), the flag back with the first failed save | **Pass, the line not seen again:** the count went back 13 -> 12; two failed saves right after the boot, but the boot freed ~64 MB and the next saves went through, so no `storage_full` in the reports after the restart (the disk wasn't full any more) |
+| 19 | **Pass.** The file deleted: `storage_full` left out, the line and the Attention row gone; Notify Me About has `push_storage_full`, on | **Pass** (the shell can't delete the fill file after a reboot on 16 - "Operation not permitted" - `truncate -s 0` frees it) |
+
+## 6br. The collected gate before launcher rc.4 (branch `gate-release-043`) - run 2026-11-25
+
+The rows owed before rc.4 that have no section of their own: the fail-closed saved policy (`failclosed-restore`,
+squeue 15), the music app's foreign controllers (`lookup-share-music`, squeue 18), §6bm's reruns
+(`enrol-gate-fixes`) and §6bn's Wi-Fi fixes. The setup as §6bq's run. The phone talked to the server through a small
+test relay (`127.0.0.1:3152` behind `0.0.0.0:3150`) that can answer the phone's `GET /api/devices/policy` by closing the
+connection while every other request passes - the policy fetch fails as unreachable while the report goes through. The
+saved policy was changed with `run-as` (the debug build) with the launcher's process killed first, then Home started.
+
+The fail-closed rows (`docs/notes/launcher/lock-and-glance.md`, "Rollback"; `PolicyGate.judgeCached`):
+
+| # | Step | Expect |
+|---|---|---|
+| a | Android's PIN set by the parent; the saved policy `{}`; the policy unreachable; restart (and on 14 a reboot with the server stopped) | `No usable cached policy - enforcing the last-enforced plan`; Android's PIN stays; the kiosk and the app list as before; adb as before; the report `cache_corrupt` and the PWA's "Telefonen får ikke brukt innstillingene" |
+| a1 | The saved policy without `call_policy` (with its app list), `calls_managed_last` set | the same: unreadable, the last-enforced plan, `cache_corrupt` |
+| a2 | The saved policy readable but with `kid_lock: null`, the policy unreachable; then the server's own choice (Lås: Android's lock -> own lock) | the saved copy never clears Android's PIN; the server's policy clears it at that sync (`rollback: Android's PIN cleared`) |
+| a3 | A phone whose apps are unmanaged keeps a saved copy without an app list (no `cache_corrupt`) | (the commit's third case) |
+
+| Row | Android 14 | Android 16 |
+|---|---|---|
+| a | **Pass.** Reboot with the server stopped: the fallback applied, `CredentialType: PIN`, `mLockTaskModeState=LOCKED`, Chrome hidden and suspended, adb kept; behind the relay: reports `cache_corrupt`, the summary "Telefonen får ikke brukt innstillingene" | **Pass** (restart behind the relay; the same) |
+| a1 | **Pass.** `cache_corrupt`, the PIN kept | **Pass** |
+| a2 | **Pass.** From the saved copy the PIN stayed (no rollback line); the server's switch to own lock: `rollback: Android's PIN cleared: true`; back to Android's lock: the PIN set again | **Pass** |
+| a3 | **Not reachable:** an unmanaged app list can't be made on this server (§6bq row 13); `PolicyGateTest` covers the rule | **The same** |
+
+The restore check (squeue 16, server, the same on both): `kid_phone_server check-backup` on a copy of the gate's live
+database: `ok`; the same copy with a planted trigger: `refused: schema`.
+
+Music: another app's controller (squeue 18; `music/CLAUDE.md`). The probe app's Media3 `MediaController` on
+`me.vibb.music.debug`'s `PlaybackService` while an RSS episode from `scripts/fake-audio.py --feed 5` played:
+
+| Row | Android 14 | Android 16 |
+|---|---|---|
+| An outside app's controller | **Pass.** `GET_TIMELINE`, `GET_METADATA`, `GET_CURRENT_MEDIA_ITEM`, `SET_MEDIA_ITEM`, `CHANGE_MEDIA_ITEMS` false; title null, no current item, 0 items; pause and play took effect; `setMediaItem` changed nothing | **Pass** |
+| System UI's media card | **Pass.** "Bilde 5 / Fake feed with pictures" with the picture (the shade with the pause on; the managed shade shows Vibb's panel instead) | **Pass** (`36-music-systemui-card.png`) |
+| The launcher's Home card | **Pass.** "Now playing: Fake feed with pictures. Bilde 5" - once notification access was on (the setup step had been skipped: no card before) | **Pass** (`36-music-homecard.png`) |
+
+§6bm's reruns (the plain-feature server and the `emulator_keys` one swapped on one data directory, as §6bm):
+
+| Row | Android 14 | Android 16 |
+|---|---|---|
+| A second attempt waiting, the phone's number confirmed | **Pass.** A re-enrolment from Settings waiting (`root`), a script's attempt (`keystore`): the landing `?notice=key_exception#key-exception` shows the orange line ("kunne ikke bevise nøkkelen sin: nøkkellageret feilet", "2 forsøk") and the quiet "Venter på telefonen"; the phone enrolled exempt at its next try | **Pass** |
+| The old token after an exempt re-enrolment; a revoked phone | **Pass.** No "Phone sign-in refused" (`device_auth_failed`) after the re-enrolment (the stream reopened on the new token); after Revoke the phone's next request wrote one (`invalid_token`) | **Pass** |
+
+§6bn's Wi-Fi fixes (fake scans need root: `compat34` and `aosp36`; Vibb's Wi-Fi page):
+
+| Row | Android 14 | Android 16 (`aosp36`) |
+|---|---|---|
+| An enterprise and a WEP network | **Pass.** "Not supported" under both; a tap saves nothing | **Pass** |
+| A WPA3-only (SAE) network | **Pass.** Saved as `wpa3-sae` alone; the join `connectToNetwork "GateSae"SAE` (the network isn't there, so not found); a WPA2 one saves as `wpa2-psk` with `wpa3-sae^` | **Pass** (the SAE part) |
+
+Not run here: the QR (row 1 of §6bp, §6bq's baseline through a real QR), Android 17 (no working image).
