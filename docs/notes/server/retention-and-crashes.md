@@ -55,7 +55,9 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `mock_location_ignored`, `phone_lines_dropped` after `PHONE_LOG_DAYS` (30, an unseen boot's Attention window; the
   status they come from is 48 hours), `parent_pin_used`, `parent_pin_lockout` after `PIN_EVENT_DAYS` (90, as the PIN
   events); an old `storytel_login_sent` row (the retired login route's, design 58 step 3) keeps the log's 180 and its
-  label. `prune` runs one statement per
+  label. Deleting a phone deletes its own security-log lines at once (`devices::delete_device`, `security::delete_phone_lines`: a `PhoneLine` kind, no username, no
+  address, `device {id}` as `record_phone_event`'s match); the parents' lines and the server's own about it stay their 180 days
+  (`tests::edge::delete_removes_the_phones_own_security_lines`). `prune` runs one statement per
   window shorter than 180; `admin::every_written_event_has_a_label` checks every `PhoneLine::ALL` label. A wrong sign-in's typed username is cleared after `SIGN_IN_NAME_HOURS`
   (24; a password typed into the name field), its line and address kept; `music_entry_added` names a feed by its host
   only (`feed at example.org`: a private feed's URL may carry a token). The Security Log's footer says the windows.

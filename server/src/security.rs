@@ -608,6 +608,31 @@ pub async fn record_phone_event(
     Ok(own)
 }
 
+/// Deletes a deleted phone's own lines (`devices::delete_device`): exactly what
+/// [record_phone_event] writes - a [PhoneLine] kind, no username, no address, `device {id}` as the
+/// fact. A parent's lines about the phone carry the parent's name, and the server's own lines about
+/// it (`device_key_conflict`, a rule's conversion) are no [PhoneLine]: both stay.
+pub async fn delete_phone_lines(
+    conn: &mut sqlx::SqliteConnection,
+    device_id: i64,
+) -> Result<u64, sqlx::Error> {
+    // `?1` the fact, `?2`.. the kinds.
+    let kinds = (2..PhoneLine::ALL.len() + 2)
+        .map(|n| format!("?{n}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "DELETE FROM security_events WHERE username IS NULL AND ip_address IS NULL \
+         AND (detail = ?1 OR detail LIKE ?1 || ':%' OR detail LIKE ?1 || ',%') \
+         AND event_type IN ({kinds})"
+    );
+    let mut query = sqlx::query(&sql).bind(format!("device {device_id}"));
+    for kind in PhoneLine::ALL {
+        query = query.bind(kind.wire());
+    }
+    Ok(query.execute(&mut *conn).await?.rows_affected())
+}
+
 /// [record_phone_event] on its own connection; a failure is logged.
 pub async fn record_phone_event_logged(
     db: &sqlx::SqlitePool,
