@@ -80,3 +80,4 @@ Prose written before 2026-11-25 names `server/testdata/<file>` (and the apps' co
 | `music/music_state.json` | 21 step 3 | by hand | server `music::tests`; launcher `MusicPlanTest`; music `BridgeTest` |
 | `music/spotify_hosts.json` | 26c §6.2 | by hand (provisional until the DNS capture) | server `spotify::tests`; launcher `SpotifyHostsTest`; music `SpotifyHostsTest` |
 | `music/storytel_token_answers.json` | 58 §2.2 | by hand | server `tests::music_storytel`; launcher `StorytelTokenCourierTest`; music `StorytelBridgeTokenTest`; `scripts/fake-storytel.py` |
+| `shipped/launcher-assets/dns/doh_hosts.txt` | 67 §2.2 | by hand | launcher: the asset `dns/doh_hosts.txt` (`DnsFilterEngine`, a release build fails without it), `DnsFilterEngineTest`; server: compiled in (`dns_server::is_builtin_doh_host`), `dns_server::tests` |

@@ -31,6 +31,10 @@ launcher's catalog row has `include_prereleases` **off** (release candidates are
 row at startup when no row is the launcher, watching `LAUNCHER_APK_URL`'s repo (`tracked_apps::ensure_launcher_row`,
 the "global catalog" bullet below).
 
+**Build from the monorepo** (design 133): the binary compiles in `../contracts/shipped/launcher-assets/dns/doh_hosts.txt`
+and the tests read `../contracts/`, so the server builds only from a whole checkout of the repo, never from a copy of
+`server/` alone; a Dockerfile that compiles must use the repo root as its context (`contracts/README.md`).
+
 ## Tech stack
 
 Deliberately mirrors `board-game-tracker` (another self-hosted Pi app by the same developer) since it already solved the boring-but-essential infrastructure for this exact hardware target:

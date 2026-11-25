@@ -204,10 +204,9 @@ and all three compare the copies (`MusicPlanTest`, `ContractFilesTest`); a chang
 `aes_vectors.json`, `bookshelf.json`; the server's `fake_login_fixtures_match`) and answers its `/fake/jwt` (the phone
 alone, design 58 §5.6) from `storytel_token_answers.json`'s rows; since design 58 step 2 the music app has no login
 fixtures (the phone never logs in).
-The launcher's built-in secure-DNS hosts `launcher/app/src/main/assets/dns/doh_hosts.txt` (design 67 §2.2) are
-byte-identical in `server/testdata/doh_hosts.txt`, which the server compiles in for the Allowed Domains notice
-(`dns_server::is_builtin_doh_host`): the server's `dns_server::tests::doh_hosts_match_the_launchers_asset` and the
-launcher's `DnsFilterEngineTest` compare the copies; a change goes into both in one commit.
+The launcher's built-in secure-DNS hosts (design 67 §2.2) are `contracts/shipped/launcher-assets/dns/doh_hosts.txt`,
+the launcher's asset `dns/doh_hosts.txt` (an assets source directory) and compiled into the server for the Allowed
+Domains notice (`dns_server::is_builtin_doh_host`); the launcher's release build fails without it in the APK.
 The calendar links' contract (design 72 §3) is `contracts/core/calendar_feeds.json`, byte-identical in
 `launcher/app/src/test/resources/`: `feed` (the document `GET /api/devices/calendar/feeds/{uid}` serves for
 `server/testdata/calendar_feeds/contract.ics`), `keys` (a link's calendar key), `policy` (a `calendar.feeds` row),

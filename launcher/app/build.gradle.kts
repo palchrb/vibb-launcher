@@ -208,7 +208,9 @@ android {
  * scans a variant's merged manifest and its APKs' dex for the hooks' names: a release build fails if
  * any is there
  * ([expectPresent] false, a dependency of assembleRelease), and the debug build checks they are all
- * there (a positive control: the scan really finds them).
+ * there (a positive control: the scan really finds them). Every APK must also hold [requiredEntries] (design 133: the
+ * built-in secure-DNS hosts come from contracts/shipped/, so a wrong assets source directory fails the build instead of
+ * shipping a launcher without them).
  */
 abstract class CheckDebugHook : DefaultTask() {
     @get:InputFile
@@ -223,6 +225,9 @@ abstract class CheckDebugHook : DefaultTask() {
     @get:Input
     abstract val expectPresent: Property<Boolean>
 
+    @get:Input
+    abstract val requiredEntries: ListProperty<String>
+
     @TaskAction
     fun check() {
         val found = mutableSetOf<String>()
@@ -232,6 +237,8 @@ abstract class CheckDebugHook : DefaultTask() {
         if (apks.isEmpty()) throw GradleException("No APK in ${apkDir.get().asFile}")
         for (apk in apks) {
             ZipFile(apk).use { zip ->
+                val absent = requiredEntries.get().filter { zip.getEntry(it) == null }
+                if (absent.isNotEmpty()) throw GradleException("${apk.name} lacks $absent (contracts/shipped/, design 133)")
                 for (entry in zip.entries().asSequence().filter { it.name.endsWith(".dex") }) {
                     // Dex strings (class descriptors, Kotlin metadata, literals) are MUTF-8: ASCII names match as bytes.
                     val dex = String(zip.getInputStream(entry).readBytes(), Charsets.ISO_8859_1)
@@ -327,6 +334,7 @@ androidComponents {
             apkDir.set(variant.artifacts.get(SingleArtifact.APK))
             names.set(listOf("LockTaskOverride", "lock_task_debug_override", "PinVaultKeyReceiver", "HeadsetDebugReceiver", "MmsDebugReceiver", "ElementCallDebugReceiver", "UpDebugReceiver", "BtPairingDebugReceiver", "PlacesDebugReceiver", "push_hex"))
             expectPresent.set(!release)
+            requiredEntries.set(listOf("assets/dns/doh_hosts.txt"))
         }
         tasks.matching { it.name == "assemble$cap" }.configureEach { dependsOn(check) }
     }
@@ -337,6 +345,8 @@ androidComponents {
 tasks.withType<Test>().configureEach {
     inputs.dir("src/release").withPathSensitivity(PathSensitivity.RELATIVE)
     inputs.dir("src/debug").withPathSensitivity(PathSensitivity.RELATIVE)
+    // Design 133: DnsFilterEngineTest reads the built-in secure-DNS hosts asset by path.
+    inputs.dir(contracts.dir("shipped/launcher-assets")).withPathSensitivity(PathSensitivity.RELATIVE)
 }
 
 dependencies {
