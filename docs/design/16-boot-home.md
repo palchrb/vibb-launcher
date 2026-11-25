@@ -216,6 +216,8 @@ no `ACTION_SHUTDOWN` and the cover isn't armed; `ACTION_SHUTDOWN` is protected, 
 
 ## 16c - Home never shows content while locked (emulator run 2026-10-07)
 
+Superseded in part by design 132 (`132-phase-d-android-lock-only.md`): Android's PIN lock is the only lock. (16e's boot mark is gone; 16c's night ground stays.)
+
 Live (`adb reboot`, boot cover off, loaded emulator):
 - 05:35:44.8: the system starts Nexus as HOME in BFU.
 - 05:35:53.6: USER_UNLOCKED.
@@ -294,6 +296,8 @@ Open device checks (emulator, then the Jelly Star):
 - [ ] A time rule at boot (the time-rule screen under the PIN lock) and a call over the lock: unchanged.
 
 ## 16e - the breathing logo for 3 s at boot (user, 2026-10-07)
+
+Superseded in part by design 132 (`132-phase-d-android-lock-only.md`): Android's PIN lock is the only lock. (the boot mark is gone.)
 
 On a boot, the locked Home's breathing Vibb mark (16c) shows only for a blink before the PIN lock, and the user wants
 about 3 s. Decision:

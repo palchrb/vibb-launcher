@@ -25,6 +25,7 @@ class SosYieldTest {
     private val features = 63 or LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK
 
     private val base = RefrontInputs(locked = true, lockResumed = false, interactive = true, ourCall = false,
+        android = AndroidLoss.WAIT, androidWaited = true,
         telecomInCall = false, emergencyFlow = false, alarmRinging = false)
 
     /** The list while the "sos" yield runs, kiosk on. */

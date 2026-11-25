@@ -40,11 +40,11 @@ object HomeFront {
      * back to the top only when the lock was left for Home or at the boot (`homeResetDue`). */
     const val EXTRA_ARRIVAL = "me.vibb.launcher.extra.HOME_ARRIVAL"
 
-    fun intent(context: Context, animate: Boolean = true, noAnimation: Boolean = false, arrival: HomeArrival = HomeArrival.OURS): Intent =
+    fun intent(context: Context, noAnimation: Boolean = false, arrival: HomeArrival = HomeArrival.OURS): Intent =
         Intent(Intent.ACTION_MAIN)
             .addCategory(Intent.CATEGORY_HOME)
             .setPackage(context.packageName)
-            .addFlags(if (animate && !noAnimation) Intent.FLAG_ACTIVITY_NEW_TASK else Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
+            .addFlags(if (!noAnimation) Intent.FLAG_ACTIVITY_NEW_TASK else Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
             .putExtra(EXTRA_BROUGHT, true)
             .putExtra(EXTRA_ARRIVAL, arrival.name)
 
@@ -56,25 +56,19 @@ object HomeFront {
         KeyguardCover.afterAndroidUnlock(context, "Home ($why)") { bring(it, why, noAnimation = AndroidLock.faceOn) }
 
     /**
-     * Starts our Home; `false` if the platform refused. [animate] false: no open transition - only
-     * design 32's lock-up passes it. Every other start ends the lock-up's dark mark first
-     * ([PinLockRuntime.darkLockUp]): that Home is wanted in front - the lock asking it to root lock
-     * task, an update, a relock - and its locked resume shows the lock again, as before design 32.
+     * Starts our Home; `false` if the platform refused. [noAnimation]: no open transition (the face's leave).
      *
-     * Any thread, but such a start from another thread runs on the main thread (qa-32-s1-code L2):
-     * the lock-up marks and starts there in one pass, so a background end-and-start can't land
-     * between them and leave Home, with the dark mark, over the lock. Posted, it answers `true` (the
-     * background callers ignore the answer; the boot's, which reads it, runs on the main thread).
+     * Any thread, but a start from another thread runs on the main thread (qa-32-s1-code L2). Posted, it answers
+     * `true` (the background callers ignore the answer; the boot's, which reads it, runs on the main thread).
      * [arrival]: why, for Home's reset to the top (`homeResetDue`) - the lock's leave and the boot say so.
      */
     fun bring(
         context: Context,
         why: String,
-        animate: Boolean = true,
         noAnimation: Boolean = false,
         arrival: HomeArrival = HomeArrival.OURS,
     ): Boolean {
-        if (animate && Looper.myLooper() != Looper.getMainLooper()) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
             val app = context.applicationContext
             main.post { bring(app, why, noAnimation = noAnimation, arrival = arrival) }
             return true
@@ -83,8 +77,7 @@ object HomeFront {
             Log.i(LOG_TAG, "Not bringing Home to the front during shutdown: $why")
             false
         } else try {
-            if (animate) PinLockRuntime.endDarkLockUp()
-            context.startActivity(intent(context, animate, noAnimation, arrival))
+            context.startActivity(intent(context, noAnimation, arrival))
             Log.i(LOG_TAG, "Home brought to the front: $why")
             true
         } catch (e: Exception) {

@@ -14,7 +14,7 @@ import com.kidslauncher.mdm.ui.HomeActivity
 private const val LOG_TAG = "HomePin"
 
 /**
- * Design 59d step M: the unlocked HOME is HomeActivity, with the boot cover enabled too (android mode).
+ * Design 59d step M: the unlocked HOME is HomeActivity, with the boot cover enabled too (Android's lock).
  *
  * The system picks the first of our HOME PPAs whose component is in the query (`ComputerEngine
  * .findPersistentPreferredActivity`). With the cover enabled both of ours are, and their order is the resolver's - after
@@ -62,7 +62,7 @@ object HomePin {
         null
     }
 
-    /** compat-fix-1: android mode ended - our PPAs are cleared and added back without the cover's, so own mode's cover
+    /** compat-fix-1: Android's lock ended - our PPAs are cleared and added back without the cover's, so no Android PIN's cover
      * (enabled, no PPA) never competes with HomeActivity. Not counted against [HOME_PIN_MAX_RESEATS]. Never throws. */
     fun dropCoverPin(context: Context) {
         val app = context.applicationContext

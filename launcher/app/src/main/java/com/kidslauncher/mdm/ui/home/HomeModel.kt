@@ -268,15 +268,14 @@ fun tileChange(old: GridTile, new: GridTile, sameIcon: Boolean): TileChange = wh
  * Launcher round 7 §4 (Fossify's Home-press reset): a HOME intent delivered to Home scrolls the grid
  * to the top and the contacts row to its start, and closes Home's menus, only when it is the kid
  * pressing Home on Home - never one of our own typed starts ([broughtByUs]: the lock leaving, the
- * boot, the dark lock-up, an update; `HomeFront.EXTRA_BROUGHT`), only when Home's content was up
+ * boot, an update; `HomeFront.EXTRA_BROUGHT`), only when Home's content was up
  * in front right before it ([contentWasUp]: resumed with its content and not stopped since - a
  * press from another app finds Home stopped), and never while the content is off the window, the
- * lock is LOCKED or a dark lock-up is marked (design 16c/32).
+ * lock is LOCKED (design 16c).
  */
 fun homePressToTop(
     broughtByUs: Boolean,
     contentWasUp: Boolean,
     contentShown: Boolean,
-    darkLockUp: Boolean,
     locked: Boolean,
-): Boolean = !broughtByUs && contentWasUp && contentShown && !darkLockUp && !locked
+): Boolean = !broughtByUs && contentWasUp && contentShown && !locked

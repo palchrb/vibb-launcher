@@ -116,7 +116,6 @@
     {"name": "the Child PIN on Android's lock", "android_credential": true, "keyguard": "android", "policy_known": true, "phone": true, "server": true},
     {"name": "a Child PIN stored, the phone without a PIN", "android_credential": false, "keyguard": "android", "policy_known": true, "phone": false, "server": false},
     {"name": "unreadable on Android's lock", "android_credential": null, "keyguard": "android", "policy_known": true, "phone": null, "server": null},
-    {"name": "Vibb One's own lock with a Child PIN", "android_credential": false, "keyguard": "own", "policy_known": true, "phone": true, "server": true},
     {"name": "before the first policy: Android's credential, the server's none stored", "android_credential": true, "keyguard": null, "policy_known": false, "phone": true, "server": false}
   ],
   "map_readings": [

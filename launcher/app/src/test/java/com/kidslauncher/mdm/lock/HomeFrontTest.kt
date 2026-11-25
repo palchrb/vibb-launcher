@@ -116,28 +116,23 @@ class HomeFrontTest {
     fun `HomeFront without an animation adds only NO_ANIMATION`() {
         val text = code(file("java/com/kidslauncher/mdm/lock/HomeFront.kt"))
         val intent = text.substringAfter("fun intent(").substringBefore("fun bring(")
-        assertTrue(intent, intent.startsWith("context: Context, animate: Boolean = true, noAnimation: Boolean = false, arrival: HomeArrival = HomeArrival.OURS): Intent ="))
-        assertTrue(intent, intent.contains(".addFlags(if (animate && !noAnimation) Intent.FLAG_ACTIVITY_NEW_TASK else Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)"))
+        assertTrue(intent, intent.startsWith("context: Context, noAnimation: Boolean = false, arrival: HomeArrival = HomeArrival.OURS): Intent ="))
+        assertTrue(intent, intent.contains(".addFlags(if (!noAnimation) Intent.FLAG_ACTIVITY_NEW_TASK else Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)"))
         assertEquals("one category, no component", 1, Regex("addCategory\\(").findAll(intent).count())
-        assertTrue(text.contains("fun bring(\n        context: Context,\n        why: String,\n        animate: Boolean = true,\n        noAnimation: Boolean = false,\n        arrival: HomeArrival = HomeArrival.OURS,\n    ): Boolean"))
+        assertTrue(text.contains("fun bring(\n        context: Context,\n        why: String,\n        noAnimation: Boolean = false,\n        arrival: HomeArrival = HomeArrival.OURS,\n    ): Boolean"))
         val bring = text.substringAfter("fun bring(")
-        assertTrue(bring.indexOf("if (animate) PinLockRuntime.endDarkLockUp()") in 0 until bring.indexOf("context.startActivity(intent(context, animate, noAnimation, arrival))"))
-        // qa-32-s1-code L2: such a start from another thread runs on the main thread, where the
-        // lock-up marks and starts in one pass - first thing, before the mark is ended.
-        val hop = bring.indexOf("if (animate && Looper.myLooper() != Looper.getMainLooper()) {")
-        assertTrue(bring, hop in 0 until bring.indexOf("PinLockRuntime.endDarkLockUp()"))
-        // Design 59d step B (Q59d-7): noAnimation keeps the hop and the dark mark's end (only `animate` skips them).
+        // qa-32-s1-code L2: a start from another thread runs on the main thread, first thing.
+        val hop = bring.indexOf("if (Looper.myLooper() != Looper.getMainLooper()) {")
+        assertTrue(bring, hop in 0 until bring.indexOf("context.startActivity(intent(context, noAnimation, arrival))"))
         assertTrue(bring.substring(hop).substringBefore("return true").contains("main.post { bring(app, why, noAnimation = noAnimation, arrival = arrival) }"))
-        // The two callers: the lock-up's `animate = false` (below) and the face's leave's `noAnimation`.
+        // The callers: the leave's `noAnimation`, and Home after an unlock.
         val noAnim = file("java/com/kidslauncher/mdm").walk().filter { it.isFile && it.name.endsWith(".kt") }
             .filter { code(it).contains("noAnimation = ") && it.name != "HomeFront.kt" }.map { it.name }.toList()
-        assertEquals(listOf("PinLockActivity.kt"), noAnim)
-        assertTrue(code(file("java/com/kidslauncher/mdm/lock/PinLockActivity.kt")).contains("HomeFront.bring(this, \"the lock left\", noAnimation = AndroidLock.faceOn, arrival = arrival)"))
+        assertEquals(setOf("PinLockActivity.kt"), noAnim.toSet())
+        assertTrue(code(file("java/com/kidslauncher/mdm/lock/PinLockActivity.kt")).contains("HomeFront.bring(this, \"the lock left\", noAnimation = true, arrival = arrival)"))
         assertTrue(text.contains("private val main = Handler(Looper.getMainLooper())"))
-        // Only the lock-up starts Home unanimated - every other start ends its dark mark.
+        // Design 132: no lock-up starts Home any more - nothing starts it unanimated.
         val sources = file("java/com/kidslauncher/mdm").walk().filter { it.isFile && it.name.endsWith(".kt") }.toList()
-        val unanimated = sources.filter { code(it).contains("animate = false") }.map { it.name }
-        assertEquals(listOf("PinLockRuntime.kt"), unanimated)
-        assertEquals(1, Regex("animate = false").findAll(code(file("java/com/kidslauncher/mdm/lock/PinLockRuntime.kt"))).count())
+        assertEquals(emptyList<String>(), sources.filter { code(it).contains("animate = false") }.map { it.name })
     }
 }

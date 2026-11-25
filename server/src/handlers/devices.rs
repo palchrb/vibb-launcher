@@ -631,22 +631,19 @@ async fn insert_device_with_policy(state: &AppState, name: &str) -> Result<i64, 
     // devices created before 2026-10-06 keep the column default (none). The notification filter
     // (Advanced › Updates & notifications) starts on (2026-10-21, the user: "Varselfilter kan
     // gjerne være på som standard"); phones created before keep what they have - the column
-    // default (0, migration 0036) is not changed, so no migration. Android's lock is the lock a
-    // new phone gets (2026-11-16, the user: "vi bruker ikke noe annet enn androids pin lås"): it
-    // takes effect when the Child PIN is set - until then `kid_lock` is null, no lock at all, as
-    // with Vibb One's - and phones created before keep their stored choice (0085's column default
-    // `own` is not changed, so no migration). Calls and SMS start "Styrt" (2026-11-23, the user: "jeg er ok med at
+    // default (0, migration 0036) is not changed, so no migration. Android's lock is the only lock
+    // (design 132): it takes effect when the Child PIN is set - until then `kid_lock` is null, no
+    // lock at all. Calls and SMS start "Styrt" (2026-11-23, the user: "jeg er ok med at
     // default er bare kontakter"): only the contacts the parent adds, the emergency menu always; phones created before
     // keep their modes (0130's column defaults `unmanaged` are not changed, so no migration).
     sqlx::query(
         "INSERT INTO device_policy (device_id, kiosk_desired, lock_task_features, \
-         quick_controls_mask, notification_auto_cancel, kid_keyguard, calls_mode, sms_mode) \
-         VALUES (?, 1, ?, ?, 1, ?, ?, ?)",
+         quick_controls_mask, notification_auto_cancel, calls_mode, sms_mode) \
+         VALUES (?, 1, ?, ?, 1, ?, ?)",
     )
     .bind(id)
     .bind(DEFAULT_LOCK_TASK_FEATURES)
     .bind(DEFAULT_QUICK_CONTROLS)
-    .bind(crate::kid_lock::KEYGUARD_ANDROID)
     .bind(NEW_PHONE_CHANNEL_MODE)
     .bind(NEW_PHONE_CHANNEL_MODE)
     .execute(&mut *tx)
@@ -2619,6 +2616,8 @@ async fn render_device(
         });
     // Design 114 §2.6: the integrations' setup steps (design 110's map steps), for the badge and Oppsett's value.
     let setup_part = state.integrations.setup(state, id).await;
+    // Design 132 §4.5: the Child PIN on its way keeps the no-Android-PIN alarm quiet.
+    let pin_on_its_way = crate::kid_lock::pin_on_its_way(&state.db, id).await;
     // The same rows the Devices list counts, from the parts built above (not read twice).
     let connection = connection_of(state, &device, now);
     let facts = crate::attention::facts_of(
@@ -2636,6 +2635,7 @@ async fn render_device(
             last_phone_on_ms,
             integrations: &integrations,
             setup_part: &setup_part,
+            pin_on_its_way,
         },
         now.timestamp_millis(),
     );
@@ -2942,10 +2942,8 @@ async fn render_device(
                 lang,
                 if crate::kid_lock::policy_kid_lock(&policy).is_none() {
                     "device.summary.value.pin_off"
-                } else if crate::kid_lock::android_requested(&policy) {
-                    // Design 59 §2.3: the parent's choice of lock.
-                    "device.summary.value.pin_android"
                 } else {
+                    // Design 132: Android's lock is the only lock, so no word for which.
                     "device.summary.value.pin_on"
                 },
             ),
@@ -3670,14 +3668,13 @@ pub async fn update_policy(
     }
 }
 
-/// Lock Screen & PINs' Child PIN (handy step 10; design 31 step 4): set or remove the kid's PIN
-/// for handy's own lock screen. A PIN must be 4-6 digits, needs an override PIN (the lock's parent code) and must not
-/// be the override PIN (`kid_lock::decide_kid_pin`); a refused save writes nothing and says why.
-/// Removing it is refused while Android's lock is chosen (`keyguard_needs_pin`, 2026-11-16).
-/// The first PIN also blocks safe mode (decision after QA review: safe mode skips our lock) -
-/// the parent can switch that off again in Advanced › Restrictions. 404 for an unknown device, 500 on
-/// a DB error; security events `kid_pin_changed`/`kid_pin_cleared`; nudges the phone. Every
-/// outcome redirects to `/devices/{id}/lock?notice=<code>#child-pin` (the flash in its group).
+/// Lock Screen & PINs' Child PIN (handy step 10; design 31 step 4; design 132: the PIN of Android's lock): set or
+/// change the kid's PIN. A PIN must be 4-6 digits, needs an override PIN and must not be the override PIN
+/// (`kid_lock::decide_kid_pin`); without the key file it can't be kept (`save_not_kept`); a refused save writes
+/// nothing and says why. Removing it is refused (`not_removed`, design 132 Q1 (a)). The first PIN also blocks safe
+/// mode (decision after QA review: safe mode skips Vibb's policies) - the parent can switch that off again in
+/// Advanced › Restrictions. 404 for an unknown device, 500 on a DB error; security event `kid_pin_changed`; nudges
+/// the phone. Every outcome redirects to `/devices/{id}/lock?notice=<code>#child-pin` (the flash in its group).
 pub async fn update_kid_lock(
     State(state): State<AppState>,
     lang: Lang,
@@ -3708,41 +3705,17 @@ pub async fn update_kid_lock(
         Redirect::to(&format!("/devices/{id}/lock?notice={code}#child-pin")).into_response()
     };
 
-    let (result, event, code) = if form.contains_key("clear_kid_pin") {
-        // Design 59 §2.1: no PIN is left to keep, hand over or show - the sealed copies go, the rev
-        // moves on, and a waiting set_kid_pin is cancelled. Since 2026-11-16 only while Vibb One's
-        // lock is chosen: Android's lock needs a Child PIN, and clearing it would roll the phone
-        // back to no lock at all, so it is refused there (`keyguard_needs_pin`; the `UPDATE`
-        // checks it, so a parallel switch wins) and the choice is never changed behind the
-        // parent's back - it used to fall back to Vibb One's lock silently.
-        let result = async {
-            let mut tx = state.db.begin().await?;
-            let cleared = sqlx::query(
-                "UPDATE device_policy SET kid_pin_hash = NULL, kid_pin_salt = NULL, \
-                 kid_pin_length = NULL, kid_pin_sealed = NULL, kid_pin_prev_sealed = NULL, \
-                 kid_pin_prev_rev = NULL, kid_pin_rev = kid_pin_rev + 1, \
-                 updated_at = datetime('now') WHERE device_id = ? AND kid_keyguard != ?",
-            )
-            .bind(id)
-            .bind(crate::kid_lock::KEYGUARD_ANDROID)
-            .execute(&mut *tx)
-            .await?
-            .rows_affected()
-                > 0;
-            if cleared {
-                crate::kid_lock::cancel_pin_command(&mut *tx, id, "kid_pin_cleared").await?;
-            }
-            tx.commit().await?;
-            Ok::<bool, sqlx::Error>(cleared)
-        }
-        .await;
-        let result = match result {
-            Ok(false) => return crate::settings_log::refused(back("keyguard_needs_pin")),
-            Ok(true) => Ok(()),
-            Err(err) => Err(err),
-        };
-        (result, "kid_pin_cleared", "cleared")
-    } else {
+    // Design 132 Q1 (a): the Child PIN is changed, never removed - Android's PIN stays once the phone has had one. A
+    // post from a page before it is refused with nothing written.
+    if form.contains_key("clear_kid_pin") {
+        return crate::settings_log::refused(back("not_removed"));
+    }
+    // Design 132 §4.2: without the key file the PIN can't be kept, so it could never reach Android's lock - refused,
+    // nothing written (the server log said why at the start).
+    let Some(key) = state.kid_pin_key.as_deref() else {
+        return crate::settings_log::refused(back("save_not_kept"));
+    };
+    let (result, code) = {
         let new_pin = crate::kid_pin::KidPin::new(
             form.get("new_kid_pin")
                 .map(|p| p.trim().to_string())
@@ -3775,18 +3748,15 @@ pub async fn update_kid_lock(
         // The first kid PIN turns the safe-boot block on; later changes leave the switch alone.
         let first = current.kid_pin_hash.is_none();
         let block_safe_boot = first || current.hardening.disallow_safe_boot;
-        // Design 59 §2.1: sealed for this phone's row (none without the key: saved, not kept).
-        let sealed = state
-            .kid_pin_key
-            .as_deref()
-            .map(|key| crate::kid_pin::seal(key, id, &new_pin));
+        // Design 59 §2.1: sealed for this phone's row.
+        let sealed = crate::kid_pin::seal(key, id, &new_pin);
         // Only while the override PIN still exists: a parallel "remove unlock code" can't leave a
         // kid PIN without its parent code (qa-10-code #9); zero rows = refused. When the switch
         // goes on is kept for the unseen-boots advice (QA 24b Low 12). The PIN and rev the phone
         // last confirmed are kept over any number of saves (`prev`, both keyed on prev_rev being
         // unset, so a legacy PIN with no sealed copy stays "an earlier PIN" - qa-59-revision M-2;
-        // SET reads the row as it was), and a phone in android mode gets the new PIN as a
-        // command in the same transaction.
+        // SET reads the row as it was), and the phone gets the new PIN as a command in the same
+        // transaction.
         let result = async {
             let mut tx = state.db.begin().await?;
             let saved = sqlx::query(
@@ -3829,16 +3799,12 @@ pub async fn update_kid_lock(
             Ok(true) => Ok(()),
             Err(err) => Err(err),
         };
-        let code = match (
-            first && !current.hardening.disallow_safe_boot,
-            sealed.is_some(),
-        ) {
-            (true, true) => "saved_safe_boot",
-            (true, false) => "saved_safe_boot_not_kept",
-            (false, false) => "saved_not_kept",
-            (false, true) => "saved",
+        let code = if first && !current.hardening.disallow_safe_boot {
+            "saved_safe_boot"
+        } else {
+            "saved"
         };
-        (result, "kid_pin_changed", code)
+        (result, code)
     };
     if let Err(err) = result {
         tracing::error!(device_id = id, %err, "failed to save the kid PIN");
@@ -3850,7 +3816,7 @@ pub async fn update_kid_lock(
     }
     security::record_security_event(
         &state.db,
-        event,
+        "kid_pin_changed",
         Some(&admin.username),
         None,
         Some(security::Detail::facts(format!("device {id}"))),
@@ -3860,97 +3826,8 @@ pub async fn update_kid_lock(
     back(code)
 }
 
-/// Design 59 §2.3, the lock switch (Lock Screen & PINs › Child PIN, an auto-saving select): `keyguard`
-/// `own` (Vibb One's lock, being phased out) or `android` (Android's, the PIN pad). Since 2026-11-16
-/// also without a Child PIN: the choice waits for the PIN (`kid_lock` stays null until then, so the
-/// phone gets no keyguard word before it has a PIN), as a new phone's Android lock does. To android,
-/// the queue rule runs in the same transaction (a kept PIN migrates the phone at once; none kept,
-/// nothing queued); to own, a waiting `set_kid_pin` is cancelled (`keyguard_own`). A change is
-/// logged (`kid_keyguard_changed`) and nudges the phone. Back to its row,
-/// `/devices/{id}/lock#lock-keyguard` (scroll-restore keeps the row where it was, even with a
-/// warning coming in above the group); 400 for another value, 404 for an unknown phone, 500 with
-/// nothing written on a DB error.
-pub async fn update_kid_keyguard(
-    State(state): State<AppState>,
-    lang: Lang,
-    Path(id): Path<i64>,
-    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
-    Form(form): Form<std::collections::HashMap<String, String>>,
-) -> Response {
-    let keyguard = match form.get("keyguard").map(String::as_str) {
-        Some(k @ (crate::kid_lock::KEYGUARD_OWN | crate::kid_lock::KEYGUARD_ANDROID)) => k,
-        _ => {
-            return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.out_of_date");
-        }
-    };
-    let failed = || {
-        crate::i18n::error(
-            lang,
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "error.save_failed_log",
-        )
-    };
-    let was: String =
-        match sqlx::query_scalar("SELECT kid_keyguard FROM device_policy WHERE device_id = ?")
-            .bind(id)
-            .fetch_optional(&state.db)
-            .await
-        {
-            Ok(Some(row)) => row,
-            Ok(None) => {
-                return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.device_not_found");
-            }
-            Err(err) => {
-                tracing::error!(device_id = id, %err, "can't read the lock switch");
-                return failed();
-            }
-        };
-    let result = async {
-        let mut tx = state.db.begin().await?;
-        sqlx::query(
-            "UPDATE device_policy SET kid_keyguard = ?, updated_at = datetime('now') \
-             WHERE device_id = ?",
-        )
-        .bind(keyguard)
-        .bind(id)
-        .execute(&mut *tx)
-        .await?;
-        if keyguard == crate::kid_lock::KEYGUARD_ANDROID {
-            crate::kid_lock::queue_pin_command(&mut *tx, id, None, Some(admin.id)).await?;
-        } else {
-            crate::kid_lock::cancel_pin_command(&mut *tx, id, "keyguard_own").await?;
-        }
-        tx.commit().await
-    }
-    .await;
-    if let Err(err) = result {
-        tracing::error!(device_id = id, %err, "failed to save the lock switch");
-        return failed();
-    }
-    if was != keyguard {
-        let words = if keyguard == crate::kid_lock::KEYGUARD_ANDROID {
-            "security.detail.keyguard.android"
-        } else {
-            "security.detail.keyguard.own"
-        };
-        security::record_security_event(
-            &state.db,
-            "kid_keyguard_changed",
-            Some(&admin.username),
-            None,
-            Some(
-                security::Detail::words(words, &[("device", &id.to_string())])
-                    .with_facts(format!("device {id}")),
-            ),
-        )
-        .await;
-    }
-    let _ = state.command_notify.send(id);
-    Redirect::to(&format!("/devices/{id}/lock#lock-keyguard")).into_response()
-}
-
 /// Design 59 §2.3, "Send the Child PIN again": the queue rule as after a save (a `set_kid_pin`
-/// when Android's lock is chosen, a copy is kept, the phone can take it and none waits). Back to
+/// when a copy is kept, the phone can take it and none waits). Back to
 /// the Child PIN group with `pin_sent`, `pin_not_kept` (no copy: set it again) or `pin_not_sent`;
 /// a queued one is logged (`kid_pin_sent`) and nudges the phone. 404 for an unknown phone, 500 on
 /// a DB error.

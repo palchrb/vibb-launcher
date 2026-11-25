@@ -35,7 +35,7 @@ import com.kidslauncher.mdm.ui.look.lookOver
  *   ([onStop]) - Home, the lock, the screen going off.
  * - **The lock screen**: never over it. Snarveier is hidden on every keyguard (`VISIBILITY_SECRET`; checked on a Swipe
  *   one too, Android 14 and 16, code QA L1), and the tap check refuses Lysstyrke there as every other item, and under
- *   Vibb's own lock (LOCKED).
+ *   the glance (LOCKED).
  * - **The look**: the kid's (Mørk or Lys, [lookOver]): this activity's context with the look's night bit and the page
  *   colours, so the layout's page tokens resolve as on a page.
  */

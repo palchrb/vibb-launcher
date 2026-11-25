@@ -34,7 +34,6 @@ import com.kidslauncher.mdm.lock.HomeFront
 import com.kidslauncher.mdm.lock.LockAsk
 import com.kidslauncher.mdm.lock.LockMode
 import com.kidslauncher.mdm.lock.PinLockRuntime
-import com.kidslauncher.mdm.lock.homeDarkResume
 import com.kidslauncher.mdm.lock.homeShowsContent
 import com.kidslauncher.mdm.apps.AbstractDetailedAppInfo
 import com.kidslauncher.mdm.apps.AppFilter
@@ -119,11 +118,6 @@ private const val MAX_OVERLAYS = 8
  * ([NightGround]), with nothing to touch, and its resume roots lock task and shows the lock. The
  * content is inflated and bound only on the UNLOCKED edge ([showContent]) and taken off the window
  * again on the LOCKED one ([showNight]).
- *
- * Design 32: at a lock-up while dark Home is brought under the lock, so what WM shows before the
- * lock's first frame at the next screen-on is Home's snapshot - plain black (no recents screenshot,
- * a black task description), never the app the kid was in. That resume only shows the night ground
- * ([homeDarkResume]); the rest waits for an interactive start or resume.
  */
 class HomeActivity : UIObjectActivity() {
 
@@ -323,9 +317,7 @@ class HomeActivity : UIObjectActivity() {
         appsJob?.cancel()
         refreshHandler.removeCallbacks(badgeRender)
         refreshHandler.removeCallbacks(callTicker)
-        // Design 16e (qa-16e-fix2 #1): the boot's 3 s start once the drawn night ground has focus.
-        val ground = night ?: NightGround(this) { PinLockRuntime.onHomeMarkShown(this, groundDrawn = true, focused = hasWindowFocus()) }
-            .also { night = it }
+        val ground = night ?: NightGround(this).also { night = it }
         if (!nightShown) {
             setContentView(ground.root)
             nightShown = true
@@ -469,18 +461,11 @@ class HomeActivity : UIObjectActivity() {
         }
     }
 
-    /** Design 32: Home brought under the lock at a lock-up, the screen still off ([homeDarkResume]). */
-    private fun darkUnderLock(): Boolean =
-        homeDarkResume(PinLockRuntime.darkLockUp, interactive(), PinLockRuntime.mode == LockMode.LOCKED)
-
     /** The screen is on (unknown counts as on: the usual path). */
     private fun interactive(): Boolean = getSystemService(PowerManager::class.java)?.isInteractive != false
 
     override fun onStart() {
         super.onStart()
-        // Design 32 (QA M1): under the lock while dark, nothing - the card renders and listeners come
-        // at the next interactive start or resume ([startWork]).
-        if (darkUnderLock()) return
         startWork()
     }
 
@@ -525,18 +510,8 @@ class HomeActivity : UIObjectActivity() {
     override fun onResume() {
         super.onResume()
         resumedNow = true
-        // Design 32 (QA M1): brought under the lock while dark - the night ground only. No update
-        // fence, no time-rule screen over the lock, no lock start, no boot mark: the lock's own start
-        // came right after Home's in the same pass, and nothing slow may come before its creation.
-        // No lock task either (qa-32-s1-code L1): the lock's task is the focused one by now, so
-        // `startLockTask` here could only throw; with the kiosk on and no lock task running, the
-        // lock's own resume asks Home to root it (START_HOME), as before design 32.
-        if (darkUnderLock()) {
-            showNight()
-            return
-        }
         startWork()
-        PinLockRuntime.onHomeResumed(interactive())
+        PinLockRuntime.onHomeResumed()
         // Design 78 §5.4: a change of look that had to wait for a page to leave the screen runs now.
         com.kidslauncher.mdm.ui.look.PageLook.onHomeResumed(this)
         // Deliberately triggered here, not from Application.onCreate() - see TsnetClient's own
@@ -559,15 +534,8 @@ class HomeActivity : UIObjectActivity() {
             com.kidslauncher.mdm.server.UpdateFence.onFront(this)
             // The time-rule screen from the stored reason: it brings the PIN lock back on top.
             if (redirectToLockScreenIfLocked()) return
-            // Handy's PIN lock (step 10): Home in front while LOCKED means the lock lost the front.
-            // At the first start of a boot it waits while the mark shows for 3 s (design 16e) -
-            // only from here on, with the night ground resumed, does the mark count as up.
-            if (PinLockRuntime.mode == LockMode.LOCKED) {
-                PinLockRuntime.onHomeMarkUp()
-                // A re-resume with the focus kept (a re-delivered HOME intent) gets no focus change.
-                PinLockRuntime.onHomeMarkShown(this, groundDrawn = night?.drawn == true, focused = hasWindowFocus())
-                PinLockRuntime.show(this, ask = LockAsk.BOOT)
-            }
+            // The lock (step 10): Home in front while LOCKED means the glance lost the front.
+            if (PinLockRuntime.mode == LockMode.LOCKED) PinLockRuntime.show(this, ask = LockAsk.BOOT)
             return
         }
         // Fresh check against the clock every time the home screen comes to the foreground, on
@@ -606,9 +574,6 @@ class HomeActivity : UIObjectActivity() {
     }
 
     override fun onPause() {
-        // Design 16e (qa-16e-code #2): anything over the mark - even translucent - ends the boot's
-        // wait, unless Home is resumed again at once (a re-delivered HOME intent pauses it).
-        PinLockRuntime.onHomePaused(isChangingConfigurations)
         // A language retry that waits (design 78 §5.3) is for a Home still in front.
         LauncherLocales.onHomePaused()
         resumedNow = false
@@ -699,18 +664,6 @@ class HomeActivity : UIObjectActivity() {
         }
     }
 
-    /** Design 16e: the first focus of the drawn night ground starts the mark's 3 s (qa-16e-fix2 #1 -
-     * focus goes only to a drawn, shown window); the assistant, the power menu or a dialog over the
-     * mark takes the focus without pausing Home - the boot's wait ends (qa-16e-code #2). */
-    override fun onWindowFocusChanged(hasFocus: Boolean) {
-        super.onWindowFocusChanged(hasFocus)
-        if (!hasFocus) {
-            PinLockRuntime.onHomeCovered(this, isChangingConfigurations, "Home lost focus")
-        } else if (nightShown) {
-            PinLockRuntime.onHomeMarkShown(this, groundDrawn = night?.drawn == true, focused = true)
-        }
-    }
-
     /**
      * Launcher round 7 §4: Home pressed while Home is up - back to the top (the grid and the contacts
      * row) and Home's menus closed; nothing for our own Home starts or under the lock
@@ -728,7 +681,6 @@ class HomeActivity : UIObjectActivity() {
             broughtByUs = broughtByUs,
             contentWasUp = contentUp,
             contentShown = contentShown,
-            darkLockUp = PinLockRuntime.darkLockUp,
             locked = PinLockRuntime.mode == LockMode.LOCKED,
         )
         if (!toTop) return
@@ -740,8 +692,6 @@ class HomeActivity : UIObjectActivity() {
     override fun onStop() {
         contentUp = false
         resetDue = false
-        // Design 16e: something covers the mark - the boot's wait for it ends.
-        PinLockRuntime.onHomeCovered(this, isChangingConfigurations, "Home stopped")
         started = false
         // An app opened over Home closes the long-press menu and ends the move bar's moving (code QA M1).
         if (::gridAdapter.isInitialized) gridAdapter.closeMenus()

@@ -161,7 +161,7 @@ object RestrictionsPause {
         } catch (e: Exception) {
             Log.w("RestrictionsPause", "The hold's notification grant failed: ${e.javaClass.simpleName}")
         }
-        WindowRelock.opened(app, WindowKind.PAUSE, start, secureKnown = false) {
+        WindowRelock.opened(app, WindowKind.PAUSE, start) {
             mdm.restrictionsPausedUntil(start.untilWallMs)
             mdm.restrictionsPausedElapsedStart(start.elapsedStartMs)
             mdm.restrictionsPausedBoot(start.bootCount)

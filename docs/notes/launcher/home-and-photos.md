@@ -67,7 +67,7 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   (`reportedCoverArm`) - a sync still in flight at the power-off (the low-battery sync with its fix) no longer reports
   an arm the next start hasn't had its chance at. No shape change. The server says "not shown" only once a `phone_on`
   newer than the arm exists (`kiosk_escapes::boot_cover_notes`), for phones on older builds.
-- **Own mode's boot HOME (compat-fix-1, QA H1, 2026-11-16)**: own mode on a managed phone hung at every boot - a normal
+- **The boot HOME without an Android PIN (compat-fix-1, QA H1, 2026-11-16; "own mode" until design 132 - today a managed phone before its Child PIN reaches Android)**: own mode on a managed phone hung at every boot - a normal
   restart too - on Android 14's Google image: our plan hides Settings (FallbackHome), the stock launcher's HOME isn't
   direct-boot aware and the 16b cover was armed only at `ACTION_SHUTDOWN` while the switch was on, so no HOME ran before
   the unlock and the user stayed BOOTING. Now, at every apply in own mode, `BootCover.directBootHomeElsewhere` asks for
