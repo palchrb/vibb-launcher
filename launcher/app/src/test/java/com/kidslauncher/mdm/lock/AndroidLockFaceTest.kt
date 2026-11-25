@@ -283,8 +283,6 @@ class AndroidLockFaceTest {
 
     @Test
     fun `59d B - the page shows under the pad, only its ground at the leave`() {
-        assertTrue(glancePageShown(LockStage.GLANCE))
-        assertTrue("the page under Android's pad", glancePageShown(LockStage.ASK))
         assertEquals("no keypad stage (design 132)", setOf(LockStage.GLANCE, LockStage.ASK), LockStage.entries.toSet())
         assertTrue(glanceContentShown(leaving = false))
         assertFalse("the leave hides it", glanceContentShown(leaving = true))
@@ -296,9 +294,8 @@ class AndroidLockFaceTest {
         assertTrue(show, show.contains("for (i in 0 until root.childCount) root.getChildAt(i).visibility = content"))
         assertFalse(panel.contains("decorView"))
         val render = panel.substringAfter("private fun renderNow() {").substringBefore("\n    }\n")
-        assertTrue(render.contains("val shown = glancePageShown(state.stage)"))
-        assertTrue(render.indexOf("showContent()") > render.indexOf("glance.root.visibility = if (shown) View.VISIBLE else View.GONE"))
-        assertTrue(panel.contains("val page = glancePageShown(state.stage)"))
+        assertTrue(render.indexOf("showContent()") > render.indexOf("glance.root.visibility = View.VISIBLE"))
+        assertFalse(panel.contains("glancePageShown"))
         // The next resume shows a content still hidden by a leave that didn't finish.
         assertTrue(panel.substringAfter("fun resume() = guarded(\"resume\") {").substringBefore("\n    }\n").contains("leaving = false"))
     }

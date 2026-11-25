@@ -13,7 +13,7 @@ import com.kidslauncher.mdm.server.dto.ParentPinEvent
  * 5 wrong tries in a row lock the parent PIN everywhere for 15 min, then 30 min, 1 h, ... up to
  * 24 h. A correct PIN clears the tries but keeps the level; the level drops one step for every
  * 24 h without a wrong try, and a new PIN from the server (another fingerprint) resets it all.
- * Both windows follow the kid backoff's clock rules within a boot (lock/PinBackoff.kt) and carry
+ * Both windows follow the lock clocks' rules within a boot (lock/LockClocks.kt) and carry
  * over by the wall clock across a reboot - never longer than their duration.
  */
 

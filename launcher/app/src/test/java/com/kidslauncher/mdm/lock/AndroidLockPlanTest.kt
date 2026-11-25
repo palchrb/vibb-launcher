@@ -182,7 +182,7 @@ class AndroidLockPlanTest {
         assertFalse(android.contains("reset(app, null"))
         assertEquals(1, Regex("""\breset\(app, """).findAll(android).count())
         val configure = body(android, "configure")
-        assertTrue(configure.contains("val stillOwned = if (owned && !secure) {"))
+        assertTrue(configure.contains("val stillOwned: Boolean? = if (ownedGone(owned, secure)) {"))
         assertEquals(1, Regex("owned = false").findAll(android).count())
         // Step 4's command, its reset failed, gives back exactly what it wrote ahead (a credential not ours stays not ours).
         assertTrue(body(android, "setFromCommand").contains("PinLockStore.saveAndroid(app, owned = owned, rev = before)"))
@@ -277,7 +277,7 @@ class AndroidLockPlanTest {
         assertNull(ownChangeConsumed(after1, 7, 3_500))
         // A failed reset takes its mark back and its rev is no one's; a stale mark restarts the count.
         assertEquals(OwnChange(1, 7, 2_000 + OWN_CHANGE_MS, null), ownChangeConsumed(two, 7, 3_000, failed = true))
-        assertEquals(OwnChange(1, 9, 50 + OWN_CHANGE_MS, null), ownChangeArmed(two, 9, 50, settingRev = null))
+        assertEquals(OwnChange(1, 9, 50 + OWN_CHANGE_MS, 8L), ownChangeArmed(two, 9, 50, settingRev = 8L))
         assertNull(ownChangeConsumed(one, 7, 1_000 + OWN_CHANGE_MS))
         // onPasswordChanged reads the stored mark, consumes one and adopts its rev only when it is ours.
         val changed = body(code("$lock/AndroidLock.kt"), "onPasswordChanged")
@@ -653,7 +653,9 @@ class AndroidLockPlanTest {
         assertEquals("not before Android has the Child PIN", PASSWORD_QUALITY_UNSPECIFIED, passwordQuality(true, owned = false, deviceSecure = true))
         assertEquals("no credential", PASSWORD_QUALITY_UNSPECIFIED, passwordQuality(true, true, deviceSecure = false))
         assertEquals("unmanaged", PASSWORD_QUALITY_UNSPECIFIED, passwordQuality(managed = false, owned = true, deviceSecure = true))
-        // Every Child PIN the command sets (4-6 digits, the policy's length) meets NUMERIC with no minimum length set.
+        // Every Child PIN the command sets (4-6 digits, the policy's length) meets NUMERIC with no minimum length set
+        // (Android's own floor of 4, digits only).
+        fun numericQualityMet(pin: String) = pin.length >= 4 && pin.all { it in '0'..'9' }
         for (pin in listOf("0000", "1234", "12345", "987654")) {
             assertTrue(pin, commandPinShape(pin, pin.length))
             assertTrue(pin, numericQualityMet(pin))
@@ -666,7 +668,7 @@ class AndroidLockPlanTest {
     @Test
     fun `the quality is written at every apply, read back, the deprecation suppressed at that one call (§4_5)`() {
         val android = code("$lock/AndroidLock.kt")
-        assertTrue(body(android, "configure").contains("passwordQualityNow(dpm, admin, passwordQuality(managed, stillOwned, secure))"))
+        assertTrue(body(android, "configure").contains("passwordQualityNow(dpm, admin, quality)"))
         val write = body(android, "passwordQualityNow")
         assertTrue(write.contains("dpm.setPasswordQuality(admin, quality)"))
         assertTrue(write.contains("val read = dpm.getPasswordQuality(admin)"))
@@ -695,6 +697,38 @@ class AndroidLockPlanTest {
         val configure = body(code("$lock/AndroidLock.kt"), "configure")
         assertTrue(configure.contains("WindowRelock.ensureAndroidResetToken(app)"))
         assertFalse(configure.substringBefore("WindowRelock.ensureAndroidResetToken(app)").contains("if ("))
+    }
+
+
+    @Test
+    fun `an unreadable input never moves the quality or the owned flag (code QA M2)`() {
+        for (managed in listOf(true, false)) for (known in listOf(true, false)) {
+            assertNull("owned unreadable", passwordQualityToWrite(managed, owned = null, deviceSecure = known))
+            assertNull("isDeviceSecure unreadable", passwordQualityToWrite(managed, owned = known, deviceSecure = null))
+        }
+        assertNull(passwordQualityToWrite(true, null, null))
+        assertEquals(PASSWORD_QUALITY_NUMERIC, passwordQualityToWrite(true, owned = true, deviceSecure = true))
+        assertEquals(PASSWORD_QUALITY_UNSPECIFIED, passwordQualityToWrite(true, owned = true, deviceSecure = false))
+        assertEquals(PASSWORD_QUALITY_UNSPECIFIED, passwordQualityToWrite(false, owned = true, deviceSecure = true))
+        // The owned flag goes only on a definite "no credential".
+        assertTrue(ownedGone(owned = true, deviceSecure = false))
+        assertFalse(ownedGone(owned = true, deviceSecure = null))
+        assertFalse(ownedGone(owned = null, deviceSecure = false))
+        assertFalse(ownedGone(owned = false, deviceSecure = false))
+        assertFalse(ownedGone(owned = true, deviceSecure = true))
+        val configure = body(code("$lock/AndroidLock.kt"), "configure")
+        assertTrue(configure.contains("val quality = passwordQualityToWrite(managed, stillOwned, secure)"))
+        assertTrue(configure.contains("if (ownedGone(owned, secure)) {"))
+        assertFalse(configure.contains("deviceSecure(app)"))
+    }
+
+    @Test
+    fun `nothing can clear Android's PIN - the reset takes a PIN, never null (Q1 (a), code QA L2)`() {
+        val relock = file("$server/WindowRelock.kt").readText()
+        assertTrue(relock.contains("internal fun resetCredential(context: Context, pin: String): Boolean {"))
+        val android = file("$lock/AndroidLock.kt").readText()
+        assertTrue(android.contains("private fun reset(app: Context, pin: String, settingRev: Long): Boolean {"))
+        assertTrue(file("$lock/AndroidLockPlan.kt").readText().contains("fun ownChangeArmed(change: OwnChange?, boot: Int, elapsed: Long, settingRev: Long): OwnChange ="))
     }
 
 }

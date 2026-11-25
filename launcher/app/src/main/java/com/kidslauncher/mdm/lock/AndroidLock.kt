@@ -86,22 +86,35 @@ object AndroidLock {
      */
     fun configure(context: Context, dpm: DevicePolicyManager, admin: ComponentName, managed: Boolean): Boolean = synchronized(this) {
         val app = context.applicationContext
-        val owned = try {
+        val owned: Boolean? = try {
             PinLockStore.keyguardAndroid(app)
         } catch (e: Exception) {
-            false
+            null
         }
         WindowRelock.ensureAndroidResetToken(app)
-        val secure = deviceSecure(app)
-        val stillOwned = if (owned && !secure) {
+        val secure = deviceSecureRead(app)
+        // Code QA M2: only a definite "no credential" drops the owned flag; an unreadable input writes no quality.
+        val stillOwned: Boolean? = if (ownedGone(owned, secure)) {
             val ok = PinLockStore.saveAndroid(app, owned = false, rev = null)
             Log.i(ANDROID_LOCK_TAG, "Android's PIN is gone - ours no more (stored: $ok)")
             false
         } else {
             owned
         }
-        passwordQualityNow(dpm, admin, passwordQuality(managed, stillOwned, secure))
-        stillOwned
+        val quality = passwordQualityToWrite(managed, stillOwned, secure)
+        if (quality == null) {
+            Log.w(ANDROID_LOCK_TAG, "password quality: an input unreadable (owned=$owned secure=$secure) - left as it is")
+        } else {
+            passwordQualityNow(dpm, admin, quality)
+        }
+        stillOwned == true
+    }
+
+    /** `isDeviceSecure` as read: `null` when the service or the call fails (code QA M2). */
+    private fun deviceSecureRead(context: Context): Boolean? = try {
+        context.getSystemService(KeyguardManager::class.java)?.isDeviceSecure
+    } catch (e: Exception) {
+        null
     }
 
     /**
@@ -281,11 +294,10 @@ object AndroidLock {
 
     /**
      * Every own `resetPasswordWithToken` (the command), under the monitor: our change is marked
-     * first (§3.7, S4-1: [ownChangeArmed] in CE - one more expected, and the rev it sets, [settingRev], `null` for a
-     * clear), so its `onPasswordChanged` is known as ours also in a new process and beside another of ours. A failed
+     * first (§3.7, S4-1: [ownChangeArmed] in CE - one more expected, and the rev it sets, [settingRev]), so its `onPasswordChanged` is known as ours also in a new process and beside another of ours. A failed
      * reset takes its mark back ([ownChangeConsumed]).
      */
-    private fun reset(app: Context, pin: String?, settingRev: Long?): Boolean {
+    private fun reset(app: Context, pin: String, settingRev: Long): Boolean {
         val boot = BootClock.bootCount()
         PinLockStore.saveOwnChange(app, ownChangeArmed(PinLockStore.ownChange(app), boot, SystemClock.elapsedRealtime(), settingRev))
         val ok = WindowRelock.resetCredential(app, pin)

@@ -226,7 +226,8 @@ const val OWN_CHANGE_MS = 60_000L
 
 /**
  * 59 §3.7 (S4-1): our own credential changes still expected - [count] resets whose `onPasswordChanged` hasn't come,
- * in boot [boot] until [untilElapsed] (elapsed realtime); [settingRev] the rev the newest one sets (`null`: a clear).
+ * in boot [boot] until [untilElapsed] (elapsed realtime); [settingRev] the rev the newest one sets (`null`: its reset
+ * failed - the rev is no one's, or none was stored). Every own reset sets a PIN (design 132: none clears it).
  * Kept in CE `pin_lock_state` beside the owned flag, so a new process (the broadcast starts one after a death) still
  * knows the change was ours, and two resets close together are two.
  */
@@ -237,7 +238,7 @@ fun ownChangeLive(change: OwnChange?, boot: Int, elapsed: Long): Boolean =
     change != null && change.count > 0 && boot >= 0 && change.boot == boot && elapsed < change.untilElapsed
 
 /** Before our reset: one more expected, the window from now, the rev it sets. */
-fun ownChangeArmed(change: OwnChange?, boot: Int, elapsed: Long, settingRev: Long?): OwnChange =
+fun ownChangeArmed(change: OwnChange?, boot: Int, elapsed: Long, settingRev: Long): OwnChange =
     OwnChange((change?.takeIf { ownChangeLive(it, boot, elapsed) }?.count ?: 0) + 1, boot, elapsed + OWN_CHANGE_MS, settingRev)
 
 /** One expected change done - its broadcast came, or its reset failed (then [failed]: its rev is no one's). `null`
@@ -323,7 +324,12 @@ fun passwordQuality(managed: Boolean, owned: Boolean, deviceSecure: Boolean): In
     if (managed && owned && deviceSecure) PASSWORD_QUALITY_NUMERIC else PASSWORD_QUALITY_UNSPECIFIED
 
 /**
- * Design 132 §4.5: a PIN `resetPasswordWithToken` takes under NUMERIC with no minimum length set - Android's own floor
- * of 4, digits only. Every PIN [commandPinShape] takes for a 4-6 digit Child PIN passes.
+ * Code QA M2: the apply's quality step with its reads as read - [owned] (CE `keyguard_android`) and [deviceSecure]
+ * (`isDeviceSecure`), `null` = unreadable. Any unreadable input writes nothing (`null`): whatever is in force stays - an
+ * unreadable read never drops NUMERIC.
  */
-fun numericQualityMet(pin: String): Boolean = pin.length >= 4 && pin.all { it in '0'..'9' }
+fun passwordQualityToWrite(managed: Boolean, owned: Boolean?, deviceSecure: Boolean?): Int? =
+    if (owned == null || deviceSecure == null) null else passwordQuality(managed, owned, deviceSecure)
+
+/** Code QA M2: the owned flag goes only on a definite "no credential" while it reads owned - never on an unreadable read. */
+fun ownedGone(owned: Boolean?, deviceSecure: Boolean?): Boolean = owned == true && deviceSecure == false

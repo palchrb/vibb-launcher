@@ -30,7 +30,6 @@ class WindowRelockStore(
         private const val PENDING = "pending"
         private const val GEN = "gen"
         private const val WINDOWS = "windows"
-        private const val SECURE_AT_START = "secure_at_start"
         private const val SNAPSHOT = "snapshot"
         private const val DISABLED_AT_START = "disabled_at_start"
         private const val BLOCKED = "blocked"
@@ -69,9 +68,6 @@ class WindowRelockStore(
 
     fun saveMarker(marker: RelockMarker): Boolean = prefs.edit().putMarker(marker).commit()
 
-    /** `null` = unknown (no start snapshot: an adopted window). */
-    fun secureAtStart(): Boolean? = if (prefs.contains(SECURE_AT_START)) prefs.getBoolean(SECURE_AT_START, true) else null
-
     /** `null` = no snapshot (an adopted window, or it couldn't be taken). Unreadable = none. */
     fun snapshot(): Map<String, PackageState>? = decode(SNAPSHOT) { ServerJson.decodeFromString(SNAPSHOT_SERIALIZER, it) }
 
@@ -101,7 +97,6 @@ class WindowRelockStore(
         val editor = prefs.edit().putMarker(marker)
         if (start != null) {
             editor.putLong(START_MS, start.atMs)
-            if (start.secure != null) editor.putBoolean(SECURE_AT_START, start.secure) else editor.remove(SECURE_AT_START)
             putOrRemove(editor, SNAPSHOT, start.packages?.let { ServerJson.encodeToString(SNAPSHOT_SERIALIZER, it) })
             putOrRemove(editor, DISABLED_AT_START, start.disabled?.let { ServerJson.encodeToString(NAMES, it.sorted()) })
             putOrRemove(editor, CA_AT_START, start.caCerts?.let { ServerJson.encodeToString(NAMES, it.sorted()) })
@@ -168,7 +163,6 @@ class WindowRelockStore(
             editor.putMarker(after)
                 .putString(REPORT_LAST, encoded)
                 .remove(REPORT_CURRENT)
-                .remove(SECURE_AT_START)
                 .remove(START_MS)
                 .remove(SNAPSHOT)
                 .remove(DISABLED_AT_START)
@@ -197,12 +191,10 @@ class WindowRelockStore(
     }
 }
 
-/** The first window's start state ([takesStartSnapshot]): when it opened, whether the phone had an
- * Android credential, the non-system packages, the disabled system packages, the user CA
- * certificates and the Wi-Fi proxies (`null` = couldn't be read). */
+/** The first window's start state ([takesStartSnapshot]): when it opened, the non-system packages, the disabled
+ * system packages, the user CA certificates and the Wi-Fi proxies (`null` = couldn't be read). Design 132: no screen
+ * lock at the start any more - no credential is removed at a relock. */
 data class RelockStart(
-    /** `null` = unknown (design 114's setup hold, QA M1): never a credential removed. */
-    val secure: Boolean?,
     val packages: Map<String, PackageState>?,
     val disabled: Set<String>?,
     val atMs: Long = 0L,

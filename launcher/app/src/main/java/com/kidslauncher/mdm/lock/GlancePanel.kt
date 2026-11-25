@@ -557,7 +557,7 @@ class GlancePanel(
             swipeReset()
             flushRender()
             val root = glance.root
-            if (covered || !started || leaving || !glancePageShown(state.stage) || root.visibility != View.VISIBLE || root.height <= 0) {
+            if (covered || !started || leaving || root.visibility != View.VISIBLE || root.height <= 0) {
                 return SwipeTouch.PASS
             }
             val scroll = glance.lockGlanceScroll
@@ -1078,7 +1078,7 @@ class GlancePanel(
      * only while the page shows and isn't leaving.
      */
     fun askAfterGesture() = guarded("gesture ask") {
-        if (leaving || !glancePageShown(state.stage)) return@guarded
+        if (leaving) return@guarded
         Log.i(LOG_TAG, "Glance: a home gesture got through - unlock asked")
         step(GlanceStageEvent.Unlock)
     }
@@ -1088,8 +1088,6 @@ class GlancePanel(
         state = glanceStageStep(state, event)
         // The user (2026-10-24): back on the glance from Android's pad, the page starts at the top.
         if (glanceBackToTop(from, state.stage)) backToTop()
-        // Design 75: the weather's card folds when the page goes (Android's pad).
-        if (!glancePageShown(state.stage)) weather.leftPage()
         dropTargetIfGone()
         renderNow()
         onStage()
@@ -1168,14 +1166,13 @@ class GlancePanel(
         musicDirty = false
         clockDirty = false
         if (!started) return@guarded
-        val page = glancePageShown(state.stage)
         if (musicChanged) {
             tileUp = glanceTile(music.lookUp())
-            music.show(shownTile(), page)
+            music.show(shownTile(), true)
         }
         if (clockChanged) {
             clockUp = clock.up
-            clock.show(shownClock(), page)
+            clock.show(shownClock(), true)
         }
         val layout = glanceLayout(tileUp, rows.size, clockUp, ruleCard != null)
         placeList(layout)
@@ -1306,12 +1303,11 @@ class GlancePanel(
     }
 
     private fun renderNow() {
-        val shown = glancePageShown(state.stage)
-        glance.root.visibility = if (shown) View.VISIBLE else View.GONE
+        // Design 132: the page shows in every stage (the keypad stage was the one without it).
+        glance.root.visibility = View.VISIBLE
         // Design 59d step B: while the glance leaves, only the root's ground.
         showContent()
-        keypad.importantForAccessibility =
-            if (shown) View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS else View.IMPORTANT_FOR_ACCESSIBILITY_AUTO
+        keypad.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
         tileUp = glanceTile(music.lookUp())
         clockUp = clock.up
         // r11 §3.3: while a row is dragged or dismissed everything but the rows and the layout is bound; the rest waits
@@ -1338,8 +1334,8 @@ class GlancePanel(
         calendar.armBoundary()
         bindRuleCard()
         // The tiles by the rule, then the layout (and the profile's placement once the page has its room).
-        music.show(shownTile(), page = shown)
-        clock.show(shownClock(), page = shown)
+        music.show(shownTile(), page = true)
+        clock.show(shownClock(), page = true)
         if (busy) return
         placedFor = 0
         layoutNow()
@@ -1729,9 +1725,8 @@ class GlancePanel(
     }
 
     private fun apply(layout: GlanceLayout) {
-        val page = glancePageShown(state.stage)
-        music.show(layout.tile, page)
-        clock.show(layout.timer, page)
+        music.show(layout.tile, true)
+        clock.show(layout.timer, true)
         placeList(layout)
         rowViews.forEachIndexed { i, view -> view.root.visibility = if (i < layout.rows) View.VISIBLE else View.GONE }
         val more = glance.lockGlanceMore

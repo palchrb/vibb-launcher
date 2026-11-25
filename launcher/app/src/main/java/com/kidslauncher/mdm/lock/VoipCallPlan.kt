@@ -220,21 +220,12 @@ data class VoipFsiTry(
     val left: Boolean = false,
 )
 
-/** The wake activity counts as ours this long after the lock asked for it (qa-17b-code #5). */
-const val VOIP_WAKE_WINDOW_MS = 2_000L
-
 /**
  * A pause that means the app's ring screen came up without our send (qa-17b-code #5): the wake activity was covered
  * before it finished itself ([wakeCovered]) - SystemUI launching the full-screen intent itself, or the screen going
  * off. Design 132: the resumed lock's own 17b send is gone, so a pause of the lock alone is never one.
  */
-@Suppress("UNUSED_PARAMETER")
-fun pauseIsTry(
-    wakeCovered: Boolean,
-    wakeAskedAtElapsedMs: Long?,
-    wakeGone: Boolean,
-    nowElapsedMs: Long,
-): Boolean = wakeCovered
+fun pauseIsTry(wakeCovered: Boolean): Boolean = wakeCovered
 
 /** The try after the lock (or the wake) left the front: this ring's try is marked left; with none
  * yet, a pause that [pauseIsTry] is one that came up by itself - nothing sent, the card from then on,
@@ -469,7 +460,6 @@ fun managedCallActive(inManagedCall: Boolean?, audioMode: Int): Boolean = inMana
 
 /** `AudioManager.MODE_IN_CALL` / `MODE_IN_COMMUNICATION`, duplicated to stay Android-free. */
 const val AUDIO_MODE_IN_CALL = 2
-const val AUDIO_MODE_IN_COMMUNICATION = 3
 
 /** `AudioManager.RINGER_MODE_*` and `NotificationManager.INTERRUPTION_FILTER_*`. */
 const val RINGER_MODE_SILENT = 0

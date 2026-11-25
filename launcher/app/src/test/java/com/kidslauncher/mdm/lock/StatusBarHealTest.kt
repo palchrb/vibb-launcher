@@ -358,7 +358,7 @@ class StatusBarHealTest {
         assertTrue(answered, answered.indexOf("gestureAskRetryDue(") < answered.indexOf("if (current) askFromGesture = false"))
         assertTrue(lockResume, lockResume.indexOf("if (resumeAsFace()) return") < lockResume.indexOf("PinLockRuntime.takeGestureAsk(this)"))
         val ask = code("java/com/kidslauncher/mdm/lock/GlancePanel.kt").substringAfter("fun askAfterGesture() = guarded(").substringBefore("private fun step(")
-        assertTrue(ask, ask.contains("if (leaving || !glancePageShown(state.stage)) return@guarded"))
+        assertTrue(ask, ask.contains("if (leaving) return@guarded"))
         assertTrue(ask, ask.contains("step(GlanceStageEvent.Unlock)"))
         val newIntent = code("java/com/kidslauncher/mdm/ui/HomeActivity.kt").substringAfter("override fun onNewIntent(").substringBefore("override fun onStop(")
         assertTrue(newIntent.contains("val broughtByUs = intent.getBooleanExtra(HomeFront.EXTRA_BROUGHT, false)"))

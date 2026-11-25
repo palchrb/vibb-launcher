@@ -437,9 +437,9 @@ class VoipCallPlanTest {
     @Test
     fun `only managed calls hold the lock open - a self-managed VoIP call never does`() {
         assertEquals(true, managedCallActive(inManagedCall = true, audioMode = 0))
-        assertEquals("WhatsApp/Signal self-managed: isInCall would say yes", false, managedCallActive(false, AUDIO_MODE_IN_COMMUNICATION))
+        assertEquals("WhatsApp/Signal self-managed: isInCall would say yes", false, managedCallActive(false, android.media.AudioManager.MODE_IN_COMMUNICATION))
         assertEquals("no READ_PHONE_STATE: a telephony call's audio mode", true, managedCallActive(null, AUDIO_MODE_IN_CALL))
-        assertEquals(false, managedCallActive(null, AUDIO_MODE_IN_COMMUNICATION))
+        assertEquals(false, managedCallActive(null, android.media.AudioManager.MODE_IN_COMMUNICATION))
         assertEquals(false, managedCallActive(null, 0))
     }
 
@@ -530,10 +530,8 @@ class VoipCallPlanTest {
 
     @Test
     fun `qa-17b-code 5 - which pauses count as the app's screen having come up - the wake covered only (design 132)`() {
-        val now = 100_000L
-        assertTrue("the wake was covered before it finished itself", pauseIsTry(wakeCovered = true, wakeAskedAtElapsedMs = now - 50, wakeGone = false, nowElapsedMs = now))
-        assertFalse("the lock's own pause: no send of ours to come up", pauseIsTry(false, null, true, now))
-        assertFalse(pauseIsTry(false, now - 900, wakeGone = true, nowElapsedMs = now))
+        assertTrue("the wake was covered before it finished itself", pauseIsTry(wakeCovered = true))
+        assertFalse("the lock's own pause: no send of ours to come up", pauseIsTry(false))
     }
 
     @Test

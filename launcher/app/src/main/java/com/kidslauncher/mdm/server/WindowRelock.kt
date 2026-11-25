@@ -134,14 +134,14 @@ object WindowRelock {
      * reset-password token and - as device owner - the "Lock again" notification. Never throws: the parent's PIN was right, the window opens whatever.
      * Background thread (inside ParentPin's lock).
      */
-    fun opened(context: Context, kind: WindowKind, start: WindowStart, secureKnown: Boolean = true, lift: () -> Unit) {
+    fun opened(context: Context, kind: WindowKind, start: WindowStart, lift: () -> Unit) {
         val app = context.applicationContext
         var lifted = false
         try {
             val store = store(app)
             synchronized(WindowRelockStore.LOCK) {
                 val marker = store.marker()
-                val startState = if (takesStartSnapshot(marker)) startState(app, secureKnown) else null
+                val startState = if (takesStartSnapshot(marker)) startState(app) else null
                 // A failed commit still holds in memory (SharedPreferences): this process relocks.
                 if (!store.saveOpened(markerOpened(marker, kind), startState)) Log.w(LOG_TAG, "Couldn't commit the relock marker")
                 lift()
@@ -174,9 +174,7 @@ object WindowRelock {
     }
 
     @Suppress("DEPRECATION") // WifiConfiguration's proxy and SSID
-    /** [secureKnown] false (design 114's setup hold, QA M1): the screen lock is recorded unknown, so the relock never
-     * removes one the parent sets in Android's setup wizard after the hold started. */
-    private fun startState(app: Context, secureKnown: Boolean): RelockStart {
+    private fun startState(app: Context): RelockStart {
         val packages = try {
             installedPackages(app, withInstaller = false).associate { it.name to PackageState(it.signers, it.updatedAt) }
         } catch (e: Exception) {
@@ -201,7 +199,6 @@ object WindowRelock {
             null
         }
         return RelockStart(
-            secure = if (secureKnown) deviceSecure(app) else null,
             packages = packages,
             disabled = disabled,
             atMs = System.currentTimeMillis(),
@@ -290,10 +287,11 @@ object WindowRelock {
 
     /**
      * Design 59 ([com.kidslauncher.mdm.lock.AndroidLock], the only caller): Android's credential through our reset
-     * token - [pin] (the Child PIN just checked, a numeric PIN) set, or `null` cleared. The same stored token as the
-     * relock's step 1; no second copy, the local bytes zeroed. False without an active token. Never logs [pin].
+     * token - [pin] (the Child PIN just checked, a numeric PIN) set. Never a clear (design 132, Q1 (a): the Child PIN is
+     * changed, never removed). No second copy of the token, the local bytes zeroed. False without an active token. Never
+     * logs [pin].
      */
-    internal fun resetCredential(context: Context, pin: String?): Boolean {
+    internal fun resetCredential(context: Context, pin: String): Boolean {
         val app = context.applicationContext
         val dpm = dpm(app) ?: return false
         if (!resetTokenActive(app)) return false

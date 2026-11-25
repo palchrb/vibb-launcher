@@ -1013,10 +1013,6 @@ object PinLockRuntime {
         )
     }
 
-    /** When the lock last asked for [VoipWakeActivity] (elapsed), and whether it is gone since. */
-    private var voipWakeAskedAt: Long? = null
-    private var voipWakeGone = true
-
     /** The lock left the front: the heads-up send's ring screen came up (59b §4) - a later resume in the same ring shows
      * the card, never a second try. */
     fun voipLockLeft() = notePause(wakeCovered = false)
@@ -1025,12 +1021,11 @@ object PinLockRuntime {
      * SystemUI's own launch of the app's full-screen intent, qa-17b-code #5). */
     fun voipWakePaused(covered: Boolean) {
         notePause(wakeCovered = covered)
-        voipWakeGone = true
     }
 
     private fun notePause(wakeCovered: Boolean) {
         val now = SystemClock.elapsedRealtime()
-        val isTry = pauseIsTry(wakeCovered, voipWakeAskedAt, voipWakeGone, now)
+        val isTry = pauseIsTry(wakeCovered)
         val next = voipTryAfterPause(voipFsiTry, VoipCalls.ringId, isTry, now)
         if (next != null && next.ringId != voipFsiTry?.ringId) Log.i(LOG_TAG, "The VoIP ring screen came up without our send")
         voipFsiTry = next
@@ -1536,11 +1531,7 @@ object PinLockRuntime {
             )
             started = true
             when (wake) {
-                WakeKind.VOIP -> {
-                    voipWakeAskedAt = SystemClock.elapsedRealtime()
-                    voipWakeGone = false
-                    startOwn(context, VoipWakeActivity.intent(context, WakeKind.VOIP), "the VoIP wake")
-                }
+                WakeKind.VOIP -> startOwn(context, VoipWakeActivity.intent(context, WakeKind.VOIP), "the VoIP wake")
                 // No voipWakePaused bookkeeping for a notice (17b's try detection stays the ring's).
                 WakeKind.NOTICE -> startOwn(context, VoipWakeActivity.intent(context, WakeKind.NOTICE), "the notice wake")
                 null -> Unit

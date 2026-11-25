@@ -86,7 +86,7 @@ class WindowRelockPlanTest {
     private val phone = FakePhone()
 
     /** What WindowRelock.opened commits for [kind] (the lift is the caller's). */
-    private fun open(kind: WindowKind, start: RelockStart? = RelockStart(secure = false, packages = emptyMap(), disabled = emptySet())) {
+    private fun open(kind: WindowKind, start: RelockStart? = RelockStart(packages = emptyMap(), disabled = emptySet())) {
         val marker = store.marker()
         store.saveOpened(markerOpened(marker, kind), start.takeIf { takesStartSnapshot(marker) })
         phone.open = phone.open + kind
@@ -136,32 +136,29 @@ class WindowRelockPlanTest {
 
     @Test
     fun `the marker stays when a window opened during the relock - and the first snapshot with it`() {
-        val first = RelockStart(secure = false, packages = mapOf("org.example.chat" to PackageState(setOf("aa"), 1L)), disabled = emptySet())
+        val first = RelockStart(packages = mapOf("org.example.chat" to PackageState(setOf("aa"), 1L)), disabled = emptySet())
         open(WindowKind.OVERRIDE, first)
         end(WindowKind.OVERRIDE)
         // The parent opens a pause while the relock runs (QA #2).
-        phone.duringApply = { open(WindowKind.PAUSE, RelockStart(secure = true, packages = emptyMap(), disabled = emptySet())) }
+        phone.duringApply = { open(WindowKind.PAUSE, RelockStart(packages = emptyMap(), disabled = emptySet())) }
         val outcome = relock()
         assertFalse(outcome.cleared)
         assertTrue(store.marker().pending)
         assertEquals(setOf("override", "pause"), store.marker().windows)
         assertEquals(true, phone.finishedReopened)
         // The second window kept the first one's start (QA #11).
-        assertEquals(false, store.secureAtStart())
         assertEquals(first.packages, store.snapshot())
         // The pause ends: now it clears.
         phone.duringApply = {}
         end(WindowKind.PAUSE)
         assertTrue(relock().cleared)
         assertNull(store.snapshot())
-        assertNull(store.secureAtStart())
     }
 
     @Test
     fun `overlapping windows keep the first window's snapshot`() {
-        open(WindowKind.OVERRIDE, RelockStart(secure = false, packages = mapOf("a.b" to PackageState(setOf("x"), 1L)), disabled = setOf("c.d")))
-        open(WindowKind.PAUSE, RelockStart(secure = true, packages = emptyMap(), disabled = emptySet()))
-        assertEquals(false, store.secureAtStart())
+        open(WindowKind.OVERRIDE, RelockStart(packages = mapOf("a.b" to PackageState(setOf("x"), 1L)), disabled = setOf("c.d")))
+        open(WindowKind.PAUSE, RelockStart(packages = emptyMap(), disabled = emptySet()))
         assertEquals(setOf("c.d"), store.disabledAtStart())
         assertEquals(mapOf("a.b" to PackageState(setOf("x"), 1L)), store.snapshot())
         assertEquals(2, store.marker().gen)
@@ -247,7 +244,7 @@ class WindowRelockPlanTest {
 
     @Test
     fun `a signer check that throws keeps the marker and the snapshot (QA Low 2)`() {
-        val start = RelockStart(secure = false, packages = mapOf("org.example.chat" to PackageState(setOf("a1a1"), 1L)), disabled = emptySet(), atMs = 500L)
+        val start = RelockStart(packages = mapOf("org.example.chat" to PackageState(setOf("a1a1"), 1L)), disabled = emptySet(), atMs = 500L)
         open(WindowKind.PAUSE, start)
         end(WindowKind.PAUSE)
         phone.installedThrows = true
@@ -295,7 +292,7 @@ class WindowRelockPlanTest {
     @Test
     fun `only the certificates and proxies added in the window go, and what stays is a failure (QA Low 4, 9)`() {
         val school = "5c" + "0".repeat(62)
-        open(WindowKind.PAUSE, RelockStart(false, emptyMap(), emptySet(), caCerts = setOf(school), proxies = mapOf("\"School\"" to "proxy.school:3128 ")))
+        open(WindowKind.PAUSE, RelockStart(emptyMap(), emptySet(), caCerts = setOf(school), proxies = mapOf("\"School\"" to "proxy.school:3128 ")))
         open(WindowKind.OVERRIDE)
         end(WindowKind.PAUSE)
         end(WindowKind.OVERRIDE)

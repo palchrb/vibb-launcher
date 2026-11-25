@@ -36,11 +36,6 @@ import kotlin.math.roundToInt
  */
 enum class LockStage { GLANCE, ASK }
 
-/** Whether the glance page (its root, with its ground) is on screen: on the page and under Android's pad - every stage
- * since design 132 (the keypad stage was the one without it). */
-@Suppress("UNUSED_PARAMETER")
-fun glancePageShown(stage: LockStage): Boolean = true
-
 /**
  * Design 59d step B (the user's rc.2 recording: after the pad, the glance came to the front for ~330 ms and slid away
  * "the same as the old keypad page did"): the page's content - everything but the root's ground - goes once the

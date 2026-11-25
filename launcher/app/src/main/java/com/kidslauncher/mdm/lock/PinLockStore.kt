@@ -28,6 +28,10 @@ object PinLockStore {
         "backoff_elapsed_start", "backoff_boot", "backoff_duration", "keyguard_requested", "boot_mark_boot_count",
     )
 
+    /** Code QA L3: the keyguard cover's flag in KeyguardCover's CE prefs `keyguard_cover` (its `cover_added` stays:
+     * Android's lock's bits). */
+    internal val OLD_COVER_KEYS = listOf("cover_written")
+
     // Design 59 (M-1): we own Android's credential.
     private const val KEYGUARD_ANDROID = "keyguard_android"
     private const val ANDROID_PIN_REV = "android_pin_rev"
@@ -46,13 +50,15 @@ object PinLockStore {
      * once. No migration: nothing is read from them.
      */
     fun dropOldKeys(context: Context) {
-        val dropped = dropOldKeysFrom(prefs(context)) ?: return
-        Log.i("PinLock", "The own lock's stored keys removed (${dropped.first}): ${dropped.second}")
+        val app = context.applicationContext
+        dropOldKeysFrom(prefs(app))?.let { Log.i("PinLock", "The own lock's stored keys removed (${it.first}): ${it.second}") }
+        val cover = app.getSharedPreferences("keyguard_cover", Context.MODE_PRIVATE)
+        dropOldKeysFrom(cover, OLD_COVER_KEYS)?.let { Log.i("PinLock", "The keyguard cover's flag removed: ${it.second}") }
     }
 
-    /** [OLD_KEYS] found in [p] removed in one commit: how many, and whether it committed; `null` = none was there. */
-    internal fun dropOldKeysFrom(p: SharedPreferences): Pair<Int, Boolean>? {
-        val found = OLD_KEYS.filter { p.contains(it) }
+    /** [keys] found in [p] removed in one commit: how many, and whether it committed; `null` = none was there. */
+    internal fun dropOldKeysFrom(p: SharedPreferences, keys: List<String> = OLD_KEYS): Pair<Int, Boolean>? {
+        val found = keys.filter { p.contains(it) }
         if (found.isEmpty()) return null
         val editor = p.edit()
         for (key in found) editor.remove(key)

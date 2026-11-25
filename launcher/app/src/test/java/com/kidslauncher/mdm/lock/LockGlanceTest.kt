@@ -52,9 +52,8 @@ class LockGlanceTest {
     fun `LEAVE hides the page's content, ASK shows it`() {
         val ask = glanceStageStep(GlanceStageState.GLANCE, GlanceStageEvent.Unlock)
         assertEquals(LockStage.ASK, ask.stage)
-        assertTrue("the pad over our own lock", glancePageShown(ask.stage) && glanceContentShown(leaving = false))
+        assertTrue("the pad over our own lock", glanceContentShown(leaving = false))
         assertFalse("the leave: only the ground", glanceContentShown(leaving = true))
-        assertTrue(glancePageShown(ask.stage))
     }
 
     /** Design 59d step J: the swipe up anywhere on the page is "Lås opp" (the page 457 dp: a third is 152.3 dp). */
@@ -935,8 +934,7 @@ class LockMediaGuardTest {
         // JL-1, JL-4 (b): the DOWN passes while leaving, covered or off the page; in ASK (the page shown under the pad) a
         // swipe asks again, as the button's second tap did.
         val down = glance.substringAfter("if (action == MotionEvent.ACTION_DOWN) {").substringBefore("return SwipeTouch.PASS")
-        assertTrue(down, down.contains("covered || !started || leaving || !glancePageShown(state.stage)"))
-        assertTrue(glancePageShown(LockStage.ASK) && glancePageShown(LockStage.GLANCE))
+        assertTrue(down, down.contains("covered || !started || leaving || root.visibility != View.VISIBLE"))
         // The swipe's only step is Unlock - the same ask as the button was; the activity feeds it every touch first.
         val swipe = glance.substringAfter("private fun swipeNow(").substringBefore("private fun swipeReset(")
         assertEquals(listOf("step(GlanceStageEvent.Unlock)"), Regex("""\bstep\([^)]*\)""").findAll(swipe).map { it.value }.toList())
