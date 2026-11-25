@@ -440,6 +440,9 @@ Then the full checklists in `docs/design/01`–`07`, `09`, `10` and `11` (§6d b
 
 ## 6c. Step 10: handy's own PIN lock and the call screens
 
+**Design 132 (phase D): the own keypad lock is gone - the lock part of this section is history; Android's lock is the
+only lock (design 132 §11, the gate G1-G12). The call screens below still apply.**
+
 Setup: device page -> Lock Screen & PINs -> set the Parent PIN (6-10 digits), then the Child PIN
 (4-6 digits; the first one also turns "Block safe mode" on). Sync (or wait for the
 nudge). The emulator must have no Android screen lock:
@@ -1216,6 +1219,9 @@ Play emulator: the store is the package verifier and is never suspended).
   on Home.
 
 ## 6k. The lock started with the screen on (design 32 step 1)
+
+**Design 132: HOME_THEN_LOCK and Home's dark lock-up are gone - every lock-up is the lock alone (Android's face). This
+section is history; design 132 §11 is the gate.**
 
 Design 32 step 2's keyguard cover (Android's keyguard as a bare Swipe cover across the sleep) was a debug-only device
 experiment. Its switch, `KeyguardCoverDebug` and its receiver, was deleted in round 0b (2026-10-26) unrun, so the
@@ -2708,7 +2714,7 @@ until a parent allows an address. Two ways onto the row, and each scenario uses 
 
 Run on `handy36` (`-wipe-data`, `wm density 240`) on 2026-11-09, branch `sms-glance`, against a throwaway server
 seeded as step 2's (calls and SMS "Styrt av Vibb", Mamma, Pappa, Bestemor) plus a Child PIN (`kid_pin_hash`/`_salt`,
-PBKDF2-HMAC-SHA256, 210,000 rounds, 4 digits - the own lock, no Android credential). The emulator was started under
+PBKDF2-HMAC-SHA256, 210,000 rounds, 4 digits - the own lock, no Android credential; design 132: that lock is gone). The emulator was started under
 `flock ~/build.lock` and held it while it ran: a Gradle build that started under a first try OOM-killed it.
 
 - `adb emu sms send +4790000001 ...`, two from Pappa and one from a stranger `+4790000041`, then power off and on:
@@ -4772,7 +4778,11 @@ next boot finds no HOME before the unlock and never completes (user 0 stays BOOT
 `home-and-photos.md` step M describes for Android 15. Start it with `-wipe-data` and provision again (or switch the boot
 cover on and stop it with `svc power reboot`). 37 can't hang there: Settings (FallbackHome) is never hidden.
 
-## 6at. A HOME before the first unlock in own mode (compat-fix-1, QA H1, 2026-11-16)
+## 6at. A HOME before the first unlock without an Android PIN (compat-fix-1, QA H1, 2026-11-16)
+
+**Design 132: "own mode" is gone; its rows below are now the case of a managed phone without a Child PIN on Android
+(no Child PIN yet, or `no_android_pin`) - G5 of design 132 §11. The PWA's lock switch (step 2's POST) is gone (404);
+Android's lock is every phone's. The log lines keep their words (`Boot cover own mode ...`).**
 
 Device 1 of the 14-17 rig, the `boot_cover` switch off, apps managed (Settings `hidden=true`). Watch
 `getprop sys.boot_completed`, `dumpsys user` (`State:`) and `cmd package resolve-activity --brief -a
@@ -4782,7 +4792,7 @@ android.intent.action.MAIN -c android.intent.category.HOME`.
    power reboot` (with `ACTION_SHUTDOWN`) all hung - no `sys.boot_completed` after 150 s, user 0 BOOTING, a black
    screen, `cmd package query-activities ... HOME --user 0`: "No activities found". In the pause (Settings unhidden)
    `adb reboot` booted in 15 s. Shell can't rescue it (`pm unhide` needs MANAGE_USERS): wipe and provision again.
-2. **Android mode** (PWA `POST /devices/1/kid-lock/keyguard keyguard=android`), 34: `adb reboot` boots in 15 s,
+2. **Android mode** (PWA `POST /devices/1/kid-lock/keyguard keyguard=android` - gone with design 132), 34: `adb reboot` boots in 15 s,
    `BootCoverActivity` on top, RUNNING_LOCKED until the PIN (step M).
 3. **`jelly36` (API 36) in own mode, before the fix**: `adb reboot` boots - its Pixel launcher's HOME runs before the
    unlock (it was displayed at boot).

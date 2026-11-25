@@ -131,7 +131,7 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   `#252827`/`#5555ff`/`#fff`). Both `launcherBaseTheme` and `colorThemeDefault` (applied over it in `UIObject`) read
   them, so the drawer and the PIN-gated parent Settings (its switches and category titles, the status bar via
   `colorPrimaryDark`) are night with the peach accent: white 19:1, peach 9.9:1. The parent's dialogs (`ParentPinDialog`,
-  Settings' edit-text dialog, the drawer's rename/uninstall, the PIN lock's Parent code) keep their explicit light
+  Settings' edit-text dialog, the drawer's rename/uninstall, the PIN lock's Parent code until design 132) keep their explicit light
   `AlertDialogCustom` (qa-34-s5-code N1). `EmergencyCall.confirm` ("Ringe 112?" on the PIN lock, its ring card and the
   time-rule screen) takes `KidAlertDialog` explicitly since the emulator round of 2026-10-14 (N10), like the phone book's.
 - **`KidAlertDialog`** (qa-34-s5-code M1): the base theme's `alertDialogTheme`, so every `AlertDialog.Builder(this)`
@@ -275,6 +275,9 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   rows' card, font scale 2.0.
 
 ## The keypad's tonal emergency button and the spacing rule (design 34 step 8, P7, `docs/design/34-launcher-polish.md`, at the monorepo root)
+
+Design 132: the keypad, its dots and the spacing rule's budget went; the tonal Nødsamtale pills (under the glance and on
+the VoIP ring card) stay, and `PinLockLayoutTest` keeps only their rows.
 
 - **Nødsamtale** on the keypad stage (`activity_pin_lock.xml` `pin_emergency`) and on the VoIP ring card (`view_voip_ring.xml` `voip_ring_emergency`, qa-34-s8-code L2) is the tonal pill `bg_pin_emergency_tonal` (`kid_emergency_tonal` `#3A1E24`, 24 dp radius; a calm press ripple of the label's red at 20 %) with its label and glyph in `kid_emergency_text` `#FF8A8A` (6.6:1; the pill itself is ~1.3:1 on the night, QA N4 - the text and glyph identify it) - the same pair as the 112 avatar. The saturated `bg_pin_emergency` is gone; on the ring card the one saturated red is Avvis. Both pills announce as a button (`lock/ButtonRole`, an accessibility delegate that only sets the class name). The views, their clicks and the emergency flow are unchanged (the glance page's link still `performClick`s the keypad's; that link is 48 dp now, its margin giving the 4 dp so the glance fit didn't move).
 - **The spacing rule**: one column with nothing overlaid - prompt row, dots, keypad, >= 16 dp (the button's top margin; the keypad has no bottom margin and its keys never overflow it), Emergency call (min 48 dp, 6 dp vertical padding; the label wraps and the pill grows with the font scale), "Foreldrekode" (min 44 dp), the 4 dp inset. Only the keys give way (`PinKeypadLayout`: min(72, (h - 3 x 6) / 4) dp of the measured keypad, floor 32 dp). A digit never outgrows its key: the pure `keyStyle` caps the 30 sp digits at 0.7 x the key (`digitTextPx`; the line box stays inside the key, and a 2.0 digit is no smaller than at 1.0), and `sizeKeys` applies size and digit apart (`keyStale`), so keys that keep their first 48 dp get the cap too.

@@ -17,7 +17,7 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   `day_title`) after the phone book while `calendarUsable` and `CalendarStore.tileShown()` - Home's own condition for its
   tile, re-rendered on the store's changes (code QA L2) - (`timeLockRows(.., calendarLabel)`,
   `LockRow.Calendar`, opens `DayActivity.intent`; Back comes back). `lockEnd` treats it as a usable app (its time counts
-  against the budget, Q-6). **After an unlock** (`PinLockRuntime.afterUnlock`, own mode and every Android-mode unlock)
+  against the budget, Q-6). **After an unlock** (`PinLockRuntime.afterUnlock`, every unlock of Android's lock)
   the time-rule screen is marked (`LockActivity.markUnlock`, elapsed realtime) as it starts; its next `onResume` takes the
   mark once (`takeUnlockMark`, fresh within `UNLOCK_OPEN_MS` = 10 s and the PIN lock not LOCKED) and, unless the glance
   handed it a fresh row (`GlanceOpener.handOverPending()`, read before `openHandedOver`, by its freshness rule
