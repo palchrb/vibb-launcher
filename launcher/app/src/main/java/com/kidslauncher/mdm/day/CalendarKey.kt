@@ -30,3 +30,28 @@ fun calendarSource(name: String?): String? {
     if (uri.scheme?.lowercase() !in SOURCE_SCHEMES) return null
     return uri.host?.lowercase()?.trimEnd('.')?.takeIf { HOSTNAME.matches(it) }
 }
+
+/** The at signs an address may be written with: ASCII, fullwidth, small. */
+private val AT_SIGNS = charArrayOf('@', '＠', '﹫')
+private val TOKEN = Regex("\\S+")
+
+/** How much of a name is read before the cut, so an address is masked whole. */
+private const val NAME_SCAN_MAX = 1000
+
+/** A calendar name for the status report, cleaned ([TitleRules.clean], at most 100 code points), with every token that
+ * looks like an e-mail address (DAVx5 and Google name a calendar after the login) shortened to its first letter and
+ * what follows the last at sign, `p…@example.org`, so an address never leaves the phone. [ownName]: the provider has a
+ * display name of its own; without one (Dagen shows `Calendars.NAME`, maybe a feed URL with a token) the report sends
+ * none. The phone's own screens keep the full name. */
+fun reportedCalendarName(displayName: String, ownName: Boolean = true): String =
+    if (!ownName) "" else TitleRules.clean(maskAddresses(TitleRules.clean(displayName, NAME_SCAN_MAX)), 100)
+
+/** Every whitespace-separated token with an at sign that has text on both sides, masked; the rest as it is. */
+fun maskAddresses(text: String): String = TOKEN.replace(text) { maskToken(it.value) }
+
+private fun maskToken(token: String): String {
+    val first = token.indexOfAny(AT_SIGNS)
+    val last = token.lastIndexOfAny(AT_SIGNS)
+    if (first <= 0 || last == token.length - 1) return token
+    return token.substring(0, token.offsetByCodePoints(0, 1)) + "…@" + token.substring(last + 1)
+}

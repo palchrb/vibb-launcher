@@ -59,7 +59,10 @@ object TimeRulesStore {
             return
         }
         val prefs = PreferenceManager.getDefaultSharedPreferences(context)
-        val everApplied = prefs.getBoolean(context.getString(R.string.settings_mdm_policy_ever_applied_key), false)
+        val everApplied = com.kidslauncher.mdm.server.everManaged(
+            prefs.getBoolean(context.getString(R.string.settings_mdm_policy_ever_applied_key), false),
+            com.kidslauncher.mdm.server.EnrolmentWitness.policyApplied(context),
+        )
         val lastEnforced = LastEnforcedPlan.decode(prefs.getString(context.getString(R.string.settings_mdm_last_enforced_plan_key), null))
         val decision = choosePolicy(
             null,

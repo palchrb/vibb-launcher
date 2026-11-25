@@ -45,7 +45,51 @@ class TailnetKeyTest {
         assertTrue("tailnetConnect(storedKey, prefs.getBoolean(TAILNET_JOINED_KEY, false), connected)" in body)
         val forget = client.substringAfter("private fun forgetKeyOnceJoined(").substringBefore("\n    }\n")
         assertTrue("only while connected", "if (!connected) return" in forget)
-        assertTrue("the key and the mark in one commit", "edit.remove(LauncherPreferences.mdm().keys().tailscaleAuthKey())" in forget && "edit.commit()" in forget)
+        assertTrue(
+            "the key and the mark in one commit",
+            "it.raw.putBoolean(TAILNET_JOINED_KEY, true)" in forget && "if (forget) TailnetAuthKey.remove(it)" in forget,
+        )
+        assertTrue("read sealed", "val storedKey = TailnetAuthKey.get()" in body)
+    }
+
+    private val prefs = ParentPinStoreTest.FakePrefs()
+    private val sealed = SealedPrefs(SealedPrefsTest.FakeBox()) { _, _ -> }
+    private val prefKey = "mdm.tailscale_auth_key"
+
+    @Test
+    fun `the key is kept sealed, read back, and a blank one deletes it`() {
+        assertTrue(TailnetAuthKey.write(sealed, prefs, prefKey, " $key "))
+        val stored = prefs.getString(prefKey, null)!!
+        assertTrue(stored.startsWith(SealedPrefs.PREFIX))
+        assertFalse(key in stored)
+        assertEquals("a blob no key opens reads as none, kept", null, TailnetAuthKey.read(SealedPrefs(SealedPrefsTest.FakeBox()) { _, _ -> }, prefs, prefKey))
+        assertEquals(stored, prefs.getString(prefKey, null))
+        assertEquals(key, TailnetAuthKey.read(sealed, prefs, prefKey))
+        assertTrue(TailnetAuthKey.write(sealed, prefs, prefKey, "  "))
+        assertEquals(null, prefs.getString(prefKey, null))
+        assertEquals(null, TailnetAuthKey.read(sealed, prefs, prefKey))
+    }
+
+    @Test
+    fun `a plain key from an older build is deleted at its first read`() {
+        prefs.edit().putString(prefKey, key).commit()
+        assertEquals(null, TailnetAuthKey.read(sealed, prefs, prefKey))
+        assertEquals(null, prefs.getString(prefKey, null))
+    }
+
+    @Test
+    fun `the settings row shows a fixed mask without opening the key, and the write is the recovering one`() {
+        val src = listOf("src", "app/src").map(::File).first { File(it, "main/java").isDirectory }
+        val settings = File(src, "main/java/com/kidslauncher/mdm/ui/settings/launcher/SettingsFragmentLauncher.kt").readText()
+        val summary = settings.substringAfter("private fun tailscaleKeySummary(): String {").substringBefore("\n    }\n")
+        assertTrue("TailnetAuthKey.present() -> TAILNET_KEY_MASK" in summary)
+        assertFalse("no decryption on the main thread", "TailnetAuthKey.get()" in settings)
+        assertTrue("private const val TAILNET_KEY_MASK = \"••••••••\"" in settings)
+        assertTrue(TailnetAuthKey.storedSealed("ks1:AAAA"))
+        assertFalse("a plain value isn't shown as a key", TailnetAuthKey.storedSealed(key))
+        assertFalse(TailnetAuthKey.storedSealed(null))
+        val owner = File(src, "main/java/com/kidslauncher/mdm/server/TailnetAuthKey.kt").readText()
+        assertTrue("sealed.putRecovering(prefs, AAD, key, value.trim())" in owner)
     }
 
     /** Upstream 0d4201dab9: a failed connect builds a fresh tsnet.Server next time - but never on a first join. */

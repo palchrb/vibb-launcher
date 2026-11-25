@@ -121,7 +121,8 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     val admin = ComponentName(context, MdmDeviceAdminReceiver::class.java)
 
     val cached = cachedPolicy()
-    val policyEverApplied = mdm.policyEverApplied()
+    // A lost or cut-short preferences file never reads as a new phone: the witness counts as applied.
+    val policyEverApplied = everManaged(mdm.policyEverApplied(), EnrolmentWitness.policyApplied(context))
 
     // Only a fresh policy that decodes and passes judgeFresh is acted on - see PolicyGate.kt.
     // Everything in the `freshPolicy != null` block (cache, PIN hash, commands, uninstalls) is
@@ -501,7 +502,7 @@ suspend fun postReportOnly(context: Context, airplaneGoingOn: Boolean): Boolean 
         val reason = mdm.lockReason()
         val sent = sendReport(
             report = statusReportOf(
-                context, reason, policyState(FreshOutcome.UNREACHABLE, cachedPolicy(), mdm.policyEverApplied()), decision,
+                context, reason, policyState(FreshOutcome.UNREACHABLE, cachedPolicy(), everManaged(mdm.policyEverApplied(), EnrolmentWitness.policyApplied(context))), decision,
                 LocationOutcome(LocationAction.NONE, null, null, null), null, com.kidslauncher.mdm.lock.PinLockRuntime.report(context),
                 WindowRelock.reportBlocks(context),
                 ServerPinStore.ring(context), null, airplaneGoingOn,
@@ -1556,6 +1557,7 @@ private fun storeAcceptedPolicy(context: Context, policy: PolicyResponse): Unit 
     }
     val ok = editor.commit()
     if (!ok) Log.w(LOG_TAG, "Failed to cache the accepted policy")
+    EnrolmentWitness.recordPolicyApplied(context, LauncherPreferences.mdm().serverUrl())
 }
 
 /** Guards the cached policy blob's writes (design 24b §2). */
@@ -1580,7 +1582,7 @@ fun cachedPolicy(): CachedPolicy {
     if (decoded !is CachedPolicy.Ok) return decoded
     val mdm = LauncherPreferences.mdm()
     val plan = if (decoded.policy.allowlist == null) lastEnforcedPlan() else null
-    return judgeCached(decoded, mdm.policyEverApplied(), plan, mdm.callsManagedLast())
+    return judgeCached(decoded, everManaged(mdm.policyEverApplied(), EnrolmentWitness.policyAppliedNow()), plan, mdm.callsManagedLast())
 }
 
 private class CachedPolicyMemo(val raw: String?, val decoded: CachedPolicy)
@@ -1594,7 +1596,7 @@ fun lastEnforcedPlan(): LastEnforcedPlan? = LastEnforcedPlan.decode(LauncherPref
 /** What to enforce right now without a network call: the cache, the last-enforced plan, or
  * (never-managed phone) nothing. */
 fun currentPolicyDecision(): PolicyToApply =
-    choosePolicy(null, cachedPolicy(), LauncherPreferences.mdm().policyEverApplied(), lastEnforcedPlan())
+    choosePolicy(null, cachedPolicy(), everManaged(LauncherPreferences.mdm().policyEverApplied(), EnrolmentWitness.policyAppliedNow()), lastEnforcedPlan())
 
 /** Re-applies enforcement off the main thread after the schedule lock changed - see
  * [reevaluateLockReasonFromCache]. */

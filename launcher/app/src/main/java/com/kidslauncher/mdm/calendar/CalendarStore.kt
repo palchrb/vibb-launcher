@@ -42,7 +42,6 @@ import com.kidslauncher.mdm.day.CalendarPolicy
 import com.kidslauncher.mdm.day.DayRowsCache
 import com.kidslauncher.mdm.day.DayView
 import com.kidslauncher.mdm.day.InstanceRow
-import com.kidslauncher.mdm.day.TitleRules
 import com.kidslauncher.mdm.day.TodayCalendar
 import com.kidslauncher.mdm.day.ownReminderEvents
 import com.kidslauncher.mdm.day.calendarKey
@@ -50,6 +49,7 @@ import com.kidslauncher.mdm.day.calendarPolicy
 import com.kidslauncher.mdm.day.calendarShown
 import com.kidslauncher.mdm.day.calendarSource
 import com.kidslauncher.mdm.day.dayView
+import com.kidslauncher.mdm.day.reportedCalendarName
 import com.kidslauncher.mdm.day.julianDay
 import com.kidslauncher.mdm.server.CachedPolicy
 import com.kidslauncher.mdm.server.QuickControls
@@ -218,11 +218,14 @@ object CalendarStore {
                     val type = c.getString(1).orEmpty()
                     val account = c.getString(2).orEmpty()
                     val name = c.getString(4)
+                    val ownName = c.getString(3)
                     out += CalendarInfo(
                         id = id,
                         key = calendarKey(type, account, name),
                         accountType = type,
-                        displayName = c.getString(3) ?: name.orEmpty(),
+                        // Dagen falls back to NAME; the report never does (a feed URL may carry a token).
+                        displayName = ownName ?: name.orEmpty(),
+                        ownName = ownName != null,
                         syncEvents = c.getInt(5) == 1,
                         accessLevel = c.getInt(6),
                         vibbLocal = type == CalendarContract.ACCOUNT_TYPE_LOCAL && account == LOCAL_ACCOUNT && name == LOCAL_NAME,
@@ -411,7 +414,7 @@ object CalendarStore {
         if (!now.readable) return CalendarReport(false, emptyList(), policy.rulesSkipped)
         val rows = now.calendars.filter { it.syncEvents }.distinctBy { it.key }.take(50).map {
             // Cleaned by code points, so a cut never splits a surrogate pair (QA nit 3).
-            CalendarReportRow(it.key, it.accountType, TitleRules.clean(it.displayName, 100), calendarSource(it.name), it.accessLevel)
+            CalendarReportRow(it.key, it.accountType, reportedCalendarName(it.displayName, it.ownName), calendarSource(it.name), it.accessLevel)
         }
         // Design 72: the calendar links as applied (their calendars are rows above like any other).
         return CalendarReport(true, rows, policy.rulesSkipped, CalendarFeeds.report(context))

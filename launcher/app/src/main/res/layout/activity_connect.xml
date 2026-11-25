@@ -86,5 +86,24 @@
             android:fontFamily="@font/nunito_bold"
             android:minHeight="56dp"
             android:text="@string/connect_title" />
+
+        <!-- Always there: the emergency confirm (or the parent's emergency menu), as on every locked screen. -->
+        <TextView
+            android:id="@+id/connect_emergency"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="12dp"
+            android:background="?android:attr/selectableItemBackground"
+            android:clickable="true"
+            android:focusable="true"
+            android:fontFamily="@font/nunito_extrabold"
+            android:gravity="center"
+            android:minHeight="48dp"
+            android:paddingStart="18dp"
+            android:paddingEnd="18dp"
+            android:text="@string/calls_emergency"
+            android:textColor="@color/dialog_error_text"
+            android:textSize="15sp" />
     </LinearLayout>
 </ScrollView>

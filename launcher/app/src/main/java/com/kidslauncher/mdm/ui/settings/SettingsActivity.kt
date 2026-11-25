@@ -74,8 +74,10 @@ class SettingsActivity : UIObjectActivity() {
         val mdm = LauncherPreferences.mdm()
         val pin = ParentPin.status(this)
         return settingsAccess(
-            // A cached policy also counts, for a phone whose cache predates the flag.
-            policyEverApplied = mdm.policyEverApplied() || !mdm.kidModePolicy().isNullOrBlank(),
+            // A cached policy also counts, for a phone whose cache predates the flag, and so does the enrolment's
+            // witness of an applied policy (the main preferences lost: still behind the parent code).
+            policyEverApplied = mdm.policyEverApplied() || !mdm.kidModePolicy().isNullOrBlank() ||
+                com.kidslauncher.mdm.server.EnrolmentWitness.policyApplied(this),
             pinConfigured = pin.configured,
             lockedOut = pin.lockoutMs > 0L,
         )

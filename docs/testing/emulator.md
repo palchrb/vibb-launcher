@@ -5853,3 +5853,37 @@ These rows confirm it on the two versions.
 | 3 | Open the photo's properties in the gallery (or the test app's `getLatLong`) | no position (the EXIF GPS fields read empty or zero); the rest of the photo is there |
 | 4 | Revoke and grant the photos access again in Android's app info (the pause on, Settings shown) | `ACCESS_MEDIA_LOCATION` comes back `granted=true` only during the pause (it lifts every key); after the pause ends, `granted=false` with `POLICY_FIXED` again |
 | 5 | Posisjon on again in the PWA, a sync | the flag is gone (`POLICY_FIXED` cleared), the permission back to what the user gave; the gallery shows the coordinates once its photos access is granted again |
+
+## 6bp. The Tailscale key sealed; Koble til after lost settings (branch `launcher-edges`) - written, not run
+
+On **Android 14 and 16** with the user's OK. The debug launcher of this branch as Device Owner, a server of `main`
+with a tailnet key for the phone (a reusable test key from the admin console, never a real one in a doc). Logcat
+`TsnetClient`, `Provisioning`, `SealedPrefs`. The prefs file is read with `adb shell run-as me.vibb.launcher.debug cat
+shared_prefs/me.vibb.launcher.debug_preferences.xml`.
+
+| # | Step | Expect |
+|---|---|---|
+| 1 | A setup QR with `tailscale_auth_key` on a fresh emulator; read the prefs file before the join finishes (or with the network off, so the join fails) | `mdm.tailscale_auth_key` holds `ks1:` and a Base64 blob - never the key; Settings' Tailscale row shows `••••••••` alone (no part of the key) |
+| 2 | The network on; the next Home resume or sync | the node joins (the PWA's Device › Tailscale row); the key is gone from the file, `tsnet_node_joined` true; Settings: "On the tailnet" |
+| 3 | Settings › Tailscale key, type a key while not joined (a fresh emulator, setup by Server URL + code) | the row's summary shows `••••••••` at once; the file holds `ks1:` |
+| 4 | Write a plain value by hand (`run-as ... sed` the line to a bare string), force-stop, open Settings, then Home | Settings says not set; at Home's resume (the connect attempt) the line is gone from the file and no join is tried with it |
+
+The lost preferences (item 2 of this branch): an enrolled phone with a policy applied, Android's PIN set by the parent
+(Lyd/Lås › Android's PIN), adb on by the policy. The main preferences replaced with a cut-short file: `adb shell
+run-as me.vibb.launcher.debug sh -c 'head -c 200 shared_prefs/me.vibb.launcher.debug_preferences.xml > /data/local/tmp/x;
+cp /data/local/tmp/x shared_prefs/me.vibb.launcher.debug_preferences.xml'` (or an empty `<map/>`), then `adb reboot`.
+The witness is `/data/user_de/0/me.vibb.launcher.debug/files/enrolment_witness` (device-protected storage, apart from
+the main preferences).
+
+| # | Step | Expect |
+|---|---|---|
+| 5 | Before the cut: `run-as ... cat /data/user_de/0/me.vibb.launcher.debug/files/enrolment_witness` | `{"enrolled":true,"policy_applied":true,"server_url":"https://..."}` (right after the enrolment, before the first policy: `"enrolled":true` alone) |
+| 6 | The cut and the reboot; unlock with Android's PIN | Android's PIN still asked (never cleared); Home shows Koble til with the server address filled in and "Nødsamtale" under the button; logcat has no "Resetting preferences" |
+| 7 | Tap Nødsamtale | the emergency confirm ("Ring 112?") over the screen; Avbryt back to Koble til (no call placed in the test) |
+| 8 | Back gesture, then the home gesture | Koble til closes for that resume; Home shows nothing allowed (the fallback: kiosk on, no apps); the next time Home comes to the front Koble til is back |
+| 9 | The drawer's Settings (or `adb shell am start -a android.settings.APPLICATION_PREFERENCES -p me.vibb.launcher.debug`) | Settings doesn't open (no parent code stored: the gate's dialog, OK disabled) |
+| 10 | adb | stays as the fallback plan leaves it (the last plan's or nothing allowed's), never opened by the lost file; `adb shell dumpsys device_policy` shows the restrictions still set |
+| 11 | A new code from the PWA (the phone's page › Avansert › Ny oppsettkode) typed on Koble til | the phone enrols, the setup hold does not start (the witness counts as applied), the server's policy applies and Home is back |
+| 12 | Before step 11: another server's address in the field (`https://other.example.org`), any code | the address rule's line ("server_url_refused"'s text), nothing sent (no request in the server's log) |
+| 13 | A fresh emulator: enrol with a code but keep the server from answering the policy (stop it right after the enrolment), cut the preferences as above, reboot | the witness holds `"enrolled":true` alone; Koble til shows (no first-launch reset), Settings opens without a code, Home is not locked down (no policy applied yet) |
+| 14 | The calendar report: a calendar named `per.hansen@example.org` (DAVx5 or a local one), and an ICSx5 subscription whose display name is cleared (`content insert`/`update` on `content://com.android.calendar/calendars`, `calendar_displayName` null) | the PWA's Calendars list shows `p…@example.org` and an empty name for the subscription (its host as the source); Dagen on the phone shows the full names |

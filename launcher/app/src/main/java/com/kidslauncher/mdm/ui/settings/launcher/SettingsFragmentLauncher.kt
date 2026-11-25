@@ -42,6 +42,7 @@ import com.kidslauncher.mdm.openAppsList
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.ui.LegalInfoActivity
 import com.kidslauncher.mdm.ui.ParentPinDialog
+import com.kidslauncher.mdm.server.TailnetAuthKey
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -63,11 +64,8 @@ private const val MAP_LINKS_BACK = "settings_map_links_back"
  * real last 4 characters) to recognize the value without displaying the secret itself on a screen
  * anyone glancing at the phone could read.
  */
-private fun maskedSecretSummary(value: String?, notSet: String): String {
-    if (value.isNullOrBlank()) return notSet
-    val tail = value.takeLast(4)
-    return "••••••••$tail"
-}
+/** A stored Tailscale key in Settings: a fixed mask, never a part of the key. */
+private const val TAILNET_KEY_MASK = "••••••••"
 
 /**
  * The [SettingsFragmentLauncher] holds all of the app's settings on a single screen.
@@ -149,7 +147,7 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
             true
         }
 
-        val tailscaleAuthKey = findPreference<Preference>(mdm.keys().tailscaleAuthKey())
+        val tailscaleAuthKey = findPreference<Preference>(TailnetAuthKey.prefKey())
         tailscaleAuthKey?.summary = tailscaleKeySummary()
         tailscaleAuthKey?.setOnPreferenceClickListener {
             showEditTextDialog(
@@ -157,8 +155,11 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
                 getString(R.string.settings_mdm_tailscale_auth_key),
                 currentValue = null,
             ) { value ->
-                mdm.tailscaleAuthKey(value)
-                tailscaleAuthKey.summary = maskedSecretSummary(value, getString(R.string.settings_mdm_not_set))
+                // Sealed off the main thread (a Keystore call); the row shows what was kept.
+                lifecycleScope.launch {
+                    withContext(Dispatchers.IO) { TailnetAuthKey.set(value) }
+                    tailscaleAuthKey.summary = tailscaleKeySummary()
+                }
             }
             true
         }
@@ -271,9 +272,9 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
 
     /** The key masked while it is stored; once the phone joined, it is gone (security review M12). */
     private fun tailscaleKeySummary(): String {
-        val key = LauncherPreferences.mdm().tailscaleAuthKey()
+        // No decryption here (the main thread): a stored key shows as a fixed mask.
         return when {
-            !key.isNullOrBlank() -> maskedSecretSummary(key, getString(R.string.settings_mdm_not_set))
+            TailnetAuthKey.present() -> TAILNET_KEY_MASK
             com.kidslauncher.mdm.server.TsnetClient.joined(requireContext()) -> getString(R.string.settings_mdm_tailscale_joined)
             else -> getString(R.string.settings_mdm_not_set)
         }
@@ -732,7 +733,7 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
                     // summary should reflect that instead of falsely showing "Not set".
                     val mdm = LauncherPreferences.mdm()
                     findPreference<Preference>(mdm.keys().serverUrl())?.summary = serverUrlSummary(mdm.serverUrl())
-                    findPreference<Preference>(mdm.keys().tailscaleAuthKey())?.summary = tailscaleKeySummary()
+                    findPreference<Preference>(TailnetAuthKey.prefKey())?.summary = tailscaleKeySummary()
                 }.onFailure { e ->
                     Toast.makeText(
                         context,

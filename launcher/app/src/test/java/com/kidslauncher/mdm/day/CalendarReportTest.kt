@@ -60,4 +60,33 @@ class CalendarReportTest {
             assertNull(odd, calendarSource(odd))
         }
     }
+
+    @Test
+    fun `every address-shaped token in a name is shortened, the rest kept`() {
+        assertEquals("p\u2026@example.org", reportedCalendarName("per.hansen@example.org"))
+        assertEquals("\u00e5\u2026@familie.no", reportedCalendarName(" \u00e5se@familie.no "))
+        assertEquals("\uD83D\uDE00\u2026@x.no", reportedCalendarName("\uD83D\uDE00a@x.no"))
+        assertEquals("p\u2026@example.org og m\u2026@familie.no", reportedCalendarName("per@example.org og mor@familie.no"))
+        assertEquals("a\u2026@b", reportedCalendarName("a@b"))
+        assertEquals("a\u2026@c", reportedCalendarName("a@b@c"))
+        // The fullwidth and small at signs.
+        assertEquals("p\u2026@example.org", reportedCalendarName("per\uFF20example.org"))
+        assertEquals("p\u2026@example.org", reportedCalendarName("per\uFE6Bexample.org"))
+        // An invisible character inside an address is cleaned out first, so the address is masked whole.
+        assertEquals("p\u2026@example.org", reportedCalendarName("pe\u200Br@exam\u2060ple.org"))
+        // A long name is masked before the cut.
+        assertEquals("p\u2026@example.org", reportedCalendarName("p" + "e".repeat(150) + "@example.org"))
+        for (kept in listOf("Skolen", "Min kalender", "Familie @ hjemme", "@example.org", "per@", "")) {
+            assertEquals(kept, reportedCalendarName(kept))
+        }
+    }
+
+    @Test
+    fun `a calendar without a display name of its own reports none, never its NAME`() {
+        assertEquals("", reportedCalendarName("https://skole.kommune.no/feed.ics?token=abc", ownName = false))
+        assertEquals("Skolen", reportedCalendarName("Skolen", ownName = true))
+        val store = File(listOf("src/main", "app/src/main").map(::File).first { it.isDirectory }, "java/com/kidslauncher/mdm/calendar/CalendarStore.kt").readText()
+        assertTrue("ownName = ownName != null," in store)
+        assertTrue("reportedCalendarName(it.displayName, it.ownName)" in store)
+    }
 }

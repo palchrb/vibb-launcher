@@ -39,8 +39,8 @@ suspend fun applyProvisioningExtras(context: Context, extras: ProvisioningExtras
     ServerPinStore.setEnforce(context, false)
     // ... and the old server's tailnet recovery address goes with it (verification n1): the new server names its own.
     ServerPinStore.setRecovery(context, null)
-    if (extras.tailscaleAuthKey.isNotBlank()) {
-        mdm.tailscaleAuthKey(extras.tailscaleAuthKey)
+    if (extras.tailscaleAuthKey.isNotBlank() && !TailnetAuthKey.set(extras.tailscaleAuthKey)) {
+        Log.w(LOG_TAG, "Couldn't seal the Tailscale key - not kept")
     }
 
     // No-ops immediately if no auth key is configured (nothing to connect) or a connection from

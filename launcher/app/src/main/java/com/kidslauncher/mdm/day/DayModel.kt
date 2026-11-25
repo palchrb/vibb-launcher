@@ -50,6 +50,9 @@ data class CalendarInfo(
     val vibbLocal: Boolean = false,
     /** The provider's `Calendars.NAME` (an ICSx5 subscription's URL, a CalDAV path), for the report's `source`. */
     val name: String? = null,
+    /** The provider has a display name of its own; else [displayName] is [name]'s fallback, which the report never
+     * sends ([reportedCalendarName]). */
+    val ownName: Boolean = true,
 ) {
     override fun toString() = "CalendarInfo($key)"
 }
