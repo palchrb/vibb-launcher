@@ -269,9 +269,19 @@ async fn a_third_stream_closes_the_first_and_delete_closes_the_rest() {
     assert_eq!(res.status, StatusCode::UNAUTHORIZED);
 }
 
-/// Deleting a phone deletes its own security-log lines - those `record_phone_event` writes, with
-/// neither a username nor an address -; a parent's line about the phone, the parent's line about
-/// the delete and another phone's lines (`device 1` against `device 12`) stay.
+async fn security_line_ids(db: &sqlx::SqlitePool) -> std::collections::BTreeSet<i64> {
+    sqlx::query_scalar("SELECT id FROM security_events")
+        .fetch_all(db)
+        .await
+        .unwrap()
+        .into_iter()
+        .collect()
+}
+
+/// Deleting a phone deletes its own security-log lines - those `record_phone_event` writes: a
+/// phone line's kind, neither a username nor an address -; a parent's line about the phone, the
+/// enrolment's (with its address), the server's own `device_key_conflict` line, the parent's line
+/// about the delete and another phone's lines (`device 1` against `device 12`) stay.
 #[tokio::test]
 async fn delete_removes_the_phones_own_security_lines() {
     use crate::security::{Detail, PhoneLine, record_phone_event};
@@ -279,55 +289,86 @@ async fn delete_removes_the_phones_own_security_lines() {
     let cookie = app.admin_cookie().await;
     let (id, _token) = app.enrolled_device("phone").await;
     let (other, _) = app.enrolled_device("other").await;
-    // The other phone's id shares the first digits: `device {id}` must not match `device {id}2`.
+    // A phone whose id starts with this one's digits: `device {id}` must not match `device {id}2`.
     let lookalike = id * 10 + 2;
-    let mut conn = app.db.acquire().await.unwrap();
-    for device in [id, other, lookalike] {
+    let newest = || async {
+        sqlx::query_scalar::<_, i64>("SELECT MAX(id) FROM security_events")
+            .fetch_one(&app.db)
+            .await
+            .unwrap()
+    };
+    let mut written = std::collections::BTreeMap::new();
+    for (name, device) in [("own", id), ("other", other), ("lookalike", lookalike)] {
         let line = Detail::words(
             "security.detail.phone_lines_dropped",
             &[("device", &device.to_string()), ("max", "1")],
         );
+        let mut conn = app.db.acquire().await.unwrap();
         assert!(
             record_phone_event(&mut conn, device, PhoneLine::SetupTickPhone, line)
                 .await
                 .unwrap()
         );
+        drop(conn);
+        written.insert(name, newest().await);
     }
-    // The older spellings of a phone line, `device {id}:` and `device {id},`.
-    for detail in [format!("device {id}: started"), format!("device {id}, app")] {
+    // By hand: `(name, event_type, username, ip_address, detail)`.
+    let by_hand = [
+        // The older spellings of a phone line, `device {id}:` and `device {id},`.
+        (
+            "own_colon",
+            PhoneLine::RelockFindings.wire(),
+            None,
+            None,
+            format!("device {id}: started"),
+        ),
+        (
+            "own_comma",
+            PhoneLine::AppInstalled.wire(),
+            None,
+            None,
+            format!("device {id}, app"),
+        ),
+        // The server's own line about the phone: no phone line's kind.
+        (
+            "key_conflict",
+            "device_key_conflict",
+            None,
+            None,
+            format!("device {id}"),
+        ),
+        // A parent's line about the phone carries the parent's name.
+        (
+            "parent",
+            "settings_saved",
+            Some("admin"),
+            None,
+            format!("device {id}"),
+        ),
+        // A phone line's kind with an address: not one `record_phone_event` wrote.
+        (
+            "with_address",
+            PhoneLine::AppInstalled.wire(),
+            None,
+            Some("192.0.2.7"),
+            format!("device {id}"),
+        ),
+    ];
+    for (name, kind, username, address, detail) in by_hand {
         sqlx::query(
-            "INSERT INTO security_events (event_type, detail) VALUES ('relock_findings', ?)",
+            "INSERT INTO security_events (event_type, username, ip_address, detail) \
+             VALUES (?, ?, ?, ?)",
         )
+        .bind(kind)
+        .bind(username)
+        .bind(address)
         .bind(detail)
-        .execute(&mut *conn)
+        .execute(&app.db)
         .await
         .unwrap();
+        written.insert(name, newest().await);
     }
-    // A parent's line about the phone carries the parent's name.
-    sqlx::query(
-        "INSERT INTO security_events (event_type, username, detail) VALUES ('settings_saved', 'admin', ?)",
-    )
-    .bind(format!("device {id}"))
-    .execute(&mut *conn)
-    .await
-    .unwrap();
-    drop(conn);
-    let count = |detail: String, parent: bool| {
-        let db = app.db.clone();
-        async move {
-            sqlx::query_scalar::<_, i64>(
-                "SELECT COUNT(*) FROM security_events WHERE \
-                 (detail = ?1 OR detail LIKE ?1 || ':%' OR detail LIKE ?1 || ',%') \
-                 AND (username IS NOT NULL OR ip_address IS NOT NULL) = ?2",
-            )
-            .bind(detail)
-            .bind(parent)
-            .fetch_one(&db)
-            .await
-            .unwrap()
-        }
-    };
-    assert!(count(format!("device {id}"), false).await >= 3);
+    let before = security_line_ids(&app.db).await;
 
     let res = app
         .request_form(
@@ -339,10 +380,32 @@ async fn delete_removes_the_phones_own_security_lines() {
         .await;
     assert!(res.status.is_redirection(), "{}", res.status);
 
-    assert_eq!(count(format!("device {id}"), false).await, 0);
-    // The parent's line and the enrolment's (it carries the address it came from) stay, and the
-    // parent's own line about the delete.
-    assert!(count(format!("device {id}"), true).await >= 2);
+    let after = security_line_ids(&app.db).await;
+    let gone: std::collections::BTreeSet<i64> = before.difference(&after).copied().collect();
+    let own: std::collections::BTreeSet<i64> = ["own", "own_colon", "own_comma"]
+        .iter()
+        .map(|name| written[name])
+        .collect();
+    assert_eq!(gone, own);
+    for name in [
+        "other",
+        "lookalike",
+        "key_conflict",
+        "parent",
+        "with_address",
+    ] {
+        assert!(after.contains(&written[name]), "{name}");
+    }
+    // The enrolment's line (it carries the address it came from) stays; the parent's line about
+    // the delete is written.
+    let enrolled: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM security_events WHERE event_type = 'device_enrolled' AND detail = ?",
+    )
+    .bind(format!("device {id}"))
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(enrolled, 1);
     let deleted: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM security_events WHERE username IS NOT NULL AND detail LIKE '%/delete%'",
     )
@@ -350,8 +413,6 @@ async fn delete_removes_the_phones_own_security_lines() {
     .await
     .unwrap();
     assert_eq!(deleted, 1);
-    assert_eq!(count(format!("device {other}"), false).await, 1);
-    assert_eq!(count(format!("device {lookalike}"), false).await, 1);
 }
 
 #[tokio::test]

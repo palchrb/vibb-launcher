@@ -4173,23 +4173,21 @@ pub async fn delete_device(
 ) -> impl IntoResponse {
     // Design 87: the logos its rows name, read before the rows go with it.
     let logos = crate::app_logos::hashes_of(&state.db, id).await;
-    sqlx::query("DELETE FROM devices WHERE id = ?")
-        .bind(id)
-        .execute(&state.db)
-        .await
-        .ok();
-    // The phone's own security-log lines go with it - exactly what `security::record_phone_event`
-    // writes (no username, no address, `device {id}` as the fact); a parent's lines about the
-    // phone carry the parent's name and stay, `device_deleted` among them.
-    let fact = format!("device {id}");
-    sqlx::query(
-        "DELETE FROM security_events WHERE username IS NULL AND ip_address IS NULL \
-         AND (detail = ?1 OR detail LIKE ?1 || ':%' OR detail LIKE ?1 || ',%')",
-    )
-    .bind(&fact)
-    .execute(&state.db)
-    .await
-    .ok();
+    // The row and the phone's own security-log lines in one transaction
+    // (`security::delete_phone_lines`); the parents' lines about the phone stay.
+    let deleted = async {
+        let mut tx = state.db.begin().await?;
+        sqlx::query("DELETE FROM devices WHERE id = ?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        crate::security::delete_phone_lines(&mut tx, id).await?;
+        tx.commit().await
+    }
+    .await;
+    if let Err(err) = deleted {
+        tracing::error!(device_id = id, %err, "couldn't delete the phone");
+    }
     // Its token stops working and its open command streams end (design 22 QA d: auth is checked
     // only when a stream opens).
     state.tokens.refresh(&state.db, id, None).await;
@@ -4198,6 +4196,13 @@ pub async fn delete_device(
     state.device_keys.forget_device(id);
     state.command_streams.close_device(id);
     state.limits.forget_device(id);
+    // Once more now that its token and streams are gone: a request already past the token check
+    // may have written a line after the transaction.
+    if let Ok(mut conn) = state.db.acquire().await {
+        crate::security::delete_phone_lines(&mut conn, id)
+            .await
+            .ok();
+    }
     // device_contacts rows went with the device (ON DELETE CASCADE); drop address-book entries
     // no other device has.
     sqlx::query(

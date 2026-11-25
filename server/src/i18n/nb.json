@@ -1622,7 +1622,7 @@
   "apps.perms.access.usage_access": "Data om appbruk",
   "apps.perms.access.full_screen": "Fullskjermvarsler",
   "apps.perms.camera_help": "Kamera av: videosamtaler og QR-skanning virker ikke.",
-  "apps.perms.location_help": "Posisjon av: appen ser ikke hvor telefonen er.",
+  "apps.perms.location_help": "Posisjon av: appen ser ikke hvor telefonen er, eller hvor bildene ble tatt.",
   "apps.perms.microphone_help": "Mikrofon av: samtaler og lydopptak i appen virker ikke.",
   "apps.perms.contacts_help": "Kontakter av: appen ser ikke kontaktene på telefonen.",
   "apps.access.title": "Tilgang",

@@ -1622,7 +1622,7 @@
   "apps.perms.access.usage_access": "App usage data",
   "apps.perms.access.full_screen": "Full-screen notifications",
   "apps.perms.camera_help": "Camera off: video calls and QR scanning stop working.",
-  "apps.perms.location_help": "Location off: the app can't see where the phone is.",
+  "apps.perms.location_help": "Location off: the app can't see where the phone is, or where photos were taken.",
   "apps.perms.microphone_help": "Microphone off: calls and recordings in the app stop working.",
   "apps.perms.contacts_help": "Contacts off: the app can't see the phone's contacts.",
   "apps.access.title": "Access",
