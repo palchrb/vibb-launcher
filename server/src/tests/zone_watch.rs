@@ -1,7 +1,7 @@
 //! Safe zones, step 2 (design 64 §4): the phone watches - `location_policy.zones` and the served
 //! interval's floor, the status report's `extra_locations` (every fix stored, then one judging)
 //! and `zone_watch` (the fences, the mock counter), and the shared contract
-//! `testdata/zone_status_report.json`.
+//! `contracts/core/zone_status_report.json`.
 
 use axum::http::{Method, StatusCode};
 use chrono::{DateTime, Duration, Utc};
@@ -9,23 +9,13 @@ use serde_json::{Value, json};
 
 use super::TestApp;
 
-/// The launcher's body (`ZoneReportTest` encodes exactly this; byte-identical in its test
-/// resources).
-const ZONE_REPORT: &str = include_str!("../../testdata/zone_status_report.json");
+/// The launcher's body (`ZoneReportTest` encodes exactly this).
+const ZONE_REPORT: &str = crate::contracts::contract!("core/zone_status_report.json");
 
 /// 30 m from Home's centre (59.9139, 10.7522): inside with a good fix.
 const NEAR: (f64, f64) = (59.91417, 10.7522);
 /// 1 km away.
 const AWAY: (f64, f64) = (59.9229, 10.7522);
-
-#[test]
-fn the_zone_contract_matches_the_launchers_copy() {
-    let copy_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../launcher/app/src/test/resources/zone_status_report.json");
-    let copy = std::fs::read_to_string(&copy_path)
-        .unwrap_or_else(|e| panic!("{}: {e}", copy_path.display()));
-    assert_eq!(copy, ZONE_REPORT, "{} differs", copy_path.display());
-}
 
 fn at(minutes_ago: i64) -> String {
     (Utc::now() - Duration::minutes(minutes_ago)).to_rfc3339()

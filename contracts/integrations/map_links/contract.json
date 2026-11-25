@@ -1,0 +1,529 @@
+{
+ "_doc": "Design 110 (map links), the contract both sides run, kept once in contracts/integrations/map_links/ (design 133). The server's integrations::map_links::tests and the launcher's MapLinksContractTest run every row.",
+ "policy": {
+  "off": {
+   "on": false
+  },
+  "on": {
+   "on": true
+  }
+ },
+ "report": {
+  "target": "app.organicmaps",
+  "target_state": "allowed",
+  "play_services_links": false,
+  "vibb_hosts": {
+   "selected": 20,
+   "selectable": 20,
+   "declared": 20
+  },
+  "reach": {
+   "short": true,
+   "google": true,
+   "apple": true
+  }
+ },
+ "report_steps_left": {
+  "target": "app.organicmaps",
+  "target_state": "allowed",
+  "play_services_links": true,
+  "vibb_hosts": {
+   "selected": 0,
+   "selectable": 20,
+   "declared": 20
+  },
+  "reach": {
+   "short": false,
+   "google": false,
+   "apple": false
+  }
+ },
+ "report_hidden": {
+  "target": "app.comaps.fdroid",
+  "target_state": "hidden",
+  "play_services_links": null,
+  "vibb_hosts": {
+   "selected": 20,
+   "selectable": 20,
+   "declared": 20
+  },
+  "reach": {
+   "short": true,
+   "google": true,
+   "apple": true
+  }
+ },
+ "report_held_by_maps": {
+  "target": "app.organicmaps",
+  "target_state": "allowed",
+  "play_services_links": false,
+  "vibb_hosts": {
+   "selected": 11,
+   "selectable": 11,
+   "declared": 20
+  },
+  "reach": {
+   "short": true,
+   "google": false,
+   "apple": true
+  }
+ },
+ "clean": [
+  {
+   "in": {
+    "target": "app.organicmaps",
+    "target_state": "suspended",
+    "play_services_links": true,
+    "vibb_hosts": {
+     "selected": 3,
+     "selectable": 20,
+     "declared": 20
+    },
+    "reach": {
+     "short": false,
+     "google": true,
+     "apple": false
+    }
+   },
+   "out": {
+    "target": "app.organicmaps",
+    "target_state": "suspended",
+    "play_services_links": true,
+    "vibb_hosts": {
+     "selected": 3,
+     "selectable": 20,
+     "declared": 20
+    },
+    "reach": {
+     "short": false,
+     "google": true,
+     "apple": false
+    }
+   }
+  },
+  {
+   "in": {
+    "target": "com.example.maps",
+    "target_state": "everywhere",
+    "play_services_links": "yes",
+    "vibb_hosts": {
+     "selected": -1,
+     "selectable": 900,
+     "declared": "20"
+    },
+    "reach": [],
+    "extra": 1
+   },
+   "out": {
+    "target": null,
+    "target_state": "missing",
+    "play_services_links": null,
+    "vibb_hosts": {
+     "selected": 0,
+     "selectable": 64,
+     "declared": 0
+    },
+    "reach": {
+     "short": false,
+     "google": false,
+     "apple": false
+    }
+   }
+  },
+  {
+   "in": {
+    "target": "app.comaps",
+    "target_state": "missing"
+   },
+   "out": {
+    "target": "app.comaps",
+    "target_state": "missing",
+    "play_services_links": null,
+    "vibb_hosts": {
+     "selected": 0,
+     "selectable": 0,
+     "declared": 0
+    },
+    "reach": {
+     "short": false,
+     "google": false,
+     "apple": false
+    }
+   }
+  },
+  {
+   "in": "app.organicmaps",
+   "out": null
+  },
+  {
+   "in": null,
+   "out": null
+  }
+ ],
+ "short_links": [
+  {
+   "url": "https://maps.app.goo.gl/ZtCcrVTKt54Dx2hVA",
+   "short": "https://maps.app.goo.gl/ZtCcrVTKt54Dx2hVA"
+  },
+  {
+   "url": "https://maps.app.goo.gl/mBtbC6qXLK2baGTV9?g_st=ac",
+   "short": "https://maps.app.goo.gl/mBtbC6qXLK2baGTV9"
+  },
+  {
+   "url": "https://MAPS.APP.GOO.GL/AbC_12-x",
+   "short": "https://maps.app.goo.gl/AbC_12-x"
+  },
+  {
+   "url": "https://goo.gl/maps/aBcD123",
+   "short": "https://goo.gl/maps/aBcD123"
+  },
+  {
+   "url": "https://maps.apple/p/7E-Brjrk_THN14",
+   "short": "https://maps.apple/p/7E-Brjrk_THN14"
+  },
+  {
+   "url": "http://maps.app.goo.gl/ZtCcrVTKt54Dx2hVA",
+   "short": null
+  },
+  {
+   "url": "https://maps.app.goo.gl/",
+   "short": null
+  },
+  {
+   "url": "https://maps.app.goo.gl/?link=https%3A%2F%2Fwww.google.com%2Fmaps%2Fplace%2FX",
+   "short": null
+  },
+  {
+   "url": "https://maps.app.goo.gl/a/b",
+   "short": null
+  },
+  {
+   "url": "https://maps.app.goo.gl/bad%20id",
+   "short": null
+  },
+  {
+   "url": "https://user@maps.app.goo.gl/AbC",
+   "short": null
+  },
+  {
+   "url": "https://maps.app.goo.gl:8443/AbC",
+   "short": null
+  },
+  {
+   "url": "https://maps.app.goo.gl/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "short": null
+  },
+  {
+   "url": "https://goo.gl/AbC",
+   "short": null
+  },
+  {
+   "url": "https://maps.apple.com/p/7E-Brjrk_THN14",
+   "short": null
+  },
+  {
+   "url": "https://www.google.com/maps/place/X",
+   "short": null
+  }
+ ],
+ "long_hosts": [
+  {
+   "url": "https://maps.google.com?q=Artbox+AS,+Drammensveien+133,+0277+Oslo&ftid=0x46416db4338a09ff:0x7d7d788043d1f40e&entry=gps",
+   "map": true
+  },
+  {
+   "url": "https://maps.google.com/maps?q=Artbox+AS,+Drammensveien+133,+0277+Oslo&ftid=0x46416db4338a09ff:0x7d7d788043d1f40e",
+   "map": true
+  },
+  {
+   "url": "https://www.google.com/maps?q=Artbox+AS&ftid=0x46416db4338a09ff:0x7d7d788043d1f40e&ucbcb=1",
+   "map": true
+  },
+  {
+   "url": "https://www.google.com/maps/place/Steak+no+Don/@34.5945482,133.7583428,17z/data=!4m6!3m5!1s0x3551565394d96b57:0x1c9bdbc5990908bf!8m2!3d34.5945482!4d133.7583428!16s%2Fg%2F1tdvlc5x",
+   "map": true
+  },
+  {
+   "url": "https://www.google.no/maps/@59.91,10.75,15z",
+   "map": true
+  },
+  {
+   "url": "https://google.com/maps/dir/Oslo/Bergen",
+   "map": true
+  },
+  {
+   "url": "https://maps.google.de/maps/place/X",
+   "map": true
+  },
+  {
+   "url": "https://maps.google.co.uk?ll=51.5,-0.12",
+   "map": true
+  },
+  {
+   "url": "https://maps.google.com.au?cid=9042516119118803982",
+   "map": true
+  },
+  {
+   "url": "https://maps.apple.com/place?name=X&coordinate=59.9,10.7",
+   "map": true
+  },
+  {
+   "url": "https://maps.apple.com/?q=Kiwi&sll=59.9,10.7",
+   "map": true
+  },
+  {
+   "url": "https://maps.google.com",
+   "map": false
+  },
+  {
+   "url": "https://maps.google.com/?hl=no",
+   "map": false
+  },
+  {
+   "url": "https://www.google.com/?q=pizza",
+   "map": false
+  },
+  {
+   "url": "https://www.google.com/search?q=pizza",
+   "map": false
+  },
+  {
+   "url": "https://www.google.com/mapsearch",
+   "map": false
+  },
+  {
+   "url": "https://share.google/abc",
+   "map": false
+  },
+  {
+   "url": "https://www.google.example/maps",
+   "map": false
+  },
+  {
+   "url": "https://evil.com/maps.google.com",
+   "map": false
+  },
+  {
+   "url": "https://maps.google.com.evil.com/maps",
+   "map": false
+  },
+  {
+   "url": "http://maps.google.com/maps?q=x",
+   "map": false
+  },
+  {
+   "url": "https://user@maps.google.com/maps?q=x",
+   "map": false
+  },
+  {
+   "url": "https://maps.google.com:444/maps?q=x",
+   "map": false
+  }
+ ],
+ "feature_ids": [
+  {
+   "url": "https://maps.google.com?q=Artbox+AS,+Drammensveien+133,+0277+Oslo&ftid=0x46416db4338a09ff:0x7d7d788043d1f40e&entry=gps",
+   "ftid": "0x46416db4338a09ff:0x7d7d788043d1f40e"
+  },
+  {
+   "url": "https://maps.google.com?q=Artbox&ftid=0x46416DB4338A09FF:0x7D7D788043D1F40E",
+   "ftid": "0x46416db4338a09ff:0x7d7d788043d1f40e"
+  },
+  {
+   "url": "https://www.google.com/maps/place/Steak+no+Don/@34.5945482,133.7583428,17z/data=!4m6!3m5!1s0x3551565394d96b57:0x1c9bdbc5990908bf!8m2!3d34.5945482!4d133.7583428!16s%2Fg%2F1tdvlc5x",
+   "ftid": "0x3551565394d96b57:0x1c9bdbc5990908bf"
+  },
+  {
+   "url": "https://www.google.com/maps/place/Steak+no+Don/data=!4m2!3m1!1s0x3551565394d96b57:0x1c9bdbc5990908bf",
+   "ftid": "0x3551565394d96b57:0x1c9bdbc5990908bf"
+  },
+  {
+   "url": "https://www.google.com/maps/place/Steak+no+Don/data=!4m2!3m1!1s0x3551565394d96b57%3A0x1c9bdbc5990908bf",
+   "ftid": "0x3551565394d96b57:0x1c9bdbc5990908bf"
+  },
+  {
+   "url": "https://www.google.com/maps/dir/My+place/Steak+no+Don/data=!4m8!4m7!1m0!1m5!1m1!1s0x1111111111111111:0x22!2m2!1d133.75!2d34.59!1m5!1m1!1s0x3551565394d96b57:0x1c9bdbc5990908bf",
+   "ftid": "0x3551565394d96b57:0x1c9bdbc5990908bf"
+  },
+  {
+   "url": "https://maps.google.com/?cid=9042516119118803982",
+   "ftid": "0x0:0x7d7d788043d1f40e"
+  },
+  {
+   "url": "https://maps.google.com/?cid=12x",
+   "ftid": null
+  },
+  {
+   "url": "https://maps.google.com?q=59.9,10.7",
+   "ftid": null
+  },
+  {
+   "url": "https://maps.google.com?q=X&ftid=0x46416db4338a09ff",
+   "ftid": null
+  },
+  {
+   "url": "https://maps.google.com?q=X&ftid=0x46416db4338a09ff1:0x1",
+   "ftid": null
+  },
+  {
+   "url": "https://maps.apple.com/place?name=X&ftid=0x46416db4338a09ff:0x7d7d788043d1f40e",
+   "ftid": null
+  },
+  {
+   "url": "https://www.google.com/search?ftid=0x46416db4338a09ff:0x7d7d788043d1f40e",
+   "ftid": null
+  }
+ ],
+ "resolve": {
+  "requests": {
+   "short": {
+    "url": "https://maps.app.goo.gl/ZtCcrVTKt54Dx2hVA"
+   },
+   "ftid": {
+    "ftid": "0x46416db4338a09ff:0x7d7d788043d1f40e",
+    "text": "Artbox AS, Drammensveien 133, 0277 Oslo"
+   }
+  },
+  "answers": [
+   {
+    "case": "short_place",
+    "request": "short",
+    "server": true,
+    "status": 200,
+    "body": {
+     "url": "https://maps.google.com?q=Artbox+AS,+Drammensveien+133,+0277+Oslo&ftid=0x46416db4338a09ff:0x7d7d788043d1f40e&entry=gps",
+     "place": {
+      "lat": 59.9223615,
+      "lon": 10.6868892,
+      "name": "Artbox AS",
+      "address": "Drammensveien 133, 0277 Oslo"
+     }
+    },
+    "phone": "pin"
+   },
+   {
+    "case": "short_url",
+    "request": "short",
+    "server": true,
+    "status": 200,
+    "body": {
+     "url": "https://www.google.com/maps/search/39.920439,+116.331538?entry=s"
+    },
+    "phone": "parse"
+   },
+   {
+    "case": "short_apple",
+    "request": "short",
+    "server": true,
+    "status": 200,
+    "body": {
+     "url": "https://maps.apple.com/place?address=Thomash%C3%B6he,+12053+Berlin,+Germany&coordinate=52.4737758,13.4373898"
+    },
+    "phone": "parse"
+   },
+   {
+    "case": "ftid_place",
+    "request": "ftid",
+    "server": true,
+    "status": 200,
+    "body": {
+     "place": {
+      "lat": 59.9223615,
+      "lon": 10.6868892,
+      "name": "Artbox AS",
+      "address": "Drammensveien 133, 0277 Oslo"
+     }
+    },
+    "phone": "pin"
+   },
+   {
+    "case": "ftid_none",
+    "request": "ftid",
+    "server": true,
+    "status": 200,
+    "body": {},
+    "phone": "fallback"
+   },
+   {
+    "case": "off",
+    "request": "short",
+    "server": true,
+    "status": 409,
+    "body": {
+     "error": "off"
+    },
+    "phone": "retry_sync"
+   },
+   {
+    "case": "not_short_link",
+    "request": "short",
+    "server": true,
+    "status": 422,
+    "body": {
+     "error": "not_short_link"
+    },
+    "phone": "dead"
+   },
+   {
+    "case": "dead",
+    "request": "short",
+    "server": true,
+    "status": 422,
+    "body": {
+     "error": "dead"
+    },
+    "phone": "dead"
+   },
+   {
+    "case": "busy",
+    "request": "short",
+    "server": true,
+    "status": 429,
+    "body": {
+     "error": "busy"
+    },
+    "phone": "retry"
+   },
+   {
+    "case": "unreachable",
+    "request": "short",
+    "server": true,
+    "status": 503,
+    "body": {
+     "error": "unreachable"
+    },
+    "phone": "retry"
+   },
+   {
+    "case": "busy_ftid",
+    "request": "ftid",
+    "server": false,
+    "status": 429,
+    "body": {
+     "error": "busy"
+    },
+    "phone": "fallback"
+   },
+   {
+    "case": "unreachable_ftid",
+    "request": "ftid",
+    "server": false,
+    "status": 503,
+    "body": {
+     "error": "unreachable"
+    },
+    "phone": "fallback"
+   },
+   {
+    "case": "off_ftid",
+    "request": "ftid",
+    "server": true,
+    "status": 409,
+    "body": {
+     "error": "off"
+    },
+    "phone": "retry_sync"
+   }
+  ]
+ }
+}

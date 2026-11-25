@@ -5,7 +5,7 @@ import kotlinx.serialization.Serializable
 
 /*
  * Design 98: Flymodus through the Digital assistant role - the pure parts (no Android imports), pinned by the shared
- * contract `airplane_mode.json` (byte-identical with `server/testdata/`, `AirplaneModeTest`).
+ * contract `airplane_mode.json` (in `contracts/core/`, `AirplaneModeTest`).
  */
 
 /** One airplane-mode period (§5.1): [onBy] `kid` or `other`; [offBy] `kid`, `parent`, `emergency` or `other`. Only the

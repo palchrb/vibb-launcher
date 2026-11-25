@@ -25,7 +25,7 @@ import java.security.spec.ECPublicKeySpec
 import java.util.Base64
 
 /**
- * Design 129's shared contract (`device_key.json`, byte-identical with `server/testdata/`, whose `tests::device_key`
+ * Design 129's shared contract (`device_key.json`, in `contracts/core/`, whose `tests::device_key`
  * verifies the crypto rows and produces the route rows): the canonical form and the proofs built exactly (and their
  * signatures verifying over what this side builds), the enrolment's challenge, the signature clock's offset, every
  * `Vibb-Auth` answer's action, the policy's `device_key`, and the registration flow's table (`phone`, `phone_nudge`).
@@ -374,12 +374,5 @@ class DeviceKeyContractTest {
         assertEquals(listOf("b"), keyCapPlan(three.map { if (it.alias == "a") it.copy(named = true) else it }, now))
         // Every key's challenge still live, or named: none may go - no new key.
         assertEquals(null, keyCapPlan(three.map { it.copy(challengeUntilMs = now + 1) }, now))
-    }
-
-    @Test
-    fun `the contract is identical to the servers copy`() {
-        val serverCopy = File("../../server/testdata/device_key.json")
-        assertTrue(serverCopy.absolutePath, serverCopy.isFile)
-        assertEquals(serverCopy.readText(), text)
     }
 }

@@ -531,7 +531,7 @@ async fn meldinger_has_a_row_and_a_name_and_icon_of_its_own() {
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
     let contract: serde_json::Value =
-        serde_json::from_str(include_str!("../../testdata/sms_contract.json")).unwrap();
+        serde_json::from_str(crate::contracts::contract!("core/sms_contract.json")).unwrap();
     // Its row on the list (a link to its page, design 127), and its page.
     let cell = || async {
         let page = app

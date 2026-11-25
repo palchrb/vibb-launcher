@@ -57,8 +57,8 @@ sentence and a field prefilled with the `https://` form of its address, `POST /d
   bootstrap/connect/tls/http/refused/timeout; every time from 2000 up to the report's arrival + 5 min -
   `CLOCK_SLACK_MS`, a phone clock ahead; `unreachable_until_ms` only with a kept `unreachable_since_ms`, and neither
   when it ends before it starts), never an address, inside `dns_upstream_json` (no migration; a row stored
-  before design 67 reads back with both times `None`). Contract `testdata/dns_upstream_status.json`, byte-identical in the launcher's
-  test resources (root `CLAUDE.md`). Design 67's launcher reports in provider mode too (`rev` 0, `provider`, no since or reason) and
+  before design 67 reads back with both times `None`). Contract `contracts/core/dns_upstream_status.json`, which the
+  launcher reads too (`contracts/README.md`). Design 67's launcher reports in provider mode too (`rev` 0, `provider`, no since or reason) and
   only while its tunnel is up; the two times are "DNS can't be reached" (`unreachable_since_ms` alone: ongoing; both:
   the last ended outage), read by the phone as at least 3 dropped queries over at least 30 s with no answer between,
   on a validated network (launcher/CLAUDE.md, "DNS can't be reached").
@@ -118,13 +118,13 @@ sentence and a field prefilled with the `https://` form of its address, `POST /d
   says whether it reads the managed config it gets). The Allowed Domains footer (both pages) says the built-in hosts
   stay blocked, and an allow entry they cover is kept (it lifts nothing) with a notice on that save, "<host> is a
   secure-DNS server and stays blocked" (`?notice=doh_allowed&domain=`, shown only for a host `is_builtin_doh_host`
-  covers; qa-67-code L1). The server's copy of the list is `testdata/doh_hosts.txt`, byte-identical with the
-  launcher's asset (root `CLAUDE.md`).
+  covers; qa-67-code L1). The list is the launcher's asset itself,
+  `contracts/shipped/launcher-assets/dns/doh_hosts.txt`, compiled in (`contracts/README.md`).
 - Tests: `dns_server::tests` (every row and refusal, normalized, hint, the wire, the sanitizer with the outage's
   times and `provider`), `tests::custom_dns` (save/refusals/Forget/the event, the policy shapes, a pair that isn't
-  valid, the status contract and both copies, the footer's lines, `the_lines_say_when_dns_cant_be_reached` - both modes,
+  valid, the status contract, the footer's lines, `the_lines_say_when_dns_cant_be_reached` - both modes,
   24 h, under 5 min, at last report, an old rev, a provider report under Custom -, `the_secure_dns_bypass_on_the_page`,
-  `an_allowed_secure_dns_host_says_it_stays_blocked`), `dns_server::tests::doh_hosts_match_the_launchers_asset`, `policy_json_keys_snapshot`
+  `an_allowed_secure_dns_host_says_it_stays_blocked`), `dns_server::tests::the_builtin_doh_hosts`, `policy_json_keys_snapshot`
   (`dns_upstream` and its `backup`), the settings redirect table, `migrations_73_to_95_in_order`.
 
 ## Filter on, tunnel down (design 116 part C, security review S-M2)

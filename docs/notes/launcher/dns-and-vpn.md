@@ -199,7 +199,7 @@ Also found and fixed on the same test pass: **`CommandListenerService`'s SSE `Ok
   bootstrap|connect|tls|http|refused|timeout, unreachable_since_ms, unreachable_until_ms}`, with a provider `{rev: 0,
   in_use: provider, since_ms: null, reason: null, ..., provider}` (`providerReport`; `provider` the one that answered
   last, left out before any), never an address (`upstreamReport`;
-  contract `dns_upstream_status.json`, byte-identical with `../server/testdata/`, `DnsUpstreamStatusTest`,
+  contract `contracts/core/dns_upstream_status.json`, `DnsUpstreamStatusTest`,
   `UpstreamChooserTest`).
 - **DNS can't be reached** (design 67 §3, pure `server/UpstreamReach.kt`; glue `ReachTracker`, one `AtomicReference`
   per `KidVpnService` instance, CAS): `CustomDns.resolve` and `DnsFilterEngine.resolveProvider` return `Resolved(bytes,
@@ -275,7 +275,8 @@ parent's switch):
   `org.mozilla.fennec_fdroid`, IronFox `org.ironfoxoss.ironfox`: Gecko reads no Chromium policy; the canary below, and
   an Each Phone line each - `dns_filter::DOH_IGNORING_BROWSERS`), Vanadium (not on these phones). A browser that
   doesn't read it stays listed.
-- **The built-in secure-DNS hosts** (a best-effort backstop): `assets/dns/doh_hosts.txt`, one name per line, each a
+- **The built-in secure-DNS hosts** (a best-effort backstop): the asset `dns/doh_hosts.txt` (kept in
+  `contracts/shipped/launcher-assets/`, design 133), one name per line, each a
   suffix, listed one by one (no `doh.`/`dns.` first-label rule: `doh.wa.gov` is a health department), loaded by
   `DnsFilterEngine.loadFromDisk` **before** the list's early return (in force before the first sync). `classifyDomain`
   takes it as its fourth input: FCM and Spotify first, then the set (category `"Secure DNS server"`, the phone's NODATA,
@@ -288,8 +289,7 @@ parent's switch):
   (`nxdomainResponse`) in `handlePacket` before `classify` - never forwarded, logged or counted. It turns off the DoH
   Firefox enabled by default; a user's own "Increased" falls back to us, "Max" with an unlisted host still bypasses.
   Next to it DDR's `_dns.resolver.arpa` (RFC 9462) gets the phone's NODATA, never relayed (`isDdrQuery`).
-  The server keeps a byte-identical copy of the host list (`server/testdata/doh_hosts.txt`, its Allowed Domains notice;
-  `DnsFilterEngineTest` compares).
+  The server compiles in the same file for its Allowed Domains notice.
 - **What stays open** (the page says so): a browser that ignores the managed config (Firefox, Cromite) set by hand to
   an unlisted DoH host or an IP-literal template (`https://1.1.1.1/dns-query`). Routing the resolvers' IPs into the
   tunnel is design 67's non-goal.

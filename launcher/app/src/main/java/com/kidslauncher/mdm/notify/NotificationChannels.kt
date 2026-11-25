@@ -31,7 +31,7 @@ import kotlinx.serialization.Serializable
 /*
  * Design 107: the Vibb One notification channels that are turned off, in every full status report
  * (`notification_channels`), so the parent's About This Phone names them. The shared contract is
- * `notification_channels.json` (byte-identical with `server/testdata/`; `NotificationChannelsTest`).
+ * `notification_channels.json` (in `contracts/core/`; `NotificationChannelsTest`).
  *
  * The report is read at each report build ([NotificationChannelsReader.read], two binder calls); a block-state broadcast
  * only asks for a sync sooner ([NotificationChannelsWatch]). Vibb never raises a channel the kid turned off: the parent

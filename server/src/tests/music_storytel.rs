@@ -2390,27 +2390,14 @@ fn contract_file(path: &str) -> Vec<u8> {
     std::fs::read(path).unwrap_or_else(|e| panic!("{path}: {e}"))
 }
 
-/// §8 (QA 58-13): every row of the shared answers file is produced by the route - its HTTP
-/// status, its keys and their types - and the apps' copies are this file, byte for byte.
+/// §8 (QA 58-13): every row of the shared answers file (`contracts/music/storytel_token_answers.json`, which both
+/// apps read too) is produced by the route - its HTTP status, its keys and their types.
 #[tokio::test]
 async fn the_token_route_answers_the_shared_contract() {
-    let ours = contract_file("testdata/storytel_token_answers.json");
-    for copy in [
-        "../launcher/app/src/test/resources/storytel_token_answers.json",
-        "../music/app/src/test/resources/storytel_token_answers.json",
-    ] {
-        assert_eq!(
-            contract_file(copy),
-            ours,
-            "{copy} differs from the server's"
-        );
-    }
-    let contract: serde_json::Value = serde_json::from_slice(&ours).unwrap();
+    let ours = crate::contracts::contract!("music/storytel_token_answers.json");
+    let contract: serde_json::Value = serde_json::from_str(ours).unwrap();
     let rows = contract["answers"].as_array().unwrap();
-    assert!(
-        !String::from_utf8_lossy(&ours).contains("eyJ"),
-        "fake values only"
-    );
+    assert!(!ours.contains("eyJ"), "fake values only");
 
     let app = TestApp::new().await;
     let (_, token) = storytel_phone(&app, "phone", true).await;

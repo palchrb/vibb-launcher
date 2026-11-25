@@ -243,7 +243,7 @@ pub enum ServerUrl {
 /// The one rule for the phones' server address in the setup QR (launcher security review S-M1,
 /// the user's decision of 2026-11-04; before it, L8's four classes), for `.env`'s
 /// `PHONE_SERVER_URL` and Phone Setup's field alike, and the launcher's for the address it stores
-/// (`ServerUrlRule.kt`; both run `testdata/server_url_vectors.json`):
+/// (`ServerUrlRule.kt`; both run `contracts/core/server_url_vectors.json`):
 /// - `https://` and a host: fine;
 /// - `http://` to a Tailscale IP literal (100.64.0.0/10, `fd7a:115c:a1e0::/48`): taken with a
 ///   warning (no name is looked up: a `*.ts.net` name must be https);
@@ -503,10 +503,10 @@ mod tests {
     }
 
     /// Launcher security review S-M1, the user's rule of 2026-11-04: every row of the vectors the
-    /// launcher runs too, and the copies identical.
+    /// launcher runs too.
     #[test]
     fn the_server_url_vectors() {
-        const VECTORS: &str = include_str!("../testdata/server_url_vectors.json");
+        const VECTORS: &str = crate::contracts::contract!("core/server_url_vectors.json");
         let rows: serde_json::Value = serde_json::from_str(VECTORS).unwrap();
         let rows = rows["vectors"].as_array().unwrap();
         assert!(rows.len() >= 50);
@@ -522,14 +522,6 @@ mod tests {
             };
             assert_eq!(got, row["verdict"].as_str().unwrap(), "{url:?}");
         }
-        let launcher = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../launcher/app/src/test/resources/server_url_vectors.json");
-        let copy = std::fs::read_to_string(&launcher)
-            .unwrap_or_else(|e| panic!("{}: {e}", launcher.display()));
-        assert_eq!(
-            copy, VECTORS,
-            "the launcher's server_url_vectors.json differs"
-        );
     }
 
     /// The refusal's reason: a bad shape, or plain http to anything but a tailnet IP.

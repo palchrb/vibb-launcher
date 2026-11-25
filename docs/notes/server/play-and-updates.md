@@ -90,7 +90,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   below the release's). A failed row shows and is kept a day (`retention::INSTALL_FAILED_HOURS`), past the 10 minutes
   only while the phone reports no download of the app, and goes once a new release of the app is stored (an upload,
   a sync, an approved held release). The launcher reports no failure for a catalog app Play installed (Play's to
-  update; its row reads Installed). Contract: `testdata/install_failure.json` (root CLAUDE.md).
+  update; its row reads Installed). Contract: `contracts/core/install_failure.json` (root CLAUDE.md).
 - **Manual APK upload** (upstream review 2026-11-20, code QA of the fixes): streamed to its file through
   `stream_capped` (at most `MAX_UPLOAD_BYTES`, 2 GB), one upload at a time (`AppState.apk_upload`; a second is told
   "An upload is already running", 409), the data disk kept at the music upload's floor (`music::MIN_FREE_BYTES`, 1 GB):
@@ -174,7 +174,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   Now"; `received_overdue_minutes` makes a Received `install_update` "No answer" only after 25 h
   (`INSTALL_UPDATE_RECEIVED_MINUTES`), every other command after 10 minutes.
 - **The row** (pure `src/install_now.rs`, typed): `launcher_tag_version_code` (the launcher's `launcherTagVersionCode`,
-  both reading the shared `testdata/launcher_tag_codes.json`: `X*10_000_000 + Y*10_000 + Z*10 + N`, N the RC number
+  both reading the shared `contracts/core/launcher_tag_codes.json`: `X*10_000_000 + Y*10_000 + Z*10 + N`, N the RC number
   1..8 or 9 for the release - every build its own code, `scripts/release-version.sh`; a tag from before
   `launcher-v0.36.0-rc.4` reads by it too, below every build since), `release(tag, report)` -> `Standing` NotReported /
   NoRelease (no release, or the row is off) / UpToDate / Behind (the tag's code above the report's `app_version_code`

@@ -80,7 +80,7 @@ fn octet(label: &str) -> bool {
     (label == "0" || !label.starts_with('0')) && label.parse::<u8>().is_ok()
 }
 
-/// Design 83 §1's entry, one grammar on both sides (`testdata/sms_contract.json`'s `mmsc_entries`; the launcher's
+/// Design 83 §1's entry, one grammar on both sides (`contracts/core/sms_contract.json`'s `mmsc_entries`; the launcher's
 /// `MmsGate.validEntry`): `host` or `host:port`. The host is 1-253 bytes of `[a-z0-9.-]` in non-empty labels, and
 /// either its last label starts with a letter or it is exactly four decimal octets - so nothing a resolver could read
 /// as another address (`010.0.0.1`, `2130706433`) - whose first is neither 0 nor 127: "this host" is no MMS server,
@@ -377,7 +377,7 @@ mod tests {
     #[test]
     fn the_contracts_entries() {
         let contract: serde_json::Value =
-            serde_json::from_str(include_str!("../testdata/sms_contract.json")).unwrap();
+            serde_json::from_str(crate::contracts::contract!("core/sms_contract.json")).unwrap();
         let rows = contract["mmsc_entries"].as_array().unwrap();
         assert!(rows.len() >= 9);
         for row in rows {

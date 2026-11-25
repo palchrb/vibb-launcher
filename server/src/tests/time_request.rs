@@ -1,5 +1,5 @@
 //! Design r13 §2.5-2.8: `POST /api/devices/time-request` - the kid's "Be om mer tid" from the
-//! phone's notification: the three answers of the shared contract `testdata/time_request.json`,
+//! phone's notification: the three answers of the shared contract `contracts/core/time_request.json`,
 //! one row per request id, the day's cap and a retried third request, the news rule, a stale
 //! request, the push and each parent's "Asks for more time" switch. Design 100 §14: the answer card
 //! on the summary until a parent answers or the day ends, each answer, D9's pause under a rule, the
@@ -16,22 +16,13 @@ use super::web_push::{ENDPOINT, subscribe};
 use super::{TestApp, assert_redirect};
 
 /// The launcher's body and the three answers (`TimeRequestsTest` encodes and decodes exactly
-/// these; byte-identical in its test resources).
-const TIME_REQUEST: &str = include_str!("../../testdata/time_request.json");
+/// these).
+const TIME_REQUEST: &str = crate::contracts::contract!("core/time_request.json");
 
 const PAPPAS_ENDPOINT: &str = "https://web.push.apple.com/QK1-pappas-fake-endpoint";
 
 fn contract() -> Value {
     serde_json::from_str(TIME_REQUEST).unwrap()
-}
-
-#[test]
-fn the_time_request_contract_matches_the_launchers_copy() {
-    let copy_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../launcher/app/src/test/resources/time_request.json");
-    let copy = std::fs::read_to_string(&copy_path)
-        .unwrap_or_else(|e| panic!("{}: {e}", copy_path.display()));
-    assert_eq!(copy, TIME_REQUEST, "{} differs", copy_path.display());
 }
 
 /// A request `minutes_ago`, with an id made from `n`.

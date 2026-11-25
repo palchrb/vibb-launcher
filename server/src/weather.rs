@@ -1,7 +1,7 @@
 //! Weather on the lock glance (design 75 §3.2): everything the phone shows, computed here and pure - the grid
 //! cell, MET's hours as the cache keeps them, the words (D3-D4), the card's periods, the dusk (D10), the hour
 //! schedule (D2), the nowcast line (D9) and the answer's JSON (§3.5). No I/O: `weather_cache` fetches and stores,
-//! `handlers::weather` answers. Every function is pinned by `testdata/weather.json`, shared with the launcher.
+//! `handlers::weather` answers. Every function is pinned by `contracts/core/weather.json`, shared with the launcher.
 
 use chrono::{DateTime, Duration, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Timelike, Utc};
 use chrono_tz::Tz;

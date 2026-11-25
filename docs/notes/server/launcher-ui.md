@@ -54,8 +54,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   phone's Apps page (the form's action carries `#app-<package>`, so the answer lands on the row) or the catalog page, that form open, the values kept, the error by the field and that field `autofocus`ed (the
   POST path differs, so scroll-restore can't help - the focus keeps the place). `static/app-display.js` previews
   live (the tile in the phone's resolved colour; `auto` previews slate).
-- **Icons and colours**: `testdata/app_icons.json` (16 Material Symbols, 6 colours with design 14's seed and the
-  tile the launcher draws - since design 34 one of its six tones), byte-identical to the launcher's test copy;
+- **Icons and colours**: `contracts/core/app_icons.json` (16 Material Symbols, 6 colours with design 14's seed and the
+  tile the launcher draws - since design 34 one of its six tones), which the launcher's tests read too;
   `scripts/material-symbols.sh` (root) fetches the
   SVGs at a pinned commit with SHA-256s and writes `static/app-icons/<key>.svg` + `LICENSE.txt` (Apache-2.0), the
   launcher's vectors and both tables (`src/app_icons.rs`, generated, rustfmt-clean - don't edit). Tests check the
@@ -114,7 +114,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - **The report's `installed_apps[].access`** (`app_permissions::AppAccess`): `camera` (`requested` | `admin_denied`,
   only for third-party apps that ask for it) and `manage_media`, `exact_alarm`, `write_settings`, `usage_access`,
   `full_screen` (`granted` | `denied` | `unknown`), only the keys the app declares; anything else is dropped at the
-  intake. The contract is `testdata/installed_apps_report.json` (byte-identical with the launcher's). The PWA's part: `pwa.md`, "Device › Apps: Permissions".
+  intake. The contract is `contracts/core/installed_apps_report.json` (the launcher reads it too). The PWA's part: `pwa.md`, "Device › Apps: Permissions".
 
 ## The launcher is "Vibb One" (design 34 step 12, P11, `docs/design/34-launcher-polish.md`)
 
@@ -145,7 +145,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `lock_weather_zone_changed` (the zone's name, never coordinates) only on a change, and nudges the phone. Note: no
   fresh position and no zone.
 - **The routes** (`handlers::weather`, bearer): `GET /api/devices/weather` - `off` (no outside request),
-  `no_position`, `unavailable` or `ok` with four hour entries and the card's days (§3.5; `testdata/weather.json`'s
+  `no_position`, `unavailable` or `ok` with four hour entries and the card's days (§3.5; `contracts/core/weather.json`'s
   `answer`, shared with the launcher); `GET /api/devices/weather/now` - `none` or `ok` with the nowcast line or null.
   20 and 60 asks a rolling hour per phone (429 with `Retry-After`), `no-store`, gzip when asked.
 - **The position** (D5): the newest real fix (`COALESCE(mock, 0) = 0`) at most 6 h old and not in the future while
@@ -155,7 +155,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - **The pure part** (`weather.rs`): MET's hourly entries as `Hour`s, `merge` (24 h back), the words (D3-D4's window and
   rule table, the forms), the periods, the dusk (NOAA, the end of civil twilight after solar noon), the four entries
   (from 18:00 to midnight each with `tonight`, the rest of this evening beside tomorrow's card - design 75 §14)
-  and the nowcast line - all in the phone's zone (`device_api::phone_zone`). Every row of `testdata/weather.json` runs
+  and the nowcast line - all in the phone's zone (`device_api::phone_zone`). Every row of `contracts/core/weather.json` runs
   in `weather::tests`; `WEATHER_CONTRACT_WRITE=1` rewrites the computed parts from `testdata/weather/` (recorded MET
   answers).
 - **The fetches** (`weather_cache.rs`): `AppState.weather_fetch` (MET, its own gate, MET's User-Agent with

@@ -13,8 +13,8 @@ import org.junit.Test
 import java.io.File
 
 /**
- * Design 69 §3.4: the title rules against the shared vectors `calendar_title_rules.json` (byte-identical with the
- * server's `testdata/`, whose `calendar::tests::the_title_rules_vectors` runs the same rows). A rule this launcher
+ * Design 69 §3.4: the title rules against the shared vectors `calendar_title_rules.json` (in
+ * `contracts/core/`, whose `calendar::tests::the_title_rules_vectors` runs the same rows). A rule this launcher
  * can't use is dropped by [calendarPolicy], as the policy would drop it.
  */
 class TitleRulesTest {
@@ -33,14 +33,6 @@ class TitleRulesTest {
             val title = (r["title"] as JsonPrimitive).content
             assertEquals("row $i: $title", expected, TitleRules.apply(policy.rules, calendar, title, description))
         }
-    }
-
-    @Test
-    fun `the vectors are identical to the server's copy`() {
-        // Gradle runs unit tests with the module directory (launcher/app/) as the working directory.
-        val serverCopy = File("../../server/testdata/calendar_title_rules.json")
-        assertTrue("${serverCopy.absolutePath} not found", serverCopy.isFile)
-        assertEquals(serverCopy.readText(), vectors)
     }
 
     @Test

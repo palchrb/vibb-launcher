@@ -6,8 +6,8 @@ package com.kidslauncher.mdm.music
  * true - this phone plays Spotify - whatever a blocklist says (ad lists often carry
  * `spclient.wg.spotify.com`). Per phone, unlike FCM's global exemption (push/FcmHosts.kt): the
  * server drops them from that phone's delivered list too, and the parent's device page says so.
- * The list is server/testdata/spotify_hosts.json's (byte-identical in this app's and the music
- * app's test resources; SpotifyHostsTest, MusicPlanTest). PROVISIONAL until the spike's DNS capture
+ * The list is contracts/music/spotify_hosts.json's (both apps and the server
+ * read it; SpotifyHostsTest). PROVISIONAL until the spike's DNS capture
  * replaces it, before any tag of design 26c's release (its "Release" names the one commit: the three
  * JSON copies with their comment, these constants, the server's and the music app's). Pure.
  */

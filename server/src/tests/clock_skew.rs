@@ -1,5 +1,5 @@
 //! The phone's clock as its decisions see it (time rules keep their own clock): the shared rows of
-//! `testdata/clock_skew.json` (byte-identical in the launcher's test resources, `ClockSkewContractTest`), the report's
+//! `contracts/core/clock_skew.json` (the launcher's `ClockSkewContractTest` runs them too), the report's
 //! line on Device › Time, the summary's Attention row and the Devices list's badge, and a fix stored from its age.
 
 use axum::http::{Method, StatusCode};
@@ -8,18 +8,10 @@ use serde_json::{Value, json};
 use super::TestApp;
 use crate::i18n::Lang;
 
-const CONTRACT: &str = include_str!("../../testdata/clock_skew.json");
+const CONTRACT: &str = crate::contracts::contract!("core/clock_skew.json");
 
 fn contract() -> Value {
     serde_json::from_str(CONTRACT).unwrap()
-}
-
-#[test]
-fn the_contract_matches_the_launchers_copy() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../launcher/app/src/test/resources/clock_skew.json");
-    let copy = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-    assert_eq!(copy, CONTRACT, "{} differs", path.display());
 }
 
 #[test]

@@ -8,7 +8,7 @@
 //!   the ticked [PRESETS] expanded and the parent's own entries, [valid_entry]), the report's `login_browser`
 //!   ([clean_browser]).
 //!
-//! The shared contract is `testdata/login_windows.json` (byte-identical in the launcher's test resources). The page
+//! The shared contract is `contracts/core/login_windows.json`, which the launcher reads too. The page
 //! (`/devices/{id}/logins`) and the Advanced page's `#wifi-signin` row are `handlers::logins`.
 
 use std::collections::BTreeSet;

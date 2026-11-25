@@ -15,8 +15,7 @@ import java.io.File
 
 /**
  * The shared vectors (QA 02 criterion T1/T6): the same file the server's src/phone.rs tests read
- * (server/testdata/ in this monorepo). This copy lives in app/src/test/resources; the two must be
- * identical.
+ * (contracts/core/phone_vectors.json, kept once in this monorepo).
  */
 class PhoneNumbersTest {
 
@@ -43,14 +42,6 @@ class PhoneNumbersTest {
             val input = case.str("input")!!
             assertEquals("numberFromHandle(\"$input\")", case.str("number"), PhoneNumbers.numberFromHandle(input))
         }
-    }
-
-    @Test
-    fun `vectors are identical to the server's copy`() {
-        // Gradle runs unit tests with the module directory (launcher/app/) as the working directory.
-        val serverCopy = File("../../server/testdata/phone_vectors.json")
-        assertTrue("${serverCopy.absolutePath} not found", serverCopy.isFile)
-        assertEquals("${serverCopy.path} differs from the launcher's copy", serverCopy.readText(), text)
     }
 
     @Test

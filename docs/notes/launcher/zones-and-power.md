@@ -95,7 +95,7 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   open (`sse_open`), else the 30-min backstop.
 - Tests: `PowerEventsTest` (`rebootOf`/`reasonOf`, `bootRecord`, `uploadBody` - the resend with the start -,
   the answer table, `clearSent`/`dropSent` keeping a newer record, `stale`, the codec, the prepared client's key,
-  the encoding equals `power_report.json` and both copies match; by source: one `ACTION_SHUTDOWN` receiver in the
+  the encoding equals `contracts/core/power_report.json`; by source: one `ACTION_SHUTDOWN` receiver in the
   process, the cover's writes before `PowerEvents.onShutdown`, each caught, the commit before `goAsync`, `finish()` in
   a `finally`, the record's writes `commit()` never `apply()`, the boot cover's synchronous arm in
   `coverAtShutdown` - the code QA's L1 -, the wiring in `Application`, `MdmSyncWorker` and `TsnetClient`),

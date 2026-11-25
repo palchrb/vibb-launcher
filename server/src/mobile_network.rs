@@ -3,8 +3,8 @@
 //! field, and the words the PWA shows - on the phone's own Mobilnett page (`handlers::mobile_page`,
 //! `device_mobile.html`), as the row's value and as lines on the summary.
 //!
-//! The shared contract is `testdata/mobile_network.json` (byte-identical in the launcher's test resources;
-//! `tests::mobile_network`). The launcher alone decides the VPN's shape; nothing here judges a network.
+//! The shared contract is `contracts/core/mobile_network.json` (`tests::mobile_network`;
+//! the launcher reads it too). The launcher alone decides the VPN's shape; nothing here judges a network.
 
 use serde::Deserialize;
 use serde_json::{Value, json};

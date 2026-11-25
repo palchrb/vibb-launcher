@@ -1,5 +1,5 @@
-//! Design 125 step 2's tests: the shared contract (`testdata/wifi_lookup/contract.json`, compared with the launcher's
-//! copy), the server's own rows (`testdata/wifi_lookup/server.json`, written by `scripts/wifi-lookup-fixtures.py`) and
+//! Design 125 step 2's tests: the shared contract (`contracts/integrations/wifi_lookup/contract.json`, which the
+//! launcher runs too), the server's own rows (`testdata/wifi_lookup/server.json`, written by `scripts/wifi-lookup-fixtures.py`) and
 //! the flows through the real routes. No test reaches Apple: every call goes to the canned fetch or a local fake
 //! SOCKS server.
 
@@ -17,12 +17,14 @@ use crate::integration_health::{self, Class, Title};
 use crate::integrations::{Integration, Prune};
 use crate::tests::TestApp;
 
-fn read(path: &str) -> Value {
+fn read(path: impl AsRef<std::path::Path>) -> Value {
     serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
 }
 
 fn contract() -> Value {
-    read("testdata/wifi_lookup/contract.json")
+    read(crate::contracts::path(
+        "integrations/wifi_lookup/contract.json",
+    ))
 }
 
 fn server_rows() -> Value {
@@ -90,17 +92,6 @@ fn bssids(request: &Value) -> Vec<String> {
         .iter()
         .map(|b| b.as_str().unwrap().to_string())
         .collect()
-}
-
-#[test]
-fn the_contract_is_the_launchers() {
-    let ours = std::fs::read("testdata/wifi_lookup/contract.json").unwrap();
-    let theirs =
-        std::fs::read("../launcher/app/src/test/resources/wifi_lookup/contract.json").unwrap();
-    assert!(
-        ours == theirs,
-        "testdata/wifi_lookup/contract.json differs from the launcher's copy"
-    );
 }
 
 /// A8: the request is GrapheneOS's, byte for byte (the golden hex of the fixtures script's own encoder).

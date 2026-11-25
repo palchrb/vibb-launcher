@@ -1,4 +1,4 @@
-//! Design 98 §4.4 (Foreldrekode): the shared contract `testdata/rule_pause.json` - the phone's parent-code pause of the
+//! Design 98 §4.4 (Foreldrekode): the shared contract `contracts/core/rule_pause.json` - the phone's parent-code pause of the
 //! rule in force, posted to `POST /api/devices/rule-pause` (`handlers::rule_pause`) - and the PWA's side of it.
 
 use axum::http::{Method, StatusCode};
@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 
 use super::TestApp;
 
-const CONTRACT: &str = include_str!("../../testdata/rule_pause.json");
+const CONTRACT: &str = crate::contracts::contract!("core/rule_pause.json");
 
 /// The contract's instant the answers' bodies are built around (`request.started_at_ms`).
 const STARTED_AT_MS: i64 = 1_794_826_200_000;
@@ -16,7 +16,7 @@ fn contract() -> Value {
 }
 
 #[test]
-fn the_contract_is_identical_to_the_launchers_copy() {
+fn the_contracts_lengths_and_request() {
     let contract = contract();
     let lengths: Vec<i64> = contract["lengths"]
         .as_array()
@@ -26,12 +26,6 @@ fn the_contract_is_identical_to_the_launchers_copy() {
         .collect();
     assert_eq!(lengths, crate::time_rules::RULE_LIFT_MINUTES);
     assert_eq!(contract["request"], contract["answers"][0]["body"]);
-    let launcher = std::fs::read_to_string(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../launcher/app/src/test/resources/rule_pause.json"
-    ))
-    .unwrap();
-    assert_eq!(launcher, CONTRACT, "the launcher's copy differs");
 }
 
 /// `value` with every `*_ms` number moved by `shift` (the contract's instants into the last minutes).

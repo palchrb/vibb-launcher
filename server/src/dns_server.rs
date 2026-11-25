@@ -232,8 +232,10 @@ pub struct DnsUpstreamState {
 }
 
 /// The secure-DNS hosts the phone blocks whatever the lists say (design 67 §2.2): the launcher's
-/// `assets/dns/doh_hosts.txt`, byte-identical in `testdata/` (`doh_hosts_match_the_launchers_asset`).
-const BUILTIN_DOH_HOSTS: &str = include_str!("../testdata/doh_hosts.txt");
+/// asset `dns/doh_hosts.txt`, kept once in the repo's `contracts/shipped/launcher-assets/` (design 133) - the one
+/// contract this binary compiles in, so the server builds from the whole repo (`contracts/README.md`).
+const BUILTIN_DOH_HOSTS: &str =
+    include_str!("../../contracts/shipped/launcher-assets/dns/doh_hosts.txt");
 
 /// `domain` (lowercase, no trailing dot) is a built-in secure-DNS host or under one: an Allowed
 /// Domains entry for it changes nothing on the phone (qa-67-code L1).
@@ -826,12 +828,7 @@ mod tests {
     }
 
     #[test]
-    fn doh_hosts_match_the_launchers_asset() {
-        let asset = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../launcher/app/src/main/assets/dns/doh_hosts.txt");
-        let asset =
-            std::fs::read_to_string(&asset).unwrap_or_else(|e| panic!("{}: {e}", asset.display()));
-        assert_eq!(asset, BUILTIN_DOH_HOSTS, "testdata/doh_hosts.txt differs");
+    fn the_builtin_doh_hosts() {
         for host in ["dns.google", "chrome.cloudflare-dns.com", "doh.opendns.com"] {
             assert!(is_builtin_doh_host(host), "{host}");
         }

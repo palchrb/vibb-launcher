@@ -17,18 +17,12 @@ import org.junit.Test
 import java.io.File
 import java.util.Base64
 
-/** Design 108: the shared contract `unified_push.json` (byte-identical with `server/testdata/`, whose
+/** Design 108: the shared contract `unified_push.json` (in `contracts/core/`, whose
  * `tests::unified_push` produces its rows): the bodies encoded exactly, every answer and policy row decoded, each
  * refusal mapped to its `failed_reason`. */
 class UnifiedPushContractTest {
     private val contractText = javaClass.classLoader!!.getResource("unified_push.json")!!.readText()
     private val contract = ServerJson.parseToJsonElement(contractText).jsonObject
-
-    @Test
-    fun `the two copies of the contract are identical`() {
-        val serverCopy = listOf("../../server/testdata/unified_push.json", "../server/testdata/unified_push.json").map(::File).first { it.exists() }
-        assertEquals(serverCopy.readText(), contractText)
-    }
 
     @Test
     fun `every policy row decodes, and on follows the switch and the origin`() {

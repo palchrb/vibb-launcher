@@ -2,7 +2,7 @@
 //! `docs/design/127-app-page.md` §3): the parent's Kamera, Posisjon, Mikrofon and Kontakter off per phone and app
 //! (`device_app_denials`, migration 0166 - one row per key), sent as the policy's `app_permissions`, and what the phone
 //! reports about each app's grant keys and special accesses (`installed_apps[].access`; the shared contract
-//! `testdata/app_access.json`, byte-identical in the launcher's test resources). Since 2026-11-04
+//! `contracts/core/app_access.json`, which the launcher reads too). Since 2026-11-04
 //! also "Media player on the lock screen" per phone and app (`device_lock_media_apps`, migration 0127), sent
 //! as the policy's `lock_media_apps`.
 //!
@@ -685,23 +685,20 @@ mod tests {
     }
 
     fn contract() -> serde_json::Value {
-        serde_json::from_str(&std::fs::read_to_string("testdata/app_access.json").unwrap()).unwrap()
+        serde_json::from_str(
+            &std::fs::read_to_string(crate::contracts::path("core/app_access.json")).unwrap(),
+        )
+        .unwrap()
     }
 
     /// Design 127 §3.3: the shared contract - `keys` against [GRANT_KEYS], `clean` through [AppAccess::of], `policy`
     /// produced by the page's real saves, `report` posted and read back as stored and as the page shows it, `never`
-    /// refused, and the launcher's copy byte for byte.
+    /// refused.
     #[tokio::test]
     async fn the_contract() {
         use crate::tests::{TestApp, assert_redirect};
         use axum::http::Method;
         let contract = contract();
-        let ours = std::fs::read("testdata/app_access.json").unwrap();
-        let theirs = std::fs::read("../launcher/app/src/test/resources/app_access.json").unwrap();
-        assert!(
-            ours == theirs,
-            "testdata/app_access.json differs from the launcher's copy"
-        );
 
         let keys: Vec<serde_json::Value> = GRANT_KEYS
             .iter()

@@ -73,7 +73,7 @@ class PlayBodyTest {
 
     @Test
     fun `design 27's episode art stays off the speaker - a hash is no URL, and nothing serves it on the LAN`() {
-        // The listing's art is a 64-hex hash since design 27 (server/testdata/music_listing.json); the
+        // The listing's art is a 64-hex hash since design 27 (contracts/music/music_listing.json); the
         // server serves it only to the phone's bearer (GET /api/devices/music/covers/{hash}), and the
         // phone's copy is a file - no http URL a speaker can fetch (the merge of design 27, design 26a).
         val hash = "940b951005008e7207e7f8b8807ac39691025858882b8c67843a29b65e388187"

@@ -27,7 +27,7 @@ fake_login_fixtures_match - and the bookshelf is the server's bookshelf.json: on
 logs in, the phone never does (design 58). The login is accepted only for fake_login_request.json's email and
 `pwd` hex (stdlib Python has no AES, so the hex is compared as the fixture spells it; aes_vectors.json pins
 it), answered with fake_login_answers.json's `ok` (or `no_jwt`) body, its jwt the current FAKE-JWT-<n>.
-/fake/jwt answers the server route's bodies from server/testdata/storytel_token_answers.json (the launcher's
+/fake/jwt answers the server route's bodies from contracts/music/storytel_token_answers.json (the launcher's
 and the music app's tests read the same rows): the phone alone on §6i A asks it instead of the launcher. The
 asset call answers asset_302.json's status with a Location shaped like the fixture's (`consumableId` and
 `token` in the query) and asset_locked.json's status for a locked book (both in the music app's resources).
@@ -79,7 +79,7 @@ FIXTURES = os.path.join(HERE, "..", "music", "app", "src", "test", "resources", 
 # The login's and the bookshelf's (design 58 step 1: the server reads them; fake_login_fixtures_match).
 SERVER_FIXTURES = os.path.join(HERE, "..", "server", "testdata", "storytel")
 # The session route's answers (design 58 §8: the server, the launcher and the music app read the same rows).
-TOKEN_ANSWERS = os.path.join(HERE, "..", "server", "testdata", "storytel_token_answers.json")
+TOKEN_ANSWERS = os.path.join(HERE, "..", "contracts", "music", "storytel_token_answers.json")
 T0 = time.monotonic()
 RATE = 22050          # Hz, 16-bit mono: 44 100 bytes a second of silence
 HEADER = 44

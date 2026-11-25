@@ -58,8 +58,9 @@ Kotlin, one Gradle module (`app/`), the launcher's AGP 8.13 / Kotlin 2.1.20, min
 
 From `music/` with JDK 17 and `local.properties` (`sdk.dir=...`):
 `./gradlew assembleDebug assembleRelease testDebugUnitTest -PwarningsAsErrors=true` (CI: `./gradlew build`). The
-shared files in `src/test/resources/` must equal `server/testdata/music_{library,listing,icons}.json` and
-`server/testdata/spotify_hosts.json` (`ContractFilesTest`; `SpotifyHostsTest` checks the constant against it). A release build without the signing properties is unsigned, as the launcher's. Dependencies
+files it shares with the server and the launcher are read in place from `../contracts/music/` (design 133,
+`contracts/README.md`): `music_{library,listing,icons}.json` (`ContractFilesTest`, which also fails on a copy in
+`src/test/resources/`) and `spotify_hosts.json` (`SpotifyHostsTest` checks the constant against it). A release build without the signing properties is unsigned, as the launcher's. Dependencies
 are verified against `gradle/verification-metadata.xml` and the wrapper pins its distribution (security review L9,
 root `CLAUDE.md` "Build and test"; `BuildChainTest`). The canned SOAP replies in `src/test/resources/sonos/`
 (`SonosFixturesTest`) are also what `scripts/fake-sonos.py` answers from (vibb's "two fakes" rule; the fake has no event
@@ -70,7 +71,7 @@ captures real ones with every id, address, name, serial, device, location, queue
 from `become_standalone.xml`): change a fixture
 and run `python3 -I scripts/fake-sonos.py --selftest` (CI does, `music.yml`). On the emulator the app plays on the
 fake speakers (docs/testing/emulator.md §6h; no multicast there, so no SSDP: the debug feed seeds the cache). Likewise
-`src/test/resources/storytel/` (the asset 302 and the locked 403) and `storytel_token_answers.json` (the server's
+`src/test/resources/storytel/` (the asset 302 and the locked 403) and `../contracts/music/storytel_token_answers.json` (the server's
 session route, `/fake/jwt`'s answers) are what `scripts/fake-storytel.py` answers from (`--selftest`, CI too; its login
 and bookshelf are the server's, `server/testdata/storytel/`): its options `--books cid:MB,...`, `--locked`, `--refuse`,
 `--jwt-ttl`, `--off`, `--busy S`, `--jwt-down`, `--revoke-after K`, `--token-ttl`, `--drop-at`, `--slow-mint`,
@@ -165,7 +166,8 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   own Sonos volume sets, design 26a §5.3) are read live from the managed config. The report always carries
   `audio_bytes` (the audio cache: what the limit counts) and `extra_bytes` (the played extras now, from the
   report's own plan, so the job's report says it too). The AIDL is
-  byte-identical with `launcher/` - append, never reorder; shared names are in `bridge_contract.json`.
+  the launcher's own, `../contracts/shipped/bridge-aidl/` (design 133) - append, never reorder; shared names are in
+  `../contracts/music/bridge_contract.json`.
 - The session gives another app's controller (the launcher, the system UI, Bluetooth, any app) the transport only:
   no `COMMAND_SET_MEDIA_ITEM`/`COMMAND_CHANGE_MEDIA_ITEMS`, and `onAddMediaItems`/`onSetMediaItems` refuse every
   package but ours (security review S-L2, `foreignPlayerCommands`, `mayChangeItems`). Only a trusted controller reads

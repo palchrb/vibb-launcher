@@ -149,9 +149,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   shows no end and no bar ("at last report (yesterday 21:40)"); Offline always and Away after 15 min add "at last
   report", never with an end. "· calls off" only with calls managed and screened (`attention::Facts::calls_enforced`).
   In the fallback zone the bar names the phone's day ("42 of 90 min on 13 Oct"). End to end with the launcher's
-  own body (`devices_list::a_launcher_report_with_its_zone_shows_the_rules_end` posts `testdata/time_status_report.json`,
-  the contract the launcher's `TimeStateZoneTest` encodes exactly; the launcher keeps a byte-identical copy, compared
-  on both sides): Phone Setup's zone shows "until 07:00" on the Devices list, the summary and Device › Time; another
+  own body (`devices_list::a_launcher_report_with_its_zone_shows_the_rules_end` posts `contracts/core/time_status_report.json`,
+  the contract the launcher's `TimeStateZoneTest` encodes exactly): Phone Setup's zone shows "until 07:00" on the Devices list, the summary and Device › Time; another
   zone, none, `null`, a non-string or garbage show the rule's name alone (the 64-byte cap is pinned by
   `time_state::tests::the_zone_is_kept_only_as_a_short_non_empty_string`). The emulator's zone (the launcher forces automatic time zone, so the
   network's wins): `adb shell getprop persist.sys.timezone` into Phone Setup (`docs/testing/emulator.md`).
@@ -581,7 +580,7 @@ Tilgang): the "camera" words here are history.
   `?notice=perms`), an allow always. The rows are `device_app_denials` (one per phone, package and key; 0102's camera
   rows copied; at most 200 packages a phone, `?notice=perms_full`; no prune - a removed app keeps its rows), the policy's
   `app_permissions` `[{package_name, camera?, location?, microphone?, contacts?}]` (each `"deny"`; the shared contract
-  `testdata/app_access.json`, `app_permissions::tests::the_contract`). **Låseskjerm** (`#lock-screen`): "Mediespiller", back to `#lock-screen`.
+  `contracts/core/app_access.json`, `app_permissions::tests::the_contract`). **Låseskjerm** (`#lock-screen`): "Mediespiller", back to `#lock-screen`.
   A refusal lands on the page at its group (`?notice=perms|perms_full`, `lock_media|lock_media_full` - its own words,
   `apps.lock_screen.refused`), at the head
   when that group isn't shown; the managed dialer's at its list row as before.

@@ -12,8 +12,8 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** The round "Mobilnett" (design 94, design 95 rev. 3): the shared contract `mobile_network.json` (byte-identical with
- * `server/testdata/`, whose `policy` the server's `tests::mobile_network::the_contract` serves from saved choices),
+/** The round "Mobilnett" (design 94, design 95 rev. 3): the shared contract `mobile_network.json` (in
+ * `contracts/core/`, whose `policy` the server's `tests::mobile_network::the_contract` serves from saved choices),
  * the pure rules and the single owner of always-on. */
 class MobileNetworkTest {
     private val contractText = javaClass.classLoader!!.getResource("mobile_network.json")!!.readText()
@@ -484,13 +484,5 @@ class MobileNetworkTest {
         // Design 116 (QA L1): one retry chain - a lost tunnel's retry reschedules itself only when no switch ran.
         val retry = vpn.substringAfter("private fun retryTunnel() {").substringBefore("\n    }\n")
         assertTrue(retry, "val switched = startVpn()" in retry && "!switched" in retry)
-    }
-
-    @Test
-    fun `the contract is identical to the server's copy`() {
-        // Gradle runs unit tests with the module directory (launcher/app/) as the working directory.
-        val serverCopy = java.io.File("../../server/testdata/mobile_network.json")
-        assertTrue("${serverCopy.absolutePath} not found", serverCopy.isFile)
-        assertEquals("${serverCopy.path} differs from the launcher's copy", serverCopy.readText(), contractText)
     }
 }

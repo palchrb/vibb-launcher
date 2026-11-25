@@ -12,7 +12,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Design 127 §3.3: the shared contract `app_access.json`, byte-identical with the server's `testdata/` copy (the
+ * Design 127 §3.3: the shared contract `app_access.json`, in `contracts/core/` (the
  * server's `app_permissions::tests::the_contract` saves through the page and posts the report): [AccessKey]'s
  * permissions against `keys`, both policies decoded, `report` encoded exactly from the pure report functions, `never`
  * never a target while signed with our own certificate (another signer is denied),
@@ -104,13 +104,5 @@ class AppAccessContractTest {
             assertEquals(pkg, mapOf(Grant(pkg, "android.permission.CAMERA") to GRANT_STATE_DENIED), plan(ours = false).writes)
         }
         assertEquals(contract["never"]!!.jsonArray.map { it.jsonPrimitive.content }.toSet(), ACCESS_NEVER)
-    }
-
-    @Test
-    fun `the copies are identical`() {
-        // Gradle runs unit tests with the module directory (launcher/app/) as the working directory.
-        val serverCopy = java.io.File("../../server/testdata/app_access.json")
-        assertTrue("${serverCopy.absolutePath} not found", serverCopy.isFile)
-        assertEquals("${serverCopy.path} differs from the launcher's copy", serverCopy.readText(), text)
     }
 }

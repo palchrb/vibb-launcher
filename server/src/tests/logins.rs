@@ -1,5 +1,5 @@
 //! Design 102: Wi-Fi sign-in pages and in-app logins without free Chrome - the shared contract
-//! `testdata/login_windows.json`, Device › Sign-in and its saves, Advanced's `#wifi-signin` row, the report and its
+//! `contracts/core/login_windows.json`, Device › Sign-in and its saves, Advanced's `#wifi-signin` row, the report and its
 //! Activity events, and the Wi-Fi sign-in's parent-code entry.
 
 use axum::http::{Method, StatusCode};
@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use super::{TestApp, assert_redirect};
 use crate::logins::{clean_browser, clean_portal, valid_entry};
 
-const CONTRACT: &str = include_str!("../../testdata/login_windows.json");
+const CONTRACT: &str = crate::contracts::contract!("core/login_windows.json");
 
 fn contract() -> Value {
     serde_json::from_str(CONTRACT).unwrap()
@@ -59,7 +59,7 @@ async fn stored(app: &TestApp, id: i64) -> (Option<String>, Option<String>) {
 }
 
 /// Each `policy` row produced from the saves on the page; the reports stored as the contract has them; the `clean`
-/// and `entries` rows; the copies identical.
+/// and `entries` rows.
 #[tokio::test]
 async fn the_contract() {
     let app = TestApp::new().await;
@@ -154,13 +154,6 @@ async fn the_contract() {
             "{row}"
         );
     }
-
-    let launcher = std::fs::read_to_string(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../launcher/app/src/test/resources/login_windows.json"
-    ))
-    .unwrap();
-    assert_eq!(launcher, CONTRACT, "the launcher's copy differs");
 }
 
 /// The page's groups and their anchors; each save lands on its own; the role's switch is disabled while Chrome is

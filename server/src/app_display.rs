@@ -4,7 +4,7 @@
 //! (`device_app_display`, by package name, also for apps that aren't in the catalog) that replaces
 //! the default as a whole. The policy carries the resolved list per phone
 //! (`launcher_ui.app_display`). The icons and colours are `app_icons.rs` (generated from
-//! `testdata/app_icons.json` by `scripts/material-symbols.sh`).
+//! `contracts/core/app_icons.json` by `scripts/material-symbols.sh`).
 
 use serde::Serialize;
 use sqlx::SqlitePool;
@@ -687,9 +687,9 @@ impl AppDisplayForm {
 mod tests {
     use super::*;
 
-    const SHARED: &str = include_str!("../testdata/app_icons.json");
+    const SHARED: &str = crate::contracts::contract!("core/app_icons.json");
 
-    /// QA #4: the runtime table is the shared JSON - and the launcher's copy is identical.
+    /// QA #4: the runtime table is the shared JSON.
     #[test]
     fn the_table_is_the_shared_json() {
         let json: serde_json::Value = serde_json::from_str(SHARED).unwrap();
@@ -715,11 +715,6 @@ mod tests {
             assert_eq!(colors[*key]["seed"], *seed, "{key}");
             assert_eq!(colors[*key]["tile"], *tile, "{key}");
         }
-        let copy_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../launcher/app/src/test/resources/app_icons.json");
-        let copy = std::fs::read_to_string(&copy_path)
-            .unwrap_or_else(|e| panic!("{}: {e}", copy_path.display()));
-        assert_eq!(copy, SHARED, "{} differs", copy_path.display());
     }
 
     /// Every icon has its glyph for the preview, saying where it comes from (QA #5).
@@ -1016,7 +1011,7 @@ mod tests {
     }
 
     /// Every icon of the table has its name in both catalogs: a new one in
-    /// `testdata/app_icons.json` needs its `apps.display.icon.<key>`.
+    /// `contracts/core/app_icons.json` needs its `apps.display.icon.<key>`.
     #[test]
     fn every_icon_is_worded() {
         for (key, _) in ICONS {

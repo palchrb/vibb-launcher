@@ -1,5 +1,5 @@
-//! Design 110's tests: the shared contract (`testdata/map_links/contract.json`, compared with the launcher's copy),
-//! the server's own rows (`testdata/map_links/server.json`) and the flows through the real routes.
+//! Design 110's tests: the shared contract (`contracts/integrations/map_links/contract.json`, which the launcher runs
+//! too), the server's own rows (`testdata/map_links/server.json`) and the flows through the real routes.
 
 use axum::http::{Method, StatusCode};
 use serde_json::{Value, json};
@@ -10,12 +10,14 @@ use crate::integrations::Integration;
 use crate::tests::music::Canned;
 use crate::tests::{TestApp, assert_redirect};
 
-fn read(path: &str) -> Value {
+fn read(path: impl AsRef<std::path::Path>) -> Value {
     serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
 }
 
 fn contract() -> Value {
-    read("testdata/map_links/contract.json")
+    read(crate::contracts::path(
+        "integrations/map_links/contract.json",
+    ))
 }
 
 fn server_rows() -> Value {
@@ -33,17 +35,6 @@ fn without_nulls(value: &Value) -> Value {
         ),
         other => other.clone(),
     }
-}
-
-#[test]
-fn the_contract_is_the_launchers() {
-    let ours = std::fs::read("testdata/map_links/contract.json").unwrap();
-    let theirs =
-        std::fs::read("../launcher/app/src/test/resources/map_links/contract.json").unwrap();
-    assert!(
-        ours == theirs,
-        "testdata/map_links/contract.json differs from the launcher's copy"
-    );
 }
 
 #[test]
@@ -118,11 +109,10 @@ fn every_preview_row_is_judged_as_recorded() {
 }
 
 /// Code QA L6: design 114's rows 15-16 read from a report as the phone reads them (`setup_steps.json`'s `map_readings`,
-/// which the launcher's `SetupStepsTest` runs through `playLinksDone` and `vibbLinksDone`; `setup_status`'s tests
-/// compare the copies).
+/// which the launcher's `SetupStepsTest` runs through `playLinksDone` and `vibbLinksDone`).
 #[test]
 fn the_setup_readings_are_the_phones() {
-    for row in read("testdata/setup_steps.json")["map_readings"]
+    for row in read(crate::contracts::path("core/setup_steps.json"))["map_readings"]
         .as_array()
         .unwrap()
     {

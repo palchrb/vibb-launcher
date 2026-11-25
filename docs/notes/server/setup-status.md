@@ -2,9 +2,8 @@
 
 `docs/design/114-setup-status.md` is the spec; this note says where the server's parts are.
 
-- **One table, one rule** (`src/setup_status.rs`): `STEPS` and `FEATURES` are `testdata/setup_steps.json`'s `steps` and
-  `features` (byte-identical in the launcher's test resources; `setup_status::tests` runs every row and compares the
-  copies). `inputs_of` and `readings_of` map the policy, the latest report and the integrations' part
+- **One table, one rule** (`src/setup_status.rs`): `STEPS` and `FEATURES` are `contracts/core/setup_steps.json`'s `steps` and
+  `features` (the launcher reads it too; `setup_status::tests` runs every row). `inputs_of` and `readings_of` map the policy, the latest report and the integrations' part
   (`Integrations::setup`: design 110's switch as the `map_links` input and rows 15-16's readings from its own report,
   114 §2.6; `setup_steps.json`'s `map_readings` pins those readings against the launcher's) to the rule's inputs and
   readings;

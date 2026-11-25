@@ -1,13 +1,13 @@
 //! Dagen (design 69): the policy's `calendar`, the status report's `calendar` and the shared contract
-//! `testdata/calendar_status_report.json`; the Calendar pages further down.
+//! `contracts/core/calendar_status_report.json`; the Calendar pages further down.
 
 use axum::http::{Method, StatusCode};
 use serde_json::{Value, json};
 
 use super::TestApp;
 
-/// The launcher's body (`CalendarReportTest` encodes exactly this; byte-identical in its test resources).
-const CALENDAR_REPORT: &str = include_str!("../../testdata/calendar_status_report.json");
+/// The launcher's body (`CalendarReportTest` encodes exactly this).
+const CALENDAR_REPORT: &str = crate::contracts::contract!("core/calendar_status_report.json");
 
 /// A rule with this id, in order.
 async fn add_rule(app: &TestApp, device: i64, id: i64, sort: i64, sql_values: &str) {
@@ -92,14 +92,6 @@ async fn a_launcher_report_lists_the_calendars() {
         .unwrap();
     assert!(!kept.readable);
     assert_eq!(kept.rules_skipped, [9]);
-}
-
-#[test]
-fn the_contract_is_identical_to_the_launchers_copy() {
-    let theirs =
-        std::fs::read_to_string("../launcher/app/src/test/resources/calendar_status_report.json")
-            .expect("the launcher's copy");
-    assert_eq!(CALENDAR_REPORT, theirs);
 }
 
 #[tokio::test]

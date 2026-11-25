@@ -4,7 +4,7 @@ import com.kidslauncher.mdm.server.dto.PolicyResponse
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-/** Design 102: the launcher's half of the shared contract `login_windows.json` (byte-identical with `server/testdata/`,
+/** Design 102: the launcher's half of the shared contract `login_windows.json` (in `contracts/core/`,
  * `LoginWindowsTest`): the policy's `captive_portal` (Part A, the Wi-Fi sign-in window) and `login_browser` (Part B,
  * Chrome only for logins), and the add field's entry rule the launcher also applies before Chrome sees a site. */
 

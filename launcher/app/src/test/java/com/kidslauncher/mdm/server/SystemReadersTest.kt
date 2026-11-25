@@ -13,8 +13,8 @@ import org.junit.Test
 import java.io.File
 
 /** Android Auto hidden unless allowed, the other Home apps suspended (never the recents provider), the report of the
- * apps with notification access - and the shared contract `notification_listeners.json` (byte-identical with
- * `server/testdata/`, whose `notification_listeners` tests read the same rows). */
+ * apps with notification access - and the shared contract `notification_listeners.json` (in
+ * `contracts/core/`, whose `notification_listeners` tests read the same rows). */
 class SystemReadersTest {
     private val contractText = javaClass.classLoader!!.getResource("notification_listeners.json")!!.readText()
     private val contract = ServerJson.parseToJsonElement(contractText).jsonObject
@@ -150,12 +150,5 @@ class SystemReadersTest {
             ).jsonObject
             assertEquals(name, contract.getValue(name), body.getValue("notification_listeners"))
         }
-    }
-
-    @Test
-    fun `the two copies of the contract are identical`() {
-        val serverCopy = listOf("../../server/testdata/notification_listeners.json", "../server/testdata/notification_listeners.json")
-            .map(::File).first { it.exists() }
-        assertEquals(serverCopy.readText(), contractText)
     }
 }

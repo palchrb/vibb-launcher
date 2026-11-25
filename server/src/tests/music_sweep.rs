@@ -2441,8 +2441,8 @@ async fn expired_items_are_asked_about_before_they_go() {
 // The listing route and the library (§4)
 // ------------------------------------------------------------------------------------------------
 
-/// `server/testdata/music_listing.json` pins the listing's shape (the music app keeps a
-/// byte-identical copy). `MUSIC_LISTING_SNAPSHOT_WRITE=1` rewrites it.
+/// `contracts/music/music_listing.json` pins the listing's shape (the music app and the launcher
+/// read it too). `MUSIC_LISTING_SNAPSHOT_WRITE=1` rewrites it.
 #[tokio::test]
 async fn music_listing_snapshot() {
     let app = TestApp::new().await;
@@ -2498,14 +2498,14 @@ async fn music_listing_snapshot() {
     let version = listing(&app, id).await.version.unwrap();
     assert_eq!(res.headers[header::ETAG], format!("\"{version}\"").as_str());
     let pretty = pretty_json(&res.text());
-    let path = "testdata/music_listing.json";
+    let path = crate::contracts::path("music/music_listing.json");
     if std::env::var("MUSIC_LISTING_SNAPSHOT_WRITE").is_ok() {
-        std::fs::write(path, &pretty).unwrap();
+        std::fs::write(&path, &pretty).unwrap();
     }
     assert_eq!(
         pretty,
-        std::fs::read_to_string(path).unwrap(),
-        "the listing changed - update both copies together"
+        std::fs::read_to_string(&path).unwrap(),
+        "the listing changed - rewrite it with MUSIC_LISTING_SNAPSHOT_WRITE=1"
     );
     let not_modified = device_get(
         &app,

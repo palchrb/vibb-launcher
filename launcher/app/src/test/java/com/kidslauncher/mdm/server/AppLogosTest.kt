@@ -28,7 +28,7 @@ import org.junit.Test
 import java.security.MessageDigest
 import java.util.Base64
 
-/** Design 87: the apps' real logos, the shared contract `app_logos.json` (byte-identical with `server/testdata/`, which
+/** Design 87: the apps' real logos, the shared contract `app_logos.json` (in `contracts/core/`, which
  * the server's `tests::app_logos::the_contract` posts and uploads); step 2's reading of the answer and the upload plan
  * (R2-L7). The cache's rules are `AppLogosCacheTest`. */
 class AppLogosTest {
@@ -189,13 +189,5 @@ class AppLogosTest {
         }
         val order = anchors.map { body.indexOf(it) }
         assertTrue("$order", order == order.sorted())
-    }
-
-    @Test
-    fun `the contract is identical to the server's copy`() {
-        // Gradle runs unit tests with the module directory (launcher/app/) as the working directory.
-        val serverCopy = java.io.File("../../server/testdata/app_logos.json")
-        assertTrue("${serverCopy.absolutePath} not found", serverCopy.isFile)
-        assertEquals("${serverCopy.path} differs from the launcher's copy", serverCopy.readText(), contractText)
     }
 }

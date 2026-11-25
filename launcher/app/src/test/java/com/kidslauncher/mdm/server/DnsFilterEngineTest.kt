@@ -79,7 +79,8 @@ class DnsFilterEngineTest {
 
     // Design 67 §2.2: the built-in secure-DNS hosts.
 
-    private val dohFile = listOf(File("src/main/assets/$DOH_HOSTS_ASSET"), File("app/src/main/assets/$DOH_HOSTS_ASSET")).first { it.exists() }
+    // The asset lives once in the repo's contracts/shipped/launcher-assets/ (design 133), an assets source directory.
+    private val dohFile = listOf("../..", "..").map { File("$it/contracts/shipped/launcher-assets/$DOH_HOSTS_ASSET") }.first { it.exists() }
     private val doh = parseDohHosts(dohFile.readText())
 
     @Test
@@ -90,10 +91,6 @@ class DnsFilterEngineTest {
         for (name in names) assertTrue(name, Regex("$label(\\.$label)+").matches(name))
         assertEquals("no repeats", names.size, names.toSet().size)
         for (name in names) assertNull("$name is under another entry", classifyDomain(emptyMap(), name, false, doh - name))
-        // The server's copy (its Allowed Domains notice, qa-67-code L1) is byte-identical.
-        val serverCopy = File("../../server/testdata/doh_hosts.txt")
-        assertTrue("${serverCopy.absolutePath} not found", serverCopy.isFile)
-        assertEquals("${serverCopy.path} differs from the asset", dohFile.readText(), serverCopy.readText())
     }
 
     @Test

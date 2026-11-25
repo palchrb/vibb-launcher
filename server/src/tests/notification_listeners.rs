@@ -1,5 +1,5 @@
 //! The apps with notification access and Advanced › Android Auto: the shared contract
-//! `testdata/notification_listeners.json` - the policy rows from the switch's saves, the report stored as the contract
+//! `contracts/core/notification_listeners.json` - the policy rows from the switch's saves, the report stored as the contract
 //! has it - and About This Phone's row (quiet for an app the parent gave, orange for one it didn't).
 
 use axum::http::{Method, StatusCode};
@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 
 use super::TestApp;
 
-const CONTRACT: &str = include_str!("../../testdata/notification_listeners.json");
+const CONTRACT: &str = crate::contracts::contract!("core/notification_listeners.json");
 
 fn contract() -> Value {
     serde_json::from_str(CONTRACT).unwrap()

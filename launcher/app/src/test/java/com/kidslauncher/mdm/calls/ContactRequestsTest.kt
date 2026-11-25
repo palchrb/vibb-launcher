@@ -17,20 +17,12 @@ import java.io.File
 
 /**
  * The kid's contact request (design 77 §14): the body and the answers of the shared `contact_request.json`
- * (byte-identical with `server/testdata/`, whose `tests::contact_requests::the_contract_answers` posts and produces
+ * (in `contracts/core/`, whose `tests::contact_requests::the_contract_answers` posts and produces
  * them), the form's check on the shared vectors, what the policy's rows do, and the rows the phone book shows.
  */
 class ContactRequestsTest {
     private val contract = javaClass.classLoader!!.getResource("contact_request.json")!!.readText()
     private val json = Json.parseToJsonElement(contract).jsonObject
-
-    @Test
-    fun `the contract is identical to the servers copy`() {
-        // Gradle runs unit tests with the module directory (launcher/app/) as the working directory.
-        val serverCopy = File("../../server/testdata/contact_request.json")
-        assertTrue("${serverCopy.absolutePath} not found", serverCopy.isFile)
-        assertEquals("${serverCopy.path} differs from the launcher's copy", serverCopy.readText(), contract)
-    }
 
     @Test
     fun `the phone encodes exactly the contracts requests`() {

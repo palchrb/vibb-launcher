@@ -16,7 +16,7 @@ import java.io.File
 
 /**
  * Why an install failed (upstream review 2026-11-20): the contract `install_failure.json`
- * (byte-identical with `server/testdata/`, which the server's `install_failure::tests` and
+ * (in `contracts/core/`, which the server's `install_failure::tests` and
  * `tests::tracked_apps::an_install_failures_reason_is_stored_and_worded` read) - the report's exact
  * body, the launcher's own kinds and every Android result read to its code.
  */
@@ -47,13 +47,5 @@ class InstallFailureTest {
         }
         // A code longer than the server keeps is none.
         assertNull(installFailureReason(1, "INSTALL_FAILED_" + "X".repeat(INSTALL_FAILURE_MAX_CODE)))
-    }
-
-    @Test
-    fun `the contract is identical to the servers copy`() {
-        // Gradle runs unit tests with the module directory (launcher/app/) as the working directory.
-        val serverCopy = File("../../server/testdata/install_failure.json")
-        assertTrue("${serverCopy.absolutePath} not found", serverCopy.isFile)
-        assertEquals("${serverCopy.path} differs from the launcher's copy", serverCopy.readText(), text)
     }
 }

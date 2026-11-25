@@ -6,7 +6,7 @@ import kotlinx.serialization.Serializable
 /*
  * The system apps outside the controllable set that the plan restricts while apps are managed, and the report of the
  * apps with notification access. Pure, no Android imports - SystemReadersTest and the shared contract
- * `notification_listeners.json` (byte-identical with `server/testdata/`).
+ * `notification_listeners.json` (in `contracts/core/`).
  *
  * - Android Auto ([ANDROID_AUTO]) is hidden unless the parent allows it (the policy's `allow_android_auto`, Advanced ›
  *   Android Auto on the server). It has no launcher icon on current Android, so the allowlist never reached it.

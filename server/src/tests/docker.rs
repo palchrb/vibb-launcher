@@ -58,6 +58,12 @@ async fn old_database(dir: &Path, version: i64) -> (String, PathBuf) {
         .execute(&db)
         .await
         .unwrap();
+    // The zip copies the main file only: fold the -wal in first (sqlx 0.8 closes pooled connections concurrently, so
+    // a close alone may leave the rows above in the -wal).
+    sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+        .execute(&db)
+        .await
+        .unwrap();
     db.close().await;
     (url, path)
 }

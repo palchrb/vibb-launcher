@@ -900,7 +900,8 @@ mod tests {
     #[test]
     fn the_first_enrol_attempt_code_is_the_contracts() {
         let contract: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string("testdata/launcher_tag_codes.json").unwrap(),
+            &std::fs::read_to_string(crate::contracts::path("core/launcher_tag_codes.json"))
+                .unwrap(),
         )
         .unwrap();
         let tag = contract["enrol_attempt_first"].as_str().unwrap();

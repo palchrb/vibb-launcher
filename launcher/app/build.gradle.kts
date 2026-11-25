@@ -85,6 +85,9 @@ val versionCodeOverride = providers.gradleProperty("versionCode").orNull?.let {
 }
 val versionNameOverride = providers.gradleProperty("versionName").orNull
 
+// Design 133: the repo's one contracts/ folder (read below as source directories, never copied).
+val contracts = rootProject.layout.projectDirectory.dir("../contracts")
+
 android {
     namespace = "com.kidslauncher.mdm"
     compileSdk = 36
@@ -148,6 +151,15 @@ android {
         sourceSets.getByName("debug").java.srcDir("src/tsnetStub/java")
     }
 
+    // Design 133: the files the server, the launcher and the music app share live once in the repo's contracts/
+    // folder (contracts/README.md). The test roots are test resources by their bare names; shipped/ holds what a
+    // release build compiles in (the bridge's AIDL, the built-in secure-DNS hosts asset).
+    sourceSets {
+        getByName("test").resources.srcDirs(contracts.dir("core"), contracts.dir("integrations"), contracts.dir("music"))
+        getByName("main").aidl.srcDir(contracts.dir("shipped/bridge-aidl"))
+        getByName("main").assets.srcDir(contracts.dir("shipped/launcher-assets"))
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -196,7 +208,9 @@ android {
  * scans a variant's merged manifest and its APKs' dex for the hooks' names: a release build fails if
  * any is there
  * ([expectPresent] false, a dependency of assembleRelease), and the debug build checks they are all
- * there (a positive control: the scan really finds them).
+ * there (a positive control: the scan really finds them). Every APK must also hold [requiredEntries] (design 133: the
+ * built-in secure-DNS hosts come from contracts/shipped/, so a wrong assets source directory fails the build instead of
+ * shipping a launcher without them).
  */
 abstract class CheckDebugHook : DefaultTask() {
     @get:InputFile
@@ -211,6 +225,9 @@ abstract class CheckDebugHook : DefaultTask() {
     @get:Input
     abstract val expectPresent: Property<Boolean>
 
+    @get:Input
+    abstract val requiredEntries: ListProperty<String>
+
     @TaskAction
     fun check() {
         val found = mutableSetOf<String>()
@@ -220,6 +237,8 @@ abstract class CheckDebugHook : DefaultTask() {
         if (apks.isEmpty()) throw GradleException("No APK in ${apkDir.get().asFile}")
         for (apk in apks) {
             ZipFile(apk).use { zip ->
+                val absent = requiredEntries.get().filter { zip.getEntry(it) == null }
+                if (absent.isNotEmpty()) throw GradleException("${apk.name} lacks $absent (contracts/shipped/, design 133)")
                 for (entry in zip.entries().asSequence().filter { it.name.endsWith(".dex") }) {
                     // Dex strings (class descriptors, Kotlin metadata, literals) are MUTF-8: ASCII names match as bytes.
                     val dex = String(zip.getInputStream(entry).readBytes(), Charsets.ISO_8859_1)
@@ -315,6 +334,7 @@ androidComponents {
             apkDir.set(variant.artifacts.get(SingleArtifact.APK))
             names.set(listOf("LockTaskOverride", "lock_task_debug_override", "PinVaultKeyReceiver", "HeadsetDebugReceiver", "MmsDebugReceiver", "ElementCallDebugReceiver", "UpDebugReceiver", "BtPairingDebugReceiver", "PlacesDebugReceiver", "push_hex"))
             expectPresent.set(!release)
+            requiredEntries.set(listOf("assets/dns/doh_hosts.txt"))
         }
         tasks.matching { it.name == "assemble$cap" }.configureEach { dependsOn(check) }
     }
@@ -325,6 +345,9 @@ androidComponents {
 tasks.withType<Test>().configureEach {
     inputs.dir("src/release").withPathSensitivity(PathSensitivity.RELATIVE)
     inputs.dir("src/debug").withPathSensitivity(PathSensitivity.RELATIVE)
+    // Design 133: DnsFilterEngineTest reads the built-in secure-DNS hosts asset by path, MusicPlanTest the bridge's AIDL.
+    inputs.dir(contracts.dir("shipped/launcher-assets")).withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.dir(contracts.dir("shipped/bridge-aidl")).withPathSensitivity(PathSensitivity.RELATIVE)
 }
 
 dependencies {

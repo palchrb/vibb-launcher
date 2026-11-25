@@ -1036,7 +1036,7 @@ pub async fn links(db: &SqlitePool, device_id: i64) -> Result<Vec<LinkRow>, sqlx
     .await
 }
 
-/// The contract's link (`testdata/calendar_feeds.json`, its feed `testdata/calendar_feeds/contract.ics`).
+/// The contract's link (`contracts/core/calendar_feeds.json`, its feed `testdata/calendar_feeds/contract.ics`).
 #[cfg(test)]
 pub const CONTRACT_URL: &str = "https://skole.example.no/kalender/5b.ics?token=FAKE-TOKEN";
 
@@ -1115,9 +1115,9 @@ mod tests {
     /// exactly `provider`. `CALENDAR_FEEDS_CONTRACT_WRITE=1` rewrites `feed`, `keys` and the uids and revs.
     #[test]
     fn the_contract() {
-        let path = "testdata/calendar_feeds.json";
+        let path = crate::contracts::path("core/calendar_feeds.json");
         let mut contract: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         let uid = uid_of(&normalize(CONTRACT_URL).unwrap());
         let body = std::fs::read("testdata/calendar_feeds/contract.ics").unwrap();
         let parsed = ics::parse(&body, None, contract_today()).unwrap();
@@ -1133,11 +1133,11 @@ mod tests {
             contract["report"]["feeds"][0]["id"] = uid.clone().into();
             contract["report"]["feeds"][0]["applied_rev"] = rev.clone().into();
             let pretty = serde_json::to_string_pretty(&contract).unwrap() + "\n";
-            std::fs::write(path, pretty).unwrap();
+            std::fs::write(&path, pretty).unwrap();
         }
         assert_eq!(
             contract["feed"], feed,
-            "the feed changed - update both copies together"
+            "the feed changed - rewrite the contract"
         );
         assert_eq!(contract["keys"], keys);
         assert_eq!(contract["policy"]["feeds"][0]["id"], uid.as_str());
@@ -1152,15 +1152,6 @@ mod tests {
             .find(|e| e["uid"] == "contract-weekly")
             .unwrap()["overrides"][0];
         assert_eq!(weekly["start"], "20261116T101500");
-    }
-
-    #[test]
-    fn the_contract_is_identical_to_the_launchers_copy() {
-        let ours = std::fs::read_to_string("testdata/calendar_feeds.json").unwrap();
-        let theirs =
-            std::fs::read_to_string("../launcher/app/src/test/resources/calendar_feeds.json")
-                .expect("the launcher's copy");
-        assert_eq!(ours, theirs);
     }
 
     #[test]

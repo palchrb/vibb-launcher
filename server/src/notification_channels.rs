@@ -1,6 +1,6 @@
 //! Design 107: the Vibb One notification channels the phone has turned off. The report's `notification_channels`
 //! cleaned ([clean]) and the channels' table ([CHANNELS]). The shared contract is
-//! `testdata/notification_channels.json` (byte-identical in the launcher's test resources): `channels`
+//! `contracts/core/notification_channels.json`, which the launcher reads too: `channels`
 //! (this table), `report`/`report_none`/`report_all_off`, the launcher's `read` rows, the `clean` rows and the `pages`
 //! rows (About's value and colour, the Attention title).
 //!
@@ -434,7 +434,7 @@ pub fn attention_title(lang: Lang, attention: &Attention) -> String {
 mod tests {
     use super::*;
 
-    const CONTRACT: &str = include_str!("../testdata/notification_channels.json");
+    const CONTRACT: &str = crate::contracts::contract!("core/notification_channels.json");
 
     fn contract() -> Value {
         serde_json::from_str(CONTRACT).unwrap()

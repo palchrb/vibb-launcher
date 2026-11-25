@@ -917,9 +917,9 @@ mod tests {
     /// `LOCK_NOW_CONTRACT_WRITE=1` rewrites them.
     #[tokio::test]
     async fn the_contract() {
-        let path = "testdata/lock_now.json";
+        let path = crate::contracts::path("core/lock_now.json");
         let mut contract: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         let dir = tempfile::tempdir().unwrap();
         let db =
             crate::connect_db(&format!("sqlite://{}", dir.path().join("t.db").display())).await;
@@ -985,7 +985,7 @@ mod tests {
             contract["policy"] = policy.clone();
             contract["policy_end_locked"] = end_locked.clone();
             std::fs::write(
-                path,
+                &path,
                 serde_json::to_string_pretty(&contract).unwrap() + "\n",
             )
             .unwrap();
@@ -995,13 +995,12 @@ mod tests {
             contract["policy_on_demand"] = on_demand.clone();
             contract["policy_off_rule"] = off_rule.clone();
             std::fs::write(
-                path,
+                &path,
                 serde_json::to_string_pretty(&contract).unwrap() + "\n",
             )
             .unwrap();
         }
-        let changed =
-            "the served policy changed - LOCK_NOW_CONTRACT_WRITE=1, then copy it to the launcher";
+        let changed = "the served policy changed - rewrite it with LOCK_NOW_CONTRACT_WRITE=1";
         assert_eq!(contract["policy"], policy, "{changed}");
         assert_eq!(contract["policy_end_locked"], end_locked, "{changed}");
         assert_eq!(contract["policy_on_demand"], on_demand, "{changed}");
@@ -1084,13 +1083,5 @@ mod tests {
         lock(3, 4, "Lekser").execute(&db).await.unwrap();
         let off_rule = served(served_rule_rows(&db, device, now).await.unwrap());
         (on_demand, off_rule)
-    }
-
-    #[test]
-    fn the_contract_is_identical_to_the_launchers_copy() {
-        let ours = std::fs::read_to_string("testdata/lock_now.json").unwrap();
-        let theirs = std::fs::read_to_string("../launcher/app/src/test/resources/lock_now.json")
-            .expect("the launcher's copy");
-        assert_eq!(ours, theirs);
     }
 }

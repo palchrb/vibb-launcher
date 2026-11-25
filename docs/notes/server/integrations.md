@@ -28,9 +28,8 @@ server does with an outside service for the phones - lives inside one boundary f
   client, gate, cache and limits. The tests build it with `Integrations::with_source(fetch)` (the canned fetch).
 - **Tables**: its own migration and its own table names (`map_link_devices`, `map_link_lookups`; migration 0159). No
   column on a core table.
-- **Contract**: its own folder, `server/testdata/<name>/` - `contract.json` byte-identical in
-  `launcher/app/src/test/resources/<name>/`, `server.json` the server's alone. Both CI workflows' path filters name the
-  folder.
+- **Contract**: `contracts/integrations/<name>/contract.json`, kept once and read by both sides (design 133); the
+  server's own rows in `server/testdata/<name>/server.json`. Both CI workflows' path filters take `contracts/`.
 - **Words**: its keys in the catalogs under its own namespace (`map_links.*`), its template in
   `templates/partials/<name>_group.html` (in `i18n::tests::MOVED`); `i18n`'s key scans read `src/integrations/` and
   each integration's folder (add a new one's folder there).
@@ -58,7 +57,7 @@ server does with an outside service for the phones - lives inside one boundary f
 ## The Apple Wi-Fi lookup (design 125 step 2)
 
 The second integration: `src/integrations/wifi_lookup/`, the feature `wifi_lookup`, migration 0163
-(`wifi_lookup_devices`, `wifi_lookup_aps`), the contract folder `testdata/wifi_lookup/` (`server.json` written by
+(`wifi_lookup_devices`, `wifi_lookup_aps`), the contract `contracts/integrations/wifi_lookup/contract.json` and its own rows in `testdata/wifi_lookup/` (`server.json` written by
 `scripts/wifi-lookup-fixtures.py`). It added two hooks to the trait, both with do-nothing defaults:
 `location_group()` (its group on the phone's Location page, `handlers::locate::show_location_settings` prints
 `integration_groups` after the location settings) and `prune()` (`Prune::Sweep` from `retention::run_pruning`,

@@ -3,7 +3,7 @@
 //! (or `INSTALL_PARSE_FAILED_*`) name, the first such upper-case token anywhere in its status message, else the `STATUS_FAILURE_*` name of
 //! the session's status, else one of the launcher's own [KINDS] - never Android's free text (paths, package names).
 //! Kept only in that form ([clean]); Device › Apps words it ([words]). The contract is
-//! `testdata/install_failure.json`, byte-identical in the launcher's test resources (`InstallFailureTest`).
+//! `contracts/core/install_failure.json`, which the launcher's `InstallFailureTest` reads too.
 
 use crate::i18n::{Lang, t};
 
@@ -80,8 +80,10 @@ mod tests {
     use super::*;
 
     fn contract() -> serde_json::Value {
-        serde_json::from_str(&std::fs::read_to_string("testdata/install_failure.json").unwrap())
-            .unwrap()
+        serde_json::from_str(
+            &std::fs::read_to_string(crate::contracts::path("core/install_failure.json")).unwrap(),
+        )
+        .unwrap()
     }
 
     #[test]
@@ -131,15 +133,6 @@ mod tests {
         assert_eq!(
             words(Lang::En, "INSTALL_FAILED_OLDER_SDK"),
             "Needs a newer Android"
-        );
-    }
-
-    #[test]
-    fn the_contract_is_identical_to_the_launchers_copy() {
-        assert_eq!(
-            std::fs::read_to_string("testdata/install_failure.json").unwrap(),
-            std::fs::read_to_string("../launcher/app/src/test/resources/install_failure.json")
-                .unwrap()
         );
     }
 }

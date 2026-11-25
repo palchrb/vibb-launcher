@@ -7,8 +7,8 @@
 //!
 //! The title rules are one grammar on both sides (§3.4): [clean] (control and bidi characters out, whitespace runs
 //! one space, NFC), matching that ignores case per code point and whitespace, and the three actions. The launcher's
-//! `day/TitleRules.kt` is the same code; `testdata/calendar_title_rules.json` (byte-identical in the launcher's test
-//! resources) pins both. The PWA's preview runs this one on titles the parent pastes.
+//! `day/TitleRules.kt` is the same code; `contracts/core/calendar_title_rules.json`, which both read,
+//! pins both. The PWA's preview runs this one on titles the parent pastes.
 
 use std::collections::HashSet;
 
@@ -823,7 +823,9 @@ mod tests {
     /// on the phone.
     #[test]
     fn the_title_rules_vectors() {
-        let text = std::fs::read_to_string("testdata/calendar_title_rules.json").unwrap();
+        let text =
+            std::fs::read_to_string(crate::contracts::path("core/calendar_title_rules.json"))
+                .unwrap();
         let vectors: Vectors = serde_json::from_str(&text).unwrap();
         assert!(vectors.titles.len() >= 20);
         for (i, v) in vectors.titles.iter().enumerate() {
@@ -861,21 +863,6 @@ mod tests {
             local_calendar_key(crate::calendar_feeds::ACCOUNT, "vibb-feed-x"),
             "one key rule with the links'"
         );
-    }
-
-    #[test]
-    fn the_vectors_are_identical_to_the_launchers_copy() {
-        let ours = std::fs::read_to_string("testdata/calendar_title_rules.json").unwrap();
-        let theirs =
-            std::fs::read_to_string("../launcher/app/src/test/resources/calendar_title_rules.json")
-                .unwrap();
-        assert_eq!(ours, theirs);
-        let ours = std::fs::read_to_string("testdata/calendar_status_report.json").unwrap();
-        let theirs = std::fs::read_to_string(
-            "../launcher/app/src/test/resources/calendar_status_report.json",
-        )
-        .unwrap();
-        assert_eq!(ours, theirs);
     }
 
     /// Design 72 QA L1: the report's link rows - a valid uid once, the counts within 0..=2000, at most ten.

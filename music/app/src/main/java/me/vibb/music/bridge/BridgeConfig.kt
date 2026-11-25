@@ -18,7 +18,7 @@ const val BRIDGE_SERVICE = "com.kidslauncher.mdm.music.MusicBridgeService"
 /** The launcher's nudge: carries nothing, only starts the sync. */
 const val ACTION_BRIDGE_CHANGED = "me.vibb.music.action.BRIDGE_CHANGED"
 
-/** `reportState`'s Bundle keys (bridge_contract.json, compared with the launcher's). */
+/** `reportState`'s Bundle keys (contracts/music/bridge_contract.json, which the launcher reads too). */
 const val REPORT_KEY = "report"
 const val HELD_FILES_KEY = "held_files"
 const val HELD_SHA256_KEY = "held_sha256"

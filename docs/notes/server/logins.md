@@ -57,7 +57,7 @@ The launcher's side is `docs/notes/launcher/logins.md`.
 - **The setup step `vibb_browser`** (design 119 §4.1, `setup_status`): `when: link_gate` (the latest report's
   `login_browser.browser_role` isn't null), read from `browser_role`; its feature `login_browser` warns at
   `/devices/{id}/logins#logins-apps` while the role is on.
-- **The contract**: `testdata/login_windows.json` (root `CLAUDE.md`; its `now_ms` is the clean rows' arrival); `tests::logins` (the policy rows from the page's
+- **The contract**: `contracts/core/login_windows.json` (root `CLAUDE.md`; its `now_ms` is the clean rows' arrival); `tests::logins` (the policy rows from the page's
   saves, the reports - the stopped hosts' instants moved to the last minutes -, `clean`, `entries`, the pages and their
   anchors, the Apps page's line, the events, the PIN entry, `the_stopped_hosts_and_the_browser_role`);
   `policy_json_keys_snapshot` pins `captive_portal` (non-null) and `login_browser` (nullable).

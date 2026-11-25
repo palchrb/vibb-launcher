@@ -613,11 +613,11 @@ pub struct DeviceStatus {
 }
 
 /// The launcher's longest "pause all restrictions" (`RESTRICTIONS_PAUSE_DURATION_MS`, 2 hours from the PIN or the
-/// parent's Unlock; a reboot ends it sooner) - both pinned by `testdata/restrictions_pause.json`.
+/// parent's Unlock; a reboot ends it sooner) - both pinned by `contracts/core/restrictions_pause.json`.
 pub const RESTRICTIONS_PAUSE_MAX_MS: i64 = 2 * 60 * 60 * 1000;
 
 /// Design 114 §3.2: the setup hold's ceiling (`SETUP_HOLD_DURATION_MS` on the phone, 4 hours from a fresh enrolment;
-/// "Ferdig", the PWA's Lock Again and a restart end it sooner) - pinned by `testdata/restrictions_pause.json`'s
+/// "Ferdig", the PWA's Lock Again and a restart end it sooner) - pinned by `contracts/core/restrictions_pause.json`'s
 /// `setup_hold_max_ms`.
 pub const SETUP_HOLD_MAX_MS: i64 = 4 * 60 * 60 * 1000;
 
@@ -709,15 +709,11 @@ mod paused_at_tests {
 
     #[test]
     fn the_longest_pause_is_the_shared_contracts() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let ours = std::fs::read_to_string(dir.join("testdata/restrictions_pause.json")).unwrap();
-        let contract: serde_json::Value = serde_json::from_str(&ours).unwrap();
+        let contract: serde_json::Value =
+            serde_json::from_str(crate::contracts::contract!("core/restrictions_pause.json"))
+                .unwrap();
         assert_eq!(contract["pause_max_ms"], RESTRICTIONS_PAUSE_MAX_MS);
         assert_eq!(contract["setup_hold_max_ms"], SETUP_HOLD_MAX_MS);
-        let launcher = dir.join("../launcher/app/src/test/resources/restrictions_pause.json");
-        let theirs = std::fs::read_to_string(&launcher)
-            .unwrap_or_else(|e| panic!("{}: {e}", launcher.display()));
-        assert_eq!(ours, theirs, "testdata/restrictions_pause.json differs");
     }
 }
 
@@ -1226,7 +1222,7 @@ pub fn command_label(command: &str) -> &'static str {
         "install_update" => "locate.command.install_update",
         // Design 59: the Child PIN for Android's lock (its answers: `kid_lock::PinAnswer`).
         "set_kid_pin" => "locate.command.set_kid_pin",
-        // Security review S-L10: Advanced › Connection's "Leave Tailnet" (`testdata/leave_tailnet.json`).
+        // Security review S-L10: Advanced › Connection's "Leave Tailnet" (`contracts/core/leave_tailnet.json`).
         "leave_tailnet" => "locate.command.leave_tailnet",
         _ => "locate.command.unknown",
     }
@@ -1718,7 +1714,7 @@ pub struct StatusReportRequest {
     /// read it.
     #[serde(default)]
     pub write_settings_granted: Option<bool>,
-    /// Security review S-L10's fix round: the phone has been on the tailnet (`testdata/leave_tailnet.json`'s
+    /// Security review S-L10's fix round: the phone has been on the tailnet (`contracts/core/leave_tailnet.json`'s
     /// `report`).
     #[serde(default)]
     pub tailnet_joined: Option<bool>,
@@ -1766,7 +1762,7 @@ pub struct StatusReportRequest {
     /// reach}`), raw - the integration cleans it (`integrations::map_links::clean`). A full-report field.
     #[serde(default)]
     pub map_links: Option<serde_json::Value>,
-    /// Design 76: the launcher's certificate check (`testdata/server_tls_report.json`'s `report`), raw - read
+    /// Design 76: the launcher's certificate check (`contracts/core/server_tls_report.json`'s `report`), raw - read
     /// within limits by `server_tls::sanitize`, so nothing in it can fail the report.
     #[serde(default)]
     pub server_tls: Option<serde_json::Value>,
@@ -1853,8 +1849,8 @@ fn lenient_battery<'de, D: serde::Deserializer<'de>>(
 /// `POST /api/devices/power` (design 38 §2): the phone's last shutdown and this boot's start, each
 /// optional (the handler wants at least one). Instants, a battery, flags - no address, no text but
 /// the shutdown reason, which only names a known word ([crate::parent_events::OffReason]) and is
-/// never shown or stored. Pinned by `testdata/power_report.json` (the launcher's copy is
-/// byte-identical).
+/// never shown or stored. Pinned by `contracts/core/power_report.json`, which the launcher
+/// encodes too.
 #[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct PowerReport {
     #[serde(default)]

@@ -20,7 +20,7 @@ import org.junit.Test
 import java.io.File
 
 /**
- * The phone's clock in the status report (shared contract `clock_skew.json`, byte-identical with `server/testdata/`,
+ * The phone's clock in the status report (shared contract `clock_skew.json`, in `contracts/core/`,
  * whose `tests::clock_skew` runs the server's rows): the reported offset's steps and hysteresis, and a fix's age from
  * elapsed realtime - the server stamps the fix at receipt minus it.
  */
@@ -53,12 +53,5 @@ class ClockSkewContractTest {
         assertTrue(encoded, encoded.contains("\"age_ms\":90000"))
         val lost = ServerJson.encodeToString(LocationReport.serializer(), fix.toReport(1_090_000L, 43))
         assertFalse(lost, lost.contains("age_ms"))
-    }
-
-    @Test
-    fun `the contract is identical to the servers copy`() {
-        val serverCopy = File("../../server/testdata/clock_skew.json")
-        assertTrue("${serverCopy.absolutePath} not found", serverCopy.isFile)
-        assertEquals("${serverCopy.path} differs from the launcher's copy", serverCopy.readText(), text)
     }
 }

@@ -27,6 +27,9 @@ val versionCodeOverride = providers.gradleProperty("versionCode").orNull?.let {
 }
 val versionNameOverride = providers.gradleProperty("versionName").orNull
 
+// Design 133: the repo's one contracts/ folder (read below as source directories, never copied).
+val contracts = rootProject.layout.projectDirectory.dir("../contracts")
+
 android {
     namespace = "me.vibb.music"
     compileSdk = 36
@@ -106,6 +109,18 @@ android {
         // in JVM tests). No other test touches Android.
         unitTests.isReturnDefaultValues = true
     }
+
+    // Design 133: what the music app shares with the server and the launcher lives once in the repo's contracts/
+    // folder (contracts/README.md): music/ as test resources by their bare names, the bridge's AIDL as main source.
+    sourceSets {
+        getByName("test").resources.srcDir(contracts.dir("music"))
+        getByName("main").aidl.srcDir(contracts.dir("shipped/bridge-aidl"))
+    }
+}
+
+// Design 133: EpisodeArtTest and SourceScanTest read the bridge's AIDL by path - an input of every unit test task.
+tasks.withType<Test>().configureEach {
+    inputs.dir(contracts.dir("shipped/bridge-aidl")).withPathSensitivity(PathSensitivity.RELATIVE)
 }
 
 kotlin {

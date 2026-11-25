@@ -108,7 +108,7 @@ waits for a device capture of the Play Protect / account-security channel ids.
   `Enrollment.enroll(..., connectTailnet = false)` doesn't try again, so the provisioning receiver's `goAsync` holds one
   connect, not two (code QA L2).
 - **S-L10, Leave Tailnet** (command `leave_tailnet`, Advanced › Connection on the server, behind a ticked box;
-  contract `server/testdata/leave_tailnet.json`): `TsnetClient.leave` closes tsnet, removes `tsnet_node_joined`, any
+  contract `contracts/core/leave_tailnet.json`): `TsnetClient.leave` closes tsnet, removes `tsnet_node_joined`, any
   stored auth key and the crash guard's marks in one `commit()`, then deletes `files/tailscale` and drops the global
   `Authenticator`. Answers "left the tailnet" / "not on the tailnet" (nothing was there) / "failed to leave the
   tailnet" / "server is reached only over the tailnet" (QA M2: refused, nothing changed, while the server URL's host
@@ -133,8 +133,7 @@ waits for a device capture of the Play Protect / account-security channel ids.
   looked up, so a `*.ts.net` name must be https. The grammar is narrower than a URL (after trimming ASCII whitespace:
   `scheme://host[:port][/path]`, path `A-Z a-z 0-9 . _ ~ / -`; a strict dotted quad, a bracketed IPv6 of hex groups,
   or a DNS name whose last label isn't a number), so no userinfo, query, fragment, `%` or `\` can make OkHttp see
-  another host than the rule did. `server/testdata/server_url_vectors.json`, byte-identical in
-  `launcher/app/src/test/resources/`, is every row both sides run (`ServerTransportTest`, `config::tests::the_server_url_vectors`).
+  another host than the rule did. `contracts/core/server_url_vectors.json` is every row both sides run (`ServerTransportTest`, `config::tests::the_server_url_vectors`).
 - **The paths** (`server/ServerTransport.kt`, `serverPath` pure, `serverPathNow` with `TsnetClient.proxy()` and
   `BuildConfig.DEBUG`): `createMdmApi`, the SSE client (`CommandListenerService.buildClient`) and `createMusicServer`
   call `OkHttpClient.Builder().toServer(path)` before anything else. `Direct` = https, through tsnet's proxy while it

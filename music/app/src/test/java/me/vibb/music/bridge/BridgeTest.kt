@@ -14,33 +14,12 @@ import kotlinx.serialization.json.jsonObject
 import java.io.File
 
 /**
- * The music app's side of the bridge (design 21 §2): the AIDL byte-identical with the launcher's,
- * the managed config, the signer check, the listings it asks for, and the Storytel login sealed at
+ * The music app's side of the bridge (design 21 §2; its AIDL is the repo's contracts/shipped/bridge-aidl/, whose method
+ * order the launcher's MusicPlanTest pins): the managed config, the signer check, the listings it asks for, and the Storytel login sealed at
  * rest.
  */
 class BridgeTest {
     private fun repo(path: String) = listOf(File("../../$path"), File("../$path")).first { it.exists() }
-
-    @Test
-    fun `the bridge's AIDL is byte-identical in both apps`() {
-        for (name in listOf("IMusicBridge.aidl", "ISpotifyTokenCallback.aidl", "IStorytelTokenCallback.aidl")) {
-            val ours = moduleFile("src/main/aidl/me/vibb/bridge/$name")
-            val theirs = repo("launcher/app/src/main/aidl/me/vibb/bridge/$name")
-            assertEquals("$name differs from launcher/'s copy", theirs.readText(), ours.readText())
-        }
-        // Appended, never reordered (the transaction codes an installed launcher or app uses follow the
-        // order; qa-26c-step3-code L2): the whole sequence, a new method added at the end.
-        val aidl = moduleFile("src/main/aidl/me/vibb/bridge/IMusicBridge.aidl").readText()
-        val methods = Regex("^\\s+(?:oneway )?[\\w\\[\\]]+ (\\w+)\\(", RegexOption.MULTILINE).findAll(aidl).map { it.groupValues[1] }.toList()
-        assertEquals(
-            listOf(
-                "version", "openLibrary", "openCover", "openFile", "releaseFile", "reserved", "reportState",
-                "setNowPlaying", "setForeground", "listingVersion", "openListing", "wantArt", "getSpotifyToken",
-                "getStorytelToken",
-            ),
-            methods,
-        )
-    }
 
     @Test
     fun `the Storytel session's statuses and wait are the shared contract's (design 58 §3)`() {
@@ -171,7 +150,6 @@ class BridgeTest {
 
     @Test
     fun `the bridge's names match the shared contract`() {
-        assertEquals("the launcher's copy", repo("launcher/app/src/test/resources/bridge_contract.json").readText(), me.vibb.music.Fixtures.resource("bridge_contract.json"))
         assertEquals((contract["bridge_service"] as JsonPrimitive).content, BRIDGE_SERVICE)
         assertEquals((contract["action_bridge_changed"] as JsonPrimitive).content, ACTION_BRIDGE_CHANGED)
         assertEquals(strings("launcher_packages"), LAUNCHER_PACKAGES)
@@ -240,7 +218,7 @@ class BridgeTest {
 
     @Test
     fun `the report's keys are the shared music_state fixture's, less the launcher's own`() {
-        val fixture = me.vibb.music.model.JSON.parseToJsonElement(repo("server/testdata/music_state.json").readText()).jsonObject
+        val fixture = me.vibb.music.model.JSON.parseToJsonElement(me.vibb.music.Fixtures.resource("music_state.json")).jsonObject
         val report = me.vibb.music.logic.stateReport(1, "0123456789abcdef", 0, 0, 0, emptyList(), emptyList(), emptyList(), "ok")
         assertEquals(fixture.keys - setOf("package", "bridge"), report.keys)
     }

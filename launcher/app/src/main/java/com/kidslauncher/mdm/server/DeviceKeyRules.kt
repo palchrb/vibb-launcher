@@ -8,7 +8,7 @@ import java.util.Base64
  * Design 129 (the hardware-bound phone key), the launcher's pure rules: the signed request's canonical form (§4.2),
  * the proofs and the enrolment's challenge (§5.1, §5.2), the signature clock's offset (§4.3), what each `Vibb-Auth`
  * answer makes the phone do (§4.4), and the registration flow's one decision (§5.2, `keyStep`). All of them are rows
- * of the shared contract `server/testdata/device_key.json` (`DeviceKeyContractTest`).
+ * of the shared contract `contracts/core/device_key.json` (`DeviceKeyContractTest`).
  */
 
 /** The headers (§4.2, §4.4). */

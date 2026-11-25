@@ -106,12 +106,12 @@ selftest() {
     check server-v1.0.0 -
     check music-1.0.0 -
     check "" -
-    # The tags in the shared contract (server/testdata/launcher_tag_codes.json): its launcher rows (`"tag"`, the
+    # The tags in the shared contract (contracts/core/launcher_tag_codes.json): its launcher rows (`"tag"`, the
     # parsers' cases) and music rows (`"music_tag"`, the server's version_of_code cases). A tag this script builds gets
     # the row's code; a null row is refused; a row below the app's first tag is refused. The parsers' other inputs (a
     # release id after `@`, other names) are theirs.
     local contract
-    contract="$(dirname "${BASH_SOURCE[0]}")/../server/testdata/launcher_tag_codes.json"
+    contract="$(dirname "${BASH_SOURCE[0]}")/../contracts/core/launcher_tag_codes.json"
     local launcher_rows=0 music_rows=0 line code bad first_code
     local launcher_first=$(( LAUNCHER_FIRST[0] * 10000000 + LAUNCHER_FIRST[1] * 10000 + LAUNCHER_FIRST[2] * 10 + LAUNCHER_FIRST[3] ))
     local music_first=$(( MUSIC_FIRST[0] * 10000000 + MUSIC_FIRST[1] * 10000 + MUSIC_FIRST[2] * 10 + MUSIC_FIRST[3] ))
@@ -153,7 +153,7 @@ selftest() {
         echo "FAIL: only $launcher_rows launcher and $music_rows music rows read from $contract"
         failures=$((failures + 1))
     else
-        echo "contract: $launcher_rows launcher and $music_rows music rows of server/testdata/launcher_tag_codes.json checked"
+        echo "contract: $launcher_rows launcher and $music_rows music rows of contracts/core/launcher_tag_codes.json checked"
     fi
     if (( failures > 0 )); then
         echo "$failures failed"

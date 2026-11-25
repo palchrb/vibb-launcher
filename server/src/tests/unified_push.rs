@@ -1,5 +1,5 @@
-//! Design 108 (Vibb as the UnifiedPush distributor): the shared contract `testdata/unified_push.json` (the policy rows
-//! and every device API answer, produced through the routes; the copies identical), the push routes' rows
+//! Design 108 (Vibb as the UnifiedPush distributor): the shared contract `contracts/core/unified_push.json` (the policy rows
+//! and every device API answer, produced through the routes), the push routes' rows
 //! (`testdata/unified_push_gateway.json`, server-only), the ban, the allowlist writers' prune, the security log's
 //! redaction, the switch on by default, nothing logged per message.
 
@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 
 use super::TestApp;
 
-const CONTRACT: &str = include_str!("../../testdata/unified_push.json");
+const CONTRACT: &str = crate::contracts::contract!("core/unified_push.json");
 const GATEWAY: &str = include_str!("../../testdata/unified_push_gateway.json");
 const VAPID: &str = include_str!("../../testdata/unified_push_vapid.json");
 const ORIGIN: &str = "https://phones.example.com";
@@ -19,13 +19,7 @@ fn contract() -> Value {
 }
 
 #[test]
-fn the_contract_is_identical_to_the_launchers_copy() {
-    let launcher = std::fs::read_to_string(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../launcher/app/src/test/resources/unified_push.json"
-    ))
-    .unwrap();
-    assert_eq!(launcher, CONTRACT, "the launcher's copy differs");
+fn the_contracts_endpoint_and_event() {
     let pattern = contract()["endpoint"]["pattern"]
         .as_str()
         .unwrap()
@@ -2387,7 +2381,7 @@ async fn the_contract_of_115() {
 
     // A heartbeat expands into the kept held report (QA L7).
     let heartbeat: Value =
-        serde_json::from_str(include_str!("../../testdata/status_heartbeat.json")).unwrap();
+        serde_json::from_str(crate::contracts::contract!("core/status_heartbeat.json")).unwrap();
     let mut full = heartbeat["full"].clone();
     full["unified_push"] = contract["report"]["unified_push"].clone();
     full["mobile_data"] = mobile_data("parent");

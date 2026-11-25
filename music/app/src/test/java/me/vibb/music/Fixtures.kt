@@ -23,6 +23,9 @@ object Fixtures {
     /** A file of the module (Gradle runs unit tests in music/app/). */
     fun moduleFile(path: String): File = listOf(File(path), File("app/$path")).first { it.exists() }
 
+    /** A file of the repo's contracts/ (design 133), e.g. the bridge's AIDL in `shipped/bridge-aidl/`. */
+    fun contractFile(path: String): File = listOf(File("../../contracts/$path"), File("../contracts/$path")).first { it.exists() }
+
     fun entry(
         id: Long,
         source: Source = Source.RSS,

@@ -1342,9 +1342,10 @@ async fn an_install_failures_reason_is_stored_and_worded() {
         .await;
     assert!(res.status.is_success(), "{}", res.text());
 
-    let contract: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string("testdata/install_failure.json").unwrap())
-            .unwrap();
+    let contract: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(crate::contracts::path("core/install_failure.json")).unwrap(),
+    )
+    .unwrap();
     let post = |mut body: serde_json::Value, app_id: i64| {
         body["tracked_app_id"] = serde_json::json!(app_id);
         app.request(

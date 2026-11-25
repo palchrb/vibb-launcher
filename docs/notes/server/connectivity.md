@@ -113,8 +113,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   address, a `*.ts.net` or other name - nothing is looked up) - the form refuses it (400, `url_plain_http` under the
   field, nothing saved), `.env`'s is ignored with a log line; a bad shape (userinfo, query, fragment, `%`, `\`, a
   numeric last label, another scheme) - `url_shape`. The grammar and the rows are shared with the launcher
-  (`testdata/server_url_vectors.json`, byte-identical in `launcher/app/src/test/resources/`;
-  `config::tests::the_server_url_vectors` runs every row and compares the copies). A saved one the rule refuses (saved
+  (`contracts/core/server_url_vectors.json`, which the launcher runs too;
+  `config::tests::the_server_url_vectors` runs every row). A saved one the rule refuses (saved
   before it) is never put in a QR (`provisioning::server_url`) and Phone Setup says so under the field, with how to
   fix the phones already set up with it - they stop reaching the server once Vibb One is updated (QA L-e;
   `provisioning::the_server_address_is_judged_on_save_and_shown`).
@@ -515,7 +515,7 @@ only while the phone's last status report says `tailnet_joined: true` (migration
 `device_status.tailnet_joined`, `DeviceStatus.tailnet_joined`; the contract's `report`): a phone with no field or not on the tailnet doesn't see it. The confirm says the phone then reaches the server only at its direct
 address; a phone whose server URL is a Tailscale address refuses ("Stayed on the tailnet",
 `locate.answer.tailnet_only`). It never expires (like a lock). The launcher's answers are the shared contract
-`testdata/leave_tailnet.json` (`tests::leave_tailnet`), worded by `locate::reword` (`locate.answer.left_tailnet`,
+`contracts/core/leave_tailnet.json` (`tests::leave_tailnet`), worded by `locate::reword` (`locate.answer.left_tailnet`,
 `not_on_tailnet`, `leave_tailnet_failed`, `tailnet_only`).
 
 ## The phones' certificate check (design 76, `docs/design/76-server-issuer-pin.md`)
@@ -562,7 +562,7 @@ one row per phone, no row = `watching`):
   `server_tls_on`, the parent's username, `security.detail.server_tls.*` naming the phone - never the settings log's
   `settings_saved`), for off the `server_tls_off` event pushed to every parent ("Certificate check for Anna's phone
   turned off by Mamma"), and an SSE nudge (R-4). Each returns to `#server-tls` with `?notice=`.
-- **Contract**: `testdata/server_tls_report.json` (root `CLAUDE.md`); `tests::server_tls` posts its `report` and
+- **Contract**: `contracts/core/server_tls_report.json` (root `CLAUDE.md`); `tests::server_tls` posts its `report` and
   produces its `policy` rows.
 - Recovery for a phone that refuses this server's certificate: its Server URL set to the tailnet recovery address on
   the phone (the tailnet path is never pinned), then "Turn off the certificate check" here if the server stays outside

@@ -1,5 +1,5 @@
 //! Design 95 §3.5 (step 95-T2): the heartbeat report, the gzip'd report, and the shared contract
-//! `testdata/status_heartbeat.json` (the launcher's `StatusReportsTest` encodes and reads the same file).
+//! `contracts/core/status_heartbeat.json` (the launcher's `StatusReportsTest` encodes and reads the same file).
 
 use std::io::Write;
 
@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use super::{TestApp, TestResponse};
 use crate::status_heartbeat::{HEARTBEAT_FIELDS, fields_tag};
 
-const CONTRACT: &str = include_str!("../../testdata/status_heartbeat.json");
+const CONTRACT: &str = crate::contracts::contract!("core/status_heartbeat.json");
 
 fn contract() -> Value {
     serde_json::from_str(CONTRACT).expect("the contract is JSON")
@@ -75,12 +75,7 @@ async fn latest(
 }
 
 #[test]
-fn the_contract_matches_the_launchers_copy_and_the_constants() {
-    let copy_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../launcher/app/src/test/resources/status_heartbeat.json");
-    let copy = std::fs::read_to_string(&copy_path)
-        .unwrap_or_else(|e| panic!("{}: {e}", copy_path.display()));
-    assert_eq!(copy, CONTRACT, "{} differs", copy_path.display());
+fn the_contract_matches_the_constants() {
     let contract = contract();
     let fields: Vec<&str> = contract["heartbeat_fields"]
         .as_array()

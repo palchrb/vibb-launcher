@@ -1,5 +1,5 @@
-//! Design 76: the launcher's certificate check through the routes - the shared contract `testdata/server_tls_report.json`
-//! (byte-identical in the launcher's test resources; its `ServerPinsTest` encodes the report and runs every flag row),
+//! Design 76: the launcher's certificate check through the routes - the shared contract `contracts/core/server_tls_report.json`
+//! (the launcher's `ServerPinsTest` encodes the report and runs every flag row),
 //! the policy's `server_tls` per state, the device page's group and the parent's one-shots.
 
 use axum::http::{Method, StatusCode};
@@ -7,16 +7,7 @@ use serde_json::{Value, json};
 
 use super::{TestApp, assert_redirect};
 
-const CONTRACT: &str = include_str!("../../testdata/server_tls_report.json");
-
-#[test]
-fn the_contract_matches_the_launchers_copy() {
-    let copy_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../launcher/app/src/test/resources/server_tls_report.json");
-    let copy = std::fs::read_to_string(&copy_path)
-        .unwrap_or_else(|e| panic!("{}: {e}", copy_path.display()));
-    assert_eq!(copy, CONTRACT, "{} differs", copy_path.display());
-}
+const CONTRACT: &str = crate::contracts::contract!("core/server_tls_report.json");
 
 fn capable() -> Value {
     json!({})

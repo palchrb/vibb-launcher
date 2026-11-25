@@ -1,5 +1,5 @@
-//! Design 98 (Flymodus through the Digital assistant role): the shared contract `testdata/airplane_mode.json` - the
-//! report stored as the contract has it, the `clean` rows, the emergency line's rule, the copies identical.
+//! Design 98 (Flymodus through the Digital assistant role): the shared contract `contracts/core/airplane_mode.json` - the
+//! report stored as the contract has it, the `clean` rows, the emergency line's rule.
 
 use axum::http::Method;
 use serde_json::{Value, json};
@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use super::{TestApp, assert_redirect};
 use crate::airplane_mode::{Period, clean, emergency_line};
 
-const CONTRACT: &str = include_str!("../../testdata/airplane_mode.json");
+const CONTRACT: &str = crate::contracts::contract!("core/airplane_mode.json");
 
 fn contract() -> Value {
     serde_json::from_str(CONTRACT).unwrap()
@@ -90,16 +90,6 @@ fn the_emergency_line_rows() {
             row["case"]
         );
     }
-}
-
-#[test]
-fn the_contract_is_identical_to_the_launchers_copy() {
-    let launcher = std::fs::read_to_string(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../launcher/app/src/test/resources/airplane_mode.json"
-    ))
-    .unwrap();
-    assert_eq!(launcher, CONTRACT, "the launcher's copy differs");
 }
 
 // ---- Step 5: the PWA (§6.1, §6.2, §7.1) ---------------------------------------------------------------------------

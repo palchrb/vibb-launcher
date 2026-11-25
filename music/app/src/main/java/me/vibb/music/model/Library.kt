@@ -18,7 +18,7 @@ import me.vibb.music.spotify.spotifyTarget
 
 /*
  * The phone's library (design 21 §1.3, 21b §4.1): `GET /api/devices/music/library`, pinned by
- * server/testdata/music_library.json (byte-identical in src/test/resources, ContractFilesTest).
+ * contracts/music/music_library.json (on the test class path, ContractFilesTest).
  * Parsing is lenient per element (21 §4.6): a field that can degrade does (an unknown order is
  * `auto`, a bad cover none), an entry or file that still can't be used is hidden - but its id stays
  * in [Library.entryIds]/[Library.fileIds], so nothing of it is deleted (qa-21-step2-code H1: an unreadable

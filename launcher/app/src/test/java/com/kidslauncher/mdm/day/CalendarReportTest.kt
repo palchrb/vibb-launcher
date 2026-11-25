@@ -14,7 +14,7 @@ import java.io.File
 
 /**
  * Design 69 §4.2: the status report's `calendar` against the shared contract `calendar_status_report.json`
- * (byte-identical with `server/testdata/`, whose `calendar::a_launcher_report_lists_the_calendars` posts it), the
+ * (in `contracts/core/`, whose `calendar::a_launcher_report_lists_the_calendars` posts it), the
  * calendar key and the feed's host.
  */
 class CalendarReportTest {
@@ -40,13 +40,6 @@ class CalendarReportTest {
             ServerJson.encodeToString(StatusReportRequest.serializer(), StatusReportRequest(lockReason = "NONE", kioskEngaged = true)),
         ).jsonObject
         assertFalse(none.containsKey("calendar"))
-    }
-
-    @Test
-    fun `the contract is identical to the server's copy`() {
-        val serverCopy = File("../../server/testdata/calendar_status_report.json")
-        assertTrue("${serverCopy.absolutePath} not found", serverCopy.isFile)
-        assertEquals(serverCopy.readText(), contract)
     }
 
     @Test

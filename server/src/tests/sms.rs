@@ -1,6 +1,5 @@
 //! Design 77 step 1, the server's side: the policy's SMS keys against the shared contract
-//! (`testdata/sms_contract.json`, byte-identical in the launcher's test resources - `sms::tests`
-//! compares the copies), D2's modes and migration, the report's `sms_state`, the
+//! (`contracts/core/sms_contract.json`, which the launcher reads too), D2's modes and migration, the report's `sms_state`, the
 //! `sms-held` intake's checks, states and bound, and the Calls page's two channel rows.
 
 use axum::http::{Method, StatusCode};
@@ -8,7 +7,7 @@ use serde_json::{Value, json};
 
 use super::TestApp;
 
-const CONTRACT: &str = include_str!("../../testdata/sms_contract.json");
+const CONTRACT: &str = crate::contracts::contract!("core/sms_contract.json");
 
 fn contract() -> Value {
     serde_json::from_str(CONTRACT).unwrap()

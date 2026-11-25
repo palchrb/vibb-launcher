@@ -135,8 +135,8 @@ pub const PHONE_TOKEN_BUDGET: Duration = Duration::from_secs(8);
 
 // --- the phone's hosts (§6.2) --------------------------------------------------------------------
 
-/// Spotify's hosts for the Web Playback SDK (§6.2; `testdata/spotify_hosts.json`, byte-identical
-/// in both apps' test resources, `tests::hosts_match_the_contract`): a domain equal to or under one
+/// Spotify's hosts for the Web Playback SDK (§6.2; `contracts/music/spotify_hosts.json`, which
+/// both apps read too, `tests::hosts_match_the_contract`): a domain equal to or under one
 /// of these. **Provisional** (unverified) until the spike's DNS capture replaces the list (before
 /// any tag of design 26c's release: its "Release" names the one commit - the three JSON copies with
 /// their comment, these constants and both apps').
@@ -4922,21 +4922,13 @@ pub(crate) mod tests {
         }
     }
 
-    /// §6.2 / §8 item 5: the host list is `testdata/spotify_hosts.json`'s, byte-identical in both
-    /// apps' test resources (as `phone_vectors.json`; their own tests compare too), and a domain is
+    /// §6.2 / §8 item 5: the host list is `contracts/music/spotify_hosts.json`'s (both apps read it
+    /// too), and a domain is
     /// Spotify's when it equals or lies under a suffix, or equals an exact host - never a look-alike
     /// or a third-party parent.
     #[test]
     fn hosts_match_the_contract() {
-        const HOSTS: &str = include_str!("../testdata/spotify_hosts.json");
-        for app in ["launcher", "music"] {
-            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!(
-                "../{app}/app/src/test/resources/spotify_hosts.json"
-            ));
-            let copy = std::fs::read_to_string(&path)
-                .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-            assert_eq!(copy, HOSTS, "{} differs", path.display());
-        }
+        const HOSTS: &str = crate::contracts::contract!("music/spotify_hosts.json");
         let contract: Value = serde_json::from_str(HOSTS).unwrap();
         let list = |key: &str| -> Vec<String> {
             contract[key]

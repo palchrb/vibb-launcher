@@ -55,10 +55,7 @@ class StatusReportsTest {
     )
 
     @Test
-    fun `the contract is the server's, and the full report and the heartbeat encode exactly`() {
-        val serverCopy = File("../../server/testdata/status_heartbeat.json")
-        assertTrue("${serverCopy.absolutePath} not found", serverCopy.isFile)
-        assertEquals(serverCopy.readText(), text)
+    fun `the full report and the heartbeat encode the contract exactly`() {
         assertEquals(HEARTBEAT_FIELDS, contract["heartbeat_fields"]!!.jsonArray.map { it.jsonPrimitive.content })
         assertEquals(HEARTBEAT_FIELDS_TAG, contract["fields_tag"]!!.jsonPrimitive.content)
 

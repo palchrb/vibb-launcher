@@ -4,8 +4,8 @@ package com.kidslauncher.mdm.server
  * Why a catalog install failed, for the parent's Device › Apps (upstream review 2026-11-20,
  * docs/review/2026-11-20-upstream-review.md): the failure report's `reason` is a short code, never
  * Android's free text (it names paths and packages). The server keeps only this form and words it
- * (`install_failure.rs`). The contract is `install_failure.json`, byte-identical with
- * `server/testdata/` (InstallFailureTest). Pure, no Android imports.
+ * (`install_failure.rs`). The contract is `install_failure.json`, in
+ * `contracts/core/` (InstallFailureTest). Pure, no Android imports.
  */
 
 /** The launcher's own reasons, before Android was asked. */

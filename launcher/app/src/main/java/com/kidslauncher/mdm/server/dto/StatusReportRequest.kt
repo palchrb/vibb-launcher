@@ -244,7 +244,7 @@ data class ZoneWatchReport(
  * clock): ongoing [unreachableSinceMs] with no until, the last ended one both, none neither
  * ([outageTimes]). In provider mode [provider] is the one that answered last (`quad9`,
  * `cloudflare`; left out before any). Never an address. Pinned by `dns_upstream_status.json`,
- * byte-identical with the server's `testdata/`. */
+ * in `contracts/core/`. */
 @Serializable
 data class DnsUpstreamReport(
     val rev: Long,
@@ -499,7 +499,7 @@ data class CallState(
     /** The in-call screen couldn't be brought up over the PIN lock for a ringing call (step 10,
      * QA 10 #8) - the last time, ISO-8601; `null` = never. */
     val inCallUiFailedAt: String? = null,
-    /** Android's blocked-numbers list (`calls/BlockedNumbers.kt`, `testdata/blocked_numbers.json`): readable at all,
+    /** Android's blocked-numbers list (`calls/BlockedNumbers.kt`, `contracts/core/blocked_numbers.json`): readable at all,
      * the rows the rule clears still left (a delete failed), the rows it keeps (the kid's own), what was cleared by class
      * since the install, and the last clearing (ISO-8601). Never a number. */
     val blockedReadable: Boolean? = null,

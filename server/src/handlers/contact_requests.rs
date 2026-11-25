@@ -1,7 +1,7 @@
 //! Design 77 §14 (step 6, `docs/design/77-sms-mms-client.md`): the kid asks for a new contact from the phone book's
 //! "+", and a parent decides on the Calls page. It follows design r13's time request (`device_api::time_request`):
 //! - `POST /api/devices/contact-request` ([intake]): `{id, name, number, matrix_id?, asked_at_ms}`
-//!   (`testdata/contact_request.json`, shared with the launcher), checked by [check] - the name cleaned
+//!   (`contracts/core/contact_request.json`, shared with the launcher), checked by [check] - the name cleaned
 //!   (`calendar::clean`, at most 40 characters), the number normalised again (`phone::normalize`) and never an
 //!   emergency number, the Matrix ID by `valid_matrix_id` - and answered `accepted`, or not with `capped` (three a day
 //!   in the phone's own day, or five open), `invalid` or `known` (the number is a contact on this phone, or another
@@ -731,7 +731,7 @@ pub fn notice(lang: Lang, code: &str) -> Option<&'static str> {
 mod tests {
     use super::*;
 
-    const CONTRACT: &str = include_str!("../../testdata/contact_request.json");
+    const CONTRACT: &str = crate::contracts::contract!("core/contact_request.json");
 
     /// §14's checks on the shared vectors: every `valid` row passes with its cleaned name and normalised number, every
     /// `invalid` one is refused - the launcher's `ContactRequestsTest` runs the same rows.

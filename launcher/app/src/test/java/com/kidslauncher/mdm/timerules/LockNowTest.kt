@@ -14,8 +14,8 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Design 93 §9.3: a rule turned on now ("Slå på nå"), the shared contract `lock_now.json` (byte-identical with
- * `server/testdata/`, whose `policy` the server's `lock_now::tests::the_contract` serves from seeded rows); every case
+/** Design 93 §9.3: a rule turned on now ("Slå på nå"), the shared contract `lock_now.json` (in
+ * `contracts/core/`, whose `policy` the server's `lock_now::tests::the_contract` serves from seeded rows); every case
  * run through [inForceAt], [decideTimeLock], [cardRule] and [lockEnd], and the capability this launcher claims. */
 class LockNowTest {
     private val contractText = javaClass.classLoader!!.getResource("lock_now.json")!!.readText()
@@ -77,13 +77,5 @@ class LockNowTest {
             assertEquals(label, case["card_rule"]!!.jsonPrimitive.longOrNull, pick.rule?.id)
             assertEquals(label, case["card_until"]!!.jsonPrimitive.let { if (it.isString) it.content else null }, pick.end?.toString())
         }
-    }
-
-    @Test
-    fun `the contract is identical to the server's copy`() {
-        // Gradle runs unit tests with the module directory (launcher/app/) as the working directory.
-        val serverCopy = java.io.File("../../server/testdata/lock_now.json")
-        assertTrue("${serverCopy.absolutePath} not found", serverCopy.isFile)
-        assertEquals("${serverCopy.path} differs from the launcher's copy", serverCopy.readText(), contractText)
     }
 }

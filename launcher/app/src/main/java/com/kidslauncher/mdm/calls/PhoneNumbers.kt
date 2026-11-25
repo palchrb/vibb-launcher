@@ -3,8 +3,7 @@ package com.kidslauncher.mdm.calls
 /*
  * Phone-number normalisation, shared with kid-phone-server's src/phone.rs (design 02-calls.md 3.4,
  * QA #16). Pure Kotlin, no Android imports: PhoneNumbersTest runs the same vector file as the
- * server (app/src/test/resources/phone_vectors.json, a byte-identical copy of the server's
- * testdata/phone_vectors.json).
+ * server (contracts/core/phone_vectors.json).
  *
  * The server stores contacts normalised; the launcher normalises only the other side of a call
  * and compares strings exactly. No suffix ("last 8 digits") matching and no

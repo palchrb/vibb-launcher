@@ -1,4 +1,4 @@
-//! Design 114 (the phone setup status): the shared contract `testdata/setup_steps.json` through the routes - the
+//! Design 114 (the phone setup status): the shared contract `contracts/core/setup_steps.json` through the routes - the
 //! report's `setup` stored with the hold's end, the phone's tick (`POST /api/devices/setup/ticks`) and the policy's
 //! `setup`.
 
@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 
 use super::TestApp;
 
-const CONTRACT: &str = include_str!("../../testdata/setup_steps.json");
+const CONTRACT: &str = crate::contracts::contract!("core/setup_steps.json");
 
 pub(super) fn contract() -> Value {
     serde_json::from_str(CONTRACT).unwrap()

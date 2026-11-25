@@ -1,8 +1,8 @@
 //! A phone's emergency menu (design 73): the numbers the kid gets when it taps Nødsamtale, in the parent's order,
 //! sent as `call_policy.emergency_menu`. Stored in `device_emergency_numbers` (0114); no rows = [DEFAULT_NUMBER] alone.
 //!
-//! The fixed emergency list is shared with the launcher (`testdata/emergency_numbers.json`, byte-identical in
-//! `../launcher/app/src/test/resources/`; the launcher's `Emergency.staticSet` ORs it with the platform's own
+//! The fixed emergency list is shared with the launcher (`contracts/core/emergency_numbers.json`, which both sides'
+//! tests read; the launcher's `Emergency.staticSet` ORs it with the platform's own
 //! `isEmergencyNumber`). Only the numbers on it are shown here as "always works"; the phone may know a few more.
 
 use serde::Serialize;
@@ -197,7 +197,7 @@ pub fn suggestions(menu: &[MenuEntry], cc: &str) -> Vec<(&'static str, &'static 
 mod tests {
     use super::*;
 
-    const CONTRACT: &str = include_str!("../testdata/emergency_numbers.json");
+    const CONTRACT: &str = crate::contracts::contract!("core/emergency_numbers.json");
 
     fn entry(number: &str) -> MenuEntry {
         MenuEntry {
@@ -247,15 +247,6 @@ mod tests {
                 "{input:?} in {cc}"
             );
         }
-    }
-
-    #[test]
-    fn the_contract_matches_the_launchers_copy() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../launcher/app/src/test/resources/emergency_numbers.json");
-        let copy =
-            std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-        assert_eq!(copy, CONTRACT, "{} differs", path.display());
     }
 
     #[test]

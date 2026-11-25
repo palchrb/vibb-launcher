@@ -292,7 +292,7 @@ pub(crate) fn short_version(full: &str) -> &str {
 /// `scripts/release-version.sh`): `X*10_000_000 + Y*10_000 + Z*10 + N`, N the RC number (1..8) or 9
 /// for the release - "0.5.0-rc.4" for 50004, "1.2.3" for 10020039; a code ending in 0, or not above
 /// 0, is no release build (`None`). The shared contract's `music_codes` rows
-/// (`testdata/launcher_tag_codes.json`) are its cases. The ⓘ has the code itself.
+/// (`contracts/core/launcher_tag_codes.json`) are its cases. The ⓘ has the code itself.
 pub(crate) fn version_of_code(code: i64) -> Option<String> {
     if code <= 0 {
         return None;
@@ -3136,7 +3136,8 @@ mod tests {
     #[test]
     fn music_versions_read_as_the_shared_contract() {
         let contract: serde_json::Value =
-            serde_json::from_str(include_str!("../../testdata/launcher_tag_codes.json")).unwrap();
+            serde_json::from_str(crate::contracts::contract!("core/launcher_tag_codes.json"))
+                .unwrap();
         let rows = contract["music_codes"].as_array().unwrap();
         assert!(rows.len() >= 3);
         for row in rows {

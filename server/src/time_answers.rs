@@ -3,7 +3,7 @@
 //! `time_request_answers` row. The summary shows it as the answer card (`handlers::time_answer`); a parent's "+15 min"
 //! / "+30 min" / "+1 t" or a fitting lift from Quick actions answers it `yes`, "Nei" `no`, a newer request of the same
 //! day `superseded`. The phone learns the answer from its policy (`time_policy.answer`, `lifts[].by`/`at_ms`,
-//! `time_policy.request_answers`; the shared contract `testdata/time_request.json`).
+//! `time_policy.request_answers`; the shared contract `contracts/core/time_request.json`).
 
 use chrono::{DateTime, Utc};
 use sqlx::{SqliteConnection, SqlitePool};

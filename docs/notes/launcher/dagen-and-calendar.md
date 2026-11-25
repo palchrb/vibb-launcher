@@ -175,7 +175,7 @@ glance's "Lås opp og åpne Kalender" (`day_title`, `glance_reminder_action`). "
   report's `calendar.feeds` (`CalendarFeeds.report`, `CalendarFeedReportRow(id, applied_rev, refused, unknown_zone)`;
   left out when empty).
 - Tests: `CalendarFeedsTest` (the shared `calendar_feeds.json`: `feed` maps to exactly `provider` in its zone, the key,
-  the policy's and the report's rows, both copies), `FeedPlanTest`, `FeedEventsTest` (the columns, all-day, floating,
+  the policy's and the report's rows), `FeedPlanTest`, `FeedEventsTest` (the columns, all-day, floating,
   an unknown zone, EXDATE's fallback, the sync-adapter URI by source), `KidEventTest` (the kid's four writes above the
   section), `PolicyResponseCompatTest`.
 - **Not device-tested** (`docs/testing/emulator.md` §6y): the provider taking the LOCAL calendar and the sync columns
@@ -222,6 +222,6 @@ glance's "Lås opp og åpne Kalender" (`day_title`, `glance_reminder_action`). "
   kid chose another; a hand-back takes the same row as the snapshot when two live rows share a UID. Events
   this phone once wrote through DAVx5 (its tag, not in "Min kalender") show from the feed, read-only.
 - Tests: `KidCaldavTest` (the shared `calendar_kid_events.json`: `provider` to exactly `snapshot` and `cut_variant`,
-  `canonical`, the policy and the answers, `back_provider`, the ids, both copies), `FeedPlanTest` (the skip set,
+  `canonical`, the policy and the answers, `back_provider`, the ids), `FeedPlanTest` (the skip set,
   `skipLeft`), `KidEventTest` (R-L5, the hand-back writes' guards), `PolicyResponseCompatTest`.
 - **Not device-tested**: `docs/testing/emulator.md` §6z (Radicale) and one real account.

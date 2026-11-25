@@ -71,8 +71,8 @@ count or a time. Kept only within limits: `readable` a bool (else nothing is sto
 `device_api::known_fields` with `calendar::CALENDAR_ROW_FIELDS`, a valid key (16 lowercase hex, once), an account type
 of at most 200, the name cleaned and cut to 100, the source a hostname (`[a-z0-9.-]`, at most 253, lowercased) or null,
 the access level an int (else 0); at most 50 rows; `rules_skipped` at most 30 ids, only ids the phone has. A report
-without the key leaves the last one. Contract: `testdata/calendar_status_report.json`
-(byte-identical in the launcher's test resources; `tests::calendar::a_launcher_report_lists_the_calendars`,
+without the key leaves the last one. Contract: `contracts/core/calendar_status_report.json`
+(the launcher reads it too; `tests::calendar::a_launcher_report_lists_the_calendars`,
 `CalendarReportTest`); `intake_limits::the_field_tables_keep_every_contract_key` checks it too.
 
 ## The title rules (`calendar.rs`, one grammar with the launcher's `day/TitleRules.kt`)
@@ -82,8 +82,7 @@ sides -, trimmed, NFC, a title cut to 200 code points), matching (Starts with / 
 point with simple lowercase - `İ` → `i` by hand - and ignoring whitespace: "Romerriket" finds "R omerriket"), the
 actions (replace; prefix = the text + the title without the match, the separators ` - – — : · | , ; /` trimmed from the
 rest's ends; hide). The first rule whose calendar is any or the event's and whose field matches wins. Shared vectors:
-`testdata/calendar_title_rules.json` (`calendar::tests::the_title_rules_vectors`, `TitleRulesTest`; both compare the
-copies). Regex rules are design 69 §3.5's later step (RE2/J on the phone).
+`contracts/core/calendar_title_rules.json` (`calendar::tests::the_title_rules_vectors`, `TitleRulesTest`). Regex rules are design 69 §3.5's later step (RE2/J on the phone).
 
 ## Device › Calendar (`handlers/calendar.rs`)
 
@@ -230,7 +229,7 @@ ICSx5/DAVx5 stay possible. Step 2 (CalDAV, read-only, the password on the server
   `policy_json_keys_snapshot`) and `GET /api/devices/calendar/feeds/{uid}` (bearer; `handlers::calendar::device_feed`
   through `music_api::versioned_json`: `ETag` = rev, 304, gzip; 404 unless this phone has the link). The report's
   `calendar.feeds` (`[{id, applied_rev, refused, unknown_zone}]`, `calendar::sanitize_report`, at most 10 rows with a valid id, the counts capped at 2000 - QA L1) says
-  what the phone applied. Contract `testdata/calendar_feeds.json` (root `CLAUDE.md`).
+  what the phone applied. Contract `contracts/core/calendar_feeds.json` (root `CLAUDE.md`).
 - **The page** (since 2026-11-01 the look of variant B, below - "Device › Calendar's sources"): the link's own page
   (`GET .../calendar/links/{uid}`): its name (auto-saving, back to `#name`), its host, Fetching (`#fetch`: the failure
   in words with the set's age - orange -, Last fetched and Events once a fetch was stored ("27.10. 14:05" - the
@@ -461,7 +460,7 @@ ends. `src/calendar_kid_events.rs` (the endpoint, the plan, the job, the way bac
   (`caldav::writable_of`; `null` until the account's next Test).
 - **Privacy**: no event text in any log, page, error or settings-log row; the set and row types have no `Debug`. The
   UID's 8-hex phone tag is a stable pseudonym, visible in the calendar.
-- Tests: `calendar_kid_events::tests` (the contract `testdata/calendar_kid_events.json` and the `.ics` bodies, the
+- Tests: `calendar_kid_events::tests` (the contract `contracts/core/calendar_kid_events.json` and the `.ics` bodies, the
   canonical rows, the writer's folding and escaping, the hrefs, every guard against the stateful fake
   `tests::fake_dav` - conditions, no redirects, H1/H2/R-M2/R-L1/R-L2's paths, the rewrite switch, cut, ended, the
   clock, the holds, the confirm, the 403 bodies, 401/507/400/409, weak and missing ETags, the claim, the backoff and the

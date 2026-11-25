@@ -18,7 +18,7 @@ gateway. Code: `src/unified_push/` (its `README.md` lists what is ported from nt
   push (no open relay, no SSRF).
 - **The device API** (bearer, `device_routes.rs`): `POST /api/devices/up/registrations` `{reg, secret, package,
   vapid?}` -> `{endpoint}` or 409 `{refused}`; `DELETE /api/devices/up/registrations/{reg}` -> 204;
-  `POST /api/devices/up/messages` `{ack}` -> `{messages, more}`. Shapes: `testdata/unified_push.json`, shared with the
+  `POST /api/devices/up/messages` `{ack}` -> `{messages, more}`. Shapes: `contracts/core/unified_push.json`, shared with the
   launcher.
 
 ## The answers (§3.4)

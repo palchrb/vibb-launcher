@@ -12,7 +12,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Design 98 §4.4: the shared contract `rule_pause.json` (byte-identical with `server/testdata/`, whose
+/** Design 98 §4.4: the shared contract `rule_pause.json` (in `contracts/core/`, whose
  * `tests::rule_pause` posts `request` and produces every answer row). */
 class RulePauseTest {
     private val contractText = javaClass.classLoader!!.getResource("rule_pause.json")!!.readText()
@@ -148,12 +148,5 @@ class RulePauseTest {
     @Test
     fun `the lengths`() {
         assertEquals(contract["lengths"]!!.jsonArray.map { it.jsonPrimitive.content.toInt() }, RULE_LIFT_MINUTES)
-    }
-
-    @Test
-    fun `the contract is identical to the server's copy`() {
-        val serverCopy = java.io.File("../../server/testdata/rule_pause.json")
-        assertTrue("${serverCopy.absolutePath} not found", serverCopy.isFile)
-        assertEquals("${serverCopy.path} differs from the launcher's copy", serverCopy.readText(), contractText)
     }
 }

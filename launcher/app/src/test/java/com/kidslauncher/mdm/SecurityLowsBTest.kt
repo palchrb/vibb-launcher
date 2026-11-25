@@ -240,10 +240,6 @@ class SecurityLowsBTest {
         assertTrue(sync.contains("LEAVE_TAILNET_COMMAND -> {\n            val (ok, message) = TsnetClient.leave(context)\n            CommandAnswers.keep(context, pending, ok, message)"))
         assertTrue(sync.contains("if (ranCommand?.command == LEAVE_TAILNET_COMMAND) {\n            apiPath = serverPathNow(serverUrl)\n            api = createMdmApi(serverUrl, credential, path = apiPath)"))
         assertTrue(sync.contains("tailnetJoined = TsnetClient.joined(context),"))
-        // Gradle runs unit tests with the module directory (launcher/app/) as the working directory.
-        val serverCopy = File("../../server/testdata/leave_tailnet.json")
-        assertTrue("${serverCopy.absolutePath} not found", serverCopy.isFile)
-        assertEquals("${serverCopy.path} differs from the launcher's copy", serverCopy.readText(), contract)
     }
 
     @Test

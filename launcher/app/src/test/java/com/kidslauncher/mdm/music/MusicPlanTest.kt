@@ -17,13 +17,16 @@ import java.io.File
 
 /**
  * The launcher's side of Vibb music (design 21 §2/§3, 21b §5): the bridge's contract with the music
- * app (the AIDL byte-identical, the signature permission), the policy and library as the launcher
+ * app (the one AIDL's method order, the signature permission), the policy and library as the launcher
  * reads them, the listings, covers and own files it fetches, the managed config, the caller check,
  * the update deferral and `music_state`.
  */
 class MusicPlanTest {
     private fun module(path: String) = listOf(File(path), File("app/$path")).first { it.exists() }
     private fun repo(path: String) = listOf(File("../../$path"), File("../$path")).first { it.exists() }
+
+    /** A contract file on the test class path (design 133: `contracts/music/`). */
+    private fun resource(name: String) = javaClass.classLoader!!.getResource(name)!!.readText()
 
     // The contract with music/.
 
@@ -38,16 +41,11 @@ class MusicPlanTest {
     }
 
     @Test
-    fun `the bridge's AIDL is byte-identical in both apps`() {
-        for (name in listOf("IMusicBridge.aidl", "ISpotifyTokenCallback.aidl", "IStorytelTokenCallback.aidl")) {
-            val ours = module("src/main/aidl/me/vibb/bridge/$name")
-            val theirs = repo("music/app/src/main/aidl/me/vibb/bridge/$name")
-            assertEquals("$name differs from music/'s copy", theirs.readText(), ours.readText())
-        }
-        // Appended, never reordered (the transaction codes an installed music app or launcher uses follow the
+    fun `the bridge's AIDL keeps its method order`() {
+        // The one AIDL both apps compile, contracts/shipped/bridge-aidl/ (design 133). Appended, never reordered (the transaction codes an installed music app or launcher uses follow the
         // order; qa-26c-step3-code L2): the whole sequence, a new method added at the end.
         val methods = Regex("^\\s+(?:oneway )?\\S+ (\\w+)\\(", RegexOption.MULTILINE)
-            .findAll(module("src/main/aidl/me/vibb/bridge/IMusicBridge.aidl").readText()).map { it.groupValues[1] }.toList()
+            .findAll(repo("contracts/shipped/bridge-aidl/me/vibb/bridge/IMusicBridge.aidl").readText()).map { it.groupValues[1] }.toList()
         assertEquals(
             listOf(
                 "version", "openLibrary", "openCover", "openFile", "releaseFile", "reserved", "reportState",
@@ -56,20 +54,6 @@ class MusicPlanTest {
             ),
             methods,
         )
-    }
-
-    @Test
-    fun `Storytel's token answers are the server's and the music app's (design 58 §8)`() {
-        val ours = javaClass.classLoader!!.getResource("storytel_token_answers.json")!!.readText()
-        assertEquals("the music app's copy", repo("music/app/src/test/resources/storytel_token_answers.json").readText(), ours)
-        assertEquals("the server's copy", repo("server/testdata/storytel_token_answers.json").readText(), ours)
-    }
-
-    @Test
-    fun `Spotify's host list is the music app's and the server's (26c §8 item 5)`() {
-        val ours = javaClass.classLoader!!.getResource("spotify_hosts.json")!!.readText()
-        assertEquals("the music app's copy", repo("music/app/src/test/resources/spotify_hosts.json").readText(), ours)
-        assertEquals("the server's copy", repo("server/testdata/spotify_hosts.json").readText(), ours)
     }
 
     @Test
@@ -201,7 +185,7 @@ class MusicPlanTest {
 
     @Test
     fun `the shared library snapshot as the launcher reads it`() {
-        val head = libraryHead(repo("server/testdata/music_library.json").readText())!!
+        val head = libraryHead(resource("music_library.json"))!!
         assertEquals(4, head.covers.size)
         assertEquals(listOf(1L, 2L), head.files.map { it.id })
         assertTrue(head.files[1].missing)
@@ -218,7 +202,7 @@ class MusicPlanTest {
 
     @Test
     fun `the shared listing snapshot's version`() {
-        assertEquals("a8146790d70b89a3", listingVersionOf(repo("server/testdata/music_listing.json").readText()))
+        assertEquals("a8146790d70b89a3", listingVersionOf(resource("music_listing.json")))
         assertNull(listingVersionOf("{\"v\":9,\"version\":\"x\"}"))
     }
 
@@ -648,7 +632,7 @@ class MusicPlanTest {
 
     @Test
     fun `music_state end to end - every field of the shared fixture survives the launcher`() {
-        val fixture = ServerJson.parseToJsonElement(repo("server/testdata/music_state.json").readText()).jsonObject
+        val fixture = ServerJson.parseToJsonElement(resource("music_state.json")).jsonObject
         val fromApp = kotlinx.serialization.json.JsonObject(fixture - setOf("package", "version_code", "bridge"))
         val now = 1_800_000_000_000L
         assertEquals(fixture, musicState("me.vibb.music", 1000000, fromApp, now - 1_000, now))
@@ -666,7 +650,7 @@ class MusicPlanTest {
         assertFalse(older.containsKey("audio_bytes") || older.containsKey("extra_bytes"))
     }
 
-    // The contract with the music app, spelled once (bridge_contract.json, byte-identical in both apps).
+    // The contract with the music app, spelled once (contracts/music/bridge_contract.json, which both apps read).
 
     private val contract by lazy {
         ServerJson.parseToJsonElement(javaClass.classLoader!!.getResource("bridge_contract.json")!!.readText()).jsonObject
@@ -676,11 +660,6 @@ class MusicPlanTest {
 
     @Test
     fun `the bridge's names match the shared contract`() {
-        assertEquals(
-            "the music app's copy",
-            repo("music/app/src/test/resources/bridge_contract.json").readText(),
-            javaClass.classLoader!!.getResource("bridge_contract.json")!!.readText(),
-        )
         assertEquals((contract["bridge_service"] as JsonPrimitive).content, MusicBridgeService::class.java.name)
         assertEquals((contract["action_bridge_changed"] as JsonPrimitive).content, ACTION_BRIDGE_CHANGED)
         assertEquals(strings("music_packages"), MUSIC_PACKAGES)

@@ -11,8 +11,8 @@ import org.junit.Test
 import java.io.File
 
 /**
- * Design 14 QA #3-#5: the icon and colour table is the shared `app_icons.json` (identical to the
- * server's copy), every icon has its converted glyph saying where it comes from, every tile is
+ * Design 14 QA #3-#5: the icon and colour table is the shared `app_icons.json` (in
+ * `contracts/core/`), every icon has its converted glyph saying where it comes from, every tile is
  * one of the six tones (design 34 P1), and the Apache-2.0 licence ships with them.
  */
 class AppGlyphsTest {
@@ -20,14 +20,6 @@ class AppGlyphsTest {
     private val json = ServerJson.parseToJsonElement(text).jsonObject
 
     private fun file(path: String) = listOf(File(path), File("app/$path")).first { it.exists() }
-
-    @Test
-    fun `the json is identical to the server's copy`() {
-        // Gradle runs unit tests with the module directory (launcher/app/) as the working directory.
-        val serverCopy = File("../../server/testdata/app_icons.json")
-        assertTrue("${serverCopy.absolutePath} not found", serverCopy.isFile)
-        assertEquals("${serverCopy.path} differs from the launcher's copy", serverCopy.readText(), text)
-    }
 
     @Test
     fun `the runtime table is the json`() {
