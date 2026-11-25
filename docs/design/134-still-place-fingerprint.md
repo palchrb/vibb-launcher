@@ -84,7 +84,9 @@ D3. **One more scan, only when it would decide** (D5c of revision 1, kept). Afte
     attempt calls `startScan()` once more, at least **10 s** after the first request, and waits up to 8 s. One at most
     per attempt: two of the four scans the throttle allows the anchor's importance in 2 min (§7). Its answer goes
     through the learned fix and the Apple lookup as the first would have. Not when the first was refused while Wi-Fi
-    is off.
+    is off - and (decided at the build, as gate row (c) says) not after a throttled refusal either: the throttle that
+    refused the first refuses a second within its 2-min window. A refusal while Wi-Fi is off is conclusive (nothing
+    can be heard, nothing would be by asking again).
 D4. **After an inconclusive try** - the scan (and the second one, when D3 ran) inconclusive, and no fresh fix:
     - **nothing is reported** from the attempt: no cell fix, no unchecked Wi-Fi or Apple fix, no 2-min fallback, no
       last-known - never a worse fix than the last good one. The server keeps what the last report said;
@@ -274,12 +276,14 @@ P5. The ring is a record of when the phone moved a little and how far it was fro
 
 The emulator has no significant-motion sensor (§6bn row b) and no real neighbours, so the gate needs three hooks, all
 in the existing `PlacesDebugReceiver` (`src/debug`, exported, guarded by `DUMP`): `--es motion sensor|fire|off` (a
-fake trigger feeding `MotionGate` as the real one would), `--ei age_s N` (the made-up results heard N s ago; today they
-are always heard now) and `--ez refuse true` (the next `startScan` counts as throttled). Main code reaches them only
+fake trigger feeding `MotionGate` as the real one would), `--ei scan_age_s N` (the made-up results heard N s ago; today
+they are always heard now) and `--ez refuse_scan true` (every `startScan` counts as throttled until `false` or `clear`;
+built as `scan_age_s`/`refuse_scan`, not `age_s`/`refuse`: the release check matches substrings of the dex, and a
+release build holds "refused" in its log lines). Main code reaches them only
 through `PlacesDebugHooks`, an object with a debug implementation in `src/debug` and a **no-op twin in `src/release`**
 (like `LockTaskDebug`), so a release build can't hold a fake trigger. The existing `WifiPlaces.debugResults` and
 `debugConnected` move behind the same object. The new names (`PlacesDebugHooks`' debug-only members `fakeMotion`,
-`scanAgeS`, `refuseScan`, and the extras `age_s`, `refuse`) join `DebugHookAbsentTest`'s banned list for `src/main` and
+`scanAgeS`, `refuseScan`, and the extras `scan_age_s`, `refuse_scan`) join `DebugHookAbsentTest`'s banned list for `src/main` and
 `src/release` and `checkReleaseHasNoDebugHook`'s `names` in `app/build.gradle.kts`.
 
 ## 8. Steps and tests
@@ -292,7 +296,9 @@ through `PlacesDebugHooks`, an object with a debug implementation in `src/debug`
 | **J** | the Jelly Star (§9) for 2-4 weeks; the owner reads the dump | - |
 | **Later** | a revision 4 decides from the data whether the moved tier may renew | - |
 
-**Pure tests.** `PlacesTest` over a `still_print` section of `wifi_places.json`, `ZonePlanTest` for the flags:
+**Pure tests** (built as `StillPlanTest` - D1-D5 and the glue by source - and `StillPrintTest` - the print, the
+verdict, the ring and binding rows 1-12, Kotlin rows rather than a `wifi_places.json` section; `ZonePlanTest` for the
+flags):
 - **`scanAnswer`** (D1, D2): results after the request; all older; the cache path within and past 30 s; refused with
   and without a fresh cache; unanswered; Wi-Fi off; connected with its AP in the answer, missing from it, and not
   connected; one fresh AP and none - conclusive.
@@ -341,8 +347,8 @@ shadowing, rooms added):
 
 10. **The friend's house after a car ride the sensor missed** (revision 3). A print at home of 4 settled devices and
     the home cell; the sensor misses the drive (no fire); at the 4-h cap try at the friend's house 3 km off a fresh
-    answer of 5 unknown APs: `wifi` mismatch - `STILL` ends, the try reports nothing, no `still`, the next beats
-    `QUIET` (one interval, then the back-off), the next try runs GPS; its fix 3 km off: `outcome confirmed` and a D7
+    answer of 5 unknown APs: `wifi` mismatch - `STILL` ends, the try reports nothing, no `still`; the next beat tries
+    (GPS; design 124's back-off counts from the mismatch, so the waits grow - `QUIET` between - while the tries fail); its fix 3 km off: `outcome confirmed` and a D7
     contradiction (no fire since the vouch).
 11. **The Jelly Star's own day under the rule** (revision 3). 15:31's cap try with a list older than the request:
     inconclusive - no mismatch, (A)'s cap fail, `STILL` goes on (the retries at the next two beats, 1 h, 2 h). The same
@@ -358,15 +364,15 @@ networks of their own devices, three occasions over two local days by the time-z
 | # | Step | Expect |
 |---|---|---|
 | a | A satellite feed fix (8 satellites, 10 m) at home with home's scan | `StillPrint: taken devices=3` |
-| b | `motion fire`, GPS silent, home's scan with `age_s 600` | `result=inconclusive reason=old`, a second scan (`refuse` off) - still old - then nothing reported (Locate unchanged); next beat tries again; the 4th in a row ends as today with `QUIET` |
-| c | As (b) with `refuse true` | `reason=refused`, no second scan |
+| b | `motion fire`, GPS silent, home's scan with `scan_age_s 600` | `result=inconclusive reason=old`, a second scan (`refuse_scan` off) - still old - then nothing reported (Locate unchanged); next beat tries again; the 4th in a row ends as today with `QUIET` |
+| c | As (b) with `refuse_scan true` | `reason=refused`, no second scan |
 | d | `motion fire`, GPS silent, home's scan fresh | `StillPrint: verdict would=yes`; nothing renewed (Locate as today); then the feed at home: `outcome confirmed` |
 | e | `motion fire`, a neighbour's scan (their device strongest) | `would=no reason=anchor` |
 | f | One made-up AP, fresh | no second scan, no retry; `thin` |
 | g | `adb reboot` | `print dropped (boot)` |
 | h | The release build | `dumpsys activity service ... still-print` prints the summary and ring; without the argument one line; `checkReleaseHasNoDebugHook` passes; the receiver's extras do nothing (no receiver) |
 | i | Location Off from the PWA | both files gone, `print dropped (off)`, the dump's ring empty |
-| j | (revision 3) `motion sensor`, a fresh print at home (a), the clock 4 h on (an image with `adb root`: `date`), a neighbour's scan without home's devices, GPS silent | `Location heartbeat: STILL ended by a scan mismatch`, `StillPrint: mismatch clause=wifi`, no `still` in the report, the next beats `QUIET`; the same with home's scan and one device missing: no mismatch, `STILL ... fails=1` |
+| j | (revision 3) `motion sensor`, a fresh print at home (a), the clock 4 h on (an image with `adb root`: `date`), a neighbour's scan without home's devices, GPS silent | `Location heartbeat: STILL ended by a scan mismatch`, `StillPrint: mismatch clause=wifi`, no `still` in the report, the next beat a `FIX` (GPS), `QUIET` between the later tries; the same with home's scan and one device missing: no mismatch, `STILL ... fails=1` |
 
 **What can't be faked there**: real room-to-room levels, real neighbours and flats, the HAL's behaviour in deep Doze,
 the real throttle under the anchor's importance with other apps scanning, a real sensor's delay.
