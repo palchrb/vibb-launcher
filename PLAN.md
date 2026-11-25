@@ -33,9 +33,8 @@ findings, merge to `main`, full suite once.
 - **LOCKED LIST (the owner, 2026-11-24: no new features or ideas before this list is done; checked against the code
   2026-11-24)** - the order of work. Anything new goes to "Inbox (not prioritised)" below and is not built until the
   owner and I have discussed where it goes.
-  1. In progress: squeue 11 (the owner's Jelly registered its TEE key on rc.2 2026-11-24 - pass; a false "unusual address" to fix before S2, with 129b); 129b (enrolment requires a key, the per-phone exception; `docs/design/129b-enrolment-requires-a-key.md`) revision 2 MERGED as a doc 2026-11-24 (design QA 3H 7M 9L all taken, plus the false "unusual address" fix), waiting for the owner's Q2-Q5 (Q1, the code typed from the phone, OK'd) - NOTE its H2: it can only ship after a STABLE launcher with it is GitHub's latest (the QR downloads latest, today 0.41.0) (emulator gate, an RC for the
-     Jelly, then the key-required enrolment with the per-phone exception, then S2).
-  2. Squeue 7 (design written 2026-11-24, in design QA), then squeue 12.
+  1. Squeue 11: 129b (E1, L2, E2) MERGED and gated 2026-11-24/25; launcher rc.3 tagged, waiting for the owner's signing, then the Jelly, a stable 0.43.0, the server tag, then S2.
+  2. Squeue 7 MERGED and gated 2026-11-25 (the owner's Jelly + stick test later); squeue 12 split into 15-34: 15 (part), 16-19, 21 merged; 20 in QA fixes; next 22 (https part), 23-27, 32; 28-31, 33, 15's row and 22's http part wait on the owner's seven answers; 34 the owner's.
   3. C3 / Phase D: Vibb's own PIN lock removed (own-mode code still in the launcher).
   4. C4: one `contracts/` folder both builds read (not started).
   5. Zones shared by the family, picked per phone (a design 64 revision; not started).
