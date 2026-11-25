@@ -50,6 +50,7 @@ import com.kidslauncher.mdm.day.calendarPolicy
 import com.kidslauncher.mdm.day.calendarShown
 import com.kidslauncher.mdm.day.calendarSource
 import com.kidslauncher.mdm.day.dayView
+import com.kidslauncher.mdm.day.reportedCalendarName
 import com.kidslauncher.mdm.day.julianDay
 import com.kidslauncher.mdm.server.CachedPolicy
 import com.kidslauncher.mdm.server.QuickControls
@@ -411,7 +412,7 @@ object CalendarStore {
         if (!now.readable) return CalendarReport(false, emptyList(), policy.rulesSkipped)
         val rows = now.calendars.filter { it.syncEvents }.distinctBy { it.key }.take(50).map {
             // Cleaned by code points, so a cut never splits a surrogate pair (QA nit 3).
-            CalendarReportRow(it.key, it.accountType, TitleRules.clean(it.displayName, 100), calendarSource(it.name), it.accessLevel)
+            CalendarReportRow(it.key, it.accountType, reportedCalendarName(TitleRules.clean(it.displayName, 100)), calendarSource(it.name), it.accessLevel)
         }
         // Design 72: the calendar links as applied (their calendars are rows above like any other).
         return CalendarReport(true, rows, policy.rulesSkipped, CalendarFeeds.report(context))

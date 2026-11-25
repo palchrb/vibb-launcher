@@ -30,3 +30,14 @@ fun calendarSource(name: String?): String? {
     if (uri.scheme?.lowercase() !in SOURCE_SCHEMES) return null
     return uri.host?.lowercase()?.trimEnd('.')?.takeIf { HOSTNAME.matches(it) }
 }
+
+private val ADDRESS = Regex("[^\\s@]+@([^\\s@]+\\.[^\\s@]+)")
+
+/** A calendar name for the status report: a name that is one e-mail address (DAVx5 and Google name a calendar after
+ * the login) is shortened to its first letter and the domain, `p…@example.org`, so the address never leaves the phone;
+ * any other name as it is. The phone's own screens keep the full name. */
+fun reportedCalendarName(name: String): String {
+    val match = ADDRESS.matchEntire(name.trim()) ?: return name
+    val address = match.value
+    return address.substring(0, address.offsetByCodePoints(0, 1)) + "…@" + match.groupValues[1]
+}

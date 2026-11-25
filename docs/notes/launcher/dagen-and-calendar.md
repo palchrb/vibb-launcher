@@ -122,7 +122,9 @@ glance's "Lås opp og åpne Kalender" (`day_title`, `glance_reminder_action`). "
   notification sound with `USAGE_NOTIFICATION`/`CONTENT_TYPE_SONIFICATION`, once (`goAsync` held 4 s): no
   notification, nothing in the shade, no vibration. Logcat tag `ReminderPing` ("Reminder up: PLAY" / "QUIET").
 - **Contracts**: the policy's `calendar` (`PolicyResponseCompatTest`), the report's `calendar` (`CalendarReport`,
-  `calendar_status_report.json`, `CalendarReportTest`).
+  `calendar_status_report.json`, `CalendarReportTest`). A calendar's name in the report is cleaned and, when it is
+  one e-mail address (DAVx5 and Google name a calendar after the login), shortened to `p…@example.org`
+  (`reportedCalendarName`); Dagen and the glance keep the full name.
 - **Not device-tested**: design 69 §7 (`docs/testing/emulator.md` §6w): ICSx5's and DAVx5's NAME/account type/access
   level, the local calendar's insert as a plain app, the two-line caps and "›" at font 1.0 and 1.3, the glance
   geometry, DAVx5's round trip of the `vibb-` UID, `requestSync`, a far-future day.

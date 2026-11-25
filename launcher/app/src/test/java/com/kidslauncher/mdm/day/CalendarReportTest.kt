@@ -60,4 +60,14 @@ class CalendarReportTest {
             assertNull(odd, calendarSource(odd))
         }
     }
+
+    @Test
+    fun `a name that is an e-mail address is shortened, any other name kept`() {
+        assertEquals("p\u2026@example.org", reportedCalendarName("per.hansen@example.org"))
+        assertEquals("\u00e5\u2026@familie.no", reportedCalendarName(" \u00e5se@familie.no "))
+        assertEquals("\uD83D\uDE00\u2026@x.no", reportedCalendarName("\uD83D\uDE00a@x.no"))
+        for (kept in listOf("Skolen", "Min kalender", "Familie @ hjemme", "a@b", "per@example.org og mor", "@example.org", "")) {
+            assertEquals(kept, reportedCalendarName(kept))
+        }
+    }
 }
