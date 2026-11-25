@@ -5867,3 +5867,20 @@ shared_prefs/me.vibb.launcher.debug_preferences.xml`.
 | 2 | The network on; the next Home resume or sync | the node joins (the PWA's Device › Tailscale row); the key is gone from the file, `tsnet_node_joined` true; Settings: "On the tailnet" |
 | 3 | Settings › Tailscale key, type a key while not joined (a fresh emulator, setup by Server URL + code) | the row's summary shows the masked key at once; the file holds `ks1:` |
 | 4 | Write a plain value by hand (`run-as ... sed` the line to a bare string), force-stop, open Settings | the row says not set, the line is gone from the file; no join is tried with it |
+
+The lost preferences (item 2 of this branch): an enrolled phone with a policy applied, Android's PIN set by the parent
+(Lyd/Lås › Android's PIN), adb on by the policy. The main preferences replaced with a cut-short file: `adb shell
+run-as me.vibb.launcher.debug sh -c 'head -c 200 shared_prefs/me.vibb.launcher.debug_preferences.xml > /data/local/tmp/x;
+cp /data/local/tmp/x shared_prefs/me.vibb.launcher.debug_preferences.xml'` (or an empty `<map/>`), then `adb reboot`.
+The witness is `/data/user_de/0/me.vibb.launcher.debug/files/enrolment_witness` (device-protected storage, apart from
+the main preferences).
+
+| # | Step | Expect |
+|---|---|---|
+| 5 | Before the cut: `run-as ... cat /data/user_de/0/me.vibb.launcher.debug/files/enrolment_witness` | `{"managed":true,"server_url":"https://..."}` |
+| 6 | The cut and the reboot; unlock with Android's PIN | Android's PIN still asked (never cleared); Home shows Koble til with the server address filled in and "Nødsamtale" under the button; logcat has no "Resetting preferences" |
+| 7 | Tap Nødsamtale | the emergency confirm ("Ring 112?") over the screen; Avbryt back to Koble til (no call placed in the test) |
+| 8 | Back gesture, then the home gesture | Koble til closes for that resume; Home shows nothing allowed (the fallback: kiosk on, no apps); the next time Home comes to the front Koble til is back |
+| 9 | The drawer's Settings (or `adb shell am start -a android.settings.APPLICATION_PREFERENCES -p me.vibb.launcher.debug`) | Settings doesn't open (no parent code stored: the gate's dialog, OK disabled) |
+| 10 | adb | stays as the fallback plan leaves it (the last plan's or nothing allowed's), never opened by the lost file; `adb shell dumpsys device_policy` shows the restrictions still set |
+| 11 | A new code from the PWA (the phone's page › Avansert › Ny oppsettkode) typed on Koble til | the phone enrols, the setup hold does not start (the witness counts as applied), the server's policy applies and Home is back |

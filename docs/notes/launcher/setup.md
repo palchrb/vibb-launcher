@@ -119,6 +119,17 @@
   parent sets the key in Settings (open before the first policy: Back, the drawer's Settings, "Tailscale-nøkkel" / "Tailscale auth key"),
   then comes back. Lighter than an expander on a screen meant for two fields, and the case is rare: the server's QR
   carries the key.
+- "Nødsamtale" / "Emergency call" under the button, always there: `EmergencyCall.confirm`, as on every locked screen.
+- The preferences lost or cut short on a phone that was managed: the enrolment's witness (`server/EnrolmentWitness.kt`,
+  `enrolment_witness` in device-protected storage, `{managed, server_url}`, written atomically at every enrolment and
+  every accepted policy, never removed by the app) counts as "a policy was applied" wherever that decides what to
+  enforce (`everManaged`: the sync, `cachedPolicy`, `currentPolicyDecision`, `TimeRulesStore`, the setup hold's start,
+  Settings' gate) - so the sync enforces the last plan or nothing allowed, never no policy, Settings stays behind the
+  parent code (with no PIN stored it doesn't open), and no first-launch reset runs. Koble til is then due although a
+  policy was applied (`connectScreenDue`'s `witnessManaged`), the witness's address filled in: a new code from the
+  parent is the way back. A witness that is there but doesn't read counts as managed. A phone with an adopted
+  hardware key keeps its enrolment anyway (`DeviceCredentials.stored`, the key book's own file). `PolicyGateTest`,
+  `ConnectScreenTest`, `FirstLaunchResetTest`.
 - Back closes it for that one resume of Home; it comes back the next time Home comes to the front. Not exported, out
   of Recents, `FLAG_SECURE`. `ConnectScreenTest`.
 

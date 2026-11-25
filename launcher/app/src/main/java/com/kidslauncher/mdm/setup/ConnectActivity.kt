@@ -16,7 +16,9 @@ import com.kidslauncher.mdm.BuildConfig
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.databinding.ActivityConnectBinding
 import com.kidslauncher.mdm.preferences.LauncherPreferences
+import com.kidslauncher.mdm.calls.EmergencyCall
 import com.kidslauncher.mdm.server.DeviceCredentials
+import com.kidslauncher.mdm.server.EnrolmentWitness
 import com.kidslauncher.mdm.server.QrExtras
 import com.kidslauncher.mdm.server.EnrolWait
 import com.kidslauncher.mdm.server.enrolFailureLine
@@ -33,7 +35,8 @@ private const val LOG_TAG = "ConnectActivity"
 
 /**
  * "Koble til" (2026-11-20, the user): Home's resume brings it up on a Device Owner phone that isn't enrolled
- * ([connectScreenDue] - only before the first policy, never wider than the Settings gate). The server address (the
+ * ([connectScreenDue] - only before the first policy, never wider than the Settings gate; or when the enrolment's
+ * witness says managed and the preferences were lost). An emergency button opens [EmergencyCall.confirm]. The server address (the
  * stored one filled in), the setup code, one button: S-M1's rule first ([serverUrlUsable], the whole reason as
  * `server_url_refused`), then the QR's one apply through [QrExtras.enrolTyped] on the process's scope (a one-shot code
  * the server consumed is never lost to the screen going away). Enrolled, it finishes and Home's resume leads on to the
@@ -61,7 +64,7 @@ class ConnectActivity : UIObjectActivity() {
         window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
         binding = ActivityConnectBinding.inflate(layoutInflater)
         setContentView(binding.root)
-        if (savedInstanceState == null) binding.connectServerUrl.setText(prefilledUrl())
+        if (savedInstanceState == null) binding.connectServerUrl.setText(prefilledUrl(this))
         val watcher = object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
@@ -73,6 +76,8 @@ class ConnectActivity : UIObjectActivity() {
         binding.connectServerUrl.addTextChangedListener(watcher)
         binding.connectCode.addTextChangedListener(watcher)
         binding.connectButton.setOnClickListener { connect() }
+        // Always there, as on every locked screen: the confirm (or the parent's emergency menu) decides what calls.
+        binding.connectEmergency.setOnClickListener { EmergencyCall.confirm(this) }
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 skipNextHomeResume = true
@@ -164,7 +169,8 @@ class ConnectActivity : UIObjectActivity() {
         /** Back closed the screen: Home's next resume (the one right after) shows Home. Main thread only. */
         private var skipNextHomeResume = false
 
-        /** The rule's live inputs; main-thread safe (a binder call and prefs reads, no Keystore). Never throws. */
+        /** The rule's live inputs; main-thread safe (a binder call, prefs reads and the witness's small file, no
+         * Keystore). Never throws. */
         fun due(context: Context): Boolean = try {
             val mdm = LauncherPreferences.mdm()
             connectScreenDue(
@@ -172,13 +178,15 @@ class ConnectActivity : UIObjectActivity() {
                 enrolled = mdm.enrolled(),
                 tokenStored = DeviceCredentials.stored(context),
                 policyEverApplied = mdm.policyEverApplied(),
+                witnessManaged = EnrolmentWitness.managed(context),
             )
         } catch (e: Exception) {
             false
         }
 
-        private fun prefilledUrl(): String =
-            LauncherPreferences.mdm().serverUrl()?.takeIf { it.isNotBlank() }.orEmpty()
+        /** The stored address, else the one the enrolment's witness names (the preferences lost). */
+        private fun prefilledUrl(context: Context): String =
+            LauncherPreferences.mdm().serverUrl()?.takeIf { it.isNotBlank() } ?: EnrolmentWitness.serverUrl(context).orEmpty()
 
         /** From Home's resume: true when the screen was started (Home stops there). */
         fun startFromHome(activity: Activity): Boolean {

@@ -151,10 +151,11 @@ class PolicyGateTest {
     @Test
     fun `the sync and the time rules read the saved copy through judgeCached`() {
         val root = java.io.File("src/main/java/com/kidslauncher/mdm").takeIf { it.exists() } ?: java.io.File("app/src/main/java/com/kidslauncher/mdm")
-        assertTrue(root.resolve("server/MdmSyncWorker.kt").readText().contains("return judgeCached(decoded, mdm.policyEverApplied(), plan, mdm.callsManagedLast())"))
+        assertTrue(root.resolve("server/MdmSyncWorker.kt").readText().contains("return judgeCached(decoded, everManaged(mdm.policyEverApplied(), EnrolmentWitness.managedNow()), plan, mdm.callsManagedLast())"))
         val times = root.resolve("timerules/TimeRulesStore.kt").readText()
         assertTrue(times.contains("judgeCached(\n                decodeCached("))
         assertTrue(times.contains("settings_mdm_calls_managed_last_key"))
+        assertTrue(times.contains("com.kidslauncher.mdm.server.EnrolmentWitness.managed(context)"))
     }
 
     /** The plan written with every accepted policy keeps a null app list through its own encode and decode, so a phone
@@ -219,6 +220,42 @@ class PolicyGateTest {
             PolicyToApply.Apply(null),
             choosePolicy(null, CachedPolicy.Absent, policyEverApplied = false, lastEnforced = null)
         )
+    }
+
+    @Test
+    fun `the preferences lost on a phone the witness says was managed - the fallback, never no policy`() {
+        assertEquals(
+            PolicyToApply.Fallback(NOTHING_ALLOWED_FALLBACK),
+            choosePolicy(null, CachedPolicy.Absent, everManaged(policyEverApplied = false, witnessManaged = true), lastEnforced = null),
+        )
+        assertEquals(PolicyToApply.Apply(null), choosePolicy(null, CachedPolicy.Absent, everManaged(false, false), null))
+        // The witness file: none is a new phone, one that doesn't read is managed, the address read back.
+        val record = """{"managed":true,"server_url":"https://vibb.example.org"}"""
+        assertFalse(witnessManaged(null))
+        assertTrue(witnessManaged(record))
+        assertTrue(witnessManaged("""{"managed":tr"""))
+        assertTrue(witnessManaged(""))
+        assertEquals("https://vibb.example.org", witnessServerUrl(record))
+        assertNull(witnessServerUrl("{"))
+        assertNull(witnessServerUrl(null))
+    }
+
+    /** Every reading of "a policy was applied" that decides what to enforce counts the witness too. */
+    @Test
+    fun `the sync, the cache, the offline decision, the enrolment and Settings ask the witness`() {
+        val main = listOf("src/main", "app/src/main").map { java.io.File(it) }.first { it.isDirectory }
+        fun src(path: String) = java.io.File(main, "java/com/kidslauncher/mdm/$path").readText()
+        val sync = src("server/MdmSyncWorker.kt")
+        val reads = Regex("""mdm(\(\))?\.policyEverApplied\(\)""").findAll(sync).count()
+        val witnessed = Regex("""everManaged\((LauncherPreferences\.)?mdm(\(\))?\.policyEverApplied\(\), EnrolmentWitness\.managed(Now\(\)|\(context\))\)""")
+            .findAll(sync).count()
+        assertEquals(4, witnessed)
+        assertEquals("every read of the flag", reads, witnessed)
+        assertTrue("EnrolmentWitness.record(context, LauncherPreferences.mdm().serverUrl())" in sync.substringAfter("private fun storeAcceptedPolicy("))
+        val enrol = src("server/Enrollment.kt")
+        assertTrue("everManaged(mdmBefore.policyEverApplied(), EnrolmentWitness.managed(context))" in enrol)
+        assertTrue("mdm.enrolled(true)\n            EnrolmentWitness.record(context, serverUrl)" in enrol)
+        assertTrue("EnrolmentWitness.managed(this)" in src("ui/settings/SettingsActivity.kt").substringAfter("private fun currentAccess()"))
     }
 
     private val lastPlan = LastEnforcedPlan.of(managed.copy(screenTimeoutSeconds = 60))

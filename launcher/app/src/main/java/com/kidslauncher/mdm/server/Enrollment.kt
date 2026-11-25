@@ -68,7 +68,7 @@ object Enrollment {
             val mdmBefore = LauncherPreferences.mdm()
             val startsHold = setupHoldStarts(
                 deviceOwner = deviceOwnerNow(context),
-                policyEverApplied = mdmBefore.policyEverApplied(),
+                policyEverApplied = everManaged(mdmBefore.policyEverApplied(), EnrolmentWitness.managed(context)),
                 cachedPolicy = !mdmBefore.kidModePolicy().isNullOrBlank(),
             )
             // No-ops when connected or when no key is set.
@@ -107,6 +107,7 @@ object Enrollment {
             }
             enrolledKey(context, (key as? EnrolKey.Made)?.alias, body.key)
             mdm.enrolled(true)
+            EnrolmentWitness.record(context, serverUrl)
             // Design 95 (code QA L3): the old enrollment's kept policy body (its PIN hashes) goes; the token hash would
             // refuse it anyway.
             PolicyEtagStore.of(context).drop()

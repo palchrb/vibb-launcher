@@ -13,15 +13,42 @@ class ConnectScreenTest {
 
     @Test
     fun `due only on an unenrolled Device Owner phone before the first policy`() {
-        assertTrue(connectScreenDue(deviceOwner = true, enrolled = false, tokenStored = false, policyEverApplied = false))
+        assertTrue(connectScreenDue(deviceOwner = true, enrolled = false, tokenStored = false, policyEverApplied = false, witnessManaged = false))
         // Not Device Owner (a plain install, adb before set-device-owner): Settings is the way, as before.
-        assertFalse(connectScreenDue(deviceOwner = false, enrolled = false, tokenStored = false, policyEverApplied = false))
+        assertFalse(connectScreenDue(deviceOwner = false, enrolled = false, tokenStored = false, policyEverApplied = false, witnessManaged = false))
         // Never on an enrolled phone, whichever of the enrolment's two writes is seen (an unreadable token counts).
-        assertFalse(connectScreenDue(deviceOwner = true, enrolled = true, tokenStored = true, policyEverApplied = false))
-        assertFalse(connectScreenDue(deviceOwner = true, enrolled = true, tokenStored = false, policyEverApplied = false))
-        assertFalse(connectScreenDue(deviceOwner = true, enrolled = false, tokenStored = true, policyEverApplied = false))
+        assertFalse(connectScreenDue(deviceOwner = true, enrolled = true, tokenStored = true, policyEverApplied = false, witnessManaged = false))
+        assertFalse(connectScreenDue(deviceOwner = true, enrolled = true, tokenStored = false, policyEverApplied = false, witnessManaged = false))
+        assertFalse(connectScreenDue(deviceOwner = true, enrolled = false, tokenStored = true, policyEverApplied = false, witnessManaged = false))
         // Never wider than the Settings gate: once a policy was applied, Settings needs the parent PIN - no screen.
-        assertFalse(connectScreenDue(deviceOwner = true, enrolled = false, tokenStored = false, policyEverApplied = true))
+        assertFalse(connectScreenDue(deviceOwner = true, enrolled = false, tokenStored = false, policyEverApplied = true, witnessManaged = false))
+    }
+
+    @Test
+    fun `a managed phone whose preferences were lost gets the screen, with Settings still gated`() {
+        // The witness says managed, the preferences say never enrolled: due even though a policy was applied.
+        assertTrue(connectScreenDue(deviceOwner = true, enrolled = false, tokenStored = false, policyEverApplied = true, witnessManaged = true))
+        assertTrue(connectScreenDue(deviceOwner = true, enrolled = false, tokenStored = false, policyEverApplied = false, witnessManaged = true))
+        // Settings' gate reads the witness as "a policy was applied": the parent code, never open.
+        assertEquals(
+            com.kidslauncher.mdm.ui.settings.SettingsAccess.REFUSE_NO_PIN,
+            com.kidslauncher.mdm.ui.settings.settingsAccess(policyEverApplied = true, pinConfigured = false, lockedOut = false),
+        )
+        // Still never on an enrolled phone or off Device Owner.
+        assertFalse(connectScreenDue(deviceOwner = true, enrolled = true, tokenStored = false, policyEverApplied = true, witnessManaged = true))
+        assertFalse(connectScreenDue(deviceOwner = true, enrolled = false, tokenStored = true, policyEverApplied = true, witnessManaged = true))
+        assertFalse(connectScreenDue(deviceOwner = false, enrolled = false, tokenStored = false, policyEverApplied = true, witnessManaged = true))
+    }
+
+    @Test
+    fun `the screen has the emergency button and asks the witness`() {
+        val text = code("setup/ConnectActivity.kt")
+        assertTrue("binding.connectEmergency.setOnClickListener { EmergencyCall.confirm(this) }" in text.substringAfter("override fun onCreate("))
+        assertTrue("witnessManaged = EnrolmentWitness.managed(context)" in text.substringAfter("fun due(context: Context)"))
+        val layout = File(main, "res/layout/activity_connect.xml").readText()
+        assertTrue("android:id=\"@+id/connect_emergency\"" in layout)
+        assertTrue("android:text=\"@string/calls_emergency\"" in layout.substringAfter("@+id/connect_emergency"))
+        assertTrue("<string name=\"calls_emergency\">Nødsamtale</string>" in File(main, "res/values-nb/strings.xml").readText())
     }
 
     @Test

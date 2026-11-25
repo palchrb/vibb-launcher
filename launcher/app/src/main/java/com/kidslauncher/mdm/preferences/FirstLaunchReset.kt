@@ -11,7 +11,8 @@ package com.kidslauncher.mdm.preferences
  * both enrolment paths write `mdm.enrolled` and the device token together, and a fresh install
  * has neither. [tokenStored]: a token is stored, sealed or not (`DeviceCredentials.stored`: design r10 - an unreadable one
  * still marks an enrolled phone). `started_before` itself stays Home's to set, with its first-launch work (the HOME
- * role request, the notification permission).
+ * role request, the notification permission). [witnessManaged]: the enrolment's witness (`EnrolmentWitness`, outside
+ * this file) says the phone was managed - a lost or cut-short file is never reset as a new phone's.
  */
-fun firstLaunchResetDue(startedBefore: Boolean, enrolled: Boolean, tokenStored: Boolean): Boolean =
-    !startedBefore && !enrolled && !tokenStored
+fun firstLaunchResetDue(startedBefore: Boolean, enrolled: Boolean, tokenStored: Boolean, witnessManaged: Boolean): Boolean =
+    !startedBefore && !enrolled && !tokenStored && !witnessManaged
