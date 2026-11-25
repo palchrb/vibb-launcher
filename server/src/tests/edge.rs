@@ -269,6 +269,91 @@ async fn a_third_stream_closes_the_first_and_delete_closes_the_rest() {
     assert_eq!(res.status, StatusCode::UNAUTHORIZED);
 }
 
+/// Deleting a phone deletes its own security-log lines - those `record_phone_event` writes, with
+/// neither a username nor an address -; a parent's line about the phone, the parent's line about
+/// the delete and another phone's lines (`device 1` against `device 12`) stay.
+#[tokio::test]
+async fn delete_removes_the_phones_own_security_lines() {
+    use crate::security::{Detail, PhoneLine, record_phone_event};
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _token) = app.enrolled_device("phone").await;
+    let (other, _) = app.enrolled_device("other").await;
+    // The other phone's id shares the first digits: `device {id}` must not match `device {id}2`.
+    let lookalike = id * 10 + 2;
+    let mut conn = app.db.acquire().await.unwrap();
+    for device in [id, other, lookalike] {
+        let line = Detail::words(
+            "security.detail.phone_lines_dropped",
+            &[("device", &device.to_string()), ("max", "1")],
+        );
+        assert!(
+            record_phone_event(&mut conn, device, PhoneLine::SetupTickPhone, line)
+                .await
+                .unwrap()
+        );
+    }
+    // The older spellings of a phone line, `device {id}:` and `device {id},`.
+    for detail in [format!("device {id}: started"), format!("device {id}, app")] {
+        sqlx::query(
+            "INSERT INTO security_events (event_type, detail) VALUES ('relock_findings', ?)",
+        )
+        .bind(detail)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    }
+    // A parent's line about the phone carries the parent's name.
+    sqlx::query(
+        "INSERT INTO security_events (event_type, username, detail) VALUES ('settings_saved', 'admin', ?)",
+    )
+    .bind(format!("device {id}"))
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+    drop(conn);
+    let count = |detail: String, parent: bool| {
+        let db = app.db.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM security_events WHERE \
+                 (detail = ?1 OR detail LIKE ?1 || ':%' OR detail LIKE ?1 || ',%') \
+                 AND (username IS NOT NULL OR ip_address IS NOT NULL) = ?2",
+            )
+            .bind(detail)
+            .bind(parent)
+            .fetch_one(&db)
+            .await
+            .unwrap()
+        }
+    };
+    assert!(count(format!("device {id}"), false).await >= 3);
+
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/delete"),
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    assert!(res.status.is_redirection(), "{}", res.status);
+
+    assert_eq!(count(format!("device {id}"), false).await, 0);
+    // The parent's line and the enrolment's (it carries the address it came from) stay, and the
+    // parent's own line about the delete.
+    assert!(count(format!("device {id}"), true).await >= 2);
+    let deleted: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM security_events WHERE username IS NOT NULL AND detail LIKE '%/delete%'",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(deleted, 1);
+    assert_eq!(count(format!("device {other}"), false).await, 1);
+    assert_eq!(count(format!("device {lookalike}"), false).await, 1);
+}
+
 #[tokio::test]
 async fn re_enrolling_a_phone_retires_its_old_token() {
     let app = TestApp::new().await;

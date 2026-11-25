@@ -4178,6 +4178,18 @@ pub async fn delete_device(
         .execute(&state.db)
         .await
         .ok();
+    // The phone's own security-log lines go with it - exactly what `security::record_phone_event`
+    // writes (no username, no address, `device {id}` as the fact); a parent's lines about the
+    // phone carry the parent's name and stay, `device_deleted` among them.
+    let fact = format!("device {id}");
+    sqlx::query(
+        "DELETE FROM security_events WHERE username IS NULL AND ip_address IS NULL \
+         AND (detail = ?1 OR detail LIKE ?1 || ':%' OR detail LIKE ?1 || ',%')",
+    )
+    .bind(&fact)
+    .execute(&state.db)
+    .await
+    .ok();
     // Its token stops working and its open command streams end (design 22 QA d: auth is checked
     // only when a stream opens).
     state.tokens.refresh(&state.db, id, None).await;
