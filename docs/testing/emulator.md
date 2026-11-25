@@ -221,6 +221,8 @@ through the role holder (CloudDPC) and the admin extras reach only `ADMIN_POLICY
 at the next sync`, then `Retry: ...` at the next sync run); a second delivery logs `skipped (already
 applied)`.
 
+**Design 132: while Vibb One holds the password quality NUMERIC (a managed phone whose Android PIN Vibb set) `adb shell locksettings clear --old <PIN>` is refused ("New credential doesn't satisfy admin policies"); every clear step below needs the phone unmanaged first (the apply then writes UNSPECIFIED) - design 132 §11, G12b.**
+
 Screen lock: since step 10 the phone has **no Android screen lock** - handy's own PIN lock
 replaces it (set the Child PIN on the phone's Lock Screen & PINs page; the Parent PIN must be set
 first). An Android PIN keeps handy's lock off (no double lock) and Lock Screen & PINs says
