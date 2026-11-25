@@ -1265,8 +1265,6 @@ struct LockTemplate {
     /// The flash after a Child PIN save, `(text, refused)`; a refusal opens the form again.
     child_flash: Option<(&'static str, bool)>,
     child_open: bool,
-    /// Design 59 §2.3: Android's lock is chosen (the switch, the ⓘ's words).
-    keyguard_android: bool,
     /// "Send the Child PIN again" ([crate::kid_lock::offers_send_again]).
     send_again: bool,
     /// What "Show Child PIN…" showed on this page (design 59 §2.2): the PIN or why there is
@@ -1404,8 +1402,8 @@ impl RevealView {
 }
 
 /// GET `/devices/{id}/lock`: Lock Screen & PINs (design 31 §3.2, step 4). The Child PIN
-/// (`/kid-lock`: set in a `<details>`, remove behind a confirm; design 59: the lock switch
-/// `/kid-lock/keyguard`, "Show Child PIN…" posting here, "Send the Child PIN again"
+/// (`/kid-lock`: set in a `<details>`, never removed - design 132; design 59: "Show Child PIN…" posting here,
+/// "Send the Child PIN again"
 /// `/kid-pin/send`), the Parent PIN (`/parent-pin`, with what the phone reported), the screen
 /// timeout and the lock's background (inline selects), one select per app - Off, Name only, Full
 /// text (`/lock-screen/apps`). The forms return here. A phone not set up yet has the page too: its
@@ -1531,12 +1529,12 @@ pub async fn lock_action(
 fn phone_lock<'a>(
     latest: Option<&DeviceStatus>,
     state: Option<&'a crate::kid_lock::LockState>,
-    pin_waiting: bool,
+    pin_on_its_way: bool,
 ) -> crate::kid_lock::PhoneLock<'a> {
     crate::kid_lock::PhoneLock {
         state,
         android_capable: has_capability(latest, crate::kid_lock::ANDROID_KEYGUARD_CAPABILITY),
-        pin_waiting,
+        pin_on_its_way,
         no_pin: crate::setup_status::reported_child_pin(latest) == Some(Some(false)),
     }
 }
@@ -1548,28 +1546,6 @@ fn since_enrolment<'a>(
     latest: Option<&'a DeviceStatus>,
 ) -> Option<&'a DeviceStatus> {
     latest.filter(|s| s.reported_at.as_str() >= enrolled_at.unwrap_or(""))
-}
-
-/// The newest `set_kid_pin` of this enrollment, as the Child PIN group shows it.
-async fn newest_pin_send(
-    state: &AppState,
-    id: i64,
-    zone: &Zone,
-    now: DateTime<Utc>,
-) -> Result<Option<crate::kid_lock::PinSend>, sqlx::Error> {
-    let newest: Option<crate::models::DeviceCommand> = sqlx::query_as(&format!(
-        "SELECT * FROM device_commands WHERE device_id = ?1 AND command = ?2 \
-         AND requested_at >= {} ORDER BY id DESC LIMIT 1",
-        crate::models::ENROLLED_AT
-    ))
-    .bind(id)
-    .bind(crate::kid_lock::SET_KID_PIN)
-    .fetch_optional(&state.db)
-    .await?;
-    let Some(newest) = newest else {
-        return Ok(None);
-    };
-    Ok(crate::kid_lock::pin_send(&newest, zone, now))
 }
 
 /// Lock Screen & PINs, with `notice`'s flash and, after "Show Child PIN…", its answer (a wrong
@@ -1601,22 +1577,14 @@ async fn render_lock(
     let lock_state = crate::kid_lock::parse_lock_state(
         latest.as_ref().and_then(|s| s.lock_state_json.as_deref()),
     );
-    let keyguard_android = crate::kid_lock::android_requested(&policy);
-    // Design 59: the newest set_kid_pin, shown while Android's lock is chosen.
-    let pin_send = if keyguard_android {
-        match newest_pin_send(state, id, &zone, now).await {
-            Ok(send) => send,
-            Err(err) => return read_failed(lang, id, "the Child PIN's command", err),
-        }
-    } else {
-        None
+    // Design 59: the newest set_kid_pin.
+    let pin_send = match crate::kid_lock::newest_pin_send(&state.db, id, &zone, now).await {
+        Ok(send) => send,
+        Err(err) => return read_failed(lang, id, "the Child PIN's command", err),
     };
-    let phone = phone_lock(
-        latest.as_ref(),
-        lock_state.as_ref(),
-        pin_send == Some(crate::kid_lock::PinSend::Waiting),
-    );
-    let child = crate::kid_lock::lock_card(&policy, &phone, now.timestamp_millis());
+    let sending = crate::kid_lock::on_its_way(pin_send.as_ref());
+    let phone = phone_lock(latest.as_ref(), lock_state.as_ref(), sending);
+    let child = crate::kid_lock::lock_card(&policy, &phone);
     // "Send again" reads only this install's reports, as the queue rule does (qa-59-step2-code
     // S2P-4, step 1's S59-3): before a re-enrolled phone's first report, no button.
     let send_again = crate::kid_lock::offers_send_again(
@@ -1624,9 +1592,8 @@ async fn render_lock(
         &phone_lock(
             since_enrolment(device.enrolled_at.as_deref(), latest.as_ref()),
             lock_state.as_ref(),
-            phone.pin_waiting,
+            sending,
         ),
-        pin_send.as_ref(),
     );
     // The report's time on "On the phone", so an old report never reads as now (qa-31-s4-code L3).
     let reported = latest
@@ -1642,17 +1609,15 @@ async fn render_lock(
     // Design 114b: the setup step `child_pin` missing, said once at the Child PIN, the fix behind its ⓘ. No Child PIN
     // stored (whatever PIN the phone has, code QA M2): "Ingen barne-PIN". One stored but the phone has no PIN (code QA
     // L1: in place of "not the Child PIN", which `PhoneLock::no_pin` holds back): "Telefonen har ingen PIN" - unless a
-    // send is waiting or under way, which the card's own row says.
-    let sending = matches!(
-        pin_send,
-        Some(
-            crate::kid_lock::PinSend::Waiting
-                | crate::kid_lock::PinSend::Sent { .. }
-                | crate::kid_lock::PinSend::Taken { .. }
-        )
-    );
+    // send is waiting or under way, which the card's own row says, or the card says it already (design 132 §4.5's
+    // no-Android-PIN line, the lock report's own).
+    let card_says_it = child
+        .notes
+        .iter()
+        .any(|n| matches!(n, crate::kid_lock::LockNote::NoAndroidPin { .. }));
     if crate::setup_status::child_pin_missing(&policy, latest.as_ref(), &setup_part)
         && (!child.pin_set || !sending)
+        && !card_says_it
     {
         let (title, fix) = if child.pin_set {
             (
@@ -1744,7 +1709,6 @@ async fn render_lock(
         // A refusal opens the Child PIN's form again - not "Not sent", which it can't fix.
         child_open: child_flash.is_some_and(|(_, refused)| refused)
             && notice != Some("pin_not_sent"),
-        keyguard_android,
         send_again,
         reveal_answer,
         reveal_error,

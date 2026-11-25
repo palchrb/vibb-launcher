@@ -194,15 +194,12 @@ pub struct DevicePolicy {
     pub location_mode: String,
     /// Minutes between active location fixes in "interval" mode.
     pub location_interval_minutes: i64,
-    /// The kid's PIN for handy's own lock screen (migrations/0030, handy step 10), hashed like
-    /// the override PIN. `None` = lock off. Sent as `PolicyResponse.kid_lock`.
+    /// The Child PIN (migrations/0030, handy step 10), hashed like the override PIN; Android's PIN
+    /// lock is set from it (design 59, design 132). `None` = no lock. Sent as `PolicyResponse.kid_lock`.
     pub kid_pin_hash: Option<String>,
     pub kid_pin_salt: Option<String>,
-    /// 4-6; the keypad submits at the last digit.
+    /// 4-6, sent as `kid_lock.pin_length` (no longer read by the phone, design 132).
     pub kid_pin_length: Option<i64>,
-    /// Design 59 (migrations/0085): "own" (Vibb One's lock) or "android" (Android's PIN is the
-    /// Child PIN), sent as `kid_lock.keyguard` ([crate::kid_lock::policy_kid_lock]).
-    pub kid_keyguard: String,
     /// The Child PIN sealed (`kid_pin`), `None` for a PIN saved before 0085 or without the key.
     /// (`kid_pin_prev_sealed`/`kid_pin_prev_rev`, the PIN the phone last confirmed, are written by
     /// the save and the status intake and read by the reveal, not through this struct.)

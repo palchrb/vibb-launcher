@@ -560,8 +560,8 @@ async fn the_child_pin_step() {
     // A Child PIN stored, the phone without a PIN and nothing on its way (code QA L1): "The phone has no PIN", never
     // "not the Child PIN" beside it, and no such Attention row.
     sqlx::query(
-        "UPDATE device_policy SET kid_pin_hash = 'aGFzaA', kid_pin_salt = 'c2FsdA', kid_pin_length = 4, \
-         kid_keyguard = 'android' WHERE device_id = ?",
+        "UPDATE device_policy SET kid_pin_hash = 'aGFzaA', kid_pin_salt = 'c2FsdA', kid_pin_length = 4 \
+         WHERE device_id = ?",
     )
     .bind(id)
     .execute(&app.db)
