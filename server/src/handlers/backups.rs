@@ -36,6 +36,9 @@ struct BackupRow {
     exact: String,
     /// Design 116 §4: the newest backup was opened as a restore would and passed - a quiet "checked".
     checked: bool,
+    /// An older backup whose check, or whose restore at a start, failed: its line, in orange (the newest's is the
+    /// page's own line).
+    refused: Option<&'static str>,
 }
 
 #[derive(Clone)]
@@ -350,7 +353,7 @@ pub(crate) const CHECK_KEY: &str = "backup";
 
 /// Why a backup can't be restored by this binary (§4's codes; `failed`, the backup itself, is [perform_backup]'s).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum CheckCode {
+pub enum CheckCode {
     /// No `kidphone.db` in it, or not a zip.
     NoDb,
     /// The database can't be opened or read (not SQLite, `devices` won't read).
@@ -360,6 +363,14 @@ pub(crate) enum CheckCode {
     /// Made by a newer or a different build: a migration this binary doesn't know, another checksum, or one that
     /// failed.
     Version,
+    /// Not a Vibb backup: the comparison ran and its tables, indexes, views or triggers differ from what this server's
+    /// migrations make ([schema_matches]), or it has a trigger or a view no migration makes.
+    Schema,
+    /// Its copy couldn't be opened read-write or updated to this server's version (a migration failed on it).
+    Migrate,
+    /// No room for the check's scratch copy at a restore (a full disk; [Checked::NoRoom]) - only ever a restore's
+    /// refusal, never a check's row.
+    NoRoom,
 }
 
 impl CheckCode {
@@ -369,6 +380,9 @@ impl CheckCode {
             CheckCode::Unreadable => "unreadable",
             CheckCode::Integrity => "integrity",
             CheckCode::Version => "version",
+            CheckCode::Schema => "schema",
+            CheckCode::Migrate => "migrate",
+            CheckCode::NoRoom => "no_room",
         }
     }
 }
@@ -402,17 +416,23 @@ pub(crate) fn restorable(
     })
 }
 
-/// Opens, as a restore would, the backup at `zip` - its `kidphone.db` under the restore's own 1 GiB cap, copied to a
-/// unique scratch file in `data_dir`, opened read-only and immutable - and checks it: `integrity_check`, the
-/// migrations ([restorable]) and a read of `devices`. The scratch file is deleted afterwards, also on a failure.
-pub(crate) async fn check_file(data_dir: &std::path::Path, zip: &std::path::Path) -> Checked {
+/// A unique scratch file in `data_dir` for a check (swept at startup if a crash leaves it).
+fn check_scratch(data_dir: &std::path::Path) -> std::path::PathBuf {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let scratch = data_dir.join(format!(
+    data_dir.join(format!(
         "{CHECK_SCRATCH_PREFIX}{}-{}-{}.db",
         chrono::Utc::now().format("%Y%m%d%H%M%S"),
         std::process::id(),
         NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    ));
+    ))
+}
+
+/// Opens, as a restore would, the backup at `zip` - its `kidphone.db` under the restore's own 1 GiB cap, copied to a
+/// unique scratch file in `data_dir`, opened read-only and immutable - and checks it: `integrity_check`, the
+/// migrations ([restorable]), a read of `devices`, and then the schema once migrated ([schema_matches]). The scratch
+/// file is deleted afterwards, also on a failure.
+pub(crate) async fn check_file(data_dir: &std::path::Path, zip: &std::path::Path) -> Checked {
+    let scratch = check_scratch(data_dir);
     let (zip_path, scratch_path) = (zip.to_path_buf(), scratch.clone());
     let extracted = tokio::task::spawn_blocking(move || extract_db(&zip_path, &scratch_path))
         .await
@@ -457,7 +477,118 @@ fn extract_db(zip: &std::path::Path, scratch: &std::path::Path) -> Result<(), Ex
     out.sync_all().map_err(|e| Extract::Scratch(e.to_string()))
 }
 
+/// [check_file] for a database already out of its zip (the restore at the start, `startup::apply_restore_request`):
+/// `db` is copied to a scratch file in `data_dir` first, so the migrations the check runs never touch it.
+pub(crate) async fn check_extracted(data_dir: &std::path::Path, db: &std::path::Path) -> Checked {
+    let scratch = check_scratch(data_dir);
+    let checked = match tokio::fs::copy(db, &scratch).await {
+        Ok(_) => check_db(&scratch).await,
+        Err(err) => Checked::NoRoom(err.to_string()),
+    };
+    let _ = tokio::fs::remove_file(&scratch).await;
+    checked
+}
+
+/// Checks the database at `path`, a scratch copy the check may change: read-only first ([restorable], a read of
+/// `devices`, no trigger or view the migrations never make), then migrated in place for [schema_matches].
 async fn check_db(path: &std::path::Path) -> Checked {
+    match check_db_read_only(path).await {
+        Checked::Ok => {}
+        other => return other,
+    }
+    match schema_matches(path).await {
+        Ok(true) => Checked::Ok,
+        Ok(false) => Checked::Failed(CheckCode::Schema),
+        Err(err) => {
+            tracing::warn!(%err, "a backup couldn't be updated to this server's version");
+            Checked::Failed(CheckCode::Migrate)
+        }
+    }
+}
+
+/// Runs what the start runs on a database (every migration this binary has, then the session store's table) and
+/// reads its schema ([crate::backup_schema::read]). `Err`: it couldn't be opened read-write or migrated.
+async fn migrated_schema(
+    options: sqlx::sqlite::SqliteConnectOptions,
+) -> Result<crate::backup_schema::Schema, String> {
+    // One connection: an in-memory database is the connection's own.
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .min_connections(1)
+        .idle_timeout(None)
+        .max_lifetime(None)
+        .connect_with(options.foreign_keys(true))
+        .await
+        .map_err(|err| format!("open: {err}"))?;
+    let read = async {
+        crate::MIGRATOR
+            .run(&pool)
+            .await
+            .map_err(|err| format!("migrations: {err}"))?;
+        tower_sessions_sqlx_store::SqliteStore::new(pool.clone())
+            .migrate()
+            .await
+            .map_err(|err| format!("session store: {err}"))?;
+        let mut conn = pool.acquire().await.map_err(|err| err.to_string())?;
+        crate::backup_schema::read(&mut conn)
+            .await
+            .map_err(|err| format!("read: {err}"))
+    }
+    .await;
+    pool.close().await;
+    read
+}
+
+/// What this server's migrations make: a fresh in-memory database migrated as the start would, once per process.
+async fn reference_schema() -> Result<&'static crate::backup_schema::Schema, String> {
+    static REFERENCE: tokio::sync::OnceCell<crate::backup_schema::Schema> =
+        tokio::sync::OnceCell::const_new();
+    REFERENCE
+        .get_or_try_init(|| async {
+            let options = sqlx::sqlite::SqliteConnectOptions::new().in_memory(true);
+            migrated_schema(options).await
+        })
+        .await
+}
+
+/// Every trigger and view name a backup of any migration version may hold: the reference's and every one a migration
+/// creates.
+async fn known_trigger_and_view_names()
+-> Result<&'static std::collections::BTreeSet<String>, String> {
+    static NAMES: tokio::sync::OnceCell<std::collections::BTreeSet<String>> =
+        tokio::sync::OnceCell::const_new();
+    NAMES
+        .get_or_try_init(|| async {
+            let mut names = reference_schema().await?.trigger_and_view_names();
+            names.extend(crate::backup_schema::migration_trigger_and_view_names(
+                &crate::MIGRATOR,
+            ));
+            Ok(names)
+        })
+        .await
+}
+
+/// A restore takes only a database whose schema is exactly what the migrations make: the database at `path` (a
+/// scratch copy - it is migrated in place, as the start would) has, once migrated, the same tables, columns, indexes,
+/// foreign keys, checks, views and triggers as [reference_schema] (`crate::backup_schema`). An older backup passes (it
+/// is migrated forward); one with a trigger, a view or a table changed or added doesn't (`Ok(false)`). `Err`: the copy
+/// couldn't be opened read-write or migrated.
+pub(crate) async fn schema_matches(path: &std::path::Path) -> Result<bool, String> {
+    let reference = reference_schema().await?;
+    let options = sqlx::sqlite::SqliteConnectOptions::new().filename(path);
+    let candidate = migrated_schema(options).await?;
+    let differences = candidate.differences(reference);
+    if !differences.is_empty() {
+        tracing::warn!(
+            ?differences,
+            "a backup's schema differs from what the migrations make"
+        );
+        return Ok(false);
+    }
+    Ok(true)
+}
+
+async fn check_db_read_only(path: &std::path::Path) -> Checked {
     use sqlx::Connection;
     let options = sqlx::sqlite::SqliteConnectOptions::new()
         .filename(path)
@@ -492,17 +623,76 @@ async fn check_db(path: &std::path::Path) -> Checked {
         if !restorable(&applied, &crate::MIGRATOR) {
             return Checked::Failed(CheckCode::Version);
         }
-        match sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM devices")
+        if sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM devices")
             .fetch_one(&mut conn)
             .await
+            .is_err()
         {
-            Ok(_) => Checked::Ok,
+            return Checked::Failed(CheckCode::Unreadable);
+        }
+        // A trigger or a view no migration makes is refused before anything runs on the copy.
+        let known = match known_trigger_and_view_names().await {
+            Ok(known) => known,
+            Err(err) => {
+                tracing::warn!(%err, "the migrations' schema couldn't be made");
+                return Checked::Failed(CheckCode::Migrate);
+            }
+        };
+        match crate::backup_schema::trigger_and_view_names(&mut conn).await {
+            Ok(names) if names.is_subset(known) => Checked::Ok,
+            Ok(names) => {
+                let extra: Vec<&String> = names.difference(known).collect();
+                tracing::warn!(
+                    ?extra,
+                    "a backup has a trigger or a view the migrations don't make"
+                );
+                Checked::Failed(CheckCode::Schema)
+            }
             Err(_) => Checked::Failed(CheckCode::Unreadable),
         }
     }
     .await;
     let _ = conn.close().await;
     checked
+}
+
+/// `check-backup <file>`: the backup check of a backup zip (or a bare `kidphone.db`) as a restore would make it, on a
+/// scratch copy in a new folder under the system's temporary folder, deleted afterwards - nothing else is read or
+/// written, the server's own database least of all. Prints `ok` or `refused: <code>` and returns the exit code (0 ok, 1
+/// refused, 2 no room for the copy).
+pub(crate) async fn check_command(file: &std::path::Path) -> i32 {
+    let scratch_dir = std::env::temp_dir().join(format!(
+        "{CHECK_SCRATCH_PREFIX}cli-{}-{}",
+        std::process::id(),
+        chrono::Utc::now().format("%Y%m%d%H%M%S")
+    ));
+    if let Err(err) = tokio::fs::create_dir(&scratch_dir).await {
+        eprintln!("check-backup: can't make {}: {err}", scratch_dir.display());
+        return 2;
+    }
+    let is_zip = file
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("zip"));
+    let checked = if is_zip {
+        check_file(&scratch_dir, file).await
+    } else {
+        check_extracted(&scratch_dir, file).await
+    };
+    let _ = tokio::fs::remove_dir_all(&scratch_dir).await;
+    match checked {
+        Checked::Ok => {
+            println!("ok");
+            0
+        }
+        Checked::Failed(code) => {
+            println!("refused: {}", code.as_str());
+            1
+        }
+        Checked::NoRoom(err) => {
+            println!("refused: {} ({err})", CheckCode::NoRoom.as_str());
+            2
+        }
+    }
 }
 
 /// [check_file] for `name` in `data_dir/backups/`, recorded as `('backup', 'file:<name>')` (a row means checked; a
@@ -514,8 +704,20 @@ pub(crate) async fn check_and_record(
     name: &str,
 ) {
     let dir = data_dir.join(BACKUP_DIR);
+    let checked = check_file(data_dir, &dir.join(name)).await;
+    record_check(db, data_dir, name, checked).await;
+}
+
+/// [check_and_record]'s recording of a check already made.
+async fn record_check(
+    db: &sqlx::SqlitePool,
+    data_dir: &std::path::Path,
+    name: &str,
+    checked: Checked,
+) {
+    let dir = data_dir.join(BACKUP_DIR);
     let scope = format!("file:{name}");
-    match check_file(data_dir, &dir.join(name)).await {
+    match checked {
         Checked::Ok => crate::integration_health::ok(db, CHECK_KEY, &scope).await,
         Checked::Failed(code) => {
             tracing::error!(
@@ -588,8 +790,46 @@ pub async fn check_newest_unchecked(db: sqlx::SqlitePool, data_dir: std::path::P
 pub enum BackupProblem {
     /// The newest backup has a failing check.
     Check,
+    /// The newest backup's database isn't one this server makes ([CheckCode::Schema]): not a Vibb backup.
+    NotVibb,
+    /// The newest backup couldn't be updated to this server's version ([CheckCode::Migrate]).
+    Migrate,
+    /// A restore of the newest backup found no room for its check ([CheckCode::NoRoom]).
+    NoRoom,
     /// The backup itself failed, after the newest zip (or with none).
     Run,
+}
+
+impl BackupProblem {
+    /// A failing check row's code to the problem it shows.
+    fn of_code(code: Option<&str>) -> BackupProblem {
+        match code {
+            Some(code) if code == CheckCode::Schema.as_str() => BackupProblem::NotVibb,
+            Some(code) if code == CheckCode::Migrate.as_str() => BackupProblem::Migrate,
+            Some(code) if code == CheckCode::NoRoom.as_str() => BackupProblem::NoRoom,
+            _ => BackupProblem::Check,
+        }
+    }
+
+    /// The line and its (i), as i18n keys.
+    fn words(self) -> (&'static str, &'static str) {
+        match self {
+            BackupProblem::Check => (
+                "settings.backups.check_failed",
+                "settings.backups.check_info",
+            ),
+            BackupProblem::NotVibb => (
+                "settings.backups.not_vibb",
+                "settings.backups.not_restorable_info",
+            ),
+            BackupProblem::Migrate => (
+                "settings.backups.migrate_failed",
+                "settings.backups.not_restorable_info",
+            ),
+            BackupProblem::NoRoom => ("settings.backups.no_room", "settings.backups.no_room_info"),
+            BackupProblem::Run => ("settings.backups.run_failed", "settings.backups.run_info"),
+        }
+    }
 }
 
 /// The backups' state: the problem that shows, if any, and whether the newest backup was checked and passed.
@@ -611,11 +851,11 @@ pub async fn backup_state(
         Some(name) => row(format!("file:{name}")).await,
         None => None,
     };
-    if newest_row
-        .as_ref()
-        .is_some_and(|r| r.failing_since.is_some())
-    {
-        return (Some(BackupProblem::Check), false);
+    if let Some(failing) = newest_row.as_ref().filter(|r| r.failing_since.is_some()) {
+        return (
+            Some(BackupProblem::of_code(failing.error.as_deref())),
+            false,
+        );
     }
     let checked = newest_row.is_some_and(|r| r.ok_at.is_some());
     let made_at = match &newest {
@@ -736,13 +976,7 @@ impl BackupsTemplate {
     /// Design 116 §4: the page's orange line and its (i), if any - each problem its own how-to (code QA L5).
     fn problem_line(&self) -> Option<(&'static str, &'static str)> {
         self.problem.map(|problem| {
-            let (line, info) = match problem {
-                BackupProblem::Check => (
-                    "settings.backups.check_failed",
-                    "settings.backups.check_info",
-                ),
-                BackupProblem::Run => ("settings.backups.run_failed", "settings.backups.run_info"),
-            };
+            let (line, info) = problem.words();
             (t(self.lang, line), t(self.lang, info))
         })
     }
@@ -991,6 +1225,7 @@ async fn render_backups(
                 ),
                 exact: made.map(|t| zone.exact(t)).unwrap_or_default(),
                 checked: false,
+                refused: None,
             });
         }
     }
@@ -999,6 +1234,20 @@ async fn render_backups(
     let (problem, checked) = backup_state(&state.db, &state.data_dir).await;
     if let Some(newest) = backups.first_mut() {
         newest.checked = checked;
+    }
+    let failing: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT scope, error FROM integration_health \
+         WHERE key = ? AND scope LIKE 'file:%' AND failing_since IS NOT NULL",
+    )
+    .bind(CHECK_KEY)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+    for row in backups.iter_mut().skip(1) {
+        let scope = format!("file:{}", row.filename);
+        if let Some((_, code)) = failing.iter().find(|(s, _)| *s == scope) {
+            row.refused = Some(t(lang, BackupProblem::of_code(code.as_deref()).words().0));
+        }
     }
 
     let page = BackupsTemplate {
@@ -1609,6 +1858,28 @@ pub async fn upload_backup(
     .await;
     match saved {
         Ok(()) => {
+            // The upload sorts as the newest backup: checked now, as a made one is (code QA L4). A database this
+            // server doesn't make is refused here, before any restore: the file goes.
+            let checked = check_file(&state.data_dir, &path).await;
+            if checked == Checked::Failed(CheckCode::Schema) {
+                let _ = tokio::fs::remove_file(&path).await;
+                security::record_security_event(
+                    &state.db,
+                    "backup_upload_refused",
+                    Some(&who.admin.username),
+                    None,
+                    Some(security::Detail::facts(CheckCode::Schema.as_str())),
+                )
+                .await;
+                let answer = Answer {
+                    flash: Some(
+                        Flash::refused("upload", t(lang, "settings.backups.not_vibb"))
+                            .because(t(lang, "settings.backups.not_restorable_info")),
+                    ),
+                    ..Answer::default()
+                };
+                return render_backups(&state, StatusCode::BAD_REQUEST, answer, &who, lang).await;
+            }
             security::record_security_event(
                 &state.db,
                 "backup_uploaded",
@@ -1617,9 +1888,7 @@ pub async fn upload_backup(
                 Some(security::Detail::facts(&filename)),
             )
             .await;
-            // The upload sorts as the newest backup: checked now, as a made one is (code QA L4).
-            let (db, data_dir) = (state.db.clone(), state.data_dir.clone());
-            tokio::spawn(async move { check_and_record(&db, &data_dir, &filename).await });
+            record_check(&state.db, &state.data_dir, &filename, checked).await;
             Done::Upload.redirect()
         }
         Err(err) => {
@@ -1668,6 +1937,33 @@ mod tests {
         path
     }
 
+    /// A database migrated only up to `version` (the migrations' files up to it), its bytes.
+    async fn older_db(dir: &std::path::Path, version: i64) -> Vec<u8> {
+        let files = dir.join("older-migrations");
+        std::fs::create_dir_all(&files).unwrap();
+        for entry in std::fs::read_dir("migrations").unwrap() {
+            let entry = entry.unwrap();
+            let name = entry.file_name().to_string_lossy().to_string();
+            let number: i64 = name.split('_').next().unwrap().parse().unwrap();
+            if number <= version {
+                std::fs::copy(entry.path(), files.join(&name)).unwrap();
+            }
+        }
+        let path = dir.join("older.db");
+        let options = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(&path)
+            .create_if_missing(true);
+        let db = sqlx::SqlitePool::connect_with(options).await.unwrap();
+        sqlx::migrate::Migrator::new(files.as_path())
+            .await
+            .unwrap()
+            .run(&db)
+            .await
+            .unwrap();
+        db.close().await;
+        std::fs::read(&path).unwrap()
+    }
+
     /// The same database with `sql` run on it.
     async fn changed(dir: &std::path::Path, bytes: &[u8], sql: &str) -> Vec<u8> {
         let path = dir.join("changed.db");
@@ -1697,13 +1993,49 @@ mod tests {
             }
         };
         assert_eq!(check("backup-1.zip", Some(good.clone())).await, Checked::Ok);
-        let older = changed(
+        let older = older_db(tmp.path(), 150).await;
+        assert_eq!(check("backup-2.zip", Some(older)).await, Checked::Ok);
+        // A migration that fails on the copy is "can't be updated", never "not a Vibb backup": the good one with its
+        // newer migrations' rows taken out (they run again on tables that are there), and an older one holding a table
+        // a later migration makes.
+        let half = changed(
             tmp.path(),
             &good,
             "DELETE FROM _sqlx_migrations WHERE version > 150",
         )
         .await;
-        assert_eq!(check("backup-2.zip", Some(older)).await, Checked::Ok);
+        assert_eq!(
+            check("backup-2b.zip", Some(half)).await,
+            Checked::Failed(CheckCode::Migrate)
+        );
+        let older = older_db(tmp.path(), 150).await;
+        let clash = changed(
+            tmp.path(),
+            &older,
+            "CREATE TABLE unified_push_settings (x TEXT)",
+        )
+        .await;
+        assert_eq!(
+            check("backup-2c.zip", Some(clash)).await,
+            Checked::Failed(CheckCode::Migrate)
+        );
+        // The comparison ran and differs: an older one with a table of its own, a column added to a table, a trigger
+        // (refused before anything runs on the copy).
+        for (name, sql) in [
+            ("backup-2d.zip", "CREATE TABLE notes (body TEXT)"),
+            ("backup-2e.zip", "ALTER TABLE devices ADD COLUMN note TEXT"),
+            (
+                "backup-2f.zip",
+                "CREATE TRIGGER keep AFTER DELETE ON devices BEGIN SELECT 1; END",
+            ),
+        ] {
+            let other = changed(tmp.path(), &older, sql).await;
+            assert_eq!(
+                check(name, Some(other)).await,
+                Checked::Failed(CheckCode::Schema),
+                "{sql}"
+            );
+        }
         assert_eq!(
             check("backup-3.zip", None).await,
             Checked::Failed(CheckCode::NoDb)
@@ -1807,6 +2139,7 @@ mod tests {
                     when: "03:00".to_string(),
                     exact: String::new(),
                     checked: false,
+                    refused: None,
                 }],
                 flash,
                 refused: None,
@@ -1908,6 +2241,7 @@ mod tests {
                     when: "now".to_string(),
                     exact: String::new(),
                     checked: false,
+                    refused: None,
                 })
                 .collect(),
             flash: None,

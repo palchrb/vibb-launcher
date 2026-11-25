@@ -191,7 +191,9 @@ async fn a_backup_restores() {
     .unwrap();
     std::fs::write(fresh.path().join(startup::RESTORE_REQUEST), &name).unwrap();
     let db_path = fresh.path().join("kidphone.db");
-    let restored = startup::apply_restore_request(fresh.path(), &db_path).unwrap();
+    let restored = startup::apply_restore_request(fresh.path(), &db_path)
+        .await
+        .unwrap();
     assert!(restored.is_some());
     let db = crate::connect_db(&format!("sqlite://{}", db_path.display())).await;
     let phone: String = sqlx::query_scalar("SELECT name FROM devices WHERE id = ?")
@@ -281,5 +283,86 @@ async fn a_backup_that_cant_be_read_shows_until_it_is_gone() {
             .await
             .unwrap()
             .is_none()
+    );
+}
+
+/// A backup whose database isn't one this server makes: the Backups page's line says "Not a Vibb backup", and a
+/// restore of it refused at the start writes `backup_restore_refused` to the live database's log.
+#[tokio::test]
+async fn a_backup_the_migrations_dont_make_is_not_a_vibb_backup() {
+    use crate::handlers::backups;
+    use std::io::Write;
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let made = tempfile::tempdir().unwrap();
+    let file = made.path().join("kidphone.db");
+    let db = crate::connect_db(&format!("sqlite://{}", file.display())).await;
+    sqlx::query("CREATE VIEW every_admin AS SELECT username FROM admin_users")
+        .execute(&db)
+        .await
+        .unwrap();
+    sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+        .execute(&db)
+        .await
+        .unwrap();
+    db.close().await;
+    let bad = "backup-29991231-235959.zip";
+    std::fs::create_dir_all(app.state.data_dir.join("backups")).unwrap();
+    let zip_file = std::fs::File::create(app.state.data_dir.join("backups").join(bad)).unwrap();
+    let mut zip = zip::ZipWriter::new(zip_file);
+    zip.start_file("kidphone.db", zip::write::SimpleFileOptions::default())
+        .unwrap();
+    zip.write_all(&std::fs::read(&file).unwrap()).unwrap();
+    zip.finish().unwrap();
+
+    backups::check_and_record(&app.db, &app.state.data_dir, bad).await;
+    assert_eq!(
+        backups::backup_state(&app.db, &app.state.data_dir).await.0,
+        Some(backups::BackupProblem::NotVibb)
+    );
+    let page = app.get_page("/backups", &cookie).await.text();
+    assert!(page.contains("data-note=\"backup-problem\""), "{page}");
+    assert!(page.contains("Not a Vibb backup"), "{page}");
+    let list = app.get_page("/devices", &cookie).await.text();
+    assert!(list.contains("id=\"backup-warning\""), "{list}");
+
+    // A restore of an older backup refused at the start (here: it couldn't be updated): the live database's log has
+    // the line with the file and the code, and the page shows it at that backup's row.
+    let older = "backup-20000101-000000.zip";
+    std::fs::write(app.state.data_dir.join("backups").join(older), b"older").unwrap();
+    startup::record_restore_refused(
+        &app.db,
+        &startup::CheckRefusal {
+            filename: older.to_string(),
+            by: Some("parent".to_string()),
+            code: backups::CheckCode::Migrate,
+        },
+    )
+    .await;
+    let logged: Vec<(Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT username, detail FROM security_events WHERE event_type = 'backup_restore_refused'",
+    )
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(logged.len(), 1, "{logged:?}");
+    assert_eq!(logged[0].0.as_deref(), Some("parent"));
+    assert!(
+        logged[0]
+            .1
+            .as_deref()
+            .is_some_and(|d| d.contains(older) && d.contains("(migrate)")),
+        "{logged:?}"
+    );
+    let page = app.get_page("/backups", &cookie).await.text();
+    let row = page
+        .split("data-backup=\"backup-20000101-000000.zip\"")
+        .nth(1)
+        .unwrap_or_default();
+    assert!(row.contains("data-refused"), "{page}");
+    assert!(
+        row.contains("Can&#39;t be updated to this server")
+            || row.contains("Can't be updated to this server"),
+        "{page}"
     );
 }

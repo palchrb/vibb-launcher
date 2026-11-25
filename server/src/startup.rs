@@ -108,13 +108,75 @@ fn with_suffix(db: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(name)
 }
 
+/// A restore that was refused or failed: nothing was swapped.
+#[derive(Debug)]
+pub struct RestoreRefused {
+    /// For the server log.
+    pub message: String,
+    /// The backup check refused it ([crate::handlers::backups::check_extracted]): for the live database's
+    /// `backup_restore_refused` line and the file's check row ([record_restore_refused]).
+    pub check: Option<CheckRefusal>,
+}
+
+/// A restore the backup check refused: the file, who asked (the PWA's marker's username) and the check's code.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckRefusal {
+    pub filename: String,
+    pub by: Option<String>,
+    pub code: crate::handlers::backups::CheckCode,
+}
+
+impl From<String> for RestoreRefused {
+    fn from(message: String) -> Self {
+        RestoreRefused {
+            message,
+            check: None,
+        }
+    }
+}
+
+impl std::fmt::Display for RestoreRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
 /// Applies `data_dir/restore_request` if it is there: the marker is deleted first, so a restore that fails can't loop; the
 /// name must be `backup-*.zip` without `/` or `..`, the file must be in `backups/` and hold
-/// `kidphone.db`; the live database (with its `-wal`/`-shm`) is copied to
-/// `backups/prerestore-<timestamp>/` first, then replaced, and its `-wal`/`-shm` removed.
+/// `kidphone.db`, which must pass the backup check (`backups::check_extracted` on a scratch copy: readable, from this
+/// server's migrations, and once migrated exactly the schema they make); the live database (with its `-wal`/`-shm`)
+/// is copied to `backups/prerestore-<timestamp>/` first, then replaced, and its `-wal`/`-shm` removed.
 /// `Ok(None)`: no marker. `Err`: refused or failed - nothing was swapped.
-pub fn apply_restore_request(data_dir: &Path, db: &Path) -> Result<Option<AppliedRestore>, String> {
-    apply_restore_request_capped(data_dir, db, RESTORE_MAX_BYTES)
+pub async fn apply_restore_request(
+    data_dir: &Path,
+    db: &Path,
+) -> Result<Option<AppliedRestore>, RestoreRefused> {
+    apply_restore_request_capped(data_dir, db, RESTORE_MAX_BYTES).await
+}
+
+/// After a restore the backup check refused: the live database's security log gets a `backup_restore_refused` line
+/// with the file and the code, and the file's check row fails with the code (the Backups page's line for it).
+pub async fn record_restore_refused(db: &sqlx::SqlitePool, refusal: &CheckRefusal) {
+    let code = refusal.code.as_str();
+    crate::security::record_security_event(
+        db,
+        "backup_restore_refused",
+        refusal.by.as_deref(),
+        None,
+        Some(crate::security::Detail::facts(format!(
+            "{} ({code})",
+            refusal.filename
+        ))),
+    )
+    .await;
+    crate::integration_health::failed(
+        db,
+        crate::handlers::backups::CHECK_KEY,
+        &format!("file:{}", refusal.filename),
+        code,
+        crate::integration_health::Class::Stop,
+    )
+    .await;
 }
 
 /// After a restore, in the restored database (privacy review 2026-11-17 M1): the security log's `backup_restored` line
@@ -164,11 +226,11 @@ pub const RESTORE_MAX_BYTES: u64 = 1024 * 1024 * 1024;
 /// `prerestore-*` copies kept in `backups/`.
 pub const PRERESTORE_KEEP: usize = 3;
 
-pub(crate) fn apply_restore_request_capped(
+pub(crate) async fn apply_restore_request_capped(
     data_dir: &Path,
     db: &Path,
     max_bytes: u64,
-) -> Result<Option<AppliedRestore>, String> {
+) -> Result<Option<AppliedRestore>, RestoreRefused> {
     let marker = data_dir.join(RESTORE_REQUEST);
     let Ok(filename) = std::fs::read_to_string(&marker) else {
         return Ok(None);
@@ -200,9 +262,7 @@ pub(crate) fn apply_restore_request_capped(
         && !filename.contains('\\')
         && !filename.contains(".."))
     {
-        return Err(format!(
-            "refusing to restore {filename:?}: not a backup-*.zip name"
-        ));
+        return Err(format!("refusing to restore {filename:?}: not a backup-*.zip name").into());
     }
     let backups = data_dir.join("backups");
     let zip_path = backups.join(&filename);
@@ -232,7 +292,8 @@ pub(crate) fn apply_restore_request_capped(
                 let _ = std::fs::remove_file(&staged);
                 return Err(format!(
                     "{filename}'s kidphone.db is larger than {max_bytes} bytes - refused"
-                ));
+                )
+                .into());
             }
             out.write_all(&buffer[..read])
                 .map_err(|err| format!("couldn't write {}: {err}", staged.display()))?;
@@ -248,9 +309,27 @@ pub(crate) fn apply_restore_request_capped(
         && &header == b"SQLite format 3\0";
     if !is_sqlite {
         let _ = std::fs::remove_file(&staged);
-        return Err(format!(
-            "{filename}'s kidphone.db is not an SQLite database"
-        ));
+        return Err(format!("{filename}'s kidphone.db is not an SQLite database").into());
+    }
+    drop(entry);
+    drop(archive);
+    // The backup check, on a scratch copy (its migrations never touch the staged file): a database this server can't
+    // open or migrate, or whose schema isn't exactly what the migrations make, is never swapped in.
+    let checked = crate::handlers::backups::check_extracted(data_dir, &staged).await;
+    if checked != crate::handlers::backups::Checked::Ok {
+        let _ = std::fs::remove_file(&staged);
+        let code = match &checked {
+            crate::handlers::backups::Checked::Failed(code) => *code,
+            _ => crate::handlers::backups::CheckCode::NoRoom,
+        };
+        return Err(RestoreRefused {
+            message: format!("{filename}'s kidphone.db doesn't pass the backup check: {checked:?}"),
+            check: Some(CheckRefusal {
+                filename: filename.clone(),
+                by: by.as_ref().map(|(username, _)| username.clone()),
+                code,
+            }),
+        });
     }
 
     let prerestore_dir = backups.join(format!(

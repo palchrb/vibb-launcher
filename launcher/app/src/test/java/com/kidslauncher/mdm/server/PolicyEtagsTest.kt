@@ -66,6 +66,18 @@ class PolicyEtagsTest {
         assertSame(serverError, fetch(answer(500)).first)
     }
 
+    /** A 304's kept body is the server's own answer of this sync: it reaches the apply as `fromServer`, so it may roll
+     * Android's PIN back, as a 200 would. */
+    @Test
+    fun `a 304 reaches the apply as the server's own policy`() {
+        val served = fetch(answer(200, body, "W/\"abc\"")).third!!
+        assertTrue(store.keep(owner, served.etag!!, served.body))
+        val notModified = fetch(answer(304)).first as FreshDecode.Ok
+        val decision = choosePolicy(notModified.policy, CachedPolicy.Ok(notModified.policy), true, null)
+        assertEquals(PolicyToApply.Apply(notModified.policy, fromServer = true), decision)
+        assertTrue(rollbackAllowed(decision.source))
+    }
+
     @Test
     fun `a kept body is for this build, server and token only`() {
         assertTrue(store.keep(owner, "W/\"abc\"", body))

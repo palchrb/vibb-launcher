@@ -520,7 +520,8 @@ initial-admin-password`. Sign in as `admin` and change it - the server deletes i
 - **Restoring a backup** from the Backups page works in the container too: the server stops, swaps in the backup at
   its next start (Docker's restart policy brings it back), and keeps the previous database in
   `data/backups/prerestore-<time>/` (the newest 3 are kept); if the backup won't open, the previous database goes
-  back. A backup whose database is over 1 GiB is refused.
+  back. A backup whose database is over 1 GiB is refused, and so is one whose tables, indexes or triggers differ from
+what this server makes.
 - **The host's backup takes `./backups`**: the server never copies anything off the machine. Keep that folder as safe
   as the admin password: it holds full copies of the family's database.
 - **Moving the backups out of the named volume** (an install from before design 116, once, when the new
@@ -1193,7 +1194,23 @@ sudo systemctl restart kid-phone-server.service
 
 The server takes the marker at its next start (the same restore as the container's): the backup's `kidphone.db` must
 be an SQLite database of at most 1 GiB, the database it replaces is kept in `data/backups/prerestore-<time>/` (the
-newest 3), a backup that won't open is undone, and everyone signs in again. A backup that isn't in
+newest 3), a backup that won't open is undone, and everyone signs in again. A restore refuses a file whose tables,
+indexes or triggers differ from what this server makes ("Not a Vibb backup"), or that can't be updated to this
+server's version: the database stays as it was, the Security Log says "Backup restore refused" with the file and the
+reason, and the Backups page shows it at that backup. An upload of a file that isn't a Vibb backup is refused at once.
+
+**Checking a backup by hand.** `check-backup` runs the same check a restore runs, on a copy in a new folder under the
+system's temporary folder that it deletes afterwards; it reads nothing else and writes nothing else - not the
+server's database, not `data/`:
+
+```
+cd /opt/kid-phone-server && sudo -u kidphone ./kid_phone_server check-backup data/backups/backup-20261104-020000.zip
+docker compose exec handy /app/kid_phone_server check-backup /app/data/backups/backup-20261104-020000.zip
+```
+
+It prints `ok`, or `refused:` and the reason's code (`schema` - not a Vibb backup, `migrate` - can't be updated to this
+version, `version`, `integrity`, `unreadable`, `no_db`, `no_room`), and exits 0 when the backup would restore. Worth
+running on the newest backup before you update the server. It also takes a bare `kidphone.db`. A backup that isn't in
 `data/backups/` yet goes there first (Upload a Backup…, or copy it in as the `kidphone` user). In Docker Restore…
 asks for the file name and restarts the container itself ("Docker" above).
 

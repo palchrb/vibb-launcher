@@ -225,6 +225,7 @@ async fn the_restore_marker_swaps_in_a_good_backup_and_refuses_bad_ones() {
     // No marker: nothing happens.
     assert!(
         startup::apply_restore_request(&data, &live)
+            .await
             .unwrap()
             .is_none()
     );
@@ -240,7 +241,7 @@ async fn the_restore_marker_swaps_in_a_good_backup_and_refuses_bad_ones() {
         "backup-20261009-031000.zip",
     ] {
         std::fs::write(data.join(startup::RESTORE_REQUEST), name).unwrap();
-        let result = startup::apply_restore_request(&data, &live);
+        let result = startup::apply_restore_request(&data, &live).await;
         assert!(result.is_err(), "{name}: {result:?}");
         assert!(!data.join(startup::RESTORE_REQUEST).exists(), "{name}");
         assert_eq!(admin_names(&url).await, ["live"], "{name}");
@@ -259,6 +260,7 @@ async fn the_restore_marker_swaps_in_a_good_backup_and_refuses_bad_ones() {
     )
     .unwrap();
     let restored = startup::apply_restore_request(&data, &live)
+        .await
         .unwrap()
         .expect("applied");
     assert_eq!(
@@ -280,7 +282,7 @@ async fn the_restore_marker_swaps_in_a_good_backup_and_refuses_bad_ones() {
 }
 
 #[tokio::test]
-async fn a_restored_database_that_wont_open_is_put_back() {
+async fn a_restored_database_is_put_back_by_the_undo() {
     let dir = tempfile::tempdir().unwrap();
     let data = dir.path().join("data");
     std::fs::create_dir_all(&data).unwrap();
@@ -313,12 +315,37 @@ async fn a_restored_database_that_wont_open_is_put_back() {
     )
     .unwrap();
 
+    // A database that won't open is refused by the backup check before anything is swapped.
+    let refused = startup::apply_restore_request(&data, &live).await;
+    assert!(refused.is_err(), "{refused:?}");
+    assert_eq!(admin_names(&url).await, ["live"]);
+
+    // A backup that passes: swapped in, then put back by the undo (the start's path when the restored database
+    // doesn't open).
+    let good = dir.path().join("good.db");
+    let db = crate::connect_db(&format!("sqlite://{}", good.display())).await;
+    sqlx::query("INSERT INTO admin_users (username, password_hash) VALUES ('from-backup', 'x')")
+        .execute(&db)
+        .await
+        .unwrap();
+    sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+        .execute(&db)
+        .await
+        .unwrap();
+    db.close().await;
+    backup_zip(dir.path(), "backup-20261009-041000.zip", Some(&good));
+    std::fs::write(
+        data.join(startup::RESTORE_REQUEST),
+        "backup-20261009-041000.zip",
+    )
+    .unwrap();
     let restored = startup::apply_restore_request(&data, &live)
+        .await
         .unwrap()
         .expect("applied");
     // The owner's one-line marker over SSH names no one.
     assert_eq!((restored.by.as_ref(), restored.asked_at), (None, None));
-    assert!(crate::try_connect_db(&url).await.is_err(), "junk opened");
+    assert_eq!(admin_names(&url).await, ["from-backup"]);
     startup::undo_restore(&live, &restored).unwrap();
     let listing = |dir: &Path| -> Vec<String> {
         std::fs::read_dir(dir)
@@ -369,8 +396,8 @@ async fn a_restore_is_size_capped_and_old_prerestore_copies_go() {
         "backup-20261009-050000.zip",
     )
     .unwrap();
-    let refused = startup::apply_restore_request_capped(&data, &live, size - 1);
-    assert!(refused.unwrap_err().contains("larger than"));
+    let refused = startup::apply_restore_request_capped(&data, &live, size - 1).await;
+    assert!(refused.unwrap_err().message.contains("larger than"));
     assert!(!data.join("kidphone.db.restore-tmp").exists());
     assert_eq!(admin_names(&url).await, ["live"]);
     assert!(
@@ -397,6 +424,7 @@ async fn a_restore_is_size_capped_and_old_prerestore_copies_go() {
     )
     .unwrap();
     let restored = startup::apply_restore_request_capped(&data, &live, size)
+        .await
         .unwrap()
         .expect("applied");
     let mut left: Vec<String> = std::fs::read_dir(&backups)
@@ -735,4 +763,200 @@ async fn the_updates_page_shows_the_release_read_in_the_background() {
     release.set(None, false, true);
     let page = app.get_page("/updates", &cookie).await.text();
     assert!(latest_row(&page).contains("Couldn&#39;t check"), "{page}");
+}
+
+/// A database as this server makes it (every migration), one admin `from-backup`, with `extra` run on it, all of it in
+/// its main file.
+async fn made_database(path: &Path, extra: &str) {
+    let db = crate::connect_db(&format!("sqlite://{}", path.display())).await;
+    sqlx::query("INSERT INTO admin_users (username, password_hash) VALUES ('from-backup', 'x')")
+        .execute(&db)
+        .await
+        .unwrap();
+    if !extra.is_empty() {
+        sqlx::query(extra).execute(&db).await.unwrap();
+    }
+    sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+        .execute(&db)
+        .await
+        .unwrap();
+    db.close().await;
+}
+
+/// A restore takes only a database whose schema is exactly what the migrations make: a trigger, a view, an index or
+/// a changed table is refused before anything is swapped - the marker gone, the live database untouched, no copy
+/// aside - and the backup check refuses the same file.
+#[tokio::test]
+async fn a_restore_refuses_a_schema_the_migrations_dont_make() {
+    use crate::handlers::backups::{CheckCode, Checked, check_file};
+    let dir = tempfile::tempdir().unwrap();
+    let data = dir.path().join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    let live = data.join("kidphone.db");
+    let url = format!("sqlite://{}", live.display());
+    let db = crate::connect_db(&url).await;
+    sqlx::query("INSERT INTO admin_users (username, password_hash) VALUES ('live', 'x')")
+        .execute(&db)
+        .await
+        .unwrap();
+    sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+        .execute(&db)
+        .await
+        .unwrap();
+    db.close().await;
+
+    let cases = [
+        (
+            "trigger",
+            "CREATE TRIGGER keep_admins AFTER DELETE ON admin_users BEGIN \
+             INSERT INTO admin_users (username, password_hash) VALUES (old.username, old.password_hash); END",
+        ),
+        (
+            "trigger on the migrations table",
+            "CREATE TRIGGER on_migrate AFTER INSERT ON _sqlx_migrations BEGIN \
+             UPDATE admin_users SET password_hash = 'y'; END",
+        ),
+        (
+            "view",
+            "CREATE VIEW every_admin AS SELECT username FROM admin_users",
+        ),
+        ("altered table", "ALTER TABLE devices ADD COLUMN note TEXT"),
+        (
+            "index",
+            "CREATE INDEX admin_users_by_hash ON admin_users (password_hash)",
+        ),
+        ("table", "CREATE TABLE notes (body TEXT)"),
+    ];
+    for (i, (what, extra)) in cases.iter().enumerate() {
+        let file = dir.path().join(format!("case-{i}.db"));
+        made_database(&file, extra).await;
+        let name = format!("backup-20261124-0{i}0000.zip");
+        backup_zip(dir.path(), &name, Some(&file));
+        assert_eq!(
+            check_file(&data, &data.join("backups").join(&name)).await,
+            Checked::Failed(CheckCode::Schema),
+            "{what}"
+        );
+        std::fs::write(
+            data.join(startup::RESTORE_REQUEST),
+            crate::handlers::backups::restore_marker(&name, "parent", "Mamma", chrono::Utc::now()),
+        )
+        .unwrap();
+        let refused = startup::apply_restore_request(&data, &live)
+            .await
+            .expect_err(what);
+        assert_eq!(
+            refused.check,
+            Some(startup::CheckRefusal {
+                filename: name.clone(),
+                by: Some("parent".to_string()),
+                code: CheckCode::Schema,
+            }),
+            "{what}"
+        );
+        assert!(!data.join(startup::RESTORE_REQUEST).exists(), "{what}");
+        assert!(!data.join("kidphone.db.restore-tmp").exists(), "{what}");
+        assert_eq!(admin_names(&url).await, ["live"], "{what}");
+        let scratch_left = std::fs::read_dir(&data)
+            .unwrap()
+            .filter_map(Result::ok)
+            .any(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with(crate::handlers::backups::CHECK_SCRATCH_PREFIX)
+            });
+        assert!(!scratch_left, "{what}");
+    }
+    let copies = std::fs::read_dir(data.join("backups"))
+        .unwrap()
+        .filter_map(Result::ok)
+        .any(|e| e.file_name().to_string_lossy().starts_with("prerestore-"));
+    assert!(!copies, "a refused restore makes no copy");
+
+    // The same database without anything added restores.
+    let file = dir.path().join("plain.db");
+    made_database(&file, "").await;
+    backup_zip(dir.path(), "backup-20261124-090000.zip", Some(&file));
+    std::fs::write(
+        data.join(startup::RESTORE_REQUEST),
+        "backup-20261124-090000.zip",
+    )
+    .unwrap();
+    startup::apply_restore_request(&data, &live)
+        .await
+        .unwrap()
+        .expect("applied");
+    assert_eq!(admin_names(&url).await, ["from-backup"]);
+}
+
+/// A backup from the previous migration version (with the session store's table, as a running server has it) passes
+/// the check and restores: it is migrated forward.
+#[tokio::test]
+async fn a_backup_from_the_previous_version_restores() {
+    let dir = tempfile::tempdir().unwrap();
+    let older = tempfile::tempdir().unwrap();
+    let (_, old) = old_database(older.path(), back(1)).await;
+    let data = dir.path().join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    let live = data.join("kidphone.db");
+    let url = format!("sqlite://{}", live.display());
+    crate::connect_db(&url).await.close().await;
+    backup_zip(dir.path(), "backup-20261124-100000.zip", Some(&old));
+    assert_eq!(
+        crate::handlers::backups::check_file(
+            &data,
+            &data.join("backups").join("backup-20261124-100000.zip")
+        )
+        .await,
+        crate::handlers::backups::Checked::Ok
+    );
+    std::fs::write(
+        data.join(startup::RESTORE_REQUEST),
+        "backup-20261124-100000.zip",
+    )
+    .unwrap();
+    startup::apply_restore_request(&data, &live)
+        .await
+        .unwrap()
+        .expect("applied");
+    assert_eq!(admin_names(&url).await, ["old"]);
+}
+
+/// A refused restore leaves the live database's `-wal` and `-shm` as they were: only a swap removes them.
+#[tokio::test]
+async fn a_refused_restore_leaves_the_live_wal_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let data = dir.path().join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    let live = data.join("kidphone.db");
+    let url = format!("sqlite://{}", live.display());
+    // A write still in the -wal (no checkpoint), the pool held open as a running server's would be.
+    let db = crate::connect_db(&url).await;
+    sqlx::query("INSERT INTO admin_users (username, password_hash) VALUES ('live', 'x')")
+        .execute(&db)
+        .await
+        .unwrap();
+    let file = dir.path().join("viewed.db");
+    made_database(
+        &file,
+        "CREATE VIEW every_admin AS SELECT username FROM admin_users",
+    )
+    .await;
+    backup_zip(dir.path(), "backup-20261124-110000.zip", Some(&file));
+    let wal = |suffix: &str| std::fs::read(format!("{}{suffix}", live.display())).ok();
+    let before = (wal("-wal"), wal("-shm"));
+    assert!(
+        before.0.as_ref().is_some_and(|w| !w.is_empty()),
+        "a -wal to keep"
+    );
+    std::fs::write(
+        data.join(startup::RESTORE_REQUEST),
+        "backup-20261124-110000.zip",
+    )
+    .unwrap();
+    let refused = startup::apply_restore_request(&data, &live).await;
+    assert!(refused.is_err(), "{refused:?}");
+    assert_eq!((wal("-wal"), wal("-shm")), before);
+    db.close().await;
+    assert_eq!(admin_names(&url).await, ["live"]);
 }
