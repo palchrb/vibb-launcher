@@ -1556,6 +1556,8 @@ private fun storeAcceptedPolicy(context: Context, policy: PolicyResponse): Unit 
         }
     }
     val ok = editor.commit()
+    // A failed cache write is the storage-full flag too (`time_state.storage_full`).
+    StorageWrites.record(StorageWrites.Kind.POLICY_CACHE, ok)
     if (!ok) Log.w(LOG_TAG, "Failed to cache the accepted policy")
     EnrolmentWitness.recordPolicyApplied(context, LauncherPreferences.mdm().serverUrl())
 }

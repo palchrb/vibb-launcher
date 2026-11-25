@@ -2007,6 +2007,17 @@ async fn render_device_time(
             fix: None,
         });
     }
+    // Storage full: one orange line, what it means and the fix behind its (i).
+    if report.as_ref().is_some_and(|(_, r)| r.storage_full) {
+        warnings.push(Note {
+            warning: true,
+            title: t(lang, "device.attention.storage_full").to_string(),
+            value: None,
+            sub: None,
+            detail: Some(t(lang, "device.time.storage_full_info").to_string()),
+            fix: None,
+        });
+    }
     // The phone's clock (time rules keep their own clock): one orange line when it is off or unchecked, why behind
     // its (i); nothing when it is right.
     if let Some(problem) = report.as_ref().and_then(|(_, r)| r.clock_problem()) {

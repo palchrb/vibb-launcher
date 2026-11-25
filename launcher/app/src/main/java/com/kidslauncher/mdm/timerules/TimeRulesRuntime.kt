@@ -74,10 +74,18 @@ object TimeRulesRuntime {
         }
     }
 
+    /** Whether the phone's storage is full as its writes see it ([com.kidslauncher.mdm.server.StorageWrites]): a failed
+     * ledger write counts. The count itself keeps enforcing while the process runs - SharedPreferences keeps the new
+     * value in memory even when the write to disk fails -; a restart goes back to the last saved ledger, losing the
+     * time used since storage filled (the owner's choice, 2026-11-25). */
+    fun storageFull(): Boolean = com.kidslauncher.mdm.server.StorageWrites.full()
+
     private fun saveLedger(context: Context, before: ScreenTimeLedger, after: ScreenTimeLedger) {
         if (before == after) return
         val ok = prefs(context).edit().putString(LEDGER_KEY, ServerJson.encodeToString(ScreenTimeLedger.serializer(), after)).commit()
-        if (!ok) Log.w(LOG_TAG, "Couldn't save the screen-time ledger")
+        if (com.kidslauncher.mdm.server.StorageWrites.record(com.kidslauncher.mdm.server.StorageWrites.Kind.LEDGER, ok)) {
+            Log.w(LOG_TAG, "Couldn't save the screen-time ledger: storage full?")
+        }
     }
 
     /** The ledger moved to now in [zone], with new budget lifts applied - saved when it changed. */
@@ -135,6 +143,8 @@ object TimeRulesRuntime {
         val zone: ZoneId,
         /** Design 98 §4.4: the policy's lift ids a parent-code pause on this phone stands behind (`lifts_active`). */
         val phoneLiftIds: List<Long> = emptyList(),
+        /** The ledger can't be saved ([storageFull]): `time_state.storage_full`. */
+        val storageFull: Boolean = false,
     )
 
     /** [zone] is read once here and passed down; nothing below reads the system zone again. */
@@ -144,7 +154,7 @@ object TimeRulesRuntime {
         com.kidslauncher.mdm.server.TrustedClock.checkpoint()
         // Design 93 §9.1: a rule turned on now is gone from its `until_ms`.
         val tp = KidModeEnforcer.timePolicyOf(policy)?.inForceAt(clocks.wallMs)
-            ?: return Snapshot(UNLOCKED, null, null, null, emptyList(), clocks, zone)
+            ?: return Snapshot(UNLOCKED, null, null, null, emptyList(), clocks, zone, storageFull = storageFull())
         val ledger = ledger(context, tp, clocks, zone)
         val records = liftRecords(context, tp.lifts, clocks)
         val budget = budgetUse(ledger, tp)
@@ -154,7 +164,7 @@ object TimeRulesRuntime {
             // Security review S-L8: only the music app with our signer is exempt from the budget.
             musicApps = com.kidslauncher.mdm.music.MusicTrust.installed(context).toSet(),
         )
-        return Snapshot(lock, tp, ledger, budget, records, clocks, zone, PhonePauses.activeLiftIds(context, tp.lifts, clocks))
+        return Snapshot(lock, tp, ledger, budget, records, clocks, zone, PhonePauses.activeLiftIds(context, tp.lifts, clocks), storageFull())
     }
 
     /** The PWA's lifts through their records, and design 98's parent-code pauses through their own entries. */
@@ -243,6 +253,7 @@ object TimeRulesRuntime {
             clockSkewMs = clock?.skewMs,
             clockTrust = clock?.trust?.wire,
             unanchoredMs = clock?.unanchoredMs,
+            storageFull = snap.storageFull,
         )
     }
 

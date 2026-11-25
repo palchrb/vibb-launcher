@@ -72,6 +72,7 @@ class MdmDeviceAdminReceiver : DeviceAdminReceiver() {
     override fun onProfileProvisioningComplete(context: Context, intent: Intent) {
         super.onProfileProvisioningComplete(context, intent)
         Log.i(LOG_TAG, "Provisioning complete")
+        ProvisioningBaseline.arm(context, "Provisioning complete")
 
         val bundle = intent.getParcelableExtra(
             DevicePolicyManager.EXTRA_PROVISIONING_ADMIN_EXTRAS_BUNDLE,

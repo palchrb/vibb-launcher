@@ -28,7 +28,7 @@ class TimeStateZoneTest {
     private fun state(zone: String?) = TimeState(
         day = "2026-10-14", usedMinutes = 42, budgetMinutes = 90, extraMinutes = 0, activeRuleId = 7,
         activeRuleName = "Leggetid", callsBlocked = false, lockReason = "BEDTIME", liftsActive = emptyList(),
-        zone = zone, clockSkewMs = 0, clockTrust = "server", unanchoredMs = 0,
+        zone = zone, clockSkewMs = 0, clockTrust = "server", unanchoredMs = 0, storageFull = true,
     )
 
     /** The contract's clock fields: checked by the server, at the time it reported. */
@@ -48,7 +48,7 @@ class TimeStateZoneTest {
         val lock = TimeLock(reason = LockReason.BEDTIME, rules = listOf(rule), callsAllowed = true)
         val ledger = ScreenTimeLedger(day = "2026-10-14", usedMs = 42 * 60_000L)
         val policy = TimePolicy(rules = listOf(rule), dailyBudgetMinutes = List(7) { 90 })
-        return TimeRulesRuntime.Snapshot(lock, policy, ledger, budgetUse(ledger, policy), emptyList(), Clocks(0, 0, 1), zone)
+        return TimeRulesRuntime.Snapshot(lock, policy, ledger, budgetUse(ledger, policy), emptyList(), Clocks(0, 0, 1), zone, storageFull = true)
     }
 
     @Test
@@ -64,6 +64,13 @@ class TimeStateZoneTest {
         val serverCopy = File("../../server/testdata/time_status_report.json")
         assertTrue("${serverCopy.absolutePath} not found", serverCopy.isFile)
         assertEquals("${serverCopy.path} differs from the launcher's copy", serverCopy.readText(), contract)
+    }
+
+    /** The storage line: `storage_full` is sent only while the ledger can't be saved. */
+    @Test
+    fun storage_full_is_left_out_while_false() {
+        val timeState = ServerJson.parseToJsonElement(encoded(state("Europe/Oslo").copy(storageFull = false))).jsonObject["time_state"]!!.jsonObject
+        assertFalse(timeState.containsKey("storage_full"))
     }
 
     @Test

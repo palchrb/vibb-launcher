@@ -2654,7 +2654,9 @@ async fn render_device(
     // "Needs attention" while Device › Time shows a warning, as the Music row does.
     let (time_value, time_attention) = match &time_rules {
         Err(_) => (unreadable(), false),
-        Ok(_) if facts.ledger_unreadable || facts.clock.is_some() => (needs_attention(), true),
+        Ok(_) if facts.ledger_unreadable || facts.storage_full || facts.clock.is_some() => {
+            (needs_attention(), true)
+        }
         // A rule or the own limit in force that doesn't read: the phone gets a 500 for its
         // settings until it is saved again (qa-31-s9-code N5).
         Ok(rules)
@@ -4018,8 +4020,8 @@ pub async fn update_hardening(
          disallow_modify_accounts = ?, disallow_config_vpn = ?, disallow_usb_file_transfer = ?, \
          disallow_debugging_features = ?, disallow_safe_boot = ?, lock_location = ?, \
          disallow_airplane_mode = ?, disallow_config_locale = ?, \
-         disallow_screen_capture = ?, updated_at = datetime('now') \
-         WHERE device_id = ?",
+         disallow_screen_capture = ?, disallow_config_credentials = ?, \
+         updated_at = datetime('now') WHERE device_id = ?",
     )
     .bind(on("disallow_safe_boot"))
     .bind(chrono::Utc::now().timestamp_millis())
@@ -4034,6 +4036,7 @@ pub async fn update_hardening(
     .bind(on("disallow_airplane_mode"))
     .bind(on("disallow_config_locale"))
     .bind(on("disallow_screen_capture"))
+    .bind(on("disallow_config_credentials"))
     .bind(id)
     .execute(&state.db)
     .await;

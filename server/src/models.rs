@@ -404,6 +404,9 @@ pub struct Hardening {
     /// `DevicePolicyManager.setScreenCaptureDisabled` (migrations/0089), not a user restriction:
     /// no screenshots, screen recording or casting, and Recents cards go blank. Off by default.
     pub disallow_screen_capture: bool,
+    /// `DISALLOW_CONFIG_CREDENTIALS` (migrations/0178): no user certificates installed from Settings. On by
+    /// default; off for a Wi-Fi network or an app that needs its own certificate.
+    pub disallow_config_credentials: bool,
 }
 
 impl Default for Hardening {
@@ -421,6 +424,7 @@ impl Default for Hardening {
             disallow_airplane_mode: false,
             disallow_config_locale: true,
             disallow_screen_capture: false,
+            disallow_config_credentials: true,
         }
     }
 }

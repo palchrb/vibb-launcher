@@ -145,7 +145,7 @@ keeps the music app's, the music app sends exactly those. Spotify's host list `s
 (design 26c §6.2; provisional until the DNS capture) is byte-identical in both apps' test resources
 (`spotify::tests::hosts_match_the_contract`, `ContractFilesTest`, `MusicPlanTest`); a change goes into all three in
 one commit, with each side's constants (`HOST_SUFFIXES`/`EXACT_HOSTS`, `SPOTIFY_HOST_SUFFIXES`/`SPOTIFY_EXACT_HOSTS`).
-The launcher's status body with `time_state.zone` (design 34 P13) is `server/testdata/time_status_report.json`,
+The launcher's status body with `time_state.zone` (design 34 P13; since 2026-11-25 with `storage_full`) is `server/testdata/time_status_report.json`,
 byte-identical in `launcher/app/src/test/resources/`: the launcher's `TimeStateZoneTest` encodes exactly it, the
 server's `devices_list::a_launcher_report_with_its_zone_shows_the_rules_end` posts it, and both compare the copies.
 The launcher's status body with `dns_upstream` (design 36 §4.2) is `server/testdata/dns_upstream_status.json`,

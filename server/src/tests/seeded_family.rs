@@ -407,6 +407,8 @@ pub async fn seed(app: &TestApp, lang: crate::i18n::Lang) -> Family {
         ),
         // Design 116 §3.4: the web filter down.
         phone.filter_down("5:120000", ago(131)),
+        // The phone's storage full, once a day.
+        phone.storage_full(),
     ];
     let kinds: std::collections::BTreeSet<&str> = events.iter().map(|e| e.kind.wire()).collect();
     assert_eq!(kinds.len(), parent_events::Kind::ALL.len(), "every kind");

@@ -5887,3 +5887,48 @@ the main preferences).
 | 12 | Before step 11: another server's address in the field (`https://other.example.org`), any code | the address rule's line ("server_url_refused"'s text), nothing sent (no request in the server's log) |
 | 13 | A fresh emulator: enrol with a code but keep the server from answering the policy (stop it right after the enrolment), cut the preferences as above, reboot | the witness holds `"enrolled":true` alone; Koble til shows (no first-launch reset), Settings opens without a code, Home is not locked down (no policy applied yet) |
 | 14 | The calendar report: a calendar named `per.hansen@example.org` (DAVx5 or a local one), and an ICSx5 subscription whose display name is cleared (`content insert`/`update` on `content://com.android.calendar/calendars`, `calendar_displayName` null) | the PWA's Calendars list shows `p…@example.org` and an empty name for the subscription (its host as the source); Dagen on the phone shows the full names |
+
+## 6bq. User certificates, the provisioning baseline, storage full (branch `storage-certs-baseline`) - written, not run
+
+On **Android 14 and 16** with the user's OK. The debug launcher and a server of this branch. Logcat `AppEnforcer`,
+`ProvisioningBaseline`, `Provisioning`, `TimeRulesRuntime`. Restrictions are read with `adb shell dumpsys
+device_policy | grep -A30 'User restrictions'` (while adb is still there) or from Settings' greyed rows.
+
+User certificates (Advanced › Restrictions › "Blokker sertifikater", on by default):
+
+| # | Step | Expect |
+|---|---|---|
+| 1 | An enrolled, managed phone with the defaults; Settings › Security › More security settings › Encryption & credentials (the pause on, so Settings shows) | "Install a certificate" and "Clear credentials" greyed or refused ("blocked by your admin"); "Trusted credentials" shows the system CAs with no switch to turn one off; `dumpsys` lists `no_config_credentials` |
+| 2 | Wi-Fi › Add network, EAP (PEAP), CA certificate | "Use system certificates" with a domain can be saved; no way to install a certificate from the dialog |
+| 3 | The PWA: "Blokker sertifikater" off (no orange line anywhere, the page stays where it was), a sync | `no_config_credentials` gone; a CA certificate installs from Downloads (Settings › Install a certificate › CA certificate); the PWA shows no warning for the choice |
+| 4 | The switch on again, a sync | the installed certificate stays (nothing removes it), but installing another is refused again; Vibb One's server connection is unaffected (it trusts no user CA) |
+| 5 | The pause from the phone's parent code, or the setup hold of a fresh enrolment | the certificate rows stay greyed (hardening is never lifted by a pause or the hold) |
+| 6 | Settings › Passwords, passkeys & accounts (14: Passwords & accounts) | not affected by the restriction (the credential provider choice is another setting); note what the build shows - if Android greys out the provider picker, that goes to the owner as a visible cost |
+
+The provisioning baseline (a QR-provisioned phone locked down before its first policy). A fresh emulator (wiped),
+QR provisioning from the welcome screen (six taps, the setup QR from the PWA shown to the emulator's camera through
+the virtual scene's poster image, or any route that runs `ADMIN_POLICY_COMPLIANCE`), with the server stopped so the
+enrolment fails at first:
+
+| # | Step | Expect |
+|---|---|---|
+| 7 | Before the setup wizard ends, `adb logcat -s ProvisioningBaseline` (adb from the emulator console's `adb` stays only until the restriction lands) | `Admin policy compliance: baseline set` (on a phone without a role holder `Provisioning complete: baseline set`) |
+| 8 | After setup: Settings › System › Developer options; Settings › System › Users; a sideloaded APK from Files; Encryption & credentials | developer options and USB debugging off and greyed (`adb devices` shows the emulator offline or gone); no "Add user"/guest; "Install unknown apps" refused; certificate install greyed |
+| 9 | Settings › System › Reset options › Erase all data | allowed (not blocked before the first policy) - cancel it |
+| 10 | Long-press power › long-press Power off | no "Reboot to safe mode" offer |
+| 11 | Android's PIN: set one in Settings, lock and unlock | the PIN unlocks as always (the baseline touches no lock) |
+| 12 | The server on; Koble til with a new code from the PWA (the phone's page › Avansert › Ny oppsettkode) | the phone enrols and takes its first policy; from then on the PWA's switches decide: "Blokker USB-feilsøking" off in the PWA brings developer options and adb back after a sync, and factory reset is blocked by the default |
+| 13 | The server unmanages the phone (calls and apps unmanaged) | every restriction cleared, the baseline doesn't come back |
+| 14 | A wiped emulator, adb's `dpm set-device-owner me.vibb.launcher.debug/com.kidslauncher.mdm.server.MdmDeviceAdminReceiver` (the dev path) | no `ProvisioningBaseline` line; adb stays until the first managed policy, as before; `run-as me.vibb.launcher.debug ls /data/user_de/0/me.vibb.launcher.debug/shared_prefs` has no `provisioning_baseline.xml` |
+
+Storage full (the phone stays usable; the parent is told). An enrolled phone with a daily screen-time limit (say 30
+minutes). Fill `/data` until a write fails: `adb shell 'dd if=/dev/zero of=/sdcard/Download/fill bs=1M count=100000'`
+(stop at "No space left on device"; free a little and fill again until `df /data` shows 0 available):
+
+| # | Step | Expect |
+|---|---|---|
+| 15 | Use the phone for 5 minutes (a policy sync in the full state fails its cache write too, the same flag) | logcat `Couldn't save the screen-time ledger: storage full?` once; the count goes on (Home's remaining time falls, the limit locks when it is used up) |
+| 16 | A sync | the report's `time_state.storage_full` is `true`; the PWA's summary has the orange Attention row "Lagringen er full" to Device › Tid, whose orange line has the fix behind its (i); one push "Emma: lagringen er full" / "Skjermtiden lagres ikke." |
+| 17 | More syncs the same day | no second push (one a day); the line stays |
+| 18 | `adb reboot` with the disk still full | the day's count goes back to the last saved ledger: the time used since storage filled is lost (the accepted cost); the line comes back with the first failed save after the restart |
+| 19 | Delete the fill file, use the phone a minute, a sync | the save works, `storage_full` is left out of the report, the line and the Attention row are gone; Notify Me About has the "Lagringen er full" switch, on |

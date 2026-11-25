@@ -1713,6 +1713,7 @@ pub(crate) const TIME_STATE_FIELDS: &[(&str, Field)] = &[
     ("clock_skew_ms", Field::Int),
     ("clock_trust", Field::Word(16)),
     ("unanchored_ms", Field::Int),
+    ("storage_full", Field::Bool),
 ];
 
 /// The launcher's `CallState` (`StatusReportRequest.kt`), every key it sends.
@@ -2239,6 +2240,14 @@ async fn status_intake(
         // Design 116 §3.4: "Web filter is down", once per down period.
         if vpn_filter_json.is_some() {
             crate::mobile_network::filter_down_intake(&state, phone).await;
+        }
+        // The phone's storage is full and its screen time isn't saved: at most one notice a day.
+        if time_state_json
+            .as_deref()
+            .and_then(crate::time_state::TimeReport::parse)
+            .is_some_and(|report| report.storage_full)
+        {
+            crate::parent_events::raise_logged(&state, &phone.storage_full()).await;
         }
     }
     // A number cleared from Android's blocked list: a line per class that rose against the previous report.

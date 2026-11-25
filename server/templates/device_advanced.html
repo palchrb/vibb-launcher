@@ -128,6 +128,10 @@
                     <span class="row-label">{{ self.t("device.advanced.screenshots") }}</span>
                     <input type="checkbox" role="switch" class="sw" name="disallow_screen_capture" value="on" {% if hardening.disallow_screen_capture %}checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                 </label>
+                <label class="row">
+                    <span class="row-label">{{ self.t("device.advanced.credentials") }}</span>
+                    <input type="checkbox" role="switch" class="sw" name="disallow_config_credentials" value="on" {% if hardening.disallow_config_credentials %}checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                </label>
             </div>
             <div class="group-footer">
                 <details class="info">

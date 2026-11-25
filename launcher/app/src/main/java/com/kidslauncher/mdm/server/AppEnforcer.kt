@@ -439,7 +439,7 @@ object AppEnforcer {
         // with the filter by the override and the pause, as the filter is. Design 95 §2.2: and with the sink and the
         // pass shape, lifted with them.
         val hardening = withFilterVpnLock(
-            hardeningPlan(policy?.hardening, managedForHardening), policy?.hardening,
+            hardeningPlan(policy?.hardening, managedForHardening, baseline = ProvisioningBaseline.holds(context)), policy?.hardening,
             filterOn = policy != null && vpnConfigLocked(vpnShapeNow),
         )
         clearHardening(context, dpm, admin, hardening)
@@ -916,7 +916,7 @@ object AppEnforcer {
 
     /** `null` for a restriction this Android doesn't have ([hardeningKeyApplies]; design 126's
      * `DISALLOW_ASSIST_CONTENT` on 14): neither set nor cleared. */
-    private fun HardeningRestriction.userManagerKey(): String? {
+    internal fun HardeningRestriction.userManagerKey(): String? {
         if (!hardeningKeyApplies(this, Build.VERSION.SDK_INT)) return null
         return when (this) {
             HardeningRestriction.FACTORY_RESET -> UserManager.DISALLOW_FACTORY_RESET
@@ -930,6 +930,7 @@ object AppEnforcer {
             HardeningRestriction.AIRPLANE_MODE -> UserManager.DISALLOW_AIRPLANE_MODE
             HardeningRestriction.SET_WALLPAPER -> UserManager.DISALLOW_SET_WALLPAPER
             HardeningRestriction.CONFIG_LOCALE -> UserManager.DISALLOW_CONFIG_LOCALE
+            HardeningRestriction.CONFIG_CREDENTIALS -> UserManager.DISALLOW_CONFIG_CREDENTIALS
             HardeningRestriction.CONTENT_CAPTURE -> UserManager.DISALLOW_CONTENT_CAPTURE
             HardeningRestriction.CONTENT_SUGGESTIONS -> UserManager.DISALLOW_CONTENT_SUGGESTIONS
             HardeningRestriction.ASSIST_CONTENT ->
@@ -1881,7 +1882,7 @@ object AppEnforcer {
         return true
     }
 
-    private fun setRestriction(
+    internal fun setRestriction(
         dpm: DevicePolicyManager,
         admin: ComponentName,
         restriction: String,

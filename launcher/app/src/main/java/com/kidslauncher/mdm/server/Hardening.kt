@@ -50,6 +50,10 @@ enum class HardeningRestriction(val defaultOn: Boolean, val minSdk: Int = 0) {
     /** `DISALLOW_ASSIST_CONTENT` (design 126 A4, API 35): no screenshot or app content to the assistant
      * (Gemini, Google) on the whole device. Launcher-only, as [CONTENT_CAPTURE]; skipped on Android 14. */
     ASSIST_CONTENT(true, minSdk = 35),
+    /** `DISALLOW_CONFIG_CREDENTIALS`: no user certificates installed or removed from Settings, and Android's own trusted
+     * ones can't be switched off. On by default; the parent's switch under Advanced allows them (a Wi-Fi network that
+     * needs its own certificate, a client certificate). Vibb One trusts no user certificate either way. */
+    CONFIG_CREDENTIALS(true),
 }
 
 /** Whether [restriction] exists on API level [sdk] (design 126 §1.2): AppEnforcer sets or clears
@@ -85,6 +89,7 @@ private fun HardeningPolicy?.value(restriction: HardeningRestriction): Boolean? 
     HardeningRestriction.AIRPLANE_MODE -> this?.disallowAirplaneMode
     HardeningRestriction.SET_WALLPAPER -> null
     HardeningRestriction.CONFIG_LOCALE -> this?.disallowConfigLocale
+    HardeningRestriction.CONFIG_CREDENTIALS -> this?.disallowConfigCredentials
     HardeningRestriction.CONTENT_CAPTURE,
     HardeningRestriction.CONTENT_SUGGESTIONS,
     HardeningRestriction.ASSIST_CONTENT,
@@ -92,20 +97,43 @@ private fun HardeningPolicy?.value(restriction: HardeningRestriction): Boolean? 
 }
 
 /**
+ * The restrictions a phone set up from the QR holds from its provisioning until its first policy
+ * ([ProvisioningBaseline]): no USB debugging, no new users, no safe mode, no user certificates
+ * (no unknown sources is AppEnforcer's sideload restriction, set then too). Factory reset stays
+ * open, so a phone that never reaches its server can still be reset from Settings.
+ */
+val PROVISIONING_BASELINE: Set<HardeningRestriction> = setOf(
+    HardeningRestriction.DEBUGGING_FEATURES,
+    HardeningRestriction.ADD_USER,
+    HardeningRestriction.SAFE_BOOT,
+    HardeningRestriction.CONFIG_CREDENTIALS,
+)
+
+/**
  * [managed] ([hardeningManaged]): each restriction as the server's switch says, or its default
  * when the switch is missing. Not managed (never had a policy, or the server unmanaged the phone):
- * everything cleared, so setup and adb provisioning work. There is deliberately no
+ * everything cleared, so setup and adb provisioning work - except [baseline]
+ * ([provisioningBaselineHolds]: set up from the QR, no policy ever applied), which keeps
+ * [PROVISIONING_BASELINE]. There is deliberately no
  * `overrideActive` parameter: the offline override and the pause never lift these - only an
  * explicit server value does (the second exception to the "every restriction is liftable" rule,
  * after the call rules).
  */
-fun hardeningPlan(policy: HardeningPolicy?, managed: Boolean): HardeningPlan =
+fun hardeningPlan(policy: HardeningPolicy?, managed: Boolean, baseline: Boolean = false): HardeningPlan =
     HardeningPlan(
         HardeningRestriction.entries.associateWith { restriction ->
-            managed && (policy.value(restriction) ?: restriction.defaultOn)
+            if (managed) {
+                policy.value(restriction) ?: restriction.defaultOn
+            } else {
+                baseline && restriction in PROVISIONING_BASELINE
+            }
         },
         screenCaptureDisabled = managed && (policy?.disallowScreenCapture ?: false),
     )
+
+/** Whether the provisioning baseline still holds: armed at a QR provisioning, until a policy was ever applied
+ * ([everManaged]) - after that the server's switches alone, and an unmanaged phone clears everything. */
+fun provisioningBaselineHolds(armed: Boolean, everManaged: Boolean): Boolean = armed && !everManaged
 
 /**
  * Security review S-L11: `DISALLOW_CONFIG_VPN` whenever the Web filter is on ([filterOn]: a policy with
