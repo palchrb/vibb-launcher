@@ -26,6 +26,17 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   turns the switch off, which is a choice, never a warning. Like every hardening switch the pause, the setup hold and
   the Parent PIN don't lift it, so a certificate during setup also needs the switch. Vibb One trusts no user
   certificate either way (design 76). The device owner's own `installCaCert` isn't gated by it.
+- **The provisioning baseline** (2026-11-25, `server/ProvisioningBaseline.kt`): a phone set up from the QR is locked
+  down before it has talked to the server - `PROVISIONING_BASELINE` (no USB debugging, no new users, no safe mode, no
+  user certificates) and the sideload restriction, set at once by `PolicyComplianceActivity` and
+  `onProfileProvisioningComplete` (both call `ProvisioningBaseline.arm` first, extras or none), and kept by
+  `hardeningPlan(managed = false, baseline = true)` while the flag (device-protected `provisioning_baseline.xml`) is
+  armed and no policy was ever applied (`provisioningBaselineHolds` over `everManaged`). From the first policy the
+  server's switches alone decide; a phone the server later unmanages clears everything as before. Factory reset is
+  only blocked from the first policy, so a phone that never reaches its server can still be reset from Settings;
+  Android's own lock is never touched. adb's `dpm set-device-owner` runs neither entry, so the dev emulator's adb
+  provisioning keeps adb. A QR-provisioned phone whose enrolment failed has no adb until it connects: Koble til with a
+  new code from the PWA is the way on.
 - **Never call `setUserControlDisabledPackages`** (launcher round 7 §2, `docs/design/r7-launcher-small-items.md`; the round's battery-state report was removed on 2026-10-20): a package on that list can't be suspended, hidden or uninstalled by the device owner either (AOSP `SuspendPackageHelper` "protected package", `setApplicationHiddenSettingAsUser`, `DeletePackageHelper`; qa-l7-b-code finding 1), so time rules, the budget, the camera lock and the update fence would fail open for those apps. `BackupServiceInvariantsTest` scans the production sources for it.
 - **Device checks** are in `04-hardening.md` (restrictions in Settings, VPN with `DISALLOW_CONFIG_VPN`, location lock vs `WifiNetworksActivity`, suspension at the schedule edges incl. inside an app and from Recents, calls at bedtime).
 

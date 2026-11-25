@@ -50,6 +50,8 @@ class ProvisioningModeActivity : Activity() {
 class PolicyComplianceActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // The baseline before anything else, extras or none: the phone is locked down before it talks to the server.
+        ProvisioningBaseline.arm(this, "Admin policy compliance")
         val bundle = intent?.getParcelableExtra(DevicePolicyManager.EXTRA_PROVISIONING_ADMIN_EXTRAS_BUNDLE, PersistableBundle::class.java)
         try {
             QrExtras.deliver(this, bundle, "Admin policy compliance")

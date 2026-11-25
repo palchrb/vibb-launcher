@@ -153,6 +153,38 @@ class HardeningTest {
     }
 
     @Test
+    fun `the provisioning baseline holds until the first policy, factory reset left open`() {
+        val baseline = setOf(
+            HardeningRestriction.DEBUGGING_FEATURES,
+            HardeningRestriction.ADD_USER,
+            HardeningRestriction.SAFE_BOOT,
+            HardeningRestriction.CONFIG_CREDENTIALS,
+        )
+        assertEquals(baseline, PROVISIONING_BASELINE)
+        val plan = hardeningPlan(null, managed = false, baseline = true)
+        assertEquals(baseline, plan.restrictions.filterValues { it }.keys)
+        assertFalse(plan.isSet(HardeningRestriction.FACTORY_RESET))
+        assertFalse(plan.forceLocationOn)
+        assertFalse(plan.screenCaptureDisabled)
+        // Once managed, the server's switches alone: the parent's off wins over the baseline.
+        val managed = hardeningPlan(HardeningPolicy(disallowDebuggingFeatures = false), managed = true, baseline = true)
+        assertFalse(managed.isSet(HardeningRestriction.DEBUGGING_FEATURES))
+        assertTrue(managed.isSet(HardeningRestriction.FACTORY_RESET))
+        // Armed at a QR provisioning, gone with the first policy (an unmanaged phone then clears everything).
+        assertTrue(provisioningBaselineHolds(armed = true, everManaged = false))
+        assertFalse(provisioningBaselineHolds(armed = true, everManaged = true))
+        assertFalse(provisioningBaselineHolds(armed = false, everManaged = false))
+    }
+
+    @Test
+    fun `the baseline is armed by the two provisioning entries only, never by adb's provisioning`() {
+        val main = listOf("src", "app/src").map(::File).first { File(it, "main/java").isDirectory }
+        val sources = File(main, "main/java").walkTopDown().filter { it.isFile && it.extension == "kt" }.toList()
+        val callers = sources.filter { it.readText().contains("ProvisioningBaseline.arm(") }.map { it.name }.sorted()
+        assertEquals(listOf("MdmDeviceAdminReceiver.kt", "ProvisioningActivities.kt"), callers)
+    }
+
+    @Test
     fun `unmanaged clears every restriction`() {
         for (policy in listOf(null, serverDefaults, HardeningPolicy(disallowSafeBoot = true))) {
             val plan = hardeningPlan(policy, managed = false)
