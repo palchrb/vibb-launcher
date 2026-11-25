@@ -930,6 +930,7 @@ object AppEnforcer {
             HardeningRestriction.AIRPLANE_MODE -> UserManager.DISALLOW_AIRPLANE_MODE
             HardeningRestriction.SET_WALLPAPER -> UserManager.DISALLOW_SET_WALLPAPER
             HardeningRestriction.CONFIG_LOCALE -> UserManager.DISALLOW_CONFIG_LOCALE
+            HardeningRestriction.CONFIG_CREDENTIALS -> UserManager.DISALLOW_CONFIG_CREDENTIALS
             HardeningRestriction.CONTENT_CAPTURE -> UserManager.DISALLOW_CONTENT_CAPTURE
             HardeningRestriction.CONTENT_SUGGESTIONS -> UserManager.DISALLOW_CONTENT_SUGGESTIONS
             HardeningRestriction.ASSIST_CONTENT ->

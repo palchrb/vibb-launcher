@@ -198,6 +198,20 @@ class PolicyResponseCompatTest {
         assertNull(LastEnforcedPlan.of(policy("""{"enforce": true}""")).toPolicy().serverTls)
     }
 
+    /** The server's `hardening_keys_snapshot`: `disallow_config_credentials` decodes, survives the fallback, and a
+     * missing one blocks user certificates (its default). */
+    @Test
+    fun `hardening's disallow_config_credentials decodes, and missing blocks`() {
+        fun plan(json: String) = hardeningPlan(
+            ServerJson.decodeFromString(PolicyResponse.serializer(), json).hardening, managed = true,
+        )
+        assertTrue(plan("{}").isSet(HardeningRestriction.CONFIG_CREDENTIALS))
+        assertTrue(plan("""{"hardening": {"disallow_factory_reset": true}}""").isSet(HardeningRestriction.CONFIG_CREDENTIALS))
+        assertFalse(plan("""{"hardening": {"disallow_config_credentials": false}}""").isSet(HardeningRestriction.CONFIG_CREDENTIALS))
+        val allowed = ServerJson.decodeFromString(PolicyResponse.serializer(), """{"hardening": {"disallow_config_credentials": false}}""")
+        assertEquals(false, LastEnforcedPlan.of(allowed).toPolicy().hardening?.disallowConfigCredentials)
+    }
+
     @Test
     fun `a server without block_activity_start leaves the kiosk app block off (qa-09-code 7)`() {
         assertEquals(false, ServerJson.decodeFromString(PolicyResponse.serializer(), "{}").blockActivityStart)

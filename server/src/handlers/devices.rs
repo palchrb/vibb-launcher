@@ -4018,8 +4018,8 @@ pub async fn update_hardening(
          disallow_modify_accounts = ?, disallow_config_vpn = ?, disallow_usb_file_transfer = ?, \
          disallow_debugging_features = ?, disallow_safe_boot = ?, lock_location = ?, \
          disallow_airplane_mode = ?, disallow_config_locale = ?, \
-         disallow_screen_capture = ?, updated_at = datetime('now') \
-         WHERE device_id = ?",
+         disallow_screen_capture = ?, disallow_config_credentials = ?, \
+         updated_at = datetime('now') WHERE device_id = ?",
     )
     .bind(on("disallow_safe_boot"))
     .bind(chrono::Utc::now().timestamp_millis())
@@ -4034,6 +4034,7 @@ pub async fn update_hardening(
     .bind(on("disallow_airplane_mode"))
     .bind(on("disallow_config_locale"))
     .bind(on("disallow_screen_capture"))
+    .bind(on("disallow_config_credentials"))
     .bind(id)
     .execute(&state.db)
     .await;

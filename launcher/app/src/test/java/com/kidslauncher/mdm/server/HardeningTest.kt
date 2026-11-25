@@ -21,6 +21,7 @@ class HardeningTest {
         disallowAirplaneMode = false,
         disallowConfigLocale = true,
         disallowScreenCapture = false,
+        disallowConfigCredentials = true,
     )
 
     @Test
@@ -47,7 +48,7 @@ class HardeningTest {
         assertTrue(plan.isSet(HardeningRestriction.FACTORY_RESET))
         assertTrue(plan.isSet(HardeningRestriction.CONFIG_VPN))
 
-        val allOff = HardeningPolicy(false, false, false, false, false, false, false, false, false, false)
+        val allOff = HardeningPolicy(false, false, false, false, false, false, false, false, false, false, false, false)
         // Every server switch off; the launcher-only locks have no switch.
         assertEquals(
             launcherOnly,
@@ -62,6 +63,12 @@ class HardeningTest {
         assertTrue(hardeningPlan(HardeningPolicy(), managed = true).isSet(HardeningRestriction.CONFIG_LOCALE))
         assertFalse(hardeningPlan(HardeningPolicy(disallowConfigLocale = false), managed = true).isSet(HardeningRestriction.CONFIG_LOCALE))
         assertFalse(hardeningPlan(null, managed = false).isSet(HardeningRestriction.CONFIG_LOCALE))
+
+        // User certificates: blocked by default while managed, allowed only by the parent's switch.
+        assertTrue(hardeningPlan(null, managed = true).isSet(HardeningRestriction.CONFIG_CREDENTIALS))
+        assertTrue(hardeningPlan(HardeningPolicy(), managed = true).isSet(HardeningRestriction.CONFIG_CREDENTIALS))
+        assertFalse(hardeningPlan(HardeningPolicy(disallowConfigCredentials = false), managed = true).isSet(HardeningRestriction.CONFIG_CREDENTIALS))
+        assertFalse(hardeningPlan(null, managed = false).isSet(HardeningRestriction.CONFIG_CREDENTIALS))
     }
 
     @Test
@@ -125,7 +132,7 @@ class HardeningTest {
 
     @Test
     fun `the screen-content locks are on whenever managed, whatever the server sends (design 126 A4)`() {
-        val allOff = HardeningPolicy(false, false, false, false, false, false, false, false, false, false, false)
+        val allOff = HardeningPolicy(false, false, false, false, false, false, false, false, false, false, false, false)
         val a4 = launcherOnly - HardeningRestriction.SET_WALLPAPER
         for (policy in listOf(null, HardeningPolicy(), serverDefaults, allOff)) {
             for (restriction in a4) {
@@ -198,7 +205,7 @@ class HardeningTest {
               "disallow_config_vpn": true, "disallow_usb_file_transfer": true,
               "disallow_debugging_features": false, "disallow_safe_boot": false, "lock_location": true,
               "disallow_airplane_mode": false, "disallow_config_locale": true,
-              "disallow_screen_capture": false}}
+              "disallow_screen_capture": false, "disallow_config_credentials": true}}
         """.trimIndent()
         val policy = (decodeFresh(json) as FreshDecode.Ok).policy
         assertEquals(serverDefaults.copy(disallowDebuggingFeatures = false), policy.hardening)

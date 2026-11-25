@@ -50,6 +50,10 @@ enum class HardeningRestriction(val defaultOn: Boolean, val minSdk: Int = 0) {
     /** `DISALLOW_ASSIST_CONTENT` (design 126 A4, API 35): no screenshot or app content to the assistant
      * (Gemini, Google) on the whole device. Launcher-only, as [CONTENT_CAPTURE]; skipped on Android 14. */
     ASSIST_CONTENT(true, minSdk = 35),
+    /** `DISALLOW_CONFIG_CREDENTIALS`: no user certificates installed or removed from Settings, and Android's own trusted
+     * ones can't be switched off. On by default; the parent's switch under Advanced allows them (a Wi-Fi network that
+     * needs its own certificate, a client certificate). Vibb One trusts no user certificate either way. */
+    CONFIG_CREDENTIALS(true),
 }
 
 /** Whether [restriction] exists on API level [sdk] (design 126 §1.2): AppEnforcer sets or clears
@@ -85,6 +89,7 @@ private fun HardeningPolicy?.value(restriction: HardeningRestriction): Boolean? 
     HardeningRestriction.AIRPLANE_MODE -> this?.disallowAirplaneMode
     HardeningRestriction.SET_WALLPAPER -> null
     HardeningRestriction.CONFIG_LOCALE -> this?.disallowConfigLocale
+    HardeningRestriction.CONFIG_CREDENTIALS -> this?.disallowConfigCredentials
     HardeningRestriction.CONTENT_CAPTURE,
     HardeningRestriction.CONTENT_SUGGESTIONS,
     HardeningRestriction.ASSIST_CONTENT,

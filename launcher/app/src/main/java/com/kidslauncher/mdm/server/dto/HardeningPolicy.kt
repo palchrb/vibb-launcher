@@ -25,4 +25,6 @@ data class HardeningPolicy(
     /** Not a user restriction: `setScreenCaptureDisabled` ([HardeningPlan.screenCaptureDisabled]).
      * Missing means off, its default (2026-10-23). */
     val disallowScreenCapture: Boolean? = null,
+    /** `DISALLOW_CONFIG_CREDENTIALS` (user certificates); missing means on, its default. */
+    val disallowConfigCredentials: Boolean? = null,
 )

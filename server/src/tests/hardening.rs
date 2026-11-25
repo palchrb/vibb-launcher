@@ -9,9 +9,10 @@ use super::{
     Section, TestApp, assert_redirect, autosaves, device_page, form_action_of, input_checked,
 };
 
-const SWITCHES: [&str; 11] = [
+const SWITCHES: [&str; 12] = [
     "disallow_add_user",
     "disallow_airplane_mode",
+    "disallow_config_credentials",
     "disallow_config_locale",
     "disallow_config_vpn",
     "disallow_debugging_features",
@@ -64,6 +65,8 @@ async fn new_device_gets_explicit_defaults() {
             "disallow_config_locale": true,
             // Screenshots stay allowed unless the parent turns them off (2026-10-23).
             "disallow_screen_capture": false,
+            // User certificates stay blocked unless the parent allows them.
+            "disallow_config_credentials": true,
         })
     );
 }
@@ -182,7 +185,7 @@ async fn advanced_shows_the_switches_as_one_form() {
     assert_eq!(page.status, StatusCode::OK);
     let html = page.text();
     let action = format!("/devices/{id}/hardening#restrictions");
-    // All eleven in one form (H1: a missing box is off), each a switch that saves itself.
+    // All twelve in one form (H1: a missing box is off), each a switch that saves itself.
     for (name, on) in [
         ("disallow_factory_reset", true),
         ("disallow_add_user", true),
@@ -193,6 +196,7 @@ async fn advanced_shows_the_switches_as_one_form() {
         ("disallow_airplane_mode", false),
         ("disallow_config_locale", true),
         ("disallow_screen_capture", false),
+        ("disallow_config_credentials", true),
         ("disallow_debugging_features", true),
         ("disallow_safe_boot", false),
     ] {
