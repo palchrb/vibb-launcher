@@ -1832,6 +1832,10 @@ pub fn build_admin_router(
             post(handlers::dns_filter::toggle_blocklist),
         )
         .route(
+            "/dns/blocklists/{id}/url",
+            post(handlers::dns_filter::set_blocklist_url),
+        )
+        .route(
             "/dns/domains/new",
             post(handlers::dns_filter::create_custom_domain),
         )

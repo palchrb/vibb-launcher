@@ -35,6 +35,10 @@ struct FeedRow {
     sub: String,
     failing: bool,
     detail: Option<String>,
+    /// Its address is `http://`: behind its ⓘ, a field to change it to https ([set_blocklist_url]).
+    needs_https: bool,
+    /// The https address typed into that field was refused (`?notice=bad_list_url&list=<id>`): the ⓘ opens on it.
+    url_refused: bool,
     /// What the switch means for the phones ([list_scope]): "On for every phone except Testtelefon"; `None` while
     /// every phone follows the switch (design 113 P4: the switch says it).
     scope: Option<String>,
@@ -67,6 +71,8 @@ pub(crate) enum FeedState<'a> {
     Failing { count: usize, error: &'a str },
     /// Never loaded, so no phone has it yet; the last error, if a download was tried.
     NotLoaded(Option<&'a str>),
+    /// Its address is `http://`: not fetched (whatever it had is kept) until the parent changes it to https.
+    NeedsHttps,
 }
 
 impl FeedState<'_> {
@@ -74,6 +80,9 @@ impl FeedState<'_> {
         let Some(list) = compiled.lists.iter().find(|list| list.blocklist_id == id) else {
             return FeedState::NotLoaded(None);
         };
+        if list.needs_https {
+            return FeedState::NeedsHttps;
+        }
         match (list.last_error.as_deref(), list.loaded) {
             (None, _) => FeedState::Loaded(list.domains.len()),
             (Some(error), true) => FeedState::Failing {
@@ -90,6 +99,7 @@ impl FeedState<'_> {
             FeedState::Loaded(_) => None,
             FeedState::Failing { .. } => Some(t(lang, "settings.web_filter.download_failed")),
             FeedState::NotLoaded(_) => Some(t(lang, "settings.web_filter.not_loaded")),
+            FeedState::NeedsHttps => Some(t(lang, "settings.web_filter.needs_https")),
         }
     }
 
@@ -110,6 +120,9 @@ impl FeedState<'_> {
                 "settings.web_filter.not_loaded_error",
                 &[("error", error)],
             )),
+            FeedState::NeedsHttps => {
+                Some(t(lang, "settings.web_filter.needs_https_detail").to_string())
+            }
         }
     }
 }
@@ -647,6 +660,9 @@ async fn render_page(
     let (blocked_domains, allowed_domains): (Vec<_>, Vec<_>) =
         custom.into_iter().partition(|d| d.list_type == "block");
 
+    let refused_url = (params.get("notice").map(String::as_str) == Some("bad_list_url"))
+        .then(|| params.get("list").and_then(|id| id.parse::<i64>().ok()))
+        .flatten();
     let blocklists = {
         let compiled = state.dns_compiled.read().await;
         blocklists
@@ -665,8 +681,11 @@ async fn render_page(
                     .filter(|(id, on, _)| *id == list.id && *on != list.enabled)
                     .map(|(_, _, name)| name.as_str())
                     .collect();
+                let url_refused = refused_url == Some(list.id);
                 FeedRow {
                     scope: list_scope(lang, list.enabled, &others),
+                    needs_https: feed == FeedState::NeedsHttps,
+                    url_refused,
                     failing: feed.problem(lang).is_some(),
                     detail: feed.detail(lang),
                     sub,
@@ -1048,6 +1067,38 @@ pub async fn toggle_blocklist(
     Redirect::to("/dns#lists").into_response()
 }
 
+/// A shared list's new address, for a list saved with `http://` before the form asked for https (its row's ⓘ). An
+/// https URL, else nothing changes and the ⓘ opens again with why (`?notice=bad_list_url&list=<id>#lists`); 404 for
+/// an unknown list. Back to `#lists`.
+pub async fn set_blocklist_url(
+    State(state): State<AppState>,
+    lang: Lang,
+    Path(id): Path<i64>,
+    Form(form): Form<HashMap<String, String>>,
+) -> Response {
+    let url = form.get("url").map(|s| s.trim()).unwrap_or_default();
+    if !url.starts_with("https://") || url.len() > 2000 {
+        return crate::settings_log::refused(Redirect::to(&format!(
+            "/dns?notice=bad_list_url&list={id}#lists"
+        )));
+    }
+    let result = sqlx::query("UPDATE dns_blocklists SET url = ? WHERE id = ?")
+        .bind(url)
+        .bind(id)
+        .execute(&state.db)
+        .await;
+    match result {
+        Ok(done) if done.rows_affected() == 0 => {
+            return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.list_not_found");
+        }
+        Ok(_) => {}
+        Err(err) => return write_failed(lang, err),
+    }
+    dns_engine::compile_blocklist(&state, &state.dns_compiled).await;
+    nudge(&state, None).await;
+    Redirect::to("/dns#lists").into_response()
+}
+
 /// Adds a blocked or allowed domain, for every phone or (`device_id`) one. Absent or empty
 /// `device_id` = every phone (device_id NULL, migrations/0011); anything else that isn't a number
 /// is a 400, never a silent "every phone". A name that isn't a domain (`dns_engine`'s check) adds
@@ -1375,7 +1426,7 @@ pub async fn run_blocklist_refresh(state: AppState) {
             .await
             .lists
             .iter()
-            .any(|list| list.last_error.is_some());
+            .any(|list| list.last_error.is_some() && !list.needs_https);
         let wait = if failing { 5 * 60 } else { 60 * 60 };
         tokio::time::sleep(Duration::from_secs(wait)).await;
         dns_engine::compile_blocklist(&state, &state.dns_compiled).await;

@@ -29,9 +29,20 @@
             {#- Design 113: a failing list's problem is an orange row right after its switch row, the story behind its ⓘ
                 (never an ⓘ inside the switch's label). -#}
             {% if let Some(detail) = row.detail %}
-            <details class="info cell" data-list-problem="{{ row.list.id }}">
+            <details class="info cell" data-list-problem="{{ row.list.id }}"{% if row.url_refused %} open{% endif %}>
                 <summary class="row"><span class="row-label tone-orange">{{ row.sub }}</span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.tp("settings.web_filter.problem_label", [("name", row.list.name.as_str())]) }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
-                <div class="info-panel"><p>{{ detail }}</p></div>
+                <div class="info-panel"><p>{{ detail }}</p>
+                {%- if row.needs_https %}
+                {#- An http list (saved before the form asked for https): its new address here, back to #lists. -#}
+                <form method="post" action="/dns/blocklists/{{ row.list.id }}/url#lists" class="form-group" data-list-url="{{ row.list.id }}">
+                    <div class="field">
+                        <label class="field-label" for="bl_url_{{ row.list.id }}">{{ self.t("settings.web_filter.list_url") }}</label>
+                        <input type="url" id="bl_url_{{ row.list.id }}" name="url" value="{{ row.list.url.replacen("http://", "https://", 1) }}" required autocapitalize="none" spellcheck="false"{% if row.url_refused %} aria-invalid="true" aria-describedby="list-url-error-{{ row.list.id }}" autofocus{% endif %}>
+                        {% if row.url_refused %}<p class="field-error" id="list-url-error-{{ row.list.id }}">{{ self.t("settings.web_filter.bad_list_url") }}</p>{% endif %}
+                    </div>
+                    <button type="submit" class="button-wide">{{ self.t("common.save") }}</button>
+                </form>
+                {%- endif %}</div>
             </details>
             {% endif %}
             {% else %}

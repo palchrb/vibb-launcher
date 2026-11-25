@@ -39,6 +39,9 @@ pub struct CompiledList {
     pub source_hash: String,
     /// Why the last download failed (its previous domains are kept); `None` after a good one.
     pub last_error: Option<String>,
+    /// Its address is `http://` (saved before the form asked for https): it isn't fetched, its previous domains are
+    /// kept, and its row says "Needs https" ([FeedFailure::NeedsHttps]).
+    pub needs_https: bool,
 }
 
 /// The largest feed read, after decompression (the big public lists are around 10 MB).
@@ -136,6 +139,7 @@ pub async fn compile_blocklist(state: &AppState, shared: &SharedCompiledBlocklis
                     Ok(domains)
                 }
             });
+        let needs_https = matches!(fetched, Err(FeedFailure::NeedsHttps));
         let scope = format!("feed:{}", list.id);
         match &fetched {
             Ok(_) => crate::integration_health::ok(&state.db, "blocklist", &scope).await,
@@ -167,6 +171,7 @@ pub async fn compile_blocklist(state: &AppState, shared: &SharedCompiledBlocklis
                     loaded: true,
                     source_hash,
                     last_error: None,
+                    needs_https: false,
                 }
             }
             Err(err) => {
@@ -199,6 +204,7 @@ pub async fn compile_blocklist(state: &AppState, shared: &SharedCompiledBlocklis
                     loaded,
                     source_hash,
                     last_error: Some(err.to_string()),
+                    needs_https,
                 }
             }
         };
@@ -254,6 +260,9 @@ pub enum FeedFailure {
     /// Not asked or not followed: a private, tailnet or loopback address, a redirect away from https, more than 5
     /// redirects, not a link.
     Refused(String),
+    /// The list's own address is `http://` (saved before the form asked for https): never asked; the parent changes
+    /// the address to https.
+    NeedsHttps,
 }
 
 impl std::fmt::Display for FeedFailure {
@@ -267,6 +276,7 @@ impl std::fmt::Display for FeedFailure {
             FeedFailure::TooBig => write!(f, "larger than {} MB", MAX_FEED_BYTES / (1024 * 1024)),
             FeedFailure::NotAList => write!(f, "no domains in it"),
             FeedFailure::Refused(why) => write!(f, "not fetched: {why}"),
+            FeedFailure::NeedsHttps => write!(f, "not fetched: the address isn't https"),
         }
     }
 }
@@ -280,6 +290,7 @@ impl FeedFailure {
             FeedFailure::TooBig => "too_big".to_string(),
             FeedFailure::NotAList => "not_a_list".to_string(),
             FeedFailure::Refused(_) => "refused".to_string(),
+            FeedFailure::NeedsHttps => "needs_https".to_string(),
         }
     }
 
@@ -293,7 +304,8 @@ impl FeedFailure {
             FeedFailure::Status(_)
             | FeedFailure::TooBig
             | FeedFailure::NotAList
-            | FeedFailure::Refused(_) => Parent,
+            | FeedFailure::Refused(_)
+            | FeedFailure::NeedsHttps => Parent,
         }
     }
 }
@@ -302,10 +314,13 @@ impl FeedFailure {
 /// [Reach::Public] - a list never takes the server to a private, tailnet or loopback address (its resolver drops
 /// such answers, a literal is refused before the request) and never through a proxy from the environment. Redirects
 /// are followed here one hop at a time, at most 5, and only to https. A list saved with an `http://` address before
-/// the form asked for https is still asked at that address.
+/// the form asked for https is never asked ([FeedFailure::NeedsHttps]).
 async fn fetch_feed(source: &dyn Source, url: &str) -> Result<String, FeedFailure> {
     let mut current =
         reqwest::Url::parse(url).map_err(|_| FeedFailure::Refused("not a link".to_string()))?;
+    if current.scheme() == "http" {
+        return Err(FeedFailure::NeedsHttps);
+    }
     for hop in 0..=5 {
         let mut request = SourceRequest::new(current.as_str(), Kind::Blocklist, Reach::Public);
         request.follow = false;
