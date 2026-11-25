@@ -3,8 +3,8 @@
 //! `clock_trust` (`server`, `gnss`, `carried`, `none`) and `unanchored_ms` (since the time was last checked, whole
 //! hours) - cleaned here, and the one orange line they may raise ([problem]): the clock off by more than
 //! [WRONG_AFTER_MS], or the time not checked for more than [UNCHECKED_AFTER_MS]. Nothing else is said: a clock that
-//! is right shows nothing. The rows are pinned by `testdata/clock_skew.json` (byte-identical in the launcher's test
-//! resources; `tests::clock_skew`, the launcher's `ClockSkewContractTest`).
+//! is right shows nothing. The rows are pinned by `contracts/core/clock_skew.json` (`tests::clock_skew`, the
+//! launcher's `ClockSkewContractTest`).
 //!
 //! Also the server's own clock (design M1 §4): its GitHub fetches compare the answer's `Date` with this machine's
 //! clock ([observe_date]); past [SERVER_OFF_AFTER_MS] the Software Updates page says so and every phone answer

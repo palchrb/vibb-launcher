@@ -25,7 +25,7 @@ import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 
 /**
- * Design 72b §8: the shared contract `calendar_kid_events.json` (byte-identical with `server/testdata/`, whose
+ * Design 72b §8: the shared contract `calendar_kid_events.json` (in `contracts/core/`, whose
  * `calendar_kid_events::tests::the_contract` posts `snapshot` against its fake CalDAV and produces `answers` and
  * `back_provider`): "Min kalender"'s rows encode to exactly `snapshot` (and, past the limits, `cut_variant`), every
  * `canonical` row hashes as the server's does, the policy and the answers decode, each hand-back maps to exactly the
@@ -307,12 +307,5 @@ class KidCaldavTest {
         assertEquals(86_400_000L, kidDurationMs("P1D"))
         assertNull(kidDurationMs("P"))
         assertEquals("\"a\\\"b\\\\c\\n\\u0001\"", jsonString("a\"b\\c\n\u0001"))
-    }
-
-    @Test
-    fun `the contract is identical to the server's copy`() {
-        val serverCopy = File("../../server/testdata/calendar_kid_events.json")
-        assertTrue(serverCopy.exists())
-        assertEquals(serverCopy.readText(), text)
     }
 }

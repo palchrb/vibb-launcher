@@ -581,7 +581,7 @@ Tilgang): the "camera" words here are history.
   `?notice=perms`), an allow always. The rows are `device_app_denials` (one per phone, package and key; 0102's camera
   rows copied; at most 200 packages a phone, `?notice=perms_full`; no prune - a removed app keeps its rows), the policy's
   `app_permissions` `[{package_name, camera?, location?, microphone?, contacts?}]` (each `"deny"`; the shared contract
-  `testdata/app_access.json`, `app_permissions::tests::the_contract`). **Låseskjerm** (`#lock-screen`): "Mediespiller", back to `#lock-screen`.
+  `contracts/core/app_access.json`, `app_permissions::tests::the_contract`). **Låseskjerm** (`#lock-screen`): "Mediespiller", back to `#lock-screen`.
   A refusal lands on the page at its group (`?notice=perms|perms_full`, `lock_media|lock_media_full` - its own words,
   `apps.lock_screen.refused`), at the head
   when that group isn't shown; the managed dialer's at its list row as before.

@@ -1,4 +1,4 @@
-//! Design 72b §10: the shared contract (`testdata/calendar_kid_events.json`), the canonical form, the writer, the
+//! Design 72b §10: the shared contract (`contracts/core/calendar_kid_events.json`), the canonical form, the writer, the
 //! hrefs, and every guard of the write-back against the stateful fake CalDAV (`tests::fake_dav`).
 
 use std::sync::Arc;
@@ -17,10 +17,11 @@ const USER: &str = "forelder@example.org";
 const PASSWORD: &str = "test-only-not-a-real-password";
 const COLLECTION: &str = "https://dav.example.org/calendars/forelder/familie/";
 const TAG: &str = "1a2b3c4d";
-const CONTRACT: &str = "testdata/calendar_kid_events.json";
+const CONTRACT: &str = "core/calendar_kid_events.json";
 
 fn contract() -> Value {
-    serde_json::from_str(&std::fs::read_to_string(CONTRACT).unwrap()).unwrap()
+    serde_json::from_str(&std::fs::read_to_string(crate::contracts::path(CONTRACT)).unwrap())
+        .unwrap()
 }
 
 fn t0() -> DateTime<Utc> {
@@ -313,15 +314,6 @@ fn parent_body(uid: &str, summary: &str, start: &str, end: &str, extra: &str) ->
 }
 
 // ---- the contract ------------------------------------------------------------------------------
-
-#[test]
-fn the_contract_is_identical_to_the_launchers_copy() {
-    let ours = std::fs::read_to_string(CONTRACT).unwrap();
-    let theirs =
-        std::fs::read_to_string("../launcher/app/src/test/resources/calendar_kid_events.json")
-            .expect("the launcher's copy");
-    assert_eq!(ours, theirs);
-}
 
 fn when(value: &str, tz: Option<Tz>) -> KidWhen {
     if value.len() == 8 {
@@ -648,12 +640,16 @@ async fn the_contract() {
         c["answers"] = json!(answers);
         c["back_provider"] = json!(back_provider);
         c["policy_waiting"] = policy_waiting.clone();
-        std::fs::write(CONTRACT, serde_json::to_string_pretty(&c).unwrap() + "\n").unwrap();
+        std::fs::write(
+            crate::contracts::path(CONTRACT),
+            serde_json::to_string_pretty(&c).unwrap() + "\n",
+        )
+        .unwrap();
     }
     assert_eq!(
         json!(answers),
         c["answers"],
-        "the answers changed - update both copies"
+        "the answers changed - rewrite the contract"
     );
     assert_eq!(json!(back_provider), c["back_provider"]);
     assert_eq!(policy_waiting, c["policy_waiting"]);

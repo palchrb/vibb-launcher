@@ -10,7 +10,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Design 98: the shared contract `airplane_mode.json` (byte-identical with `server/testdata/`, whose
+/** Design 98: the shared contract `airplane_mode.json` (in `contracts/core/`, whose
  * `tests::airplane_mode` posts the reports and runs `clean` and `emergency.line`). */
 class AirplaneModeTest {
     private val contractText = javaClass.classLoader!!.getResource("airplane_mode.json")!!.readText()
@@ -82,13 +82,5 @@ class AirplaneModeTest {
     fun `the bit`() {
         assertEquals(contract["bit"]!!.jsonPrimitive.content.toLong(), com.kidslauncher.mdm.server.QuickControlFeature.AIRPLANE)
         assertTrue(contract["rows"]!!.jsonArray.isNotEmpty())
-    }
-
-    @Test
-    fun `the contract is identical to the server's copy`() {
-        // Gradle runs unit tests with the module directory (launcher/app/) as the working directory.
-        val serverCopy = java.io.File("../../server/testdata/airplane_mode.json")
-        assertTrue("${serverCopy.absolutePath} not found", serverCopy.isFile)
-        assertEquals("${serverCopy.path} differs from the launcher's copy", serverCopy.readText(), contractText)
     }
 }

@@ -1,5 +1,5 @@
 //! Design 77 §14 (step 6): `POST /api/devices/contact-request` - the kid asks for a new contact from the phone book's
-//! "+" - with the answers of the shared contract `testdata/contact_request.json`, the day's and the open caps, a
+//! "+" - with the answers of the shared contract `contracts/core/contact_request.json`, the day's and the open caps, a
 //! retried id, `known` and `invalid`; the policy's `call_policy.contact_requests`; the Calls page's "Forespørsler" card
 //! with "Legg til…" (Add Contact prefilled, §14's switches, the Matrix ID only when ticked) and "Avslå"; the push and
 //! its switch; retention.
@@ -14,20 +14,11 @@ use super::web_push::{ENDPOINT, subscribe};
 use super::{TestApp, input_checked};
 
 /// The launcher's body, the answers, the check vectors and the policy rows (`ContactRequestsTest` reads exactly
-/// these; byte-identical in its test resources).
-const CONTRACT: &str = include_str!("../../testdata/contact_request.json");
+/// these).
+const CONTRACT: &str = crate::contracts::contract!("core/contact_request.json");
 
 fn contract() -> Value {
     serde_json::from_str(CONTRACT).unwrap()
-}
-
-#[test]
-fn the_contact_request_contract_matches_the_launchers_copy() {
-    let copy_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../launcher/app/src/test/resources/contact_request.json");
-    let copy = std::fs::read_to_string(&copy_path)
-        .unwrap_or_else(|e| panic!("{}: {e}", copy_path.display()));
-    assert_eq!(copy, CONTRACT, "{} differs", copy_path.display());
 }
 
 /// A Phone Setup zone whose day began at least an hour ago and ends at least two hours from now (as

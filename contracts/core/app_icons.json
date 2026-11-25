@@ -1,5 +1,5 @@
 {
-  "comment": "Design 14: the parent's icon and colour choices for an app on the kid's launcher. Identical copies in server/testdata and launcher/app/src/test/resources; scripts/material-symbols.sh makes the glyphs and both runtime tables from this file. icons: key -> Material Symbols Rounded name (filled, 24 px). colors: key -> seed (design 14's colour, kept for the record) and tile (design 34 P1: one of the launcher's six tones, IconTones.kt; white on it >= 4.5:1). The PWA names a key by its tile (app_display::color_label).",
+  "comment": "Design 14: the parent's icon and colour choices for an app on the kid's launcher. Kept once in contracts/core/ (design 133), read by the server and the launcher; scripts/material-symbols.sh makes the glyphs and both runtime tables from this file. icons: key -> Material Symbols Rounded name (filled, 24 px). colors: key -> seed (design 14's colour, kept for the record) and tile (design 34 P1: one of the launcher's six tones, IconTones.kt; white on it >= 4.5:1). The PWA names a key by its tile (app_display::color_label).",
   "icons": {
     "chat": "chat",
     "mail": "mail",

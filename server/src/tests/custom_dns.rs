@@ -10,8 +10,8 @@ use super::{TestApp, TestResponse, assert_redirect};
 use crate::display_time::Zone;
 
 /// The launcher's status body with `dns_upstream` (the shared contract: the launcher's
-/// `DnsUpstreamStatusTest` encodes exactly this; byte-identical in its test resources).
-const DNS_STATUS_REPORT: &str = include_str!("../../testdata/dns_upstream_status.json");
+/// `DnsUpstreamStatusTest` encodes exactly this).
+const DNS_STATUS_REPORT: &str = crate::contracts::contract!("core/dns_upstream_status.json");
 
 /// `(upstream, custom_server, custom_backup, custom_rev)` as stored.
 async fn stored(app: &TestApp) -> (String, String, String, i64) {
@@ -530,16 +530,6 @@ async fn custom_without_a_valid_pair_is_the_default_provider() {
         assert!(page.contains("id=\"custom-server\" open"));
         assert!(!page.contains("data-dns-phone"));
     }
-}
-
-/// The launcher keeps a byte-identical copy of the contract in its test resources.
-#[test]
-fn the_dns_status_contract_matches_the_launchers_copy() {
-    let copy_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../launcher/app/src/test/resources/dns_upstream_status.json");
-    let copy = std::fs::read_to_string(&copy_path)
-        .unwrap_or_else(|e| panic!("{}: {e}", copy_path.display()));
-    assert_eq!(copy, DNS_STATUS_REPORT, "{} differs", copy_path.display());
 }
 
 /// The launcher's body is taken as sent and stored through the known words only.

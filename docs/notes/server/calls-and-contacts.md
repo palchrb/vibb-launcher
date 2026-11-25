@@ -73,7 +73,7 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
   (`emergency::store_default`), then applies the change.
 - **Policy:** `call_policy.emergency_menu: [{number, name}]` (`emergency::policy_menu`), always, managed or not, never
   empty (`policy_json_keys_snapshot`; the launcher's `PolicyEmergencyEntry`).
-- **The fixed list:** `emergency::ALWAYS`/`BY_COUNTRY` = `testdata/emergency_numbers.json`, shared with the launcher
+- **The fixed list:** `emergency::ALWAYS`/`BY_COUNTRY` = `contracts/core/emergency_numbers.json`, shared with the launcher
   (its `Emergency.staticSet`, which the phone ORs with the platform's own answer). `is_emergency` judges a normalised
   number; it decides the sub-lines and the removal rule only - the phone decides every call.
 - **Device › Calls › Emergency Menu** (at the top of the page): a row per number (the number in bold, the name, a
@@ -227,7 +227,7 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
 A phone book and contacts feature, not an SMS one: the kid asks from the phone book for a new contact, and a
 parent decides on the Calls page. It follows design r13's time request.
 - **The intake** `POST /api/devices/contact-request` (`intake`, 1 KiB): `{id, name, number, matrix_id?, asked_at_ms}`,
-  the shapes in `testdata/contact_request.json` (shared with the launcher). `check` (QA R2-L5): the name through
+  the shapes in `contracts/core/contact_request.json` (shared with the launcher). `check` (QA R2-L5): the name through
   `calendar::clean`, 1-40 characters; the number through `phone::normalize` again, never an emergency number
   (`emergency::is_emergency`); an empty Matrix ID none, any other one through `calls::valid_matrix_id`. Refused:
   `invalid`. Then in one `BEGIN IMMEDIATE` transaction: a stored id answers `accepted` again (a retry: no second row or
@@ -570,5 +570,5 @@ hourly budget; no line without a previous report, a lower count taken silently).
   own settings, which only the system may read or write, so Vibb can't see or undo it; Vibb's own call rules already
   turn withheld callers away while calls are managed.
 
-The contract is `testdata/blocked_numbers.json` (root `CLAUDE.md`); tests in `blocked_numbers::tests` and
+The contract is `contracts/core/blocked_numbers.json` (root `CLAUDE.md`); tests in `blocked_numbers::tests` and
 `tests::blocked_numbers`.

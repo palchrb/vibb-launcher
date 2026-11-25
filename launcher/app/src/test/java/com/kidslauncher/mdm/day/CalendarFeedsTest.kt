@@ -19,7 +19,7 @@ import java.io.File
 import java.time.ZoneId
 
 /**
- * Design 72 §3: the shared contract `calendar_feeds.json` (byte-identical with `server/testdata/`, whose
+ * Design 72 §3: the shared contract `calendar_feeds.json` (in `contracts/core/`, whose
  * `calendar_feeds::tests::the_contract` produces `feed`, `keys` and the uids and revs): the document decodes, maps to
  * exactly `provider` in the contract's phone zone, the calendar key is the server's, the policy's row and the report's
  * row read and encode as the contract has them.
@@ -75,12 +75,5 @@ class CalendarFeedsTest {
             listOf(CalendarFeedReportRow(r.getValue("id").jsonPrimitive.content, r.getValue("applied_rev").jsonPrimitive.content, 0, 0)),
         )
         assertEquals(report, encoded)
-    }
-
-    @Test
-    fun `the contract is identical to the server's copy`() {
-        val serverCopy = File("../../server/testdata/calendar_feeds.json")
-        assertTrue("${serverCopy.absolutePath} not found", serverCopy.isFile)
-        assertEquals(serverCopy.readText(), text)
     }
 }

@@ -149,9 +149,9 @@ class SyncScheduleTest {
     }
 
     /** qa-launcher-small-a-code Q-5: the status body with the installed versions is the shared contract
-     * `installed_apps_report.json` (byte-identical with `server/testdata/`, which the server's `app_updates` test posts). */
+     * `installed_apps_report.json` (in `contracts/core/`, which the server's `app_updates` test posts). */
     @Test
-    fun `the installed versions encode exactly the shared contract, identical to the servers copy`() {
+    fun `the installed versions encode exactly the shared contract`() {
         val contract = javaClass.classLoader!!.getResource("installed_apps_report.json")!!.readText()
         val report = StatusReportRequest(
             lockReason = "NONE",
@@ -180,10 +180,6 @@ class SyncScheduleTest {
         // A release launcher never trusts the debug music app by name, so it isn't flagged there.
         assertEquals(null, otherSigner("me.vibb.music.debug") { false })
         assertEquals(true, otherSigner("me.vibb.music.debug", debug = true) { false })
-        // Gradle runs unit tests with the module directory (launcher/app/) as the working directory.
-        val serverCopy = java.io.File("../../server/testdata/installed_apps_report.json")
-        assertTrue("${serverCopy.absolutePath} not found", serverCopy.isFile)
-        assertEquals("${serverCopy.path} differs from the launcher's copy", serverCopy.readText(), contract)
     }
 
     private fun otherSigner(

@@ -108,7 +108,7 @@ waits for a device capture of the Play Protect / account-security channel ids.
   `Enrollment.enroll(..., connectTailnet = false)` doesn't try again, so the provisioning receiver's `goAsync` holds one
   connect, not two (code QA L2).
 - **S-L10, Leave Tailnet** (command `leave_tailnet`, Advanced › Connection on the server, behind a ticked box;
-  contract `server/testdata/leave_tailnet.json`): `TsnetClient.leave` closes tsnet, removes `tsnet_node_joined`, any
+  contract `contracts/core/leave_tailnet.json`): `TsnetClient.leave` closes tsnet, removes `tsnet_node_joined`, any
   stored auth key and the crash guard's marks in one `commit()`, then deletes `files/tailscale` and drops the global
   `Authenticator`. Answers "left the tailnet" / "not on the tailnet" (nothing was there) / "failed to leave the
   tailnet" / "server is reached only over the tailnet" (QA M2: refused, nothing changed, while the server URL's host

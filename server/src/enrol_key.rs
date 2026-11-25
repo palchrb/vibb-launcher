@@ -931,7 +931,10 @@ mod tests {
     use super::*;
 
     fn contract() -> serde_json::Value {
-        serde_json::from_str(&std::fs::read_to_string("testdata/device_key.json").unwrap()).unwrap()
+        serde_json::from_str(
+            &std::fs::read_to_string(crate::contracts::path("core/device_key.json")).unwrap(),
+        )
+        .unwrap()
     }
 
     #[test]

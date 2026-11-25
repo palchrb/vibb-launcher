@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The crypto rows of design 129's shared contract (§7.1): server/testdata/device_key.json.
+"""The crypto rows of design 129's shared contract (§7.1): contracts/core/device_key.json.
 
 Made with a throwaway P-256 key whose private scalar is derived from the phrase below (a fake key that looks fake, the
 secrets rule). Only public data is written: the public key, the signed bytes and the signatures. Signing is pure Python
@@ -8,7 +8,7 @@ secrets rule). Only public data is written: the public key, the signed bytes and
 `tests::device_key::the_contract` produces each through the real routes and compares. Run with `python3 -I`:
 
     python3 -I scripts/device-key-vectors.py            # prints the file
-    python3 -I scripts/device-key-vectors.py --write    # writes server/testdata/device_key.json
+    python3 -I scripts/device-key-vectors.py --write    # writes contracts/core/device_key.json
     python3 -I scripts/device-key-vectors.py --check    # the committed file is exactly what this script writes
 """
 import base64, hashlib, hmac, json, os, sys
@@ -20,7 +20,7 @@ G = (0x6B17D1F2E12C4247F8BCE6E563A440F277037D812DEB33A0F4A13945D898C296,
      0x4FE342E2FE1A7F9B8EE7EB4A7C0F9E162BCE33576B315ECECBB6406837BF51F5)
 PHRASE = b"vibb fake phone key - test only, never a real phone"
 OTHER = b"vibb fake phone key - test only, never a real phone (another one)"
-OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "server", "testdata",
+OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "contracts", "core",
                    "device_key.json")
 # The window (s4.3) and the clock's floor step (10 s writes + the future window).
 PAST_MS, FUTURE_MS, FLOOR_STEP_MS = 60_000, 30_000, 100_000
@@ -145,8 +145,8 @@ def build():
     return {
         "comment": "Design 129 S1's shared contract (s7.1), with design 129b's enrolment rows (s10.2). The crypto rows are scripts/device-key-vectors.py's (a "
                    "throwaway key from a fake phrase - public data only); the route rows are produced by the "
-                   "server's tests::device_key through the real routes. Byte-identical in the launcher's "
-                   "test resources (L1): its DeviceKeyContractTest builds the canonical and proof rows, computes "
+                   "server's tests::device_key through the real routes. Kept once in contracts/core/ (design "
+                   "133); the launcher's DeviceKeyContractTest (L1) builds the canonical and proof rows, computes "
                    "the clock, maps the answers and runs the phone rows (the registration flow's decision).",
         "headers": {"signature": "Vibb-Signature", "body_sha256": "Vibb-Body-SHA256", "time": "Vibb-Time",
                     "auth": "Vibb-Auth"},
@@ -541,7 +541,7 @@ def main():
     elif "--check" in sys.argv:
         with open(OUT) as f:
             if f.read() != out:
-                raise SystemExit("server/testdata/device_key.json is not what the script writes")
+                raise SystemExit("contracts/core/device_key.json is not what the script writes")
         print("device-key-vectors check ok")
     else:
         sys.stdout.write(out)

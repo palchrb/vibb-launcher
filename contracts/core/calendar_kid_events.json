@@ -1,5 +1,5 @@
 {
-  "_comment": "Design 72b §8: the kid's own events handed to the server for the marked CalDAV calendar. Byte-identical in launcher/app/src/test/resources/. The server's calendar_kid_events::tests::the_contract and the launcher's KidCaldavTest read every row; CALENDAR_KID_EVENTS_CONTRACT_WRITE=1 rewrites `answers` and `back_provider` from the server's run.",
+  "_comment": "Design 72b §8: the kid's own events handed to the server for the marked CalDAV calendar. Kept once in contracts/core/ (design 133). The server's calendar_kid_events::tests::the_contract and the launcher's KidCaldavTest read every row; CALENDAR_KID_EVENTS_CONTRACT_WRITE=1 rewrites `answers` and `back_provider` from the server's run.",
   "answers": [
     {
       "body": {

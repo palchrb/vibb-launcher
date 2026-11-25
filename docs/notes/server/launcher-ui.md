@@ -54,7 +54,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   phone's Apps page (the form's action carries `#app-<package>`, so the answer lands on the row) or the catalog page, that form open, the values kept, the error by the field and that field `autofocus`ed (the
   POST path differs, so scroll-restore can't help - the focus keeps the place). `static/app-display.js` previews
   live (the tile in the phone's resolved colour; `auto` previews slate).
-- **Icons and colours**: `testdata/app_icons.json` (16 Material Symbols, 6 colours with design 14's seed and the
+- **Icons and colours**: `contracts/core/app_icons.json` (16 Material Symbols, 6 colours with design 14's seed and the
   tile the launcher draws - since design 34 one of its six tones), byte-identical to the launcher's test copy;
   `scripts/material-symbols.sh` (root) fetches the
   SVGs at a pinned commit with SHA-256s and writes `static/app-icons/<key>.svg` + `LICENSE.txt` (Apache-2.0), the
@@ -114,7 +114,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - **The report's `installed_apps[].access`** (`app_permissions::AppAccess`): `camera` (`requested` | `admin_denied`,
   only for third-party apps that ask for it) and `manage_media`, `exact_alarm`, `write_settings`, `usage_access`,
   `full_screen` (`granted` | `denied` | `unknown`), only the keys the app declares; anything else is dropped at the
-  intake. The contract is `testdata/installed_apps_report.json` (byte-identical with the launcher's). The PWA's part: `pwa.md`, "Device › Apps: Permissions".
+  intake. The contract is `contracts/core/installed_apps_report.json` (the launcher reads it too). The PWA's part: `pwa.md`, "Device › Apps: Permissions".
 
 ## The launcher is "Vibb One" (design 34 step 12, P11, `docs/design/34-launcher-polish.md`)
 

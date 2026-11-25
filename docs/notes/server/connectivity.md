@@ -515,7 +515,7 @@ only while the phone's last status report says `tailnet_joined: true` (migration
 `device_status.tailnet_joined`, `DeviceStatus.tailnet_joined`; the contract's `report`): a phone with no field or not on the tailnet doesn't see it. The confirm says the phone then reaches the server only at its direct
 address; a phone whose server URL is a Tailscale address refuses ("Stayed on the tailnet",
 `locate.answer.tailnet_only`). It never expires (like a lock). The launcher's answers are the shared contract
-`testdata/leave_tailnet.json` (`tests::leave_tailnet`), worded by `locate::reword` (`locate.answer.left_tailnet`,
+`contracts/core/leave_tailnet.json` (`tests::leave_tailnet`), worded by `locate::reword` (`locate.answer.left_tailnet`,
 `not_on_tailnet`, `leave_tailnet_failed`, `tailnet_only`).
 
 ## The phones' certificate check (design 76, `docs/design/76-server-issuer-pin.md`)

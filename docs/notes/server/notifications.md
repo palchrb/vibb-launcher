@@ -588,9 +588,8 @@ push varsel ... kanskje man kan få valget". Branch `pwa-fixes-b`.
   or a lower one (`is.code <= was.code`: a phone already at the release when its launcher starts sending codes, a step
   back from a beta onto the release; qa-launcher-small-a-code Q-4). Test: `app_updates::every_checked_catalog_app_raises_app_updated_by_its_listed_code`
   and `an_app_already_at_the_release_or_going_back_to_it_raises_nothing`; the status body is the shared contract
-  `testdata/installed_apps_report.json` (byte-identical in the launcher's test resources: its `SyncScheduleTest`
-  encodes exactly it, `the_installed_apps_contract_raises_app_updated` posts it, both compare the copies; the code QA's
-  Q-5).
+  `contracts/core/installed_apps_report.json` (the launcher's `SyncScheduleTest` encodes exactly it,
+  `the_installed_apps_contract_raises_app_updated` posts it; the code QA's Q-5).
 - **A release that waits or is held** (design 90 §17.3 H1/M5, `play-and-updates.md`, "Update holds and the per-app
   wait"): no new kind and no new switch (the user's D1). `AppUpdateParams` gained `ready` (RFC 3339) and `held`
   (`HeldParams {reason, groups}`), both `skip_serializing_if` none, so a row from before reads as before. A release found

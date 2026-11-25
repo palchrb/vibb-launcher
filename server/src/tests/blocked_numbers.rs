@@ -1,5 +1,5 @@
 //! Android's blocked-numbers list (`blocked_numbers`): the launcher's `call_state` counts from
-//! `testdata/blocked_numbers.json`, the security-log line per class that rose, and the Calls page's
+//! `contracts/core/blocked_numbers.json`, the security-log line per class that rose, and the Calls page's
 //! orange lines (never for the kid's own blocks the phone keeps).
 
 use axum::http::StatusCode;
@@ -8,8 +8,10 @@ use serde_json::{Value, json};
 use super::TestApp;
 
 fn contract() -> Value {
-    serde_json::from_str(&std::fs::read_to_string("testdata/blocked_numbers.json").unwrap())
-        .unwrap()
+    serde_json::from_str(
+        &std::fs::read_to_string(crate::contracts::path("core/blocked_numbers.json")).unwrap(),
+    )
+    .unwrap()
 }
 
 async fn set_modes(app: &TestApp, id: i64, calls: &str, sms: &str) {

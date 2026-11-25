@@ -1157,7 +1157,7 @@ pub(crate) fn reword(lang: Lang, raw: &str) -> Option<String> {
         "no space" => "locate.answer.no_space",
         "superseded" => "locate.answer.superseded",
         "call never ended" => "locate.answer.call",
-        // Leave Tailnet (security review S-L10, `testdata/leave_tailnet.json`).
+        // Leave Tailnet (security review S-L10, `contracts/core/leave_tailnet.json`).
         "left the tailnet" => "locate.answer.left_tailnet",
         "not on the tailnet" => "locate.answer.not_on_tailnet",
         "failed to leave the tailnet" => "locate.answer.leave_tailnet_failed",

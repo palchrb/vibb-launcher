@@ -54,7 +54,7 @@ fn tag_version(tag: &str) -> Option<(i64, i64, i64, Option<i64>)> {
 /// the launcher's `launcherTagVersionCode`: the part before `@`, `launcher-vX.Y.Z` =
 /// `X*10_000_000 + Y*10_000 + Z*10 + 9`, `-rc.N` the same with N (1..8) for the 9 - every build its
 /// own code; X <= 199, Y and Z <= 999. `None` for any other tag (a manual upload's label). The cases
-/// are the shared `testdata/launcher_tag_codes.json`.
+/// are the shared `contracts/core/launcher_tag_codes.json`.
 pub fn launcher_tag_version_code(tag: &str) -> Option<i64> {
     let (x, y, z, rc) = tag_version(tag)?;
     let n = match rc {
@@ -520,7 +520,7 @@ mod tests {
 
     const TAG: &str = "launcher-v1.4.0@77";
 
-    const TAG_CODES: &str = include_str!("../testdata/launcher_tag_codes.json");
+    const TAG_CODES: &str = crate::contracts::contract!("core/launcher_tag_codes.json");
 
     /// The shared contract (the launcher's `SelfUpdatePlanTest` and `scripts/release-version.sh
     /// --selftest` read it too).
@@ -537,15 +537,6 @@ mod tests {
                 "{tag:?}"
             );
         }
-    }
-
-    #[test]
-    fn launcher_tag_codes_match_the_launchers_copy() {
-        let copy_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../launcher/app/src/test/resources/launcher_tag_codes.json");
-        let copy = std::fs::read_to_string(&copy_path)
-            .unwrap_or_else(|e| panic!("{}: {e}", copy_path.display()));
-        assert_eq!(copy, TAG_CODES, "{} differs", copy_path.display());
     }
 
     #[test]

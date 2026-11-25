@@ -7,7 +7,7 @@
 //! The first sweep after the phone became managed (the parent's switch) is `blocked_cleared_initial` alone: stored, never
 //! a line or a warning. The flat keys go through `device_api::CALL_STATE_FIELDS`. Each class's rise against the previous
 //! report is a security-log line ([log_lines], `phone_blocked_cleared`); the Calls page words the rest (`calls::Finding::BlockedCleared`,
-//! `BlockedLeft`). The shapes are `testdata/blocked_numbers.json`, shared with the launcher.
+//! `BlockedLeft`). The shapes are `contracts/core/blocked_numbers.json`, shared with the launcher.
 
 /// The classes the launcher sorts a cleared entry into, in the contract's order.
 pub const CLASSES: [&str; 2] = ["contact", "emergency"];
@@ -82,8 +82,10 @@ mod tests {
     use super::*;
 
     fn contract() -> serde_json::Value {
-        serde_json::from_str(&std::fs::read_to_string("testdata/blocked_numbers.json").unwrap())
-            .unwrap()
+        serde_json::from_str(
+            &std::fs::read_to_string(crate::contracts::path("core/blocked_numbers.json")).unwrap(),
+        )
+        .unwrap()
     }
 
     #[test]
@@ -116,13 +118,5 @@ mod tests {
     fn the_report_reads_as_counts() {
         let report = &contract()["call_state"];
         assert_eq!(counts(Some(report)), [1, 2]);
-    }
-
-    #[test]
-    fn the_copies_are_identical() {
-        assert_eq!(
-            std::fs::read("testdata/blocked_numbers.json").unwrap(),
-            std::fs::read("../launcher/app/src/test/resources/blocked_numbers.json").unwrap()
-        );
     }
 }

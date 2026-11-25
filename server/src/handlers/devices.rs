@@ -883,7 +883,7 @@ pub async fn revoke_access(
     .into_response()
 }
 
-/// The command "Leave Tailnet…" queues (security review S-L10; `testdata/leave_tailnet.json`).
+/// The command "Leave Tailnet…" queues (security review S-L10; `contracts/core/leave_tailnet.json`).
 pub const LEAVE_TAILNET: &str = "leave_tailnet";
 
 /// "Leave Tailnet…" on Advanced › Connection (security review S-L10): queues `leave_tailnet` - the phone stops its

@@ -1,4 +1,4 @@
-//! Design 87: the apps' real logos - the contract with the launcher (`testdata/app_logos.json`), the report's
+//! Design 87: the apps' real logos - the contract with the launcher (`contracts/core/app_logos.json`), the report's
 //! rows, the wanted list, the upload's answers, the files and the PWA's tiles.
 
 use axum::body::Body;
@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 use super::{Section, TestApp, TestResponse, device_page};
 use crate::app_logos::{MAX_BYTES, MAX_LOGOS_PER_PHONE, MAX_WANTED, SIZE_PX};
 
-const CONTRACT: &str = include_str!("../../testdata/app_logos.json");
+const CONTRACT: &str = crate::contracts::contract!("core/app_logos.json");
 
 fn sha(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
@@ -106,7 +106,7 @@ fn file(app: &TestApp, hash: &str) -> std::path::PathBuf {
 }
 
 /// The shared contract: the report's answer, the upload and every answer row; the stored file is the server's own
-/// encoding; the launcher's copy is identical.
+/// encoding.
 #[tokio::test]
 async fn the_contract() {
     let app = TestApp::new().await;
@@ -217,11 +217,6 @@ async fn the_contract() {
     // A refused logo isn't asked for again (for a day).
     assert_eq!(wanted(&app, &token, body).await, json!([]));
     assert!(!file(&app, &sha(&wrong_size)).exists());
-
-    // Gradle's and cargo's working directories differ; the copies are byte-identical.
-    let launcher_copy =
-        std::fs::read_to_string("../launcher/app/src/test/resources/app_logos.json").unwrap();
-    assert_eq!(launcher_copy, CONTRACT);
 }
 
 /// R2-M5: a malformed logo is no logo, never a refused report; a report without logos gets 204 and no rows; a report

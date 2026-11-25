@@ -1,5 +1,5 @@
 {
-  "comment": "Design 129 S1's shared contract (s7.1), with design 129b's enrolment rows (s10.2). The crypto rows are scripts/device-key-vectors.py's (a throwaway key from a fake phrase - public data only); the route rows are produced by the server's tests::device_key through the real routes. Byte-identical in the launcher's test resources (L1): its DeviceKeyContractTest builds the canonical and proof rows, computes the clock, maps the answers and runs the phone rows (the registration flow's decision).",
+  "comment": "Design 129 S1's shared contract (s7.1), with design 129b's enrolment rows (s10.2). The crypto rows are scripts/device-key-vectors.py's (a throwaway key from a fake phrase - public data only); the route rows are produced by the server's tests::device_key through the real routes. Kept once in contracts/core/ (design 133); the launcher's DeviceKeyContractTest (L1) builds the canonical and proof rows, computes the clock, maps the answers and runs the phone rows (the registration flow's decision).",
   "headers": {
     "signature": "Vibb-Signature",
     "body_sha256": "Vibb-Body-SHA256",

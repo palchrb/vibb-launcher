@@ -19,7 +19,7 @@ import java.time.format.DateTimeFormatter
  * and applies the hand-backs the answer carries, acknowledging each by its id. The app password stays on the server;
  * the phone knows the calendar only by its feed uid. Pure: the policy's object, D2.7's canonical form and hash, the
  * snapshot with its limits, the hand-backs as provider writes, the skip set. KidCaldavTest runs the shared contract
- * `calendar_kid_events.json` (byte-identical with `server/testdata/`).
+ * `calendar_kid_events.json` (in `contracts/core/`).
  */
 
 /** The set's limits (D1.3): a safety net, never a reason to delete. */

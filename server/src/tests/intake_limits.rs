@@ -351,8 +351,16 @@ async fn a_phones_storage_has_a_budget() {
 fn the_field_tables_keep_every_contract_key() {
     use crate::handlers::device_api::{CALL_STATE_FIELDS, TIME_STATE_FIELDS, known_fields};
     let mut checked = 0;
-    for entry in std::fs::read_dir("testdata").unwrap() {
-        let path = entry.unwrap().path();
+    // The server's own fixtures and the contracts both sides read (design 133).
+    let dirs = [
+        std::path::PathBuf::from("testdata"),
+        crate::contracts::path("core"),
+    ];
+    for path in dirs
+        .iter()
+        .flat_map(|dir| std::fs::read_dir(dir).unwrap())
+        .map(|entry| entry.unwrap().path())
+    {
         if path.extension().is_none_or(|e| e != "json") {
             continue;
         }
@@ -560,7 +568,7 @@ async fn the_security_log_pages_back_past_a_flood() {
 #[test]
 fn the_kid_events_set_keeps_every_snapshot_key() {
     let contract: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string("testdata/calendar_kid_events.json").unwrap(),
+        &std::fs::read_to_string(crate::contracts::path("core/calendar_kid_events.json")).unwrap(),
     )
     .unwrap();
     for snapshot in [&contract["snapshot"], &contract["cut_variant"]["snapshot"]] {

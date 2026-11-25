@@ -7,7 +7,7 @@ import kotlinx.serialization.Serializable
  * [id] is the request's own 32 lowercase hex characters (the server's key, so a retried POST is one request), [name]
  * the name the kid typed (cleaned, at most 40 characters), [number] normalised on the phone, [matrixId] the kid's
  * optional Matrix ID (left out when there is none), [askedAtMs] when the kid asked. Pinned by
- * `contact_request.json`'s `request` and `request_without_matrix` (byte-identical with `server/testdata/`,
+ * `contact_request.json`'s `request` and `request_without_matrix` (in `contracts/core/`,
  * `ContactRequestsTest`). The request's picture is never in it: it follows on its own route once the request is
  * accepted (`MdmApi.uploadContactRequestPhoto`, `contact_request.json`'s `photo`).
  */

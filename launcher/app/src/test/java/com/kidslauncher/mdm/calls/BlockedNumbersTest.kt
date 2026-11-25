@@ -13,7 +13,7 @@ import org.junit.Test
 import java.io.File
 
 /** Android's blocked-numbers list: [blockedNumbersPlan]'s rows, and the report's `blocked_*` keys exactly as
- * `blocked_numbers.json` (byte-identical with `server/testdata/`, whose `blocked_numbers::tests` read the same file). */
+ * `blocked_numbers.json` (in `contracts/core/`, whose `blocked_numbers::tests` read the same file). */
 class BlockedNumbersTest {
     private val contractText = javaClass.classLoader!!.getResource("blocked_numbers.json")!!.readText()
     private val contract = ServerJson.parseToJsonElement(contractText).jsonObject
@@ -154,13 +154,6 @@ class BlockedNumbersTest {
         assertEquals(contract["call_state"], blockedKeys(base.withBlocked(read)))
         val unread = BlockedReport(false, null, BlockedClass.entries.associateWith { 0 }, null)
         assertEquals(contract["call_state_unreadable"], blockedKeys(base.withBlocked(unread)))
-    }
-
-    @Test
-    fun `the copies are identical`() {
-        val serverCopy = listOf("../../server/testdata/blocked_numbers.json", "../server/testdata/blocked_numbers.json")
-            .map(::File).first { it.exists() }
-        assertEquals(serverCopy.readText(), contractText)
     }
 
     /** The gate is pinned in apply and the re-seat, and enabled only by the runtime (never left on while unmanaged). */

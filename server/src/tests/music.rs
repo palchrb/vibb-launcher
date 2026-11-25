@@ -3657,8 +3657,10 @@ async fn the_phone_reports_music_state_with_known_fields_only() {
     assert!(!page.contains("not from Vibb"), "{page}");
     // The launcher refuses a music app signed with another key (`installed_apps_report.json`'s row): one orange line;
     // `other_signer` on any other package is dropped at the intake.
-    let contract: Value =
-        serde_json::from_str(include_str!("../../testdata/installed_apps_report.json")).unwrap();
+    let contract: Value = serde_json::from_str(crate::contracts::contract!(
+        "core/installed_apps_report.json"
+    ))
+    .unwrap();
     let mut apps = contract["installed_apps"].clone();
     apps.as_array_mut()
         .unwrap()

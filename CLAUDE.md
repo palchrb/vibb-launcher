@@ -75,7 +75,7 @@ admin server it talks to. Old commit hashes in the docs still resolve.
   GrapheneOS's signed `attestation.json`, its OpenSSH signature checked with `ssh-keygen -Y verify` against the signer
   the script pins, an older `timestamp` refused; `--selftest`, no network, a vendored sample signed by a throwaway key
   in `scripts/grapheneos-boot-keys-sample/`; run by `server-ci.yml`'s always-run changes job), `device-key-vectors.py`
-  (design 129 §7.1: the crypto rows of `server/testdata/device_key.json` from a throwaway P-256 key derived from a fake
+  (design 129 §7.1: the crypto rows of `contracts/core/device_key.json` from a throwaway P-256 key derived from a fake
   phrase - public data only, pure Python; `--check` run by `server-ci.yml`'s always-run changes job),
   `emulator-attestation-vectors.py` (design 129b §7: the `emulator_keys` profile's chains and rows in
   `server/testdata/attestation/emulator/`, from throwaway keys and made-up values in the emulator gate's shape, never a
@@ -148,11 +148,11 @@ one commit, with each side's constants (`HOST_SUFFIXES`/`EXACT_HOSTS`, `SPOTIFY_
 The launcher's status body with `time_state.zone` (design 34 P13; since 2026-11-25 with `storage_full`) is `server/testdata/time_status_report.json`,
 byte-identical in `launcher/app/src/test/resources/`: the launcher's `TimeStateZoneTest` encodes exactly it, the
 server's `devices_list::a_launcher_report_with_its_zone_shows_the_rules_end` posts it, and both compare the copies.
-The launcher's status body with `dns_upstream` (design 36 §4.2) is `server/testdata/dns_upstream_status.json`,
+The launcher's status body with `dns_upstream` (design 36 §4.2) is `contracts/core/dns_upstream_status.json`,
 byte-identical in `launcher/app/src/test/resources/`: the launcher's `DnsUpstreamStatusTest` encodes exactly it, the
 server's `custom_dns::dns_upstream_status_contract` posts it, and both compare the copies. The policy's `dns_upstream`
 is pinned by `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTest`.
-The versionCode a launcher release tag was built with is `server/testdata/launcher_tag_codes.json` (tag -> code or null),
+The versionCode a launcher release tag was built with is `contracts/core/launcher_tag_codes.json` (tag -> code or null),
 byte-identical in `launcher/app/src/test/resources/`: the launcher's `SelfUpdatePlanTest` (``a release tag's
 versionCode is the shared contract's``, ``the tag codes are identical to the server's copy``) and the server's
 `install_now::tests::launcher_tags_read_as_the_shared_contract` / `launcher_tag_codes_match_the_launchers_copy` read
@@ -172,7 +172,7 @@ instants moved to the last minutes), and both compare the copies. The policy's `
 server's alone: the phone judges no zone (design 64 decision 1).
 The launcher's status body with `installed_apps[].version_code`/`version_name` (2026-10-25, the `app_updated` of every
 checked catalog app) and `other_signer` (2026-11-24: a Vibb music package not signed with Vibb One's key, which the
-phone refuses - Device › Music's orange line) is `server/testdata/installed_apps_report.json`, byte-identical in
+phone refuses - Device › Music's orange line) is `contracts/core/installed_apps_report.json`, byte-identical in
 `launcher/app/src/test/resources/`: the launcher's `SyncScheduleTest` encodes exactly it, the server's
 `app_updates::the_installed_apps_contract_raises_app_updated` posts it (`tests::music` posts its music row and reads
 the line), and both compare the copies.
@@ -189,10 +189,10 @@ answer row, and `time_request::the_contract_policies` produces every `policy_*` 
 run's); both compare the copies. These rows pin `time_policy.answer`'s and a lift's `by`/`at_ms` keys;
 `policy_json_keys_snapshot` pins `time_policy`'s own keys (`request_answers` among them) and the launcher's
 `PolicyResponseCompatTest` decodes them.
-Dagen's title rules (design 69 §3.4) are `server/testdata/calendar_title_rules.json` (`{"titles": [{rules, calendar,
+Dagen's title rules (design 69 §3.4) are `contracts/core/calendar_title_rules.json` (`{"titles": [{rules, calendar,
 title, description?, shown}]}`, `shown: null` = hidden), byte-identical in `launcher/app/src/test/resources/`: the
 server's `calendar::tests::the_title_rules_vectors` and the launcher's `TitleRulesTest` run every row and compare the
-copies. The launcher's status body with `calendar` (design 69 §4.2) is `server/testdata/calendar_status_report.json`,
+copies. The launcher's status body with `calendar` (design 69 §4.2) is `contracts/core/calendar_status_report.json`,
 byte-identical there too: the launcher's `CalendarReportTest` encodes exactly it, the server's
 `calendar::a_launcher_report_lists_the_calendars` posts it, and both compare the copies. The policy's `calendar` is pinned
 by `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTest`.
@@ -208,7 +208,7 @@ The launcher's built-in secure-DNS hosts `launcher/app/src/main/assets/dns/doh_h
 byte-identical in `server/testdata/doh_hosts.txt`, which the server compiles in for the Allowed Domains notice
 (`dns_server::is_builtin_doh_host`): the server's `dns_server::tests::doh_hosts_match_the_launchers_asset` and the
 launcher's `DnsFilterEngineTest` compare the copies; a change goes into both in one commit.
-The calendar links' contract (design 72 §3) is `server/testdata/calendar_feeds.json`, byte-identical in
+The calendar links' contract (design 72 §3) is `contracts/core/calendar_feeds.json`, byte-identical in
 `launcher/app/src/test/resources/`: `feed` (the document `GET /api/devices/calendar/feeds/{uid}` serves for
 `server/testdata/calendar_feeds/contract.ics`), `keys` (a link's calendar key), `policy` (a `calendar.feeds` row),
 `report` (a status report's `calendar.feeds` row), `zone` and `provider` (the Events rows the phone writes in that
@@ -217,7 +217,7 @@ rewrites them), `intake_limits` keeps `report`'s keys; the launcher's `CalendarF
 `provider`, checks the key and decodes and encodes the rows; both compare the copies. The policy's `calendar.feeds` is
 pinned by `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTest`.
 The fixed emergency list (design 73 §4: `always`, `by_country`, `vectors` of a raw number and a country code) is
-`server/testdata/emergency_numbers.json`, byte-identical in `launcher/app/src/test/resources/`: the server's
+`contracts/core/emergency_numbers.json`, byte-identical in `launcher/app/src/test/resources/`: the server's
 `emergency::tests` and the launcher's `EmergencyMenuTest` check their constants (`emergency::ALWAYS`/`BY_COUNTRY`,
 `Emergency.ALWAYS`/`BY_COUNTRY`) against it, run every vector and compare the copies. The policy's
 `call_policy.emergency_menu` is pinned by `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTest`.
@@ -229,12 +229,12 @@ recorded MET answers in `server/testdata/weather/` (`WEATHER_CONTRACT_WRITE=1`);
 `WeatherContractTest` decodes the answers into its DTOs and checks every symbol code; both compare the copies. The
 policy's `launcher_ui.lock_weather` is pinned by `policy_json_keys_snapshot` and the launcher's
 `PolicyResponseCompatTest`.
-The `leave_tailnet` command's answers (security review S-L10, round L4b) are `server/testdata/leave_tailnet.json`
+The `leave_tailnet` command's answers (security review S-L10, round L4b) are `contracts/core/leave_tailnet.json`
 (`{command, answers: [{success, message}], report}`), byte-identical in `launcher/app/src/test/resources/`: the
 launcher's `SecurityLowsBTest` produces every row from `leaveTailnetAnswer`/`leaveTailnetRefusal` and encodes the
 status report's `report` keys (`tailnet_joined`) exactly; the server's `tests::leave_tailnet` words each answer
 (`locate::reword`), posts `report` and shows Leave Tailnet only then; both compare the copies.
-The kid's own events written to the marked CalDAV calendar (design 72b §8) are `server/testdata/calendar_kid_events.json`,
+The kid's own events written to the marked CalDAV calendar (design 72b §8) are `contracts/core/calendar_kid_events.json`,
 byte-identical in `launcher/app/src/test/resources/`: `provider` ("Min kalender"'s rows) and the exact POST body
 `snapshot` (and `cut_variant` past the limits), `canonical` (D2.7's form and hash, row by row), `policy` /
 `policy_waiting` (a `calendar.kid_caldav`), `answers` (every answer of `POST /api/devices/calendar/kid-events`) and
@@ -289,7 +289,7 @@ both compare the copies. The receive and send rules (D4/D5) stay the launcher's 
 `launcher/app/src/test/resources/sms_rules.json` (`SmsRulesTest`). The policy's new `call_policy` keys are pinned by
 `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTest`.
 
-The kid's contact request from the phone book (design 77 §14) is `server/testdata/contact_request.json`, byte-identical
+The kid's contact request from the phone book (design 77 §14) is `contracts/core/contact_request.json`, byte-identical
 in `launcher/app/src/test/resources/`: `request` and `request_without_matrix` (the exact `POST
 /api/devices/contact-request` bodies), `answers` (accepted, `capped`, `invalid`, `known`), the check vectors `valid`
 (with the cleaned name and normalised number) and `invalid`, `photo` (the request's picture, Calls & Contacts tidied
@@ -302,7 +302,7 @@ reads each answer and policy row, maps every `phone_answers` row and runs the ve
 compare the copies. The policy's
 `call_policy.contact_requests` is pinned by `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTest`.
 
-The apps' real logos (design 87) are `server/testdata/app_logos.json`, byte-identical in
+The apps' real logos (design 87) are `contracts/core/app_logos.json`, byte-identical in
 `launcher/app/src/test/resources/`: the limits (`size_px`, `max_bytes`, `max_per_phone`,
 `max_wanted`), a test PNG (`png_base64`, a disc with a text chunk the server's re-encode drops) and its `png_sha256`,
 design 87b's Automatic tile (`tile_png_base64`, `tile_png_sha256`), `report` (the exact status body with
@@ -355,7 +355,7 @@ encodes `full` and `heartbeat` exactly from one report, checks the hash and the 
 server's `tests::status_heartbeat` posts `full` and `heartbeat` and checks what is stored and every refusal; both
 compare the copies. The policy's three keys are pinned by `policy_json_keys_snapshot` and `StatusReportsTest`.
 
-Flymodus through the Digital assistant role (design 98) is `server/testdata/airplane_mode.json`, byte-identical in
+Flymodus through the Digital assistant role (design 98) is `contracts/core/airplane_mode.json`, byte-identical in
 `launcher/app/src/test/resources/`: `bit` (64 in `quick_controls_mask`), `rows`
 (the kid's Flymodus row and the section from `{mask, role, restricted, on, wifi_up, busy, last_error, error_age_ms}`,
 the Off-only rows included), `report` and `report_open` (the exact `airplane_mode` of a status report), `clean` (the
@@ -491,7 +491,7 @@ route, each 200 and 503 no sooner than the answer time); `cell_phone_answers` (e
 `appleCellStep`, the cell wait alone, a 409 both) and `cell_phone_rows` (`storeAppleCells`: 90 days, a negative 30, the
 range). `server.json` gained `golden_cells` and `apple_cells`; the launcher's own cell rules are `CellPlanTest`'s.
 
-Why an install failed (upstream review 2026-11-20) is `server/testdata/install_failure.json`, byte-identical in
+Why an install failed (upstream review 2026-11-20) is `contracts/core/install_failure.json`, byte-identical in
 `launcher/app/src/test/resources/`: `kinds` (the launcher's own reasons), `report` and `report_progress` (the exact
 `POST /api/devices/apps/progress` bodies), `parse` (an Android result's status and message to the code the launcher
 sends - never the message's text) and `clean` (the server's keeping of a sent `reason`). The launcher's
@@ -513,7 +513,7 @@ the tick exactly, decodes the policy and runs the rows. `restrictions_pause.json
 pinned by `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTest`.
 
 What each app may use (design 127 step 2: Kamera, Posisjon, Mikrofon, Kontakter on the app's own page) is
-`server/testdata/app_access.json`, byte-identical in `launcher/app/src/test/resources/`: `keys` (each key with the
+`contracts/core/app_access.json`, byte-identical in `launcher/app/src/test/resources/`: `keys` (each key with the
 Android permissions it covers, in display order), `policy` (`none` and `seeded`: the exact `app_permissions` -
 `[{package_name, camera?, location?, microphone?, contacts?}]`, each `"deny"` - after the page's saves), `report` (the
 exact `installed_apps[]` with each key's `requested`/`admin_denied`/`refused` beside the special accesses), `clean` (the
@@ -526,7 +526,7 @@ the copies. The launcher's own rules (the grant plan, the report's readings, the
 `launcher/app/src/test/resources/app_access_rules.json` (`AppAccessRulesTest`). The policy's `app_permissions` is
 pinned by `policy_json_keys_snapshot` and `PolicyResponseCompatTest`. `network` (Nett) joins in step 3.
 
-Android's blocked-numbers list, its rows that hit the rules cleared while managed, is `server/testdata/blocked_numbers.json`, byte-identical in
+Android's blocked-numbers list, its rows that hit the rules cleared while managed, is `contracts/core/blocked_numbers.json`, byte-identical in
 `launcher/app/src/test/resources/`: `classes` (a cleared entry's class: `contact` - a contact's or an own number -,
 `emergency` - never the number), `call_state` and `call_state_unreadable` (the exact `blocked_*` keys of a status report's `call_state`: readable,
 the rows the rule clears left (a failed delete), `blocked_kept` (the kid's own blocks, never worded), the counts per class since the install, the last clearing, and `blocked_cleared_initial` - the first
@@ -539,7 +539,7 @@ an own number or an emergency number; the rest kept) stays the launcher's. No po
 
 The phone's clock as its decisions see it (time rules keep their own clock, `server/TrustedClock.kt`): the status
 report's `time_state.clock_skew_ms`, `clock_trust` and `unanchored_ms` ride in `time_status_report.json` (above); the rows
-are `server/testdata/clock_skew.json`, byte-identical in `launcher/app/src/test/resources/`: `round` (a raw offset and
+are `contracts/core/clock_skew.json`, byte-identical in `launcher/app/src/test/resources/`: `round` (a raw offset and
 the last reported step to the reported step: 0 within five minutes, five-minute steps, a minute's hysteresis), `clean`
 (the server's keeping of the three keys), `pages` (`{skew, trust, unanchored, lang}` to the one orange line or none),
 `fix_age` (a fix's `{received, captured_at, age_ms}` to the stored time and `phone_offset_ms`: receipt minus the age,
@@ -551,7 +551,7 @@ the launcher's alone, in `launcher/app/src/test/resources/clock_rules.json` (`Tr
 fails on a new wall-clock read where the phone decides. No policy key.
 
 The hardware-bound phone key (design 129; server S1 `docs/notes/server/device-key.md`, launcher L1
-`docs/notes/launcher/security.md`, "The hardware-bound phone key") is `server/testdata/device_key.json`, written by
+`docs/notes/launcher/security.md`, "The hardware-bound phone key") is `contracts/core/device_key.json`, written by
 `scripts/device-key-vectors.py` (a throwaway key from a fake phrase, public data only; `--check` in `server-ci.yml`'s
 changes job) and byte-identical in `launcher/app/src/test/resources/`: the headers, `canonical` (the signed bytes of a
 request), `signed` and `proof` (signatures by the throwaway key), `enroll_challenge`, `clock` (the signature clock and

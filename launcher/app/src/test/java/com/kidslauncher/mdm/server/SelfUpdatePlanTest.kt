@@ -231,7 +231,7 @@ class SelfUpdatePlanTest {
     private fun running(advertised: String, code: Long, pending: PendingSelfUpdate? = null) =
         launcherUpdateStep(advertised, null, null, null, false, pending, true, now, backoff, runningVersionCode = code)
 
-    /** The shared contract (`launcher_tag_codes.json`, byte-identical with the server's `testdata/`, which
+    /** The shared contract (`launcher_tag_codes.json`, in `contracts/core/`, which
      * `install_now::launcher_tag_version_code` and `scripts/release-version.sh --selftest` read too). */
     private val tagCodes = javaClass.classLoader!!.getResource("launcher_tag_codes.json")!!.readText()
 
@@ -244,13 +244,6 @@ class SelfUpdatePlanTest {
             val code = row["code"]!!.takeUnless { it is JsonNull }?.jsonPrimitive?.longOrNull
             assertEquals(tag, code, launcherTagVersionCode(tag))
         }
-    }
-
-    @Test
-    fun `the tag codes are identical to the server's copy`() {
-        val serverCopy = File("../../server/testdata/launcher_tag_codes.json")
-        assertTrue("${serverCopy.absolutePath} not found", serverCopy.isFile)
-        assertEquals("${serverCopy.path} differs from the launcher's copy", serverCopy.readText(), tagCodes)
     }
 
     @Test

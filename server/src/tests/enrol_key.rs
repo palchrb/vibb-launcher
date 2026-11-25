@@ -10,7 +10,10 @@ use super::{TestApp, TestResponse};
 use crate::device_key::testing::TestKey;
 
 fn contract() -> serde_json::Value {
-    serde_json::from_str(&std::fs::read_to_string("testdata/device_key.json").unwrap()).unwrap()
+    serde_json::from_str(
+        &std::fs::read_to_string(crate::contracts::path("core/device_key.json")).unwrap(),
+    )
+    .unwrap()
 }
 
 fn b64u(bytes: &[u8]) -> String {

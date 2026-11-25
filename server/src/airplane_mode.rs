@@ -1,6 +1,6 @@
 //! Design 98: Flymodus through the Digital assistant role. The report's `airplane_mode` cleaned field by field
 //! ([clean]) and the emergency line's rule ([emergency_line]). The shared contract is
-//! `testdata/airplane_mode.json` (byte-identical in the launcher's test resources).
+//! `contracts/core/airplane_mode.json`, which the launcher reads too.
 //!
 //! The pages' parts (§6): the stored report read back ([report]), the summary's lines ([summary_lines]; "Flymodus på
 //! siden 21:03" is the header's, `phone_status::with_airplane`) and the Home Screen row's sub-line ([home_sub]). The

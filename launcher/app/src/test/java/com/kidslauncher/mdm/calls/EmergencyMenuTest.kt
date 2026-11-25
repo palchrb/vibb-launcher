@@ -213,13 +213,6 @@ class EmergencyMenuTest {
     }
 
     @Test
-    fun `the contract is identical to the server's copy`() {
-        val serverCopy = File("../../server/testdata/emergency_numbers.json")
-        assertTrue("${serverCopy.absolutePath} not found", serverCopy.isFile)
-        assertEquals("${serverCopy.path} differs from the launcher's copy", serverCopy.readText(), text)
-    }
-
-    @Test
     fun `nothing else is emergency`() {
         assertFalse(emergency("116117"))
         assertFalse(emergency("+4791234567"))

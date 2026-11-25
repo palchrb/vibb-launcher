@@ -5,7 +5,7 @@ package com.kidslauncher.mdm.calls
  * closed) a row is deleted only when it blocks a number the rules need: one of the rules' contacts or the phone's own
  * numbers, or an emergency number ([Emergency.staticSet]), compared after the shared normalisation ([PhoneNumbers]).
  * Every other row - the kid's own spam blocks, e-mail addresses, codes - stays. What was cleared is reported by class
- * only - never the number (`testdata/blocked_numbers.json`, shared with the server). The first sweep after the phone
+ * only - never the number (`contracts/core/blocked_numbers.json`, shared with the server). The first sweep after the phone
  * becomes managed clears by the same rule; it is counted on its own, as `initial`, and the server says nothing of it.
  * Pure; the Android side is [BlockedNumbersRuntime], which runs it after every apply, so a number the parent adds as a
  * contact later is cleared then. Not lifted by the pause or the offline override, as the call rules.

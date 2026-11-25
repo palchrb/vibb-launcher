@@ -1,5 +1,5 @@
 //! Design 129 S1 (observe): the phone key's routes, the edge's signature check and the shared contract
-//! (`testdata/device_key.json`). The attestation itself is `attestation::tests`; here a fake one stands in (§7.2:
+//! (`contracts/core/device_key.json`). The attestation itself is `attestation::tests`; here a fake one stands in (§7.2:
 //! `device_key::testing::fake_attest`, a key made at each run).
 
 use axum::body::Body;
@@ -12,7 +12,10 @@ use crate::device_key::testing::TestKey;
 use crate::device_key::{self, AuthReason};
 
 fn contract() -> serde_json::Value {
-    serde_json::from_str(&std::fs::read_to_string("testdata/device_key.json").unwrap()).unwrap()
+    serde_json::from_str(
+        &std::fs::read_to_string(crate::contracts::path("core/device_key.json")).unwrap(),
+    )
+    .unwrap()
 }
 
 fn b64u(bytes: &[u8]) -> String {
@@ -154,16 +157,6 @@ fn vibb_auth(res: &TestResponse) -> Option<String> {
         .get(device_key::AUTH_HEADER)
         .and_then(|v| v.to_str().ok())
         .map(str::to_string)
-}
-
-/// The launcher's copy (L1: its `DeviceKeyContractTest` runs the phone's rows) is byte-identical.
-#[test]
-fn the_contract_matches_the_launchers_copy() {
-    let ours = std::fs::read_to_string("testdata/device_key.json").unwrap();
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../launcher/app/src/test/resources/device_key.json");
-    let copy = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-    assert_eq!(copy, ours, "{} differs", path.display());
 }
 
 /// The contract's crypto rows (the script's) through the server's own code.

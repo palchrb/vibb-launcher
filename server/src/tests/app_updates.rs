@@ -604,21 +604,7 @@ async fn an_app_already_at_the_release_or_going_back_to_it_raises_nothing() {
 
 /// qa-launcher-small-a-code Q-5: the launcher's status body with the installed versions, shared
 /// with its test resources (`SyncScheduleTest` encodes exactly it).
-const INSTALLED_APPS_REPORT: &str = include_str!("../../testdata/installed_apps_report.json");
-
-#[test]
-fn the_installed_apps_contract_matches_the_launchers_copy() {
-    let copy_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../launcher/app/src/test/resources/installed_apps_report.json");
-    let copy = std::fs::read_to_string(&copy_path)
-        .unwrap_or_else(|e| panic!("{}: {e}", copy_path.display()));
-    assert_eq!(
-        copy,
-        INSTALLED_APPS_REPORT,
-        "{} differs",
-        copy_path.display()
-    );
-}
+const INSTALLED_APPS_REPORT: &str = crate::contracts::contract!("core/installed_apps_report.json");
 
 /// The contract posted as is, after a report of the same apps one release back: the checked
 /// app's `app_updated`, with the fields stored as the launcher sent them.

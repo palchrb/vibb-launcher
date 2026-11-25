@@ -1,6 +1,6 @@
 //! Security review S-L10: Advanced › Connection's "Leave Tailnet…" queues `leave_tailnet` behind a ticked box, and
-//! the launcher's answers (the shared contract `testdata/leave_tailnet.json`, byte-identical in the launcher's test
-//! resources; its `SecurityLowsBTest` produces each row) are worded. The row shows only while the last status report
+//! the launcher's answers (the shared contract `contracts/core/leave_tailnet.json`; the launcher's
+//! `SecurityLowsBTest` produces each row) are worded. The row shows only while the last status report
 //! says `tailnet_joined` (the contract's `report`, which the launcher encodes).
 
 use axum::http::{Method, StatusCode};
@@ -9,16 +9,7 @@ use serde_json::Value;
 use super::{TestApp, assert_redirect};
 use crate::i18n::Lang;
 
-const CONTRACT: &str = include_str!("../../testdata/leave_tailnet.json");
-
-#[test]
-fn the_leave_tailnet_contract_matches_the_launchers_copy() {
-    let copy_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../launcher/app/src/test/resources/leave_tailnet.json");
-    let copy = std::fs::read_to_string(&copy_path)
-        .unwrap_or_else(|e| panic!("{}: {e}", copy_path.display()));
-    assert_eq!(copy, CONTRACT, "{} differs", copy_path.display());
-}
+const CONTRACT: &str = crate::contracts::contract!("core/leave_tailnet.json");
 
 #[test]
 fn every_answer_of_the_contract_is_worded() {
