@@ -1,5 +1,5 @@
 {
- "_doc": "Design 125 step 2 (§4a A3, A4), the Apple Wi-Fi lookup's shared contract: byte-identical in launcher/app/src/test/resources/wifi_lookup/contract.json. rules: the server's cache months (a positive row fresh fresh_months calendar months from the month Apple answered, a negative until the month it was asked in ends, UTC) and the phone's stale_grace_h. policy: the policy's wifi_lookup. request: the exact body of POST /api/devices/wifi-lookup. answers: each case the server's tests produce (only asked BSSIDs; fresh_months_left, never a month). phone_answers: the phone's action for each status and body (use: the rows stored; wait_s: no ask for that long; off: none until a policy says on). phone_rows: what the phone keeps from a 200 at now, and until when (storeApple). Design 125b (cells): rules' cells_max, cells_a_day (the per-phone brake), cell_answer_after_s (a cells answer's fixed time through a proxy - the gate's 3 s, the Apple call's 10 s and a second; 9 s direct is the server's alone), cell_row_days and cell_negative_days (the phone's rows). request_cells: the exact cells body. cell_forms: a cell's wire form to valid or not (the server's cells::Cell::parse, the launcher's cellWire). cell_answers: each cells case the server's tests produce - no age, no cached mark, the same body from the cache as from Apple; each asked string echoed. cell_phone_answers: the phone's action for each (the cell wait alone; a 409 both waits). cell_phone_rows: what the phone keeps from a cells 200 at now, and until when (storeAppleCells). Test network 001-01 only, made-up coordinates.",
+ "_doc": "Design 125 step 2 (§4a A3, A4), the Apple Wi-Fi lookup's shared contract: byte-identical in launcher/app/src/test/resources/wifi_lookup/contract.json. rules: the server's cache months (a positive row fresh fresh_months calendar months from the month Apple answered, a negative until the month it was asked in ends, UTC) and the phone's stale_grace_h. policy: the policy's wifi_lookup. request: the exact body of POST /api/devices/wifi-lookup. answers: each case the server's tests produce (only asked BSSIDs; fresh_months_left, never a month; off also while the phone's location is off). phone_answers: the phone's action for each status and body (use: the rows stored; wait_s: no ask for that long; off: none until a policy says on). phone_rows: what the phone keeps from a 200 at now, and until when (storeApple). Design 125b (cells): rules' cells_max, cells_a_day (the per-phone brake), cell_answer_after_s (a cells answer's fixed time through a proxy - the gate's 3 s, the Apple call's 10 s and a second; 9 s direct is the server's alone), cell_row_days and cell_negative_days (the phone's rows). request_cells: the exact cells body. cell_forms: a cell's wire form to valid or not (the server's cells::Cell::parse, the launcher's cellWire). cell_answers: each cells case the server's tests produce - no age, no cached mark, the same body from the cache as from Apple; each asked string echoed. cell_phone_answers: the phone's action for each (the cell wait alone; a 409 both waits). cell_phone_rows: what the phone keeps from a cells 200 at now, and until when (storeAppleCells). Test network 001-01 only, made-up coordinates.",
  "rules": {
   "fresh_months": 3,
   "negative_months": 1,
@@ -185,6 +185,21 @@
    "body": {
     "error": "off"
    }
+  },
+  {
+   "case": "off_location",
+   "request": {
+    "bssids": [
+     "00:00:5e:00:53:01",
+     "00:00:5e:00:53:02",
+     "00:00:5e:00:53:03"
+    ]
+   },
+   "status": 409,
+   "body": {
+    "error": "off"
+   },
+   "note": "the switch on, the phone's location off"
   },
   {
    "case": "limit",

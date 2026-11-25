@@ -302,10 +302,12 @@ pub async fn prune(db: &SqlitePool, now_month: i64) -> Result<u64, sqlx::Error> 
     .rows_affected())
 }
 
-/// After a phone's delete: the whole table, when no phone has the switch on any more.
+/// After a phone's delete or its location turned off: the whole table, when no phone has both the switch and location
+/// on any more.
 pub async fn empty_unless_used(db: &SqlitePool) -> Result<u64, sqlx::Error> {
     Ok(sqlx::query(
-        "DELETE FROM wifi_lookup_aps WHERE NOT EXISTS (SELECT 1 FROM wifi_lookup_devices WHERE is_on = 1)",
+        "DELETE FROM wifi_lookup_aps WHERE NOT EXISTS (SELECT 1 FROM wifi_lookup_devices w \
+         JOIN device_policy p ON p.device_id = w.device_id WHERE w.is_on = 1 AND p.location_mode <> 'off')",
     )
     .execute(db)
     .await?

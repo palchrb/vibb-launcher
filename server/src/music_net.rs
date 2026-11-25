@@ -841,6 +841,28 @@ impl PhoneAsks {
         Some((wait.as_secs() + u64::from(wait.subsec_nanos() > 0)).max(1))
     }
 
+    /// How long until `device` is under `limit` (at most this window's own limit) at `now`; zero while it is.
+    /// Counts nothing.
+    #[cfg_attr(not(feature = "wifi_lookup"), allow(dead_code))]
+    pub fn wait_under(&self, device: i64, limit: usize, now: tokio::time::Instant) -> Duration {
+        let mut asks = self.asks.lock().unwrap_or_else(|e| e.into_inner());
+        self.prune(&mut asks, now);
+        let Some(times) = asks.get(&device) else {
+            return Duration::ZERO;
+        };
+        if times.len() < limit.max(1) {
+            return Duration::ZERO;
+        }
+        // The ask that must leave the window before one more fits under `limit`.
+        let leaving = times
+            .get(times.len() - limit.max(1))
+            .copied()
+            .unwrap_or(now);
+        self.window
+            .saturating_sub(now.saturating_duration_since(leaving))
+            .max(Duration::from_secs(1))
+    }
+
     /// Counts one ask of `device` at `now`.
     pub fn record(&self, device: i64, now: tokio::time::Instant) {
         let mut asks = self.asks.lock().unwrap_or_else(|e| e.into_inner());

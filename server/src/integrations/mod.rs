@@ -76,6 +76,8 @@ pub enum Prune {
     Sweep,
     /// A phone was deleted (its own rows went with it by `ON DELETE CASCADE`).
     DeviceDeleted,
+    /// A phone's location was turned off (`locate::update_location_policy`'s Off).
+    LocationOff,
 }
 
 /// One integration, as the core sees it.
