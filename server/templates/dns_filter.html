@@ -37,7 +37,7 @@
                 <form method="post" action="/dns/blocklists/{{ row.list.id }}/url#lists" class="form-group" data-list-url="{{ row.list.id }}">
                     <div class="field">
                         <label class="field-label" for="bl_url_{{ row.list.id }}">{{ self.t("settings.web_filter.list_url") }}</label>
-                        <input type="url" id="bl_url_{{ row.list.id }}" name="url" value="{{ row.list.url.replacen("http://", "https://", 1) }}" required autocapitalize="none" spellcheck="false"{% if row.url_refused %} aria-invalid="true" aria-describedby="list-url-error-{{ row.list.id }}" autofocus{% endif %}>
+                        <input type="url" id="bl_url_{{ row.list.id }}" name="url" value="{{ row.url_value }}" required autocapitalize="none" spellcheck="false"{% if row.url_refused %} aria-invalid="true" aria-describedby="list-url-error-{{ row.list.id }}" autofocus{% endif %}>
                         {% if row.url_refused %}<p class="field-error" id="list-url-error-{{ row.list.id }}">{{ self.t("settings.web_filter.bad_list_url") }}</p>{% endif %}
                     </div>
                     <button type="submit" class="button-wide">{{ self.t("common.save") }}</button>

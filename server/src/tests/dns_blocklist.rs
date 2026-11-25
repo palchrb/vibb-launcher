@@ -533,7 +533,11 @@ async fn an_http_list_is_not_fetched_and_says_needs_https() {
         row.contains("<span class=\"row-label tone-orange\">Needs https</span>"),
         "{row}"
     );
-    assert!(row.contains("Change its address to https://."), "{row}");
+    assert!(
+        row.contains("Lists are only fetched over https, so this one isn&#39;t updated.")
+            || row.contains("Lists are only fetched over https, so this one isn&#x27;t updated."),
+        "{row}"
+    );
     assert!(
         row.contains(&format!("action=\"/dns/blocklists/{old}/url#lists\""))
             && row.contains("value=\"https://old.example/hosts\""),
@@ -556,19 +560,56 @@ async fn an_http_list_is_not_fetched_and_says_needs_https() {
             Method::POST,
             &format!("/dns/blocklists/{old}/url"),
             Some(&cookie),
-            &[("url", "http://old.example/hosts")],
+            &[("url", "http://typed.example/hosts")],
         )
         .await;
     let location = res.location().unwrap_or_default().to_string();
     assert_eq!(
         location,
-        format!("/dns?notice=bad_list_url&list={old}#lists")
+        format!("/dns?notice=bad_list_url&list={old}&url=http%3A%2F%2Ftyped.example%2Fhosts#lists")
     );
     let page = app.get_page(&location, &cookie).await.text();
     let row = problem_row(&page);
     assert!(
-        row.contains(" open>") && row.contains("The address must start with https://."),
+        row.contains(" open>")
+            && row.contains("The address must start with https://.")
+            && row.contains("value=\"http://typed.example/hosts\""),
         "{row}"
+    );
+
+    // Off for every phone: the parent's choice - nothing on its row, on the phone's page or in Attention.
+    sqlx::query("UPDATE dns_blocklists SET enabled = 0 WHERE id = ?")
+        .bind(old)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let page = app.get_page("/dns", &cookie).await.text();
+    assert!(
+        !page.contains(&format!("data-list-problem=\"{old}\"")) && !page.contains("Needs https"),
+        "{page}"
+    );
+    let page = app
+        .get_page(&super::device_page(phone, super::Section::Filter), &cookie)
+        .await
+        .text();
+    assert!(!page.contains("Needs https"), "{page}");
+    let attention = crate::integration_health::for_device(&app.db, phone, chrono::Utc::now())
+        .await
+        .unwrap();
+    assert!(attention.is_empty(), "{attention:?}");
+    // On for one phone by its own setting: the line is back.
+    sqlx::query(
+        "INSERT INTO device_blocklist_overrides (device_id, blocklist_id, enabled) VALUES (?, ?, 1)",
+    )
+    .bind(phone)
+    .bind(old)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let page = app.get_page("/dns", &cookie).await.text();
+    assert!(
+        page.contains(&format!("data-list-problem=\"{old}\"")),
+        "{page}"
     );
 
     let res = app
