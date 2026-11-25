@@ -5903,7 +5903,7 @@ User certificates (Advanced › Restrictions › "Blokker sertifikater", on by d
 | 3 | The PWA: "Blokker sertifikater" off (no orange line anywhere, the page stays where it was), a sync | `no_config_credentials` gone; a CA certificate installs from Downloads (Settings › Install a certificate › CA certificate); the PWA shows no warning for the choice |
 | 4 | The switch on again, a sync | the installed certificate stays (nothing removes it), but installing another is refused again; Vibb One's server connection is unaffected (it trusts no user CA) |
 | 5 | The pause from the phone's parent code, or the setup hold of a fresh enrolment | the certificate rows stay greyed (hardening is never lifted by a pause or the hold) |
-| 6 | Settings › Passwords, passkeys & accounts (14: Passwords & accounts) | not affected by the restriction (the credential provider choice is another setting); note what the build shows |
+| 6 | Settings › Passwords, passkeys & accounts (14: Passwords & accounts) | not affected by the restriction (the credential provider choice is another setting); note what the build shows - if Android greys out the provider picker, that goes to the owner as a visible cost |
 
 The provisioning baseline (a QR-provisioned phone locked down before its first policy). A fresh emulator (wiped),
 QR provisioning from the welcome screen (six taps, the setup QR from the PWA shown to the emulator's camera through
@@ -5927,8 +5927,8 @@ minutes). Fill `/data` until a write fails: `adb shell 'dd if=/dev/zero of=/sdca
 
 | # | Step | Expect |
 |---|---|---|
-| 15 | Use the phone for 5 minutes | logcat `Couldn't save the screen-time ledger: storage full?` once; the count goes on (Home's remaining time falls, the limit locks when it is used up) |
+| 15 | Use the phone for 5 minutes (a policy sync in the full state fails its cache write too, the same flag) | logcat `Couldn't save the screen-time ledger: storage full?` once; the count goes on (Home's remaining time falls, the limit locks when it is used up) |
 | 16 | A sync | the report's `time_state.storage_full` is `true`; the PWA's summary has the orange Attention row "Lagringen er full" to Device › Tid, whose orange line has the fix behind its (i); one push "Emma: lagringen er full" / "Skjermtiden lagres ikke." |
 | 17 | More syncs the same day | no second push (one a day); the line stays |
-| 18 | `adb reboot` with the disk still full | the day's count starts again (the accepted cost); the line comes back with the first failed save after the restart |
+| 18 | `adb reboot` with the disk still full | the day's count goes back to the last saved ledger: the time used since storage filled is lost (the accepted cost); the line comes back with the first failed save after the restart |
 | 19 | Delete the fill file, use the phone a minute, a sync | the save works, `storage_full` is left out of the report, the line and the Attention row are gone; Notify Me About has the "Lagringen er full" switch, on |

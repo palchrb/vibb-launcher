@@ -33,10 +33,16 @@ object ProvisioningBaseline {
         false
     }
 
-    /** Whether [AppEnforcer.apply] keeps the baseline now. */
+    /** Whether [AppEnforcer.apply] keeps the baseline now. A failed read of whether a policy was applied keeps it
+     * (fail closed: the first policy's own switches lift it at the next apply). */
     fun holds(context: Context): Boolean {
         if (!armed(context)) return false
-        val everManaged = everManaged(LauncherPreferences.mdm().policyEverApplied(), EnrolmentWitness.policyApplied(context))
+        val everManaged = try {
+            everManaged(LauncherPreferences.mdm().policyEverApplied(), EnrolmentWitness.policyApplied(context))
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't read whether a policy was applied - the baseline stays: ${e.javaClass.simpleName}")
+            false
+        }
         return provisioningBaselineHolds(armed = true, everManaged = everManaged)
     }
 

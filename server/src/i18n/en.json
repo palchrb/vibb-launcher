@@ -1819,7 +1819,7 @@
   "device.time.no_report": "No report yet",
   "device.time.ledger_unreadable": "Screen-time record unreadable",
   "device.time.ledger_unreadable_sub": "The phone counts today's screen time as used up.",
-  "device.time.storage_full_info": "The phone counts screen time but can't save it. A restart resets today's time. Free up space on the phone: delete photos, videos or apps.",
+  "device.time.storage_full_info": "The phone counts screen time but can't save it. A restart loses the time used since storage filled. Free up space on the phone: delete photos, videos or apps.",
   "device.clock.wrong": "Clock is wrong ({amount} {direction})",
   "device.clock.ahead": "ahead",
   "device.clock.behind": "behind",

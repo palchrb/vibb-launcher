@@ -74,20 +74,18 @@ object TimeRulesRuntime {
         }
     }
 
-    /** The last ledger write failed (storage full): reported as `time_state.storage_full` until one succeeds. The
-     * count itself keeps enforcing while the process runs - SharedPreferences keeps the new value in memory even when
-     * the write to disk fails -, only a restart loses the day's count (the owner's choice, 2026-11-25). */
-    @Volatile
-    private var ledgerUnsaved = false
-
-    /** Whether the screen-time ledger can't be saved now ([ledgerUnsaved]). */
-    fun storageFull(): Boolean = ledgerUnsaved
+    /** Whether the phone's storage is full as its writes see it ([com.kidslauncher.mdm.server.StorageWrites]): a failed
+     * ledger write counts. The count itself keeps enforcing while the process runs - SharedPreferences keeps the new
+     * value in memory even when the write to disk fails -; a restart goes back to the last saved ledger, losing the
+     * time used since storage filled (the owner's choice, 2026-11-25). */
+    fun storageFull(): Boolean = com.kidslauncher.mdm.server.StorageWrites.full()
 
     private fun saveLedger(context: Context, before: ScreenTimeLedger, after: ScreenTimeLedger) {
         if (before == after) return
         val ok = prefs(context).edit().putString(LEDGER_KEY, ServerJson.encodeToString(ScreenTimeLedger.serializer(), after)).commit()
-        if (!ok && !ledgerUnsaved) Log.w(LOG_TAG, "Couldn't save the screen-time ledger: storage full?")
-        ledgerUnsaved = !ok
+        if (com.kidslauncher.mdm.server.StorageWrites.record(com.kidslauncher.mdm.server.StorageWrites.Kind.LEDGER, ok)) {
+            Log.w(LOG_TAG, "Couldn't save the screen-time ledger: storage full?")
+        }
     }
 
     /** The ledger moved to now in [zone], with new budget lifts applied - saved when it changed. */

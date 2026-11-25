@@ -36,7 +36,9 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   only blocked from the first policy, so a phone that never reaches its server can still be reset from Settings;
   Android's own lock is never touched. adb's `dpm set-device-owner` runs neither entry, so the dev emulator's adb
   provisioning keeps adb. A QR-provisioned phone whose enrolment failed has no adb until it connects: Koble til with a
-  new code from the PWA is the way on.
+  new code from the PWA is the way on. The cost, accepted by the owner: before the first policy, a launcher that
+  misbehaves (crash loop, a broken setup) has no adb and no safe mode to fix it with - only a factory reset from Settings
+  or recovery remains.
 - **Never call `setUserControlDisabledPackages`** (launcher round 7 §2, `docs/design/r7-launcher-small-items.md`; the round's battery-state report was removed on 2026-10-20): a package on that list can't be suspended, hidden or uninstalled by the device owner either (AOSP `SuspendPackageHelper` "protected package", `setApplicationHiddenSettingAsUser`, `DeletePackageHelper`; qa-l7-b-code finding 1), so time rules, the budget, the camera lock and the update fence would fail open for those apps. `BackupServiceInvariantsTest` scans the production sources for it.
 - **Device checks** are in `04-hardening.md` (restrictions in Settings, VPN with `DISALLOW_CONFIG_VPN`, location lock vs `WifiNetworksActivity`, suspension at the schedule edges incl. inside an app and from Recents, calls at bedtime).
 

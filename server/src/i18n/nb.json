@@ -1819,7 +1819,7 @@
   "device.time.no_report": "Ingen melding ennå",
   "device.time.ledger_unreadable": "Skjermtidsregnskapet kan ikke leses",
   "device.time.ledger_unreadable_sub": "Telefonen regner dagens skjermtid som brukt opp.",
-  "device.time.storage_full_info": "Telefonen teller skjermtiden, men kan ikke lagre den. En omstart nullstiller dagens tid. Frigjør plass på telefonen: slett bilder, videoer eller apper.",
+  "device.time.storage_full_info": "Telefonen teller skjermtiden, men kan ikke lagre den. En omstart mister tiden brukt siden lagringen ble full. Frigjør plass på telefonen: slett bilder, videoer eller apper.",
   "device.clock.wrong": "Klokken går feil ({amount} {direction})",
   "device.clock.ahead": "foran",
   "device.clock.behind": "bak",

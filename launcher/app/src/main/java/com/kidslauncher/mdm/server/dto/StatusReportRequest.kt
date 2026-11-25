@@ -462,8 +462,9 @@ data class TimeState(
     val clockTrust: String? = null,
     /** Since the last server or satellite time, in whole hours; `null` (left out) when there never was one. */
     val unanchoredMs: Long? = null,
-    /** The screen-time record couldn't be saved (storage full): the count keeps enforcing until a restart, which resets
-     * the day's count. Left out while false. */
+    /** The phone's storage is full: the last write of the screen-time record or the policy's cache failed
+     * ([com.kidslauncher.mdm.server.StorageWrites]). The count keeps enforcing; a restart loses the time used since
+     * storage filled. Left out while false. */
     val storageFull: Boolean = false,
 )
 
