@@ -255,9 +255,8 @@ class DeviceKeyContractTest {
             adopted = AdoptedKey("device_key_1", "key-1", "bound"),
             enrolChallenges = mapOf("device_key_1" to oldChallenge),
         )
-        // A new code: no key to reuse, and the cap has room - a fresh key is made for the new code's challenge.
+        // A new code: no key to reuse - a fresh key is made for the new code's challenge.
         assertEquals(null, enrolKeyAlias(orphaned, "new-code-challenge"))
-        assertEquals(emptyList<String>(), keyCapPlan(orphaned.keys, 1_000L))
         // The old code typed again: never the adopted key (a refusal deletes the attempt's key), a fresh one instead.
         assertEquals(null, enrolKeyAlias(orphaned, oldChallenge))
         // A retried enrolment with the same new code reuses its own, not yet adopted, key.
@@ -271,9 +270,36 @@ class DeviceKeyContractTest {
         assertEquals(listOf("device_key_1"), enrolmentDrops(made, keep = "device_key_2"))
         // Enrolled without a kept key (exempt or refused): the old key goes as well.
         assertEquals(listOf("device_key_1", "device_key_2"), enrolmentDrops(made, keep = null))
-        val fresh = newEnrolmentBook(made.copy(adopted = null))
+        // The new enrolment's book: no adoption and no challenge left, so no later lookup finds the old key.
+        val fresh = newEnrolmentBook(made.copy(lost = true))
         assertEquals(null, fresh.adopted)
+        assertEquals(emptyMap<String, String>(), fresh.enrolChallenges)
         assertEquals(false, fresh.lost)
+        assertEquals(null, enrolKeyAlias(fresh.copy(adopted = AdoptedKey("device_key_2", "key-2")), "new-code-challenge"))
+    }
+
+    @Test
+    fun `the cap never takes the adopted key for an enrolment key`() {
+        val adopted = KeyAlias("device_key_1", 10L, 20L, named = true)
+        val book = listOf(adopted, KeyAlias("device_key_2", 100L, 5_000L), KeyAlias("device_key_3", 200L, 5_000L))
+        // The adopted key and two enrolment keys whose challenges still hold: no room, no new key.
+        assertEquals(null, keyCapPlan(book, 1_000L))
+        // Once one challenge ran out, that key goes - never the adopted one.
+        assertEquals(listOf("device_key_2"), keyCapPlan(book, 5_000L))
+    }
+
+    @Test
+    fun `an enrolment's key comes only from the lookup that skips the adopted key, and a refusal deletes only that`() {
+        val main = listOf("src/main", "app/src/main").map(::File).first { it.isDirectory }
+        fun src(path: String) = File(main, "java/com/kidslauncher/mdm/$path").readText()
+        val keyFor = src("server/DeviceKey.kt").substringAfter("fun enrolKeyFor(").substringBefore("fun proof(")
+        assertTrue("val alias = enrolKeyAlias(book, challenge) ?: return null" in keyFor)
+        assertTrue("enrolChallenges.entries" !in keyFor)
+        val enrol = src("server/Enrollment.kt")
+        assertTrue("val made = DeviceKeys.enrolKeyFor(context, b64u(challenge), now)\n" in enrol.substringAfter("private fun enrolKey("))
+        // The refusal's delete takes the attempt's key alone (made or reused above), never another alias.
+        assertTrue("if (failure.refused) (key as? EnrolKey.Made)?.let { DeviceKeys.forget(context, alias = it.alias) }" in enrol)
+        assertEquals(1, Regex("""DeviceKeys\.forget\(""").findAll(enrol).count())
     }
 
     @Test

@@ -106,7 +106,12 @@ object Enrollment {
                 return@withContext Result.failure(EnrollFailure(refused = false, "the token couldn't be stored"))
             }
             enrolledKey(context, (key as? EnrolKey.Made)?.alias, body.key)
-            mdm.enrolled(true)
+            // `enrolled` on disk before the witness says enrolled (code QA L1 of koble-til-key): the generated setter only
+            // `apply()`s, and a process death between the two would leave the witness enrolled and the flag unset - Koble
+            // til's sign of lost preferences on a healthy phone.
+            if (!LauncherPreferences.getSharedPreferences().edit().putBoolean(mdm.keys().enrolled(), true).commit()) {
+                android.util.Log.w("Enrollment", "The enrolled flag wasn't committed")
+            }
             EnrolmentWitness.recordEnrolled(context, serverUrl)
             // Design 95 (code QA L3): the old enrollment's kept policy body (its PIN hashes) goes; the token hash would
             // refuse it anyway.

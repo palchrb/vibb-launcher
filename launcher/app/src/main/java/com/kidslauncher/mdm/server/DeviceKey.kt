@@ -328,10 +328,11 @@ object KeyBook {
 fun withEnrolAttempt(book: KeyBookState, challenge: String, made: String): KeyBookState =
     if (book.enrolAttempts.containsKey(challenge)) book else book.copy(enrolAttempts = book.enrolAttempts + (challenge to made))
 
-/** A new enrolment's book (§5.1, design 129b D4): the old enrolment's marks, attempts and exempt try go. */
+/** A new enrolment's book (§5.1, design 129b D4): the old enrolment's marks, attempts, enrolment challenges (no use
+ * after a successful enrolment - and so [DeviceKeys.forgetEnrolKey] never finds the adopted key) and exempt try go. */
 fun newEnrolmentBook(book: KeyBookState): KeyBookState = book.copy(
     adopted = null, conflictReported = null, lost = false, suspicion = null, keyGone = false, lastRefusal = null,
-    enrolAttempts = emptyMap(), exemptTriedMs = null,
+    enrolAttempts = emptyMap(), enrolChallenges = emptyMap(), exemptTriedMs = null,
 )
 
 /**
