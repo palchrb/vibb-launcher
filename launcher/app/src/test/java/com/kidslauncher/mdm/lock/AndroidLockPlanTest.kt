@@ -678,4 +678,23 @@ class AndroidLockPlanTest {
         assertFalse(raw.contains("NewApi"))
     }
 
+
+    @Test
+    fun `the reset token at enrolment, in the one apply of the QR and Koble til, after the address is accepted (§7_1)`() {
+        val provisioning = code("$server/Provisioning.kt")
+        val apply = provisioning.substringAfter("suspend fun applyProvisioningExtras(").substringBefore("\n}\n")
+        val accepted = apply.indexOf("mdm.serverUrl(extras.serverUrl.trim())")
+        val token = apply.indexOf("WindowRelock.ensureAndroidResetToken(context)")
+        assertTrue(apply, accepted in 0 until token)
+        assertTrue("before the enrolment", token < apply.indexOf("Enrollment.enroll("))
+        assertTrue("the refused address changes nothing first", apply.indexOf("serverUrlUsable(") < accepted)
+        // Both QR paths and Koble til come through the one apply.
+        val qr = code("$server/QrExtras.kt")
+        assertEquals(3, Regex("applyProvisioningExtras\\(").findAll(qr).count())
+        // ... and every apply keeps it, in every state (no `requested` gate since design 132).
+        val configure = body(code("$lock/AndroidLock.kt"), "configure")
+        assertTrue(configure.contains("WindowRelock.ensureAndroidResetToken(app)"))
+        assertFalse(configure.substringBefore("WindowRelock.ensureAndroidResetToken(app)").contains("if ("))
+    }
+
 }
