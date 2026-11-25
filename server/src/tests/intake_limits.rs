@@ -355,6 +355,7 @@ fn the_field_tables_keep_every_contract_key() {
     let dirs = [
         std::path::PathBuf::from("testdata"),
         crate::contracts::path("core"),
+        crate::contracts::path("music"),
     ];
     for path in dirs
         .iter()

@@ -3,9 +3,8 @@ package me.vibb.music.spotify
 /*
  * Spotify's hosts (design 26c §6.2, §7.2): the music app's web player loads nothing else
  * (`WebPolicy`), and the launcher's DNS filter never blocks them on a phone with Spotify on. The list
- * is server/testdata/spotify_hosts.json's, byte-identical in this app's and the launcher's test
- * resources (ContractFilesTest, MusicPlanTest); SpotifyHostsTest checks these constants against the
- * music copy, and the rule is the server's `spotify::is_spotify_host` and the launcher's
+ * is contracts/music/spotify_hosts.json's, which both apps and the server read; SpotifyHostsTest
+ * checks these constants against it, and the rule is the server's `spotify::is_spotify_host` and the launcher's
  * `isSpotifyHost`. PROVISIONAL until the spike's DNS capture replaces it, before any tag of design
  * 26c's release: then the three JSON copies (with their comment) and the three sides' constants change
  * in one commit (26c "Release"). Pure.

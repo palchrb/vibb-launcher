@@ -12,7 +12,7 @@ import kotlinx.serialization.json.longOrNull
 
 /*
  * One entry's listing (design 21b §4.2): `GET /api/devices/music/entries/{id}/items`, oldest first,
- * pinned by server/testdata/music_listing.json (byte-identical in src/test/resources). The server
+ * pinned by contracts/music/music_listing.json (on the test class path). The server
  * built it; the phone only checks what would be unsafe to use (21b QA #13): keys, http(s) URLs and
  * art hashes (64 lowercase hex, design 27).
  * A bad item is dropped, not the listing - but a listing without an `items` array, or one where

@@ -171,7 +171,6 @@ class BridgeTest {
 
     @Test
     fun `the bridge's names match the shared contract`() {
-        assertEquals("the launcher's copy", repo("launcher/app/src/test/resources/bridge_contract.json").readText(), me.vibb.music.Fixtures.resource("bridge_contract.json"))
         assertEquals((contract["bridge_service"] as JsonPrimitive).content, BRIDGE_SERVICE)
         assertEquals((contract["action_bridge_changed"] as JsonPrimitive).content, ACTION_BRIDGE_CHANGED)
         assertEquals(strings("launcher_packages"), LAUNCHER_PACKAGES)
@@ -240,7 +239,7 @@ class BridgeTest {
 
     @Test
     fun `the report's keys are the shared music_state fixture's, less the launcher's own`() {
-        val fixture = me.vibb.music.model.JSON.parseToJsonElement(repo("server/testdata/music_state.json").readText()).jsonObject
+        val fixture = me.vibb.music.model.JSON.parseToJsonElement(me.vibb.music.Fixtures.resource("music_state.json")).jsonObject
         val report = me.vibb.music.logic.stateReport(1, "0123456789abcdef", 0, 0, 0, emptyList(), emptyList(), emptyList(), "ok")
         assertEquals(fixture.keys - setOf("package", "bridge"), report.keys)
     }

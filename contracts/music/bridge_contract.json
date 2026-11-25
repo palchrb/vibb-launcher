@@ -1,5 +1,5 @@
 {
-  "comment": "The launcher-music bridge's names (design 21 §2), spelled once here: byte-identical in launcher/ and music/ test resources; MusicPlanTest and BridgeTest check their constants against it.",
+  "comment": "The launcher-music bridge's names (design 21 §2), spelled once here (contracts/music/, design 133); MusicPlanTest and BridgeTest check their constants against it.",
   "bridge_service": "com.kidslauncher.mdm.music.MusicBridgeService",
   "permission_suffix": ".permission.MUSIC_BRIDGE",
   "action_bridge_changed": "me.vibb.music.action.BRIDGE_CHANGED",

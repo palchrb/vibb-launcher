@@ -101,7 +101,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__))
 SERVER_FIXTURES = os.path.join(HERE, "..", "server", "testdata", "spotify")
 MUSIC_FIXTURES = os.path.join(HERE, "..", "music", "app", "src", "test", "resources", "spotify")
-LIBRARY = os.path.join(HERE, "..", "server", "testdata", "music_library.json")
+LIBRARY = os.path.join(HERE, "..", "contracts", "music", "music_library.json")
 PLAYER_JS = os.path.join(HERE, "..", "music", "app", "src", "main", "assets", "spotify", "player.js")
 T0 = time.monotonic()
 RATE = 8000                       # Hz, 16-bit mono: 16 000 bytes a second of tone
@@ -1489,7 +1489,7 @@ def main():
     p.add_argument("--version", default="11ee11ee11ee11ee",
                    help="the listing's version for --print-listing (default %(default)s: the library snapshot's Spotify playlist)")
     p.add_argument("--print-library", action="store_true",
-                   help="print the library snapshot (server/testdata/music_library.json: entries 6 and 7 are Spotify's) and exit")
+                   help="print the library snapshot (contracts/music/music_library.json: entries 6 and 7 are Spotify's) and exit")
     p.add_argument("--selftest", action="store_true", help="check the fixtures and the fake against itself, then exit")
     args = p.parse_args()
     if args.selftest:

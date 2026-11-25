@@ -39,7 +39,7 @@ const val ACTION_BRIDGE_CHANGED = "me.vibb.music.action.BRIDGE_CHANGED"
 
 /**
  * The music app's player activity and the extras Home's card sends it on a snapshot (21 §3 step 4:
- * open the player and continue). Spelled once in bridge_contract.json, byte-identical in both apps.
+ * open the player and continue). Spelled once in contracts/music/bridge_contract.json, which both apps read.
  */
 const val MUSIC_PLAYER_ACTIVITY = "me.vibb.music.ui.MainActivity"
 const val MUSIC_EXTRA_OPEN = "me.vibb.music.extra.OPEN"

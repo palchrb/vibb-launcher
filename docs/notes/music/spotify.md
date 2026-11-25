@@ -241,7 +241,7 @@ Moved from music/CLAUDE.md on 2026-11-01.
   debug feed, B the real SDK with the user's account (the recorder, the DNS capture).
 - **Owed for Spotify** (26c "Release"): §6l A ran once (2026-10-14, `docs/testing/2026-10-14-spotify-6l-a.md`; its
   fixes are 26c's "Fixes after the emulator check §6l A") - its re-run is steps 5b and 6's acceptance; part B, its recorded real `sdk_states/` and the DNS capture that replaces the provisional host list
-  (one commit of the list, the constants and the comment: the three `spotify_hosts.json` copies, the six constants -
+  (one commit of the list, the constants and the comment: `contracts/music/spotify_hosts.json`, the six constants -
   this app's two in `SpotifyHosts.kt` among them - as 26c's "Release" names it); the Jelly Star checks of 26c's QA
   checklist (real Doze for 2.5 hours with the token refreshed ahead of expiry, the WebView's own audio focus with the real SDK
   (the fake's stub answered it, §5.6), the protected-media origin, episodes in a `uris` list - no switch is built: if the SDK refuses them, the server's parser

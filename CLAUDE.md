@@ -134,14 +134,14 @@ Shared between the two and checked by tests on both sides: `contracts/core/phone
 launcher `PhoneNumbersTest`). The policy JSON shape is pinned on both sides
 (`policy_json_keys_snapshot` / `PolicyResponseCompatTest`). A change to the API goes into both
 directories in the same commit. The music library and an entry's episode list are pinned by
-`server/testdata/music_library.json` and `server/testdata/music_listing.json` (`music_library_snapshot`,
+`contracts/music/music_library.json` and `contracts/music/music_listing.json` (`music_library_snapshot`,
 `music_listing_snapshot`, regenerated with `MUSIC_LIBRARY_SNAPSHOT_WRITE=1` / `MUSIC_LISTING_SNAPSHOT_WRITE=1`); the
 music app keeps byte-identical copies in `music/app/src/test/resources/` (with `music_icons.json`;
 `ContractFilesTest`), and a change goes into both in one commit. The launcher-music bridge's AIDL
 (`*/app/src/main/aidl/me/vibb/bridge/`) and the names both apps spell (`bridge_contract.json` in both apps'
 test resources) are byte-identical in `launcher/` and `music/` (`MusicPlanTest`, `BridgeTest`); new methods are
-appended. `server/testdata/music_state.json` is every `music_state` field: the server keeps them all, the launcher
-keeps the music app's, the music app sends exactly those. Spotify's host list `server/testdata/spotify_hosts.json`
+appended. `contracts/music/music_state.json` is every `music_state` field: the server keeps them all, the launcher
+keeps the music app's, the music app sends exactly those. Spotify's host list `contracts/music/spotify_hosts.json`
 (design 26c §6.2; provisional until the DNS capture) is byte-identical in both apps' test resources
 (`spotify::tests::hosts_match_the_contract`, `ContractFilesTest`, `MusicPlanTest`); a change goes into all three in
 one commit, with each side's constants (`HOST_SUFFIXES`/`EXACT_HOSTS`, `SPOTIFY_HOST_SUFFIXES`/`SPOTIFY_EXACT_HOSTS`).
@@ -196,7 +196,7 @@ copies. The launcher's status body with `calendar` (design 69 §4.2) is `contrac
 byte-identical there too: the launcher's `CalendarReportTest` encodes exactly it, the server's
 `calendar::a_launcher_report_lists_the_calendars` posts it, and both compare the copies. The policy's `calendar` is pinned
 by `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTest`.
-The answers of `POST /api/devices/music/storytel/token` (design 58 §2.2) are `server/testdata/storytel_token_answers.json`,
+The answers of `POST /api/devices/music/storytel/token` (design 58 §2.2) are `contracts/music/storytel_token_answers.json`,
 byte-identical in both apps' test resources: the server's `music_storytel::the_token_route_answers_the_shared_contract`
 produces every row, the launcher's `StorytelTokenCourierTest` and the music app's `StorytelBridgeTokenTest` read each,
 and all three compare the copies (`MusicPlanTest`, `ContractFilesTest`); a change goes into the three in one commit.

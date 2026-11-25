@@ -1,5 +1,5 @@
 {
-  "comment": "Design 21: the icons and colours a parent picks for a music category (the kid's category tiles in the Vibb music app). The music app keeps a byte-identical copy; scripts/material-symbols.sh makes the glyphs and the server's table from this file. icons: key -> Material Symbols Rounded name (filled, 24 px). colors: key -> the tile colour (white on it >= 3:1).",
+  "comment": "Design 21: the icons and colours a parent picks for a music category (the kid's category tiles in the Vibb music app). Kept once in contracts/music/ (design 133); scripts/material-symbols.sh makes the glyphs and the server's table from this file. icons: key -> Material Symbols Rounded name (filled, 24 px). colors: key -> the tile colour (white on it >= 3:1).",
   "icons": {
     "music_note": "music_note",
     "star": "star",

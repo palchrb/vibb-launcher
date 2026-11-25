@@ -886,7 +886,7 @@ struct LibraryBody<'a> {
     sonos_rooms: Option<&'a [String]>,
 }
 
-/// What is served (`server/testdata/music_library.json` pins the shape).
+/// What is served (`contracts/music/music_library.json` pins the shape).
 #[derive(Serialize)]
 struct LibraryDocument<'a> {
     v: u32,
@@ -2386,12 +2386,12 @@ mod tests {
         );
     }
 
-    /// `testdata/music_state.json` is every field the launcher and the music app send (both apps'
-    /// tests read it): the sanitizer keeps them all, unchanged.
+    /// `contracts/music/music_state.json` is every field the launcher and the music app send (both
+    /// apps' tests read it): the sanitizer keeps them all, unchanged.
     #[test]
     fn music_state_keeps_every_field_the_phone_sends() {
         let fixture: serde_json::Value =
-            serde_json::from_str(include_str!("../testdata/music_state.json")).unwrap();
+            serde_json::from_str(crate::contracts::contract!("music/music_state.json")).unwrap();
         let stored = sanitize_music_state(&fixture).unwrap();
         let kept: serde_json::Value = serde_json::from_str(&stored).unwrap();
         assert_eq!(kept, fixture);

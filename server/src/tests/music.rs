@@ -1862,8 +1862,8 @@ pub(super) fn pretty_json(compact: &str) -> String {
     out
 }
 
-/// `server/testdata/music_library.json` pins the library's shape (the music app keeps a
-/// byte-identical copy). `MUSIC_LIBRARY_SNAPSHOT_WRITE=1` rewrites it.
+/// `contracts/music/music_library.json` pins the library's shape (the music app and the launcher
+/// read it too). `MUSIC_LIBRARY_SNAPSHOT_WRITE=1` rewrites it.
 #[tokio::test]
 async fn music_library_snapshot() {
     let app = TestApp::new().await;
@@ -1877,14 +1877,14 @@ async fn music_library_snapshot() {
     );
     let served = res.json();
     let pretty = pretty_json(&res.text());
-    let path = "testdata/music_library.json";
+    let path = crate::contracts::path("music/music_library.json");
     if std::env::var("MUSIC_LIBRARY_SNAPSHOT_WRITE").is_ok() {
-        std::fs::write(path, &pretty).unwrap();
+        std::fs::write(&path, &pretty).unwrap();
     }
     assert_eq!(
         pretty,
-        std::fs::read_to_string(path).unwrap(),
-        "the library changed (fields, order or values) - update both copies together"
+        std::fs::read_to_string(&path).unwrap(),
+        "the library changed (fields, order or values) - rewrite it with MUSIC_LIBRARY_SNAPSHOT_WRITE=1"
     );
     assert_eq!(
         crate::music::state_key("https://example.org/feed.xml"),
@@ -3983,9 +3983,10 @@ async fn the_music_pages_render_and_link_both_ways() {
 
 #[test]
 fn the_music_icon_table_matches_its_json() {
-    let table: Value =
-        serde_json::from_str(&std::fs::read_to_string("testdata/music_icons.json").unwrap())
-            .unwrap();
+    let table: Value = serde_json::from_str(
+        &std::fs::read_to_string(crate::contracts::path("music/music_icons.json")).unwrap(),
+    )
+    .unwrap();
     let icons: Vec<(&str, &str)> = table["icons"]
         .as_object()
         .unwrap()

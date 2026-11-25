@@ -73,3 +73,10 @@ Prose written before 2026-11-25 names `server/testdata/<file>` (and the apps' co
 | `core/zone_status_report.json` | 64 step 2, 131 | by hand | server `tests::zone_watch`; launcher `ZoneReportTest` |
 | `integrations/map_links/contract.json` | 110 | by hand | server `integrations::map_links::tests`; launcher `MapLinksContractTest` |
 | `integrations/wifi_lookup/contract.json` | 125 step 2, 125b | by hand | server `integrations::wifi_lookup::tests`; launcher `WifiLookupContractTest` |
+| `music/bridge_contract.json` | 21 §2 | by hand | launcher `MusicPlanTest`; music `BridgeTest` |
+| `music/music_icons.json` | 21 | by hand; `scripts/material-symbols.sh` generates `music_icons.rs` and `MusicGlyphs.kt` from it | server `tests::music`; music `SourceScanTest` |
+| `music/music_library.json` | 21 §1.3 | `MUSIC_LIBRARY_SNAPSHOT_WRITE=1` (`tests::music::music_library_snapshot`) | server `tests::music`; launcher `MusicPlanTest`; music `ContractFilesTest` and others; `scripts/fake-spotify.py` |
+| `music/music_listing.json` | 21b §4.2 | `MUSIC_LISTING_SNAPSHOT_WRITE=1` (`tests::music_sweep::music_listing_snapshot`) | server `tests::music_sweep`; launcher `MusicPlanTest`; music `ContractFilesTest` |
+| `music/music_state.json` | 21 step 3 | by hand | server `music::tests`; launcher `MusicPlanTest`; music `BridgeTest` |
+| `music/spotify_hosts.json` | 26c §6.2 | by hand (provisional until the DNS capture) | server `spotify::tests`; launcher `SpotifyHostsTest`; music `SpotifyHostsTest` |
+| `music/storytel_token_answers.json` | 58 §2.2 | by hand | server `tests::music_storytel`; launcher `StorytelTokenCourierTest`; music `StorytelBridgeTokenTest`; `scripts/fake-storytel.py` |

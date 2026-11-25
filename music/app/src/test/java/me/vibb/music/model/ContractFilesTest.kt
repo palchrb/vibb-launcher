@@ -10,22 +10,29 @@ import org.junit.Test
 import java.io.File
 
 /**
- * The shared contract (design 21 §1.3, 21b §4.5): server/testdata/music_library.json,
- * music_listing.json and music_icons.json are byte-identical in src/test/resources, and the app
- * parses them. A bad element is dropped, not the document (21 §4.6).
+ * The shared contract (design 21 §1.3, 21b §4.5): the repo's contracts/music/ (design 133) holds
+ * music_library.json, music_listing.json and music_icons.json once, on this module's test class
+ * path, and the app parses them. A bad element is dropped, not the document (21 §4.6).
  */
 class ContractFilesTest {
-    private fun server(name: String): File {
-        // Gradle runs unit tests in music/app/.
-        val f = listOf(File("../../server/testdata/$name"), File("../server/testdata/$name")).first { it.isFile }
-        assertTrue("${f.absolutePath} not found", f.isFile)
-        return f
-    }
+    // Gradle runs unit tests in music/app/.
+    private fun repo(path: String) = listOf(File("../../$path"), File("../$path")).first { it.exists() }
 
+    private fun filesUnder(dir: File): List<String> =
+        if (!dir.isDirectory) emptyList()
+        else dir.walkTopDown().filter { it.isFile }.map { it.relativeTo(dir).invariantSeparatorsPath }.toList()
+
+    /** Design 133 §6.2: no contract has a copy in this module, where it would shadow the one in contracts/. */
     @Test
-    fun `the shared files are identical to the server's copies`() {
-        for (name in listOf("music_library.json", "music_listing.json", "music_icons.json", "spotify_hosts.json", "storytel_token_answers.json")) {
-            assertEquals("$name differs from the server's copy", server(name).readText(), Fixtures.resource(name))
+    fun `no contract has a copy in the music app's source sets`() {
+        val contracts = repo("contracts")
+        val music = filesUnder(File(contracts, "music"))
+        assertTrue("contracts/music/ is read", "music_library.json" in music)
+        for (name in music) {
+            assertFalse("$name has a copy in src/test/resources", Fixtures.moduleFile("src").resolve("test/resources/$name").exists())
+        }
+        for (name in filesUnder(File(contracts, "shipped/bridge-aidl"))) {
+            assertFalse("$name has a copy in src/main/aidl", Fixtures.moduleFile("src").resolve("main/aidl/$name").exists())
         }
     }
 

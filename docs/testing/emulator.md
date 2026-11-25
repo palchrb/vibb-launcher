@@ -968,7 +968,7 @@ t+15 volume 60
 No real account is used on the emulator: `scripts/fake-storytel.py` on the VM is the login and the bookshelf (the
 server's, §6i B), the server's session route for the phone alone (`/fake/jwt`), the asset call (the 302 the app
 captures) and a CDN serving silent WAV books with Range. Its answers come from the fixtures the tests read (the login
-and the bookshelf from `server/testdata/storytel/`, `/fake/jwt` from `server/testdata/storytel_token_answers.json`, the
+and the bookshelf from `server/testdata/storytel/`, `/fake/jwt` from `contracts/music/storytel_token_answers.json`, the
 asset call from the music app's; fake values only: `k@example.invalid` / `hemmelig`, `FAKE-JWT-<n>`, sessions
 `1:<16 hex>`, `FAKE-SIG-<n>`), and it logs every request with its Range and token. Since design 58 step 2 **the phone
 never logs in**: it uses the server's JWT, in memory only - through the launcher's bridge when managed (§6i B), and
@@ -994,7 +994,7 @@ python3 -I scripts/fake-storytel.py                            # port 8730, book
 #   --slow-mint 5                 every 302 after 5 s (step 4b)
 #   --no-download 222,444         those books mint but the CDN answers 503: never on the phone, a room plays them (step 4b)
 mkdir -p debug-feed/items
-cp server/testdata/music_library.json debug-feed/library.json     # entry 5 "Kokosbananas" is storytel:series:26175
+cp contracts/music/music_library.json debug-feed/library.json     # entry 5 "Kokosbananas" is storytel:series:26175
 python3 -I scripts/fake-storytel.py --print-listing 5 > debug-feed/items/5.json
 echo '{"storytel_base": "http://10.0.2.2:8730"}' > debug-feed/config.json
 R=me.vibb.music.debug/me.vibb.music.debugfeed.DebugFeedReceiver

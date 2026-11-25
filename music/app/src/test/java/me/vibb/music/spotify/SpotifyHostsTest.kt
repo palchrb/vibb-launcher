@@ -11,9 +11,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Spotify's hosts (design 26c §6.2, §8 item 5): the music app's constants are its copy of
- * spotify_hosts.json's (ContractFilesTest keeps the copy equal to the server's), and the rule is the
- * server's and the launcher's.
+ * Spotify's hosts (design 26c §6.2, §8 item 5): the music app's constants are
+ * contracts/music/spotify_hosts.json's, and the rule is the server's and the launcher's.
  */
 class SpotifyHostsTest {
     private val contract by lazy { Json.parseToJsonElement(Fixtures.resource("spotify_hosts.json")).jsonObject }
