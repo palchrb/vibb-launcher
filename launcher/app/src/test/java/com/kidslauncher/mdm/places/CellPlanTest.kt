@@ -236,7 +236,7 @@ class CellPlanTest {
         // for a locate (L5); awaited only before the cell fix, which reads the table again.
         assertTrue(glue.contains("askBeside(scope, if (askCells) ({ askAppleCells(app, store, s) }) else null)"))
         assertTrue(glue.contains("cellAskAllowed(appleStillMotion(ask.motion), plan == AttemptPlan.LOCATE)"))
-        assertTrue(glue.contains("val result = kept ?: run {\n                    cellAsk.get()?.await()\n                    cellOnly("))
+        assertTrue(glue.contains("var result = kept ?: run {\n                    cellAsk.get()?.await()\n                    cellOnly("))
         assertTrue(glue.contains("val store = open(context) ?: return null\n        val fix = cellFix(snap.cells, store.rows, nowMin())"))
         assertFalse(Regex("""Log\.[a-z]\(LOG_TAG, "[^"]*\$\{?(wire|asking|cells)\b(?!\.size)""").containsMatchIn(glue))
         assertFalse(File("src/main/java/com/kidslauncher/mdm/places/CellPlan.kt").readText().contains("Log."))

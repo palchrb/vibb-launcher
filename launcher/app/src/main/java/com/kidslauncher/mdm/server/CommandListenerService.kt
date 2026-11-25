@@ -28,6 +28,8 @@ import com.kidslauncher.mdm.push.sseDropWakeLockDue
 import com.kidslauncher.mdm.push.sseReconnectOnNetwork
 import com.kidslauncher.mdm.push.sseStale
 import com.kidslauncher.mdm.push.syncOnSseReopen
+import java.io.FileDescriptor
+import java.io.PrintWriter
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 import okhttp3.OkHttpClient
@@ -134,6 +136,19 @@ class CommandListenerService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    /**
+     * Design 134 D13: `adb shell dumpsys activity service me.vibb.launcher/com.kidslauncher.mdm.server.CommandListenerService
+     * still-print` prints the place fingerprint's record (counts, levels, rounded distances - no key or position); without
+     * the argument one line. Android lets only a caller holding `DUMP` (adb's shell) reach a service's dump.
+     */
+    override fun dump(fd: FileDescriptor?, writer: PrintWriter, args: Array<out String>?) {
+        try {
+            com.kidslauncher.mdm.places.StillPrints.dump(applicationContext, writer, args)
+        } catch (e: Exception) {
+            writer.println("still-print: not readable now (${e.javaClass.simpleName})")
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()

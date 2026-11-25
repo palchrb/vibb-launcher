@@ -225,6 +225,8 @@ object LocateCommands {
         // Design 64 §4.4, design 124 D9: the heartbeat, a crossing's first fix and the low-battery
         // fix take the balanced path ([balancedFirst]); the rest the precise one. Design 125 D14: with the network
         // provider off (Google's location accuracy off) the Wi-Fi places' attempt instead - a scan beside GPS.
+        // Design 134 D14: Google's location accuracy on - the fingerprint goes (nothing here scans, H1).
+        if (places != null && !WifiPlaces.networkOff(lm)) com.kidslauncher.mdm.places.StillPrints.drop(context, com.kidslauncher.mdm.places.DropReason.GLA)
         val requested = when {
             places != null && WifiPlaces.networkOff(lm) -> {
                 val path = when {

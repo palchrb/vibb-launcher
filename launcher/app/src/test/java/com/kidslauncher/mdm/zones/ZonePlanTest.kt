@@ -821,7 +821,7 @@ class ZonePlanTest {
         assertTrue(watch.contains("PassiveFixes.update(app, on = still, keep = on)"))
         // D2: the sensor on every Regularly phone (kept armed for the series with zones), stopped
         // - and so moved - only when not Regularly.
-        assertTrue(watch.contains("if (still) MotionGate.watch(app, zones = on) else MotionGate.stop(app)"))
+        assertTrue(Regex("""if \(still\) \{\s+MotionGate\.watch\(app, zones = on\)\s+\} else \{\s+MotionGate\.stop\(app\)""").containsMatchIn(watch))
         assertTrue(watch.contains("ZoneFences.sync(app, zones, watching = on)"))
         // G7: a fence's zones only from a Regularly policy.
         assertTrue(watch.contains("currentPolicyDecision().policy?.locationPolicy?.takeIf { it.mode == \"interval\" }?.zones.orEmpty()"))
@@ -862,8 +862,8 @@ class ZonePlanTest {
         // D7: a fresh fix while the gate said STILL is checked against the fix it vouched for (QA L2),
         // and only when no fire came during the attempt (QA L1).
         assertTrue(sync.contains("val lastFreshQueued = if (motionNow != null && action.fresh) LocateCommands.cachedQueued()?.takeIf { it.timeMs == lastFreshFix } else null"))
-        // Design 125 D15: only a satellite fix vouches, and a learned fix never contradicts.
-        assertTrue(sync.contains("val vouched = lastFreshQueued?.takeIf { motion == Motion.STILL && it.provider in VOUCHING_PROVIDERS }"))
+        // Design 125 D15: only a satellite fix vouches, and a learned fix never contradicts; design 134 D18: after a mismatch too.
+        assertTrue(sync.contains("val vouched = lastFreshQueued?.takeIf { d7Applies(motion, motionNow?.mismatched == true) && it.provider in VOUCHING_PROVIDERS }"))
         assertTrue(sync.contains("if (held && fresh != null && satellite && motionContradiction(vouched, fresh.toQueued())) ZoneWatch.noteContradiction(context)"))
         assertTrue(sync.contains("private val VOUCHING_PROVIDERS = setOf(\"gps\", \"fused\")"))
         assertTrue(watch.contains("motionSensor = MotionGate.hasSensor(app) && motionTrusted(app),"))
@@ -903,7 +903,7 @@ class ZonePlanTest {
         assertTrue(sync.contains("val capTry = beat == Heartbeat.FIX && motion == Motion.STILL"))
         assertTrue(sync.contains("capTryAtMs = if (capTry) now else null,"))
         assertTrue(sync.contains("capFailed = capTry && fresh == null && !places.renewed"))
-        assertTrue(sync.contains("capResend = capTryResends(LocateCommands.cachedQueued()?.timeMs, lastFreshFix, held, stillVouched(motion, now, stillFrom, capFailsNow))"))
+        assertTrue(sync.contains("capTryResends(LocateCommands.cachedQueued()?.timeMs, lastFreshFix, held, stillVouched(motion, now, stillFrom, capFailsNow))"))
         assertTrue(sync.contains("val location = attempted?.takeIf { !capFailed || capResend }"))
         assertTrue(sync.contains("val still = stillBeat || places.renewed || capResend"))
         val locateSource = source("server/LocateCommands.kt")

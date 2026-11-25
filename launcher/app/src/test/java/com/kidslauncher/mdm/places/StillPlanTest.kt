@@ -193,4 +193,61 @@ class StillPlanTest {
         assertTrue(sync.contains("heartbeat = beat == Heartbeat.FIX, nowMs = now, moving = moving, withheld = places.withheld)"))
         assertTrue(source("zones/ZoneWatch.kt").contains(".remove(KEY_CAP_FAILS).remove(KEY_INCONCLUSIVE).commit()"))
     }
+
+    @Test
+    fun `source - the fingerprint's glue - shadow, the mismatch, the drops, the clears and the dump`() {
+        val glue = source("places/WifiPlaces.kt")
+        val sync = source("server/MdmSyncWorker.kt")
+        // D10, D15: the shadow runs at the attempt's end, the withheld path too; a mismatch cancels a renewal.
+        assertEquals(2, Regex("""shadow\(app, store, print, ask, ended, """).findAll(glue).count())
+        assertTrue(Regex("""if \(ask\.mismatch != null && ask\.renewed\) \{\s+ask\.renewed = false\s+ask\.renewedByApple = false\s+result = null""").containsMatchIn(glue))
+        assertTrue(glue.contains("val clause = if (fresh) null else printMismatch(print, scan)"))
+        // D6: the shadow never touches the report, the flags or the disagreement count - its only outputs are the ring,
+        // the print and ask.mismatch (which only stops a vouch).
+        val shadow = Regex("""private fun shadow\([\s\S]*?\n    }\n""").find(glue)!!.value
+        for (banned in listOf("notFresh =", "renewed = true", "stillVouch", "disagreement", "ZoneWatch.", "MotionGate.", "countWifiDisagreed")) {
+            assertFalse(banned, shadow.contains(banned))
+        }
+        // D16: the sync ends STILL only on a cap try with no fresh fix; no re-send; the count cleared; D18's D7.
+        assertTrue(sync.contains("val mismatch = places.mismatch?.takeIf { capTry && fresh == null }"))
+        assertTrue(Regex("""if \(mismatch != null\) \{\s+MotionGate\.scanMismatch\(context, motionNow\.fires, now\)\s+ZoneWatch\.stampStillCapFails\(context, 0\)\s+Log\.i\(ZONE_LOG_TAG, "Location heartbeat: STILL ended by a scan mismatch clause=\$\{mismatch\.wire\}"\)""").containsMatchIn(sync))
+        assertTrue(sync.contains("capResend = mismatch == null &&"))
+        assertTrue(sync.contains("val vouched = lastFreshQueued?.takeIf { d7Applies(motion, motionNow?.mismatched == true) && it.provider in VOUCHING_PROVIDERS }"))
+        assertFalse(sync.contains("mismatch") && Regex("""mismatch[\s\S]{0,80}noteContradiction""").containsMatchIn(sync))
+        assertTrue(sync.contains("if (fresh != null) WifiPlaces.afterFreshFix(context, places, fresh.toQueued(LocateCommands.providerOf(fresh)), moving)"))
+        // D14: the drops - GLA on, the rule off, distrust, something not fresh reported; P4: the clears with the table.
+        assertTrue(source("server/LocateCommands.kt").contains("if (places != null && !WifiPlaces.networkOff(lm)) com.kidslauncher.mdm.places.StillPrints.drop(context, com.kidslauncher.mdm.places.DropReason.GLA)"))
+        assertTrue(source("zones/ZoneWatch.kt").contains("com.kidslauncher.mdm.places.StillPrints.drop(app, com.kidslauncher.mdm.places.DropReason.RULE)"))
+        assertTrue(source("zones/ZoneWatch.kt").contains("com.kidslauncher.mdm.places.StillPrints.drop(context, com.kidslauncher.mdm.places.DropReason.DISTRUST)"))
+        assertTrue(sync.contains("com.kidslauncher.mdm.places.StillPrints.drop(context, com.kidslauncher.mdm.places.DropReason.NOT_FRESH)"))
+        assertTrue(Regex("""lastLearned = null\s+// Design 134 P4[^\n]*\n\s+StillPrints\.clear\(context, reason\)""").containsMatchIn(glue))
+        val prints = source("places/StillPrints.kt")
+        assertTrue(Regex("""fun clear\(context: Context, reason: String\): Unit = synchronized\(lock\) \{[\s\S]{0,200}file\(context, FILE_PRINT\)\.delete\(\)\s+file\(context, FILE_RING\)\.delete\(\)""").containsMatchIn(prints))
+        // P1: sealed whole under the secrets key, each file its own AAD.
+        assertTrue(prints.contains("Secrets.box.open(name, f.readFully())"))
+        assertTrue(prints.contains("Secrets.box.seal(name, bytes)"))
+        assertTrue(prints.contains("private const val FILE_PRINT = \"still_print_v1\""))
+        assertTrue(prints.contains("private const val FILE_RING = \"still_print_ring_v1\""))
+        assertTrue(prints.contains("AtomicFile(File(context.applicationContext.noBackupFilesDir, name))"))
+        // D13: the anchor's dump - the record only with the argument; one line without it.
+        val anchor = source("server/CommandListenerService.kt")
+        assertTrue(anchor.contains("override fun dump(fd: FileDescriptor?, writer: PrintWriter, args: Array<out String>?) {"))
+        assertTrue(anchor.contains("com.kidslauncher.mdm.places.StillPrints.dump(applicationContext, writer, args)"))
+        assertTrue(Regex("""if \(args\?\.contains\("still-print"\) != true\) \{\s+writer\.println\([^\n]*\)\s+return\s+\}""").containsMatchIn(prints))
+        assertEquals(1, Regex("""writer""").findAll(prints.substringAfter("val lines = synchronized(lock) {")).count())
+        // P2: no Log line or dump line of the fingerprint takes a BSSID, SSID, key or coordinate.
+        val text = prints + source("places/StillPlan.kt")
+        var calls = 0
+        for (m in Regex("""Log\.\w\(""").findAll(text)) {
+            var depth = 1
+            var i = m.range.last + 1
+            while (depth > 0) depth += when (text[i++]) { '(' -> 1; ')' -> -1; else -> 0 }
+            val call = text.substring(m.range.first, i)
+            calls++
+            assertFalse(call, Regex("""bssid|ssid|keys\.|\.key\b|\.device\b|\.network\b|serving|others|secret|\blat|\blng|latitude|longitude""", RegexOption.IGNORE_CASE).containsMatchIn(call))
+        }
+        assertTrue(calls >= 8)
+        val dumpFn = Regex("""fun dumpLines\([\s\S]*?\n}\n""").find(source("places/StillPlan.kt"))!!.value + Regex("""fun eventText\([\s\S]*?\n}\n""").find(source("places/StillPlan.kt"))!!.value
+        assertFalse(dumpFn, Regex("""\.device\b|\.network\b|\.serving\b|\.others\b|\blat\b|\blng\b""").containsMatchIn(dumpFn))
+    }
 }

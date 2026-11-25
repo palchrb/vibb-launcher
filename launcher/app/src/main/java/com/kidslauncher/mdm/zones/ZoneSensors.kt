@@ -148,7 +148,14 @@ object MotionGate {
     fun snapshot(context: Context): MotionSnapshot {
         val trusted = hasSensor(context) && ZoneWatch.motionTrusted(context)
         val motion = flags.motion(trusted, com.kidslauncher.mdm.server.CommandListenerService.isRunning)
-        return MotionSnapshot(motion, flags.fires, flags.stillSinceMs, flags.movedAtElapsedMs)
+        return MotionSnapshot(motion, flags.fires, flags.stillSinceMs, flags.movedAtElapsedMs, mismatched = flags.mismatchSinceFresh)
+    }
+
+    /** Design 134 D16 (revision 3): the cap try's scan clearly isn't the vouch's place - `STILL` ends
+     * ([MotionFlags.scanMismatch]); with a fire during the attempt nothing changes. */
+    @Synchronized
+    fun scanMismatch(context: Context, firesAtStart: Int, nowMs: Long) {
+        flags = flags.scanMismatch(firesAtStart, nowMs)
     }
 
     /** Regularly as device owner (D2): armed now if it isn't - at every process's first sync -, and

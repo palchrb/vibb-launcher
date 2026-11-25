@@ -130,7 +130,13 @@ object ZoneWatch {
             val zones = if (on) policy?.locationPolicy?.zones.orEmpty() else emptyList()
             ZoneFences.sync(app, zones, watching = on)
             PassiveFixes.update(app, on = still, keep = on)
-            if (still) MotionGate.watch(app, zones = on) else MotionGate.stop(app)
+            if (still) {
+                MotionGate.watch(app, zones = on)
+            } else {
+                MotionGate.stop(app)
+                // Design 134 D14: the still rule off - the fingerprint goes.
+                com.kidslauncher.mdm.places.StillPrints.drop(app, com.kidslauncher.mdm.places.DropReason.RULE)
+            }
             if (!on) {
                 ZoneSeries.stop(app)
                 LocateCommands.clearKept(app)
@@ -343,7 +349,11 @@ object ZoneWatch {
         if (trust.distrustUntilMs != 0L) edit.putLong(KEY_DISTRUST_UNTIL, trust.distrustUntilMs)
         edit.commit()
         Log.w(LOG_TAG, "Motion contradiction")
-        if (trust.distrustUntilMs != 0L) Log.w(LOG_TAG, "Motion sensor distrusted until ${Instant.ofEpochMilli(trust.distrustUntilMs)}")
+        if (trust.distrustUntilMs != 0L) {
+            Log.w(LOG_TAG, "Motion sensor distrusted until ${Instant.ofEpochMilli(trust.distrustUntilMs)}")
+            // Design 134 D14: a distrusted sensor vouches for nothing - the fingerprint goes.
+            com.kidslauncher.mdm.places.StillPrints.drop(context, com.kidslauncher.mdm.places.DropReason.DISTRUST)
+        }
     }
 
     private val instantsSerializer = ListSerializer(Long.serializer())

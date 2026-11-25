@@ -142,7 +142,9 @@ object WifiPlaces {
      * inside its circle while it is under 4 h old is not reported (design 125b C9.3). Design 134: [heartbeat] - the
      * heartbeat's own `FIX`; [mayWithhold] - after a move an inconclusive try may be withheld (D4, `mayWithhold`); the
      * attempt answers in [inconclusive] (its last scan said nothing about the place, D2) and [withheld] (nothing
-     * reported: the scan was inconclusive and no fresh fix came, D4).
+     * reported: the scan was inconclusive and no fresh fix came, D4). [vouchFix]: the last fresh fix, the fingerprint's
+     * vouch (D9's veto, D11's distances); the attempt answers in [mismatch] (revision 3, D15: the cap try's conclusive
+     * scan clearly isn't the print's place - `STILL` ends) and [material] (D8: what a print may be taken from).
      */
     class Ask(
         val motion: Motion,
@@ -152,7 +154,16 @@ object WifiPlaces {
         val lastFresh: Location? = null,
         val heartbeat: Boolean = false,
         val mayWithhold: Boolean = false,
+        val vouchFix: com.kidslauncher.mdm.zones.QueuedFix? = null,
     ) {
+        @Volatile var mismatch: MismatchClause? = null
+
+        /** D9.5: something in the attempt says elsewhere (a Wi-Fi fix outside the vouch, an impossible jump, a cell fix
+         * past it + 2 km). */
+        @Volatile var elsewhere = false
+
+        @Volatile internal var material: PrintMaterial? = null
+
         @Volatile var renewed = false
 
         /** The renewal came from an Apple fix within the vouch, not a zone link (A9). */
@@ -308,6 +319,8 @@ object WifiPlaces {
         keys = null
         readings = emptyMap()
         lastLearned = null
+        // Design 134 P4: the fingerprint and its ring go with the table.
+        StillPrints.clear(context, reason)
         if (!had) return
         f.delete()
         p.edit().clear().commit()
@@ -329,6 +342,10 @@ object WifiPlaces {
 
     /** A scan's results and its request (design 134 D1). */
     private class Scan(val results: List<ScanAp>, val request: ScanRequest)
+
+    /** Design 134 D8: a conclusive answer's usable results by their keys, the table's settled keys and the cells - what
+     * a print may be taken from once the sync knows the fix. Memory only, for the attempt's sync. */
+    internal class PrintMaterial(val heard: List<Heard>, val settled: Set<String>, val cells: List<Heard>)
 
     private fun wifi(context: Context) = context.applicationContext.getSystemService(WifiManager::class.java)
 
@@ -585,6 +602,8 @@ object WifiPlaces {
         val store = open(context) ?: return null
         val fix = cellFix(snap.cells, store.rows, nowMin()) ?: return null
         save(context, store.generation) { touchSeen(it, fix.keys, nowMin()) }
+        // Design 134 D9.5: a cell fix past the vouch's accuracy + 2 km says elsewhere.
+        ask.vouchFix?.let { v -> if (distanceM(v.latitude, v.longitude, fix.lat, fix.lng) > fix.accuracyM + (v.accuracy ?: 0f) + CELL_VETO_SLACK_M) ask.elsewhere = true }
         // Code QA L4: the fixes' ages by elapsed realtime, never the wall clock (none set: another boot's fix, unknown).
         fun seen(l: Location?) = l?.let {
             SeenFix(it.latitude, it.longitude, if (it.hasAccuracy()) it.accuracy.toDouble() else 0.0, (it.elapsedRealtimeNanos / 1_000_000).takeIf { e -> e > 0 })
@@ -1043,6 +1062,13 @@ object WifiPlaces {
         val disagreement = Disagreement()
         try {
             val store = open(app)
+            // Design 134 D14: the print in force (dropped at a boot or after 72 h); without a trusted sensor it describes
+            // nothing the heartbeat could use.
+            var print = if (store != null) StillPrints.current(app) else null
+            if (print != null && ask.motion == Motion.NO_SENSOR) {
+                StillPrints.drop(app, if (ZoneWatch.motionTrusted(app)) DropReason.NO_SENSOR else DropReason.DISTRUST)
+                print = null
+            }
             val movedSinceFresh = ask.motion != Motion.STILL
             val refresh = refreshDue(prefs(app).getLong(KEY_LAST_GPS_TRY, 0L), System.currentTimeMillis())
             val plan = attemptPlan(path, ask.motion, refresh)
@@ -1144,15 +1170,24 @@ object WifiPlaces {
                 }
                 // Design 134 D2, D4: the attempt's last scan said nothing and no fresh fix came - after a move nothing is
                 // reported (no cell fix, no unchecked or fallback fix, no last-known), and the flags stay as they were.
-                ask.inconclusive = (last ?: snap.await()).answer?.inconclusive
+                val ended = last ?: snap.await()
+                ask.inconclusive = ended.answer?.inconclusive
                 if (withheld(ask.mayWithhold, ask.inconclusive, kept != null && !ask.notFresh && !ask.renewed)) {
                     ask.withheld = true
                     Log.i(LOG_TAG, "attempt path=$plan result=withheld reason=${ask.inconclusive?.wire}")
+                    shadow(app, store, print, ask, ended, null)
                     return@coroutineScope null
                 }
-                val result = kept ?: run {
+                var result = kept ?: run {
                     cellAsk.get()?.await()
                     cellOnly(app, store, snap.await(), ask, plan == AttemptPlan.LOCATE, accept)
+                }
+                shadow(app, store, print, ask, ended, result)
+                // Revision 3 (D16): a mismatch stops the vouch - a renewal in the same attempt is not sent.
+                if (ask.mismatch != null && ask.renewed) {
+                    ask.renewed = false
+                    ask.renewedByApple = false
+                    result = null
                 }
                 Log.i(LOG_TAG, "attempt path=$plan result=${if (ask.renewed) "renewed" else result?.provider ?: "none"}")
                 result
@@ -1166,6 +1201,96 @@ object WifiPlaces {
             ownTeaching.decrementAndGet()
             // Design 131: however many rules saw it, one rise an attempt.
             ZoneWatch.countWifiDisagreed(app, disagreement.rise())
+        }
+    }
+
+    /**
+     * Design 134 at an attempt's end, with its last scan [s]: a conclusive answer's material for a print (D8); then, with
+     * a print in force and the heartbeat's own `FIX` - after a move (`MOVED`) the shadow verdict or an inconclusive
+     * event (D10; it never acts, D6); while `STILL` (a cap try or retry) revision 3's mismatch (D15: only with no fresh
+     * fix; recorded, D19) or, at a renewal where the rule held, the print grown (D8, QA M5). The still tier records no
+     * verdict. Never throws into the attempt.
+     */
+    private fun shadow(context: Context, store: Store?, print: StillPrint?, ask: Ask, s: Snapshot, result: Location?) {
+        try {
+            store ?: return
+            val answer = s.answer ?: return
+            val now = nowMin()
+            val material = if (answer.conclusive) {
+                val heard = hear(answer.answering, null, store.keys, moving(context), emptyMap(), SystemClock.elapsedRealtime()).heard
+                PrintMaterial(heard, settledKeys(store.rows, now), s.cells).also { ask.material = it }
+            } else {
+                null
+            }
+            if (print == null || !ask.heartbeat) return
+            val at = EventAt(now, SystemClock.elapsedRealtime(), BootClock.bootCount())
+            val fresh = result != null && !ask.notFresh && !ask.renewed
+            when (ask.motion) {
+                Motion.MOVED -> {
+                    val event = if (material == null) {
+                        inconclusiveEvent(print, answer.inconclusive ?: return, at)
+                    } else {
+                        // D9.5: a fresh fix of this attempt outside both accuracies of the vouch says elsewhere too.
+                        val v = ask.vouchFix
+                        val far = fresh && v != null &&
+                            distanceM(v.latitude, v.longitude, result.latitude, result.longitude) > (v.accuracy ?: 0f) + (if (result.hasAccuracy()) result.accuracy else 0f)
+                        verdictEvent(print, shadowVerdict(print, printScan(material.heard, material.settled, material.cells), ask.elsewhere || far), at)
+                    }
+                    StillPrints.record(context, event)
+                }
+                Motion.STILL -> {
+                    material ?: return
+                    val scan = printScan(material.heard, material.settled, material.cells)
+                    val clause = if (fresh) null else printMismatch(print, scan)
+                    if (clause != null) {
+                        ask.mismatch = clause
+                        StillPrints.record(context, mismatchEvent(print, clause, scan, at))
+                    } else if (ask.renewed && shadowVerdict(print, scan, veto = false).would) {
+                        StillPrints.grow(context, print, grownPrint(print, scan.devices))
+                    }
+                }
+                else -> {}
+            }
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "fingerprint skipped: ${e.javaClass.simpleName}")
+        }
+    }
+
+    /**
+     * Design 134 after an attempt's sync: [fresh] - the genuinely fresh fix that is now the vouch (`null` none) - judges
+     * the ring's pending events (D11: `gps` or a checked Wi-Fi fix, the distances from the vouch before it, [ask]'s
+     * `vouchFix`), then replaces the print: the old one dropped, a new one taken when [printRefusal] allows (D8). [moving]:
+     * the fix was on the move. Never throws.
+     */
+    fun afterFreshFix(context: Context, ask: Ask, fresh: com.kidslauncher.mdm.zones.QueuedFix, moving: Boolean) {
+        try {
+            val app = context.applicationContext
+            val nowMin = nowMin()
+            val outcome = fresh.provider == "gps" || (fresh.provider in PRINT_WIFI_PROVIDERS && fresh.check != null)
+            val acc = fresh.accuracy
+            if (outcome && acc != null) {
+                val vouch = ask.vouchFix?.let { VouchPoint((it.timeMs / 60_000).toInt(), it.latitude, it.longitude, it.accuracy ?: 0f) }
+                StillPrints.afterFix(app, OutcomeFix(fresh.latitude, fresh.longitude, acc, nowMin, BootClock.bootCount(), MotionGate.snapshot(app).movedAtElapsedMs), vouch)
+            }
+            val old = StillPrints.current(app)
+            if (old != null && old.fixTimeMs != fresh.timeMs) StillPrints.drop(app, DropReason.REPLACED)
+            val material = ask.material
+            val refusal = printRefusal(fresh.provider, fresh.check, acc, moving, fresh.mock, release, material != null)
+            val elapsed = fresh.elapsedMs
+            // Without a trusted sensor no heartbeat could use a print (D14): none is taken.
+            val sensor = ask.motion != Motion.NO_SENSOR
+            val taken = if (sensor && refusal == null && material != null && elapsed != null) {
+                takePrint(fresh.timeMs, elapsed, BootClock.bootCount(), SystemClock.elapsedRealtime(), nowMin, material.heard, material.settled, material.cells)
+            } else {
+                null
+            }
+            if (taken != null) {
+                StillPrints.take(app, taken)
+            } else if (sensor && material != null) {
+                Log.i("StillPrint", "not taken (${(refusal ?: PrintRefusal.PAIR).wire})")
+            }
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "fingerprint skipped: ${e.javaClass.simpleName}")
         }
     }
 
@@ -1192,7 +1317,11 @@ object WifiPlaces {
             else -> null
         }
         val vouch = ask.stillVouch?.let { Vouched(it.latitude, it.longitude, if (it.hasAccuracy()) it.accuracy.toDouble() else 0.0) }
-        val verdict = wifiVerdict(fix, check, ask.motion, vouch, jumpGate(fix, gnss, TrustedClock.nowMs(), nowElapsed, boot))
+        val jump = jumpGate(fix, gnss, TrustedClock.nowMs(), nowElapsed, boot)
+        val verdict = wifiVerdict(fix, check, ask.motion, vouch, jump)
+        // Design 134 D9.5: a Wi-Fi fix outside both accuracies of the vouch, or an impossible jump, says elsewhere.
+        val v = ask.vouchFix
+        if (jump == Jump.IMPOSSIBLE || (v != null && distanceM(v.latitude, v.longitude, fix.lat, fix.lng) > fix.accuracyM + (v.accuracy ?: 0f))) ask.elsewhere = true
         Log.i(LOG_TAG, "wifi fix check=${check?.wire ?: "none"} step=${verdict.step}")
         if (verdict.disagreed) {
             disagreement.mark()

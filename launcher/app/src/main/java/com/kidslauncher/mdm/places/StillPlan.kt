@@ -185,6 +185,9 @@ data class StillPrint(
     val cells: PrintCells = PrintCells(),
 ) {
     val fixMin: Int get() = (fixTimeMs / 60_000).toInt()
+
+    /** The cells it holds, the serving one and the others - a count for the log and the dump. */
+    val cellCount: Int get() = (if (cells.serving != null) 1 else 0) + cells.others.size
 }
 
 /** D7 (QA H3): the keys of the own Wi-Fi rows that make a device settled - seen on [SETTLED_DAYS_MIN] local days,
@@ -736,7 +739,7 @@ fun dumpLines(print: StillPrint?, ring: PrintRing, nowMin: Int, nowElapsedMs: Lo
     out += "still-print (design 134): " + if (print == null) {
         "no print"
     } else {
-        "print devices=${print.devices.size} cells=${(if (print.cells.serving != null) 1 else 0) + print.cells.others.size} " +
+        "print devices=${print.devices.size} cells=${print.cellCount} " +
             "age=${(nowElapsedMs - print.takenElapsedMs) / 60_000} min"
     }
     out += "prints taken=${ring.taken} dropped " + DropReason.entries.joinToString(" ") { "${it.wire}=${ring.drops[it] ?: 0}" }
