@@ -361,7 +361,7 @@ async fn read_table(
             where_clause: where_sql,
         });
     }
-    let keys: Vec<(i64, String, String, Option<String>, String, String, String)> = sqlx::query_as(
+    let keys: Vec<ForeignKey> = sqlx::query_as(
         "SELECT seq, \"table\", \"from\", \"to\", on_update, on_delete, \"match\" \
              FROM pragma_foreign_key_list(?)",
     )
