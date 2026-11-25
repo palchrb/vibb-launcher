@@ -455,7 +455,7 @@ plan, the `regs` reconcile, the origin rewrite) stay the launcher's alone, in
 115's hold rows (`hold`: the VPN's views to held or not).
 
 The map links (design 110, the integration-boundary pilot: `server/src/integrations/map_links/`, the Cargo feature
-`map_links`, `docs/notes/server/integrations.md`) have their own contract folder: `server/testdata/map_links/contract.json`,
+`map_links`, `docs/notes/server/integrations.md`) have their own contract folder: `contracts/integrations/map_links/contract.json`,
 byte-identical in `launcher/app/src/test/resources/map_links/`: `policy` (`map_links: {on}`, `off` and `on`), the
 report rows (`report`, `report_steps_left`, `report_hidden`, `report_held_by_maps`: the status report's exact
 `map_links`), `clean` (the server's field-by-field cleaning), the link rules `short_links`, `long_hosts` and
@@ -470,7 +470,7 @@ stay each side's. The policy's `map_links` is pinned by `policy_json_keys_snapsh
 
 The Apple Wi-Fi lookup (design 125 step 2, an integration behind design 110's boundary:
 `server/src/integrations/wifi_lookup/`, the Cargo feature `wifi_lookup`) has its own contract folder:
-`server/testdata/wifi_lookup/contract.json`, byte-identical in `launcher/app/src/test/resources/wifi_lookup/`: `rules`
+`contracts/integrations/wifi_lookup/contract.json`, byte-identical in `launcher/app/src/test/resources/wifi_lookup/`: `rules`
 (the server's cache months - `fresh_months`, `negative_months` - and the phone's `stale_grace_h`), `policy`
 (`wifi_lookup: {on}`, `off` and `on`), `request` (the exact `POST /api/devices/wifi-lookup` body), `answers` (each case
 the route answers - only asked BSSIDs with `fresh_months_left` and the `unknown` ones: fresh, cached, stale rows while

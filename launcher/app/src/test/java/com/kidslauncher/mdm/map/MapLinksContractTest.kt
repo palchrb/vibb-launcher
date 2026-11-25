@@ -13,7 +13,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
-/** Design 110: the shared contract `map_links/contract.json` (byte-identical with `server/testdata/map_links/`, whose
+/** Design 110: the shared contract `map_links/contract.json` (in `contracts/integrations/`, whose
  * `integrations::map_links::tests` produces its rows): the link rules through [MapLinkForms], the report encoded
  * exactly, the policy decoded and every answer mapped to the phone's action. */
 class MapLinksContractTest {
@@ -22,13 +22,6 @@ class MapLinksContractTest {
 
     private fun rows(key: String) = contract[key]!!.jsonArray.map { it.jsonObject }
     private fun JsonObject.text(key: String) = this[key]!!.takeIf { it != JsonNull }?.jsonPrimitive?.content
-
-    @Test
-    fun `the two copies of the contract are identical`() {
-        val serverCopy = listOf("../../server/testdata/map_links/contract.json", "../server/testdata/map_links/contract.json")
-            .map(::File).first { it.exists() }
-        assertEquals(serverCopy.readText(), contractText)
-    }
 
     @Test
     fun `the link rules are the server's`() {

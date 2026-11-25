@@ -1,5 +1,5 @@
 {
- "_doc": "Design 110 (map links), the contract both sides run: server/testdata/map_links/contract.json, byte-identical in launcher/app/src/test/resources/map_links/contract.json. The server's integrations::map_links::tests and the launcher's MapLinksContractTest run every row and compare the copies.",
+ "_doc": "Design 110 (map links), the contract both sides run, kept once in contracts/integrations/map_links/ (design 133). The server's integrations::map_links::tests and the launcher's MapLinksContractTest run every row.",
  "policy": {
   "off": {
    "on": false

@@ -71,3 +71,5 @@ Prose written before 2026-11-25 names `server/testdata/<file>` (and the apps' co
 | `core/unified_push.json` | 108, 108b, 115 | by hand | server `tests::unified_push`; launcher `UnifiedPushContractTest` |
 | `core/weather.json` | 75 §7.1 | `WEATHER_CONTRACT_WRITE=1` (`weather::tests`) | server `weather::tests`; launcher `WeatherContractTest` |
 | `core/zone_status_report.json` | 64 step 2, 131 | by hand | server `tests::zone_watch`; launcher `ZoneReportTest` |
+| `integrations/map_links/contract.json` | 110 | by hand | server `integrations::map_links::tests`; launcher `MapLinksContractTest` |
+| `integrations/wifi_lookup/contract.json` | 125 step 2, 125b | by hand | server `integrations::wifi_lookup::tests`; launcher `WifiLookupContractTest` |

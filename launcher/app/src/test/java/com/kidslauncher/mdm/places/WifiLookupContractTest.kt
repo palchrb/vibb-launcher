@@ -16,8 +16,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Design 125 step 2: the shared contract `wifi_lookup/contract.json` (byte-identical with
- * `server/testdata/wifi_lookup/`, whose `integrations::wifi_lookup::tests` produces its answers): the rules, the policy
+/** Design 125 step 2: the shared contract `wifi_lookup/contract.json` (in
+ * `contracts/integrations/`, whose `integrations::wifi_lookup::tests` produces its answers): the rules, the policy
  * decoded, the request encoded exactly, every server answer and every `phone_answers` row mapped to the phone's action,
  * every `phone_rows` row through `storeApple`. */
 class WifiLookupContractTest {
@@ -28,13 +28,6 @@ class WifiLookupContractTest {
     private fun JsonObject.bodyText() = this["body"]?.takeIf { it != JsonNull }?.toString()
 
     private fun minute(iso: String) = (Instant.parse(iso).epochSecond / 60).toInt()
-
-    @Test
-    fun `the two copies of the contract are identical`() {
-        val serverCopy = listOf("../../server/testdata/wifi_lookup/contract.json", "../server/testdata/wifi_lookup/contract.json")
-            .map(::File).first { it.exists() }
-        assertEquals(serverCopy.readText(), contractText)
-    }
 
     @Test
     fun `the rules are the phone's constants`() {

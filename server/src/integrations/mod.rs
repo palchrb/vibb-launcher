@@ -3,8 +3,9 @@
 //! An integration is a thing this server does with an outside service on the phones' behalf. Each one:
 //!
 //! - lives in its own module here, behind its own Cargo feature (on by default), so a build can leave it out;
-//! - keeps its own tables (its own migration, its own table names) and its own contract folder
-//!   (`testdata/<name>/`, the launcher's copy in `launcher/app/src/test/resources/<name>/`);
+//! - keeps its own tables (its own migration, its own table names) and its own contract folder: the contract both
+//!   sides read in the repo's `contracts/integrations/<name>/contract.json` (design 133), the server's own rows in
+//!   `testdata/<name>/`;
 //! - reaches the core only through [Integration]: its routes, its policy key, its part of a status report, its group
 //!   on Device › Apps and its health. The core never names it.
 //!

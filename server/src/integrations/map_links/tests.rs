@@ -1,5 +1,5 @@
-//! Design 110's tests: the shared contract (`testdata/map_links/contract.json`, compared with the launcher's copy),
-//! the server's own rows (`testdata/map_links/server.json`) and the flows through the real routes.
+//! Design 110's tests: the shared contract (`contracts/integrations/map_links/contract.json`, which the launcher runs
+//! too), the server's own rows (`testdata/map_links/server.json`) and the flows through the real routes.
 
 use axum::http::{Method, StatusCode};
 use serde_json::{Value, json};
@@ -15,7 +15,9 @@ fn read(path: impl AsRef<std::path::Path>) -> Value {
 }
 
 fn contract() -> Value {
-    read("testdata/map_links/contract.json")
+    read(crate::contracts::path(
+        "integrations/map_links/contract.json",
+    ))
 }
 
 fn server_rows() -> Value {
@@ -33,17 +35,6 @@ fn without_nulls(value: &Value) -> Value {
         ),
         other => other.clone(),
     }
-}
-
-#[test]
-fn the_contract_is_the_launchers() {
-    let ours = std::fs::read("testdata/map_links/contract.json").unwrap();
-    let theirs =
-        std::fs::read("../launcher/app/src/test/resources/map_links/contract.json").unwrap();
-    assert!(
-        ours == theirs,
-        "testdata/map_links/contract.json differs from the launcher's copy"
-    );
 }
 
 #[test]
