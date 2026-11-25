@@ -722,10 +722,10 @@ object WifiPlaces {
         val boot = BootClock.bootCount()
         val p = prefs(context)
         val stored = p.getString(KEY_SAVED_NETWORKS, null)?.split(':')?.mapNotNull { it.toIntOrNull() }?.takeIf { it.size == 2 }
-        val now = "$boot:${configs.size}"
+        val (count, named) = savedNetworkCounts(configs.map { it.SSID?.removeSurrounding("\"") to it.networkId }, ssid)
+        val now = "$boot:$count"
         if (p.getString(KEY_SAVED_NETWORKS, null) != now) p.edit().putString(KEY_SAVED_NETWORKS, now).commit()
-        val named = configs.count { it.SSID?.removeSurrounding("\"") == ssid }
-        return rebindAllowed(stored?.get(0), stored?.get(1), boot, configs.size, named)
+        return rebindAllowed(stored?.get(0), stored?.get(1), boot, count, named)
     }
 
     // --- Design 131: the last satellite fix ---

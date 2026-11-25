@@ -16,6 +16,18 @@ class JoinMacSettingTest {
         assertNull(joinMacSetting(secured = true))
     }
 
+    /** The 131 gate: a secured network is saved as WPA2 personal (Android adds the WPA3 upgrade), never WPA3 alone. */
+    @Suppress("DEPRECATION")
+    @Test
+    fun `a secured network is saved as WPA2 personal, an open one open`() {
+        assertEquals(android.net.wifi.WifiConfiguration.SECURITY_TYPE_PSK, joinSecurityType(secured = true))
+        assertEquals(2, joinSecurityType(secured = true))
+        assertEquals(0, joinSecurityType(secured = false))
+        val source = listOf("src/main", "app/src/main").map { java.io.File(it, "java/com/kidslauncher/mdm/server/QuickControls.kt") }.first { it.exists() }.readText()
+        assertTrue(source.contains("setSecurityParams(joinSecurityType(secured))"))
+        assertFalse(source.contains("KeyMgmt.SAE"))
+    }
+
     @Test
     fun `a secured network needs a password, an open one none`() {
         assertTrue(joinAllowed(secured = false, password = null))

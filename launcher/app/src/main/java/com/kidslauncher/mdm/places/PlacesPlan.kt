@@ -1320,6 +1320,15 @@ fun wifiVerdict(fix: LearnedFix, check: FixCheck?, motion: com.kidslauncher.mdm.
 fun rebindAllowed(lastBoot: Int?, lastCount: Int?, boot: Int, count: Int, named: Int): Boolean =
     lastBoot != null && lastBoot != boot && lastCount == count && named == 1
 
+/**
+ * [rebindAllowed]'s count and named from `getConfiguredNetworks` as `(name, network id)` pairs: saved networks, not
+ * entries. Android lists a network once per security type it holds (the 131 gate on Android 14, 2026-11-25: a WPA2
+ * network saved with Android's WPA3 upgrade came twice, `wpa2-psk` and `wpa3-sae^` under one id, and so never
+ * rebound), so both count distinct ids.
+ */
+fun savedNetworkCounts(configs: List<Pair<String?, Int>>, ssid: String): Pair<Int, Int> =
+    configs.map { it.second }.distinct().size to configs.filter { it.first == ssid }.map { it.second }.distinct().size
+
 /** What an attempt keeps after the judging ([attemptKeep]). */
 enum class Kept { WIFI, GPS, RENEW, NONE }
 

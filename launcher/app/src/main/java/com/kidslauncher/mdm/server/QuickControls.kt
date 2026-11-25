@@ -75,6 +75,17 @@ fun joinMacSetting(secured: Boolean): Int? =
 fun joinAllowed(secured: Boolean, password: String?): Boolean = !secured || !password.isNullOrEmpty()
 
 /**
+ * The security a network Vibb adds is saved with (the 131 gate, 2026-11-25): a secured one WPA2 personal
+ * (`SECURITY_TYPE_PSK`), which Android saves with its own WPA3 upgrade beside it (`wpa2-psk` and `wpa3-sae^` in
+ * `cmd wifi list-networks`), so it joins a WPA2 router, a WPA3 one and a transition one; an open one open. The old
+ * `allowedKeyManagement` with both `WPA_PSK` and `SAE` set was read by Android as WPA3 alone: such a network never
+ * matched a WPA2-only router (Android's Settings showed it as WPA3-Personal, apart from the router's own row). API 30.
+ */
+@Suppress("DEPRECATION")
+fun joinSecurityType(secured: Boolean): Int =
+    if (secured) android.net.wifi.WifiConfiguration.SECURITY_TYPE_PSK else android.net.wifi.WifiConfiguration.SECURITY_TYPE_OPEN
+
+/**
  * Direct, silent Device-Owner API calls backing the Quick Controls screen - deliberately not
  * Android's own Quick Settings tiles or panel intents (`Settings.Panel.ACTION_WIFI` etc.), since
  * this whole screen exists specifically to give a kid safe toggle access without depending on any
@@ -568,13 +579,8 @@ object QuickControls {
                     SSID = "\"$ssid\""
                     // Design 126 A7: a fresh address on an open network; Vibb adds it, so as its creator it may.
                     joinMacSetting(secured)?.let { macRandomizationSetting = it }
-                    if (secured) {
-                        allowedKeyManagement.set(android.net.wifi.WifiConfiguration.KeyMgmt.WPA_PSK)
-                        allowedKeyManagement.set(android.net.wifi.WifiConfiguration.KeyMgmt.SAE)
-                        preSharedKey = "\"$password\""
-                    } else {
-                        allowedKeyManagement.set(android.net.wifi.WifiConfiguration.KeyMgmt.NONE)
-                    }
+                    setSecurityParams(joinSecurityType(secured))
+                    if (secured) preSharedKey = "\"$password\""
                 }
                 val result = wm.addNetworkPrivileged(config)
                 if (result.statusCode != WifiManager.AddNetworkResult.STATUS_SUCCESS) {

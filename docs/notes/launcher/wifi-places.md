@@ -236,6 +236,9 @@ glue in `WifiPlaces.attempt`/`judged`.
   teach after one rebinds a link row of the same class, its occasions kept, when exactly one saved network has the
   connected name and the saved networks' count is the last boot's (CE prefs `wifi_places` `saved_networks_v1`,
   `boot:count`, from `getConfiguredNetworks`); otherwise a new id learns again. The emulator gate checks it (§6bn (h)).
+  Both count saved networks by their distinct ids (`savedNetworkCounts`): Android lists a network once per security
+  type it holds, so a WPA2 network with its WPA3 upgrade came twice and never rebound (the gate's run on Android 14,
+  2026-11-25, which also saw the ids renumbered at a reboot: 7 became 1).
 - **Mesh nodes, 6 GHz and locally administered BSSIDs**: on a WPA2/WPA3 personal network the link goes by the name, so
   they give `link` like any node of it; on an enterprise network the connected AP must be a row of the fix, and a
   locally administered BSSID never has one (`usableAp` drops it), so it never gives `link` there - by design.
@@ -263,6 +266,9 @@ glue in `WifiPlaces.attempt`/`judged`.
 - **Saved networks** (D11): `AppEnforcer.applySavedNetworksLock` sets `setConfiguredNetworksLockdownState` by its own
   plan flag (`EnforcementPlan.lockSavedNetworks`): while managed, or while the zones and Wi-Fi places watch (Regularly);
   lifted by the override and the pause. Android's screens can't change or forget a network Vibb saved. Vibb's own Wi-Fi
-  page adds a new network (a new id) and never edits one; `DISALLOW_CONFIG_WIFI` is not set.
+  page adds a new network (a new id) and never edits one; `DISALLOW_CONFIG_WIFI` is not set. A secured network is
+  added as WPA2 personal (`joinSecurityType`: `SECURITY_TYPE_PSK`, Android keeps its WPA3 upgrade beside it); until the
+  gate's run of 2026-11-25 both key-management bits were set, which Android read as WPA3 alone - a WPA2-only router
+  never matched it. The lockdown is the global setting `wifi_device_owner_configs_lockdown` (1 while it holds).
 - **The emulator**: the debug build's `PlacesDebugReceiver` (src/debug) hands the places a made-up scan and connection;
   rows in `docs/testing/emulator.md` §6bn.
