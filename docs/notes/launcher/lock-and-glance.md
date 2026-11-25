@@ -228,7 +228,9 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   `AppEnforcer.apply(context, decision: PolicyToApply)` passes `fromServer = rollbackAllowed(decision.source)` (only
   `PolicySource.SERVER`: the policy the server sent in this sync; never the saved copy, a `Fallback` or `Apply(null)`)
   with `carriesParentChoice` to `PinLockRuntime.configure`; every caller passes the decision, not its policy. A
-  rollback waiting for the token runs at a later sync's fresh policy.
+  rollback waiting for the token runs at a later sync's fresh policy: when the token turns active while we own the
+  credential and it isn't requested (`rollbackSyncDue`, the apply after the kid's unlock), `AndroidLock.configure` asks
+  for that sync at once (`SyncRunner.request(.., "android_rollback")`).
   The credential is cleared with the token before the keyguard is written (then DISABLED); no active token: Android's
   PIN stays the gate (UNTOUCHED) until the escrow activates. An apply **without** the parent's choice never touches
   Android mode: while we own the live credential the keyguard stays ANDROID (`androidKeyguardHeld`) and

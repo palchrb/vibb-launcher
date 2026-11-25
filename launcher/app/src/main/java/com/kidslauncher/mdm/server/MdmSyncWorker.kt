@@ -1566,8 +1566,10 @@ fun cachedPolicy(): CachedPolicy {
         cachedPolicyMemo = CachedPolicyMemo(raw, cached)
     }
     // A saved copy without an app list on a managed phone counts as unreadable (judgeCached); the plan is read only then.
-    if (decoded !is CachedPolicy.Ok || decoded.policy.allowlist != null) return decoded
-    return judgeCached(decoded, LauncherPreferences.mdm().policyEverApplied(), lastEnforcedPlan())
+    if (decoded !is CachedPolicy.Ok) return decoded
+    val mdm = LauncherPreferences.mdm()
+    val plan = if (decoded.policy.allowlist == null) lastEnforcedPlan() else null
+    return judgeCached(decoded, mdm.policyEverApplied(), plan, mdm.callsManagedLast())
 }
 
 private class CachedPolicyMemo(val raw: String?, val decoded: CachedPolicy)

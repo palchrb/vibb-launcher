@@ -206,6 +206,14 @@ fun secureCameraHeld(managed: Boolean, features: Int?): Boolean =
 fun rollbackDue(owned: Boolean, requested: Boolean, fromServer: Boolean): Boolean = owned && !requested && fromServer
 
 /**
+ * The reset token turned active ([wasActive] false, [active] true) while we own Android's credential and the policy no
+ * longer asks for it: the rollback waits for the server's own policy ([rollbackDue]), so a sync is asked for at once.
+ * Not at a process's first apply ([wasActive] `null`): that process's own start syncs anyway.
+ */
+fun rollbackSyncDue(wasActive: Boolean?, active: Boolean, owned: Boolean, requested: Boolean): Boolean =
+    wasActive == false && active && owned && !requested
+
+/**
  * S3-1 (qa-59-step3-code): an apply without the parent's choice (the last-enforced plan, a corrupt cache - no
  * `kid_lock`) keeps Android mode's keyguard write (features and T) while we own Android's live credential: no
  * notification content, face unlock, trust agents or lock delay come back from a fallback. The face may be off.

@@ -63,7 +63,12 @@ object TimeRulesStore {
         val lastEnforced = LastEnforcedPlan.decode(prefs.getString(context.getString(R.string.settings_mdm_last_enforced_plan_key), null))
         val decision = choosePolicy(
             null,
-            judgeCached(decodeCached(prefs.getString(context.getString(R.string.settings_mdm_kid_mode_policy_key), null)), everApplied, lastEnforced),
+            judgeCached(
+                decodeCached(prefs.getString(context.getString(R.string.settings_mdm_kid_mode_policy_key), null)),
+                everApplied,
+                lastEnforced,
+                prefs.getBoolean(context.getString(R.string.settings_mdm_calls_managed_last_key), false),
+            ),
             everApplied,
             lastEnforced,
         )

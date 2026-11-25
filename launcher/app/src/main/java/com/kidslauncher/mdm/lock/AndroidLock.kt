@@ -73,6 +73,10 @@ object AndroidLock {
     @Volatile
     private var lockAfterSet = false
 
+    /** Whether the reset token was active at the last [configure] (`null`: none yet in this process). */
+    @Volatile
+    private var tokenActiveSeen: Boolean? = null
+
     // ---- the process start, the apply -------------------------------------------------------------------------
 
     /** From [PinLockRuntime.decide] (main thread, before any activity): the stored request, the face from it and a
@@ -112,6 +116,18 @@ object AndroidLock {
             false
         }
         val token = if (requested || owned) WindowRelock.ensureAndroidResetToken(app) else false
+        // A rollback waits for the server's own policy: when the token turns active while it is due, a sync is asked
+        // for at once, so a parent's PIN off clears Android's PIN at that sync, not at the next one.
+        val tokenWas = tokenActiveSeen
+        tokenActiveSeen = token
+        if (rollbackSyncDue(tokenWas, token, owned, this.requested)) {
+            Log.i(ANDROID_LOCK_TAG, "rollback: the reset token is active - asking for a sync")
+            try {
+                com.kidslauncher.mdm.push.SyncRunner.request(app, "android_rollback")
+            } catch (e: Exception) {
+                Log.w(ANDROID_LOCK_TAG, "Couldn't request a sync", e)
+            }
+        }
         var secure = deviceSecure(app)
         if (rollbackDue(owned, requested, parentChoice && fromServer)) {
             when (androidRollback(secure, token)) {

@@ -181,6 +181,13 @@ class AndroidLockPlanTest {
         assertFalse("a saved copy, a Fallback or Apply(null)", rollbackDue(true, false, fromServer = false))
         assertFalse("still requested", rollbackDue(true, true, true))
         assertFalse("not ours (own mode's credential)", rollbackDue(false, false, true))
+        // The token turning active while the rollback waits asks for a sync - only on that edge.
+        assertTrue(rollbackSyncDue(wasActive = false, active = true, owned = true, requested = false))
+        assertFalse("already active", rollbackSyncDue(true, true, true, false))
+        assertFalse("the process's first apply", rollbackSyncDue(null, true, true, false))
+        assertFalse("still requested", rollbackSyncDue(false, true, true, true))
+        assertFalse("not ours", rollbackSyncDue(false, true, false, false))
+        assertTrue(body(code("$lock/AndroidLock.kt"), "configure").contains("SyncRunner.request(app, \"android_rollback\")"))
         assertEquals(AndroidRollback.CLEAR, androidRollback(deviceSecure = true, tokenActive = true))
         assertEquals(AndroidRollback.NO_TOKEN, androidRollback(true, false))
         assertEquals(AndroidRollback.NOTHING, androidRollback(false, true))

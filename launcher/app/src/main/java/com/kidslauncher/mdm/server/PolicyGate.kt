@@ -27,9 +27,20 @@ sealed interface CachedPolicy {
 
     data class Ok(val policy: PolicyResponse) : CachedPolicy
 
-    /** Something is cached but doesn't decode. [error] is for logs only: the exception class, never its
-     * message (a decode error quotes the input, which may hold design 36's secret servers). */
-    data class Corrupt(val error: String) : CachedPolicy
+    /** Something is cached but doesn't decode, or [judgeCached] counts it unreadable. [error] is for logs only: the
+     * exception class, never its message (a decode error quotes the input, which may hold design 36's secret servers),
+     * or [NO_ALLOWLIST]/[NO_CALL_POLICY]. [appsManaged]: whether the phone's apps may have been managed - always, but
+     * for a saved copy that only lacks its `call_policy` on a phone whose apps are unmanaged ([judgeFresh] then still
+     * takes a fresh policy without an app list). */
+    data class Corrupt(val error: String, val appsManaged: Boolean = true) : CachedPolicy
+
+    companion object {
+        /** [judgeCached]: a saved copy without an app list on a phone whose apps were managed. */
+        const val NO_ALLOWLIST = "no_allowlist"
+
+        /** [judgeCached]: a saved copy without `call_policy` on a phone whose calls were managed. */
+        const val NO_CALL_POLICY = "no_call_policy"
+    }
 }
 
 fun decodeCached(json: String?): CachedPolicy {
@@ -49,10 +60,23 @@ fun decodeCached(json: String?): CachedPolicy {
  * genuinely unmanaged has a plan without an app list, and its cache stays [CachedPolicy.Ok]; a phone that has never had
  * a policy is unchanged (setup must still work).
  */
-fun judgeCached(cached: CachedPolicy, policyEverApplied: Boolean, lastEnforced: LastEnforcedPlan?): CachedPolicy {
-    if (cached !is CachedPolicy.Ok || cached.policy.allowlist != null || !policyEverApplied) return cached
-    val wasManaged = lastEnforced == null || lastEnforced.allowlist != null
-    return if (wasManaged) CachedPolicy.Corrupt("no_allowlist") else cached
+fun judgeCached(
+    cached: CachedPolicy,
+    policyEverApplied: Boolean,
+    lastEnforced: LastEnforcedPlan?,
+    callsManagedLast: Boolean = false,
+): CachedPolicy {
+    if (cached !is CachedPolicy.Ok) return cached
+    val policy = cached.policy
+    if (policy.allowlist == null && policyEverApplied && (lastEnforced == null || lastEnforced.allowlist != null)) {
+        return CachedPolicy.Corrupt(CachedPolicy.NO_ALLOWLIST)
+    }
+    // A phone whose calls were managed: the server always sends call_policy, so a saved copy without it is unreadable
+    // too - whatever its app list says. Its apps count as managed only when the copy has an app list.
+    if (policy.callPolicy == null && callsManagedLast) {
+        return CachedPolicy.Corrupt(CachedPolicy.NO_CALL_POLICY, appsManaged = policy.allowlist != null)
+    }
+    return cached
 }
 
 /** The policy as `storeAcceptedPolicy` caches it: without `set_kid_pin`'s Child PIN (design 59 §1) -
@@ -142,7 +166,9 @@ fun judgeFresh(
     if (fresh.allowlist != null) return FreshVerdict.ACCEPT
     val wasManaged = when (cached) {
         is CachedPolicy.Ok -> cached.policy.allowlist != null
-        is CachedPolicy.Corrupt -> true
+        // A copy judgeCached found unreadable for its app list, or one that doesn't decode: managed. One that only lacks
+        // its call_policy on a phone with unmanaged apps: not (QA of the fail-closed round).
+        is CachedPolicy.Corrupt -> cached.appsManaged
         CachedPolicy.Absent -> policyEverApplied
     }
     return if (wasManaged) FreshVerdict.REJECT_SUSPECT else FreshVerdict.ACCEPT
