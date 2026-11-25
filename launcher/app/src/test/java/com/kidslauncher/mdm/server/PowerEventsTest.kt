@@ -17,7 +17,7 @@ import java.io.File
 /**
  * Design 38 §4: the phone's shutdown and start records - the restart flag, the boot record, the
  * kept shutdown resent with the next start (QA H1), the answer table, staleness, the prepared
- * client's key, the contract `power_report.json` (byte-identical with `server/testdata/`, which
+ * client's key, the contract `power_report.json` (in `contracts/core/`, which
  * the server's `power::a_launcher_report_raises_both` posts) and the wiring by source.
  */
 class PowerEventsTest {
@@ -44,14 +44,6 @@ class PowerEventsTest {
         assertEquals(contract.trimEnd(), ServerJson.encodeToString(PowerReport.serializer(), report))
         // Unknowns are left out, never sent as null.
         assertEquals("""{"on":{"at_ms":5,"boot_count":1}}""", ServerJson.encodeToString(PowerReport.serializer(), PowerReport(on = PowerOn(5, 1))))
-    }
-
-    @Test
-    fun `the contract is identical to the servers copy`() {
-        // Gradle runs unit tests with the module directory (launcher/app/) as the working directory.
-        val serverCopy = File("../../server/testdata/power_report.json")
-        assertTrue("${serverCopy.absolutePath} not found", serverCopy.isFile)
-        assertEquals("${serverCopy.path} differs from the launcher's copy", serverCopy.readText(), contract)
     }
 
     @Test

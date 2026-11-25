@@ -7,8 +7,8 @@ import java.time.ZoneId
 
 /*
  * Design 98 §4.4: Foreldrekode - the parent code's offline pause of the rule(s) in force only, from the time-rule
- * screen's sheet. Pure (no Android imports), pinned by the shared contract `rule_pause.json` (byte-identical with
- * `server/testdata/`, `RulePauseTest`).
+ * screen's sheet. Pure (no Android imports), pinned by the shared contract `rule_pause.json` (in
+ * `contracts/core/`, `RulePauseTest`).
  */
 
 /** The PWA's own lengths for a rule lift (the server's `time_rules::RULE_LIFT_MINUTES`); the phone offers no other. */

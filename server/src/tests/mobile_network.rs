@@ -1,4 +1,4 @@
-//! The round "Mobilnett" (design 94, design 95 rev. 3): the shared contract `testdata/mobile_network.json`, the
+//! The round "Mobilnett" (design 94, design 95 rev. 3): the shared contract `contracts/core/mobile_network.json`, the
 //! Mobilnett page and its saves, and its lines on the summary.
 
 use axum::http::{Method, StatusCode};
@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use super::{TestApp, assert_redirect};
 use crate::mobile_network::{clean_mobile, clean_roaming};
 
-const CONTRACT: &str = include_str!("../../testdata/mobile_network.json");
+const CONTRACT: &str = crate::contracts::contract!("core/mobile_network.json");
 
 fn contract() -> Value {
     serde_json::from_str(CONTRACT).unwrap()
@@ -58,7 +58,7 @@ async fn stored(app: &TestApp, id: i64) -> (Option<String>, Option<String>) {
 }
 
 /// Each `policy` row produced from the choices saved through the page; the report stored as the contract has it; the
-/// `clean` rows; the copies identical.
+/// `clean` rows.
 #[tokio::test]
 async fn the_contract() {
     let app = TestApp::new().await;
@@ -156,13 +156,6 @@ async fn the_contract() {
             .unwrap_or(Value::Null);
         assert_eq!(cleaned, row["stored"], "{row}");
     }
-
-    let launcher = std::fs::read_to_string(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../launcher/app/src/test/resources/mobile_network.json"
-    ))
-    .unwrap();
-    assert_eq!(launcher, CONTRACT, "the launcher's copy differs");
 }
 
 /// An unknown value, an unknown group: 400 with nothing written; an unknown phone 404.

@@ -1,6 +1,6 @@
 //! Design 38: `POST /api/devices/power` - the phone turned off and on, its words, the held
 //! `phone_off` push and a restart's drop, the switches, the status lines' "Turned off" and the
-//! shared contract `testdata/power_report.json`.
+//! shared contract `contracts/core/power_report.json`.
 
 use axum::http::{Method, StatusCode};
 use chrono::{DateTime, Duration, Utc};
@@ -9,18 +9,8 @@ use serde_json::{Value, json};
 use super::web_push::{ENDPOINT, payload, subscribe};
 use super::{Section, TestApp, device_page, status_lines};
 
-/// The launcher's body (`PowerEventsTest` encodes exactly this; byte-identical in its test
-/// resources).
-const POWER_REPORT: &str = include_str!("../../testdata/power_report.json");
-
-#[test]
-fn the_power_contract_matches_the_launchers_copy() {
-    let copy_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../launcher/app/src/test/resources/power_report.json");
-    let copy = std::fs::read_to_string(&copy_path)
-        .unwrap_or_else(|e| panic!("{}: {e}", copy_path.display()));
-    assert_eq!(copy, POWER_REPORT, "{} differs", copy_path.display());
-}
+/// The launcher's body (`PowerEventsTest` encodes exactly this).
+const POWER_REPORT: &str = crate::contracts::contract!("core/power_report.json");
 
 async fn post(app: &TestApp, token: &str, body: Value) -> StatusCode {
     app.request(Method::POST, "/api/devices/power", Some(token), Some(body))

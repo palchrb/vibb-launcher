@@ -1,5 +1,5 @@
-//! Design 99 (Snarveier, the kid's quick panel in the shade): the shared contract `testdata/shortcuts.json` - the
-//! report stored as the contract has it, the `clean` rows, the items' table, the copies identical - and the PWA's parts
+//! Design 99 (Snarveier, the kid's quick panel in the shade): the shared contract `contracts/core/shortcuts.json` - the
+//! report stored as the contract has it, the `clean` rows, the items' table - and the PWA's parts
 //! (§5.2 the Home Screen row with its keep, sub-lines and ⓘ; §5.3 About This Phone's line), migration 0148's bit.
 
 use axum::http::Method;
@@ -9,7 +9,7 @@ use super::{TestApp, assert_redirect};
 use crate::handlers::devices::{DEFAULT_QUICK_CONTROLS, QUICK_CONTROL_SHORTCUTS};
 use crate::shortcuts::{ITEMS, MAX_ITEMS, clean};
 
-const CONTRACT: &str = include_str!("../../testdata/shortcuts.json");
+const CONTRACT: &str = crate::contracts::contract!("core/shortcuts.json");
 
 fn contract() -> Value {
     serde_json::from_str(CONTRACT).unwrap()
@@ -88,16 +88,6 @@ fn the_table_is_the_contracts() {
     assert_eq!(contract["max_items"], MAX_ITEMS);
     assert_eq!(contract["bit"], 128);
     assert_ne!(DEFAULT_QUICK_CONTROLS & QUICK_CONTROL_SHORTCUTS, 0, "D2");
-}
-
-#[test]
-fn the_contract_is_identical_to_the_launchers_copy() {
-    let launcher = std::fs::read_to_string(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../launcher/app/src/test/resources/shortcuts.json"
-    ))
-    .unwrap();
-    assert_eq!(launcher, CONTRACT, "the launcher's copy differs");
 }
 
 /// D2: migration 0148 sets bit 128 on every phone and keeps the other bits.

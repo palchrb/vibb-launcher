@@ -2,7 +2,7 @@
 //! the rule in force, set offline on the phone's time-rule screen and posted at the start of its next sync.
 //!
 //! `POST /api/devices/rule-pause` ([intake]): `{key, minutes, started_at_ms, rules: [{rule_id, until_ms}]}`
-//! (`testdata/rule_pause.json`, shared with the launcher). [check] refuses with a `400` a key that isn't 32 lowercase hex
+//! (`contracts/core/rule_pause.json`, shared with the launcher). [check] refuses with a `400` a key that isn't 32 lowercase hex
 //! characters, minutes outside `time_rules::RULE_LIFT_MINUTES`, a start past the clock slack ahead or older than 7 days,
 //! no rules or more than 8, or a rule's end at or before the start or past the start plus the minutes and the slack. A
 //! rule id the phone doesn't have is skipped; a design 93 copy's negative id is its `time_lock_now` row's rule (the

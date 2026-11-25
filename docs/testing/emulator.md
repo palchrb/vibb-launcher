@@ -2438,7 +2438,7 @@ body after a PUT (`X-APPLE-*`, its own DTSTAMP) is not read as a parent's edit (
 Branch `lock-weather`; `jelly36` at `wm density 240` (the Jelly Star's 320 dp) and `handy36` at its own density (360 dp);
 logcat `WeatherPull`, `WeatherStore`, `WeatherLockPanel` (counts and classes only - never a place or a temperature).
 The server needs no MET: point the phone at a server whose `weather_cells` row holds the contract's recorded hours, or
-serve `server/testdata/weather.json`'s `answer` / `answer_words` from a throwaway endpoint as the phone's
+serve `contracts/core/weather.json`'s `answer` / `answer_words` from a throwaway endpoint as the phone's
 `/api/devices/weather` (and a `now_answers` row as `/weather/now`). Device › Weather on, Location Regularly with a
 fresh fix, or a weather zone. Set the emulator's clock inside the answer's hours (2026-11-03 15:20 Europe/Oslo).
 

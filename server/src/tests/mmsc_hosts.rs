@@ -104,7 +104,7 @@ async fn the_policy_has_the_reported_sims_entries() {
     let app = TestApp::new().await;
     let (id, token) = app.enrolled_device("Emma").await;
     let contract: Value =
-        serde_json::from_str(include_str!("../../testdata/sms_contract.json")).unwrap();
+        serde_json::from_str(crate::contracts::contract!("core/sms_contract.json")).unwrap();
     let row = contract["policy"]["mmsc_hosts_row"].clone();
     for host in row["hosts"].as_array().unwrap().iter().rev() {
         stored(&app, id, SIM, host.as_str().unwrap(), "allowed").await;

@@ -206,7 +206,7 @@ fun decodeRing(stored: String?): List<OutsideRow> = try {
     emptyList()
 }
 
-/** The status report's `server_tls` (`testdata/server_tls_report.json`'s `report`): the stored flag, this sync's
+/** The status report's `server_tls` (`contracts/core/server_tls_report.json`'s `report`): the stored flag, this sync's
  * policy connection as seen (absent over the tailnet or plain http), and the ring. */
 @Serializable
 data class ServerTlsReport(val enforcing: Boolean, val seen: ServerTlsSeen? = null, val outside: List<OutsideRow>)

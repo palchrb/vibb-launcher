@@ -16,7 +16,7 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 import java.io.File
 
-/** Design 102: the shared contract `login_windows.json` (byte-identical with `server/testdata/`, whose
+/** Design 102: the shared contract `login_windows.json` (in `contracts/core/`, whose
  * `tests::logins` produces the same `policy` rows from the page's saves and posts the same reports). */
 class LoginWindowsTest {
     @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
@@ -80,11 +80,5 @@ class LoginWindowsTest {
         }
         // An invalid site from a policy is dropped, never written to Chrome.
         assertEquals(listOf("school.example"), loginHostsOf(LoginBrowserPolicy(CHROME_PACKAGE, listOf("*", "school.example", "School.Example"))))
-    }
-
-    @Test
-    fun `the two copies of the contract are identical`() {
-        val serverCopy = listOf("../../server/testdata/login_windows.json", "../server/testdata/login_windows.json").map(::File).first { it.exists() }
-        assertEquals(serverCopy.readText(), contractText)
     }
 }

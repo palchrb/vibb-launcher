@@ -1,6 +1,6 @@
 //! Design 114: the phone's setup status - one step table for the phone and the PWA
-//! (`docs/design/114-setup-status.md`). The shared contract is `testdata/setup_steps.json`, byte-identical in the
-//! launcher's test resources: `steps` ([STEPS]), `features` ([FEATURES]), the report's `setup` ([clean]), the policy's
+//! (`docs/design/114-setup-status.md`). The shared contract is `contracts/core/setup_steps.json`, which the
+//! launcher reads too: `steps` ([STEPS]), `features` ([FEATURES]), the report's `setup` ([clean]), the policy's
 //! `setup` ([policy]), the phone's tick ([tick]) and the `needed` rows the one rule runs ([missing], [count],
 //! [alarm], [setup_row]).
 //!
@@ -1362,10 +1362,8 @@ mod tests {
     use super::*;
 
     fn contract() -> Value {
-        let text = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/setup_steps.json"),
-        )
-        .unwrap();
+        let text =
+            std::fs::read_to_string(crate::contracts::path("core/setup_steps.json")).unwrap();
         serde_json::from_str(&text).unwrap()
     }
 
@@ -1556,15 +1554,5 @@ mod tests {
         // The page's step: a step done only in the PWA never opens the phone.
         let step = STEPS.iter().find(|s| s.key == "child_pin").unwrap();
         assert!(!on_phone(step));
-    }
-
-    #[test]
-    fn the_copies_are_identical() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let ours = std::fs::read_to_string(dir.join("testdata/setup_steps.json")).unwrap();
-        let launcher = dir.join("../launcher/app/src/test/resources/setup_steps.json");
-        let theirs = std::fs::read_to_string(&launcher)
-            .unwrap_or_else(|e| panic!("{}: {e}", launcher.display()));
-        assert_eq!(ours, theirs, "testdata/setup_steps.json differs");
     }
 }

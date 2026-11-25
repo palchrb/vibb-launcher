@@ -1,4 +1,4 @@
-//! The heartbeat report (design 95 §3.5, step 95-T2; `testdata/status_heartbeat.json`).
+//! The heartbeat report (design 95 §3.5, step 95-T2; `contracts/core/status_heartbeat.json`).
 //!
 //! The launcher sends its full status report with a `"hash"` - its own SHA-256 over the report
 //! without the [HEARTBEAT_FIELDS] - while the policy says `status_heartbeat: true` and names the same

@@ -19,7 +19,7 @@ import java.time.ZoneId
  * Design 34 P13 (QA L8): the status report's `time_state.zone` - the phone's IANA zone, so the
  * server can show a rule's end ("Leggetid until 07:00") when it is Phone Setup's. The test checks
  * the **encoded JSON** (`ServerJson` leaves defaults out; a set value must be in it) against the
- * shared contract `time_status_report.json` (byte-identical with `server/testdata/`, whose
+ * shared contract `time_status_report.json` (in `contracts/core/`, whose
  * end-to-end test `devices_list::a_launcher_report_with_its_zone_shows_the_rules_end` posts it).
  */
 class TimeStateZoneTest {
@@ -56,14 +56,6 @@ class TimeStateZoneTest {
         assertEquals(contract.trimEnd(), encoded(state("Europe/Oslo")))
         val timeState = ServerJson.parseToJsonElement(contract).jsonObject["time_state"]!!.jsonObject
         assertEquals("Europe/Oslo", timeState["zone"]!!.jsonPrimitive.content)
-    }
-
-    @Test
-    fun the_contract_is_identical_to_the_servers_copy() {
-        // Gradle runs unit tests with the module directory (launcher/app/) as the working directory.
-        val serverCopy = File("../../server/testdata/time_status_report.json")
-        assertTrue("${serverCopy.absolutePath} not found", serverCopy.isFile)
-        assertEquals("${serverCopy.path} differs from the launcher's copy", serverCopy.readText(), contract)
     }
 
     /** The storage line: `storage_full` is sent only while the ledger can't be saved. */

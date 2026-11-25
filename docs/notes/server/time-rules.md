@@ -183,7 +183,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - **`until_ms` and `card_first`** on every served rule (design 93 §9): the copy's end as epoch ms and `true`; a scheduled
   rule `null` and `false`, always explicit. The launcher drops the copy at
   `until_ms` (no relock a week later) and shows it on the card while its end is a real unlock. The contract is
-  `server/testdata/lock_now.json` (CLAUDE.md), `lock_now::tests::the_contract`.
+  `contracts/core/lock_now.json` (CLAUDE.md), `lock_now::tests::the_contract`.
 - **Time**: wall clock in the phone's zone, never instant + hours (`end_minute`, `instant_of`: a gap moves later, an
   overlap takes the earlier offset, as `java.time`). Never past midnight: 1/2/3 t are offered only when they end by
   24:00 (24:00 is stored as 1439), Til must be after the current minute, 00:00 is "Ut dagen"; nothing starts in the day's
@@ -217,7 +217,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 
 ## The parent code's pause on the phone (design 98 §4.4, step 7, 2026-11-14, migration `0147_rule_pause.sql`)
 
-- `POST /api/devices/rule-pause` (`handlers::rule_pause::intake`, `testdata/rule_pause.json`): the phone's Foreldrekode
+- `POST /api/devices/rule-pause` (`handlers::rule_pause::intake`, `contracts/core/rule_pause.json`): the phone's Foreldrekode
   pause of the rule(s) in force, set offline and posted before the next sync's policy GET. Checked field by field
   ([`check`]: 32 lowercase hex key, `RULE_LIFT_MINUTES`, the start within 5 min ahead and 7 days back, 1-8 rules, each
   end after the start and within start + minutes + 5 min) - a `400` otherwise. A rule the phone doesn't have is

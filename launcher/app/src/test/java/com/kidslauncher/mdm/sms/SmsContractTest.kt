@@ -49,7 +49,7 @@ import org.junit.Test
 import java.io.File
 
 /**
- * Design 77 §7: `sms_contract.json`, byte-identical with `server/testdata/` (the server's `sms::tests` run the same
+ * Design 77 §7: `sms_contract.json`, in `contracts/core/` (the server's `sms::tests` run the same
  * rows). The launcher's side: the modes, the policy the server sends, the exact `sms_state` and `sms-held` body, the answers, the cleaning and the names.
  */
 class SmsContractTest {
@@ -61,13 +61,6 @@ class SmsContractTest {
     private fun JsonObject.str(key: String) = this[key]!!.jsonPrimitive.content
 
     private fun JsonObject.bool(key: String) = this[key]!!.jsonPrimitive.boolean
-
-    @Test
-    fun `the contract is identical to the servers copy`() {
-        val serverCopy = File("../../server/testdata/sms_contract.json")
-        assertTrue("${serverCopy.absolutePath} not found", serverCopy.isFile)
-        assertEquals("${serverCopy.path} differs from the launcher's copy", serverCopy.readText(), text)
-    }
 
     @Test
     fun `each mode pair is applied as sent`() {

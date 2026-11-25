@@ -51,3 +51,23 @@ Prose written before 2026-11-25 names `server/testdata/<file>` (and the apps' co
 | `core/installed_apps_report.json` | app updates (2026-10-25), `other_signer` (2026-11-24) | by hand | server `tests::app_updates`, `tests::music`; launcher `SyncScheduleTest` |
 | `core/launcher_tag_codes.json` | release tags (`scripts/release-version.sh`) | by hand, a row per tag | server `install_now::tests`, `device_pages::tests`, `launcher_check::tests`; launcher `SelfUpdatePlanTest`; `scripts/release-version.sh --selftest`, through which `launcher.yml`'s and `music.yml`'s changes jobs and release builds read it |
 | `core/leave_tailnet.json` | security review S-L10 | by hand | server `tests::leave_tailnet`; launcher `SecurityLowsBTest` |
+| `core/lock_now.json` | 93, 123 | `LOCK_NOW_CONTRACT_WRITE=1` (`lock_now::tests::the_contract`) | server `lock_now::tests`; launcher `LockNowTest` |
+| `core/login_windows.json` | 102 | by hand | server `tests::logins`; launcher `LoginWindowsTest` |
+| `core/mobile_network.json` | 94, 95 rev. 3, 97, 116 | by hand | server `tests::mobile_network`; launcher `MobileNetworkTest` |
+| `core/notification_channels.json` | 107 | by hand | server `notification_channels::tests`, `tests::notification_channels`; launcher `NotificationChannelsTest` |
+| `core/notification_listeners.json` | Android Auto (2026-11) | by hand | server `notification_listeners::tests`, `tests::notification_listeners`; launcher `SystemReadersTest` |
+| `core/phone_vectors.json` | 02 §3.4 | by hand | server `phone::tests`; launcher `PhoneNumbersTest` |
+| `core/power_report.json` | 38 §2 | by hand | server `tests::power`; launcher `PowerEventsTest` |
+| `core/restrictions_pause.json` | pause-end-report M1, 114 §6.1 | by hand | server `models::paused_at_tests`; launcher `RestrictionsPauseTest` |
+| `core/rule_pause.json` | 98 §4.4 | by hand | server `tests::rule_pause`; launcher `RulePauseTest` |
+| `core/server_tls_report.json` | 76 | by hand | server `tests::server_tls`; launcher `ServerPinsTest` |
+| `core/server_url_vectors.json` | security review S-M1 | by hand | server `config::tests`; launcher `ServerTransportTest` |
+| `core/setup_steps.json` | 114 | by hand | server `setup_status::tests`, `tests::setup_status`, `integrations::map_links::tests`; launcher `SetupStepsTest` |
+| `core/shortcuts.json` | 99 | by hand | server `tests::shortcuts`; launcher `ShortcutsTest` |
+| `core/sms_contract.json` | 77 §7, 80, 82, 83 | by hand | server `sms::tests`, `tests::sms`; launcher `SmsContractTest` |
+| `core/status_heartbeat.json` | 95 §3.5 | by hand | server `tests::status_heartbeat`; launcher `StatusReportsTest` |
+| `core/time_request.json` | r13 §2.5, 100 §14.5 | by hand | server `tests::time_request`; launcher `TimeRequestsTest` |
+| `core/time_status_report.json` | 34 P13 | by hand | server `tests::devices_list`; launcher `TimeStateZoneTest` |
+| `core/unified_push.json` | 108, 108b, 115 | by hand | server `tests::unified_push`; launcher `UnifiedPushContractTest` |
+| `core/weather.json` | 75 §7.1 | `WEATHER_CONTRACT_WRITE=1` (`weather::tests`) | server `weather::tests`; launcher `WeatherContractTest` |
+| `core/zone_status_report.json` | 64 step 2, 131 | by hand | server `tests::zone_watch`; launcher `ZoneReportTest` |

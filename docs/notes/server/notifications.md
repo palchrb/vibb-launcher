@@ -228,7 +228,7 @@ Notifications on it). `docs/design/45-notifications-inbox-first.md`, `docs/desig
   reason}`, `PowerOn {at_ms, boot_count, battery}`; `battery` through `lenient_battery`, `reason` any non-string =
   none) -> 204; neither part or not one -> 400; > 2 KiB -> 413; a DB error 500 (the phone keeps its record). No
   `device_status` row, no security log line. Contract
-  `testdata/power_report.json`, byte-identical in the launcher's test resources (root `CLAUDE.md`).
+  `contracts/core/power_report.json`, which the launcher encodes too (`contracts/README.md`).
 - **The state machine** (pure `parent_events::power_events(&report, last_report, &phone) -> PowerPlan {events,
   drop_held_off, quiet_start, release_held_off, dropped}`, applied in one transaction, then `push.wake()` if a row or a delivery
   changed): parts dropped first (an instant > 5 min in the server's future - that part only -, an `off` or an `on`
@@ -355,7 +355,7 @@ Notifications on it). `docs/design/45-notifications-inbox-first.md`, `docs/desig
   notification. 200 `{"accepted":true}`, `{"accepted":false,"reason":"capped"}` or `{"accepted":false,"reason":"stale"}`
   (`TimeRequestAnswer`); 400 for a body that doesn't parse, an id that isn't 16-64 lowercase hex
   (`time_request_id_ok`) or an instant out of range; 500 on a DB error (the phone keeps its request and retries). The
-  shapes are the shared contract `testdata/time_request.json` (byte-identical in the launcher's test resources).
+  shapes are the shared contract `contracts/core/time_request.json`, which the launcher reads too.
 - **The kind** `Kind::ExtraTimeRequest` (`extra_time_request`, last in `Kind::ALL`; normal urgency, TTL 3600 s,
   foldable) with its own switch `push_extra_time` "Asks for more time" (Notify Me About lists it from
   `Kind::switches()`, per parent, on by default for every parent, existing ones included - migration 0096's `DEFAULT 1`,

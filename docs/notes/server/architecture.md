@@ -35,7 +35,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `policy_etag_matches`) answers `304` with no body; the request still counts as the phone's access and the pop still
   happens. `Cache-Control: no-store` stays (set by the handler, so `limits::device_cache_control` doesn't turn the ETag
   into `no-cache`), and the policy is never gzip'd (the PIN hashes, design 95 §3.3). `tests::policy_etag`.
-- **The heartbeat report and gzip (design 95 step 95-T2, §3.5; contract `testdata/status_heartbeat.json`)**:
+- **The heartbeat report and gzip (design 95 step 95-T2, §3.5; contract `contracts/core/status_heartbeat.json`)**:
   `handlers::device_api::status` reads the body as JSON first. `status_heartbeat::take`: a full report with a `hash`
   (the phone's own SHA-256 over the report without `HEARTBEAT_FIELDS`; the server never computes it) is kept, once
   the intake answered 2xx, as `kept_body` (the report's known top-level keys `REPORT_KEYS` only, without the

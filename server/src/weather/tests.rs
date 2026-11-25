@@ -1,10 +1,9 @@
-//! `testdata/weather.json`'s rows, run against the pure functions, and its computed parts (design 75 §7.1).
+//! `contracts/core/weather.json`'s rows, run against the pure functions, and its computed parts (design 75 §7.1).
 
 use super::*;
 use serde_json::{Value, json};
 
-const CONTRACT: &str = "testdata/weather.json";
-const LAUNCHER_COPY: &str = "../launcher/app/src/test/resources/weather.json";
+const CONTRACT: &str = "core/weather.json";
 /// The contract's answer: 2026-11-03 at 15:20 in Oslo, 20 minutes after the recorded fetch.
 const ANSWER_NOW: &str = "2026-11-03T14:20:00Z";
 const CHECKED_AT: &str = "2026-11-03T14:00:22Z";
@@ -12,7 +11,8 @@ const CHECKED_AT: &str = "2026-11-03T14:00:22Z";
 const NOWCAST_T0: &str = "2026-11-03T14:00:00Z";
 
 fn contract() -> Value {
-    serde_json::from_str(&std::fs::read_to_string(CONTRACT).unwrap()).unwrap()
+    serde_json::from_str(&std::fs::read_to_string(crate::contracts::path(CONTRACT)).unwrap())
+        .unwrap()
 }
 
 fn utc(text: &str) -> DateTime<Utc> {
@@ -350,12 +350,12 @@ fn the_contract() {
         contract["now_answers"] = now_answers.clone();
         contract["statuses"] = statuses.clone();
         std::fs::write(
-            CONTRACT,
+            crate::contracts::path(CONTRACT),
             serde_json::to_string_pretty(&contract).unwrap() + "\n",
         )
         .unwrap();
     }
-    let changed = "the contract changed - WEATHER_CONTRACT_WRITE=1, then copy it to the launcher";
+    let changed = "the contract changed - rewrite it with WEATHER_CONTRACT_WRITE=1";
     assert_eq!(contract["forms"], Value::Object(forms), "{changed}");
     assert_eq!(contract["now_keys"], json!(NOW_KEYS), "{changed}");
     for (row, dark) in contract["dark"].as_array().unwrap().iter().zip(&darks) {
@@ -383,15 +383,6 @@ fn the_contract() {
             assert!(forms.as_array().unwrap().contains(&words["form"]));
         }
     }
-}
-
-#[test]
-fn the_contract_is_identical_to_the_launchers_copy() {
-    assert_eq!(
-        std::fs::read(CONTRACT).unwrap(),
-        std::fs::read(LAUNCHER_COPY).unwrap(),
-        "testdata/weather.json and the launcher's copy differ - update both in one commit"
-    );
 }
 
 #[test]

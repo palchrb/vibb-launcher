@@ -19,7 +19,7 @@ import java.io.File
 
 /**
  * Design r13 §2.4-2.5, design 100 §14: the kid's request for more screen time - the shared contract
- * `time_request.json` (byte-identical with `server/testdata/`, whose `time_request` tests post its request, produce
+ * `time_request.json` (in `contracts/core/`, whose `time_request` tests post its request, produce
  * every answer row and serve each `policy_*` row), and the phone's rules: [requestState] and [timePart] for every
  * `states` row (one open request until an answer or the day's end, the answer by id, the cap,
  * D10's gift, D12's 30 minutes), [askStep], [uploadStep] and [timeRequestAnswer] for every row of §2.4's table.
@@ -49,14 +49,6 @@ class TimeRequestsTest {
         for ((row, answer) in parsed.getValue("answers").jsonArray.zip(answers)) {
             assertEquals(row as JsonObject, Json.parseToJsonElement(ServerJson.encodeToString(TimeRequestAnswer.serializer(), answer)))
         }
-    }
-
-    @Test
-    fun `the contract is identical to the servers copy`() {
-        // Gradle runs unit tests with the module directory (launcher/app/) as the working directory.
-        val serverCopy = File("../../server/testdata/time_request.json")
-        assertTrue("${serverCopy.absolutePath} not found", serverCopy.isFile)
-        assertEquals("${serverCopy.path} differs from the launcher's copy", serverCopy.readText(), contract)
     }
 
     private val day = "2026-10-26"

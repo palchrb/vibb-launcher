@@ -2,8 +2,7 @@
 
 The design is `docs/design/108-unified-push.md` (revision 2, variant A, with the user's Q4 amendment: Element X keeps
 its Play build and its push provider is switched to Vibb One once per account in Element X). The server's side is
-`docs/notes/server/unified-push.md`; the shared contract `server/testdata/unified_push.json` (byte-identical in
-`launcher/app/src/test/resources/`, `UnifiedPushContractTest`). Code: `push/up/` (GPL-3.0-or-later), except
+`docs/notes/server/unified-push.md`; the shared contract `contracts/core/unified_push.json` (`UnifiedPushContractTest`). Code: `push/up/` (GPL-3.0-or-later), except
 `push/up/vendor/RaiseToForeground.kt` (Apache-2.0, adapted from UnifiedPush's android-distributor at 6daaf14; its header
 lists every change, `NOTICE.md` names it). Built in R1-L (2026-11-17, branch `up`).
 

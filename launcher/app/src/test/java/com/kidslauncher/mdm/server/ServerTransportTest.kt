@@ -46,13 +46,6 @@ class ServerTransportTest {
     }
 
     @Test
-    fun `the vectors are identical to the server's copy`() {
-        val serverCopy = File("../../server/testdata/server_url_vectors.json")
-        assertTrue("${serverCopy.absolutePath} not found", serverCopy.isFile)
-        assertEquals("${serverCopy.path} differs from the launcher's copy", serverCopy.readText(), text)
-    }
-
-    @Test
     fun `https goes direct or through tsnet as before`() {
         assertEquals(ServerPath.Direct("https://vibb.example.org/x/", socks), serverPath("https://vibb.example.org/x", socks, debug = false))
         assertEquals(ServerPath.Direct("https://vibb.example.org/", null), serverPath(" https://vibb.example.org/ ", null, debug = false))

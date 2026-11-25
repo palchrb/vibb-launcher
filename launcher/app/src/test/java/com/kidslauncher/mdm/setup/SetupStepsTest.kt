@@ -22,7 +22,7 @@ import org.junit.Test
 import java.io.File
 
 /**
- * Design 114 §3.1: the phone's side of the shared contract `setup_steps.json` (byte-identical with `server/testdata/`,
+ * Design 114 §3.1: the phone's side of the shared contract `setup_steps.json` (in `contracts/core/`,
  * whose `setup_status::tests` read the same rows): the table, the names, the need rule's rows, the report, the policy
  * and the tick.
  */
@@ -170,13 +170,6 @@ class SetupStepsTest {
         }
         val readings = File(main, "java/com/kidslauncher/mdm/setup/SetupReadings.kt").readText()
         assertTrue("put(\"child_pin\", childPinDone(read { deviceSecure(context) }, cached?.kidLock?.keyguard, policyKnown = cached != null))" in readings)
-    }
-
-    @Test
-    fun `the two copies of the contract are identical`() {
-        val serverCopy = listOf("../../server/testdata/setup_steps.json", "../server/testdata/setup_steps.json")
-            .map(::File).first { it.exists() }
-        assertEquals(serverCopy.readText(), contractText)
     }
 
     /** Code QA L6: rows 15-16 read from a `map_links` report as the server's `map_links::setup_part` reads it. */

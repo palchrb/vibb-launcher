@@ -72,11 +72,8 @@ class RestrictionsPauseTest {
     private val contract = javaClass.classLoader!!.getResource("restrictions_pause.json")!!.readText()
 
     @Test
-    fun `the pause lasts the shared contract's length, identical to the server's copy`() {
+    fun `the pause lasts the shared contract's length`() {
         assertEquals(Json.parseToJsonElement(contract).jsonObject.getValue("pause_max_ms").jsonPrimitive.long, RESTRICTIONS_PAUSE_DURATION_MS)
-        val serverCopy = File("../../server/testdata/restrictions_pause.json")
-        assertTrue("${serverCopy.absolutePath} not found", serverCopy.isFile)
-        assertEquals("${serverCopy.path} differs from the launcher's copy", serverCopy.readText(), contract)
     }
 
     // Design 114 §6.1: the setup hold - the same pause with the 4-hour ceiling, pinned by the same contract.

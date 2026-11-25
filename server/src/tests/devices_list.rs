@@ -481,22 +481,7 @@ async fn no_phones_yet() {
 
 /// The launcher's status body (design 34 P13, the shared contract: the launcher's
 /// `TimeStateZoneTest` encodes exactly this - snake_case, defaults left out, `zone` last).
-const LAUNCHER_TIME_REPORT: &str = include_str!("../../testdata/time_status_report.json");
-
-/// The launcher keeps a byte-identical copy of the contract in its test resources.
-#[test]
-fn the_time_report_contract_matches_the_launchers_copy() {
-    let copy_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../launcher/app/src/test/resources/time_status_report.json");
-    let copy = std::fs::read_to_string(&copy_path)
-        .unwrap_or_else(|e| panic!("{}: {e}", copy_path.display()));
-    assert_eq!(
-        copy,
-        LAUNCHER_TIME_REPORT,
-        "{} differs",
-        copy_path.display()
-    );
-}
+const LAUNCHER_TIME_REPORT: &str = crate::contracts::contract!("core/time_status_report.json");
 
 /// The lock as the Devices list's row, the summary's header and Device › Time show it.
 async fn locks_shown(app: &TestApp, cookie: &str, id: i64) -> [String; 3] {

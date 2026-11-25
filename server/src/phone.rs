@@ -3,8 +3,8 @@
 //! the number of a ringing or dialled call, then matches by exact string equality - never by a
 //! suffix ("last 8 digits") match, which would let foreign numbers through.
 //!
-//! Both sides run the same vectors: `testdata/phone_vectors.json` here, a byte-identical copy in
-//! `../launcher/app/src/test/resources/` (same monorepo). Change the rules on both sides together.
+//! Both sides run the same vectors, `contracts/core/phone_vectors.json`. Change the rules on both sides
+//! together.
 //!
 //! Rules, in order:
 //! 1. Strip ` -.()/` and NBSP. Nothing else is stripped: `,`/`;` (dial pauses, extensions) are
@@ -109,7 +109,7 @@ fn e164(digits: &str) -> Result<String, PhoneError> {
 mod tests {
     use super::*;
 
-    const VECTORS: &str = include_str!("../testdata/phone_vectors.json");
+    const VECTORS: &str = crate::contracts::contract!("core/phone_vectors.json");
 
     #[test]
     fn shared_vectors() {
@@ -126,17 +126,6 @@ mod tests {
                 "normalize({input:?}, {cc:?})"
             );
         }
-    }
-
-    /// The launcher (`../launcher` in this monorepo) carries a copy of the vectors; they must
-    /// not drift apart.
-    #[test]
-    fn vectors_match_the_launchers_copy() {
-        let copy_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../launcher/app/src/test/resources/phone_vectors.json");
-        let copy = std::fs::read_to_string(&copy_path)
-            .unwrap_or_else(|e| panic!("{}: {e}", copy_path.display()));
-        assert_eq!(copy, VECTORS, "{} differs", copy_path.display());
     }
 
     #[test]

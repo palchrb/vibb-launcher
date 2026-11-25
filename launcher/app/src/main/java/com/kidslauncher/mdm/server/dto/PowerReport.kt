@@ -6,8 +6,8 @@ import kotlinx.serialization.Serializable
  * Body of `POST /api/devices/power` (design 38 §2): the phone's last shutdown and this boot's
  * start, each optional. Instants, a battery, flags, the shutdown's last stored fix - no address, no user text (the shutdown reason
  * is the system property's own word, which the server only matches against known words). `null`s
- * are left out (`ServerJson` encodes no defaults). Pinned by `power_report.json` (byte-identical
- * with `server/testdata/`, `PowerEventsTest`).
+ * are left out (`ServerJson` encodes no defaults). Pinned by `power_report.json` (in
+ * `contracts/core/`, `PowerEventsTest`).
  */
 @Serializable
 data class PowerReport(val off: PowerOff? = null, val on: PowerOn? = null)

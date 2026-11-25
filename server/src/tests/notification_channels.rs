@@ -1,12 +1,12 @@
-//! Design 107 (blocked notification channels): the shared contract `testdata/notification_channels.json` - the report
-//! stored as the contract has it, the copies identical - and the PWA's parts: About This Phone › Sound's
+//! Design 107 (blocked notification channels): the shared contract `contracts/core/notification_channels.json` - the report
+//! stored as the contract has it - and the PWA's parts: About This Phone › Sound's
 //! "Notifications" row (§5.2) and the summary's Attention row with the Devices list's badge (§5.3), every `pages` row.
 
 use serde_json::{Value, json};
 
 use super::{TestApp, tags};
 
-const CONTRACT: &str = include_str!("../../testdata/notification_channels.json");
+const CONTRACT: &str = crate::contracts::contract!("core/notification_channels.json");
 
 fn contract() -> Value {
     serde_json::from_str(CONTRACT).unwrap()
@@ -46,16 +46,6 @@ async fn the_report_is_stored_as_the_contract_has_it() {
     );
     app.post_status(&token, json!({})).await;
     assert_eq!(stored(&app, id).await, None);
-}
-
-#[test]
-fn the_contract_is_identical_to_the_launchers_copy() {
-    let launcher = std::fs::read_to_string(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../launcher/app/src/test/resources/notification_channels.json"
-    ))
-    .unwrap();
-    assert_eq!(launcher, CONTRACT, "the launcher's copy differs");
 }
 
 // ---- The PWA (§5.2, §5.3) -----------------------------------------------------------------------------------------

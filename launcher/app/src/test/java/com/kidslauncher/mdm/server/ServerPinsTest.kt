@@ -141,14 +141,6 @@ class ServerPinsTest {
     }
 
     @Test
-    fun `the contract is identical to the server's copy`() {
-        // Gradle runs unit tests with the module directory (launcher/app/) as the working directory.
-        val serverCopy = File("../../server/testdata/server_tls_report.json")
-        assertTrue("${serverCopy.absolutePath} not found", serverCopy.isFile)
-        assertEquals("${serverCopy.path} differs from the launcher's copy", serverCopy.readText(), contractText)
-    }
-
-    @Test
     fun `a sighting is added only when it differs from the last, at most eight kept`() {
         val a = OutsideRow(OutsideRow.SEEN, "vibb.example.org", "emSign Root CA - G1", "N2oacIKlk9zMINVh0Rnpq40w8RzDIdCjf6QfDfKE4Bw=", "wifi", 1)
         assertEquals(listOf(a), addOutside(addOutside(emptyList(), a), a.copy(atMs = 31_000)))

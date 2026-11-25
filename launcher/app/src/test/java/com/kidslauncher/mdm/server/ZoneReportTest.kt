@@ -12,7 +12,7 @@ import java.io.File
 
 /**
  * Design 64 step 2: the status report's `extra_locations` and `zone_watch` against the shared
- * contract `zone_status_report.json` (byte-identical with `server/testdata/`, whose
+ * contract `zone_status_report.json` (in `contracts/core/`, whose
  * `zone_watch::a_launcher_report_raises_the_arrival` posts it). The encoded JSON must be exactly
  * the file (`ServerJson` leaves defaults out: a fix's `mock` only when true, its `provider` only
  * when known), and a report without them leaves both keys out. The phone judges no zone, so it
@@ -49,13 +49,5 @@ class ZoneReportTest {
             """{"latitude":1.0,"longitude":2.0,"captured_at":"2026-10-24T08:00:00Z","mock":true}""",
             ServerJson.encodeToString(LocationReport.serializer(), fix),
         )
-    }
-
-    @Test
-    fun `the contract is identical to the servers copy`() {
-        // Gradle runs unit tests with the module directory (launcher/app/) as the working directory.
-        val serverCopy = File("../../server/testdata/zone_status_report.json")
-        assertTrue("${serverCopy.absolutePath} not found", serverCopy.isFile)
-        assertEquals("${serverCopy.path} differs from the launcher's copy", serverCopy.readText(), contract)
     }
 }

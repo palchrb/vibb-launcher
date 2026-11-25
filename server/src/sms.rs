@@ -1,8 +1,8 @@
 //! Design 77 step 1, the server's side of the SMS engine (`docs/design/77-sms-mms-client.md` §7): the policy's SMS
 //! parts (`call_policy.sms_names`, `own_numbers`, `sms_held_drop`), the status report's `sms_state` through its known
 //! keys, the parent's sender names (D17: [valid_name], [fold]) and the held and blocked senders the phone posts
-//! (`POST /api/devices/sms-held`, D16) - who and when, never what. The shapes are `testdata/sms_contract.json`,
-//! byte-identical in the launcher's test resources. Step 4: the intake raises the parent's `sms_held` event at a held
+//! (`POST /api/devices/sms-held`, D16) - who and when, never what. The shapes are `contracts/core/sms_contract.json`,
+//! which the launcher reads too. Step 4: the intake raises the parent's `sms_held` event at a held
 //! row's first sight (`parent_events::sms_held`, its push within `Kind::push_budget`) and marks it read when the row
 //! moves on; the PWA's cards are `handlers::calls_sms`.
 
@@ -599,17 +599,10 @@ mod tests {
     use super::*;
 
     fn contract() -> serde_json::Value {
-        serde_json::from_str(&std::fs::read_to_string("testdata/sms_contract.json").unwrap())
-            .unwrap()
-    }
-
-    #[test]
-    fn the_contract_matches_the_launchers_copy() {
-        assert_eq!(
-            std::fs::read("testdata/sms_contract.json").unwrap(),
-            std::fs::read("../launcher/app/src/test/resources/sms_contract.json").unwrap(),
-            "server/testdata/sms_contract.json and the launcher's copy differ"
-        );
+        serde_json::from_str(
+            &std::fs::read_to_string(crate::contracts::path("core/sms_contract.json")).unwrap(),
+        )
+        .unwrap()
     }
 
     /// Design 82 D3: Meldinger's lock level. Every `app.lock` row - the stored choice and `sms_mode` - gives its

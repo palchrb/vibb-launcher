@@ -20,7 +20,7 @@ import org.junit.Test
 import java.io.File
 
 /** Design 99: Snarveier's model, the tap check, the window's choice, the pacing, the picker - and the shared contract
- * `shortcuts.json` (byte-identical with `server/testdata/`, whose `tests::shortcuts` reads the same rows). */
+ * `shortcuts.json` (in `contracts/core/`, whose `tests::shortcuts` reads the same rows). */
 class ShortcutsTest {
     private val contractText = javaClass.classLoader!!.getResource("shortcuts.json")!!.readText()
     private val contract = ServerJson.parseToJsonElement(contractText).jsonObject
@@ -77,12 +77,6 @@ class ShortcutsTest {
         // The status report's key.
         val body = ServerJson.encodeToJsonElement(StatusReportRequest.serializer(), StatusReportRequest(lockReason = "none", kioskEngaged = true, shortcuts = shortcutsReport(panel))).jsonObject
         assertEquals(contract.getValue("report"), body.getValue("shortcuts"))
-    }
-
-    @Test
-    fun `the two copies of the contract are identical`() {
-        val serverCopy = listOf("../../server/testdata/shortcuts.json", "../server/testdata/shortcuts.json").map(::File).first { it.exists() }
-        assertEquals(serverCopy.readText(), contractText)
     }
 
     // ---- the panel ----

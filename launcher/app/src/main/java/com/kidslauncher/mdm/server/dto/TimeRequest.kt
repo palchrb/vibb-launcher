@@ -7,7 +7,7 @@ import kotlinx.serialization.Serializable
  * anchor's notification. [id] is the request's own 32 lowercase hex characters (the server's key, so
  * a retried POST is one event), [askedAtMs] when the kid asked. Nothing else - where the phone stands
  * the server reads from its own last report. Pinned by `time_request.json`'s `request`
- * (byte-identical with `server/testdata/`, `TimeRequestsTest`).
+ * (in `contracts/core/`, `TimeRequestsTest`).
  */
 @Serializable
 data class TimeRequestBody(val id: String, val askedAtMs: Long)

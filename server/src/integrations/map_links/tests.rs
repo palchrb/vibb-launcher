@@ -10,7 +10,7 @@ use crate::integrations::Integration;
 use crate::tests::music::Canned;
 use crate::tests::{TestApp, assert_redirect};
 
-fn read(path: &str) -> Value {
+fn read(path: impl AsRef<std::path::Path>) -> Value {
     serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
 }
 
@@ -118,11 +118,10 @@ fn every_preview_row_is_judged_as_recorded() {
 }
 
 /// Code QA L6: design 114's rows 15-16 read from a report as the phone reads them (`setup_steps.json`'s `map_readings`,
-/// which the launcher's `SetupStepsTest` runs through `playLinksDone` and `vibbLinksDone`; `setup_status`'s tests
-/// compare the copies).
+/// which the launcher's `SetupStepsTest` runs through `playLinksDone` and `vibbLinksDone`).
 #[test]
 fn the_setup_readings_are_the_phones() {
-    for row in read("testdata/setup_steps.json")["map_readings"]
+    for row in read(crate::contracts::path("core/setup_steps.json"))["map_readings"]
         .as_array()
         .unwrap()
     {

@@ -16,7 +16,7 @@ import org.junit.Test
 import java.io.File
 
 /** Design 107: the channels' table, the report's reading, Settings' row - and the shared contract
- * `notification_channels.json` (byte-identical with `server/testdata/`, whose `notification_channels::tests` and
+ * `notification_channels.json` (in `contracts/core/`, whose `notification_channels::tests` and
  * `tests::notification_channels` read the same rows). */
 class NotificationChannelsTest {
     private val contractText = javaClass.classLoader!!.getResource("notification_channels.json")!!.readText()
@@ -104,13 +104,6 @@ class NotificationChannelsTest {
             )
             assertEquals(name, row, ServerJson.encodeToJsonElement(NotificationChannelsReport.serializer(), report))
         }
-    }
-
-    @Test
-    fun `the two copies of the contract are identical`() {
-        val serverCopy = listOf("../../server/testdata/notification_channels.json", "../server/testdata/notification_channels.json")
-            .map(::File).first { it.exists() }
-        assertEquals(serverCopy.readText(), contractText)
     }
 
     // ---- Settings' row (§6) ----

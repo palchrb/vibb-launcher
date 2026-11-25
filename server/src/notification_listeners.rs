@@ -1,6 +1,6 @@
 //! The apps with notification access on a phone. The report's `notification_listeners` cleaned ([clean]): every app
 //! Android lets read notifications besides Vibb One, each with `off` while Vibb has it hidden or suspended. The shared
-//! contract is `testdata/notification_listeners.json` (byte-identical in the launcher's test resources): `policy`
+//! contract is `contracts/core/notification_listeners.json`, which the launcher reads too: `policy`
 //! (Advanced › Android Auto as the policy carries it), `report`/`report_none`, the launcher's `read` rows, the `clean`
 //! rows and the `unknown` rows (which listeners About This Phone names in orange).
 //!
@@ -167,7 +167,7 @@ pub fn about(
 mod tests {
     use super::*;
 
-    const CONTRACT: &str = include_str!("../testdata/notification_listeners.json");
+    const CONTRACT: &str = crate::contracts::contract!("core/notification_listeners.json");
 
     fn contract() -> Value {
         serde_json::from_str(CONTRACT).unwrap()
@@ -239,15 +239,5 @@ mod tests {
         let row = about(Lang::En, &listeners[1..], &known, &installed);
         assert!(!row.orange);
         assert_eq!(row.value, "Only Vibb One");
-    }
-
-    #[test]
-    fn the_contract_is_identical_to_the_launchers_copy() {
-        let launcher = std::fs::read_to_string(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../launcher/app/src/test/resources/notification_listeners.json"
-        ))
-        .unwrap();
-        assert_eq!(launcher, CONTRACT, "the launcher's copy differs");
     }
 }

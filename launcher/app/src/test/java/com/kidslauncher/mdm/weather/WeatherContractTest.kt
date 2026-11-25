@@ -19,7 +19,7 @@ import org.junit.Test
 import java.io.File
 
 /**
- * Design 75 §7.3: the weather's shared contract `weather.json` (byte-identical with `server/testdata/`, whose
+ * Design 75 §7.3: the weather's shared contract `weather.json` (in `contracts/core/`, whose
  * `weather::tests::the_contract` writes its `answer`, `answer_line`, `now_answers` and `statuses` from recorded MET
  * answers) decodes into the DTOs, and every symbol code the answer sends - and every code yr maps - has its drawable
  * and its name. The words' strings (`WeatherWords`) come with step 2.
@@ -27,14 +27,6 @@ import java.io.File
 class WeatherContractTest {
     private val contract = javaClass.classLoader!!.getResource("weather.json")!!.readText()
     private val parsed = Json.parseToJsonElement(contract).jsonObject
-
-    @Test
-    fun `the contract is identical to the servers copy`() {
-        // Gradle runs unit tests with the module directory (launcher/app/) as the working directory.
-        val serverCopy = File("../../server/testdata/weather.json")
-        assertTrue("${serverCopy.absolutePath} not found", serverCopy.isFile)
-        assertEquals("${serverCopy.path} differs from the launcher's copy", serverCopy.readText(), contract)
-    }
 
     private fun answer() = ServerJson.decodeFromString(WeatherAnswer.serializer(), parsed.getValue("answer").toString())
 

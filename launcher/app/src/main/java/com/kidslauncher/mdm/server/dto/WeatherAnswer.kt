@@ -7,7 +7,7 @@ import kotlinx.serialization.Serializable
  * [status] is `ok` (the rest is set), `off`, `no_position` or `unavailable` (nothing else). Every string the
  * server computed is a key the phone maps to its own words and drawables (the model leaves out what it doesn't
  * know: a newer server never breaks this launcher; [v] changes only for a breaking shape). Pinned by `weather.json`'s
- * `answer` and `statuses` (byte-identical with `server/testdata/`, `WeatherContractTest`).
+ * `answer` and `statuses` (in `contracts/core/`, `WeatherContractTest`).
  *
  * Since 2026-11-04 the answer carries no place name (the user: "Vi dropper navnet").
  *

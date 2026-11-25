@@ -126,7 +126,7 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   copy of the rule with one window on today's weekday, a negative `id`, `until_ms` (its end as epoch ms) and
   `card_first: true`; every scheduled rule carries `until_ms: null` and `card_first: false`. A pause of that rule comes
   with a twin lift for the copy (`rule_id` the copy's). `TimeRule.untilMs` / `cardFirst`; the cache keeps them
-  (`PolicyGate` drops only the lifts). Contract: `server/testdata/lock_now.json`, `LockNowTest`. Since design 123 the
+  (`PolicyGate` drops only the lifts). Contract: `contracts/core/lock_now.json`, `LockNowTest`. Since design 123 the
   copy may be of a rule without days (served as itself too, never locking) or of a rule switched off for the phone
   (not served itself): `policy_on_demand`, `policy_off_rule`; no launcher code changed for it. The time-rule screen's
   title names such a copy by itself beside another rule in force (`pauseTitleRules`, design 123 QA L2).

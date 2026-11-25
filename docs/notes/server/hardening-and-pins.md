@@ -158,7 +158,7 @@ Step 1 (the contract and the storage; step 2, the PWA's side, below):
   number = `None`); step 2 words it.
 - Tests: `kid_pin::tests`, `kid_lock::tests::the_keyguard_fields_are_kept_typed`, `src/tests/kid_keyguard.rs` (the
   legacy, B, C sequence, clear, no key, the queue rule per condition, delivery and the `pending_command` keys with and
-  without `pin`, the intake), `power::a_launcher_report_raises_both` (`testdata/power_report.json`).
+  without `pin`, the intake), `power::a_launcher_report_raises_both` (`contracts/core/power_report.json`).
 
 Step 2 (Lock Screen & PINs; `docs/notes/server/pwa.md`, "Lock Screen & PINs", has the page's forms):
 

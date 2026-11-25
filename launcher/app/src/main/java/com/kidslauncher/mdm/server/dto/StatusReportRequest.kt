@@ -244,7 +244,7 @@ data class ZoneWatchReport(
  * clock): ongoing [unreachableSinceMs] with no until, the last ended one both, none neither
  * ([outageTimes]). In provider mode [provider] is the one that answered last (`quad9`,
  * `cloudflare`; left out before any). Never an address. Pinned by `dns_upstream_status.json`,
- * byte-identical with the server's `testdata/`. */
+ * in `contracts/core/`. */
 @Serializable
 data class DnsUpstreamReport(
     val rev: Long,

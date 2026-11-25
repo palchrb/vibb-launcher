@@ -129,7 +129,7 @@ has them. CI's aapt2 (`com.android.tools.build:aapt2:<AGP>-<build>:linux`) is ne
 with the `aapt2FromMavenOverride`: an AGP bump needs its entry by hand (resolve it in a throwaway build, as on
 2026-10-11).
 
-Shared between the two and checked by tests on both sides: `server/testdata/phone_vectors.json` and
+Shared between the two and checked by tests on both sides: `contracts/core/phone_vectors.json` and
 `launcher/app/src/test/resources/phone_vectors.json` must be identical (server `phone::tests`,
 launcher `PhoneNumbersTest`). The policy JSON shape is pinned on both sides
 (`policy_json_keys_snapshot` / `PolicyResponseCompatTest`). A change to the API goes into both
@@ -145,7 +145,7 @@ keeps the music app's, the music app sends exactly those. Spotify's host list `s
 (design 26c §6.2; provisional until the DNS capture) is byte-identical in both apps' test resources
 (`spotify::tests::hosts_match_the_contract`, `ContractFilesTest`, `MusicPlanTest`); a change goes into all three in
 one commit, with each side's constants (`HOST_SUFFIXES`/`EXACT_HOSTS`, `SPOTIFY_HOST_SUFFIXES`/`SPOTIFY_EXACT_HOSTS`).
-The launcher's status body with `time_state.zone` (design 34 P13; since 2026-11-25 with `storage_full`) is `server/testdata/time_status_report.json`,
+The launcher's status body with `time_state.zone` (design 34 P13; since 2026-11-25 with `storage_full`) is `contracts/core/time_status_report.json`,
 byte-identical in `launcher/app/src/test/resources/`: the launcher's `TimeStateZoneTest` encodes exactly it, the
 server's `devices_list::a_launcher_report_with_its_zone_shows_the_rules_end` posts it, and both compare the copies.
 The launcher's status body with `dns_upstream` (design 36 §4.2) is `contracts/core/dns_upstream_status.json`,
@@ -160,12 +160,12 @@ every `codes` row and compare the copies; the server's `device_pages::tests::mus
 reads the `music_codes` rows (the music app's version from its code), and `scripts/release-version.sh --selftest`
 checks both lists' rows against what the workflows build.
 The launcher's `POST /api/devices/power` body (design 38 §2; since 2026-10-25 its `off` with the shutdown's last stored fix,
-`location`, since design 131 with the fix's `check`) is `server/testdata/power_report.json`, byte-identical in
+`location`, since design 131 with the fix's `check`) is `contracts/core/power_report.json`, byte-identical in
 `launcher/app/src/test/resources/`: the launcher's `PowerEventsTest` encodes exactly it, the server's
 `power::a_launcher_report_raises_both` posts it (its instants moved to the last hour), and both compare the copies.
 The launcher's status body with `extra_locations` and `zone_watch` (design 64 step 2; design 131: a Wi-Fi fix's
 `check` - a `vibb_wifi` location with `link`, a `vibb_apple` extra without one - and `zone_watch.wifi_disagreed`) is
-`server/testdata/zone_status_report.json`, byte-identical in `launcher/app/src/test/resources/`: the launcher's
+`contracts/core/zone_status_report.json`, byte-identical in `launcher/app/src/test/resources/`: the launcher's
 `ZoneReportTest` encodes exactly it, the server's `zone_watch::a_launcher_report_raises_the_arrival` posts it (its
 instants moved to the last minutes), and both compare the copies. The policy's `location_policy.zones` is pinned by
 `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTest`. `server/testdata/zone_vectors.json` stays the
@@ -177,7 +177,7 @@ phone refuses - Device › Music's orange line) is `contracts/core/installed_app
 `app_updates::the_installed_apps_contract_raises_app_updated` posts it (`tests::music` posts its music row and reads
 the line), and both compare the copies.
 The launcher's `POST /api/devices/time-request` body and the three answers (design r13 §2.5), and the parent's answer
-as the policy carries it (design 100 §14.5), are `server/testdata/time_request.json`, byte-identical in
+as the policy carries it (design 100 §14.5), are `contracts/core/time_request.json`, byte-identical in
 `launcher/app/src/test/resources/`: `request`, `answers`, `policy_no`/`policy_yes`/`policy_unnamed`/`policy_lift_only`/
 `policy_ended` (the `time_policy` fragment the server serves: `request_answers: true`, `answer {request_id, answer, by?,
 at_ms, lift_id?, minutes?}`, lifts with `by?`/`at_ms`; `policy_ended` a yes whose pause was ended early - no `lift_id`,
@@ -221,7 +221,7 @@ The fixed emergency list (design 73 §4: `always`, `by_country`, `vectors` of a 
 `emergency::tests` and the launcher's `EmergencyMenuTest` check their constants (`emergency::ALWAYS`/`BY_COUNTRY`,
 `Emergency.ALWAYS`/`BY_COUNTRY`) against it, run every vector and compare the copies. The policy's
 `call_policy.emergency_menu` is pinned by `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTest`.
-The weather's contract (design 75 §7.1) is `server/testdata/weather.json`, byte-identical in
+The weather's contract (design 75 §7.1) is `contracts/core/weather.json`, byte-identical in
 `launcher/app/src/test/resources/`: `forms` and `now_keys` (every key and form the server may send), the rule vectors
 (`words`, `periods`, `dark`, `cells`, `nowcast`) and the answers (`answer`, `answer_now_ms`, `answer_line`,
 `now_answers`, `statuses`). The server's `weather::tests` runs every row and writes the computed parts from the
@@ -247,18 +247,18 @@ compare the copies. The policy's `calendar.kid_caldav` is pinned by `policy_json
 `PolicyResponseCompatTest`.
 
 The phones' server address rule (launcher security review S-M1, 2026-11-04: `https://`, or `http://` to a Tailscale IP
-literal) is `server/testdata/server_url_vectors.json` (`{url, verdict}`: `https`, `tailnet_http`, `refused`),
+literal) is `contracts/core/server_url_vectors.json` (`{url, verdict}`: `https`, `tailnet_http`, `refused`),
 byte-identical in `launcher/app/src/test/resources/`: the server's `config::tests::the_server_url_vectors`
 (`config::check_server_url`, Phone Setup and `PHONE_SERVER_URL`) and the launcher's `ServerTransportTest`
 (`serverUrlVerdict`, the QR, the Settings edit and every server client) run every row and compare the copies.
-The longest "pause all restrictions" (2026-11-04, QA of pause-end-report M1) is `server/testdata/restrictions_pause.json`
+The longest "pause all restrictions" (2026-11-04, QA of pause-end-report M1) is `contracts/core/restrictions_pause.json`
 (`{pause_max_ms}`), byte-identical in `launcher/app/src/test/resources/`: the server's
 `models::paused_at_tests::the_longest_pause_is_the_shared_contracts` (`RESTRICTIONS_PAUSE_MAX_MS`: a paused report older
 than it is over) and the launcher's `RestrictionsPauseTest` (`RESTRICTIONS_PAUSE_DURATION_MS`) check their constant against
 it and compare the copies.
 
 The launcher's certificate check (design 76: the server's issuer pinned once the server switches it on) is
-`server/testdata/server_tls_report.json`, byte-identical in `launcher/app/src/test/resources/`: `report` (the status
+`contracts/core/server_tls_report.json`, byte-identical in `launcher/app/src/test/resources/`: `report` (the status
 body's `server_tls`: `enforcing`, `seen`, `outside` rows of both kinds), `policy` (the policy's `server_tls` per server
 state: `{}` watching, `{"enforce": true}` on, `{"enforce": false}` off), `flags` (the phone's stored flag from each
 policy value - absent and malformed included - start state and connection: `passing`, `failing`, `tailnet`,
@@ -270,7 +270,7 @@ tailnet connection, only as tailnet http). The launcher's `ServerPinsTest` encod
 every `policy` row; both compare the copies. The built-in set itself stays the launcher's (`ServerPins.kt`): the server
 never judges a chain. The policy's `server_tls` is pinned by `policy_json_keys_snapshot` and `ServerPinsTest`.
 
-The SMS engine's contract (design 77 §7, step 1) is `server/testdata/sms_contract.json`, byte-identical in
+The SMS engine's contract (design 77 §7, step 1) is `contracts/core/sms_contract.json`, byte-identical in
 `launcher/app/src/test/resources/`: `modes` (each mode pair: the server sends it, the launcher applies it), `policy` (a seeded `call_policy` with the SMS keys:
 the per-contact `sms_in`/`sms_out`/`mms`, `sms_names`, `own_numbers`, `mmsc_hosts`, `sms_held_drop`, design 80's
 `sms_groups`; `groups_off` the switch off; design 83's `mmsc_hosts_row`, a SIM's row of entries), `report` (the exact
@@ -314,7 +314,7 @@ report's `200 {"wanted_logos"}`), `upload`
 `WantedLogos`, hashes the PNG and reads the rows; both compare the copies. No policy key: the wanted list rides on the
 report's answer.
 
-A rule turned on now (design 93, "Slå på nå") is `server/testdata/lock_now.json`, byte-identical in
+A rule turned on now (design 93, "Slå på nå") is `contracts/core/lock_now.json`, byte-identical in
 `launcher/app/src/test/resources/`: `policy` (a `time_policy` the server serves: a copy of
 Leggetid first - negative `id`, one weekday's window, `until_ms`, `card_first: true` -, a scheduled Skole and Leggetid
 with `until_ms: null` and `card_first: false`, a pause of Leggetid and its twin for the copy - every lift with design 100's
@@ -329,7 +329,7 @@ rewrites them); the launcher's `LockNowTest` decodes them and runs every case th
 
 The round "Mobilnett" (design 94, data roaming; design 95 revision 3, Bare Vibb and the mobile-network settings lock;
 design 97, "I utlandet", `where` and the kid's switch) is
-`server/testdata/mobile_network.json`, byte-identical in `launcher/app/src/test/resources/`: `policy` (the top-level `abroad`,
+`contracts/core/mobile_network.json`, byte-identical in `launcher/app/src/test/resources/`: `policy` (the top-level `abroad`,
 `apps_mobile` and `mobile_settings_locked` for a new phone and after each save), `abroad_choice` (the launcher's
 reading of `abroad`, a missing one Ingen data, no policy `none`), the rule rows `roaming_locked` and `settings_locked`
 (each with the pause's lift), `where` (the launcher's home/abroad/unknown from telephony), `shapes` (the VPN's shape,
@@ -344,7 +344,7 @@ decodes the policy rows, runs every rule, `where`, shape and kid-row row through
 `mobileSettingsLocked`, `whereOf`, `parentSinkOn`, `applyShape`, `sinkReason`, `reportedSink`, `alwaysOnFor` and
 `kidMobileRow`, and encodes `report` exactly; both compare the copies. The policy's three keys are pinned by `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTest`.
 
-The heartbeat report (design 95 §3.5, step 95-T2) is `server/testdata/status_heartbeat.json`, byte-identical in
+The heartbeat report (design 95 §3.5, step 95-T2) is `contracts/core/status_heartbeat.json`, byte-identical in
 `launcher/app/src/test/resources/`: `policy` (the top-level `status_heartbeat`,
 `status_heartbeat_fields` and `status_gzip`), `heartbeat_fields` (what a heartbeat carries and the phone's hash leaves
 out) and `fields_tag` (their name in a heartbeat), `full` (a full report with its `hash`), `heartbeat` (the heartbeat
@@ -368,7 +368,7 @@ its pure functions; the server's `tests::airplane_mode` posts the reports and ch
 `quick_controls_mask`.
 
 The parent code's pause of the rule in force on the phone (design 98 §4.4, Foreldrekode) is
-`server/testdata/rule_pause.json`, byte-identical in `launcher/app/src/test/resources/`:
+`contracts/core/rule_pause.json`, byte-identical in `launcher/app/src/test/resources/`:
 `lengths` (the PWA's `RULE_LIFT_MINUTES`), `policy` (the top-level `rule_pause: true`, a copy's `copy_of` and the lifts
 with `phone_key` - since design 100 every lift with `at_ms`, the PWA's with `by`, and `time_policy.request_answers`), `request` (the exact `POST /api/devices/rule-pause` body), `answers` (each body's status and answer:
 accepted, a retry's same ids, `over`, `unknown_rule`, the refused 400s; its instants are moved to the last minutes),
@@ -381,7 +381,7 @@ checks the `time_lifts` rows and the security event, and serves `policy`'s lift 
 `lock_now.json`'s copy rows carry `copy_of`. The policy's `rule_pause`, `lifts[].phone_key` and `rules[].copy_of` are
 pinned by `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTest`.
 
-Snarveier, the kid's quick panel in the shade (design 99), is `server/testdata/shortcuts.json`, byte-identical in
+Snarveier, the kid's quick panel in the shade (design 99), is `contracts/core/shortcuts.json`, byte-identical in
 `launcher/app/src/test/resources/`: `bit` (128 in `quick_controls_mask`), `max_items`
 (4), `items` (each key with its gating bit, `null` for none, and its names in nb and en), `defaults` (the default order),
 `report` and `report_hidden` (the exact `shortcuts` of a status report) and `clean` (the server's cleaning: unknown keys
@@ -391,7 +391,7 @@ checks its keys, bits and default order against `items` and `defaults` and encod
 page's sub-lines from the names, and `intake_limits` keeps the report's keys; both compare the copies. No policy key:
 bit 128 rides in `quick_controls_mask`.
 
-Wi-Fi sign-in and Chrome only for logins (design 102) is `server/testdata/login_windows.json`, byte-identical in
+Wi-Fi sign-in and Chrome only for logins (design 102) is `contracts/core/login_windows.json`, byte-identical in
 `launcher/app/src/test/resources/`: `policy` (the top-level
 `captive_portal` and `login_browser` for a new phone and after the page's saves: the switch, Advanced's parent-code
 requirement, "one more", the role, a preset ticked and unticked with an own entry equal to its host kept, Chrome
@@ -406,7 +406,7 @@ check (`loginEntry`); both compare the copies. The window's and the role's own r
 `captive_portal` and `login_browser` are pinned by `policy_json_keys_snapshot` and the launcher's
 `PolicyResponseCompatTest`.
 
-The blocked notification channels (design 107) are `server/testdata/notification_channels.json`, byte-identical in
+The blocked notification channels (design 107) are `contracts/core/notification_channels.json`, byte-identical in
 `launcher/app/src/test/resources/`: `channels` (the table in display order:
 `{key, id, nb, en, feature, orange, attention}`, the names the phone's own strings), `report`, `report_none` and
 `report_all_off` (the exact `notification_channels` of a status report), `read` (the launcher's reading of Android's
@@ -419,7 +419,7 @@ launcher's `NotificationChannelsTest` checks its table and names against `channe
 row through `channelsReport` and encodes the reports exactly; both compare the copies. No policy key.
 
 The apps with notification access and Android Auto (the policy's `allow_android_auto`, Advanced › Android Auto) are
-`server/testdata/notification_listeners.json`, byte-identical in `launcher/app/src/test/resources/`: `android_auto`
+`contracts/core/notification_listeners.json`, byte-identical in `launcher/app/src/test/resources/`: `android_auto`
 (the package), `policy` (`off`, a new phone's, and `on`), `report`/`report_none` (the exact `notification_listeners` of
 a status report: `[{package, off, system}]`, Vibb One left out, `off` only while hidden), `read` (the launcher's reading of Android's enabled listeners),
 `clean` (the server's cleaning) and `unknown` (the listeners About This Phone names in orange: reading, not a system app,
@@ -430,7 +430,7 @@ and `intake_limits` keeps the reports' keys; the launcher's `SystemReadersTest` 
 Android Auto's plan rows stay the launcher's (`SystemReadersTest`). The policy's `allow_android_auto` is pinned by
 `policy_json_keys_snapshot` and `SystemReadersTest`.
 
-App push (design 108, Vibb as the UnifiedPush distributor) is `server/testdata/unified_push.json`, byte-identical in
+App push (design 108, Vibb as the UnifiedPush distributor) is `contracts/core/unified_push.json`, byte-identical in
 `launcher/app/src/test/resources/`: `policy` (the policy's `unified_push`
 `{on, origin, regs, stopped, refresh}` in the rows `off`, `on_empty`, `on_two`, `stopped`, `origin_changed`, and design 108b's
 `refresh_outside` and `refresh_refused` - `refresh` is `[{reg, why: outside|refused}]`, an unknown `why` read as `outside`), `older_server`
@@ -499,7 +499,7 @@ sends - never the message's text) and `clean` (the server's keeping of a sent `r
 server's `install_failure::tests` runs `clean`, words every code made and compares the copies, and
 `tests::tracked_apps::an_install_failures_reason_is_stored_and_worded` posts the reports. No policy key.
 
-The phone setup status (design 114) is `server/testdata/setup_steps.json`, byte-identical in
+The phone setup status (design 114) is `contracts/core/setup_steps.json`, byte-identical in
 `launcher/app/src/test/resources/`: `steps` (the one step table in display order: `key`, `need`, `read_by`, `when`,
 `summary`, `level`, `features`, `phone_page`, `names`), `features` (each PWA choice a step stops and its page and
 section), `report`/`report_no_hold` (the exact `setup` of a status report, the setup hold's `hold_until_ms` and
@@ -577,7 +577,7 @@ pinned by `policy_json_keys_snapshot` and `PolicyResponseCompatTest`.
 - `.github/workflows/launcher.yml`, `server-ci.yml` and `music.yml` run on every push/PR, but their build job
   (`launcher-build`, `server-build`, `music-build`) only runs when its own directory or workflow changed
   (`launcher.yml` also on `.github/actions/build-tsnet/` and the music files its tests read: the bridge, the
-  shared snapshots, the three `spotify_hosts.json`, `server/testdata/time_status_report.json`,
+  shared snapshots, the three `spotify_hosts.json`, `contracts/core/time_status_report.json`,
   `dns_upstream_status.json`, `power_report.json`, `zone_status_report.json`, `launcher_tag_codes.json`,
   `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json`, `server_url_vectors.json`, `restrictions_pause.json`, `server_tls_report.json`, `sms_contract.json`, `contact_request.json`, `app_logos.json`, `lock_now.json`, `mobile_network.json`, `status_heartbeat.json`, `airplane_mode.json`, `rule_pause.json`, `shortcuts.json`, `login_windows.json`, `notification_channels.json`, `notification_listeners.json`, `unified_push.json`, `setup_steps.json`, `install_failure.json`, `app_access.json`, `blocked_numbers.json`, `clock_skew.json` and `device_key.json`, `server/testdata/map_links/contract.json` and
   `server/testdata/wifi_lookup/contract.json`, `music/gradle/` and `music.yml`, and the server's and music's `storytel_token_answers.json`, and `server/testdata/doh_hosts.txt`, and `scripts/yr-symbols.py` with its vendored `yr-symbols-11.svg` and `scripts/fake-portal.py` (the changes job runs both `--selftest`s always); `music.yml` also on the shared

@@ -1,5 +1,5 @@
 {
-  "about": "Design 75's contract, byte-identical in server/testdata/ and launcher/app/src/test/resources/. Times in words, periods and nowcast are local wall times in the row's zone; nowcast minutes count from 2026-11-03T14:00:00Z. forms, now_keys, dark[].expect, answer, answer_now_ms, answer_line, answer_words (the same answer with rain laid over 16:00-18:00), now_answers and statuses are written by the server's weather::tests::the_contract (WEATHER_CONTRACT_WRITE=1).",
+  "about": "Design 75's contract, kept once in contracts/core/ (design 133). Times in words, periods and nowcast are local wall times in the row's zone; nowcast minutes count from 2026-11-03T14:00:00Z. forms, now_keys, dark[].expect, answer, answer_now_ms, answer_line, answer_words (the same answer with rain laid over 16:00-18:00), now_answers and statuses are written by the server's weather::tests::the_contract (WEATHER_CONTRACT_WRITE=1).",
   "answer": {
     "checked_at_ms": 1793714422000,
     "days": [

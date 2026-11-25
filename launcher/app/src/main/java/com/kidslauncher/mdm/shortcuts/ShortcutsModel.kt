@@ -8,7 +8,7 @@ import kotlinx.serialization.Serializable
 
 /*
  * Snarveier, the kid's quick panel in the shade (design 99) as data - pure, no Android imports, `ShortcutsTest`. The
- * shared contract is `shortcuts.json` (byte-identical with `server/testdata/`): the keys, their gating bits, the
+ * shared contract is `shortcuts.json` (in `contracts/core/`): the keys, their gating bits, the
  * default order and the report. The panel's own rules - what shows, what is dimmed, what a tap may do - are the
  * launcher's alone.
  */

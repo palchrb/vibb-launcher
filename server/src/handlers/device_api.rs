@@ -3395,7 +3395,7 @@ pub async fn power(
 /// `POST /api/devices/time-request` takes at most this much (design r13 §2.5): an id and an instant.
 pub const TIME_REQUEST_BODY_LIMIT: usize = 1024;
 
-/// The phone's request for more screen time (design r13 §2.5, `server/testdata/time_request.json`'s
+/// The phone's request for more screen time (design r13 §2.5, `contracts/core/time_request.json`'s
 /// `request`): its own `id` (16-64 lowercase hex, the event's key) and when the kid asked.
 #[derive(Debug, serde::Deserialize)]
 pub struct TimeRequestBody {

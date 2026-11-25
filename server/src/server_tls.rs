@@ -4,7 +4,7 @@
 //! Every phone checks the chain Android validated for this server against its built-in set (Let's
 //! Encrypt's roots, ZeroSSL's operator Sectigo's - the launcher's alone: the server never judges a chain) and reports
 //! what it sees in every status report: `server_tls: {enforcing, seen?: {in_set, name, pin, network, at_ms},
-//! outside: [{kind, host, name, pin, network, at_ms}]}` (`testdata/server_tls_report.json`, [sanitize]). Per phone the
+//! outside: [{kind, host, name, pin, network, at_ms}]}` (`contracts/core/server_tls_report.json`, [sanitize]). Per phone the
 //! server is in one [State]:
 //! - `watching` (no row, the start): the policy carries `server_tls: {}` - no `enforce`, so a phone keeps its flag
 //!   (R-1). In-set sightings spanning [WINDOW] of receive time (never the phone's `at_ms`), on [WINDOW_DAYS] days, on
