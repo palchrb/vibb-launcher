@@ -130,6 +130,31 @@ there; a gesture inset lower than 24 dp gets the rest). To compare with `jelly36
 stop the emulator, set `hw.mainKeys = no` in the copy and cold boot it, then `adb reboot` once (the bar comes back only
 with a fresh SystemUI); the copy is then `jelly36` with this phone's data. Remember to set it back to `yes`.
 
+**Faster gates: snapshots** (run 2026-11-25/26). A gate whose rows don't each need a wiped phone provisions once and
+loads a snapshot per row instead of `-wipe-data` and §4 again. Start the AVD as above (`-wipe-data -no-snapshot-save`;
+saving by hand still works, the AVDs' `<temp>` data partition included, within that emulator session), then:
+
+```sh
+adb -s emulator-5556 emu avd snapshot save gate-do      # Device Owner, not enrolled (Koble til up): 3-5 s, ~2.4 GB
+# enrol, finish the setup flow, set the PINs, then
+adb -s emulator-5556 emu avd snapshot save gate-base    # enrolled with its key, policy applied
+# the server's data is part of the state: copy it with each save, put it back with each load
+kill <server pid>; cp -a srv/data srv-data-gate-base; <start the server again>
+# a row from the saved phone:
+adb -s emulator-5556 emu avd snapshot load gate-base    # 3 s; the guest clock is right at once
+adb reconnect offline                                    # adb can stay "offline" after a load
+adb -s emulator-5556 emu avd snapshot delete gate-base  # at the end - each one is ~2.5 GB of the tight disk
+```
+
+Measured: a load 3 s against ~3.5-4 min for a wipe, §4's provisioning, the Koble til enrolment and the setup flow (boot
+32-85 s alone); the run of 2026-11-25/26 loaded six times (§6bp's rows after the control and row 13 on both images, a
+second pass on 16, §6bs's start on 14), about 20-25 minutes saved, and no row needed a second wiped image. A row that rewrites the server's view of
+the phone (a new key, a re-enrolment) runs last from a snapshot, or the server's data goes back with the load. Before a
+save that later rows drive without adb (§6bp's cut closes adb), set what the console can't do later: 3-button navigation
+(`adb shell cmd overlay enable-exclusive --category com.android.internal.systemui.navbar.threebutton`): the console's
+touches work, but its key events (`event send EV_KEY:...`) and the gesture navigation's swipes never reached
+`jelly36`'s screen, while the navigation bar's Back is a touch. `event text` types, `:`, `/` and `.` included (send a URL in pieces).
+
 ## 3b. The Jelly Star's size, font scale, time zone, adb-installed apps (design 34 step 0)
 
 **Density.** The AVD `handy36` runs 480x854 at 320 dpi = 240x427 dp; the Jelly Star is 480x854 at 240 dpi =
@@ -5944,6 +5969,66 @@ Findings:
    and drops the old one (`enrolmentDrops`); the adopted key is never reused for an enrolment (`enrolKeyAlias`). Rows
    6-13 to run again with the key book kept (not 6').
 
+### The run of 2026-11-25/26 (branch `gate-rc4-rest`, main `9f6aab016` with `koble-til-key`)
+
+Rows 5-13 again with the key book kept, and a control. The debug launcher and a debug server (`--features
+emulator_keys`, `LAUNCHER_DEBUG_SIGNATURE_CHECKSUM`) from the same tree, the phone behind §6br's relay on 3150 (its
+policy switch for row 13); Android 16 on `jelly36` (Google Play, `-wipe-data`), Android 14 on `compat34` (Google APIs,
+`-wipe-data`, `adb root` for the Keystore's database). Each phone: Device Owner by adb, enrolled on Koble til with a
+typed code, the setup flow finished, Android's PIN by the policy (Lås: Android's lock, Barne-PIN 1357), "Block USB
+debugging" off; saved as a snapshot (§3, "Faster gates") before the control, and loaded again for the rows. The cut as
+above (the main file to 200 bytes, `device_key.xml` and `device_key_adopted.xml` kept). With adb gone, the console drove
+the screen (touches, `event text`, `screenrecord screenshot`); 16 ran twice - the first pass on gesture navigation,
+where the console's Back never registered, the second with 3-button navigation set before the snapshot. Row 13 on each
+image from the not-yet-enrolled snapshot, a new phone in the PWA, the relay dropping `GET /api/devices/policy`.
+Screenshots in the session's `scratchpad/g-rc4/` (not committed).
+
+| Row | Android 14 (`compat34`) | Android 16 (`jelly36`) |
+|---|---|---|
+| Control | **Pass.** A healthy enrolled phone with its key, rebooted: Android's PIN, Home with the policy's apps, lock task `LOCKED`, syncs; no Koble til, no `ConnectActivity` start | **Pass.** The same |
+| 5 | **Pass.** The witness `{"enrolled":true,"policy_applied":true,"server_url":"http://10.0.2.2:3150"}`; `device_key.xml` adopts `device_key_1`, `device_key_adopted.xml` the same; the Keystore's database has `device_key_1` for the app's uid | **Pass.** The same (`device_key_1`; the Keystore not read: no root on `jelly36`) |
+| 6 | **Pass.** Android's PIN pad after the reboot; Koble til with `http://10.0.2.2:3150` filled in and Emergency call under the button (`34-bp6-koble.png`); `Home hasn't started yet, but the phone is enrolled - keeping its preferences`, no "Resetting preferences" | **Pass**, both passes (`36-bp6-koble-pass2.png`) |
+| 7 | **Pass.** "Call 112?" with Cancel and Call; Cancel back to Koble til | **Pass** |
+| 8 | **Pass.** The navigation bar's Back: Home with nothing allowed (Phone book, Settings); Phone book, then Back: Koble til again | **Pass** (second pass, the same; on the first pass the console's Back reached the screen once). Also by adb on row 13's phone: `input keyevent BACK` - Home; `HOME` - Koble til again |
+| 9 | **Pass.** The drawer's gear: the gate's dialog; a wrong code "That code didn't match. Try again." (finding 3: the first try showed Koble til over the dialog) | **Pass, with a note.** The gate's dialog; a wrong code refused; **the parent's real PIN opens Settings** (Server URL "Not set", Setup "1 step left") - the parent PIN lives in its own file (`pin_vault.xml`), not in the cut one, so the row's "no parent code stored, OK disabled" no longer describes the build: the gate holds, the parent's code still works |
+| 10 | **Pass.** adb `offline` from the fallback after the unlock until developer options were turned on again after row 11 (the restrictions not readable meanwhile) | **Pass.** The same |
+| 12 | **Pass.** `https://other.example.org`: the address rule's line under the fields ("The phone only uses a server address that starts with https:// ..." - finding 4), no `Koble til: enrolling` line in the log, no request at the relay. The old used code on `http://10.0.2.2:3150`: "That code didn't work. Check it and try again, or make a new one." (`enrolment failed (EnrollFailure)`); the old key still in use (finding 2) | **Pass.** The same, on both passes |
+| 11 | **Pass.** A new code typed: `Koble til: enrolled`, the stream and the policy at once, no setup flow, Home with the policy's apps (`34-bp11-enrolled.png`); `device_key.xml` adopts `device_key_3` (the new key id `vji-EX17yCYlwm_ojPX47w` in the server's `device_keys`), `device_key_1` gone from the key book **and from the Keystore** (`keyentry` for the uid: `device_key_3` alone) | **Pass.** The same (`device_key_3`, `YcdGe_El-...`; `device_key_1` gone from both files) |
+| 13 | **Pass.** The witness `{"enrolled":true,"server_url":"http://10.0.2.2:3150"}` (the policy dropped by the relay), the cut, the reboot: Koble til with the address; Back: Home with every app, lock task `NONE`; `APPLICATION_PREFERENCES` opens Settings with no code | **Pass.** The same |
+
+adb came back after row 11 only by hand: the fallback had turned developer options off, and Settings' "Re-enter your
+PIN" before the seventh tap on Build number needs Enter, which the console can't send - the PWA's lock switched to
+Vibb's own lock (Android's PIN cleared), a pause, then Build number and USB debugging by touch.
+
+Findings (none blocks rc.4; no code changed here):
+
+1. **ANRs right after a boot on both images, Vibb One's among them.** Every boot of these images brought a burst of
+   "isn't responding" dialogs - System UI, Phone, Play services, Gboard, Pixel Launcher - with the guest's CPU pressure
+   at 70-76 % and `kcompactd`/`kswapd` busy (2 GB images). Vibb One's were `executing service ...KidVpnService` (main
+   thread in `VpnService.Builder.establish` from `KidVpnService.onCreate`, which also reads the 80 000-line block list
+   from disk on the main thread, `DnsFilterEngine.loadFromDisk`), `executing service ...CommandListenerService`, and
+   input timeouts with an idle main thread. Environment first; the one thing ours: `KidVpnService.onCreate` does the
+   list load and the tunnel's `establish` on the main thread, which a slow phone's boot could push past the service's
+   20 s. Repro: either image, any reboot, `adb logcat -d | grep -A3 'ANR in me.vibb'`; stacks in `dumpsys dropbox
+   --print data_app_anr`.
+2. **After a refused code on Koble til the phone syncs again with its old key** (14 and 16, three times). Typing the
+   right server's address with an old (used) code: "That code didn't work", then 3-16 s later the command stream opens
+   as the phone's old device (`command stream opened device=4`), the policy, apps and status follow, Android's lock and
+   the policy's Home come back - while Koble til keeps coming back at every Home (`enrolled` is still gone). The typed
+   address is kept, and the adopted key (kept by design until a new enrolment) signs the requests, which the server
+   still takes. Not harmful - the phone is back under its policy - but the screen asks for a code the phone no longer
+   needs, and a parent may not see why. Repro: §6bp row 12's second half, then watch the relay or `adb logcat -s
+   CommandListenerService`. For the owner: keep (the code still re-binds a fresh key), or let a working stream with
+   the adopted key restore `enrolled` and close Koble til.
+3. **Koble til comes up over the drawer's Settings dialog** (14 and 16, the first try each). After Back, swipe up for
+   the drawer and tap its gear: the gate's dialog opens, then Koble til is started over it (the drawer's close is a new
+   resume of Home); Back shows the dialog underneath. The documented way to the Tailscale key ("Back, the drawer's
+   Settings") needs Back twice. Repro: rows 8-9 on a cut phone.
+4. **The address rule's text speaks of https** when the address is https but another host
+   (`https://other.example.org`): "The phone only uses a server address that starts with https:// (plain http only to a
+   Tailscale IP ...)". `server_url_refused` covers both rules; for the host rule the line doesn't say what is wrong.
+   Words only.
+
 ## 6bq. User certificates, the provisioning baseline, storage full (branch `storage-certs-baseline`) - run 2026-11-25
 
 On **Android 14 and 16** with the user's OK. The debug launcher and a server of this branch. Logcat `AppEnforcer`,
@@ -6079,7 +6164,7 @@ Music: another app's controller (squeue 18; `music/CLAUDE.md`). The probe app's 
 
 Not run here: the QR (row 1 of §6bp, §6bq's baseline through a real QR), Android 17 (no working image).
 
-## 6bs. After a small move: inconclusive scans, the shadow fingerprint, a mismatch ends still (design 134, branch `still-print`) - written, not run
+## 6bs. After a small move: inconclusive scans, the shadow fingerprint, a mismatch ends still (design 134, branch `still-print`) - run 2026-11-25/26
 
 `docs/design/134-still-place-fingerprint.md` §8 and revision 3's row (j): on **Android 14 and 16** with the owner's
 OK (the 17 images don't run; 17 is read from its behaviour-change list; the Jelly Star is on 16), a debug and a release
@@ -6114,3 +6199,38 @@ own `FIX` (wait for the beat, or `am broadcast` a sync and let the beat be due).
 What can't be faked here: real room-to-room levels, real neighbours and flats, the HAL's behaviour in deep Doze, the
 real throttle under the anchor's importance with other apps scanning, a real sensor's delay - the Jelly Star's §9
 (`docs/testing/new-phone-model.md` §2).
+
+### The run of 2026-11-25/26 (branch `gate-rc4-rest`, main `9f6aab016`)
+
+Android 14 on `compat34` (Google APIs, the `network` test provider off as above) and Android 16 on **`aosp36`** (AOSP,
+no `network` provider) - not `jelly36`: the row needs `adb root` for the clock (`date`), and so do the beats below. The
+debug launcher and server of §6bp's run; a phone each (Kid14 from §6bp's snapshot, Kid16c fresh), Regularly every 10
+min, Location on, no Android PIN in the way of adb on 16. **Settled rows by the clock**: the made-up home scan (the
+setup above) and the home connection (`psk`, 7), a Locate with the satellite feed (8 satellites, 10 m), the clock 31
+min on (`date`, root), the time zone moved to a zone where it is already tomorrow (`Pacific/Kiritimati` - `America/Adak`
+is still today when the first teach was in the UTC evening), a second Locate: `scan usable=4 trusted=4 networks=3`.
+**The beats by the clock too**: each "next beat" below is the clock 10 min on (root `date`), then a PWA save as the
+nudge (`Sync for [clock]`/`[sse]`) - the heartbeat's own `FIX`, not a Locate, unless a row says so. A print was taken
+afresh (home's scan, the feed, a Locate: `StillPrint: taken devices=3`) before each row that needs one. Logs and the
+dumps in the session's `scratchpad/g-rc4/` (`34-bs-*`, `36-bs-*`).
+
+| Row | Android 14 (`compat34`) | Android 16 (`aosp36`) |
+|---|---|---|
+| a | **Pass.** `motion sensor`: the next sync `Motion trigger armed (start)` and `Location heartbeat: STILL` (the teaching Locate's fix is the vouch); the feed and a Locate: `StillPrint: taken devices=3` | **Pass.** The same |
+| b | **Pass, with notes.** `scan answer 0/4 ask=answered old`, `second scan old`, `attempt path=TOGETHER result=withheld reason=old`, `FIX result=inconclusive reason=old n=1/3`, `StillPrint: inconclusive reason=old devices=3`; no new location row; `n=2/3`; `n=3/3` with `reason=refused` - Android's own `startScan` throttle (4 per 2 min): the clock-stepped beats came ~40 s apart in real time; the 4th `result=none` (`print dropped (notfresh)`); then `FIX` again at the next two beats (path `LEARNED_FIRST`, a cell fix reported as `vibb_cell` once) and `QUIET backoff=25 min` at the third: the back-off is `max(interval, last try - still since)`, so `QUIET` shows only once that passes the interval | **Pass, the same notes** (`n=3/3 reason=refused`; `QUIET backoff=10 min` at the second beat after the 4th) |
+| c | **Pass.** With `scan_age_s 600` kept (with 0 the cached results answer and no `startScan` is asked): `scan refusals throttled=3`, `scan answer 0/4 ask=refused refused`, `reason=refused`, no `second scan` | **Pass.** The same |
+| d | **Pass, judged at once.** `StillPrint: verdict would=yes j=1.00 diff=0.0 devices=3/3 near=2/2 agree=2`; no renewal, no `still` - the beat reported its own Wi-Fi fix (`vibb_wifi`, `check=gnss`, 50 m), as before 134, and that checked fix judged the verdict in the same attempt: `outcome confirmed d=0 after=0 acc<=100`, `print dropped (replaced)`, `not taken (accuracy)` (50.000153 m); the feed and a Locate: `taken devices=3` | **Pass.** The same |
+| e | **Pass.** Their own device at -45, home's 18 dB weaker, connected to theirs (`psk`): `would=no reason=anchor j=0.52 diff=18.0 devices=3/3 near=2/1 agree=0`. The made-up connection must be in the scan: with none, the emulator's real `AndroidWifi` BSSID made it `inconclusive reason=noconnected` | **Pass.** The same |
+| f | **Pass.** One AP: no `second scan`, no `withheld`; `would=no reason=agree j=0.49 devices=3/1 agree=1` (the print has 3 devices); `cell fix acc=500 WITHHOLD` | **Pass.** The same |
+| g | **Pass.** `adb reboot`: the first beat after it `StillPrint: print dropped (boot)`, no verdict at that try (the emulator's own GNSS answered that beat at 0 satellites and became the next print) | **Pass.** The first try came at the boot itself (before the made-up scan was set again): the dump `dropped boot=1`, no new verdict in the ring, `no print` (that beat's fix was the emulator's GNSS at its default place, 0 satellites) |
+| h | **Pass.** `./gradlew assembleRelease` with a throwaway stub `libs/tsnet.aar` (removed afterwards): `checkReleaseHasNoDebugHook: no debug hook in [app-release-unsigned.apk]`. The APK signed with this machine's debug key for the emulator only, installed on a wiped, unmanaged image and Home started: `dumpsys activity service me.vibb.launcher/...CommandListenerService still-print` gives the summary (`no print`, `prints taken=0 dropped ...`, `verdicts=0 ...`, `inconclusive=0 ...`, `mismatches=0 ...`, `ring (newest first, 0 of 500)`), no key, BSSID, SSID or position; without the argument one line; `am broadcast -n me.vibb.launcher/...PlacesDebugReceiver`: `No receivers found` | **Pass.** The same (the build once; the release install on a wiped `aosp36`) |
+| i | **Pass, one line differs.** Location Off: `StillPrint: print dropped (rule)` - the still rule goes off before the clear - then `WifiPlaces: cleared (off)`; `no_backup` holds neither `still_print_v1` nor `still_print_ring_v1`; the dump `no print`, every count 0, `ring (newest first, 0 of 500)` | **Pass.** No print in force, so no drop line; `WifiPlaces: cleared (off)`; neither file in `no_backup`; the ring `0 of 500` |
+| j, mismatch | **Pass.** A print, the clock 245 min on, three foreign devices (one connected): `StillPrint: mismatch clause=wifi devices=0/3`, `Location heartbeat: STILL ended by a scan mismatch clause=wifi`, `cap try failed fails=1 vouch=dropped`, no new location row; the next beat `FIX` (`LEARNED_FIRST`, nothing: GPS silent), then `QUIET backoff=10 min`, then `FIX`; the dump `mismatches=1 wifi=1 ... pending=1` | **Pass.** The same lines; no new location row; the next two beats `FIX` (nothing), then `QUIET backoff=21 min`; the dump `mismatches=1 wifi=1 ... pending=1` |
+| j, one missing | **Pass for "no mismatch"; the failed cap try needs a thinner scan.** Home's scan without Naboen (2 of 3 networks): no mismatch, but the cap try **succeeded** - a checked Wi-Fi fix (`vibb_wifi`, `check=gnss`, 75 m), `FIX result=fresh`. With Hjemme's two APs alone (one network): no mismatch, `cap try failed fails=1 vouch=re-sent`; `fails=2` and `fails=3` at the next beats, then `STILL fails=3 retry=60 min`. A `STILL fails=1 retry=..` line can't come on a 10-min interval: `capRetryMs` is the interval for the first two fails, so those beats try again | **The same** (run with Hjemme's two APs: no mismatch, `cap try failed fails=1 vouch=re-sent`, `fails=2`, `fails=3`, then `STILL fails=3 retry=60 min`) |
+| j, zone link | **Pass.** Zone Hjem (150 m), the link taught by three Locates 31 min, 31 min and a day apart (`wifi fix check=link`); a print; the foreign scan plus a Hjemme node that is no print device (`00:00:5e:00:57:09`, connected, `psk` 7): `StillPrint: mismatch clause=wifi devices=0/3 vetoed`, `STILL renewed by a zone link`, `FIX result=renewed` | **Pass.** The same (`wifi fix check=link`, `zone=1/1` after the third Locate; `mismatch clause=wifi devices=0/3 vetoed`, `STILL renewed by a zone link`) |
+| j, cell | **Half.** One foreign device, the modem's cell with its own row at home: no mismatch (`cap try failed fails=1 vouch=re-sent`). **Not run:** the Apple cell row 5 km off - there is no fake Apple answer on the emulator (§6bk: Apple's answer is the Jelly Star's), so `mismatch clause=cell` is the Jelly Star's | **Half, the same** (no mismatch, `cap try failed fails=1 vouch=re-sent`; the cell clause not run) |
+
+The dump without the argument (both): one line, "Vibb: the place fingerprint's record needs the argument still-print".
+Findings: none in the code; three rows' expectations are off (b's `QUIET` timing, i's `print dropped (rule)` before
+`cleared (off)`, j's "one device missing" with a three-network home gives a fix) - the table above says what the build
+does. Not run: row j's cell clause (above).
