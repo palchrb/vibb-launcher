@@ -1125,6 +1125,15 @@ class PlacesTest {
         assertFalse("a network forgotten or added", rebindAllowed(4, 6, 5, 7, 1))
         assertFalse("two saved networks of that name", rebindAllowed(4, 6, 5, 6, 2))
         assertFalse("nothing known before", rebindAllowed(null, null, 5, 6, 1))
+        // The 131 gate: Android lists a WPA2 network with its WPA3 upgrade twice under one id - one saved network.
+        val listed = listOf("AndroidWifi" to 0, "AndroidWifi" to 0, "Hjemme" to 1, "Hjemme" to 1, null to 2)
+        assertEquals(3 to 1, savedNetworkCounts(listed, "Hjemme"))
+        assertEquals(3 to 0, savedNetworkCounts(listed, "Gammel"))
+        assertEquals("two saved networks of that name", 4 to 2, savedNetworkCounts(listed + ("Hjemme" to 4), "Hjemme"))
+        // One id under two types, and a second id of the same name under another type: two networks of that name.
+        val twoOfAName = listOf("Hjemme" to 1, "Hjemme" to 1, "Hjemme" to 5)
+        assertEquals(2 to 2, savedNetworkCounts(twoOfAName, "Hjemme"))
+        assertFalse(rebindAllowed(4, 2, 5, savedNetworkCounts(twoOfAName, "Hjemme").first, savedNetworkCounts(twoOfAName, "Hjemme").second))
         val v = Vouched(north(20.0), lng0, 15.0)
         assertTrue(linkRenews(rows, linkZones, v, net, still = true, refreshDue = false, nowMin = now, binding = binding))
         assertFalse(linkRenews(rows, linkZones, v, net, still = true, refreshDue = false, nowMin = now, binding = other))

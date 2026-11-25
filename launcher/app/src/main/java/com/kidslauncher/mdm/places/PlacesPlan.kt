@@ -1082,8 +1082,8 @@ enum class LinkSecurity {
     }
 }
 
-/** What a link is bound to of the security (code QA H1): Vibb saves a secured network as WPA2 and WPA3 at once, and a
- * mesh node or a band may negotiate either - one class. */
+/** What a link is bound to of the security (code QA H1): Vibb saves a WPA2 network with Android's WPA3 upgrade
+ * (`joinSecurityType`), and a mesh node or a band may negotiate either - one class. */
 enum class LinkClass(val code: Int) { NONE(0), PERSONAL(1), ENTERPRISE(2) }
 
 /** A still vouch a Wi-Fi fix is compared with: a `gps` fix of teaching quality (<= 25 m, >= 5 satellites, not mock in a
@@ -1319,6 +1319,15 @@ fun wifiVerdict(fix: LearnedFix, check: FixCheck?, motion: com.kidslauncher.mdm.
  * networks' count is the last boot's and exactly one saved network has the connected name ([named]). */
 fun rebindAllowed(lastBoot: Int?, lastCount: Int?, boot: Int, count: Int, named: Int): Boolean =
     lastBoot != null && lastBoot != boot && lastCount == count && named == 1
+
+/**
+ * [rebindAllowed]'s count and named from `getConfiguredNetworks` as `(name, network id)` pairs: saved networks, not
+ * entries. Android lists a network once per security type it holds (the 131 gate on Android 14, 2026-11-25: a WPA2
+ * network saved with Android's WPA3 upgrade came twice, `wpa2-psk` and `wpa3-sae^` under one id, and so never
+ * rebound), so both count distinct ids.
+ */
+fun savedNetworkCounts(configs: List<Pair<String?, Int>>, ssid: String): Pair<Int, Int> =
+    configs.map { it.second }.distinct().size to configs.filter { it.first == ssid }.map { it.second }.distinct().size
 
 /** What an attempt keeps after the judging ([attemptKeep]). */
 enum class Kept { WIFI, GPS, RENEW, NONE }

@@ -72,7 +72,41 @@ fun joinMacSetting(secured: Boolean): Int? =
  * an open profile under that SSID (`KeyMgmt.NONE`), which never connects and shadows the network from then on - so the
  * Wi-Fi page's Connect stays off until the field has text, and [QuickControls.connectToWifiNetwork] refuses it too.
  */
-fun joinAllowed(secured: Boolean, password: String?): Boolean = !secured || !password.isNullOrEmpty()
+fun joinAllowed(security: WifiSecurity, password: String?): Boolean =
+    security != WifiSecurity.UNSUPPORTED && (!security.secured || !password.isNullOrEmpty())
+
+/**
+ * A scanned network's security as Vibb's Wi-Fi page joins it (the 131 gate, 2026-11-25): `OPEN` (OWE too, saved open
+ * as before), `PSK` (WPA2 personal, with or without WPA3 beside it), `SAE` (WPA3 personal alone), `UNSUPPORTED` (an
+ * enterprise, WEP or WAPI network: a password alone never joins it, so Vibb doesn't save one).
+ */
+enum class WifiSecurity(val secured: Boolean) { OPEN(false), PSK(true), SAE(true), UNSUPPORTED(true) }
+
+/** [WifiSecurity] from a scan result's capabilities string (`[WPA2-PSK-CCMP][RSN-PSK+SAE-CCMP][ESS]` and the like). */
+fun wifiSecurityOf(capabilities: String?): WifiSecurity {
+    val caps = capabilities.orEmpty()
+    return when {
+        caps.contains("WAPI") || caps.contains("EAP") || caps.contains("WEP") -> WifiSecurity.UNSUPPORTED
+        caps.contains("PSK") -> WifiSecurity.PSK
+        caps.contains("SAE") -> WifiSecurity.SAE
+        else -> WifiSecurity.OPEN
+    }
+}
+
+/**
+ * The security a network Vibb adds is saved with (the 131 gate, 2026-11-25): a WPA2 one (WPA3 beside it or not)
+ * `SECURITY_TYPE_PSK`, which Android saves with its own WPA3 upgrade beside it (`wpa2-psk` and `wpa3-sae^` in `cmd wifi
+ * list-networks`); a WPA3-only one `SECURITY_TYPE_SAE`, so it joins where a vendor turned that upgrade off; an open one
+ * open; an unsupported one `null` (never saved). The old `allowedKeyManagement` with both `WPA_PSK` and `SAE` set was
+ * read by Android as WPA3 alone: such a network never matched a WPA2-only router. API 30.
+ */
+@Suppress("DEPRECATION")
+fun joinSecurityType(security: WifiSecurity): Int? = when (security) {
+    WifiSecurity.OPEN -> android.net.wifi.WifiConfiguration.SECURITY_TYPE_OPEN
+    WifiSecurity.PSK -> android.net.wifi.WifiConfiguration.SECURITY_TYPE_PSK
+    WifiSecurity.SAE -> android.net.wifi.WifiConfiguration.SECURITY_TYPE_SAE
+    WifiSecurity.UNSUPPORTED -> null
+}
 
 /**
  * Direct, silent Device-Owner API calls backing the Quick Controls screen - deliberately not
@@ -413,7 +447,7 @@ object QuickControls {
      */
     data class WifiNetworkInfo(
         val ssid: String,
-        val secured: Boolean,
+        val security: WifiSecurity,
         val signalLevel: Int,
         val savedNetworkId: Int?,
         val isConnected: Boolean,
@@ -515,7 +549,7 @@ object QuickControls {
             .map { (ssid, result) ->
                 WifiNetworkInfo(
                     ssid = ssid,
-                    secured = listOf("WEP", "PSK", "EAP", "SAE").any { result.capabilities.contains(it) },
+                    security = wifiSecurityOf(result.capabilities),
                     signalLevel = wm.calculateSignalLevel(result.level),
                     savedNetworkId = savedIdBySsid[ssid],
                     isConnected = ssid == currentSsid,
@@ -530,9 +564,9 @@ object QuickControls {
     /**
      * Connects to a network, saving it first if it isn't already ([savedNetworkId] null).
      * [WifiManager.addNetworkPrivileged] (API 30+) is Device-Owner-privileged the same way
-     * [setWifiEnabled] is - the same tier of access Settings itself uses. Sets both WPA2 and WPA3
-     * key-management bits when a password is given (standard "transition mode" pattern) rather
-     * than trying to precisely tell WPA2 from WPA3 out of the scan result's capabilities string.
+     * [setWifiEnabled] is - the same tier of access Settings itself uses. The security comes from
+     * the scan ([joinSecurityType]): WPA2 with Android's WPA3 upgrade, WPA3 alone, or open; an
+     * unsupported network (enterprise, WEP) is never saved.
      *
      * `WifiConfiguration` is deprecated as a whole since API 36 (in favour of network suggestions
      * and specifiers, which can't save a system network for every app), but
@@ -554,12 +588,13 @@ object QuickControls {
         context: Context,
         ssid: String,
         password: String?,
-        secured: Boolean,
+        security: WifiSecurity,
         savedNetworkId: Int?,
     ): Boolean {
         val wm = wifiManager(context)
-        if (savedNetworkId == null && !joinAllowed(secured, password)) {
-            Log.w(LOG_TAG, "A secured network without a password: not added")
+        val type = joinSecurityType(security)
+        if (savedNetworkId == null && (type == null || !joinAllowed(security, password))) {
+            Log.w(LOG_TAG, "An unsupported network, or a secured one without a password: not added")
             return false
         }
         return try {
@@ -567,14 +602,9 @@ object QuickControls {
                 val config = android.net.wifi.WifiConfiguration().apply {
                     SSID = "\"$ssid\""
                     // Design 126 A7: a fresh address on an open network; Vibb adds it, so as its creator it may.
-                    joinMacSetting(secured)?.let { macRandomizationSetting = it }
-                    if (secured) {
-                        allowedKeyManagement.set(android.net.wifi.WifiConfiguration.KeyMgmt.WPA_PSK)
-                        allowedKeyManagement.set(android.net.wifi.WifiConfiguration.KeyMgmt.SAE)
-                        preSharedKey = "\"$password\""
-                    } else {
-                        allowedKeyManagement.set(android.net.wifi.WifiConfiguration.KeyMgmt.NONE)
-                    }
+                    joinMacSetting(security.secured)?.let { macRandomizationSetting = it }
+                    setSecurityParams(type ?: return false)
+                    if (security.secured) preSharedKey = "\"$password\""
                 }
                 val result = wm.addNetworkPrivileged(config)
                 if (result.statusCode != WifiManager.AddNetworkResult.STATUS_SUCCESS) {
