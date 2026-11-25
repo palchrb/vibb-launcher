@@ -533,8 +533,9 @@ impl WifiLookup {
         if !slot.is_zero() {
             return Err(slot);
         }
-        // M1: one slot a cells request, whether Apple is called or not.
-        self.take_slot(device, now);
+        // M1: one slot of the server-wide limits a cells request, whether Apple is called or not; the phone's share
+        // only when Apple is called (below). Over its share the phone is refused before the cache is read, cached or not.
+        self.take_slot(now);
         let key = match self.key(state).await {
             Ok(key) => key,
             Err(err) => {
@@ -565,6 +566,7 @@ impl WifiLookup {
             .map(|(b, _)| b.clone())
             .collect();
         if !wanted.is_empty() {
+            self.count_call(device, now);
             let fetched = self
                 .call(state, &key, &wanted, month, Call::Cells, now)
                 .await?;
@@ -716,10 +718,14 @@ impl WifiLookup {
             )
     }
 
-    /// One Apple call's slot taken: the server-wide limits and the phone's share.
-    fn take_slot(&self, device: i64, now: Instant) {
+    /// One slot of the server-wide limits taken.
+    fn take_slot(&self, now: Instant) {
         self.burst.take(now);
         self.outbound.take(now);
+    }
+
+    /// One Apple call counted against the phone's share of the hour.
+    fn count_call(&self, device: i64, now: Instant) {
         crate::music_net::PhoneAsks::record(&self.phone_calls, device, now);
     }
 
@@ -773,7 +779,8 @@ impl WifiLookup {
         if !slot.is_zero() {
             return Err(NotAsked::Wait(slot));
         }
-        self.take_slot(device, now);
+        self.take_slot(now);
+        self.count_call(device, now);
         let fetched = self
             .call(state, key, &still, month, Call::Wifi, now)
             .await

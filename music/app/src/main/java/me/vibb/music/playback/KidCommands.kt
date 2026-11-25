@@ -28,7 +28,7 @@ val READ_COMMANDS = intArrayOf(
  * What a controller of another app may do with the player (security review 2026-10-21 S-L2): [base] without setting
  * or changing the media items - an app that could hand the session its own items would play any public URL in the
  * kid's player. A [trusted] controller (the launcher, signed as this app; the system UI and Bluetooth through the
- * platform session, `ControllerInfo.isTrusted`) also reads what plays; any other app gets the transport only - play,
+ * platform session, or an app with notification access - `ControllerInfo.isTrusted`) also reads what plays; any other app gets the transport only - play,
  * pause, skip - without the queue, the current item or their metadata ([READ_COMMANDS]).
  */
 @OptIn(UnstableApi::class)

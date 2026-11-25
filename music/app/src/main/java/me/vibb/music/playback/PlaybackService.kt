@@ -778,8 +778,8 @@ class PlaybackService : MediaSessionService() {
                 return MediaSession.ConnectionResult.AcceptedResultBuilder(session).setAvailableSessionCommands(calls)
                     .setAvailablePlayerCommands(foreignPlayerCommands(MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS, trusted = true)).build()
             }
-            // S-L2: another app never sets the queue's items; the system UI and Bluetooth (trusted) read what plays,
-            // any other app gets the transport only
+            // S-L2: another app never sets the queue's items; the system UI, Bluetooth or an app with notification
+            // access (trusted) read what plays, any other app gets the transport only
             if (controller.packageName != packageName) {
                 return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
                     .setAvailablePlayerCommands(foreignPlayerCommands(MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS, controller.isTrusted)).build()

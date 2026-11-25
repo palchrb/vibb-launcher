@@ -310,7 +310,16 @@ impl Integration for WifiLookup {
                 }
             }
             let result = match why {
-                Prune::Sweep => cache::prune(&state.db, cache::month_of(chrono::Utc::now())).await,
+                // A lookup still in flight at a phone's location Off or delete may write rows after that emptying:
+                // the sweep empties the cache too while no phone can use it.
+                Prune::Sweep => {
+                    match cache::prune(&state.db, cache::month_of(chrono::Utc::now())).await {
+                        Ok(pruned) => cache::empty_unless_used(&state.db)
+                            .await
+                            .map(|emptied| pruned + emptied),
+                        Err(err) => Err(err),
+                    }
+                }
                 Prune::DeviceDeleted | Prune::LocationOff => {
                     cache::empty_unless_used(&state.db).await
                 }

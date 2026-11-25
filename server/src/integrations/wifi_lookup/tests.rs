@@ -581,6 +581,8 @@ async fn a_new_key_empties_the_cache() {
 #[tokio::test]
 async fn the_caps_the_lifetime_and_a_deleted_phone() {
     let app = TestApp::new().await;
+    // A phone the lookup is usable for: the sweep keeps the cache.
+    let (on_phone, _) = phone_on(&app).await;
     let key = CacheKey::from_bytes(&[9; 32]);
     let now = this_month();
     let position = codec::Position {
@@ -639,7 +641,6 @@ async fn the_caps_the_lifetime_and_a_deleted_phone() {
     ));
 
     // A deleted phone: kept while another has the switch on, emptied with the last.
-    let (on_phone, _) = phone_on(&app).await;
     let (other, _) = app.enrolled_device("other").await;
     let cookie = app.admin_cookie().await;
     for (id, left) in [(other, 4usize), (on_phone, 0)] {
@@ -1472,4 +1473,63 @@ async fn each_phone_gets_its_share_of_the_hour() {
     let (status, _) = lookup(&app, &second_token, &unseen).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(app.fetch.count(), 2);
+}
+
+/// Only a request that calls Apple counts against the phone's share: cells answered from the cache leave its Wi-Fi share.
+#[tokio::test]
+async fn cells_from_the_cache_leave_the_share() {
+    let contract = contract();
+    let app = TestApp::new().await;
+    let (first, token) = phone_on(&app).await;
+    phone_on(&app).await;
+    phone_on(&app).await;
+    let wifi = app.state.integrations.wifi_lookup.clone();
+    let cells = &contract["request_cells"];
+    app.fetch.answer(APPLE_URL, 200, apple_cell("cells_fresh"));
+    assert_eq!(lookup(&app, &token, cells).await.0, StatusCode::OK);
+    assert_eq!(app.fetch.count(), 1);
+    // One short of the share (three phones: 20), the first call included.
+    let now = Instant::now();
+    for _ in 2..route::phone_share(3) {
+        crate::music_net::PhoneAsks::record(&wifi.phone_calls, first, now);
+    }
+    // Cached cells: answered, Apple not called, nothing counted.
+    for _ in 0..2 {
+        assert_eq!(lookup(&app, &token, cells).await.0, StatusCode::OK);
+    }
+    assert_eq!(app.fetch.count(), 1);
+    // The Wi-Fi share's last call is still there.
+    app.fetch.answer(APPLE_URL, 200, apple("fresh"));
+    let (status, body) = lookup(&app, &token, &contract["request"]).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(app.fetch.count(), 2);
+    // Now spent: an uncached BSSID is the cache alone.
+    let unseen = json!({"bssids": ["00:00:5e:00:53:06"]});
+    assert_eq!(
+        lookup(&app, &token, &unseen).await.0,
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    assert_eq!(app.fetch.count(), 2);
+}
+
+/// Rows a lookup in flight wrote after the last usable phone's location Off go with the next sweep.
+#[tokio::test]
+async fn the_sweep_empties_the_cache_without_a_usable_phone() {
+    let contract = contract();
+    let app = TestApp::new().await;
+    let (id, token) = phone_on(&app).await;
+    app.fetch.answer(APPLE_URL, 200, apple("fresh"));
+    assert_eq!(
+        lookup(&app, &token, &contract["request"]).await.0,
+        StatusCode::OK
+    );
+    let wifi = app.state.integrations.wifi_lookup.clone();
+    wifi.prune(&app.state, Prune::Sweep).await;
+    let cached = cache_rows(&app).await;
+    assert!(cached > 0, "a usable phone keeps the cache");
+    // Location off without the save's emptying: the rows stand in for a late write.
+    set_location(&app, id, "off").await;
+    assert_eq!(cache_rows(&app).await, cached);
+    wifi.prune(&app.state, Prune::Sweep).await;
+    assert_eq!(cache_rows(&app).await, 0);
 }

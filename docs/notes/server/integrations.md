@@ -74,7 +74,8 @@ map links for both to use.
   in ends, the caps (200,000 / 20,000, the least recently
   used out), the lifetime `CACHE_LIFETIME_MONTHS` (24, the user's Q6) and the emptying when no phone with both the
   switch and location on is left (a phone's delete, `Prune::DeviceDeleted`; its location turned off,
-  `Prune::LocationOff` from `locate::update_location_policy`).
+  `Prune::LocationOff` from `locate::update_location_policy`; the hourly sweep too, for rows a lookup in flight
+  wrote after that).
 - **With location off, the lookup is off for that phone** (`is_usable`: the switch on and `location_mode` not `off`):
   the route answers `409 off` (cells too) and the policy's `wifi_lookup.on` is false, so the phone stops asking
   (`contract.json`'s `off_location`). The Location page's switch keeps the parent's choice.
@@ -83,8 +84,8 @@ map links for both to use.
   and never a month; `409 off`; `429 limit|busy` and `503 unavailable` with `retry_after_s` only when the cache
   answered none of them), one Apple call at a time (a second waits 3 s and reads the cache again once the call is its
   own, a third is busy), 60 calls an hour and 10 in any 10 minutes, each phone its share of the hour's calls
-  (`route::phone_share`: 60 split between the phones the lookup is usable for, never under 10; in memory; past it
-  the phone is answered from the cache alone, as over the server-wide limit), GrapheneOS's throttle (8 surrounding after an answer of 17), the pauses (5 min, then 1 h doubling
+  (`route::phone_share`: 60 split between the phones the lookup is usable for, never under 10; in memory; only a
+  request that calls Apple counts; past it the phone is answered from the cache alone, as over the server-wide limit), GrapheneOS's throttle (8 surrounding after an answer of 17), the pauses (5 min, then 1 h doubling
   to 24 h; a non-200 or an unreadable answer starts at the hour; a 200 resets) and their log line.
 - **The proxy** (`WIFI_LOOKUP_PROXY`, `Proxy::parse`: `socks5h://host:port` only): `SourceRequest::proxy` makes
   `HttpSource` build a one-off client with only that proxy, fresh random SOCKS credentials and `music_net::PROXIED`
