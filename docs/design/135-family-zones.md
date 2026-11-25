@@ -590,7 +590,7 @@ Gone:
 | # | Step | Size |
 |---|---|---|
 | B | Server, **one reviewable unit** (the data alone wouldn't compile against the old pages): migration 0181; `zones::list`, links and family-zone writes (`start_over` per link); `event_of` without the switch; the push filter; the weather's family zone and picker; the pages (`/zones`, the editor with Telefoner, the `was_` diff and the per-phone location buttons in `zones.js`, the phone's page as one autosave form, Locate's all-phones row); routes, `no_store_paths`, nb/en, the security log words; the tests (§10); `docs/notes/server/zones.md`, `pwa.md`, `notifications.md` | M |
-| G | Emulator gate §6bs on Android 14 and 16 (§11) | S |
+| G | Emulator gate §6bt on Android 14 and 16 (§11) | S |
 
 **No launcher step.** `docs/notes/launcher/zones-and-power.md` gains one line: a policy zone's id is the phone's link
 to a family zone.
@@ -673,7 +673,7 @@ After the migration:
 **Elsewhere.** `seeded_family` is updated. `jstest/zones.test.js` checks that the per-phone location buttons write the
 fields. The launcher's tests are unchanged.
 
-## 11. Emulator gate (`docs/testing/emulator.md` §6bs, Android 14 and 16 only)
+## 11. Emulator gate (`docs/testing/emulator.md` §6bt, Android 14 and 16 only)
 
 **Setup:** two phones of one family, an API 34 image (Android 14) and `jelly36` (Android 16), both enrolled to one
 server. The debug launcher, with mock fixes as in §6t (`cmd location providers add-test-provider fused`). The

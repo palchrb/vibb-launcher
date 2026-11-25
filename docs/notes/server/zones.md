@@ -1,5 +1,10 @@
 # Server notes: safe zones
 
+Since design 135 (migration 0181, "Zones shared by the family" at the end) a zone is the family's (`family_zones`: the
+name and the circle) and a phone links to the zones it uses (`device_zones`, the link: the rule's state and the id the
+phone and the events see). The sections below describe design 64's per-phone zone; where they say "the zone's row"
+for the state or the id, read "the link"; the name, centre and radius are the family zone's.
+
 ## Safe zones, step 1: the server judges every fix (design 64, `docs/design/64-safe-zones.md`, migration `0091_safe_zones.sql`)
 
 Server only; works with every launcher (zones judged at each fix the phone already sends). Step 2 (the launcher's
@@ -54,8 +59,8 @@ at each fix, as below.
 - **Events** (`parent_events`): `Kind::ZoneArrived` (`zone_arrived`) and `Kind::ZoneLeft` (`zone_left`), after
   `PhoneOn` in `Kind::ALL`; not urgent, foldable, TTL 3600, urgency normal; **one switch for both**,
   `("push_zones", "Zones: arrived and left")` - `Kind::switches()` lists each switch once (Notify Me About's rows, its
-  save, its read). Raised only when the zone's switch for that direction is on (`zones::event_of`; decision 5: the
-  zone's switches decide whether there is an event, each parent's "Zones" only the push). Key
+  save, its read). Until design 135 raised only when the zone's switch for that direction was on; since then every
+  crossing is an event and each parent's own switches filter only the push (the last section). Key
   `<zone id>:<inside|outside>:<the first fix's captured_at>`, `happened_at` = the first fix of the pair. **Stored as a
   key plus parameters, never prose** (the user's decision 5, 2026-10-24): `title`/`summary` empty, `params` =
   `ZoneParams {zone_id, zone, phone, direction: arrived|left, at}` (the names as they were when raised);
@@ -202,7 +207,9 @@ The user's cabin case (Q2, 2026-11-24): a phone switched off, driven to a cabin 
 
 ## A zone stands in for the weather (design 75, migration `0122_lock_weather.sql`)
 
-`device_policy.weather_zone_id` names one of the phone's zones whose centre gives the lock screen's weather when the
+Since design 135 the column is `device_policy.weather_family_zone_id` (a family zone, linked to the phone or not; the
+last section); `weather_zone_id` stays, NULL and unread. Before it, `device_policy.weather_zone_id` named one of the
+phone's zones whose centre gives the lock screen's weather when the
 phone has no fresh fix (Lock Screen & PINs › Weather; `docs/notes/server/launcher-ui.md`, "Lock screen weather"). It is a foreign
 key `ON DELETE SET NULL`: deleting the zone clears it (and the delete nudges the phone, as every zone save does).
 **A future migration that rebuilds `device_zones`** (copy, drop, rename) runs with foreign keys on, so dropping the old
@@ -233,3 +240,51 @@ A Wi-Fi fix that no satellite fix or linked network confirms never starts an arr
 - **Locate's age and "Here now" can differ**: Locate's "Recent"/"Old" (`locate::Seen`) is how fresh the phone's newest
   fix is, of any class, while a zone's "Here now" needs a fine fix - so a phone indoors on Wi-Fi estimates can show a
   recent fix and no "Here now" at once. As intended.
+
+## Zones shared by the family (design 135, migration `0181_family_zones.sql`; `docs/design/135-family-zones.md`)
+
+Server only: no launcher code, no contract file, no change to the policy JSON. Needs phase D's 0180 first.
+
+- **Data** (0181): `family_zones` (`name`, `latitude`/`longitude`, `radius_m`, `created_by`, `created_at`/
+  `updated_at`) is the place. `device_zones` is the link: `device_id`, `zone_id` (FK, `ON DELETE CASCADE`; nullable in
+  the schema because `ADD COLUMN` with a reference can't be `NOT NULL`, every write path sets it), the rule's state and
+  cursor, `created_by`/`created_at` (who linked it, when); its `name`, circle and `notify_*` columns are dropped. Unique
+  `(device_id, zone_id)` (`idx_device_zones_link`). `zone_alerts(admin_id, device_zone_id, arrive, leave)` - each
+  parent's push switches per link, no row = both on (cascades with the link and the parent).
+  `device_policy.weather_family_zone_id` (FK `ON DELETE SET NULL`).
+- **The fold**: zones with the same name (ASCII `lower` and `trim`), the same centre and the same radius become one
+  family zone, made from the group's oldest row; same-name zones elsewhere stay apart with their names (no rename, the
+  owner's Q2). Each link keeps its id, state, cursor and `created_at`; the weather moves to the link's family zone;
+  every switch that was off becomes a `zone_alerts` row for **every** parent, removed ones too (a `reset-2fa` restores
+  them as they were). Nothing is judged again, nothing raised. No table rebuild (the weather's FK). The policy's
+  `zones` are equal value for value (`tests::family_zones::migration_0181_folds_and_keeps_every_phone`).
+- **Code**: `zones::list` joins the link to its family zone (`Zone.id` the link, `Zone.zone_id` the family zone;
+  `notify_*` gone), `zones::links_of`, `zones::family`, `zones::family_zone`, `zones::FamilyZone`, `zones::link`
+  (insert + `start_over`, never a replay). The rule, `evaluate_stored`, `policy_zones`, `served_interval_of`,
+  `forget_sides` and the intake are unchanged and work on links. `MAX_ZONES` (10) caps links per phone,
+  `MAX_FAMILY_ZONES` (50) the family (a family over it after the fold loses only Add Zone).
+- **Every crossing is an event** (decision 7): `zones::event_of` no longer checks a switch. The push is filtered at
+  queueing (`push::queue_as`, `ZONE_ALERTS_ON`): for a zone kind, no delivery to a subscriber whose `zone_alerts` row
+  for the event's `params.zone_id` has that direction off. A retry re-sends what was queued; a switch turned off later
+  recalls nothing; a removed parent gets nothing (`removed_at`, as every push); a new parent starts with every link on.
+  Notify Me About's `push_zones` stays each parent's switch for all zones.
+- **Editing a shared zone**: a moved centre or a changed radius runs `start_over` on every link of the zone in the
+  save's transaction and nudges each phone; a rename changes the name only (no nudge: the name never reaches a phone).
+  Every phone sees the new circle at its next sync, re-registers that fence and relearns its Wi-Fi zone link for it.
+- **Unlink** deletes the link (state and alerts with it); **relink** is a new id and a silent first side. Neither
+  touches the weather. **Delete** of a family zone cascades to its links, their alerts and the weather's
+  `weather_family_zone_id`, and nudges the phones that used it. Past events stay until retention.
+- **The weather** (`weather.rs` `cell_of`, `weather_page.rs`): the family zone's centre; the picker lists every family
+  zone; the save checks the id against `family_zones`.
+- **Names**: the rules (1-40, no `Cc`/`Cf`, unique in the family by `to_lowercase`) apply only to a new or changed name
+  (decision 5); a migrated over-long or duplicate name saves other changes as it is.
+- **Security log**: `zone_added` ("Hjem, 150 m"), `zone_changed` ("Hjem. Renamed from Home. Moved. Radius 150 -> 250
+  m."), `zone_deleted` ("Hjem (Telefon 1, Telefon 2)" or "Hjem") - the family's lines, facts `zone N`
+  (`security.detail.zone.family_*`); `zone_linked`/`zone_unlinked` ("phone 3 (Telefon 1): Hjem",
+  `security.detail.zone.link`, labels "Zone linked"/"Zone unlinked"). Never a coordinate. The old keys stay for old
+  rows. An alert switch alone is the settings log's `settings_saved`.
+- The pages are `pwa.md`, "Zones shared by the family". Tests: `tests::family_zones` (the migration, judging per phone,
+  move/rename, unlink/relink/delete, the weather, the caps from both pages, the stale forms, the push filter),
+  `tests::zones` (adapted), `handlers::zones::tests` (`a_save_writes_only_what_differs_from_the_page`), `jstest/zones.test.js`.
+- The phone: nothing changes (`docs/notes/launcher/zones-and-power.md`): a policy zone's id is the phone's link to a
+  family zone.
