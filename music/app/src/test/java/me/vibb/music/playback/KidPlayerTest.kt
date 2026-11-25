@@ -35,18 +35,33 @@ class KidPlayerTest {
     }
 
     @Test
-    fun `S-L2 another app's controller gets the transport but can't set or change the items`() {
+    fun `another app's controller gets the transport, not the queue - a trusted one reads what plays`() {
         val all = Player.Commands.Builder().addAllCommands().build()
-        val foreign = foreignPlayerCommands(all)
-        for (c in listOf(Player.COMMAND_SET_MEDIA_ITEM, Player.COMMAND_CHANGE_MEDIA_ITEMS)) assertTrue(!foreign.contains(c))
-        for (c in listOf(Player.COMMAND_PLAY_PAUSE, Player.COMMAND_SEEK_TO_NEXT, Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM, Player.COMMAND_GET_METADATA)) {
-            assertTrue(foreign.contains(c))
-        }
+        val transport = listOf(Player.COMMAND_PLAY_PAUSE, Player.COMMAND_SEEK_TO_NEXT, Player.COMMAND_SEEK_TO_PREVIOUS, Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM)
+        val reads = listOf(
+            Player.COMMAND_GET_TIMELINE,
+            Player.COMMAND_GET_METADATA,
+            Player.COMMAND_GET_CURRENT_MEDIA_ITEM,
+        )
+        val sets = listOf(Player.COMMAND_SET_MEDIA_ITEM, Player.COMMAND_CHANGE_MEDIA_ITEMS)
+        val other = foreignPlayerCommands(all, trusted = false)
+        for (c in sets + reads) assertTrue("$c", !other.contains(c))
+        for (c in transport) assertTrue("$c", other.contains(c))
+        val trusted = foreignPlayerCommands(all, trusted = true)
+        for (c in sets) assertTrue("$c", !trusted.contains(c))
+        for (c in transport + reads) assertTrue("$c", trusted.contains(c))
+        // exactly the sets (and, untrusted, the reads) go
+        assertEquals(all.size() - sets.size, trusted.size())
+        assertEquals(all.size() - sets.size - reads.size, other.size())
         assertTrue(mayChangeItems("me.vibb.music", "me.vibb.music"))
         assertTrue(!mayChangeItems("com.kidslauncher.mdm", "me.vibb.music"))
-        // both foreign branches of onConnect narrow the commands; both item callbacks refuse another app
+        // the launcher (same signer) keeps the reads, any other package by Media3's trust; both item callbacks refuse
+        // another app
         val connect = service.substringAfter("override fun onConnect(").substringBefore("override fun onCustomCommand(")
-        assertEquals(2, connect.split(".setAvailablePlayerCommands(foreignPlayerCommands(MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS))").size - 1)
+        val narrowed = ".setAvailablePlayerCommands(foreignPlayerCommands(MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS, "
+        assertEquals(2, connect.split(narrowed).size - 1)
+        assertTrue(connect.contains("${narrowed}trusted = true))"))
+        assertTrue(connect.contains("${narrowed}controller.isTrusted))"))
         for (cb in listOf("override fun onAddMediaItems(", "override fun onSetMediaItems(")) {
             assertTrue(cb, service.substringAfter(cb).substringBefore("override fun").contains("if (mayChangeItems(controller.packageName, packageName)) super."))
         }
