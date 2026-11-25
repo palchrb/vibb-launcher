@@ -257,44 +257,27 @@ fun lockActiveAtStart(onError: (Exception) -> Unit = {}, read: () -> Boolean): B
 enum class LockInactive(val wire: String) {
     NO_PIN("no_pin"),
     UNMANAGED("unmanaged"),
-    ANDROID_CREDENTIAL("android_credential"),
-    KEYGUARD_NOT_DISABLED("keyguard_not_disabled"),
-    CRASH_GUARD("crash_guard"),
 
-    /** Not "off": the lock is on, but only the parent code opens it. */
-    BAD_HASH("bad_hash"),
+    /** Design 132 §4.3: a Child PIN is stored, Android has no credential (yet) - no lock at all (§4.5). */
+    NO_ANDROID_PIN("no_android_pin"),
+    CRASH_GUARD("crash_guard"),
 }
 
 /**
- * Whether to switch Android's keyguard off (`setKeyguardDisabled(true)`): only for an active
- * lock - managed, a kid PIN, and no Android credential (with one the call fails anyway, and our
- * lock stays off so there is no double lock, design §7).
- */
-fun wantKeyguardDisabled(managed: Boolean, hasKidPin: Boolean, deviceSecure: Boolean): Boolean =
-    managed && hasKidPin && !deviceSecure
-
-/**
- * Design §3: active only if managed, the policy has a kid PIN, no Android credential, and
- * `setKeyguardDisabled(true)` worked ([keyguardDisabled]); the crash guard switches it off until
- * it re-arms. An unreadable hash keeps the lock on - only the parent code opens it then.
- * [androidGate]: design 59's face ([androidFace], `kid_lock.keyguard` "android" with a credential) - Android's
- * credential is the gate and our lock its face, so the credential and the keyguard that isn't disabled keep it active.
+ * Design 132 (§2.1): our lock is Android's face, so it is active only where the face is ([androidFace]): a Child PIN,
+ * managed, and Android's credential - without it there is no lock to be the face of (`no_android_pin`, DISABLED: no
+ * glance, never a dead "Lås opp"). The crash guard switches it off until it re-arms (Android's PIN with SystemUI's face).
  */
 fun lockActivation(
     managed: Boolean,
     hasKidPin: Boolean,
     deviceSecure: Boolean,
-    keyguardDisabled: Boolean,
-    hashUsable: Boolean,
     guardTripped: Boolean,
-    androidGate: Boolean = false,
 ): Pair<Boolean, LockInactive?> = when {
     !hasKidPin -> false to LockInactive.NO_PIN
     !managed -> false to LockInactive.UNMANAGED
-    deviceSecure && !androidGate -> false to LockInactive.ANDROID_CREDENTIAL
-    !keyguardDisabled && !androidGate -> false to LockInactive.KEYGUARD_NOT_DISABLED
+    !deviceSecure -> false to LockInactive.NO_ANDROID_PIN
     guardTripped -> false to LockInactive.CRASH_GUARD
-    !hashUsable -> true to LockInactive.BAD_HASH
     else -> true to null
 }
 
@@ -305,7 +288,7 @@ fun kidPinLength(length: Int?): Int = if (length != null && length in 4..6) leng
  * The kid PIN [PinLockRuntime.configure] applies (design r10 §3.2): **never `null` while [kidLock] is there** (QA
  * R10-1). No `kid_lock` -> `null` (no PIN); a real hash -> it; redacted (`""`, the cached policy's form) -> [memory]
  * when usable, else the [stored] copy when usable (QA R10-4: an unusable memory never sticks), else the unusable
- * stand-in, which [lockActivation] makes `true to BAD_HASH` - the lock up, the parent code opens it. The policy's
+ * stand-in (a Child PIN all the same). The policy's
  * `pin_length` wins in every case. [stored] is read only when needed (a Keystore call).
  */
 fun kidConfigFor(kidLock: com.kidslauncher.mdm.server.dto.KidLock?, memory: KidLockConfig?, stored: () -> KidLockConfig?): KidLockConfig? {

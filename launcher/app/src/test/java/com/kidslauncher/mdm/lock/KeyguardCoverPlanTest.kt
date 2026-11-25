@@ -31,22 +31,12 @@ class KeyguardCoverPlanTest {
     // ---- keyguardMode ---------------------------------------------------------------------------
 
     @Test
-    fun `COVER only with the switch, managed, a PIN, no credential, no VoIP and the guard not tripped`() {
-        assertEquals(KeyguardMode.COVER, keyguardMode(true, true, false, coverWanted = true, VoipPhase.NONE, guardTripped = false))
-        assertEquals("switch off: today's", KeyguardMode.DISABLED, keyguardMode(true, true, false, false, VoipPhase.NONE, false))
-        assertEquals("VoIP ringing (M5)", KeyguardMode.DISABLED, keyguardMode(true, true, false, true, VoipPhase.RINGING, false))
-        assertEquals("VoIP in call (M5)", KeyguardMode.DISABLED, keyguardMode(true, true, false, true, VoipPhase.IN_CALL, false))
-        assertEquals("the crash guard (L8)", KeyguardMode.DISABLED, keyguardMode(true, true, false, true, VoipPhase.NONE, true))
-        assertEquals("the guard without the switch: as today", KeyguardMode.DISABLED, keyguardMode(true, true, false, false, VoipPhase.NONE, true))
-    }
-
-    @Test
-    fun `UNTOUCHED wherever today's code doesn't disable the keyguard, switch or not`() {
-        for (cover in listOf(false, true)) {
-            assertEquals(KeyguardMode.UNTOUCHED, keyguardMode(false, true, false, cover, VoipPhase.NONE, false))
-            assertEquals(KeyguardMode.UNTOUCHED, keyguardMode(true, false, false, cover, VoipPhase.NONE, false))
-            assertEquals("an Android credential", KeyguardMode.UNTOUCHED, keyguardMode(true, true, true, cover, VoipPhase.NONE, false))
-        }
+    fun `keyguardMode - ANDROID with a credential on a managed phone, UNTOUCHED otherwise, never COVER or DISABLED (design 132)`() {
+        assertEquals(KeyguardMode.ANDROID, keyguardMode(managed = true, deviceSecure = true))
+        assertEquals("a fallback apply's missing kid_lock changes nothing", KeyguardMode.ANDROID, keyguardMode(true, true))
+        assertEquals(KeyguardMode.UNTOUCHED, keyguardMode(managed = true, deviceSecure = false))
+        assertEquals(KeyguardMode.UNTOUCHED, keyguardMode(managed = false, deviceSecure = true))
+        assertEquals(KeyguardMode.UNTOUCHED, keyguardMode(managed = false, deviceSecure = false))
     }
 
     // ---- keyguardDisabledFeatures (M6) ------------------------------------------------------------
@@ -313,33 +303,6 @@ class KeyguardCoverPlanTest {
 
     // ---- the lock-up under the cover, the dark lock-up (M5) ----------------------------------------------
 
-    @Test
-    fun `under the cover the lock-up starts the lock alone`() {
-        assertEquals(LockUpStart.LOCK, lockUpStarts(showLock = true, lockOnTop = false, callLive = false, interactive = false, coverLocked = true))
-        assertEquals(LockUpStart.NONE, lockUpStarts(showLock = true, lockOnTop = true, callLive = false, interactive = false, coverLocked = true))
-        assertEquals(LockUpStart.NONE, lockUpStarts(showLock = false, lockOnTop = false, callLive = false, interactive = false, coverLocked = true))
-        assertEquals("the keyguard not locked: step 1's Home (L4)", LockUpStart.HOME_THEN_LOCK, lockUpStarts(showLock = true, lockOnTop = false, callLive = false, interactive = false, coverLocked = false))
-        // L2: the input is the cover and its keyguard locked at this screen-off - never a constant.
-        val atScreenOff = body(code("$lock/PinLockRuntime.kt"), "lockUpAtScreenOff")
-        assertTrue(atScreenOff.contains("val cover = KeyguardCover.coverOn || AndroidLock.faceOn\n"))
-        assertTrue(atScreenOff.contains("val kg = cover && KeyguardCover.keyguardLockedNow(context)\n"))
-        assertTrue(atScreenOff.contains("lockUpStarts(result.showLock, lockOnTop, callLive, interactive, cover && kg, face = AndroidLock.faceOn)"))
-    }
-
-    private val dark = RefrontInputs(locked = true, lockResumed = false, interactive = false, ourCall = false, telecomInCall = false, emergencyFlow = false, alarmRinging = false)
-
-    @Test
-    fun `refrontAction - dark, LOCKED, not on top, nothing exempt, the cover on - DarkLockUp`() {
-        assertEquals(RefrontAction.DarkLockUp, refrontAction(dark.copy(coverOn = true), 0))
-        assertEquals("the cover off: as before", RefrontAction.Stop, refrontAction(dark, 0))
-        assertEquals("the lock on top", RefrontAction.Stop, refrontAction(dark.copy(coverOn = true, lockOnTop = true), 0))
-        assertEquals("the system dialer's call goes on: keep looking", RefrontAction.Yield("system_call"), refrontAction(dark.copy(coverOn = true, telecomInCall = true), 0))
-        assertEquals(RefrontAction.Yield("voip"), refrontAction(dark.copy(coverOn = true, voipCall = true), 0))
-        assertEquals(RefrontAction.Stop, refrontAction(dark.copy(coverOn = true, locked = false), 0))
-        assertEquals(RefrontAction.Stop, refrontAction(dark.copy(coverOn = true, lockResumed = true), 0))
-        assertTrue("the screen on: unchanged", refrontAction(dark.copy(coverOn = true, interactive = true), 0) is RefrontAction.Refront)
-    }
-
     // ---- source pins ------------------------------------------------------------------------------------
 
     @Test
@@ -381,9 +344,8 @@ class KeyguardCoverPlanTest {
         assertEquals(1, Regex("\\breturn\\b").findAll(apply).count())
         // configure's keyguard is the writer's, after the guard re-arm.
         val configure = body(code("$lock/PinLockRuntime.kt"), "configure")
-        assertTrue(configure.contains("val keyguardDisabled = KeyguardCover.configure(app, dpm, admin, managed, newConfig != null, deviceSecure, guard.trippedAtMs != null, requested, androidHeld)"))
+        assertTrue(configure.contains("KeyguardCover.configure(app, dpm, admin, managed, newConfig != null, deviceSecure, guard.trippedAtMs != null)"))
         assertTrue(configure.indexOf("guardRearm(") < configure.indexOf("KeyguardCover.configure("))
-        assertTrue(configure.contains("keyguardDisabled = keyguardDisabled"))
         // AppEnforcer no longer writes the features itself.
         assertFalse(code("java/com/kidslauncher/mdm/server/AppEnforcer.kt").contains("applyKeyguardFeatures"))
     }
@@ -454,10 +416,6 @@ class KeyguardCoverPlanTest {
         val runtime = code("$lock/PinLockRuntime.kt")
         assertTrue(body(runtime, "onLockResumed").contains("KeyguardCover.onLockResumed(context, interactiveNow)"))
         assertTrue(body(runtime, "onVoipPhase").contains("KeyguardCover.onVoipPhase(app, after, interactive(app))"))
-        val refront = body(runtime, "runRefrontCheck")
-        assertTrue(refront.contains("coverOn = KeyguardCover.coverOn"))
-        assertTrue(refront.contains("lockOnTop = lockOnTop"))
-        assertTrue(refront.substringAfter("RefrontAction.DarkLockUp -> {").contains("lockUp(context, LockUpStart.LOCK, LockAsk.AT_ONCE)"))
         val cover = code("$lock/KeyguardCover.kt")
         // M7.4: the re-arm and the VoIP phase are written only from a lock resume with the screen on.
         assertTrue(body(cover, "onVoipPhase").contains("if (!interactive || after == voipSeen) return"))
@@ -467,8 +425,8 @@ class KeyguardCoverPlanTest {
         val off = runtime.substringAfter("if (intent.action == Intent.ACTION_SCREEN_OFF) {").substringBefore("} else {")
         val dispatchAt = off.indexOf("dispatch(app, LockEvent.ScreenOff(")
         assertTrue(off, dispatchAt >= 0 && off.indexOf("if (KeyguardCover.switchOn) KeyguardCover.onScreenOff(interactive(app))") > dispatchAt)
-        // The cover is written only while armed, and its fallback holds it off until the next re-arm.
-        assertTrue(body(cover, "wantedNow").contains("coverWanted = !off && switchOn && armed"))
+        // Design 132: the mode reads only managed and the credential.
+        assertTrue(body(cover, "wantedNow").contains("keyguardMode(i.managed, i.deviceSecure)"))
         val fallback = body(cover, "fallback")
         assertTrue(fallback.contains("armed = false") && fallback.contains("wakePending = true"))
     }

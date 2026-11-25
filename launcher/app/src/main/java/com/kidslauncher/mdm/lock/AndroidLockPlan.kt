@@ -1,14 +1,13 @@
 package com.kidslauncher.mdm.lock
 
-import com.kidslauncher.mdm.server.dto.KidLock
-
 /*
  * Design 59 (docs/design/59-android-keyguard-design.md §3) - Android's own lock screen as the gate, our
  * glance its face - pure, tested in AndroidLockPlanTest. Android's secure keyguard holds the Child PIN
  * (`resetPasswordWithToken`, CE bound to it); our glance page is a `showWhenLocked` activity over the
- * occluded keyguard; "Lås opp" asks Android (`requestDismissKeyguard`, Android's PIN pad). Only the
- * per-phone policy switch `kid_lock.keyguard == "android"` turns it on ([androidRequested]); without it
- * every path is today's own lock. [AndroidLock] is the glue.
+ * occluded keyguard; "Lås opp" asks Android (`requestDismissKeyguard`, Android's PIN pad). Since design 132
+ * (phase D) it is the only lock: a managed phone with a Child PIN and Android's credential has the face; without
+ * the credential it has no lock at all until `set_kid_pin` sets it (`lock_state.inactive` `no_android_pin`).
+ * [AndroidLock] is the glue.
  */
 
 /** The one logcat tag: `adb logcat -s AndroidLock`. */
@@ -27,18 +26,11 @@ const val ANDROID_KEYGUARD_FEATURES = 0x1 or 0x4 or 0x10 or 0x80 or 0x100 or 0x2
 const val KEYGUARD_SECURE_CAMERA = 0x2
 
 /**
- * What the policy asks (P59-5): `kid_lock.keyguard` exactly `"android"`. Anything else - `"own"`, missing,
- * junk, or no `kid_lock` at all - is today's own lock.
+ * The glance is Android's face (59 §3.1, design 132): managed, a Child PIN, and an Android credential. `kid_lock.keyguard`
+ * is no longer read - the server sends `"android"` always.
  */
-fun androidRequested(kidLock: KidLock?): Boolean = kidLock?.keyguard == "android"
-
-/** The glance is Android's face (59 §3.1): requested, managed, a kid PIN, and an Android credential. */
-fun androidFace(requested: Boolean, managed: Boolean, hasKidPin: Boolean, deviceSecure: Boolean): Boolean =
-    requested && managed && hasKidPin && deviceSecure
-
-/** 59 §3.4: the next correct Child PIN on **our** keypad becomes Android's PIN - requested, managed, no credential. */
-fun migrationDue(requested: Boolean, managed: Boolean, deviceSecure: Boolean): Boolean =
-    requested && managed && !deviceSecure
+fun androidFace(managed: Boolean, hasKidPin: Boolean, deviceSecure: Boolean): Boolean =
+    managed && hasKidPin && deviceSecure
 
 /** What wakes [faceStep] (59 §3.3). */
 enum class FaceTrigger {
@@ -77,9 +69,6 @@ enum class FaceStep {
 
     /** `dpm.lockNow()`: Android didn't lock under the glance. */
     RELOCK,
-
-    /** No credential now: our keypad and hash, as today - never past a PIN. */
-    OWN_KEYPAD,
 }
 
 /**
@@ -87,10 +76,11 @@ enum class FaceStep {
  * locked) are read now; [presentSinceLocked] = a `USER_PRESENT` (a protected broadcast SystemUI sends when its
  * keyguard is done) since our lock last went LOCKED. The glance leaves only on Android's verdict: the PIN
  * pad's success, or `USER_PRESENT` with Android open. A not-locked read alone never opens the phone - it
- * waits, then locks Android (`lockNow`). No credential at any trigger: our own keypad.
+ * waits, then locks Android (`lockNow`). No credential at any trigger (design 132 §4.5): the glance leaves - there is
+ * no lock to keep, and the apply makes ours DISABLED with `no_android_pin` (never a dead "Lås opp").
  */
 fun faceStep(trigger: FaceTrigger, deviceSecure: Boolean, androidLocked: Boolean, presentSinceLocked: Boolean): FaceStep = when {
-    !deviceSecure -> FaceStep.OWN_KEYPAD
+    !deviceSecure -> FaceStep.LEAVE
     trigger == FaceTrigger.PAD_SUCCEEDED -> FaceStep.LEAVE
     androidLocked -> if (trigger == FaceTrigger.UNLOCK_TAP) FaceStep.ASK_ANDROID else FaceStep.STAY
     // Dark and open: Android must lock now - the next wake's RESUME decides about a USER_PRESENT.
@@ -199,56 +189,12 @@ fun secureCameraHeld(managed: Boolean, features: Int?): Boolean =
     managed && features != null && (features and KEYGUARD_SECURE_CAMERA) != 0
 
 /**
- * 59 §3.8 (Q59-4, M-1, L-1): the edge out of android mode - we own Android's credential ([owned], CE
- * `keyguard_android`), the policy doesn't ask for it, and the server sent that policy in this sync ([fromServer],
- * [com.kidslauncher.mdm.server.rollbackAllowed]): never the saved copy, a `Fallback` (no `kid_lock`) nor `Apply(null)`.
- */
-fun rollbackDue(owned: Boolean, requested: Boolean, fromServer: Boolean): Boolean = owned && !requested && fromServer
-
-/**
- * The reset token turned active ([wasActive] false, [active] true) while we own Android's credential and the policy no
- * longer asks for it: the rollback waits for the server's own policy ([rollbackDue]), so a sync is asked for at once.
- * Not at a process's first apply ([wasActive] `null`): that process's own start syncs anyway.
- */
-fun rollbackSyncDue(wasActive: Boolean?, active: Boolean, owned: Boolean, requested: Boolean): Boolean =
-    wasActive == false && active && owned && !requested
-
-/**
- * S3-1 (qa-59-step3-code): an apply without the parent's choice (the last-enforced plan, a corrupt cache - no
- * `kid_lock`) keeps Android mode's keyguard write (features and T) while we own Android's live credential: no
- * notification content, face unlock, trust agents or lock delay come back from a fallback. The face may be off.
- */
-fun androidKeyguardHeld(owned: Boolean, deviceSecure: Boolean, parentChoice: Boolean): Boolean =
-    owned && deviceSecure && !parentChoice
-
-/** S3-1: `keyguard_requested` is written only from an apply with the parent's choice; `null` keeps the stored one. */
-fun requestToStore(requested: Boolean, parentChoice: Boolean): Boolean? = if (parentChoice) requested else null
-
-/**
  * L-4 (S3-4): the boot count to commit as `android_boot_count` at this CE start - [boot] when known and new, else
  * `null` (nothing to write).
  */
 fun bootSwap(stored: Int?, boot: Int): Int? = if (boot >= 0 && boot != stored) boot else null
 
-/** The rollback's step once due. */
-enum class AndroidRollback {
-    /** No credential left: `keyguard_android` false (verified). */
-    NOTHING,
-
-    /** `resetPasswordWithToken(null)`, then the apply writes DISABLED. */
-    CLEAR,
-
-    /** A credential and no active token: Android's PIN stays the gate; the token is kept running (escrow). */
-    NO_TOKEN,
-}
-
-fun androidRollback(deviceSecure: Boolean, tokenActive: Boolean): AndroidRollback = when {
-    !deviceSecure -> AndroidRollback.NOTHING
-    tokenActive -> AndroidRollback.CLEAR
-    else -> AndroidRollback.NO_TOKEN
-}
-
-/** The reset token in android mode (59 §3.6, replacing 24b's `resetTokenNeeded` there). */
+/** The reset token (59 §3.6; design 132: at enrolment and every apply, in every state). */
 enum class TokenStep {
     NOTHING,
 
@@ -317,9 +263,6 @@ const val SET_KID_PIN_COMMAND = "set_kid_pin"
 /** `set_kid_pin`'s answers (59 §1): the command result's `message` and its `success`. */
 enum class PinCommandAnswer(val message: String, val success: Boolean) {
     PIN_SET("pin set", true),
-
-    /** The fresh policy doesn't ask for Android's lock: the hash in it is the gate (also with no Child PIN). */
-    OWN_LOCK("own lock", true),
     NO_TOKEN("refused: no_token", false),
     MISMATCH("refused: mismatch", false),
     NO_PIN("refused: no_pin", false),
@@ -327,21 +270,19 @@ enum class PinCommandAnswer(val message: String, val success: Boolean) {
 }
 
 /**
- * 59 §3.5: `set_kid_pin` against the **fresh** policy (the one its PIN came in): its keyguard isn't android -> own
- * lock; no PIN -> no_pin; the PIN doesn't verify against that policy's hash ([verifies]: `verifyCommandPin`, no
+ * 59 §3.5: `set_kid_pin` against the **fresh** policy (the one its PIN came in): no PIN -> no_pin; the PIN doesn't verify against that policy's hash ([verifies]: `verifyCommandPin`, no
  * backoff, no failure counted - Q59-1) -> mismatch; no active reset token ([tokenActive], which sets one for the
  * escrow when none is stored) -> no_token. `null` = set it now. [verifies] runs only with a PIN, [tokenActive] only
  * for a PIN that verified.
  */
-fun pinCommandStep(requested: Boolean, pin: String?, verifies: (String) -> Boolean, tokenActive: () -> Boolean): PinCommandAnswer? = when {
-    !requested -> PinCommandAnswer.OWN_LOCK
+fun pinCommandStep(pin: String?, verifies: (String) -> Boolean, tokenActive: () -> Boolean): PinCommandAnswer? = when {
     pin.isNullOrEmpty() -> PinCommandAnswer.NO_PIN
     !verifies(pin) -> PinCommandAnswer.MISMATCH
     !tokenActive() -> PinCommandAnswer.NO_TOKEN
     else -> null
 }
 
-/** A PIN Android's pad and our keypad both take: exactly [length] digits (the policy's `pin_length`). */
+/** A PIN the command takes: exactly [length] digits (the policy's `pin_length`). */
 fun commandPinShape(pin: String, length: Int): Boolean = pin.length == length && pin.all { it in '0'..'9' }
 
 /**
@@ -353,7 +294,7 @@ fun commandWriteAheadRev(owned: Boolean, storedRev: Long?): Long? = if (owned) s
 
 /**
  * Android's PIN is the gate (59 §1): our glance is its face ([face]), or we own Android's live credential ([owned] &&
- * [deviceSecure]: a rollback waiting for the token, a fallback apply, an unmanaged phone).
+ * [deviceSecure]: a fallback apply, an unmanaged phone).
  */
 fun androidGate(face: Boolean, owned: Boolean, deviceSecure: Boolean): Boolean = face || (owned && deviceSecure)
 
@@ -361,9 +302,28 @@ fun androidGate(face: Boolean, owned: Boolean, deviceSecure: Boolean): Boolean =
 data class KeyguardReport(val keyguard: String, val pinRev: Long?)
 
 /**
- * Which gate the phone runs, and the rev it enforces (59 §1): `"android"` while [androidGate] - with the rev Android's
- * PIN was set from ([androidRev]; `null` = unknown, or a credential not ours) -, else `"own"` with the rev committed
- * with the hash in use ([ownRev]; `null` = no Child PIN).
+ * Design 132 §2.1a: the gate is always Android's (`"android"`), with the rev Android's PIN was set from - known only for
+ * a credential we set ([owned]; `null` = unknown, a credential not ours, or none - the latter reported as
+ * `inactive: no_android_pin`).
  */
-fun keyguardReport(face: Boolean, owned: Boolean, deviceSecure: Boolean, androidRev: Long?, ownRev: Long?): KeyguardReport =
-    if (androidGate(face, owned, deviceSecure)) KeyguardReport("android", androidRev.takeIf { owned }) else KeyguardReport("own", ownRev)
+fun keyguardReport(owned: Boolean, androidRev: Long?): KeyguardReport = KeyguardReport("android", androidRev.takeIf { owned })
+
+/** `DevicePolicyManager.PASSWORD_QUALITY_UNSPECIFIED` and `PASSWORD_QUALITY_NUMERIC` (design 132 §4.5). */
+const val PASSWORD_QUALITY_UNSPECIFIED = 0
+const val PASSWORD_QUALITY_NUMERIC = 0x20000
+
+/**
+ * Design 132 §4.5 (QA H1): the password quality every apply writes. NUMERIC once Android has the Child PIN - we set it
+ * ([owned], `keyguard_android`) and the credential is there ([deviceSecure]) - on a managed phone: Settings › Screen lock
+ * then offers PIN and password only, never "None", "Swipe" or a pattern. Never before (a quality the current
+ * credential doesn't meet makes Android ask for a new screen lock, racing `set_kid_pin`). A fallback apply (no
+ * `kid_lock`) keeps it: the Child PIN is changed, never removed (Q1 (a)). Else UNSPECIFIED.
+ */
+fun passwordQuality(managed: Boolean, owned: Boolean, deviceSecure: Boolean): Int =
+    if (managed && owned && deviceSecure) PASSWORD_QUALITY_NUMERIC else PASSWORD_QUALITY_UNSPECIFIED
+
+/**
+ * Design 132 §4.5: a PIN `resetPasswordWithToken` takes under NUMERIC with no minimum length set - Android's own floor
+ * of 4, digits only. Every PIN [commandPinShape] takes for a 4-6 digit Child PIN passes.
+ */
+fun numericQualityMet(pin: String): Boolean = pin.length >= 4 && pin.all { it in '0'..'9' }

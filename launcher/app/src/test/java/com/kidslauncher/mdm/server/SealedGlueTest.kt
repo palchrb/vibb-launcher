@@ -17,7 +17,7 @@ class SealedGlueTest {
         val configure = body(runtime, "configure")
         assertTrue(configure.contains("kidConfigFor(kidLock, config) { runCatching { PinLockStore.config(app) }.getOrNull() }"))
         assertTrue(configure.contains("(write is PinWrite.Write && !PinLockStore.pinStored(app))"))
-        assertTrue(configure.contains("PinLockStore.saveConfig(app, write, active, why, storedRequest)"))
+        assertTrue(configure.contains("PinLockStore.saveConfig(app, write, active, why)"))
         assertTrue(body(runtime, "checkPin").contains("val cfg = config?.takeIf { it.usable } ?: runCatching { PinLockStore.config(app) }.getOrNull()"))
         val guard = body(runtime, "guardTripped")
         assertTrue(guard.contains("PinLockStore.saveConfig(app, PinWrite.Keep, active = false"))

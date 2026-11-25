@@ -42,13 +42,6 @@ class WindowRelockPlanTest {
 
         override fun now() = 1_760_100_000_000
         override fun openWindows() = open
-        override fun secureNow() = secure
-        override fun tokenUsable() = token
-        override fun removeCredential(): Boolean {
-            calls += "credential"
-            secure = false
-            return true
-        }
         override fun installedPackages(): List<InstalledPackage> {
             calls += "signers"
             if (installedThrows) throw IllegalStateException("dead binder")
@@ -132,13 +125,13 @@ class WindowRelockPlanTest {
     }
 
     @Test
-    fun `the steps run in order - the credential before apply, the resets after it`() {
+    fun `the steps run in order - the signer check before apply, the resets after it`() {
         open(WindowKind.PAUSE)
         phone.secure = true
         phone.packages = listOf(InstalledPackage("org.example.chat", setOf("aa"), 1L, "com.android.vending"))
         end(WindowKind.PAUSE)
         relock()
-        assertEquals(listOf("credential", "signers", "apply", "proxies", "certs", "notifications", "detect", "finish"), phone.calls)
+        assertEquals(listOf("signers", "apply", "proxies", "certs", "notifications", "detect", "finish"), phone.calls)
     }
 
     @Test
@@ -221,49 +214,15 @@ class WindowRelockPlanTest {
     }
 
     @Test
-    fun `an Android screen lock goes only when the phone had none at the first window's start`() {
-        assertEquals(CredentialAction.REMOVE, credentialAction(secureAtStart = false, secureNow = true, tokenUsable = true))
-        assertEquals(CredentialAction.LEFT, credentialAction(secureAtStart = false, secureNow = true, tokenUsable = false))
-        assertEquals(CredentialAction.NONE, credentialAction(secureAtStart = true, secureNow = true, tokenUsable = true))
-        assertEquals(CredentialAction.NONE, credentialAction(secureAtStart = null, secureNow = true, tokenUsable = true))
-        assertEquals(CredentialAction.NONE, credentialAction(secureAtStart = false, secureNow = false, tokenUsable = true))
-
-        // Set during the window: removed, reported.
+    fun `an Android screen lock set in a window is never removed - Android's PIN is the Child PIN (design 132)`() {
         open(WindowKind.OVERRIDE)
         phone.secure = true
         end(WindowKind.OVERRIDE)
-        val removed = relock().report!!
-        assertTrue(removed.credentialRemoved)
-        assertFalse(removed.credentialLeft)
-        // No usable token: left, reported.
-        phone.calls.clear()
-        open(WindowKind.OVERRIDE)
-        phone.secure = true
-        phone.token = false
-        end(WindowKind.OVERRIDE)
-        val left = relock().report!!
-        assertFalse(left.credentialRemoved)
-        assertTrue(left.credentialLeft)
+        val report = relock().report!!
+        assertFalse(report.credentialRemoved)
+        assertFalse(report.credentialLeft)
         assertFalse("credential" in phone.calls)
-        // The phone had one before the window (not migrated yet): never touched.
-        phone.calls.clear()
-        phone.token = true
-        open(WindowKind.PAUSE, RelockStart(secure = true, packages = emptyMap(), disabled = emptySet()))
-        end(WindowKind.PAUSE)
-        val kept = relock().report!!
-        assertFalse(kept.credentialRemoved)
-        assertFalse(kept.credentialLeft)
-        assertFalse("credential" in phone.calls)
-    }
-
-    @Test
-    fun `the reset token is set only while it isn't active and the phone has no credential`() {
-        assertTrue(resetTokenNeeded(tokenActive = false, tokenStored = false, secureNow = false))
-        assertTrue(resetTokenNeeded(tokenActive = false, tokenStored = true, secureNow = false))
-        assertTrue(resetTokenNeeded(tokenActive = true, tokenStored = false, secureNow = false))
-        assertFalse(resetTokenNeeded(tokenActive = true, tokenStored = true, secureNow = false))
-        // With a credential it couldn't be activated (it would wait for the kid's credential).
-        assertFalse(resetTokenNeeded(tokenActive = false, tokenStored = false, secureNow = true))
+        assertFalse("credential" in report.failures)
     }
 
     @Test

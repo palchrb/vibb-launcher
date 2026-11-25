@@ -134,10 +134,8 @@ class HomeFrontTest {
         assertEquals(listOf("PinLockActivity.kt"), noAnim)
         assertTrue(code(file("java/com/kidslauncher/mdm/lock/PinLockActivity.kt")).contains("HomeFront.bring(this, \"the lock left\", noAnimation = AndroidLock.faceOn, arrival = arrival)"))
         assertTrue(text.contains("private val main = Handler(Looper.getMainLooper())"))
-        // Only the lock-up starts Home unanimated - every other start ends its dark mark.
+        // Design 132: no lock-up starts Home any more - nothing starts it unanimated.
         val sources = file("java/com/kidslauncher/mdm").walk().filter { it.isFile && it.name.endsWith(".kt") }.toList()
-        val unanimated = sources.filter { code(it).contains("animate = false") }.map { it.name }
-        assertEquals(listOf("PinLockRuntime.kt"), unanimated)
-        assertEquals(1, Regex("animate = false").findAll(code(file("java/com/kidslauncher/mdm/lock/PinLockRuntime.kt"))).count())
+        assertEquals(emptyList<String>(), sources.filter { code(it).contains("animate = false") }.map { it.name })
     }
 }

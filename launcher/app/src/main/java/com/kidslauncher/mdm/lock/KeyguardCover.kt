@@ -56,8 +56,8 @@ object KeyguardCover {
     /** T (`setMaximumTimeToLock`) follows the screen timeout: under the cover (H1) or Android's lock (59 §3.2). */
     val timeToLockFollows: Boolean get() = coverOn || androidOn
 
-    /** [configure]'s last inputs (`null` before the first apply in this process). [androidRequested]: design 59's switch. */
-    private data class Inputs(val managed: Boolean, val hasKidPin: Boolean, val deviceSecure: Boolean, val guardTripped: Boolean, val androidRequested: Boolean = false, val androidHeld: Boolean = false)
+    /** [configure]'s last inputs (`null` before the first apply in this process). */
+    private data class Inputs(val managed: Boolean, val hasKidPin: Boolean, val deviceSecure: Boolean, val guardTripped: Boolean)
 
     @Volatile
     private var inputs: Inputs? = null
@@ -126,11 +126,9 @@ object KeyguardCover {
         hasKidPin: Boolean,
         deviceSecure: Boolean,
         guardTripped: Boolean,
-        androidRequested: Boolean = false,
-        androidHeld: Boolean = false,
     ): Boolean {
         val app = context.applicationContext
-        inputs = Inputs(managed, hasKidPin, deviceSecure, guardTripped, androidRequested, androidHeld)
+        inputs = Inputs(managed, hasKidPin, deviceSecure, guardTripped)
         val (wanted, forManaged) = wantedNow()
         return write(app, dpm, admin, "apply", wanted, forManaged).lockMayRun
     }
@@ -158,15 +156,7 @@ object KeyguardCover {
     private fun wantedNow(forceOff: Boolean = false): Pair<KeyguardMode, Boolean> {
         val i = inputs ?: Inputs(managed = false, hasKidPin = false, deviceSecure = false, guardTripped = false)
         val off = forceOff || shuttingDown
-        val wanted = keyguardMode(
-            i.managed, i.hasKidPin, i.deviceSecure,
-            coverWanted = !off && switchOn && armed,
-            voip = if (off) VoipPhase.NONE else voipSeen,
-            guardTripped = i.guardTripped,
-            // Design 59: not the cover's - a shutdown or a failed T never takes Android mode's features out.
-            androidRequested = i.androidRequested,
-            androidHeld = i.androidHeld,
-        )
+        val wanted = keyguardMode(i.managed, i.deviceSecure)
         return wanted to i.managed
     }
 

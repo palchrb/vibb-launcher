@@ -350,11 +350,6 @@ class PinLockActivity : AppCompatActivity() {
      */
     private fun tapAsFace() {
         val step = AndroidLock.step(this, FaceTrigger.UNLOCK_TAP)
-        if (step == FaceStep.OWN_KEYPAD) {
-            Log.i(ANDROID_LOCK_TAG, "Lås opp: no Android PIN now - our own keypad")
-            glance?.ownKeypad()
-            return
-        }
         if (step == FaceStep.ASK_ANDROID) {
             if (askAgain(askAge())) askAndroid()
         } else {
@@ -500,7 +495,7 @@ class PinLockActivity : AppCompatActivity() {
                 AndroidLock.relock(this, why)
             }
             FaceStep.STAY -> if (askedAt == null && asking()) glance?.back()
-            FaceStep.ASK_ANDROID, FaceStep.OWN_KEYPAD -> Unit
+            FaceStep.ASK_ANDROID -> Unit
         }
         return false
     }
@@ -1059,12 +1054,7 @@ class PinLockActivity : AppCompatActivity() {
         val checkedAt = PinLockRuntime.screenOffs
         lifecycleScope.launch {
             val result = withContext(Dispatchers.Default) {
-                PinLockRuntime.checkPin(this@PinLockActivity, pin).also {
-                    // Design 59 §3.4: while Android's lock is asked for and has no PIN yet, the right Child PIN
-                    // becomes Android's, with the rev of the hash it was checked against (returns at once otherwise)
-                    // - before the unlock, so the next screen-off is Android's.
-                    if (it is PinLockRuntime.PinResult.Ok) AndroidLock.migrateIfDue(this@PinLockActivity, pin, it.pinRev)
-                }
+                PinLockRuntime.checkPin(this@PinLockActivity, pin)
             }
             checking = false
             entered = ""

@@ -36,7 +36,7 @@ class PowerGlanceTest {
         assertTrue("before: the mark", sosGestureLikely(screenOn, paused, sosAppPresent = true))
         assertNull(sosScreenOn(screenOn, power, dark))
         assertFalse(sosGestureLikely(sosScreenOn(screenOn, power, dark), paused, sosAppPresent = true))
-        assertFalse(sosMarkAtPause(androidFace = true, ours = false, sosScreenOn(screenOn, power, dark), paused, sosAppPresent = true))
+        assertFalse(sosMarkAtPause(ours = false, sosScreenOn(screenOn, power, dark), paused, sosAppPresent = true))
         assertEquals(PAUSE_REFRONT_MS, pauseRefrontDelayMs(sosScreenOn(screenOn, power, dark), paused))
     }
 

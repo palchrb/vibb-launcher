@@ -339,16 +339,15 @@ object PinLockRuntime {
         }
         // Design 59 §3.1 (Q59-2, L-4): every CE start stores the boot count; with Android's lock as the gate the
         // boot's first CE start is UNLOCKED (CE unlocked = the Child PIN was typed), every later start LOCKED.
-        // Unreadable: own mode's rule (LOCKED when active).
+        // Unreadable: LOCKED when active.
         startAndroidBoot = try {
             val boot = com.kidslauncher.mdm.server.BootClock.bootCount()
             val stored = PinLockStore.swapAndroidBoot(app, boot)
-            val requested = PinLockStore.keyguardRequested(app)
-            val face = startActive && requested && AndroidLock.deviceSecure(app)
-            AndroidLock.atProcessStart(requested, face, firstCeStart(boot, stored))
+            val face = startActive && AndroidLock.deviceSecure(app)
+            AndroidLock.atProcessStart(face, firstCeStart(boot, stored))
             processStartUnlocked(face, boot, stored)
         } catch (e: Exception) {
-            Log.w(LOG_TAG, "Android's lock state unreadable at the start - our own rule", e)
+            Log.w(LOG_TAG, "Android's lock state unreadable at the start - LOCKED when active", e)
             false
         }
         mode = step(LockMode.DISABLED, LockEvent.ProcessStart(startActive, interactive = false, androidBoot = startAndroidBoot)).mode
@@ -801,8 +800,8 @@ object PinLockRuntime {
         // S3-3: Android read locked since this screen-off - an open read at the next resume is then an unlock, so
         // the wait for USER_PRESENT is the longer one (a fingerprint from dark).
         if (kg && AndroidLock.faceOn) AndroidLock.sawLocked(screenOffs)
-        // Design 59d step C: as the face the lock alone whatever kg read (kg still feeds sawLocked above).
-        val start = lockUpStarts(result.showLock, lockOnTop, callLive, interactive, cover && kg, face = AndroidLock.faceOn)
+        // Design 59d step C, design 132: the lock alone whatever kg read (kg still feeds sawLocked above).
+        val start = lockUpStarts(result.showLock, lockOnTop, callLive, interactive)
         lockUp(context, start, lockAsk(event))
         AndroidLock.note(context, "screen-off, lock-up $start")
         if (result.mode == LockMode.LOCKED) Log.i(LOG_TAG, "Lock-up at screen-off: $start (call=$callLive, interactive=$interactive, cover=$cover, kg=$kg)")
@@ -819,10 +818,6 @@ object PinLockRuntime {
         if (start == LockUpStart.NONE) return
         // Round 7 §3: no notice wake in the first 2 s after a lock-up ([noticeWakeAllowed]).
         lockUpAtElapsed = SystemClock.elapsedRealtime()
-        if (start == LockUpStart.HOME_THEN_LOCK) {
-            darkLockUp = true
-            HomeFront.bring(context, "under the lock (a lock-up while dark)", animate = false)
-        }
         if (show(context, ask = ask, fromLockUp = true)) lockOnTop = lockOnTopAfter(lockOnTop, LockTopEvent.LOCK_UP)
     }
 
@@ -1044,11 +1039,6 @@ object PinLockRuntime {
                 if (intent.action == Intent.ACTION_SCREEN_ON && !screenOnHealed) {
                     screenOnHealed = true
                     healStatusBar(app, HealTrigger.FIRST_SCREEN_ON)
-                }
-                // Backstop for the migration (QA 10 #15): the Android credential is gone but no
-                // onPasswordChanged arrived - check now rather than at the next sync.
-                if (intent.action == Intent.ACTION_USER_PRESENT && inactive == LockInactive.ANDROID_CREDENTIAL && !deviceSecure(app)) {
-                    requestApply(app)
                 }
             }
         }
@@ -1801,23 +1791,18 @@ object PinLockRuntime {
     // ---- configuration (from AppEnforcer.apply, background thread) ------------------------
 
     /**
-     * Design §3: decides whether the lock is active and switches Android's keyguard off for it
-     * (`setKeyguardDisabled(true)` = screen lock "None", only possible without an Android
-     * credential). Re-checked on every apply; an override or pause doesn't switch the lock off.
-     * Design 59: `kid_lock.keyguard` "android" ([androidRequested]) makes Android's PIN the gate and the lock its
-     * face; [parentChoice] is a fresh or `Ok` cached policy (L-1), and only [fromServer] - the server's policy of this
-     * sync - may roll it back.
+     * Decides whether the lock is active (design 132: Android's face - a Child PIN, managed, Android's credential) and
+     * writes Android's keyguard ([KeyguardCover]). Re-checked on every apply; an override or pause doesn't switch the
+     * lock off.
      */
-    fun configure(context: Context, dpm: DevicePolicyManager, admin: ComponentName, policy: PolicyResponse?, managed: Boolean, parentChoice: Boolean = false, fromServer: Boolean = false) {
+    fun configure(context: Context, dpm: DevicePolicyManager, admin: ComponentName, policy: PolicyResponse?, managed: Boolean) {
         val app = context.applicationContext
         val kidLock = policy?.kidLock
         // Design r10 §3.2: a cached policy's kid hash is redacted - the PIN then comes from memory or the sealed store,
         // else the unusable stand-in (BAD_HASH), never "no PIN" (QA R10-1, R10-4).
         val newConfig = kidConfigFor(kidLock, config) { runCatching { PinLockStore.config(app) }.getOrNull() }
-        val requested = androidRequested(kidLock)
-        // Design 59 first: the token, the rollback and the owned flag - the keyguard below is written for the
-        // credential this leaves (a rollback's clear, then DISABLED).
-        val owned = AndroidLock.configure(app, requested, parentChoice, fromServer)
+        // Design 59 first: the token and the owned flag.
+        AndroidLock.configure(app)
         val deviceSecure = try {
             app.getSystemService(KeyguardManager::class.java)?.isDeviceSecure == true
         } catch (e: Exception) {
@@ -1826,27 +1811,17 @@ object PinLockRuntime {
         // The crash guard re-arms at a sync at most once every 10 minutes.
         val guard = guardRearm(PinLockStore.guard(app), System.currentTimeMillis())
         PinLockStore.saveGuard(app, guard)
-        // The one keyguard writer (design 32 step 2, [KeyguardCover]): `setKeyguardDisabled(true)` where
-        // today's code disables it ([wantKeyguardDisabled] - false while a credential exists; true also
-        // re-dismisses a showing keyguard), the features (B2's camera bit) and, only under the debug
-        // switch's cover, the Swipe keyguard with T. True: the cover is set or the keyguard disabled - a
-        // failed cover is today's disabled keyguard, never the lock off (H2).
-        // Design 59: requested with a credential, the keyguard is ANDROID and the lock stays active as its face
-        // (androidGate); the camera lock follows what the write read back.
-        val androidGate = AndroidLock.face(app, dpm, admin, requested, managed, newConfig != null, deviceSecure)
-        // S3-1: an apply without the parent's choice (the last-enforced plan has no kid_lock) keeps Android's
-        // keyguard write while we own its live credential - no notification content, face or trust agents back.
-        val androidHeld = androidKeyguardHeld(owned, deviceSecure, parentChoice)
-        val keyguardDisabled = KeyguardCover.configure(app, dpm, admin, managed, newConfig != null, deviceSecure, guard.trippedAtMs != null, requested, androidHeld)
+        // The face, then the one keyguard writer ([KeyguardCover]): ANDROID on a managed phone with a credential (a
+        // fallback apply too), else UNTOUCHED - `setKeyguardDisabled(false)` either way. The camera lock follows what the
+        // write read back.
+        AndroidLock.face(app, dpm, admin, managed, newConfig != null, deviceSecure)
+        KeyguardCover.configure(app, dpm, admin, managed, newConfig != null, deviceSecure, guard.trippedAtMs != null)
         AndroidLock.afterKeyguard(app)
         val (active, why) = lockActivation(
             managed = managed,
             hasKidPin = newConfig != null,
             deviceSecure = deviceSecure,
-            keyguardDisabled = keyguardDisabled,
-            hashUsable = newConfig?.usable == true,
             guardTripped = guard.trippedAtMs != null,
-            androidGate = androidGate,
         )
         // A new PIN from the parent resets the wrong-PIN count and wait (design §5) - never the stand-in (r10, QA R10-11).
         if (backoffStepDue(kidLock, newConfig)) {
@@ -1856,16 +1831,13 @@ object PinLockRuntime {
                 if (forHash != backoff) PinLockStore.saveBackoff(app, forHash)
             }
         }
-        // S3-1: the request is stored only from a policy with the parent's choice - never from a fallback's missing kid_lock.
-        val storedRequest = requestToStore(requested, parentChoice)
         val write = pinWriteFor(kidLock, newConfig)
         // Code QA Q-5: a real hash whose seal failed (the fields removed, R10-3) is written again at the next apply,
         // not only when the PIN changes - else it stays off the disk for the rest of the process.
         if (newConfig != config || active != PinLockStore.active(app) || why != inactive ||
-            (storedRequest != null && storedRequest != PinLockStore.keyguardRequested(app)) ||
             (write is PinWrite.Write && !PinLockStore.pinStored(app))
         ) {
-            PinLockStore.saveConfig(app, write, active, why, storedRequest)
+            PinLockStore.saveConfig(app, write, active, why)
         }
         config = newConfig
         inactive = why
@@ -2066,7 +2038,7 @@ object PinLockRuntime {
         // one stops the glance only after ~1 s) is a probable SOS at once - never re-fronted over before its stop.
         val pausedNow = SystemClock.elapsedRealtime()
         val ours = androidLossOurs(androidAskAt ?: androidCancelledAskAt, androidAnsweredAt, ownStartAt, ownOthersResumed > 0, pausedNow)
-        if (sosMarkAtPause(AndroidLock.faceOn, ours, sosScreenOn(lastScreenOnElapsed, powerChangedAt, lastScreenOffElapsed), pausedNow, sosPackage != null)) noteProbableSos(pausedNow)
+        if (sosMarkAtPause(ours, sosScreenOn(lastScreenOnElapsed, powerChangedAt, lastScreenOffElapsed), pausedNow, sosPackage != null)) noteProbableSos(pausedNow)
         refrontAttempt = 0
         handler.removeCallbacks(refrontCheck)
         // Just after a screen-on the stop that marks Emergency SOS may still come (bug 25b-H).
@@ -2166,8 +2138,6 @@ object PinLockRuntime {
             alarmRinging = alarmNow(context),
             voipCall = VoipCalls.phase != VoipPhase.NONE,
             sosFlow = sosFlowNow(sosFlowUntilElapsed, now, ownOthersResumed > 0),
-            coverOn = KeyguardCover.coverOn,
-            lockOnTop = lockOnTop,
             // Design 59b §3 (P59-3): the face's loss rule - Android locked under it, or open with USER_PRESENT (no binder
             // call without the face, or with the glance in front).
             android = if (chromeLocked && !lockResumed) AndroidLock.loss(context) else null,
@@ -2211,7 +2181,7 @@ object PinLockRuntime {
                 handler.postDelayed(refrontCheck, action.nextCheckMs)
             }
             RefrontAction.AndroidWait -> {
-                // B-5: Android open with no USER_PRESENT yet - one wait for it, then own mode's backstop.
+                // B-5: Android open with no USER_PRESENT yet - one wait for it, then the RELOCK backstop.
                 yielding = null
                 androidWaited = true
                 handler.postDelayed(refrontCheck, ANDROID_ANSWER_WAIT_MS)
@@ -2222,14 +2192,6 @@ object PinLockRuntime {
                 yielding = null
                 val hook = androidUnlockHook
                 if (hook != null) hook() else dispatch(context, LockEvent.Unlocked(screenOffs, screenOffs))
-            }
-            RefrontAction.DarkLockUp -> {
-                // Design 32 step 2 (M5): a system-dialer call ended while dark under the keyguard cover -
-                // the lock-up the screen-off couldn't do, once, so the keyguard is occluded at the wake.
-                // The lock alone, as every lock-up under the cover ([lockUpStarts]' coverOn).
-                yielding = null
-                lockUp(context, LockUpStart.LOCK, LockAsk.AT_ONCE)
-                Log.i(LOG_TAG, "Lock-up while dark: LOCK (the re-front check, the keyguard cover)")
             }
         }
     }
@@ -2404,7 +2366,7 @@ object PinLockRuntime {
         val wait = backoffRemaining(refreshBackoff(backoff, now), now)
         val yields = exemptYields
         exemptYields = 0
-        val android = AndroidLock.report(app, ownRev = (config ?: runCatching { PinLockStore.config(app) }.getOrNull())?.pinRev)
+        val android = AndroidLock.report(app)
         return LockStateReport(
             active = mode != LockMode.DISABLED,
             inactive = inactive?.wire,

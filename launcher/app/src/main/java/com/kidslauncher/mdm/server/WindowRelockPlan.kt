@@ -116,33 +116,6 @@ fun windowEndMs(start: WindowStart, durationMs: Long, nowWallMs: Long, nowElapse
     return minOf(start.untilWallMs, nowWallMs + elapsedLeft)
 }
 
-// ---- step 1: an Android screen lock set during the window -------------------------------------
-
-enum class CredentialAction {
-    /** No credential now, or the phone had one before the first window. */
-    NONE,
-
-    /** Set during the window, and our reset token works: `resetPasswordWithToken(null)`. */
-    REMOVE,
-
-    /** Set during the window, no usable token: reported (`credential_left`). */
-    LEFT,
-}
-
-/** [secureAtStart] `null` = unknown (an adopted window): never removed. [androidRequested] (design 59 §3.7): while the
- * policy asks for Android's lock the step is skipped - a window opened before the migration must not remove the
- * migrated Child PIN (a kid's own PIN set in a window is the PWA's warning instead). */
-fun credentialAction(secureAtStart: Boolean?, secureNow: Boolean, tokenUsable: Boolean, androidRequested: Boolean = false): CredentialAction = when {
-    !secureNow || secureAtStart != false || androidRequested -> CredentialAction.NONE
-    tokenUsable -> CredentialAction.REMOVE
-    else -> CredentialAction.LEFT
-}
-
-/** The reset token is (re)set only while it isn't active and the phone has no credential - that
- * activates it at once (QA #9). */
-fun resetTokenNeeded(tokenActive: Boolean, tokenStored: Boolean, secureNow: Boolean): Boolean =
-    !secureNow && !(tokenActive && tokenStored)
-
 // ---- step 2: apps installed, updated or re-signed in the window (§1.6) ------------------------
 
 /** One non-system package at the start of the first window. */

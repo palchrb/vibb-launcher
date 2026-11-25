@@ -18,13 +18,11 @@ class KidPinSealTest {
     private val real = KidLock(hash, salt, pinLength = 6, pinRev = 7)
     private val redacted = real.copy(pinHash = "", pinSalt = "")
 
-    /** What `configure` decides for [config] - through [lockActivation], as the runtime does. */
+    /** What `configure` decides for [config] - through [lockActivation], as the runtime does (Android's PIN set). */
     private fun activation(config: KidLockConfig?) = lockActivation(
         managed = true,
         hasKidPin = config != null,
-        deviceSecure = false,
-        keyguardDisabled = true,
-        hashUsable = config?.usable == true,
+        deviceSecure = true,
         guardTripped = false,
     )
 
@@ -48,19 +46,19 @@ class KidPinSealTest {
         // Code QA Q-12: a stored copy of another rev is an older PIN - the stand-in; rev 0 (an older server) isn't checked.
         val older = other.copy(pinRev = 6)
         assertFalse(kidConfigFor(redacted, null) { older }!!.usable)
-        assertEquals(true to LockInactive.BAD_HASH, activation(kidConfigFor(redacted, null) { older }))
+        assertEquals(true to null, activation(kidConfigFor(redacted, null) { older }))
         assertEquals(older.copy(length = 6), kidConfigFor(redacted.copy(pinRev = 0), null) { older })
         // Memory is the last applied: no rev check.
         assertEquals(older.copy(length = 6), kidConfigFor(redacted, older, ::noRead))
     }
 
     @Test
-    fun `a redacted policy with nothing readable is the stand-in - the lock up, BAD_HASH, never off`() {
+    fun `a redacted policy with nothing readable is the stand-in - a Child PIN all the same, the lock up`() {
         val standIn = kidConfigFor(redacted, null) { null }!!
         assertFalse(standIn.usable)
         assertEquals(6, standIn.length)
-        assertEquals(true to LockInactive.BAD_HASH, activation(standIn))
-        assertEquals(true to LockInactive.BAD_HASH, activation(kidConfigFor(redacted, null) { KidLockConfig("zz", salt, 4) }))
+        assertEquals(true to null, activation(standIn))
+        assertEquals(true to null, activation(kidConfigFor(redacted, null) { KidLockConfig("zz", salt, 4) }))
     }
 
     @Test
@@ -132,7 +130,7 @@ class KidPinSealTest {
         box.openFailures = 1
         assertNull(PinLockStore.configFrom(prefs, reader))
         val memory = kidConfigFor(redacted, null) { null }
-        assertEquals(true to LockInactive.BAD_HASH, activation(memory))
+        assertEquals(true to null, activation(memory))
         val healed = kidConfigFor(redacted, memory) { PinLockStore.configFrom(prefs, reader) }
         assertEquals(written, healed)
         assertEquals(true to null, activation(healed))

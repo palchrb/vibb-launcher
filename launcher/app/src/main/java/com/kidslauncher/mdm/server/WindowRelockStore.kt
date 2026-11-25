@@ -218,18 +218,6 @@ interface RelockPlatform {
     /** The windows open now (`isActive()` of the override and the pause). */
     fun openWindows(): Set<WindowKind>
 
-    fun secureNow(): Boolean
-
-    /** Our reset-password token is stored and active. */
-    fun tokenUsable(): Boolean
-
-    /** `resetPasswordWithToken(null)`: true when the credential is gone. */
-    fun removeCredential(): Boolean
-
-    /** Design 59 §3.7: the policy asks for Android's lock (CE `keyguard_requested`) or we own its credential
-     * (`keyguard_android`) - step 1 is skipped then. Unreadable counts as true (the safe side). */
-    fun androidKeyguardRequested(): Boolean = false
-
     fun installedPackages(): List<InstalledPackage>
 
     /** The enforced policy's allowlist (`null` = apps unmanaged). */
@@ -257,7 +245,8 @@ interface RelockPlatform {
 
     fun regrantNotifications()
 
-    /** What is still on (the credential is the engine's: [RelockDetections.credentialLeft] is ignored). */
+    /** What is still on ([RelockDetections.credentialLeft] is always false since design 132: Android's PIN is the
+     * Child PIN, and a PIN the kid changed in a window is the PWA's "isn't the Child PIN" line). */
     fun detect(disabledAtStart: Set<String>?): RelockDetections
 
     /** The lock re-check, the time-rule screen, the alarm, Home to the front (unless a call,
@@ -269,8 +258,8 @@ interface RelockPlatform {
 data class RelockOutcome(val report: RelockReport?, val cleared: Boolean)
 
 /**
- * One relock (design 24b §1.2), when due: (1) an Android screen lock set in the window goes, so
- * `PinLockRuntime.configure` in (3) sees none; (2) the signer check writes `relock_blocked`; (3)
+ * One relock (design 24b §1.2), when due: (1) gone with design 132 (an Android screen lock set in the window was
+ * removed - now Android's PIN is the Child PIN, never removed); (2) the signer check writes `relock_blocked`; (3)
  * apply(); (4) the resets; (5) the detections; (6) finish. Each step's findings are committed as it
  * completes; a step that throws is a failure and the rest still runs; a throwing apply() or signer
  * check keeps the marker (and the snapshot) for the next trigger. (3) always runs - also in the sync,
@@ -286,7 +275,6 @@ fun runRelock(store: WindowRelockStore, platform: RelockPlatform, trigger: Reloc
         marker
     }
     val genAtStart = marker.gen
-    val secureAtStart = store.secureAtStart()
     var report = (store.currentReport() ?: startedReport(platform.now(), trigger, marker.windows))
         .let { it.copy(windows = (it.windows + marker.windows).filter { w -> WindowKind.entries.any { k -> k.wire == w } }.distinct().sorted()) }
 
@@ -301,12 +289,6 @@ fun runRelock(store: WindowRelockStore, platform: RelockPlatform, trigger: Reloc
         store.saveCurrentReport(report)
     }
 
-    // 1. The credential first (QA #9).
-    step(RelockFailure.CREDENTIAL) {
-        if (credentialAction(secureAtStart, platform.secureNow(), platform.tokenUsable(), platform.androidKeyguardRequested()) == CredentialAction.REMOVE) {
-            report = withResets(report, 0, 0, platform.removeCredential(), emptyList())
-        }
-    }
     // 2. The signer check: a throw keeps the marker and the snapshot (QA Low 2).
     var signerFailed = false
     step(RelockFailure.SIGNER_CHECK) {
@@ -348,8 +330,7 @@ fun runRelock(store: WindowRelockStore, platform: RelockPlatform, trigger: Reloc
     step(RelockFailure.NOTIFICATIONS) { platform.regrantNotifications() }
     // 5. What is still on.
     step(RelockFailure.DETECTIONS) {
-        val left = credentialAction(secureAtStart, platform.secureNow(), tokenUsable = false) != CredentialAction.NONE
-        report = withDetections(report, platform.detect(store.disabledAtStart()).copy(credentialLeft = left))
+        report = withDetections(report, platform.detect(store.disabledAtStart()).copy(credentialLeft = false))
     }
     // 6. Finish.
     step(RelockFailure.FINISH) {

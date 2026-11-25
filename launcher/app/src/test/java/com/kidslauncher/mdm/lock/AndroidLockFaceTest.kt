@@ -152,18 +152,21 @@ class AndroidLockFaceTest {
     }
 
     @Test
-    fun `own mode's rows are unchanged - never giving up, no NO_USER_ACTION, the dark cover row`() {
-        assertEquals(RefrontAction.Refront(2_000L), refrontAction(lostFront, 0))
-        assertEquals(RefrontAction.Refront(5_000L), refrontAction(lostFront.copy(androidRefronts = 99, androidOurs = true), 7))
-        assertFalse((refrontAction(lostFront, 3) as RefrontAction.Refront).noUserAction)
-        assertEquals(RefrontAction.Stop, refrontAction(lostFront.copy(interactive = false), 0))
-        assertEquals(RefrontAction.DarkLockUp, refrontAction(lostFront.copy(interactive = false, coverOn = true), 0))
-        assertEquals(RefrontAction.Yield("system_call"), refrontAction(lostFront.copy(interactive = false, coverOn = true, telecomInCall = true), 0))
-        // The glance's start adds NO_USER_ACTION only when asked (the face's re-front): own mode's intent is unchanged.
+    fun `no face, nothing to bring back - the RELOCK backstop after the face's one wait (design 132)`() {
+        // No face (no credential): no lock - no re-front, never giving up is gone with own mode.
+        assertEquals(RefrontAction.Stop, refrontAction(lostFront, 0))
+        assertEquals(RefrontAction.Stop, refrontAction(lostFront.copy(androidRefronts = 99, androidOurs = true), 7))
+        // The wait for USER_PRESENT is over: the backstop re-fronts (the exemptions first), the glance's read RELOCKs.
+        val waited = lostFront.copy(android = AndroidLoss.WAIT, androidWaited = true)
+        assertEquals(RefrontAction.Refront(2_000L), refrontAction(waited, 0))
+        assertEquals(RefrontAction.Refront(5_000L), refrontAction(waited, 7))
+        assertFalse((refrontAction(waited, 3) as RefrontAction.Refront).noUserAction)
+        assertEquals(RefrontAction.Yield("system_call"), refrontAction(waited.copy(telecomInCall = true), 0))
+        assertEquals(RefrontAction.Stop, refrontAction(waited.copy(interactive = false), 0))
+        // The glance's start adds NO_USER_ACTION only when asked (the face's re-front).
         val show = code("$lock/PinLockRuntime.kt").substringAfter("    fun show(").substringBefore("\n    }\n")
         assertTrue(show.contains(".addFlags(if (noUserAction) Intent.FLAG_ACTIVITY_NO_USER_ACTION else 0)"))
         assertTrue(show.contains("noUserAction: Boolean = false,"))
-        assertEquals(1, Regex("noUserAction = ").findAll(code("$lock/PinLockRuntime.kt")).count())
     }
 
     @Test
@@ -271,14 +274,14 @@ class AndroidLockFaceTest {
 
     /** Design 59d step B (Q59d-6): the ASK stage asks from the glance page; only ASK asks, every other stage closes it. */
     @Test
-    fun `59d B - the ASK stage asks for Android's pad, OWN_KEYPAD gives our keys, every return to GLANCE closes the ask`() {
+    fun `59d B - the ASK stage asks for Android's pad, every return to GLANCE closes the ask`() {
         val activity = code("$lock/PinLockActivity.kt")
         val onStage = activity.substringAfter("private fun onStage() {").substringBefore("\n    }\n")
         assertTrue(onStage, onStage.contains("!asking() -> closeAsk()"))
         assertTrue(onStage, onStage.contains("!AndroidLock.faceOn -> glance?.ownKeypad()"))
         assertTrue(onStage, onStage.contains("else -> tapAsFace()"))
         val tap = activity.substringAfter("private fun tapAsFace() {").substringBefore("\n    }\n")
-        assertTrue(tap, tap.substringAfter("if (step == FaceStep.OWN_KEYPAD) {").substringBefore("return").contains("glance?.ownKeypad()"))
+        assertFalse(tap, tap.contains("ownKeypad"))
         assertTrue(activity.contains("FaceStep.STAY -> if (askedAt == null && asking()) glance?.back()"))
         assertTrue(activity.contains("GlancePanel(this, frame, binding.root, ::onStage, face = { AndroidLock.faceOn })"))
         val panel = code("$lock/GlancePanel.kt")
@@ -333,18 +336,17 @@ class AndroidLockFaceTest {
     @Test
     fun `R1 - as the face a pause in the SOS window is the mark, so a cold SOS screen is never re-fronted over`() {
         // The rc.2 run: the SOS screen drew 0.9-1.2 s after the glance's pause, past the pause's 700 ms check.
-        assertTrue(sosMarkAtPause(androidFace = true, ours = false, lastScreenOnAtMs = 10_000L, pausedAtMs = 10_900L, sosAppPresent = true))
-        assertFalse("own mode keeps its stop-only mark (Recents only pauses it)", sosMarkAtPause(false, false, 10_000L, 10_900L, true))
-        assertFalse("the pad's ask or our own start", sosMarkAtPause(true, ours = true, lastScreenOnAtMs = 10_000L, pausedAtMs = 10_900L, sosAppPresent = true))
-        assertFalse("outside the window", sosMarkAtPause(true, false, 10_000L, 10_001L + SOS_GESTURE_WINDOW_MS, true))
-        assertFalse("no SOS app", sosMarkAtPause(true, false, 10_000L, 10_900L, false))
-        assertFalse("no screen-on yet", sosMarkAtPause(true, false, null, 10_900L, true))
+        assertTrue(sosMarkAtPause(ours = false, lastScreenOnAtMs = 10_000L, pausedAtMs = 10_900L, sosAppPresent = true))
+        assertFalse("the pad's ask or our own start", sosMarkAtPause(ours = true, lastScreenOnAtMs = 10_000L, pausedAtMs = 10_900L, sosAppPresent = true))
+        assertFalse("outside the window", sosMarkAtPause(false, 10_000L, 10_001L + SOS_GESTURE_WINDOW_MS, true))
+        assertFalse("no SOS app", sosMarkAtPause(false, 10_000L, 10_900L, false))
+        assertFalse("no screen-on yet", sosMarkAtPause(false, null, 10_900L, true))
         // The marked loss yields "sos" at the pause's check, before the face's re-front.
         assertEquals(RefrontAction.Yield("sos"), refrontAction(face.copy(sosFlow = true), 0))
         // The glue: the pause marks before its check is scheduled; the stop's mark is own mode's, unchanged.
         val runtime = code("$lock/PinLockRuntime.kt")
         val paused = runtime.substringAfter("fun onLockPaused(").substringBefore("\n    }\n")
-        val mark = paused.indexOf("if (sosMarkAtPause(AndroidLock.faceOn, ours, sosScreenOn(lastScreenOnElapsed, powerChangedAt, lastScreenOffElapsed), pausedNow, sosPackage != null)) noteProbableSos(pausedNow)")
+        val mark = paused.indexOf("if (sosMarkAtPause(ours, sosScreenOn(lastScreenOnElapsed, powerChangedAt, lastScreenOffElapsed), pausedNow, sosPackage != null)) noteProbableSos(pausedNow)")
         assertTrue(mark > paused.indexOf("if (!pauseStartsRefront(chromeLocked, finishing)) return"))
         assertTrue(mark < paused.indexOf("handler.postDelayed(refrontCheck"))
         assertTrue(paused.contains("val ours = androidLossOurs(androidAskAt ?: androidCancelledAskAt, androidAnsweredAt, ownStartAt, ownOthersResumed > 0, pausedNow)"))
@@ -363,7 +365,7 @@ class AndroidLockFaceTest {
         assertFalse("the wake's pause/resume pair: the lock is back", sosMarkLogDue(true, RefrontAction.Stop))
         assertFalse("logged once already", sosMarkLogDue(unlogged = false, action = sos))
         // A stop just after a screen-on with an alarm ringing: the alarm comes first, the mark ends unlogged.
-        val alarmUp = lostFront.copy(sosFlow = true, alarmRinging = true)
+        val alarmUp = face.copy(sosFlow = true, alarmRinging = true)
         assertEquals(RefrontAction.Yield("alarm"), refrontAction(alarmUp, 0))
         assertFalse(sosMarkLogDue(true, refrontAction(alarmUp, 0)))
         val runtime = code("$lock/PinLockRuntime.kt")

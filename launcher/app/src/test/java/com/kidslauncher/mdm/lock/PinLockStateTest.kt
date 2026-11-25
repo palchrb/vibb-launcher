@@ -158,21 +158,16 @@ class PinLockStateTest {
     }
 
     @Test
-    fun `activation decides why the lock is off`() {
-        fun act(managed: Boolean = true, pin: Boolean = true, secure: Boolean = false, kg: Boolean = true, hash: Boolean = true, guard: Boolean = false) =
-            lockActivation(managed, pin, secure, kg, hash, guard)
+    fun `activation decides why the lock is off - Android's face or no lock (design 132)`() {
+        fun act(managed: Boolean = true, pin: Boolean = true, secure: Boolean = true, guard: Boolean = false) =
+            lockActivation(managed, pin, secure, guard)
         assertEquals(true to null, act())
         assertEquals(false to LockInactive.NO_PIN, act(pin = false))
         assertEquals(false to LockInactive.NO_PIN, act(pin = false, managed = false))
         assertEquals(false to LockInactive.UNMANAGED, act(managed = false))
-        assertEquals(false to LockInactive.ANDROID_CREDENTIAL, act(secure = true, kg = false))
-        assertEquals(false to LockInactive.KEYGUARD_NOT_DISABLED, act(kg = false))
+        assertEquals("a Child PIN, no Android PIN: no lock, no glance", false to LockInactive.NO_ANDROID_PIN, act(secure = false))
         assertEquals(false to LockInactive.CRASH_GUARD, act(guard = true))
-        assertEquals("bad hash: on, parent code only", true to LockInactive.BAD_HASH, act(hash = false))
-        assertTrue(wantKeyguardDisabled(true, true, false))
-        assertFalse(wantKeyguardDisabled(true, true, true))
-        assertFalse(wantKeyguardDisabled(false, true, false))
-        assertFalse(wantKeyguardDisabled(true, false, false))
+        assertEquals(listOf("no_pin", "unmanaged", "no_android_pin", "crash_guard"), LockInactive.entries.map { it.wire })
     }
 
     // ---- design 17: VoIP calls over the lock ------------------------------------------------

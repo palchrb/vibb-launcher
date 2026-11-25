@@ -32,32 +32,13 @@ enum class KeyguardMode {
 }
 
 /**
- * Design 32 step 2 item 2. [coverWanted]: the debug switch is on and the cover isn't held off (a new
- * process before its first lock resume with the screen on, M4; the dismissal fallback, M7);
- * [voip]: the VoIP phase as last seen with the screen on (M5: the cover is off in a VoIP call);
- * [guardTripped]: the crash guard (L8).
- * - UNTOUCHED wherever today's code doesn't disable the keyguard ([wantKeyguardDisabled]);
- * - COVER only with the switch, managed, a kid PIN, no credential, no VoIP call or ring, the guard not tripped;
- * - DISABLED otherwise - today's behaviour.
- * [androidRequested]: design 59's switch (`kid_lock.keyguard` "android") - ANDROID once the phone has the Android
- * PIN ([androidFace]), whatever the VoIP phase or the crash guard; never the cover while it is asked for.
- * [androidHeld] ([androidKeyguardHeld], S3-1): ANDROID also off a fallback apply while we own the live credential.
+ * Design 132 (§2.1, §2.1a): ANDROID on any managed phone with an Android credential - a Child PIN in the policy or not
+ * (a fallback apply has no `kid_lock`), whatever the VoIP phase or the crash guard; UNTOUCHED otherwise. Both write
+ * `setKeyguardDisabled(false)`, so a keyguard an older build left disabled is undone at the first apply; nothing
+ * writes `setKeyguardDisabled(true)` any more.
  */
-fun keyguardMode(
-    managed: Boolean,
-    hasKidPin: Boolean,
-    deviceSecure: Boolean,
-    coverWanted: Boolean,
-    voip: VoipPhase,
-    guardTripped: Boolean,
-    androidRequested: Boolean = false,
-    androidHeld: Boolean = false,
-): KeyguardMode = when {
-    androidFace(androidRequested, managed, hasKidPin, deviceSecure) || androidHeld -> KeyguardMode.ANDROID
-    !wantKeyguardDisabled(managed, hasKidPin, deviceSecure) -> KeyguardMode.UNTOUCHED
-    coverWanted && !androidRequested && voip == VoipPhase.NONE && !guardTripped -> KeyguardMode.COVER
-    else -> KeyguardMode.DISABLED
-}
+fun keyguardMode(managed: Boolean, deviceSecure: Boolean): KeyguardMode =
+    if (managed && deviceSecure) KeyguardMode.ANDROID else KeyguardMode.UNTOUCHED
 
 /** `DevicePolicyManager.KEYGUARD_DISABLE_FEATURES_ALL`. */
 const val KEYGUARD_FEATURES_ALL = 0x7fffffff

@@ -158,7 +158,7 @@ object WindowRelock {
             Log.w(LOG_TAG, "The window's alarm failed", e)
         }
         try {
-            ensureResetToken(app)
+            ensureAndroidResetToken(app)
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Reset-password token failed", e)
         }
@@ -242,25 +242,9 @@ object WindowRelock {
         }
     }
 
-    /** §1.5: 32 random bytes, stored first (CE prefs), set only while it isn't active and the phone
-     * has no credential - that activates it at once (QA #9). */
-    private fun ensureResetToken(app: Context) {
-        val dpm = dpm(app) ?: return
-        if (!dpm.isDeviceOwnerApp(app.packageName)) return
-        val admin = admin(app)
-        val store = store(app)
-        val active = try {
-            dpm.isResetPasswordTokenActive(admin)
-        } catch (e: Exception) {
-            false
-        }
-        if (!resetTokenNeeded(active, store.token() != null, deviceSecure(app))) return
-        setNewToken(app, dpm, admin, store)
-    }
-
     /**
-     * Design 59 §3.6 (L-3): in android mode the token is kept active, at every apply - [androidTokenStep] instead
-     * of 24b's rule: none stored (r10's unreadable counts as none) -> a new one (without a credential it activates
+     * Design 59 §3.6 (L-3), design 132 §7.1: the token is kept active - at enrolment, every apply and a window's
+     * start - by [androidTokenStep]: none stored (r10's unreadable counts as none) -> a new one (without a credential it activates
      * at once; with one it is escrowed until the kid's next unlock); stored, not active and no credential -> set
      * again; stored, not active, a credential -> wait for the escrow. The token is read only through
      * `WindowRelockStore.token()`, never copied elsewhere. Returns whether it is active now. Background thread.
@@ -619,26 +603,6 @@ object WindowRelock {
         override fun now() = System.currentTimeMillis()
 
         override fun openWindows() = WindowRelock.openWindows()
-
-        override fun secureNow() = deviceSecure(app)
-
-        override fun tokenUsable(): Boolean = store(app).token() != null && dpm.isResetPasswordTokenActive(admin)
-
-        override fun removeCredential(): Boolean {
-            val token = store(app).token()?.fromHex() ?: return false
-            val ok = dpm.resetPasswordWithToken(admin, null, token, 0)
-            Log.i(LOG_TAG, "Removing the Android screen lock set in the window: $ok")
-            return ok && !deviceSecure(app)
-        }
-
-        override fun androidKeyguardRequested(): Boolean = try {
-            // S3-1: also while we own Android's credential (a rollback waiting, a fallback apply in between).
-            com.kidslauncher.mdm.lock.PinLockStore.keyguardRequested(app) || com.kidslauncher.mdm.lock.PinLockStore.keyguardAndroid(app)
-        } catch (e: Exception) {
-            // N2: unreadable counts as asked for - step 1 is skipped (own mode too): never remove a credential that
-            // may be the Child PIN's. The safe side; a credential left in a window is then reported, not removed.
-            true
-        }
 
         override fun installedPackages() = installedPackages(app, withInstaller = true)
 

@@ -277,7 +277,7 @@ class BootMarkPlanTest {
         // is off (then the screen-on shows it - nothing waits any more).
         val inputs = RefrontInputs(
             locked = true, lockResumed = false, interactive = true, ourCall = false, telecomInCall = false,
-            emergencyFlow = false, alarmRinging = false,
+            emergencyFlow = false, alarmRinging = false, android = AndroidLoss.WAIT, androidWaited = true,
         )
         assertTrue(refrontAction(inputs, 0) is RefrontAction.Refront)
         assertEquals(BootMarkState.Holding(13_000L), bootMarkHeldFrom(startMs = 11_000L, nowMs = 10_000L))

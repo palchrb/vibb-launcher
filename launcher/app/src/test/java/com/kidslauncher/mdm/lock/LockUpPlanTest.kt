@@ -55,36 +55,19 @@ class LockUpPlanTest {
     }
 
     @Test
-    fun `dark, no call, the lock not on top - Home then the lock`() {
-        assertEquals(LockUpStart.HOME_THEN_LOCK, lockUpStarts(showLock = true, lockOnTop = false, callLive = false, interactive = false))
+    fun `dark, no call, the lock not on top - the lock alone, never Home under it (design 132)`() {
+        assertEquals(LockUpStart.LOCK, lockUpStarts(showLock = true, lockOnTop = false, callLive = false, interactive = false))
         // A fresh process knows nothing about the top task: lockOnTop starts false.
         assertTrue(runtime.contains("private var lockOnTop = false"))
+        assertEquals(setOf(LockUpStart.NONE, LockUpStart.LOCK), LockUpStart.entries.toSet())
     }
 
-    /** Design 59d step C (Q59d-12): as the face the lock alone whatever the keyguard read, never Home under it. */
     @Test
-    fun `as the face a dark lock-up is the lock alone even when Android read not locked`() {
-        assertEquals(LockUpStart.LOCK, lockUpStarts(showLock = true, lockOnTop = false, callLive = false, interactive = false, coverLocked = false, face = true))
-        assertEquals(LockUpStart.NONE, lockUpStarts(showLock = true, lockOnTop = true, callLive = false, interactive = false, face = true))
-        assertEquals(LockUpStart.NONE, lockUpStarts(showLock = false, lockOnTop = false, callLive = false, interactive = false, face = true))
-        // The keyguard read stays: it feeds sawLocked (S3-3); only the plan ignores it as the face.
+    fun `the keyguard read at the screen-off feeds only sawLocked (S3-3), never the plan`() {
         val lockUp = body(runtime, "lockUpAtScreenOff")
         assertTrue(lockUp, lockUp.contains("val kg = cover && KeyguardCover.keyguardLockedNow(context)"))
         assertTrue(lockUp, lockUp.contains("if (kg && AndroidLock.faceOn) AndroidLock.sawLocked(screenOffs)"))
-        assertTrue(lockUp, lockUp.contains("lockUpStarts(result.showLock, lockOnTop, callLive, interactive, cover && kg, face = AndroidLock.faceOn)"))
-    }
-
-    @Test
-    fun `own-mode lock-up rows unchanged`() {
-        for (show in listOf(false, true)) for (onTop in listOf(false, true)) for (call in listOf(false, true)) {
-            for (interactive in listOf(false, true)) for (cover in listOf(false, true)) {
-                assertEquals(
-                    lockUpStarts(show, onTop, call, interactive, cover),
-                    lockUpStarts(show, onTop, call, interactive, cover, face = false),
-                )
-            }
-        }
-        assertEquals(LockUpStart.HOME_THEN_LOCK, lockUpStarts(showLock = true, lockOnTop = false, callLive = false, interactive = false, face = false))
+        assertTrue(lockUp, lockUp.contains("lockUpStarts(result.showLock, lockOnTop, callLive, interactive)"))
     }
 
     /** Design 59d step C: the face's skip of a glance on top keeps the mark; a call's skip clears it as before. */
@@ -148,7 +131,7 @@ class LockUpPlanTest {
         // stays in the dialer's UI after it: SCREEN_ON starts nothing - cleared, the next lock-up starts.
         val systemCall = afterScreenOn(true, LockEvent.ScreenOn(lockShowing = false, systemCall = true))
         assertFalse(systemCall)
-        assertEquals(LockUpStart.HOME_THEN_LOCK, nextScreenOff(systemCall))
+        assertEquals(LockUpStart.LOCK, nextScreenOff(systemCall))
         // A VoIP call (in the call, or ringing - the ring's own start clears it too).
         assertFalse(afterScreenOn(true, LockEvent.ScreenOn(lockShowing = false, voip = VoipPhase.IN_CALL)))
         assertFalse(afterScreenOn(true, LockEvent.ScreenOn(lockShowing = false, voip = VoipPhase.RINGING)))
@@ -193,7 +176,7 @@ class LockUpPlanTest {
     // ---- source pins (QA L6) --------------------------------------------------------------------
 
     @Test
-    fun `a screen-off's starts go through lockUp - Home first, unanimated, then the lock`() {
+    fun `a screen-off's starts go through lockUp - the lock alone, never Home (design 132)`() {
         val code = runtime
         val dispatch = body(code, "dispatch")
         val routed = dispatch.indexOf("if (event is LockEvent.ScreenOff) {")
@@ -202,25 +185,21 @@ class LockUpPlanTest {
         assertTrue(dispatch.contains("show(context, wake = WakeKind.VOIP.takeIf { result.wake }, ask = lockAsk(event), sameLockUp = event is LockEvent.ScreenOn)"))
         val atScreenOff = body(code, "lockUpAtScreenOff")
         assertTrue(atScreenOff.contains("val callLive = event.ourCall || event.systemCall || event.voip != VoipPhase.NONE"))
-        assertTrue(atScreenOff.contains("lockUpStarts(result.showLock, lockOnTop, callLive, interactive, cover && kg, face = AndroidLock.faceOn)"))
+        assertTrue(atScreenOff.contains("lockUpStarts(result.showLock, lockOnTop, callLive, interactive)"))
         assertTrue(atScreenOff.indexOf("lockUp(context, start, lockAsk(event))") in 0 until atScreenOff.indexOf("Log.i("))
         assertTrue(atScreenOff.contains("\"Lock-up at screen-off: \$start (call=\$callLive, interactive=\$interactive, cover=\$cover, kg=\$kg)\""))
         val lockUp = body(code, "lockUp")
-        val home = lockUp.indexOf("HomeFront.bring(context, \"under the lock (a lock-up while dark)\", animate = false)")
-        val show = lockUp.indexOf("show(context, ask = ask, fromLockUp = true)")
-        assertTrue(lockUp, home >= 0 && show > home)
-        assertTrue(lockUp.indexOf("darkLockUp = true") in 0 until home)
+        assertFalse(lockUp.contains("HomeFront"))
+        assertTrue(lockUp.contains("show(context, ask = ask, fromLockUp = true)"))
         assertTrue(lockUp.contains("if (start == LockUpStart.NONE) return"))
         assertTrue(lockUp.contains("lockOnTop = lockOnTopAfter(lockOnTop, LockTopEvent.LOCK_UP)"))
-        // lockUp is the runtime's only Home start, and the receiver itself starts nothing.
-        assertEquals(1, Regex("HomeFront\\.bring\\(").findAll(code).count())
+        // The runtime starts no Home, and the receiver itself starts nothing.
+        assertEquals(0, Regex("HomeFront\\.bring\\(").findAll(code).count())
         val off = code.substringAfter("if (intent.action == Intent.ACTION_SCREEN_OFF) {").substringBefore("} else {")
         assertFalse(off.contains("HomeFront"))
         assertFalse(off.contains("show("))
         assertEquals("only dispatch calls lockUpAtScreenOff", 2, Regex("lockUpAtScreenOff\\(").findAll(code).count())
-        // Design 32 step 2: plus the re-front check's dark lock-up under the keyguard cover (the lock alone).
-        assertEquals("lockUp's definition, the screen-off's call and the dark lock-up", 3, Regex("\\blockUp\\(context").findAll(code).count())
-        assertTrue(code.contains("lockUp(context, LockUpStart.LOCK, LockAsk.AT_ONCE)"))
+        assertEquals("lockUp's definition and the screen-off's call", 2, Regex("\\blockUp\\(context").findAll(code).count())
     }
 
     @Test
