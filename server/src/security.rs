@@ -1483,9 +1483,15 @@ pub async fn require_device_token(
         (Some(SigCheck::TooMany { device_id }), Some(bearer)) if device_id == bearer => {
             (bearer, None)
         }
-        (Some(SigCheck::Refused { reason, device_id }), None)
-            if retired.is_some() && device_id.is_none_or(|d| Some(d) == retired) =>
-        {
+        // Only a key no phone has (the replaced phone's old key, removed at the re-enrolment): a refusal naming one of
+        // the row's current keys is refused and logged as always.
+        (
+            Some(SigCheck::Refused {
+                reason,
+                device_id: None,
+            }),
+            None,
+        ) if retired.is_some() => {
             return signature_refusal(reason);
         }
         (Some(SigCheck::Refused { reason, device_id }), _) => {

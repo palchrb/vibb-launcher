@@ -5726,6 +5726,8 @@ Findings (nothing failed; none fixed here):
    waiting typed enrolment always ends at the code's expiry (`401`, the same "The code has expired" text) long before
    45 minutes - unless a confirm moved the expiry on, and then the next try enrols. The stop is the QR code's (30
    minutes, also under 45) only after a confirm's grace - i.e. practically never. Worth a look at D11's number.
+   **Closed as by design** (code QA of `enrol-gate-fixes`): the stop is for a server that can't be reached; a
+   reachable one ends the wait with the code-expired answer first. Design 129b D11 says so.
 
 Findings 1 and 2 fixed on branch `enrol-gate-fixes` (`tests::enrol_key::the_exception`,
 `a_replaced_token_is_refused_quietly`). To run again on Android 14 and 16: with a second attempt waiting, the confirm's

@@ -154,8 +154,9 @@ before it keep their bearer and register as above.
   registration ends the exception (`device_key_bound` "Avslutter unntaket."); a refusal with the exception's own reason
   isn't logged again.
 - The token a re-enrolment of the same row replaced (`TokenIndex::refresh` with a new token retires the row's old one
-  for `security::RETIRED_FOR`, an hour, in memory) is refused as before - `401`, or a refused signature's answer - but
-  writes no `device_auth_failed`: the phone's old stream reconnecting with it a few times (§6bm's finding 2). Revoke
+  for `security::RETIRED_FOR`, an hour, in memory) is refused as before - `401`, or the answer of a signature by a key no phone has (the replaced phone's, removed
+  at the re-enrolment) - but writes no `device_auth_failed`; a refusal naming one of the row's current keys is logged
+  as always: the phone's old stream reconnecting with it a few times (§6bm's finding 2). Revoke
   Access and the delete forget the row's retired tokens, so they log again; so does a restart.
 - The rows die with the code: `new_code` deletes them, Revoke Access too, the phone's delete cascades, and
   `retention::prune` runs `enrol_key::SWEEP_SQL` (a used row lives to its `keep_until`).
