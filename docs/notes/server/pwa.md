@@ -837,10 +837,13 @@ Tilgang): the "camera" words here are history.
   pattern (`map_tiles::parse_tile`: `z` 0-19, `x`/`y` below `2^z`, plain digits; the upstream address built from the
   numbers), never an open proxy. OpenStreetMap's tile policy: its own User-Agent (`map_tiles::user_agent`,
   `vibb-server/<version> (self-hosted map tile cache)` - the software, never the owner), a tile kept 7 days before it
-  is asked again (`FRESH`), at most 2 downloads at once and 3000 an hour (past it only the cache answers), nothing
-  fetched ahead. Bounded: only a PNG is kept, a tile older than 30 days is deleted (`KEEP`; until then a stale one is
-  served while OSM can't be reached), and every 200 stored tiles (and the first after a start) `map_tiles::sweep`
-  trims the cache to under 256 MB, oldest first. The browser keeps a tile a day (`private, max-age=86400`). The CSP's
+  is asked again (`FRESH`), at most 2 downloads at once and 3000 an hour (past it only the cache answers, logged once
+  an hour), one fetch per tile at a time (a second asker waits for the first's tile), a 60 s pause after a failed
+  download in which only the cache answers (`FAILURE_PAUSE`), a 404 remembered a day in memory (`MISSING_FOR`, at most
+  10 000), nothing fetched ahead. A stale tile (past 7 days) is served at once and refreshed in the background (the
+  budget and the pause still apply). Bounded: only a PNG is kept, written through a temporary file of its own (process
+  id and counter), a tile older than 30 days is deleted (`KEEP`), and at start-up and every 200 stored tiles
+  `map_tiles::sweep` trims the cache to under 256 MB, oldest first, and removes emptied folders. The browser keeps a tile a day (`private, max-age=86400`). The CSP's
   `img-src` is `'self' data: blob:` - no outside image host. Answers: 404 for an address that isn't a tile or a tile OSM
   lacks, 503 when there is neither a new nor a kept tile. Tests `locations::the_maps_load_their_tiles_through_the_server`
   and `map_tiles::tests`.

@@ -451,34 +451,82 @@ async fn the_maps_load_their_tiles_through_the_server() {
         assert_eq!(res.status, StatusCode::NOT_FOUND, "{path}");
     }
     assert_eq!(osm(&app).len(), 1);
-    // Not a PNG or an error with nothing kept: no image, nothing stored. A tile OSM lacks: 404.
+    // A tile OSM lacks: 404, remembered - not asked again.
+    app.fetch
+        .answer("https://tile.openstreetmap.org/3/0/1.png", 404, "");
+    for _ in 0..2 {
+        let res = app.get_page("/map-tiles/3/0/1.png", &cookie).await;
+        assert_eq!(res.status, StatusCode::NOT_FOUND);
+    }
+    assert_eq!(osm(&app).len(), 2);
+    // Not a PNG: no image, nothing stored, and a pause in which only the cache answers (3/0/2 isn't asked).
     app.fetch
         .answer("https://tile.openstreetmap.org/3/0/0.png", 200, "<html>");
     app.fetch
-        .answer("https://tile.openstreetmap.org/3/0/1.png", 404, "");
-    app.fetch
         .answer("https://tile.openstreetmap.org/3/0/2.png", 503, "");
-    for (path, status) in [
-        ("/map-tiles/3/0/0.png", StatusCode::SERVICE_UNAVAILABLE),
-        ("/map-tiles/3/0/1.png", StatusCode::NOT_FOUND),
-        ("/map-tiles/3/0/2.png", StatusCode::SERVICE_UNAVAILABLE),
-    ] {
-        assert_eq!(app.get_page(path, &cookie).await.status, status, "{path}");
+    for path in ["/map-tiles/3/0/0.png", "/map-tiles/3/0/2.png"] {
+        let res = app.get_page(path, &cookie).await;
+        assert_eq!(res.status, StatusCode::SERVICE_UNAVAILABLE, "{path}");
     }
     assert!(!app.state.data_dir.join("map_tiles/3/0/0.png").exists());
+    assert_eq!(osm(&app).len(), 3, "paused after the failure");
+    let res = app.get_page("/map-tiles/3/4/2.png", &cookie).await;
+    assert_eq!(res.status, StatusCode::OK, "the cache still answers");
+    app.state.map_tiles.unpause();
+    let res = app.get_page("/map-tiles/3/0/2.png", &cookie).await;
+    assert_eq!(res.status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(osm(&app).len(), 4);
+    app.state.map_tiles.unpause();
+
+    // One fetch per tile: two browsers asking at once get one download.
+    let tile = b"\x89PNG\r\n\x1a\nanother tile".to_vec();
+    app.fetch.answer(
+        "https://tile.openstreetmap.org/3/1/1.png",
+        200,
+        tile.clone(),
+    );
+    app.fetch.hold();
+    let release = async {
+        app.fetch.wait_in_flight().await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        app.fetch.release();
+    };
+    let (first, second, ()) = tokio::join!(
+        app.get_page("/map-tiles/3/1/1.png", &cookie),
+        app.get_page("/map-tiles/3/1/1.png", &cookie),
+        release
+    );
+    assert_eq!((first.status, &first.body), (StatusCode::OK, &tile));
+    assert_eq!((second.status, &second.body), (StatusCode::OK, &tile));
+    assert_eq!(osm(&app).len(), 5, "one download for both");
     let asked = osm(&app).len();
 
-    // A stale tile (past a week) is asked again; while OSM fails it is still served.
+    // A stale tile (past a week) is served at once and asked again in the background.
     let path = app.state.data_dir.join("map_tiles/3/4/2.png");
     let file = std::fs::File::options().write(true).open(&path).unwrap();
     file.set_modified(
         std::time::SystemTime::now() - crate::map_tiles::FRESH - std::time::Duration::from_secs(60),
     )
     .unwrap();
-    app.fetch
-        .answer("https://tile.openstreetmap.org/3/4/2.png", 503, "");
+    drop(file);
+    let newer = b"\x89PNG\r\n\x1a\na newer tile".to_vec();
+    app.fetch.answer(
+        "https://tile.openstreetmap.org/3/4/2.png",
+        200,
+        newer.clone(),
+    );
     let res = app.get_page("/map-tiles/3/4/2.png", &cookie).await;
-    assert_eq!((res.status, res.body), (StatusCode::OK, png));
+    assert_eq!((res.status, &res.body), (StatusCode::OK, &png));
+    for _ in 0..500 {
+        if std::fs::read(&path).unwrap_or_default() == newer {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert_eq!(std::fs::read(&path).unwrap(), newer, "refreshed");
+    assert_eq!(osm(&app).len(), asked + 1);
+    let res = app.get_page("/map-tiles/3/4/2.png", &cookie).await;
+    assert_eq!((res.status, res.body), (StatusCode::OK, newer));
     assert_eq!(osm(&app).len(), asked + 1);
 
     // Without the parent's session: no tile, never asked.

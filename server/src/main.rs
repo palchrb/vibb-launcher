@@ -672,6 +672,9 @@ async fn main() {
         handlers::tracked_apps::run_scheduled_tracked_app_sync(catalog_state).await;
     });
     tokio::task::spawn(handlers::dns_filter::run_blocklist_refresh(state.clone()));
+    // The map tile cache's upkeep once at start-up (`map_tiles::sweep`; then every 200 stored tiles).
+    let tile_dir = state.data_dir.join(map_tiles::DIR);
+    tokio::task::spawn_blocking(move || map_tiles::sweep(&tile_dir, std::time::SystemTime::now()));
     // Blocked domains, location history and status history (src/retention.rs).
     tokio::task::spawn(retention::run_pruning(state.clone()));
     // The music sweep (design 21b): lists every NRK/RSS entry, its first pass 60 s from now.
