@@ -142,7 +142,12 @@ launcher (the server ships first: an older launcher that reads `keyguard: "andro
   written to them - the page asks to save them again.
 - **The queue rule** (`kid_lock::queue_pin_command`) has no keyguard condition; its intake trigger is "the phone has no
   Android PIN" (`LockState::no_android_pin`: `inactive: no_android_pin`, or an older build's `keyguard: own`) or a
-  stale rev, as before; `deliverable_pin` likewise. **`lock_state`**: `inactive` gains `no_android_pin`
+  stale rev, as before; `deliverable_pin` likewise. One exception to "never after an answer" (§7.1, Koble til; code
+  QA L2): a newest row refused `no_token` is tried once more by a report with `reset_token` on and a rev that isn't
+  the current one, unless the row before it was refused `no_token` too (no loop;
+  `android_lock_page::queue::a_no_token_refusal_is_retried_once_when_the_token_comes_on`). "Send again" and the
+  no-Android-PIN line's "send again below" read one rule (`offers_send_again`: a report of this enrolment
+  (`PhoneLock::this_enrolment`) with the capability, a copy kept). **`lock_state`**: `inactive` gains `no_android_pin`
   (`Inactive::NoAndroidPin`); `android_credential`, `keyguard_not_disabled`, `bad_hash` are `Inactive::Other` now.
 - **No phone without a lock** (§4.5, QA H1): a report with no Android PIN is the quiet `set_kid_pin` row while one of
   this enrolment is waiting or in flight (`kid_lock::on_its_way`: Waiting, Sent, Taken; read by

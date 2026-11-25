@@ -1489,7 +1489,8 @@ pub struct KidLock {
     pub pin_hash: String,
     pub pin_salt: String,
     pub pin_length: i64,
-    /// Design 59 §1: "own" | "android" - always sent; an older launcher ignores it (own).
+    /// Design 59 §1, always sent; always "android" since design 132 (an older launcher never falls back to its own
+    /// lock).
     pub keyguard: &'static str,
     /// The rev of this hash ([DevicePolicy::kid_pin_rev]): the phone names "which PIN" by it.
     pub pin_rev: i64,

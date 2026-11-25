@@ -1503,6 +1503,7 @@ pub async fn lock_action(
             );
             // What the phone has, from this install's reports only (S2P-4).
             let phone = phone_lock(
+                device.enrolled_at.as_deref(),
                 since_enrolment(device.enrolled_at.as_deref(), latest.as_ref()),
                 lock_state.as_ref(),
                 false,
@@ -1527,6 +1528,7 @@ pub async fn lock_action(
 
 /// What the last report says about the lock ([crate::kid_lock::PhoneLock]).
 fn phone_lock<'a>(
+    enrolled_at: Option<&str>,
     latest: Option<&DeviceStatus>,
     state: Option<&'a crate::kid_lock::LockState>,
     pin_on_its_way: bool,
@@ -1535,6 +1537,7 @@ fn phone_lock<'a>(
         state,
         android_capable: has_capability(latest, crate::kid_lock::ANDROID_KEYGUARD_CAPABILITY),
         pin_on_its_way,
+        this_enrolment: since_enrolment(enrolled_at, latest).is_some(),
         no_pin: crate::setup_status::reported_child_pin(latest) == Some(Some(false)),
     }
 }
@@ -1583,18 +1586,16 @@ async fn render_lock(
         Err(err) => return read_failed(lang, id, "the Child PIN's command", err),
     };
     let sending = crate::kid_lock::on_its_way(pin_send.as_ref());
-    let phone = phone_lock(latest.as_ref(), lock_state.as_ref(), sending);
+    let phone = phone_lock(
+        device.enrolled_at.as_deref(),
+        latest.as_ref(),
+        lock_state.as_ref(),
+        sending,
+    );
     let child = crate::kid_lock::lock_card(&policy, &phone);
     // "Send again" reads only this install's reports, as the queue rule does (qa-59-step2-code
     // S2P-4, step 1's S59-3): before a re-enrolled phone's first report, no button.
-    let send_again = crate::kid_lock::offers_send_again(
-        &policy,
-        &phone_lock(
-            since_enrolment(device.enrolled_at.as_deref(), latest.as_ref()),
-            lock_state.as_ref(),
-            sending,
-        ),
-    );
+    let send_again = crate::kid_lock::offers_send_again(&policy, &phone);
     // The report's time on "On the phone", so an old report never reads as now (qa-31-s4-code L3).
     let reported = latest
         .as_ref()
