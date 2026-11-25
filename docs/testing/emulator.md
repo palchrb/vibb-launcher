@@ -5721,11 +5721,19 @@ Findings (nothing failed; none fixed here):
 2. **A re-enrolment's old token reads as a refused sign-in** (server, the security log): when a waiting re-enrolment
    of an enrolled phone ends exempt, the phone's SSE on the old token gets 401s until it reconnects - "Phone sign-in
    refused ... Invalid phone key (2-3 times in a minute) · /api/devices/commands/stream". Expected from the token
-   swap, but it reads like an attack in the parent's log.
+   swap, but it reads badly in the parent's log.
 3. **The 45-minute stop can't be reached with a typed code**: a typed code lives 15 minutes (`TYPED_MINUTES`), so a
    waiting typed enrolment always ends at the code's expiry (`401`, the same "The code has expired" text) long before
    45 minutes - unless a confirm moved the expiry on, and then the next try enrols. The stop is the QR code's (30
    minutes, also under 45) only after a confirm's grace - i.e. practically never. Worth a look at D11's number.
+   **Closed as by design** (code QA of `enrol-gate-fixes`): the stop is for a server that can't be reached; a
+   reachable one ends the wait with the code-expired answer first. Design 129b D11 says so.
+
+Findings 1 and 2 fixed on branch `enrol-gate-fixes` (`tests::enrol_key::the_exception`,
+`a_replaced_token_is_refused_quietly`). To run again on Android 14 and 16: with a second attempt waiting, the confirm's
+landing shows the orange line and the quiet "Waiting for the phone" in `#key-exception` (the page stays there); after
+an exempt re-enrolment from Settings, the old token's stream reconnects get `401` and the security log has no "Phone
+sign-in refused" line, while a revoked phone's next request still writes one.
 
 Not on the emulator: the passkey confirm, the QR path, a really empty key pool, the L1 and 0.93.0 builds.
 

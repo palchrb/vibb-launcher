@@ -147,11 +147,17 @@ before it keep their bearer and register as above.
   redirect so the password never sits in a rendered POST).
 - The pages: `partials/key_wait.html` (`enrol_key::Section`) in `<section id="key-exception">` on the summary and
   Connect, empty when nothing shows; the Devices list's badge counts `attention::Kind::KeyWait`/`OldApp`
-  (`enrol_key::facts`, also for a phone not set up). About's "Innlogging" is the quiet "Uten maskinvarenøkkel" with
+  (`enrol_key::facts`, also for a phone not set up). An allowed, unused row shows the quiet "Venter på telefonen",
+  beside the orange line while another attempt still waits (§6bm's finding 1). About's "Innlogging" is the quiet "Uten maskinvarenøkkel" with
   "Valgt av {parent} {date} ({reason})." behind the (i) while exempt and keyless.
 - `GET /api/devices/key` and the policy's `device_key` answer `{state: "exempt", rotate: false}`; a passing
   registration ends the exception (`device_key_bound` "Avslutter unntaket."); a refusal with the exception's own reason
   isn't logged again.
+- The token a re-enrolment of the same row replaced (`TokenIndex::refresh` with a new token retires the row's old one
+  for `security::RETIRED_FOR`, an hour, in memory) is refused as before - `401`, or the answer of a signature by a key no phone has (the replaced phone's, removed
+  at the re-enrolment) - but writes no `device_auth_failed`; a refusal naming one of the row's current keys is logged
+  as always: the phone's old stream reconnecting with it a few times (§6bm's finding 2). Revoke
+  Access and the delete forget the row's retired tokens, so they log again; so does a restart.
 - The rows die with the code: `new_code` deletes them, Revoke Access too, the phone's delete cascades, and
   `retention::prune` runs `enrol_key::SWEEP_SQL` (a used row lives to its `keep_until`).
 - D13: `launcher_check`'s `Verdict::TooOld` blocks the setup QR while its launcher's versionCode is under

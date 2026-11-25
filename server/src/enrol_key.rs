@@ -444,7 +444,7 @@ pub struct Section {
     /// `summary` or `provision`: where the confirm comes back to.
     pub back: &'static str,
     pub wait: Option<Wait>,
-    /// A quiet row: "Venter på telefonen" (an allowed attempt), or a landing's.
+    /// A quiet row: "Venter på telefonen" (an allowed attempt, also beside [Section::wait]), or a landing's.
     pub quiet: Option<String>,
     /// "{name} har en eldre Vibb One" (D13).
     pub old_app: Option<String>,
@@ -554,7 +554,10 @@ pub async fn section(
                 .collect(),
             tag: tag.as_deref().map(hex::encode).unwrap_or_default(),
         });
-    } else if rows.iter().any(|r| r.allowed_at.is_some()) {
+    }
+    // An allowed attempt not used yet: "Venter på telefonen", beside the line while another attempt still waits (the
+    // gate of §10.3, finding 1).
+    if rows.iter().any(|r| r.allowed_at.is_some()) {
         section.quiet = Some(t(lang, "device.key_exception.waiting").to_string());
     }
     if section.wait.is_none() && section.quiet.is_none() {

@@ -1308,7 +1308,14 @@ pub struct TokenIndex {
     /// Reloads run one at a time, each reading after its own write, so the last one to finish
     /// holds every write.
     reload: tokio::sync::Mutex<()>,
+    /// `token_hash -> (device id, when)`: the tokens a re-enrolment of the same row replaced, for [RETIRED_FOR]. The
+    /// phone's old stream reconnects with one a few times before it takes the new token: refused, but not logged as
+    /// a failed sign-in. A revoke or a delete of the row clears its entries; memory only.
+    retired: std::sync::Mutex<std::collections::HashMap<String, (i64, std::time::Instant)>>,
 }
+
+/// How long a token replaced by a re-enrolment is refused quietly.
+pub const RETIRED_FOR: std::time::Duration = std::time::Duration::from_secs(3600);
 
 impl TokenIndex {
     pub fn lookup(&self, token: &str) -> Option<i64> {
@@ -1335,7 +1342,18 @@ impl TokenIndex {
     /// cleared or deleted): [TokenIndex::reload], and if the database can't be read, the same
     /// change applied by hand - a phone must never keep a revoked token, nor be refused the one it
     /// was just given.
+    ///
+    /// A new token for the row (a re-enrolment) retires the row's old ones ([TokenIndex::retired]); `None` (a revoke,
+    /// a delete) forgets the row's retired ones, so they log again.
     pub async fn refresh(&self, db: &sqlx::SqlitePool, device_id: i64, token_hash: Option<&str>) {
+        let old: Vec<String> = self
+            .map
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .filter(|(_, id)| **id == device_id)
+            .map(|(hash, _)| hash.clone())
+            .collect();
         if let Err(err) = self.reload(db).await {
             tracing::error!(device_id, %err, "couldn't reload the device tokens - patching");
             let mut map = self.map.write().unwrap_or_else(|e| e.into_inner());
@@ -1344,6 +1362,28 @@ impl TokenIndex {
                 map.insert(hash.to_string(), device_id);
             }
         }
+        let now = std::time::Instant::now();
+        let mut retired = self.retired.lock().unwrap_or_else(|e| e.into_inner());
+        if token_hash.is_none() {
+            retired.retain(|_, (id, _)| *id != device_id);
+        }
+        retired.retain(|_, (_, at)| now.duration_since(*at) < RETIRED_FOR);
+        if let Some(new) = token_hash {
+            retired.remove(new);
+            for hash in old.into_iter().filter(|hash| hash != new) {
+                retired.insert(hash, (device_id, now));
+            }
+        }
+    }
+
+    /// The row whose re-enrolment replaced `token` within [RETIRED_FOR] - refused without a security-log line.
+    pub fn retired(&self, token: &str) -> Option<i64> {
+        let hash = hash_token(token);
+        let retired = self.retired.lock().unwrap_or_else(|e| e.into_inner());
+        retired
+            .get(&hash)
+            .filter(|(_, at)| at.elapsed() < RETIRED_FOR)
+            .map(|(id, _)| *id)
     }
 }
 
@@ -1393,6 +1433,12 @@ pub async fn require_device_token(
         .and_then(|v| v.strip_prefix("Bearer "));
     let bearer_device = token.and_then(|token| state.tokens.lookup(token));
     let signature = request.extensions().get::<SigCheck>().cloned();
+    // A token a re-enrolment of the same row replaced: the phone's old stream on its way to the new one - refused
+    // as before, but no failed sign-in (the gate of design 129b, finding 2).
+    let retired = match bearer_device {
+        None => token.and_then(|token| state.tokens.retired(token)),
+        Some(_) => None,
+    };
 
     let (device_id, signed_key) = match (signature, bearer_device) {
         // L1's code QA L5: a valid signature with another phone's bearer beside it authenticates neither.
@@ -1437,6 +1483,17 @@ pub async fn require_device_token(
         (Some(SigCheck::TooMany { device_id }), Some(bearer)) if device_id == bearer => {
             (bearer, None)
         }
+        // Only a key no phone has (the replaced phone's old key, removed at the re-enrolment): a refusal naming one of
+        // the row's current keys is refused and logged as always.
+        (
+            Some(SigCheck::Refused {
+                reason,
+                device_id: None,
+            }),
+            None,
+        ) if retired.is_some() => {
+            return signature_refusal(reason);
+        }
         (Some(SigCheck::Refused { reason, device_id }), _) => {
             return refuse_signature(
                 &state,
@@ -1457,6 +1514,10 @@ pub async fn require_device_token(
             let key = client.as_ref().map(|c| c.key()).unwrap_or_default();
             if let Some(refused) = state.limits.ip_blocked(&key) {
                 return too_many(refused);
+            }
+            if retired.is_some() {
+                return (axum::http::StatusCode::UNAUTHORIZED, "invalid device token")
+                    .into_response();
             }
             let blocked = state.limits.ip_failed(&key);
             let what = if token.is_some() {
@@ -1531,7 +1592,6 @@ pub async fn refuse_signature(
     client: Option<&crate::net::Client>,
     path: &str,
 ) -> Response {
-    use crate::device_key::AuthReason;
     if reason.counts() {
         let key = client.map(|c| c.key()).unwrap_or_default();
         if let Some(refused) = state.limits.ip_blocked(&key) {
@@ -1539,6 +1599,12 @@ pub async fn refuse_signature(
         }
         log_signature_failure(state, reason, client, path, true).await;
     }
+    signature_refusal(reason)
+}
+
+/// A refused signature's answer, without the log: 401 (400 for `bad_body`) with `Vibb-Auth: <reason>`.
+fn signature_refusal(reason: crate::device_key::AuthReason) -> Response {
+    use crate::device_key::AuthReason;
     let status = if reason == AuthReason::BadBody {
         axum::http::StatusCode::BAD_REQUEST
     } else {

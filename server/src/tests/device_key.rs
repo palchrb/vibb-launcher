@@ -1019,6 +1019,72 @@ async fn re_enrolment_and_revoke_remove_the_keys() {
     assert_eq!(app.state.device_keys.index.len(), 0);
 }
 
+/// The device_auth_failed lines written so far.
+async fn auth_failed(app: &TestApp) -> i64 {
+    app.state.audit.flush(&app.db).await;
+    sqlx::query_scalar(
+        "SELECT COUNT(*) FROM security_events WHERE event_type = 'device_auth_failed'",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap()
+}
+
+/// The 129b gate's finding 2 (code QA M/L): beside the token a re-enrolment replaced, a signature by the replaced
+/// phone's removed key (`unknown_key`) is refused quietly, while a refusal naming the row's current key - here a
+/// replayed signature - is refused and logged as always.
+#[tokio::test]
+async fn a_replaced_tokens_signatures() {
+    let app = TestApp::new().await;
+    let old = phone_with_key(&app, "phone").await;
+    let code = app.new_code(old.id, crate::enrollment::Kind::Qr).await;
+    let key = TestKey::new();
+    let res = enroll_with(&app, &code, &key, serde_json::json!({})).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    let answer = res.json();
+    let new = Phone {
+        id: old.id,
+        token: answer["device_token"].as_str().unwrap().to_string(),
+        key,
+        key_id: answer["key"]["key_id"].as_str().unwrap().to_string(),
+    };
+    assert_ne!(new.token, old.token);
+    let with_old_bearer = |mut request: Request<Body>| {
+        request.headers_mut().insert(
+            header::AUTHORIZATION,
+            format!("Bearer {}", old.token).parse().unwrap(),
+        );
+        request
+    };
+    let policy = "/api/devices/policy";
+
+    // The old key, removed at the re-enrolment: quiet.
+    let request = signed(&app, &old, Method::GET, policy, vec![], "", 0);
+    let res = app.send(with_old_bearer(request)).await;
+    assert_eq!(res.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(vibb_auth(&res).as_deref(), Some("unknown_key"));
+    assert_eq!(auth_failed(&app).await, 0);
+
+    // The current key's signature replayed beside the old bearer: refused and logged.
+    let request = signed(&app, &new, Method::GET, policy, vec![], "", 0);
+    let copy = Request::get(policy)
+        .header(
+            device_key::SIGNATURE_HEADER,
+            request.headers()[device_key::SIGNATURE_HEADER].clone(),
+        )
+        .header(
+            device_key::BODY_HASH_HEADER,
+            request.headers()[device_key::BODY_HASH_HEADER].clone(),
+        )
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(app.send(request).await.status, StatusCode::OK);
+    let res = app.send(with_old_bearer(copy)).await;
+    assert_eq!(res.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(vibb_auth(&res).as_deref(), Some("replay"));
+    assert_eq!(auth_failed(&app).await, 1);
+}
+
 /// §5.2 (H3): a registration from an address the phone's bearer never came from (an hour before its challenge) is
 /// `unusual`.
 #[tokio::test]

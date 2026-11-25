@@ -460,6 +460,22 @@ async fn the_exception() {
     .unwrap();
     assert!(left);
     assert_eq!(events(&app, "device_key_exempted").await, 1);
+    // The gate's finding 1: with the other attempt still waiting, the landing shows the allowed one's quiet row
+    // beside the line, in the section the confirm lands at.
+    let page = app
+        .get_page(&format!("/devices/{id}?notice=key_exception"), &cookie)
+        .await
+        .text();
+    let section = &page[page.find("<section id=\"key-exception\">").unwrap()..];
+    let section = &section[..section.find("</section>").unwrap()];
+    assert!(section.contains("data-warning=\"key-wait\""), "{section}");
+    assert!(
+        section.contains(
+            "data-row=\"key-exception-quiet\"><span class=\"row-label\">Waiting for the phone"
+        ),
+        "{section}"
+    );
+    assert_eq!(section.matches("data-row=\"key-attempt\"").count(), 1);
     // The other attempt still waits; the allowed one enrols exempt at its next try.
     past_pace(&app).await;
     let res = refused(&app, &code, &other).await;
@@ -1184,4 +1200,61 @@ async fn a_software_key_can_be_stored() {
     };
     insert("software", "soft").await.unwrap();
     assert!(insert("other", "other").await.is_err(), "the CHECK stays");
+}
+
+/// The gate's finding 2: the token a re-enrolment of the same row replaced (the phone's old stream reconnecting) is
+/// refused without a failed sign-in in the security log; once the row is revoked it logs again, as an unknown token.
+#[tokio::test]
+async fn a_replaced_token_is_refused_quietly() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, old) = app.enrolled_device("Mi").await;
+    let code = app.new_code(id, crate::enrollment::Kind::Typed).await;
+    let attempt = new_attempt();
+    refused(&app, &code, &attempt).await;
+    let page = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    let res = confirm(
+        &app,
+        &cookie,
+        id,
+        &number_of(&attempt),
+        &tag_of(&page),
+        PASSWORD,
+    )
+    .await;
+    assert!(res.location().unwrap().contains("notice=key_exception"));
+    past_pace(&app).await;
+    let res = refused(&app, &code, &attempt).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    let new = res.json()["device_token"].as_str().unwrap().to_string();
+
+    let stream = "/api/devices/commands/stream";
+    for _ in 0..3 {
+        let res = app.request(Method::GET, stream, Some(&old), None).await;
+        assert_eq!(res.status, StatusCode::UNAUTHORIZED);
+    }
+    app.state.audit.flush(&app.db).await;
+    assert_eq!(events(&app, "device_auth_failed").await, 0);
+    let res = app
+        .request(Method::GET, "/api/devices/key", Some(&new), None)
+        .await;
+    assert_eq!(res.status, StatusCode::OK);
+
+    // Revoked: the row's tokens are unknown ones again.
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/revoke"),
+            Some(&cookie),
+            &[("confirm", "yes")],
+        )
+        .await;
+    assert!(res.location().unwrap().contains("access_revoked"));
+    let res = app.request(Method::GET, stream, Some(&old), None).await;
+    assert_eq!(res.status, StatusCode::UNAUTHORIZED);
+    app.state.audit.flush(&app.db).await;
+    assert_eq!(events(&app, "device_auth_failed").await, 1);
 }

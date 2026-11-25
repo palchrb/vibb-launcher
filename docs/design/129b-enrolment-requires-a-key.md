@@ -179,7 +179,9 @@ logged again. (Owner question 4.)
 `EnrollFailure.Waiting(reason, number, retryAfterS)`; one process-wide `EnrolWait` keeps trying the same code with the
 same attempt at `retry_after_s` (clamped 10-300 s), each try under `QrExtras`' mutex and `NonCancellable` once sent,
 until: `200` (enrolled, with a key or exempt), a code refusal (`CODE_REFUSED_STATUSES`), or 45 minutes since the first
-waiting answer. A transient answer (no network, 5xx, 429, the two 503s, 426) keeps the schedule. **A phone without a
+waiting answer. The 45-minute stop is for a server that can't be reached: a reachable server ends the wait first with
+the code-expired answer (`401` once the code's life - 15 min typed, 30 min QR, or a confirm's 10 more - is over), as
+the §6bm gate saw (`docs/testing/emulator.md`, finding 3). A transient answer (no network, 5xx, 429, the two 503s, 426) keeps the schedule. **A phone without a
 key tries to make one on every try** (M4; the cap applies: a fourth key first deletes the oldest expired, never-named
 one - the waiting key's challenge is the live code's, so it is kept). The enrolment key is kept while waiting (the same
 SPKI on every try), deleted on a code refusal or an exempt enrolment. The QR's kept extras stay kept while waiting
