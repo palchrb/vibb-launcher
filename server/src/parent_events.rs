@@ -117,6 +117,10 @@ pub enum Kind {
     /// the parent's switch is on and nothing lifts it - once per down period (keyed by the report's `period`), urgent,
     /// under its own switch. No event when it comes back. Told from its parameters ([PhoneAtParams]).
     FilterDown,
+    /// The phone's storage is full, so its screen time isn't saved (a report's `time_state.storage_full`), keyed by the
+    /// family's local date: at most one a day per phone, under its own switch. Told from its parameters
+    /// ([PhoneAtParams]).
+    StorageFull,
 }
 
 /// A kind's own push rate (design 77 §7, QA R2-M3), beside [EVENTS_AN_HOUR] and [URGENT_PUSHES_AN_HOUR]: a phone's
@@ -130,7 +134,7 @@ pub struct PushBudget {
 }
 
 impl Kind {
-    pub const ALL: [Kind; 30] = [
+    pub const ALL: [Kind; 31] = [
         Kind::EmergencyCall,
         Kind::PinUsed,
         Kind::PinLockout,
@@ -161,6 +165,7 @@ impl Kind {
         Kind::BackupDownloaded,
         Kind::BackupRestored,
         Kind::FilterDown,
+        Kind::StorageFull,
     ];
 
     pub fn wire(self) -> &'static str {
@@ -195,6 +200,7 @@ impl Kind {
             Kind::BackupDownloaded => "backup_downloaded",
             Kind::BackupRestored => "backup_restored",
             Kind::FilterDown => "filter_down",
+            Kind::StorageFull => "storage_full",
         }
     }
 
@@ -286,6 +292,8 @@ impl Kind {
             }
             // Design 116 §3.4: on by default (migration 0158).
             Kind::FilterDown => Some(("push_filter_down", "Web filter down")),
+            // On by default (migration 0179).
+            Kind::StorageFull => Some(("push_storage_full", "Storage full")),
         }
     }
 
@@ -586,6 +594,24 @@ impl Phone {
         NewEvent {
             target: format!("/devices/{}/filter", self.id),
             ..self.with_params(Kind::FilterDown, period.to_string(), at, &params)
+        }
+    }
+
+    /// The phone's storage is full and its screen time isn't saved: one event a day (the key is the family's local
+    /// date), to the phone's Time page, whose orange line says what to do.
+    pub fn storage_full(&self) -> NewEvent {
+        let params = PhoneAtParams {
+            phone: self.name.clone(),
+            at: instant(self.now),
+        };
+        NewEvent {
+            target: format!("/devices/{}/time", self.id),
+            ..self.with_params(
+                Kind::StorageFull,
+                self.zone.today(self.now).format("%Y-%m-%d").to_string(),
+                self.now,
+                &params,
+            )
         }
     }
 
@@ -3417,6 +3443,14 @@ fn phone_event_told(
             let (_, when) = at_of(&p.at)?;
             (titled(lang, &title_key(""), &p.phone), capitalized(&when))
         }
+        Kind::StorageFull => {
+            let p: PhoneAtParams = serde_json::from_str(params).ok()?;
+            at_of(&p.at)?;
+            (
+                titled(lang, &title_key(""), &p.phone),
+                t(lang, "events.storage_full.summary").to_string(),
+            )
+        }
         Kind::UnseenBoot => {
             let p: PhoneAtParams = serde_json::from_str(params).ok()?;
             let (_, when) = at_of(&p.at)?;
@@ -4415,6 +4449,12 @@ mod tests {
                 "14:02",
                 "/devices/3/filter",
             ),
+            (
+                phone.storage_full(),
+                "Storage is full on Anna's phone",
+                "Screen time isn't saved.",
+                "/devices/3/time",
+            ),
         ];
         for (event, title, summary, target) in &rows {
             // Nothing is stored as words any more (design 70 §4): every kind is told from its
@@ -5112,7 +5152,7 @@ mod tests {
         assert_eq!(zones.count(), 1);
         assert_eq!(
             switches.len(),
-            15,
+            16,
             "every switch once; the emergency call has none"
         );
         // "App updates": one switch for both kinds, the only one off by default.
@@ -5378,6 +5418,7 @@ mod tests {
             backup_restored("Mamma", "backup-20261018-020000.zip", two, Push::No),
             backup_restored("", "backup-20261018-020000.zip", two, Push::No),
             phone.filter_down("5:120000", two),
+            phone.storage_full(),
         ];
         let kinds: std::collections::BTreeSet<&str> =
             events.iter().map(|e| e.kind.wire()).collect();

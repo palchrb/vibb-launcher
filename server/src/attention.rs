@@ -69,6 +69,8 @@ pub enum Kind {
     AppPushOutside(usize),
     Calls(CallProblem),
     LedgerUnreadable,
+    /// The phone's storage is full: its screen time isn't saved (`time_state.storage_full`).
+    StorageFull,
     /// The phone's clock is off the time its decisions use, or its time hasn't been checked for long
     /// (`clock_skew::problem`).
     Clock(crate::clock_skew::ClockProblem),
@@ -163,6 +165,7 @@ impl AttentionItem {
             Kind::AppPushOutside(_) => "app-push-outside",
             Kind::Calls(_) => "calls",
             Kind::LedgerUnreadable => "screen-time-record",
+            Kind::StorageFull => "storage-full",
             Kind::Clock(_) => "clock",
             Kind::MusicUnreachable => "music-unreachable",
             Kind::MusicOtherSigner => "music-other-signer",
@@ -218,6 +221,8 @@ pub struct Facts {
     /// From the call report, in its order (`Waiting` left out by [items]).
     pub calls: Vec<CallProblem>,
     pub ledger_unreadable: bool,
+    /// The last report's `time_state.storage_full`.
+    pub storage_full: bool,
     /// The last report's clock line (`time_state::TimeReport::clock_problem`).
     pub clock: Option<crate::clock_skew::ClockProblem>,
     /// Not a row: calls are managed and the launcher screens them, so a no-calls rule really
@@ -283,6 +288,7 @@ pub fn items(lang: Lang, device_id: i64, facts: &Facts) -> Vec<AttentionItem> {
         add(problem.needs_attention(), Kind::Calls(*problem));
     }
     add(facts.ledger_unreadable, Kind::LedgerUnreadable);
+    add(facts.storage_full, Kind::StorageFull);
     if let Some(problem) = facts.clock {
         add(true, Kind::Clock(problem));
     }
@@ -380,6 +386,7 @@ fn level(kind: Kind) -> Level {
         | Kind::AppPushOutside(_)
         | Kind::Calls(_)
         | Kind::LedgerUnreadable
+        | Kind::StorageFull
         | Kind::Clock(_)
         | Kind::MusicUnreachable
         | Kind::MusicOtherSigner
@@ -429,6 +436,7 @@ fn title(lang: Lang, kind: Kind) -> String {
         }
         Kind::Calls(problem) => problem.title(lang),
         Kind::LedgerUnreadable => t(lang, "device.attention.screen_time_record"),
+        Kind::StorageFull => t(lang, "device.attention.storage_full"),
         Kind::Clock(problem) => {
             return problem.words(lang);
         }
@@ -485,7 +493,7 @@ fn target(kind: Kind, id: i64) -> String {
             return format!("/devices/{id}/calls");
         }
         // Device › Time's warnings at the top of the page (step 9): no fragment needed.
-        Kind::LedgerUnreadable | Kind::Clock(_) => {
+        Kind::LedgerUnreadable | Kind::StorageFull | Kind::Clock(_) => {
             return format!("/devices/{id}/time");
         }
         // Device › Music's warnings at the top of the page: no fragment needed.
@@ -806,6 +814,10 @@ pub fn facts_of(s: &Sources, now_ms: i64) -> Facts {
             .and_then(|st| st.time_state_json.as_deref())
             .and_then(crate::time_state::TimeReport::parse)
             .is_some_and(|report| report.ledger_unreadable),
+        storage_full: latest
+            .and_then(|st| st.time_state_json.as_deref())
+            .and_then(crate::time_state::TimeReport::parse)
+            .is_some_and(|report| report.storage_full),
         // Device › Time reads the same line.
         clock: latest
             .and_then(|st| st.time_state_json.as_deref())

@@ -53,6 +53,8 @@ pub struct TimeReport {
     pub extra_minutes: Option<i64>,
     /// The phone couldn't read its screen-time record and counts today as used up.
     pub ledger_unreadable: bool,
+    /// The phone couldn't save its screen-time record (its storage is full): the count holds until a restart.
+    pub storage_full: bool,
     /// The phone's own IANA time zone (design 34 P13; `None` when absent, or a value
     /// that isn't a non-empty string of at most 64 bytes). Only compared with Phone Setup's name.
     pub zone: Option<String>,
@@ -90,6 +92,7 @@ impl TimeReport {
             budget_minutes: state["budget_minutes"].as_i64().filter(|m| *m >= 0),
             extra_minutes: state["extra_minutes"].as_i64().filter(|m| *m > 0),
             ledger_unreadable: state["ledger_unreadable"].as_bool() == Some(true),
+            storage_full: state["storage_full"].as_bool() == Some(true),
             zone: state["zone"]
                 .as_str()
                 .filter(|z| !z.is_empty() && z.len() <= 64)

@@ -102,6 +102,15 @@ async fn each_fact_raises_its_own_row() {
                                   "lock_reason": "NONE", "lifts_active": [],
                                   "ledger_unreadable": true}}),
         ),
+        // The phone's storage is full: one orange row to Device › Time.
+        (
+            "storage-full",
+            json!({"time_state": {"day": "2026-10-13", "used_minutes": 0, "budget_minutes": 60,
+                                  "extra_minutes": 0, "active_rule_id": null,
+                                  "active_rule_name": null, "calls_blocked": false,
+                                  "lock_reason": "NONE", "lifts_active": [],
+                                  "storage_full": true}}),
+        ),
         // Design 114: Android's own mobile-data switch off is a setup step (design 113's own row folded, QA H1).
         ("setup", json!({"setup": {"mobile_data": false}})),
         // Design 114 §5.2 (QA M4): not device owner is its own red row, and the steps don't raise the setup row.

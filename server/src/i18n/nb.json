@@ -544,6 +544,9 @@
   "events.unseen_boot.push.title": "{phone}: startet uten Vibb One",
   "events.filter_down.inbox.title": "Nettfilteret er nede på {phone}",
   "events.filter_down.push.title": "{phone}: nettfilteret er nede",
+  "events.storage_full.inbox.title": "Lagringen er full på {phone}",
+  "events.storage_full.push.title": "{phone}: lagringen er full",
+  "events.storage_full.summary": "Skjermtiden lagres ikke.",
   "events.low_battery.inbox.title": "{phone} har lite strøm ({level} %)",
   "events.low_battery.inbox.charging": "Lader · {at}",
   "events.low_battery.inbox.not_charging": "Lader ikke · {at}",
@@ -1816,6 +1819,7 @@
   "device.time.no_report": "Ingen melding ennå",
   "device.time.ledger_unreadable": "Skjermtidsregnskapet kan ikke leses",
   "device.time.ledger_unreadable_sub": "Telefonen regner dagens skjermtid som brukt opp.",
+  "device.time.storage_full_info": "Telefonen teller skjermtiden, men kan ikke lagre den. En omstart nullstiller dagens tid. Frigjør plass på telefonen: slett bilder, videoer eller apper.",
   "device.clock.wrong": "Klokken går feil ({amount} {direction})",
   "device.clock.ahead": "foran",
   "device.clock.behind": "bak",
@@ -4672,6 +4676,7 @@
   "security.detail.pin.place.wifi_signin": "ved Wi-Fi-innloggingen",
   "settings.notifications.switch.wifi_signin": "Wi-Fi-innlogging",
   "settings.notifications.switch.filter_down": "Nettfilteret nede",
+  "settings.notifications.switch.storage_full": "Lagringen er full",
   "apps.dialer.managed_label": "{app} → Vibbs telefonbok",
   "apps.dialer.off_sub": "Bare nødnumre",
   "apps.dialer.not_allowed": "Av: bare nødanrop virker",
@@ -4901,6 +4906,7 @@
   "device.attention.setup_hold": "I oppsett, uten begrensninger",
   "device.attention.not_device_owner": "Vibb One styrer ikke telefonen",
   "device.attention.filter_down": "Nettfilteret er nede",
+  "device.attention.storage_full": "Lagringen er full",
 
   "device.attention.notifications_all_off": "Alle varsler fra Vibb One er av"
 }

@@ -1078,3 +1078,69 @@ async fn the_filter_down_is_one_event_per_period() {
     assert!(html.contains("Web filter down"));
     assert!(crate::parent_events::Kind::FilterDown.urgent());
 }
+
+/// Storage full (the phone can't save its screen time): one event a day per phone, pushed under its own switch, on by
+/// default; the Time page's orange line with the fix behind its (i).
+#[tokio::test]
+async fn storage_full_is_told_once_a_day() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("Emma").await;
+    let full = |on: bool| {
+        json!({"time_state": {"used_minutes": 10, "extra_minutes": 0, "calls_blocked": false,
+                                               "lock_reason": "NONE", "lifts_active": [], "storage_full": on}})
+    };
+    app.post_status(&token, full(false)).await;
+    assert!(kinds(&app, id).await.is_empty());
+    for _ in 0..3 {
+        app.post_status(&token, full(true)).await;
+    }
+    assert_eq!(
+        events(&app, id).await,
+        [(
+            "storage_full".to_string(),
+            "Storage is full on Emma's phone".to_string()
+        )]
+    );
+    let key: String = sqlx::query_scalar(
+        "SELECT dedup_key FROM parent_events WHERE device_id = ? AND kind = 'storage_full'",
+    )
+    .bind(id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    let zone = crate::display_time::Zone::load(&app.db, crate::i18n::Lang::default()).await;
+    assert_eq!(
+        key,
+        zone.today(chrono::Utc::now())
+            .format("%Y-%m-%d")
+            .to_string()
+    );
+
+    // Device › Time: one orange line, the fix behind its (i).
+    let time = app
+        .get_page(&format!("/devices/{id}/time"), &cookie)
+        .await
+        .text();
+    assert!(time.contains("Storage is full"), "{time}");
+    assert!(time.contains("Free up space on the phone"));
+
+    // Its own switch on Notify Me About, on by default.
+    let html = app
+        .get_page("/notifications/settings", &cookie)
+        .await
+        .text();
+    assert_eq!(
+        super::input_checked(&html, "push_storage_full", "on"),
+        Some(true)
+    );
+    assert!(!crate::parent_events::Kind::StorageFull.urgent());
+
+    // Saved again: the line goes.
+    app.post_status(&token, full(false)).await;
+    let time = app
+        .get_page(&format!("/devices/{id}/time"), &cookie)
+        .await
+        .text();
+    assert!(!time.contains("Storage is full"));
+}
