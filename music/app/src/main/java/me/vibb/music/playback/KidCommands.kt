@@ -1,6 +1,8 @@
 package me.vibb.music.playback
 
+import androidx.annotation.OptIn
 import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
 
 /**
  * The listeners `KidPlayer` gave out (r12 emulator round E-1): each wrapped in a [KidCommandsListener] - every event
@@ -29,6 +31,7 @@ val READ_COMMANDS = intArrayOf(
  * platform session, `ControllerInfo.isTrusted`) also reads what plays; any other app gets the transport only - play,
  * pause, skip - without the queue, the current item or their metadata ([READ_COMMANDS]).
  */
+@OptIn(UnstableApi::class)
 fun foreignPlayerCommands(base: Player.Commands, trusted: Boolean): Player.Commands =
     base.buildUpon().removeAll(Player.COMMAND_SET_MEDIA_ITEM, Player.COMMAND_CHANGE_MEDIA_ITEMS)
         .apply { if (!trusted) removeAll(*READ_COMMANDS) }.build()
