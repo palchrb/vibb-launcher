@@ -34,7 +34,8 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   decision is the pure `deferredCameraApplyDue`.
 - **Kamera, Posisjon, Mikrofon, Kontakter** (design 127 step 2, `docs/design/127-app-page.md` §4.1; the camera
   mechanism above, widened - its rules all stand, renamed): `AccessKey` (`server/EnforcementPlan.kt`; `CAMERA`,
-  `LOCATION` - fine, coarse, background -, `MICROPHONE`, `CONTACTS` - read and write; an app asks for a key when it
+  `LOCATION` - fine, coarse, background, and the location stored in photos (`ACCESS_MEDIA_LOCATION`, 2026-11-25:
+  without it Android hands the app its photos with the position taken out; emulator §6bo) -, `MICROPHONE`, `CONTACTS` - read and write; an app asks for a key when it
   requests any of its permissions, and each requested one is denied). `appPermissionsOf` is now
   `Map<String, Set<AccessKey>>?` (`[{package_name, camera?, location?, microphone?, contacts?}]`, each `"deny"`; an entry
   with nothing known off dropped; `null` still touches nothing). The pure `accessGrants` works per (package,

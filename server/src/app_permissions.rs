@@ -82,6 +82,7 @@ pub const GRANT_KEYS: [GrantKey; 4] = [
             "android.permission.ACCESS_FINE_LOCATION",
             "android.permission.ACCESS_COARSE_LOCATION",
             "android.permission.ACCESS_BACKGROUND_LOCATION",
+            "android.permission.ACCESS_MEDIA_LOCATION",
         ],
     },
     GrantKey {

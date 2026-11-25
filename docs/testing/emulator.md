@@ -5763,3 +5763,31 @@ PlacesDebug`.
 | i | The home connection with the same id negotiated as WPA3 (`sae`, 7) | still `check: "link"` |
 
 Not on the emulator: real neighbours, real bands, a real mesh - the owner's device check on the Jelly Star, later.
+
+## 6bo. Posisjon also covers the location stored in photos (branch `media-location-delete-lines`) - written, not run
+
+App access's Posisjon key (design 127) also covers `android.permission.ACCESS_MEDIA_LOCATION`, the runtime permission
+(since Android 10) without which the system hands an app its photos with the position taken out. On **Android 14 and
+16** with the user's OK. The debug launcher and a server of this branch, managed apps. A third-party gallery that asks
+for `READ_MEDIA_IMAGES` and `ACCESS_MEDIA_LOCATION` and shows a photo's coordinates - Fossify Gallery
+(`org.fossify.gallery`, Properties), checked first with `aapt2 dump permissions <apk>`; if it doesn't ask for both, a
+throwaway test app that reads `ExifInterface.getLatLong` on the picture it opens. A geotagged JPEG on the phone:
+`adb push geo.jpg /sdcard/Pictures/` and `adb shell am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d
+file:///sdcard/Pictures/geo.jpg` (any photo with GPS tags; `exiftool -GPSLatitude=59.9 -GPSLongitude=10.7 geo.jpg`).
+Logcat `AppEnforcer`.
+
+What the platform says (AOSP's `core/res/AndroidManifest.xml` and `DevicePolicyManagerService`, 14 to 17 alike):
+`ACCESS_MEDIA_LOCATION` is `dangerous` with no group of its own, so `setPermissionGrantState` takes it like any runtime
+permission; it is not one of the sensor permissions Android 12+ keeps a device owner from granting (a denial is never
+limited anyway). The permission controller grants it together with the photos access (Android 14 and 15: "Photos and
+videos"; with "Select photos" too) - a `POLICY_FIXED` denial stays through that. An app targeting below 29 gets it
+implicitly from `READ_EXTERNAL_STORAGE` (the split permission, `server/src/apk.rs`), so the key covers it there too.
+These rows confirm it on the two versions.
+
+| # | Step | Expect |
+|---|---|---|
+| 1 | The gallery allowed, Posisjon on; grant its photos access in the app | the PWA's app page has the Posisjon switch (the report's `access.location` `requested`); the gallery shows the photo's coordinates |
+| 2 | Posisjon off in the PWA, a sync | `adb shell dumpsys package org.fossify.gallery \| grep -A1 ACCESS_MEDIA_LOCATION`: `granted=false`, flags with `POLICY_FIXED`; the report's `access.location` `admin_denied` (quiet in the PWA) |
+| 3 | Open the photo's properties in the gallery (or the test app's `getLatLong`) | no position (the EXIF GPS fields read empty or zero); the rest of the photo is there |
+| 4 | Revoke and grant the photos access again in Android's app info (the pause on, Settings shown) | `ACCESS_MEDIA_LOCATION` comes back `granted=true` only during the pause (it lifts every key); after the pause ends, `granted=false` with `POLICY_FIXED` again |
+| 5 | Posisjon on again in the PWA, a sync | the flag is gone (`POLICY_FIXED` cleared), the permission back to what the user gave; the gallery shows the coordinates once its photos access is granted again |

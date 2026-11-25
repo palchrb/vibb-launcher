@@ -413,6 +413,9 @@ enum class AccessKey(val key: String, val permissions: List<String>) {
             "android.permission.ACCESS_FINE_LOCATION",
             "android.permission.ACCESS_COARSE_LOCATION",
             "android.permission.ACCESS_BACKGROUND_LOCATION",
+            // The location stored in photos (a runtime permission since Android 10): without it the system hands
+            // the app its photos with the position taken out.
+            "android.permission.ACCESS_MEDIA_LOCATION",
         ),
     ),
     MICROPHONE("microphone", listOf("android.permission.RECORD_AUDIO")),

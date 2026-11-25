@@ -55,6 +55,7 @@ class AppAccessContractTest {
         val coarse = "android.permission.ACCESS_COARSE_LOCATION"
         val read = "android.permission.READ_CONTACTS"
         val write = "android.permission.WRITE_CONTACTS"
+        val photosLocation = "android.permission.ACCESS_MEDIA_LOCATION"
         val apps = listOf(
             InstalledApp(
                 "io.element.android.x", "Element X", false,
@@ -72,6 +73,14 @@ class AppAccessContractTest {
                 access = appAccessReport(
                     accessReports(listOf(camera, fine, mic, read), states(), emptySet()),
                     listOf(SpecialAccess.EXACT_ALARM to AccessState.GRANTED),
+                ),
+            ),
+            // Asks only for the location stored in photos: Posisjon.
+            InstalledApp(
+                "org.example.gallery", "Gallery", false,
+                access = appAccessReport(
+                    accessReports(listOf("android.permission.READ_MEDIA_IMAGES", photosLocation), states(photosLocation), emptySet()),
+                    emptyList(),
                 ),
             ),
         )
