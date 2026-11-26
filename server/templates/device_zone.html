@@ -107,7 +107,7 @@
             <form method="post" action="/devices/{{ device.id }}/zones/{{ zid }}/wifi#zone-wifi" class="row row-actions" data-wifi="current">
                 <span class="row-label">{{ w.ssid }}</span>
                 <input type="hidden" name="bssid" value="{{ w.bssid }}">{% if let Some(m) = w.mld %}<input type="hidden" name="mld" value="{{ m }}">{% endif %}
-                <button type="submit" class="button-small">{{ self.t("locate.zone.wifi.confirm") }}</button>
+                <button type="submit" class="row-action">{{ self.t("locate.zone.wifi.confirm") }}</button>
             </form>
             {% endif %}
             {% if let Some((line, info, name)) = self.wifi_orange() %}
