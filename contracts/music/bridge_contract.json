@@ -3,6 +3,7 @@
   "bridge_service": "com.kidslauncher.mdm.music.MusicBridgeService",
   "permission_suffix": ".permission.MUSIC_BRIDGE",
   "action_bridge_changed": "me.vibb.music.action.BRIDGE_CHANGED",
+  "extra_report_ask": "me.vibb.music.extra.REPORT_ASK",
   "launcher_packages": ["me.vibb.launcher", "me.vibb.launcher.debug"],
   "music_packages": ["me.vibb.music", "me.vibb.music.debug"],
   "restrictions": {

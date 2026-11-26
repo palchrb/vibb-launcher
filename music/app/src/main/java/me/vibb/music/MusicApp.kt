@@ -5,6 +5,8 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.util.Log
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -12,7 +14,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import me.vibb.music.bridge.Bridge
 import me.vibb.music.bridge.LiveBridge
-import me.vibb.music.bridge.LAUNCHER_PACKAGES
+import me.vibb.music.bridge.EXTRA_REPORT_ASK
+import me.vibb.music.bridge.launcherAllowed
 import me.vibb.music.playback.PlayerHub
 import me.vibb.music.sonos.SonosSuspension
 import me.vibb.music.spotify.SpotifyWebHost
@@ -65,12 +68,35 @@ class MusicApp : Application() {
     }
 }
 
-/** The launcher's nudge (`me.vibb.music.action.BRIDGE_CHANGED`): carries nothing, only starts the
- * sync - and only from a launcher (it shares its identity, qa-21-step3-code L7). */
+/** The launcher's nudge (`me.vibb.music.action.BRIDGE_CHANGED`): starts the sync - and only from a
+ * launcher signed like this app (it shares its identity, qa-21-step3-code L7; the signer since code QA
+ * L5, `launcherAllowed`). The launcher's report ask ([EXTRA_REPORT_ASK]), or any nudge with the last
+ * report an hour old or none, also sends the report at once, inside the broadcast ([goAsync]): the
+ * nudge's sync is WorkManager work app standby may defer for hours. */
 class BridgeChangedReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (sentFromPackage !in LAUNCHER_PACKAGES) return
+        if (!launcherAllowed(sentFromPackage) { Bridge.sameSigner(context, it) }) return
         Sync.nudge(context)
+        val asked = intent.getBooleanExtra(EXTRA_REPORT_ASK, false)
+        val pending = goAsync()
+        val app = context.applicationContext
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            try {
+                withTimeoutOrNull(REPORT_BUDGET_MS) { Sync.answerNudge(app, asked) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w("BridgeChanged", "The report on the nudge failed - the sync reports", e)
+            } finally {
+                pending.finish()
+            }
+        }
+    }
+
+    private companion object {
+        /** The nudge is a background broadcast, whose receiver may run 60 s; the report needs a few seconds
+         * (a bind, a binder call), so it gets well under that - the sync reports again in any case. */
+        const val REPORT_BUDGET_MS = 9_000L
     }
 }
 

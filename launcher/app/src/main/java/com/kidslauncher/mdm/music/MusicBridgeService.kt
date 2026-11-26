@@ -424,6 +424,6 @@ object MusicStatus {
     fun report(context: Context): JsonObject? {
         val pkg = MusicStore.installedPackage(context) ?: return null
         val (report, at) = MusicStore.report(context)
-        return musicState(pkg, MusicStore.versionCode(context, pkg), report, at, System.currentTimeMillis())
+        return musicState(pkg, MusicStore.versionCode(context, pkg), report, at, System.currentTimeMillis(), MusicStore.reportAsk(context))
     }
 }

@@ -43,6 +43,7 @@ import me.vibb.music.logic.listedOf
 import me.vibb.music.logic.newsApplied
 import me.vibb.music.logic.repickWanted
 import me.vibb.music.logic.SpotifyOutcome
+import me.vibb.music.logic.reportOnNudge
 import me.vibb.music.logic.reportWaiting
 import me.vibb.music.logic.reportedRooms
 import me.vibb.music.logic.stateReport
@@ -339,6 +340,23 @@ object Sync {
 
     /** The sync and the download job both write the report. */
     private val reportLock = Mutex()
+
+    /**
+     * The launcher's nudge, in its receiver: the report at once when the launcher asked for it ([asked]) or the last
+     * one is old ([reportOnNudge]), so a launcher asking an idle app gets its answer while the receiver runs - the
+     * nudge's sync may wait for app standby. One at a time (code QA L4): a nudge landing while one is written skips.
+     */
+    suspend fun answerNudge(context: Context, asked: Boolean) = withContext(Dispatchers.IO) {
+        if (!nudgeReporting.compareAndSet(false, true)) return@withContext
+        try {
+            val at = Store.get(context).reportFile.lastModified().takeIf { it > 0 }
+            if (reportOnNudge(asked, at, System.currentTimeMillis())) writeReport(context)
+        } finally {
+            nudgeReporting.set(false)
+        }
+    }
+
+    private val nudgeReporting = java.util.concurrent.atomic.AtomicBoolean(false)
 }
 
 class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {

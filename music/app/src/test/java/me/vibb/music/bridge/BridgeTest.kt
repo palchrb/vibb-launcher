@@ -152,6 +152,7 @@ class BridgeTest {
     fun `the bridge's names match the shared contract`() {
         assertEquals((contract["bridge_service"] as JsonPrimitive).content, BRIDGE_SERVICE)
         assertEquals((contract["action_bridge_changed"] as JsonPrimitive).content, ACTION_BRIDGE_CHANGED)
+        assertEquals((contract["extra_report_ask"] as JsonPrimitive).content, EXTRA_REPORT_ASK)
         assertEquals(strings("launcher_packages"), LAUNCHER_PACKAGES)
         val manifest = moduleFile("src/main/AndroidManifest.xml").readText()
         for (pkg in LAUNCHER_PACKAGES) assertTrue(manifest.contains(pkg + (contract["permission_suffix"] as JsonPrimitive).content))
