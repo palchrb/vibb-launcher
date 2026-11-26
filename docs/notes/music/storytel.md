@@ -46,6 +46,29 @@ Moved from music/CLAUDE.md on 2026-11-01.
   `storytel` is `StorytelAccount.state()` (`none` while off or `off` answered, `refused` in the server's cooldown,
   else `ok`) and a Storytel entry's `waiting` is
   `storytelWaiting` (`login`, `storage` below the floor, else the shared rule).
+- **Sealed books** (design 117): no Storytel byte is ever on the phone's storage plain. A book is the CDN's bytes
+  sealed with AES-256-CTR at their own offset (`logic/Seal.kt` `SealCipher`: the counter of the block holding byte `p`
+  is `nonce || be64(p / 16)`), so the cache's offsets, the Range resume, `cachedBytes`, the limit and the `LengthGuard`
+  are unchanged. The cache key is `sealed:<entry key>:<cid>` (`sealedCacheKey`): whether a book is sealed follows from
+  its key. Each book has its own random data key, wrapped (AES-GCM, AAD = the record's header + the cache key) by one
+  TEE Keystore key `music_books_<8 hex>` (no StrongBox, no user auth, no `setUnlockedDeviceRequired`) and kept in a
+  78-byte record, the resource's `vibb_seal` content metadata (`SealRecord`). `media/BookKeys.kt` owns the Keystore
+  (`AndroidKeyStore`/`KeyGenParameterSpec` nowhere else, `containsAlias` never: `SourceScanTest`): "missing" is only
+  `getKey` reading null; a new key always gets a new id (never the stored id, one a record names, or one that reads),
+  made key, canary, id in that order; the prefs `music_seal` hold the id, the canaries and the Unclassified counters,
+  never a key. **Lost only on definite signals** (§7, `sealFailure`): a key that reads null, permanently invalidated,
+  `ERROR_KEY_DOES_NOT_EXIST` not transient, an unreadable record, a bad tag while the same key's canary unwraps, or an
+  unnamed fault 3 times over 24 h with a good canary; anything else is Transient and deletes nothing. The sync runs
+  `CacheThrough.dropPlainStorytel` (a plain copy from before 117 goes with its row - no migration, the user 2026-11-18)
+  and `dropLostBooks` (`BookKeys.check`) before the plan; a lost book's row goes, the plan wants it again and it comes
+  back by the parent's download rules (mobile data too when that switch is on; §16 ASK 1, yes), at its bookmark. The
+  download prepares the seal before the mint (`DownloadIo.prepareSeal`; Transient = `network`, nothing minted), a start
+  with no spans always gets a new data key and record, a Lost record over held spans is Transient (never one book under
+  two keys). On the player a lost key is `SealLostException`: not retried (`SourceChangedPolicy`), `RendererEvent.Error`'s
+  `lost` -> "Ikke lastet ned" and a sync at once. The cipher checks itself against `seal_vectors.json`'s `self_check`
+  case once per process (`SealSelfCheck`). The emulator's lost-key check deletes the key with the debug-only
+  `DebugSealReceiver` (`docs/testing/emulator.md` §6by). Not protected: code running as our app, root on a running
+  phone, the audio while it plays.
 - **Storytel secrets** (design 26b §0, §6.1, design 58 §7.1): the JWT (a bearer for the family's whole account), its
   session and a minted URL (its `token=` is a bearer for the book) never reach a file, a log, Room, `renderer.json`,
   `music_state`, the report or a `toString`: `JwtResult.Ok`, `StorytelSession.Jwt`, `StorytelRequest`,

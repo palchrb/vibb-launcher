@@ -6664,3 +6664,25 @@ on a copy of `data/kidphone.db` (never the live file while it runs).
 
 What can't be seen here: a real phone's Wi-Fi zone link relearning after the moved zone in step 4 (design 125 D12, at
 least 2 days) - the Jelly Star's, later.
+
+## 6by. Storytel books sealed on the phone (design 117, branch `music-117-seal`) - written, not run
+
+`docs/design/117-storytel-sealed-books.md` §14 (the design named this §6ba, which another section has since taken).
+**Music app only**; it waits for the owner's OK ("Emulator: ask first"). On **API 34 and API 37** (the Keystore varies
+by version; the images of 2026-11-16), the debug music build, unmanaged on the debug feed as in §6i part A, the fake
+with two books: `python3 -I scripts/fake-storytel.py --books 111:20,222:5` (entry 5, `--print-listing 5`, `storytel_base`
+in `config.json`). Logs: `adb logcat -s VibbMusicDebugFeed BookKeys Sync WM-WorkerWrapper ExoPlayerImpl`; the fake
+logs every Range. The spans are pulled with `adb exec-out run-as me.vibb.music.debug tar c no_backup/media > media.tar`
+and checked on the VM with a few lines of Python: for each `*.exo` file the share of zero bytes (the fake serves silent
+WAV, mostly zeros; AES output has about 0.4 %).
+
+| # | Step | Expect |
+|---|---|---|
+| 1 | **Every span sealed** (QA M5(c)): download both books; pull every span | `BookKeys` logs `seal level 1` once (TEE; 2 is StrongBox, 0 software); every `*.exo` file, the last of each book included, has a zero-byte share under 1 %; none starts with `RIFF`; `exoplayer_internal.db` holds a 78-byte `vibb_seal` per book; `report.json` `audio_bytes` equals the plain sizes as before (the sealed copy is the same length) |
+| 2 | Play 111, seek to the middle and to the last minute, lock the screen, wait out 10 minutes of background play | it plays from each seek with no gap or noise; the position and bookmark move as before; no `Playback failed` line |
+| 3 | `--drop-at 40` (a fresh install's data cleared first): the first transfer of 111 is cut; the next job resumes it | the fake logs `206 Range bytes=<N>-` with a fresh token, never a 200 from 0; the book completes and step 1's check passes on all its spans |
+| 4 | **The update from before**: install `main`'s debug music build from before 117, download both books (plain: step 1's check fails on them), then install this build over it and sync | `Sync` logs `Sealed books: dropped 2 plain, 0 lost`; both rows go, both books download again sealed (the fake logs two new mints and 200s from 0), step 1 passes; the bookmark of 111 stays where it was |
+| 5 | **A lost key**: with both books on the phone and 111's bookmark at 5 min, `adb shell am broadcast -n me.vibb.music.debug/me.vibb.music.debugfeed.DebugSealReceiver` (deletes the current `music_books_<id>` and ends the process), open the app and tap 111 | "Ikke lastet ned" at once (no `ExoPlayerImpl` retries at 1-3 s); a sync runs: `Sealed books: dropped 0 plain, 2 lost`; the job downloads both again (two mints) under a new key id (`run-as ... cat shared_prefs/music_seal.xml`: `seal_kek_id` changed, the old canary gone after the next clean sync); 111 then plays from 5 min |
+| 6 | Step 5 with "Download on mobile data" on and the emulator on cellular only (`adb shell svc wifi disable`) | the books come back over mobile data (the parent's rule, §16 ASK 1); with the switch off they wait for Wi-Fi and the report's `waiting` says `wifi` |
+
+On the **Jelly Star** after the release: `seal level` logged once (TEE expected), and a 10-hour book played and sought.
