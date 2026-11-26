@@ -14,6 +14,10 @@
 //!   again; capped on their own ([NEGATIVE_CAP]). Positives at [POSITIVE_CAP], the least recently used out first.
 //! - **Lifetime** ([CACHE_LIFETIME_MONTHS], the user's Q6: "2 years unused, sealed"): [prune] drops a row unused that
 //!   long; the table is emptied when a phone is deleted and no phone has the switch on.
+//! - **A cell's neighbours** (design 137 N3, migration 0182's `near`): an asked cell's row holds the call's
+//!   overlapping neighbours ([super::cells::near]) sealed under `near|<canonical>` ([CacheKey::seal_near]); NULL = not
+//!   from a full call (a Wi-Fi row, an older cell row, a throttled call), and such a cell row is wanted
+//!   ([CellCached::wanted]). Apple's surrounding towers are no rows of their own; Wi-Fi's surrounding APs still are.
 
 use std::path::Path;
 
@@ -21,6 +25,7 @@ use chrono::Datelike;
 use ring::{aead, hkdf, hmac, rand::SecureRandom};
 use sqlx::SqlitePool;
 
+use super::cells::{Cell, Near};
 use super::codec::Position;
 
 /// A positive row unused this long goes (Q6: two years).
@@ -37,6 +42,8 @@ const SEAL_SALT: &[u8] = b"vibb wifi_lookup row v1";
 /// The labels the two keys are expanded under from `K` (code QA nit: `K` itself is never a key).
 const ID_LABEL: &[u8] = b"id";
 const SEAL_LABEL: &[u8] = b"seal";
+/// Design 137 N3: a cell's neighbour list is sealed under `near|<canonical cell>`.
+const NEAR_LABEL: &[u8] = b"near|";
 const NONCE_LEN: usize = 12;
 /// `lat`, `lng` as 1e-7 degree i32, `acc_m` as u16.
 const PLAIN_LEN: usize = 10;
@@ -73,8 +80,10 @@ impl CacheKey {
         hmac::sign(&self.id, bssid.as_bytes()).as_ref().to_vec()
     }
 
-    fn row_key(&self, bssid: &str) -> aead::LessSafeKey {
-        let info = [bssid.as_bytes()];
+    /// The AES-256-GCM key expanded from the seal PRK with `info` (a BSSID or canonical cell; `near|<cell>` for a
+    /// cell's neighbour list).
+    fn row_key(&self, info: &[u8]) -> aead::LessSafeKey {
+        let info = [info];
         let okm = self
             .seal
             .expand(&info, &aead::AES_256_GCM)
@@ -82,53 +91,122 @@ impl CacheKey {
         aead::LessSafeKey::new(aead::UnboundKey::from(okm))
     }
 
-    /// `position` sealed for `bssid`'s row: the nonce, then the ciphertext and its tag.
-    pub fn seal(&self, bssid: &str, position: &Position) -> Vec<u8> {
+    /// `plain` sealed under `info`'s key with `info` as the AAD: the nonce, then the ciphertext and its tag.
+    fn seal_bytes(&self, info: &[u8], mut plain: Vec<u8>) -> Vec<u8> {
         let mut nonce = [0u8; NONCE_LEN];
         ring::rand::SystemRandom::new()
             .fill(&mut nonce)
             .expect("the system's random source");
-        let mut plain = Vec::with_capacity(PLAIN_LEN + 16);
-        plain.extend_from_slice(&((position.lat * 1e7).round() as i32).to_be_bytes());
-        plain.extend_from_slice(&((position.lng * 1e7).round() as i32).to_be_bytes());
-        plain.extend_from_slice(&position.acc_m.to_be_bytes());
-        self.row_key(bssid)
+        self.row_key(info)
             .seal_in_place_append_tag(
                 aead::Nonce::assume_unique_for_key(nonce),
-                aead::Aad::from(bssid.as_bytes()),
+                aead::Aad::from(info),
                 &mut plain,
             )
-            .expect("AES-GCM seals ten bytes");
+            .expect("AES-GCM seals a short row");
         let mut sealed = nonce.to_vec();
         sealed.extend_from_slice(&plain);
         sealed
     }
 
-    /// The position `sealed` holds for `bssid`, or `None`: another key, another BSSID's row, a changed byte.
-    pub fn open(&self, bssid: &str, sealed: &[u8]) -> Option<Position> {
+    /// What `sealed` holds under `info`, or `None`: another key, another row's, a changed byte.
+    fn open_bytes(&self, info: &[u8], sealed: &[u8]) -> Option<Vec<u8>> {
         if sealed.len() < NONCE_LEN {
             return None;
         }
         let (nonce, rest) = sealed.split_at(NONCE_LEN);
         let mut buffer = rest.to_vec();
         let plain = self
-            .row_key(bssid)
+            .row_key(info)
             .open_in_place(
                 aead::Nonce::try_assume_unique_for_key(nonce).ok()?,
-                aead::Aad::from(bssid.as_bytes()),
+                aead::Aad::from(info),
                 &mut buffer,
             )
             .ok()?;
+        Some(plain.to_vec())
+    }
+
+    /// `position` sealed for `bssid`'s row (or a canonical cell's): the nonce, then the ciphertext and its tag.
+    pub fn seal(&self, bssid: &str, position: &Position) -> Vec<u8> {
+        let mut plain = Vec::with_capacity(PLAIN_LEN + 16);
+        put_position(&mut plain, position);
+        self.seal_bytes(bssid.as_bytes(), plain)
+    }
+
+    /// The position `sealed` holds for `bssid`, or `None`: another key, another BSSID's row, a changed byte.
+    pub fn open(&self, bssid: &str, sealed: &[u8]) -> Option<Position> {
+        let plain = self.open_bytes(bssid.as_bytes(), sealed)?;
         if plain.len() != PLAIN_LEN {
             return None;
         }
-        let int = |at: usize| i32::from_be_bytes(plain[at..at + 4].try_into().unwrap());
-        Some(Position {
-            lat: f64::from(int(0)) / 1e7,
-            lng: f64::from(int(4)) / 1e7,
-            acc_m: u16::from_be_bytes([plain[8], plain[9]]),
-        })
+        take_position(&plain)
     }
+
+    /// Design 137 N3: `near` sealed for the canonical `cell`'s row, under the key expanded with `near|<cell>` (the
+    /// AAD the same), so it opens only with `K` and that cell's id. An empty list is an empty sealed list.
+    pub fn seal_near(&self, cell: &str, near: &[Near]) -> Vec<u8> {
+        let mut plain = vec![near.len().min(usize::from(u8::MAX)) as u8];
+        for n in near.iter().take(usize::from(u8::MAX)) {
+            plain.push(n.cell.len() as u8);
+            plain.extend_from_slice(n.cell.as_bytes());
+            put_position(&mut plain, &n.position);
+            plain.extend_from_slice(&n.channel.unwrap_or(u32::MAX).to_be_bytes());
+            plain.extend_from_slice(&n.pci.unwrap_or(u16::MAX).to_be_bytes());
+        }
+        self.seal_bytes(&near_info(cell), plain)
+    }
+
+    /// The list `sealed` holds for the canonical `cell`, or `None`: another key, another cell's list, a changed
+    /// byte, an entry that doesn't read.
+    pub fn open_near(&self, cell: &str, sealed: &[u8]) -> Option<Vec<Near>> {
+        let plain = self.open_bytes(&near_info(cell), sealed)?;
+        let (&count, mut rest) = plain.split_first()?;
+        let mut list = Vec::with_capacity(usize::from(count));
+        for _ in 0..count {
+            let (&len, after) = rest.split_first()?;
+            let len = usize::from(len);
+            let entry = after.get(..len + PLAIN_LEN + 6)?;
+            let name = std::str::from_utf8(&entry[..len]).ok()?;
+            Cell::from_canonical(name)?;
+            let fields = &entry[len..];
+            let channel = u32::from_be_bytes(fields[PLAIN_LEN..PLAIN_LEN + 4].try_into().ok()?);
+            let pci = u16::from_be_bytes([fields[PLAIN_LEN + 4], fields[PLAIN_LEN + 5]]);
+            list.push(Near {
+                cell: name.to_string(),
+                position: take_position(&fields[..PLAIN_LEN])?,
+                channel: (channel != u32::MAX).then_some(channel),
+                pci: (pci != u16::MAX).then_some(pci),
+            });
+            rest = &after[len + PLAIN_LEN + 6..];
+        }
+        rest.is_empty().then_some(list)
+    }
+}
+
+/// The info and AAD of a cell's neighbour list.
+fn near_info(cell: &str) -> Vec<u8> {
+    [NEAR_LABEL, cell.as_bytes()].concat()
+}
+
+/// `lat`, `lng` as 1e-7 degree i32, `acc_m` as u16.
+fn put_position(out: &mut Vec<u8>, position: &Position) {
+    out.extend_from_slice(&((position.lat * 1e7).round() as i32).to_be_bytes());
+    out.extend_from_slice(&((position.lng * 1e7).round() as i32).to_be_bytes());
+    out.extend_from_slice(&position.acc_m.to_be_bytes());
+}
+
+fn take_position(plain: &[u8]) -> Option<Position> {
+    let int = |at: usize| {
+        plain
+            .get(at..at + 4)
+            .map(|b| i32::from_be_bytes(b.try_into().unwrap()))
+    };
+    Some(Position {
+        lat: f64::from(int(0)?) / 1e7,
+        lng: f64::from(int(4)?) / 1e7,
+        acc_m: u16::from_be_bytes([*plain.get(8)?, *plain.get(9)?]),
+    })
 }
 
 /// The key from `file`, made (0600, 32 random bytes as base64, its directory 0700) the first time; a new key empties
@@ -183,6 +261,28 @@ impl Cached {
     }
 }
 
+/// One row's answer: a negative still in its month, an opened position, else missing.
+fn judge(
+    key: &CacheKey,
+    name: &str,
+    sealed: Option<Vec<u8>>,
+    fetched_month: i64,
+    negative: i64,
+    now_month: i64,
+) -> Cached {
+    match (sealed, negative) {
+        (_, 1) if now_month - fetched_month < NEGATIVE_MONTHS => Cached::Unknown,
+        (Some(sealed), 0) => match key.open(name, &sealed) {
+            Some(position) => Cached::Known {
+                position,
+                fetched_month,
+            },
+            None => Cached::Missing,
+        },
+        _ => Cached::Missing,
+    }
+}
+
 /// The cache's answer for each of `bssids` (in order). A row that doesn't open (another key) is missing.
 pub async fn read(
     db: &SqlitePool,
@@ -199,15 +299,62 @@ pub async fn read(
         .fetch_optional(db)
         .await?;
         out.push(match row {
-            Some((_, fetched, 1)) if now_month - fetched < NEGATIVE_MONTHS => Cached::Unknown,
-            Some((Some(sealed), fetched_month, 0)) => match key.open(bssid, &sealed) {
-                Some(position) => Cached::Known {
-                    position,
-                    fetched_month,
-                },
-                None => Cached::Missing,
+            Some((sealed, fetched, negative)) => {
+                judge(key, bssid, sealed, fetched, negative, now_month)
+            }
+            None => Cached::Missing,
+        });
+    }
+    Ok(out)
+}
+
+/// Design 137 N3: what the cache holds for one asked cell - its position and its neighbour list (`None`: not from a
+/// full call, or a list that doesn't open).
+#[derive(Clone, Debug, PartialEq)]
+pub struct CellCached {
+    pub cached: Cached,
+    pub near: Option<Vec<Near>>,
+}
+
+impl CellCached {
+    /// Whether Apple should be asked for it now: as [Cached::wanted], and a placed cell without its list.
+    pub fn wanted(&self, now_month: i64) -> bool {
+        self.cached.wanted(now_month)
+            || (matches!(self.cached, Cached::Known { .. }) && self.near.is_none())
+    }
+}
+
+/// A cell row as read: the sealed position, `fetched_month`, `negative`, the sealed list.
+type CellRow = (Option<Vec<u8>>, i64, i64, Option<Vec<u8>>);
+
+/// The cache's answer for each of the canonical `cells` (in order), with each placed cell's neighbour list.
+pub async fn read_cells(
+    db: &SqlitePool,
+    key: &CacheKey,
+    cells: &[String],
+    now_month: i64,
+) -> Result<Vec<CellCached>, sqlx::Error> {
+    let mut out = Vec::with_capacity(cells.len());
+    for cell in cells {
+        let row: Option<CellRow> = sqlx::query_as(
+            "SELECT sealed, fetched_month, negative, near FROM wifi_lookup_aps WHERE id = ?",
+        )
+        .bind(key.id(cell))
+        .fetch_optional(db)
+        .await?;
+        out.push(match row {
+            Some((sealed, fetched, negative, near)) => {
+                let cached = judge(key, cell, sealed, fetched, negative, now_month);
+                let near = match cached {
+                    Cached::Known { .. } => near.and_then(|n| key.open_near(cell, &n)),
+                    _ => None,
+                };
+                CellCached { cached, near }
+            }
+            None => CellCached {
+                cached: Cached::Missing,
+                near: None,
             },
-            _ => Cached::Missing,
         });
     }
     Ok(out)
@@ -222,17 +369,54 @@ pub async fn store(
     unknown: &[String],
     now_month: i64,
 ) -> Result<(), sqlx::Error> {
+    let rows: Vec<(String, Position, Option<Vec<u8>>)> = known
+        .iter()
+        .map(|(bssid, position)| (bssid.clone(), *position, None))
+        .collect();
+    store_rows(db, key, &rows, unknown, now_month).await
+}
+
+/// Design 137 N3: a cell call's answer stored at `now_month` - each asked cell Apple placed sealed with its neighbour
+/// list (`None`: a throttled call's, NULL so it is asked again), each asked one Apple didn't know a negative row.
+/// Surrounding towers are no rows of their own. Then the caps.
+pub async fn store_cells(
+    db: &SqlitePool,
+    key: &CacheKey,
+    known: &[(String, Position, Option<Vec<Near>>)],
+    unknown: &[String],
+    now_month: i64,
+) -> Result<(), sqlx::Error> {
+    let rows: Vec<(String, Position, Option<Vec<u8>>)> = known
+        .iter()
+        .map(|(cell, position, near)| {
+            let sealed = near.as_ref().map(|list| key.seal_near(cell, list));
+            (cell.clone(), *position, sealed)
+        })
+        .collect();
+    store_rows(db, key, &rows, unknown, now_month).await
+}
+
+/// The rows written in one transaction: positives with their sealed list or NULL, negatives (no list); then the caps.
+async fn store_rows(
+    db: &SqlitePool,
+    key: &CacheKey,
+    known: &[(String, Position, Option<Vec<u8>>)],
+    unknown: &[String],
+    now_month: i64,
+) -> Result<(), sqlx::Error> {
     let mut tx = db.begin().await?;
-    for (bssid, position) in known {
+    for (name, position, near) in known {
         sqlx::query(
-            "INSERT INTO wifi_lookup_aps (id, sealed, fetched_month, used_month, negative) VALUES (?, ?, ?, ?, 0) \
+            "INSERT INTO wifi_lookup_aps (id, sealed, fetched_month, used_month, negative, near) \
+             VALUES (?, ?, ?, ?, 0, ?) \
              ON CONFLICT(id) DO UPDATE SET sealed = excluded.sealed, fetched_month = excluded.fetched_month, \
-             used_month = excluded.used_month, negative = 0",
+             used_month = excluded.used_month, negative = 0, near = excluded.near",
         )
-        .bind(key.id(bssid))
-        .bind(key.seal(bssid, position))
+        .bind(key.id(name))
+        .bind(key.seal(name, position))
         .bind(now_month)
         .bind(now_month)
+        .bind(near)
         .execute(&mut *tx)
         .await?;
     }
@@ -240,7 +424,7 @@ pub async fn store(
         sqlx::query(
             "INSERT INTO wifi_lookup_aps (id, sealed, fetched_month, used_month, negative) VALUES (?, NULL, ?, ?, 1) \
              ON CONFLICT(id) DO UPDATE SET sealed = NULL, fetched_month = excluded.fetched_month, \
-             used_month = excluded.used_month, negative = 1",
+             used_month = excluded.used_month, negative = 1, near = NULL",
         )
         .bind(key.id(bssid))
         .bind(now_month)
@@ -345,6 +529,54 @@ mod tests {
             CacheKey::from_bytes(&[8; 32]).id("00:00:5e:00:53:01")
         );
         assert_eq!(key.id("00:00:5e:00:53:01").len(), 32);
+    }
+
+    /// Design 137 N3: a neighbour list opens only for its asked cell and key - never as another cell's list or as a
+    /// position -, keeps the unknown channel and PCI, and an empty list is a list.
+    #[test]
+    fn a_neighbour_list_opens_only_for_its_cell() {
+        let key = CacheKey::from_bytes(&[7; 32]);
+        let list = vec![
+            Near {
+                cell: "lte:1:1:4711:12345679".to_string(),
+                position: Position {
+                    lat: 59.9190000,
+                    lng: 10.7500000,
+                    acc_m: 1400,
+                },
+                channel: Some(6200),
+                pci: Some(503),
+            },
+            Near {
+                cell: "wcdma:1:1:2001:70002".to_string(),
+                position: Position {
+                    lat: -33.5,
+                    lng: -70.6,
+                    acc_m: 6500,
+                },
+                channel: None,
+                pci: None,
+            },
+        ];
+        let cell = "lte:1:1:4711:12345678";
+        let sealed = key.seal_near(cell, &list);
+        assert_eq!(key.open_near(cell, &sealed), Some(list.clone()));
+        assert_eq!(key.open_near("lte:1:1:4711:12345679", &sealed), None);
+        assert_eq!(key.open(cell, &sealed), None);
+        assert_eq!(
+            CacheKey::from_bytes(&[8; 32]).open_near(cell, &sealed),
+            None
+        );
+        // A position sealed for the cell doesn't open as its list.
+        let position = key.seal(cell, &list[0].position);
+        assert_eq!(key.open_near(cell, &position), None);
+        let mut changed = sealed.clone();
+        changed[20] ^= 1;
+        assert_eq!(key.open_near(cell, &changed), None);
+        let empty = key.seal_near(cell, &[]);
+        assert_eq!(key.open_near(cell, &empty), Some(Vec::new()));
+        // Nothing of a neighbour's id in the clear.
+        assert!(!sealed.windows(5).any(|w| w == b"4711:"));
     }
 
     #[test]

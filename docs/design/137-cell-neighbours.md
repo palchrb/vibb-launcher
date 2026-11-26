@@ -345,6 +345,12 @@ example; the provider); the `near_apple` counts and their line. `WifiLookupContr
 4. **The Jelly Star with a SIM** (release RC, new lines in `docs/testing/new-phone-model.md` §2): a day of `near heard=`
    lines (matched against ambiguous and far); the indoor cases of §7 - a visit with Wi-Fi unknown, the phone in a bag in
    the car - with a GPS fix after to compare; the `near_apple` counts after 30 days, which decide 137b (§10).
+   **Multi-cell asks** (the server step's code QA, H1/M1): does Apple apply the count per asked cell? Where the Jelly is
+   registered with two or more full-id cells of one standard heard, or by a probe as §1's (the request as
+   `cells::request` builds it, count 12), ask two or three cells of one standard together and then each alone: 12
+   neighbours around each asked cell, or 12 for the call in all? If 12 in all, a list stored from a multi-cell ask can be
+   shorter than a lone ask's - the residual oracle N5 names (`route.rs`, "What is left of an oracle"); the answer
+   decides whether it stays as it is or the server asks each cell alone.
 
 Before the first release, by hand: the `protoc --encode` check of the new `golden_cells`.
 

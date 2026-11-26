@@ -15,7 +15,8 @@
 //! - **The route** ([route]): `POST /api/devices/wifi-lookup`, its limits, pauses and answers.
 //! - **Cells** (design 125b, [cells]): the same route with `{"cells"}`, the same sealed cache keyed by a cell's
 //!   canonical form, a call of their own to Apple; no cache oracle (a fixed answer time, no age, the same permit,
-//!   gate and limit slot whatever the cache holds).
+//!   gate and limit slot whatever the cache holds). Design 137: each asked cell's row keeps Apple's overlapping
+//!   neighbours (migration 0182), answered as `near` from the store on both paths.
 
 pub mod cache;
 pub mod cells;
@@ -94,6 +95,8 @@ pub struct Counts {
     /// Design 125b: the cells named and the cell calls made.
     cells: AtomicU64,
     cell_calls: AtomicU64,
+    /// Design 137: the `near` entries answered.
+    near: AtomicU64,
 }
 
 impl Counts {
@@ -110,18 +113,19 @@ impl Counts {
             .fetch_add(unanswered as u64, Ordering::Relaxed);
     }
 
-    /// One cells lookup: the cells it named (canonical) and whether a cell call was made.
-    pub fn add_cells(&self, cells: usize, called: bool) {
+    /// One cells lookup: the cells it named (canonical), whether a cell call was made, the `near` entries answered.
+    pub fn add_cells(&self, cells: usize, called: bool, near: usize) {
         self.lookups.fetch_add(1, Ordering::Relaxed);
         self.cells.fetch_add(cells as u64, Ordering::Relaxed);
+        self.near.fetch_add(near as u64, Ordering::Relaxed);
         if called {
             self.cell_calls.fetch_add(1, Ordering::Relaxed);
         }
     }
 
     /// The counts since the last take, and back to zero: (lookups, named, not cached, Apple calls, unanswered, cells,
-    /// cell calls).
-    pub fn take(&self) -> [u64; 7] {
+    /// cell calls, near entries).
+    pub fn take(&self) -> [u64; 8] {
         [
             &self.lookups,
             &self.asked,
@@ -130,6 +134,7 @@ impl Counts {
             &self.unanswered,
             &self.cells,
             &self.cell_calls,
+            &self.near,
         ]
         .map(|n| n.swap(0, Ordering::Relaxed))
     }
@@ -155,7 +160,8 @@ pub struct WifiLookup {
     pub(crate) pauses: std::sync::Mutex<route::Pauses>,
     /// GrapheneOS's own throttle: after an answer of 17 or more APs, the next 10 s ask for 8 surrounding.
     pub(crate) throttled_until: std::sync::Mutex<Option<tokio::time::Instant>>,
-    /// Design 125b C6: the cell call's own throttle - after 10 towers, the next 10 s ask for 4 in all.
+    /// Design 125b C6: the cell call's own throttle - after an answer of more than was asked (design 137 N2), the next
+    /// 10 s ask for 1 each.
     pub(crate) cell_throttled_until: std::sync::Mutex<Option<tokio::time::Instant>>,
     /// Design 125b C5: the cells each phone named today (the abuse brake).
     pub(crate) cell_days: route::CellDays,
@@ -295,6 +301,7 @@ impl Integration for WifiLookup {
                     unanswered,
                     cells,
                     cell_calls,
+                    near,
                 ] = self.counts.take();
                 if lookups > 0 {
                     tracing::info!(
@@ -305,6 +312,7 @@ impl Integration for WifiLookup {
                         unanswered,
                         cells,
                         cell_calls,
+                        near,
                         "wifi_lookup: since the last sweep"
                     );
                 }
