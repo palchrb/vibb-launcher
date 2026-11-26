@@ -192,7 +192,7 @@ class ZoneLinksTest {
         assertEquals(RouterPlace.ZONE, centre.place)
         assertEquals(sqrt(150.0 * 150.0 + 25.0 * 25.0), centre.fix!!.accuracyM, 0.01)
         // The continuity gate: the last reported fix's centre inside the zone - never brought home from elsewhere.
-        assertEquals("continuity", fix(last = Gate(null, 5, null)).reason)
+        assertEquals("continuity", fix(last = Gate(emptyList(), 5, null)).reason)
         assertEquals("continuity", fix(last = gateAt(north(400.0))).reason)
         assertEquals("fix", fix(last = gateAt(north(140.0))).reason)
         // Every veto.
@@ -207,7 +207,8 @@ class ZoneLinksTest {
         assertEquals("fix", routerFix(r, -45, heard(router to "Net-A"), true, zones, confirmed, emptySet(), table, 0, 0, home0, { false }, unchecked = inside).reason)
         // Round 2 M3, L2: the first source inside the zone - the own row outside gives way to Apple's, both outside to
         // the zone's centre; Apple's only by the router's own address.
-        val ownOutside = table.map { if (it.network == keys.network("Net-A", "")) it.copy(lat = north(400.0)) else it }
+        // Just outside the radius, within its range (further out it contradicts - verification QA L2 (b)).
+        val ownOutside = table.map { if (it.network == keys.network("Net-A", "")) it.copy(lat = north(180.0)) else it }
         val appleKey = hear(listOf(ScanAp(router, "Net-A", null, 2437, -55, 0)), null, keys, moving, emptyMap(), 0).heard.single().key
         val appleIn = PlaceRow(RowKind.APPLE, appleKey, lat = north(40.0), lng = lng0, rangeM = 40f, lastTeachMin = 10_000)
         val viaApple = fix(rows = ownOutside + appleIn)
@@ -268,30 +269,61 @@ class ZoneLinksTest {
         assertFalse(routerOf(conn().copy(hexName = true), keys)!!.named)
     }
 
-    private fun gateAt(lat: Double, acc: Double? = 20.0, boot: Int = 5) = Gate(GateFix(lat, lng0, acc, 1_000, boot), 5, null)
+    private fun gateAt(lat: Double, acc: Double? = 20.0, boot: Int = 5) = Gate(listOf(GateFix(lat, lng0, acc, 1_000, boot, 1_000)), 5, null)
 
     @Test
-    fun `round 2 M2 - the continuity gate's witness, its accuracy, a boot between`() {
+    fun `round 2 M2 and the verification QA - the continuity gate's witness`() {
         val z = zones.single()
-        assertTrue(continuityHolds(gateAt(lat0), z))
-        assertFalse("outside", continuityHolds(gateAt(north(400.0)), z))
-        assertFalse("a coarse cell fix never opens it", continuityHolds(gateAt(lat0, acc = 800.0), z))
-        assertFalse("no accuracy", continuityHolds(gateAt(lat0, acc = null), z))
-        // Another boot's witness: a plain restart (off 2 min) holds it; off 3 h, or no shutdown seen, doesn't.
-        val before = GateFix(lat0, lng0, 20.0, 1_000, 4)
-        assertTrue(continuityHolds(Gate(before, 5, 2 * 60_000L), z))
-        assertFalse(continuityHolds(Gate(before, 5, 3 * 3_600_000L), z))
-        assertFalse(continuityHolds(Gate(before, 5, null), z))
-        // The witness is the newest by time: a satellite fix outside after the cached home fix closes it.
-        val home = GateFix(lat0, lng0, 20.0, 1_000, 5)
-        val away = GateFix(north(3_000.0), lng0, 10.0, 2_000, 5)
-        assertEquals(away, gateWitness(home, away))
-        assertFalse(continuityHolds(Gate(gateWitness(home, away), 5, null), z))
-        assertEquals(home, gateWitness(home, away.copy(timeMs = 500)))
-        // The shutdown's length: on minus off, only in the boot after it.
-        assertEquals(120_000L, offGapMs(1_000_000, 4, 1_120_000, 5, 5))
-        assertNull(offGapMs(1_000_000, 4, 1_120_000, 5, 6))
-        assertNull(offGapMs(null, null, 1_120_000, 5, 5))
+        fun gate(vararg w: GateFix, gap: Long? = null) = continuityHolds(Gate(w.toList(), 5, gap), z)
+        val home = GateFix(lat0, lng0, 20.0, 1_000, 5, 1_000)
+        assertTrue(gate(home))
+        assertFalse("outside", gate(home.copy(lat = north(400.0))))
+        assertFalse("no witness", gate())
+        // H1: a coarse fix (a cell fix at home) says nothing - the older home fix decides; surely outside it closes.
+        val cellHome = GateFix(lat0, lng0, 800.0, 2_000, 5, 2_000)
+        assertTrue(gate(home, cellHome))
+        assertFalse("a coarse fix alone opens nothing", gate(cellHome))
+        assertFalse(gate(home, GateFix(north(5_000.0), lng0, 800.0, 2_000, 5, 2_000)))
+        // H1: the single-router fix as the next witness keeps the gate - fix0 and a zone-centre fix over the radius.
+        val f = fix0()
+        assertTrue(gate(GateFix(f.lat, f.lng, f.accuracyM, 3_000, 5, 3_000, link = true)))
+        assertTrue(gate(GateFix(lat0, lng0, 152.0, 3_000, 5, 3_000, link = true)))
+        assertFalse("an unchecked fix over the radius is coarse", gate(GateFix(lat0, lng0, 152.0, 3_000, 5, 3_000)))
+        val centre = routerFix(
+            routerOf(conn(), keys), null, hear(listOf(ScanAp(router, "Net-A", null, 5180, -50, 100_000)), conn(), keys, moving, emptyMap(), 100_000).heard,
+            false, zones, confirmed, emptySet(), neighboursHome, 0, 100_000, Gate(listOf(GateFix(lat0, lng0, 152.0, 3_000, 5, 3_000, link = true)), 5, null), { false },
+        )
+        assertEquals("fix", centre.reason)
+        assertEquals(RouterPlace.ZONE, centre.place)
+        // A boot between: the boot right before, off at most 10 min, holds it; off 3 h, unknown, or two boots back doesn't.
+        val before = home.copy(bootCount = 4, elapsedMs = null)
+        assertTrue(gate(before, gap = 2 * 60_000L))
+        assertFalse(gate(before, gap = 3 * 3_600_000L))
+        assertFalse(gate(before))
+        assertFalse(gate(before.copy(bootCount = 3), gap = 60_000L))
+        // L1: this boot's candidates by elapsed time, ahead of another boot's; a satellite fix outside after home closes it.
+        val away = GateFix(north(3_000.0), lng0, 10.0, 500, 5, 5_000)
+        assertFalse(gate(home, away))
+        assertEquals(listOf(away, home, before), gateOrder(listOf(before, home, away), 5))
+        // M1: the off gap at the boot, only for the boot right before.
+        assertEquals(120_000L, bootOffGapMs(1_000_000, 4, 5, 1_150_000, 30_000))
+        assertNull(bootOffGapMs(1_000_000, 3, 5, 1_150_000, 30_000))
+        assertNull(bootOffGapMs(null, null, 5, 1_150_000, 30_000))
+    }
+
+    @Test
+    fun `verification QA L2 - never in place of a renewal, own rows far outside veto`() {
+        assertTrue(routerMayReplace(null, null))
+        assertTrue(routerMayReplace(null, WifiStep.USE))
+        assertTrue(routerMayReplace(null, WifiStep.GPS))
+        assertFalse(routerMayReplace(null, WifiStep.RENEW))
+        assertFalse(routerMayReplace(FixCheck.GNSS, WifiStep.USE))
+        val farOwn = table.map { if (it.network == keys.network("Net-A", "")) it.copy(lat = north(900.0)) else it }
+        val r = routerFix(
+            routerOf(conn(), keys), -45, hear(listOf(ScanAp(router, "Net-A", null, 5180, -45, 100_000)), conn(), keys, moving, emptyMap(), 100_000).heard,
+            true, zones, confirmed, emptySet(), farOwn, 0, 100_000, gateAt(lat0), { false },
+        )
+        assertEquals("outside", r.reason)
     }
 
     @Test

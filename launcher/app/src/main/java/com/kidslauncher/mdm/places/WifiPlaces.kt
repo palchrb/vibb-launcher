@@ -1078,8 +1078,11 @@ object WifiPlaces {
         // The continuity gate's witness (round 2 M2): the newest of the known fix and the last satellite fix.
         val gnss = lastGnss(context)
         val boot = BootClock.bootCount()
-        val known = LocateCommands.newestKnown()?.let { GateFix(it.latitude, it.longitude, it.accuracy?.toDouble(), it.timeMs, it.bootCount) }
-        val gate = Gate(gateWitness(known, gnss?.let { GateFix(it.lat, it.lng, it.accuracyM, it.trustedMs, it.bootCount) }), boot, PowerEvents.lastOffGapMs(context))
+        val known = LocateCommands.newestKnown()?.let {
+            GateFix(it.latitude, it.longitude, it.accuracy?.toDouble(), it.timeMs, it.bootCount, it.elapsedMs, it.check == FixCheck.LINK.wire)
+        }
+        val satellite = gnss?.let { GateFix(it.lat, it.lng, it.accuracyM, it.trustedMs, it.bootCount, it.elapsedMs) }
+        val gate = Gate(listOfNotNull(known, satellite), boot, PowerEvents.lastOffGapMs(context))
         val nowElapsed = SystemClock.elapsedRealtime()
         val answer = routerFix(
             router, scanned, heard, snap.answer?.conclusive == true, zones, confirmed, struck(context), rows, now, nowElapsed, gate,
@@ -1340,7 +1343,8 @@ object WifiPlaces {
                 // Round 2 L1: no checked Wi-Fi fix in hand - the single-router fix, with an unchecked one as the
                 // neighbours' verdict (its centre outside the zone vetoes it).
                 suspend fun withRouter(j: Judged?, on: Snapshot? = null): Judged? {
-                    if (j?.check != null) return j
+                    // Verification QA L2 (a): never in place of a checked fix or a renewal of the still vouch.
+                    if (!routerMayReplace(j?.check, j?.verdict?.step)) return j
                     val r = routerOnly(on, j?.fix) ?: return j
                     return judge(r, on)
                 }

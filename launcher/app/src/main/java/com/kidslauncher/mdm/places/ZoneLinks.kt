@@ -404,6 +404,8 @@ fun routerFix(
     }
     val appleQuad = wifi.filter { router.ownsAddress(it) }.firstNotNullOfOrNull { h -> chooseRow(h, null, apple[h.key], nowMin)?.first }
         ?.let { Quad(it.lat, it.lng, it.rangeM.toDouble(), RouterPlace.APPLE) }
+    // Verification QA L2 (b): own rows placing the router outside the zone by more than their range contradict.
+    if (ownQuad != null && fromZone(ownQuad.lat, ownQuad.lng) > r + ownQuad.range) return RouterAnswer(null, "outside", RouterPlace.OWN)
     val (lat, lng, range, place) = listOfNotNull(ownQuad, appleQuad).firstOrNull { fromZone(it.lat, it.lng) <= r }
         ?: Quad(zone.zone.latitude, zone.zone.longitude, r, RouterPlace.ZONE)
     if (placed.any { (_, row) -> distanceM(row.lat, row.lng, lat, lng) > row.rangeM + range }) return RouterAnswer(null, "disagree", place)
@@ -414,31 +416,67 @@ fun routerFix(
     return RouterAnswer(fix, "fix", place)
 }
 
-/** The continuity gate's witness (round 2 M2): the newest of the phone's known fix (the kept slot or the cached one)
- * and the last satellite fix by their time, its accuracy, and its boot. */
-data class GateFix(val lat: Double, val lng: Double, val accuracyM: Double?, val timeMs: Long, val bootCount: Int)
+/** A candidate witness of the continuity gate (round 2 M2): a fix the phone knows - its place, accuracy, time, its own
+ * boot and elapsed time in it (when known), and whether it is `link`-checked. */
+data class GateFix(
+    val lat: Double,
+    val lng: Double,
+    val accuracyM: Double?,
+    val timeMs: Long,
+    val bootCount: Int,
+    val elapsedMs: Long? = null,
+    val link: Boolean = false,
+)
 
-/** The gate's inputs: the witness, the boot now and the last shutdown's length (`PowerEvents`, `null` unknown). */
-data class Gate(val witness: GateFix?, val bootNow: Int, val offGapMs: Long?)
+/** The gate's inputs: the candidates (the known fix - kept or cached - and the last satellite fix), the boot now and
+ * the last shutdown's length before this boot (`PowerEvents`, `null` unknown). */
+data class Gate(val witnesses: List<GateFix>, val bootNow: Int, val offGapMs: Long?)
 
 /** A boot between the witness and now holds the gate only when the phone was off at most this long. */
 const val GATE_OFF_MAX_MS = 10 * 60_000L
 
-/** The newest of [known] and [gnss] by time. */
-fun gateWitness(known: GateFix?, gnss: GateFix?): GateFix? = listOfNotNull(known, gnss).maxByOrNull { it.timeMs }
+/** Verification QA L1: the candidates newest first - this boot's by elapsed time, ahead of every other boot's, those by
+ * their time. */
+fun gateOrder(witnesses: List<GateFix>, bootNow: Int): List<GateFix> = witnesses.sortedWith(
+    compareByDescending<GateFix> { it.bootCount == bootNow && it.elapsedMs != null }
+        .thenByDescending { if (it.bootCount == bootNow && it.elapsedMs != null) it.elapsedMs else it.timeMs },
+)
 
 /**
- * Round 2 M2: the continuity gate holds for [zone] - the witness's centre inside, its accuracy at most the radius (a
- * coarse cell fix never opens it), and, when it is another boot's, the phone off at most [GATE_OFF_MAX_MS] (a plain
- * restart; not "off at home, on somewhere else").
+ * Round 2 M2 with the verification QA's H1: the continuity gate holds for [zone] when the newest candidate that says
+ * something says inside. A `link`-checked fix with its centre inside says inside whatever its accuracy (the
+ * single-router fix keeps the gate it came through); a fine fix (accuracy at most the radius) says inside or outside by
+ * its centre; a coarse one (over the radius, a cell fix) says outside only when surely outside, else nothing - the next
+ * older candidate decides. The inside witness of another boot holds only for the boot right before this one, after at
+ * most [GATE_OFF_MAX_MS] off (a plain restart; not "off at home, on somewhere else").
  */
 fun continuityHolds(gate: Gate, zone: LinkZone): Boolean {
-    val w = gate.witness ?: return false
-    val acc = w.accuracyM?.takeIf { it.isFinite() && it >= 0 } ?: return false
     val r = zone.zone.radiusM.toDouble()
-    if (acc > r || distanceM(w.lat, w.lng, zone.zone.latitude, zone.zone.longitude) > r) return false
-    return w.bootCount == gate.bootNow || (gate.offGapMs != null && gate.offGapMs in 0..GATE_OFF_MAX_MS)
+    for (w in gateOrder(gate.witnesses, gate.bootNow)) {
+        val acc = w.accuracyM?.takeIf { it.isFinite() && it >= 0 } ?: continue
+        val d = distanceM(w.lat, w.lng, zone.zone.latitude, zone.zone.longitude)
+        val inside = when {
+            w.link && d <= r -> true
+            acc <= r -> d <= r
+            d - acc > r -> false
+            else -> continue
+        }
+        if (!inside) return false
+        return w.bootCount == gate.bootNow ||
+            (w.bootCount == gate.bootNow - 1 && gate.offGapMs != null && gate.offGapMs in 0..GATE_OFF_MAX_MS)
+    }
+    return false
 }
+
+/** Verification QA M1: the shutdown before this boot's length, computed at the boot - the wall clock now less the time
+ * since the boot less the shutdown's instant - only for a shutdown of the boot right before ([offBoot] == [bootNow] -
+ * 1); else `null`. */
+fun bootOffGapMs(offAtMs: Long?, offBoot: Int?, bootNow: Int, nowMs: Long, elapsedMs: Long): Long? =
+    if (offAtMs == null || offBoot == null || offBoot != bootNow - 1) null else (nowMs - elapsedMs - offAtMs).takeIf { it >= 0 }
+
+/** Verification QA L2 (a): the single-router fix may take the place of the judged fix - none, or one without a check,
+ * and never a renewal of the still vouch (A9 and the print keep it). */
+fun routerMayReplace(check: FixCheck?, step: WifiStep?): Boolean = check == null && step != WifiStep.RENEW
 
 /** Round 2 L6: the level for the single-router fix - the connected BSSID's own entry in the answering scan, else none
  * (the -85 dBm bound then). */
@@ -452,9 +490,6 @@ fun heardSince(heard: List<Heard>, movedAtElapsedMs: Long): List<Heard> = heard.
 
 private data class Quad(val lat: Double, val lng: Double, val range: Double, val place: RouterPlace)
 
-/** The last shutdown's length when the phone is in the boot after it: on's time minus off's, else `null`. */
-fun offGapMs(offAtMs: Long?, offBoot: Int?, onAtMs: Long?, onBoot: Int?, bootNow: Int): Long? =
-    if (offAtMs == null || onAtMs == null || offBoot == null || onBoot != bootNow || offBoot >= bootNow) null else onAtMs - offAtMs
 
 /** D3, D7 (L2): the struck ids the policy still carries, at most [STRUCK_MAX]. */
 fun struckInPolicy(struck: Set<Long>, zones: List<PolicyZone>): List<Long> {
