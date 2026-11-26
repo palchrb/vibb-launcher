@@ -111,7 +111,7 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
     Android's lock screen with Unihertz's `ChargingDialog` (`com.agui.settings`) over it until the screen cycled. Now
     `PinLockRuntime.powerReceiver` (registered at runtime) stamps `ACTION_POWER_CONNECTED` and `ACTION_POWER_DISCONNECTED`
     (an unplug wakes the screen too). Only the power change's own wake is exempt from the SOS rule (`powerWokeScreen`,
-    `sosScreenOn`, at the pause's mark, its delay and the stop's mark): a screen-on from -1 s to +2 s around the stamp
+    `sosScreenOn`, at the pause's mark, its delay and the stop's mark): a screen-on from -0.8 s to +2 s around the stamp
     that ends a dark spell of at least 1 s (`POWER_WAKE_DARK_MS`; no screen-off seen counts as long) - the tag ends at
     the next screen-off (until glance-replug: -300 ms, and no screen-off between the stamp and the screen-on). 1 s
     after the change (`POWER_RECHECK_MS`) `powerRecheck` looks once: LOCKED, the glance not in front and lost from
@@ -137,16 +137,19 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
     the screen-on's cap after them, so the bound stays a bound, not a rate. Log `re-front #n of the power change (..)`.
     A look that yields (a call, the alarm) takes nothing, and its yield's rechecks are no fresh loss.
     *The stamp is late* (the emulator runs, §6bl "Row 5 again"): the broadcast is stamped when it reaches us, and
-    Android's broadcast queue delivers it ~500 ms late to a process that isn't in the foreground - once the glance has
-    lost the front (`scheduled +500ms` in `dumpsys activity broadcasts history`,
-    Android 14 and 16; the screen-dark case is still to measure). So the look's window begins 1 s before the stamp (`POWER_LOSS_BEFORE_MS`; was 300 ms: a pause
-    100 ms before the change was 600 ms before the stamp), and the wake's too (`POWER_WAKE_BEFORE_MS`; was 300 ms: the
-    plug-in's own wake 100 ms after the change was 400 ms before the stamp). **The SOS rule changed with it** (the code
-    QA): the order of the stamp and the screen-on can't tell a press-SOS any more - a press turning the screen off at
-    T+0.4 and on at T+0.7 after a plug-in at T came after a stamp at T+0.5 with no screen-off between, and read as the
-    plug-in's wake. The wake is now the screen-on that ends a dark spell of at least 1 s; the SOS gesture's never does.
-    The exemptions still come before the cap, and a mark from a screen-on that wasn't the change's own wake still stops
-    the look.
+    Android's broadcast queue delivers it ~500 ms late to a process that isn't in the foreground (`scheduled +500ms` in
+    `dumpsys activity broadcasts history`, Android 14 and 16) - once the glance has lost the front, and in the dark (a
+    plug-in with no wake: +500/+501 ms); with the wake right after the change the deferral ends once we are in front
+    (+24..+350 ms). So the look's window begins 1 s before the stamp (`POWER_LOSS_BEFORE_MS`; was 300 ms: a pause 100 ms
+    before the change was 600 ms before the stamp), and the wake's 800 ms (`POWER_WAKE_BEFORE_MS`; was 300 ms: the
+    deferral and the old reorder). **The SOS rule changed with it** (the code QA): the order of the stamp and the
+    screen-on can't tell a press-SOS any more - a press turning the screen off at T+0.4 and on at T+0.7 after a plug-in
+    at T came after a stamp at T+0.5 with no screen-off between, and read as the plug-in's wake. The wake is now the
+    screen-on that ends a dark spell of at least 1 s (`POWER_WAKE_DARK_MS`); the SOS gesture's last screen-on ends a short
+    one and keeps its mark. What can't be told: a single press waking the screen after a long dark, up to 0.8 s before a
+    plug-in's stamp, then a loss - read as the plug-in's wake, so the look re-fronts (seen on the emulator with a
+    stand-in: one wake key, the blocked start, a plug-in 0.25 s later). The exemptions still come before the cap, and a
+    mark from a screen-on that wasn't the change's own wake still stops the look.
   - *R2, decided* (the user, 2026-11-02; branch `android-r2`): as the face with Android's secure keyguard locked
     (`AndroidLock.refrontHeld`) **and the kiosk off** (`LockTaskChrome.kioskOn` false) the glance takes **no lock task**
     (`lockTaskEntry(.., androidLocked)` -> NONE, beside the VoIP row; log `AndroidLock: lock task: none of the glance's

@@ -670,10 +670,12 @@ fun sosMarkKept(action: RefrontAction): Boolean = action == RefrontAction.Yield(
  * ([FaceRefronts]) - three plug-ins on one screen-on each get the glance back.
  */
 
-/** The power change's stamp may come this long after its screen-on: the two are reordered, and the broadcast reaches us
- * up to ~0.5 s late (glance-replug's emulator runs, Android 14 and 16, the glance not in front; the dark case is still to measure). Safe to widen:
- * only a screen-on after a long dark spell is the change's ([POWER_WAKE_DARK_MS]). */
-const val POWER_WAKE_BEFORE_MS = 1_000L
+/** The power change's stamp may come this long after its screen-on: the two are reordered (300 ms, as before), and the
+ * broadcast reaches us up to ~0.5 s late - glance-replug's emulator runs, Android 14 and 16: a plug-in in the dark
+ * `scheduled +500ms`/`+501ms`, and with the wake right after it +24..+350 ms (the deferral ends once we are in front).
+ * Only a screen-on that ends a long dark spell is the change's ([POWER_WAKE_DARK_MS]); a single press's wake up to this
+ * long before the stamp can't be told from it (the SOS gesture's last screen-on ends a short one). */
+const val POWER_WAKE_BEFORE_MS = 800L
 
 /** glance-replug's code QA: the power change's wake ends a dark spell at least this long (or no screen-off was seen in
  * this process). The SOS gesture's presses are a fraction of a second apart: its screen-ons end a short one. */
