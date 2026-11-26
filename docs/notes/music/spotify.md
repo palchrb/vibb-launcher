@@ -24,12 +24,24 @@ Moved from music/CLAUDE.md on 2026-11-01.
   on once** (2026-11-26, the owner's Jelly Star on Android 16: the first play after the 5-minute idle close started at its
   place, then sat paused until play was pressed again; later plays were fine. Likely cause: the new device's transfer,
   `play: false` after the play call's 404, applied by Spotify after our play call): a `Paused(ours = false)` less than
-  `SPOTIFY_FIRST_PAUSE_MS` (5 s) after the start's first playing state, on the page's first play (`pageStarted`: reset
-  when a page opens), while the kid wants it playing, with no start or step of ours in flight, no `askedPaused`, the
-  start's gates open and no pause or resume of ours since, gets exactly one `sdk("resume")` - the player stays playing,
-  the gap watch on it (a resume that brings no state of ours is a silent player, recycled as after any SDK resume);
-  anything else is the WebView's pause as before (`spotifyResumesFirstPause`, `SpotifyRulesTest`; the renderer's
-  `resumesUnaskedPause`). Not device-checked yet: the always-on lines below say whether it fired. During a call (`inCall`: the launcher's, or a
+  `SPOTIFY_FIRST_PAUSE_MS` (5 s) after the start's first playing state was handled, on the page's first play
+  (`pageStarted`: reset when a page opens), with no `askedPaused`, the start's gates open and no pause or resume of
+  ours since, is **looked at** for `SPOTIFY_FIRST_PAUSE_LOOK_MS` (750 ms, code QA M1: a resume would take the audio
+  focus back from whoever took it) while the player keeps showing playing - so a ring's pause, which reaches the page
+  60-220 ms before `CALL_HOLD`, lands on a playing player and the call rule pauses it (cancelling the look) and plays
+  it again at the call's end. At the look's end exactly one `sdk("resume")` goes out only if the kid still wants it
+  playing, our track is still paused (the WebView didn't play it again by itself - that cancels the look too), no
+  call, the audio mode is `MODE_NORMAL` (no ring, call or VoIP) and no other audio started since our track played
+  (`otherAudio`: a player in `AudioManager.getActivePlaybackConfigurations()` or a recording in its recording list - voice
+  typing, the assistant - that `markAudio` didn't see while ours played; readable on 14-17 without a permission:
+  the copies are anonymized but keep the player's id, which their `equals` compares - AOSP 14 and 16; `isMusicActive`
+  can't serve, our own paused page's stream may stay started; a player's state and `isActive` are system API, so a new
+  player that never plays, like a copy that ever compared unequal, fails safe, as no resume); the gap watch stays on it (a resume that brings no state of ours is a silent player, recycled as after any
+  SDK resume). Otherwise the pause stands as the WebView's (a fault, its hold - late by the look). The rules are
+  `spotifyFirstPauseLook` and `spotifyFirstPauseResumes` (`SpotifyRulesTest`), the renderer's `looksAtUnaskedPause`
+  and `decideFirstPause`. **Accepted cost** (code QA M2): a pause from the account's other Spotify app, or a hand-off
+  to another device, inside that window on a new page's first play is played over once. Not device-checked yet: the
+  always-on lines below say whether it fired. During a call (`inCall`: the launcher's, or a
   system call by the audio mode - `spotifyInCall`, and `callOn` lets the mode drive the call rule on the web player as on
   a room) no start goes out and the player shows paused (qa-26c-6l-fixes-code H1, M1, L2). The session never says playing
   while nothing plays (`pwr && !ended`); the launcher sends `CALL_HOLD` at every call's begin instead (below). **The session's `SpotifyPlayer` calls the renderer only qualified**
@@ -236,8 +248,11 @@ Moved from music/CLAUDE.md on 2026-11-01.
   `VibbSpotify`: at every start (`begin`), `spotify: a start - the app <top | foreground service | other (n)>, the
   playback service in the foreground=<b>` (`ActivityManager.getMyMemoryState`'s importance; `foregroundServiceType`);
   at every pause of our track we didn't ask for while playing, `spotify: our track paused not by us <ms> ms after it
-  started (page fresh=<b>, transferred=<b>, resumed=<b>)` (transferred: that start's play call got the 404 and moved the
-  playback to the device). The third is the service's own, under `VibbPlayback`: the media button hold's start that
+  started (first play of page=<b>, transferred=<b>, resumed=<b>)` (transferred: that start's play call got the 404 and
+  moved the playback to the device; resumed: the look's one resume went out - written at the look's end when there was
+  one). If the device shows `the playback service in the foreground=false` at the start and `resumed=true` with the
+  pause back again, the root fix is the playback service in the foreground before the play call (the WebView's
+  audio focus refused), not more resumes. The third is the service's own, under `VibbPlayback`: the media button hold's start that
   Android refuses from the background (`ForegroundServiceStartNotAllowedException`, silent before) is `No foreground
   hold: a start from the background not allowed` at info (`SourceScanTest` and `GuardsTest` pin the service's log
   lines). The page is never paused: no `onPause`/`pauseTimers` anywhere. **The page's console is a log channel too**:

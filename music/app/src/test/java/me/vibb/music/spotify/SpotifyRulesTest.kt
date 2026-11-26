@@ -433,31 +433,43 @@ class SpotifyRulesTest {
         assertEquals(60 * 60_000L, me.vibb.music.logic.SPOTIFY_DIAG_MAX_AHEAD_MS)
     }
 
-    /** 2026-11-26: a new page's first play paused not by us within 5 s plays on once; anything else stays a pause. */
+    /** 2026-11-26 (code QA M1): a new page's first play paused not by us within 5 s is looked at, then resumed once. */
     @Test
-    fun `spotifyResumesFirstPause - once, on a new page's first play within 5 s, never when asked or with a call in flight`() {
+    fun `spotifyFirstPauseLook - on a new page's first play within 5 s, once, never when asked or with a gate shut`() {
+        fun looks(
+            ours: Boolean = false, first: Boolean = true, since: Long = 1_000, asked: Boolean = false, used: Boolean = false, gates: Boolean = true,
+        ) = me.vibb.music.logic.spotifyFirstPauseLook(ours, first, since, asked, used, gates)
+        assertTrue(looks())
+        assertTrue(looks(since = 0))
+        assertFalse("once: the look is used, or a pause or resume of ours came", looks(used = true))
+        assertFalse("a pause we sent", looks(ours = true))
+        assertFalse("a pause asked while the page held it", looks(asked = true))
+        assertFalse("5 s after the first playing state", looks(since = me.vibb.music.logic.SPOTIFY_FIRST_PAUSE_MS))
+        assertFalse("no first playing state yet", looks(since = -1))
+        assertFalse("a later play of the same page", looks(first = false))
+        assertFalse("detached, suspended, a call or the network gate", looks(gates = false))
+    }
+
+    @Test
+    fun `spotifyFirstPauseResumes - only while still wanted and paused, no call, mode normal and no other audio`() {
         fun resumes(
-            ours: Boolean = false, first: Boolean = true, since: Long = 1_000, wanted: Boolean = true,
-            calling: Boolean = false, asked: Boolean = false, used: Boolean = false, gates: Boolean = true,
-        ) = me.vibb.music.logic.spotifyResumesFirstPause(ours, first, since, wanted, calling, asked, used, gates)
+            wanted: Boolean = true, paused: Boolean = true, inCall: Boolean = false, normal: Boolean = true, other: Boolean = false, gates: Boolean = true,
+        ) = me.vibb.music.logic.spotifyFirstPauseResumes(wanted, paused, inCall, normal, other, gates)
         assertTrue(resumes())
-        assertTrue(resumes(since = 0))
-        assertFalse("once: the resume is used", resumes(used = true))
-        assertFalse("a pause we sent", resumes(ours = true))
-        assertFalse("a pause asked while the page held it", resumes(asked = true))
-        assertFalse("5 s after the first playing state", resumes(since = me.vibb.music.logic.SPOTIFY_FIRST_PAUSE_MS))
-        assertFalse("no first playing state yet", resumes(since = -1))
-        assertFalse("a later play of the same page", resumes(first = false))
-        assertFalse("a start or step of ours in flight", resumes(calling = true))
-        assertFalse("the kid doesn't want it playing", resumes(wanted = false))
-        assertFalse("detached, suspended, a call or the network gate", resumes(gates = false))
+        assertFalse("paused by us meanwhile (the call rule's pause of a ring)", resumes(wanted = false))
+        assertFalse("the WebView played it again by itself", resumes(paused = false))
+        assertFalse("a call", resumes(inCall = true))
+        assertFalse("a ring, a call or VoIP: the audio mode", resumes(normal = false))
+        assertFalse("another player or a recording took the audio", resumes(other = true))
+        assertFalse(resumes(gates = false))
+        assertTrue("short enough to feel like one start", me.vibb.music.logic.SPOTIFY_FIRST_PAUSE_LOOK_MS in 300..1_000)
     }
 
     @Test
     fun `the always-on lines are fixed words, numbers and yes-no only (2026-11-26)`() {
-        val note = me.vibb.music.logic.SpotifyNote.UnaskedPause(1_234, pageFresh = true, transferred = true, resumed = false)
+        val note = me.vibb.music.logic.SpotifyNote.UnaskedPause(1_234, firstPlayOfPage = true, transferred = true, resumed = false)
         assertEquals(
-            "spotify: our track paused not by us 1234 ms after it started (page fresh=true, transferred=true, resumed=false)",
+            "spotify: our track paused not by us 1234 ms after it started (first play of page=true, transferred=true, resumed=false)",
             me.vibb.music.logic.spotifyNoteLine(note, 100, serviceForeground = false),
         )
         val start = me.vibb.music.logic.SpotifyNote.Start
@@ -467,9 +479,14 @@ class SpotifyRulesTest {
         )
         assertTrue(me.vibb.music.logic.spotifyNoteLine(start, 125, serviceForeground = true).endsWith("the app foreground service, the playback service in the foreground=true"))
         assertTrue(me.vibb.music.logic.spotifyNoteLine(start, 200, serviceForeground = false).contains("the app other (200)"))
-        // the notes carry no string of the renderer's: nothing it holds (a token, a uri, a title) can reach the line
+        // the notes carry nothing but numbers and yes/no: nothing the renderer holds (a token, a uri, a title) can reach a line
         val fields = me.vibb.music.logic.SpotifyNote.UnaskedPause::class.java.declaredFields.filter { !java.lang.reflect.Modifier.isStatic(it.modifiers) }
-        assertTrue(fields.isNotEmpty() && fields.none { it.type == String::class.java })
+        assertEquals(4, fields.size)
+        for (f in fields) {
+            val t = f.type
+            assertTrue("${f.name}: ${t.name}", t.isPrimitive || t == java.lang.Boolean::class.java || Number::class.java.isAssignableFrom(t))
+        }
+        assertTrue(me.vibb.music.logic.SpotifyNote.Start::class.java.declaredFields.none { !java.lang.reflect.Modifier.isStatic(it.modifiers) })
     }
 
     /** Design 120 R2 and R5 (revision 2): a silent player is recycled once, only while the kid wants it playing. */
