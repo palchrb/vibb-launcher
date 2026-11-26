@@ -22,11 +22,13 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
 import me.vibb.music.bridge.TokenResult
 import me.vibb.music.logic.Repeat
+import me.vibb.music.logic.SPOTIFY_FIRST_PAUSE_MS
 import me.vibb.music.logic.SPOTIFY_OUTPUT_STATE_MS
 import me.vibb.music.logic.SPOTIFY_STATE_GAP_MS
 import me.vibb.music.logic.SPOTIFY_STEP_COALESCE_MS
 import me.vibb.music.logic.SpotifyContextTrack
 import me.vibb.music.logic.SpotifyLine
+import me.vibb.music.logic.SpotifyNote
 import me.vibb.music.model.Entry
 import me.vibb.music.model.PlayItem
 import me.vibb.music.model.Source
@@ -143,6 +145,13 @@ class SpotifyRendererTest {
 
         override fun log(message: String) {
             log += message
+        }
+
+        /** The always-on lines (2026-11-26). */
+        val notes = mutableListOf<SpotifyNote>()
+
+        override fun note(note: SpotifyNote) {
+            notes += note
         }
 
         /** `spotify_context.json` (§5.9): the live track per entry key, as the store keeps it. */
@@ -886,6 +895,7 @@ class SpotifyRendererTest {
         }
         events.clear()
         // Chromium's media session lost the focus to another app (or a call): the page's audio paused, not by us
+        advance(SPOTIFY_FIRST_PAUSE_MS) // it plays a while: past the new page's first-pause resume (2026-11-26)
         post(state(0, 3_000, paused = true))
         assertFalse(r.showsPlaying)
         assertFalse(r.spec().playWhenReady)
@@ -899,6 +909,7 @@ class SpotifyRendererTest {
     @Test
     fun `a transient focus loss - Chromium pauses the page and plays it again, the player follows both`() = runBlocking {
         val r = playing()
+        advance(SPOTIFY_FIRST_PAUSE_MS) // it plays a while: past the new page's first-pause resume (2026-11-26)
         post(state(0, 5_000))
         events.clear()
         post(state(0, 6_000, paused = true)) // a notification's transient loss: Chromium suspends the page's audio
@@ -916,8 +927,42 @@ class SpotifyRendererTest {
     }
 
     @Test
+    fun `2026-11-26 - a new page's first play paused not by us within 5 s plays on once, a later pause or play stays a pause`() = runBlocking {
+        val r = playing()
+        assertEquals("the start's always-on line", SpotifyNote.Start, ports.notes.single())
+        events.clear()
+        advance(1_000)
+        post(state(0, 1_000, paused = true)) // the new device's transfer (play: false) landing after our play call
+        assertEquals("one resume through the page", 1, page.calls.count { it == "vibb.resume()" })
+        assertTrue("still shown playing", r.showsPlaying)
+        assertFalse(events.contains(RendererEvent.Paused(PauseCause.FAULT)))
+        assertEquals(SpotifyNote.UnaskedPause(1_000, pageFresh = true, transferred = false, resumed = true), ports.notes.last())
+        post(state(0, 1_200))
+        assertTrue(r.showsPlaying)
+        advance(1_000)
+        post(state(0, 2_200, paused = true)) // once only: the second is the WebView's pause, as before
+        assertEquals(1, page.calls.count { it == "vibb.resume()" })
+        assertFalse(r.showsPlaying)
+        assertTrue(events.contains(RendererEvent.Paused(PauseCause.FAULT)))
+        assertEquals(SpotifyNote.UnaskedPause(2_000, pageFresh = true, transferred = false, resumed = false), ports.notes.last())
+        // a later start on the same page: its pause is the WebView's
+        r.seekTo(1, 0)
+        r.play() // another item: a fresh start once the step's 300 ms are over
+        advance(SPOTIFY_STEP_COALESCE_MS)
+        assertEquals(2, api.plays().size)
+        post(state(1, 0))
+        assertTrue(r.showsPlaying)
+        post(state(1, 500, paused = true))
+        assertFalse(r.showsPlaying)
+        assertEquals(1, page.calls.count { it == "vibb.resume()" })
+        assertEquals(false, (ports.notes.last() as SpotifyNote.UnaskedPause).pageFresh)
+        r.release()
+    }
+
+    @Test
     fun `a resume by itself is paused at once while the app is suspended or another renderer plays`() = runBlocking {
         val r = playing()
+        advance(SPOTIFY_FIRST_PAUSE_MS) // it plays a while: past the new page's first-pause resume (2026-11-26)
         post(state(0, 6_000, paused = true))
         ports.mayPlay = false
         post(state(0, 6_000))
@@ -2306,6 +2351,7 @@ class SpotifyRendererTest {
     @Test
     fun `H1 - the kid's pause while an alarm holds the page paused sticks - Chromium's resume is paused at once`() = runBlocking {
         val r = playing()
+        advance(SPOTIFY_FIRST_PAUSE_MS) // it plays a while: past the new page's first-pause resume (2026-11-26)
         post(state(0, 5_000))
         post(state(0, 6_000, paused = true)) // the alarm: Chromium suspends the page's audio
         assertTrue(r.heldByPage)
@@ -2345,6 +2391,7 @@ class SpotifyRendererTest {
     @Test
     fun `M1 - held by the WebView the page outlives the idle close, a pause of ours closes it 5 minutes later`() = runBlocking {
         val r = playing()
+        advance(SPOTIFY_FIRST_PAUSE_MS) // it plays a while: past the new page's first-pause resume (2026-11-26)
         post(state(0, 5_000))
         post(state(0, 6_000, paused = true)) // a long call's ring
         advance(6 * 60_000L)
@@ -2547,6 +2594,7 @@ class SpotifyRendererTest {
     @Test
     fun `N3 - the session never says playing while the page holds it paused`() = runBlocking {
         val r = playing()
+        advance(SPOTIFY_FIRST_PAUSE_MS) // it plays a while: past the new page's first-pause resume (2026-11-26)
         post(state(0, 5_000))
         post(state(0, 6_000, paused = true)) // the ring's focus loss reaches the page first
         assertTrue(r.heldByPage)
@@ -2566,6 +2614,7 @@ class SpotifyRendererTest {
         assertTrue("long enough for the call's word after the ring (60-220 ms)", held in 1_000..5_000)
         // a video app takes the audio for good: the page held, then a call 10 s later
         val r = playing()
+        advance(SPOTIFY_FIRST_PAUSE_MS) // it plays a while: past the new page's first-pause resume (2026-11-26)
         post(state(0, 5_000))
         post(state(0, 6_000, paused = true))
         advance(10_000)

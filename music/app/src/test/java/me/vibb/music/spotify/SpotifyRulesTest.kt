@@ -433,6 +433,45 @@ class SpotifyRulesTest {
         assertEquals(60 * 60_000L, me.vibb.music.logic.SPOTIFY_DIAG_MAX_AHEAD_MS)
     }
 
+    /** 2026-11-26: a new page's first play paused not by us within 5 s plays on once; anything else stays a pause. */
+    @Test
+    fun `spotifyResumesFirstPause - once, on a new page's first play within 5 s, never when asked or with a call in flight`() {
+        fun resumes(
+            ours: Boolean = false, first: Boolean = true, since: Long = 1_000, wanted: Boolean = true,
+            calling: Boolean = false, asked: Boolean = false, used: Boolean = false, gates: Boolean = true,
+        ) = me.vibb.music.logic.spotifyResumesFirstPause(ours, first, since, wanted, calling, asked, used, gates)
+        assertTrue(resumes())
+        assertTrue(resumes(since = 0))
+        assertFalse("once: the resume is used", resumes(used = true))
+        assertFalse("a pause we sent", resumes(ours = true))
+        assertFalse("a pause asked while the page held it", resumes(asked = true))
+        assertFalse("5 s after the first playing state", resumes(since = me.vibb.music.logic.SPOTIFY_FIRST_PAUSE_MS))
+        assertFalse("no first playing state yet", resumes(since = -1))
+        assertFalse("a later play of the same page", resumes(first = false))
+        assertFalse("a start or step of ours in flight", resumes(calling = true))
+        assertFalse("the kid doesn't want it playing", resumes(wanted = false))
+        assertFalse("detached, suspended, a call or the network gate", resumes(gates = false))
+    }
+
+    @Test
+    fun `the always-on lines are fixed words, numbers and yes-no only (2026-11-26)`() {
+        val note = me.vibb.music.logic.SpotifyNote.UnaskedPause(1_234, pageFresh = true, transferred = true, resumed = false)
+        assertEquals(
+            "spotify: our track paused not by us 1234 ms after it started (page fresh=true, transferred=true, resumed=false)",
+            me.vibb.music.logic.spotifyNoteLine(note, 100, serviceForeground = false),
+        )
+        val start = me.vibb.music.logic.SpotifyNote.Start
+        assertEquals(
+            "spotify: a start - the app top, the playback service in the foreground=false",
+            me.vibb.music.logic.spotifyNoteLine(start, 100, serviceForeground = false),
+        )
+        assertTrue(me.vibb.music.logic.spotifyNoteLine(start, 125, serviceForeground = true).endsWith("the app foreground service, the playback service in the foreground=true"))
+        assertTrue(me.vibb.music.logic.spotifyNoteLine(start, 200, serviceForeground = false).contains("the app other (200)"))
+        // the notes carry no string of the renderer's: nothing it holds (a token, a uri, a title) can reach the line
+        val fields = me.vibb.music.logic.SpotifyNote.UnaskedPause::class.java.declaredFields.filter { !java.lang.reflect.Modifier.isStatic(it.modifiers) }
+        assertTrue(fields.isNotEmpty() && fields.none { it.type == String::class.java })
+    }
+
     /** Design 120 R2 and R5 (revision 2): a silent player is recycled once, only while the kid wants it playing. */
     @Test
     fun `spotifyRecycles - once, wanted, allowed, never on a fresh page or before the last recycle played`() {

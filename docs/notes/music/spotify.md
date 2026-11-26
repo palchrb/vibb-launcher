@@ -20,7 +20,16 @@ Moved from music/CLAUDE.md on 2026-11-01.
   `SPOTIFY_HELD_RECENT_MS` (5 s) of its start - `heldRecently`, so `CALL_RELEASE` plays again whichever of `CALL_HOLD` and
   the ring's pause came first, but another app that took the audio for good is never started again by a later call's
   end: qa-26c-emu-music-code M1), and a pause asked during it (`askedPaused`: the kid,
-  the sleep timer, the call rule) pauses Chromium's own resume at once; during a call (`inCall`: the launcher's, or a
+  the sleep timer, the call rule) pauses Chromium's own resume at once. **A new page's first play paused not by us plays
+  on once** (2026-11-26, the owner's Jelly Star on Android 16: the first play after the 5-minute idle close started at its
+  place, then sat paused until play was pressed again; later plays were fine. Likely cause: the new device's transfer,
+  `play: false` after the play call's 404, applied by Spotify after our play call): a `Paused(ours = false)` less than
+  `SPOTIFY_FIRST_PAUSE_MS` (5 s) after the start's first playing state, on the page's first play (`pageStarted`: reset
+  when a page opens), while the kid wants it playing, with no start or step of ours in flight, no `askedPaused`, the
+  start's gates open and no pause or resume of ours since, gets exactly one `sdk("resume")` - the player stays playing,
+  the gap watch on it (a resume that brings no state of ours is a silent player, recycled as after any SDK resume);
+  anything else is the WebView's pause as before (`spotifyResumesFirstPause`, `SpotifyRulesTest`; the renderer's
+  `resumesUnaskedPause`). Not device-checked yet: the always-on lines below say whether it fired. During a call (`inCall`: the launcher's, or a
   system call by the audio mode - `spotifyInCall`, and `callOn` lets the mode drive the call rule on the web player as on
   a room) no start goes out and the player shows paused (qa-26c-6l-fixes-code H1, M1, L2). The session never says playing
   while nothing plays (`pwr && !ended`); the launcher sends `CALL_HOLD` at every call's begin instead (below). **The session's `SpotifyPlayer` calls the renderer only qualified**
@@ -221,7 +230,17 @@ Moved from music/CLAUDE.md on 2026-11-01.
   and the mode it leaves with its events (`eventWord`), the first-state wait, the gap watch and the idle close, the
   page's calls by name (no argument; not `volume`), its load, `not_ready`, and the page's own `diag` lines (its
   visibility, a 5 s tick more than 2 s late - Chromium throttling it; `SpotifyPage.diagLine` passes only those fixed
-  shapes). The page is never paused: no `onPause`/`pauseTimers` anywhere. **The page's console is a log channel too**:
+  shapes). **Three always-on lines** (2026-11-26, a release build's too, without the diagnostic log; rare): the renderer
+  hands the service a `SpotifyNote` through its port `note` - numbers and yes/no only, never a string, so nothing it
+  holds can reach them - and the service's `spotifyNote` writes `spotifyNoteLine`'s fixed words with `Log.i` under
+  `VibbSpotify`: at every start (`begin`), `spotify: a start - the app <top | foreground service | other (n)>, the
+  playback service in the foreground=<b>` (`ActivityManager.getMyMemoryState`'s importance; `foregroundServiceType`);
+  at every pause of our track we didn't ask for while playing, `spotify: our track paused not by us <ms> ms after it
+  started (page fresh=<b>, transferred=<b>, resumed=<b>)` (transferred: that start's play call got the 404 and moved the
+  playback to the device). The third is the service's own, under `VibbPlayback`: the media button hold's start that
+  Android refuses from the background (`ForegroundServiceStartNotAllowedException`, silent before) is `No foreground
+  hold: a start from the background not allowed` at info (`SourceScanTest` and `GuardsTest` pin the service's log
+  lines). The page is never paused: no `onPause`/`pauseTimers` anywhere. **The page's console is a log channel too**:
   `onConsoleMessage` returns true always (a debug build notes the level and the source's host only). The token
   reaches the page only as a quoted `evaluateJavascript` argument. **The state recorder is debug-only**:
   `SpotifyRecording.recorder` is null in main and assigned only by `DebugSpotify.kt` while `config.json` says
