@@ -6,6 +6,7 @@ import me.vibb.music.logic.itemCacheKey
 import me.vibb.music.logic.mintItemError
 import me.vibb.music.logic.mintStopsRun
 import me.vibb.music.logic.sameSource
+import me.vibb.music.logic.sealedCacheKey
 import me.vibb.music.logic.sourceId
 import me.vibb.music.logic.storytelRoom
 import me.vibb.music.model.Source
@@ -53,7 +54,13 @@ interface DownloadIo {
 
     /** A fresh CDN URL for Storytel book [cid]: the account's one mint, off the main thread (design 26b §4.2). */
     suspend fun mint(cid: String): Mint
+
+    /** Design 117 §5: ready the book's seal ([cacheKey], sealed) before the mint - `BookKeys.prepare`. */
+    suspend fun prepareSeal(cacheKey: String): SealReady
 }
+
+/** Could a book's seal be prepared (design 117 §4.3)? [TRANSIENT]: the Keystore can't seal now; nothing is deleted. */
+enum class SealReady { READY, TRANSIENT }
 
 /**
  * The decisions of one run of the download worker, item by item ([fetchOne]). An NRK/RSS item is
@@ -68,7 +75,9 @@ interface DownloadIo {
  *    `network`, and the next book goes on;
  * 3. the row names the book by its source id (`storytel:book:<cid>`), so a partial copy survives a
  *    re-mint and the next attempt resumes with Range from the cached bytes against the new token;
- * 4. `http_416` drops the partial and fetches once from 0 with a freshly minted URL (L7).
+ * 4. `http_416` drops the partial and fetches once from 0 with a freshly minted URL (L7);
+ * 5. sealed (design 117 §5): its cache key is `sealed:`, its seal is prepared before the mint (a Keystore
+ *    that can't seal now is `network` with nothing minted), and a partial under another key starts over.
  * A failure is stored on the row (source id, code, time, attempts in a row) for `mayRetry`; a not-done
  * row's `bytes` hold the partial copy's size at its last failure, and a failure after the copy grew by
  * at least [GROWTH_FLOOR_BYTES] or 1 % ([grewEnough]) counts as the first again (main session's review of step 3,
@@ -109,16 +118,22 @@ class DownloadRun(private val io: DownloadIo) {
             }
         }
         val source = sourceId(w.entry, w.item) ?: return
+        val cacheKey = cacheKeyOf(w)
+        // Design 117 §5: a book's seal is ready before anything is minted; a Keystore that can't seal now costs no
+        // mint at Storytel, records `network` and waits as any failure (`mayRetry`), and the run goes on.
+        if (storytel && io.prepareSeal(cacheKey) == SealReady.TRANSIENT) return fail(w, source, "network")
         var from = urlFor(w)
         if (from !is From.Url) return failed(w, source, from)
-        val cacheKey = itemCacheKey(w.entry.key, w.item.key)
         val old = io.row(w.entry.id, w.item.key)
         // A partial copy from another source may be another file: start over (qa-21-step2-code L7). A
         // Storytel book's source never changes with a new mint, so its partial stays (design 26b §4.3);
         // nor does a url with only a new query (design 30 §1.6, L5: a re-resolved token, a stream's partial).
-        if (old != null && !old.done && !sameSource(old.url, source)) io.removeCopy(old.cacheKey, old.hls)
+        // A partial under another cache key (a plain Storytel partial from before 117) goes too: the book
+        // starts over sealed (design 117 §5).
+        val kept = old != null && !old.done && sameSource(old.url, source) && old.cacheKey == cacheKey
+        if (old != null && !old.done && !kept) io.removeCopy(old.cacheKey, old.hls)
         // The partial's size at the last failure rides along (fail() compares it); a dropped one is 0.
-        val lastBytes = old?.takeIf { !it.done && sameSource(it.url, source) }?.bytes ?: 0
+        val lastBytes = old?.takeIf { kept }?.bytes ?: 0
         io.saveRow(DownloadRow(w.entry.id, w.item.key, cacheKey, source, w.item.hls, false, lastBytes, null, old?.failedUrl, old?.failedCode, old?.failedAt, old?.attempts ?: 0))
         var code = fetchFrom(w, from.url, source)
         if (code == "http_416") {
@@ -164,7 +179,7 @@ class DownloadRun(private val io: DownloadIo) {
     /** One fetch: null when the item is on the phone now (its row done), else the failure's code. */
     private suspend fun fetchFrom(w: WantedDownload, url: String, source: String): String? = try {
         val (bytes, variant) = io.fetch(w, url)
-        io.saveRow(DownloadRow(w.entry.id, w.item.key, itemCacheKey(w.entry.key, w.item.key), source, w.item.hls, true, bytes, variant, null))
+        io.saveRow(DownloadRow(w.entry.id, w.item.key, cacheKeyOf(w), source, w.item.hls, true, bytes, variant, null))
         null
     } catch (e: CancellationException) {
         throw e
@@ -179,13 +194,17 @@ class DownloadRun(private val io: DownloadIo) {
     private suspend fun fail(w: WantedDownload, source: String, code: String) {
         io.recordError(w.entry.id, w.item.key, code)
         val row = io.row(w.entry.id, w.item.key)
-            ?: DownloadRow(w.entry.id, w.item.key, itemCacheKey(w.entry.key, w.item.key), source, w.item.hls, false, 0, null, null)
+            ?: DownloadRow(w.entry.id, w.item.key, cacheKeyOf(w), source, w.item.hls, false, 0, null, null)
         val cached = io.cachedBytes(row.cacheKey, row.hls)
         val grew = grewEnough(row.bytes, cached)
         val attempts = if (row.failedUrl == source && row.failedCode == code && !grew) row.attempts + 1 else 1
         io.saveRow(row.copy(bytes = cached, failedUrl = source, failedCode = code, failedAt = io.nowMs(), attempts = attempts))
     }
 }
+
+/** The cache key of [w]: a Storytel book's is sealed (design 117 §4.1), every other item's is plain. */
+fun cacheKeyOf(w: WantedDownload): String =
+    if (w.entry.source == Source.STORYTEL) sealedCacheKey(w.entry.key, w.item.key) else itemCacheKey(w.entry.key, w.item.key)
 
 /** The least a partial must grow between two failures to start their count again: 1 MiB or 1 % of it. */
 const val GROWTH_FLOOR_BYTES = 1L shl 20

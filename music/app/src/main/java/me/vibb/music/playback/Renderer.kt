@@ -156,9 +156,10 @@ sealed interface RendererEvent {
     /**
      * The current item failed, with the `item_errors` code (`MediaCache.errorCode`); [gated]: the phone's
      * streaming gate refused it (design 30 §1.6, `MediaCache.StreamGate`) - not the item's fault; [noNetwork]: its
-     * host's name couldn't be looked up (`logic/PlayFailure.kt`).
+     * host's name couldn't be looked up (`logic/PlayFailure.kt`); [lost]: a sealed Storytel book whose key is lost
+     * (design 117 §6, `MediaCache.sealLost`).
      */
-    data class Error(val code: String, val gated: Boolean = false, val noNetwork: Boolean = false) : RendererEvent
+    data class Error(val code: String, val gated: Boolean = false, val noNetwork: Boolean = false, val lost: Boolean = false) : RendererEvent
 
     /**
      * The renderer can't play at all (a Sonos room's failed start, design 26a §4.2): back to the phone, paused. [askAdult]

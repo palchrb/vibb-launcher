@@ -683,12 +683,73 @@ class SourceScanTest {
     @Test
     fun `a Storytel download never follows a redirect, so no token reaches the cache index`() {
         val downloads = code(moduleFile("src/main/java/me/vibb/music/sync/Downloads.kt"))
-        assertTrue(downloads.contains("followRedirects = !storytel"))
+        assertTrue(downloads.contains("MediaCache.storytelDownloadFactory("))
         val cache = code(moduleFile("src/main/java/me/vibb/music/media/MediaCache.kt"))
+        assertTrue(cache.contains("storytelFactory(get(context), http(context, publicOnly, followRedirects = false), keys, bookKeys)"))
         assertTrue(cache.contains(".followRedirects(false).followSslRedirects(false)"))
         // (S-L4: a public entry's redirecting client asks https first; the no-redirect one never does)
         assertTrue(cache.contains("!followRedirects -> noRedirectClients.getValue(publicOnly)\n            publicOnly -> enclosureClient"))
         assertTrue(cache.contains("OkHttpDataSource.Factory(client)"))
+    }
+
+    @Test
+    fun `117 - the Keystore lives in BookKeys alone, containsAlias nowhere, the key holders print redacted and no log names a key`() {
+        for (f in sources("src/main")) {
+            val text = code(f)
+            for (token in listOf("AndroidKeyStore", "KeyGenParameterSpec")) {
+                if (text.contains(token)) assertEquals("${f.path} names $token", "BookKeys.kt", f.name)
+            }
+        }
+        for (f in sources("src/main") + sources("src/debug")) assertFalse("${f.path}: containsAlias reads any error as missing (§2.2)", code(f).contains("containsAlias"))
+        val seal = code(moduleFile("src/main/java/me/vibb/music/logic/Seal.kt"))
+        for (holder in listOf("class SealRecord(", "class BookKey(")) {
+            assertTrue("$holder needs an explicit toString()", body(seal, Regex(Regex.escape(holder) + "[^)]*\\)\\s*\\{")).contains("override fun toString()"))
+        }
+        val secret = Regex("\\$\\{?[^\"]*?(record|wrapped|nonce|raw|bookKey|kek|alias|canary|spec)", RegexOption.IGNORE_CASE)
+        val files = listOf("media/BookKeys.kt", "media/SealStreams.kt", "logic/Seal.kt", "sync/CacheThrough.kt", "sync/Sync.kt")
+            .map { moduleFile("src/main/java/me/vibb/music/$it") }
+        for (f in files) {
+            for (line in code(f).lines().filter { it.contains("Log.") || it.contains("log(") }) {
+                assertFalse("${f.name}: $line", secret.containsMatchIn(line))
+            }
+        }
+    }
+
+    @Test
+    fun `117 - Storytel reaches only the sealed factories, and every plain factory with an upstream passes an explicit sink`() {
+        val media = code(moduleFile("src/main/java/me/vibb/music/media/MediaCache.kt"))
+        // each CacheDataSource.Factory built in media/: with an upstream it names its sink factory
+        for (f in sources("src/main/java/me/vibb/music/media")) {
+            val text = code(f)
+            var at = text.indexOf("CacheDataSource.Factory()")
+            while (at >= 0) {
+                val chain = text.substring(at, text.indexOf("\n\n", at).takeIf { it > 0 } ?: text.length)
+                val noUpstream = chain.contains(".setUpstreamDataSourceFactory(null)")
+                assertTrue("${f.name}: a factory with an upstream and no explicit sink\n$chain", noUpstream || chain.contains(".setCacheWriteDataSinkFactory("))
+                at = text.indexOf("CacheDataSource.Factory()", at + 1)
+            }
+        }
+        assertTrue(media.contains(".setCacheReadDataSourceFactory { SealDataSource(FileDataSource(), bookKeys) }"))
+        assertTrue(media.contains("SealDataSink(CacheDataSink(cache, CacheDataSink.DEFAULT_FRAGMENT_SIZE), bookKeys)"))
+        assertTrue("the ThroughSink refuses a Storytel book", media.substringAfter("class ThroughSink").contains("refusePlainBook(dataSpec)"))
+        val items = code(moduleFile("src/main/java/me/vibb/music/media/ItemMediaSourceFactory.kt"))
+        assertTrue(items.contains("ItemRoute.STORYTEL -> {") && items.contains("MediaCache.storytelPlaybackFactory("))
+        assertTrue(items.contains("through ?: NoWriteSink.Factory"))
+        assertFalse("copyOnly reaches only the route", items.substringAfter("ItemRoute.PLAIN ->").contains("copyOnly"))
+        // Source.STORYTEL in the download path goes to the sealed factory only
+        val downloads = code(moduleFile("src/main/java/me/vibb/music/sync/Downloads.kt"))
+        assertEquals(1, Regex("MediaCache\\.downloadFactory\\(").findAll(downloads).count())
+        assertTrue(downloads.indexOf("if (storytel) {") < downloads.indexOf("MediaCache.storytelDownloadFactory(") &&
+            downloads.indexOf("MediaCache.storytelDownloadFactory(") < downloads.indexOf("MediaCache.downloadFactory("))
+    }
+
+    @Test
+    fun `117 - the key-deleting debug receiver exists only in src-debug, guarded by DUMP`() {
+        for (f in sources("src/main")) assertFalse("${f.path} names DebugSealReceiver", f.readText().contains("DebugSealReceiver"))
+        val debug = code(moduleFile("src/debug/AndroidManifest.xml"))
+        val receiver = debug.substringAfter("android:name=\"me.vibb.music.debugfeed.DebugSealReceiver\"").substringBefore("/>")
+        assertTrue(receiver, receiver.contains("android:permission=\"android.permission.DUMP\""))
+        assertTrue(moduleFile("src/debug/java/me/vibb/music/debugfeed/DebugSeal.kt").isFile)
     }
 
     @Test

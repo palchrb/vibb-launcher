@@ -35,8 +35,11 @@ import me.vibb.music.logic.extrasFloor
 import me.vibb.music.logic.itemCacheKey
 import me.vibb.music.logic.pickVariant
 import me.vibb.music.logic.publicOnly
+import me.vibb.music.logic.sealedCacheKey
 import me.vibb.music.logic.storageLimitBytes
+import me.vibb.music.media.BookKeys
 import me.vibb.music.media.MediaCache
+import me.vibb.music.media.SealTransientException
 import me.vibb.music.model.Source
 import me.vibb.music.playback.PlayerHub
 import me.vibb.music.storytel.Mint
@@ -102,17 +105,25 @@ object Downloads {
 
     /**
      * Fetch one item from [url] into the cache: (bytes cached, the HLS variant fetched). Blocking,
-     * interruptible. A Storytel book ([url] minted for this attempt, design 26b §4.3) goes under the
-     * item's cache key like any progressive item, so a partial resumes with Range whatever the token;
-     * its CDN request never follows a redirect and never carries a bearer (MediaCache's clients add no
-     * `Authorization`), and only the debug switch's fake lets it reach a private address.
+     * interruptible. A Storytel book ([url] minted for this attempt, design 26b §4.3) goes under its
+     * sealed cache key (design 117 §5), sealed from the first byte, so a partial resumes with Range
+     * whatever the token; its seal is prepared again first (a resume, or a new record after the 416's
+     * removal); its CDN request never follows a redirect and never carries a bearer (MediaCache's clients
+     * add no `Authorization`), and only the debug switch's fake lets it reach a private address.
      */
     @OptIn(UnstableApi::class)
     fun fetch(context: Context, w: WantedDownload, url: String): Pair<Long, Int?> {
-        val cacheKey = itemCacheKey(w.entry.key, w.item.key)
         val storytel = w.entry.source == Source.STORYTEL
-        val publicOnly = if (storytel) StorytelEndpoints.publicDownloads() else publicOnly(w.entry)
-        val factory = MediaCache.downloadFactory(context, publicOnly, MediaCache.keyFactory(cacheKey, url, w.item.hls), followRedirects = !storytel)
+        if (storytel) {
+            val cacheKey = sealedCacheKey(w.entry.key, w.item.key)
+            val keys = BookKeys.get(context)
+            keys.prepare(cacheKey)
+            val factory = MediaCache.storytelDownloadFactory(context, StorytelEndpoints.publicDownloads(), MediaCache.keyFactory(cacheKey, url, false), keys)
+            ProgressiveDownloader(MediaItem.Builder().setUri(url).setCustomCacheKey(cacheKey).build(), factory).download(null)
+            return MediaCache.cachedBytes(context, cacheKey, false) to null
+        }
+        val cacheKey = itemCacheKey(w.entry.key, w.item.key)
+        val factory = MediaCache.downloadFactory(context, publicOnly(w.entry), MediaCache.keyFactory(cacheKey, url, w.item.hls))
         if (!w.item.hls) {
             ProgressiveDownloader(MediaItem.Builder().setUri(url).setCustomCacheKey(cacheKey).build(), factory).download(null)
             return MediaCache.cachedBytes(context, cacheKey, false) to null
@@ -188,7 +199,21 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
 
         override suspend fun saveRow(row: DownloadRow) = dao.upsertDownload(row)
 
-        override suspend fun removeCopy(cacheKey: String, hls: Boolean) = CacheThrough.removeCopy(context, cacheKey, hls)
+        override suspend fun removeCopy(cacheKey: String, hls: Boolean) {
+            CacheThrough.removeCopy(context, cacheKey, hls)
+        }
+
+        /** Design 117 §5: before the mint; a Keystore that can't seal now is `network`, with nothing minted. */
+        override suspend fun prepareSeal(cacheKey: String): SealReady = withContext(Dispatchers.IO) {
+            try {
+                BookKeys.get(context).prepare(cacheKey)
+                SealReady.READY
+            } catch (e: SealTransientException) {
+                SealReady.TRANSIENT
+            } catch (e: RuntimeException) {
+                SealReady.TRANSIENT
+            }
+        }
 
         override suspend fun fetch(w: WantedDownload, url: String): Pair<Long, Int?> = runInterruptible { Downloads.fetch(context, w, url) }
 

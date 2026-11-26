@@ -20,12 +20,16 @@ import me.vibb.music.data.Store
 import me.vibb.music.logic.Extra
 import me.vibb.music.logic.ItemRef
 import me.vibb.music.logic.extrasToEvict
+import me.vibb.music.logic.heldCacheKeys
 import me.vibb.music.logic.hlsResourceKey
+import me.vibb.music.logic.isSealedKey
 import me.vibb.music.logic.itemCacheKey
 import me.vibb.music.logic.itemOfResource
 import me.vibb.music.logic.orphanResources
 import me.vibb.music.logic.pickVariant
+import me.vibb.music.logic.plainStorytelRows
 import me.vibb.music.logic.staleThrough
+import me.vibb.music.media.BookKeys
 import me.vibb.music.media.MediaCache
 import me.vibb.music.model.Entry
 import me.vibb.music.model.PlayItem
@@ -181,22 +185,17 @@ object CacheThrough {
         val store = Store.get(context)
         val keys = MediaCache.resourceKeys(context)
         val rows = store.db.downloads()
-        val orphans = orphanResources(keys, rows.map { it.cacheKey }.toSet(), heldCacheKeys(store, rows))
+        val orphans = orphanResources(keys, rows.map { it.cacheKey }.toSet(), heldKeys(store, rows))
         for (key in orphans) {
-            if (itemOfResource(key, heldCacheKeys(store, rows)) != null) continue
+            if (itemOfResource(key, heldKeys(store, rows)) != null) continue
             MediaCache.removeResource(context, key)
         }
     }
 
-    /** The cache keys of the items the player holds now: their rows', and the library's for those without one. */
-    private fun heldCacheKeys(store: Store, rows: List<DownloadRow>): Set<String> {
+    /** The cache keys of the items the player holds now ([heldCacheKeys]: a Storytel book's sealed key too, design 117 §4.1). */
+    private fun heldKeys(store: Store, rows: List<DownloadRow>): Set<String> {
         val lib = store.library()
-        val keys = mutableSetOf<String>()
-        for (ref in PlayerHub.heldLocal) {
-            rows.firstOrNull { it.entryId == ref.entryId && it.itemKey == ref.itemKey }?.let { keys += it.cacheKey }
-            lib?.entry(ref.entryId)?.let { keys += itemCacheKey(it.key, ref.itemKey) }
-        }
-        return keys
+        return heldCacheKeys(PlayerHub.heldLocal, rows) { lib?.entry(it) }
     }
 
     /** A new queue's rows ([rows], read after its claim) and the keys of its [stale] items, which play uncached. */
@@ -229,13 +228,48 @@ object CacheThrough {
 
     /**
      * The download job drops a partial copy (another source, a changed one: `DownloadRun`): unless the
-     * player holds that item now - an HLS stream's, never fetched while busy otherwise (§1.6).
+     * player holds that item now - an HLS stream's, never fetched while busy otherwise (§1.6). Whether it went.
      */
-    suspend fun removeCopy(context: Context, cacheKey: String, hls: Boolean) = withContext(Dispatchers.IO) {
+    suspend fun removeCopy(context: Context, cacheKey: String, hls: Boolean): Boolean = withContext(Dispatchers.IO) {
         val store = Store.get(context)
         lock.withLock {
-            if (cacheKey in heldCacheKeys(store, store.db.downloads())) return@withLock
+            if (cacheKey in heldKeys(store, store.db.downloads())) return@withLock false
             MediaCache.remove(context, cacheKey, hls)
+            true
         }
+    }
+
+    /**
+     * Design 117 §8, at every sync before [dropLostBooks] and the plan: a Storytel copy stored plain (before 117; only
+     * the emulators hold any) is removed with its row, and the plan wants the book again, sealed. No migration. A held
+     * book keeps its row until the next sync (the player can't read it anyway). The number removed.
+     */
+    suspend fun dropPlainStorytel(context: Context): Int = withContext(Dispatchers.IO) {
+        val dao = Store.get(context).db
+        var dropped = 0
+        for (row in plainStorytelRows(dao.downloads())) {
+            if (!removeCopy(context, row.cacheKey, row.hls)) continue
+            dao.deleteDownload(row.entryId, row.itemKey)
+            dropped++
+        }
+        dropped
+    }
+
+    /**
+     * Design 117 §7, at every sync before the plan: `BookKeys.check` over the sealed rows; a Lost book's copy goes
+     * (never while the player holds it - the sweep takes it once let go), its row and its counter go, and the plan
+     * wants it again under a new data key. A Keystore hiccup deletes nothing. The number dropped.
+     */
+    suspend fun dropLostBooks(context: Context): Int = withContext(Dispatchers.IO) {
+        val dao = Store.get(context).db
+        val keys = BookKeys.get(context)
+        val rows = dao.downloads().filter { isSealedKey(it.cacheKey) }
+        val lost = keys.check(rows.map { it.cacheKey }).toSet()
+        for (row in rows.filter { it.cacheKey in lost }) {
+            removeCopy(context, row.cacheKey, row.hls)
+            dao.deleteDownload(row.entryId, row.itemKey)
+            keys.forget(row.cacheKey)
+        }
+        lost.size
     }
 }

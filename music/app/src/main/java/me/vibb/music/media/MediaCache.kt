@@ -12,6 +12,7 @@ import androidx.media3.datasource.DataSink
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.HttpDataSource
+import androidx.media3.datasource.FileDataSource
 import androidx.media3.datasource.TransferListener
 import androidx.media3.datasource.cache.Cache
 import androidx.media3.datasource.cache.CacheDataSink
@@ -49,7 +50,9 @@ import java.util.concurrent.TimeUnit
  * The one audio cache (design 21 §4.5): a Media3 [SimpleCache] in noBackupFilesDir that never evicts
  * by itself (the keep/prune rule and the parent's storage limit decide, design 30 §1.8). The download
  * job writes it, and so does a stream as it plays (design 30 §1.4: through the [ThroughSink], above
- * depth 0, above the free floor); the player reads it first. Each item has its own [keyFactory] (QA #2,
+ * depth 0, above the free floor); the player reads it first. A Storytel book is sealed (design 117): its own
+ * `sealed:` key, written and read only through the `storytel*` factories; every plain factory passes an
+ * explicit sink that refuses it (§4.5). Each item has its own [keyFactory] (QA #2,
  * qa-21-step2-code S3): a progressive item is one resource keyed "<entry key>:<item key>", an HLS
  * item's playlists and segments are keyed by their path under it.
  */
@@ -154,20 +157,41 @@ object MediaCache {
     }
 
     /**
-     * For the player: the item's copy first, then the network through the [StreamGate] - or, for
-     * [copyOnly] (a Storytel book, design 26b §4.4: download-only), the copy and nothing else: no
-     * upstream at all (Media3 then reads through a placeholder that fails to open), so a missing part
-     * is an error, never a request. What streams is written to the cache only through [through] (design
-     * 30 §1.4, the [ThroughSink]; null = read only), and a cache error never fails playback
-     * (`FLAG_IGNORE_CACHE_ON_ERROR`: the read goes on uncached).
+     * For the player (NRK, RSS): the item's copy first, then the network through the [StreamGate]. What streams is
+     * written to the cache only through [through] (design 30 §1.4, the [ThroughSink]; [NoWriteSink] = read only -
+     * always an explicit sink, never Media3's default plain one, design 117 §4.5), and a cache error never fails
+     * playback (`FLAG_IGNORE_CACHE_ON_ERROR`: the read goes on uncached). A Storytel book never comes here
+     * ([storytelPlaybackFactory]).
      */
-    fun playbackFactory(context: Context, publicOnly: Boolean, keys: CacheKeyFactory, copyOnly: Boolean = false, through: ThroughSink.Factory? = null): CacheDataSource.Factory =
+    fun playbackFactory(context: Context, publicOnly: Boolean, keys: CacheKeyFactory, through: DataSink.Factory): CacheDataSource.Factory =
         CacheDataSource.Factory()
             .setCache(get(context))
-            .setUpstreamDataSourceFactory(if (copyOnly) null else gated(context, http(context, publicOnly)))
-            .setCacheWriteDataSinkFactory(if (copyOnly) null else through)
+            .setUpstreamDataSourceFactory(gated(context, http(context, publicOnly)))
+            .setCacheWriteDataSinkFactory(through)
             .setCacheKeyFactory(keys)
-            .setFlags(if (copyOnly) 0 else CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+            .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+
+    /**
+     * A sealed Storytel book (design 117 §4.5) over [cache]: [upstream] (the download's CDN client, or null for the
+     * player: design 26b §4.4's copy only, no upstream and so no sink - a missing part is an error, never a request),
+     * written only through the [SealDataSink] and read only through the [SealDataSource]. StorageFactoriesTest checks
+     * both by reflection.
+     */
+    internal fun storytelFactory(cache: Cache, upstream: DataSource.Factory?, keys: CacheKeyFactory, bookKeys: SealKeys): CacheDataSource.Factory =
+        CacheDataSource.Factory()
+            .setCache(cache)
+            .setUpstreamDataSourceFactory(upstream)
+            .setCacheWriteDataSinkFactory(upstream?.let { DataSink.Factory { SealDataSink(CacheDataSink(cache, CacheDataSink.DEFAULT_FRAGMENT_SIZE), bookKeys) } })
+            .setCacheReadDataSourceFactory { SealDataSource(FileDataSource(), bookKeys) }
+            .setCacheKeyFactory(keys)
+
+    /** A Storytel book's download (design 26b §4.3, 117 §5): the CDN client that never follows a redirect, sealed. */
+    fun storytelDownloadFactory(context: Context, publicOnly: Boolean, keys: CacheKeyFactory, bookKeys: SealKeys): CacheDataSource.Factory =
+        storytelFactory(get(context), http(context, publicOnly, followRedirects = false), keys, bookKeys)
+
+    /** A Storytel book on the phone's player (design 26b §4.4, 117 §6): its sealed copy and nothing else. */
+    fun storytelPlaybackFactory(context: Context, keys: CacheKeyFactory, bookKeys: SealKeys): CacheDataSource.Factory =
+        storytelFactory(get(context), null, keys, bookKeys)
 
     /** For an item whose cached bytes are stale (design 30 §1.6, `ItemTag.uncached`): plain http through the gate, no cache. */
     fun uncachedFactory(context: Context, publicOnly: Boolean): DataSource.Factory = gated(context, http(context, publicOnly))
@@ -182,12 +206,15 @@ object MediaCache {
         .setCacheWriteDataSinkFactory(null)
         .setCacheKeyFactory(keys)
 
-    /** For downloads: written into the cache. [followRedirects] false for a Storytel book (above). */
-    fun downloadFactory(context: Context, publicOnly: Boolean, keys: CacheKeyFactory, followRedirects: Boolean = true): CacheDataSource.Factory =
-        CacheDataSource.Factory()
-            .setCache(get(context))
-            .setUpstreamDataSourceFactory(http(context, publicOnly, followRedirects))
+    /** For downloads of NRK and RSS: written into the cache through the [PlainCacheSink] (never a Storytel book, design 117 §4.5). */
+    fun downloadFactory(context: Context, publicOnly: Boolean, keys: CacheKeyFactory): CacheDataSource.Factory {
+        val cache = get(context)
+        return CacheDataSource.Factory()
+            .setCache(cache)
+            .setUpstreamDataSourceFactory(http(context, publicOnly))
+            .setCacheWriteDataSinkFactory { PlainCacheSink(CacheDataSink(cache, CacheDataSink.DEFAULT_FRAGMENT_SIZE)) }
             .setCacheKeyFactory(keys)
+    }
 
     /**
      * The sink of item [ref] (design 30 §1.4): it writes at an open only while [throughWrites] says so -
@@ -219,6 +246,9 @@ object MediaCache {
 
     /** Did a load fail at the [LengthGuard] (a changed source, design 30 §1.6)? */
     fun sourceChanged(error: Throwable): Boolean = generateSequence(error) { it.cause }.any { it is SourceChangedException }
+
+    /** Did a sealed book fail for a lost key (design 117 §6)? "Ikke lastet ned", never retried. */
+    fun sealLost(error: Throwable): Boolean = generateSequence(error) { it.cause }.take(8).any { it is SealLostException }
 
     /** Delete an item's audio. */
     fun remove(context: Context, cacheKey: String, hls: Boolean) {
@@ -288,6 +318,8 @@ class ThroughSink(cache: Cache, private val decide: () -> Boolean, private val f
     private var rowMade = false
 
     override fun open(dataSpec: DataSpec) {
+        // Design 117 §4.5: never a Storytel book, whatever the decision - the item fails instead.
+        refusePlainBook(dataSpec)
         writing = try {
             decide().also { if (it && !rowMade) firstWrite() }
         } catch (e: Exception) {
@@ -323,12 +355,15 @@ class SourceChangedException : IOException("the source changed under a partial c
 /**
  * The player's load policy (qa-30-s3b-code L1): Media3's default, except that a changed source fails at once
  * - the default retries anything that isn't a parse error or the like after 0, 1 and 2 s, three more
- * requests the guard would close, before the player hears of it.
+ * requests the guard would close, before the player hears of it. A sealed book whose key is lost fails at
+ * once too (design 117 §6, QA L5): another open would only unwrap again.
  */
 @OptIn(UnstableApi::class)
 class SourceChangedPolicy : DefaultLoadErrorHandlingPolicy() {
-    override fun getRetryDelayMsFor(loadErrorInfo: LoadErrorHandlingPolicy.LoadErrorInfo): Long =
-        if (MediaCache.sourceChanged(loadErrorInfo.exception)) C.TIME_UNSET else super.getRetryDelayMsFor(loadErrorInfo)
+    override fun getRetryDelayMsFor(loadErrorInfo: LoadErrorHandlingPolicy.LoadErrorInfo): Long {
+        val e = loadErrorInfo.exception
+        return if (MediaCache.sourceChanged(e) || MediaCache.sealLost(e)) C.TIME_UNSET else super.getRetryDelayMsFor(loadErrorInfo)
+    }
 }
 
 /** The streaming switch refused a request (design 30 §1.6): "Ikke lastet ned - trenger Wi-Fi", never an item error. */

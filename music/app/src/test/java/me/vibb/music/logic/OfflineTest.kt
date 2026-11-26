@@ -402,6 +402,22 @@ class OfflineTest {
         assertTrue(orphanResources(emptySet(), setOf("e1:a"), emptySet()).isEmpty())
     }
 
+    @Test
+    fun `117 a held Storytel book's sealed key is spared by the sweep, its row there or not (QA L4)`() {
+        val series = entry(7, Source.STORYTEL, target = "storytel:series:1")
+        val rss = entry(1)
+        val entries = mapOf(7L to series, 1L to rss)
+        val held = setOf(ItemRef(7, "111"), ItemRef(1, "k1"))
+        // the lost path dropped 111's row while the player held it
+        val keys = heldCacheKeys(held, emptyList()) { entries[it] }
+        assertEquals(setOf("e7:111", "sealed:e7:111", "e1:k1"), keys)
+        val resources = setOf("sealed:e7:111", "sealed:e7:222", "e1:k1")
+        assertEquals("only the unheld book with no row goes", setOf("sealed:e7:222"), orphanResources(resources, emptySet(), keys))
+        // a row's own key counts too
+        val row = DownloadRow(7, "111", "sealed:e7:111", "storytel:book:111", false, true, 1, null, null)
+        assertTrue("sealed:e7:111" in heldCacheKeys(setOf(ItemRef(7, "111")), listOf(row)) { null })
+    }
+
     // The plan (design 30 §1.6, §1.8)
 
     @Test
