@@ -102,6 +102,7 @@ mod wallpapers;
 mod weather;
 mod web_push;
 mod window_relock;
+mod zone_networks;
 mod zone_watch;
 mod zones;
 

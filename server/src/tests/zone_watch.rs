@@ -230,7 +230,7 @@ async fn the_policy_serves_the_zones_and_the_floor() {
     assert_eq!(policy["interval_minutes"], 10);
     assert_eq!(
         policy["zones"],
-        json!([{"id": home, "latitude": 59.9139, "longitude": 10.7522, "radius_m": 150}])
+        json!([{"id": home, "latitude": 59.9139, "longitude": 10.7522, "radius_m": 150, "networks": []}])
     );
     assert!(!policy.to_string().contains("Home"), "no name: {policy}");
     // A watch without fences (they couldn't be registered): still as chosen.

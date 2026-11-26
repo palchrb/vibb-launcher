@@ -6427,3 +6427,41 @@ sync` had left `aosp36` with a truncated APK, the launcher gone at the next boot
 Not run: Android 17 (no working image); §6bp row 10's `dumpsys device_policy`, row 11's phone-side key book and 12b's
 `Enrolment restored` line (adb closed by the cut; the server's tables and the relay stand in); R1 and R3 on `aosp36`
 (run on `jelly36`); R2 on `jelly36` (System UI hung; run on `aosp36`).
+
+## 6bw. A zone's Wi-Fi: the parent's confirmation, the learned link bound to its router (design 138, branch `wifi-link-confirm`) - written, not run
+
+`docs/design/138-confirmed-zone-networks.md`: on **Android 14 and 16**. The setup of §6bn: the debug launcher,
+Regularly, a zone Home (150 m), Google's location accuracy off, Location on, the made-up scan and connection through
+`PlacesDebugReceiver` (`--es connect "<bssid>,<ssid>,psk|sae|eap|open,<networkId>,<MHz>[,<dBm>[,<mld>]]"` - the
+seventh field, the AP's multi-link address, is design 138's), the satellite feed for teaching, a second local day by
+the time zone. Home's router `00:00:5e:00:53:01` "Net-A" (its guest name on the same prefix `00:00:5e:00:53:05`), three
+neighbours on their own prefixes (`00:00:5e:00:61:01`, `00:00:5e:00:62:01`, `00:00:5e:00:63:01`), taught first as
+§6bn says. Logs: `adb logcat -s WifiPlaces ZoneWatch PlacesDebug`. The real background read (the Jelly's redacted
+BSSID and the callback) is a device row: the emulator's own network is open.
+
+| # | Step | Expect |
+|---|---|---|
+| a | Nothing confirmed or learned for Home (`--ez clear true`, then the neighbours taught), GPS silent, home's scan, `connect "00:00:5e:00:53:01,Net-A,psk,7,5180"`; a sync | `zone wifi report yes netid=known`; the report's `device_status.zone_watch_json` has `wifi` with `Net-A`; the zone's page shows `Net-A` with Bekreft; with `open` - `zone wifi report no reason=security`, no row |
+| b | Tap Bekreft; Locate | the policy's zone has `networks` with the id, name and BSSID; `zone link confirmed rest=fix`, `wifi fix check=link step=USE`; the report's fix `check: "link"`; Locate no "Wi-Fi estimate"; "At Home" on the row only when the fix is surely inside the zone (the server's `zones::side`, unchanged) |
+| c | The finding's path: reinstall the same debug APK over itself (a new process, `MOVED`), then the heartbeat's own `FIX` | `attempt path=TOGETHER`, `check=link`, `Location heartbeat: FIX result=fresh`; no back-off |
+| d | `connect` `00:00:5e:00:53:02` (the same router's other band); then `00:00:5e:00:58:01`, `Net-A` (another router) | the first `check=link` at once; the second `zone link none` (and with only it heard, `router fix unconfirmed`), the page's Bekreft row and no orange line; Bekreft - `check=link` |
+| e | `connect` another link of a router confirmed with a multi-link address (seventh field the same) | `check=link` at once |
+| f | The travel router: `Net-A` (a) connected, another place's scan (three neighbours taught 3 km away) | `zone link none rest=fix`, `check=none`; with only the router heard (its two names and an unknown router) - `zone link confirmed rest=nothing` |
+| g | Then the satellite feed 3 km away (8 satellites) twice, 90 s apart, `Net-A` connected | one feed fix alone strikes nothing; after the second `zone link struck by=confirmed`; the next report's `zone_watch.wifi_struck` has the id; the page "Sett et annet sted"; the security log "Wi-Fi seen elsewhere" (the zone's name only); the policy drops the row; back home `check=none`; Bekreft again - a new id, `check=link` |
+| h | The learned link: no confirmation, GPS silent, home's scan and `Net-B` psk (another router); Locate 3 times 30 min apart over 2 local days | `link taught by=wifi occasions=1..3 days=1..2`; then `zone link learned rest=fix`, `check=link`; a scan of only `Net-B`, its guest name and unknown routers - no occasion (`occasions` unchanged) |
+| i | Move the zone 200 m (radius 150); then confirm again and move it 50 m | the first clears the rows ("Wi-Fi removed" in the `zone_changed` line); the second keeps them |
+| j | Revision 3, the single-router fix: the last reported fix inside Home; `Net-A` confirmed and connected (`connect "00:00:5e:00:53:01,Net-A,psk,7,5180"`), only it heard (its two names, in the made-up scan at -45 dBm), GPS silent; Locate | `router fix fix at=own acc=39` (half the row's range and 25 m; `at=zone acc=152` before its rows are taught), `wifi fix check=link step=USE`; the report's fix `vibb_wifi` with `check: "link"` at the router's position; without the router in the scan `acc` from the -85 dBm bound; no `link taught` line |
+| k | The same with §6bk's fake Apple cell answer placing the registered cell 5 km away | `router fix cell`; no Wi-Fi fix (`check=none` or GPS) |
+| l | The same after (g)'s strike (the row blocked, the policy without it) | `router fix unconfirmed`; no `link` fix |
+| m | The continuity gate: a satellite fix 3 km away reported (the cached fix outside Home), then back on `Net-A` with only it heard | `router fix continuity`; no `link` fix until GPS or an ordinary checked fix brings it home |
+| n | After a restart (reinstall over itself) with the last reported fix at home, the scan inconclusive (`--ez refuse_scan true`) | `router fix fix`, not withheld; `Location heartbeat: FIX result=fresh` |
+| o | `adb reboot` at home with the last fix at home (off about a minute); then the same with the emulator stopped for 15 min before the boot | the first `router fix fix`; the second `router fix continuity` until another fix brings it home |
+| p | A cell-only fix reported last (`--ez gps_off true`, Wi-Fi off, Locate), then back on `Net-A` | `router fix continuity` (the witness's accuracy over the radius) |
+
+The cell veto is a unit row (`ZoneLinksTest`): the emulator's cell has no placed row unless §6bk's fake Apple cell
+answer is loaded - if it is, place it 5 km away and expect (b) to give `check=none`.
+
+**Device row** (the Jelly Star, Android 16, the owner's check): at home, screen off, an hour after the install - the
+report's `wifi` present (`connection read by callback yes` when the first read was redacted, `zone wifi report yes
+netid=known|none`), the scan fresh (`scan answer n/m ask=answered`), the parent's Bekreft, then `FIX result=fresh` at
+the next heartbeat.

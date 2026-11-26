@@ -323,6 +323,7 @@ fn migrations_from_73_in_order() {
             (177, "security event request".to_string()),
             (178, "config credentials".to_string()),
             (179, "storage full".to_string()),
+            (180, "zone networks".to_string()),
         ],
         "0073 (design 30), 0074 (Spotify), 0075 (the clock format), 0076 (the softer \
          wallpapers), 0077 (Vibb One), 0078 (design 35), 0079 (the custom DNS server), 0080 \

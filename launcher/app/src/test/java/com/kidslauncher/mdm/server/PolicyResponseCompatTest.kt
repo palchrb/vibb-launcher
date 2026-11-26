@@ -1388,6 +1388,21 @@ class PolicyResponseCompatTest {
         val older = (decodeCached(withLocation("""{"mode": "interval", "interval_minutes": 10}""")) as CachedPolicy.Ok).policy
         assertEquals(com.kidslauncher.mdm.server.dto.LocationPolicy("interval", 10), older.locationPolicy)
         assertEquals(emptyList<Any>(), older.locationPolicy!!.zones)
+        // Design 138 D13: a zone's confirmed routers (the server's `policy_json_keys_snapshot` pins the keys); a zone
+        // without the key has none.
+        val networked = (
+            decodeCached(
+                withLocation(
+                    """{"mode": "interval", "interval_minutes": 30, "zones": [{"id": 7, "latitude": 59.9139, "longitude": 10.7522,
+                     "radius_m": 150, "networks": [{"id": 3, "ssid": "Net-A", "bssid": "00:00:5e:00:53:01", "mld": null}]}]}""",
+                ),
+            ) as CachedPolicy.Ok
+            ).policy
+        assertEquals(
+            listOf(com.kidslauncher.mdm.server.dto.ZoneNetwork(3, "Net-A", "00:00:5e:00:53:01", null)),
+            networked.locationPolicy!!.zones.single().networks,
+        )
+        assertEquals(emptyList<Any>(), policy.locationPolicy!!.zones.first().networks)
     }
 
     /** Design 36 §4.1: the server's `dns_upstream` (its `custom_server_in_the_policy` shapes) and anything

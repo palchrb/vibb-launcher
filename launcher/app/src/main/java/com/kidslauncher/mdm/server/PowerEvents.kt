@@ -367,6 +367,15 @@ object PowerEvents {
 
     private fun load(prefs: SharedPreferences): PowerRecord = decodePowerRecord(prefs.all)
 
+    /** Design 138 round 2 M2: how long the phone was off before this boot (the last shutdown to this boot's start), or
+     * `null` when unknown - no shutdown seen (a pulled battery, a crash), or not this boot's. Never throws. */
+    fun lastOffGapMs(context: Context): Long? = try {
+        val r = synchronized(lock) { load(prefs(context)) }
+        com.kidslauncher.mdm.places.offGapMs(r.off?.atMs, r.off?.bootCount, r.on?.atMs, r.on?.bootCount, BootClock.bootCount())
+    } catch (e: Exception) {
+        null
+    }
+
     /** [change] of the record, committed when it changed; the record after it. */
     private fun update(context: Context, change: (PowerRecord) -> PowerRecord): PowerRecord = synchronized(lock) {
         val prefs = prefs(context)
