@@ -5642,7 +5642,7 @@ shows the plug-in's look, and rows 6 and 8 the SOS rule only where one is instal
 | 2 | Locked, screen off: a plug-in and the blocked start in one line (`... set usb 1; am start -n ...`) | `BlockedAppActivity` in `ActivityTaskManager`, the glance paused and stopped; within ~1 s `AndroidLock: power changed` and `re-front #1`, the glance in front again with the keyguard occluded (`dumpsys window | grep -i occluded`); no `probably Emergency SOS` line |
 | 3 | Locked, screen on: swipe or tap the glance up to Android's PIN pad, then a plug-in | the pad stays (the ask is ours): no re-front; the right PIN unlocks as before |
 | 4 | Locked: an incoming call (`adb emu gsm call 5551234`), then a plug-in | the call screen stays (`Lock yields to an exempt screen`); the glance back after the hang-up as before |
-| 5 | Locked, one screen-on: three times `dumpsys battery unplug; dumpsys battery set usb 1; am start -n ...` | at most two re-fronts (`re-front #1`, `#2`), then Android's lock screen until a screen cycle - no loop |
+| 5 | Locked, one screen-on: three times `dumpsys battery unplug; dumpsys battery set usb 1; am start -n ...` | at most two re-fronts (`re-front #1`, `#2`), then Android's lock screen until a screen cycle - no loop. **Since `glance-replug`:** each plug-in gets the glance back (`re-front #1` each); "Row 5 again" below |
 | 6 | With an SOS app: no plug-in, the power button, then the blocked start within 3 s | unchanged: the "sos" yield (`probably Emergency SOS`) |
 | 7 | Unplugged (`dumpsys battery unplug`), the same blocked start with the screen on well after its screen-on | unchanged: the face's re-front (`re-front #1`) |
 | 8 | With an SOS app: a plug-in (the screen wakes), then five power presses within 2 s | the "sos" yield (`probably Emergency SOS`, `Lock yields to an exempt screen: sos`); no `power changed` re-front over the SOS screen |
@@ -5685,6 +5685,37 @@ Branch `gate-129b` at main `31a123725` (the merged `glance-back`), the debug lau
 
 Nothing failed. Not on the emulator: a real plug-in's own wake (the Jelly Star wakes on USB) and Unihertz's
 `ChargingDialog`; the owner's case from the field is the Jelly Star's to confirm.
+
+### Row 5 again: three plug-ins on one screen-on (branch `glance-replug`) - run 2026-11-26 (22:38-23:09 CET)
+
+The owner's log (rc.6, 2026-11-26 22:26): three plug-ins within 10 s with the screen on - the third met row 5's cap
+of two per screen-on (`power changed`, no re-front) and Android's lock screen stayed. The fix: each power change
+starts a re-front count of its own and its look keeps one re-front (`lock-and-glance.md`, "The cap per power
+change"). `aosp36` (Android 16) and `compat34` (Android 14) as the day's gates left them (the debug launcher as
+Device Owner, Android's PIN set, kiosk on), the branch's debug build installed over it (`adb install -r`, `adb shell
+sync`). Each row: a screen cycle (`input keyevent KEYCODE_SLEEP`, then `KEYCODE_WAKEUP`), 5 s (outside the SOS
+window), then three cycles 4 s apart, each after `input keyevent KEYCODE_SHIFT_LEFT` - user activity, as the owner
+touching the screen: without it the un-occluded keyguard sleeps after 10 s (`Going to sleep due to timeout ...
+activityTimeoutWM=10000`), the screen-off resets the count and the run tests nothing. The blocked start is
+`am start -a android.intent.action.SET_WALLPAPER` (`BlockedAppActivity`, as above). Logs `AndroidLock`, `PinLock`;
+`dumpsys window` for `mKeyguardOccluded`; `dumpsys activity broadcasts history` for when `ACTION_POWER_CONNECTED`
+reached the launcher.
+
+| # | Step | Android 14 (`compat34`) | Android 16 (`aosp36`) |
+|---|---|---|---|
+| 5a | The build before the fix (versionCode 116): three times `dumpsys battery unplug; dumpsys battery set usb 1; am start ...` | **Reproduced.** `re-front #1`, `#2`, the third: paused, `power changed` 0.9 s later, stopped, no re-front, `mKeyguardOccluded=false` | **Reproduced.** The same as the owner's log: paused, stopped, `power changed`, no re-front, Android's lock screen |
+| 5b | The fix, the same three | **Pass.** `re-front #1` each time (the count started again at each change), occluded after every cycle | **Pass.** The same |
+| 5c | Two blocked starts with no power change (the cap reached), then `am start ...; sleep 0.05-0.12; dumpsys battery unplug; set usb 1` - the loss before the broadcast | **Pass.** Each of three delays: the broadcast came 80-150 ms after the pause and reached the launcher 501 ms later (`scheduled +501ms`): the pause's check met the cap, `power changed` and `re-front #1 (the glance stopped)` by the look ~1.5 s after the pause | **Pass.** 0.05 and 0.08 s: the broadcast reached the launcher at once, before the pause's check - `re-front #1` by that check. 0.12 s: `scheduled +500ms`, the look's `power changed` and `re-front #1` as on 14 |
+| 5d | Three blocked starts, no power change | **Pass, unchanged:** `re-front #1`, `#2`, then the third stays on Android's lock screen - no loop | **Pass.** The same |
+| 5e | Screen off 3 s, then `input keyevent KEYCODE_WAKEUP; am start ...; sleep 0.6` (and again with `sleep 0.25`)`; dumpsys battery set usb 1` - a press's screen-on, a probable SOS, then a plug-in | **Pass.** `probably Emergency SOS`, `Lock yields to an exempt screen: sos`, no `power changed`, no re-front. With 0.25 s the pause was 733 ms before the broadcast reached the launcher - inside the look's window, and the mark still won | **Pass.** The same (0.25 s: 750 ms before) |
+
+**Found by the run, fixed on the branch (5c, first build):** the look's window began 300 ms before the change, but the
+change is stamped when the broadcast reaches the launcher, and once the glance has lost the front Android's broadcast
+queue delivers `ACTION_POWER_CONNECTED` ~500 ms late (`DELIVERED scheduled +500ms` / `+501ms` on both versions; at once
+while the glance is in front). A pause 107 ms before the change was 608 ms before the stamp: no `power changed`, the
+cap held, Android's lock screen. `POWER_LOSS_BEFORE_MS` is now 1 s; the wake's 300 ms (the SOS exemption) is unchanged.
+Not on the emulator, as above: the Jelly Star's own wake on USB and Unihertz's `ChargingDialog` - the owner's
+plug-in-and-out run on the Jelly confirms it.
 
 ## 6bm. Enrolment requires a key: design 129b §10.3 with `emulator_keys` (branch `gate-129b`) - run 2026-11-24
 

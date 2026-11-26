@@ -73,8 +73,42 @@ fun androidLoss(face: Boolean, deviceSecure: Boolean, androidLocked: Boolean, pr
 }
 
 /** Design 59b §3 step 6 (Q59b-3): at most this many re-fronts per screen-on - then SystemUI's face (with our ground)
- * until the screen-off. Own mode never gives up (QA 10 #2); here a cap leaves only Android's locked keyguard. */
+ * until the screen-off. Own mode never gives up (QA 10 #2); here a cap leaves only Android's locked keyguard. Since the
+ * glance-replug fix the count also starts again at each power change ([androidRefrontsAfter]). */
 const val ANDROID_REFRONT_CAP = 2
+
+/** What moves the face's re-front count ([androidRefrontsAfter]). */
+enum class RefrontCount {
+    /** The screen went off: a new screen-on, a new count. */
+    SCREEN_OFF,
+
+    /** Android was unlocked by the kid. */
+    USER_PRESENT,
+
+    /** (4i), glance-replug: `ACTION_POWER_CONNECTED`/`DISCONNECTED` - the loss it causes (the blocked start's
+     * `BlockedAppActivity`, a charging dialog) has a count of its own, whether or not the screen was already on. */
+    POWER_CHANGE,
+
+    /** (4i), glance-replug: the power change's own look ([powerRecheck]) found a fresh loss: it keeps one re-front of its
+     * own even when the pause's and the stop's checks used the change's count up. */
+    POWER_LOOK,
+
+    /** The face re-fronted the glance. */
+    REFRONT,
+}
+
+/**
+ * The face's re-front count after [event] - [ANDROID_REFRONT_CAP] per screen-on, and per power change since the
+ * owner's log of 2026-11-26 (three plug-ins on one screen-on: the third loss met the cap and Android's lock screen stayed
+ * until the screen went off). The bound still holds: each power change allows at most [ANDROID_REFRONT_CAP] + 1
+ * re-fronts (its look's own one included), and a power change is a plug or an unplug. Never an exemption: the "sos"
+ * yield and the others come before the cap ([androidLossStep]).
+ */
+fun androidRefrontsAfter(count: Int, event: RefrontCount): Int = when (event) {
+    RefrontCount.REFRONT -> count + 1
+    RefrontCount.POWER_LOOK -> minOf(count, ANDROID_REFRONT_CAP - 1)
+    RefrontCount.SCREEN_OFF, RefrontCount.USER_PRESENT, RefrontCount.POWER_CHANGE -> 0
+}
 
 /** Design 59b §3 step 3 (Q59b-8): one of our own starts ([PinLockRuntime.noteOwnStart]) counts as ours this long. */
 const val OWN_START_MS = 2_000L
@@ -600,8 +634,9 @@ fun sosMarkKept(action: RefrontAction): Boolean = action == RefrontAction.Yield(
  * is already on exempts nothing. A screen-on by the kid's press 2-3 s before a plug-in can't be told from a press-SOS
  * whose screen comes up with the plug-in: the SOS rule wins there (the glimpse stays possible in that narrow case). The
  * power change then looks once ([powerRecheck]) - a fresh loss through the same rule ([refrontAction]), so the kid's own
- * path to Android's PIN pad ([androidLossOurs]), the exempt screens and the cap per screen-on ([ANDROID_REFRONT_CAP])
- * all hold.
+ * path to Android's PIN pad ([androidLossOurs]), the exempt screens and the cap ([ANDROID_REFRONT_CAP]) all hold.
+ * glance-replug (the owner's log, 2026-11-26): the cap counts per power change too, and the look keeps one re-front of
+ * its own ([androidRefrontsAfter]) - three plug-ins on one screen-on each get the glance back.
  */
 
 /** The power change's broadcast may come this long after its screen-on (the two are reordered). */
@@ -611,12 +646,16 @@ const val POWER_WAKE_BEFORE_MS = 300L
 const val POWER_WAKE_AFTER_MS = 2_000L
 
 /** The power change's own look at the glance, this long after the broadcast: the blocked start's pause and stop are
- * over by then (~0.9 s in the owner's log). Once per change - a re-front it makes counts for the cap. */
+ * over by then (~0.9 s in the owner's log). Once per change - a re-front it makes counts for the cap
+ * ([RefrontCount.POWER_LOOK]). */
 const val POWER_RECHECK_MS = 1_000L
 
 /** A loss of the glance this close around the power change ([POWER_LOSS_BEFORE_MS] before, [POWER_LOSS_AFTER_MS] after)
- * is the blocked start's. */
-const val POWER_LOSS_BEFORE_MS = 300L
+ * is the blocked start's. The change is stamped when the broadcast reaches us ([PinLockRuntime]'s receiver), and once
+ * the glance has lost the front Android's broadcast queue delivers it ~500 ms late (glance-replug's emulator run,
+ * Android 14 and 16: `scheduled +500ms` in `dumpsys activity broadcasts history` - a normal broadcast to a process that
+ * isn't in the foreground): a pause up to 300 ms before the change, stamped ~500 ms later still, counts. */
+const val POWER_LOSS_BEFORE_MS = 1_000L
 const val POWER_LOSS_AFTER_MS = 1_500L
 
 /**

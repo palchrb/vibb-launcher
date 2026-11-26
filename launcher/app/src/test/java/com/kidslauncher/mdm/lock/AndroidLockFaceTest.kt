@@ -123,13 +123,16 @@ class AndroidLockFaceTest {
         assertEquals(ANDROID_REFRONT_CAP, refronts)
         val runtime = code("$lock/PinLockRuntime.kt")
         val screenOff = runtime.substringAfter("if (intent.action == Intent.ACTION_SCREEN_OFF) {").substringBefore("dispatch(app, LockEvent.ScreenOff(")
-        assertTrue(screenOff.contains("androidRefronts = 0"))
+        assertTrue(screenOff.contains("androidRefronts = androidRefrontsAfter(androidRefronts, RefrontCount.SCREEN_OFF)"))
         val present = runtime.substringAfter("private val userPresentReceiver").substringBefore("\n    }\n")
-        assertTrue(present.indexOf("androidRefronts = 0") in present.indexOf("AndroidLock.userPresent()") until present.indexOf("if (mode != LockMode.LOCKED) return"))
-        assertEquals("zeroed nowhere else", 2, Regex("(?<!var )androidRefronts = 0").findAll(runtime).count())
+        val presentReset = present.indexOf("androidRefronts = androidRefrontsAfter(androidRefronts, RefrontCount.USER_PRESENT)")
+        assertTrue(presentReset in present.indexOf("AndroidLock.userPresent()") until present.indexOf("if (mode != LockMode.LOCKED) return"))
+        // glance-replug: a power change and its look move it too ([PowerGlanceTest]); nothing else assigns it.
+        assertEquals("moved only by the rule", 5, Regex("androidRefronts = androidRefrontsAfter\\(androidRefronts, RefrontCount\\.").findAll(runtime).count())
+        assertEquals("moved nowhere else", 5, Regex("(?<!var )androidRefronts = (?!androidRefronts,)").findAll(runtime).count())
         // Counted (and logged) only for the face's re-front; the flag reaches show().
         val check = runtime.substringAfter("private fun runRefrontCheck() {").substringBefore("\n    }\n")
-        assertTrue(check.contains("if (action.noUserAction) Log.i(ANDROID_LOCK_TAG, \"re-front #\${++androidRefronts} (\$androidLossWhy)\")"))
+        assertTrue(check.contains("if (action.noUserAction) {\n                    androidRefronts = androidRefrontsAfter(androidRefronts, RefrontCount.REFRONT)\n                    Log.i(ANDROID_LOCK_TAG, \"re-front #\$androidRefronts (\$androidLossWhy)\")"))
         assertTrue(check.contains("show(context, ask = LockAsk.BOOT, noUserAction = action.noUserAction)"))
         assertTrue(check.contains("androidRefronts = androidRefronts,"))
     }

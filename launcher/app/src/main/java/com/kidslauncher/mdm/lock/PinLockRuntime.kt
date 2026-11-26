@@ -200,8 +200,9 @@ object PinLockRuntime {
 
     // ---- design 59b §3: the face's loss rule ([androidLossStep]) ----------------------------------------------------
 
-    /** The face's re-fronts since the last screen-off or `USER_PRESENT` - the cap's count ([ANDROID_REFRONT_CAP]; a
-     * resume, pause or stop never zeroes it, unlike [refrontAttempt]). Main thread. */
+    /** The face's re-fronts since the last screen-off, `USER_PRESENT` or power change - the cap's count
+     * ([ANDROID_REFRONT_CAP], [androidRefrontsAfter]; a resume, pause or stop never zeroes it, unlike [refrontAttempt]).
+     * Main thread. */
     private var androidRefronts = 0
 
     /** What the glance last lost the front to ("paused"/"stopped"), for the re-front's log line. Main thread. */
@@ -971,7 +972,7 @@ object PinLockRuntime {
                 // Design 59d §8.16 (Q-2): a gesture's mark dies with its screen-on.
                 gestureAskPending = false
                 // Design 59b §3: the face's re-front cap is per screen-on; an ask dies with the screen-off.
-                androidRefronts = 0
+                androidRefronts = androidRefrontsAfter(androidRefronts, RefrontCount.SCREEN_OFF)
                 androidAskAt = null
                 androidCancelledAskAt = null
                 androidWaited = false
@@ -1086,7 +1087,7 @@ object PinLockRuntime {
             if (!interactive(app)) return
             AndroidLock.userPresent()
             // Design 59b §3: Android open - the face's re-front count starts again.
-            androidRefronts = 0
+            androidRefronts = androidRefrontsAfter(androidRefronts, RefrontCount.USER_PRESENT)
             androidWaited = false
             AndroidLock.note(app, "USER_PRESENT")
             if (mode != LockMode.LOCKED) return
@@ -1978,6 +1979,9 @@ object PinLockRuntime {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action != Intent.ACTION_POWER_CONNECTED && intent.action != Intent.ACTION_POWER_DISCONNECTED) return
             powerChangedAt = SystemClock.elapsedRealtime()
+            // glance-replug: the loss this change causes has a re-front count of its own (the owner's third plug-in on
+            // one screen-on met the cap of the two before it).
+            androidRefronts = androidRefrontsAfter(androidRefronts, RefrontCount.POWER_CHANGE)
             handler.removeCallbacks(powerCheck)
             handler.postDelayed(powerCheck, POWER_RECHECK_MS)
         }
@@ -2001,6 +2005,8 @@ object PinLockRuntime {
             sosMarkUnlogged = false
         }
         AndroidLock.note(app, "power changed")
+        // glance-replug: the look keeps one re-front of its own, even after the pause's and the stop's checks.
+        androidRefronts = androidRefrontsAfter(androidRefronts, RefrontCount.POWER_LOOK)
         // Own mode keeps its back-off (code QA L3): only the face's check starts over.
         if (AndroidLock.faceOn) refrontAttempt = 0
         handler.removeCallbacks(refrontCheck)
@@ -2205,7 +2211,10 @@ object PinLockRuntime {
                 yielding = null
                 refrontAttempt++
                 // Design 59b §3: the face's re-front, counted for the cap.
-                if (action.noUserAction) Log.i(ANDROID_LOCK_TAG, "re-front #${++androidRefronts} ($androidLossWhy)")
+                if (action.noUserAction) {
+                    androidRefronts = androidRefrontsAfter(androidRefronts, RefrontCount.REFRONT)
+                    Log.i(ANDROID_LOCK_TAG, "re-front #$androidRefronts ($androidLossWhy)")
+                }
                 // Design 16e: the boot's first lock may still wait for the mark (its backstop ends it).
                 if (show(context, ask = LockAsk.BOOT, noUserAction = action.noUserAction)) Log.i(LOG_TAG, "Re-fronting the lock (#$refrontAttempt)")
                 handler.postDelayed(refrontCheck, action.nextCheckMs)
