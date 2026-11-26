@@ -112,7 +112,7 @@ class BootCoverManifestTest {
         assertTrue(step.contains("val gate = padGate()"))
         assertTrue(step.contains("val inCall = gate && telecomInCall()"))
         assertTrue(step.contains("val step = bootPadStep(pad, event, gate, interactive, inCall, covered, keyguard)"))
-        assertTrue(step.contains("PadAction.ASK -> askPad(event, covered, keyguard)"))
+        assertTrue(step.contains("PadAction.ASK -> askPad(event, covered, keyguard, padUp)"))
         // The flag follows the gate at create, every resume, the unlock broadcast and F3's poll once unlocked.
         assertTrue(activity.substringAfter("override fun onCreate(").substringBefore("\n    }\n").contains("waitForLauncher = persistent\n        applyLockedFace()"))
         val resume = activity.substringAfter("override fun onResume()").substringBefore("\n    }\n")

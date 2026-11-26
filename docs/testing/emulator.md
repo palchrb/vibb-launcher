@@ -6418,6 +6418,11 @@ sync` had left `aosp36` with a truncated APK, the launcher gone at the next boot
 - **2, `jelly36`: pass.** Two `adb reboot`s and a cold boot, unlocked each time: no `ANR in me.vibb...`, no `Timeout
   executing service` of ours, the dropbox empty; `Unlocked setup took` 469-723 ms, the rules' own message 878-2421 ms,
   `Boot Home started` 2.7-7.0 s after the unlock.
+- **After code QA** (the 30 s re-ask with the pad up, a not-shown reading taking `reached` back, the rules' step at an
+  idle moment): `aosp36` an `adb reboot` (3-button) and a cold boot, `compat34` an `adb reboot` (gestures): no
+  regression - the pad once System UI was up, then "no re-ask" and one ask every 30 s while it stayed up unanswered
+  (only `Adding callback` in System UI's log, the pad not hidden or redrawn; on 14 it also brings back the answer of a
+  relaunch's orphaned ask: "succeeded" at the PIN); 1357 opens Home, no ANR, the rules' step 0.5-1.2 s.
 
 Not run: Android 17 (no working image); §6bp row 10's `dumpsys device_policy`, row 11's phone-side key book and 12b's
 `Enrolment restored` line (adb closed by the cut; the server's tables and the relay stand in); R1 and R3 on `aosp36`

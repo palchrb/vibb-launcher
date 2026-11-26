@@ -569,16 +569,20 @@ class BootCoverPlanTest {
     fun `an ask whose pad is up is not asked again - only once the cover has the focus back`() {
         val asked = bootPadStep(BootPad(), PadEvent.RESUMED, gate = true, interactive = true, inCall = false)
         var state = asked.pad
-        // Up for a minute: every tick is skipped, the same ask, its clock going on - never an ask.
-        repeat(20) {
+        // Up for 27 s: every 3 s tick is skipped, the same ask, its clock going on (code QA M1: the time it is taken as up).
+        repeat(9) { n ->
             val tick = bootPadStep(state, PadEvent.SILENT, gate = true, interactive = true, inCall = false, covered = true)
-            assertEquals(PadStep(asked.pad, PadAction.NONE, bootPadSilentInMs(0)), tick)
+            assertEquals(PadStep(asked.pad.copy(upMs = (n + 1) * 3_000L), PadAction.NONE, bootPadSilentInMs(0)), tick)
             state = tick.pad
         }
         // The pad gone without an answer (SystemUI dropped it): the next tick asks, uncounted.
         val again = bootPadStep(state, PadEvent.SILENT, gate = true, interactive = true, inCall = false, covered = false)
         assertEquals(PadAction.ASK, again.action)
         assertEquals(asked.pad.copy(reasks = 1), again.pad)
+        // Still covered at 30 s with no answer: asked for again once (code QA M1), its clock anew.
+        val late = bootPadStep(state, PadEvent.SILENT, gate = true, interactive = true, inCall = false, covered = true)
+        assertEquals(PadAction.ASK, late.action)
+        assertEquals(asked.pad.copy(reasks = 1), late.pad)
         // The pad's own answer still ends the ask whatever covers the cover.
         assertFalse(bootPadStep(state, PadEvent.CANCELLED, true, true, false, covered = true).pad.open)
         // A tap or a resume asks as before (only a silence reads the focus).
@@ -604,13 +608,25 @@ class BootCoverPlanTest {
         assertTrue(lockScreen.pad.reached)
         assertEquals(2, lockScreen.pad.reasks)
         assertEquals(1, lockScreen.pad.autoAsks)
-        // From then on the pad is up: every tick skipped, the same ask, never an ask (§6bt finding 2 holds).
+        // From then on the pad is up: the 6 s ticks skipped, the same ask (§6bt finding 2 holds) - for 30 s with no
+        // answer, then asked once more (code QA M1: the cover never stays without a pad for good), its clock anew.
         var state = lockScreen.pad
-        repeat(10) {
+        repeat(4) { n ->
             val tick = bootPadStep(state, PadEvent.SILENT, true, true, false, covered = true, keyguard = KeyguardRead.SHOWN)
-            assertEquals(PadStep(lockScreen.pad, PadAction.NONE, bootPadSilentInMs(2)), tick)
+            assertEquals(PadStep(lockScreen.pad.copy(upMs = (n + 1) * 6_000L), PadAction.NONE, bootPadSilentInMs(2)), tick)
             state = tick.pad
         }
+        val thirty = bootPadStep(state, PadEvent.SILENT, true, true, false, covered = true, keyguard = KeyguardRead.SHOWN)
+        assertEquals(PadAction.ASK, thirty.action)
+        assertEquals(0L, thirty.pad.upMs)
+        assertTrue(thirty.pad.reached)
+        assertEquals(PadAction.NONE, bootPadStep(thirty.pad, PadEvent.SILENT, true, true, false, covered = true).action)
+        // Code QA M1: a keyguard reading not shown after a reached ask is no pad up - asked again, and no longer reached.
+        val down = bootPadStep(lockScreen.pad, PadEvent.SILENT, true, true, false, covered = true, keyguard = KeyguardRead.NOT_SHOWN)
+        assertEquals(PadAction.ASK, down.action)
+        assertFalse(down.pad.reached)
+        // Nor does a relaunch then take it for the pad.
+        assertEquals(PadAction.ASK, bootPadStep(lockScreen.pad, PadEvent.RELAUNCHED, true, true, false, covered = true, keyguard = KeyguardRead.NOT_SHOWN).action)
         // A new ask reads the keyguard anew: an error's retry before the keyguard shows hasn't reached it.
         val retried = bootPadStep(BootPad(open = false, retryDue = true, retried = true, reached = true), PadEvent.RETRY, true, true, false, keyguard = KeyguardRead.NOT_SHOWN)
         assertEquals(PadAction.ASK, retried.action)

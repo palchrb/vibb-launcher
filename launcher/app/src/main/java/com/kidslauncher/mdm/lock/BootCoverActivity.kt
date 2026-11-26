@@ -468,7 +468,7 @@ class BootCoverActivity : Activity() {
         pad = step.pad
         autoAsksThisProcess = pad.autoAsks
         tapLine?.visibility = if (gate && pad.line) View.VISIBLE else View.GONE
-        val padUp = covered && before.reached
+        val padUp = covered && before.reached && keyguard != KeyguardRead.NOT_SHOWN
         if (event == PadEvent.SILENT && step.action == PadAction.NONE && step.silentInMs != null && !(padUp && coveredLogged)) {
             coveredLogged = padUp
             Log.i(
@@ -487,7 +487,7 @@ class BootCoverActivity : Activity() {
             Log.i(LOG_TAG, "Boot cover: the focus back, the relaunch's pad gone - the line, no ask")
         }
         when (step.action) {
-            PadAction.ASK -> askPad(event, covered, keyguard)
+            PadAction.ASK -> askPad(event, covered, keyguard, padUp)
             PadAction.RETRY_LATER -> {
                 handler.removeCallbacks(padRetry)
                 handler.postDelayed(padRetry, BOOT_PAD_RETRY_MS)
@@ -504,14 +504,18 @@ class BootCoverActivity : Activity() {
 
     /** Step F: ask for Android's PIN pad (the BFU bouncer) - the gate read again first. It only asks; the answer goes
      * back through [padStep], an earlier ask's answer is dropped by its id. */
-    private fun askPad(why: PadEvent, covered: Boolean, keyguard: KeyguardRead) {
+    private fun askPad(why: PadEvent, covered: Boolean, keyguard: KeyguardRead, padUp: Boolean = false) {
         if (!padGate()) return
         val id = ++askId
         coveredLogged = false
         focusLostSinceAsk = false
         // RC3-1: a silence's re-ask says so (no answer since the ask; uncounted, the same ask). §6bv: the keyguard's
         // state and the focus at the ask, so a run tells an ask SystemUI couldn't take from one it took.
-        val what = if (why == PadEvent.SILENT) "no answer, again ${pad.reasks}" else why.name.lowercase()
+        val what = when {
+            why != PadEvent.SILENT -> why.name.lowercase()
+            padUp -> "no answer, again ${pad.reasks}, the pad unanswered ${BOOT_PAD_UP_REASK_MS / 1000} s"
+            else -> "no answer, again ${pad.reasks}"
+        }
         val where = when (keyguard) {
             KeyguardRead.SHOWN -> "keyguard up"
             KeyguardRead.NOT_SHOWN -> "keyguard not up"

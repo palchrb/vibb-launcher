@@ -68,15 +68,21 @@ class DirectBootComponentsTest {
             assertTrue(call, factory.substringAfter("override fun $call(").substringBefore("\n    }\n").contains("beforeCreating(className, DirectBootComponents.Kind.$kind)"))
         }
         assertTrue(factory.contains("ensureUnlockedInit(rulesNow = DirectBootComponents.unlockedRulesBefore(kind))"))
-        // The application: a process started unlocked runs both parts at once; the posted part runs once, in order.
+        // The application's wiring of UnlockedSetupSteps (its order is UnlockedSetupStepsTest's): onCreate unlocked runs
+        // both parts at once, the factory and the unlock broadcast go through ensureUnlockedInit, which schedules the
+        // second part at an idle moment.
         val app = File(src, "com/kidslauncher/mdm/Application.kt").readText()
-        val ensure = app.substringAfter("fun ensureUnlockedInit(rulesNow: Boolean = false) {").substringBefore("\n    }\n")
-        assertTrue(ensure.indexOf("rulesLater = !rulesNow") in 0 until ensure.indexOf("initUnlocked()"))
-        assertTrue(ensure.contains("if (rulesNow) initRules()"))
-        val unlocked = app.substringAfter("private fun initUnlocked() {").substringBefore("\n    }\n")
-        assertTrue(unlocked.indexOf("initRest()") in 0 until unlocked.indexOf("if (rulesLater) {\n            mainHandler.post(rulesStep)\n        } else {\n            initRules()"))
-        val rules = app.substringAfter("private fun initRules() {").substringBefore("\n    }\n")
-        assertTrue(rules.indexOf("if (rulesDone) return\n        rulesDone = true\n        mainHandler.removeCallbacks(rulesStep)") in 0 until rules.indexOf("rulesAndLock()"))
+        assertTrue(app.contains("setupSteps.ensure(rulesNow = true) { initUnlocked() }"))
+        assertTrue(app.contains("fun ensureUnlockedInit(rulesNow: Boolean = false) = setupSteps.ensure(rulesNow) {\n        com.kidslauncher.mdm.calls.CallPolicyStore.refresh(this, ceReadable = true)\n        initUnlocked()"))
+        assertTrue(app.contains("rules = { initRules() },\n        schedule = { step -> scheduleRules(step) },"))
+        val schedule = app.substringAfter("private fun scheduleRules(step: () -> Unit) {").substringBefore("\n    }\n")
+        assertTrue(schedule.contains("android.os.Looper.getMainLooper().queue.addIdleHandler {\n            step()\n            false"))
+        assertTrue(schedule.contains("mainHandler.postDelayed({ step() }, RULES_STEP_LATEST_MS)"))
+        // The unlock broadcast (a process with no component of ours created at the unlock) schedules it too.
+        val deferred = app.substringAfter("private fun deferUntilUnlocked() {").substringBefore("\n    }\n")
+        assertTrue(deferred.contains("override fun onReceive(context: Context?, intent: Intent?) = ensureUnlockedInit()"))
+        assertTrue(deferred.contains("if (com.kidslauncher.mdm.calls.CallPolicyStore.userUnlocked(this)) ensureUnlockedInit()"))
+        assertTrue(app.substringAfter("private fun initRules() {").substringBefore("\n    }\n").contains("rulesAndLock()"))
         val rest = app.substringAfter("private fun initRest() {").substringBefore("\n    }\n")
         val second = app.substringAfter("private fun rulesAndLock() {").substringBefore("\n    }\n")
         assertTrue(rest.contains("ZenRuleRuntime.init(this)"))

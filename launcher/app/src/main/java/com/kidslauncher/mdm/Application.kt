@@ -36,6 +36,9 @@ class Application : android.app.Application() {
         @Volatile
         var instance: Application? = null
             private set
+
+        /** §6bv finding 2: the unlocked setup's second part waits for an idle main thread at most this long. */
+        const val RULES_STEP_LATEST_MS = 2_000L
     }
 
     val apps = MutableLiveData<List<AbstractDetailedAppInfo>>()
@@ -259,14 +262,12 @@ class Application : android.app.Application() {
         // enforcement, kiosk, services, tsnet - waits for the unlock. Nothing here may start lock
         // task or an activity before unlock (the BFU lockout incidents in CLAUDE.md).
         if (com.kidslauncher.mdm.calls.CallPolicyStore.userUnlocked(this)) {
-            initUnlocked()
+            setupSteps.ensure(rulesNow = true) { initUnlocked() }
         } else {
             android.util.Log.i("Application", "Started before the first unlock: call path only")
             deferUntilUnlocked()
         }
     }
-
-    private var unlockedInitDone = false
 
     /** The languages the notification channels were last named in; null until the unlocked setup has named them. */
     private var channelLocales: android.os.LocaleList? = null
@@ -310,8 +311,6 @@ class Application : android.app.Application() {
      * open, Telecom falls back to the preloaded dialer). Now it's reported and the process stays up.
      */
     private fun initUnlocked() {
-        if (unlockedInitDone) return
-        unlockedInitDone = true
         unlockedAtElapsed = android.os.SystemClock.elapsedRealtime()
         unlockReceiver?.let { runCatching { unregisterReceiver(it) } }
         unlockReceiver = null
@@ -360,12 +359,6 @@ class Application : android.app.Application() {
         // Design 59 F3: the main thread's share of the gap between the unlock and our Home (the boot's Home start
         // is posted behind this) - the timing recipe in the design reads this line (with the rules' line below).
         android.util.Log.i("Application", "Unlocked setup took ${android.os.SystemClock.elapsedRealtime() - setupStart} ms")
-        // The rc.5 gate (§6bv finding 2): the rules' step now, or as its own main-thread message ([rulesLater]).
-        if (rulesLater) {
-            mainHandler.post(rulesStep)
-        } else {
-            initRules()
-        }
     }
 
     private val mainHandler by lazy { android.os.Handler(android.os.Looper.getMainLooper()) }
@@ -375,15 +368,32 @@ class Application : android.app.Application() {
      * unlocked setup inside the create of the first component the unlock brought (on a slow Android 16 boot a content
      * provider's install, at 73 % CPU pressure: over 20 s on the main thread, so the always-on VPN service's create and
      * the notification listener's bind, queued meanwhile, timed out - `executing service`, the process killed). There
-     * the part from the time rules' boot re-check on ([initRules]) is its own main-thread message, posted behind what
-     * the system queued during the first part: a service or provider is created with the first part only (the call
-     * rules, the preferences, the channels, the rules' runtimes); an activity or a receiver still has it all before its
-     * create ([ensureUnlockedInit]'s `rulesNow`, [com.kidslauncher.mdm.calls.DirectBootComponents.unlockedRulesBefore]).
-     * A process started unlocked runs it all at once in `onCreate`, as before. Main thread.
+     * the part from the time rules' boot re-check on ([initRules]) waits for the main thread's next idle moment (an
+     * `IdleHandler`: every create and bind the system queued runs first), at most [RULES_STEP_LATEST_MS]: a service or
+     * provider is created with the first part only (the call rules, the preferences, the channels, the rules' runtimes);
+     * an activity or a receiver still has it all before its create ([ensureUnlockedInit]'s `rulesNow`,
+     * [com.kidslauncher.mdm.calls.DirectBootComponents.unlockedRulesBefore]). A process started unlocked runs it all at
+     * once in `onCreate`, as before. The order and the once-only rule are [UnlockedSetupSteps]'. A mitigation: the work
+     * is moved, not made shorter. Main thread.
      */
-    private var rulesLater = false
-    private var rulesDone = false
-    private val rulesStep = Runnable { initRules() }
+    private val setupSteps = UnlockedSetupSteps(
+        rules = { initRules() },
+        schedule = { step -> scheduleRules(step) },
+        failed = { e ->
+            android.util.Log.e("Application", "Unlocked setup failed, continuing", e)
+            com.kidslauncher.mdm.crash.CrashReports.record(this, e)
+        },
+    )
+
+    /** §6bv finding 2: the rules' step at the main thread's next idle moment, and at the latest after
+     * [RULES_STEP_LATEST_MS] when it never idles ([UnlockedSetupSteps.runRules] runs once, whichever comes first). */
+    private fun scheduleRules(step: () -> Unit) {
+        android.os.Looper.getMainLooper().queue.addIdleHandler {
+            step()
+            false
+        }
+        mainHandler.postDelayed({ step() }, RULES_STEP_LATEST_MS)
+    }
 
     /**
      * The unlocked setup's second part, once per process, in the order it always ran in: the time rules' re-check of
@@ -392,9 +402,6 @@ class Application : android.app.Application() {
      * Main thread.
      */
     private fun initRules() {
-        if (rulesDone) return
-        rulesDone = true
-        mainHandler.removeCallbacks(rulesStep)
         val rulesStart = android.os.SystemClock.elapsedRealtime()
         try {
             rulesAndLock()
@@ -411,7 +418,7 @@ class Application : android.app.Application() {
         }
         android.util.Log.i(
             "Application",
-            "Unlocked setup (the rules and the lock${if (rulesLater) ", its own message" else ""}) took " +
+            "Unlocked setup (the rules and the lock${if (setupSteps.rulesScheduled) ", its own message" else ""}) took " +
                 "${android.os.SystemClock.elapsedRealtime() - rulesStart} ms",
         )
     }
@@ -421,16 +428,12 @@ class Application : android.app.Application() {
      * runs [initUnlocked]. Called by KidAppComponentFactory right before a component that isn't
      * direct-boot-aware is created (proof that CE storage is unlocked, even while the user is
      * still "unlocking" and isUserUnlocked() is false), and on ACTION_USER_UNLOCKED. Main thread.
-     * [rulesNow]: the second part ([initRules]) runs now too, else it is posted (§6bv finding 2, [rulesLater]); one
-     * still posted runs now when an activity or a receiver comes before it.
+     * [rulesNow]: the second part ([initRules]) runs now too, else at the next idle moment (§6bv finding 2,
+     * [scheduleRules]); one still waiting runs now when an activity or a receiver comes before it.
      */
-    fun ensureUnlockedInit(rulesNow: Boolean = false) {
-        if (!unlockedInitDone) {
-            com.kidslauncher.mdm.calls.CallPolicyStore.refresh(this, ceReadable = true)
-            rulesLater = !rulesNow
-            initUnlocked()
-        }
-        if (rulesNow) initRules()
+    fun ensureUnlockedInit(rulesNow: Boolean = false) = setupSteps.ensure(rulesNow) {
+        com.kidslauncher.mdm.calls.CallPolicyStore.refresh(this, ceReadable = true)
+        initUnlocked()
     }
 
     /**
