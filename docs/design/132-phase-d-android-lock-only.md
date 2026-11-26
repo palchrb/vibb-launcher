@@ -257,7 +257,9 @@ it's typed)", the security log's old lines.
 
 A managed phone with a Child PIN stored and no Android credential has no lock at all (the glance is off, §2.1). The
 causes: the moments before `set_kid_pin` lands; a legacy PIN; the token not active; Android refusing the PIN; the
-PIN removed on the phone. One rule covers all of them, whatever the cause:
+PIN removed on the phone (once NUMERIC holds only some way outside Vibb One, e.g. a factory-level path - neither
+Settings nor `locksettings clear` can, and the server can't unmanage a phone; §11 G12a/G12b). One rule covers all of
+them, whatever the cause:
 
 - **The server**: a report with `inactive: no_android_pin` (or an older build's `keyguard: own`) is the quiet
   `pin_send` row while a `set_kid_pin` of this enrolment is waiting or in flight (`kid_lock::pin_send`'s Waiting, or
@@ -401,7 +403,7 @@ host it counted). Each launcher step builds and passes `testDebugUnitTest` on it
 ## 11. Emulator gate (Android 14 `compat34`, Android 16 `jelly36`)
 
 **Run 2026-11-26 on 14 and 16** (`docs/testing/emulator.md` §6bt, branch `gate-phase-d`): G1-G7, G9, G11, G12a pass;
-G12b passes by its stand-in (unmanaging is not reachable); G8 and G10 partial (no `am crash` for a Device Owner, no
+G12b passes by its stand-in (unmanaging is not reachable, so the row is corrected to it below); G8 and G10 partial (no `am crash` for a Device Owner, no
 VoIP app); J1 open.
 
 G1, G4 and G8 run under both gesture and 3-button navigation on each version (QA M4;
@@ -422,7 +424,7 @@ the owner come from `jelly36`.
 | G10 | A VoIP ring (`scripts/fake-homeserver.py`), a call and an alarm over the locked glance; the power double-press opens no camera app but Android's secure camera or nothing | x | x |
 | G11 | A legacy row (`UPDATE device_policy SET kid_pin_sealed = NULL`, a fresh launcher with no Android PIN): the start's log line counts it; the PWA's orange "The phone has no PIN" with "Save the Child PIN again." behind the (i), Attention's `lock_off`; saving the PIN again sets Android's | x | - |
 | G12a | The kid tries to remove the PIN (QA H1): Settings › Security › Screen lock offers no "None"/"Swipe"/pattern, and `adb shell locksettings clear --old <Child PIN>` is refused ("New credential doesn't satisfy admin policies", AOSP `LockSettingsShellCommand.runClear`) while `dumpsys device_policy` shows the quality NUMERIC | x | x |
-| G12b | No Android PIN reached another way (code QA M1): make the phone unmanaged from the server (apps and calls both unmanaged - `managed` false), so the next apply writes UNSPECIFIED (`dumpsys device_policy`); then `adb shell locksettings clear --old <Child PIN>` (accepted now); then manage it again. The next apply drops `keyguard_android` and the quality stays UNSPECIFIED: no glance, no dead "Lås opp"; the report `no_android_pin`; the PWA's orange line and `lock_off` (nothing in flight, the newest row answered); Send again restores Android's PIN, NUMERIC again, and the line goes. If unmanaging is not reachable from the PWA, G11's setup (a fresh launcher, a Child PIN and no Android PIN, `set_kid_pin` refused or not sent) shows the same line and `lock_off` | x | x |
+| G12b | No Android PIN reached another way (code QA M1). **Corrected after the gate (§6bt finding 3)**: a managed phone can't be made unmanaged from the server - the PWA has no switch for it, a `NULL` allowlist is filled again by the first-heartbeat bootstrap (`device_api`), and the launcher's `PolicyGate` refuses a fresh policy without an app list on a managed phone - so the quality never drops to UNSPECIFIED and Android's PIN can't be cleared while NUMERIC (G12a). The row is its stand-in: the Child PIN saved while the phone is offline, its `set_kid_pin` answered `refused: failed`, the phone with no Android PIN reporting `no_android_pin`: Android's Swipe screen at a wake (no glance, no dead "Lås opp"); the PWA's orange "Telefonen har ingen PIN" with "Send barne-PIN-en igjen under." behind the (i) and Attention's `lock_off` (nothing in flight, the newest row answered); Send again: `pin set`, NUMERIC, the line and the Attention row go. The launcher's `ownedGone` path (owned, no credential left) is not reached by it: it is reachable only if Android's credential is removed some other way, outside Vibb One - e.g. a factory-level path | x | x |
 
 Jelly Star row (not the emulator):
 
