@@ -166,6 +166,9 @@ class KidVpnService : VpnService() {
         }
         // The decision and the tunnel on the control thread (gate rc.4 finding 1), after onCreate's.
         ctl.post { startCommand(startId, answered) }
+        // Always sticky now (the stop path returned START_NOT_STICKY when it decided here): harmless - the posted
+        // stopSelf(startId) leaves nothing started to restart, and a process killed before it runs comes back with no
+        // intent, where onCreate builds no tunnel while none is wanted and this start's decision stops it again.
         return START_STICKY
     }
 
@@ -193,6 +196,7 @@ class KidVpnService : VpnService() {
      * always-on yet takes it back.
      */
     private fun settleForeground() {
+        if (destroyed) return
         when (state.settle { isAlwaysOn }) {
             VpnSettle.ENTER -> enterForeground()
             VpnSettle.DROP -> {
@@ -317,6 +321,8 @@ class KidVpnService : VpnService() {
                 VpnShape.PASS -> builder.allowFamily(android.system.OsConstants.AF_INET).allowFamily(android.system.OsConstants.AF_INET6)
                 VpnShape.NONE -> return false
             }
+            // Destroyed while the builder was made: no tunnel for a service that is gone (its close is queued).
+            if (destroyed) return false
             val established = builder.establish()
             if (established == null) {
                 // Happens if the user has since revoked VPN permission, or another VPN grabbed it
@@ -523,6 +529,7 @@ class KidVpnService : VpnService() {
      * state comes back and the service tries again by itself (5 s doubling to 5 min,
      * [VpnTunnelState.readLoopEnded]) - the next `apply()`'s start would too, but may be far off. */
     private fun tunnelLost(fd: ParcelFileDescriptor) {
+        if (destroyed) return
         val retryMs = state.readLoopEnded(fd, SystemClock.elapsedRealtime()) ?: return
         try {
             fd.close()

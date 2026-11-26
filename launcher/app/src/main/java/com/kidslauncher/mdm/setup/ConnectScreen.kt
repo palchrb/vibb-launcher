@@ -49,12 +49,13 @@ fun connectUrlRefusal(usable: Boolean, allowed: Boolean): ConnectUrlRefusal? = w
 
 /**
  * Gate rc.4 finding 2: a phone whose preferences were lost still has its adopted key, and once an address on the
- * witnessed server is back (Koble til keeps the typed one, also after a refused code) its signed sync works - the
- * phone is enrolled in all but the flag. A policy accepted on a request the adopted key signed ([keySigned]), from
+ * witnessed server is back (Koble til keeps the typed one, also after a refused code) its sync works again - the
+ * phone is enrolled in all but the flag. A policy the server gave this phone's credential, the adopted key
+ * ([keySigned]: the request went out as `DeviceCredential.Key`; nothing here proves how the server checked it), from
  * the server the witness named before this sync ([witnessUrl], read before the sync rewrites it - [connectUrlAllowed]'s
  * host rule), restores `enrolled`, and Koble til closes. Never without a witnessed address (an unreadable witness names
- * none): another host never restores anything. A lost key signs nothing (no credential, no sync), and a key the
- * server doesn't know gets no policy, so design 129's key-lost path is never crossed.
+ * none): another host never restores anything. A lost key gives no credential (no sync), and a server that refuses
+ * the key gives no policy, so design 129's key-lost path is never crossed.
  */
 fun enrolmentRestoredBySync(
     enrolled: Boolean,

@@ -186,7 +186,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
 
     if (freshPolicy != null) {
         storeAcceptedPolicy(context, freshPolicy)
-        // Gate rc.4 finding 2: the adopted key's signed sync with the witnessed server is the enrolment, back.
+        // Gate rc.4 finding 2: a policy the witnessed server gave the adopted key is the enrolment, back.
         val keySigned = credential is DeviceCredential.Key
         if (com.kidslauncher.mdm.setup.enrolmentRestoredBySync(mdm.enrolled(), keySigned, witnessEnrolledBefore, serverUrl, witnessUrlBefore)) {
             restoreEnrolled()

@@ -6024,7 +6024,7 @@ Findings (none blocks rc.4; no code changed here):
    needs, and a parent may not see why. Repro: §6bp row 12's second half, then watch the relay or `adb logcat -s
    CommandListenerService`. For the owner: keep (the code still re-binds a fresh key), or let a working stream with
    the adopted key restore `enrolled` and close Koble til. **Fixed on branch `launcher-edges-2`**: a policy accepted
-   on a request the adopted key signed, from the witnessed host, restores `enrolled` (row 12b).
+   from the witnessed host for the adopted key restores `enrolled` (row 12b).
 3. **Koble til comes up over the drawer's Settings dialog** (14 and 16, the first try each). After Back, swipe up for
    the drawer and tap its gear: the gate's dialog opens, then Koble til is started over it (the drawer's close is a new
    resume of Home); Back shows the dialog underneath. The documented way to the Tailscale key ("Back, the drawer's

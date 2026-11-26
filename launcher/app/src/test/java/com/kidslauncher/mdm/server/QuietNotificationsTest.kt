@@ -190,6 +190,10 @@ class QuietNotificationsTest {
         assertEquals("if (destroyed) return", statements(body(vpn, "private fun startCommand("))[0])
         assertEquals("if (state.stopped || destroyed) return false", statements(body(vpn, "private fun startVpn()"))[0])
         assertEquals("if (state.stopped || destroyed) return", statements(body(vpn, "private fun reshape()"))[0])
+        assertEquals("if (destroyed) return", statements(body(vpn, "private fun settleForeground()"))[0])
+        val build = statements(body(vpn, "private fun establish("))
+        assertEquals(build.indexOf("if (destroyed) return false") + 1, build.indexOf("val established = builder.establish()"))
+        assertTrue(build.indexOf("if (destroyed) return false") > 0)
     }
 
     @Test
@@ -228,7 +232,7 @@ class QuietNotificationsTest {
         assertTrue("if (length == 0) continue" in loop)
         // The loss goes through the state first, then settles and schedules the retry.
         val lost = statements(body(vpn, "private fun tunnelLost("))
-        assertEquals("val retryMs = state.readLoopEnded(fd, SystemClock.elapsedRealtime()) ?: return", lost[0])
+        assertEquals(listOf("if (destroyed) return", "val retryMs = state.readLoopEnded(fd, SystemClock.elapsedRealtime()) ?: return"), lost.take(2))
         assertTrue("settleForeground()" in lost)
         assertTrue("scheduleRetry(retryMs)" in lost)
         val retry = statements(body(vpn, "private fun retryTunnel()"))
