@@ -476,7 +476,8 @@ class SourceScanTest {
      * Design 26c step 5b (§7.1, qa-26c-step5a-code L8): the web player is made only by the service, with a log that is
      * a debug build's only - or, since 2026-11-01, the parent's diagnostic log's while it runs (`spotifyDiagLogOn`) - and
      * writes the renderer's fixed words as they are; the outcome file is the store's alone and holds a word. (The
-     * tile's and the player's "Spotify" went in step 8: see the next test.)
+     * tile's and the player's "Spotify" went in step 8: see the next test.) Since 2026-11-26 a few rare lines are always
+     * on (`spotifyNote`): the renderer hands over a `SpotifyNote` of numbers and yes/no, never a string.
      */
     @Test
     fun `5b - the web player's log is debug-only or the diagnostic log's, it is made by the service alone, and the outcome file holds a word`() {
@@ -486,12 +487,16 @@ class SourceScanTest {
         val logs = service.lines().filter { it.contains("Log.") }
         assertEquals(
             listOf(
-                "if (e !is android.app.ForegroundServiceStartNotAllowedException) Log.w(TAG, \"No foreground hold: \${e.javaClass.simpleName}\")",
+                "Log.i(TAG, \"No foreground hold: a start from the background not allowed\")",
+                "Log.w(TAG, \"No foreground hold: \${e.javaClass.simpleName}\")",
                 "if (spotifyDiagLogOn(BuildConfig.DEBUG, PlayerHub.spotifyDiagUntilS, System.currentTimeMillis())) Log.d(SPOTIFY_LOG_TAG, message)",
+                // 2026-11-26: the always-on lines, built from a note's numbers and yes/no only - never a string of the renderer's
+                "Log.i(SPOTIFY_LOG_TAG, spotifyNoteLine(note, importance, serviceForeground = foregroundServiceType != 0))",
             ),
             logs.map { it.trim() },
         )
         assertTrue(service.contains("log = ::spotifyLog,"))
+        assertTrue(service.contains("note = ::spotifyNote,"))
         // the outcome's file: written by the store only, read by the report through the store's name
         val files = sources("src/main/java").filter { code(it).contains("spotify_state.json") }.map { it.name }
         assertEquals(listOf("Store.kt"), files)

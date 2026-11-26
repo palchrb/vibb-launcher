@@ -1,5 +1,6 @@
 package me.vibb.music.playback
 
+import android.app.ActivityManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -138,7 +139,9 @@ import me.vibb.music.logic.storedPlan
 import me.vibb.music.logic.storedRowAwaitsBook
 import me.vibb.music.logic.seekGate
 import me.vibb.music.logic.smallArtMissing
+import me.vibb.music.logic.SpotifyNote
 import me.vibb.music.logic.spotifyDiagLogOn
+import me.vibb.music.logic.spotifyNoteLine
 import me.vibb.music.logic.spotifyInCall
 import me.vibb.music.logic.spotifyNetworkLine
 import me.vibb.music.logic.sourceId
@@ -505,7 +508,12 @@ class PlaybackService : MediaSessionService() {
         startForeground(MEDIA_NOTIFICATION_ID, mediaNotificationUp() ?: holdPlaceholder(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
         true
     } catch (e: Exception) {
-        if (e !is android.app.ForegroundServiceStartNotAllowedException) Log.w(TAG, "No foreground hold: ${e.javaClass.simpleName}")
+        // Android's refusal of a start from the background: a fixed line since 2026-11-26 (it was silent), always on
+        if (e is android.app.ForegroundServiceStartNotAllowedException) {
+            Log.i(TAG, "No foreground hold: a start from the background not allowed")
+        } else {
+            Log.w(TAG, "No foreground hold: ${e.javaClass.simpleName}")
+        }
         false
     }
 
@@ -1580,6 +1588,7 @@ class PlaybackService : MediaSessionService() {
             scope.launch(writer) { if (store.recordSpotifyOutcome(word, System.currentTimeMillis())) reportSpotifyWord() }
         },
         log = ::spotifyLog,
+        note = ::spotifyNote,
     ).apply { inCall = spotifyInCall(launcherInCall, modeInCall) }.also { spotify = it }
 
     /** The report with the web player's new word, to the launcher (§6l A F7; a failure waits for the next sync's). */
@@ -1601,6 +1610,16 @@ class PlaybackService : MediaSessionService() {
      */
     private fun spotifyLog(message: String) {
         if (spotifyDiagLogOn(BuildConfig.DEBUG, PlayerHub.spotifyDiagUntilS, System.currentTimeMillis())) Log.d(SPOTIFY_LOG_TAG, message)
+    }
+
+    /**
+     * The web player's always-on lines (2026-11-26, the first play after the page's idle close that sat paused): at info,
+     * a release build's too, without the diagnostic log - rare (a start, a pause of ours we didn't ask for), and built
+     * here from numbers and yes/no only ([SpotifyNote]): never a string of the renderer's, so never a secret (§7.1).
+     */
+    private fun spotifyNote(note: SpotifyNote) {
+        val importance = ActivityManager.RunningAppProcessInfo().also { ActivityManager.getMyMemoryState(it) }.importance
+        Log.i(SPOTIFY_LOG_TAG, spotifyNoteLine(note, importance, serviceForeground = foregroundServiceType != 0))
     }
 
     /**

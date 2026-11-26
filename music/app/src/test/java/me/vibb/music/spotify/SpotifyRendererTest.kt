@@ -22,11 +22,15 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
 import me.vibb.music.bridge.TokenResult
 import me.vibb.music.logic.Repeat
+import me.vibb.music.logic.SPOTIFY_FIRST_PAUSE_LOOK_MS
+import me.vibb.music.logic.SPOTIFY_FIRST_PAUSE_MS
+import me.vibb.music.logic.SPOTIFY_HOST_IDLE_MS
 import me.vibb.music.logic.SPOTIFY_OUTPUT_STATE_MS
 import me.vibb.music.logic.SPOTIFY_STATE_GAP_MS
 import me.vibb.music.logic.SPOTIFY_STEP_COALESCE_MS
 import me.vibb.music.logic.SpotifyContextTrack
 import me.vibb.music.logic.SpotifyLine
+import me.vibb.music.logic.SpotifyNote
 import me.vibb.music.model.Entry
 import me.vibb.music.model.PlayItem
 import me.vibb.music.model.Source
@@ -144,6 +148,25 @@ class SpotifyRendererTest {
         override fun log(message: String) {
             log += message
         }
+
+        /** The always-on lines (2026-11-26). */
+        val notes = mutableListOf<SpotifyNote>()
+
+        override fun note(note: SpotifyNote) {
+            notes += note
+        }
+
+        /** Who has the audio (code QA M1): another player or a recording since [markAudio], the audio mode. */
+        var otherAudio = false
+        var modeNormal = true
+        var marks = 0
+
+        override fun markAudio() {
+            marks++
+        }
+
+        override fun otherAudio(): Boolean = otherAudio
+        override fun audioModeNormal(): Boolean = modeNormal
 
         /** `spotify_context.json` (§5.9): the live track per entry key, as the store keeps it. */
         val contexts = mutableMapOf<String, SpotifyContextTrack>()
@@ -886,7 +909,9 @@ class SpotifyRendererTest {
         }
         events.clear()
         // Chromium's media session lost the focus to another app (or a call): the page's audio paused, not by us
+        ports.otherAudio = true // another player took the audio: inside the first play's window the look sees it (code QA M1)
         post(state(0, 3_000, paused = true))
+        advance(SPOTIFY_FIRST_PAUSE_LOOK_MS) // the look: the pause stands
         assertFalse(r.showsPlaying)
         assertFalse(r.spec().playWhenReady)
         assertTrue("a fault, as the phone's player's focus loss", events.contains(RendererEvent.Paused(PauseCause.FAULT)))
@@ -899,9 +924,11 @@ class SpotifyRendererTest {
     @Test
     fun `a transient focus loss - Chromium pauses the page and plays it again, the player follows both`() = runBlocking {
         val r = playing()
+        ports.otherAudio = true // another player took the audio: inside the first play's window the look sees it (code QA M1)
         post(state(0, 5_000))
         events.clear()
         post(state(0, 6_000, paused = true)) // a notification's transient loss: Chromium suspends the page's audio
+        advance(SPOTIFY_FIRST_PAUSE_LOOK_MS) // the look: the pause stands
         assertFalse(r.showsPlaying)
         assertTrue(events.contains(RendererEvent.Paused(PauseCause.FAULT)))
         events.clear()
@@ -915,10 +942,163 @@ class SpotifyRendererTest {
         r.release()
     }
 
+    // --- 2026-11-26: a new page's first play paused not by us (the transfer's play: false), code QA M1's look ---
+
+    private fun resumes() = page.calls.count { it == "vibb.resume()" }
+
+    @Test
+    fun `2026-11-26 - a new page's first play paused not by us is looked at, then resumed once - a later pause or start stands`() = runBlocking {
+        val r = playing()
+        assertEquals("the start's always-on line", SpotifyNote.Start, ports.notes.single())
+        assertTrue("the audio playing with ours is remembered", ports.marks > 0)
+        events.clear()
+        advance(1_000)
+        post(state(0, 1_000, paused = true)) // the new device's transfer (play: false) landing after our play call
+        assertEquals("nothing at once: the look", 0, resumes())
+        assertTrue("shown playing meanwhile", r.showsPlaying)
+        advance(SPOTIFY_FIRST_PAUSE_LOOK_MS)
+        assertEquals("one resume through the page", 1, resumes())
+        assertTrue(r.showsPlaying)
+        assertFalse(events.contains(RendererEvent.Paused(PauseCause.FAULT)))
+        assertEquals(SpotifyNote.UnaskedPause(1_000, firstPlayOfPage = true, transferred = false, resumed = true), ports.notes.last())
+        post(state(0, 1_200))
+        assertTrue(r.showsPlaying)
+        advance(1_000)
+        post(state(0, 2_200, paused = true)) // once only: the second is the WebView's pause, as before
+        advance(SPOTIFY_FIRST_PAUSE_LOOK_MS)
+        assertEquals(1, resumes())
+        assertFalse(r.showsPlaying)
+        assertTrue(events.contains(RendererEvent.Paused(PauseCause.FAULT)))
+        assertEquals(SpotifyNote.UnaskedPause(2_750, firstPlayOfPage = true, transferred = false, resumed = false), ports.notes.last())
+        // a later start on the same page: its pause is the WebView's
+        r.seekTo(1, 0)
+        r.play() // another item: a fresh start once the step's 300 ms are over
+        advance(SPOTIFY_STEP_COALESCE_MS)
+        assertEquals(2, api.plays().size)
+        post(state(1, 0))
+        assertTrue(r.showsPlaying)
+        post(state(1, 500, paused = true))
+        assertFalse(r.showsPlaying)
+        advance(SPOTIFY_FIRST_PAUSE_LOOK_MS)
+        assertEquals(1, resumes())
+        assertEquals(false, (ports.notes.last() as SpotifyNote.UnaskedPause).firstPlayOfPage)
+        r.release()
+    }
+
+    @Test
+    fun `code QA M1 - a ring inside the window - the call rule's pause lands on a playing player, no resume of ours`() = runBlocking {
+        val r = playing()
+        advance(1_000)
+        post(state(0, 1_000, paused = true)) // the ring's focus loss reaches the page first
+        advance(150)
+        callStep(r, inCall = true) // the launcher's CALL_HOLD 60-220 ms later: playing, so the call rule pauses
+        assertTrue(call.pausedByCall)
+        assertEquals("vibb.pause()", page.calls.last())
+        advance(SPOTIFY_FIRST_PAUSE_LOOK_MS)
+        assertEquals("the look ended with the pause", 0, resumes())
+        assertFalse(r.showsPlaying)
+        callStep(r, inCall = false) // the call's end: the call rule plays again what it paused
+        assertEquals(1, resumes())
+        assertTrue(r.showsPlaying)
+        r.release()
+    }
+
+    @Test
+    fun `code QA M1 - another player or the audio mode at the look's end - the pause stands as the WebView's`() = runBlocking {
+        val r = playing()
+        advance(1_000)
+        ports.otherAudio = true // a video app started: it took the focus
+        post(state(0, 1_000, paused = true))
+        assertTrue(r.showsPlaying)
+        advance(SPOTIFY_FIRST_PAUSE_LOOK_MS)
+        assertEquals(0, resumes())
+        assertFalse(r.showsPlaying)
+        assertTrue("held by the page, as before", r.heldByPage)
+        assertEquals(SpotifyNote.UnaskedPause(1_000, firstPlayOfPage = true, transferred = false, resumed = false), ports.notes.last())
+        r.release()
+    }
+
+    @Test
+    fun `code QA M1 - the WebView playing it again by itself during the look - nothing sent, still playing`() = runBlocking {
+        val r = playing()
+        advance(1_000)
+        post(state(0, 1_000, paused = true))
+        advance(300)
+        post(state(0, 1_000)) // a transient loss over
+        advance(SPOTIFY_FIRST_PAUSE_LOOK_MS)
+        assertEquals(0, resumes())
+        assertTrue(r.showsPlaying)
+        r.release()
+    }
+
+    @Test
+    fun `code QA L4 - the kid's pause in the window, then an unasked pause - no resume of ours`() = runBlocking {
+        val r = playing()
+        advance(500)
+        r.pause()
+        post(state(0, 500, paused = true))
+        r.play() // the kid's own resume through the page
+        assertEquals(1, resumes())
+        post(state(0, 500))
+        advance(500)
+        post(state(0, 1_000, paused = true))
+        assertFalse("no look: a pause and a resume of ours came", r.showsPlaying)
+        advance(SPOTIFY_FIRST_PAUSE_LOOK_MS)
+        assertEquals(1, resumes())
+        r.release()
+    }
+
+    @Test
+    fun `code QA L4 - a new page after the idle close gets the look again`() = runBlocking {
+        val r = playing()
+        advance(1_000)
+        r.pause()
+        post(state(0, 1_000, paused = true))
+        advance(SPOTIFY_HOST_IDLE_MS + 1_000)
+        assertFalse("closed after 5 idle minutes", page.alive)
+        r.play() // a fresh page, a new device
+        advance(0)
+        assertEquals(2, page.opens)
+        post(state(0, 1_100))
+        assertTrue(r.showsPlaying)
+        advance(1_000)
+        post(state(0, 2_100, paused = true))
+        advance(SPOTIFY_FIRST_PAUSE_LOOK_MS)
+        assertEquals(1, resumes())
+        assertTrue(r.showsPlaying)
+        r.release()
+    }
+
+    @Test
+    fun `code QA L4 - in a call already - no look, the pause as before`() = runBlocking {
+        val r = playing()
+        r.inCall = true
+        advance(1_000)
+        post(state(0, 1_000, paused = true))
+        assertFalse(r.showsPlaying)
+        advance(SPOTIFY_FIRST_PAUSE_LOOK_MS)
+        assertEquals(0, resumes())
+        r.release()
+    }
+
+    @Test
+    fun `code QA L4 - the time rule says no - no look, the pause as before`() = runBlocking {
+        val r = playing()
+        ports.mayPlay = false
+        advance(1_000)
+        post(state(0, 1_000, paused = true))
+        assertFalse(r.showsPlaying)
+        advance(SPOTIFY_FIRST_PAUSE_LOOK_MS)
+        assertEquals(0, resumes())
+        r.release()
+    }
+
     @Test
     fun `a resume by itself is paused at once while the app is suspended or another renderer plays`() = runBlocking {
         val r = playing()
+        ports.otherAudio = true // another player took the audio: inside the first play's window the look sees it (code QA M1)
         post(state(0, 6_000, paused = true))
+        advance(SPOTIFY_FIRST_PAUSE_LOOK_MS) // the look: the pause stands
         ports.mayPlay = false
         post(state(0, 6_000))
         assertFalse("the launcher's time rule: nothing plays", r.showsPlaying)
@@ -2306,8 +2486,10 @@ class SpotifyRendererTest {
     @Test
     fun `H1 - the kid's pause while an alarm holds the page paused sticks - Chromium's resume is paused at once`() = runBlocking {
         val r = playing()
+        ports.otherAudio = true // another player took the audio: inside the first play's window the look sees it (code QA M1)
         post(state(0, 5_000))
         post(state(0, 6_000, paused = true)) // the alarm: Chromium suspends the page's audio
+        advance(SPOTIFY_FIRST_PAUSE_LOOK_MS) // the look: the pause stands
         assertTrue(r.heldByPage)
         r.pause() // the kid's pause during the ring
         settle()
@@ -2345,8 +2527,10 @@ class SpotifyRendererTest {
     @Test
     fun `M1 - held by the WebView the page outlives the idle close, a pause of ours closes it 5 minutes later`() = runBlocking {
         val r = playing()
+        ports.modeNormal = false // the ring: inside the first play's window the look sees the audio mode (code QA M1)
         post(state(0, 5_000))
         post(state(0, 6_000, paused = true)) // a long call's ring
+        advance(SPOTIFY_FIRST_PAUSE_LOOK_MS) // the look: the pause stands
         advance(6 * 60_000L)
         assertTrue("held: the page stays for Chromium's resume", page.alive)
         post(state(0, 6_000)) // Chromium plays on after the call
@@ -2547,8 +2731,10 @@ class SpotifyRendererTest {
     @Test
     fun `N3 - the session never says playing while the page holds it paused`() = runBlocking {
         val r = playing()
+        ports.modeNormal = false // the ring: inside the first play's window the look sees the audio mode (code QA M1)
         post(state(0, 5_000))
         post(state(0, 6_000, paused = true)) // the ring's focus loss reaches the page first
+        advance(SPOTIFY_FIRST_PAUSE_LOOK_MS) // the look: the pause stands
         assertTrue(r.heldByPage)
         assertFalse(r.showsPlaying)
         assertFalse("the session follows the player: paused", r.spec().playWhenReady)
@@ -2566,6 +2752,7 @@ class SpotifyRendererTest {
         assertTrue("long enough for the call's word after the ring (60-220 ms)", held in 1_000..5_000)
         // a video app takes the audio for good: the page held, then a call 10 s later
         val r = playing()
+        ports.otherAudio = true // another player took the audio: inside the first play's window the look sees it (code QA M1)
         post(state(0, 5_000))
         post(state(0, 6_000, paused = true))
         advance(10_000)

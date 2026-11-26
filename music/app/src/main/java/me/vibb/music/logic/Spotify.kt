@@ -296,6 +296,92 @@ const val SPOTIFY_HELD_RECENT_MS = 5_000L
 /** Whether a hold that began [heldForMs] ago ([held]) is the call rule's to count as playing ([SPOTIFY_HELD_RECENT_MS]). */
 fun spotifyHeldRecently(held: Boolean, heldForMs: Long): Boolean = held && heldForMs in 0 until SPOTIFY_HELD_RECENT_MS
 
+// --- the first play's unasked pause (2026-11-26) -------------------------------------------------------
+
+/**
+ * How soon after a new page's first playing state of ours a pause nobody asked for is looked at
+ * ([spotifyFirstPauseLook]). The owner's Jelly Star (Android 16, 2026-11-26): the first play after the page's idle close
+ * started at its place and then sat paused until play was pressed again; later plays were fine. Likely cause: the new
+ * device's transfer (`play: false`, the 404 retry in `SpotifyApi.start`) applied by Spotify after our play call.
+ */
+const val SPOTIFY_FIRST_PAUSE_MS = 5_000L
+
+/**
+ * How long such a pause is looked at before the one resume (code QA M1): the player keeps showing playing meanwhile, so
+ * a ring's pause (which reaches the page 60-220 ms before the launcher's `CALL_HOLD`) is the call rule's to pause, and
+ * an alarm, the assistant or another app's player has started by then.
+ */
+const val SPOTIFY_FIRST_PAUSE_LOOK_MS = 750L
+
+/**
+ * Whether a pause of our track the web player didn't ask for (the tracker's `Paused(ours = false)`, while the kid wants
+ * it playing) is looked at for one resume, [SPOTIFY_FIRST_PAUSE_LOOK_MS] later ([spotifyFirstPauseResumes]): only on a
+ * page's first play ([firstPlayOfPage]: a new page, so a new device), less than [SPOTIFY_FIRST_PAUSE_MS] after its first
+ * playing state ([sinceStartedMs]), no pause asked ([askedPaused]), the one look not used yet and no pause or resume of
+ * ours since the start ([used]), and the start's own gates open ([gatesOpen]: not detached, the time rule, no call, the
+ * network gate). Otherwise the pause is what it was before: a fault, the WebView's hold. (No start or step of ours is in
+ * flight here: the renderer reads no pause while one runs.)
+ */
+fun spotifyFirstPauseLook(
+    ours: Boolean,
+    firstPlayOfPage: Boolean,
+    sinceStartedMs: Long,
+    askedPaused: Boolean,
+    used: Boolean,
+    gatesOpen: Boolean,
+): Boolean = !ours && firstPlayOfPage && sinceStartedMs in 0 until SPOTIFY_FIRST_PAUSE_MS && !askedPaused && !used && gatesOpen
+
+/**
+ * After the look ([SPOTIFY_FIRST_PAUSE_LOOK_MS]): ONE resume through the SDK only while the kid still wants it playing
+ * ([wanted]), our track is still paused ([stillPaused]: the WebView hasn't played it again by itself), no call
+ * ([inCall]), the audio mode is `MODE_NORMAL` ([modeNormal]: no ring, call or VoIP), no other audio started since our
+ * track played ([otherAudio]: another app's player, an alarm, the assistant, navigation, a recording such as voice
+ * typing - any of them took the focus, and a resume would take it back) and the gates are open ([gatesOpen]).
+ * Otherwise the pause stands as the WebView's (a fault, its hold).
+ */
+fun spotifyFirstPauseResumes(
+    wanted: Boolean,
+    stillPaused: Boolean,
+    inCall: Boolean,
+    modeNormal: Boolean,
+    otherAudio: Boolean,
+    gatesOpen: Boolean,
+): Boolean = wanted && stillPaused && !inCall && modeNormal && !otherAudio && gatesOpen
+
+/**
+ * The web player's always-on log lines (2026-11-26; `VibbSpotify` at info, a release build's too, without the parent's
+ * diagnostic log): rare, and only numbers and yes/no - never a string of the renderer's, so no token, account or device
+ * id, uri, title or state can reach them (26c §7.1). The service writes them ([spotifyNoteLine]).
+ */
+sealed interface SpotifyNote {
+    /** A start goes out (the renderer's `begin`): the service adds the app's importance and its own foreground. */
+    data object Start : SpotifyNote
+
+    /**
+     * A pause of our track we didn't ask for, [afterMs] after the start's first playing state was handled (null: none
+     * yet); [resumed] whether the one resume went out (after the look, when there was one).
+     */
+    data class UnaskedPause(val afterMs: Long?, val firstPlayOfPage: Boolean, val transferred: Boolean, val resumed: Boolean) : SpotifyNote
+}
+
+/**
+ * [note]'s line; for [SpotifyNote.Start] with the app's [importance] (`ActivityManager.getMyMemoryState`'s
+ * `RunningAppProcessInfo.importance`) and whether the playback service is in the foreground ([serviceForeground]).
+ */
+fun spotifyNoteLine(note: SpotifyNote, importance: Int, serviceForeground: Boolean): String = when (note) {
+    SpotifyNote.Start -> "spotify: a start - the app ${importanceWord(importance)}, the playback service in the foreground=$serviceForeground"
+    is SpotifyNote.UnaskedPause ->
+        "spotify: our track paused not by us ${note.afterMs ?: "?"} ms after it started " +
+            "(first play of page=${note.firstPlayOfPage}, transferred=${note.transferred}, resumed=${note.resumed})"
+}
+
+/** `RunningAppProcessInfo.importance` in words: 100 `IMPORTANCE_FOREGROUND` (the app on top), 125 a foreground service. */
+private fun importanceWord(importance: Int): String = when (importance) {
+    100 -> "top"
+    125 -> "foreground service"
+    else -> "other ($importance)"
+}
+
 /**
  * Whether the web player hears a call (N3): the launcher's (`CALL_HOLD` .. `CALL_RELEASE`, sent at every call's begin while
  * the music app has a session - "a call began") or the audio mode's (a ringing or active system call, `callMode`: the

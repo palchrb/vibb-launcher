@@ -73,6 +73,11 @@ import me.vibb.music.logic.SPOTIFY_RECYCLE_PROOF_MS
 import me.vibb.music.logic.SPOTIFY_RECYCLE_WINDOW_MS
 import me.vibb.music.logic.spotifySelfResumeShown
 import me.vibb.music.logic.spotifyHeldRecently
+import me.vibb.music.logic.SpotifyNote
+import me.vibb.music.logic.SPOTIFY_FIRST_PAUSE_LOOK_MS
+import me.vibb.music.logic.SPOTIFY_FIRST_PAUSE_MS
+import me.vibb.music.logic.spotifyFirstPauseLook
+import me.vibb.music.logic.spotifyFirstPauseResumes
 import me.vibb.music.media.MediaCache
 import me.vibb.music.playback.Active
 import me.vibb.music.playback.Output
@@ -178,6 +183,21 @@ internal interface SpotifyPorts {
 
     /** The debug log: fixed words, never a token, a uri list, a state or the SDK's message in a release. */
     fun log(message: String)
+
+    /** The always-on log's rare lines (2026-11-26, a release's too): numbers and yes/no only ([SpotifyNote]). */
+    fun note(note: SpotifyNote)
+
+    /**
+     * The audio playing now, ours among it, is remembered (2026-11-26, code QA M1): [otherAudio] later tells a player or
+     * a recording that started since.
+     */
+    fun markAudio()
+
+    /** Another player or a recording active now that [markAudio] didn't see (another app took the audio focus). */
+    fun otherAudio(): Boolean
+
+    /** The audio mode is `MODE_NORMAL`: no ring, call or VoIP call. */
+    fun audioModeNormal(): Boolean
 
     /** Context mode (§5.9): the live track stored for the entry [entryKey] (`spotify_context.json`), or null. */
     fun contextTrack(entryKey: String): SpotifyContextTrack?
@@ -401,6 +421,9 @@ internal class SpotifyRenderer(
 
         /** Context mode: the offset the play call carried (a playlist's live track), or null. */
         var offset: String? = null
+
+        /** The play call's 404 moved the playback to the device first (`SpotifyApi.start`'s transfer, then its wait). */
+        var transferred = false
         var job: Job? = null
     }
 
@@ -455,6 +478,26 @@ internal class SpotifyRenderer(
      * old player - a new process didn't help, R2 leaves it.
      */
     private var pageFresh = false
+
+    // --- the first play's unasked pause (2026-11-26, `spotifyFirstPauseLook`, `spotifyFirstPauseResumes`) ---
+
+    /** Whether the page up now has had a start's first playing state of ours (a new page: false until then). */
+    private var pageStarted = false
+
+    /** When the current start's first playing state was handled (the elapsed clock), or null before it. */
+    private var startedAt: Long? = null
+
+    /** Whether that first playing state was the page's first ([pageStarted] false before it). */
+    private var startedFirstOfPage = false
+
+    /** Whether the start that played transferred the playback to the device first (the play call's 404). */
+    private var startTransferred = false
+
+    /** The one look used, or a pause or resume of ours came since the start's first playing state. */
+    private var firstPauseUsed = false
+
+    /** The look at an unasked pause, [SPOTIFY_FIRST_PAUSE_LOOK_MS] long (code QA M1); the answer cancels it. */
+    private var firstPauseTimer: (() -> Unit)? = null
 
     /** A recycle happened and its player hasn't played [SPOTIFY_RECYCLE_PROOF_MS] on end yet: no second one (L1, L2). */
     private var recycleUnproven = false
@@ -869,6 +912,7 @@ internal class SpotifyRenderer(
         saveNow(force = true)
         supersede()
         for (t in listOf(stepTimer, firstStateTimer, gapTimer, idleTimer, prefetchTimer, lookTimer, fadeTimer, atEndTimer, outputTimer)) t?.invoke()
+        cancelFirstPauseLook()
         outputTimer = null
         atEndTimer = null
         atEnd = null
@@ -1046,6 +1090,7 @@ internal class SpotifyRenderer(
         ports.networkLine()?.let { return refuse(it) }
         heldByPage = false
         askedPaused = false
+        firstPauseUsed = true
         ports.log("spotify: a resume through the page (no play call)")
         sdk("resume")
         tracker.resumeSent()
@@ -1099,6 +1144,9 @@ internal class SpotifyRenderer(
         stepAfterStart = r.step
         val s = Start(r, ports.now() + SPOTIFY_START_BUDGET_MS)
         ports.log("spotify: a start from item ${r.index} at ${r.posMs / 1000} s (${if (host.alive) "the page is up" else "a new page"}, ${if (deviceId != null) "its device known" else "no device yet"})")
+        ports.note(SpotifyNote.Start)
+        startedAt = null
+        cancelFirstPauseLook()
         start = s
         sdkProblem = null
         pwr = true
@@ -1194,7 +1242,10 @@ internal class SpotifyRenderer(
                 if (renew) tokens.invalidate()
                 tokens.get(s.deadline - SPOTIFY_CALL_MS)
             },
-            awaitDevice = { awaitDevice(it) },
+            awaitDevice = {
+                s.transferred = true
+                awaitDevice(it)
+            },
             sleep = { sleep(it) },
             settings = settings,
         )
@@ -1256,6 +1307,7 @@ internal class SpotifyRenderer(
             s.superseded -> ports.log("spotify: a start replaced by a newer play")
             end is StartEnd.Called && end.result == StartResult.Sent -> {
                 s.settings?.let { lastSet = it }
+                startTransferred = s.transferred
                 ports.log(
                     if (contextUri != null) {
                         "spotify: the play call went out (the context${if (s.offset != null) " from its live track at ${s.posMs / 1000} s" else ""})"
@@ -1310,6 +1362,7 @@ internal class SpotifyRenderer(
             clearing?.await()
             deviceId = null
             pageFresh = true // until it plays (code QA L1: a dropped start's page stays fresh for the next start)
+            pageStarted = false
             host.open()
         }
         deviceId?.let { return it }
@@ -1358,6 +1411,7 @@ internal class SpotifyRenderer(
     private fun fail(p: SpotifyProblem) {
         ports.log("spotify: stopped - ${p.name}")
         heldByPage = false
+        cancelFirstPauseLook()
         val ours = tracker.mode == Mode.OURS || tracker.mode == Mode.STARTING
         if (ours && host.alive) sdk("pause") // our own device only: never a pause of the account's other player
         if (ours) tracker.lost()
@@ -1382,6 +1436,9 @@ internal class SpotifyRenderer(
 
     private fun pause(cause: PauseCause) {
         playingSince = null
+        // a pause of ours (the kid's, the call rule's, a detach, a suspension) ends the look: no resume over it
+        firstPauseUsed = true
+        cancelFirstPauseLook()
         val s = start
         if (s != null) {
             if (s.calling) s.cancelled = true else dropStart(s)
@@ -1553,6 +1610,9 @@ internal class SpotifyRenderer(
             if (m.playing) {
                 lastOursAt = m.atMs
                 pageFresh = false
+                // the first play's window: what plays while ours plays is ours (its stream may open just after the
+                // first state) - the look's [SpotifyPorts.otherAudio] tells a newer player from it
+                if (startedFirstOfPage && !firstPauseUsed && startedAt?.let { m.atMs - it < SPOTIFY_FIRST_PAUSE_MS } == true) ports.markAudio()
                 // a recycled player that plays on end for a while is healthy again: a later silence may recycle it (L2)
                 val since = playingSince ?: m.atMs.also { playingSince = it }
                 if (recycleUnproven && m.atMs - since >= SPOTIFY_RECYCLE_PROOF_MS) recycleUnproven = false
@@ -1588,15 +1648,20 @@ internal class SpotifyRenderer(
                     if (e.auto) atEndBelt()
                 }
                 is Event.Unplayable -> unplayable(e.index, e.stop)
-                is Event.Paused -> if (pwr) {
+                is Event.Paused -> if (pwr && !(!e.ours && looksAtUnaskedPause())) {
                     // not ours: the WebView's media session lost the audio focus (another app, a call, a notification's
                     // transient loss - §5.6, F2), or the account's other controls paused it - a fault, as the phone's
-                    // own player's focus loss (vibb's resume overlap when it plays again)
+                    // own player's focus loss (vibb's resume overlap when it plays again); a new page's first play
+                    // paused that soon is looked at first (2026-11-26, looksAtUnaskedPause)
                     pwr = false
                     pauseCause = spotifyPauseCause(e.ours)
                     heldByPage = !e.ours // the intent kept across the WebView's pause (M1)
                 }
-                Event.Resumed -> if (!pwr) {
+                Event.Resumed -> if (firstPauseTimer != null) {
+                    // the WebView played it again by itself during the look (a transient loss over): nothing to resume
+                    cancelFirstPauseLook()
+                    noteFirstPause(resumed = false)
+                } else if (!pwr) {
                     // a step the kid sent while paused that Spotify played (qa-26c-step6-code L1): paused, it only moves -
                     // as on every other player of the app; detached (M1): the session shows another renderer
                     val pausedStep = stepWhilePausedAt?.let { ports.now() - it <= PAUSED_STEP_MS } == true
@@ -1719,10 +1784,93 @@ internal class SpotifyRenderer(
         ports.record(name)
     }
 
+    /** The start's gates, as a start and a resume check them: attached, the time rule, no call, the network gate. */
+    private fun gatesOpen(): Boolean = !detached && ports.mayPlay() && !inCall && ports.networkLine() == null
+
+    /** When the unasked pause under the look came, after the start's first playing state (the always-on line's ms). */
+    private var firstPauseSince: Long? = null
+
+    /**
+     * A pause of our track we didn't ask for while the kid wants it playing (2026-11-26). On a new page's first play
+     * within [SPOTIFY_FIRST_PAUSE_MS] of its first playing state ([spotifyFirstPauseLook]) it is looked at for
+     * [SPOTIFY_FIRST_PAUSE_LOOK_MS] (code QA M1) - the player keeps showing playing meanwhile, so the call rule's pause
+     * of a ring lands on a playing player - and [decideFirstPause] makes the one resume or lets the pause stand. True
+     * while it is looked at; else the always-on line now and the pause as before.
+     */
+    private fun looksAtUnaskedPause(): Boolean {
+        val since = startedAt?.let { ports.now() - it }
+        val look = spotifyFirstPauseLook(
+            ours = false,
+            firstPlayOfPage = startedFirstOfPage,
+            sinceStartedMs = since ?: -1,
+            askedPaused = askedPaused,
+            used = firstPauseUsed,
+            gatesOpen = gatesOpen(),
+        )
+        firstPauseSince = since
+        if (!look) {
+            noteFirstPause(resumed = false)
+            return false
+        }
+        firstPauseUsed = true
+        ports.log("spotify: a new page's first play paused not by us - looked at for ${SPOTIFY_FIRST_PAUSE_LOOK_MS} ms")
+        firstPauseTimer = ports.after(SPOTIFY_FIRST_PAUSE_LOOK_MS) {
+            firstPauseTimer = null
+            decideFirstPause()
+        }
+        return true
+    }
+
+    /**
+     * The look's end ([spotifyFirstPauseResumes]): ONE resume through the SDK - the gap watch stays on it (a resume that
+     * brings no state of ours is a silent player, as after any SDK resume) - or, when the audio went elsewhere, the
+     * pause stands as the WebView's: a fault, its hold (the branch in [apply], late by the look).
+     */
+    private fun decideFirstPause() {
+        val stillPaused = tracker.mode == Mode.OURS && tracker.measured?.let { it.index == index && !it.playing } == true
+        if (!pwr || !stillPaused) return noteFirstPause(resumed = false)
+        val resume = spotifyFirstPauseResumes(
+            wanted = pwr,
+            stillPaused = stillPaused,
+            inCall = inCall,
+            modeNormal = ports.audioModeNormal(),
+            otherAudio = ports.otherAudio(),
+            gatesOpen = gatesOpen(),
+        )
+        noteFirstPause(resume)
+        if (resume) {
+            ports.log("spotify: the unasked pause looked at - a resume through the page, once")
+            sdk("resume")
+            tracker.resumeSent()
+            lastOursAt = ports.now()
+            armGap()
+        } else {
+            ports.log("spotify: the unasked pause looked at - the audio went elsewhere, it stands")
+            pwr = false
+            pauseCause = spotifyPauseCause(ours = false)
+            heldByPage = true
+        }
+        changed()
+    }
+
+    private fun noteFirstPause(resumed: Boolean) =
+        ports.note(SpotifyNote.UnaskedPause(firstPauseSince, startedFirstOfPage, startTransferred, resumed))
+
+    private fun cancelFirstPauseLook() {
+        firstPauseTimer?.invoke()
+        firstPauseTimer = null
+    }
+
     private fun measuredAt(i: Int): Long = tracker.measured?.takeIf { it.index == i }?.positionMs ?: place.takeIf { it.index == i }?.posMs ?: 0
 
     private fun onStarted(j: Int) {
         if (firstStateTimer != null) ports.log("spotify: our first state, ${ports.now() - firstStateArmedAt} ms after the play call")
+        startedAt = ports.now()
+        startedFirstOfPage = !pageStarted
+        pageStarted = true
+        firstPauseUsed = false
+        // the audio playing now is ours (and what played already): the look tells another player from it
+        if (startedFirstOfPage) ports.markAudio()
         cancelFirstState()
         if (j != index) moveIndex(j, auto = false)
         line = null
@@ -2236,6 +2384,7 @@ internal class SpotifyRenderer(
             queue: () -> Active?,
             outcome: (String) -> Unit,
             log: (String) -> Unit,
+            note: (SpotifyNote) -> Unit,
         ): SpotifyRenderer {
             val app = context.applicationContext
             val lan = SpotifyEndpoints.apiOverLan()
@@ -2258,7 +2407,7 @@ internal class SpotifyRenderer(
                     }
                 }
             }
-            val ports = AndroidSpotifyPorts(app, store, scope, writer, SpotifyLocks(app, log), outcome, log)
+            val ports = AndroidSpotifyPorts(app, store, scope, writer, SpotifyLocks(app, log), outcome, log, note)
             // design 120 §4.2: the page lives in its own process, `:web`, one page per process
             val host = RemoteSpotifyHost(AndroidWebConnector(app), ports::after, { SpotifyEndpoints.webBase() }, log)
             return SpotifyRenderer(host, http, base, ask, ports, Dispatchers.Main, queue, Looper.getMainLooper())
@@ -2275,6 +2424,7 @@ private class AndroidSpotifyPorts(
     private val locks: SpotifyLocks,
     private val outcomeSink: (String) -> Unit,
     private val logSink: (String) -> Unit,
+    private val noteSink: (SpotifyNote) -> Unit,
 ) : SpotifyPorts {
     private val handler = Handler(Looper.getMainLooper())
     private var noisy: BroadcastReceiver? = null
@@ -2338,6 +2488,32 @@ private class AndroidSpotifyPorts(
     }
 
     override fun log(message: String) = logSink(message)
+
+    override fun note(note: SpotifyNote) = noteSink(note)
+
+    // Code QA M1 (2026-11-26): who has the audio, read without a permission on Android 14-17. The page's own pause hides
+    // the focus owner, and the configurations an app sees are anonymized (no uid, no package; a player's state and
+    // `isActive` are system API) - but an anonymized copy keeps the player's id, the only field its `equals` then tells
+    // apart (AOSP's AudioPlaybackConfiguration, 14 and 16), so a player listed now that wasn't at [markAudio] is a newer
+    // one: another app's player, an alarm, the assistant, navigation. `isMusicActive` can't serve: our own paused page's
+    // stream may stay started for a while. A recording (voice typing, the assistant) is read the same way. Every doubt
+    // fails safe - a new player that never plays, or a copy that ever compared unequal, lets the pause stand, as before.
+    private val audio = app.getSystemService(AudioManager::class.java)
+    private var players: Set<Any> = emptySet()
+    private var recordings: Set<Any> = emptySet()
+
+    private fun listedPlayers(): Set<Any> = runCatching { audio.activePlaybackConfigurations.toSet<Any>() }.getOrDefault(emptySet())
+
+    private fun listedRecordings(): Set<Any> = runCatching { audio.activeRecordingConfigurations.toSet<Any>() }.getOrDefault(emptySet())
+
+    override fun markAudio() {
+        players = listedPlayers()
+        recordings = listedRecordings()
+    }
+
+    override fun otherAudio(): Boolean = listedPlayers().any { it !in players } || listedRecordings().any { it !in recordings }
+
+    override fun audioModeNormal(): Boolean = audio.mode == AudioManager.MODE_NORMAL
 
     override fun contextTrack(entryKey: String): SpotifyContextTrack? = store.spotifyContexts()[entryKey]
 

@@ -793,9 +793,11 @@ class GuardsTest {
                 !serviceBody("private suspend fun reportSpotifyWord() {").contains("Sync.nudge"),
         )
         assertTrue(service.contains("log = ::spotifyLog,"))
+        assertTrue(service.contains("note = ::spotifyNote,"))
         assertEquals(
-            "the service's log lines: the web player's, debug builds and the parent's diagnostic log only (qa-26c-step5a-code L8, 2026-11-01), and the media button hold's refused start (compat-fix-1 QA L3)",
-            2,
+            "the service's log lines: the web player's, debug builds and the parent's diagnostic log only (qa-26c-step5a-code L8, 2026-11-01), " +
+                "its always-on notes (2026-11-26), and the media button hold's refused start, both kinds (compat-fix-1 QA L3, 2026-11-26)",
+            4,
             Regex("""\bLog\.""").findAll(service).count(),
         )
         assertTrue(
