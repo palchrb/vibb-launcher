@@ -765,6 +765,8 @@ pub(crate) async fn build_policy(
     // fences (the user's decision 3) - computed here, never written.
     let zones = crate::zones::list(&state.db, device_id).await?;
     let watch = crate::zones::last_zone_watch(&state.db, device_id).await?;
+    // Design 138 D13: each zone's confirmed routers.
+    let networks = crate::zone_networks::of_device(&state.db, device_id).await?;
     let location_policy = LocationPolicy {
         mode: policy.location_mode.clone(),
         interval_minutes: crate::zones::served_interval(
@@ -773,7 +775,7 @@ pub(crate) async fn build_policy(
             zones.len(),
             crate::zones::watching(watch.as_ref()),
         ),
-        zones: crate::zones::policy_zones(&policy.location_mode, &zones),
+        zones: crate::zones::policy_zones(&policy.location_mode, &zones, &networks),
     };
 
     // Design 36 §4.1: Custom with a valid pair is the `dns_upstream` object (the provider then the
@@ -2297,6 +2299,39 @@ async fn status_intake(
     .await
     {
         tracing::error!(device_id = device.id, %err, "can't compare the Wi-Fi count");
+    }
+    // Design 138 D7: the zone routers the phone saw far outside their zones - blocked here, one
+    // line each, and the phone nudged so its policy drops them.
+    let struck = zone_watch_json
+        .as_deref()
+        .and_then(|json| serde_json::from_str::<serde_json::Value>(json).ok())
+        .and_then(|v| {
+            v.get(crate::zone_networks::STRUCK_KEY)
+                .map(crate::zone_networks::clean_struck)
+        })
+        .unwrap_or_default();
+    if !struck.is_empty() {
+        match crate::zone_networks::block_struck(&state.db, device.id, &struck).await {
+            Ok(zones) if !zones.is_empty() => {
+                for zone in &zones {
+                    crate::security::record_phone_event_logged(
+                        &state.db,
+                        device.id,
+                        crate::security::PhoneLine::ZoneWifiBlocked,
+                        crate::security::Detail::words(
+                            "security.detail.zone.wifi_blocked",
+                            &[("zone", zone)],
+                        ),
+                    )
+                    .await;
+                }
+                let _ = state.command_notify.send(device.id);
+            }
+            Ok(_) => {}
+            Err(err) => {
+                tracing::error!(device_id = device.id, %err, "can't block the struck zone routers")
+            }
+        }
     }
     crate::handlers::window_relock::log_relock(
         &state.db,

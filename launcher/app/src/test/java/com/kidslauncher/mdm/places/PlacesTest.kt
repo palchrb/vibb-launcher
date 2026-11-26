@@ -449,10 +449,10 @@ class PlacesTest {
     private val zones = listOf(LinkZone(home, keys.zone(home)))
     private val homeNet = "0123456789abcdef"
 
-    private fun inside(rows: List<PlaceRow>, min: Int, today: Int) = teachLinks(rows, zones, lat0, lng0, 10.0, homeNet, setOf(homeNet), min, today)
+    private fun inside(rows: List<PlaceRow>, min: Int, today: Int) = teachLinks(rows, zones, lat0, lng0, 10.0, homeNet, min, today)
 
     @Test
-    fun `zone link - learned at three inside occasions on two days, revoked and blocked from outside`() {
+    fun `zone link - learned at three inside occasions on two days`() {
         var r = inside(emptyList(), 0, 20000)
         r = inside(r, 10, 20000)
         r = inside(r, 60, 20000)
@@ -461,23 +461,13 @@ class PlacesTest {
         r = inside(r, day, 20001)
         assertTrue(r.single().linked(day + 1))
         // Not connected inside, or a fix not surely inside: nothing.
-        assertEquals(r, teachLinks(r, zones, lat0, lng0, 10.0, null, setOf(homeNet), 2 * day, 20002))
-        assertEquals(r, teachLinks(r, zones, north(145.0), lng0, 10.0, homeNet, setOf(homeNet), 2 * day, 20002))
-        // Heard surely outside by 200 m: revoked.
-        val out = teachLinks(r, zones, north(400.0), lng0, 10.0, null, setOf(homeNet), 2 * day, 20002)
-        assertFalse(out.single().linked(2 * day))
-        assertEquals(0, out.single().occasions)
-        // 300 m out with 10 m accuracy is not surely 200 m outside a 150 m zone: nothing.
-        assertEquals(r, teachLinks(r, zones, north(300.0), lng0, 10.0, null, setOf(homeNet), 2 * day, 20002))
-        // A second outside sighting within 60 days blocks it for 60 days; inside teaches meanwhile don't count.
-        val blocked = teachLinks(out, zones, north(400.0), lng0, 10.0, null, setOf(homeNet), 3 * day, 20003)
-        assertTrue(blocked.single().blocked(62 * day))
-        assertEquals(blocked, inside(blocked, 4 * day, 20004))
-        // After the block it starts over.
-        assertEquals(1, inside(blocked, 64 * day, 20064).single().occasions)
+        assertEquals(r, teachLinks(r, zones, lat0, lng0, 10.0, null, 2 * day, 20002))
+        assertEquals(r, teachLinks(r, zones, north(145.0), lng0, 10.0, homeNet, 2 * day, 20002))
+        // Design 138 D7: a heard network name far outside strikes nothing any more (the strikes go by router).
+        assertEquals(r, teachLinks(r, zones, north(400.0), lng0, 10.0, null, 2 * day, 20002))
         // A zone moved (another key): its links go.
         val moved = PolicyZone(7, north(10.0), lng0, 150)
-        assertTrue(teachLinks(r, listOf(LinkZone(moved, keys.zone(moved))), 0.0, 0.0, 10.0, null, emptySet(), 3 * day, 20003).isEmpty())
+        assertTrue(teachLinks(r, listOf(LinkZone(moved, keys.zone(moved))), 0.0, 0.0, 10.0, null, 3 * day, 20003).isEmpty())
     }
 
     @Test
@@ -701,20 +691,18 @@ class PlacesTest {
             val (lat, lng) = Town.ll(hx, hy)
             assertTrue("a wrong standing fix", !standsAlone(fix, true) || distanceM(fix.lat, fix.lng, lat, lng) <= fix.accuracyM)
         }
-        // The cabin MiFi: linked to home, then alone at the cabin - no fix; a fire on the drive ends any renewal; a
-        // teaching fix at the cabin revokes the link.
+        // The cabin MiFi: linked to home, then alone at the cabin - no fix; a fire on the drive ends any renewal (design
+        // 138 D7: a teaching fix at the cabin strikes its router, `ZoneLinksTest`).
         val mifi = hear(listOf(ScanAp("00:00:5e:00:53:f0", "Hytta", null, 2437, -40, 0)), null, keys, moving, emptyMap(), 0).heard.single()
         assertNull(scanView(Hearing(listOf(mifi), false, emptyMap()), 0, -1))
         val homeZone = PolicyZone(1, Town.ll(40.0, 40.0).first, Town.ll(40.0, 40.0).second, 150)
         val z = listOf(LinkZone(homeZone, keys.zone(homeZone)))
-        var links = teachLinks(emptyList(), z, homeZone.latitude, homeZone.longitude, 8.0, mifi.network, setOf(mifi.network), 0, 20000)
-        links = teachLinks(links, z, homeZone.latitude, homeZone.longitude, 8.0, mifi.network, setOf(mifi.network), 60, 20000)
-        links = teachLinks(links, z, homeZone.latitude, homeZone.longitude, 8.0, mifi.network, setOf(mifi.network), day, 20001)
+        var links = teachLinks(emptyList(), z, homeZone.latitude, homeZone.longitude, 8.0, mifi.network, 0, 20000)
+        links = teachLinks(links, z, homeZone.latitude, homeZone.longitude, 8.0, mifi.network, 60, 20000)
+        links = teachLinks(links, z, homeZone.latitude, homeZone.longitude, 8.0, mifi.network, day, 20001)
         val vouch = Vouched(homeZone.latitude, homeZone.longitude, 10.0)
         assertTrue(linkRenews(links, z, vouch, mifi.network, still = true, refreshDue = false, nowMin = day + 1))
         assertFalse(linkRenews(links, z, vouch, mifi.network, still = false, refreshDue = false, nowMin = day + 1))
-        links = teachLinks(links, z, Town.ll(50_000.0, 0.0).first, Town.ll(50_000.0, 0.0).second, 8.0, mifi.network, setOf(mifi.network), day + 200, 20001)
-        assertFalse(linkRenews(links, z, vouch, mifi.network, still = true, refreshDue = false, nowMin = day + 300))
         // A moved lone router: one network, no fix; the first GPS fix there moves its row.
         val alone = town.aps.filter { it.house == 23 }.map { ScanAp(it.bssid, it.ssid, it.mld, it.freq, -50, 9_000) }
         assertNull(learnedFix(scanView(hear(alone, null, keys, moving, emptyMap(), 9_000), 9_000, 0) ?: ScanView(emptyList(), true), table, now))
@@ -1083,7 +1071,7 @@ class PlacesTest {
         val net = keys.network("Hjemme", "")
         val binding = keys.binding(LinkSecurity.PSK, 7)
         var rows = emptyList<PlaceRow>()
-        for ((min, today) in listOf(0 to 20000, 60 to 20000, day to 20001)) rows = teachLinks(rows, linkZones, lat0, lng0, 10.0, net, setOf(net), min, today, binding)
+        for ((min, today) in listOf(0 to 20000, 60 to 20000, day to 20001)) rows = teachLinks(rows, linkZones, lat0, lng0, 10.0, net, min, today, binding)
         val now = day + 10
         val fix = LearnedFix(north(20.0), lng0, 40.0, 3, 0, true, setOf(keys.ap(mac(1))))
         fun conn(bssid: String = mac(1), ssid: String = "Hjemme", security: LinkSecurity = LinkSecurity.PSK, id: Int = 7, unmetered: Boolean = true) =
@@ -1105,20 +1093,20 @@ class PlacesTest {
         // An enterprise network needs its connected AP among the fix's own rows.
         val eap = keys.binding(LinkSecurity.EAP, 7)
         var eapRows = emptyList<PlaceRow>()
-        for ((min, today) in listOf(0 to 20000, 60 to 20000, day to 20001)) eapRows = teachLinks(eapRows, linkZones, lat0, lng0, 10.0, net, setOf(net), min, today, eap)
+        for ((min, today) in listOf(0 to 20000, 60 to 20000, day to 20001)) eapRows = teachLinks(eapRows, linkZones, lat0, lng0, 10.0, net, min, today, eap)
         assertTrue(linkConfirms(fix, conn(security = LinkSecurity.EAP), eapRows, linkZones, now))
         assertFalse("its AP not in the cluster", linkConfirms(fix, conn(bssid = mac(5), security = LinkSecurity.EAP), eapRows, linkZones, now))
         // Saved anew: the row learns again (3 occasions on 2 days), its strikes kept; the renewal follows the binding.
         val other = keys.binding(LinkSecurity.PSK, 8)
-        val again = teachLinks(rows, linkZones, lat0, lng0, 10.0, net, setOf(net), now, 20002, other)
+        val again = teachLinks(rows, linkZones, lat0, lng0, 10.0, net, now, 20002, other)
         assertEquals(1, again.single().occasions)
         assertFalse(again.single().linked(now))
         // Code QA M1: the first teach after a boot rebinds a row of the same class, its occasions kept; another class
         // starts over.
-        val rebound = teachLinks(rows, linkZones, lat0, lng0, 10.0, net, setOf(net), now, 20002, other, rebind = true)
+        val rebound = teachLinks(rows, linkZones, lat0, lng0, 10.0, net, now, 20002, other, rebind = true)
         assertTrue(rebound.single().linked(now))
         assertEquals(other, rebound.single().device)
-        val otherClass = teachLinks(rows, linkZones, lat0, lng0, 10.0, net, setOf(net), now, 20002, keys.binding(LinkSecurity.EAP, 8), rebind = true)
+        val otherClass = teachLinks(rows, linkZones, lat0, lng0, 10.0, net, now, 20002, keys.binding(LinkSecurity.EAP, 8), rebind = true)
         assertFalse(otherClass.single().linked(now))
         assertTrue(rebindAllowed(lastBoot = 4, lastCount = 6, boot = 5, count = 6, named = 1))
         assertFalse("not the first teach of the boot", rebindAllowed(5, 6, 5, 6, 1))
@@ -1163,7 +1151,7 @@ class PlacesTest {
         val binding = keys.binding(LinkSecurity.PSK, 7)
         var links = table
         for ((min, today) in listOf(0 to 20000, 60 to 20000, day to 20001)) {
-            links = teachLinks(links, linkZones, homeZone.latitude, homeZone.longitude, 10.0, homeNet, setOf(homeNet), min, today, binding)
+            links = teachLinks(links, linkZones, homeZone.latitude, homeZone.longitude, 10.0, homeNet, min, today, binding)
         }
         // The 2.4 GHz copies alone make a fix; it is the Wi-Fi alone, and good satellites 3 km away overrule it.
         val only24 = atHome.filter { it.frequencyMhz < 5000 }.ifEmpty { atHome.take(1) } + town.aps.filter { it.house == 8 && it.freq < 5000 }.map {

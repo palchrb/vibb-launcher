@@ -6261,3 +6261,34 @@ for launcher rc.5 (the same code is on `phase-d-fixes`):
 | R1 | The glance in both navigation modes (Android's PIN set): `uiautomator dump` - `lock_glance_emergency`'s bottom at or above `lock_glance_handle`'s top (14 3-button: Nødsamtale up to 734 over the handle `[746,782]`); a swipe up from the handle's upper half opens Android's pad, never "Call 112?"; Nødsamtale's tap still asks "Call 112?" | x | x |
 | R2 (code QA M1) | A restart on a **cold first boot** (`adb emu kill`, a cold boot, so SystemUI's keyguard is late), both navigation modes: while SystemUI is late (no pad yet) `adb shell dumpsys window \| grep mCurrentFocus` names the boot cover (`BootCoverActivity`) and the log has the re-asks ("no answer, again N"); once the pad is up `mCurrentFocus` names SystemUI's `NotificationShade` and `logcat -s` the cover's tag shows exactly one ask after it ("a window (Android's pad) is over the cover - no re-ask" once, no "again N" while the pad is up); the PIN opens Home | x | x |
 | R3 | The same boot with the pad cancelled (Back on the pad): "Trykk for å låse opp" under the mark, no ask until a tap; a tap asks once | x | x |
+
+## 6bw. A zone's Wi-Fi: the parent's confirmation, the learned link bound to its router (design 138, branch `wifi-link-confirm`) - written, not run
+
+`docs/design/138-confirmed-zone-networks.md`: on **Android 14 and 16**. The setup of §6bn: the debug launcher,
+Regularly, a zone Home (150 m), Google's location accuracy off, Location on, the made-up scan and connection through
+`PlacesDebugReceiver` (`--es connect "<bssid>,<ssid>,psk|sae|eap|open,<networkId>,<MHz>[,<dBm>[,<mld>]]"` - the
+seventh field, the AP's multi-link address, is design 138's), the satellite feed for teaching, a second local day by
+the time zone. Home's router `00:00:5e:00:53:01` "Net-A" (its guest name on the same prefix `00:00:5e:00:53:05`), three
+neighbours on their own prefixes (`00:00:5e:00:61:01`, `00:00:5e:00:62:01`, `00:00:5e:00:63:01`), taught first as
+§6bn says. Logs: `adb logcat -s WifiPlaces ZoneWatch PlacesDebug`. The real background read (the Jelly's redacted
+BSSID and the callback) is a device row: the emulator's own network is open.
+
+| # | Step | Expect |
+|---|---|---|
+| a | Nothing confirmed or learned for Home (`--ez clear true`, then the neighbours taught), GPS silent, home's scan, `connect "00:00:5e:00:53:01,Net-A,psk,7,5180"`; a sync | `zone wifi report yes netid=known`; the report's `device_status.zone_watch_json` has `wifi` with `Net-A`; the zone's page shows `Net-A` with Bekreft; with `open` - `zone wifi report no reason=security`, no row |
+| b | Tap Bekreft; Locate | the policy's zone has `networks` with the id, name and BSSID; `zone link confirmed rest=fix`, `wifi fix check=link step=USE`; the report's fix `check: "link"`; Locate "At Home", no "Wi-Fi estimate" |
+| c | The finding's path: reinstall the same debug APK over itself (a new process, `MOVED`), then the heartbeat's own `FIX` | `attempt path=TOGETHER`, `check=link`, `Location heartbeat: FIX result=fresh`; no back-off |
+| d | `connect` `00:00:5e:00:53:02` (the same router's other band); then `00:00:5e:00:58:01`, `Net-A` (another router) | the first `check=link` at once; the second `zone link none`, `check=none`, the page "Ukjent ruter" with its (i) and Bekreft; Bekreft - `check=link` |
+| e | `connect` another link of a router confirmed with a multi-link address (seventh field the same) | `check=link` at once |
+| f | The travel router: `Net-A` (a) connected, another place's scan (three neighbours taught 3 km away) | `zone link none rest=fix`, `check=none`; with only the router heard (its two names and an unknown router) - `zone link confirmed rest=nothing` |
+| g | Then the satellite feed 3 km away (8 satellites) twice, 90 s apart, `Net-A` connected | one feed fix alone strikes nothing; after the second `zone link struck by=confirmed`; the next report's `zone_watch.wifi_struck` has the id; the page "Sett et annet sted"; the security log "Wi-Fi seen elsewhere" (the zone's name only); the policy drops the row; back home `check=none`; Bekreft again - a new id, `check=link` |
+| h | The learned link: no confirmation, GPS silent, home's scan and `Net-B` psk (another router); Locate 3 times 30 min apart over 2 local days | `link taught by=wifi occasions=1..3 days=1..2`; then `zone link learned rest=fix`, `check=link`; a scan of only `Net-B`, its guest name and unknown routers - no occasion (`occasions` unchanged) |
+| i | Move the zone 200 m (radius 150); then confirm again and move it 50 m | the first clears the rows ("Wi-Fi removed" in the `zone_changed` line); the second keeps them |
+
+The cell veto is a unit row (`ZoneLinksTest`): the emulator's cell has no placed row unless §6bk's fake Apple cell
+answer is loaded - if it is, place it 5 km away and expect (b) to give `check=none`.
+
+**Device row** (the Jelly Star, Android 16, the owner's check): at home, screen off, an hour after the install - the
+report's `wifi` present (`connection read by callback yes` when the first read was redacted, `zone wifi report yes
+netid=known|none`), the scan fresh (`scan answer n/m ask=answered`), the parent's Bekreft, then `FIX result=fresh` at
+the next heartbeat.

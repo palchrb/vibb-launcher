@@ -100,6 +100,7 @@ mod weather_cache;
 mod webauthn;
 mod webpush;
 mod window_relock;
+mod zone_networks;
 mod zones;
 
 use axum::Router;
@@ -1543,6 +1544,15 @@ pub fn build_admin_router(
         .route(
             "/devices/{id}/zones/{zone_id}/delete",
             post(handlers::zones::delete_zone),
+        )
+        // Design 138: a zone's confirmed Wi-Fi routers.
+        .route(
+            "/devices/{id}/zones/{zone_id}/wifi",
+            post(handlers::zones::confirm_wifi),
+        )
+        .route(
+            "/devices/{id}/zones/{zone_id}/wifi/{network_id}/delete",
+            post(handlers::zones::remove_wifi),
         )
         .route("/devices/{id}/command/ring", post(handlers::locate::ring))
         .route(

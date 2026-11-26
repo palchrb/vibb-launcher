@@ -482,9 +482,9 @@ object ZoneWatch {
 
     // --- The report ---
 
-    /** `zone_watch` for the status report; `null` when not device owner. Counts and switches only;
-     * [still] = [reportStill] (Q-3). */
-    fun report(context: Context, still: Boolean = false): ZoneWatchReport? = try {
+    /** `zone_watch` for the status report; `null` when not device owner. Counts and switches, and since design 138 the
+     * connected network ([wifi], read by the sync) and the struck confirmations; [still] = [reportStill] (Q-3). */
+    fun report(context: Context, still: Boolean = false, wifi: com.kidslauncher.mdm.server.dto.ZoneWifiReport? = null): ZoneWatchReport? = try {
         val app = context.applicationContext
         if (app.getSystemService(DevicePolicyManager::class.java)?.isDeviceOwnerApp(app.packageName) != true) {
             null
@@ -499,6 +499,9 @@ object ZoneWatch {
                 mockIgnored = prefs(app).getLong(KEY_MOCK_IGNORED, 0L),
                 wifiDisagreed = prefs(app).getLong(KEY_WIFI_DISAGREED, 0L),
                 still = still,
+                // Design 138 D3: the network for the parent's Confirm, and the struck confirmations the policy still has.
+                wifi = wifi,
+                wifiStruck = com.kidslauncher.mdm.places.WifiPlaces.struckForReport(app),
             )
         }
     } catch (e: Exception) {

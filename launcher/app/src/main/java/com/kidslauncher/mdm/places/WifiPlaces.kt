@@ -81,6 +81,10 @@ private const val KEY_BUDGET = "teach_budget_v1"
 private const val KEY_COUNTS = "loo_v1"
 private const val KEY_LAST_GPS_TRY = "last_gps_try_ms"
 
+/** Design 138 D7 (L2): the struck confirmations, in their own prefs file - a Wi-Fi places clear keeps them. */
+private const val STRUCK_PREFS = "zone_links"
+private const val KEY_STRUCK = "confirm_struck_v1"
+
 /** Design 131: the last satellite fix ([LastGnss]), kept across a reboot for the jump gate and the satellite check. */
 private const val KEY_LAST_GNSS = "last_gnss_v1"
 
@@ -188,6 +192,9 @@ object WifiPlaces {
         @Volatile var inconclusive: Inconclusive? = null
 
         @Volatile var withheld = false
+
+        /** Design 138 D6: the attempt's Wi-Fi teach of a learned link, run at its end only when nothing disagreed. */
+        @Volatile internal var teachLater: (() -> Unit)? = null
     }
 
     private val lock = Any()
@@ -206,6 +213,9 @@ object WifiPlaces {
     /** Design 134 revision 4 (D20.1): the connected AP read at the vouch's fix - memory only, never stored or logged. A
      * new process starts `MOVED`, so none is lost that a still phone could use. */
     @Volatile private var vouchLink: VouchLink? = null
+
+    /** Design 138 D7: strikes waiting for a second teaching fix (by elapsed realtime). Guarded by [lock]; memory only. */
+    private var pendingStrikes: Map<StrikeKey, Long> = emptyMap()
 
     /** Our own attempts and teaching fixes running: a passive fix then is ours, taught by the attempt itself, and a
      * teaching alarm waits for the next fire. */
@@ -340,6 +350,9 @@ object WifiPlaces {
         lastLearned = null
         // Design 134 P4: the fingerprint and its ring go with the table.
         StillPrints.clear(context, reason)
+        pendingStrikes = emptyMap()
+        // Design 138 D7 (L2): the struck ids outlive every clear but a new enrolment's.
+        if (reason == "unenrol") struckPrefs(context).edit().clear().commit()
         if (!had) return
         f.delete()
         p.edit().clear().commit()
@@ -462,10 +475,6 @@ object WifiPlaces {
         }
         return Scan(cached(context), ScanRequest(requestAt, ask))
     }
-
-    /** D4, D17: the connected network, with its metering from the active network's capabilities (merged through our VPN);
-     * design 131: its security (`getCurrentSecurityType`, API 31) and Android's id of the saved network. */
-    private fun connected(context: Context): Connected? = readConnection(context).connected
 
     /** [info] as the connected network ([unmetered] from its network's capabilities); `null` without a readable BSSID. */
     private fun connectionOf(info: WifiInfo, unmetered: Boolean): Connected? {
@@ -954,6 +963,8 @@ object WifiPlaces {
         // binding (design 131: a mesh node or a 6 GHz BSSID on it counts; saved anew, it learns again).
         val conn = linkConn(snap.connected, store.keys)
         val connectedNet = conn?.network
+        val router = routerOf(snap.connected, store.keys)
+        val confirmed = confirmedAps(ZoneWatch.watchedZones(), store.keys)
         val rebind = conn != null && rebindAfterBoot(context, snap.connected?.ssid)
         // D16: what the table as it was said for the same results; a zone-link renewal's class by the connected network.
         val counts = mutableListOf<(DayCounts) -> DayCounts>()
@@ -970,7 +981,8 @@ object WifiPlaces {
             val err = distanceM(fix.lat, fix.lng, best.lat, best.lng)
             counts += { c -> c.looCell(fix.source, err <= fix.accuracyM, err) }
         }
-        zones.firstOrNull { z -> store.rows.any { it.key == z.key && it.network == connectedNet && it.linked(now) } }?.let { z ->
+        val struckNow = struck(context)
+        zones.firstOrNull { z -> router != null && zoneLink(router, conn, z, confirmed, struckNow, store.rows, now, apOwn = false) != null }?.let { z ->
             val inside = distanceM(best.lat, best.lng, z.zone.latitude, z.zone.longitude) <= z.zone.radiusM
             counts += { c -> c.loo(LooClass.ZONE, inside) }
         }
@@ -982,15 +994,107 @@ object WifiPlaces {
         }
         if (counts.isNotEmpty()) count(context, today) { counts.fold(it) { c, f -> f(c) } }
         var outcome: TeachOutcome? = null
+        val acc = (best.accuracyM ?: TEACH_ACCURACY_MAX_M).toDouble()
+        // Design 138 D7: the routers this teach places far outside - a strike once a second teaching fix agrees.
+        val candidates = strikeCandidates(
+            zones, best.lat, best.lng, acc, router,
+            paired.filter { it.kind == RowKind.WIFI && it.bssid.isNotEmpty() }.map { listOf(it.device, store.keys.device(it.bssid, null)).distinct() to it.band },
+            confirmed, store.rows, now,
+        )
+        val struckKeys = synchronized(lock) {
+            val (hit, next) = strikeStep(pendingStrikes, candidates, best.elapsedMs)
+            pendingStrikes = next
+            hit
+        }
+        var struckIds = emptySet<Long>()
         save(context, store.generation) { rows ->
             val taught = teach(rows, sightings, now, today).also { outcome = it }
-            val acc = (best.accuracyM ?: TEACH_ACCURACY_MAX_M).toDouble()
             // Design 125 A9: an own teach beyond an Apple row's reach, or a trusted own row against it, tombstones it.
             val apple = reconcileAppleCells(appleCellTaught(reconcileApple(appleTaught(taught.rows, sightings, now), now), sightings, now), now)
-            teachLinks(apple, zones, best.lat, best.lng, acc, connectedNet, paired.map { it.network }.toSet(), now, today, conn?.binding ?: "", rebind)
+            val linked = teachLinks(apple, zones, best.lat, best.lng, acc, connectedNet, now, today, conn?.binding ?: "", rebind, router?.keys.orEmpty())
+            val (out, ids) = applyStrikes(linked, zones, confirmed, struckKeys, now)
+            struckIds = ids
+            out
         }
         outcome?.let { Log.i(LOG_TAG, "taught aps=${it.taught} new=${it.new} moved=${it.moved}") }
+        if (struckKeys.isNotEmpty()) {
+            if (struckIds.isNotEmpty()) addStruck(context, struckIds)
+            Log.w(LOG_TAG, "zone link struck by=" + if (struckIds.isNotEmpty()) "confirmed" else "learned")
+        }
         return true
+    }
+
+    // --- Design 138: a zone's Wi-Fi ---
+
+    private fun struckPrefs(context: Context) = context.applicationContext.getSharedPreferences(STRUCK_PREFS, Context.MODE_PRIVATE)
+
+    /** D7 (L2): the confirmations this phone struck - kept apart from the Wi-Fi places prefs, so a clear keeps them. */
+    fun struck(context: Context): Set<Long> = try {
+        struckPrefs(context).getString(KEY_STRUCK, null)?.split(',')?.mapNotNull { it.toLongOrNull() }?.toSet().orEmpty()
+    } catch (e: Exception) {
+        emptySet()
+    }
+
+    private fun addStruck(context: Context, ids: Set<Long>) = synchronized(lock) {
+        val all = (struck(context) + ids).sorted().takeLast(STRUCK_MAX)
+        struckPrefs(context).edit().putString(KEY_STRUCK, all.joinToString(",")).commit()
+    }
+
+    /** D3: the report's struck ids - those the policy still carries; the rest are dropped here (the server's block
+     * reached the policy). */
+    fun struckForReport(context: Context): List<Long> {
+        val zones = ZoneWatch.watchedZones()
+        val all = struck(context)
+        if (all.isEmpty()) return emptyList()
+        val carried = struckInPolicy(all, zones)
+        if (carried.size != all.size && zones.isNotEmpty()) {
+            synchronized(lock) { struckPrefs(context).edit().putString(KEY_STRUCK, carried.joinToString(",")).commit() }
+        }
+        return carried
+    }
+
+    /** D3: the report's `wifi` while the policy has zones and Location is on - the connection read through design 134
+     * D25's [connectedNow] (the callback when the first read is redacted). Logs a reason, never a name or address. */
+    suspend fun reportWifi(context: Context): com.kidslauncher.mdm.server.dto.ZoneWifiReport? {
+        val app = context.applicationContext
+        val zonesOn = ZoneWatch.watchedZones().isNotEmpty() && QuickControls.isLocationEnabled(app)
+        if (!zonesOn) return null
+        return try {
+            val read = connectedNow(app)
+            val c = read.connected
+            val report = zoneWifiOf(c, true)
+            val reason = when {
+                report != null -> null
+                c == null -> if (read.read == LinkRead.UNREADABLE) "unreadable" else "none"
+                !c.unmetered -> "metered"
+                c.security != LinkSecurity.PSK && c.security != LinkSecurity.SAE -> "security"
+                else -> "hidden"
+            }
+            Log.i(LOG_TAG, "zone wifi report " + (reason?.let { "no reason=$it" } ?: "yes") + " netid=" + if ((c?.networkId ?: -1) >= 0) "known" else "none")
+            report
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /** D6: a Wi-Fi fix's teach of the learned links - the zones where [wifiOccasion] holds, under design 131's binding. */
+    private fun teachFromWifi(context: Context, snap: Snapshot, fix: LearnedFix, check: FixCheck?, step: WifiStep, rest: Rest?) {
+        val store = open(context) ?: return
+        val conn = linkConn(snap.connected, store.keys) ?: return
+        val router = routerOf(snap.connected, store.keys) ?: return
+        if (!linkSecurityHolds(conn, apOwn = conn.apKey != null && conn.apKey in fix.keys)) return
+        val now = nowMin()
+        val zones = linkZones(store.keys)
+        val only = zones.filter { z -> wifiOccasion(fix, step, check, false, rest, z, cellAway(snap.cells, store.rows, now, z, fix.accuracyM)) }.map { it.key }.toSet()
+        if (only.isEmpty()) return
+        val rebind = rebindAfterBoot(context, snap.connected?.ssid)
+        save(context, store.generation) { rows ->
+            teachLinks(rows, zones, fix.lat, fix.lng, fix.accuracyM, conn.network, now, today(), conn.binding, rebind, router.keys, only)
+        }
+        val row = open(context)?.rows?.firstOrNull { it.kind == RowKind.LINK && it.key in only && it.network == conn.network }
+        Log.i(LOG_TAG, "link taught by=wifi occasions=${row?.occasions ?: 0} days=${row?.days ?: 0}")
     }
 
     /** A9 (H2): a still phone's Apple fix outside its vouch - an Apple contradiction (the by-source counts are
@@ -1029,7 +1133,10 @@ object WifiPlaces {
             val results = cached(context)
             if (results.isEmpty()) return
             Log.i(LOG_TAG, "passive teach sig=${signal(location)}")
-            teachWith(context, store, Snapshot(results, connected(context), emptyList()), fix, PAIR_SINGLE_MS, MotionGate.snapshot(context).movedAtElapsedMs)
+            // Design 138 D7 (L1): the connection through the callback too, so a connected router can strike here - on the
+            // passive feed's executor, at most LINK_CALLBACK_MS.
+            val conn = kotlinx.coroutines.runBlocking { connectedNow(context) }.connected
+            teachWith(context, store, Snapshot(results, conn, emptyList()), fix, PAIR_SINGLE_MS, MotionGate.snapshot(context).movedAtElapsedMs)
         } catch (e: Exception) {
             Log.w(LOG_TAG, "passive teach failed: ${e.javaClass.simpleName}")
         }
@@ -1285,6 +1392,8 @@ object WifiPlaces {
             Log.w(LOG_TAG, "attempt failed: ${e.javaClass.simpleName}")
             return null
         } finally {
+            // Design 138 D6: a Wi-Fi teach only from an attempt in which nothing disagreed.
+            ask.teachLater?.takeIf { !disagreement.seen }?.let { runCatching { it() } }
             ownTeaching.decrementAndGet()
             // Design 131: however many rules saw it, one rise an attempt.
             ZoneWatch.countWifiDisagreed(app, disagreement.rise())
@@ -1406,11 +1515,32 @@ object WifiPlaces {
         val boot = BootClock.bootCount()
         val rows = open(context)?.rows ?: store?.rows.orEmpty()
         val conn = store?.let { linkConn(snap.connected, it.keys) }
+        val router = store?.let { routerOf(snap.connected, it.keys) }
         val zones = store?.let { linkZones(it.keys) }.orEmpty()
         val gnss = lastGnss(context)
         val gnssNow = gnss?.takeIf { it.bootCount == boot }?.let { TeachFix(it.lat, it.lng, it.accuracyM.toFloat(), it.speedMps, it.elapsedMs, "gps", null, false) }
+        // Design 138 D8: what the same scan says without the connected router.
+        val rest = if (store != null && router != null) {
+            scanView(hearing(context, store, snap, remember = false), nowElapsed, ask.movedAtElapsedMs)?.let { restWithout(it, rows, now, router) }
+        } else {
+            null
+        }
+        val confirmed = store?.let { confirmedAps(ZoneWatch.watchedZones(), it.keys) }.orEmpty()
+        val by = linkCheck(fix, router, conn, rows, zones, now, confirmed, struck(context), rest) { z -> cellAway(snap.cells, rows, now, z, fix.accuracyM) }
+        if (by == LinkBy.LEARNED && store != null && router != null) {
+            zones.forEach { z -> save(context, store.generation) { touchRouter(it, z, router, now) } }
+        }
+        if (router != null && zones.isNotEmpty()) {
+            Log.i(LOG_TAG, "zone link " + (by?.wire ?: "none") + " rest=" + when (rest) {
+                is Rest.Fix -> "fix"
+                is Rest.One -> "one"
+                Rest.Nothing -> "nothing"
+                Rest.NoFix -> "nofix"
+                null -> "unknown"
+            })
+        }
         val check = when {
-            linkConfirms(fix, conn, rows, zones, now) -> FixCheck.LINK
+            by != null -> FixCheck.LINK
             gnssConfirms(gnssNow, fix, release) -> FixCheck.GNSS
             else -> null
         }
@@ -1421,6 +1551,8 @@ object WifiPlaces {
         val v = ask.vouchFix
         if (jump == Jump.IMPOSSIBLE || (v != null && distanceM(v.latitude, v.longitude, fix.lat, fix.lng) > fix.accuracyM + (v.accuracy ?: 0f))) ask.elsewhere = true
         Log.i(LOG_TAG, "wifi fix check=${check?.wire ?: "none"} step=${verdict.step}")
+        // Design 138 D6: the learned link's teach from this fix, at the attempt's end when nothing disagreed.
+        if (store != null && router != null) ask.teachLater = { teachFromWifi(context, snap, fix, check, verdict.step, rest) }
         if (verdict.disagreed) {
             disagreement.mark()
             if (fix.source != PlaceSource.OWN && appleStillMotion(ask.motion)) appleContradiction(context)
@@ -1436,7 +1568,9 @@ object WifiPlaces {
         val conn = linkConn(snap.connected, store.keys)
         val refresh = refreshDue(prefs(context).getLong(KEY_LAST_GPS_TRY, 0L), System.currentTimeMillis())
         val v = Vouched(vouched.latitude, vouched.longitude, if (vouched.hasAccuracy()) vouched.accuracy.toDouble() else Double.MAX_VALUE)
-        return linkRenews(store.rows, linkZones(store.keys), v, conn?.network, ask.motion == Motion.STILL, refresh, nowMin(), conn?.binding)
+        val router = routerOf(snap.connected, store.keys)
+        val confirmed = confirmedAps(ZoneWatch.watchedZones(), store.keys)
+        return zoneRenews(store.rows, linkZones(store.keys), v, router, conn, ask.motion == Motion.STILL, refresh, nowMin(), confirmed, struck(context))
     }
 
     /**

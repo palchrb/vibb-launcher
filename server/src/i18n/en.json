@@ -4911,5 +4911,21 @@
   "device.attention.filter_down": "Web filter is down",
   "device.attention.storage_full": "Storage is full",
 
-  "device.attention.notifications_all_off": "All Vibb One notifications are off"
+  "device.attention.notifications_all_off": "All Vibb One notifications are off",
+  "security.event.zone_wifi_confirmed": "Wi-Fi confirmed",
+  "security.event.zone_wifi_removed": "Wi-Fi removed",
+  "security.event.zone_wifi_blocked": "Wi-Fi seen elsewhere",
+  "security.detail.zone.wifi_removed": "Wi-Fi removed.",
+  "security.detail.zone.wifi_blocked": "{zone}",
+  "locate.zone.wifi.title": "Wi-Fi",
+  "locate.zone.wifi.confirm": "Confirm",
+  "locate.zone.wifi.remove": "Remove",
+  "locate.zone.wifi.remove_question": "Remove {name}?",
+  "locate.zone.wifi.info": "A confirmed network makes the Wi-Fi position certain in the zone, without GPS. Only the router the phone was on counts. Don't confirm a router that moves.",
+  "locate.zone.wifi.elsewhere": "Seen elsewhere",
+  "locate.zone.wifi.elsewhere_info": "The phone was on {name} far outside the zone, so it no longer counts. Remove it, or confirm it again when the phone is here.",
+  "locate.zone.wifi.unknown": "Unknown router",
+  "locate.zone.wifi.unknown_info": "The phone is on {name}, but on a router Vibb doesn't know. If it is here, tap Confirm.",
+  "locate.zone.wifi.changed": "The phone is on another network now",
+  "locate.zone.wifi.full": "At most 16 routers"
 }

@@ -4911,5 +4911,21 @@
   "device.attention.filter_down": "Nettfilteret er nede",
   "device.attention.storage_full": "Lagringen er full",
 
-  "device.attention.notifications_all_off": "Alle varsler fra Vibb One er av"
+  "device.attention.notifications_all_off": "Alle varsler fra Vibb One er av",
+  "security.event.zone_wifi_confirmed": "Wi-Fi bekreftet",
+  "security.event.zone_wifi_removed": "Wi-Fi fjernet",
+  "security.event.zone_wifi_blocked": "Wi-Fi sett et annet sted",
+  "security.detail.zone.wifi_removed": "Wi-Fi fjernet.",
+  "security.detail.zone.wifi_blocked": "{zone}",
+  "locate.zone.wifi.title": "Wi-Fi",
+  "locate.zone.wifi.confirm": "Bekreft",
+  "locate.zone.wifi.remove": "Fjern",
+  "locate.zone.wifi.remove_question": "Fjerne {name}?",
+  "locate.zone.wifi.info": "Et bekreftet nettverk gjør Wi-Fi-posisjonen sikker i sonen, uten GPS. Bare ruteren telefonen var på, teller. Ikke bekreft en ruter som flyttes.",
+  "locate.zone.wifi.elsewhere": "Sett et annet sted",
+  "locate.zone.wifi.elsewhere_info": "Telefonen var på {name} langt utenfor sonen, så det teller ikke lenger. Fjern det, eller bekreft det igjen når telefonen er her.",
+  "locate.zone.wifi.unknown": "Ukjent ruter",
+  "locate.zone.wifi.unknown_info": "Telefonen er på {name}, men på en ruter Vibb ikke kjenner. Står den her, trykk Bekreft.",
+  "locate.zone.wifi.changed": "Telefonen er på et annet nettverk nå",
+  "locate.zone.wifi.full": "Maks 16 rutere"
 }

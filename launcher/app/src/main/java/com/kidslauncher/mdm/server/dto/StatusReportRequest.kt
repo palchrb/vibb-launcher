@@ -235,6 +235,19 @@ data class ZoneWatchReport(
      * running count, at most one an attempt (the server writes a quiet security-log line from its rises). */
     val wifiDisagreed: Long,
     val still: Boolean = false,
+    /** Design 138 D3: the connected network while the policy has zones (a named PSK/SAE network, unmetered, a readable
+     * BSSID) - what the parent's Confirm binds to; left out otherwise. */
+    val wifi: ZoneWifiReport? = null,
+    /** Design 138 D7: the confirmations this phone struck that the policy still carries; left out when none. */
+    val wifiStruck: List<Long> = emptyList(),
+)
+
+/** `ZoneWatchReport.wifi` (design 138 D3): the network's name, the BSSID and the AP's multi-link address when known. */
+@Serializable
+data class ZoneWifiReport(
+    val ssid: String,
+    val bssid: String,
+    val mld: String? = null,
 )
 
 /** `StatusReportRequest.dnsUpstream` (no defaults: every field is always sent): the [rev] of the

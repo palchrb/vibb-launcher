@@ -1,6 +1,6 @@
 # 138 - A zone's Wi-Fi: the parent confirms it, the phone learns it, both bound to the router
 
-Status: **design, revision 2**, 2026-11-26 (branch `wifi-link-confirm`), read against `main` 3e84d466f. Approved by
+Status: **built** on branch `wifi-link-confirm` (2026-11-26, revision 2 with D8's widening); design revision 2, 2026-11-26 (branch `wifi-link-confirm`), read against `main` 3e84d466f. Approved by
 the owner on 2026-11-26 as A + B + the router's address; revision 2 takes the design QA (H1, M1-M4, L1-L9) and the
 owner's answers of the same day (Q1, the travel router, the cell veto; §11). Revision 1 was 714ab8e3b. It blocks the
 next launcher RC and the stable release. Both directories, one migration (0180), one new contract file. Android
@@ -217,11 +217,9 @@ callback blocks nothing that matters), so a connected router can strike there.
    device's Wi-Fi rows) or it is struck. LEARNED has no exception;
 4. no cell veto (D9).
 
-If other routers are placed but make no fix of their own (one placed network), the link doesn't confirm: the try
-runs GPS, as design 131 has it. A detached house usually hears only its own router (no placed neighbours, so the
-exception applies) or several placed neighbours (a fix); the one-faint-neighbour case falls back to GPS. If that case
-turns up at the owner's or a family's house, the small widening is "the placed routers all within the zone's radius
-plus their range" - one pure function, not built now.
+**Built with the widening** (the coordinator, 2026-11-26): with exactly one placed network left after the exclusion and
+no fix of its own, a confirmation stands when every row of that network lies within the zone's radius plus its range
+(the same vetoes apply); two or more placed networks without a fix confirm nothing (the try runs GPS).
 
 The server's own rule (`zones::side`, the straddle) is unchanged: a `link`-checked fix that straddles the edge is
 still unsure there.

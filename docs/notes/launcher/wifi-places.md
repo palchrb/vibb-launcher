@@ -381,3 +381,30 @@ tags `WifiPlaces`, `ZoneWatch`, `StillPrint`. No server or contract change.
   fake significant-motion trigger `MotionGate` arms and fires as the real one); `--es connect`'s optional sixth field
   is the made-up connection's level (revision 4; -45 dBm unless given). Gate: `docs/testing/emulator.md` §6bs.
 - Not device-tested: the note's §9 on the Jelly Star (`docs/testing/new-phone-model.md` §2) and §6bs.
+
+## A zone's Wi-Fi: the parent's confirmation, the learned link bound to its router (design 138, `docs/design/138-confirmed-zone-networks.md`)
+
+Pure rules in `places/ZoneLinks.kt` (`ZoneLinksTest`, `ZoneNetworksContractTest`), glue in `WifiPlaces`
+(`judged`, `teachWith`, `teachFromWifi`, `reportWifi`). A Wi-Fi fix's `link` check now comes from `linkCheck`: the
+connected router (`routerOf`: unmetered, a readable BSSID; its device key is the BSSID's first five octets, plus its
+multi-link key) holds a link to a zone - a parent's confirmation from the policy (`PolicyZone.networks`,
+`confirmedAps`; a named PSK/SAE network of the same name and router, not struck; no network id needed) with the fix's
+centre inside, or design 131's learned link (`learnedHolds`, unchanged) with the router among the zone's `LINK_AP`
+rows (kind 6: the zone's key, a router's device key, the network key) and the fix surely inside. At every use the fix
+recomputed without the connected router (`restWithout`: its network, its device and its five octets left out, so a
+guest name too) must have its centre inside the zone; a confirmation alone also stands when nothing else is placed,
+or exactly one placed network whose rows lie within the radius plus their range - unless the router's own rows have
+moved or are blocked. A registered cell placed away from the zone (`cellAway`, design 134's `cellElsewhere`) vetoes
+any link. A router joins a learned link at every inside teach (GPS or Wi-Fi), and its row's `lastSeen` moves at most
+daily while it confirms (`touchRouter`). **The Wi-Fi teach** (`wifiOccasion`, at the attempt's end only when nothing
+disagreed): a fresh, unrefused, unchecked Wi-Fi fix surely inside, its neighbours' own fix surely inside too, the
+same `LINK` row and counters as GPS teaching. **Strikes by router** (`strikeCandidates`, `strikeStep`,
+`applyStrikes`): a GPS teach with the router connected 200 m past the edge, or heard past the band's reach (300 m
+2.4 GHz, 150 m 5/6 GHz), twice 60 s-2 h apart (pending in memory): a confirmation's id goes to the struck list (CE
+prefs `zone_links` `confirm_struck_v1`, kept through a Wi-Fi places clear, emptied at unenrolment, sent as
+`zone_watch.wifi_struck` until the policy drops the id), a learned router is blocked 60 days; a heard name strikes
+nothing. The passive teach reads the connection through `connectedNow` too. **The report**: `zone_watch.wifi`
+(`zoneWifiOf`, read by `reportWifi` through `connectedNow` while the policy has zones and Location is on; logged
+`zone wifi report yes|no reason=... netid=known|none`, never a name). Logs: `zone link confirmed|learned|none
+rest=fix|one|nothing|nofix|unknown`, `zone link struck by=confirmed|learned`, `link taught by=wifi occasions=N
+days=N`. A link learned before this build has no routers until its next inside teach.

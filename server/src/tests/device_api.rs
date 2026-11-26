@@ -628,6 +628,27 @@ async fn policy_json_keys_snapshot() {
         .collect();
     location_keys.sort_unstable();
     assert_eq!(location_keys, ["interval_minutes", "mode", "zones"]);
+    // Design 138 D13: a served zone's keys, its `networks` always present, each router's four.
+    let zone = serde_json::to_value(crate::zones::PolicyZone {
+        id: 1,
+        latitude: 59.9,
+        longitude: 10.7,
+        radius_m: 150,
+        networks: vec![crate::zone_networks::PolicyNetwork {
+            id: 7,
+            ssid: "Net-A".into(),
+            bssid: "00:00:5e:00:53:01".into(),
+            mld: None,
+        }],
+    })
+    .unwrap();
+    let zone_keys: Vec<&String> = zone.as_object().unwrap().keys().collect();
+    assert_eq!(
+        zone_keys,
+        ["id", "latitude", "longitude", "networks", "radius_m"]
+    );
+    let network_keys: Vec<&String> = zone["networks"][0].as_object().unwrap().keys().collect();
+    assert_eq!(network_keys, ["bssid", "id", "mld", "ssid"]);
 
     // The lock's glance page (design 25): always an object, a fresh phone's default - Element X,
     // the sender only (per app since design 51) - and `sms`, Meldinger's level (design 82 D3), Name only. The

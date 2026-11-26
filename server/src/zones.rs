@@ -81,8 +81,9 @@ pub const MAX_EXTRA_LOCATIONS: usize = 20;
 /// policy is served ([served_interval]), never written: the parent's choice comes back with the
 /// last zone deleted.
 pub const HEARTBEAT_FLOOR_MINUTES: i64 = 30;
-/// A stored `zone_watch` is at most this long (known keys only, so it never is).
-const ZONE_WATCH_MAX: usize = 512;
+/// A stored `zone_watch` is at most this long (known keys only, so it never is; design 138's
+/// `wifi` and `wifi_struck` within their caps fit).
+const ZONE_WATCH_MAX: usize = 2048;
 
 /// Which side of a zone a fix is on, when it is sure.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -927,11 +928,17 @@ pub struct PolicyZone {
     pub latitude: f64,
     pub longitude: f64,
     pub radius_m: i64,
+    /// Design 138 D13: the routers a parent confirmed for the zone, unblocked; always present.
+    pub networks: Vec<crate::zone_networks::PolicyNetwork>,
 }
 
 /// The zones the policy carries: the phone's zones while the mode is Regularly, none otherwise
 /// (decision 7: Off and Only when asked keep zones stored but unwatched).
-pub fn policy_zones(mode: &str, zones: &[Zone]) -> Vec<PolicyZone> {
+pub fn policy_zones(
+    mode: &str,
+    zones: &[Zone],
+    networks: &[crate::zone_networks::ZoneNetwork],
+) -> Vec<PolicyZone> {
     if mode != "interval" {
         return Vec::new();
     }
@@ -942,6 +949,7 @@ pub fn policy_zones(mode: &str, zones: &[Zone]) -> Vec<PolicyZone> {
             latitude: z.latitude,
             longitude: z.longitude,
             radius_m: z.radius_m,
+            networks: crate::zone_networks::policy_networks(networks, z.id),
         })
         .collect()
 }
@@ -988,7 +996,20 @@ pub fn sanitize_zone_watch(value: &serde_json::Value) -> Option<String> {
         mock_ignored: count("mock_ignored", 1_000_000_000)?,
         wifi_disagreed: count("wifi_disagreed", 1_000_000_000).unwrap_or(0),
     };
-    serde_json::to_string(&watch)
+    let mut stored = serde_json::to_value(watch).ok()?;
+    // Design 138 D3: the connected network for the zone page's Confirm, and the struck
+    // confirmations - each kept only in its shape, a bad one dropped alone.
+    if let Some(wifi) = value.get("wifi").and_then(crate::zone_networks::clean_wifi) {
+        stored["wifi"] = serde_json::to_value(wifi).ok()?;
+    }
+    let struck = value
+        .get("wifi_struck")
+        .map(crate::zone_networks::clean_struck)
+        .unwrap_or_default();
+    if !struck.is_empty() {
+        stored["wifi_struck"] = serde_json::json!(struck);
+    }
+    serde_json::to_string(&stored)
         .ok()
         .filter(|json| json.len() <= ZONE_WATCH_MAX)
 }
@@ -2136,20 +2157,33 @@ mod tests {
         };
         let zones = [zone];
         assert_eq!(
-            policy_zones("interval", &zones),
+            policy_zones("interval", &zones, &[]),
             [PolicyZone {
                 id: 4,
                 latitude: HOME.latitude,
                 longitude: HOME.longitude,
                 radius_m: 150,
+                networks: Vec::new(),
             }]
         );
-        assert!(policy_zones("on_request", &zones).is_empty());
-        assert!(policy_zones("off", &zones).is_empty());
-        let json = serde_json::to_string(&policy_zones("interval", &zones)).unwrap();
+        assert!(policy_zones("on_request", &zones, &[]).is_empty());
+        assert!(policy_zones("off", &zones, &[]).is_empty());
+        let json = serde_json::to_string(&policy_zones("interval", &zones, &[])).unwrap();
         assert_eq!(
             json,
-            "[{\"id\":4,\"latitude\":59.9139,\"longitude\":10.7522,\"radius_m\":150}]"
+            "[{\"id\":4,\"latitude\":59.9139,\"longitude\":10.7522,\"radius_m\":150,\"networks\":[]}]"
         );
+        // Design 138 D13: a zone's unblocked rows only.
+        let row = |id: i64, blocked: bool| crate::zone_networks::ZoneNetwork {
+            id,
+            zone_id: 4,
+            ssid: "Net-A".into(),
+            bssid: format!("00:00:5e:00:53:0{id}"),
+            mld: None,
+            blocked_at: blocked.then(|| "2026-11-26 10:00:00".to_string()),
+        };
+        let served = policy_zones("interval", &zones, &[row(1, false), row(2, true)]);
+        assert_eq!(served[0].networks.len(), 1);
+        assert_eq!(served[0].networks[0].id, 1);
     }
 }

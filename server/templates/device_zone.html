@@ -86,6 +86,43 @@
     </form>
 
     {% if let Some(zid) = zone_id %}
+    {#- Design 138: the zone's confirmed Wi-Fi routers - each name with Remove..., the phone's network with Confirm
+        (when its newest report has one and its newest fix isn't surely outside), one orange line at most. Every form
+        lands back here (#zone-wifi). -#}
+    <section id="zone-wifi" aria-labelledby="zone-wifi-title">
+        <h2 class="group-header" id="zone-wifi-title">{{ self.t("locate.zone.wifi.title") }}</h2>
+        {% if let Some((key, error)) = wifi_flash %}<p class="flash{% if error %} flash-error{% endif %}" role="status" data-flash="wifi">{{ self.t(key) }}</p>{% endif %}
+        <div class="group">
+            {% for n in wifi.names %}
+            <details class="confirm cell" data-wifi="{{ n.id }}">
+                <summary class="row"><span class="row-label">{{ n.ssid }}</span><span class="row-value">{{ self.t("locate.zone.wifi.remove") }}&hellip;</span></summary>
+                <form method="post" action="/devices/{{ device.id }}/zones/{{ zid }}/wifi/{{ n.id }}/delete#zone-wifi" class="confirm-body">
+                    <p>{{ self.tp("locate.zone.wifi.remove_question", [("name", n.ssid.as_str())]) }}</p>
+                    <button type="submit" class="button-destructive">{{ self.t("locate.zone.wifi.remove") }}</button>
+                    {% include "partials/confirm_cancel.html" %}
+                </form>
+            </details>
+            {% endfor %}
+            {% if let Some(w) = wifi.current %}
+            <form method="post" action="/devices/{{ device.id }}/zones/{{ zid }}/wifi#zone-wifi" class="row row-actions" data-wifi="current">
+                <span class="row-label">{{ w.ssid }}</span>
+                <input type="hidden" name="bssid" value="{{ w.bssid }}">{% if let Some(m) = w.mld %}<input type="hidden" name="mld" value="{{ m }}">{% endif %}
+                <button type="submit" class="button-small">{{ self.t("locate.zone.wifi.confirm") }}</button>
+            </form>
+            {% endif %}
+            {% if let Some((line, info, name)) = self.wifi_orange() %}
+            <details class="info cell" data-wifi="orange">
+                <summary class="row"><span class="row-label tone-orange">{{ self.t(line) }}</span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("common.more_info") }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel"><p>{{ self.tp(info, [("name", name)]) }}</p></div>
+            </details>
+            {% endif %}
+        </div>
+        <div class="group-footer"><details class="info">
+            <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+            <div class="info-panel"><p>{{ self.t("locate.zone.wifi.info") }}</p></div>
+        </details></div>
+    </section>
+
     <section id="delete" aria-label="{{ self.t("locate.zone.delete_aria") }}">
         <div class="group">
             <details class="confirm cell">
