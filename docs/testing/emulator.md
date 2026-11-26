@@ -6241,3 +6241,22 @@ The dump without the argument (both): one line, "Vibb: the place fingerprint's r
 Findings: none in the code; three rows' expectations are off (b's `QUIET` timing, i's `print dropped (rule)` before
 `cleared (off)`, j's "one device missing" with a three-network home gives a fix) - the table above says what the build
 does. Not run: row j's cell clause (above).
+
+## 6bu. The glance's handle room on Android 14, the boot cover's one ask (branch `glance-bootcover`) - written, not run
+
+Two findings of phase D's emulator gate (`phase-d-launcher`'s §6bt, run 2026-11-26) that `main` has too, fixed here
+for launcher rc.5 (the same code is on `phase-d-fixes`):
+
+- **Finding 1**: Android 14 (`compat34`), 3-button navigation: `lock_glance_emergency` `[136,698][343,770]` overlapped
+  `lock_glance_handle` `[159,746][321,782]`, and a swipe from the handle's upper half opened "Call 112?" (16 had no
+  overlap, `[136,662][343,734]`). The lock's window isn't edge to edge on 14, the insets arrive consumed and the
+  glance's listener never ran; `KidInsets.apply` now sets the padding for no insets at once.
+- **Finding 2**: the boot cover asked for Android's pad again every 3-6 s while the pad was up (RC3-1's silence
+  re-ask), once on 14 with a cancel at the screen-off. A silence while the cover's window lacks the focus (Android's
+  pad over it) is skipped, and the focus back after the open ask lost it is the silence at once.
+
+| # | Row | 14 (`compat34`) | 16 (`jelly36`) |
+|---|---|---|---|
+| R1 | The glance in both navigation modes (Android's PIN set): `uiautomator dump` - `lock_glance_emergency`'s bottom at or above `lock_glance_handle`'s top (14 3-button: Nødsamtale up to 734 over the handle `[746,782]`); a swipe up from the handle's upper half opens Android's pad, never "Call 112?"; Nødsamtale's tap still asks "Call 112?" | x | x |
+| R2 (code QA M1) | A restart on a **cold first boot** (`adb emu kill`, a cold boot, so SystemUI's keyguard is late), both navigation modes: while SystemUI is late (no pad yet) `adb shell dumpsys window \| grep mCurrentFocus` names the boot cover (`BootCoverActivity`) and the log has the re-asks ("no answer, again N"); once the pad is up `mCurrentFocus` names SystemUI's `NotificationShade` and `logcat -s` the cover's tag shows exactly one ask after it ("a window (Android's pad) is over the cover - no re-ask" once, no "again N" while the pad is up); the PIN opens Home | x | x |
+| R3 | The same boot with the pad cancelled (Back on the pad): "Trykk for å låse opp" under the mark, no ask until a tap; a tap asks once | x | x |

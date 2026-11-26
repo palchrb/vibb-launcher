@@ -564,6 +564,28 @@ class BootCoverPlanTest {
         assertEquals(PadAction.ASK, bootPadStep(tapped, PadEvent.SILENT, true, interactive = true, inCall = true).action)
     }
 
+    /** Phase D gate §6bt finding 2: the pad up (it has the window focus over the cover) is no silence to ask again for. */
+    @Test
+    fun `an ask whose pad is up is not asked again - only once the cover has the focus back`() {
+        val asked = bootPadStep(BootPad(), PadEvent.RESUMED, gate = true, interactive = true, inCall = false)
+        var state = asked.pad
+        // Up for a minute: every tick is skipped, the same ask, its clock going on - never an ask.
+        repeat(20) {
+            val tick = bootPadStep(state, PadEvent.SILENT, gate = true, interactive = true, inCall = false, covered = true)
+            assertEquals(PadStep(asked.pad, PadAction.NONE, bootPadSilentInMs(0)), tick)
+            state = tick.pad
+        }
+        // The pad gone without an answer (SystemUI dropped it): the next tick asks, uncounted.
+        val again = bootPadStep(state, PadEvent.SILENT, gate = true, interactive = true, inCall = false, covered = false)
+        assertEquals(PadAction.ASK, again.action)
+        assertEquals(asked.pad.copy(reasks = 1), again.pad)
+        // The pad's own answer still ends the ask whatever covers the cover.
+        assertFalse(bootPadStep(state, PadEvent.CANCELLED, true, true, false, covered = true).pad.open)
+        // A tap or a resume asks as before (only a silence reads the focus).
+        assertEquals(PadAction.ASK, bootPadStep(BootPad(), PadEvent.TAPPED, true, true, false, covered = true).action)
+        assertEquals(PadAction.ASK, bootPadStep(BootPad(), PadEvent.RESUMED, true, true, false, covered = true).action)
+    }
+
     @Test
     fun `the hint line sits under the mark, but above the navigation bar (F59d-6)`() {
         // 569 dp tall at 1 px/dp, 48 dp navigation, 16 dp gap, 156 dp under the centre.

@@ -463,8 +463,10 @@ const val BOOT_PAD_RETRY_MS = 1_000L
  * the error retry never runs. An ask with no answer is asked again at these times after it - uncounted, the same ask -
  * and then every [BOOT_PAD_SILENT_EVERY_MS] until an answer, a stop or the screen going off: in the fix run's first
  * boot SystemUI's keyguard took its first ask 32 s after ours (26-42 s in its other boots). Every 6 s after 12 s keeps
- * the kid's wait on SystemUI's clock, once it is ready, under 6 s. A re-ask while Android's pad is up keeps it and the
- * digits typed (the fix run's mid-typing check); SystemUI only adds the callback.
+ * the kid's wait on SystemUI's clock, once it is ready, under 6 s. Only while no window is over the cover (phase D gate
+ * §6bt finding 2: with the pad up and unanswered it was asked for again every 3-6 s, and once on Android 14 a re-ask
+ * at the screen-off went with a cancel): an ask that reached SystemUI shows the pad, which takes the window focus from
+ * the cover, so a silence with the cover unfocused is the pad up - no re-ask, the clock goes on.
  */
 val BOOT_PAD_SILENT_REASK_AT_MS = listOf(3_000L, 6_000L, 12_000L)
 
@@ -571,12 +573,14 @@ data class PadStep(val pad: BootPad, val action: PadAction, val silentInMs: Long
  * - **Silent** (RC3-1): every ask (automatic, tapped, a retry's, a relaunch's) posts [PadEvent.SILENT]; still open when
  *   it comes, the ask is asked again - uncounted, the same ask, its count and arm untouched - at
  *   [BOOT_PAD_SILENT_REASK_AT_MS] after it and then every [BOOT_PAD_SILENT_EVERY_MS], with the screen on and, for an
- *   automatic ask, no call - else that tick is skipped and the clock goes on (code QA Q-2: a call that ends before its
- *   screen covered the cover, or a screen off and on before the pause, brings no stop to close the ask). Any answer, a
- *   stop or a lost gate ends the posting.
+ *   automatic ask, no call, and the cover not [covered] (its window without the focus: Android's pad, or another
+ *   system window, is over it - the ask reached SystemUI) - else that tick is skipped and the clock goes on (code QA
+ *   Q-2: a call that ends before its screen covered the cover, or a screen off and on before the pause, brings no stop
+ *   to close the ask; §6bt finding 2: the pad up is no silence to ask again for). Any answer, a stop or a lost gate ends
+ *   the posting.
  * An answer with no ask open (an earlier ask's) changes nothing.
  */
-fun bootPadStep(pad: BootPad, event: PadEvent, gate: Boolean, interactive: Boolean, inCall: Boolean): PadStep {
+fun bootPadStep(pad: BootPad, event: PadEvent, gate: Boolean, interactive: Boolean, inCall: Boolean, covered: Boolean = false): PadStep {
     if (!gate) return PadStep(pad.copy(open = false, retryDue = false, silentDue = false), PadAction.NONE)
     val none = PadStep(pad, PadAction.NONE)
     // The open ask closes now: an automatic one with the screen off gives its count back.
@@ -617,7 +621,7 @@ fun bootPadStep(pad: BootPad, event: PadEvent, gate: Boolean, interactive: Boole
         }
         PadEvent.SILENT -> when {
             !pad.silentDue || !pad.open -> none
-            !interactive || (pad.auto && inCall) -> PadStep(pad, PadAction.NONE, bootPadSilentInMs(pad.reasks))
+            !interactive || covered || (pad.auto && inCall) -> PadStep(pad, PadAction.NONE, bootPadSilentInMs(pad.reasks))
             else -> PadStep(pad.copy(reasks = pad.reasks + 1), PadAction.ASK, bootPadSilentInMs(pad.reasks + 1))
         }
     }
