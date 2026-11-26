@@ -3,7 +3,9 @@
 Status: **design, revision 3**, 2026-11-25 (built on branch `still-print`), read against `main` d036f5b33. Revision
 1 was 5e980281a; revision 2 applies the owner's scope decisions of 2026-11-25 and the design QA findings (H1-H3,
 M1-M6, L1-L5; §11); revision 3 adds the one rule the owner approved the same evening: **a scan mismatch ends `STILL`**
-(§3a, D15-D19; §12) - the mismatch direction acts, the match direction stays shadow-only. Part (B) of PLAN's item 1b. Part (A) ships apart on branch `still-keeps`: while the sensor
+(§3a, D15-D19; §12) - the mismatch direction acts, the match direction stays shadow-only; revision 4 (§13, D20-D25,
+the owner's addition the same night, branch `still-connected`) lets **the connected router witness the still vouch**
+at a cap try or retry while `STILL`, its code QA applied (§13a) with the owner's answer (b) (§13b). Part (B) of PLAN's item 1b. Part (A) ships apart on branch `still-keeps`: while the sensor
 hasn't fired, a failed cap try no longer ends `STILL`; `still` keeps being sent and the fresh fix is retried at **the
 next two beats, then after 1 h, 2 h, and then every 4 h**. Asked by the owner on 2026-11-25: "med lite (ikke null)
 bevegelse kan den jo fortsatt være i huset og så vil vi jo helst ikke feile lokasjon da". A launcher round; no server
@@ -410,10 +412,14 @@ the real throttle under the anchor's importance with other apps scanning, a real
    me.vibb.launcher/com.kidslauncher.mdm.server.CommandListenerService still-print` - confirmed, contradicted,
    would-not by reason, and the distances of the contradicted ones.
 4. **Cells**: whether the phone has a SIM (asked of the owner); the rule doesn't depend on it.
+5. **The witness's level** (revision 4, code QA H1): at a screen-off cap try, the `connected witness ... level=link
+   screen=off dbm=N vouch=N` line next to a fresh read with the screen on minutes later (`adb shell dumpsys wifi |
+   grep -i rssi`, or a `locate` with the screen on: `level=scan` or `screen=on`) - how far the stale level lies from
+   the live one, for the owner's (a)/(b) (§13b).
 
 ## 10. Questions for the owner
 
-None now. Whether the moved tier may renew is decided from §9's record, in a later revision; whether the mismatch rule
+Revision 4's witness level with the screen off: decided (b) by the owner 2026-11-26 (§13b). Whether the moved tier may renew is decided from §9's record, in a later revision; whether the mismatch rule
 stays, from the same record's mismatch outcomes.
 
 ## 11. Revision 2 - the owner's scope and the design QA
@@ -451,3 +457,129 @@ motion isn't `MOVED`; L8 - D12's and P1's sizes.
 its position from the table (an own cell row or design 125b's Apple answer), further from the vouch than its range,
 the vouch's accuracy and 1 km; unknown counts for nothing, and no lookup is started for it (D15.2). The print keeps
 no cells (D7, format version 2).
+
+## 13. Revision 4 - the connected router as a still witness
+
+The owner (2026-11-25 night): "Ja ta med det". The Jelly Star lay on top of the home router all day; both background
+cap tries got a poor list (15:31 `scan usable=1 trusted=0`, 22:25 `usable=2 trusted=0`) without the home router in
+`getScanResults()`, while the parent's `locate` at 18:24 heard `usable=4 trusted=2` and renewed. D1-D5 and (A)'s
+ladder already treat a stale or refused list as a cap fail; the phone's own connection says more, without a scan.
+Code QA of the build (1H 2M 5L) is applied below (§13a).
+
+D20. **The rule.** While `motion` is `STILL` (no fire since the vouch), the heartbeat's `FIX` - the 4-h cap try and
+    every retry of (A)'s ladder, the `LEARNED_FIRST` plan (no daily refresh due) - renews the vouch when no learned fix
+    was judged, the zone link (design 125 D12) didn't renew, and **all** of these hold (`stillWitness`, pure,
+    `places/StillPlan.kt`):
+    1. **a vouch under (A)'s 24-h ceiling, and its link**: at the fresh fix that became the vouch, not moving, the
+       same attempt read the phone connected to a bound AP (2, 3) with a known level; that read is kept **in memory
+       only** (`VouchLink`: the vouch's time, the boot, the AP's key, its MLO device key, its device key and binding,
+       its level). The ceiling counts from the last fresh fix or a renewal by a zone link or an Apple fix -
+       **never from this renewal** (code QA M1, `ceilingRenewedMs`, `stillCeilingPassed`): a phone lying on its router
+       with no fresh fix for 24 h goes `QUIET` at 24 h whatever the witness says (`reason=ceiling`).
+    2. **connected now** to an AP whose BSSID reads (not `02:00:00:00:00:00`, not unparseable) and is not locally
+       administered (a hotspot, a virtual BSSID).
+    3. **design 131's binding holds**: unmetered, Android's id of the saved network known, WPA2/WPA3 personal or
+       enterprise (open and OWE never) - `linkConn` and `linkSecurityHolds`, the zone link's own checks - **and it is
+       the binding read at the vouch** (the network saved anew or its security class changed: no witness).
+    4. **the same AP as at the vouch** (code QA M2): the same BSSID (its key), or another link of the same MLO
+       device (the MLD address). The router's other band or another mesh node is not: band steering falls back to
+       (A)'s ladder.
+    5. **settled**: one of the AP's device's own Wi-Fi rows trusted (2 occasions) and seen on >= 2 local days, and
+       none of the device's rows moved or blocked (D7's "settled", stricter).
+    6. **its level known and within 15 dB** (`PRINT_LEVEL_DB`) of the level at the vouch. Both levels are the
+       connected BSSID's own entry in the attempt's **answering** scan (D1: heard after the request) when it is there,
+       else the connection's `WifiInfo.getRssi()` (code QA H1). `-127` (`INVALID_RSSI`) or any level outside
+       -126..0 is unknown and refuses (code QA L2). **The connection's level is stale while the screen is off**
+       (Android polls it only with the screen on), so in the background this check is weak: see D22 and §13b.
+    It renews **only the still-ness**: the vouch re-sent with `still: true` (`Ask.renewed`, (A)'s count cleared, the
+    4-h skip counted from it - **not** the 24-h ceiling, 1) - never a new position, never a fresh fix, never a print, a
+    teach or a D7 check. Logged `ZoneWatch: Location heartbeat: STILL renewed by the connected AP` and
+    `WifiPlaces: connected witness renews level=scan|link screen=on|off dbm=N vouch=N diff=N`; one that doesn't hold
+    `WifiPlaces: connected witness no reason=<wire>` (with the same level fields once a link and a level exist).
+    The vouch's read: `WifiPlaces: vouch link read level=scan|link` or `vouch link none`.
+D21. **Not a renewal** (the reason's wire): `moved` (any motion but `STILL`: after a fire the connected AP is no
+    witness - QA H3's travel router and the car), `novouch`, `ceiling` (past (A)'s 24 h, D20.1), `none` (not on
+    Wi-Fi), `unreadable` (redacted or unparseable), `local` (locally administered), `binding` (metered, unknown id,
+    open/OWE, or another binding than at the vouch), `nolink` (no link read for this vouch: another boot, a new
+    process, the vouch's attempt not connected or its level unknown), `other` (another AP than at the vouch),
+    `unsettled`, `nolevel` (the level unknown now), `level` (more than 15 dB weaker), `stronger` (more than 15 dB
+    stronger).
+D22. **Why it is safe, and how far.** Being connected proves range: the phone exchanges frames with that AP now, so
+    it is within the AP's reach. The AP is settled - in the table on two days, never moved - so it stands where it
+    stood, and it is the AP the phone was connected to at the vouch, so the vouch lies within its reach too. The
+    sensor hasn't fired since the vouch. The binding ties it to the saved network the parent's phone joined, not a
+    name anyone can broadcast: an open or OWE twin never counts, and a WPA2/WPA3 twin needs the home's password.
+    **The real bound is the AP's own range**: indoors about one home, outdoors perhaps 50-100 m (a garden, the
+    street, a neighbour's flat), guarded by the motion sensor - a phone carried that far without a fire is the still
+    rule's own limit (§13b, L3). The level helps only when it is fresh: with the screen on, or when the answering scan
+    holds the connected BSSID (then its level is that scan's). With the screen off and the BSSID missing from the
+    answer - the Jelly Star's case - the connection's level is the last one polled with the screen on, often the
+    vouch's own, so the 15 dB check passes by construction there and bounds nothing. It renews nothing a zone link
+    (D12) wouldn't, needs no zone, and can't outlast (A)'s 24-h ceiling.
+D23. **The mismatch** (D15): the witness **vetoes** the mismatch as a renewal does (code QA M1) when it renews, or
+    fails only by a level **more than 15 dB stronger** than at the vouch (code QA L1: nearer the router, never
+    further) - `mismatchVetoed`, the event recorded `vetoed`. A level more than 15 dB weaker vetoes nothing. It
+    seldom arises: with a readable BSSID, a fresh answer that lacks the connected AP is already inconclusive (D2,
+    `noconnected`), and one that holds it hears a device of the print when the AP's device is in it.
+D24. **Reusing design 125 D12.** The witness sits beside `renews()` in `LEARNED_FIRST` (`judged == null && (renews ||
+    witness)`) and shares its pieces: `linkConn` (unmetered, saved-network id, the binding), the security check
+    `linkSecurityHolds` (taken out of `linkConfirms`), `PlaceKeys.ap`/`device`/`binding`. The sync hands the vouch to
+    the attempt on every Regularly phone (`renewable` is `stillOn`'s; `zonesOn` is `stillOn` with zones), so it needs
+    no zone; `linkRenews` itself is unchanged (no zone, no link row: no zone-link renewal).
+D25. **Reading the BSSID on Android 14-17.** `WifiManager.getConnectionInfo()` (deprecated in 31, documented "apps can
+    continue using this API") gives the real BSSID with `ACCESS_FINE_LOCATION`, `ACCESS_BACKGROUND_LOCATION` (both
+    granted as Device Owner) and Location on - the same check `getScanResults()` passes; it is what D2 and the zone
+    link read; its `unmetered` is the active network's `NOT_METERED` (merged through our VPN). When it gives none
+    while the active network carries Wi-Fi, the attempt's scans (`connectedNow`, both of D3's) register one
+    `ConnectivityManager.NetworkCallback(FLAG_INCLUDE_LOCATION_INFO)` (API 31) for Wi-Fi and read its
+    `NetworkCapabilities.getTransportInfo()` `WifiInfo`, up to 1 s, then unregister (`getNetworkCapabilities()` alone
+    always redacts it since 31, so it is no use here); its `unmetered` is **that Wi-Fi network's own** `NOT_METERED`,
+    not the merged one. **That read feeds every user of the attempt's snapshot** (code QA L4), not the witness alone:
+    D2's `noconnected` check, the zone link (`linkConn` in `renews()` and `linkConfirms`) and `hear()` (which adds the
+    connected AP when the results lack it) - where the deprecated read was redacted they now see the connection too,
+    which is the rule they were written to. The teaching path (`teachWith`'s snapshot) keeps the plain read. Both APIs
+    and `WifiInfo.getApMldMacAddress()` (33, the MLO key) are at or under minSdk 34: no SDK gate. Android 17's
+    all-apps behaviour changes name nothing for Wi-Fi, and the launcher targets 36. Never logged: the BSSID; the log
+    carries the reason, levels, their difference, the level's source and the screen's state.
+
+**Pure tests** (`StillWitnessTest`, rows 13-19; `ZonePlanTest` for the sync's source): 13. **the Jelly Star's day** -
+a vouch at 07:30 connected to the home router (-42 dBm, settled), the 15:31 cap try's list poor and old
+(inconclusive), connected at -45: renewed; 14. an unsettled AP (one day, one occasion, a moved or blocked row of its
+device, an Apple row only): `unsettled`; 15. the level 20 dB off: `level` (weaker) or `stronger`, 15 dB renews, -127
+`nolevel`; 16. a redacted BSSID (`02:00:00:00:00:00`): `unreadable`, a locally administered one `local`; 17. `MOVED`,
+`STILL_SINCE_TRY`, `NO_SENSOR`: `moved`; 18. the mismatch veto - by a renewing or a stronger witness, not by a weaker
+one; not connected, unsettled, another binding, no link: it acts; 19. **the ceiling** - renewals by the witness
+every 4 h, the beat at 24 h from the vouch a `FIX` the witness refuses (`ceiling`), `QUIET` and no `still` after it,
+a zone link's renewal still moving it. Also: the answering scan's level of the connected BSSID over the
+connection's (H1), the other band and a mesh node `other`, another link of the same MLO device the same AP,
+another binding, an open network, no link for this vouch (another boot).
+
+**Gate** (`docs/testing/emulator.md` §6bs row k, written, not run): the made-up connection (`--es connect`, its level
+the sixth field) to a settled home AP at the vouch and at the cap try.
+
+### 13a. Code QA of the build (2026-11-25), applied
+
+**H1** the connected RSSI is stale with the screen off: option (b) for now - the check kept, D20.6 and D22 say what
+it bounds, the answering scan's level of the connected BSSID used when present, `level=scan|link screen=on|off` in
+the log, §9 item 5; the owner decides (§13b). **M1** the witness never moves the 24-h ceiling (D20.1). **M2** the
+same AP only, or another link of one MLO device (D20.4). **L1** only a renewing or a stronger witness vetoes a
+mismatch (D23). **L2** an unknown level refuses (D20.6). **L3** a known limit, guarded by the sensor (§13b). **L4**
+the callback read's other users and its `unmetered` (D25). **L5** the test class's name and the ceiling's wording
+(this section).
+
+### 13b. Known limit and the owner's question
+
+**Known limit (code QA L3)**, no code change: the witness says the phone is within the router's reach, not where in
+it. A phone carried a few rooms, into the garden or to a neighbour's flat inside that reach without a motion fire
+keeps `STILL`, and with the screen off the level (D20.6) doesn't tell those places apart. Only the motion sensor
+guards it - the bound the still rule already lives with (design 124 D7's distrust after two contradictions), with
+(A)'s 24-h ceiling as the backstop.
+
+**The owner's question, DECIDED 2026-11-26: (b), the level with the screen off.**
+- **(a) Refuse a stale level.** The level counts only when fresh - the connected BSSID in the answering scan, or the
+  screen on; otherwise no renewal (a new reason, the cap try as (A)'s ladder says). The 15 dB check then always
+  means something, but on the Jelly Star's evidence (the router missing from the background lists, the screen off)
+  the witness would seldom act at the very cap tries it was asked for.
+- **(b) Keep the check as built (this build) - CHOSEN by the owner 2026-11-26.** A stale level passes; the bound is the AP's own range (D22) guarded by
+  the sensor; the log's `level=link screen=off` shows how often that is the case, and §9 item 5 measures the
+  difference on the Jelly Star.

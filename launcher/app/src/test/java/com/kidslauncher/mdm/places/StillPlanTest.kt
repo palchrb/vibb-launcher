@@ -190,6 +190,10 @@ class StillPlanTest {
         assertTrue(glue.contains("return Scan(cached(context), ScanRequest(requestAt, ask))"))
         assertTrue(glue.contains("if (fresh >= SCAN_RESULTS_MIN) return Scan(before, ScanRequest(now, ScanAsk.CACHE))"))
         assertTrue(glue.contains("val answer = scanAnswer(scan.results, scan.request, connectedBssid(connected?.bssid), movedAtElapsedMs, SystemClock.elapsedRealtime())"))
+        // Revision 4 (D25): both scans read the connection with the location-info callback behind the deprecated read.
+        assertEquals(2, Regex("""connectedNow\(context\)""").findAll(glue).count())
+        assertTrue(glue.contains("ConnectivityManager.NetworkCallback(ConnectivityManager.NetworkCallback.FLAG_INCLUDE_LOCATION_INFO)"))
+        assertTrue(glue.contains("runCatching { cm.unregisterNetworkCallback(callback) }"))
         // D3 only in the plan after a move, once.
         assertEquals(1, Regex("""rescan\(app, """).findAll(glue).count())
         assertTrue(glue.contains("val afterMove = ask.heartbeat && ask.motion == Motion.MOVED"))
@@ -209,9 +213,11 @@ class StillPlanTest {
         val sync = source("server/MdmSyncWorker.kt")
         // D10, D15: the shadow runs at the attempt's end, the withheld path too; a mismatch cancels a renewal.
         assertEquals(2, Regex("""shadow\(app, store, print, ask, ended, """).findAll(glue).count())
-        // Code QA M1: a renewal vetoes the mismatch (recorded, flagged); nothing un-renews.
-        assertTrue(glue.contains("if (!ask.renewed) ask.mismatch = clause"))
-        assertTrue(glue.contains("StillPrints.record(context, mismatchEvent(print, clause, scan, at, vetoed = ask.renewed))"))
+        // Code QA M1: a renewal vetoes the mismatch (recorded, flagged); nothing un-renews. Revision 4 (D23): so does the
+        // connected, bound, settled AP of the vouch.
+        assertTrue(glue.contains("val vetoed = mismatchVetoed(ask.renewed, if (ask.renewed) null else witness(context, store, s, ask))"))
+        assertTrue(glue.contains("if (!vetoed) ask.mismatch = clause"))
+        assertTrue(glue.contains("StillPrints.record(context, mismatchEvent(print, clause, scan, at, vetoed = vetoed))"))
         assertFalse(glue.contains("ask.renewed = false"))
         // Code QA M2: a callback whose results are all older than the request isn't the answer - wait on within 8 s.
         assertTrue(glue.contains("answered = heard.isEmpty() || heard.any { it.elapsedMs > requestAt }"))

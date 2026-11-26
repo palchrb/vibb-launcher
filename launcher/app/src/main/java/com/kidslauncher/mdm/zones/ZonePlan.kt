@@ -127,6 +127,7 @@ fun syncLocationAction(
     lastFreshFixMs: Long,
     stillSinceMs: Long = 0,
     capFails: Int = 0,
+    ceilingFromMs: Long = lastFreshFixMs,
 ): SyncLocation {
     val today = com.kidslauncher.mdm.server.locationAction(policy, forced, nowMs - lastOwnFixMs)
     if (!stillOn || policy == null || policy.mode != "interval") return SyncLocation(today, null)
@@ -135,7 +136,7 @@ fun syncLocationAction(
         return SyncLocation(fresh, null)
     }
     val intervalMs = policy.intervalMinutes.coerceAtLeast(com.kidslauncher.mdm.server.MIN_LOCATION_INTERVAL_MINUTES) * 60_000L
-    val beat = heartbeatDue(nowMs, lastBeatMs, intervalMs, motion, lastFreshFixMs, keptFixAgeMs, lastOwnFixMs, stillSinceMs, capFails)
+    val beat = heartbeatDue(nowMs, lastBeatMs, intervalMs, motion, lastFreshFixMs, keptFixAgeMs, lastOwnFixMs, stillSinceMs, capFails, ceilingFromMs)
     val action = if (beat == Heartbeat.FIX) com.kidslauncher.mdm.server.LocationAction.FRESH_BALANCED else com.kidslauncher.mdm.server.LocationAction.CACHED
     val backoffMs = if (motion == Motion.STILL && capFails > 0) capRetryMs(intervalMs, capFails) else stillBackoffMs(intervalMs, lastOwnFixMs, stillSinceMs)
     return SyncLocation(action, beat, backoffMs)
@@ -265,16 +266,19 @@ fun heartbeatDue(
     lastTryMs: Long,
     stillSinceMs: Long,
     capFails: Int = 0,
+    ceilingFromMs: Long = lastFreshFixMs,
 ): Heartbeat {
     val since = nowMs - lastBeatMs
     if (since in 0 until intervalMs) return Heartbeat.NOT_DUE
     if (keptFixAgeMs != null && keptFixAgeMs in 0 until intervalMs) return Heartbeat.KEPT
-    if (stillSinceOwnFix(motion, nowMs, lastFreshFixMs)) return Heartbeat.STILL
+    // Design 134 revision 4 (code QA M1): the ceiling counts from [ceilingFromMs], which a connected-AP renewal never moves.
+    val pastCeiling = stillCeilingPassed(nowMs, ceilingFromMs)
+    if (stillSinceOwnFix(motion, nowMs, lastFreshFixMs) && !pastCeiling) return Heartbeat.STILL
     if (motion == Motion.STILL) {
         val waiting = capFails > 0 && nowMs >= lastFreshFixMs && nowMs - lastTryMs in 0 until capRetryMs(intervalMs, capFails)
         return when {
             !waiting -> Heartbeat.FIX
-            nowMs - lastFreshFixMs < STILL_CEILING_MS -> Heartbeat.STILL
+            !pastCeiling -> Heartbeat.STILL
             else -> Heartbeat.QUIET
         }
     }
@@ -315,9 +319,18 @@ fun stillCapFailsAfter(fails: Int, beat: Heartbeat?, motion: Motion, fresh: Bool
  * ([capFails] > 0; amended 2026-11-25: a failed try is no evidence of a move) and the fix it re-sends is
  * the vouch itself ([cachedIsVouch]: never a promoted kept fix or a fallback, code QA L4).
  */
-fun stillVouched(motion: Motion, nowMs: Long, stillFromMs: Long, capFails: Int, cachedIsVouch: Boolean = true): Boolean =
-    stillSinceOwnFix(motion, nowMs, stillFromMs) ||
-        (motion == Motion.STILL && capFails > 0 && cachedIsVouch && nowMs - stillFromMs in 0 until STILL_CEILING_MS)
+fun stillVouched(motion: Motion, nowMs: Long, stillFromMs: Long, capFails: Int, cachedIsVouch: Boolean = true, ceilingFromMs: Long = stillFromMs): Boolean =
+    !stillCeilingPassed(nowMs, ceilingFromMs) && (
+        stillSinceOwnFix(motion, nowMs, stillFromMs) ||
+            (motion == Motion.STILL && capFails > 0 && cachedIsVouch && nowMs >= stillFromMs)
+        )
+
+/**
+ * (A)'s 24-h ceiling ([STILL_CEILING_MS]) has passed since [ceilingFromMs] - the last fresh fix or its renewal by a zone
+ * link or an Apple fix, never by the connected AP (design 134 revision 4, code QA M1): a phone lying on its router with
+ * no fresh fix goes `QUIET` at 24 h whatever the witness says. A clock set back counts as not passed.
+ */
+fun stillCeilingPassed(nowMs: Long, ceilingFromMs: Long): Boolean = nowMs - ceilingFromMs >= STILL_CEILING_MS
 
 /**
  * Code QA H1: what a cap try (the heartbeat's `FIX` while the motion is `STILL`) takes from its attempt -
@@ -368,8 +381,9 @@ fun reportStill(
     lastFreshFixMs: Long,
     capFails: Int = 0,
     cachedIsVouch: Boolean = true,
+    ceilingFromMs: Long = lastFreshFixMs,
 ): Boolean = stillOn && action == com.kidslauncher.mdm.server.LocationAction.CACHED &&
-    stillVouched(motion, nowMs, lastFreshFixMs, capFails, cachedIsVouch)
+    stillVouched(motion, nowMs, lastFreshFixMs, capFails, cachedIsVouch, ceilingFromMs)
 
 /**
  * The motion gate's state (design 124 D3), in memory only: a new process starts moved.

@@ -10,7 +10,9 @@ import android.location.LocationListener
 import android.location.LocationManager
 import android.location.LocationRequest
 import android.net.ConnectivityManager
+import android.net.Network
 import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.net.wifi.ScanResult
 import android.net.wifi.WifiInfo
 import android.net.wifi.WifiManager
@@ -120,6 +122,9 @@ private const val TEACH_WAKELOCK_MS = 45_000L
 private const val CELL_STALE_MS = 60_000L
 private const val CELL_WAIT_MS = 3_000L
 
+/** Design 134 D25: the location-info callback answers at once on registration; this long at most. */
+private const val LINK_CALLBACK_MS = 1_000L
+
 /**
  * Wi-Fi places, learned on the phone (design 125 step 1; rules in `PlacesPlan.kt`). With Google's location accuracy off
  * (the `network` provider off) a fresh-fix attempt scans Wi-Fi while GPS starts ([attempt], D13/D14): a learned fix
@@ -156,6 +161,7 @@ object WifiPlaces {
         val heartbeat: Boolean = false,
         val mayWithhold: Boolean = false,
         val vouchFix: com.kidslauncher.mdm.zones.QueuedFix? = null,
+        val stillCeilingPassed: Boolean = false,
     ) {
         @Volatile var mismatch: MismatchClause? = null
 
@@ -167,8 +173,15 @@ object WifiPlaces {
 
         @Volatile var renewed = false
 
-        /** The renewal came from an Apple fix within the vouch, not a zone link (A9). */
-        @Volatile var renewedByApple = false
+        /** What renewed it: a zone link (D12), an Apple fix within the vouch (A9), or the connected AP (design 134
+         * revision 4, D20). */
+        @Volatile var renewedBy = Renewal.LINK
+
+        /** Design 134 revision 4: the connected router's answer, once asked in this attempt (D20, D23). */
+        @Volatile internal var witness: StillWitness? = null
+
+        /** D20.1: the attempt's connected AP as a witness reads it - the vouch's link when its fix becomes the vouch. */
+        @Volatile internal var linkAp: LinkAp? = null
 
         @Volatile var notFresh = false
 
@@ -189,6 +202,10 @@ object WifiPlaces {
 
     /** The last learned fix of >= 3 networks, for D15's contradiction. Memory only. */
     @Volatile private var lastLearned: LearnedFix? = null
+
+    /** Design 134 revision 4 (D20.1): the connected AP read at the vouch's fix - memory only, never stored or logged. A
+     * new process starts `MOVED`, so none is lost that a still phone could use. */
+    @Volatile private var vouchLink: VouchLink? = null
 
     /** Our own attempts and teaching fixes running: a passive fix then is ours, taught by the attempt itself, and a
      * teaching alarm waits for the next fire. */
@@ -319,6 +336,7 @@ object WifiPlaces {
         rows = null
         keys = null
         readings = emptyMap()
+        vouchLink = null
         lastLearned = null
         // Design 134 P4: the fingerprint and its ring go with the table.
         StillPrints.clear(context, reason)
@@ -332,14 +350,18 @@ object WifiPlaces {
 
     /** What one read of the radio heard: the Wi-Fi results, the connected network, the usable cells (design 125b C2:
      * registered first, at most 12) and, for a scan of an attempt, which results answer its request (design 134 D1,
-     * D2; `null` without a scan). Never stored. */
+     * D2; `null` without a scan); how the connection read (design 134 revision 4, [link]). Never stored. */
     private class Snapshot(
         val results: List<ScanAp>,
         val connected: Connected?,
         val cells: List<Heard>,
         val answer: ScanAnswer? = null,
         val request: ScanRequest? = null,
+        val link: LinkRead = if (connected != null) LinkRead.READ else LinkRead.NONE,
     )
+
+    /** A connection read: the connected network and how its BSSID read (design 134 revision 4, D25). */
+    private class ConnRead(val connected: Connected?, val read: LinkRead)
 
     /** A scan's results and its request (design 134 D1). */
     private class Scan(val results: List<ScanAp>, val request: ScanRequest)
@@ -443,30 +465,75 @@ object WifiPlaces {
 
     /** D4, D17: the connected network, with its metering from the active network's capabilities (merged through our VPN);
      * design 131: its security (`getCurrentSecurityType`, API 31) and Android's id of the saved network. */
-    private fun connected(context: Context): Connected? = PlacesDebugHooks.madeUpConnected() ?: try {
-        @Suppress("DEPRECATION")
-        val info = wifi(context)?.connectionInfo
-        val bssid = connectedBssid(info?.bssid)
-        if (info == null || bssid == null) {
+    private fun connected(context: Context): Connected? = readConnection(context).connected
+
+    /** [info] as the connected network ([unmetered] from its network's capabilities); `null` without a readable BSSID. */
+    private fun connectionOf(info: WifiInfo, unmetered: Boolean): Connected? {
+        val bssid = connectedBssid(info.bssid) ?: return null
+        val ssid = info.ssid?.removeSurrounding("\"")?.takeIf { it != WifiManager.UNKNOWN_SSID }
+        val security = when (info.currentSecurityType) {
+            WifiInfo.SECURITY_TYPE_PSK -> LinkSecurity.PSK
+            WifiInfo.SECURITY_TYPE_SAE -> LinkSecurity.SAE
+            WifiInfo.SECURITY_TYPE_EAP, WifiInfo.SECURITY_TYPE_EAP_WPA3_ENTERPRISE, WifiInfo.SECURITY_TYPE_EAP_WPA3_ENTERPRISE_192_BIT,
+            WifiInfo.SECURITY_TYPE_PASSPOINT_R1_R2, WifiInfo.SECURITY_TYPE_PASSPOINT_R3,
+            -> LinkSecurity.EAP
+            else -> LinkSecurity.OTHER
+        }
+        val mld = try {
+            info.apMldMacAddress?.toString()
+        } catch (e: Exception) {
             null
-        } else {
+        }
+        return Connected(bssid, ssid, info.rssi, info.frequency, unmetered, security, info.networkId, mld)
+    }
+
+    /** The connection as `WifiManager.getConnectionInfo()` gives it (deprecated in 31, still served on 14-17 with fine
+     * and background location and Location on - design 134 D25), and whether the active network carries Wi-Fi when it
+     * gives no readable BSSID ([LinkRead.UNREADABLE]). */
+    private fun readConnection(context: Context): ConnRead {
+        PlacesDebugHooks.madeUpConnected()?.let { return ConnRead(it, LinkRead.READ) }
+        return try {
+            @Suppress("DEPRECATION")
+            val info = wifi(context)?.connectionInfo
             val cm = context.getSystemService(ConnectivityManager::class.java)
             val caps = cm?.activeNetwork?.let { cm.getNetworkCapabilities(it) }
-            val unmetered = caps != null && caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) &&
-                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
-            val ssid = info.ssid?.removeSurrounding("\"")?.takeIf { it != WifiManager.UNKNOWN_SSID }
-            val security = when (info.currentSecurityType) {
-                WifiInfo.SECURITY_TYPE_PSK -> LinkSecurity.PSK
-                WifiInfo.SECURITY_TYPE_SAE -> LinkSecurity.SAE
-                WifiInfo.SECURITY_TYPE_EAP, WifiInfo.SECURITY_TYPE_EAP_WPA3_ENTERPRISE, WifiInfo.SECURITY_TYPE_EAP_WPA3_ENTERPRISE_192_BIT,
-                WifiInfo.SECURITY_TYPE_PASSPOINT_R1_R2, WifiInfo.SECURITY_TYPE_PASSPOINT_R3,
-                -> LinkSecurity.EAP
-                else -> LinkSecurity.OTHER
-            }
-            Connected(bssid, ssid, info.rssi, info.frequency, unmetered, security, info.networkId)
+            val onWifi = caps != null && caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+            val unmetered = onWifi && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
+            val c = info?.let { connectionOf(it, unmetered) }
+            ConnRead(c, if (c != null) LinkRead.READ else if (onWifi) LinkRead.UNREADABLE else LinkRead.NONE)
+        } catch (e: Exception) {
+            ConnRead(null, LinkRead.NONE)
         }
-    } catch (e: Exception) {
-        null
+    }
+
+    /**
+     * Design 134 D25: [readConnection], and when it gave no readable BSSID on Wi-Fi, one `NetworkCallback` with
+     * `FLAG_INCLUDE_LOCATION_INFO` (API 31; `getNetworkCapabilities()` alone always redacts the `WifiInfo` in its
+     * `TransportInfo`) for the Wi-Fi network, up to [LINK_CALLBACK_MS], then unregistered.
+     */
+    private suspend fun connectedNow(context: Context): ConnRead {
+        val sync = readConnection(context)
+        if (sync.read != LinkRead.UNREADABLE) return sync
+        val cm = context.getSystemService(ConnectivityManager::class.java) ?: return sync
+        val got = CompletableDeferred<Connected>()
+        val callback = object : ConnectivityManager.NetworkCallback(ConnectivityManager.NetworkCallback.FLAG_INCLUDE_LOCATION_INFO) {
+            override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
+                val info = caps.transportInfo as? WifiInfo ?: return
+                connectionOf(info, caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED))?.let { got.complete(it) }
+            }
+        }
+        return try {
+            cm.registerNetworkCallback(NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_WIFI).build(), callback)
+            val c = withTimeoutOrNull(LINK_CALLBACK_MS) { got.await() }
+            Log.i(LOG_TAG, "connection read by callback " + if (c != null) "yes" else "no")
+            c?.let { ConnRead(it, LinkRead.READ) } ?: sync
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            sync
+        } finally {
+            runCatching { cm.unregisterNetworkCallback(callback) }
+        }
     }
 
     /**
@@ -561,21 +628,22 @@ object WifiPlaces {
     private suspend fun snapshot(context: Context, keys: PlaceKeys, movedAtElapsedMs: Long): Snapshot = coroutineScope {
         val cells = async { readCells(context, keys) }
         val scan = scanNow(context, movedAtElapsedMs)
-        answered(scan, connected(context), cells.await(), movedAtElapsedMs)
+        answered(scan, connectedNow(context), cells.await(), movedAtElapsedMs)
     }
 
     /** Design 134 D1, D2: [scan] as a snapshot with the results that answer its request; the connection read after the
      * scan (a live BSSID must be among the answer). */
-    private fun answered(scan: Scan, connected: Connected?, cells: List<Heard>, movedAtElapsedMs: Long): Snapshot {
+    private fun answered(scan: Scan, conn: ConnRead, cells: List<Heard>, movedAtElapsedMs: Long): Snapshot {
+        val connected = conn.connected
         val answer = scanAnswer(scan.results, scan.request, connectedBssid(connected?.bssid), movedAtElapsedMs, SystemClock.elapsedRealtime())
         // Code QA L2: how many results answered the request, and how it was asked; a time base that isn't boottime shows.
         Log.i(LOG_TAG, "scan answer ${answer.answering.size}/${scan.results.size} ask=${scan.request.ask.wire}" + (answer.inconclusive?.let { " ${it.wire}" } ?: ""))
-        return Snapshot(scan.results, connected, cells, answer, scan.request)
+        return Snapshot(scan.results, connected, cells, answer, scan.request, conn.read)
     }
 
     /** Design 134 D3: one more scan for [first]'s attempt, its cells kept. */
     private suspend fun rescan(context: Context, first: Snapshot, movedAtElapsedMs: Long): Snapshot =
-        answered(scanNow(context, movedAtElapsedMs), connected(context), first.cells, movedAtElapsedMs)
+        answered(scanNow(context, movedAtElapsedMs), connectedNow(context), first.cells, movedAtElapsedMs)
 
     private fun hearing(context: Context, store: Store, snap: Snapshot, remember: Boolean): Hearing {
         val h = hear(snap.results, snap.connected, store.keys, moving(context), readings, SystemClock.elapsedRealtime())
@@ -1121,7 +1189,7 @@ object WifiPlaces {
                 // A9 (H2): still means still - the vouch renewed, never replaced; with its own check (never a better one).
                 fun renew(): Location? = ask.stillVouch.also {
                     ask.renewed = true
-                    ask.renewedByApple = true
+                    ask.renewedBy = Renewal.APPLE
                 }
                 // The order after the judging is the pure [attemptKeep]'s, every plan's.
                 fun keep(gps: Location?, j: Judged?): Location? {
@@ -1165,6 +1233,11 @@ object WifiPlaces {
                         when {
                             judged != null && !runsGps(plan, judged.verdict.step) -> keep(null, judged)
                             judged == null && renews(app, store, snap.await(), ask) -> ask.vouched.also { ask.renewed = true }
+                            // Design 134 revision 4 (D20, D24): beside the zone link, the connected router - no zone needed.
+                            judged == null && store != null && witness(app, store, snap.await(), ask) == StillWitness.RENEWS -> ask.vouched.also {
+                                ask.renewed = true
+                                ask.renewedBy = Renewal.CONNECTED
+                            }
                             // Not standing alone, refused, or nothing: GPS (and Apple beside it on a miss) - TOGETHER's way.
                             else -> {
                                 val early = async { judged ?: judge(appleFix()) }
@@ -1188,6 +1261,8 @@ object WifiPlaces {
                 // Design 134 D2, D4: the attempt's last scan said nothing and no fresh fix came - after a move nothing is
                 // reported (no cell fix, no unchecked or fallback fix, no last-known), and the flags stay as they were.
                 val ended = last ?: snap.await()
+                // Design 134 revision 4 (D20.1): the connected AP this attempt read - the vouch's link if its fix becomes one.
+                ask.linkAp = store?.let { linkAp(ended.link, ended.connected, it.keys, ended.answer?.answering.orEmpty()).ap }
                 // Code QA M1: a renewal in this attempt (a zone link, an Apple fix within the vouch) vetoes a mismatch.
                 ask.inconclusive = ended.answer?.inconclusive
                 if (withheld(ask.mayWithhold, ask.inconclusive, kept != null && !ask.notFresh && !ask.renewed)) {
@@ -1260,9 +1335,11 @@ object WifiPlaces {
                     val clause = if (fresh) null else printMismatch(print, scan, cellAway)
                     if (clause != null) {
                         // Code QA M1 (D16): a renewal in the same attempt is positive evidence of the place - it vetoes the
-                        // mismatch, which is still recorded (flagged) for the owner's record.
-                        if (!ask.renewed) ask.mismatch = clause
-                        StillPrints.record(context, mismatchEvent(print, clause, scan, at, vetoed = ask.renewed))
+                        // mismatch, which is still recorded (flagged) for the owner's record; so does the connected, bound,
+                        // settled AP of the vouch (revision 4, D23), whatever its level.
+                        val vetoed = mismatchVetoed(ask.renewed, if (ask.renewed) null else witness(context, store, s, ask))
+                        if (!vetoed) ask.mismatch = clause
+                        StillPrints.record(context, mismatchEvent(print, clause, scan, at, vetoed = vetoed))
                     } else if (ask.renewed && shadowVerdict(print, scan, veto = false).would) {
                         StillPrints.grow(context, print, grownPrint(print, scan.devices))
                     }
@@ -1290,6 +1367,9 @@ object WifiPlaces {
                 val vouch = ask.vouchFix?.let { VouchPoint((it.timeMs / 60_000).toInt(), it.latitude, it.longitude, it.accuracy ?: 0f) }
                 StillPrints.afterFix(app, OutcomeFix(fresh.latitude, fresh.longitude, acc, nowMin, BootClock.bootCount(), MotionGate.snapshot(app).movedAtElapsedMs), vouch)
             }
+            // Revision 4 (D20.1): the connected AP read with the new vouch, in memory; none on the move or not connected.
+            vouchLink = vouchLinkOf(fresh.timeMs, BootClock.bootCount(), ask.linkAp, moving)
+            Log.i(LOG_TAG, "vouch link " + if (vouchLink != null) "read level=" + (if (ask.linkAp?.fresh == true) "scan" else "link") else "none")
             val old = StillPrints.current(app)
             if (old != null && old.fixTimeMs != fresh.timeMs) StillPrints.drop(app, DropReason.REPLACED)
             val material = ask.material
@@ -1357,6 +1437,31 @@ object WifiPlaces {
         val refresh = refreshDue(prefs(context).getLong(KEY_LAST_GPS_TRY, 0L), System.currentTimeMillis())
         val v = Vouched(vouched.latitude, vouched.longitude, if (vouched.hasAccuracy()) vouched.accuracy.toDouble() else Double.MAX_VALUE)
         return linkRenews(store.rows, linkZones(store.keys), v, conn?.network, ask.motion == Motion.STILL, refresh, nowMin(), conn?.binding)
+    }
+
+    /**
+     * Design 134 revision 4 (D20): the connected router's answer for [ask] on [snap]'s connection - once an attempt, logged
+     * with its reason when it doesn't renew (levels only, never the BSSID). The vouch is [Ask.vouched] (the cap try's).
+     */
+    private fun witness(context: Context, store: Store, snap: Snapshot, ask: Ask): StillWitness {
+        ask.witness?.let { return it }
+        val now = linkAp(snap.link, snap.connected, store.keys, snap.answer?.answering.orEmpty())
+        val link = vouchLink
+        val w = stillWitness(
+            ask.motion, ask.vouched?.time, BootClock.bootCount(), link, now, open(context)?.rows ?: store.rows, nowMin(), ask.stillCeilingPassed,
+        )
+        ask.witness = w
+        // Code QA H1: whether the level is the answering scan's (fresh) or the connection's (stale while the screen is off).
+        val ap = now.ap
+        val rssi = ap?.rssi
+        val level = if (ap == null || rssi == null || link == null) {
+            ""
+        } else {
+            val screen = if (context.getSystemService(PowerManager::class.java)?.isInteractive == true) "on" else "off"
+            " level=${if (ap.fresh) "scan" else "link"} screen=$screen dbm=$rssi vouch=${link.rssi} diff=${rssi - link.rssi}"
+        }
+        Log.i(LOG_TAG, "connected witness " + (if (w == StillWitness.RENEWS) "renews" else "no reason=${w.wire}") + level)
+        return w
     }
 
     // --- The teaching fix (D11) ---

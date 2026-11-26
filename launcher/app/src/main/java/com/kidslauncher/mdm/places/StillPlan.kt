@@ -423,6 +423,146 @@ fun cellElsewhere(cells: List<Heard>, rows: List<PlaceRow>, nowMin: Int, vouch: 
     return com.kidslauncher.mdm.zones.distanceM(row.lat, row.lng, vouch.lat, vouch.lng) > row.rangeM + vouch.accuracyM + CELL_ELSEWHERE_MARGIN_M
 }
 
+// --- Revision 4 (D20-D25): the connected router as a still witness ---
+
+/** D25: how the attempt read the connection - not on Wi-Fi ([NONE]), on Wi-Fi with no readable BSSID ([UNREADABLE]:
+ * redacted, `02:00:00:00:00:00`, none), or read ([READ]). */
+enum class LinkRead { NONE, UNREADABLE, READ }
+
+/** D20.6 (code QA L2): a level outside this is unknown - `WifiInfo.INVALID_RSSI` (-127) and nonsense. */
+const val RSSI_MIN = -126
+const val RSSI_MAX = 0
+
+/** D20.1: the connected AP the attempt read at the fresh fix that became the vouch ([fixTimeMs], in [bootCount]) - its
+ * AP key, its MLO device key ([mld], `null` without MLO), its device key, binding and level. Memory only, never stored
+ * or logged. */
+data class VouchLink(val fixTimeMs: Long, val bootCount: Int, val ap: String, val mld: String?, val device: String, val binding: String, val rssi: Int)
+
+/** D20.2-D20.4: the connected AP as a witness - its AP key, its MLO device key ([mld], code QA M2), its device key
+ * (design 125 D5), its binding (design 131) and its level ([rssi], `null` unknown - code QA L2): [fresh] when it is
+ * the attempt's answering scan's (code QA H1), else the connection's (not polled while the screen is off). */
+data class LinkAp(val ap: String, val mld: String?, val device: String, val binding: String, val rssi: Int?, val fresh: Boolean)
+
+/** The connected AP ([ap]) when it may witness, else why not ([refusal]). */
+data class LinkApRead(val ap: LinkAp?, val refusal: StillWitness?)
+
+/** Revision 4's answer (D20, D21) - the log's `reason=`. */
+enum class StillWitness(val wire: String) {
+    RENEWS("renews"),
+    MOVED("moved"),
+    NO_VOUCH("novouch"),
+    CEILING("ceiling"),
+    NONE("none"),
+    UNREADABLE("unreadable"),
+    LOCAL("local"),
+    BINDING("binding"),
+    NO_LINK("nolink"),
+    OTHER("other"),
+    UNSETTLED("unsettled"),
+    NO_LEVEL("nolevel"),
+
+    /** The level now more than [PRINT_LEVEL_DB] weaker than at the vouch. */
+    LEVEL("level"),
+
+    /** ... or more than [PRINT_LEVEL_DB] stronger: nearer the router, never further (code QA L1). */
+    STRONGER("stronger"),
+    ;
+
+    /** D23 (code QA L1): it vetoes a mismatch - it renews, or fails only by a level stronger than at the vouch. */
+    val vetoes: Boolean get() = this == RENEWS || this == STRONGER
+}
+
+/** Design 131's security part of a link check, shared by [linkConfirms] and the witness (D24): WPA2/WPA3 personal, or
+ * an enterprise network when the connected AP itself is known ([apOwn]: one of the fix's rows, or the witness's own AP);
+ * open and OWE never. */
+fun linkSecurityHolds(conn: LinkConn, apOwn: Boolean): Boolean = when (conn.security) {
+    LinkSecurity.PSK, LinkSecurity.SAE -> true
+    LinkSecurity.EAP -> apOwn
+    LinkSecurity.OTHER -> false
+}
+
+/** A level that is one ([RSSI_MIN]..[RSSI_MAX]), else `null` (code QA L2). */
+fun knownRssi(rssi: Int?): Int? = rssi?.takeIf { it in RSSI_MIN..RSSI_MAX }
+
+/**
+ * D20.2-D20.4, D20.6: the connection read ([read], [connected]) as a witness: a readable BSSID ([connectedBssid]), not
+ * locally administered ([usableBssid]: a hotspot, a virtual BSSID), and design 131's binding ([linkConn]: unmetered,
+ * Android's saved-network id known; [linkSecurityHolds]) - the AP's keys and its level: the connected BSSID's own
+ * level in the attempt's answering scan ([answering], heard after the request) when it is there (code QA H1: fresh),
+ * else the connection's (`WifiInfo.getRssi()`, which Android stops polling while the screen is off).
+ */
+fun linkAp(read: LinkRead, connected: Connected?, keys: PlaceKeys, answering: List<ScanAp> = emptyList()): LinkApRead {
+    if (connected == null) return LinkApRead(null, if (read == LinkRead.UNREADABLE) StillWitness.UNREADABLE else StillWitness.NONE)
+    val bssid = connectedBssid(connected.bssid) ?: return LinkApRead(null, StillWitness.UNREADABLE)
+    if (usableBssid(bssid) == null) return LinkApRead(null, StillWitness.LOCAL)
+    val conn = linkConn(connected, keys)?.takeIf { linkSecurityHolds(it, apOwn = true) } ?: return LinkApRead(null, StillWitness.BINDING)
+    val scanned = knownRssi(answering.filter { normalBssid(it.bssid) == bssid }.maxOfOrNull { it.rssi })
+    val mld = normalBssid(connected.mld)?.let { keys.device(bssid, it) }
+    val ap = LinkAp(keys.ap(bssid), mld, keys.device(bssid, connected.mld), conn.binding, scanned ?: knownRssi(connected.rssi), fresh = scanned != null)
+    return LinkApRead(ap, null)
+}
+
+/** D20.1: the link a fresh fix at [fixTimeMs] (in [bootCount]) leaves for its vouch: its attempt's connected AP ([ap]),
+ * none when it was on the move ([moving]), not connected to a bound AP, or its level unknown. */
+fun vouchLinkOf(fixTimeMs: Long, bootCount: Int, ap: LinkAp?, moving: Boolean): VouchLink? {
+    val rssi = ap?.rssi
+    return if (ap == null || rssi == null || moving) null else VouchLink(fixTimeMs, bootCount, ap.ap, ap.mld, ap.device, ap.binding, rssi)
+}
+
+/** D20.4 (code QA M2): the connected AP is the vouch's - the same BSSID, or another link of the same MLO device. Another
+ * band or mesh node of the same router is not (part A's ladder then). */
+fun sameAp(ap: LinkAp, link: VouchLink): Boolean = ap.ap == link.ap || (ap.mld != null && ap.mld == link.mld)
+
+/** D20.5: [device] is settled - one of its own Wi-Fi rows trusted and seen on [SETTLED_DAYS_MIN] local days, and none
+ * of its rows moved or blocked (stricter than D7: one moved AP and the device never witnesses). */
+fun deviceSettled(rows: List<PlaceRow>, device: String, nowMin: Int): Boolean {
+    val own = rows.filter { it.kind == RowKind.WIFI && it.device == device }
+    return own.none { it.moves > 0 || it.blocked(nowMin) } && own.any { it.trusted(nowMin) && it.days >= SETTLED_DAYS_MIN }
+}
+
+/**
+ * D20: the connected router witnesses the still vouch - [StillWitness.RENEWS] while [motion] is `STILL`, with a vouch
+ * ([vouchTimeMs]) still under (A)'s 24-h ceiling ([ceilingPassed] false; code QA M1: this renewal never moves the
+ * ceiling's start, so it can't outlast it) whose link ([link], this boot) is the connected AP now ([now], [sameAp]),
+ * under the same binding, its device settled in [rows] ([deviceSettled]) and its level known and within
+ * [PRINT_LEVEL_DB] of the vouch's. Else the first reason that fails (D21). The still-ness only: never a position.
+ */
+fun stillWitness(
+    motion: Motion,
+    vouchTimeMs: Long?,
+    bootCount: Int,
+    link: VouchLink?,
+    now: LinkApRead,
+    rows: List<PlaceRow>,
+    nowMin: Int,
+    ceilingPassed: Boolean = false,
+): StillWitness {
+    if (motion != Motion.STILL) return StillWitness.MOVED
+    if (vouchTimeMs == null) return StillWitness.NO_VOUCH
+    if (ceilingPassed) return StillWitness.CEILING
+    now.refusal?.let { return it }
+    val ap = now.ap ?: return StillWitness.NONE
+    if (link == null || link.fixTimeMs != vouchTimeMs || link.bootCount != bootCount) return StillWitness.NO_LINK
+    if (ap.binding != link.binding) return StillWitness.BINDING
+    if (!sameAp(ap, link)) return StillWitness.OTHER
+    if (!deviceSettled(rows, ap.device, nowMin)) return StillWitness.UNSETTLED
+    val rssi = ap.rssi ?: return StillWitness.NO_LEVEL
+    if (rssi - link.rssi > PRINT_LEVEL_DB) return StillWitness.STRONGER
+    if (link.rssi - rssi > PRINT_LEVEL_DB) return StillWitness.LEVEL
+    return StillWitness.RENEWS
+}
+
+/** D16 (code QA M1) and D23: a mismatch is vetoed by a renewal in the same attempt ([renewed]) or a witness that renews
+ * or is stronger than at the vouch ([witness]'s [StillWitness.vetoes], code QA L1). */
+fun mismatchVetoed(renewed: Boolean, witness: StillWitness?): Boolean = renewed || witness?.vetoes == true
+
+/** What renewed the still vouch - the sync's `STILL renewed by ...` line. */
+enum class Renewal(val phrase: String) {
+    LINK("a zone link"),
+    APPLE("an Apple fix"),
+    CONNECTED("the connected AP"),
+}
+
 // --- D10-D12, D19: events, outcomes and the ring ---
 
 /** An event's kind (D10, D19). */

@@ -942,6 +942,9 @@ private suspend fun currentLocationReport(
     // its vouch (design 125 D12).
     val lastFreshFix = if (stillOn) ZoneWatch.lastFreshFixMs(context) else lastOwnFix
     val stillFrom = if (stillOn) maxOf(lastFreshFix, ZoneWatch.vouchRenewedMs(context)) else lastOwnFix
+    // Design 134 revision 4 (code QA M1): (A)'s 24-h ceiling counts from the last fresh fix or a renewal by a zone link or
+    // an Apple fix - never the connected AP's.
+    val ceilingFrom = if (stillOn) maxOf(lastFreshFix, ZoneWatch.ceilingRenewedMs(context)) else lastOwnFix
     // Design 124 D5 (amended 2026-11-25): the failed tries since the vouch's 4 h ran out.
     val capFails = if (stillOn) ZoneWatch.stillCapFails(context) else 0
     // Design 134 D4: the inconclusive tries after a move withheld in a row; code QA L6: a run belongs to one move - any
@@ -963,6 +966,7 @@ private suspend fun currentLocationReport(
         lastFreshFixMs = stillFrom,
         stillSinceMs = motionNow?.stillSinceMs ?: 0L,
         capFails = capFails,
+        ceilingFromMs = ceilingFrom,
     )
     val action = withLowBatteryFix(sync.action, lowBatteryFix)
     val beat = sync.beat
@@ -976,7 +980,7 @@ private suspend fun currentLocationReport(
     // P-L3: a cached fix older than the interval is never reported - but the still heartbeat's re-send (Q-3); past the
     // cap only the vouch itself (code QA L4: never a promoted kept fix or a fallback).
     val cachedIsVouch = LocateCommands.cachedQueued()?.timeMs == lastFreshFix
-    val stillBeat = reportStill(stillOn, action, motion, now, stillFrom, capFails, cachedIsVouch)
+    val stillBeat = reportStill(stillOn, action, motion, now, stillFrom, capFails, cachedIsVouch, ceilingFrom)
     if (beat == Heartbeat.STILL && capFails > 0) {
         val vouch = if (stillBeat) "" else " not the vouch"
         Log.i(ZONE_LOG_TAG, "Location heartbeat: STILL fails=$capFails retry=${sync.backoffMs / 60_000} min$vouch")
@@ -990,8 +994,9 @@ private suspend fun currentLocationReport(
     // Design 134 D18: after a scan mismatch with no fire since the vouch, the next fresh fix is D7's evidence as if STILL.
     val vouched = lastFreshQueued?.takeIf { d7Applies(motion, motionNow?.mismatched == true) && it.provider in VOUCHING_PROVIDERS }
     // Design 125 D12: the heartbeat's 4-h cap try (motion STILL, so a fix is due only because the cap ran out) may renew
-    // the vouch through a zone link instead of a new position.
-    val renewable = if (zonesOn && beat == Heartbeat.FIX && motion == Motion.STILL) lastFreshQueued else null
+    // the vouch through a zone link instead of a new position; design 134 revision 4 (D24) through the connected router
+    // on every Regularly phone, zones or not (zonesOn is stillOn with zones; without one the zone link renews nothing).
+    val renewable = if (stillOn && beat == Heartbeat.FIX && motion == Motion.STILL) lastFreshQueued else null
     // Design 131: a renewal re-sends the vouch with the vouch's own check - never a better one.
     fun asLocation(q: QueuedFix) = android.location.Location(q.provider ?: "cached").apply {
         latitude = q.latitude
@@ -1027,6 +1032,7 @@ private suspend fun currentLocationReport(
         heartbeat = beat == Heartbeat.FIX,
         vouchFix = if (stillOn) ZoneWatch.lastFreshFix(context) else null,
         mayWithhold = motionNow != null && com.kidslauncher.mdm.places.mayWithhold(beat == Heartbeat.FIX, motion, inconclusiveTries),
+        stillCeilingPassed = stillOn && com.kidslauncher.mdm.zones.stillCeilingPassed(now, ceilingFrom),
     )
     // The parent's `locate` waits up to EXPLICIT_FIX_BOUND_MS here, under the sync mutex: rare and asked for, and its
     // fix goes into this report; every other fix keeps its 15 s (preciseFix).
@@ -1039,8 +1045,8 @@ private suspend fun currentLocationReport(
     var capFailed = false
     var capResend = false
     if (places.renewed) {
-        ZoneWatch.stampVouchRenewed(context, now)
-        Log.i(ZONE_LOG_TAG, "Location heartbeat: STILL renewed by " + if (places.renewedByApple) "an Apple fix" else "a zone link")
+        ZoneWatch.stampVouchRenewed(context, now, movesCeiling = places.renewedBy != com.kidslauncher.mdm.places.Renewal.CONNECTED)
+        Log.i(ZONE_LOG_TAG, "Location heartbeat: STILL renewed by " + places.renewedBy.phrase)
     }
     if (motionNow != null && action.fresh) {
         // A genuinely fresh fix of our own (not the cached or an old last-known fallback, Q-6; not a learned fix from
@@ -1080,7 +1086,7 @@ private suspend fun currentLocationReport(
         capFailed = capTry && fresh == null && !places.renewed
         if (capFailed) {
             capResend = mismatch == null &&
-                capTryResends(LocateCommands.cachedQueued()?.timeMs, lastFreshFix, held, stillVouched(motion, now, stillFrom, capFailsNow))
+                capTryResends(LocateCommands.cachedQueued()?.timeMs, lastFreshFix, held, stillVouched(motion, now, stillFrom, capFailsNow, ceilingFromMs = ceilingFrom))
             Log.i(ZONE_LOG_TAG, "Location heartbeat: cap try failed fails=$capFailsNow vouch=" + if (capResend) "re-sent" else "dropped")
         }
         if (beat == Heartbeat.FIX || moving) {
