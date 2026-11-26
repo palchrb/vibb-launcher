@@ -400,6 +400,10 @@ host it counted). Each launcher step builds and passes `testDebugUnitTest` on it
 
 ## 11. Emulator gate (Android 14 `compat34`, Android 16 `jelly36`)
 
+**Run 2026-11-26 on 14 and 16** (`docs/testing/emulator.md` §6bt, branch `gate-phase-d`): G1-G7, G9, G11, G12a pass;
+G12b passes by its stand-in (unmanaging is not reachable); G8 and G10 partial (no `am crash` for a Device Owner, no
+VoIP app); J1 open.
+
 G1, G4 and G8 run under both gesture and 3-button navigation on each version (QA M4;
 `adb shell cmd overlay enable com.android.internal.systemui.navbar.gestural` / `.threebutton`). The screenshots for
 the owner come from `jelly36`.

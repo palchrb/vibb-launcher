@@ -5944,3 +5944,71 @@ minutes). Fill `/data` until a write fails: `adb shell 'dd if=/dev/zero of=/sdca
 | 17 | More syncs the same day | no second push (one a day); the line stays |
 | 18 | `adb reboot` with the disk still full | the day's count goes back to the last saved ledger: the time used since storage filled is lost (the accepted cost); the line comes back with the first failed save after the restart |
 | 19 | Delete the fill file, use the phone a minute, a sync | the save works, `storage_full` is left out of the report, the line and the Attention row are gone; Notify Me About has the "Lagringen er full" switch, on |
+
+## 6bt. Phase D: Android's PIN lock is the only lock (design 132 §11, D7) - run 2026-11-26 (branch `gate-phase-d`)
+
+Design 132 §11's gate (G1-G12b) on **Android 14 (`compat34`, Google APIs, `adb root`) and Android 16 (`jelly36`,
+Google Play)**, each from `-wipe-data`, 00:50-02:50 CET. The branch `phase-d-launcher` at `7f40601ff` (server and
+launcher of phase D): its debug launcher (versionCode 116) and a debug server 0.93.0 `--features emulator_keys` with
+`LAUNCHER_DEBUG_SIGNATURE_CHECKSUM`; for G3 also `main` at `6567f11fc` (the previous launcher and a server before
+migration 0180, the same versionCode 116, installed with `install -r -d`). Each phone: Device Owner by adb (§4's
+lines), Koble til with a typed code to `http://10.0.2.2:3160`, the setup flow finished, "Block USB debugging" off,
+Parent PIN 246813, Child PIN 1357. The state after Device Owner, after the enrolment and after the Child PIN was saved
+as a snapshot with a copy of the server's data (§3, "Faster gates"); after each load the phone's network was dropped
+for 2 s (`svc wifi disable`/`enable`), else the command stream stayed half-open to the restarted server for minutes.
+The PWA read as the signed-in parent (nb). Screenshots in the session's `scratchpad/g-phase-d/` (not committed).
+
+| # | Android 14 (`compat34`) | Android 16 (`jelly36`) |
+|---|---|---|
+| G1 | **Pass.** `set_kid_pin` answered `pin set` 4 s after the save; `locksettings verify --old 1357` passes; `Password quality: {0=131072}` (NUMERIC) only after it (`{0=0}` before); the report `keyguard: android`, `pin_rev: 1`, `inactive: null`; screen off/on: the glance, its handle's swipe opens Android's pad, 1357 opens Home. Gesture and 3-button (finding 1) | **Pass.** The same (`password quality: NUMERIC` 2 s after `PIN command: pin set`); both navigation modes (`36-g1-glance.png`, `36-g1-pad.png`, `36-g1-glance-3btn.png`) |
+| G2 | **Pass.** QR's case (no credential at the enrolment): `The reset token at enrolment: active`, `locksettings set-pin 1111` after it, the Child PIN saved: `pin set` replaced 1111, no "can't change" line. Koble til with 1111 set before the enrolment: `not active yet`, `refused: no_token`, the orange "Vibb One kan ikke endre Androids PIN" with "Lås opp telefonen én gang først." behind its (i); one unlock with 1111, and the next report (`reset_token: true`) made the server send one more row: `pin set`, NUMERIC (finding 4) | **Pass.** The same, both halves (`36-g2k-locked.png`, `36-g2k-done.png`). The QR half by the same stand-in on both: Device Owner by adb, Koble til before any screen lock, then `set-pin 1111` (no QR scan on the emulator) |
+| G3 | **Pass.** `main`'s launcher with `main`'s server on Vibb One's lock (`keyguard: own`, `locksettings get-disabled` `true`, `pin_lock_state.xml` with `pin_hash`, `pin_salt`, `keyguard_requested`); this time the new launcher first: `The own lock's stored keys removed (12): true`, `get-disabled` `false` at its first apply, `no Android PIN: no lock until set_kid_pin` against the old server; then the new server on the same data (`pre-migrate-0179-0180.db`): its first `set_kid_pin` `pin set`, NUMERIC, the glance and the pad work | **Pass.** The design's order: the old RC on own mode, the new server (migration 0180; the old RC took `set_kid_pin` and reported `android`), then the new launcher: `The own lock's stored keys removed (12): true`, only `keyguard_android`, `android_pin_rev`, `active` and the guard keys left, `get-disabled` `false`, NUMERIC, `KeyguardCover: Home (after our package was replaced) waits for Android's unlock`; the glance and the pad work |
+| G4 | **Pass**, both navigation modes. The boot cover, then Android's pad by itself; 1357, then `Boot cover taken over`, Home (no stock launcher started, no second PIN). Home came 21-35 s after the unlock on this loaded VM. The restart line not checked: the boot cover asks for the pad at once, which covers the keyguard's info line | **Pass**, both navigation modes. The boot cover (the Vibb rings), then Android's pad (`36-g4-boot-gesture2.png`); `Android's PIN pad succeeded`, Home 25-28 s after the unlock (`Boot Home started 24706 ms after the unlock`). Finding 2 |
+| G5 | **Pass.** `adb reboot` and `adb emu kill` + a cold boot: `Boot cover inert: the boot's HOME only`, Home under Android's Swipe screen (the AVD's own lock type), no glance, quality `{0=0}`; the setup page lists Barne-PIN under "På telefonen" | **Pass** (`adb reboot` only). The same; Swipe, then Home (`36-g5-boot-home.png`). Finding 2 |
+| G6 | **Pass.** No remove control on the page; a stale `POST kid-lock clear_kid_pin=on`: "Ikke fjernet: barne-PIN-en kan byttes, ikke fjernes.", the hash kept, Android's PIN still 1357 | **Pass.** The same |
+| G7 | **Pass.** Five wrong PINs by taps: "You have incorrectly typed your PIN 5 times. Try again in 30 seconds." (`34-g7-wait.png`); no keypad or back-off line in the log. (`input text` into 14's pad gave "Wrong PIN" without a lockout; taps count) | **Pass.** "Try again in 19 seconds." after five (`36-g7-wait.png`); no keypad or back-off line |
+| G8 | **Partial.** `am crash` is refused for the Device Owner on 14 too ("Can not crash protected package"), so the three-crash guard was not reachable. A `kill -9` of the process while LOCKED, both navigation modes: the glance back, Android still locked | **Partial.** The same refusal; `run-as ... kill -9` while LOCKED, both modes: the glance back, `isKeyguardShowing=true` |
+| G9 | **Pass.** A parent pause; Settings' screen lock (after Android's "Re-enter your PIN"): PIN 2468 set; the PWA's "Telefonens PIN er ikke barne-PIN-en"; Send again: `pin set`, 1357 again; "Lock again": the pause over, 1357 kept, NUMERIC, the line gone | **Pass.** The same |
+| G10 | **Pass, without VoIP.** A call from a contact over the locked glance: Vibb's call screen, answer, hang up, the glance back, lock task LOCKED; an alarm over the glance, Stop, the glance back; the power double press opens nothing. **VoIP not run**: no VoIP app on the image | **Pass, without VoIP.** The same (`36-g10-call-locked.png`, `36-g10-alarm.png`); VoIP not run |
+| G11 | **Pass.** The Child PIN saved while the phone was offline, its queued row deleted, `kid_pin_sealed = NULL`: the server's start logged `legacy Child PINs without a copy: 1 device_ids=[1]`; the phone's report `no_android_pin`; the orange "Telefonen har ingen PIN" with "Lagre barne-PIN på nytt." behind its (i), Attention "Låsen er av på telefonen"; saving 1357 again: `pin set`, NUMERIC, both gone (finding 5) | - (not required; G12b's stand-in shows the same line) |
+| G12a | **Pass.** `locksettings clear --old 1357` and `set-pattern` refused ("New credential doesn't satisfy admin policies: Weak credential type") while NUMERIC; Settings' screen lock: None, Swipe and Pattern disabled (`34-g12a-picker.png`) | **Pass.** The same; None, Swipe, Pattern "Disabled by admin" (`36-g12a-picker.png`) |
+| G12b | **Pass by the stand-in** (finding 3: unmanaged is not reachable): the Child PIN saved offline, its row answered `refused: failed`; the phone's report `no_android_pin`, Android's Swipe screen at a wake (no glance, no "Lås opp"); the orange "Telefonen har ingen PIN" with "Send barne-PIN-en igjen under.", Attention "Låsen er av på telefonen"; Send again: `pin set`, NUMERIC, the line and the Attention row gone | **Pass by the same stand-in** (`36-g12b-nopin-wake.png`) |
+| Gone | The notice wake: the screen stayed on 30 s and more (to the screen timeout), no turn-off at 15 s | The same. At every lock-up: `Lock-up at screen-off: LOCK`, the glance alone, no Home under it. No 3 s boot mark: Home came straight after the boot cover |
+
+Not run: VoIP (G10, and "VoIP with Android not locked"), the crash guard's three crashes (G8), the re-front's and the
+RELOCK backstop's timings, "kiosk with a live call", J1 (the Jelly Star's row).
+
+Findings (no product code changed here):
+
+1. **Android 14, 3-button navigation: Emergency call overlaps the glance's handle.** `lock_glance_emergency`
+   `[136,698][343,770]` and `lock_glance_handle` `[159,746][321,782]` on `compat34` (the same after a process restart;
+   the navigation bar `[0,782][480,854]`); on `jelly36` in the same mode Emergency call is `[136,662][343,734]`. A
+   swipe up that starts on the handle's upper half opens "Call 112?" (`34-g1-after-3btn-try.png`,
+   `34-g1-glance-3btn.png`). Repro: `compat34`, `cmd overlay enable-exclusive --category
+   com.android.internal.systemui.navbar.threebutton`, screen off/on, `uiautomator dump`. Not phase D's change; the
+   glance's bottom room on 14 seems not to count the 3-button bar.
+2. **The boot cover asks for Android's pad every 3-6 s while the pad is up** (`Boot cover asks for Android's PIN pad (no
+   answer, again 1..10, automatic 1 of 3)`) and once cancelled it when the screen went off on 14; the unlock still
+   worked each time. With the VM's boot load (ANRs of System UI, GMS and Vibb One in the first minute, load 20-30) Home
+   came 21-35 s after the unlock, and on 16 the Pixel launcher's Recents activity was resumed behind Vibb's Home after
+   its own ANR (not visible). Environment first.
+3. **G12b's premise is not reachable**: a managed phone can't be made unmanaged from the server. The PWA has no switch
+   for the apps; `allowlist_json = NULL` set in the database is filled again from the phone's next report
+   (`device_api.rs`, the first-heartbeat bootstrap), and the launcher's `PolicyGate` refuses a fresh policy without an
+   app list on a managed phone anyway. So Android's PIN can't be cleared while NUMERIC (G12a holds), and the
+   `ownedGone` path (Android's PIN removed on the phone) was not reached. The stand-in (a row answered `refused:
+   failed`) checks the server's rule, the phone's `no_android_pin`, the PWA and Send again.
+4. **Koble til with a screen lock: two orange lines say different things.** With `refused: no_token` the page shows
+   "Telefonens PIN er ikke barne-PIN-en - Den ble trolig endret på telefonen. Å sende barne-PIN-en igjen setter den
+   tilbake." above "Vibb One kan ikke endre Androids PIN" (unlock first): the first is wrong here (the PIN was set in
+   the wizard, and Send again can't work before the unlock), and the row's own note repeats the second ("... før barnet
+   har låst opp telefonen én gang. Send den så igjen."). Words only; for the owner.
+5. **"Velg en barne-PIN under." while a Child PIN is stored.** Between the save and the phone's next report the
+   newest report is still `no_pin`, and the page shows "Telefonen har ingen PIN" with "Velg en barne-PIN under." -
+   for a legacy PIN without a copy (G11) until the phone reports `no_android_pin`, then "Lagre barne-PIN på nytt.".
+   Words only.
+6. **Side notes, not phase D:** after a snapshot load a pending `set_kid_pin` waited until a parent save nudged the
+   phone, although the command stream had reconnected (no `sse_open` sync within minutes of an earlier sync); a
+   contact's "Kan ringe og ringes" switches saved by the gate's form client didn't stick (`allow_inbound` 0) - set in
+   the database instead, not looked into; once on `jelly36` adb went offline for good after a Koble til enrolment from a
+   loaded snapshot (the next snapshot load brought it back; not seen on a fresh boot).
