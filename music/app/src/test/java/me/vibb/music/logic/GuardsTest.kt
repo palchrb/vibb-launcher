@@ -880,7 +880,7 @@ class GuardsTest {
         val onError = serviceBody("private fun onError(code: String, gated: Boolean = false, noNetwork: Boolean = false, lost: Boolean = false) {")
         assertTrue(onError.contains("recordsItemError(a.entry, hasUrl = item.url != null) ->\n                scope.launch(writer) { ItemErrors.record(this@PlaybackService, entryId, item.key, code) }"))
         assertTrue("an own file and a copy first, each by its own rule", onError.indexOf("item.fileId != null || gated -> Unit") < onError.indexOf("copy != null -> if (code == \"bad_media\")") && onError.indexOf("copy != null ->") < onError.indexOf("recordsItemError("))
-        assertTrue(onError.contains("val offline = gated ||\n            !isSpotify(a.entry) && copy == null"))
+        assertTrue(onError.contains("val offline = gated || lost ||\n            !isSpotify(a.entry) && copy == null"))
         // design 30's changed-source reload (playOnUncached) is the phone's own player's only, never Spotify's
         assertTrue(onError.contains("renderer.kind == RendererKind.LOCAL && a.entry.source != Source.STORYTEL"))
         // qa-26c-step5a-code (deviation 6): the seekTo/prepare/play inside the renderer's Error("unplayable") are its move-on
@@ -1116,11 +1116,11 @@ class GuardsTest {
         // qa-music-splash-b Q-11: the failure's one log line is failureLine's (URLs cut), never the raw exception
         assertTrue(local.contains("Log.w(LOG_TAG, failureLine(error.errorCodeName, error.errorCode, error))"))
         assertEquals(listOf("Log.w(LOG_TAG, failureLine("), Regex("""Log\.\w\([^\n]*""").findAll(local).map { it.value.substringBefore("error.") }.toList())
-        assertTrue(service.contains("is RendererEvent.Error -> onError(event.code, event.gated, event.noNetwork)"))
-        val onError = body(service, "private fun onError(code: String, gated: Boolean = false, noNetwork: Boolean = false) {")
+        assertTrue(service.contains("is RendererEvent.Error -> onError(event.code, event.gated, event.noNetwork, event.lost)"))
+        val onError = body(service, "private fun onError(code: String, gated: Boolean = false, noNetwork: Boolean = false, lost: Boolean = false) {")
         assertTrue(onError.contains("item.fileId != null || gated -> Unit"))
         // design 26c: a Spotify item's offline isn't the item's (its web player never reports `gated`)
-        assertTrue(onError.contains("val offline = gated ||\n            !isSpotify(a.entry) && copy == null && item.fileId == null && !streamAllowed("))
+        assertTrue(onError.contains("val offline = gated || lost ||\n            !isSpotify(a.entry) && copy == null && item.fileId == null && !streamAllowed("))
         assertTrue(MediaCache.gated(PlaybackException("x", StreamGateException(), PlaybackException.ERROR_CODE_IO_UNSPECIFIED)))
         assertFalse(MediaCache.gated(PlaybackException("x", IOException(), PlaybackException.ERROR_CODE_IO_UNSPECIFIED)))
         // The length guard's 416 on the phone: the row goes, the item plays on uncached where it was, no item error.
