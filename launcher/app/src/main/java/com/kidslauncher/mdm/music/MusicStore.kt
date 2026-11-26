@@ -187,6 +187,18 @@ object MusicStore {
         prefs(context).edit().putString("report", report).putLong("report_at", atMs).apply()
     }
 
+    /** The asks for a report since the music app's last one ([reportAskDue]); null = none. */
+    fun reportAsk(context: Context): ReportAsk? {
+        val p = prefs(context)
+        val first = p.getLong("report_ask_first", -1)
+        val last = p.getLong("report_ask_last", -1)
+        return if (first >= 0 && last >= 0) ReportAsk(first, last) else null
+    }
+
+    fun setReportAsk(context: Context, ask: ReportAsk) {
+        prefs(context).edit().putLong("report_ask_first", ask.firstAt).putLong("report_ask_last", ask.lastAt).apply()
+    }
+
     /** When the last `setNowPlaying` said "playing" (null = not playing, or the player's process died). */
     fun playingReportedAt(context: Context): Long? = prefs(context).getLong("playing_at", -1).takeIf { it >= 0 }
 

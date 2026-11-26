@@ -329,22 +329,65 @@ const val PLAYING_STALE_MS = 6 * 3_600_000L
 fun installDeferredForPlayback(apkPackage: String?, playingReportedAt: Long?, nowMs: Long): Boolean =
     apkPackage in MUSIC_PACKAGES && playingReportedAt != null && nowMs - playingReportedAt in 0 until PLAYING_STALE_MS
 
-/** The report has gone stale: the bridge isn't reached any more. */
+/** The report has gone stale: with an unanswered ask ([bridgeWord]) the bridge isn't reached any more. */
 const val REPORT_STALE_MS = 26 * 3_600_000L
 
-/** The status report's `bridge` word: "bound" while the music app reports, else "unbound". */
-fun bridgeWord(lastReportAt: Long?, nowMs: Long): String =
-    if (lastReportAt != null && nowMs - lastReportAt in 0 until REPORT_STALE_MS) "bound" else "unbound"
+/**
+ * A report older than this asks the music app for one (the nudge, [reportAskDue]): an idle music app is frozen by
+ * Android and its own WorkManager sync deferred by app standby for a day and more (the Jelly Star, 2026-11-25), so
+ * nothing but a nudge wakes it - and only an ask that goes unanswered says the bridge is broken.
+ */
+const val REPORT_ASK_AFTER_MS = 12 * 3_600_000L
+
+/** At most one ask in this long: a music app that never answers isn't nudged at every sync. */
+const val REPORT_ASK_EVERY_MS = 3 * 3_600_000L
+
+/** An ask still unanswered after this long, with the report stale, makes the bridge "unbound". */
+const val REPORT_ASK_ANSWER_MS = 30 * 60_000L
+
+/**
+ * The asks for a report since the music app's last one: [firstAt] the first (what [bridgeWord] measures from, so a
+ * repeated ask never restarts the wait), [lastAt] the newest (what [REPORT_ASK_EVERY_MS] counts from).
+ */
+data class ReportAsk(val firstAt: Long, val lastAt: Long)
+
+/**
+ * Ask the music app for a report now: it is installed and managed (the phone's policy has a music object), its last
+ * report is missing or older than [REPORT_ASK_AFTER_MS], and no ask went out in the last [REPORT_ASK_EVERY_MS]. A
+ * clock moved back (a time in the future) counts as old, so the ask goes and its record starts again.
+ */
+fun reportAskDue(installed: Boolean, managed: Boolean, lastReportAt: Long?, ask: ReportAsk?, nowMs: Long): Boolean =
+    installed && managed &&
+        (lastReportAt == null || nowMs - lastReportAt !in 0 until REPORT_ASK_AFTER_MS) &&
+        (ask == null || nowMs - ask.lastAt !in 0 until REPORT_ASK_EVERY_MS)
+
+/** The record after an ask sent at [nowMs]: the first ask since the last report is kept, else this one is the first. */
+fun reportAskSent(ask: ReportAsk?, lastReportAt: Long?, nowMs: Long): ReportAsk =
+    if (ask != null && (lastReportAt == null || lastReportAt < ask.firstAt) && ask.firstAt <= nowMs) ask.copy(lastAt = nowMs)
+    else ReportAsk(nowMs, nowMs)
+
+/**
+ * The status report's `bridge` word: "bound" while the music app reports; with its report missing or older than
+ * [REPORT_STALE_MS], "unbound" only once an ask went unanswered - the first ask since the last report is at least
+ * [REPORT_ASK_ANSWER_MS] old. No ask yet (none was due, the app isn't managed, the sync didn't run) keeps "bound": the
+ * app was never asked, so it isn't known to be unreachable.
+ */
+fun bridgeWord(lastReportAt: Long?, ask: ReportAsk?, nowMs: Long): String {
+    if (lastReportAt != null && nowMs - lastReportAt in 0 until REPORT_STALE_MS) return "bound"
+    ask ?: return "bound"
+    val unanswered = lastReportAt == null || lastReportAt < ask.firstAt
+    return if (unanswered && nowMs - ask.firstAt >= REPORT_ASK_ANSWER_MS) "unbound" else "bound"
+}
 
 /**
  * `music_state` (21 §1.3, 21b §4.3, 26a §5.5): the music app's last report (known keys only - the
  * server checks them again; `sonos_rooms` = the speakers it knows, for the parent's room scope;
  * `audio_bytes`/`extra_bytes` from a design 30 music app, whose presence tells the PWA the phone reads
  * both mobile-data switches, design 30 §1.3) plus the launcher's own view: the package, its version
- * code and the bridge.
+ * code and the bridge ([bridgeWord], with [ask] the asks for a report since the last one).
  * Null when no music app is installed.
  */
-fun musicState(packageName: String?, versionCode: Long?, report: JsonObject?, lastReportAt: Long?, nowMs: Long): JsonObject? {
+fun musicState(packageName: String?, versionCode: Long?, report: JsonObject?, lastReportAt: Long?, nowMs: Long, ask: ReportAsk?): JsonObject? {
     packageName ?: return null
     val keys = listOf(
         "library_version", "cache_bytes", "audio_bytes", "extra_bytes", "downloads_waiting", "entry_errors", "item_errors",
@@ -353,7 +396,7 @@ fun musicState(packageName: String?, versionCode: Long?, report: JsonObject?, la
     return buildJsonObject {
         put("package", packageName)
         put("version_code", versionCode)
-        put("bridge", bridgeWord(lastReportAt, nowMs))
+        put("bridge", bridgeWord(lastReportAt, ask, nowMs))
         for (key in keys) report?.get(key)?.takeIf { it !is JsonNull }?.let { put(key, it) }
     }
 }

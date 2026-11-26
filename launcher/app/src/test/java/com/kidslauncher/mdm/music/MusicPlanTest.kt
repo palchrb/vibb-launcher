@@ -608,6 +608,45 @@ class MusicPlanTest {
     }
 
     @Test
+    fun `an idle music app is asked for a report, and unbound only when the ask goes unanswered`() {
+        val now = 1_800_000_000_000L
+        val h = 3_600_000L
+        val stale = now - REPORT_STALE_MS - h
+        data class Row(val name: String, val installed: Boolean, val managed: Boolean, val reportAt: Long?, val ask: ReportAsk?, val due: Boolean, val word: String)
+        val rows = listOf(
+            Row("fresh report", true, true, now - h, null, false, "bound"),
+            Row("12 h old: asked, still bound", true, true, now - REPORT_ASK_AFTER_MS, null, true, "bound"),
+            Row("stale, no ask yet: asked, kept bound until tried", true, true, stale, null, true, "bound"),
+            Row("never reported, no ask yet", true, true, null, null, true, "bound"),
+            Row("stale, an ask 10 min ago: not again, still bound", true, true, stale, ReportAsk(now - 600_000, now - 600_000), false, "bound"),
+            Row("stale, an ask 30 min ago unanswered: unbound", true, true, stale, ReportAsk(now - REPORT_ASK_ANSWER_MS, now - REPORT_ASK_ANSWER_MS), false, "unbound"),
+            Row("never reported, an ask 30 min ago: unbound", true, true, null, ReportAsk(now - REPORT_ASK_ANSWER_MS, now - REPORT_ASK_ANSWER_MS), false, "unbound"),
+            Row("stale, the first ask 6 h ago, the last 3 h ago: asked again, still unbound", true, true, stale, ReportAsk(now - 6 * h, now - REPORT_ASK_EVERY_MS), true, "unbound"),
+            Row("stale, the ask answered before it went stale: a new ask, bound", true, true, stale, ReportAsk(stale - h, stale - h), true, "bound"),
+            Row("a clock moved back: asked again", true, true, now - REPORT_ASK_AFTER_MS, ReportAsk(now + h, now + h), true, "bound"),
+            Row("not managed: never asked", true, false, stale, null, false, "bound"),
+            Row("not installed: never asked", false, true, stale, null, false, "bound"),
+        )
+        for (r in rows) {
+            assertEquals(r.name, r.due, reportAskDue(r.installed, r.managed, r.reportAt, r.ask, now))
+            assertEquals(r.name, r.word, bridgeWord(r.reportAt, r.ask, now))
+        }
+        assertNull("not installed: no music_state at all", musicState(null, null, null, stale, now, ReportAsk(now - 6 * h, now - 6 * h)))
+
+        // The record: the first ask since the last report is kept, so a repeated ask never restarts the 30 minutes
+        assertEquals(ReportAsk(now, now), reportAskSent(null, stale, now))
+        assertEquals(ReportAsk(now - 6 * h, now), reportAskSent(ReportAsk(now - 6 * h, now - 3 * h), stale, now))
+        assertEquals("answered since: this ask is the first", ReportAsk(now, now), reportAskSent(ReportAsk(stale - h, stale - h), stale, now))
+        assertEquals("never reported: kept", ReportAsk(now - h, now), reportAskSent(ReportAsk(now - h, now - h), null, now))
+        assertEquals("a first ask in the future (clock moved back) starts again", ReportAsk(now, now), reportAskSent(ReportAsk(now + h, now + h), stale, now))
+        // the whole cycle: asked at a stale report, unanswered for 30 min, then the report comes
+        val asked = reportAskSent(null, stale, now)
+        assertEquals("bound", bridgeWord(stale, asked, now + REPORT_ASK_ANSWER_MS - 1))
+        assertEquals("unbound", bridgeWord(stale, asked, now + REPORT_ASK_ANSWER_MS))
+        assertEquals("bound", bridgeWord(now + REPORT_ASK_ANSWER_MS + 1, asked, now + REPORT_ASK_ANSWER_MS + 2))
+    }
+
+    @Test
     fun `music_state - the app's known fields plus the package, version and bridge`() {
         val now = 1_800_000_000_000L
         val report = buildJsonObject {
@@ -617,13 +656,15 @@ class MusicPlanTest {
             })
             put("now_playing", "secret")
         }
-        val state = musicState("me.vibb.music", 1000000, report, now - 60_000, now)!!
+        val state = musicState("me.vibb.music", 1000000, report, now - 60_000, now, null)!!
         assertEquals("bound", state["bridge"]!!.let { (it as JsonPrimitive).content })
         assertEquals(setOf("package", "version_code", "bridge", "library_version", "cache_bytes", "storytel", "spotify", "sonos_rooms"), state.keys)
         assertEquals("the rooms the music app knows pass as they are (design 26a §5.5)", report["sonos_rooms"], state["sonos_rooms"])
-        assertEquals("unbound", (musicState("me.vibb.music", 1, null, null, now)!!["bridge"] as JsonPrimitive).content)
-        assertEquals("unbound", (musicState("me.vibb.music", 1, report, now - REPORT_STALE_MS, now)!!["bridge"] as JsonPrimitive).content)
-        assertNull("no music app", musicState(null, null, report, now, now))
+        val unanswered = ReportAsk(now - REPORT_ASK_ANSWER_MS, now - REPORT_ASK_ANSWER_MS)
+        assertEquals("unbound", (musicState("me.vibb.music", 1, null, null, now, unanswered)!!["bridge"] as JsonPrimitive).content)
+        assertEquals("unbound", (musicState("me.vibb.music", 1, report, now - REPORT_STALE_MS, now, unanswered)!!["bridge"] as JsonPrimitive).content)
+        assertEquals("never asked", "bound", (musicState("me.vibb.music", 1, report, now - REPORT_STALE_MS, now, null)!!["bridge"] as JsonPrimitive).content)
+        assertNull("no music app", musicState(null, null, report, now, now, unanswered))
         val json = ServerJson.parseToJsonElement(
             ServerJson.encodeToString(StatusReportRequest.serializer(), StatusReportRequest(lockReason = "NONE", kioskEngaged = true, musicState = state)),
         ).jsonObject
@@ -635,7 +676,7 @@ class MusicPlanTest {
         val fixture = ServerJson.parseToJsonElement(resource("music_state.json")).jsonObject
         val fromApp = kotlinx.serialization.json.JsonObject(fixture - setOf("package", "version_code", "bridge"))
         val now = 1_800_000_000_000L
-        assertEquals(fixture, musicState("me.vibb.music", 1000000, fromApp, now - 1_000, now))
+        assertEquals(fixture, musicState("me.vibb.music", 1000000, fromApp, now - 1_000, now, null))
     }
 
     /** Design 30 §1.3/§1.10 (M4): a step 3a music app's two fields pass, 0 included; an older app sends neither. */
@@ -643,10 +684,10 @@ class MusicPlanTest {
     fun `music_state passes audio_bytes and extra_bytes`() {
         val now = 1_800_000_000_000L
         val report = buildJsonObject { put("cache_bytes", 5); put("audio_bytes", 4); put("extra_bytes", 0) }
-        val state = musicState("me.vibb.music", 1000000, report, now - 60_000, now)!!
+        val state = musicState("me.vibb.music", 1000000, report, now - 60_000, now, null)!!
         assertEquals(JsonPrimitive(4), state["audio_bytes"])
         assertEquals("0 is sent and passed: it marks a phone that reads both switches", JsonPrimitive(0), state["extra_bytes"])
-        val older = musicState("me.vibb.music", 1000000, buildJsonObject { put("cache_bytes", 5) }, now - 60_000, now)!!
+        val older = musicState("me.vibb.music", 1000000, buildJsonObject { put("cache_bytes", 5) }, now - 60_000, now, null)!!
         assertFalse(older.containsKey("audio_bytes") || older.containsKey("extra_bytes"))
     }
 

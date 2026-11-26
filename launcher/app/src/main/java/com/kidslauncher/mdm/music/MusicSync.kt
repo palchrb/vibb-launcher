@@ -49,9 +49,26 @@ object MusicSync {
             return@withContext
         }
         val music = musicPolicy(policy?.music)
-        if (writeRestrictions(app, policy, music)) nudge(app, pkg)
+        val nudged = writeRestrictions(app, policy, music)
+        if (nudged) nudge(app, pkg)
+        askForReport(app, pkg, managed = music != null, nudged)
         grantRuntimePermissions(app, managed = policy != null)
         if (fetch && music != null) MusicCourier.request(app, music)
+    }
+
+    /**
+     * The music app's report is old ([reportAskDue]): ask for one with the nudge (a config nudge this sync already
+     * asked), recorded so the status report's `bridge` waits for the answer ([bridgeWord]). An idle music app is frozen
+     * and its own sync deferred by app standby; the explicit broadcast still reaches its manifest receiver.
+     */
+    private fun askForReport(app: Context, pkg: String, managed: Boolean, nudged: Boolean) {
+        val now = System.currentTimeMillis()
+        val (_, reportAt) = MusicStore.report(app)
+        val ask = MusicStore.reportAsk(app)
+        if (!reportAskDue(installed = true, managed, reportAt, ask, now)) return
+        if (!nudged) nudge(app, pkg)
+        MusicStore.setReportAsk(app, reportAskSent(ask, reportAt, now))
+        Log.i(LOG_TAG, "The music app's report is ${reportAt?.let { "${(now - it) / 60_000} min old" } ?: "missing"}: asked for one")
     }
 
     /**
