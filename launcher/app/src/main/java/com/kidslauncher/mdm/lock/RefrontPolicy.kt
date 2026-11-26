@@ -36,8 +36,12 @@ data class RefrontInputs(
     /** Design 59b §3 step 3: the loss is ours ([androidLossOurs]): the PIN pad's ask, one of our own starts, one of our
      * own screens resumed. */
     val androidOurs: Boolean = false,
-    /** Design 59b §3 step 6: the face's re-fronts since the last screen-off or `USER_PRESENT` ([ANDROID_REFRONT_CAP]). */
+    /** Design 59b §3 step 6: the face's re-fronts counted against [androidRefrontCap] - since the last screen-off or
+     * `USER_PRESENT`, or (glance-replug) within the power change's budget when the loss is the change's
+     * ([FaceRefronts.forLoss]). */
     val androidRefronts: Int = 0,
+    /** Design 59b §3 step 6: [ANDROID_REFRONT_CAP] per screen-on, [POWER_REFRONT_BUDGET] for a power change's loss. */
+    val androidRefrontCap: Int = ANDROID_REFRONT_CAP,
     /** qa-59b-code B-3: this check was scheduled by a fresh pause or stop of the glance - not a yield's recheck or a
      * re-front's own follow-up. The face re-fronts only then. */
     val androidFreshLoss: Boolean = false,
@@ -73,41 +77,68 @@ fun androidLoss(face: Boolean, deviceSecure: Boolean, androidLocked: Boolean, pr
 }
 
 /** Design 59b §3 step 6 (Q59b-3): at most this many re-fronts per screen-on - then SystemUI's face (with our ground)
- * until the screen-off. Own mode never gives up (QA 10 #2); here a cap leaves only Android's locked keyguard. Since the
- * glance-replug fix the count also starts again at each power change ([androidRefrontsAfter]). */
+ * until the screen-off. Own mode never gives up (QA 10 #2); here a cap leaves only Android's locked keyguard. A power
+ * change's own loss has a budget of its own ([FaceRefronts]). */
 const val ANDROID_REFRONT_CAP = 2
 
-/** What moves the face's re-front count ([androidRefrontsAfter]). */
-enum class RefrontCount {
-    /** The screen went off: a new screen-on, a new count. */
-    SCREEN_OFF,
+/** glance-replug: the re-fronts a power change's own loss may take - the cap and one more, so the change's look
+ * ([powerRecheck]) still has one after the pause's and the stop's checks. */
+const val POWER_REFRONT_BUDGET = ANDROID_REFRONT_CAP + 1
 
-    /** Android was unlocked by the kid. */
-    USER_PRESENT,
+/** glance-replug: at most this many power changes per screen-on spend a budget (a change whose loss re-fronted) - the
+ * owner's three plug-ins and out within 10 s, and one more; a cable that keeps flapping meets the screen-on's cap after
+ * them, so the cap stays a bound, not a rate. */
+const val POWER_BUDGETS_PER_SCREEN_ON = 4
 
-    /** (4i), glance-replug: `ACTION_POWER_CONNECTED`/`DISCONNECTED` - the loss it causes (the blocked start's
-     * `BlockedAppActivity`, a charging dialog) has a count of its own, whether or not the screen was already on. */
-    POWER_CHANGE,
+/**
+ * glance-replug (the owner's log, rc.6, 2026-11-26: three plug-ins on one screen-on, the third's loss met the cap of two
+ * per screen-on and Android's lock screen stayed until the screen went off): the face's re-front counts. [screenOn] is the
+ * cap's count per screen-on as before (design 59b §3 step 6; a new [FaceRefronts] at the screen-off and `USER_PRESENT`).
+ * A power change opens a budget of its own at its stamp [powerAtMs] ([powerChanged]) - [POWER_REFRONT_BUDGET]
+ * re-fronts, only for a loss inside the change's window ([powerLossAround]); any other loss, also one 30 s after a
+ * plug-in, spends [screenOn]. At most [POWER_BUDGETS_PER_SCREEN_ON] budgets per screen-on are spent ([powerSpent]); a
+ * change after them opens none. Never an exemption: the "sos" yield and the others come before the cap
+ * ([androidLossStep]).
+ */
+data class FaceRefronts(
+    val screenOn: Int = 0,
+    /** The open budget's power change (its stamp, elapsed ms); `null` = none this screen-on. */
+    val powerAtMs: Long? = null,
+    /** Re-fronts the open budget has taken. */
+    val powerUsed: Int = 0,
+    /** Budgets this screen-on that took a re-front. */
+    val powerSpent: Int = 0,
+) {
+    /** The loss at [lostAtMs] (the glance's last pause) spends the open power budget. */
+    fun powerCovers(lostAtMs: Long?): Boolean = powerAtMs != null && powerLossAround(powerAtMs, lostAtMs)
 
-    /** (4i), glance-replug: the power change's own look ([powerRecheck]) found a fresh loss: it keeps one re-front of its
-     * own even when the pause's and the stop's checks used the change's count up. */
-    POWER_LOOK,
+    /** The count and the cap a check for the loss at [lostAtMs] reads. */
+    fun forLoss(lostAtMs: Long?): Pair<Int, Int> =
+        if (powerCovers(lostAtMs)) powerUsed to POWER_REFRONT_BUDGET else screenOn to ANDROID_REFRONT_CAP
 
-    /** The face re-fronted the glance. */
-    REFRONT,
+    /** The face re-fronted the glance for the loss at [lostAtMs]. */
+    fun refronted(lostAtMs: Long?): FaceRefronts = when {
+        !powerCovers(lostAtMs) -> copy(screenOn = screenOn + 1)
+        powerUsed == 0 -> copy(powerUsed = 1, powerSpent = powerSpent + 1)
+        else -> copy(powerUsed = powerUsed + 1)
+    }
+
+    /** A power change stamped at [atMs]: a new budget, unless this screen-on spent [POWER_BUDGETS_PER_SCREEN_ON]
+     * already (then the change's loss reads [screenOn], as any other). */
+    fun powerChanged(atMs: Long): FaceRefronts =
+        if (powerSpent >= POWER_BUDGETS_PER_SCREEN_ON) copy(powerAtMs = null, powerUsed = 0) else copy(powerAtMs = atMs, powerUsed = 0)
 }
 
 /**
- * The face's re-front count after [event] - [ANDROID_REFRONT_CAP] per screen-on, and per power change since the
- * owner's log of 2026-11-26 (three plug-ins on one screen-on: the third loss met the cap and Android's lock screen stayed
- * until the screen went off). The bound still holds: each power change allows at most [ANDROID_REFRONT_CAP] + 1
- * re-fronts (its look's own one included), and a power change is a plug or an unplug. Never an exemption: the "sos"
- * yield and the others come before the cap ([androidLossStep]).
+ * The face's check (design 59b §3, [refrontAction]) with its counts ([FaceRefronts]): the count and cap for the loss at
+ * [lostAtMs], and the counts after it - one more where a face re-front was made. `PinLockRuntime.runRefrontCheck` runs
+ * exactly this.
  */
-fun androidRefrontsAfter(count: Int, event: RefrontCount): Int = when (event) {
-    RefrontCount.REFRONT -> count + 1
-    RefrontCount.POWER_LOOK -> minOf(count, ANDROID_REFRONT_CAP - 1)
-    RefrontCount.SCREEN_OFF, RefrontCount.USER_PRESENT, RefrontCount.POWER_CHANGE -> 0
+fun faceRefrontStep(inputs: RefrontInputs, refronts: FaceRefronts, lostAtMs: Long?, attempt: Int): Pair<RefrontAction, FaceRefronts> {
+    val (count, cap) = refronts.forLoss(lostAtMs)
+    val action = refrontAction(inputs.copy(androidRefronts = count, androidRefrontCap = cap), attempt)
+    val after = if (action is RefrontAction.Refront && action.noUserAction) refronts.refronted(lostAtMs) else refronts
+    return action to after
 }
 
 /** Design 59b §3 step 3 (Q59b-8): one of our own starts ([PinLockRuntime.noteOwnStart]) counts as ours this long. */
@@ -228,7 +259,7 @@ fun androidLossStep(inputs: RefrontInputs, attempt: Int): RefrontAction = when {
     inputs.android == AndroidLoss.OPEN -> RefrontAction.AndroidLeave
     inputs.android == AndroidLoss.WAIT -> RefrontAction.AndroidWait
     else -> exemptYield(inputs) ?: when {
-        inputs.androidOurs || inputs.androidRefronts >= ANDROID_REFRONT_CAP || !inputs.androidFreshLoss -> RefrontAction.Stop
+        inputs.androidOurs || inputs.androidRefronts >= inputs.androidRefrontCap || !inputs.androidFreshLoss -> RefrontAction.Stop
         else -> RefrontAction.Refront(refrontDelayMs(attempt + 1), noUserAction = true)
     }
 }
@@ -628,26 +659,32 @@ fun sosMarkKept(action: RefrontAction): Boolean = action == RefrontAction.Yield(
  * loss): Android's own lock screen until the next screen cycle.
  *
  * The fix, and the SOS guarantee (code QA): only the screen-on that is the power change's own wake ([powerWokeScreen]:
- * the screen was off at the connect or disconnect and came on from -300 ms to +2 s around it, no screen-off between)
- * is exempt from the SOS rule. The SOS gesture's presses start on a lit screen with a press that turns it off, so a
- * press-SOS after a plug-in's wake always has a screen-off first and keeps its mark; a power change while the screen
- * is already on exempts nothing. A screen-on by the kid's press 2-3 s before a plug-in can't be told from a press-SOS
+ * it ends a dark spell of at least [POWER_WAKE_DARK_MS] and comes from [POWER_WAKE_BEFORE_MS] before to
+ * [POWER_WAKE_AFTER_MS] after the change's stamp) is exempt from the SOS rule. The SOS gesture's presses are a fraction
+ * of a second apart, so a press-SOS's screen-on ends a short dark spell and keeps its mark - whatever order the
+ * broadcast came in (glance-replug's code QA: the stamp can be ~0.5 s late, so the order alone can't tell). A screen-on by the kid's press 2-3 s before a plug-in can't be told from a press-SOS
  * whose screen comes up with the plug-in: the SOS rule wins there (the glimpse stays possible in that narrow case). The
  * power change then looks once ([powerRecheck]) - a fresh loss through the same rule ([refrontAction]), so the kid's own
  * path to Android's PIN pad ([androidLossOurs]), the exempt screens and the cap ([ANDROID_REFRONT_CAP]) all hold.
- * glance-replug (the owner's log, 2026-11-26): the cap counts per power change too, and the look keeps one re-front of
- * its own ([androidRefrontsAfter]) - three plug-ins on one screen-on each get the glance back.
+ * glance-replug (the owner's log, 2026-11-26): a power change's own loss has a re-front budget of its own
+ * ([FaceRefronts]) - three plug-ins on one screen-on each get the glance back.
  */
 
-/** The power change's broadcast may come this long after its screen-on (the two are reordered). */
-const val POWER_WAKE_BEFORE_MS = 300L
+/** The power change's stamp may come this long after its screen-on: the two are reordered, and the broadcast reaches us
+ * up to ~0.5 s late (glance-replug's emulator runs, Android 14 and 16, the glance not in front; the dark case is still to measure). Safe to widen:
+ * only a screen-on after a long dark spell is the change's ([POWER_WAKE_DARK_MS]). */
+const val POWER_WAKE_BEFORE_MS = 1_000L
+
+/** glance-replug's code QA: the power change's wake ends a dark spell at least this long (or no screen-off was seen in
+ * this process). The SOS gesture's presses are a fraction of a second apart: its screen-ons end a short one. */
+const val POWER_WAKE_DARK_MS = 1_000L
 
 /** The power change's wake may come this long after its broadcast. */
 const val POWER_WAKE_AFTER_MS = 2_000L
 
 /** The power change's own look at the glance, this long after the broadcast: the blocked start's pause and stop are
- * over by then (~0.9 s in the owner's log). Once per change - a re-front it makes counts for the cap
- * ([RefrontCount.POWER_LOOK]). */
+ * over by then (~0.9 s in the owner's log). Once per change - its re-front spends the change's budget ([FaceRefronts]):
+ * a look that yields (a call, the alarm) takes none, and the yield's own rechecks are no fresh loss. */
 const val POWER_RECHECK_MS = 1_000L
 
 /** A loss of the glance this close around the power change ([POWER_LOSS_BEFORE_MS] before, [POWER_LOSS_AFTER_MS] after)
@@ -658,15 +695,21 @@ const val POWER_RECHECK_MS = 1_000L
 const val POWER_LOSS_BEFORE_MS = 1_000L
 const val POWER_LOSS_AFTER_MS = 1_500L
 
+/** The loss at [lostAtMs] is the power change's at [powerAtMs] ([POWER_LOSS_BEFORE_MS] .. [POWER_LOSS_AFTER_MS]). */
+fun powerLossAround(powerAtMs: Long, lostAtMs: Long?): Boolean =
+    lostAtMs != null && lostAtMs - powerAtMs in -POWER_LOSS_BEFORE_MS..POWER_LOSS_AFTER_MS
+
 /**
- * The screen-on at [screenOnAtMs] was the power change's own wake at [powerAtMs] (elapsed ms): from
- * [POWER_WAKE_BEFORE_MS] before to [POWER_WAKE_AFTER_MS] after it, with no screen-off ([screenOffAtMs], the last one)
- * between the earlier of the two and now - the first screen-on after the change, the tag gone at the next screen-off.
+ * The screen-on at [screenOnAtMs] was the power change's own wake stamped at [powerAtMs] (elapsed ms): from
+ * [POWER_WAKE_BEFORE_MS] before to [POWER_WAKE_AFTER_MS] after the stamp, and it ended a dark spell of at least
+ * [POWER_WAKE_DARK_MS] since the last screen-off ([screenOffAtMs]; none seen = a long one). A screen-off after the
+ * screen-on ends the tag. Not the stamp's order (glance-replug's code QA): the broadcast can reach us ~0.5 s late, so a
+ * press-SOS's screen-on can come after the stamp although its plug-in came first - its short dark spell tells it.
  */
 fun powerWokeScreen(powerAtMs: Long?, screenOnAtMs: Long?, screenOffAtMs: Long?): Boolean {
     if (powerAtMs == null || screenOnAtMs == null) return false
     if (screenOnAtMs - powerAtMs !in -POWER_WAKE_BEFORE_MS..POWER_WAKE_AFTER_MS) return false
-    return screenOffAtMs == null || screenOffAtMs < minOf(powerAtMs, screenOnAtMs)
+    return screenOffAtMs == null || screenOnAtMs - screenOffAtMs >= POWER_WAKE_DARK_MS
 }
 
 /** The screen-on [sosGestureLikely] reads: none when it was the power change's own wake ([powerWokeScreen]). */
@@ -690,7 +733,6 @@ data class PowerRecheck(
  * ours, the exemptions, the cap).
  */
 fun powerRecheck(locked: Boolean, lockResumed: Boolean, powerAtMs: Long, lostAtMs: Long?, powerWake: Boolean, sosMarked: Boolean): PowerRecheck {
-    val around = lostAtMs != null && lostAtMs - powerAtMs in -POWER_LOSS_BEFORE_MS..POWER_LOSS_AFTER_MS
-    val fresh = locked && !lockResumed && around && (!sosMarked || powerWake)
+    val fresh = locked && !lockResumed && powerLossAround(powerAtMs, lostAtMs) && (!sosMarked || powerWake)
     return PowerRecheck(clearSosMark = fresh && sosMarked, freshLoss = fresh)
 }

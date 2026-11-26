@@ -112,29 +112,30 @@ class AndroidLockFaceTest {
 
     @Test
     fun `three losses with resumes between - Refront, Refront, Stop - and the count starts again at a screen-off or USER_PRESENT`() {
-        var refronts = 0
+        var refronts = FaceRefronts()
         val outcomes = (1..3).map {
             // The resume in between zeroes the attempt (refrontAttempt), never the cap's count.
-            val action = refrontAction(face.copy(androidRefronts = refronts), attempt = 0)
-            if (action is RefrontAction.Refront && action.noUserAction) refronts++
+            val (action, after) = faceRefrontStep(face, refronts, lostAtMs = null, attempt = 0)
+            refronts = after
             action
         }
         assertEquals(listOf(RefrontAction.Refront(2_000L, true), RefrontAction.Refront(2_000L, true), RefrontAction.Stop), outcomes)
-        assertEquals(ANDROID_REFRONT_CAP, refronts)
-        val runtime = code("$lock/PinLockRuntime.kt")
+        assertEquals(ANDROID_REFRONT_CAP, refronts.screenOn)
+        // Whitespace-tolerant source scans: one space for every run of blanks and line breaks.
+        val runtime = code("$lock/PinLockRuntime.kt").replace(Regex("\\s+"), " ")
         val screenOff = runtime.substringAfter("if (intent.action == Intent.ACTION_SCREEN_OFF) {").substringBefore("dispatch(app, LockEvent.ScreenOff(")
-        assertTrue(screenOff.contains("androidRefronts = androidRefrontsAfter(androidRefronts, RefrontCount.SCREEN_OFF)"))
-        val present = runtime.substringAfter("private val userPresentReceiver").substringBefore("\n    }\n")
-        val presentReset = present.indexOf("androidRefronts = androidRefrontsAfter(androidRefronts, RefrontCount.USER_PRESENT)")
+        assertTrue(screenOff.contains("faceRefronts = FaceRefronts()"))
+        val present = runtime.substringAfter("private val userPresentReceiver").substringBefore("private val ")
+        val presentReset = present.indexOf("faceRefronts = FaceRefronts()")
         assertTrue(presentReset in present.indexOf("AndroidLock.userPresent()") until present.indexOf("if (mode != LockMode.LOCKED) return"))
-        // glance-replug: a power change and its look move it too ([PowerGlanceTest]); nothing else assigns it.
-        assertEquals("moved only by the rule", 5, Regex("androidRefronts = androidRefrontsAfter\\(androidRefronts, RefrontCount\\.").findAll(runtime).count())
-        assertEquals("moved nowhere else", 5, Regex("(?<!var )androidRefronts = (?!androidRefronts,)").findAll(runtime).count())
+        // glance-replug: the power change opens its budget ([PowerGlanceTest]); the check moves the counts; nothing else.
+        assertEquals("assigned four times", 4, Regex("(?<!var )faceRefronts = ").findAll(runtime).count())
         // Counted (and logged) only for the face's re-front; the flag reaches show().
-        val check = runtime.substringAfter("private fun runRefrontCheck() {").substringBefore("\n    }\n")
-        assertTrue(check.contains("if (action.noUserAction) {\n                    androidRefronts = androidRefrontsAfter(androidRefronts, RefrontCount.REFRONT)\n                    Log.i(ANDROID_LOCK_TAG, \"re-front #\$androidRefronts (\$androidLossWhy)\")"))
+        val check = runtime.substringAfter("private fun runRefrontCheck() {").substringBefore("private ")
+        assertTrue(check.contains("val (action, refronts) = faceRefrontStep(inputs, faceRefronts, lockPausedAt, refrontAttempt) faceRefronts = refronts"))
+        assertTrue(check.contains("if (action.noUserAction) { val power = if (faceRefronts.powerCovers(lockPausedAt)) \" of the power change\" else \"\""))
+        assertTrue(check.contains("Log.i(ANDROID_LOCK_TAG, \"re-front #\${faceRefronts.forLoss(lockPausedAt).first}\$power (\$androidLossWhy)\")"))
         assertTrue(check.contains("show(context, ask = LockAsk.BOOT, noUserAction = action.noUserAction)"))
-        assertTrue(check.contains("androidRefronts = androidRefronts,"))
     }
 
     @Test
