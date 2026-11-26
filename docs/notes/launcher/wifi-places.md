@@ -424,6 +424,10 @@ gate's witness is the newest of the known fix (kept or cached) and the last sate
 radius, across a boot only after at most 10 min off (`PowerEvents.lastOffGapMs`); the position is the first source
 inside the zone (own, Apple by the router's own addresses, centre); an unchecked fix in hand tries it too
 (`withRouter`, its centre outside vetoing); the GPS branch of `LEARNED_FIRST` keeps as TOGETHER; a router fix is never a
-print's vouch or outcome (`Ask.routerFix`); the Wi-Fi teach needs `Ask.conclusive`. A GPS teach surely inside drops a router's pending strike; the Wi-Fi teach
+print's vouch or outcome (`Ask.routerFix`); the Wi-Fi teach needs `Ask.conclusive`. Verification QA: the gate takes the newest
+candidate that says something (`continuityHolds`: a `link` fix inside says inside whatever its accuracy; a coarse fix
+only when surely outside), this boot's by elapsed time first (`gateOrder`); the off gap is computed once at the boot
+(`bootOffGapMs`, `PowerEvents` key `boot_off_gap_v1`) for the boot right before only; the cached fix keeps its own boot;
+the router fix never replaces a renewal (`routerMayReplace`), and own rows far outside the zone veto it. A GPS teach surely inside drops a router's pending strike; the Wi-Fi teach
 needs a conclusive, unwithheld attempt; a hex (unquoted) name and a zero multi-link address are never reported;
 `linkConfirms`/`linkRenews` are gone (`linkCheck`, `zoneRenews`; an enterprise learned link never renews a still vouch).

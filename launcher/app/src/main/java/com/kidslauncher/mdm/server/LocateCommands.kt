@@ -485,7 +485,13 @@ object LocateCommands {
             provider = providerOf(location),
             mock = location.isMock,
             elapsedMs = location.elapsedRealtimeNanos.takeIf { it > 0 }?.let { it / 1_000_000L },
-            bootCount = BootClock.bootCount(),
+            // Design 138 (verification QA L1): the fix's own boot - a vouch re-sent after a reboot has no elapsed time
+            // here and keeps the boot it was cached in (unknown: -1), never this one.
+            bootCount = if (location.elapsedRealtimeNanos > 0) {
+                BootClock.bootCount()
+            } else {
+                cachedFix()?.takeIf { it.timeMs == location.time }?.bootCount ?: -1
+            },
             check = location.fixCheck(),
         )
         val key = LauncherPreferences.mdm().keys().cachedLocationJson()

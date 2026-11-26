@@ -367,11 +367,16 @@ object PowerEvents {
 
     private fun load(prefs: SharedPreferences): PowerRecord = decodePowerRecord(prefs.all)
 
-    /** Design 138 round 2 M2: how long the phone was off before this boot (the last shutdown to this boot's start), or
-     * `null` when unknown - no shutdown seen (a pulled battery, a crash), or not this boot's. Never throws. */
+    /** Design 138 (verification QA M1): this boot's off gap, computed once at the boot and kept apart from the record
+     * (the power upload clears the record's start and shutdown): `"<boot>:<ms>"`. */
+    private const val KEY_OFF_GAP = "boot_off_gap_v1"
+
+    /** Design 138: how long the phone was off before this boot (the shutdown of the boot right before it to this
+     * boot's start), or `null` when unknown - no shutdown seen (a pulled battery, a crash). Never throws. */
     fun lastOffGapMs(context: Context): Long? = try {
-        val r = synchronized(lock) { load(prefs(context)) }
-        com.kidslauncher.mdm.places.offGapMs(r.off?.atMs, r.off?.bootCount, r.on?.atMs, r.on?.bootCount, BootClock.bootCount())
+        val parts = prefs(context).getString(KEY_OFF_GAP, null)?.split(':')
+        val boot = parts?.getOrNull(0)?.toIntOrNull()
+        parts?.getOrNull(1)?.toLongOrNull()?.takeIf { boot == BootClock.bootCount() }
     } catch (e: Exception) {
         null
     }
@@ -543,7 +548,16 @@ object PowerEvents {
                 elapsedMs = SystemClock.elapsedRealtime(),
                 battery = BatteryStatus.report(context),
             ) ?: return
-            update(context) { withBoot(it, on) }
+            update(context) { record ->
+                // Design 138 (verification QA M1): the off gap before this boot, once, on the decisions' clock the shutdown's
+                // instant was taken on (`TrustedClock`, checkpointed at the shutdown).
+                val gap = com.kidslauncher.mdm.places.bootOffGapMs(
+                    record.off?.atMs, record.off?.bootCount, BootClock.bootCount(), TrustedClock.nowMs(), SystemClock.elapsedRealtime(),
+                )
+                val boot = BootClock.bootCount()
+                prefs(context).edit().apply { if (gap != null) putString(KEY_OFF_GAP, "$boot:$gap") else remove(KEY_OFF_GAP) }.commit()
+                withBoot(record, on)
+            }
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Couldn't record the boot: ${e.javaClass.simpleName}")
         }

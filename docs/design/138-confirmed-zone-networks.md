@@ -329,9 +329,12 @@ heard routers already in the table.
 
 - **The continuity gate** (round 2 M2): its witness is the newest, by time, of the phone's known fix (the kept slot's
   unreported fix, else the cached one) and the last satellite fix. The gate holds while that witness's centre is
-  inside the zone and its accuracy is at most the radius (a coarse cell fix never opens it); when the witness is
-  another boot's, only if the phone was off at most 10 min before this boot (`PowerEvents`' shutdown to this boot's
-  start; unknown - a pulled battery - holds nothing). 10 min covers a restart and a battery swap; a phone off longer
+  inside the zone (the verification QA's H1: the newest candidate that says something decides - a `link` fix with its
+  centre inside says inside whatever its accuracy, so the single-router fix keeps the gate it came through; a fine fix
+  by its centre; a coarse one over the radius, a cell fix, only when surely outside, else the next older one decides);
+  when the witness is the boot right before this one's, only if the phone was off at most 10 min (the gap computed at
+  the boot, kept apart from the power record the upload clears; unknown - a pulled battery - holds nothing). This boot's
+  candidates are ordered by elapsed time, ahead of another boot's; a vouch re-sent after a reboot keeps its own boot. 10 min covers a restart and a battery swap; a phone off longer
   could have been carried anywhere (10 min in a car is 10-15 km), and "off at home, on at a remote place" must not
   start inside. It keeps a known "inside" (the restart case); it never brings a phone "home" after it was seen
   elsewhere - that stays GPS's, or an ordinary checked Wi-Fi fix's.
@@ -561,3 +564,8 @@ None. Q1 is decided (§11).
   addresses; **L3** where D15 is promised; **L4** no print's vouch or outcome from a router fix; **L5** a stale
   server comment; **L6** behaviour tests of the gate, the level, the heard filter, Apple's place and the position
   outside; **L7** an explicit `conclusive` for the teach gate.
+- **Verification QA** (of 5a2c30131): **H1** the gate's witness rules above (a router fix never closes its own gate;
+  a coarse fix never decides unless surely outside); **M1** the off gap computed once at the boot in its own key, for
+  the boot right before only; **L1** the candidates by elapsed time in this boot, the cached fix's own boot kept;
+  **L2** the router fix never replaces a renewal of the still vouch, and own rows placing the router outside the zone
+  by more than their range veto it (no fallback to Apple or the centre); **L3** tests for each.
