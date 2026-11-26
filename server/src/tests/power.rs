@@ -831,7 +831,7 @@ async fn a_shutdowns_words_read_in_all_four_places_before_and_after_the_prune() 
                 "pruned {pruned}: {en}"
             );
             assert_eq!(
-                nb.contains("se kartet i Finn"),
+                nb.contains("– se Kart"),
                 !pruned,
                 "pruned {pruned}: {nb}"
             );

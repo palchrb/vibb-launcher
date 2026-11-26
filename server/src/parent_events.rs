@@ -3267,7 +3267,7 @@ pub fn detail(
         Kind::PhoneOff => {
             let location = off_params(params)?.location?;
             // "Last position at 21:10 – see the map in Locate" (nb "Siste posisjon kl. 21:10 – se
-            // kartet i Finn": Finn the tab, never read as a verb); "Last position yesterday 21:10"
+            // Kart": Kart the tab); "Last position yesterday 21:10"
             // on another day.
             Some(match DateTime::from_timestamp_millis(location.at_ms) {
                 Some(fix_at) if zone.local(fix_at).date_naive() == zone.today(now) => t_params(
@@ -5585,7 +5585,7 @@ mod tests {
         let yesterday = utc("2026-10-31 19:26:00").timestamp_millis();
         assert_eq!(
             detail(today, Lang::Nb),
-            "Siste posisjon kl. 20:26 – se kartet i Finn"
+            "Siste posisjon kl. 20:26 – se Kart"
         );
         assert_eq!(
             detail(today, Lang::En),
@@ -5593,7 +5593,7 @@ mod tests {
         );
         assert_eq!(
             detail(yesterday, Lang::Nb),
-            "Siste posisjon i går 20:26 – se kartet i Finn"
+            "Siste posisjon i går 20:26 – se Kart"
         );
         assert_eq!(
             detail(yesterday, Lang::En),
@@ -5601,7 +5601,7 @@ mod tests {
         );
         assert_eq!(
             detail(i64::MAX, Lang::Nb),
-            "Siste posisjon – se kartet i Finn"
+            "Siste posisjon – se Kart"
         );
     }
 
