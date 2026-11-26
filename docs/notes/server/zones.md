@@ -1,5 +1,10 @@
 # Server notes: safe zones
 
+Since design 135 (migration 0182, "Zones shared by the family" at the end) a zone is the family's (`family_zones`: the
+name and the circle) and a phone links to the zones it uses (`device_zones`, the link: the rule's state and the id the
+phone and the events see). The sections below describe design 64's per-phone zone; where they say "the zone's row"
+for the state or the id, read "the link"; the name, centre and radius are the family zone's.
+
 ## Safe zones, step 1: the server judges every fix (design 64, `docs/design/64-safe-zones.md`, migration `0091_safe_zones.sql`)
 
 Server only; works with every launcher (zones judged at each fix the phone already sends). Step 2 (the launcher's
@@ -54,8 +59,8 @@ at each fix, as below.
 - **Events** (`parent_events`): `Kind::ZoneArrived` (`zone_arrived`) and `Kind::ZoneLeft` (`zone_left`), after
   `PhoneOn` in `Kind::ALL`; not urgent, foldable, TTL 3600, urgency normal; **one switch for both**,
   `("push_zones", "Zones: arrived and left")` - `Kind::switches()` lists each switch once (Notify Me About's rows, its
-  save, its read). Raised only when the zone's switch for that direction is on (`zones::event_of`; decision 5: the
-  zone's switches decide whether there is an event, each parent's "Zones" only the push). Key
+  save, its read). Until design 135 raised only when the zone's switch for that direction was on; since then every
+  crossing is an event and each parent's own switches filter only the push (the last section). Key
   `<zone id>:<inside|outside>:<the first fix's captured_at>`, `happened_at` = the first fix of the pair. **Stored as a
   key plus parameters, never prose** (the user's decision 5, 2026-10-24): `title`/`summary` empty, `params` =
   `ZoneParams {zone_id, zone, phone, direction: arrived|left, at}` (the names as they were when raised);
@@ -80,7 +85,7 @@ at each fix, as below.
   inside, **no other side pending**, and the newest fix **fresh** (`zones::fresh`: younger than 2 x the interval in
   Regularly, else 1 h; `zones::freshness_inputs`). Inside and nothing pending but stale: the row says "Last seen at
   Home 14:02" (the newest fix's time, `data-last-seen`), the summary nothing.
-- **Pages**: the Locate page's `#zones` and the zone's page (`handlers::zones`, `device_zone.html`, `static/zones.js`)
+- **Pages**: the Locate page's `#zones` and the zone's page (`handlers::zones`, `family_zone.html` since design 135, `static/zones.js`)
   - see `pwa.md`, "Locate: zones (design 64 step 1)". The phone's summary header: "Home since 15:42" on its second
   line, before the battery (`devices::zone_now`, worded by `phone_status`, `data-zone-now`: the zones the phone is in
   now, the latest `side_since`; since 2026-11-01, `pwa.md`, "Tidier status").
@@ -202,7 +207,9 @@ The user's cabin case (Q2, 2026-11-24): a phone switched off, driven to a cabin 
 
 ## A zone stands in for the weather (design 75, migration `0122_lock_weather.sql`)
 
-`device_policy.weather_zone_id` names one of the phone's zones whose centre gives the lock screen's weather when the
+Since design 135 the column is `device_policy.weather_family_zone_id` (a family zone, linked to the phone or not; the
+last section); `weather_zone_id` stays, NULL and unread. Before it, `device_policy.weather_zone_id` named one of the
+phone's zones whose centre gives the lock screen's weather when the
 phone has no fresh fix (Lock Screen & PINs › Weather; `docs/notes/server/launcher-ui.md`, "Lock screen weather"). It is a foreign
 key `ON DELETE SET NULL`: deleting the zone clears it (and the delete nudges the phone, as every zone save does).
 **A future migration that rebuilds `device_zones`** (copy, drop, rename) runs with foreign keys on, so dropping the old
@@ -238,20 +245,84 @@ A Wi-Fi fix that no satellite fix or linked network confirms never starts an arr
 
 `zone_networks.rs`, `docs/design/138-confirmed-zone-networks.md`. `zone_networks` holds one row per router address
 (BSSID) a parent confirmed for a zone: the name and the multi-link address from the phone's report, `blocked_at` once
-the phone saw that router far outside the zone; at most 16 a zone, blocked rows counted; the rows go with the zone. The
+the phone saw that router far outside the zone; at most 16 a zone, blocked rows counted; the rows go with the zone.
+**With family zones (design 135)** a row stays on the link (`zone_id` is the `device_zones` id, the id the phone's policy
+names), but a confirmation is the family zone's: every write keeps the links of a family zone in step - a confirm
+writes the router to every link, a remove takes the name from every link, a strike blocks the router on every link,
+a move past the radius clears every link, and `zones::link` copies the zone's rows to a new link
+(`zone_networks::copy_to_link`: per address the oldest unblocked confirmation's name, blocked when any copy is, at
+most 16). So every phone that uses the zone is served the same routers, each under its own row ids (no schema change:
+0180 is as built; 0182's fold copies each folded zone's routers to all its links the same way - a link's own rows
+first, then unblocked before blocked, the oldest confirmation first, at most 16 - and blocks a router on every link
+when one copy is blocked). An editor save makes its new links before it drops the unticked ones, so swapping the
+phones keeps the routers; **unlinking the last phone of a zone drops its confirmations** (they live on the links). The
 report's `zone_watch.wifi` (`{ssid, bssid, mld?}`, a named WPA2/WPA3 personal network, sent only while the policy has
 zones) and `wifi_struck` (ids) are kept in their shape by `sanitize_zone_watch` (`clean_wifi`, `clean_struck`; a bad
-one dropped alone; `ZONE_WATCH_MAX` 2048). The zone's page (`#zone-wifi`) lists each confirmed name with Fjern...,
-offers Bekreft for the network of the phone's newest report with `wifi` (at most an hour old, a report without it
-hides nothing) when that router isn't confirmed (the same name and the same router: the BSSID's first five octets or
-the multi-link address) and the newest fix isn't surely outside, and shows one orange line at most: "Sett et annet
+one dropped alone; `ZONE_WATCH_MAX` 2048). The family zone's editor (`/zones/{zone_id}#zone-wifi`) lists each
+confirmed name with Fjern..., offers Bekreft for the network of each linked phone's newest report with `wifi` (at most
+an hour old, a report without it hides nothing; one row per router, the phone's name its quiet value, the form names
+the phone as `phone`) when that
+router isn't confirmed (the same name and the same router: the BSSID's first five octets or the multi-link address)
+and that phone's newest fix isn't surely outside, and shows one orange line at most: "Sett et annet
 sted" for a blocked row (revision 3 cut "Ukjent ruter": it invited confirming a router set up with the home's name
-and password; a fix surely outside counts only from the last hour). `POST
-/devices/{id}/zones/{zone_id}/wifi` confirms only what the newest report says (the form's `bssid`/`mld` must match;
-the stored name is the report's), a blocked row of that BSSID replaced by a new id; `.../wifi/{network_id}/delete`
-removes every row of that name. Both land on `?wifi=saved|changed|full#zone-wifi`. The status intake blocks a struck
-id of this phone's zones once (`block_struck`, the phone line `zone_wifi_blocked` with the zone's name) and nudges the
-phone. A zone moved further than its old radius loses its rows (`moved_past_radius`, the `zone_changed` detail "Wi-Fi
-removed"). The policy's `location_policy.zones[]` carries `networks` (unblocked rows, `{id, ssid, bssid, mld}`,
+and password; a fix surely outside counts only from the last hour). `POST /zones/{zone_id}/wifi` confirms only what
+the named phone's newest report says (the form's `bssid`/`mld` must match; the stored name is the report's; a phone
+that doesn't use the zone lands on the group with no line, one surely outside on a fix under an hour with "The phone
+is outside the zone now", `?wifi=outside`), a blocked row of that BSSID replaced by a new id; `.../wifi/{network_id}/delete` removes every row of
+that name. Both land on `?wifi=saved|changed|full|outside#zone-wifi` (with `device` when the page came from a phone) and nudge
+every phone using the zone; the log lines are `zone_wifi_confirmed` ("phone 3 (Telefon 1): Hjem", the phone whose
+report it bound to) and `zone_wifi_removed` ("Hjem."). The status intake blocks a struck id of this phone's zones once,
+and that router on the zone's other links (`block_struck`, the phone line `zone_wifi_blocked` with the zone's name),
+and nudges every phone using the zone. A zone moved further than its old radius loses its rows (`moved_past_radius`,
+the `zone_changed` detail "Wi-Fi removed"). The policy's `location_policy.zones[]` carries `networks` (unblocked rows, `{id, ssid, bssid, mld}`,
 always present). The log never names a network or an address. Contract: `contracts/core/zone_networks.json`; tests
-`tests::zone_networks`, `zone_networks::tests`.
+`tests::zone_networks` (two phones on one family zone: confirm, serve, relink, strike, remove, move),
+`zone_networks::tests`.
+
+## Zones shared by the family (design 135, migration `0182_family_zones.sql`; `docs/design/135-family-zones.md`)
+
+Server only: no launcher code, no contract file, no change to the policy JSON. Needs phase D's 0181 first.
+
+- **Data** (0182): `family_zones` (`name`, `latitude`/`longitude`, `radius_m`, `created_by`, `created_at`/
+  `updated_at`) is the place. `device_zones` is the link: `device_id`, `zone_id` (FK, `ON DELETE CASCADE`; nullable in
+  the schema because `ADD COLUMN` with a reference can't be `NOT NULL`, every write path sets it), the rule's state and
+  cursor, `created_by`/`created_at` (who linked it, when); its `name`, circle and `notify_*` columns are dropped. Unique
+  `(device_id, zone_id)` (`idx_device_zones_link`). `zone_alerts(admin_id, device_zone_id, arrive, leave)` - each
+  parent's push switches per link, no row = both on (cascades with the link and the parent).
+  `device_policy.weather_family_zone_id` (FK `ON DELETE SET NULL`).
+- **The fold**: zones with the same name (ASCII `lower` and `trim`), the same centre and the same radius become one
+  family zone, made from the group's oldest row; same-name zones elsewhere stay apart with their names (no rename, the
+  owner's Q2). Each link keeps its id, state, cursor and `created_at`; the weather moves to the link's family zone;
+  every switch that was off becomes a `zone_alerts` row for **every** parent, removed ones too (a `reset-2fa` restores
+  them as they were). Nothing is judged again, nothing raised. No table rebuild (the weather's FK). The policy's
+  `zones` are equal value for value (`tests::family_zones::migration_0182_folds_and_keeps_every_phone`).
+- **Code**: `zones::list` joins the link to its family zone (`Zone.id` the link, `Zone.zone_id` the family zone;
+  `notify_*` gone), `zones::links_of`, `zones::family`, `zones::family_zone`, `zones::FamilyZone`, `zones::link`
+  (insert + `start_over`, never a replay). The rule, `evaluate_stored`, `policy_zones`, `served_interval_of`,
+  `forget_sides` and the intake are unchanged and work on links. `MAX_ZONES` (10) caps links per phone,
+  `MAX_FAMILY_ZONES` (50) the family (a family over it after the fold loses only Add Zone).
+- **Every crossing is an event** (decision 7): `zones::event_of` no longer checks a switch. The push is filtered at
+  queueing (`push::queue_as`, `ZONE_ALERTS_ON`): for a zone kind, no delivery to a subscriber whose `zone_alerts` row
+  for the event's `params.zone_id` has that direction off. A retry re-sends what was queued; a switch turned off later
+  recalls nothing; a removed parent gets nothing (`removed_at`, as every push); a new parent starts with every link on.
+  Notify Me About's `push_zones` stays each parent's switch for all zones.
+- **Editing a shared zone**: a moved centre or a changed radius runs `start_over` on every link of the zone in the
+  save's transaction and nudges each phone; a rename changes the name only (no nudge: the name never reaches a phone).
+  Every phone sees the new circle at its next sync, re-registers that fence and relearns its Wi-Fi zone link for it.
+- **Unlink** deletes the link (state and alerts with it); **relink** is a new id and a silent first side. Neither
+  touches the weather. **Delete** of a family zone cascades to its links, their alerts and the weather's
+  `weather_family_zone_id`, and nudges the phones that used it. Past events stay until retention.
+- **The weather** (`weather.rs` `cell_of`, `weather_page.rs`): the family zone's centre; the picker lists every family
+  zone; the save checks the id against `family_zones`.
+- **Names**: the rules (1-40, no `Cc`/`Cf`, unique in the family by `to_lowercase`) apply only to a new or changed name
+  (decision 5); a migrated over-long or duplicate name saves other changes as it is.
+- **Security log**: `zone_added` ("Hjem, 150 m"), `zone_changed` ("Hjem. Renamed from Home. Moved. Radius 150 -> 250
+  m."), `zone_deleted` ("Hjem (Telefon 1, Telefon 2)" or "Hjem") - the family's lines, with no facts
+  (`handlers::zones::family_line`: the log shows any fact that doesn't name a phone; `security.detail.zone.family_*`); `zone_linked`/`zone_unlinked` ("phone 3 (Telefon 1): Hjem",
+  `security.detail.zone.link`, labels "Zone linked"/"Zone unlinked"). Never a coordinate. The old keys stay for old
+  rows. An alert switch alone is the settings log's `settings_saved`.
+- The pages are `pwa.md`, "Zones shared by the family". Tests: `tests::family_zones` (the migration, judging per phone,
+  move/rename, unlink/relink/delete, the weather, the caps from both pages, the stale forms, the push filter),
+  `tests::zones` (adapted), `handlers::zones::tests` (`a_save_writes_only_what_differs_from_the_page`), `jstest/zones.test.js`.
+- The phone: nothing changes (`docs/notes/launcher/zones-and-power.md`): a policy zone's id is the phone's link to a
+  family zone.

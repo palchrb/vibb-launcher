@@ -284,7 +284,9 @@ CREATE UNIQUE INDEX idx_zone_networks_ap ON zone_networks(zone_id, bssid);
 
 - **Routes** (session + 2FA, as the zone's page; both land on `/devices/{id}/zones/{zone_id}#zone-wifi`, so a save
   never jumps to the top): `POST /devices/{id}/zones/{zone_id}/wifi` (`bssid`; D4) and
-  `POST /devices/{id}/zones/{zone_id}/wifi/{network_id}/delete` (every row of that row's name in the zone).
+  `POST /devices/{id}/zones/{zone_id}/wifi/{network_id}/delete` (every row of that row's name in the zone). As built
+  after design 135: `POST /zones/{zone_id}/wifi` (`phone`, `bssid`) and `POST /zones/{zone_id}/wifi/{network_id}/delete`
+  on the family zone's editor, landing on `/zones/{zone_id}#zone-wifi`.
 - **The strike intake** (`zones::intake`, after the fix): `wifi_struck` ids that are this phone's zones' rows and not
   yet blocked get `blocked_at`, one security line each, and a nudge; another phone's ids are ignored.
 - **Security log** (the zone's name, never the network's name or address): `zone_wifi_confirmed`,
@@ -294,7 +296,12 @@ CREATE UNIQUE INDEX idx_zone_networks_ap ON zone_networks(zone_id, bssid);
   enrolled into the row keeps them (they describe the router). On the phone any circle change drops the zone's `LINK`
   and `LINK_AP` rows (its key changes, as today); the confirmations come back from the policy.
 - **After design 135** (family zones): whether the confirmations move to the family zone is 135's call at its rebase;
-  left on the link row (`device_zones`) they keep working per phone.
+  left on the link row (`device_zones`) they keep working per phone. **Decided at the merge (2026-11-26):** the rows
+  stay on the link (no schema change: 0180 shipped in server 0.94.0, and 135's migration is as built), and every
+  write keeps a family zone's links in step - a confirm on the family zone's editor (`/zones/{zone_id}/wifi`, bound
+  to the named phone's report) writes every link, Fjern and a move past the radius clear every link, a strike blocks
+  the router on every link, and a new link starts with the zone's rows (`zone_networks::copy_to_link` in
+  `zones::link`). So a confirmation is the family zone's and every phone using it is served the router.
 
 ### D13. The contract
 

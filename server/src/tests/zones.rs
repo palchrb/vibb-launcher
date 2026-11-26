@@ -1,6 +1,7 @@
 //! Safe zones, step 1 (design 64): the fix stored once, every stored fix judged once in time
-//! order, one event per crossing (inbox always, push while news, the switches), the zone's page
-//! and its refusals, the Locate page's group, retention and the security log.
+//! order, one event per crossing (inbox always, push while news, each parent's switches), the
+//! zone's editor and its refusals, the Locate page's group, retention and the security log. Design
+//! 135's family zones, links, stale forms and per-parent alerts are `tests::family_zones`.
 
 use axum::http::{Method, StatusCode, header};
 use chrono::{Duration, Utc};
@@ -10,18 +11,18 @@ use super::web_push::{ENDPOINT, subscribe};
 use super::{TestApp, assert_redirect, form_action_of};
 
 /// 30 m from Home's centre (59.9139, 10.7522): inside with a good fix.
-const NEAR: (f64, f64) = (59.91417, 10.7522);
+pub(super) const NEAR: (f64, f64) = (59.91417, 10.7522);
 /// 1 km away.
-const AWAY: (f64, f64) = (59.9229, 10.7522);
+pub(super) const AWAY: (f64, f64) = (59.9229, 10.7522);
 
 const PAPPAS_ENDPOINT: &str = "https://web.push.apple.com/QK1-pappas-fake-endpoint";
 
-fn at(minutes_ago: i64) -> String {
+pub(super) fn at(minutes_ago: i64) -> String {
     (Utc::now() - Duration::minutes(minutes_ago)).to_rfc3339()
 }
 
 /// A status report carrying one fix (accuracy 20 m).
-async fn report(app: &TestApp, token: &str, place: (f64, f64), captured_at: &str) {
+pub(super) async fn report(app: &TestApp, token: &str, place: (f64, f64), captured_at: &str) {
     let res = app
         .request(
             Method::POST,
@@ -38,25 +39,143 @@ async fn report(app: &TestApp, token: &str, place: (f64, f64), captured_at: &str
     assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.text());
 }
 
-async fn count(app: &TestApp, sql: &str) -> i64 {
+pub(super) async fn count(app: &TestApp, sql: &str) -> i64 {
     sqlx::query_scalar(sql).fetch_one(&app.db).await.unwrap()
 }
 
-/// Adds a zone through its form; its id.
-async fn add_zone(app: &TestApp, cookie: &str, device: i64, fields: &[(&str, &str)]) -> i64 {
-    let res = app
-        .request_form(
-            Method::POST,
-            &format!("/devices/{device}/zones"),
-            Some(cookie),
-            fields,
-        )
-        .await;
-    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.text());
-    sqlx::query_scalar("SELECT MAX(id) FROM device_zones")
+/// Design 135: a family zone and its link to `device`, straight into the tables; the link's id.
+pub(super) async fn insert_zone(
+    app: &TestApp,
+    device: i64,
+    name: &str,
+    latitude: f64,
+    longitude: f64,
+    radius_m: i64,
+) -> i64 {
+    let zone: i64 = sqlx::query_scalar(
+        "INSERT INTO family_zones (name, latitude, longitude, radius_m) VALUES (?, ?, ?, ?) \
+         RETURNING id",
+    )
+    .bind(name)
+    .bind(latitude)
+    .bind(longitude)
+    .bind(radius_m)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    sqlx::query_scalar("INSERT INTO device_zones (device_id, zone_id) VALUES (?, ?) RETURNING id")
+        .bind(device)
+        .bind(zone)
         .fetch_one(&app.db)
         .await
         .unwrap()
+}
+
+/// The family zone of a link.
+pub(super) async fn zone_of(app: &TestApp, link: i64) -> i64 {
+    sqlx::query_scalar("SELECT zone_id FROM device_zones WHERE id = ?")
+        .bind(link)
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+}
+
+/// The fields a browser posts from the form whose action starts with `action` on `html`, as
+/// drawn: its hidden and text inputs, and its checked checkboxes.
+pub(super) fn drawn(html: &str, action: &str) -> Vec<(String, String)> {
+    let form = super::tags(html, "form")
+        .into_iter()
+        .find(|f| f.attr("action").is_some_and(|a| a.starts_with(action)))
+        .unwrap_or_else(|| panic!("no form posting to {action}"));
+    let body = &html[form.start..];
+    let body = &body[..body.find("</form>").unwrap()];
+    let unescape = |v: &str| {
+        v.replace("&#39;", "'")
+            .replace("&quot;", "\"")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&amp;", "&")
+    };
+    super::tags(body, "input")
+        .into_iter()
+        .filter_map(|input| {
+            let name = input.attr("name")?;
+            let value = unescape(input.attr("value").unwrap_or(""));
+            match input.attr("type") {
+                Some("checkbox") => input.has("checked").then(|| {
+                    (
+                        name.to_string(),
+                        if value.is_empty() {
+                            "on".to_string()
+                        } else {
+                            value
+                        },
+                    )
+                }),
+                _ => Some((name.to_string(), value)),
+            }
+        })
+        .collect()
+}
+
+/// `fields` with `name` set to `value` (`None`: left out, an unticked box).
+pub(super) fn set(fields: &mut Vec<(String, String)>, name: &str, value: Option<&str>) {
+    fields.retain(|(k, _)| k != name);
+    if let Some(value) = value {
+        fields.push((name.to_string(), value.to_string()));
+    }
+}
+
+/// Posts `fields` (owned) as a form.
+pub(super) async fn post(
+    app: &TestApp,
+    cookie: &str,
+    path: &str,
+    fields: &[(String, String)],
+) -> super::TestResponse {
+    let refs: Vec<(&str, &str)> = fields
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    app.request_form(Method::POST, path, Some(cookie), &refs)
+        .await
+}
+
+/// Adds a family zone through its editor, opened from `device`'s Zones page with that phone ticked
+/// (design 135 §5.3); the link's id.
+async fn add_zone(app: &TestApp, cookie: &str, device: i64, fields: &[(&str, &str)]) -> i64 {
+    let mut all: Vec<(String, String)> = fields
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+    all.push(("device".to_string(), device.to_string()));
+    all.push((format!("phone_{device}"), "on".to_string()));
+    let res = post(app, cookie, "/zones", &all).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.text());
+    sqlx::query_scalar("SELECT MAX(id) FROM device_zones WHERE device_id = ?")
+        .bind(device)
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+}
+
+/// The editor's save of the family zone `zone` as the page is drawn now, `changes` made on it.
+async fn save_zone(
+    app: &TestApp,
+    cookie: &str,
+    zone: i64,
+    device: i64,
+    changes: &[(&str, Option<&str>)],
+) -> super::TestResponse {
+    let html = app
+        .get_page(&format!("/zones/{zone}?device={device}"), cookie)
+        .await
+        .text();
+    let mut fields = drawn(&html, &format!("/zones/{zone}#"));
+    for (name, value) in changes {
+        set(&mut fields, name, *value);
+    }
+    post(app, cookie, &format!("/zones/{zone}"), &fields).await
 }
 
 async fn add_home(app: &TestApp, cookie: &str, device: i64) -> i64 {
@@ -76,7 +195,7 @@ async fn add_home(app: &TestApp, cookie: &str, device: i64) -> i64 {
     .await
 }
 
-async fn side(app: &TestApp, zone: i64) -> Option<String> {
+pub(super) async fn side(app: &TestApp, zone: i64) -> Option<String> {
     sqlx::query_scalar("SELECT side FROM device_zones WHERE id = ?")
         .bind(zone)
         .fetch_one(&app.db)
@@ -231,7 +350,8 @@ async fn the_switches_and_old_news() {
     let app = TestApp::new().await;
     let mamma = two_parents(&app).await;
     let (id, token) = app.enrolled_device("Anna").await;
-    // Arrive off: an arrival is no event at all; leaving still is.
+    // Design 135 decision 7: Arrive off (this parent's, for this phone and zone) leaves the event
+    // in the inbox and only stops the push.
     let school = add_zone(
         &app,
         &mamma,
@@ -241,16 +361,31 @@ async fn the_switches_and_old_news() {
             ("latitude", "59.9139"),
             ("longitude", "10.7522"),
             ("radius_m", "150"),
-            ("notify_leave", "on"),
         ],
     )
     .await;
+    let page = app
+        .get_page(&format!("/devices/{id}/zones"), &mamma)
+        .await
+        .text();
+    let mut fields = drawn(&page, &format!("/devices/{id}/zones#"));
+    set(&mut fields, &format!("arrive_{school}"), None);
+    let res = post(&app, &mamma, &format!("/devices/{id}/zones"), &fields).await;
+    assert!(res.status.is_redirection(), "{}", res.text());
     report(&app, &token, AWAY, &at(50)).await;
     report(&app, &token, AWAY, &at(45)).await;
-    report(&app, &token, NEAR, &at(40)).await;
-    report(&app, &token, NEAR, &at(39)).await;
+    report(&app, &token, NEAR, &at(4)).await;
+    report(&app, &token, NEAR, &at(2)).await;
     assert_eq!(side(&app, school).await.as_deref(), Some("inside"));
-    assert_eq!(count(&app, "SELECT COUNT(*) FROM parent_events").await, 0);
+    assert_eq!(
+        count(
+            &app,
+            "SELECT COUNT(*) FROM parent_events WHERE kind = 'zone_arrived'"
+        )
+        .await,
+        1
+    );
+    assert_eq!(count(&app, "SELECT COUNT(*) FROM push_deliveries").await, 0);
     // A departure confirmed by a fix 3 hours old (a phone back after a day without data): in the
     // inbox, never pushed.
     sqlx::query("DELETE FROM device_locations")
@@ -279,7 +414,7 @@ async fn the_switches_and_old_news() {
 async fn a_moved_zone_forgets_its_side_and_a_rename_keeps_it() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
-    let (id, token) = app.enrolled_device("Anna").await;
+    let (id, token) = app.enrolled_device("Telefon 1").await;
     report(&app, &token, AWAY, &at(60)).await;
     let home = add_home(&app, &cookie, id).await;
     // The history before the zone is never judged: its cursor is at the newest fix.
@@ -292,45 +427,25 @@ async fn a_moved_zone_forgets_its_side_and_a_rename_keeps_it() {
     report(&app, &token, NEAR, &at(10)).await;
     assert_eq!(side(&app, home).await.as_deref(), Some("inside"));
     assert_eq!(count(&app, "SELECT COUNT(*) FROM parent_events").await, 0);
-    let save = |fields: Vec<(&'static str, &'static str)>| {
+    let zone = zone_of(&app, home).await;
+    let save = |changes: Vec<(&'static str, Option<&'static str>)>| {
         let app = &app;
         let cookie = cookie.clone();
         async move {
-            let res = app
-                .request_form(
-                    Method::POST,
-                    &format!("/devices/{id}/zones/{home}"),
-                    Some(&cookie),
-                    &fields,
-                )
-                .await;
+            let res = save_zone(app, &cookie, zone, id, &changes).await;
             assert_redirect(
                 &res,
-                &format!("/devices/{id}/zones?zone=saved&zone_id={home}"),
-                Some(&format!("zone-{home}")),
+                &format!("/devices/{id}/zones?zone=saved&zone_id={zone}"),
+                Some(&format!("zone-{zone}")),
             );
             app.assert_lands(&res, &cookie).await;
         }
     };
-    // A rename and a switch: the side stays.
-    save(vec![
-        ("name", "Hjemme"),
-        ("latitude", "59.913900"),
-        ("longitude", "10.752200"),
-        ("radius_m", "150"),
-        ("notify_arrive", "on"),
-    ])
-    .await;
+    // A rename: the side stays.
+    save(vec![("name", Some("Hjemme"))]).await;
     assert_eq!(side(&app, home).await.as_deref(), Some("inside"));
     // A wider circle: unknown again, silently set by the next pair.
-    save(vec![
-        ("name", "Hjemme"),
-        ("latitude", "59.913900"),
-        ("longitude", "10.752200"),
-        ("radius_m", "300"),
-        ("notify_arrive", "on"),
-    ])
-    .await;
+    save(vec![("radius_m", Some("300"))]).await;
     assert_eq!(side(&app, home).await, None);
     report(&app, &token, NEAR, &at(4)).await;
     report(&app, &token, NEAR, &at(2)).await;
@@ -344,26 +459,31 @@ async fn a_moved_zone_forgets_its_side_and_a_rename_keeps_it() {
     .await
     .unwrap();
     let mut log: Vec<(String, String)> = Vec::new();
-    for kind in ["zone_added", "zone_changed"] {
+    for kind in ["zone_added", "zone_linked", "zone_changed"] {
         for words in super::security_words(&app, kind, crate::i18n::Lang::En).await {
             log.push((kind.to_string(), words));
         }
     }
-    assert_eq!(kinds, ["zone_added", "zone_changed", "zone_changed"]);
+    assert_eq!(
+        kinds,
+        ["zone_added", "zone_linked", "zone_changed", "zone_changed"]
+    );
+    // Design 135 §8: the family's lines name the zone; a link names the phone.
     assert_eq!(
         log,
         [
+            ("zone_added".to_string(), "Home, 150 m".to_string()),
             (
-                "zone_added".to_string(),
-                format!("phone {id} (Anna): Home, 150 m")
+                "zone_linked".to_string(),
+                format!("phone {id} (Telefon 1): Home")
             ),
             (
                 "zone_changed".to_string(),
-                format!("phone {id} (Anna): Hjemme. Renamed from Home. Leave off.")
+                "Hjemme. Renamed from Home.".to_string()
             ),
             (
                 "zone_changed".to_string(),
-                format!("phone {id} (Anna): Hjemme. Radius 150 → 300 m.")
+                "Hjemme. Radius 150 → 300 m.".to_string()
             ),
         ]
     );
@@ -480,21 +600,22 @@ async fn zone_events_go_with_the_location_history() {
 async fn the_zone_page_adds_saves_and_deletes_landing_on_its_row() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
-    let (id, token) = app.enrolled_device("Anna").await;
-    let (other, _) = app.enrolled_device("Emil").await;
+    let (id, token) = app.enrolled_device("Telefon 1").await;
     // No fix: the form says so, the coordinates empty.
     let page = app
-        .get_page(&format!("/devices/{id}/zones/new"), &cookie)
+        .get_page(&format!("/zones/new?device={id}"), &cookie)
         .await;
     assert_eq!(page.status, StatusCode::OK);
     let html = page.text();
     assert!(html.contains("data-note=\"no-fix\""));
-    assert_eq!(
-        form_action_of(&html, "name"),
-        Some(format!("/devices/{id}/zones#zone-form").as_str())
-    );
+    assert_eq!(form_action_of(&html, "name"), Some("/zones#zone-form"));
     assert!(html.contains("id=\"zone-form\""));
     assert!(html.contains("value=\"150\""), "the default radius");
+    assert_eq!(
+        super::input_checked(&html, &format!("phone_{id}"), "on"),
+        Some(true),
+        "opened from the phone: it is ticked"
+    );
     assert_eq!(
         page.headers
             .get(header::CACHE_CONTROL)
@@ -504,28 +625,30 @@ async fn the_zone_page_adds_saves_and_deletes_landing_on_its_row() {
     // With a fix the new zone starts there.
     report(&app, &token, NEAR, &at(5)).await;
     let html = app
-        .get_page(&format!("/devices/{id}/zones/new"), &cookie)
+        .get_page(&format!("/zones/new?device={id}"), &cookie)
         .await
         .text();
     assert!(html.contains("value=\"59.914170\""), "{html}");
     assert!(html.contains("data-use-phone"));
-    // Added: back at its row on Locate, with its line there.
+    assert!(html.contains("Use Telefon 1&#39;s location"), "{html}");
+    // Added: back at its cell on the phone's Zones page, with its line there.
     let res = app
         .request_form(
             Method::POST,
-            &format!("/devices/{id}/zones"),
+            "/zones",
             Some(&cookie),
             &[
                 ("name", "Home"),
                 ("latitude", "59.9139"),
                 ("longitude", "10.7522"),
                 ("radius_m", "150"),
-                ("notify_arrive", "on"),
-                ("notify_leave", "on"),
+                ("device", &id.to_string()),
+                (&format!("phone_{id}"), "on"),
             ],
         )
         .await;
-    let home: i64 = count(&app, "SELECT MAX(id) FROM device_zones").await;
+    let link: i64 = count(&app, "SELECT MAX(id) FROM device_zones").await;
+    let home = zone_of(&app, link).await;
     assert_redirect(
         &res,
         &format!("/devices/{id}/zones?zone=added&zone_id={home}"),
@@ -534,24 +657,20 @@ async fn the_zone_page_adds_saves_and_deletes_landing_on_its_row() {
     app.assert_lands(&res, &cookie).await;
     let zones = app.get_page(res.location().unwrap(), &cookie).await.text();
     assert!(zones.contains("data-flash=\"zone\">Added."));
-    assert!(zones.contains("150 m · arrive and leave"));
-    // Its page, the delete confirm; another phone's path to it is a 404.
+    assert!(zones.contains("150 m"));
+    // Its page, the delete confirm; an unknown zone or phone is a 404.
     let html = app
-        .get_page(&format!("/devices/{id}/zones/{home}"), &cookie)
+        .get_page(&format!("/zones/{home}?device={id}"), &cookie)
         .await
         .text();
-    assert!(html.contains("Delete Home?"));
+    assert!(html.contains("Delete Home? Used by Telefon 1."), "{html}");
     assert_eq!(
         form_action_of(&html, "name"),
-        Some(format!("/devices/{id}/zones/{home}#zone-form").as_str())
+        Some(format!("/zones/{home}#zone-form").as_str())
     );
-    for path in [
-        format!("/devices/{other}/zones/{home}"),
-        format!("/devices/{id}/zones/999"),
-        "/devices/999/zones/new".to_string(),
-    ] {
+    for path in ["/zones/999", "/devices/999/zones"] {
         assert_eq!(
-            app.get_page(&path, &cookie).await.status,
+            app.get_page(path, &cookie).await.status,
             StatusCode::NOT_FOUND,
             "{path}"
         );
@@ -559,14 +678,16 @@ async fn the_zone_page_adds_saves_and_deletes_landing_on_its_row() {
     let unknown = app.get_page("/devices/999/zones.json", &cookie).await;
     assert_eq!(unknown.status, StatusCode::NOT_FOUND, "code QA N-8");
     let res = app
-        .request_form(
-            Method::POST,
-            &format!("/devices/{other}/zones/{home}/delete"),
-            Some(&cookie),
-            &[],
-        )
+        .request_form(Method::POST, "/zones/999/delete", Some(&cookie), &[])
         .await;
     assert_eq!(res.status, StatusCode::NOT_FOUND);
+    // The old per-phone editor routes are gone.
+    assert_eq!(
+        app.get_page(&format!("/devices/{id}/zones/{home}"), &cookie)
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
     // zones.json: the circles, no-store.
     let json = app
         .get_page(&format!("/devices/{id}/zones.json"), &cookie)
@@ -579,16 +700,17 @@ async fn the_zone_page_adds_saves_and_deletes_landing_on_its_row() {
     );
     assert_eq!(
         json.json(),
-        json!([{"id": home, "name": "Home", "latitude": 59.9139, "longitude": 10.7522,
-                "radius_m": 150}])
+        json!([{"id": link, "name": "Home", "latitude": 59.9139, "longitude": 10.7522,
+                "radius_m": 150}]),
+        "the phone's link, by the link's id"
     );
     // Deleted: back to #zones with the line.
     let res = app
         .request_form(
             Method::POST,
-            &format!("/devices/{id}/zones/{home}/delete"),
+            &format!("/zones/{home}/delete"),
             Some(&cookie),
-            &[],
+            &[("device", &id.to_string())],
         )
         .await;
     assert_redirect(
@@ -598,14 +720,15 @@ async fn the_zone_page_adds_saves_and_deletes_landing_on_its_row() {
     );
     app.assert_lands(&res, &cookie).await;
     assert_eq!(count(&app, "SELECT COUNT(*) FROM device_zones").await, 0);
+    assert_eq!(count(&app, "SELECT COUNT(*) FROM family_zones").await, 0);
     let detail = super::security_words(&app, "zone_deleted", crate::i18n::Lang::En).await;
-    assert_eq!(detail, [format!("phone {id} (Anna): Home")]);
-    let facts: String =
+    assert_eq!(detail, ["Home (Telefon 1)"]);
+    let facts: Option<String> =
         sqlx::query_scalar("SELECT detail FROM security_events WHERE event_type = 'zone_deleted'")
             .fetch_one(&app.db)
             .await
             .unwrap();
-    assert_eq!(facts, format!("device {id}"));
+    assert_eq!(facts, None, "a family line names no phone");
 }
 
 #[tokio::test]
@@ -613,7 +736,7 @@ async fn every_refusal_comes_back_at_the_form_with_nothing_written() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("Anna").await;
-    let home = add_home(&app, &cookie, id).await;
+    let home = zone_of(&app, add_home(&app, &cookie, id).await).await;
     let long = "x".repeat(41);
     let base = |name: &'static str| {
         vec![
@@ -642,17 +765,26 @@ async fn every_refusal_comes_back_at_the_form_with_nothing_written() {
         (with(base("School"), "radius_m", "99"), "radius-error"),
         (with(base("School"), "radius_m", "2001"), "radius-error"),
     ];
-    for path in [
-        format!("/devices/{id}/zones"),
-        format!("/devices/{id}/zones/{home}"),
-    ] {
+    // The editor's save carries the values it was drawn with (design 135, decision 12): a name
+    // differs from "Home", so it is checked.
+    let drawn_home = [
+        ("was_name", "Home"),
+        ("was_latitude", "59.913900"),
+        ("was_longitude", "10.752200"),
+        ("was_radius_m", "150"),
+    ];
+    for path in ["/zones".to_string(), format!("/zones/{home}")] {
         for (fields, error) in &cases {
             if path.ends_with(&home.to_string()) && fields[0].1 == "HOME" {
                 // Its own name in another case is the same zone renamed, not taken.
                 continue;
             }
+            let mut fields = fields.clone();
+            if path != "/zones" {
+                fields.extend(drawn_home);
+            }
             let res = app
-                .request_form(Method::POST, &path, Some(&cookie), fields)
+                .request_form(Method::POST, &path, Some(&cookie), &fields)
                 .await;
             assert_eq!(res.status, StatusCode::BAD_REQUEST, "{path} {fields:?}");
             let html = res.text();
@@ -669,7 +801,7 @@ async fn every_refusal_comes_back_at_the_form_with_nothing_written() {
         }
     }
     let stored: (String, f64, i64) =
-        sqlx::query_as("SELECT name, latitude, radius_m FROM device_zones")
+        sqlx::query_as("SELECT name, latitude, radius_m FROM family_zones")
             .fetch_one(&app.db)
             .await
             .unwrap();
@@ -678,42 +810,19 @@ async fn every_refusal_comes_back_at_the_form_with_nothing_written() {
         ("Home".to_string(), 59.9139, 150),
         "nothing written"
     );
+    assert_eq!(count(&app, "SELECT COUNT(*) FROM family_zones").await, 1);
     // Renaming to its own name in other letters is fine.
+    let mut renamed = base("HOME");
+    renamed.extend(drawn_home);
     let res = app
         .request_form(
             Method::POST,
-            &format!("/devices/{id}/zones/{home}"),
+            &format!("/zones/{home}"),
             Some(&cookie),
-            &base("HOME"),
+            &renamed,
         )
         .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER);
-    // The 11th zone.
-    for n in 1..10 {
-        let name: &'static str = Box::leak(format!("Zone {n}").into_boxed_str());
-        add_zone(&app, &cookie, id, &base(name)).await;
-    }
-    assert_eq!(count(&app, "SELECT COUNT(*) FROM device_zones").await, 10);
-    let res = app
-        .request_form(
-            Method::POST,
-            &format!("/devices/{id}/zones"),
-            Some(&cookie),
-            &base("Zone 11"),
-        )
-        .await;
-    assert_eq!(res.status, StatusCode::BAD_REQUEST);
-    assert!(res.text().contains("10 zones is the most for one phone"));
-    assert_eq!(count(&app, "SELECT COUNT(*) FROM device_zones").await, 10);
-    let zones = app
-        .get_page(&format!("/devices/{id}/zones"), &cookie)
-        .await
-        .text();
-    assert!(zones.contains("data-row=\"zones-full\""));
-    assert!(!zones.contains("data-row=\"add-zone\""));
-    // Another phone may have its own Home.
-    let (emil, _) = app.enrolled_device("Emil").await;
-    add_home(&app, &cookie, emil).await;
 }
 
 #[tokio::test]
@@ -882,8 +991,14 @@ async fn a_zone_needs_a_session() {
     let (id, _) = app.enrolled_device("Anna").await;
     for (method, path) in [
         (Method::GET, format!("/devices/{id}/zones.json")),
-        (Method::GET, format!("/devices/{id}/zones/new")),
+        (Method::GET, format!("/devices/{id}/zones")),
         (Method::POST, format!("/devices/{id}/zones")),
+        (Method::GET, "/zones".to_string()),
+        (Method::GET, "/zones/new".to_string()),
+        (Method::POST, "/zones".to_string()),
+        (Method::GET, "/zones/1".to_string()),
+        (Method::POST, "/zones/1".to_string()),
+        (Method::POST, "/zones/1/delete".to_string()),
     ] {
         let res = app.request_form(method, &path, None, &[]).await;
         assert_eq!(res.location(), Some("/login"), "{path}");
@@ -971,7 +1086,7 @@ async fn a_zone_error_keeps_the_fix_and_judges_it_later() {
     report(&app, &token, AWAY, &at(50)).await;
     report(&app, &token, AWAY, &at(45)).await;
     // A row that doesn't decode: every judging fails.
-    sqlx::query("UPDATE device_zones SET notify_arrive = 'garbled'")
+    sqlx::query("UPDATE family_zones SET radius_m = 'garbled'")
         .execute(&app.db)
         .await
         .unwrap();
@@ -987,7 +1102,7 @@ async fn a_zone_error_keeps_the_fix_and_judges_it_later() {
         Some("outside"),
         "not judged yet"
     );
-    sqlx::query("UPDATE device_zones SET notify_arrive = 1")
+    sqlx::query("UPDATE family_zones SET radius_m = 150")
         .execute(&app.db)
         .await
         .unwrap();
@@ -1104,10 +1219,21 @@ async fn a_new_zone_counts_a_fresh_fix_as_pending() {
         0,
         "silent"
     );
-    // A fix 40 minutes old seeds nothing.
+    // A fix 40 minutes old seeds nothing: Home linked to a second phone from its Zones page.
     let (emil, token) = app.enrolled_device("Emil").await;
     report(&app, &token, NEAR, &at(40)).await;
-    add_home(&app, &cookie, emil).await;
+    let html = app
+        .get_page(&format!("/devices/{emil}/zones"), &cookie)
+        .await
+        .text();
+    let mut fields = drawn(&html, &format!("/devices/{emil}/zones#"));
+    set(
+        &mut fields,
+        &format!("use_{}", zone_of(&app, home).await),
+        Some("on"),
+    );
+    let res = post(&app, &cookie, &format!("/devices/{emil}/zones"), &fields).await;
+    assert!(res.status.is_redirection(), "{}", res.text());
     let seeded: Option<String> =
         sqlx::query_scalar("SELECT pending_side FROM device_zones WHERE device_id = ?")
             .bind(emil)

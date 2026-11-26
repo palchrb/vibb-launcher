@@ -5,7 +5,8 @@
 //! - `#weather-lock`: "Weather on the lock screen" (`POST /devices/{id}/weather/lock`, as the Lock page's wake switch),
 //!   `device_policy.lock_weather`, sent as `launcher_ui.lock_weather`;
 //! - `#weather-zone`: while the switch is on, the zone whose centre stands in when the phone has no fresh fix (`POST
-//!   /devices/{id}/weather/zone`, one of this phone's zones or none), `device_policy.weather_zone_id` - never in the
+//!   /devices/{id}/weather/zone`, one of the family's zones or none - design 135: the weather needs a place, not a
+//!   link, so turning a zone off for the phone leaves it), `device_policy.weather_family_zone_id` - never in the
 //!   policy.
 //!
 //! Each change is in the security log (the zone by its name, never coordinates) and nudges the phone. The page never
@@ -44,13 +45,9 @@ pub struct WeatherCard {
     pub met_blocked: bool,
 }
 
-/// The group's state: the switch, this phone's zones (a deleted or foreign one never shows as chosen), the notes.
-pub async fn card(
-    state: &AppState,
-    id: i64,
-    policy: &DevicePolicy,
-) -> Result<WeatherCard, sqlx::Error> {
-    let zones = crate::zones::list(&state.db, id).await?;
+/// The group's state: the switch, the family's zones (design 135; a deleted one never shows as chosen), the notes.
+pub async fn card(state: &AppState, policy: &DevicePolicy) -> Result<WeatherCard, sqlx::Error> {
+    let zones = crate::zones::family(&state.db).await?;
     let on = policy.lock_weather;
     let met = if on {
         crate::integration_health::problem(&state.db, "met", "", chrono::Utc::now()).await?
@@ -58,7 +55,7 @@ pub async fn card(
         None
     };
     let chosen = policy
-        .weather_zone_id
+        .weather_family_zone_id
         .filter(|zone| zones.iter().any(|z| z.id == *zone));
     Ok(WeatherCard {
         on,
@@ -151,9 +148,9 @@ pub async fn save_lock(
     saved(&state, id, "weather-lock")
 }
 
-/// `POST /devices/{id}/weather/zone`: `zone` = one of this phone's zones by id, or empty for none. Back to
+/// `POST /devices/{id}/weather/zone`: `zone` = one of the family's zones by id (design 135), or empty for none. Back to
 /// `#weather-zone`, the phone nudged, a `lock_weather_zone_changed` line (the zone's name) when it changed. 400 for a
-/// zone that isn't this phone's, 404 for an unknown phone, 500 on a DB error - each with nothing written.
+/// zone the family doesn't have, 404 for an unknown phone, 500 on a DB error - each with nothing written.
 pub async fn save_zone(
     State(state): State<AppState>,
     lang: Lang,
@@ -168,13 +165,10 @@ pub async fn save_zone(
         let Ok(zone_id) = wanted.parse::<i64>() else {
             return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.zone_not_found");
         };
-        match sqlx::query_scalar::<_, String>(
-            "SELECT name FROM device_zones WHERE id = ? AND device_id = ?",
-        )
-        .bind(zone_id)
-        .bind(id)
-        .fetch_optional(&state.db)
-        .await
+        match sqlx::query_scalar::<_, String>("SELECT name FROM family_zones WHERE id = ?")
+            .bind(zone_id)
+            .fetch_optional(&state.db)
+            .await
         {
             Ok(Some(name)) => Some((zone_id, name)),
             Ok(None) => {
@@ -183,21 +177,22 @@ pub async fn save_zone(
             Err(err) => return save_failed(lang, id, err),
         }
     };
-    let before: Option<Option<i64>> =
-        match sqlx::query_scalar("SELECT weather_zone_id FROM device_policy WHERE device_id = ?")
-            .bind(id)
-            .fetch_optional(&state.db)
-            .await
-        {
-            Ok(before) => before,
-            Err(err) => return save_failed(lang, id, err),
-        };
+    let before: Option<Option<i64>> = match sqlx::query_scalar(
+        "SELECT weather_family_zone_id FROM device_policy WHERE device_id = ?",
+    )
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await
+    {
+        Ok(before) => before,
+        Err(err) => return save_failed(lang, id, err),
+    };
     let Some(before) = before else {
         return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.device_not_found");
     };
     let after = zone.as_ref().map(|(zone_id, _)| *zone_id);
     if let Err(err) =
-        sqlx::query("UPDATE device_policy SET weather_zone_id = ? WHERE device_id = ?")
+        sqlx::query("UPDATE device_policy SET weather_family_zone_id = ? WHERE device_id = ?")
             .bind(after)
             .bind(id)
             .execute(&state.db)

@@ -104,6 +104,12 @@ stable 0.43.0 and the server tag. 135 is item 5, after phase D, so it takes **01
 (the order hazard, `server/CLAUDE.md`). If 135 should merge first, it renumbers to 0180 before its first push to
 `main`.
 
+**Renumbered at the merge (the post-release chain, 2026-11-26).** Design 138's `zone_networks` reached `main` first as
+0180, so phase D's drop is 0181 and this migration is **`0182_family_zones.sql`** (needs 0181 first); its content is
+as built. The numbers in the rest of this note are the design's. Design 138's confirmed routers stay on the link
+(`zone_networks.zone_id` is a `device_zones` id), kept the same on every link of a family zone - a confirmation is
+the zone's, for every phone using it (`docs/notes/server/zones.md`, "A zone's confirmed Wi-Fi").
+
 **No table rebuild.** The migration only adds tables and columns and drops plain columns. A copy-drop-rename of
 `device_zones` would set every `weather_zone_id` to NULL (`docs/notes/server/zones.md`, "A zone stands in for the
 weather").
@@ -265,11 +271,20 @@ UNION ALL SELECT 1, 6, 'zones with an alert off',
     (SELECT COUNT(*) FROM device_zones WHERE notify_arrive = 0 OR notify_leave = 0)
 UNION ALL SELECT 1, 7, 'weather zones set',
     (SELECT COUNT(*) FROM device_policy WHERE weather_zone_id IS NOT NULL)
+UNION ALL SELECT 1, 8, 'same phone, same zone twice (0181 would fail)',
+    (SELECT COUNT(*) FROM (SELECT device_id FROM device_zones
+        GROUP BY device_id, lower(trim(name)), latitude, longitude, radius_m HAVING COUNT(*) > 1))
 UNION ALL SELECT 2, keeper, name, phones FROM fold
 ORDER BY part, k;
 ```
 
 The second part lists each family zone after the fold, with how many phones use it.
+
+Row 8 (code QA L3) counts a phone holding two zones of one fold group - only possible past the code's per-phone name
+check (a race, a hand edit). 0181's unique `(device_id, zone_id)` index would then fail the migration; the server
+keeps its pre-migration backup and the old binary starts again. 0181 doesn't fold such rows itself: the file was
+frozen once pushed (`server/CLAUDE.md`, a migration's checksum), and the case has no known path into the data. A
+non-zero row 8 is fixed by deleting the newer of the two zones on the old server before the update.
 
 ## 4. The server's rule, the policy, the intake
 
@@ -590,7 +605,7 @@ Gone:
 | # | Step | Size |
 |---|---|---|
 | B | Server, **one reviewable unit** (the data alone wouldn't compile against the old pages): migration 0181; `zones::list`, links and family-zone writes (`start_over` per link); `event_of` without the switch; the push filter; the weather's family zone and picker; the pages (`/zones`, the editor with Telefoner, the `was_` diff and the per-phone location buttons in `zones.js`, the phone's page as one autosave form, Locate's all-phones row); routes, `no_store_paths`, nb/en, the security log words; the tests (§10); `docs/notes/server/zones.md`, `pwa.md`, `notifications.md` | M |
-| G | Emulator gate §6bs on Android 14 and 16 (§11) | S |
+| G | Emulator gate §6bx on Android 14 and 16 (§11) | S |
 
 **No launcher step.** `docs/notes/launcher/zones-and-power.md` gains one line: a policy zone's id is the phone's link
 to a family zone.
@@ -673,7 +688,7 @@ After the migration:
 **Elsewhere.** `seeded_family` is updated. `jstest/zones.test.js` checks that the per-phone location buttons write the
 fields. The launcher's tests are unchanged.
 
-## 11. Emulator gate (`docs/testing/emulator.md` §6bs, Android 14 and 16 only)
+## 11. Emulator gate (`docs/testing/emulator.md` §6bx, Android 14 and 16 only)
 
 **Setup:** two phones of one family, an API 34 image (Android 14) and `jelly36` (Android 16), both enrolled to one
 server. The debug launcher, with mock fixes as in §6t (`cmd location providers add-test-provider fused`). The

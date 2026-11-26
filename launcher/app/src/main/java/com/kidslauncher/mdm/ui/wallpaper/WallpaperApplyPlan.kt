@@ -37,9 +37,9 @@ sealed interface ApplyDecision {
 }
 
 /** What the system wallpaper should be: the home fill, the lock-screen fill and the size. [androidFace] (design 59b
- * §5) changes the lock fill, so the face's edges and a rollback re-apply by themselves. Design 59d step K: as the face
+ * §5) changes the lock fill, so the face's edges re-apply by themselves. Design 59d step K: as the face
  * the lock fill is the glance's ground ([glance]) with its scrim baked in - a `lockscrim=` part (only when there is one,
- * so own mode's keys are unchanged), so a new ground, opt-in or scrim re-applies too, not only a new photo hash. */
+ * so the keys without the face are unchanged), so a new ground, opt-in or scrim re-applies too, not only a new photo hash. */
 fun wallpaperKey(home: Wallpaper, widthPx: Int, heightPx: Int, androidFace: Boolean = false, glance: GlanceGround? = null): String {
     val scrim = lockScreenScrim(androidFace, glance)
     val scrimPart = if (scrim != 0) "|lockscrim=%08x".format(scrim) else ""

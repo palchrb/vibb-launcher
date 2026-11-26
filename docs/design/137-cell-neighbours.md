@@ -104,6 +104,8 @@ N4. **The migration.** `ALTER TABLE wifi_lookup_aps ADD COLUMN near BLOB` (NULL 
     today; 137 merges after phase D's 0180 and design 135's 0181 are on `main`, so it takes **0182**, and design 136
     (written with 0182) moves to the next free number; if 136 merges first, 137 takes 0183. Never a gap, never a lower
     number after a higher one has run (`server/CLAUDE.md`). The server holds real data: the migration only adds a column.
+    At the merge (the post-release chain, 2026-11-26) design 138 held 0180, phase D 0181 and design 135 0182, so the
+    file is **`0183_cell_near.sql`** (its content as built).
 N5. **The route's answer** (`POST /api/devices/wifi-lookup`, a `{"cells"}` body; nothing else changes):
 
     ```json
@@ -345,6 +347,12 @@ example; the provider); the `near_apple` counts and their line. `WifiLookupContr
 4. **The Jelly Star with a SIM** (release RC, new lines in `docs/testing/new-phone-model.md` §2): a day of `near heard=`
    lines (matched against ambiguous and far); the indoor cases of §7 - a visit with Wi-Fi unknown, the phone in a bag in
    the car - with a GPS fix after to compare; the `near_apple` counts after 30 days, which decide 137b (§10).
+   **Multi-cell asks** (the server step's code QA, H1/M1): does Apple apply the count per asked cell? Where the Jelly is
+   registered with two or more full-id cells of one standard heard, or by a probe as §1's (the request as
+   `cells::request` builds it, count 12), ask two or three cells of one standard together and then each alone: 12
+   neighbours around each asked cell, or 12 for the call in all? If 12 in all, a list stored from a multi-cell ask can be
+   shorter than a lone ask's - the residual oracle N5 names (`route.rs`, "What is left of an oracle"); the answer
+   decides whether it stays as it is or the server asks each cell alone.
 
 Before the first release, by hand: the `protoc --encode` check of the new `golden_cells`.
 

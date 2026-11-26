@@ -815,7 +815,8 @@ private suspend fun dispatchPendingCommand(
 /**
  * The remote `lock`'s answer (the server's `locate::reword` words): the screen didn't lock; Android's PIN is the gate
  * (design 59 §3.9, [androidGate]: our LOCKED as its face, or our credential alone - `lockNow` asks for the Child PIN);
- * our own lock; or Android's alone (no Child PIN).
+ * "handy lock" (kept for the wire; not reached since design 132: our lock is always the face); or Android's alone
+ * (no Child PIN).
  */
 internal fun lockAnswer(ok: Boolean, ours: Boolean, androidGate: Boolean): String = when {
     !ok -> "failed to lock"

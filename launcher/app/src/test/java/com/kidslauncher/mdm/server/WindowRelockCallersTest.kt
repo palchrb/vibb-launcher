@@ -124,13 +124,12 @@ class WindowRelockCallersTest {
         for (file in listOf("ui/ParentPinDialog.kt", "lock/PinLockActivity.kt", "ui/LockActivity.kt", "ui/settings/SettingsActivity.kt")) {
             assertTrue(file, "EditText" !in sources.getValue(file))
         }
-        for (layout in listOf("dialog_offline_override_pin.xml", "dialog_pin_parent_code.xml", "include_parent_pin_keypad.xml")) {
+        for (layout in listOf("dialog_offline_override_pin.xml", "include_parent_pin_keypad.xml")) {
             val xml = File(main, "res/layout/$layout").readText().replace(Regex("<!--.*?-->", RegexOption.DOT_MATCHES_ALL), "")
             assertTrue(layout, "EditText" !in xml)
         }
         assertTrue("include_parent_pin_keypad" in File(main, "res/layout/dialog_offline_override_pin.xml").readText())
-        assertTrue("include_parent_pin_keypad" in File(main, "res/layout/dialog_pin_parent_code.xml").readText())
-        for (file in listOf("ui/ParentPinDialog.kt", "lock/PinLockActivity.kt")) {
+        for (file in listOf("ui/ParentPinDialog.kt")) {
             assertTrue(file, "ParentPinKeypad.secure(dialog)" in sources.getValue(file))
             assertTrue(file, "ParentPinKeypad.bind(" in sources.getValue(file))
         }

@@ -42,13 +42,6 @@ class WindowRelockPlanTest {
 
         override fun now() = 1_760_100_000_000
         override fun openWindows() = open
-        override fun secureNow() = secure
-        override fun tokenUsable() = token
-        override fun removeCredential(): Boolean {
-            calls += "credential"
-            secure = false
-            return true
-        }
         override fun installedPackages(): List<InstalledPackage> {
             calls += "signers"
             if (installedThrows) throw IllegalStateException("dead binder")
@@ -93,7 +86,7 @@ class WindowRelockPlanTest {
     private val phone = FakePhone()
 
     /** What WindowRelock.opened commits for [kind] (the lift is the caller's). */
-    private fun open(kind: WindowKind, start: RelockStart? = RelockStart(secure = false, packages = emptyMap(), disabled = emptySet())) {
+    private fun open(kind: WindowKind, start: RelockStart? = RelockStart(packages = emptyMap(), disabled = emptySet())) {
         val marker = store.marker()
         store.saveOpened(markerOpened(marker, kind), start.takeIf { takesStartSnapshot(marker) })
         phone.open = phone.open + kind
@@ -132,43 +125,40 @@ class WindowRelockPlanTest {
     }
 
     @Test
-    fun `the steps run in order - the credential before apply, the resets after it`() {
+    fun `the steps run in order - the signer check before apply, the resets after it`() {
         open(WindowKind.PAUSE)
         phone.secure = true
         phone.packages = listOf(InstalledPackage("org.example.chat", setOf("aa"), 1L, "com.android.vending"))
         end(WindowKind.PAUSE)
         relock()
-        assertEquals(listOf("credential", "signers", "apply", "proxies", "certs", "notifications", "detect", "finish"), phone.calls)
+        assertEquals(listOf("signers", "apply", "proxies", "certs", "notifications", "detect", "finish"), phone.calls)
     }
 
     @Test
     fun `the marker stays when a window opened during the relock - and the first snapshot with it`() {
-        val first = RelockStart(secure = false, packages = mapOf("org.example.chat" to PackageState(setOf("aa"), 1L)), disabled = emptySet())
+        val first = RelockStart(packages = mapOf("org.example.chat" to PackageState(setOf("aa"), 1L)), disabled = emptySet())
         open(WindowKind.OVERRIDE, first)
         end(WindowKind.OVERRIDE)
         // The parent opens a pause while the relock runs (QA #2).
-        phone.duringApply = { open(WindowKind.PAUSE, RelockStart(secure = true, packages = emptyMap(), disabled = emptySet())) }
+        phone.duringApply = { open(WindowKind.PAUSE, RelockStart(packages = emptyMap(), disabled = emptySet())) }
         val outcome = relock()
         assertFalse(outcome.cleared)
         assertTrue(store.marker().pending)
         assertEquals(setOf("override", "pause"), store.marker().windows)
         assertEquals(true, phone.finishedReopened)
         // The second window kept the first one's start (QA #11).
-        assertEquals(false, store.secureAtStart())
         assertEquals(first.packages, store.snapshot())
         // The pause ends: now it clears.
         phone.duringApply = {}
         end(WindowKind.PAUSE)
         assertTrue(relock().cleared)
         assertNull(store.snapshot())
-        assertNull(store.secureAtStart())
     }
 
     @Test
     fun `overlapping windows keep the first window's snapshot`() {
-        open(WindowKind.OVERRIDE, RelockStart(secure = false, packages = mapOf("a.b" to PackageState(setOf("x"), 1L)), disabled = setOf("c.d")))
-        open(WindowKind.PAUSE, RelockStart(secure = true, packages = emptyMap(), disabled = emptySet()))
-        assertEquals(false, store.secureAtStart())
+        open(WindowKind.OVERRIDE, RelockStart(packages = mapOf("a.b" to PackageState(setOf("x"), 1L)), disabled = setOf("c.d")))
+        open(WindowKind.PAUSE, RelockStart(packages = emptyMap(), disabled = emptySet()))
         assertEquals(setOf("c.d"), store.disabledAtStart())
         assertEquals(mapOf("a.b" to PackageState(setOf("x"), 1L)), store.snapshot())
         assertEquals(2, store.marker().gen)
@@ -221,49 +211,15 @@ class WindowRelockPlanTest {
     }
 
     @Test
-    fun `an Android screen lock goes only when the phone had none at the first window's start`() {
-        assertEquals(CredentialAction.REMOVE, credentialAction(secureAtStart = false, secureNow = true, tokenUsable = true))
-        assertEquals(CredentialAction.LEFT, credentialAction(secureAtStart = false, secureNow = true, tokenUsable = false))
-        assertEquals(CredentialAction.NONE, credentialAction(secureAtStart = true, secureNow = true, tokenUsable = true))
-        assertEquals(CredentialAction.NONE, credentialAction(secureAtStart = null, secureNow = true, tokenUsable = true))
-        assertEquals(CredentialAction.NONE, credentialAction(secureAtStart = false, secureNow = false, tokenUsable = true))
-
-        // Set during the window: removed, reported.
+    fun `an Android screen lock set in a window is never removed - Android's PIN is the Child PIN (design 132)`() {
         open(WindowKind.OVERRIDE)
         phone.secure = true
         end(WindowKind.OVERRIDE)
-        val removed = relock().report!!
-        assertTrue(removed.credentialRemoved)
-        assertFalse(removed.credentialLeft)
-        // No usable token: left, reported.
-        phone.calls.clear()
-        open(WindowKind.OVERRIDE)
-        phone.secure = true
-        phone.token = false
-        end(WindowKind.OVERRIDE)
-        val left = relock().report!!
-        assertFalse(left.credentialRemoved)
-        assertTrue(left.credentialLeft)
+        val report = relock().report!!
+        assertFalse(report.credentialRemoved)
+        assertFalse(report.credentialLeft)
         assertFalse("credential" in phone.calls)
-        // The phone had one before the window (not migrated yet): never touched.
-        phone.calls.clear()
-        phone.token = true
-        open(WindowKind.PAUSE, RelockStart(secure = true, packages = emptyMap(), disabled = emptySet()))
-        end(WindowKind.PAUSE)
-        val kept = relock().report!!
-        assertFalse(kept.credentialRemoved)
-        assertFalse(kept.credentialLeft)
-        assertFalse("credential" in phone.calls)
-    }
-
-    @Test
-    fun `the reset token is set only while it isn't active and the phone has no credential`() {
-        assertTrue(resetTokenNeeded(tokenActive = false, tokenStored = false, secureNow = false))
-        assertTrue(resetTokenNeeded(tokenActive = false, tokenStored = true, secureNow = false))
-        assertTrue(resetTokenNeeded(tokenActive = true, tokenStored = false, secureNow = false))
-        assertFalse(resetTokenNeeded(tokenActive = true, tokenStored = true, secureNow = false))
-        // With a credential it couldn't be activated (it would wait for the kid's credential).
-        assertFalse(resetTokenNeeded(tokenActive = false, tokenStored = false, secureNow = true))
+        assertFalse("credential" in report.failures)
     }
 
     @Test
@@ -288,7 +244,7 @@ class WindowRelockPlanTest {
 
     @Test
     fun `a signer check that throws keeps the marker and the snapshot (QA Low 2)`() {
-        val start = RelockStart(secure = false, packages = mapOf("org.example.chat" to PackageState(setOf("a1a1"), 1L)), disabled = emptySet(), atMs = 500L)
+        val start = RelockStart(packages = mapOf("org.example.chat" to PackageState(setOf("a1a1"), 1L)), disabled = emptySet(), atMs = 500L)
         open(WindowKind.PAUSE, start)
         end(WindowKind.PAUSE)
         phone.installedThrows = true
@@ -336,7 +292,7 @@ class WindowRelockPlanTest {
     @Test
     fun `only the certificates and proxies added in the window go, and what stays is a failure (QA Low 4, 9)`() {
         val school = "5c" + "0".repeat(62)
-        open(WindowKind.PAUSE, RelockStart(false, emptyMap(), emptySet(), caCerts = setOf(school), proxies = mapOf("\"School\"" to "proxy.school:3128 ")))
+        open(WindowKind.PAUSE, RelockStart(emptyMap(), emptySet(), caCerts = setOf(school), proxies = mapOf("\"School\"" to "proxy.school:3128 ")))
         open(WindowKind.OVERRIDE)
         end(WindowKind.PAUSE)
         end(WindowKind.OVERRIDE)

@@ -12,8 +12,8 @@
     {% call band::sub(username, "/devices/" ~ device_id ~ "/calendar#sources", self.t("calendar.title")) %}{% endcall %}
     <div class="sheet">
 
-    {#- A CalDAV account's page (design 72 step 2, the look of 2026-11-01). The account is the family's - every phone's
-        page has it -, the switches are this phone's: one auto-saving form back to #calendars. Test Again opens its form
+    {#- A CalDAV account's page (design 72 step 2, the look of 2026-11-01). Design 136: the account is the phone's
+        that added it, shown on another phone's page only when shared; the switches are this phone's: one auto-saving form back to #calendars. Test Again opens its form
         (an optional new app password; the stored one otherwise) and returns to #test, which says how it went; Remove
         Account goes back to the Calendar page's #sources. The password is never rendered back. Design 72b: the
         calendar the kid's events are written to says so on its row, with a link to Kalender's select (#dagen) where
@@ -33,6 +33,20 @@
                 <div class="info-panel"><p data-info="hosts">{{ hosts }}</p></div>
             </details>
             <div class="row"><span class="row-label">{{ self.t("calendar.caldav.signed_in") }}</span><span class="row-value" data-value="signed-in">{{ signed_in }}</span></div>
+            {#- Design 136: who the account belongs to, on a page that isn't the owner's - the owner's page of it, or a
+                quiet "ingen" whose (i) says how to claim it. -#}
+            {% if let Some(owner) = owner_name %}
+            <a class="row" href="{{ owner_href }}" data-row="owner"><span class="row-label">{{ self.t("calendar.caldav.owner_row") }}</span><span class="row-value" data-value="owner">{{ owner }}</span><svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+            {% else if owner_none %}
+            <details class="info cell" data-row="owner">
+                <summary class="row">
+                    <span class="row-label">{{ self.t("calendar.caldav.owner_row") }}</span>
+                    <span class="row-value" data-value="owner">{{ self.t("calendar.caldav.owner_none") }}</span>
+                    <svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("common.more_info") }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>
+                </summary>
+                <div class="info-panel"><p data-info="owner-none">{{ owner_none_info }}</p></div>
+            </details>
+            {% endif %}
             {% if lan_http %}<p class="row row-note tone-orange" data-row="lan-http">{{ self.t("calendar.links.status.lan_http") }}</p>{% endif %}
         </div>
     </section>
@@ -44,6 +58,7 @@
         <form method="post" action="/devices/{{ device_id }}/calendar/caldav/{{ account }}/calendars#calendars" class="group">
             {% for c in calendars %}
             <input type="hidden" name="cal" value="{{ c.id }}">
+            <input type="hidden" name="was_on_{{ c.id }}" value="{% if c.ticked %}1{% else %}0{% endif %}">
             <label class="row" data-caldav-calendar="{{ c.id }}">
                 <span class="row-label">{{ c.name }}{% if let Some(sub) = c.sub %}<span class="row-sub{% if c.failing %} tone-orange{% endif %}"{% if c.failing %} data-link-failing{% endif %}>{{ sub }}</span>{% endif %}{% if c.kid_writes %}<span class="row-sub" data-kid-writes><a href="/devices/{{ device_id }}/calendar#dagen">{{ self.t("calendar.kid_caldav.here") }}</a></span>{% endif %}</span>
                 <input type="checkbox" role="switch" class="sw" name="on_{{ c.id }}" value="on"{% if c.ticked %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
@@ -60,6 +75,28 @@
         </form>
     </section>
 
+    {#- Design 136: "Delt i familien", on the owner's page only. `was_shared` is the switch as drawn: a stale tab
+        changes nothing another parent did. -#}
+    {% if owner_page %}
+    <section id="sharing" aria-label="{{ self.t("calendar.caldav.shared") }}">
+        <form method="post" action="/devices/{{ device_id }}/calendar/caldav/{{ account }}/sharing#sharing" class="group">
+            <input type="hidden" name="was_shared" value="{% if shared %}1{% else %}0{% endif %}">
+            <label class="row" data-row="shared">
+                <span class="row-label">{{ self.t("calendar.caldav.shared") }}</span>
+                <input type="checkbox" role="switch" class="sw" name="shared" value="on"{% if shared %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+            </label>
+            <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
+        </form>
+        <div class="group-footer" data-footer="sharing">
+            <details class="info">
+                <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel"><p data-info="shared">{{ shared_info }}</p></div>
+            </details>
+        </div>
+        {% if let Some(line) = sharing_line %}<p class="flash" role="status" data-flash="caldav-unshared">{{ line }}</p>{% endif %}
+    </section>
+    {% endif %}
+
     <section id="test" aria-label="{{ self.t("calendar.caldav.test_again") }}">
         <div class="group">
             {% if let Some(line) = test_line %}<p class="flash{% if test_tone == "failed" %} flash-warn{% else if test_tone == "refused" %} flash-error{% endif %}" role="status" data-flash="caldav-test">{{ line }}</p>{% endif %}
@@ -74,18 +111,21 @@
         </div>
     </section>
 
+    {% if can_remove %}
     <section id="remove" aria-label="{{ self.t("calendar.caldav.remove") }}">
         <div class="group">
-            <details class="confirm cell">
+            <details class="confirm cell"{% if remove_open %} open{% endif %}>
                 <summary class="row row-button row-danger">{{ self.t("calendar.caldav.remove") }}&hellip;</summary>
                 <form method="post" action="/devices/{{ device_id }}/calendar/caldav/{{ account }}/remove" class="confirm-body">
-                    <p>{{ self.t("calendar.caldav.remove_confirm") }}</p>
+                    <input type="hidden" name="was_shared" value="{% if shared %}1{% else %}0{% endif %}">
+                    <p data-remove-question>{{ self.t(remove_question) }}</p>
                     <button type="submit" class="button-destructive">{{ self.t("calendar.caldav.remove") }}</button>
                     {% include "partials/confirm_cancel.html" %}
                 </form>
             </details>
         </div>
     </section>
+    {% endif %}
     </div>
 </main>
 </body>

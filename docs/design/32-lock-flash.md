@@ -1,5 +1,7 @@
 # 32 - The previous app flashes before the PIN lock at screen-on (investigation and fix design)
 
+Superseded in part by design 132 (`132-phase-d-android-lock-only.md`): Android's PIN lock is the only lock.
+
 Security bug, reported by the user on 2026-10-13. Android 16 Google Play emulator, gesture navigation, debug launcher
 as device owner. At screen-on, a Play Store page shows for about 80 ms before handy's PIN lock covers it.
 The user's words: "this MUST be fixed properly".

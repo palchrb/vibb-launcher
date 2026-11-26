@@ -75,7 +75,7 @@ class PolicyEtagsTest {
         val notModified = fetch(answer(304)).first as FreshDecode.Ok
         val decision = choosePolicy(notModified.policy, CachedPolicy.Ok(notModified.policy), true, null)
         assertEquals(PolicyToApply.Apply(notModified.policy, fromServer = true), decision)
-        assertTrue(rollbackAllowed(decision.source))
+        assertTrue(decision.carriesParentChoice)
     }
 
     @Test

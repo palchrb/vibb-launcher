@@ -5,6 +5,8 @@ code QA (`fb6df128:docs/review/qa-59-prototype-code.md`, P59-1..8); the last sec
 `59-android-keyguard-assessment.md` ("A §n"), the user's answers in PLAN's design 59 entry, the prototype on
 `proto-59-hybrid` (archived as tag `archive/proto-59-hybrid`; `46cf0fa5`, `59-prototype.md`, "P"), `docs/review/recents-over-lock-2026-10-22.md` and design r10.
 
+Superseded in part by design 132 (`132-phase-d-android-lock-only.md`): Android's PIN lock is the only lock.
+
 **Goal** (the user, 2026-10-22): a full RC - a server release and `launcher-vX.Y.0-rc.1` - with Android's lock screen
 behind a per-phone switch, tested live on the user's emulator. Missing switch = today's lock, so the RC is safe to
 promote for every phone; the deletion of today's lock is phase D, one release after the last phone migrated.

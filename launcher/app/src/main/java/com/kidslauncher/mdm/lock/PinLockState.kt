@@ -1,12 +1,12 @@
 package com.kidslauncher.mdm.lock
 
 /*
- * Handy's own PIN lock (handy step 10, design docs/design/10-lock-and-call-ui.md in the handy
- * workspace, with qa-10-design.md on top): the pure state machine. PinLockRuntime feeds it events
- * and carries out the step; no Android imports, tested in PinLockStateTest.
+ * The lock's pure state machine (handy step 10, design 10-lock-and-call-ui.md; since design 132 the glance as Android's
+ * face is the only lock). PinLockRuntime feeds it events and carries out the step; no Android imports, tested in
+ * PinLockStateTest.
  *
- * DISABLED: no lock (no kid PIN, unmanaged, an Android credential still set, the crash guard).
- * LOCKED: the kid has to enter the PIN; the lock screen is shown whenever no call is on.
+ * DISABLED: no lock (no Child PIN, unmanaged, no Android PIN, the crash guard).
+ * LOCKED: Android's keyguard asks for the Child PIN; the glance is shown whenever no call is on.
  * UNLOCKED: the kid is in. There is no persisted "unlocked": a new process starts LOCKED.
  */
 
@@ -65,7 +65,7 @@ sealed interface LockEvent {
         val lockOnTop: Boolean = false,
     ) : LockEvent {
         /** As the face, the backstop skips a glance known to be on top: its start would only pause it for a new intent
-         * (the N1 pause/resume pair, Q59d-11). Own mode never skips. */
+         * (the N1 pause/resume pair, Q59d-11). */
         val faceOnTop: Boolean get() = face && lockOnTop
     }
 
@@ -73,9 +73,9 @@ sealed interface LockEvent {
     data class LockResumed(val ourCall: Boolean, val voip: VoipPhase = VoipPhase.NONE) : LockEvent
 
     /**
-     * The correct kid PIN, or the parent code. [checkedAt]: the runtime's screen-off count when
-     * the check started; [screenOffs]: the count now. A check that comes back after a screen-off
-     * is ignored, so the lock never opens with the screen dark (design 24 QA #4).
+     * Android's verdict: its PIN pad's success or `USER_PRESENT` ([faceStep]'s LEAVE). [checkedAt]: the runtime's
+     * screen-off count when it came; [screenOffs]: the count now. One that comes back after a screen-off is ignored,
+     * so the lock never opens with the screen dark (design 24 QA #4).
      */
     data class Unlocked(val checkedAt: Int, val screenOffs: Int) : LockEvent
 
@@ -242,9 +242,8 @@ fun step(mode: LockMode, event: LockEvent): LockStep = when (event) {
 }
 
 /**
- * Whether the lock is active in a new process ([read] = the stored state). Unreadable fails closed
- * but usable (design 16c, qa-16c-code #3): active - LOCKED with the lock shown, which the parent
- * code always opens - never a dark Home with no lock.
+ * Whether the lock is active in a new process ([read] = the stored state). Unreadable fails closed (design 16c,
+ * qa-16c-code #3): active - LOCKED with the glance shown, which Android's PIN opens - never a dark Home with no lock.
  */
 fun lockActiveAtStart(onError: (Exception) -> Unit = {}, read: () -> Boolean): Boolean = try {
     read()
@@ -257,102 +256,45 @@ fun lockActiveAtStart(onError: (Exception) -> Unit = {}, read: () -> Boolean): B
 enum class LockInactive(val wire: String) {
     NO_PIN("no_pin"),
     UNMANAGED("unmanaged"),
-    ANDROID_CREDENTIAL("android_credential"),
-    KEYGUARD_NOT_DISABLED("keyguard_not_disabled"),
-    CRASH_GUARD("crash_guard"),
 
-    /** Not "off": the lock is on, but only the parent code opens it. */
-    BAD_HASH("bad_hash"),
+    /** Design 132 §4.3: a Child PIN is stored, Android has no credential (yet) - no lock at all (§4.5). */
+    NO_ANDROID_PIN("no_android_pin"),
+    CRASH_GUARD("crash_guard"),
 }
 
 /**
- * Whether to switch Android's keyguard off (`setKeyguardDisabled(true)`): only for an active
- * lock - managed, a kid PIN, and no Android credential (with one the call fails anyway, and our
- * lock stays off so there is no double lock, design §7).
- */
-fun wantKeyguardDisabled(managed: Boolean, hasKidPin: Boolean, deviceSecure: Boolean): Boolean =
-    managed && hasKidPin && !deviceSecure
-
-/**
- * Design §3: active only if managed, the policy has a kid PIN, no Android credential, and
- * `setKeyguardDisabled(true)` worked ([keyguardDisabled]); the crash guard switches it off until
- * it re-arms. An unreadable hash keeps the lock on - only the parent code opens it then.
- * [androidGate]: design 59's face ([androidFace], `kid_lock.keyguard` "android" with a credential) - Android's
- * credential is the gate and our lock its face, so the credential and the keyguard that isn't disabled keep it active.
+ * Design 132 (§2.1): our lock is Android's face, so it is active only where the face is ([androidFace]): a Child PIN,
+ * managed, and Android's credential - without it there is no lock to be the face of (`no_android_pin`, DISABLED: no
+ * glance, never a dead "Lås opp"). The crash guard switches it off until it re-arms (Android's PIN with SystemUI's face).
  */
 fun lockActivation(
     managed: Boolean,
     hasKidPin: Boolean,
     deviceSecure: Boolean,
-    keyguardDisabled: Boolean,
-    hashUsable: Boolean,
     guardTripped: Boolean,
-    androidGate: Boolean = false,
 ): Pair<Boolean, LockInactive?> = when {
     !hasKidPin -> false to LockInactive.NO_PIN
     !managed -> false to LockInactive.UNMANAGED
-    deviceSecure && !androidGate -> false to LockInactive.ANDROID_CREDENTIAL
-    !keyguardDisabled && !androidGate -> false to LockInactive.KEYGUARD_NOT_DISABLED
+    !deviceSecure -> false to LockInactive.NO_ANDROID_PIN
     guardTripped -> false to LockInactive.CRASH_GUARD
-    !hashUsable -> true to LockInactive.BAD_HASH
     else -> true to null
 }
 
-/** Kid PINs are 4-6 digits; anything else from the server means 4 (the keypad's dots). */
+/** Kid PINs are 4-6 digits; anything else from the server means 4. */
 fun kidPinLength(length: Int?): Int = if (length != null && length in 4..6) length else 4
 
-/**
- * The kid PIN [PinLockRuntime.configure] applies (design r10 §3.2): **never `null` while [kidLock] is there** (QA
- * R10-1). No `kid_lock` -> `null` (no PIN); a real hash -> it; redacted (`""`, the cached policy's form) -> [memory]
- * when usable, else the [stored] copy when usable (QA R10-4: an unusable memory never sticks), else the unusable
- * stand-in, which [lockActivation] makes `true to BAD_HASH` - the lock up, the parent code opens it. The policy's
- * `pin_length` wins in every case. [stored] is read only when needed (a Keystore call).
- */
-fun kidConfigFor(kidLock: com.kidslauncher.mdm.server.dto.KidLock?, memory: KidLockConfig?, stored: () -> KidLockConfig?): KidLockConfig? {
-    if (kidLock == null) return null
-    val length = kidPinLength(kidLock.pinLength)
-    if (kidLock.pinHash.isNotEmpty()) return KidLockConfig(kidLock.pinHash, kidLock.pinSalt, length, kidLock.pinRev)
-    // Code QA Q-12: a stored copy of another rev is an older PIN (a crash between the cache write and the apply after
-    // a PIN change) - the stand-in instead; the next sync brings the new hash. Rev 0 is an older server: no check.
-    val known = memory?.takeIf { it.usable }
-        ?: stored()?.takeIf { it.usable && (kidLock.pinRev == 0L || it.pinRev == kidLock.pinRev) }
-    return known?.copy(length = length) ?: KidLockConfig("", "", length, kidLock.pinRev)
+/** Who asks for the lock (design 16e's names; design 132: no ask is held any more - the boot mark's wait went). */
+enum class LockAsk {
+    /** The boot's lock: the process start, Home's locked resume, a screen-on backstop, the re-front check. */
+    BOOT,
+
+    /** Every other ask - a screen-off, the remote lock, a call or VoIP ring starting or ending, a time-rule screen, the
+     * update. */
+    AT_ONCE,
 }
 
-/** What [PinLockStore.saveConfig] does with the PIN fields (design r10 §3.2, revision check N1). */
-sealed interface PinWrite {
-    /** A policy's real hash: sealed, with its length and rev. */
-    class Write(val config: KidLockConfig) : PinWrite
-
-    /** No `kid_lock`: the fields go. */
-    data object Remove : PinWrite
-
-    /** A redacted policy, the stand-in, the crash guard: `active`/`inactive` only, the fields as they are (QA R10-11). */
-    data object Keep : PinWrite
+/** The ask of [event]'s lock showing ([LockStep.showLock]). */
+fun lockAsk(event: LockEvent): LockAsk = when (event) {
+    is LockEvent.ProcessStart, is LockEvent.ScreenOn -> LockAsk.BOOT
+    else -> LockAsk.AT_ONCE
 }
-
-/** The write for an apply of [kidLock], whose PIN [kidConfigFor] made [config]. */
-fun pinWriteFor(kidLock: com.kidslauncher.mdm.server.dto.KidLock?, config: KidLockConfig?): PinWrite = when {
-    kidLock == null -> PinWrite.Remove
-    kidLock.pinHash.isNotEmpty() && config != null -> PinWrite.Write(config)
-    else -> PinWrite.Keep
-}
-
-/** The stand-in (an unusable PIN of a redacted policy) takes no backoff step: its fingerprint means only
- * "unreadable", so the kid's wrong-PIN count isn't reset by it (QA R10-11). */
-fun backoffStepDue(kidLock: com.kidslauncher.mdm.server.dto.KidLock?, config: KidLockConfig?): Boolean =
-    kidLock == null || kidLock.pinHash.isNotEmpty() || config?.usable == true
-
-/** The entered digits after a key: digits only, never longer than [length]. */
-fun appendDigit(entered: String, digit: Char, length: Int): String =
-    if (digit in '0'..'9' && entered.length < length) entered + digit else entered
-
-fun deleteDigit(entered: String): String = entered.dropLast(1)
-
-/**
- * The digits typed so far, once the lock is back: every screen-off since the first of them drops them
- * (the user, 2026-10-21: a power press mid-PIN must not leave its digits on the keypad).
- * [enteredAtScreenOffs] is `PinLockRuntime.screenOffs` when the first digit was typed.
- */
-fun enteredAfterScreenOffs(entered: String, enteredAtScreenOffs: Int, screenOffs: Int): String =
-    if (entered.isNotEmpty() && screenOffs != enteredAtScreenOffs) "" else entered

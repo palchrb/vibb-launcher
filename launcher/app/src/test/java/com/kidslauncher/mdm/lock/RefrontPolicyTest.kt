@@ -9,18 +9,21 @@ import org.junit.Test
 /** Handy step 10, QA 10 #2/#11/#14: re-front never gives up except for the named exempt screens;
  * the crash guard. */
 class RefrontPolicyTest {
+    /** Design 132: the glance is always Android's face - these rows are the RELOCK backstop's (Android read open, the
+     * face's one wait for USER_PRESENT over), which keeps the exemptions and the re-front's steps. */
     private val lostFront = RefrontInputs(
         locked = true, lockResumed = false, interactive = true, ourCall = false, telecomInCall = false,
-        emergencyFlow = false, alarmRinging = false,
+        emergencyFlow = false, alarmRinging = false, android = AndroidLoss.WAIT, androidWaited = true,
     )
 
     @Test
-    fun `any other front task is re-fronted at 0,5 s, 2 s, then every 5 s - forever`() {
+    fun `the RELOCK backstop re-fronts at 0,5 s, 2 s, then every 5 s`() {
         assertEquals(500L, refrontDelayMs(0))
         assertEquals(RefrontAction.Refront(2_000L), refrontAction(lostFront, 0))
         assertEquals(RefrontAction.Refront(5_000L), refrontAction(lostFront, 1))
         assertEquals(RefrontAction.Refront(5_000L), refrontAction(lostFront, 2))
-        assertEquals("never stops", RefrontAction.Refront(5_000L), refrontAction(lostFront, 10_000))
+        assertEquals(RefrontAction.Refront(5_000L), refrontAction(lostFront, 10_000))
+        assertEquals("no face (no credential): nothing to bring back", RefrontAction.Stop, refrontAction(lostFront.copy(android = null), 0))
     }
 
     @Test

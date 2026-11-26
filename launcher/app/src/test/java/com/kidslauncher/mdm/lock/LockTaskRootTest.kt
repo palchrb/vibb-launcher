@@ -67,8 +67,8 @@ class LockTaskRootTest {
             assertEquals("kiosk on: kept", LockTaskEntry.NONE, lockTaskEntry(true, permitted, kioskOn = true, sinceHomeAskedMs = null, fallbackDue = fallback, androidLocked = true))
         }
         // The leave then stops nothing (nothing runs) and keeps today's Home rule.
-        assertEquals(LockLeave(stopLockTaskFirst = false, homeFirst = false), lockLeave(false, startedLockTask = false, lockTaskRunning = false, callLive = false, glanceInFront = false, androidFace = true))
-        assertEquals(LockLeave(stopLockTaskFirst = false, homeFirst = true), lockLeave(false, startedLockTask = false, lockTaskRunning = false, callLive = false, glanceInFront = true, androidFace = true))
+        assertEquals(LockLeave(stopLockTaskFirst = false, homeFirst = false), lockLeave(false, startedLockTask = false, lockTaskRunning = false, callLive = false, glanceInFront = false))
+        assertEquals(LockLeave(stopLockTaskFirst = false, homeFirst = true), lockLeave(false, startedLockTask = false, lockTaskRunning = false, callLive = false, glanceInFront = true))
     }
 
     /** 59b R2: every input but the one case gives what the rule gave before it (kept here as the oracle). */
@@ -140,7 +140,7 @@ class LockTaskRootTest {
         assertEquals("the glance's root: stopped once, then nothing", 0 to false, resumes(homeRoot = false))
         // Home's ends after the unlock: the leave's kiosk-off row stops first (the glance's own task, finishing anyway),
         // and Home's unlocked resume stops its root (`reconcileKioskMode`).
-        assertTrue(lockLeave(false, startedLockTask = false, lockTaskRunning = true, callLive = false, glanceInFront = true, androidFace = true).stopLockTaskFirst)
+        assertTrue(lockLeave(false, startedLockTask = false, lockTaskRunning = true, callLive = false, glanceInFront = true).stopLockTaskFirst)
     }
 
     /** E7 M2 (59b R2): a policy that turns the kiosk or the face on or off re-runs the resumed lock's entry check at once
@@ -176,9 +176,10 @@ class LockTaskRootTest {
     @Test
     fun `kiosk on - the lock always leaves through Home, stopping lock task only as the root`() {
         for (call in listOf(false, true)) {
-            assertEquals(LockLeave(stopLockTaskFirst = false, homeFirst = true), lockLeave(kioskOn = true, startedLockTask = false, lockTaskRunning = true, callLive = call))
+            // Design 59d step H (the face's rule, design 132's only one): no Home over a live call, unless the root.
+            assertEquals(LockLeave(stopLockTaskFirst = false, homeFirst = !call), lockLeave(kioskOn = true, startedLockTask = false, lockTaskRunning = true, callLive = call))
             assertEquals(LockLeave(stopLockTaskFirst = true, homeFirst = true), lockLeave(kioskOn = true, startedLockTask = true, lockTaskRunning = true, callLive = call))
-            assertEquals(LockLeave(stopLockTaskFirst = false, homeFirst = true), lockLeave(kioskOn = true, startedLockTask = false, lockTaskRunning = false, callLive = call))
+            assertEquals(LockLeave(stopLockTaskFirst = false, homeFirst = !call), lockLeave(kioskOn = true, startedLockTask = false, lockTaskRunning = false, callLive = call))
         }
         assertEquals("a refused finish: the root after a process restart", LockLeave(stopLockTaskFirst = true, homeFirst = true), rootLeave)
     }
@@ -214,39 +215,22 @@ class LockTaskRootTest {
             )
             assertEquals("in front: today's rows", lockLeave(kiosk, started, running, call), lockLeave(kiosk, started, running, call, glanceInFront = true))
         }
-        // Own mode always in front; the face only when resumed at the leave.
-        assertTrue(leaveInFront(androidFace = false, resumed = false))
-        assertTrue(leaveInFront(androidFace = false, resumed = true))
-        assertTrue(leaveInFront(androidFace = true, resumed = true))
-        assertFalse(leaveInFront(androidFace = true, resumed = false))
+        // In front only when resumed at the leave (design 132: the face is the only face).
+        assertTrue(leaveInFront(resumed = true))
+        assertFalse(leaveInFront(resumed = false))
         // qa-59b-code B-4: the pad's success is the glance's own ask - in front whatever the lifecycle reads.
-        assertTrue(leaveInFront(androidFace = true, resumed = false, fromAsk = true))
+        assertTrue(leaveInFront(resumed = false, fromAsk = true))
     }
 
     /** Design 59d step H (the user's Q1): Home after "Lås opp", except over a live call - the kiosk root excepted. */
     @Test
     fun `59d H - as the face with the kiosk on no Home over a live call, the kiosk root still re-roots through Home`() {
         assertEquals(LockLeave(stopLockTaskFirst = false, homeFirst = false),
-            lockLeave(kioskOn = true, startedLockTask = false, lockTaskRunning = true, callLive = true, androidFace = true))
+            lockLeave(kioskOn = true, startedLockTask = false, lockTaskRunning = true, callLive = true))
         assertEquals("the root: stopping clears every locked task, only Home re-roots", LockLeave(stopLockTaskFirst = true, homeFirst = true),
-            lockLeave(kioskOn = true, startedLockTask = true, lockTaskRunning = true, callLive = true, androidFace = true))
+            lockLeave(kioskOn = true, startedLockTask = true, lockTaskRunning = true, callLive = true))
         assertEquals("no call: Home, design 32 decision 2", LockLeave(stopLockTaskFirst = false, homeFirst = true),
-            lockLeave(kioskOn = true, startedLockTask = false, lockTaskRunning = true, callLive = false, androidFace = true))
-        // Kiosk off already had the rule: the face changes nothing there.
-        for (started in listOf(false, true)) for (running in listOf(false, true)) for (call in listOf(false, true)) for (front in listOf(false, true)) {
-            assertEquals(lockLeave(false, started, running, call, front), lockLeave(false, started, running, call, front, androidFace = true))
-        }
-    }
-
-    @Test
-    fun `59d H - own-mode leave rows unchanged for every input`() {
-        for (kiosk in listOf(false, true)) for (started in listOf(false, true)) for (running in listOf(false, true)) {
-            for (call in listOf(false, true)) for (front in listOf(false, true)) {
-                assertEquals(lockLeave(kiosk, started, running, call, front), lockLeave(kiosk, started, running, call, front, androidFace = false))
-            }
-        }
-        // Own mode with the kiosk on still lands on Home over a call (today's rule).
-        assertTrue(lockLeave(kioskOn = true, startedLockTask = false, lockTaskRunning = true, callLive = true).homeFirst)
+            lockLeave(kioskOn = true, startedLockTask = false, lockTaskRunning = true, callLive = false))
     }
 
     @Test
@@ -254,13 +238,13 @@ class LockTaskRootTest {
         val activity = listOf("src/main/java/com/kidslauncher/mdm/lock/PinLockActivity.kt", "app/src/main/java/com/kidslauncher/mdm/lock/PinLockActivity.kt")
             .map { java.io.File(it) }.first { it.exists() }.readText()
         val leave = activity.substringAfter("private fun leave() {").substringBefore("\n    }\n")
-        assertTrue(leave.contains("val inFront = leaveInFront(AndroidLock.faceOn, resumed, fromAsk = leaveFromAsk)"))
+        assertTrue(leave.contains("val inFront = leaveInFront(resumed, fromAsk = leaveFromAsk)"))
         // B-4: set only on the pad's success, right before its unlock.
         assertEquals(1, Regex("leaveFromAsk = true").findAll(activity).count())
         assertTrue(activity.substringAfter("private fun androidAnswered(").substringBefore("\n    }\n")
             .contains("leaveFromAsk = true\n                unlock(offs)"))
         assertTrue(leave.contains("if (!inFront) pendingOpen = null"))
-        assertTrue(leave.contains("PinLockRuntime.callLiveNow(this), glanceInFront = inFront, androidFace = AndroidLock.faceOn))"))
+        assertTrue(leave.contains("PinLockRuntime.callLiveNow(this), glanceInFront = inFront))"))
         assertTrue("the root's retry stays", leave.contains("go(rootLeave)"))
         // stopOwnLockTask keeps the default (in front): its stop agrees with every row.
         assertTrue(activity.substringAfter("private fun stopOwnLockTask() {").substringBefore("\n    }\n").contains("callLive = false).stopLockTaskFirst"))

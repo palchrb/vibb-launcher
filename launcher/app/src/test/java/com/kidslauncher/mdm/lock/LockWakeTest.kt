@@ -40,7 +40,7 @@ class LockWakeTest {
     fun `every busy case keeps the screen dark`() {
         for (busy in listOf(
             NoticeBusy(ourCall = true), NoticeBusy(systemCall = true), NoticeBusy(voip = true),
-            NoticeBusy(emergencyFlow = true), NoticeBusy(alarm = true), NoticeBusy(bootMark = true),
+            NoticeBusy(emergencyFlow = true), NoticeBusy(alarm = true),
             NoticeBusy(sinceProcessStartMs = 0), NoticeBusy(sinceProcessStartMs = NOTICE_AFTER_START_MS - 1),
         )) {
             assertTrue(busy.toString(), busy.any)
@@ -81,41 +81,13 @@ class LockWakeTest {
         assertEquals(300L, PROXIMITY_BUDGET_MS)
     }
 
+    /** Design 59d step E (the user's Q2), design 132: no 15 s end - the phone's own timeout, the fingerprint kept. */
     @Test
-    fun `the woken screen goes off at 15 s untouched, never after a touch`() {
-        fun due(
-            touched: Boolean = false, interactive: Boolean = true, locked: Boolean = true, resumed: Boolean = true,
-            busy: Boolean = false, dialog: Boolean = false, exploring: Boolean = false, now: Long = 1_000 + NOTICE_WAKE_ON_MS,
-        ) = noticeWakeOffDue(1_000, touched, interactive, locked, resumed, busy, dialog, exploring, now)
-        assertEquals(15_000L, NOTICE_WAKE_ON_MS)
-        assertTrue(due())
-        assertFalse("early", due(now = 1_000 + NOTICE_WAKE_ON_MS - 1))
-        assertFalse("touched: the phone's own timeout", due(touched = true))
-        assertFalse("already off", due(interactive = false))
-        assertFalse("unlocked meanwhile", due(locked = false))
-        assertFalse("something over the lock", due(resumed = false))
-        assertFalse("a call came", due(busy = true))
-        // qa-l7-b-code 2: touches in the lock's own dialogs and TalkBack's never reach onUserInteraction.
-        assertFalse("Foreldrekode or the emergency confirm is open", due(dialog = true))
-        assertFalse("touch exploration is on", due(exploring = true))
-        assertFalse("no wake on", noticeWakeOffDue(null, false, true, true, true, false, false, false, 99_999))
-        // qa-l7-b-code 3: the wake's own screen-on keeps the 15 s, a later one (the kid's power press) ends them.
-        assertFalse(noticeWakeEndsAtScreenOn(1_000, 1_000 + NOTICE_WAKE_SCREEN_ON_GRACE_MS))
-        assertTrue(noticeWakeEndsAtScreenOn(1_000, 1_001 + NOTICE_WAKE_SCREEN_ON_GRACE_MS))
-        assertFalse("no wake on", noticeWakeEndsAtScreenOn(null, 99_999))
-    }
-
-    /** Design 59d step E (the user's Q2): as Android's face no 15 s end - the phone's own timeout, the fingerprint kept. */
-    @Test
-    fun `as the face the notice wake has no 15 s end, own mode keeps its lockNow`() {
-        val due = 1_000 + NOTICE_WAKE_ON_MS
-        assertFalse(noticeWakeOffDue(1_000, false, true, true, true, false, false, false, due, face = true))
-        assertFalse(noticeWakeOffDue(1_000, false, true, true, true, false, false, false, due + 600_000, face = true))
-        assertTrue("own mode", noticeWakeOffDue(1_000, false, true, true, true, false, false, false, due, face = false))
+    fun `the notice wake has no 15 s end - no lockNow of ours (design 132)`() {
         val runtime = listOf("src/main/java/com/kidslauncher/mdm/lock/PinLockRuntime.kt", "app/src/main/java/com/kidslauncher/mdm/lock/PinLockRuntime.kt")
             .map { File(it) }.first { it.exists() }.readText()
-        val off = runtime.substringAfter("private fun noticeWakeOffCheck() {").substringBefore("\n    }\n")
-        assertTrue(off, off.contains("face = AndroidLock.faceOn,"))
+        assertFalse(runtime.contains("noticeWakeOff"))
+        assertFalse(runtime.contains("NOTICE_WAKE_ON_MS"))
     }
 
     @Test
@@ -272,11 +244,6 @@ class LockWakeTest {
         // The proximity read first, then the gate again with its answer, then the lock with the wake.
         assertTrue(came.indexOf("NoticeProximity.read(app, handler)") in 0 until came.indexOf("noticeAllowed(app, now, near)"))
         assertTrue(came.indexOf("noticeAllowed(app, now, near)") < came.indexOf("show(app, wake = WakeKind.NOTICE)"))
-        assertTrue(came.contains("handler.postDelayed(noticeWakeOff, NOTICE_WAKE_ON_MS)"))
-        // The 15 s are armed only for a start that went (qa-l7-b-code 3).
-        val armed = came.substringAfter("if (show(app, wake = WakeKind.NOTICE)) {").substringBefore("}")
-        assertTrue(armed, armed.contains("noticeWokeAt = now") && armed.contains("handler.postDelayed(noticeWakeOff, NOTICE_WAKE_ON_MS)"))
-        assertTrue(runtime.contains("if (noticeWakeEndsAtScreenOn(noticeWokeAt, SystemClock.elapsedRealtime())) endNoticeWake()"))
         assertEquals("the one notice start", 1, Regex("""wake = WakeKind\.NOTICE""").findAll(runtime).count())
         // The wake window only ever starts inside show, right after the lock's own start.
         val show = runtime.substringAfter("    fun show(").substringBefore("\n    }\n")
@@ -284,18 +251,10 @@ class LockWakeTest {
         assertEquals(2, Regex("""VoipWakeActivity\.intent\(""").findAll(runtime).count())
         val notice = show.substringAfter("WakeKind.NOTICE ->").substringBefore("\n")
         assertFalse("no ring bookkeeping for a notice", notice.contains("voipWake"))
-        // The lock-up stamp, the screen-off's end, the switch.
+        // The lock-up stamp, the switch.
         assertTrue(runtime.substringAfter("private fun lockUp(").substringBefore("\n    }\n").contains("lockUpAtElapsed = SystemClock.elapsedRealtime()"))
-        assertTrue(runtime.contains("screenOffs++\n                endNoticeWake()"))
         assertTrue(runtime.contains("noticeWakeFromCache()"))
         assertTrue(code("server/MdmSyncWorker.kt").contains("com.kidslauncher.mdm.lock.PinLockRuntime.noticeWakeSwitch(freshPolicy.launcherUi)"))
-        assertTrue(code("lock/PinLockActivity.kt").contains("override fun onUserInteraction() {\n        super.onUserInteraction()\n        PinLockRuntime.noticeWakeTouched()"))
-        // The screen goes off through the device owner's lockNow, only when due.
-        val off = runtime.substringAfter("private fun noticeWakeOffCheck() {").substringBefore("\n    }\n")
-        assertTrue(off.indexOf("if (!due) return") in 0 until off.indexOf("lockNow()"))
-        assertTrue(off.contains("dialogOpen = lockDialogsOpen > 0") && off.contains("touchExploration = touchExploration(app)"))
-        val activity = code("lock/PinLockActivity.kt")
-        assertEquals("opened, dismissed, destroyed", 3, Regex("""PinLockRuntime\.lockDialogsOpen = """).findAll(activity).count())
         // The proximity read's timeout goes with an early answer (qa-l7-b-code 6).
         assertTrue(code("lock/NoticeProximity.kt").contains("timeout?.let(handler::removeCallbacks)"))
     }

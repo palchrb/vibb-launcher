@@ -466,22 +466,11 @@
     <issue
         id="UseAppTint"
         message="Must use `app:tint` instead of `android:tint`"
-        errorLine1="            android:tint=&quot;@color/kid_core&quot; />"
-        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/res/layout/activity_pin_lock.xml"
-            line="40"
-            column="13"/>
-    </issue>
-
-    <issue
-        id="UseAppTint"
-        message="Must use `app:tint` instead of `android:tint`"
         errorLine1="            android:tint=&quot;@color/kid_emergency_text&quot; />"
         errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/res/layout/activity_pin_lock.xml"
-            line="99"
+            line="65"
             column="13"/>
     </issue>
 

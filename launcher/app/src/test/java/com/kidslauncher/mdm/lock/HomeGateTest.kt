@@ -218,7 +218,7 @@ class HomeGateTest {
         // (Design 32: a screen-off's starts are its lock-up's - LockUpPlanTest.)
         val lockUp = dispatch.indexOf("lockUpAtScreenOff(context, event, result)")
         val show = dispatch.indexOf("show(context, wake = WakeKind.VOIP.takeIf { result.wake }, ask = lockAsk(event), sameLockUp = event is LockEvent.ScreenOn)")
-        val now = dispatch.indexOf("if (lockedEdge && !chromeFirst) refreshChromeNow(context)")
+        val now = dispatch.indexOf("if (lockedEdge) refreshChromeNow(context)")
         assertTrue(lockUp in 0 until now)
         assertTrue(show in 0 until now)
         assertTrue(now < dispatch.indexOf("modeListeners"))
@@ -266,9 +266,8 @@ class HomeGateTest {
         val reads = init.substringBefore("ContextCompat.registerReceiver(")
         assertEquals(2, Regex("PinLockStore\\.").findAll(reads).count())
         assertEquals(2, Regex("catch \\(e: Exception\\)").findAll(reads).count())
-        // The lock itself: an unreadable guard is armed, the parent code always opens it.
+        // The lock itself: an unreadable guard is armed.
         val lock = code("java/com/kidslauncher/mdm/lock/PinLockActivity.kt")
         assertTrue(lock.contains("runCatching { PinLockStore.guard(this) }.getOrDefault(CrashGuard())"))
-        assertTrue(body(runtime, "checkParentCode").contains("Backoff reset failed"))
     }
 }

@@ -21,8 +21,7 @@
 # call notification and call screen gone after hang-up; never the system's "App is not available"
 # screen (BlockedAppActivity) after the unlock, on Recents or on a gesture swipe-up (design 16); with
 # REBOOT=1, after a reboot no UI dump shows Home's content (contacts, grid, call card) before the PIN
-# unlock (design 16c), once Home's breathing mark is up nothing else is shown before the lock and the
-# lock comes within about 5 s of it and logcat shows the mark was on screen ~3 s (design 16e), and for 45 s
+# unlock (design 16c; design 16e's boot mark went with design 132), and for 45 s
 # after the lock is up neither the shade nor Quick Settings opens over it and SystemUI's
 # TaskbarDelegate has the status bar's disable flags (design 16d); a screen-off and wake within a few ms
 # that cancel the screen-off fade (the double press) still bring the lock up (design 32). Call state
@@ -51,8 +50,7 @@
 #   OUT_DIR         screenshot folder (default ./smoke-<date>, gitignored)
 #   EXPECT_KIOSK=0  a phone whose kiosk is off on purpose (lock task isn't required then)
 #   REBOOT=1        first reboot the emulator (`adb reboot`) and dump the UI until the PIN lock is in
-#                   front: no dump may show Home's content (design 16c), after the mark only our own
-#                   windows and the lock within ~5 s (design 16e); then pull the shade over the lock
+#                   front: no dump may show Home's content (design 16c); then pull the shade over the lock
 #                   for 45 s (design 16d). Needs KID_PIN. Unset: SKIP.
 #   STRICT=1        count SKIP as a failure
 #   ELEMENT_SESSION, ELEMENT_ROOM  optional (design 15): the kid's own Element X MXID and a DM's room
@@ -348,26 +346,6 @@ HOME_CONTENT_IDS='home_contacts_scroll|home_contacts|home_grid|home_call_card'
 # home_content_in <ui dump>: a node of Home's content is in the captured dump.
 home_content_in() { grep -q -E "resource-id=\"[^\"]*:id/($HOME_CONTENT_IDS)\"" <<<"$1"; }
 home_night_in() { grep -q -E "resource-id=\"[^\"]*:id/home_night\"" <<<"$1"; }
-# other_package_in <ui dump>: a node of a package other than ours is in the captured dump (design 16e:
-# after the mark only the mark, then the lock). The package list is captured first, then grepped.
-other_package_in() {
-    local pkgs
-    pkgs="$(grep -o 'package="[^"]*"' <<<"$1" | sort -u)"
-    [ -n "$pkgs" ] && grep -q -v -x -F -- "package=\"$PKG\"" <<<"$pkgs"
-}
-# now_ms: host time in ms for intervals - bash 5's EPOCHREALTIME, else whole seconds ($SECONDS), and
-# then CLOCK_SLACK_MS keeps a measured lower bound one.
-if [ -n "${EPOCHREALTIME:-}" ]; then
-    CLOCK_SLACK_MS=0
-    now_ms() { local t="${EPOCHREALTIME//[.,]/}"; echo $((10#$t / 1000)); }
-else
-    CLOCK_SLACK_MS=1000
-    now_ms() { echo $((SECONDS * 1000)); }
-fi
-# Design 16e: the boot's lock waits 3 s for the mark; "about 5 s" leaves the lock's own start time.
-BOOT_MARK_LIMIT_MS=5000
-# ... and the launcher logs how long the mark was on screen (3 s from its first frame): at least this.
-BOOT_MARK_MIN_SHOWN_MS=2500
 boot_completed() { [ "$(sh_ getprop sys.boot_completed)" = "1" ]; }
 
 # The notification shade or Quick Settings is expanded (design 16d): SystemUI's shade window has the
@@ -408,21 +386,15 @@ swipe_up_from_node() {
 }
 
 # Design 25: the lock comes up on its glance page; since design 59d step J a swipe up (§8.13: from the gesture handle
-# at the bottom, where "Lås opp" was) leads to the keypad, which UI dumps don't show while the glance page covers it
-# (no-hide-descendants).
+# at the bottom, where "Lås opp" was) asks for Android's PIN pad (design 132: the only unlock - no keypad of ours). The
+# Child PIN is typed into the pad and entered.
 GLANCE_HANDLE_NODE='resource-id="[^"]*:id/lock_glance_handle"'
 enter_pin() {
-    local digit i
     ui_dump
-    if swipe_up_from_node "$GLANCE_HANDLE_NODE"; then
-        sleep 0.5
-        ui_dump
-    fi
-    for ((i = 0; i < ${#1}; i++)); do
-        digit="${1:i:1}"
-        tap_node "(text|content-desc)=\"$digit\"" || return 1
-        sleep 0.2
-    done
+    swipe_up_from_node "$GLANCE_HANDLE_NODE" || return 1
+    sleep 1
+    sh_ input text "$1" >/dev/null || return 1
+    sh_ input keyevent KEYCODE_ENTER >/dev/null
 }
 
 # glance_missed_row: the glance page has a missed-call row (its description, nb or en); the row's
@@ -525,18 +497,10 @@ else
     leaks=0
     night_seen=0
     lock_seen=0
-    # Design 16e: mark_ms = right after the first dump that showed the mark (it was up by then);
-    # waited_ms = from there to the last check that found no lock in front - a lower bound of the
-    # wait, so slow dumps never fail it; others = dumps after the mark with another package's window.
-    mark_ms=""
-    waited_ms=0
-    seen_ms=0
-    others=0
     deadline=$((SECONDS + 180))
     while [ "$rebooted" -eq 1 ] && [ "$SECONDS" -lt "$deadline" ]; do
         if boot_completed; then sh_ input keyevent KEYCODE_WAKEUP >/dev/null; fi
         ui_dump
-        dumped_ms="$(now_ms)"
         if grep -q '<node ' <<<"$UI_XML"; then
             dumps=$((dumps + 1))
             if home_content_in "$UI_XML"; then
@@ -544,23 +508,12 @@ else
                 printf '%s\n' "$UI_XML" >"$OUT_DIR/boot-home-content-$leaks.xml"
                 shot "boot-home-content-$leaks"
             fi
-            if home_night_in "$UI_XML"; then
-                night_seen=1
-                [ -n "$mark_ms" ] || mark_ms="$dumped_ms"
-            fi
-            if [ -n "$mark_ms" ] && other_package_in "$UI_XML"; then
-                others=$((others + 1))
-                printf '%s\n' "$UI_XML" >"$OUT_DIR/boot-not-mark-$others.xml"
-                shot "boot-not-mark-$others"
-            fi
+            if home_night_in "$UI_XML"; then night_seen=1; fi
         fi
-        checked_ms="$(now_ms)"
         if top_is "$LOCK_ACTIVITY"; then
             lock_seen=1
-            if [ -n "$mark_ms" ]; then seen_ms=$(($(now_ms) - mark_ms)); fi
             break
         fi
-        if [ -n "$mark_ms" ]; then waited_ms=$((checked_ms - mark_ms)); fi
         sleep 0.3
     done
     if [ "$rebooted" -ne 1 ]; then
@@ -573,76 +526,6 @@ else
         fail "no Home content before the PIN unlock after a reboot" "$leaks of $dumps UI dumps showed Home's content (boot-home-content-*.xml)"
     else
         pass "no Home content before the PIN unlock after a reboot ($dumps UI dumps$([ "$night_seen" -eq 1 ] && echo ", the night ground seen"))"
-    fi
-    # Design 16e: the first lock of a boot waits 3 s for the mark - nothing but the mark (then the
-    # lock) once it is up, and the lock within about 5 s. FAIL only on proof: the lock was still not
-    # in front more than 5 s after a dump had shown the mark. A dump plus the top check take 1-3 s
-    # and the mark is up for under 3 s, so no dump with the mark proves nothing: SKIP
-    # (qa-16e-code #5) - the wait itself is proven from the captured logcat below. (`adb reboot`
-    # never arms the boot cover, so the mark here is Home's night ground.)
-    if [ "$rebooted" -ne 1 ] || [ "$lock_seen" -ne 1 ]; then
-        skip "the lock within ~5 s of the boot mark (design 16e)" "no reboot or no lock (above)"
-        skip "nothing but the mark before the lock after a reboot (design 16e)" "no reboot or no lock (above)"
-        skip "the boot's mark ~3 s before the lock (design 16e)" "no reboot or no lock (above)"
-    else
-        if [ -z "$mark_ms" ]; then
-            skip "the lock within ~5 s of the boot mark (design 16e)" "no UI dump caught the night ground ($dumps dumps)"
-            skip "nothing but the mark before the lock after a reboot (design 16e)" "no UI dump caught the night ground"
-        else
-            if [ $((waited_ms - CLOCK_SLACK_MS)) -gt "$BOOT_MARK_LIMIT_MS" ]; then
-                fail "the lock within ~5 s of the boot mark (design 16e)" "no lock in front ${waited_ms} ms after a dump showed the mark"
-            else
-                pass "the lock within ~5 s of the boot mark (design 16e): not in front ${waited_ms} ms after the mark, in front at ${seen_ms} ms"
-            fi
-            if [ "$others" -gt 0 ]; then
-                fail "nothing but the mark before the lock after a reboot (design 16e)" "$others UI dumps after the mark showed another package (boot-not-mark-*.xml)"
-            else
-                pass "nothing but the mark before the lock after a reboot (design 16e)"
-            fi
-        fi
-        # The wait from the launcher's own log, captured once, then grepped: the boot's process
-        # start and `Boot mark over: <why> - the mark on screen N ms`. The 3 s count from Home's
-        # first focus with the night ground drawn (or the boot cover's first frame), so N is about
-        # 3000 when the 3 s ran out (less is a bug: FAIL). Sorted by <why> (qa-16e-fix2 #4): an
-        # early end by a Home pause, stop or focus loss FAILs below 2500 ms unless a UI dump caught
-        # another window over the mark (an ANR or "System UI isn't responding" dialog - the check
-        # above reports it); the safe ends SKIP - Home's mark never shown within 1 s (a slow or
-        # no-KVM emulator), no wait at all, an exemption, a call, an AT_ONCE ask (screen-off), the
-        # lock already up.
-        pinlog="$(adb_ logcat -d -v brief -s PinLock 2>/dev/null | tr -d '\r')"
-        mark_over="$(grep -m1 -o 'Boot mark over: .*' <<<"$pinlog" || true)"
-        mark_why="$(sed -e 's/^Boot mark over: //' -e 's/ - the mark on screen .*$//' <<<"$mark_over")"
-        shown_ms="$(grep -o 'on screen [0-9]* ms' <<<"$mark_over" | grep -o '[0-9][0-9]*' || true)"
-        check="the boot's mark ~3 s before the lock (design 16e)"
-        if ! grep -q 'Process start:' <<<"$pinlog"; then
-            skip "$check" "no PinLock 'Process start' in logcat (buffer rolled over?)"
-        elif [ -z "$mark_over" ]; then
-            skip "$check" "no 'Boot mark over:' in logcat - the wait never began (Home's mark not up at the first ask, or an exemption)"
-        elif [ -z "$shown_ms" ]; then
-            skip "$check" "the mark was never shown (a safe end): '$mark_over'"
-        else
-            case "$mark_why" in
-                "the mark's 3 s are up")
-                    if [ "$shown_ms" -ge "$BOOT_MARK_MIN_SHOWN_MS" ]; then
-                        pass "$check: ${mark_over#Boot mark }"
-                    else
-                        fail "$check" "on screen only $shown_ms ms: '$mark_over'"
-                    fi
-                    ;;
-                "Home paused" | "Home stopped" | "Home lost focus" | "Home's mark not up")
-                    if [ "$shown_ms" -ge "$BOOT_MARK_MIN_SHOWN_MS" ]; then
-                        pass "$check: ${mark_over#Boot mark }"
-                    elif [ "${others:-0}" -gt 0 ]; then
-                        skip "$check" "ended by '$mark_why' after $shown_ms ms with another window over the mark (see 'nothing but the mark')"
-                    else
-                        fail "$check" "an unexplained '$mark_why' after $shown_ms ms: '$mark_over'"
-                    fi
-                    ;;
-                *)
-                    skip "$check" "a safe early end after $shown_ms ms: '$mark_why'"
-                    ;;
-            esac
-        fi
     fi
     shot boot-lock
 fi

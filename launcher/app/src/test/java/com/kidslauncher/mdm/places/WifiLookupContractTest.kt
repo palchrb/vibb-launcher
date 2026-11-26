@@ -140,7 +140,13 @@ class WifiLookupContractTest {
             val case = row["case"]!!.jsonPrimitive.content
             val step = appleCellStep(row["status"]!!.jsonPrimitive.int, row.bodyText())
             when (row["action"]!!.jsonPrimitive.content) {
-                "use" -> assertEquals(case, row["body"]!!.jsonObject["cells"]!!.jsonArray.size, (step as CellStep.Use).cells.size)
+                "use" -> {
+                    assertEquals(case, row["body"]!!.jsonObject["cells"]!!.jsonArray.size, (step as CellStep.Use).cells.size)
+                    // Design 137: a near list decodes beside the rows (stored by the phone half, N8).
+                    val near = ServerJson.decodeFromString(CellLookupAnswer.serializer(), row.bodyText()!!).near
+                    assertEquals(case, row["body"]!!.jsonObject["near"]?.jsonArray?.size ?: 0, near.size)
+                    assertTrue(case, near.all { parseCellWire(it.cell) != null && it.accM > 0 })
+                }
                 "off" -> assertEquals(case, CellStep.Off, step)
                 "wait" -> assertEquals(case, CellStep.Wait(row["wait_s"]!!.jsonPrimitive.long * 1000), step)
                 else -> error("an action the test doesn't know: $case")
@@ -158,6 +164,19 @@ class WifiLookupContractTest {
                     // Every asked cell in one list, each an asked string; no age.
                     assertEquals(case, asked.toSet(), (use.cells.map { it.cell } + use.unknown).toSet())
                     assertTrue(case, body["cells"]!!.jsonArray.none { "month" in it.jsonObject || "age" in it.jsonObject })
+                    // Design 137 N5: near always present and read; each entry once, a wire form, never an asked cell;
+                    // ch and pci never in cells.
+                    val near = ServerJson.decodeFromString(CellLookupAnswer.serializer(), body.toString()).near
+                    assertTrue(case, "near" in body)
+                    assertEquals(case, body["near"]!!.jsonArray.size, near.size)
+                    assertTrue(case, near.size <= contract["rules"]!!.jsonObject["near_max"]!!.jsonPrimitive.int)
+                    assertEquals(case, near.size, near.map { it.cell }.toSet().size)
+                    val askedIds = asked.mapNotNull { parseCellWire(it)?.id }.toSet()
+                    for (n in near) {
+                        val wire = parseCellWire(n.cell)
+                        assertTrue("$case: ${n.cell}", wire != null && wire.id !in askedIds)
+                    }
+                    assertTrue(case, body["cells"]!!.jsonArray.none { "ch" in it.jsonObject || "pci" in it.jsonObject })
                 }
                 409 -> assertEquals(case, CellStep.Off, step)
                 429 -> assertEquals(case, CellStep.Wait(body["retry_after_s"]?.jsonPrimitive?.long?.times(1000) ?: APPLE_WAIT_MS), step)

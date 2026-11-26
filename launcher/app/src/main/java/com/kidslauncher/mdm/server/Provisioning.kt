@@ -24,6 +24,12 @@ private const val LOG_TAG = "Provisioning"
  * if tsnet hasn't connected yet (never for http to a tailnet IP: [serverPath]), which can never resolve a MagicDNS hostname and previously
  * surfaced as a confusing "can't resolve host" failure on the very first scan, before tsnet had
  * any chance to come up at all.
+ *
+ * Design 132 §7.1 (QA M5): once the address is accepted, Android's reset token is set (or kept) - the one apply both the
+ * QR and Koble til run. On the QR path no credential exists yet (the compliance step comes before the setup wizard's
+ * screen-lock page), so the token is active at once and `set_kid_pin` can replace any PIN set later in the wizard; on
+ * Koble til with a screen lock already set it is escrowed until the kid's next unlock (`set_kid_pin` answers
+ * `no_token` until then). CE is unlocked at both points.
  */
 suspend fun applyProvisioningExtras(context: Context, extras: ProvisioningExtras): Result<Unit> {
     // Security review S-M1: a QR whose server address isn't https (or http to a tailnet IP) changes nothing - not the
@@ -34,6 +40,14 @@ suspend fun applyProvisioningExtras(context: Context, extras: ProvisioningExtras
     }
     val mdm = LauncherPreferences.mdm()
     mdm.serverUrl(extras.serverUrl.trim())
+    // Design 132 §7.1: the reset token now, before Android's setup wizard can set a screen lock (never blocks the setup).
+    val token = try {
+        WindowRelock.ensureAndroidResetToken(context)
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "The reset token at enrolment failed: ${e.javaClass.simpleName}")
+        false
+    }
+    Log.i(LOG_TAG, "The reset token at enrolment: ${if (token) "active" else "not active yet"}")
     // Design 76 D2: a setup QR is a fresh setup - the certificate check is off until the server's `on` reaches the
     // phone over a connection that passes it (the enrolment itself may have to go unpinned, R-6).
     ServerPinStore.setEnforce(context, false)

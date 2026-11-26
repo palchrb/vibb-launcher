@@ -29,7 +29,7 @@
   the flow's "Standardapper" opens the pick window with `keepSnapshot = true`.
 
 - Design 114b (`docs/design/114b-setup-pin-and-roles.md`): `child_pin` (required, counted) reads
-  `KeyguardManager.isDeviceSecure`. With Vibb One's legacy own lock, a `kid_lock` in the cached policy counts instead
+  `KeyguardManager.isDeviceSecure`. Design 132: a stored Child PIN counts only with Android's credential (the legacy own lock's row went); before that, with Vibb One's legacy own lock, a `kid_lock` in the cached policy counted instead
   (`childPinDone`). It goes in the report's `setup`. In the flow it is a screen done in the PWA (`SetupStep.inPwa`): its
   line, "Senere", no "Åpne". It moves on by itself after the apply that follows the PIN's arrival, and
   `MdmDeviceAdminReceiver.onPasswordChanged` asks for a sync. `call_filter_early` (optional, `calls_unmanaged`) is row

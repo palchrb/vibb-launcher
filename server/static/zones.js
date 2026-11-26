@@ -1,14 +1,14 @@
-// A zone's page (design 64 §3.5, templates/device_zone.html): the map over the form. Without this
-// script the form is the whole feature; with it a tap on the map places the centre (Leaflet's
-// `click`, which a drag never fires; `doubleClickZoom` off so a second tap doesn't zoom), the
-// centre's marker drags, the radius slider and its number field redraw the circle as they move,
-// and "Use Phone's Location" moves the centre to the phone's newest fix. Every change writes the
-// latitude and longitude fields (6 decimals), so Save posts what the map shows. Long-press isn't
-// used: a tap is enough, and iOS's long-press opens its own menu.
+// A zone's page (design 64 §3.5; design 135 §5.3, templates/family_zone.html): the map over the
+// form. Without this script the form is the whole feature; with it a tap on the map places the
+// centre (Leaflet's `click`, which a drag never fires; `doubleClickZoom` off so a second tap doesn't
+// zoom), the centre's marker drags, the radius slider and its number field redraw the circle as
+// they move, and each phone's "Use {phone}'s location" moves the centre to that phone's newest fix.
+// Every change writes the latitude and longitude fields (6 decimals), so Save posts what the map
+// shows. Long-press isn't used: a tap is enough, and iOS's long-press opens its own menu.
 //
 // What the page knows comes in data- attributes (`data-zone-map`: the centre, the radius, the
-// slider's range; `data-use-phone`: the newest fix); nothing is read as HTML. ES5. Run its tests:
-// node --test jstest/zones.test.js
+// slider's range, where a new zone opens; `data-use-phone`: a phone's newest fix, one button per
+// phone); nothing is read as HTML. ES5. Run its tests: node --test jstest/zones.test.js
 (function (root) {
     "use strict";
 
@@ -81,11 +81,11 @@
         if (!fields.lat || !fields.lng || !fields.radius) return null;
         var slider = doc.querySelector("[data-zone-slider]");
         var sliderRow = doc.querySelector("[data-zone-slider-row]");
-        var usePhone = doc.querySelector("[data-use-phone]");
+        var usePhones = doc.querySelectorAll ? doc.querySelectorAll("[data-use-phone]") : [];
         var min = parseInt(box.getAttribute("data-min"), 10) || 100;
         var max = parseInt(box.getAttribute("data-max"), 10) || 2000;
         if (sliderRow) sliderRow.removeAttribute("hidden");
-        if (usePhone) usePhone.removeAttribute("hidden");
+        for (var u = 0; u < usePhones.length; u++) usePhones[u].removeAttribute("hidden");
 
         var map = L.map(box.querySelector("#map"), { doubleClickZoom: false });
         // OpenStreetMap's tiles through the server's cache (`map_tiles`), as on the Locate page.
@@ -162,15 +162,16 @@
         });
         fields.lat.addEventListener("change", function () { redraw(true); });
         fields.lng.addEventListener("change", function () { redraw(true); });
-        if (usePhone) {
-            usePhone.addEventListener("click", function () {
-                var lat = readCoord(usePhone.getAttribute("data-lat"), 90);
-                var lng = readCoord(usePhone.getAttribute("data-lng"), 180);
+        function useFix(button) {
+            button.addEventListener("click", function () {
+                var lat = readCoord(button.getAttribute("data-lat"), 90);
+                var lng = readCoord(button.getAttribute("data-lng"), 180);
                 if (lat === null || lng === null) return;
                 place(fields, lat, lng);
                 redraw(true);
             });
         }
+        for (var b = 0; b < usePhones.length; b++) useFix(usePhones[b]);
 
         if (centre()) {
             redraw(true);

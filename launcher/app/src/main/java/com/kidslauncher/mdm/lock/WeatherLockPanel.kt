@@ -174,7 +174,7 @@ class WeatherLockPanel(
         repick()
     }
 
-    /** The glance's stage left the page (the keypad, Android's pad) or the VoIP ring card came: the card folds. */
+    /** The glance's stage left the page (Android's pad) or the VoIP ring card came: the card folds. */
     fun leftPage() = guarded("leave") { fold(WeatherEvent.STAGE_LEFT) }
 
     fun voip() = guarded("voip") { fold(WeatherEvent.VOIP) }

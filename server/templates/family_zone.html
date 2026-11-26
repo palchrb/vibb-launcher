@@ -9,27 +9,34 @@
 {% let tab = "locate" %}
 {% include "partials/tab_bar.html" %}
 {% import "partials/band.html" as band %}
-{#- A zone (design 64 §3.5): one form, Add or Save on the band, which stays in place as on a time rule's page
-    (design 84), so it is in reach after any field, and a refusal is the form's first box, in view (.editor-flash).
-    Without JS the fields are the whole feature; static/zones.js adds the map (a tap places the centre, the marker
-    drags, the slider redraws the circle) and writes the fields, so Save posts what the map shows. A save returns to
-    the zone's row on Locate; a refusal renders this page again (400) at #zone-form, as typed, the reason under its
-    field. -#}
-{% call band::editor(title, "/devices/" ~ device.id ~ "/zones", self.t("locate.zones.title")) %}<button type="submit" class="title-action" form="zone-form" data-save="zone">{% if zone_id.is_some() %}{{ self.t("common.save") }}{% else %}{{ self.t("common.add") }}{% endif %}</button>{% endcall %}
+{#- A family zone (design 64 §3.5; design 135 §5.3): one form - the place and the phones that use it -, Add or Save on
+    the band, which stays in place as on a time rule's page (design 84), and a refusal is the form's first box, in view
+    (.editor-flash). The form carries the values it was drawn with (was_*), so the save writes only what this parent
+    changed (decision 12). Without JS the fields are the whole feature; static/zones.js adds the map (a tap places the
+    centre, the marker drags, the slider redraws the circle, each phone's "Use … location" button) and writes the
+    fields, so Save posts what the map shows. A save returns to the zone's row on the page it came from; a refusal
+    renders this page again (400) at #zone-form, as typed, the reason under its field. -#}
+{% call band::editor(title, back_href, back_label) %}<button type="submit" class="title-action" form="zone-form" data-save="zone">{% if zone_id.is_some() %}{{ self.t("common.save") }}{% else %}{{ self.t("common.add") }}{% endif %}</button>{% endcall %}
 <main class="container container-fixed">
-    <form method="post" action="{% if let Some(zid) = zone_id %}/devices/{{ device.id }}/zones/{{ zid }}{% else %}/devices/{{ device.id }}/zones{% endif %}#zone-form" id="zone-form">
-        {% if refusal.is_some() || errors.any() %}
+    <form method="post" action="{% if let Some(zid) = zone_id %}/zones/{{ zid }}{% else %}/zones{% endif %}#zone-form" id="zone-form">
+        {% if let Some(d) = device %}<input type="hidden" name="device" value="{{ d }}">{% endif %}
+        <input type="hidden" name="was_name" value="{{ form.was_name }}">
+        <input type="hidden" name="was_latitude" value="{{ form.was_latitude }}">
+        <input type="hidden" name="was_longitude" value="{{ form.was_longitude }}">
+        <input type="hidden" name="was_radius_m" value="{{ form.was_radius }}">
+        {% if refusal.is_some() || errors.any() || phones_error.is_some() %}
         <div class="editor-flash">
             {% if let Some(why) = refusal %}<p class="flash flash-error bar-flash" role="alert" data-flash="refused">{{ self.t("common.not_saved") }} {{ why }}</p>
+            {% else if let Some(why) = phones_error %}<p class="flash flash-error bar-flash" role="alert" data-flash="refused">{{ self.t("common.not_saved") }} {{ why }}</p>
             {% else if errors.any() %}<p class="flash flash-error bar-flash" role="alert" data-flash="refused">{{ self.t("common.not_saved") }} {{ self.t("locate.zone.check_field") }}</p>{% endif %}
         </div>
         {% endif %}
 
         <section id="zone-map" aria-label="{{ self.t("locate.map_aria") }}">
-            <div class="map-box" data-zone-map data-lat="{{ form.latitude }}" data-lng="{{ form.longitude }}" data-radius="{{ form.radius }}" data-min="{{ radius_min }}" data-max="{{ radius_max }}"{% if let Some((lat, lng)) = phone_fix %} data-phone-lat="{{ lat }}" data-phone-lng="{{ lng }}"{% endif %}><div id="map"></div></div>
+            <div class="map-box" data-zone-map data-lat="{{ form.latitude }}" data-lng="{{ form.longitude }}" data-radius="{{ form.radius }}" data-min="{{ radius_min }}" data-max="{{ radius_max }}"{% if let Some((lat, lng)) = start %} data-phone-lat="{{ lat }}" data-phone-lng="{{ lng }}"{% endif %}><div id="map"></div></div>
         </section>
 
-        <section id="zone-place" aria-label="{{ self.tp("locate.zone.place_aria", [("name", device.name.as_str())]) }}">
+        <section id="zone-place" aria-label="{{ self.t("locate.zone.place_aria") }}">
             <div class="group">
                 <label class="row">
                     <span class="row-label">{{ self.t("locate.zone.name") }}</span>
@@ -55,40 +62,36 @@
                 <div class="row zone-slider" data-zone-slider-row hidden>
                     <input type="range" min="{{ radius_min }}" max="{{ radius_max }}" step="{{ radius_step }}" value="{{ form.radius }}" aria-label="{{ self.t("locate.zone.slider_aria") }}" data-zone-slider>
                 </div>
-                {% if let Some((lat, lng)) = phone_fix %}
-                <button type="button" class="row row-button" data-use-phone data-lat="{{ lat }}" data-lng="{{ lng }}" hidden>{{ self.t("locate.zone.use_phone") }}</button>
-                {% endif %}
+                {% for f in fixes %}
+                <button type="button" class="row row-button" data-use-phone data-lat="{{ f.latitude }}" data-lng="{{ f.longitude }}" hidden>{{ self.tp("locate.zone.use_phone", [("phone", f.name.as_str())]) }}</button>
+                {% endfor %}
             </div>
-            {% if form.latitude.is_empty() && phone_fix.is_none() %}
-            <p class="group-footer" data-note="no-fix">{{ self.t("locate.zone.no_fix") }}</p>
-            {% else %}
-            <p class="group-footer">{{ self.t("locate.zone.map_footer") }}</p>
-            {% endif %}
+            <div class="group-footer">{% if form.latitude.is_empty() && start.is_none() %}<span data-note="no-fix">{{ self.t("locate.zone.no_fix") }}</span>{% else %}{{ self.t("locate.zone.map_footer") }}{% endif %} <details class="info">
+                <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel"><p>{{ self.t("locate.zone.shared_info") }}</p><p>{{ self.t("locate.zone.counts_info") }}</p></div>
+            </details></div>
         </section>
 
-        <section id="zone-notify" aria-labelledby="zone-notify-title">
-            <h2 class="group-header" id="zone-notify-title">{{ self.t("locate.zone.notify_title") }}</h2>
+        <section id="zone-phones" aria-labelledby="zone-phones-title">
+            <h2 class="group-header" id="zone-phones-title">{{ self.t("locate.zone.phones") }}</h2>
             <div class="group">
-                <label class="row">
-                    <span class="row-label">{{ self.t("locate.zone.notify_arrive") }}</span>
-                    <input type="checkbox" role="switch" class="sw" name="notify_arrive" value="on"{% if form.notify_arrive %} checked{% endif %}><span class="knob" aria-hidden="true"></span>
+                {% for p in phones %}
+                <input type="hidden" name="was_phone_{{ p.id }}" value="{% if p.was %}1{% else %}0{% endif %}">
+                <label class="row st-row" data-phone="{{ p.id }}">
+                    <input type="checkbox" name="phone_{{ p.id }}" value="on"{% if p.ticked %} checked{% endif %}{% if phones_error.is_some() %} aria-invalid="true" aria-describedby="phones-error"{% endif %}>
+                    <span class="row-label">{{ p.name }}</span>
                 </label>
-                <label class="row">
-                    <span class="row-label">{{ self.t("locate.zone.notify_leave") }}</span>
-                    <input type="checkbox" role="switch" class="sw" name="notify_leave" value="on"{% if form.notify_leave %} checked{% endif %}><span class="knob" aria-hidden="true"></span>
-                </label>
+                {% endfor %}
+                {% if let Some(why) = phones_error %}<p class="flash flash-error" id="phones-error" data-flash="phones">{{ why }}</p>{% endif %}
             </div>
-            <div class="group-footer"><details class="info">
-                <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
-                <div class="info-panel"><p>{{ self.t("locate.zone.notify_footer") }}</p><p>{{ self.t("locate.zone.counts_info") }}</p></div>
-            </details></div>
         </section>
     </form>
 
     {% if let Some(zid) = zone_id %}
-    {#- Design 138: the zone's confirmed Wi-Fi routers - each name with Remove..., the phone's network with Confirm
-        (when its newest report has one and its newest fix isn't surely outside), one orange line at most. Every form
-        lands back here (#zone-wifi). -#}
+    {#- Design 138: the zone's confirmed Wi-Fi routers - each name with Remove..., the network each phone using the zone
+        is on now with Confirm (when its newest report has one and its newest fix isn't surely outside; one row per
+        router), one orange line at most. A confirmation is the zone's, for every phone that uses it. Every form lands
+        back here (#zone-wifi). -#}
     <section id="zone-wifi" aria-labelledby="zone-wifi-title">
         <h2 class="group-header" id="zone-wifi-title">{{ self.t("locate.zone.wifi.title") }}</h2>
         {% if let Some((key, error)) = wifi_flash %}<p class="flash{% if error %} flash-error{% endif %}" role="status" data-flash="wifi">{{ self.t(key) }}</p>{% endif %}
@@ -96,20 +99,23 @@
             {% for n in wifi.names %}
             <details class="confirm cell" data-wifi="{{ n.id }}">
                 <summary class="row"><span class="row-label">{{ n.ssid }}</span><span class="row-value">{{ self.t("locate.zone.wifi.remove") }}&hellip;</span></summary>
-                <form method="post" action="/devices/{{ device.id }}/zones/{{ zid }}/wifi/{{ n.id }}/delete#zone-wifi" class="confirm-body">
+                <form method="post" action="/zones/{{ zid }}/wifi/{{ n.id }}/delete#zone-wifi" class="confirm-body">
+                    {% if let Some(d) = device %}<input type="hidden" name="device" value="{{ d }}">{% endif %}
                     <p>{{ self.tp("locate.zone.wifi.remove_question", [("name", n.ssid.as_str())]) }}</p>
                     <button type="submit" class="button-destructive">{{ self.t("locate.zone.wifi.remove") }}</button>
                     {% include "partials/confirm_cancel.html" %}
                 </form>
             </details>
             {% endfor %}
-            {% if let Some(w) = wifi.current %}
-            <form method="post" action="/devices/{{ device.id }}/zones/{{ zid }}/wifi#zone-wifi" class="row row-actions" data-wifi="current">
-                <span class="row-label">{{ w.ssid }}</span>
-                <input type="hidden" name="bssid" value="{{ w.bssid }}">{% if let Some(m) = w.mld %}<input type="hidden" name="mld" value="{{ m }}">{% endif %}
+            {% for o in wifi.offers %}
+            <form method="post" action="/zones/{{ zid }}/wifi#zone-wifi" class="row row-actions" data-wifi="current">
+                <span class="row-label">{{ o.wifi.ssid }}</span><span class="row-value" data-wifi-phone>{{ o.phone }}</span>
+                {% if let Some(d) = device %}<input type="hidden" name="device" value="{{ d }}">{% endif %}
+                <input type="hidden" name="phone" value="{{ o.device_id }}">
+                <input type="hidden" name="bssid" value="{{ o.wifi.bssid }}">{% if let Some(m) = o.wifi.mld %}<input type="hidden" name="mld" value="{{ m }}">{% endif %}
                 <button type="submit" class="row-action">{{ self.t("locate.zone.wifi.confirm") }}</button>
             </form>
-            {% endif %}
+            {% endfor %}
             {% if let Some((line, info, name)) = self.wifi_orange() %}
             <details class="info cell" data-wifi="orange">
                 <summary class="row"><span class="row-label tone-orange">{{ self.t(line) }}</span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("common.more_info") }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
@@ -122,13 +128,16 @@
             <div class="info-panel"><p>{{ self.t("locate.zone.wifi.info") }}</p></div>
         </details></div>
     </section>
+    {% endif %}
 
+    {% if zone_id.is_some() %}
     <section id="delete" aria-label="{{ self.t("locate.zone.delete_aria") }}">
         <div class="group">
             <details class="confirm cell">
                 <summary class="row">{{ self.t("locate.zone.delete") }}&hellip;</summary>
-                <form method="post" action="/devices/{{ device.id }}/zones/{{ zid }}/delete" class="confirm-body">
-                    <p>{{ self.tp("locate.zone.delete_question", [("name", stored_name.as_str())]) }}</p>
+                <form method="post" action="{% if let Some(zid) = zone_id %}/zones/{{ zid }}/delete{% endif %}" class="confirm-body">
+                    {% if let Some(d) = device %}<input type="hidden" name="device" value="{{ d }}">{% endif %}
+                    <p>{{ delete_question }}</p>
                     <button type="submit" class="button-destructive">{{ self.t("locate.zone.delete") }}</button>
                     {% include "partials/confirm_cancel.html" %}
                 </form>
@@ -138,7 +147,7 @@
     {% endif %}
 
     <script src="/static/leaflet/leaflet.js"></script>
-    <script src="/static/zones.js?v=3"></script>
+    <script src="/static/zones.js?v=4"></script>
 </main>
 </body>
 </html>
