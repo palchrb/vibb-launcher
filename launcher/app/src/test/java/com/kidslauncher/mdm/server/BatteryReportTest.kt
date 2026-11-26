@@ -81,7 +81,7 @@ class BatteryReportTest {
     fun `every report reads the battery, and the low and okay edges request a sync from initRest`() {
         val sync = code("MdmSyncWorker.kt")
         assertTrue("battery = BatteryStatus.report(context).also { LowBatteryFix.observe(context, it) }," in sync)
-        val initRest = code("Application.kt").substringAfter("private fun initRest(").substringBefore("\n    }\n")
+        val initRest = code("Application.kt").substringAfter("private fun rulesAndLock(").substringBefore("\n    }\n")
         assertTrue("BatteryStatus.watch(this)" in initRest)
         val status = code("BatteryStatus.kt")
         val watch = status.substringAfter("fun watch(app: Context)")

@@ -6401,6 +6401,29 @@ server's newest `device_status.music_state_json`.
    level is the answering scan's, D20.6); its noconnected case also renews by the witness. The music-nudge rule's
    `unbound` needs a report older than 26 h (`REPORT_STALE_MS`), not 12 h (12 h is when the ask goes).
 
+**Rerun of 1-3** (branch `rc5-gate-fixes`, 2026-11-26, the debug launcher of that branch; `aosp36` and `jelly36` set up
+anew with `-wipe-data` against a fresh debug server - an `emu kill` right after an `adb install` without `adb shell
+sync` had left `aosp36` with a truncated APK, the launcher gone at the next boot -, `compat34` as the gate left it):
+- **1, Android 16: pass.** `aosp36` (3-button and gestures, an `adb reboot` and a cold boot each) and `jelly36` (two
+  `adb reboot`s, a cold boot): every boot had SystemUI's `OFF -> LOCKSCREEN` over the occluding cover; the asks before
+  its show read `keyguard not up`, the next silence's ask (`keyguard up, no focus`) brought `LOCKSCREEN ->
+  PRIMARY_BOUNCER` 0.5-6 s after the show (the next 3-6 s tick), then one "Android's pad is over the cover - no re-ask" and no further ask;
+  1357 opens Home. R3 on `aosp36`: Back on the pad, "cancelled", no ask; a tap asks once (an earlier build of the
+  branch, the same cancel and tap rule).
+- **3, Android 14: pass.** `compat34` (both modes, an `adb reboot` and a cold boot each): the relaunches before the pad
+  still ask (the pad isn't up); the relaunch with the pad up logs "relaunched with Android's pad up - no ask"; Back
+  then closes the ask with the line and a tap asks once (an earlier build, the same orphan rule); 1357 opens Home.
+  When the cover never had the focus and its readings were all "keyguard reads up, not yet occluded by the cover?" (2 of 4 boots), the first silence after the pad
+  asked once more (nothing visible), then no more.
+- **2, `jelly36`: pass.** Two `adb reboot`s and a cold boot, unlocked each time: no `ANR in me.vibb...`, no `Timeout
+  executing service` of ours, the dropbox empty; `Unlocked setup took` 469-723 ms, the rules' own message 878-2421 ms,
+  `Boot Home started` 2.7-7.0 s after the unlock.
+- **After code QA** (the 30 s re-ask with the pad up, a not-shown reading taking `reached` back, the rules' step at an
+  idle moment): `aosp36` an `adb reboot` (3-button) and a cold boot, `compat34` an `adb reboot` (gestures): no
+  regression - the pad once System UI was up, then "no re-ask" and one ask every 30 s while it stayed up unanswered
+  (only `Adding callback` in System UI's log, the pad not hidden or redrawn; on 14 it also brings back the answer of a
+  relaunch's orphaned ask: "succeeded" at the PIN); 1357 opens Home, no ANR, the rules' step 0.5-1.2 s.
+
 Not run: Android 17 (no working image); §6bp row 10's `dumpsys device_policy`, row 11's phone-side key book and 12b's
 `Enrolment restored` line (adb closed by the cut; the server's tables and the relay stand in); R1 and R3 on `aosp36`
 (run on `jelly36`); R2 on `jelly36` (System UI hung; run on `aosp36`).

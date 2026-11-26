@@ -20,24 +20,27 @@ import com.kidslauncher.mdm.calls.DirectBootComponents
  */
 class KidAppComponentFactory : CoreComponentFactory() {
 
-    private fun beforeCreating(className: String) {
+    private fun beforeCreating(className: String, kind: DirectBootComponents.Kind) {
         // Design 77 D8 (QA L1): in the isolated MMS parse process nothing is set up - it returns at once.
         if (android.os.Process.isIsolated()) return
-        if (DirectBootComponents.needsUnlockedSetup(className)) Application.instance?.ensureUnlockedInit()
+        // §6bv finding 2: a service or a provider gets the setup's first part only, the rest is its own message.
+        if (DirectBootComponents.needsUnlockedSetup(className)) {
+            Application.instance?.ensureUnlockedInit(rulesNow = DirectBootComponents.unlockedRulesBefore(kind))
+        }
     }
 
     override fun instantiateActivity(cl: ClassLoader, className: String, intent: Intent?): Activity {
-        beforeCreating(className)
+        beforeCreating(className, DirectBootComponents.Kind.ACTIVITY)
         return super.instantiateActivity(cl, className, intent)
     }
 
     override fun instantiateService(cl: ClassLoader, className: String, intent: Intent?): Service {
-        beforeCreating(className)
+        beforeCreating(className, DirectBootComponents.Kind.SERVICE)
         return super.instantiateService(cl, className, intent)
     }
 
     override fun instantiateReceiver(cl: ClassLoader, className: String, intent: Intent?): BroadcastReceiver {
-        beforeCreating(className)
+        beforeCreating(className, DirectBootComponents.Kind.RECEIVER)
         return super.instantiateReceiver(cl, className, intent)
     }
 
@@ -45,7 +48,7 @@ class KidAppComponentFactory : CoreComponentFactory() {
      * normal start handles setup); one installed later in a process started before unlock counts
      * like any other component. */
     override fun instantiateProvider(cl: ClassLoader, className: String): ContentProvider {
-        beforeCreating(className)
+        beforeCreating(className, DirectBootComponents.Kind.PROVIDER)
         return super.instantiateProvider(cl, className)
     }
 }

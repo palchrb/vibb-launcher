@@ -406,7 +406,7 @@ class BootCoverPlanTest {
     fun `one automatic ask per resume after a stop - a cancel waits for the next stop`() {
         val (asked, first) = pad(BootPad(), PadEvent.RESUMED)
         assertEquals(listOf(PadAction.ASK), first)
-        assertEquals(BootPad(autoAsks = 1, armed = false, open = true, auto = true, silentDue = true), asked)
+        assertEquals(BootPad(autoAsks = 1, armed = false, open = true, auto = true, silentDue = true, reached = true), asked)
         // Cancelled (Back): the line, and resumes without a stop never ask again - no loop.
         val (cancelled, again) = pad(asked, PadEvent.CANCELLED, PadEvent.RESUMED, PadEvent.RESUMED)
         assertEquals(listOf(PadAction.NONE, PadAction.NONE, PadAction.NONE), again)
@@ -476,7 +476,7 @@ class BootCoverPlanTest {
         assertEquals(listOf(PadAction.ASK), pad(slept, PadEvent.RESUMED).second)
         // The stop first, the cancel after: the stop closes the ask uncounted, the late answer changes nothing.
         val (stopped, _) = pad(asked, PadEvent.STOPPED, PadEvent.CANCELLED, interactive = false)
-        assertEquals(BootPad(autoAsks = 0, armed = true, open = false, auto = true, line = true), stopped)
+        assertEquals(BootPad(autoAsks = 0, armed = true, open = false, auto = true, line = true, reached = true), stopped)
         // A cancel with the screen on counts.
         assertEquals(1, pad(asked, PadEvent.CANCELLED).first.autoAsks)
         // A success closes the ask and hides the line (F59d-3; CE's unlock does the rest); a late success changes nothing.
@@ -503,7 +503,7 @@ class BootCoverPlanTest {
     fun `a tap asks over an ask still marked open, uncounted (F59d-4)`() {
         val step = bootPadStep(BootPad(autoAsks = 1, armed = false, open = true, auto = true), PadEvent.TAPPED, gate = true, interactive = true, inCall = false)
         assertEquals(PadAction.ASK, step.action)
-        assertEquals(BootPad(autoAsks = 1, armed = false, open = true, auto = false, silentDue = true), step.pad)
+        assertEquals(BootPad(autoAsks = 1, armed = false, open = true, auto = false, silentDue = true, reached = true), step.pad)
     }
 
     /** RC3-3 (the rc.3 run's c1: Back, then Home, between the PIN and the take-over - the ANR dialog): the cover starts no
@@ -569,21 +569,124 @@ class BootCoverPlanTest {
     fun `an ask whose pad is up is not asked again - only once the cover has the focus back`() {
         val asked = bootPadStep(BootPad(), PadEvent.RESUMED, gate = true, interactive = true, inCall = false)
         var state = asked.pad
-        // Up for a minute: every tick is skipped, the same ask, its clock going on - never an ask.
-        repeat(20) {
+        // Up for 27 s: every 3 s tick is skipped, the same ask, its clock going on (code QA M1: the time it is taken as up).
+        repeat(9) { n ->
             val tick = bootPadStep(state, PadEvent.SILENT, gate = true, interactive = true, inCall = false, covered = true)
-            assertEquals(PadStep(asked.pad, PadAction.NONE, bootPadSilentInMs(0)), tick)
+            assertEquals(PadStep(asked.pad.copy(upMs = (n + 1) * 3_000L), PadAction.NONE, bootPadSilentInMs(0)), tick)
             state = tick.pad
         }
         // The pad gone without an answer (SystemUI dropped it): the next tick asks, uncounted.
         val again = bootPadStep(state, PadEvent.SILENT, gate = true, interactive = true, inCall = false, covered = false)
         assertEquals(PadAction.ASK, again.action)
         assertEquals(asked.pad.copy(reasks = 1), again.pad)
+        // Still covered at 30 s with no answer: asked for again once (code QA M1), its clock anew.
+        val late = bootPadStep(state, PadEvent.SILENT, gate = true, interactive = true, inCall = false, covered = true)
+        assertEquals(PadAction.ASK, late.action)
+        assertEquals(asked.pad.copy(reasks = 1), late.pad)
         // The pad's own answer still ends the ask whatever covers the cover.
         assertFalse(bootPadStep(state, PadEvent.CANCELLED, true, true, false, covered = true).pad.open)
         // A tap or a resume asks as before (only a silence reads the focus).
         assertEquals(PadAction.ASK, bootPadStep(BootPad(), PadEvent.TAPPED, true, true, false, covered = true).action)
         assertEquals(PadAction.ASK, bootPadStep(BootPad(), PadEvent.RESUMED, true, true, false, covered = true).action)
+    }
+
+    /** The rc.5 gate §6bv finding 1 (Android 16): no focus is no pad unless an ask reached the shown keyguard. */
+    @Test
+    fun `an ask the keyguard never took is asked again whatever has the focus, once taken the pad up stops the re-asks`() {
+        // The boot's first ask, before SystemUI's keyguard is shown: lost, and the cover has no focus yet.
+        val asked = bootPadStep(BootPad(), PadEvent.RESUMED, gate = true, interactive = true, inCall = false, covered = true, keyguard = KeyguardRead.NOT_SHOWN)
+        assertEquals(PadAction.ASK, asked.action)
+        assertFalse(asked.pad.reached)
+        // Its silence with no focus anywhere: asked again (the old rule took it for the pad and stopped).
+        val again = bootPadStep(asked.pad, PadEvent.SILENT, true, true, false, covered = true, keyguard = KeyguardRead.NOT_SHOWN)
+        assertEquals(PadAction.ASK, again.action)
+        assertFalse(again.pad.reached)
+        // SystemUI's lock screen shows over the cover with the focus (the clock, not the pad): the keyguard is up now, so
+        // the next silence asks - and that ask reached it.
+        val lockScreen = bootPadStep(again.pad, PadEvent.SILENT, true, true, false, covered = true, keyguard = KeyguardRead.SHOWN)
+        assertEquals(PadAction.ASK, lockScreen.action)
+        assertTrue(lockScreen.pad.reached)
+        assertEquals(2, lockScreen.pad.reasks)
+        assertEquals(1, lockScreen.pad.autoAsks)
+        // From then on the pad is up: the 6 s ticks skipped, the same ask (§6bt finding 2 holds) - for 30 s with no
+        // answer, then asked once more (code QA M1: the cover never stays without a pad for good), its clock anew.
+        var state = lockScreen.pad
+        repeat(4) { n ->
+            val tick = bootPadStep(state, PadEvent.SILENT, true, true, false, covered = true, keyguard = KeyguardRead.SHOWN)
+            assertEquals(PadStep(lockScreen.pad.copy(upMs = (n + 1) * 6_000L), PadAction.NONE, bootPadSilentInMs(2)), tick)
+            state = tick.pad
+        }
+        val thirty = bootPadStep(state, PadEvent.SILENT, true, true, false, covered = true, keyguard = KeyguardRead.SHOWN)
+        assertEquals(PadAction.ASK, thirty.action)
+        assertEquals(0L, thirty.pad.upMs)
+        assertTrue(thirty.pad.reached)
+        assertEquals(PadAction.NONE, bootPadStep(thirty.pad, PadEvent.SILENT, true, true, false, covered = true).action)
+        // Code QA M1: a keyguard reading not shown after a reached ask is no pad up - asked again, and no longer reached.
+        val down = bootPadStep(lockScreen.pad, PadEvent.SILENT, true, true, false, covered = true, keyguard = KeyguardRead.NOT_SHOWN)
+        assertEquals(PadAction.ASK, down.action)
+        assertFalse(down.pad.reached)
+        // Nor does a relaunch then take it for the pad.
+        assertEquals(PadAction.ASK, bootPadStep(lockScreen.pad, PadEvent.RELAUNCHED, true, true, false, covered = true, keyguard = KeyguardRead.NOT_SHOWN).action)
+        // A new ask reads the keyguard anew: an error's retry before the keyguard shows hasn't reached it.
+        val retried = bootPadStep(BootPad(open = false, retryDue = true, retried = true, reached = true), PadEvent.RETRY, true, true, false, keyguard = KeyguardRead.NOT_SHOWN)
+        assertEquals(PadAction.ASK, retried.action)
+        assertFalse(retried.pad.reached)
+        // With the focus on the cover nothing changes: no pad, the silence asks whatever the keyguard says.
+        assertEquals(PadAction.ASK, bootPadStep(lockScreen.pad, PadEvent.SILENT, true, true, false, covered = false, keyguard = KeyguardRead.SHOWN).action)
+    }
+
+    /** §6bv on Android 14: a shown reading before the cover could occlude may be window manager's stand-in state. */
+    @Test
+    fun `an unsure shown reading is no reach, two in a row are`() {
+        val first = bootPadStep(BootPad(), PadEvent.RESUMED, true, true, false, covered = true, keyguard = KeyguardRead.UNSURE)
+        assertEquals(PadAction.ASK, first.action)
+        assertFalse(first.pad.reached)
+        assertTrue(first.pad.unsure)
+        // Its silence reads not shown (the cover now occludes, SystemUI not up): asked again, not reached.
+        val down = bootPadStep(first.pad, PadEvent.SILENT, true, true, false, covered = true, keyguard = KeyguardRead.NOT_SHOWN)
+        assertEquals(PadAction.ASK, down.action)
+        assertFalse(down.pad.reached)
+        assertFalse(down.pad.unsure)
+        // Still unsure at the silence 3 s on: the stand-in state doesn't last - the keyguard took that ask; no more asks.
+        val second = bootPadStep(first.pad, PadEvent.SILENT, true, true, false, covered = true, keyguard = KeyguardRead.UNSURE)
+        assertEquals(PadAction.ASK, second.action)
+        assertTrue(second.pad.reached)
+        assertEquals(PadAction.NONE, bootPadStep(second.pad, PadEvent.SILENT, true, true, false, covered = true, keyguard = KeyguardRead.UNSURE).action)
+        // A relaunch with its pad up asks nothing.
+        assertTrue(bootPadStep(second.pad, PadEvent.RELAUNCHED, true, true, false, covered = true, keyguard = KeyguardRead.UNSURE).pad.orphaned)
+    }
+
+    /** The rc.5 gate §6bv finding 3 (Android 14): the boot's configuration-change relaunches ask no more while the pad is up. */
+    @Test
+    fun `a relaunch with the pad up asks nothing, and the focus back after it closes the ask with the line`() {
+        val asked = bootPadStep(BootPad(), PadEvent.RESUMED, gate = true, interactive = true, inCall = false, keyguard = KeyguardRead.SHOWN).pad
+        assertTrue(asked.reached)
+        // Relaunched under the pad (no focus): no ask, the ask stays open - orphaned, its answer went with the old instance.
+        val relaunched = bootPadStep(asked, PadEvent.RELAUNCHED, true, true, false, covered = true, keyguard = KeyguardRead.SHOWN)
+        assertEquals(PadAction.NONE, relaunched.action)
+        assertEquals(asked.copy(orphaned = true), relaunched.pad)
+        // A second relaunch under it: still nothing.
+        assertEquals(PadAction.NONE, bootPadStep(relaunched.pad, PadEvent.RELAUNCHED, true, true, false, covered = true).action)
+        // The pad up: its silences are skipped.
+        assertEquals(PadAction.NONE, bootPadStep(relaunched.pad, PadEvent.SILENT, true, true, false, covered = true).action)
+        // The focus back (the kid's Back on the pad, a cancel nobody hears): closed with the line, no ask, the count kept.
+        val back = bootPadStep(relaunched.pad, PadEvent.SILENT, true, true, false, covered = false)
+        assertEquals(PadAction.NONE, back.action)
+        assertFalse(back.pad.open)
+        assertFalse(back.pad.orphaned)
+        assertFalse(back.pad.silentDue)
+        assertTrue(back.pad.line)
+        assertEquals(1, back.pad.autoAsks)
+        // Then a tap asks as always.
+        assertEquals(PadAction.ASK, bootPadStep(back.pad, PadEvent.TAPPED, true, true, false).action)
+        // A relaunch while the ask hadn't reached the keyguard (the boot's early relaunches) asks again, uncounted, as before.
+        val early = bootPadStep(BootPad(), PadEvent.RESUMED, true, true, false, covered = true, keyguard = KeyguardRead.NOT_SHOWN).pad
+        val reask = bootPadStep(early, PadEvent.RELAUNCHED, true, true, false, covered = true, keyguard = KeyguardRead.SHOWN)
+        assertEquals(PadAction.ASK, reask.action)
+        assertTrue(reask.pad.reached)
+        assertEquals(1, reask.pad.autoAsks)
+        // A stop ends the orphan like any open ask.
+        assertFalse(bootPadStep(relaunched.pad, PadEvent.STOPPED, true, false, false).pad.orphaned)
     }
 
     @Test

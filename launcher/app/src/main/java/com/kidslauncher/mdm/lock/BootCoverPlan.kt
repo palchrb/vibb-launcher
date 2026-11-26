@@ -463,15 +463,28 @@ const val BOOT_PAD_RETRY_MS = 1_000L
  * the error retry never runs. An ask with no answer is asked again at these times after it - uncounted, the same ask -
  * and then every [BOOT_PAD_SILENT_EVERY_MS] until an answer, a stop or the screen going off: in the fix run's first
  * boot SystemUI's keyguard took its first ask 32 s after ours (26-42 s in its other boots). Every 6 s after 12 s keeps
- * the kid's wait on SystemUI's clock, once it is ready, under 6 s. Only while no window is over the cover (phase D gate
- * §6bt finding 2: with the pad up and unanswered it was asked for again every 3-6 s, and once on Android 14 a re-ask
- * at the screen-off went with a cancel): an ask that reached SystemUI shows the pad, which takes the window focus from
- * the cover, so a silence with the cover unfocused is the pad up - no re-ask, the clock goes on.
+ * the kid's wait on SystemUI's clock, once it is ready, under 6 s. Not while Android's pad is up (phase D gate §6bt
+ * finding 2: with the pad up and unanswered it was asked for again every 3-6 s, and once on Android 14 a re-ask at the
+ * screen-off went with a cancel): an ask that reached SystemUI's keyguard ([BootPad.reached]) shows the pad, which takes
+ * the window focus from the cover, so a silence with the cover unfocused after such an ask is the pad up - no re-ask,
+ * the clock goes on. The focus alone is not the pad (the rc.5 gate §6bv finding 1, Android 16): before SystemUI's
+ * keyguard is shown the cover has no focus yet and the ask is lost, and SystemUI's first show at boot can put its own
+ * lock screen (the clock, not the pad) over the cover with the focus - an ask that never reached the keyguard is asked
+ * again whatever has the focus.
  */
 val BOOT_PAD_SILENT_REASK_AT_MS = listOf(3_000L, 6_000L, 12_000L)
 
 /** After [BOOT_PAD_SILENT_REASK_AT_MS], an ask still unanswered is asked again this often. */
 const val BOOT_PAD_SILENT_EVERY_MS = 6_000L
+
+/**
+ * §6bv code QA M1: the pad taken as up ([BootPad.upMs]) with no answer this long is asked for again, and again at most
+ * this often - "reached" is a reading, not proof the pad came (Android 16 drops a request that comes before its
+ * bouncer is wired, "PrimaryBouncerInteractor#show ... before the primaryBouncerDelegate is set", while the keyguard
+ * already reads shown), so the cover never stays without a pad for good; with the pad really up the ask changes
+ * nothing visible (SystemUI keeps the pad and adds the callback). §6bt finding 2's re-asks every 3-6 s stay gone.
+ */
+const val BOOT_PAD_UP_REASK_MS = 30_000L
 
 /** How long after the ask's re-ask number [reasks] (0 = the ask itself) the next [PadEvent.SILENT] is due. */
 fun bootPadSilentInMs(reasks: Int): Long {
@@ -530,7 +543,14 @@ enum class PadAction {
  * [armed]: an automatic ask may come at the next resume (a new cover, and after every stop); [open]: an ask is out
  * with no answer; [auto]: that ask is automatic (counted); [retried]: it used its one retry; [retryDue]: the retry is
  * posted; [line]: "Trykk for å låse opp" shows under the mark (an ask ended without the PIN); [silentDue]: RC3-1's
- * [PadEvent.SILENT] is posted for the open ask; [reasks]: how often that ask was asked again for its silence.
+ * [PadEvent.SILENT] is posted for the open ask; [reasks]: how often that ask was asked again for its silence;
+ * [reached]: the open ask, or one of its re-asks, went out while Android's keyguard was shown (rc.5 gate §6bv finding
+ * 1, [KeyguardRead.SHOWN]), so SystemUI took it - the pad comes, or an answer; [unsure]: the last ask read
+ * [KeyguardRead.UNSURE] - a second unsure reading at its silence (3 s or more later; the stand-in state lasts until
+ * the cover occludes) counts as shown; [orphaned]: the open ask's pad is up but its answer went with an instance
+ * destroyed for a configuration change (§6bv finding 3) - it can't arrive; [upMs]: how long the silences have taken the
+ * pad as up with no answer ([BOOT_PAD_UP_REASK_MS]). A reading of not shown takes [reached] back (code QA M1): the
+ * keyguard isn't up, so no pad of it is.
  */
 data class BootPad(
     val autoAsks: Int = 0,
@@ -542,7 +562,21 @@ data class BootPad(
     val line: Boolean = false,
     val silentDue: Boolean = false,
     val reasks: Int = 0,
+    val reached: Boolean = false,
+    val orphaned: Boolean = false,
+    val unsure: Boolean = false,
+    val upMs: Long = 0,
 )
+
+/**
+ * §6bv: Android's keyguard as the cover reads it at a step (`KeyguardManager.isKeyguardLocked`). Window manager answers
+ * "the keyguard shown and not occluded, or input restricted by it": with the cover occluding, SystemUI's keyguard
+ * reporting itself shown - [NOT_SHOWN] until SystemUI's keyguard service is up and has shown it, [SHOWN] from then on,
+ * the pad up or not. Early in a boot, before window manager has the cover occluding and while that service isn't bound,
+ * its stand-in state reads shown too (Android 14: shown, then not shown, then shown - the run of the fix): a shown
+ * reading before the cover's window had the focus or the keyguard read not shown in its process is [UNSURE].
+ */
+enum class KeyguardRead { NOT_SHOWN, SHOWN, UNSURE }
 
 /** [silentInMs]: post [PadEvent.SILENT] this long from now, replacing one posted (RC3-1); `null` = leave it. */
 data class PadStep(val pad: BootPad, val action: PadAction, val silentInMs: Long? = null)
@@ -569,24 +603,52 @@ data class PadStep(val pad: BootPad, val action: PadAction, val silentInMs: Long
  * - **Succeeded**: the ask closes and the line goes (F59d-3); CE's unlock does the rest (the gate goes false, F3's
  *   wait).
  * - **Relaunched** (qa-59d-m-code M-4, the first resume of a cover recreated for a configuration change - the activity
- *   carries the whole pad over and skips the stop): an ask still out is asked again uncounted; else as Resumed.
+ *   carries the whole pad over and skips the stop): an ask still out is asked again uncounted (the old instance's
+ *   callback is gone) - unless its pad is up ([covered] and [BootPad.reached], §6bv finding 3: Android 14 relaunches the
+ *   cover two or three times during a boot): then no ask, the ask is [BootPad.orphaned] - its answer can't arrive, so
+ *   the cover with the focus back means the pad went: the ask closes with the line, as a cancel; else as Resumed.
  * - **Silent** (RC3-1): every ask (automatic, tapped, a retry's, a relaunch's) posts [PadEvent.SILENT]; still open when
  *   it comes, the ask is asked again - uncounted, the same ask, its count and arm untouched - at
  *   [BOOT_PAD_SILENT_REASK_AT_MS] after it and then every [BOOT_PAD_SILENT_EVERY_MS], with the screen on and, for an
- *   automatic ask, no call, and the cover not [covered] (its window without the focus: Android's pad, or another
- *   system window, is over it - the ask reached SystemUI) - else that tick is skipped and the clock goes on (code QA
- *   Q-2: a call that ends before its screen covered the cover, or a screen off and on before the pause, brings no stop
- *   to close the ask; §6bt finding 2: the pad up is no silence to ask again for). Any answer, a stop or a lost gate ends
- *   the posting.
+ *   automatic ask, no call, and not with the pad up - [covered] (the cover's window without the focus) after an ask
+ *   that [BootPad.reached] the keyguard ([keyguard] at the ask) - else that tick is skipped and the clock goes on
+ *   (code QA Q-2: a call that ends before its screen covered the cover, or a screen off and on before the pause, brings
+ *   no stop to close the ask; §6bt finding 2: the pad up is no silence to ask again for). [covered] without a reached
+ *   ask is no pad (§6bv finding 1: no focus yet at boot, or SystemUI's own lock screen over the cover): asked again;
+ *   so is [covered] with the keyguard reading not shown now. The pad taken as up for [BOOT_PAD_UP_REASK_MS] with no
+ *   answer is asked for again (code QA M1), its clock anew. An [BootPad.orphaned] ask with the cover focused closes
+ *   with the line. Any answer, a stop or a lost gate ends the posting.
  * An answer with no ask open (an earlier ask's) changes nothing.
  */
-fun bootPadStep(pad: BootPad, event: PadEvent, gate: Boolean, interactive: Boolean, inCall: Boolean, covered: Boolean = false): PadStep {
-    if (!gate) return PadStep(pad.copy(open = false, retryDue = false, silentDue = false), PadAction.NONE)
+fun bootPadStep(
+    pad: BootPad,
+    event: PadEvent,
+    gate: Boolean,
+    interactive: Boolean,
+    inCall: Boolean,
+    covered: Boolean = false,
+    keyguard: KeyguardRead = KeyguardRead.SHOWN,
+): PadStep {
+    if (!gate) return PadStep(pad.copy(open = false, retryDue = false, silentDue = false, orphaned = false), PadAction.NONE)
     val none = PadStep(pad, PadAction.NONE)
     // The open ask closes now: an automatic one with the screen off gives its count back.
     val closedCount = if (pad.open && pad.auto && !interactive) (pad.autoAsks - 1).coerceAtLeast(0) else pad.autoAsks
-    // RC3-1: every ask (not a silence's re-ask) starts its silence's clock.
-    fun ask(asked: BootPad) = PadStep(asked.copy(silentDue = true, reasks = 0), PadAction.ASK, bootPadSilentInMs(0))
+    // RC3-1: every ask (not a silence's re-ask) starts its silence's clock. §6bv: it reached the keyguard when shown now.
+    fun ask(asked: BootPad) =
+        PadStep(
+            asked.copy(
+                silentDue = true,
+                reasks = 0,
+                reached = keyguard == KeyguardRead.SHOWN,
+                unsure = keyguard == KeyguardRead.UNSURE,
+                orphaned = false,
+                upMs = 0,
+            ),
+            PadAction.ASK,
+            bootPadSilentInMs(0),
+        )
+    // Code QA M1: a keyguard reading not shown now is no pad up, whatever an earlier ask read.
+    val padUp = covered && pad.reached && keyguard != KeyguardRead.NOT_SHOWN
     return when (event) {
         PadEvent.RESUMED ->
             if (pad.armed && !pad.open && interactive && !inCall && pad.autoAsks < BOOT_PAD_AUTO_ASKS) {
@@ -600,13 +662,15 @@ fun bootPadStep(pad: BootPad, event: PadEvent, gate: Boolean, interactive: Boole
         // M-4: a configuration-change relaunch is no stop and no new automatic ask. The ask still out is asked again by
         // the new instance, uncounted (the pad stays up; a second request only re-registers); with the screen off it
         // closes as a stop would. Nothing out: the resume's rule.
+        // §6bv finding 3: not while its pad is up - the ask stays open, orphaned (its answer went with the old instance).
         PadEvent.RELAUNCHED -> when {
+            pad.open && interactive && padUp -> PadStep(pad.copy(orphaned = true), PadAction.NONE)
             pad.open && interactive -> ask(pad.copy(retried = false, retryDue = false))
-            pad.open -> PadStep(pad.copy(autoAsks = closedCount, armed = true, open = false, retryDue = false, silentDue = false, line = true), PadAction.NONE)
-            else -> bootPadStep(pad, PadEvent.RESUMED, gate, interactive, inCall)
+            pad.open -> PadStep(pad.copy(autoAsks = closedCount, armed = true, open = false, retryDue = false, silentDue = false, orphaned = false, line = true), PadAction.NONE)
+            else -> bootPadStep(pad, PadEvent.RESUMED, gate, interactive, inCall, covered, keyguard)
         }
         PadEvent.STOPPED ->
-            PadStep(pad.copy(autoAsks = closedCount, armed = true, open = false, retryDue = false, silentDue = false, line = pad.line || pad.open), PadAction.NONE)
+            PadStep(pad.copy(autoAsks = closedCount, armed = true, open = false, retryDue = false, silentDue = false, orphaned = false, line = pad.line || pad.open), PadAction.NONE)
         PadEvent.SUCCEEDED -> if (!pad.open) none else PadStep(pad.copy(open = false, silentDue = false, line = false), PadAction.NONE)
         PadEvent.CANCELLED -> if (!pad.open) none else PadStep(pad.copy(autoAsks = closedCount, open = false, silentDue = false, line = true), PadAction.NONE)
         PadEvent.ERROR -> when {
@@ -621,8 +685,23 @@ fun bootPadStep(pad: BootPad, event: PadEvent, gate: Boolean, interactive: Boole
         }
         PadEvent.SILENT -> when {
             !pad.silentDue || !pad.open -> none
-            !interactive || covered || (pad.auto && inCall) -> PadStep(pad, PadAction.NONE, bootPadSilentInMs(pad.reasks))
-            else -> PadStep(pad.copy(reasks = pad.reasks + 1), PadAction.ASK, bootPadSilentInMs(pad.reasks + 1))
+            // §6bv finding 3: the orphaned ask's pad went (the cover has the focus back) - closed as a cancel.
+            pad.orphaned && !covered -> PadStep(pad.copy(open = false, silentDue = false, orphaned = false, line = true), PadAction.NONE)
+            !interactive || (pad.auto && inCall) -> PadStep(pad, PadAction.NONE, bootPadSilentInMs(pad.reasks))
+            // The pad up: no re-ask - until it has been up this long with no answer (code QA M1).
+            padUp && pad.upMs + bootPadSilentInMs(pad.reasks) < BOOT_PAD_UP_REASK_MS ->
+                PadStep(pad.copy(upMs = pad.upMs + bootPadSilentInMs(pad.reasks)), PadAction.NONE, bootPadSilentInMs(pad.reasks))
+            else -> {
+                val shown = keyguard == KeyguardRead.SHOWN || (keyguard == KeyguardRead.UNSURE && pad.unsure)
+                val reask = pad.copy(
+                    reasks = pad.reasks + 1,
+                    reached = shown || (pad.reached && keyguard != KeyguardRead.NOT_SHOWN),
+                    unsure = keyguard == KeyguardRead.UNSURE,
+                    orphaned = false,
+                    upMs = 0,
+                )
+                PadStep(reask, PadAction.ASK, bootPadSilentInMs(pad.reasks + 1))
+            }
         }
     }
 }

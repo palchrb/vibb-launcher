@@ -111,8 +111,8 @@ class BootCoverManifestTest {
         val step = body("padStep")
         assertTrue(step.contains("val gate = padGate()"))
         assertTrue(step.contains("val inCall = gate && telecomInCall()"))
-        assertTrue(step.contains("val step = bootPadStep(pad, event, gate, interactive, inCall, covered)"))
-        assertTrue(step.contains("PadAction.ASK -> askPad(event)"))
+        assertTrue(step.contains("val step = bootPadStep(pad, event, gate, interactive, inCall, covered, keyguard)"))
+        assertTrue(step.contains("PadAction.ASK -> askPad(event, covered, keyguard, padUp)"))
         // The flag follows the gate at create, every resume, the unlock broadcast and F3's poll once unlocked.
         assertTrue(activity.substringAfter("override fun onCreate(").substringBefore("\n    }\n").contains("waitForLauncher = persistent\n        applyLockedFace()"))
         val resume = activity.substringAfter("override fun onResume()").substringBefore("\n    }\n")
@@ -160,10 +160,21 @@ class BootCoverManifestTest {
         assertTrue(step.contains("if (!pad.silentDue) handler.removeCallbacks(padSilent)\n        step.silentInMs?.let {\n            handler.removeCallbacks(padSilent)\n            handler.postDelayed(padSilent, it)"))
         assertTrue(resume.contains("if (pad.silentDue) handler.postDelayed(padSilent, bootPadSilentInMs(pad.reasks))"))
         // §6bt finding 2: the rule hears whether a window (Android's pad) has the focus over the cover.
-        assertTrue(step.contains("val covered = !hasWindowFocus()\n        val step = bootPadStep(pad, event, gate, interactive, inCall, covered)"))
+        // §6bv finding 1: and whether Android's keyguard is shown (an ask then reached it), read at every step.
+        // Only once a cover window of the process had the focus (window manager has it occluding; Android 14's stand-in
+        // state reads shown before SystemUI's keyguard exists).
+        assertTrue(step.contains("val covered = !hasWindowFocus()\n        val keyguard = keyguardRead()"))
+        val read = body("keyguardRead")
+        assertTrue(read, read.contains("if (!keyguardShown()) {\n            keyguardSeenDownThisProcess = true\n            return KeyguardRead.NOT_SHOWN"))
+        assertTrue(read, read.contains("return if (focusSeenThisProcess || keyguardSeenDownThisProcess) KeyguardRead.SHOWN else KeyguardRead.UNSURE"))
+        val firstFocus = activity.substringAfter("override fun onWindowFocusChanged(").substringBefore("\n    }\n")
+        assertTrue(firstFocus, firstFocus.contains("if (hasFocus) focusSeenThisProcess = true"))
+        assertTrue(body("keyguardShown").contains("getSystemService(KeyguardManager::class.java)?.isKeyguardLocked != false"))
         // Code QA L1: the focus back after the open ask lost it is the silence at once; every ask starts unlost.
+        // §6bv finding 3: so is an orphaned ask's first focus (its pad was up when this instance came).
         val focus = activity.substringAfter("override fun onWindowFocusChanged(").substringBefore("\n    }\n")
         assertTrue(focus, focus.contains("if (pad.open) focusLostSinceAsk = true"))
+        assertTrue(focus, focus.contains("val lost = focusLostSinceAsk || pad.orphaned"))
         assertTrue(focus, focus.contains("if (lost && resumed && pad.open && pad.silentDue) {\n            handler.removeCallbacks(padSilent)\n            handler.post(padSilent)"))
         assertTrue(body("askPad").contains("focusLostSinceAsk = false"))
         assertFalse("no default Back override", activity.contains("onBackPressed"))
@@ -380,11 +391,12 @@ class BootCoverManifestTest {
     }
 
     /** f3-run B3: initRest's tail after the PIN lock's init is its own posted message (the boot pass and what the system
-     * queued run before it; one long message starved KidVpnService into a service ANR). */
+     * queued run before it; one long message starved KidVpnService into a service ANR). Since §6bv finding 2 the lock's
+     * init is in the setup's second part, rulesAndLock. */
     @Test
-    fun `initRest posts its tail after the lock's init (f3-run B3)`() {
+    fun `initRest (its second part) posts its tail after the lock's init (f3-run B3)`() {
         val app = code("java/com/kidslauncher/mdm/Application.kt")
-        val initRest = app.substringAfter("private fun initRest(").substringBefore("\n    }\n")
+        val initRest = app.substringAfter("private fun rulesAndLock(").substringBefore("\n    }\n")
         val posted = initRest.substringAfter("PinLockRuntime.init(this)")
         val tail = posted.substringAfter("android.os.Handler(android.os.Looper.getMainLooper()).post {")
         assertTrue(posted.contains("android.os.Handler(android.os.Looper.getMainLooper()).post {"))
