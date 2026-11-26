@@ -1503,7 +1503,7 @@ async fn the_locate_tab_speaks_norwegian() {
     let html = locate_page(&app, &cookie, &format!("?device={id}&lang=nb")).await;
     assert!(html.contains(r#"<html lang="nb">"#));
     for words in [
-        "<h1 class=\"page-title\">Finn</h1>",
+        "<h1 class=\"page-title\">Kart</h1>",
         "Posisjonsinnstillinger",
         "Oppdater posisjon<",
         "Finn telefonen",
