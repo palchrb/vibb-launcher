@@ -55,6 +55,7 @@ findings, merge to `main`, full suite once.
   (the SIM); the GPS signal floor and the three-networks question (the Jelly's data); Vipps/BankID browser; (4i) the charging glimpse (a log); the Jelly device checks.
 - **Inbox (not prioritised)** - the owner's new issues and ideas since the lock, each waiting to be discussed:
   - (moved to the locked list as 5b, 2026-11-25)
+  - Upstream updates kept current (the owner, 2026-11-26: "Ja", after the release): Dependabot (cargo, GitHub Actions by SHA, the Dockerfile; Gradle as notices only - its checksums are added by hand and compared with the publisher's), a 7-day cooldown, no auto-merge; a weekly scheduled CI run (build + tests of all three, `cargo audit`, `osv-scanner` on the Gradle verification metadata) that speaks only when something fails; a monthly hand check of what Dependabot can't see (the Rust toolchain pin, the Gradle wrapper, tsnet, the Android SDK/AGP).
   - Lock alert per app (the owner, 2026-11-24: "burde nesten sette dette per app"): today one choice Av/Vibrer/Lyd
     for the phone (design 130), only for notices whose lock-glance row isn't Off; per app would sit on the Lock
     Screen page's app rows.
