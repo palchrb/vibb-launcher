@@ -146,6 +146,26 @@
   typed again and refused can't delete it), then drops every other key, the old one included (`enrolmentDrops`), and
   every enrolment challenge (`newEnrolmentBook`), as every new enrolment does (design 129 §5.1). A healthy enrolled phone (`enrolled` set) never gets the screen.
   `PolicyGateTest`, `ConnectScreenTest`, `FirstLaunchResetTest`, `DeviceKeyContractTest`.
+- The adopted key's sync restores the enrolment (the gate before rc.4, finding 2, 2026-11-26). Koble til stores the
+  typed address before it enrols, also when the code is then refused, and the adopted key still signs: the phone syncs
+  again with its old key as its old device, while `enrolled` stays gone and Koble til came back at every Home. Rule
+  (`enrolmentRestoredBySync`): a policy accepted on a request the adopted key signed (`DeviceCredential.Key`), from
+  the host the witness named before that sync (read before `storeAcceptedPolicy` rewrites the witness's address;
+  `connectUrlAllowed`'s host rule), on a phone the witness says enrolled, sets `enrolled` with a synchronous `commit()`
+  (`restoreEnrolled`, after the accepted policy is stored); an open Koble til reads its rule again and closes. Never
+  without a witnessed address (an unreadable witness names none) and never for another host. It touches nothing of
+  design 129's: no key, token or witness write; a lost key gives no credential and so no sync, and a key the server
+  doesn't know gets no policy. The old key stays the credential until a new code binds a fresh one, as before.
+  `ConnectScreenTest`.
+- The address refused for its host has its own line (finding 4): S-M1's rule first, with its whole reason
+  (`server_url_refused`); an address that passes it on another host than the witnessed one says "Det er ikke
+  telefonens server." / "That isn't this phone's server." (`connect_other_server`, `connectUrlRefusal`).
+- Never over parent Settings (finding 3): the drawer's Settings on a cut phone showed the gate's dialog and then Koble
+  til over it - most likely the first Settings open writing its preferences' defaults, so Home, stopped under it, was
+  recreated and passed through `onResume` - and Back showed the dialog again. `SettingsFront` counts parent Settings
+  from its `onStart` until it is closed (`onPause` while finishing), the parent leaves it (`onUserLeaveHint`: Home,
+  recents) or it stops; `startFromHome` starts nothing while it is shown, and Koble til comes back at the next resume
+  of Home after Settings. `ConnectScreenTest`.
 - Back closes it for that one resume of Home; it comes back the next time Home comes to the front. Not exported, out
   of Recents, `FLAG_SECURE`. `ConnectScreenTest`.
 

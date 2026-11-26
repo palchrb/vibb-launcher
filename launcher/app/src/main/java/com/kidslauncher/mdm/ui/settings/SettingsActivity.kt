@@ -101,7 +101,23 @@ class SettingsActivity : UIObjectActivity() {
             gatePassed = false
         }
         ownPageAt = null
+        markFront(true)
         enforceGate()
+    }
+
+    /** Whether this instance counts in [SettingsFront] now; main thread. */
+    private var countedFront = false
+
+    private fun markFront(front: Boolean) {
+        if (front == countedFront) return
+        countedFront = front
+        SettingsFront.count += if (front) 1 else -1
+    }
+
+    /** Home pressed, or recents: the parent left Settings - Home's resume right after may show Koble til. */
+    override fun onUserLeaveHint() {
+        markFront(false)
+        super.onUserLeaveHint()
     }
 
     private fun enforceGate() {
@@ -140,6 +156,8 @@ class SettingsActivity : UIObjectActivity() {
     override fun onPause() {
         LauncherPreferences.getSharedPreferences()
             .unregisterOnSharedPreferenceChangeListener(sharedPreferencesListener)
+        // Closed (its X, Back, Cancel): Home's resume right after may show Koble til.
+        if (isFinishing) markFront(false)
         super.onPause()
     }
 
@@ -148,6 +166,7 @@ class SettingsActivity : UIObjectActivity() {
         // next onStart asks for the PIN again. A configuration change keeps it (see onCreate).
         val ownPage = ownPageKeepsGate(ownPageAt, android.os.SystemClock.elapsedRealtime(), atStop = true)
         if (!ownPage) ownPageAt = null
+        markFront(false)
         if (!isChangingConfigurations && !ownPage) {
             session++
             gatePassed = false
@@ -164,6 +183,7 @@ class SettingsActivity : UIObjectActivity() {
     }
 
     override fun onDestroy() {
+        markFront(false)
         pinDialog?.dismiss()
         pinDialog = null
         super.onDestroy()
@@ -193,4 +213,17 @@ class SettingsActivity : UIObjectActivity() {
     private companion object {
         const val STATE_GATE_PASSED_FOR_RECREATE = "settings_gate_passed_for_recreate"
     }
+}
+
+/**
+ * Gate rc.4 finding 3: parent Settings is in front - from its `onStart` until it is closed, the parent leaves it (Home,
+ * recents) or it stops. Koble til isn't started over it by a resume of Home ([com.kidslauncher.mdm.setup.ConnectActivity]):
+ * the drawer's Settings on a cut phone showed the gate's dialog, then Koble til over it, and Back showed the dialog
+ * again. Main thread only.
+ */
+object SettingsFront {
+    var count = 0
+        internal set
+
+    val shown: Boolean get() = count > 0
 }

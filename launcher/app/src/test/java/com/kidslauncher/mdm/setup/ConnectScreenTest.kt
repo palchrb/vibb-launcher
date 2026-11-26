@@ -87,9 +87,71 @@ class ConnectScreenTest {
         assertTrue("no witnessed address: the address rule alone", connectUrlAllowed("https://other.example.org", null))
         val connect = code("setup/ConnectActivity.kt").substringAfter("private fun connect()").substringBefore("private fun hideIme()")
         assertTrue(
-            "if (!serverUrlUsable(url, BuildConfig.DEBUG) || !connectUrlAllowed(url, EnrolmentWitness.serverUrl(this))) {\n" +
-                "            lastError.value = R.string.server_url_refused" in connect,
+            "connectUrlRefusal(serverUrlUsable(url, BuildConfig.DEBUG), connectUrlAllowed(url, EnrolmentWitness.serverUrl(this)))" in connect,
         )
+        assertTrue("ConnectUrlRefusal.ADDRESS_RULE -> R.string.server_url_refused" in connect)
+        assertTrue("ConnectUrlRefusal.OTHER_SERVER -> R.string.connect_other_server" in connect)
+    }
+
+    @Test
+    fun `another host gets its own line, the address rule keeps its own`() {
+        // Gate rc.4 finding 4: https://other.example.org broke no address rule - the line says it isn't this phone's server.
+        assertEquals(ConnectUrlRefusal.OTHER_SERVER, connectUrlRefusal(usable = true, allowed = false))
+        assertEquals(ConnectUrlRefusal.ADDRESS_RULE, connectUrlRefusal(usable = false, allowed = true))
+        assertEquals("the address rule first", ConnectUrlRefusal.ADDRESS_RULE, connectUrlRefusal(usable = false, allowed = false))
+        assertEquals(null, connectUrlRefusal(usable = true, allowed = true))
+        val en = File(main, "res/values/strings.xml").readText()
+        val nb = File(main, "res/values-nb/strings.xml").readText()
+        assertTrue("<string name=\"connect_other_server\">That isn\\'t this phone\\'s server.</string>" in en)
+        assertTrue("<string name=\"connect_other_server\">Det er ikke telefonens server.</string>" in nb)
+    }
+
+    @Test
+    fun `a signed sync with the witnessed server restores the enrolment`() {
+        val witnessed = "https://vibb.example.org"
+        // Gate rc.4 finding 2: the cut phone's adopted key synced with its own server - enrolled again.
+        assertTrue(enrolmentRestoredBySync(enrolled = false, keySigned = true, witnessEnrolled = true, syncedUrl = witnessed, witnessUrl = witnessed))
+        assertTrue(enrolmentRestoredBySync(enrolled = false, keySigned = true, witnessEnrolled = true, syncedUrl = "https://VIBB.example.org/", witnessUrl = witnessed))
+        // Already enrolled: nothing to restore.
+        assertFalse(enrolmentRestoredBySync(enrolled = true, keySigned = true, witnessEnrolled = true, syncedUrl = witnessed, witnessUrl = witnessed))
+        // The bearer alone signed nothing with the key: not this rule.
+        assertFalse(enrolmentRestoredBySync(enrolled = false, keySigned = false, witnessEnrolled = true, syncedUrl = witnessed, witnessUrl = witnessed))
+        // Never against another host, never without a witnessed address, never without the witness.
+        assertFalse(enrolmentRestoredBySync(enrolled = false, keySigned = true, witnessEnrolled = true, syncedUrl = "https://other.example.org", witnessUrl = witnessed))
+        assertFalse(enrolmentRestoredBySync(enrolled = false, keySigned = true, witnessEnrolled = true, syncedUrl = "https://vibb.example.org.evil.example", witnessUrl = witnessed))
+        assertFalse(enrolmentRestoredBySync(enrolled = false, keySigned = true, witnessEnrolled = true, syncedUrl = witnessed, witnessUrl = null))
+        assertFalse(enrolmentRestoredBySync(enrolled = false, keySigned = true, witnessEnrolled = false, syncedUrl = witnessed, witnessUrl = witnessed))
+        // Restored, Koble til is no longer due (the key and the witness unchanged).
+        assertFalse(connectScreenDue(deviceOwner = true, enrolled = true, tokenStored = false, keyAdopted = true, policyEverApplied = true, witnessEnrolled = true))
+        // The sync: the witness read before the policy rewrites its address, the restore after the accepted policy,
+        // only for a key-signed request, committed synchronously.
+        val sync = code("server/MdmSyncWorker.kt")
+        val perform = sync.substringAfter("suspend fun performMdmSync(")
+        val before = perform.indexOf("val witnessUrlBefore = EnrolmentWitness.serverUrl(context)")
+        val store = perform.indexOf("storeAcceptedPolicy(context, freshPolicy)")
+        val restore = perform.indexOf("enrolmentRestoredBySync(mdm.enrolled(), keySigned, witnessEnrolledBefore, serverUrl, witnessUrlBefore)")
+        assertTrue(before in 0 until perform.indexOf("fetchPolicy("))
+        assertTrue(restore > store && store > 0)
+        assertTrue("val keySigned = credential is DeviceCredential.Key" in perform)
+        val write = sync.substringAfter("private fun restoreEnrolled()").substringBefore("\n}\n")
+        assertTrue(".putBoolean(mdm.keys().enrolled(), true).commit()" in write)
+        assertTrue("ConnectActivity.enrolmentRestored()" in write)
+        for (key in listOf("DeviceKeys.", "KeyBook.", "DeviceToken.", "EnrolmentWitness.")) assertFalse(key, key in write)
+        // An open screen reads the rule again.
+        assertTrue("restored.collect { render() }" in code("setup/ConnectActivity.kt").substringAfter("override fun onStart()"))
+    }
+
+    @Test
+    fun `Koble til never comes up over parent Settings`() {
+        // Gate rc.4 finding 3: the drawer's Settings showed its gate's dialog, then Koble til over it.
+        val start = code("setup/ConnectActivity.kt").substringAfter("fun startFromHome(activity: Activity)")
+        assertTrue(start.indexOf("if (com.kidslauncher.mdm.ui.settings.SettingsFront.shown) return false") in 0 until start.indexOf("activity.startActivity("))
+        val settings = code("ui/settings/SettingsActivity.kt")
+        assertTrue("markFront(true)" in settings.substringAfter("override fun onStart()").substringBefore("private fun enforceGate()"))
+        assertTrue("if (isFinishing) markFront(false)" in settings.substringAfter("override fun onPause()").substringBefore("override fun onStop()"))
+        for (left in listOf("override fun onUserLeaveHint()", "override fun onStop()", "override fun onDestroy()")) {
+            assertTrue(left, "markFront(false)" in settings.substringAfter(left).substringBefore("\n    }\n"))
+        }
     }
 
     @Test
