@@ -876,8 +876,15 @@ pub fn lock_card(policy: &DevicePolicy, phone: &PhoneLock) -> LockCard {
             .map(|package| LockNote::CallsCantRing(package.clone())),
     );
     if phone.android_capable {
-        // No Android PIN at all is said once, above (the phone reports no rev then too).
-        if runs_android && state.pin_rev.is_none() && !phone.no_pin && !state.no_android_pin() {
+        // No Android PIN at all is said once, above (the phone reports no rev then too). Without the reset token
+        // (Koble til on a phone with a screen lock, design 132 §7.1: `refused: no_token`) the PIN can't be put back
+        // yet - [LockNote::NoResetToken]'s "unlock once first" alone says it (phase D gate §6bt finding 4).
+        if runs_android
+            && state.pin_rev.is_none()
+            && state.reset_token
+            && !phone.no_pin
+            && !state.no_android_pin()
+        {
             card.notes.push(LockNote::PinNotChildPin {
                 stored: policy.kid_pin_sealed.is_some(),
             });
@@ -902,6 +909,19 @@ pub fn lock_card(policy: &DevicePolicy, phone: &PhoneLock) -> LockCard {
         card.notes.push(LockNote::SteppedAside(state.exempt_yields));
     }
     card
+}
+
+/// Design 114b's line on Lock Screen & PINs while the phone reports no PIN at all, as keys (title, the fix behind the
+/// ⓘ): no Child PIN stored - "No Child PIN", choose one below; one stored - "The phone has no PIN", and the fix is
+/// "Send again below" where the button is ([offers_send_again]), else "Save the Child PIN again" (phase D gate §6bt
+/// finding 5: never "Choose a Child PIN below" while one is stored - a legacy PIN without a copy, until the phone's
+/// next report).
+pub fn no_pin_line(pin_set: bool, send_again: bool) -> (&'static str, &'static str) {
+    match (pin_set, send_again) {
+        (false, _) => ("device.lock.no_child_pin", "device.lock.no_pin_fix"),
+        (true, true) => ("device.lock.no_pin", "device.lock.no_pin_send"),
+        (true, false) => ("device.lock.no_pin", "device.lock.no_pin_save"),
+    }
 }
 
 /// A Child PIN is set, but the phone has no lock (design 31 L2, an Attention alarm): the phone reports it inactive
@@ -1585,6 +1605,27 @@ mod tests {
         }
     }
 
+    /// Phase D gate §6bt finding 5: with a Child PIN stored, the no-PIN line never asks to choose one.
+    #[test]
+    fn the_no_pin_line_never_asks_for_a_child_pin_while_one_is_stored() {
+        assert_eq!(
+            no_pin_line(false, false),
+            ("device.lock.no_child_pin", "device.lock.no_pin_fix")
+        );
+        assert_eq!(
+            no_pin_line(true, true),
+            ("device.lock.no_pin", "device.lock.no_pin_send")
+        );
+        assert_eq!(
+            no_pin_line(true, false),
+            ("device.lock.no_pin", "device.lock.no_pin_save")
+        );
+        assert_eq!(
+            t(Lang::Nb, no_pin_line(true, false).1),
+            "Lagre barne-PIN på nytt."
+        );
+    }
+
     /// Design 59 §2.3 and design 132 §4.5, case by case: what the phone runs against the stored Child PIN.
     #[test]
     fn the_card_words_android_lock_case_by_case() {
@@ -1662,6 +1703,14 @@ mod tests {
             lock_card(&unkept, &android_phone(&state)).notes[0],
             LockNote::PinNotChildPin { stored: false }
         );
+        // §6bt finding 4: Koble til on a phone with a screen lock - another PIN and no token yet (`refused:
+        // no_token`): only "unlock once first", never "not the Child PIN, send it again", and no Attention row.
+        let state = reported("android", None, false);
+        assert_eq!(
+            lock_card(&p, &android_phone(&state)).notes,
+            [LockNote::NoResetToken, on(true)]
+        );
+        assert!(!pin_changed_on_phone(&p, &android_phone(&state)));
         // Behind, without the token, locked again under the glance.
         let mut state = reported("android", Some(3), false);
         state.keyguard_relocks = 2;

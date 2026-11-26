@@ -499,6 +499,68 @@ async fn an_unconfirmed_command_nudges_the_phone() {
     );
 }
 
+/// Phase D gate §6bt finding 6: a command the pop would hand out gets one nudge when the phone's stream opens - a
+/// nudge sent while the phone had no live stream (a short drop, a server restart with a row waiting) was lost, and a
+/// reopen within the launcher's 10 minutes syncs nothing. None with nothing due, none for a row already handed out.
+#[tokio::test]
+async fn the_stream_nudges_at_its_open_while_a_command_is_due() {
+    use axum::body::Body;
+    use axum::http::{Request, header};
+    use http_body_util::BodyExt;
+    use std::time::Duration;
+
+    let app = TestApp::new().await;
+    let (device, token) = app.enrolled_device("phone").await;
+    report_receipts(&app, &token).await;
+    let open = || async {
+        let request = Request::builder()
+            .uri("/api/devices/commands/stream")
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap();
+        let response = app
+            .call_via(&app.router, super::LOOPBACK_PEER, request)
+            .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        response.into_body()
+    };
+    let nudged = |mut body: Body| async move {
+        match tokio::time::timeout(Duration::from_millis(300), body.frame()).await {
+            Err(_) => false,
+            Ok(frame) => {
+                let data = frame.unwrap().unwrap().into_data().unwrap();
+                assert_eq!(std::str::from_utf8(&data).unwrap(), "data: command\n\n");
+                true
+            }
+        }
+    };
+
+    assert!(!nudged(open().await).await, "nothing due, no nudge");
+    let id = queue(&app, device, "ring").await;
+    assert!(
+        crate::handlers::device_api::command_due(&app.db, device)
+            .await
+            .unwrap()
+    );
+    assert!(
+        nudged(open().await).await,
+        "a waiting command: one nudge at the open"
+    );
+    // Handed out: not due again until its re-delivery, so a reopen is quiet.
+    assert_eq!(app.policy(&token).await["pending_command"]["id"], id);
+    assert!(!nudged(open().await).await, "handed out: no nudge");
+    // Due again for its re-delivery (unconfirmed, past the gap, within the window): one more.
+    age_delivery(&app, id, 3).await;
+    assert!(
+        nudged(open().await).await,
+        "a re-delivery is due: one nudge"
+    );
+    // Confirmed: never again.
+    assert_eq!(receipt(&app, &token, id).await, StatusCode::NO_CONTENT);
+    age_delivery(&app, id, 3).await;
+    assert!(!nudged(open().await).await, "confirmed: no nudge");
+}
+
 /// QA Low 2: a new enrollment into the same device row ends its pending commands - a wipe for a
 /// lost phone never reaches the replacement - and the security log says so.
 #[tokio::test]

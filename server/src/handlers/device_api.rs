@@ -1013,6 +1013,51 @@ pub(crate) async fn build_policy(
     })
 }
 
+/// The command the pop of [build_policy] hands out next, as a `SELECT {select}` of its row (the oldest due), for
+/// [pop_command] and [command_due] alike - one rule, so the stream's open nudge and the pop can't drift. Its binds are
+/// `bind_due!`'s.
+fn due_command(select: &str) -> String {
+    format!(
+        "SELECT {select} FROM device_commands WHERE device_id = ? \
+           AND {} \
+           AND (command NOT IN (?, ?, ?, ?) OR requested_at > datetime('now', ?)) \
+           AND (command != ? OR (SELECT kid_pin_rev FROM device_policy \
+                WHERE device_policy.device_id = device_commands.device_id) = ?) \
+           AND (delivered_at IS NULL OR (deliveries < ? \
+                AND delivered_at <= datetime('now', ?) \
+                AND first_delivered_at > datetime('now', ?))) \
+          ORDER BY requested_at ASC, id ASC LIMIT 1",
+        crate::models::COMMAND_OPEN
+    )
+}
+
+/// [due_command]'s binds, in its order: the device, then the rev the `set_kid_pin` row must still have.
+macro_rules! bind_due {
+    ($query:expr, $device_id:expr, $kid_pin_rev:expr) => {
+        $query
+            .bind($device_id)
+            .bind(crate::models::EXPIRING_COMMANDS[0])
+            .bind(crate::models::EXPIRING_COMMANDS[1])
+            .bind(crate::models::EXPIRING_COMMANDS[2])
+            .bind(crate::models::EXPIRING_COMMANDS[3])
+            .bind(format!(
+                "-{} minutes",
+                crate::models::COMMAND_EXPIRY_MINUTES
+            ))
+            .bind(crate::kid_lock::SET_KID_PIN)
+            .bind($kid_pin_rev)
+            .bind(crate::models::MAX_COMMAND_DELIVERIES)
+            .bind(format!(
+                "-{} minutes",
+                crate::models::REDELIVER_AFTER_MINUTES
+            ))
+            .bind(format!(
+                "-{} minutes",
+                crate::models::REDELIVER_WINDOW_MINUTES
+            ))
+    };
+}
+
 /// The next command for this device (the pop of [build_policy], one statement): marks it delivered
 /// and returns `(id, command, requested_at, payload)`. `kid_pin_rev` is the rev of the
 /// `device_policy` row the answer was built from: a `set_kid_pin` goes out only while it is still
@@ -1026,40 +1071,35 @@ pub(crate) async fn pop_command(
     let pop = format!(
         "UPDATE device_commands SET delivered_at = datetime('now'), deliveries = deliveries + 1, \
            first_delivered_at = COALESCE(first_delivered_at, datetime('now')) \
-         WHERE id = (SELECT id FROM device_commands WHERE device_id = ? \
-           AND {} \
-           AND (command NOT IN (?, ?, ?, ?) OR requested_at > datetime('now', ?)) \
-           AND (command != ? OR (SELECT kid_pin_rev FROM device_policy \
-                WHERE device_policy.device_id = device_commands.device_id) = ?) \
-           AND (delivered_at IS NULL OR (deliveries < ? \
-                AND delivered_at <= datetime('now', ?) \
-                AND first_delivered_at > datetime('now', ?))) \
-          ORDER BY requested_at ASC, id ASC LIMIT 1) \
+         WHERE id = ({}) \
          RETURNING id, command, requested_at, payload",
-        crate::models::COMMAND_OPEN
+        due_command("id")
     );
-    sqlx::query_as(&pop)
-        .bind(device_id)
-        .bind(crate::models::EXPIRING_COMMANDS[0])
-        .bind(crate::models::EXPIRING_COMMANDS[1])
-        .bind(crate::models::EXPIRING_COMMANDS[2])
-        .bind(crate::models::EXPIRING_COMMANDS[3])
-        .bind(format!(
-            "-{} minutes",
-            crate::models::COMMAND_EXPIRY_MINUTES
-        ))
-        .bind(crate::kid_lock::SET_KID_PIN)
-        .bind(kid_pin_rev)
-        .bind(crate::models::MAX_COMMAND_DELIVERIES)
-        .bind(format!(
-            "-{} minutes",
-            crate::models::REDELIVER_AFTER_MINUTES
-        ))
-        .bind(format!(
-            "-{} minutes",
-            crate::models::REDELIVER_WINDOW_MINUTES
-        ))
+    bind_due!(sqlx::query_as(&pop), device_id, kid_pin_rev)
         .fetch_optional(db)
+        .await
+}
+
+/// The pop would hand this device a command now ([due_command] at the stored rev): the stream's open sends one nudge
+/// then (phase D gate §6bt finding 6). A nudge sent while the phone had no live stream - a short drop, a server
+/// restart with a row waiting, a half-open connection - is lost, and a reopen within the launcher's 10 minutes of
+/// its last reopen sync (`syncOnSseReopen`) syncs nothing, so the row waited for the 30-minute backstop or a parent's
+/// next save. Bounded like the pop: once handed out a row is due again only for its re-deliveries.
+pub(crate) async fn command_due(
+    db: &sqlx::SqlitePool,
+    device_id: i64,
+) -> Result<bool, sqlx::Error> {
+    let Some(rev): Option<i64> =
+        sqlx::query_scalar("SELECT kid_pin_rev FROM device_policy WHERE device_id = ?")
+            .bind(device_id)
+            .fetch_optional(db)
+            .await?
+    else {
+        return Ok(false);
+    };
+    let due = format!("SELECT EXISTS({})", due_command("1"));
+    bind_due!(sqlx::query_scalar::<_, bool>(&due), device_id, rev)
+        .fetch_one(db)
         .await
 }
 
@@ -2869,6 +2909,16 @@ pub async fn commands_stream(
     let rx = state.command_notify.subscribe();
     // Design 108 §3.9: app push's content-free `up`, a channel of its own (none of the command nudges change).
     let up_rx = state.unified_push.subscribe();
+    // §6bt finding 6: a command the pop would hand out now gets one nudge at the open (subscribed first, so a nudge
+    // sent meanwhile is in `rx` too - one extra sync at most, which the phone's runner coalesces).
+    let due = match command_due(&state.db, device_id).await {
+        Ok(due) => due,
+        Err(err) => {
+            tracing::warn!(device = device_id, %err, "couldn't read the phone's due command at the stream's open");
+            false
+        }
+    };
+    let first = tokio_stream::iter(due.then(|| Some(Event::default().data("command"))));
     // Moved into the stream: dropped (stream counted closed) when the connection ends.
     let guard = state.command_streams.open(device_id);
     tracing::info!(device = device_id, "command stream opened");
@@ -2891,9 +2941,8 @@ pub async fn commands_stream(
         }
         _ => None,
     });
-    let stream = nudges
-        .merge(ups)
-        .merge(close)
+    let stream = first
+        .chain(nudges.merge(ups).merge(close))
         .take_while(Option::is_some)
         .filter_map(move |event| {
             let _open: &crate::streams::StreamGuard = &guard;
