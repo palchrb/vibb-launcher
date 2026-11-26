@@ -6243,7 +6243,9 @@ Findings: none in the code; three rows' expectations are off (b's `QUIET` timing
 `cleared (off)`, j's "one device missing" with a three-network home gives a fix) - the table above says what the build
 does. Not run: row j's cell clause (above).
 
-## 6bu. The glance's handle room on Android 14, the boot cover's one ask (branch `glance-bootcover`) - written, not run
+Row k (revision 4) was run on 2026-11-26 before launcher rc.5: §6bv.
+
+## 6bu. The glance's handle room on Android 14, the boot cover's one ask (branch `glance-bootcover`) - run 2026-11-26 (§6bv)
 
 Two findings of phase D's emulator gate (`phase-d-launcher`'s §6bt, run 2026-11-26) that `main` has too, fixed here
 for launcher rc.5 (the same code is on `phase-d-fixes`):
@@ -6261,3 +6263,144 @@ for launcher rc.5 (the same code is on `phase-d-fixes`):
 | R1 | The glance in both navigation modes (Android's PIN set): `uiautomator dump` - `lock_glance_emergency`'s bottom at or above `lock_glance_handle`'s top (14 3-button: Nødsamtale up to 734 over the handle `[746,782]`); a swipe up from the handle's upper half opens Android's pad, never "Call 112?"; Nødsamtale's tap still asks "Call 112?" | x | x |
 | R2 (code QA M1) | A restart on a **cold first boot** (`adb emu kill`, a cold boot, so SystemUI's keyguard is late), both navigation modes: while SystemUI is late (no pad yet) `adb shell dumpsys window \| grep mCurrentFocus` names the boot cover (`BootCoverActivity`) and the log has the re-asks ("no answer, again N"); once the pad is up `mCurrentFocus` names SystemUI's `NotificationShade` and `logcat -s` the cover's tag shows exactly one ask after it ("a window (Android's pad) is over the cover - no re-ask" once, no "again N" while the pad is up); the PIN opens Home | x | x |
 | R3 | The same boot with the pad cancelled (Back on the pad): "Trykk for å låse opp" under the mark, no ask until a tap; a tap asks once | x | x |
+
+## 6bv. The gate before launcher rc.5 (branch `gate-rc5`) - run 2026-11-26
+
+On **Android 14 and 16** with the owner's OK (the 17 images don't run). `main` at `1682889d6`: the debug launcher
+(`0.23.6-debug`, versionCode 116), the debug music app and a debug server (`--features emulator_keys`,
+`LAUNCHER_DEBUG_SIGNATURE_CHECKSUM`) from the same tree, **one server per image** (14: the relay `0.0.0.0:3150` ->
+`127.0.0.1:3152`; 16: `3160` -> `3162`, §6br's relay with its policy switch), so each image's snapshots go with their
+own server data. Android 14 on `compat34` (Google APIs, `-wipe-data`, `adb root` where a row needs it). Android 16 on
+`jelly36` (Google Play) for R1, R3, the first reboots and the first cut; its System UI then hung for good (an "isn't
+responding" dialog that took no input, `Failed to find ColorBuffer` in the emulator's log, the screen off with adb gone
+and no way to wake it from the console - no key event, AC toggle or simulated call did), so every other row ran on
+**`aosp36`** (AOSP, `-wipe-data`, root). Each phone: §4's adb lines, the debug music app installed by adb, "Blokker
+USB-feilsøking" off in the PWA **before** the enrolment (so adb outlives the first policy), Koble til with a typed
+code, the setup flow finished, Lås: Android's lock, Barne-PIN 1357 and Foreldre-PIN 246813 from the PWA, 3-button
+navigation, the screen timeout 10 min (Lås, so the console-driven rows don't lose the screen), then `gate-do` (Device
+Owner, not enrolled) and `gate-base` (enrolled with its key) saved as snapshots with a copy of the server data (§3,
+"Faster gates"). **A snapshot survives an emulator restart**: `aosp36` crashed once during an `adb reboot` (a crashpad
+dump in its log, not out of memory) and came back with `-snapshot gate-do -no-snapshot-save` in 19 s. With adb gone
+after the cut, the console drove the screen (touches, `event text` in pieces, a long-press's Cut to clear a field,
+`screenrecord screenshot`). Logs and screenshots in the session's `scratchpad/g-rc5/` (not committed).
+
+### §6bp rows 5-13 and 12b (Koble til with the key book kept)
+
+| Row | Android 14 (`compat34`) | Android 16 (`aosp36`) |
+|---|---|---|
+| 5 | **Pass.** `{"enrolled":true,"policy_applied":true,"server_url":"http://10.0.2.2:3150"}`; `device_key.xml` adopts `device_key_1`, `device_key_adopted.xml` the same | **Pass.** The same (`:3160`, `device_key_1`) |
+| 6 | **Pass.** The cut (200 bytes, key book kept), `adb reboot`: Android's pad, 1357, Koble til with `http://10.0.2.2:3150` and Emergency call under the button; no "Resetting preferences" | **Pass**, with finding 1 at the boot (the pad came only after a screen off/on): Koble til with `:3160`, `Home hasn't started yet, but the phone is enrolled - keeping its preferences`. On `jelly36` the first cut reached the pad, then System UI hung (above) |
+| 7 | **Pass.** "Call 112?" with Cancel and Call; Cancel back to Koble til | **Pass** |
+| 8 | **Pass.** The navigation bar's Back: Home with nothing allowed (Phone book, Settings); Phone book, then Back: Koble til again | **Pass** |
+| 9 | **Pass.** The drawer (a fast console swipe) and its gear: "Enter code to open settings", **Koble til not over it** (also 3 s later); 111111: "That code didn't match. Try again."; 246813 opens Settings (Server URL "Not set") | **Pass.** The same |
+| 10 | **Pass.** adb `offline` from the fallback after the unlock, never opened by the lost file (the restrictions not readable meanwhile) | **Pass.** The same |
+| 12 | **Pass.** `https://other.example.org`: "That isn't this phone's server." under the fields, no request at the relay; `http://other.example.org`: the address rule's line ("The phone only uses a server address that starts with https:// ...") | **Pass.** The same |
+| 12b | **Pass.** `http://10.0.2.2:3150` with the used code: "That code didn't work. Check it and try again, or make a new one."; 21 s later the relay has `GET commands/stream`, the policy, apps and status; Koble til closed and didn't come back (Phone book and Back, Home); the drawer's gear still asks for the code. The `Enrolment restored` line not read: adb was closed by the cut (the relay shows the sync). A second time by accident with an empty code: the same | **Pass.** The same, the stream 4 s after the refused code |
+| 11 | **Pass** (from `gate-base`, cut, reboot): a new code typed: the stream and the policy at once, no setup flow, Home with the policy's apps; the server's `device_keys` holds only the new key (`jfQj...`), the old one gone; the phone's key book not read (adb closed) | **Pass.** The same (the new key `fmCK...` alone) |
+| 13 | **Pass** (from `gate-do`, the relay dropping `GET /api/devices/policy`): the witness `{"enrolled":true,"server_url":"http://10.0.2.2:3150"}`, the cut, the reboot: Android's swipe screen (no PIN yet), then Koble til with the address; Back: Home with every app, lock task `NONE`; `APPLICATION_PREFERENCES` opens Settings with no code | **Pass.** The same |
+
+### The VPN service at a reboot (§6bp's finding 1, fixed on `launcher-edges-2`)
+
+Every reboot's log checked for `ANR in me.vibb...` and `Tunnel: filter`:
+
+| Image | Boots | Result |
+|---|---|---|
+| 14 `compat34` | 6 `adb reboot` (both navigation modes, the cuts) and 2 cold boots | **Pass.** No Vibb One ANR; `Tunnel: filter` and `Filter up and always-on` after every unlock. GMS ANRs at most boots (environment) |
+| 16 `aosp36` | 3 `adb reboot`, 2 cold boots | **Pass.** No Vibb One ANR; `Tunnel: filter` after every unlock |
+| 16 `jelly36` | 3 `adb reboot` | **Fail, finding 2.** One `executing service ...KidVpnService, waited 20117ms` (3-button reboot, 20 s after the unlock) and one `executing service ...BadgeListenerService, waited 22356ms` (the cut's reboot); both times the main thread was in `Application.initUnlocked`, not in the service. The tunnel came back with the restarted process (`tun0` up) |
+
+### §6bu R1-R3
+
+| # | 14 (`compat34`) | 16 |
+|---|---|---|
+| R1 | **Pass.** 3-button: `lock_glance_emergency` `[136,662][343,734]` over `lock_glance_handle` `[159,746][321,782]` (the bar `[0,782][480,854]`); gestures: `[136,698][343,770]` over `[159,782][321,818]`. A swipe from the handle's upper half (y 755 / 791): `NotificationShade` with "Enter your PIN" (Android's pad), no "Call 112?"; Emergency call's tap: "Call 112?" | **Pass** on `jelly36`: 3-button the same bounds as 14; gestures `[136,734][343,806]` over `[159,818][321,854]`; the swipe opens "Enter PIN", the tap "Call 112?" |
+| R2 | **Pass, with a note.** Cold boots (`adb emu kill`, `-no-snapshot-load`), both modes: the cover focused while System UI is late, the asks (`resumed`, `no answer, again 1`), the pad (`NotificationShade`) and one "a window (Android's pad) is over the cover - no re-ask"; no "again N" while the pad is up; 1357 opens Home (`Boot cover leaves (taken over, Home over it): 27525 ms after the unlock`). The note: on 14 the cover is relaunched two or three times during the boot (`wm_relaunch_resume_activity`, configuration changes), and each relaunch asks again (`asks ... (relaunched, automatic 1 of 3)`), once while the pad was already up - the pad stayed, nothing visible (finding 3) | **Fail** on `aosp36`, both modes (finding 1): the first ask lands before System UI's keyguard (`wm_set_keyguard_shown` 5-10 s later), the next silence is skipped as "covered" while the cover has no window focus yet, no "again N" follows when the focus arrives, and once the keyguard's own lock screen takes the focus (`NotificationShade`, the clock - not the pad) every silence is skipped: System UI's clock over the cover, no pad, swipes and taps do nothing, until a screen off/on (`asks ... (resumed)`, the pad). The same at 2 of 3 `adb reboot`s on `aosp36` and once on `jelly36` (3-button) |
+| R3 | **Pass**, both modes (`adb reboot`): Back on the pad: `Android's PIN pad cancelled`, "Tap to unlock" under the mark, no ask in the next 20 s; a tap: one ask (`tapped`), then the pad and one "no re-ask" | **Pass** on `jelly36`, both modes (in 3-button the pad first had to come up, finding 1) |
+
+### §6bs row k (design 134 rev 4, the connected router as a still witness)
+
+The setup as §6bs's run (Regularly 10 min, Location on, `mock_location` for the launcher; on `compat34` the `network`
+test provider off - it has to be added as the shell user, before `adb root`: as root `cmd location providers` is
+refused with `android from uid 0 not allowed to perform MOCK_LOCATION`, and a Locate then gives a `fused` fix that
+takes no print). Home's networks (§6bs's made-up scan) taught by Locates with the satellite feed on two local days
+(the clock 31 min on, the zone to `Pacific/Kiritimati`): `scan usable=4 trusted=4 networks=3`; `motion sensor` armed.
+Each case is a fresh vouch at home (home's scan, connected to `00:00:5e:00:53:01` at `-42`, the feed, a Locate) and then
+the cap try with the clock 245 min on (root `date`), GPS silent, one neighbour AP heard 600 s ago, a PWA save as the
+nudge.
+
+| Case | Android 14 (`compat34`) | Android 16 (`aosp36`) |
+|---|---|---|
+| The vouch | **Pass.** `vouch link read level=scan`, `StillPrint: taken devices=3` | **Pass.** The same |
+| Connected at `-45` | **Pass.** `scan answer 0/1 ask=answered old`, `connected witness renews level=link screen=off dbm=-45 vouch=-45 diff=0`, `attempt path=LEARNED_FIRST result=renewed`, `Location heartbeat: STILL renewed by the connected AP`; no GPS. **`vouch=-45`, not the row's `-42`**: the vouch's level is the answering scan's entry for the connected BSSID (D20.6, `level=scan`), and home's made-up scan has `53:01` at `-45` | **Pass.** The same lines |
+| At `-62` | **Pass.** `connected witness no reason=level level=link screen=off dbm=-62 vouch=-45 diff=-17`, `result=none`, `cap try failed fails=1 vouch=re-sent` | **Pass.** The same |
+| At `-127` | **Pass.** `connected witness no reason=nolevel`, `fails=1` | **Pass** |
+| The other BSSID (`53:02`) | **Pass.** `connected witness no reason=other ... diff=0` | **Pass** |
+| networkId `-1` | **Pass.** `connected witness no reason=binding` | **Pass** |
+| BSSID `02:00:00:00:00:00` | **Pass.** `connected witness no reason=unreadable` | **Pass** |
+| `motion fire` first | **Pass.** `attempt path=TOGETHER result=withheld reason=old`, `FIX result=inconclusive reason=old n=1/3`; no witness line, no renewal | **Pass** |
+| A fresh neighbour scan of 3 devices of their own, connected at `-45` | **Pass, with a note.** `scan answer 3/3 ask=cache noconnected`, no `STILL ended`; the witness then renewed (`connected witness renews ...`, `STILL renewed by the connected AP`) - the row says nothing of a renewal here; D23 lets a renewing witness stand | **The same** |
+| The 24-h ceiling | **Pass.** Renewed at 245, 490, 735, 980 and 1225 min; at 1470 min `connected witness no reason=ceiling`, `cap try failed fails=1 vouch=dropped`; the next two beats `fails=2`, `fails=3` (the ladder's retries), then `QUIET backoff=60 min` and no `still` | **Pass.** The same |
+
+The server's side of `still` was not readable: with the phone's clock hours ahead of the server's real time the
+server drops the report's fix (`dropped locations that aren't valid ... refused=1`), so no `resent_at` - the clock
+step's own limit, as §6bs's "no new location row".
+
+### music-nudge: the launcher's report ask (rows written here)
+
+`docs/notes/launcher/music-bridge.md`, "The report ask": the launcher asks (`BRIDGE_CHANGED` with
+`me.vibb.music.extra.REPORT_ASK`) when the music app's last report is 12 h old and no ask went out in 3 h; it calls the
+bridge `unbound` only when the report is older than `REPORT_STALE_MS` (**26 h**) and the first ask since it is 30 min
+old and unanswered. The times are moved in the launcher's `music_bridge` preferences (`report_at`,
+`report_ask_first`, `report_ask_last`, epoch ms) with `run-as me.vibb.launcher.debug` and the launcher's process
+killed first (the restarted process syncs at once); the values are worked out on the host (the device shell's
+arithmetic is 32-bit). The sync's nudge is a PWA save; the log is `adb logcat -s MusicSync`; the bridge word is the
+server's newest `device_status.music_state_json`.
+
+| # | Step | Expect |
+|---|---|---|
+| N1 | A report 11 h old (`report_at` 660 min back), no ask recorded; a sync | no `asked for one`; `report_at` unchanged; `bridge` `bound` |
+| N2 | The music app idle: `am set-standby-bucket me.vibb.music.debug restricted`, left cached until `dumpsys activity processes` shows `isFrozen=true`; `report_at` 780 min back | `MusicSync: The music app's report is 780 min old: asked for one`; the music app reports within seconds (`report_at` now) and is frozen again; `bridge` `bound` |
+| N2b | The same with the music app force-stopped (`stopped=true`) | the ask reaches it (`FLAG_INCLUDE_STOPPED_PACKAGES`); it reports; `bound` |
+| N3 | The music app disabled (`pm disable-user --user 0`): the ask goes, no answer; then the asks set 31 min back, with the report 13 h and then 27 h old; then the last ask 181 min back (the first 211); then the app on again | the ask unanswered: `bound` while the first ask is under 30 min, and with the report 13 h old even after 30 min (under 26 h); with the report 27 h old and the first ask 31 min old: `unbound`; at 181 min a new ask (`asked for one`), `report_ask_first` kept, still `unbound`; the app on again reports by itself: `bound` |
+| N4 | A phone without a policy (§6bp row 13's: the relay drops the policy), the music app installed, never reported | no `asked for one`, no `music_bridge` preferences at all |
+
+| # | Android 14 (`compat34`) | Android 16 (`aosp36`) |
+|---|---|---|
+| N1 | **Pass.** 660 min, a new status row, no ask, `bound` | **Pass** |
+| N2 | **Pass.** Bucket 45 (restricted), `isFrozen=true`; `asked for one` at 11:16:48, `report_at` 0 min, frozen again after; `bound` | **Pass, the bucket not restricted:** `set-standby-bucket` left the music app at 5 (exempted) on this image; frozen (`isFrozen=true`); the ask at `...929847` and the report at `...929881` ms (34 ms); `bound` |
+| N2b | **Pass.** The ask at `...373881`, the report 1.3 s later | **Pass** |
+| N3 | **Pass.** 13 h + 31 min: `bound`; 27 h + 31 min: `unbound`; the re-ask kept the first (211 min), `unbound`; the app on: it reported on its own (the package change's nudge), `bound` | **Pass.** The same |
+| N4 | **Pass** | **Pass** |
+
+### Findings (no product code changed here)
+
+1. **Medium - the boot cover takes System UI's lock screen for Android's pad and stops asking** (launcher,
+   `lock/BootCoverActivity.kt` `padStep`: `covered = !hasWindowFocus()`; `lock/BootCoverPlan.kt`). Android 16
+   (`aosp36`): both cold boots and 2 of 3 `adb reboot`s; `jelly36` once (3-button reboot); never on 14. The cover's first
+   ask (`resumed`) comes before System UI's keyguard is shown (`wm_set_keyguard_shown` 5-10 s later) and gets no answer;
+   the next silence falls while the cover's window has no focus yet ("a window (Android's pad) is over the cover - no
+   re-ask"); when the focus does arrive (`input_focus` "Focus entering ...BootCoverActivity" 3-4 s later) no re-ask
+   follows; then the keyguard's own lock screen (`NotificationShade`, the clock, **not** the bouncer) takes the focus and
+   every later silence is skipped. The kid sees System UI's clock over the cover; on `aosp36` swipes and taps did
+   nothing; a screen off/on asks again (`resumed`) and the pad comes. Repro: `aosp36`, Android's PIN set by the policy,
+   `adb emu kill`, cold boot, `adb shell dumpsys window | grep mCurrentFocus` (`NotificationShade`) with a console
+   screenshot showing the clock, `adb logcat -b events | grep input_focus`. §6bu's fix assumed a `NotificationShade`
+   with the focus is the pad; it is also the lock screen.
+2. **Low-medium - the launcher's main thread is busy over 20 s after the first unlock on a slow boot**, so a service
+   started then can't be created: on `jelly36` (2 GB, CPU pressure 73 %) one `executing service ...KidVpnService, waited
+   20117ms` and one `executing service ...BadgeListenerService, waited 22356ms`, both with the main thread in
+   `Application.initRest` <- `initUnlocked` <- `ensureUnlockedInit` <- `KidAppComponentFactory.instantiateProvider`
+   (`TimeRulesRuntime.recheck`, `TrustedClock.read`, `ClockAnchor.getBootCount`), and the log full of the debug
+   build's `Verification of ... took N ms`. The VPN service's own work is off the main thread now (that fix holds); this
+   is the process's unlock work. Environment first (not seen on `compat34` or `aosp36` in 13 boots), but the unlock init
+   on the main thread is ours. Repro: `jelly36`, reboot, unlock, `adb shell dumpsys dropbox --print data_app_anr`.
+3. **Low - on Android 14 the boot cover is relaunched two or three times during a boot and each relaunch asks for
+   the pad again** (`asks ... (relaunched, automatic 1 of 3)` after `wm_relaunch_resume_activity`), once while the pad
+   was up; the pad stayed, nothing visible. Repro: `compat34`, a cold boot, `logcat -s BootCover`.
+4. **Words in the rows** (no code): §6bs row k's `vouch=-42 diff=-3` is `vouch=-45 diff=0` with §6bs's home scan (the
+   level is the answering scan's, D20.6); its noconnected case also renews by the witness. The music-nudge rule's
+   `unbound` needs a report older than 26 h (`REPORT_STALE_MS`), not 12 h (12 h is when the ask goes).
+
+Not run: Android 17 (no working image); §6bp row 10's `dumpsys device_policy`, row 11's phone-side key book and 12b's
+`Enrolment restored` line (adb closed by the cut; the server's tables and the relay stand in); R1 and R3 on `aosp36`
+(run on `jelly36`); R2 on `jelly36` (System UI hung; run on `aosp36`).
