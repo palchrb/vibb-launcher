@@ -161,6 +161,11 @@ class BootCoverManifestTest {
         assertTrue(resume.contains("if (pad.silentDue) handler.postDelayed(padSilent, bootPadSilentInMs(pad.reasks))"))
         // §6bt finding 2: the rule hears whether a window (Android's pad) has the focus over the cover.
         assertTrue(step.contains("val covered = !hasWindowFocus()\n        val step = bootPadStep(pad, event, gate, interactive, inCall, covered)"))
+        // Code QA L1: the focus back after the open ask lost it is the silence at once; every ask starts unlost.
+        val focus = activity.substringAfter("override fun onWindowFocusChanged(").substringBefore("\n    }\n")
+        assertTrue(focus, focus.contains("if (pad.open) focusLostSinceAsk = true"))
+        assertTrue(focus, focus.contains("if (lost && resumed && pad.open && pad.silentDue) {\n            handler.removeCallbacks(padSilent)\n            handler.post(padSilent)"))
+        assertTrue(body("askPad").contains("focusLostSinceAsk = false"))
         assertFalse("no default Back override", activity.contains("onBackPressed"))
         val views = body("faceViews")
         for (needed in listOf("if (!face) tapLine?.visibility = View.GONE", "isClickable = face", "contentDescription = if (face) getString(R.string.boot_cover_tap_to_unlock) else null")) {

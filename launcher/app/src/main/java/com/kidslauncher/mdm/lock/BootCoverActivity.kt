@@ -119,6 +119,9 @@ class BootCoverActivity : Activity() {
     /** §6bt finding 2: the open ask's "the pad is up, no re-ask" was logged (once per ask, not at every tick). */
     private var coveredLogged = false
 
+    /** Code QA L1: the open ask lost the window focus since it went out (a window - Android's pad - came over the cover). */
+    private var focusLostSinceAsk = false
+
     /** What [applyBackHold] last set ([coverHoldsBack]). */
     private var holdsBack = false
 
@@ -249,6 +252,23 @@ class BootCoverActivity : Activity() {
         logo?.stop()
         handler.removeCallbacksAndMessages(null)
         super.onPause()
+    }
+
+    /** Code QA L1 of the §6bt fixes: the focus back, after the open ask lost it, with that ask still unanswered - the
+     * window over the cover (Android's pad, a dialog) went without an answer - is the silence at once, not at the
+     * clock's next tick. Only after a loss since the ask: the first focus of a resume (often after its ask) is none. */
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (!hasFocus) {
+            if (pad.open) focusLostSinceAsk = true
+            return
+        }
+        val lost = focusLostSinceAsk
+        focusLostSinceAsk = false
+        if (lost && resumed && pad.open && pad.silentDue) {
+            handler.removeCallbacks(padSilent)
+            handler.post(padSilent)
+        }
     }
 
     /** Disable, then finish once the disable reads back - the system re-resolves HOME at once
@@ -474,6 +494,7 @@ class BootCoverActivity : Activity() {
         if (!padGate()) return
         val id = ++askId
         coveredLogged = false
+        focusLostSinceAsk = false
         // RC3-1: a silence's re-ask says so (no answer since the ask; uncounted, the same ask).
         val what = if (why == PadEvent.SILENT) "no answer, again ${pad.reasks}" else why.name.lowercase()
         Log.i(LOG_TAG, "Boot cover asks for Android's PIN pad ($what, automatic ${pad.autoAsks} of $BOOT_PAD_AUTO_ASKS)")
