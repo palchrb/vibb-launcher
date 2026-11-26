@@ -624,7 +624,10 @@ class MusicPlanTest {
             Row("stale, the first ask 6 h ago, the last 3 h ago: asked again, still unbound", true, true, stale, ReportAsk(now - 6 * h, now - REPORT_ASK_EVERY_MS), true, "unbound"),
             Row("stale, the ask answered before it went stale: a new ask, bound", true, true, stale, ReportAsk(stale - h, stale - h), true, "bound"),
             Row("a clock moved back: asked again", true, true, now - REPORT_ASK_AFTER_MS, ReportAsk(now + h, now + h), true, "bound"),
-            Row("not managed: never asked", true, false, stale, null, false, "bound"),
+            Row("a report time in the future (clock moved back) answers nothing: unbound after the ask", true, true, now + h, ReportAsk(now - REPORT_ASK_ANSWER_MS, now - REPORT_ASK_ANSWER_MS), false, "unbound"),
+            Row("a report time in the future, never asked: asked", true, true, now + h, null, true, "bound"),
+            Row("a policy without a music object, or a refused one (MusicSync passes policy != null): asked", true, true, stale, null, true, "bound"),
+            Row("no policy: never asked", true, false, stale, null, false, "bound"),
             Row("not installed: never asked", false, true, stale, null, false, "bound"),
         )
         for (r in rows) {
@@ -639,6 +642,9 @@ class MusicPlanTest {
         assertEquals("answered since: this ask is the first", ReportAsk(now, now), reportAskSent(ReportAsk(stale - h, stale - h), stale, now))
         assertEquals("never reported: kept", ReportAsk(now - h, now), reportAskSent(ReportAsk(now - h, now - h), null, now))
         assertEquals("a first ask in the future (clock moved back) starts again", ReportAsk(now, now), reportAskSent(ReportAsk(now + h, now + h), stale, now))
+        assertEquals("a report time in the future answered nothing: the first ask is kept", ReportAsk(now - h, now), reportAskSent(ReportAsk(now - h, now - h), now + h, now))
+        // code QA M1: any policy makes the app managed for the ask, not only a music object
+        assertTrue(module("src/main/java/com/kidslauncher/mdm/music/MusicSync.kt").readText().contains("askForReport(app, pkg, managed = policy != null)"))
         // the whole cycle: asked at a stale report, unanswered for 30 min, then the report comes
         val asked = reportAskSent(null, stale, now)
         assertEquals("bound", bridgeWord(stale, asked, now + REPORT_ASK_ANSWER_MS - 1))
@@ -703,6 +709,7 @@ class MusicPlanTest {
     fun `the bridge's names match the shared contract`() {
         assertEquals((contract["bridge_service"] as JsonPrimitive).content, MusicBridgeService::class.java.name)
         assertEquals((contract["action_bridge_changed"] as JsonPrimitive).content, ACTION_BRIDGE_CHANGED)
+        assertEquals((contract["extra_report_ask"] as JsonPrimitive).content, EXTRA_REPORT_ASK)
         assertEquals(strings("music_packages"), MUSIC_PACKAGES)
         assertTrue(module("src/main/AndroidManifest.xml").readText().contains("\${applicationId}" + (contract["permission_suffix"] as JsonPrimitive).content))
         val types = (contract["restrictions"] as kotlinx.serialization.json.JsonObject).mapValues { (it.value as JsonPrimitive).content }

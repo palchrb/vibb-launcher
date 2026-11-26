@@ -37,6 +37,9 @@ fun musicNudgeOnChange(changedPackage: String?, trusted: (String) -> Boolean): S
 /** The bridge's nudge to the music app: carries nothing, only starts its sync. */
 const val ACTION_BRIDGE_CHANGED = "me.vibb.music.action.BRIDGE_CHANGED"
 
+/** The nudge's one extra (boolean true): the report ask ([reportAskDue]) - the music app reports at once. */
+const val EXTRA_REPORT_ASK = "me.vibb.music.extra.REPORT_ASK"
+
 /**
  * The music app's player activity and the extras Home's card sends it on a snapshot (21 §3 step 4:
  * open the player and continue). Spelled once in contracts/music/bridge_contract.json, which both apps read.
@@ -352,8 +355,9 @@ const val REPORT_ASK_ANSWER_MS = 30 * 60_000L
 data class ReportAsk(val firstAt: Long, val lastAt: Long)
 
 /**
- * Ask the music app for a report now: it is installed and managed (the phone's policy has a music object), its last
- * report is missing or older than [REPORT_ASK_AFTER_MS], and no ask went out in the last [REPORT_ASK_EVERY_MS]. A
+ * Ask the music app for a report now: it is installed and the phone is managed (it has a policy - with or without a
+ * music object, or one refused: the managed config is kept then, so the app still has its launcher and can answer), its
+ * last report is missing or older than [REPORT_ASK_AFTER_MS], and no ask went out in the last [REPORT_ASK_EVERY_MS]. A
  * clock moved back (a time in the future) counts as old, so the ask goes and its record starts again.
  */
 fun reportAskDue(installed: Boolean, managed: Boolean, lastReportAt: Long?, ask: ReportAsk?, nowMs: Long): Boolean =
@@ -361,21 +365,27 @@ fun reportAskDue(installed: Boolean, managed: Boolean, lastReportAt: Long?, ask:
         (lastReportAt == null || nowMs - lastReportAt !in 0 until REPORT_ASK_AFTER_MS) &&
         (ask == null || nowMs - ask.lastAt !in 0 until REPORT_ASK_EVERY_MS)
 
+/** A report time in the future (the clock moved back) is no report: it can't answer an ask. */
+private fun reportTime(lastReportAt: Long?, nowMs: Long): Long? = lastReportAt?.takeIf { it <= nowMs }
+
 /** The record after an ask sent at [nowMs]: the first ask since the last report is kept, else this one is the first. */
-fun reportAskSent(ask: ReportAsk?, lastReportAt: Long?, nowMs: Long): ReportAsk =
-    if (ask != null && (lastReportAt == null || lastReportAt < ask.firstAt) && ask.firstAt <= nowMs) ask.copy(lastAt = nowMs)
+fun reportAskSent(ask: ReportAsk?, lastReportAt: Long?, nowMs: Long): ReportAsk {
+    val at = reportTime(lastReportAt, nowMs)
+    return if (ask != null && (at == null || at < ask.firstAt) && ask.firstAt <= nowMs) ask.copy(lastAt = nowMs)
     else ReportAsk(nowMs, nowMs)
+}
 
 /**
- * The status report's `bridge` word: "bound" while the music app reports; with its report missing or older than
- * [REPORT_STALE_MS], "unbound" only once an ask went unanswered - the first ask since the last report is at least
- * [REPORT_ASK_ANSWER_MS] old. No ask yet (none was due, the app isn't managed, the sync didn't run) keeps "bound": the
- * app was never asked, so it isn't known to be unreachable.
+ * The status report's `bridge` word: "bound" while the music app reports; with its report missing, older than
+ * [REPORT_STALE_MS] or in the future, "unbound" only once an ask went unanswered - the first ask since the last report
+ * is at least [REPORT_ASK_ANSWER_MS] old. No ask yet (none was due, the phone has no policy, the sync didn't run) keeps
+ * "bound": the app was never asked, so it isn't known to be unreachable.
  */
 fun bridgeWord(lastReportAt: Long?, ask: ReportAsk?, nowMs: Long): String {
-    if (lastReportAt != null && nowMs - lastReportAt in 0 until REPORT_STALE_MS) return "bound"
+    val at = reportTime(lastReportAt, nowMs)
+    if (at != null && nowMs - at < REPORT_STALE_MS) return "bound"
     ask ?: return "bound"
-    val unanswered = lastReportAt == null || lastReportAt < ask.firstAt
+    val unanswered = at == null || at < ask.firstAt
     return if (unanswered && nowMs - ask.firstAt >= REPORT_ASK_ANSWER_MS) "unbound" else "bound"
 }
 

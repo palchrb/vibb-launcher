@@ -49,24 +49,25 @@ object MusicSync {
             return@withContext
         }
         val music = musicPolicy(policy?.music)
-        val nudged = writeRestrictions(app, policy, music)
-        if (nudged) nudge(app, pkg)
-        askForReport(app, pkg, managed = music != null, nudged)
+        if (writeRestrictions(app, policy, music)) nudge(app, pkg)
+        // any policy (code QA M1): a refused or missing music object keeps the managed config, so the app can answer
+        askForReport(app, pkg, managed = policy != null)
         grantRuntimePermissions(app, managed = policy != null)
         if (fetch && music != null) MusicCourier.request(app, music)
     }
 
     /**
-     * The music app's report is old ([reportAskDue]): ask for one with the nudge (a config nudge this sync already
-     * asked), recorded so the status report's `bridge` waits for the answer ([bridgeWord]). An idle music app is frozen
-     * and its own sync deferred by app standby; the explicit broadcast still reaches its manifest receiver.
+     * The music app's report is old ([reportAskDue]): ask for one with the nudge carrying [EXTRA_REPORT_ASK] (the app
+     * reports at once, inside its receiver), recorded so the status report's `bridge` waits for the answer
+     * ([bridgeWord]). An idle music app is frozen and its own sync deferred by app standby; the explicit broadcast still
+     * reaches its manifest receiver.
      */
-    private fun askForReport(app: Context, pkg: String, managed: Boolean, nudged: Boolean) {
+    private fun askForReport(app: Context, pkg: String, managed: Boolean) {
         val now = System.currentTimeMillis()
         val (_, reportAt) = MusicStore.report(app)
         val ask = MusicStore.reportAsk(app)
         if (!reportAskDue(installed = true, managed, reportAt, ask, now)) return
-        if (!nudged) nudge(app, pkg)
+        nudge(app, pkg, reportAsk = true)
         MusicStore.setReportAsk(app, reportAskSent(ask, reportAt, now))
         Log.i(LOG_TAG, "The music app's report is ${reportAt?.let { "${(now - it) / 60_000} min old" } ?: "missing"}: asked for one")
     }
@@ -185,11 +186,12 @@ object MusicSync {
     /**
      * The bridge's nudge (21 §2): an explicit broadcast that only starts the music app's sync. It
      * shares the launcher's identity, which the music app checks (qa-21-step3-code L7), and reaches a
-     * just-installed app never opened yet (L10).
+     * just-installed app never opened yet (L10). [reportAsk]: the report ask ([EXTRA_REPORT_ASK]).
      */
-    fun nudge(context: Context, pkg: String? = MusicStore.installedPackage(context)) {
+    fun nudge(context: Context, pkg: String? = MusicStore.installedPackage(context), reportAsk: Boolean = false) {
         pkg ?: return
         val intent = Intent(ACTION_BRIDGE_CHANGED).setPackage(pkg).addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES)
+        if (reportAsk) intent.putExtra(EXTRA_REPORT_ASK, true)
         context.sendBroadcast(intent, null, BroadcastOptions.makeBasic().setShareIdentityEnabled(true).toBundle())
     }
 
