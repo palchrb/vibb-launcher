@@ -6428,7 +6428,7 @@ Not run: Android 17 (no working image); §6bp row 10's `dumpsys device_policy`, 
 `Enrolment restored` line (adb closed by the cut; the server's tables and the relay stand in); R1 and R3 on `aosp36`
 (run on `jelly36`); R2 on `jelly36` (System UI hung; run on `aosp36`).
 
-## 6bw. A zone's Wi-Fi: the parent's confirmation, the learned link bound to its router (design 138, branch `wifi-link-confirm`) - written, not run
+## 6bw. A zone's Wi-Fi: the parent's confirmation, the learned link bound to its router (design 138, branch `wifi-link-confirm`) - run 2026-11-26 (branch `gate-138`)
 
 `docs/design/138-confirmed-zone-networks.md`: on **Android 14 and 16**. The setup of §6bn: the debug launcher,
 Regularly, a zone Home (150 m), Google's location accuracy off, Location on, the made-up scan and connection through
@@ -6441,22 +6441,22 @@ BSSID and the callback) is a device row: the emulator's own network is open.
 
 | # | Step | Expect |
 |---|---|---|
-| a | Nothing confirmed or learned for Home (`--ez clear true`, then the neighbours taught), GPS silent, home's scan, `connect "00:00:5e:00:53:01,Net-A,psk,7,5180"`; a sync | `zone wifi report yes netid=known`; the report's `device_status.zone_watch_json` has `wifi` with `Net-A`; the zone's page shows `Net-A` with Bekreft; with `open` - `zone wifi report no reason=security`, no row |
+| a | Nothing confirmed or learned for Home (`--ez clear true`, then the neighbours taught), GPS silent, home's scan, `connect "00:00:5e:00:53:01,Net-A,psk,7,5180"`; a sync | `zone wifi report yes netid=known`; the report's `device_status.zone_watch_json` has `wifi` with `Net-A`; the zone's page shows `Net-A` with Bekreft; with `open` - `zone wifi report no reason=security`, no `wifi` in the report (the page keeps the Bekreft row of the last report with `wifi` for its hour, D4) |
 | b | Tap Bekreft; Locate | the policy's zone has `networks` with the id, name and BSSID; `zone link confirmed rest=fix`, `wifi fix check=link step=USE`; the report's fix `check: "link"`; Locate no "Wi-Fi estimate"; "At Home" on the row only when the fix is surely inside the zone (the server's `zones::side`, unchanged) |
-| c | The finding's path: reinstall the same debug APK over itself (a new process, `MOVED`), then the heartbeat's own `FIX` | `attempt path=TOGETHER`, `check=link`, `Location heartbeat: FIX result=fresh`; no back-off |
+| c | The finding's path: reinstall the same debug APK over itself (a new process, `MOVED`), then the heartbeat's own `FIX` (the process start's try when a beat is due; else the clock 31 min on as root and a PWA save as the nudge) | `attempt path=TOGETHER`, `check=link`, `Location heartbeat: FIX result=fresh`; no back-off |
 | d | `connect` `00:00:5e:00:53:02` (the same router's other band); then `00:00:5e:00:58:01`, `Net-A` (another router) | the first `check=link` at once; the second `zone link none` (and with only it heard, `router fix unconfirmed`), the page's Bekreft row and no orange line; Bekreft - `check=link` |
 | e | `connect` another link of a router confirmed with a multi-link address (seventh field the same) | `check=link` at once |
-| f | The travel router: `Net-A` (a) connected, another place's scan (three neighbours taught 3 km away) | `zone link none rest=fix`, `check=none`; with only the router heard (its two names and an unknown router) - `zone link confirmed rest=nothing` |
+| f | The travel router: `Net-A` (a) connected, another place's scan (three neighbours taught 3 km away) | `zone link none rest=fix`, `check=none`; with only the router heard (its two names and an unknown router) - no Wi-Fi fix (no three usable results placed), `router fix continuity` (the last fix was the other place's: the gate), no `link` fix |
 | g | Then the satellite feed 3 km away (8 satellites) twice, 90 s apart, `Net-A` connected | one feed fix alone strikes nothing; after the second `zone link struck by=confirmed`; the next report's `zone_watch.wifi_struck` has the id; the page "Sett et annet sted"; the security log "Wi-Fi seen elsewhere" (the zone's name only); the policy drops the row; back home `check=none`; Bekreft again - a new id, `check=link` |
-| h | The learned link: no confirmation, GPS silent, home's scan and `Net-B` psk (another router); Locate 3 times 30 min apart over 2 local days | `link taught by=wifi occasions=1..3 days=1..2`; then `zone link learned rest=fix`, `check=link`; a scan of only `Net-B`, its guest name and unknown routers - no occasion (`occasions` unchanged) |
+| h | The learned link: no confirmation, GPS silent, home's scan and `Net-B` psk (another router); Locate 3 times 30 min apart over 2 local days, every made-up level moved by a dB between the Locates (the same levels twice read as a stale cache, D9's guard: `scan usable=.. fallback`, inconclusive, no occasion), the phone brought home by GPS first when its last satellite fix was elsewhere (the jump gate counts elapsed time, which the clock steps don't move: `step=REFUSE`) | `link taught by=wifi occasions=1..3 days=1..2`; then `zone link learned rest=fix`, `check=link`; a scan of only `Net-B`, its guest name and unknown routers - no occasion (`occasions` unchanged) |
 | i | Move the zone 200 m (radius 150); then confirm again and move it 50 m | the first clears the rows ("Wi-Fi removed" in the `zone_changed` line); the second keeps them |
-| j | Revision 3, the single-router fix: the last reported fix inside Home; `Net-A` confirmed and connected (`connect "00:00:5e:00:53:01,Net-A,psk,7,5180"`), only it heard (its two names, in the made-up scan at -45 dBm), GPS silent; Locate | `router fix fix at=own acc=39` (half the row's range and 25 m; `at=zone acc=152` before its rows are taught), `wifi fix check=link step=USE`; the report's fix `vibb_wifi` with `check: "link"` at the router's position; without the router in the scan `acc` from the -85 dBm bound; no `link taught` line |
+| j | Revision 3, the single-router fix: the last reported fix inside Home; `Net-A` confirmed and connected (`connect "00:00:5e:00:53:01,Net-A,psk,7,5180"`), only it heard (its two names, in the made-up scan at -45 dBm), GPS silent; Locate | `router fix fix at=own acc=N` (`sqrt((range/2)^2 + 25^2)`: 55 with the rows of this setup; `at=zone acc=153` for a confirmed router without rows), `wifi fix check=link step=USE`; the report's fix `vibb_wifi` with `check: "link"` at the router's position; without the router in the scan `acc` from the -85 dBm bound (158 here); no `link taught` line |
 | k | The same with §6bk's fake Apple cell answer placing the registered cell 5 km away | `router fix cell`; no Wi-Fi fix (`check=none` or GPS) |
 | l | The same after (g)'s strike (the row blocked, the policy without it) | `router fix unconfirmed`; no `link` fix |
 | m | The continuity gate: a satellite fix 3 km away reported (the cached fix outside Home), then back on `Net-A` with only it heard | `router fix continuity`; no `link` fix until GPS or an ordinary checked fix brings it home |
-| n | After a restart (reinstall over itself) with the last reported fix at home, the scan inconclusive (`--ez refuse_scan true`) | `router fix fix`, not withheld; `Location heartbeat: FIX result=fresh` |
-| o | `adb reboot` at home with the last fix at home (off about a minute); then the same with the emulator stopped for 15 min before the boot | the first `router fix fix`; the second `router fix continuity` until another fix brings it home |
-| p | A cell-only fix reported last (`--ez gps_off true`, Wi-Fi off, Locate), then back on `Net-A` | `router fix continuity` (the witness's accuracy over the radius) |
+| n | After a restart (reinstall over itself) with the last reported fix at home, the scan inconclusive (`--ei scan_age_s 600 --ez refuse_scan true`: with fresh results the cache answers), the heartbeat's `FIX` once due (as c) | `router fix fix`, not withheld; `Location heartbeat: FIX result=fresh` |
+| o | `adb shell svc power reboot` at home with the last fix at home (off seconds; `adb reboot` records no shutdown, §6p, so the gap is unknown and the gate holds nothing); then `adb shell svc power shutdown`, 15 min, a cold boot; GPS silent before the unlock (the shell's `cmd location providers add-test-provider gps`, else the emulator's own GNSS answers) | the first `router fix fix`; the second `router fix continuity` until another fix brings it home |
+| p | A cell-only fix reported last (GPS silent, one unknown AP heard, not connected, Locate: `vibb_cell` - a cell fix needs a placed cell; `--ez gps_off true` lets the emulator's own GNSS answer), then back on `Net-A` alone | (the verification QA's H1) a coarse fix that isn't surely outside says nothing, so the older `link` fix decides: `router fix fix`; a cell fix surely outside the zone - `router fix continuity` |
 
 The cell veto is a unit row (`ZoneLinksTest`): the emulator's cell has no placed row unless §6bk's fake Apple cell
 answer is loaded - if it is, place it 5 km away and expect (b) to give `check=none`.
@@ -6465,3 +6465,78 @@ answer is loaded - if it is, place it 5 km away and expect (b) to give `check=no
 report's `wifi` present (`connection read by callback yes` when the first read was redacted, `zone wifi report yes
 netid=known|none`), the scan fresh (`scan answer n/m ask=answered`), the parent's Bekreft, then `FIX result=fresh` at
 the next heartbeat.
+
+### The run of 2026-11-26 (branch `gate-138`, 16:10-18:30 UTC)
+
+On **Android 14 and 16** with the owner's OK (17 is a device row). Android 14 on `compat34` (Google APIs, the
+`network` test provider off - added as the shell user before `adb root`, again after every boot), Android 16 on
+**`aosp36`** (AOSP) - not `jelly36`: the rows step the clock as root, and no row needed a screenshot. Each image kept
+its phone of §6bv's rerun (Telefon 1, enrolled with its key, Android's PIN 1357), each on its own debug server from
+this tree (`--features emulator_keys`, a copy of its data, §6bv's relays `3150` and `3160`); the debug launcher of the
+branch installed over it with `adb install -r` and `adb shell sync`. Setup: the location policy Off and then Regularly
+10 min (Off clears the places), a zone Home (59.9139, 10.7522, 150 m); home's made-up scan `Net-A`
+`00:00:5e:00:53:01` (5180 MHz, -45), its guest name `Net-A-gjest` `00:00:5e:00:53:05`, three neighbours
+`00:00:5e:00:61:01`/`62:01`/`63:01`, taught by the satellite feed (8 satellites, 10 m) with no made-up connection on
+two local days (the clock 31 min on as root, the zone to `Pacific/Kiritimati`): `scan usable=5 trusted=5 networks=4
+acc=65`. That state was saved as a snapshot `base138` with each server's data (§3, "Faster gates").
+
+**Builds.** First `wifi-link-confirm` at `5a2c30131` (the gate's merge `5f6b45a44`): rows a-e, j, m, n. The
+verification QA's `0a00aa512` (the gate's witness, the off gap kept apart) came during the run (merge `2b4e418e1`):
+both images went back to `base138`, the new build was installed over it, and a, b, j, m, n, o, the STILL cap try and
+f-i, l, p ran on it. d and e ran on `5a2c30131` only (the change touched the gate, the off gap and the router fix's
+place in the keep, not the match).
+
+**GPS silent** is the satellite feed's test provider with no fix (`--es gps "59.9139,10.7522,10,8,0"`); `--ez gps_off
+true` removes it, and the emulator's own GNSS then answers at its `geo fix` place. After a boot the provider is added
+before the unlock as the shell user (`cmd location providers add-test-provider gps`; on `aosp36` once `appops set
+com.android.shell android:mock_location allow`). Locate stands in for the heartbeat except where a row says beat (the
+clock on as root, a PWA save as the nudge). Two things of the debug hooks: the made-up scan repeated with the same
+levels reads as a stale cache (D9's guard: `scan usable=.. fallback`, inconclusive, no B occasion) - row h moved every
+level by a dB between Locates; and a feed fix 3 km away is followed by `step=REFUSE` at home until GPS brings the phone
+back, since the jump gate counts elapsed time, which the clock steps don't move. Logs in the session's
+`scratchpad/g138/logs/` (not committed).
+
+| Row | Android 14 (`compat34`) | Android 16 (`aosp36`) | Build |
+|---|---|---|---|
+| a | **Pass.** `zone wifi report yes netid=known`; `zone_watch_json` `"wifi":{"bssid":"00:00:5e:00:53:01","ssid":"Net-A"}`; the page's `#zone-wifi`: `Net-A` Bekreft (the form posts `bssid=00:00:5e:00:53:01`), no orange line. `open`: `zone wifi report no reason=security`, no `wifi` in the report; the page keeps the row of the earlier report (D4, the row's text corrected) | **Pass.** The same | both |
+| b | **Pass.** `zone_networks` `1 / Net-A / 00:00:5e:00:53:01 / mld NULL`, the page `?wifi=saved#zone-wifi` with `Fjern...`; Locate: `zone link confirmed rest=fix`, `wifi fix check=link step=USE`, the location row `vibb_wifi` 65 m `fix_check=link`; Locate "Funnet innenfor 65 m", "Her nå: Home", no "Wi-Fi-anslag". Locate ran GPS its 60 s (65 m is over §6bn's 60 m stop) | **Pass.** The same lines and location row (the Locate page's text not read: with two phones it is drawn by script) | both |
+| c | **Pass.** After `adb install -r`: `zone link confirmed rest=fix`, `wifi fix check=link step=USE`, `attempt path=TOGETHER result=vibb_wifi`, `Location heartbeat: FIX result=fresh moving=false`; no back-off | **Pass.** The same | `5a2c30131` |
+| d | **Pass.** `53:02` (Net-A, 2437): `zone link confirmed rest=fix`, `check=link`. `00:00:5e:00:58:01` Net-A with home's scan: `zone link none rest=fix`, `check=none step=USE`; alone: `router fix unconfirmed`; the page: Net-A (confirmed, Fjern) and a second Net-A row with Bekreft (`bssid=00:00:5e:00:58:01`), no orange line; Bekreft: row 2, `check=link`. Fjern on it removed both rows of the name (D2) | **Pass.** The same | `5a2c30131` |
+| e | **Pass.** Confirmed `00:00:5e:00:59:01` with `mld 00:00:5e:00:59:10` (the report's `wifi` carried `mld`, stored from it); `00:00:5e:00:5a:01` (another prefix) with the same MLD: `zone link confirmed`, `check=link`; without the MLD: `zone link none`, `router fix unconfirmed` | **Pass.** The same | `5a2c30131` |
+| f | **Pass** (the second half's text corrected). Another place 3 km north (`Borte1-3`, taught there on two local days), Net-A connected and heard: `scan usable=5 trusted=5 networks=3`, `zone link none rest=fix`, `check=gnss`/`none`, `router fix continuity`. Only Net-A's two names and an unknown router: no Wi-Fi fix (`trusted=2 networks=0`), `router fix continuity` - the gate, the last fix being there | **Pass.** The same | `0a00aa512` |
+| g | **Pass, with a note.** One feed (25 fixes in 25 s) strikes nothing; the strike came at the next far satellite teach (`taught aps=4 new=0 moved=1`, `zone link struck by=confirmed`) 5 min after the first teach - the first try's first feed was not taught passively (no `passive teach` line at it), so its second feed was the first teach. The report's `wifi_struck` was taken: `zone_networks.blocked_at` set; the page "Sett et annet sted" in orange with its (i) ("Telefonen var på Net-A langt utenfor sonen, ..."); the security log `zone_wifi_blocked` with `{"zone":"Home"}` only; then `router fix unconfirmed`. Home's scan: `zone link none`, `check=none`. Bekreft again: a new id (3), `check=link` | **Pass.** The feed twice 90 s apart: `taught aps=3` at each, `zone link struck by=confirmed` at the second; the rest as 14 (home's scan after it: `check=none step=REFUSE`, the jump from the far fix); Bekreft again: id 3, `check=link` | `0a00aa512` |
+| h | **Pass.** Net-B (`00:00:5e:00:64:01`, psk, never confirmed) with home's scan, GPS silent: `link taught by=wifi occasions=1 days=1`, `occasions=2 days=2` (the zone to `America/Adak`; one taught by the heartbeat's `LEARNED_FIRST` try), `occasions=3 days=2`; the next Locate `zone link learned rest=fix`, `wifi fix check=link step=USE`. Only Net-B's two names and an unknown router: no Wi-Fi fix, no `link taught` line | **Pass.** The same (`occasions=1 days=1`, `2 days=2`, `3 days=2`, then `zone link learned`, `check=link`; Net-B's names alone: none) | `0a00aa512` |
+| i | **Pass.** Moved 200 m north: both rows gone; `zone_changed` with "moved" and "Wi-Fi removed" (`security.detail.zone.wifi_removed`). Back, Net-A confirmed again (id 4); moved 50 m: kept (`zone_changed` "moved" alone); radius 150 -> 200 and back with a 50 m move: kept | **Pass.** The same | `0a00aa512` |
+| j | **Pass** (the numbers in the row corrected). Only Net-A's two names at -45, GPS silent: `router fix fix at=own acc=55`, `zone link confirmed rest=unknown`, `wifi fix check=link step=USE`; Locate stopped at 16 s; the row `vibb_wifi` 55.9 m `link` at the router's own position; no `link taught`. Without the router in the scan (the guest name alone): `at=own acc=158`. A confirmed router with no rows (`00:00:5e:00:5b:01`, the cap try below): `at=zone acc=153` | **Pass.** The same (`acc=55`, `acc=158`, `at=zone acc=153`) | both |
+| k | **Not run.** No placed cell 5 km away: §6bk has no fake Apple answer, and an own cell row moves with each teach (`compat34`'s own row for the modem's cell came out 1.35 km north, 1948 m, from the fixes at home and 3 km north). The cell veto stays `ZoneLinksTest`'s | **Not run** (no cell row on `aosp36`) | - |
+| l | **Pass.** After (g)'s strike: `router fix unconfirmed`, no `link` fix | **Pass.** The same | `0a00aa512` |
+| m | **Pass.** The feed 3 km north with no made-up connection (the location row `gps` 59.9409), then Net-A alone: `router fix continuity`, `attempt path=LOCATE result=none` | **Pass** on `0a00aa512`; on `5a2c30131` **failed once of two**: after (j)'s router fixes (the last 158 m) and a reported satellite fix 3 km north, Net-A alone gave `router fix fix at=own acc=55` and a `link` fix at home (finding 2); the second try `continuity` | both |
+| n | **Pass.** Home by the feed, then `adb install -r`, only Net-A's names heard 600 s ago with every scan refused: the process start's try wasn't due; the clock 31 min on and a nudge: `scan answer 0/2 ask=refused refused`, `router fix fix at=own acc=158`, `check=link step=USE`, `attempt path=TOGETHER result=vibb_wifi`, `Location heartbeat: FIX result=fresh`; not withheld | **Pass.** The same | both |
+| o | **Fail** (finding 1). `svc power reboot` at home (the last fix a router fix at home; off 6 s: `phone_off` 17:01:17, `phone_on` 17:01:23): after the unlock, Net-A alone, GPS silent: `router fix continuity`. `power_events.xml` holds no `boot_off_gap_v1`. With `adb reboot` (no shutdown recorded, the gap unknown): `continuity` too, as designed. The 15-min case: `svc power shutdown` (`phone_off` 18:05:36), a cold boot 15.5 min later (`phone_on` 18:21:07), the same: `router fix continuity` - as the row expects, though with finding 1 it can't tell the two cases apart | **Fail**, the same (`off_at_ms`/`off_boot_count` 16/`on_boot_count` 17 kept, no `boot_off_gap_v1`; `router fix continuity`). The 15-min case (`phone_off` 18:05:39, `phone_on` 18:21:07): `router fix continuity`, as 14 | `0a00aa512` |
+| p | **Not reached.** The cell fix came (one unknown AP heard, not connected: `cell fix acc=1948 REPORT`, `vibb_cell`), but Net-A's own rows had moved in (g) (`moved=1`), so the router fix answered `router fix moved` (D15's veto) before the gate. With `--ez gps_off true` the emulator's own GNSS answered (a `gps` fix at the `geo fix` place) | **Not reached.** No cell fix on `aosp36` (no placed cell): Wi-Fi off and GPS silent gave `result=none` | `0a00aa512` |
+| STILL cap try | **Pass.** A confirmed router with no rows (`00:00:5e:00:5b:01`, the only AP heard, -50), `motion sensor` (`Motion trigger armed`), Locate: `router fix fix at=zone acc=153` at the zone's centre, `vouch link read level=scan`; the clock 245 min on, a nudge: `connected witness no reason=unsettled`, `router fix fix at=zone acc=153`, `attempt path=LEARNED_FIRST result=vibb_wifi`, `Location heartbeat: FIX result=fresh`; a new location row | **Pass.** The same | `0a00aa512` |
+
+**Findings**
+
+1. **Medium - the off gap across a boot is never kept, so after any restart the single-router fix answers
+   `continuity` until GPS or an ordinary checked fix brings the phone home** (row o; the restart case D15 promises).
+   `PowerEvents.recordBoot` writes `boot_off_gap_v1` inside its `update { }` block on the same `power_events`
+   preferences, and `update()` then saves the record with `prefs.edit().clear()` and the record's keys only - the gap
+   key is wiped in the same call (and the upload's own record rewrite would wipe it again). `lastOffGapMs` is then
+   always `null`, and `continuityHolds` holds nothing for the boot before. Repro (both images): a router fix at home,
+   `adb shell svc power reboot`, unlock, GPS silent, Net-A alone, Locate: `router fix continuity`; `adb shell cat
+   /data/user_de/0/me.vibb.launcher.debug/shared_prefs/power_events.xml` has `off_at_ms`, `off_boot_count`,
+   `on_boot_count` and no `boot_off_gap_v1`. `PowerEvents`' tests can't see it (the gap is a pure function).
+2. **Low, `5a2c30131` only - the gate opened once after a reported far satellite fix** (row m, `aosp36`, 1 of 2): the
+   last candidates were (j)'s router fixes (158 m) and the 3 km `gps` fix reported a minute later; the router fix
+   answered `fix at=own`. Not seen on `0a00aa512` (m twice per image, n, f, l) - its H1/L1 (the newest candidate that
+   says something, this boot's by elapsed time) is the change.
+
+**Rows corrected** (no code): a (the page keeps the Bekreft row of the last report with `wifi`, D4), c and n (the
+heartbeat's `FIX` once a beat is due; n's inconclusive scan needs `scan_age_s 600` with `refuse_scan`), f's second half
+(`router fix continuity`, the gate, not `zone link confirmed rest=nothing`), h (moved levels between Locates, GPS home
+first), j (`acc` by the rows' range: 55 here; 158 without the router's entry; `at=zone acc=153`), o (`svc power reboot`
+/ `svc power shutdown`: `adb reboot` records no shutdown), p (H1: a coarse fix that isn't surely outside decides
+nothing).
+
+Not run: k (above); d and e on `0a00aa512`; Android 17; the device row (the Jelly Star).
