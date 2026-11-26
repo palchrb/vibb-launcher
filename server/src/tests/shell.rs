@@ -2054,7 +2054,7 @@ async fn every_page_carries_the_connecting_script_and_its_ping() {
     // Saves in place (design 103): swap.js un-deferred right after scroll-restore.js (which hands it a save's landing),
     // and auto-reload.js on every page, armed only by the server's `data-waits` marker.
     assert!(head.contains(
-        "<script src=\"/static/scroll-restore.js?v=11\"></script>\n\
+        "<script src=\"/static/scroll-restore.js?v=12\"></script>\n\
          <!-- Saves in place (design 103)"
     ));
     assert!(head.contains("<script src=\"/static/swap.js?v=2\"></script>"));

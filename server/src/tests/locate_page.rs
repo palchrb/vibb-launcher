@@ -114,6 +114,7 @@ async fn every_form_on_the_locate_pages_returns_to_its_group() {
         format!("arrive_{link}"),
         format!("leave_{link}"),
     );
+    let zone_cell = format!("zone-{zone}");
     let lock = waiting(&app, id, "lock", "datetime('now', '-1 minutes')").await;
     let mut found = Vec::new();
     for (path, html) in [
@@ -154,7 +155,7 @@ async fn every_form_on_the_locate_pages_returns_to_its_group() {
             &[],
             (format!("/devices/{id}/zones"), Some("zones")),
         ),
-        // Design 135: the Zones page's autosave form; a post that changed nothing lands on #zones.
+        // Design 135: the Zones page's autosave form; a post that changed nothing lands on the first zone it named.
         (
             format!("/devices/{id}/zones#zones"),
             &[
@@ -162,7 +163,7 @@ async fn every_form_on_the_locate_pages_returns_to_its_group() {
                 (arrive_on.as_str(), "on"),
                 (leave_on.as_str(), "on"),
             ],
-            (format!("/devices/{id}/zones"), Some("zones")),
+            (format!("/devices/{id}/zones"), Some(zone_cell.as_str())),
         ),
         (
             format!("/devices/{id}/command/ring#actions"),

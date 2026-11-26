@@ -279,8 +279,8 @@ Server only: no launcher code, no contract file, no change to the policy JSON. N
 - **Names**: the rules (1-40, no `Cc`/`Cf`, unique in the family by `to_lowercase`) apply only to a new or changed name
   (decision 5); a migrated over-long or duplicate name saves other changes as it is.
 - **Security log**: `zone_added` ("Hjem, 150 m"), `zone_changed` ("Hjem. Renamed from Home. Moved. Radius 150 -> 250
-  m."), `zone_deleted` ("Hjem (Telefon 1, Telefon 2)" or "Hjem") - the family's lines, facts `zone N`
-  (`security.detail.zone.family_*`); `zone_linked`/`zone_unlinked` ("phone 3 (Telefon 1): Hjem",
+  m."), `zone_deleted` ("Hjem (Telefon 1, Telefon 2)" or "Hjem") - the family's lines, with no facts
+  (`handlers::zones::family_line`: the log shows any fact that doesn't name a phone; `security.detail.zone.family_*`); `zone_linked`/`zone_unlinked` ("phone 3 (Telefon 1): Hjem",
   `security.detail.zone.link`, labels "Zone linked"/"Zone unlinked"). Never a coordinate. The old keys stay for old
   rows. An alert switch alone is the settings log's `settings_saved`.
 - The pages are `pwa.md`, "Zones shared by the family". Tests: `tests::family_zones` (the migration, judging per phone,

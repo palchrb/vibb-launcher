@@ -157,7 +157,7 @@ pub async fn seed(app: &TestApp, lang: crate::i18n::Lang) -> Family {
         .await
         .unwrap();
 
-    // A zone on Anna (design 135: a family zone, ticked for her phone).
+    // A zone: a family zone ticked for the first phone (design 135).
     let made = app
         .request_form(
             Method::POST,

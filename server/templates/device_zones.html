@@ -46,7 +46,7 @@
         </div>
         {% endif %}
         {% if !zones.rows.is_empty() %}
-        <form method="post" action="/devices/{{ device.id }}/zones#zones" class="group" data-group="zones">
+        <form method="post" action="/devices/{{ device.id }}/zones#zones" class="group" data-group="zones" data-diff>
             {% if let Some(text) = zones.flash %}<p class="flash" role="status" data-flash="zones">{{ text }}</p>{% endif %}
             {% for z in zones.rows %}
             <input type="hidden" name="zone" value="{{ z.id }}">
@@ -54,7 +54,7 @@
             <div class="cell" id="zone-{{ z.id }}" data-zone="{{ z.id }}">
                 <label class="row">
                     <span class="row-label">{{ z.name }}<span class="row-sub">{{ z.sub }}{% if z.presence.here() %} · <span data-here>{{ self.t("locate.zones.here") }}</span>{% else if let Some(seen) = z.presence.last_seen() %} · <span data-last-seen>{{ seen }}</span>{% endif %}</span></span>
-                    <input type="checkbox" role="switch" class="sw" name="use_{{ z.id }}" value="on" aria-label="{{ self.tp("locate.zones.use_aria", [("phone", device.name.as_str())]) }}"{% if z.link.is_some() %} checked{% endif %}{% if z.refused.is_some() %} aria-invalid="true" aria-describedby="zone-{{ z.id }}-refused"{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                    <input type="checkbox" role="switch" class="sw" name="use_{{ z.id }}" value="on"{% if z.link.is_some() %} checked{% endif %}{% if z.refused.is_some() %} aria-invalid="true" aria-describedby="zone-{{ z.id }}-refused"{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                 </label>
                 {% if let Some(link) = z.link %}
                 <input type="hidden" name="alerts" value="{{ link.id }}">

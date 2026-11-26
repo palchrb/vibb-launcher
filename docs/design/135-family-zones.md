@@ -265,11 +265,20 @@ UNION ALL SELECT 1, 6, 'zones with an alert off',
     (SELECT COUNT(*) FROM device_zones WHERE notify_arrive = 0 OR notify_leave = 0)
 UNION ALL SELECT 1, 7, 'weather zones set',
     (SELECT COUNT(*) FROM device_policy WHERE weather_zone_id IS NOT NULL)
+UNION ALL SELECT 1, 8, 'same phone, same zone twice (0181 would fail)',
+    (SELECT COUNT(*) FROM (SELECT device_id FROM device_zones
+        GROUP BY device_id, lower(trim(name)), latitude, longitude, radius_m HAVING COUNT(*) > 1))
 UNION ALL SELECT 2, keeper, name, phones FROM fold
 ORDER BY part, k;
 ```
 
 The second part lists each family zone after the fold, with how many phones use it.
+
+Row 8 (code QA L3) counts a phone holding two zones of one fold group - only possible past the code's per-phone name
+check (a race, a hand edit). 0181's unique `(device_id, zone_id)` index would then fail the migration; the server
+keeps its pre-migration backup and the old binary starts again. 0181 doesn't fold such rows itself: the file was
+frozen once pushed (`server/CLAUDE.md`, a migration's checksum), and the case has no known path into the data. A
+non-zero row 8 is fixed by deleting the newer of the two zones on the old server before the update.
 
 ## 4. The server's rule, the policy, the intake
 

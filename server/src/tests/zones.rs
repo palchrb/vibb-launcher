@@ -414,7 +414,7 @@ async fn the_switches_and_old_news() {
 async fn a_moved_zone_forgets_its_side_and_a_rename_keeps_it() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
-    let (id, token) = app.enrolled_device("Anna").await;
+    let (id, token) = app.enrolled_device("Telefon 1").await;
     report(&app, &token, AWAY, &at(60)).await;
     let home = add_home(&app, &cookie, id).await;
     // The history before the zone is never judged: its cursor is at the newest fix.
@@ -475,7 +475,7 @@ async fn a_moved_zone_forgets_its_side_and_a_rename_keeps_it() {
             ("zone_added".to_string(), "Home, 150 m".to_string()),
             (
                 "zone_linked".to_string(),
-                format!("phone {id} (Anna): Home")
+                format!("phone {id} (Telefon 1): Home")
             ),
             (
                 "zone_changed".to_string(),
@@ -600,7 +600,7 @@ async fn zone_events_go_with_the_location_history() {
 async fn the_zone_page_adds_saves_and_deletes_landing_on_its_row() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
-    let (id, token) = app.enrolled_device("Anna").await;
+    let (id, token) = app.enrolled_device("Telefon 1").await;
     // No fix: the form says so, the coordinates empty.
     let page = app
         .get_page(&format!("/zones/new?device={id}"), &cookie)
@@ -630,7 +630,7 @@ async fn the_zone_page_adds_saves_and_deletes_landing_on_its_row() {
         .text();
     assert!(html.contains("value=\"59.914170\""), "{html}");
     assert!(html.contains("data-use-phone"));
-    assert!(html.contains("Use Anna&#39;s location"), "{html}");
+    assert!(html.contains("Use Telefon 1&#39;s location"), "{html}");
     // Added: back at its cell on the phone's Zones page, with its line there.
     let res = app
         .request_form(
@@ -663,7 +663,7 @@ async fn the_zone_page_adds_saves_and_deletes_landing_on_its_row() {
         .get_page(&format!("/zones/{home}?device={id}"), &cookie)
         .await
         .text();
-    assert!(html.contains("Delete Home? Used by Anna."), "{html}");
+    assert!(html.contains("Delete Home? Used by Telefon 1."), "{html}");
     assert_eq!(
         form_action_of(&html, "name"),
         Some(format!("/zones/{home}#zone-form").as_str())
@@ -722,7 +722,7 @@ async fn the_zone_page_adds_saves_and_deletes_landing_on_its_row() {
     assert_eq!(count(&app, "SELECT COUNT(*) FROM device_zones").await, 0);
     assert_eq!(count(&app, "SELECT COUNT(*) FROM family_zones").await, 0);
     let detail = super::security_words(&app, "zone_deleted", crate::i18n::Lang::En).await;
-    assert_eq!(detail, ["Home (Anna)"]);
+    assert_eq!(detail, ["Home (Telefon 1)"]);
     let facts: Option<String> =
         sqlx::query_scalar("SELECT detail FROM security_events WHERE event_type = 'zone_deleted'")
             .fetch_one(&app.db)

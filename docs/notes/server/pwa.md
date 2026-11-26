@@ -1639,7 +1639,8 @@ no orange line for a choice (a zone no phone uses is "no phone", quiet).
   `POST /devices/{id}/zones#zones` (`handlers::zones::save_phone`), every control `data-autosave` with a `<noscript>`
   Save, as the calendar page's per-calendar switches. A cell per family zone in the family's order (`id="zone-Z"`, Z
   the family zone; a toggle never reorders): the name over "150 m" (and "· Here now" / "· Last seen at Hjem 14:02"
-  while linked), a switch "Use on {phone}" (`use_Z`, on = linked); while linked "Arrive" and "Leave" (`arrive_L`,
+  while linked), a switch (`use_Z`, on = linked; no `aria-label`: the row's label - the zone's name - names it,
+  code QA L2); while linked "Arrive" and "Leave" (`arrive_L`,
   `leave_L`, L the link): the **signed-in parent's** pushes (`zone_alerts`, no row = on). Hidden `zone=Z`,
   `was_use_Z`, and for linked cells `alerts=L`, `was_arrive_L`, `was_leave_L`. The handler: links/unlinks only cells
   whose switch differs from `was_use_` (a zone deleted meanwhile skipped, one the form doesn't name never touched),
@@ -1647,7 +1648,12 @@ no orange line for a choice (a zone no phone uses is "no phone", quiet).
   (an unlink-and-relink meanwhile doesn't match). An 11th link refuses the whole post: a 303 to
   `?refused=full&zone_id=Z#zone-Z` (`settings_log::refused`), "10 zones is the most" under that cell. A change of
   links nudges the phone and logs `zone_linked`/`zone_unlinked`; alerts alone are a `settings_saved` line. Lands on
-  the first zone that changed (`?zone=saved&zone_id=Z#zone-Z`), else on `#zones`. The group's (i) adds "Arrive and
+  the first zone that changed (`?zone=saved&zone_id=Z#zone-Z`), else (nothing changed: a stale page whose change was
+  made already) on the first zone the post named, with no line (code QA L5), else on `#zones`. The form is marked
+  `data-diff`: when one of its switches is flipped again while its save is out, `scroll-restore.js` (`?v=12`,
+  `postedAsWas`) sets the `was_` fields to what the first save posted before it sends the second, so the second diffs
+  against the server's new state and the page ends at the parent's last tap (code QA M1; a refusal sent again the
+  browser's way keeps the page's own `was_` values). The group's (i) adds "Arrive and
   Leave are your own notifications for this phone."; the warnings, the watch line and Locate Regularly are as before
   ("while the phone has zones" now means links). No family zones: no cells, the two rows, `footer_empty`.
 - **Locate's one-phone view**: the Zones row's value counts the phone's links (`ZonesView.linked`), "3 · Here now:

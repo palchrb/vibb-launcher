@@ -2285,7 +2285,6 @@
   "locate.zones.added": "Lagt til.",
   "locate.zones.deleted": "Sonen er slettet.",
   "locate.zones.radius_sub": "{radius} m",
-  "locate.zones.use_aria": "Bruk på {phone}",
   "locate.zones.alerts_info": "Kommer og Drar er dine egne varsler for denne telefonen.",
   "locate.zones.all": "Alle soner",
   "locate.zones.family_sub": "{radius} m · {phones}",

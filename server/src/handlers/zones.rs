@@ -1220,7 +1220,8 @@ fn fields(body: &[u8]) -> Vec<(String, String)> {
 ///
 /// A change of links nudges the phone (and is in the security log); a change of alerts alone doesn't
 /// (the settings log's `settings_saved` line says it). Lands on the first zone that changed
-/// (`?zone=saved&zone_id=Z#zone-Z`), or on `#zones` when nothing did.
+/// (`?zone=saved&zone_id=Z#zone-Z`); when nothing did (a stale page whose change was made already),
+/// on the first zone the post named that still exists, with no line (code QA L5), else on `#zones`.
 pub async fn save_phone(
     State(state): State<AppState>,
     lang: Lang,
@@ -1274,9 +1275,12 @@ pub async fn save_phone(
             (arrive.is_some() || leave.is_some()).then_some((l, arrive, leave))
         })
         .collect();
+    let named = ids("zone");
     enum Phone {
         Done {
             first: Option<i64>,
+            /// Nothing changed: the first zone the post named that still exists.
+            named: Option<i64>,
             linked_changed: bool,
             lines: Vec<LogLine>,
         },
@@ -1354,9 +1358,19 @@ pub async fn save_phone(
             }
             first.get_or_insert(zone_id);
         }
+        let mut named_first = None;
+        if first.is_none() {
+            for z in &named {
+                if zones::family_zone(&mut *tx, *z).await?.is_some() {
+                    named_first = Some(*z);
+                    break;
+                }
+            }
+        }
         tx.commit().await?;
         Ok::<_, sqlx::Error>(Phone::Done {
             first,
+            named: named_first,
             linked_changed,
             lines,
         })
@@ -1364,12 +1378,14 @@ pub async fn save_phone(
     match outcome.await {
         Ok(Phone::Done {
             first,
+            named,
             linked_changed,
             lines,
         }) => {
-            let back = match first {
-                Some(z) => format!("/devices/{id}/zones?zone=saved&zone_id={z}#zone-{z}"),
-                None => format!("/devices/{id}/zones#zones"),
+            let back = match (first, named) {
+                (Some(z), _) => format!("/devices/{id}/zones?zone=saved&zone_id={z}#zone-{z}"),
+                (None, Some(z)) => format!("/devices/{id}/zones#zone-{z}"),
+                (None, None) => format!("/devices/{id}/zones#zones"),
             };
             let nudge: &[i64] = if linked_changed { &[id] } else { &[] };
             written(&state, &admin, nudge, lines, back).await

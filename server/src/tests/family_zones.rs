@@ -944,14 +944,26 @@ async fn a_stale_phone_page_changes_only_what_it_changed() {
     let mut fields = stale.clone();
     set(&mut fields, &format!("arrive_{h2}"), Some("on"));
     let res = post(&app, &cookie, &format!("/devices/{t2}/zones"), &fields).await;
-    super::assert_redirect(&res, &format!("/devices/{t2}/zones"), Some("zones"));
+    super::assert_redirect(
+        &res,
+        &format!("/devices/{t2}/zones"),
+        Some(&format!("zone-{hjem}")),
+    );
     assert_eq!(
         count(&app, "SELECT COUNT(*) FROM zone_alerts").await,
         0,
         "nothing for the new link"
     );
-    // A post that changed nothing (a stale page whose change was made already) lands on #zones.
+    // A post that changed nothing (a stale page whose change was made already) lands on the first zone it named
+    // (code QA L5), with no line; a post that names none lands on #zones.
     let res = post(&app, &cookie, &format!("/devices/{t2}/zones"), &stale).await;
+    super::assert_redirect(
+        &res,
+        &format!("/devices/{t2}/zones"),
+        Some(&format!("zone-{hjem}")),
+    );
+    app.assert_lands(&res, &cookie).await;
+    let res = post(&app, &cookie, &format!("/devices/{t2}/zones"), &[]).await;
     super::assert_redirect(&res, &format!("/devices/{t2}/zones"), Some("zones"));
     app.assert_lands(&res, &cookie).await;
 }
@@ -1119,4 +1131,114 @@ async fn every_crossing_is_stored_and_each_parent_filters_the_push() {
         count(&app, "SELECT COUNT(*) FROM push_deliveries").await,
         deliveries
     );
+}
+
+/// Code QA test gap: two links asked at once from 9 - the first would make 10, the second 11 - refuse the whole post:
+/// the first link is rolled back with it, and the page comes back at the second zone's cell.
+#[tokio::test]
+async fn two_links_from_nine_are_refused_together() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (t1, _) = app.enrolled_device("Telefon 1").await;
+    for n in 0..9 {
+        super::zones::insert_zone(
+            &app,
+            t1,
+            &format!("Sted {n}"),
+            60.0 + n as f64 / 100.0,
+            11.0,
+            150,
+        )
+        .await;
+    }
+    let first = new_zone(&app, &cookie, &HOME, &[]).await;
+    let second = new_zone(
+        &app,
+        &cookie,
+        &[
+            ("name", "Skole"),
+            ("latitude", "59.95"),
+            ("longitude", "10.7"),
+            ("radius_m", "200"),
+        ],
+        &[],
+    )
+    .await;
+    let mut nudges = app.state.command_notify.subscribe();
+    let mut fields = phone_form(&app, &cookie, t1).await;
+    set(&mut fields, &format!("use_{first}"), Some("on"));
+    set(&mut fields, &format!("use_{second}"), Some("on"));
+    let res = post(&app, &cookie, &format!("/devices/{t1}/zones"), &fields).await;
+    super::assert_redirect(
+        &res,
+        &format!("/devices/{t1}/zones?refused=full&zone_id={second}"),
+        Some(&format!("zone-{second}")),
+    );
+    assert_eq!(
+        link_of(&app, t1, first).await,
+        None,
+        "rolled back with the refusal"
+    );
+    assert_eq!(link_of(&app, t1, second).await, None);
+    assert_eq!(count(&app, "SELECT COUNT(*) FROM device_zones").await, 9);
+    assert_eq!(
+        count(
+            &app,
+            "SELECT COUNT(*) FROM security_events WHERE event_type = 'zone_linked'"
+        )
+        .await,
+        0
+    );
+    assert!(nudged(&mut nudges).is_empty());
+}
+
+/// Code QA test gap: the handlers, not the foreign keys alone - unticking the phone in the editor keeps the weather's
+/// family zone; deleting the zone from its editor clears it.
+#[tokio::test]
+async fn the_editor_unlink_keeps_the_weather_and_its_delete_clears_it() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (t1, token1) = app.enrolled_device("Telefon 1").await;
+    regularly(&app).await;
+    let hjem = new_zone(&app, &cookie, &HOME, &[t1]).await;
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{t1}/weather/zone"),
+            Some(&cookie),
+            &[("zone", &hjem.to_string())],
+        )
+        .await;
+    assert!(res.status.is_redirection(), "{}", res.text());
+    let weather = || async {
+        sqlx::query_scalar::<_, Option<i64>>(
+            "SELECT weather_family_zone_id FROM device_policy WHERE device_id = ?",
+        )
+        .bind(t1)
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+    };
+    assert_eq!(weather().await, Some(hjem));
+    let mut fields = editor_form(&app, &cookie, hjem).await;
+    set(&mut fields, &format!("phone_{t1}"), None);
+    let res = post(&app, &cookie, &format!("/zones/{hjem}"), &fields).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.text());
+    assert_eq!(link_of(&app, t1, hjem).await, None);
+    assert!(policy_zones(&app, &token1).await.is_empty());
+    assert_eq!(
+        weather().await,
+        Some(hjem),
+        "the weather needs a place, not a link"
+    );
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/zones/{hjem}/delete"),
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    assert!(res.status.is_redirection(), "{}", res.text());
+    assert_eq!(weather().await, None);
 }

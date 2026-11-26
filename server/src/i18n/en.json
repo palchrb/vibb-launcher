@@ -2285,7 +2285,6 @@
   "locate.zones.added": "Added.",
   "locate.zones.deleted": "Zone deleted.",
   "locate.zones.radius_sub": "{radius} m",
-  "locate.zones.use_aria": "Use on {phone}",
   "locate.zones.alerts_info": "Arrive and Leave are your own notifications for this phone.",
   "locate.zones.all": "All Zones",
   "locate.zones.family_sub": "{radius} m · {phones}",
