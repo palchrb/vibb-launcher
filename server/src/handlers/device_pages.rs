@@ -1620,18 +1620,7 @@ async fn render_lock(
         && (!child.pin_set || !sending)
         && !card_says_it
     {
-        let (title, fix) = if child.pin_set {
-            (
-                "device.lock.no_pin",
-                if send_again {
-                    "device.lock.no_pin_send"
-                } else {
-                    "device.lock.no_pin_fix"
-                },
-            )
-        } else {
-            ("device.lock.no_child_pin", "device.lock.no_pin_fix")
-        };
+        let (title, fix) = crate::kid_lock::no_pin_line(child.pin_set, send_again);
         child_warnings.insert(
             0,
             Note {

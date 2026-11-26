@@ -6622,3 +6622,19 @@ Findings (no product code changed here):
    contact's "Kan ringe og ringes" switches saved by the gate's form client didn't stick (`allow_inbound` 0) - set in
    the database instead, not looked into; once on `jelly36` adb went offline for good after a Koble til enrolment from a
    loaded snapshot (the next snapshot load brought it back; not seen on a fresh boot).
+
+### 6bt-r. The fixes' rows (branch `phase-d-fixes`) - written, not run
+
+Fixed on `phase-d-fixes`: finding 1 (`KidInsets.apply` keeps the handle's room when no insets reach the page), 2 (the
+boot cover asks once and again only when its window has the focus back - code QA M1/L1), 4 (no "not the Child PIN"
+without the reset token), 5 (`kid_lock::no_pin_line`), 3 (design 132 §11 G12b corrected) and side note 6 (the
+command stream's open nudge for a due command, at most one a minute per phone). Re-run on the same images:
+
+| # | Row | 14 (`compat34`) | 16 (`jelly36`) |
+|---|---|---|---|
+| R1 | G1's glance in both navigation modes: `uiautomator dump` - `lock_glance_emergency`'s bottom at or above `lock_glance_handle`'s top (14 3-button: Nødsamtale up to 734 over the handle `[746,782]`); a swipe up from the handle's upper half opens Android's pad, never "Call 112?"; Nødsamtale's tap still asks "Call 112?" | x | x |
+| R2 (code QA M1) | G4 on a **cold first boot** (`-wipe-data` snapshot not loaded: `adb emu kill`, a cold boot, so SystemUI's keyguard is late), both navigation modes: while SystemUI is late (no pad yet) `adb shell dumpsys window \| grep mCurrentFocus` names the boot cover (`BootCoverActivity`) and the log has the re-asks ("no answer, again N"); once the pad is up `mCurrentFocus` names SystemUI's `NotificationShade` and `logcat -s` the cover's tag shows exactly one ask after it ("a window (Android's pad) is over the cover - no re-ask" once, no "again N" while the pad is up); the PIN opens Home | x | x |
+| R3 | G4 with the pad cancelled (Back on the pad): "Trykk for å låse opp" under the mark, no ask until a tap; a tap asks once | x | x |
+| R4 | G2's Koble til half: with `refused: no_token` the Lock page shows "Vibb One kan ikke endre Androids PIN" alone - no "Telefonens PIN er ikke barne-PIN-en", no Attention row for it | x | - |
+| R5 | G11: between the save and the phone's next report "Telefonen har ingen PIN" with "Lagre barne-PIN på nytt." behind the (i), never "Velg en barne-PIN under." | x | - |
+| R6 | Side note 6: after a snapshot load with a waiting `set_kid_pin` and the 2 s network drop, the row goes out within seconds of the stream's reconnect (the server log `command stream opened`, the phone's `Command stream nudge received`), no parent save | x | - |

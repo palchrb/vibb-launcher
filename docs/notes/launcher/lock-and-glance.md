@@ -23,7 +23,12 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   deprecated for plain admins but a Device Owner's call on 34-37 (API 8, no SDK gate; the deprecation suppressed at the
   one call).
 - **Nothing clears Android's PIN** (Q1 (a)): the Child PIN is changed, never removed; owned with no credential left
-  only drops `keyguard_android`.
+  only drops `keyguard_android` (`ownedGone` in `AndroidLock.configure`). That path is now reachable only if Android's
+  credential is removed some other way, outside Vibb One - e.g. a factory-level path: while NUMERIC holds, Settings and
+  `locksettings clear` can't remove it (G12a), and the server can't make a managed phone unmanaged to drop the quality
+  (a `NULL` allowlist is filled again by the heartbeat bootstrap, and `PolicyGate` refuses a fresh policy without an
+  app list on a managed phone). The phase D gate checked the no-Android-PIN state by a stand-in instead (`set_kid_pin`
+  answered `refused: failed`, then `no_android_pin`; `docs/testing/emulator.md` §6bt G12b).
 - **The reset token** (§7.1): at enrolment in `applyProvisioningExtras` (the QR and Koble til, right after the address
   is accepted) and at every apply in every state (`AndroidLock.configure`), and at a window's start.
 - **No PIN material on the phone**: `PinLockStore.dropOldKeys` removes the own lock's keys (sealed hash and salt,
@@ -74,7 +79,8 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   `Application.initUnlocked` right after `decide` (pure `withUnlock`, DE key `on_unlocked_at_ms`, once a boot).
 - **Stored** (CE `pin_lock_state`, M-1): `keyguard_requested` and `pin_rev` committed with the hash by `saveConfig`;
   `keyguard_android` = we own Android's credential - committed **before** a reset (write-ahead) and cleared only when
-  no credential is left (a verified clear, or removed on the phone); `android_pin_rev` = the rev Android's PIN was set
+  no credential is left (a verified clear, or removed on the phone; since design 132 there is no clear, and a removal
+  only some way outside Vibb One - "Nothing clears Android's PIN" above); `android_pin_rev` = the rev Android's PIN was set
   from (`null` after a change on the phone, §3.7); `android_boot_count`, written at **every** CE process start
   (`decide`, L-4).
 - **Face** = requested, managed, a kid PIN and an Android credential (`androidFace`). Then `KeyguardCover` writes

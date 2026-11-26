@@ -30,6 +30,10 @@ pub struct StreamState {
 /// Live command streams per phone; a new one past this closes the oldest.
 pub const MAX_PER_DEVICE: usize = 2;
 
+/// A stream's open nudge for a due command (phase D gate §6bt finding 6) at most this often per phone (code QA L2): a
+/// flapping stream never becomes a sync loop.
+pub const OPEN_NUDGE_EVERY: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// One open stream's close signal.
 struct OpenStream {
     id: u64,
@@ -45,6 +49,8 @@ pub struct CommandStreams {
     closed: AtomicBool,
     /// When this server started counting (design 121 §4.3, the restart grace).
     started: Mutex<DateTime<Utc>>,
+    /// Per device, the last open nudge ([CommandStreams::open_nudge_due]).
+    open_nudges: Mutex<HashMap<i64, std::time::Instant>>,
 }
 
 impl Default for CommandStreams {
@@ -55,6 +61,7 @@ impl Default for CommandStreams {
             next_id: AtomicU64::default(),
             closed: AtomicBool::default(),
             started: Mutex::new(Utc::now()),
+            open_nudges: Mutex::default(),
         }
     }
 }
@@ -63,6 +70,29 @@ impl CommandStreams {
     /// When this server started: a phone with no stream since then may have held one when it stopped.
     pub fn started(&self) -> DateTime<Utc> {
         *self.started.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Whether a stream opening `now` may nudge `device_id` for a due command: none in the last [OPEN_NUDGE_EVERY]
+    /// (code QA L2). A yes is recorded.
+    pub fn open_nudge_due(&self, device_id: i64, now: std::time::Instant) -> bool {
+        let mut last = self.open_nudges.lock().unwrap_or_else(|e| e.into_inner());
+        if last
+            .get(&device_id)
+            .is_some_and(|at| now.saturating_duration_since(*at) < OPEN_NUDGE_EVERY)
+        {
+            return false;
+        }
+        last.insert(device_id, now);
+        true
+    }
+
+    /// Tests: the open nudges forgotten, as after a minute.
+    #[cfg(test)]
+    pub fn forget_open_nudges(&self) {
+        self.open_nudges
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
     }
 
     /// Tests: a server that started at `at`.
@@ -718,6 +748,22 @@ mod tests {
         assert!(*late.closed().borrow(), "opened during shutdown");
         drop(first);
         assert_eq!(streams.state(1).unwrap().open, 0);
+    }
+
+    /// Code QA L2: one open nudge per phone a minute, each phone its own.
+    #[test]
+    fn open_nudges_are_one_a_minute_per_phone() {
+        let streams = CommandStreams::default();
+        let t0 = std::time::Instant::now();
+        assert!(streams.open_nudge_due(1, t0));
+        assert!(!streams.open_nudge_due(1, t0));
+        assert!(!streams.open_nudge_due(
+            1,
+            t0 + OPEN_NUDGE_EVERY - std::time::Duration::from_millis(1)
+        ));
+        assert!(streams.open_nudge_due(2, t0), "another phone");
+        assert!(streams.open_nudge_due(1, t0 + OPEN_NUDGE_EVERY));
+        assert!(!streams.open_nudge_due(1, t0 + OPEN_NUDGE_EVERY));
     }
 
     #[test]

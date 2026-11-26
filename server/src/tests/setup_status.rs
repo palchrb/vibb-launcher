@@ -578,6 +578,10 @@ async fn the_child_pin_step() {
     assert!(lock.contains(">The phone has no PIN"), "{lock}");
     assert!(!lock.contains(">No Child PIN"), "{lock}");
     assert!(!lock.contains("isn&#39;t the Child PIN"), "{lock}");
+    // Phase D gate §6bt finding 5: a Child PIN is stored (a legacy one without a copy, no "Send again"), so never
+    // "Choose a Child PIN below" - save it again.
+    assert!(!lock.contains("Choose a Child PIN below."), "{lock}");
+    assert!(lock.contains("Save the Child PIN again."), "{lock}");
     let summary = app
         .get_page(&format!("/devices/{id}"), &cookie)
         .await
