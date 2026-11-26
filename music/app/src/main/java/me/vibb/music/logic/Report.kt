@@ -48,6 +48,17 @@ private fun roomName(name: String?): String {
     return String(points, 0, points.size)
 }
 
+/**
+ * The launcher's nudge (`BRIDGE_CHANGED`) reports at once, in its receiver, when the last report ([lastReportAt], the
+ * report file's time; null = none) is older than this: the launcher nudges an idle app whose report went old and reads
+ * the bridge as broken when the nudge goes unanswered, while the nudge's sync is WorkManager work that app standby may
+ * hold back for hours. A fresher report waits for the sync, so a burst of nudges never writes one each.
+ */
+const val REPORT_ON_NUDGE_MS = 3_600_000L
+
+fun reportOnNudge(lastReportAt: Long?, nowMs: Long): Boolean =
+    lastReportAt == null || nowMs - lastReportAt !in 0 until REPORT_ON_NUDGE_MS
+
 /** A failed download or stream of a listed url (21b §4.3). */
 data class ItemError(val entry: Long, val version: String, val item: String, val error: String)
 

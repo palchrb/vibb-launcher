@@ -159,7 +159,7 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   in every sync (library, changed listings, covers, own files copied + checked + released; Storytel's session is asked
   only when a mint needs it, design 58) and `push` sends the report (with the own files held) at its end; `LiveBridge` sends
   `setNowPlaying`/`setForeground` and retries a bind. Bind only the restrictions' launcher, and only when it is
-  signed like this app; honour `BRIDGE_CHANGED` only from a launcher. An in-place update syncs at once (`PackageReplacedReceiver` on `MY_PACKAGE_REPLACED`; the launcher nudges too), so Device › Music never keeps the old app's report. The two mobile-data switches
+  signed like this app; honour `BRIDGE_CHANGED` only from a launcher. An in-place update syncs at once (`PackageReplacedReceiver` on `MY_PACKAGE_REPLACED`; the launcher nudges too), so Device › Music never keeps the old app's report. The launcher asks an idle app for a report with the same nudge (its report 12 h old; "unbound" only when the ask goes unanswered 30 min, `docs/notes/launcher/music-bridge.md`), and app standby may defer the nudge's sync for hours, so `BridgeChangedReceiver` also writes and pushes the report at once inside the broadcast (`goAsync`, 9 s; `Sync.reportIfOld`, only when the report file is an hour old or missing - `reportOnNudge`, `ReportTest`). The two mobile-data switches
   (`stream_mobile_data`, `download_mobile_data`; `true` is on, anything else - absent included - off, `mobileSwitch`),
   the storage limit (`storage_limit_gb`, 0 = none, absent or junk =
   2 GB - `storageLimit`; the played extras' eviction counts against it) and `volume_cap_pct` (the parent's cap on our

@@ -12,6 +12,7 @@ import kotlinx.serialization.json.long
 import me.vibb.music.media.MediaCache
 import me.vibb.music.Fixtures.moduleFile
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
@@ -22,6 +23,16 @@ import java.net.SocketTimeoutException
  * most once per item per sync, at most 50; the report's fields. Kept in the app for step 3.
  */
 class ReportTest {
+    @Test
+    fun `the launcher's nudge reports at once only when the last report is an hour old or none`() {
+        val now = 1_800_000_000_000L
+        assertTrue("no report yet", reportOnNudge(null, now))
+        assertTrue("13 h old: the launcher's ask", reportOnNudge(now - 13 * 3_600_000L, now))
+        assertTrue("exactly an hour", reportOnNudge(now - REPORT_ON_NUDGE_MS, now))
+        assertFalse("a minute old: the sync reports", reportOnNudge(now - 60_000, now))
+        assertTrue("a time in the future (clock moved back)", reportOnNudge(now + 60_000, now))
+    }
+
     @Test
     fun `codes - an HTTP status, media that isn't audio, else network`() {
         assertEquals("http_404", itemErrorCode(404, false))

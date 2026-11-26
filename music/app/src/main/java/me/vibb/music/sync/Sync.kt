@@ -43,6 +43,7 @@ import me.vibb.music.logic.listedOf
 import me.vibb.music.logic.newsApplied
 import me.vibb.music.logic.repickWanted
 import me.vibb.music.logic.SpotifyOutcome
+import me.vibb.music.logic.reportOnNudge
 import me.vibb.music.logic.reportWaiting
 import me.vibb.music.logic.reportedRooms
 import me.vibb.music.logic.stateReport
@@ -339,6 +340,15 @@ object Sync {
 
     /** The sync and the download job both write the report. */
     private val reportLock = Mutex()
+
+    /**
+     * The launcher's nudge, in its receiver: the report at once when the last one is old ([reportOnNudge]), so a
+     * launcher asking an idle app gets its answer while the receiver runs - the nudge's sync may wait for app standby.
+     */
+    suspend fun reportIfOld(context: Context) = withContext(Dispatchers.IO) {
+        val at = Store.get(context).reportFile.lastModified().takeIf { it > 0 }
+        if (reportOnNudge(at, System.currentTimeMillis())) writeReport(context)
+    }
 }
 
 class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
