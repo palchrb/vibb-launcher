@@ -1184,6 +1184,11 @@ pub fn build_admin_router(
             "/devices/{id}/calendar/caldav/{account}/calendars",
             post(handlers::calendar_sources::save_caldav_calendars),
         )
+        // Design 136: "Delt i familien", the owner's page only.
+        .route(
+            "/devices/{id}/calendar/caldav/{account}/sharing",
+            post(handlers::calendar_sources::save_caldav_sharing),
+        )
         .route(
             "/devices/{id}/calendar/caldav/{account}/remove",
             post(handlers::calendar_sources::remove_caldav),

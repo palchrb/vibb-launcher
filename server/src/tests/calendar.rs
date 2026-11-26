@@ -1216,7 +1216,12 @@ async fn every_calendar_route_needs_a_session() {
         ),
         (format!("{page}/caldav/1/test"), vec![("password", "")]),
         (format!("{page}/caldav/1/calendars"), vec![("cal", "x")]),
-        (format!("{page}/caldav/1/remove"), vec![]),
+        // Design 136: "Delt i familien".
+        (
+            format!("{page}/caldav/1/sharing"),
+            vec![("was_shared", "0"), ("shared", "on")],
+        ),
+        (format!("{page}/caldav/1/remove"), vec![("was_shared", "0")]),
     ];
     for (path, fields) in posts {
         let res = app.request_form(Method::POST, &path, None, &fields).await;

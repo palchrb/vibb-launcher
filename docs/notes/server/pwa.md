@@ -1666,6 +1666,23 @@ no orange line for a choice (a zone no phone uses is "no phone", quiet).
   autosave form), `shell::every_form_on_every_page_lands_on_its_own_group` (`/zones`, `/zones/new?device=N`,
   `/zones/1`), `admin_auth::tests::no_store_paths`, `i18n_pages` (the three pages in nb), `jstest/zones.test.js`.
 
+## A CalDAV account belongs to a phone (design 136, migration 0183, `docs/design/136-caldav-per-phone.md` §5; data in `calendar.md`)
+
+Device › Calendar's CalDAV account is the phone's that added it; "Delt i familien" (`#sharing`, an autosave switch with
+its `<noscript>` Save, the owner's page only) shows it on every phone's page. The details are in `calendar.md`, "CalDAV
+accounts"; what matters for the PWA's rules:
+
+- **Words**: the switch's label is the owner's own words, its (i) says who writes; the states are quiet ("· delt", "·
+  delt fra {owner}", "Hører til · ingen"); nothing about sharing is orange - it is a choice. The add refusal "Kontoen
+  hører til {phone}." sits under Brukernavn with the fix behind its (i).
+- **No jump**: every form posts to its own group - `#calendars`, `#sharing`, `#test`, Kalender's `#dagen` -, "Fjern
+  konto…" leaves for `#sources` (its refusal comes back to `#remove`, the confirm open); a refusal is a 303 with
+  `settings_log::Refused`, never counted as a save.
+- **Stale forms** (design 135 decision 12's rule): the ticks post `was_on_<id>`, the switch and "Fjern konto…" post
+  `was_shared`; a save applies only what the parent changed.
+- Tests: `tests::caldav_per_phone`, `shell::every_form_on_every_page_lands_on_its_own_group` (the owner's page, another
+  phone's shared account, a shared account no phone owns).
+
 ## A phone's own picture (server round C, 2026-10-25, branch `pwa-fixes-c`, migration `0100_device_avatar.sql`)
 
 *Since design 101 the picker is a sheet under the picture ("The summary as mockup A" below): the avatar is the summary of a `details.pic-menu`, the file field a row in it, "Add picture" / "Remove picture" are the sheet's rows, and the status dot left the picture. The rest of this section (pipeline, where it shows, the route, the backup) stands.*

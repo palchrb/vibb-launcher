@@ -99,8 +99,8 @@ async fn kid_with(writable: Option<bool>) -> Kid {
     };
     let account: i64 = sqlx::query_scalar(
         "INSERT INTO caldav_accounts (server_url, username, password_sealed, password_nonce, password_key_fp, \
-         hosts, principal, home_set, calendars_json, state, ok_at) VALUES (?, ?, X'', X'', '', ?, ?, ?, ?, 'ok', ?) \
-         RETURNING id",
+         hosts, principal, home_set, calendars_json, state, ok_at, owner_device_id) \
+         VALUES (?, ?, X'', X'', '', ?, ?, ?, ?, 'ok', ?, ?) RETURNING id",
     )
     .bind(SERVER_URL)
     .bind(USER)
@@ -109,6 +109,7 @@ async fn kid_with(writable: Option<bool>) -> Kid {
     .bind("https://dav.example.org/calendars/forelder/")
     .bind(serde_json::to_string(&[&found]).unwrap())
     .bind(stamp(t0()))
+    .bind(device)
     .fetch_one(&app.db)
     .await
     .unwrap();
@@ -548,19 +549,60 @@ async fn the_contract() {
     let res = k.post(&bad).await;
     answer("bad_set", &res);
     // A second phone (the same phone enrolled again) posting the first one's tag.
+    // Design 136: a phone marks only a calendar of its own account - the new phone has its own login to the same
+    // calendar (the old phone still holds the first).
     let (second, token) = k.app.enrolled_device("Anna ny").await;
     k.app.post_status(&token, json!({})).await;
+    let second_user = "forelder-ny@example.org";
+    let calendars: String =
+        sqlx::query_scalar("SELECT calendars_json FROM caldav_accounts WHERE id = ?")
+            .bind(k.account)
+            .fetch_one(&k.app.db)
+            .await
+            .unwrap();
+    let second_account: i64 = sqlx::query_scalar(
+        "INSERT INTO caldav_accounts (server_url, username, password_sealed, password_nonce, password_key_fp, \
+         hosts, principal, home_set, calendars_json, state, ok_at, owner_device_id) \
+         VALUES (?, ?, X'', X'', '', ?, ?, ?, ?, 'ok', ?, ?) RETURNING id",
+    )
+    .bind(SERVER_URL)
+    .bind(second_user)
+    .bind(json!([HOST]).to_string())
+    .bind("https://dav.example.org/principals/forelder-ny/")
+    .bind("https://dav.example.org/calendars/forelder-ny/")
+    .bind(&calendars)
+    .bind(stamp(t0()))
+    .bind(second)
+    .fetch_one(&k.app.db)
+    .await
+    .unwrap();
+    let key = k.app.state.music_key.clone().unwrap();
+    let (sealed, nonce) = key.seal_with(
+        &crate::caldav::aad(&key.fingerprint, second_account),
+        PASSWORD.as_bytes(),
+    );
+    sqlx::query(
+        "UPDATE caldav_accounts SET password_sealed = ?, password_nonce = ?, password_key_fp = ? WHERE id = ?",
+    )
+    .bind(sealed)
+    .bind(nonce)
+    .bind(&key.fingerprint)
+    .bind(second_account)
+    .execute(&k.app.db)
+    .await
+    .unwrap();
     let found = crate::caldav::calendar_id(COLLECTION);
     let on = format!("on_{found}");
     k.app
         .request_form(
             Method::POST,
-            &format!("/devices/{second}/calendar/caldav/{}/calendars", k.account),
+            &format!("/devices/{second}/calendar/caldav/{second_account}/calendars"),
             Some(&k.cookie),
             &[("cal", &found), (&on, "on")],
         )
         .await;
-    let pick = format!("caldav:{}", k.calendar);
+    let second_calendar = crate::caldav::uid_of(SERVER_URL, second_user, COLLECTION);
+    let pick = format!("caldav:{second_calendar}");
     k.app
         .request_form(
             Method::POST,
@@ -575,10 +617,20 @@ async fn the_contract() {
             Method::POST,
             "/api/devices/calendar/kid-events",
             Some(&token),
-            Some(applied.clone()),
+            Some({
+                let mut pinned = applied.clone();
+                pinned["calendar"] = second_calendar.clone().into();
+                pinned
+            }),
         )
         .await;
     answer("tag_pinned", &res);
+    // The fake server takes only the first login: the second account's first fetch was refused - not this line.
+    sqlx::query("UPDATE caldav_accounts SET state = 'ok', test_status = NULL WHERE id = ?")
+        .bind(second_account)
+        .execute(&k.app.db)
+        .await
+        .unwrap();
     let page = k
         .app
         .get_page(&format!("/devices/{second}/calendar"), &k.cookie)

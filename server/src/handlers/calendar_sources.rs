@@ -7,13 +7,15 @@
 //!   (`#fetch`: last fetched, events, next, Fetch now), Remove… (back to the Calendar page's `#sources`). A CalDAV
 //!   calendar's uid goes to its account's page; a link this phone hasn't (removed meanwhile) to `#sources`.
 //! - `GET .../calendar/caldav/{account}` (`device_calendar_caldav.html`): the server, the sign-in, where the password
-//!   goes, a switch per calendar for this phone (`#calendars`), Test Again… (`#test`), Remove Account….
+//!   goes, "Hører til" on a page that isn't the owner's (design 136), a switch per calendar for this phone
+//!   (`#calendars`), "Delt i familien" on the owner's page (`#sharing`), Test Again… (`#test`), Remove Account…
+//!   (`#remove`, the owner's page or a shared account no phone owns).
 //! - `GET .../calendar/add` (`device_calendar_add.html`, `?kind=caldav` picks CalDAV): the source (a link or a CalDAV
 //!   account, the fields swapped by CSS alone), posting to `POST .../calendar/links` or `POST .../calendar/caldav`;
 //!   a refusal renders this page again (400) as typed - never the password -, its kind chosen, the reason under its
 //!   field; a pass goes to the new source's page.
-//! - The POSTs (`.../links/{uid}/name|fetch|remove`, `.../caldav/{account}/test|calendars|remove`) go back to the
-//!   page their form is on, at its group, so a save never jumps to the top.
+//! - The POSTs (`.../links/{uid}/name|fetch|remove`, `.../caldav/{account}/test|calendars|sharing|remove`) go back
+//!   to the page their form is on, at its group, so a save never jumps to the top.
 
 use std::collections::HashSet;
 
@@ -312,15 +314,25 @@ pub(super) fn source_rows(
                     .iter()
                     .filter(|c| mine.iter().any(|l| l.uid == account.uid(c)))
                     .count();
-                (
-                    t_count(
+                let sub = t_count(
+                    lang,
+                    "calendar.sources.caldav_sub",
+                    listed.len() as i64,
+                    &[("provider", &provider), ("ticked", &ticked.to_string())],
+                );
+                // Design 136: a quiet "· delt", "· delt fra {owner}" on another phone's page - a choice, never orange.
+                let sub = match (account.shared, account.owner_device_id, &account.owner_name) {
+                    (false, ..) => sub,
+                    (true, Some(owner), Some(name)) if owner != id => t_params(
                         lang,
-                        "calendar.sources.caldav_sub",
-                        listed.len() as i64,
-                        &[("provider", &provider), ("ticked", &ticked.to_string())],
+                        "calendar.sources.caldav_shared_from",
+                        &[("sub", &sub), ("owner", name)],
                     ),
-                    false,
-                )
+                    (true, ..) => {
+                        t_params(lang, "calendar.sources.caldav_shared", &[("sub", &sub)])
+                    }
+                };
+                (sub, false)
             }
         };
         rows.push(SourceRow {
@@ -638,10 +650,32 @@ struct CaldavTemplate {
     test_tone: &'static str,
     /// Test Again's form shown open: its last answer asks for a password or a moment.
     test_open: bool,
+    /// Design 136: the account is this phone's - the sharing switch (`#sharing`) is drawn.
+    owner_page: bool,
+    /// "Delt i familien" as stored (the switch, its `was_shared`, the remove form's `was_shared`).
+    shared: bool,
+    /// The (i) under the switch: who writes the kid's events.
+    shared_info: String,
+    /// "Fjernet fra Telefon 2." after switching sharing off (only phones that still exist).
+    sharing_line: Option<String>,
+    /// "Hører til" on another phone's page: the owner's name and its page of this account (§5.2 b).
+    owner_name: Option<String>,
+    owner_href: String,
+    /// "Hører til · ingen" (§5.2 c): a shared account no phone owns, and its (i) - how to claim it.
+    owner_none: bool,
+    owner_none_info: String,
+    /// "Fjern konto…" is drawn: the owner's page, or a shared account no phone owns (decision 4).
+    can_remove: bool,
+    /// The remove question: the calendars leave this phone, or every phone (shared).
+    remove_question: &'static str,
+    /// A remove refused because the account was shared since the page was drawn (M3): the confirm open.
+    remove_open: bool,
 }
 crate::i18n::words!(CaldavTemplate);
 
-/// GET `/devices/{id}/calendar/caldav/{account}`. Every account is the family's, shown on every phone's page.
+/// GET `/devices/{id}/calendar/caldav/{account}`: an account shown on this phone (design 136: its own, or shared),
+/// else back to `#sources`. Its four states (§5.2): the owner's page with the sharing switch; another phone's shared
+/// account with "Hører til {owner} ›"; a shared account no phone owns with "Hører til · ingen".
 pub async fn show_caldav(
     State(state): State<AppState>,
     lang: Lang,
@@ -653,7 +687,7 @@ pub async fn show_caldav(
     }
     let loaded = async {
         Ok::<_, sqlx::Error>((
-            caldav::accounts(&state.db).await?,
+            caldav::accounts(&state.db, id).await?,
             calendar_feeds::links(&state.db, id).await?,
         ))
     }
@@ -728,6 +762,23 @@ pub async fn show_caldav(
         .as_deref()
         .map(|code| caldav_why(lang, code, account.test_status));
     let signed_in = when_text(lang, &zone, account.ok_at.as_deref(), now);
+    let phone_name = match phone_name(&state, id).await {
+        Ok(name) => name,
+        Err(err) => return read_failed(lang, err, "the phone's name"),
+    };
+    let owner_page = account.owner_device_id == Some(id);
+    let sharing_line = match (notice, query.get("from")) {
+        (Some("unshared"), Some(from)) => match unshared_names(&state, from).await {
+            Ok(names) if !names.is_empty() => Some(t_params(
+                lang,
+                "calendar.caldav.unshared",
+                &[("phones", &names.join(", "))],
+            )),
+            Ok(_) => None,
+            Err(err) => return read_failed(lang, err, "the phones' names"),
+        },
+        _ => None,
+    };
     let (test_line, test_tone) = match (asks, stop, last_test) {
         (Some(key), _, _) => (Some(t(lang, key).to_string()), "refused"),
         (None, Some(stop), _) if tested => (Some(t(lang, stop_line(stop)).to_string()), "failed"),
@@ -778,10 +829,70 @@ pub async fn show_caldav(
         test_line,
         test_tone,
         test_open: asks.is_some(),
+        owner_page,
+        shared: account.shared,
+        shared_info: t_params(
+            lang,
+            "calendar.caldav.shared_info",
+            &[("owner", &phone_name)],
+        ),
+        sharing_line,
+        owner_name: account
+            .owner_name
+            .clone()
+            .filter(|_| account.owner_device_id.is_some() && !owner_page),
+        owner_href: account
+            .owner_device_id
+            .map(|owner| caldav_page(owner, account.id))
+            .unwrap_or_default(),
+        owner_none: account.owner_device_id.is_none(),
+        owner_none_info: t_params(
+            lang,
+            "calendar.caldav.shared_info_none",
+            &[("phone", &phone_name)],
+        ),
+        can_remove: owner_page || (account.shared && account.owner_device_id.is_none()),
+        remove_question: if account.shared {
+            "calendar.caldav.remove_confirm"
+        } else {
+            "calendar.caldav.remove_confirm_own"
+        },
+        remove_open: notice == Some("remove_shared"),
         title: account.username.clone(),
         username: account.username,
     };
     render(lang, template, StatusCode::OK)
+}
+
+/// The phone's name, for the (i) texts.
+async fn phone_name(state: &AppState, id: i64) -> Result<String, sqlx::Error> {
+    sqlx::query_scalar("SELECT name FROM devices WHERE id = ?")
+        .bind(id)
+        .fetch_one(&state.db)
+        .await
+}
+
+/// The names of the phones an unshare took the calendars from (`from`, comma-separated ids), only those that still
+/// exist, in id order.
+async fn unshared_names(state: &AppState, from: &str) -> Result<Vec<String>, sqlx::Error> {
+    let mut ids: Vec<i64> = from
+        .split(',')
+        .filter_map(|id| id.trim().parse().ok())
+        .take(50)
+        .collect();
+    ids.sort_unstable();
+    ids.dedup();
+    let mut names = Vec::new();
+    for id in ids {
+        if let Some(name) = sqlx::query_scalar::<_, String>("SELECT name FROM devices WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await?
+        {
+            names.push(name);
+        }
+    }
+    Ok(names)
 }
 
 /// A stop's ([account_stop]) short line in Device › Calendar's sources and the kid's calendar.
@@ -824,6 +935,7 @@ pub async fn test_caldav_again(
     }
     let tested = caldav::test_again(
         &state,
+        id,
         account,
         field(&fields, "password"),
         chrono::Utc::now(),
@@ -835,8 +947,10 @@ pub async fn test_caldav_again(
             return failed(lang, err, "couldn't test a CalDAV account");
         }
         Err(caldav::TestError::Wait) => "caldav_wait",
-        Err(caldav::TestError::Refused("calendar.caldav.error.gone")) => {
-            return back_to_sources(id);
+        // Not shown on this phone (gone, or another phone's since; design 136).
+        Err(caldav::TestError::Refused("calendar.caldav.error.gone"))
+        | Err(caldav::TestError::OtherPhone(_)) => {
+            return crate::settings_log::refused(back_to_sources(id));
         }
         Err(caldav::TestError::Refused("calendar.caldav.error.too_long")) => "caldav_too_long",
         Err(caldav::TestError::Refused(_)) => "caldav_retype",
@@ -844,8 +958,10 @@ pub async fn test_caldav_again(
     caldav_back(id, account, Some(notice), "test")
 }
 
-/// POST `/devices/{id}/calendar/caldav/{account}/calendars`: `cal` (every listed calendar's id) and `on_<id>` for the
-/// ticked ones - exactly the rows it was sent. A newly ticked calendar is fetched before the answer (each at most
+/// POST `/devices/{id}/calendar/caldav/{account}/calendars`: `cal` (every listed calendar's id), `on_<id>` for the
+/// ticked ones and `was_on_<id>` (1/0) as each was drawn - only the switches that differ are saved (design 136
+/// decision 9: a stale tab never unticks one ticked meanwhile; a missing `was_on_` counts as changed). A newly
+/// ticked calendar is fetched before the answer (each at most
 /// 60 s), so the phone's first sync has its events; back to the account's page at `#calendars`, the phone nudged.
 /// Too many calendars on the phone → `?notice=caldav_full`, nothing saved.
 pub async fn save_caldav_calendars(
@@ -868,6 +984,14 @@ pub async fn save_caldav_calendars(
         .filter(|c| has(&fields, &format!("on_{c}")))
         .cloned()
         .collect();
+    let listed: Vec<String> = listed
+        .into_iter()
+        .filter(|c| match field(&fields, &format!("was_on_{c}")) {
+            "1" => !ticked.contains(c),
+            "0" => ticked.contains(c),
+            _ => true,
+        })
+        .collect();
     let now = chrono::Utc::now();
     // Design 72b D5.1: unticking the marked calendar ends the mark by the cascade - the save says so.
     let marked = crate::calendar_kid_events::marked_uid(&state.db, id)
@@ -876,7 +1000,7 @@ pub async fn save_caldav_calendars(
         .flatten();
     // The marked calendar's id in this account's list (the notice names it), when it is one of this account's.
     let marked_cal: Option<String> = match &marked {
-        Some(uid) => caldav::accounts(&state.db)
+        Some(uid) => caldav::accounts(&state.db, id)
             .await
             .ok()
             .and_then(|all| all.into_iter().find(|a| a.id == account))
@@ -937,21 +1061,73 @@ pub async fn save_caldav_calendars(
     }
 }
 
-/// POST `/devices/{id}/calendar/caldav/{account}/remove`: the account goes (confirmed: its calendars leave every
-/// phone, the password is deleted); every phone that had one is nudged. Back to the Calendar page's `#sources`.
+/// POST `/devices/{id}/calendar/caldav/{account}/sharing` (design 136 §5.3): `shared` (the switch, missing = off)
+/// and `was_shared` (1/0, as drawn). The owner's page only; on writes `shared` alone, off first takes the account's
+/// calendars off every other phone (nudged, their colours picked again) and lands with "Fjernet fra Telefon 2."
+/// (`?notice=unshared&from=<ids>`). Back to `#sharing`; a refusal is a 303 to the page (or `#sources`), not a save.
+pub async fn save_caldav_sharing(
+    State(state): State<AppState>,
+    lang: Lang,
+    Path((id, account)): Path<(i64, i64)>,
+    body: Bytes,
+) -> Response {
+    let fields = form_pairs(&body);
+    if let Err(answer) = phone(&state, lang, id).await {
+        return *answer;
+    }
+    let shared = has(&fields, "shared");
+    let was_shared = field(&fields, "was_shared") == "1";
+    match caldav::set_shared(&state, id, account, was_shared, shared).await {
+        Ok(caldav::Shared::Unchanged) => caldav_back(id, account, None, "sharing"),
+        Ok(caldav::Shared::On) => caldav_back(id, account, None, "sharing"),
+        Ok(caldav::Shared::Off(phones)) => {
+            for phone in &phones {
+                let _ = state.command_notify.send(*phone);
+                colors_after_link_save(&state, *phone).await;
+            }
+            let from = phones
+                .iter()
+                .map(i64::to_string)
+                .collect::<Vec<_>>()
+                .join(",");
+            let query = if from.is_empty() {
+                String::new()
+            } else {
+                format!("?notice=unshared&from={from}")
+            };
+            Redirect::to(&format!("{}{query}#sharing", caldav_page(id, account))).into_response()
+        }
+        Err(caldav::ManageError::Gone) => crate::settings_log::refused(back_to_sources(id)),
+        Err(caldav::ManageError::NotYours | caldav::ManageError::SharedSince) => {
+            crate::settings_log::refused(caldav_back(id, account, None, "account"))
+        }
+        Err(caldav::ManageError::Db(err)) => {
+            failed(lang, err, "couldn't save a CalDAV account's sharing")
+        }
+    }
+}
+
+/// POST `/devices/{id}/calendar/caldav/{account}/remove` (design 136 §5.5): `was_shared` (1/0, as the confirm was
+/// drawn). The account goes (its calendars leave every phone, the password is deleted); every phone that had one is
+/// nudged; back to the Calendar page's `#sources`. Refused (a 303, not a save): a page that doesn't manage it (another
+/// phone's, a stale tab) back to the account's page, and a confirm drawn unshared for an account shared since back to
+/// `?notice=remove_shared#remove`, the confirm open with the shared question.
 pub async fn remove_caldav(
     State(state): State<AppState>,
     lang: Lang,
     Path((id, account)): Path<(i64, i64)>,
+    body: Bytes,
 ) -> Response {
+    let fields = form_pairs(&body);
     if let Err(answer) = phone(&state, lang, id).await {
         return *answer;
     }
+    let was_shared = field(&fields, "was_shared") == "1";
     let marked_here = crate::calendar_kid_events::marked_uid(&state.db, id)
         .await
         .ok()
         .flatten();
-    match caldav::remove(&state, account).await {
+    match caldav::remove(&state, id, account, was_shared).await {
         Ok(phones) => {
             for phone in phones {
                 let _ = state.command_notify.send(phone);
@@ -972,7 +1148,14 @@ pub async fn remove_caldav(
             }
             back_to_sources(id)
         }
-        Err(err) => failed(lang, err, "couldn't remove a CalDAV account"),
+        Err(caldav::ManageError::Gone) => crate::settings_log::refused(back_to_sources(id)),
+        Err(caldav::ManageError::NotYours) => {
+            crate::settings_log::refused(caldav_back(id, account, None, "account"))
+        }
+        Err(caldav::ManageError::SharedSince) => {
+            crate::settings_log::refused(caldav_back(id, account, Some("remove_shared"), "remove"))
+        }
+        Err(caldav::ManageError::Db(err)) => failed(lang, err, "couldn't remove a CalDAV account"),
     }
 }
 
@@ -994,6 +1177,8 @@ pub struct CaldavForm {
     pub error: Option<String>,
     /// `server`, `username` or `password`.
     pub error_field: &'static str,
+    /// The fix behind the reason's (i) (design 136: "Del den under Telefon 1, eller …").
+    pub error_info: Option<String>,
 }
 
 #[derive(Template)]
@@ -1041,7 +1226,7 @@ async fn render_add(
     let loaded = async {
         Ok::<_, sqlx::Error>((
             calendar_feeds::links(&state.db, id).await?.len(),
-            caldav::accounts(&state.db).await?.len(),
+            caldav::account_count(&state.db).await?,
         ))
     }
     .await;
@@ -1058,7 +1243,7 @@ async fn render_add(
             caldav,
             off: state.music_key.is_none(),
             phone_full: links as i64 >= calendar_feeds::MAX_LINKS_PER_PHONE,
-            accounts_full: accounts as i64 >= caldav::MAX_ACCOUNTS,
+            accounts_full: accounts >= caldav::MAX_ACCOUNTS,
             link,
             account,
         },
@@ -1121,12 +1306,14 @@ pub async fn test_caldav(
     let (server, username) = (field(&fields, "server"), field(&fields, "username"));
     let tested = caldav::test_new(
         &state,
+        id,
         server,
         username,
         field(&fields, "password"),
         chrono::Utc::now(),
     )
     .await;
+    let mut error_info = None;
     let (error, error_field) = match tested {
         Ok(account) => return Redirect::to(&caldav_page(id, account)).into_response(),
         Err(caldav::TestError::Db(err)) => {
@@ -1143,6 +1330,22 @@ pub async fn test_caldav(
         Err(caldav::TestError::Wait) => {
             (t(lang, "calendar.caldav.test_wait").to_string(), "server")
         }
+        // Design 136 decision 6: another phone's account - the reason under Brukernavn, the fix behind its (i).
+        Err(caldav::TestError::OtherPhone(phone)) => {
+            error_info = Some(t_params(
+                lang,
+                "calendar.caldav.error.other_phone_info",
+                &[("phone", &phone)],
+            ));
+            (
+                t_params(
+                    lang,
+                    "calendar.caldav.error.other_phone",
+                    &[("phone", &phone)],
+                ),
+                "username",
+            )
+        }
         Err(caldav::TestError::Failed(err)) => (
             caldav_why(lang, err.code, err.status.map(i64::from)),
             if err.code == "login_refused" {
@@ -1157,6 +1360,7 @@ pub async fn test_caldav(
         username: crate::audit::clip(username, caldav::MAX_USERNAME_CHARS).to_string(),
         error: Some(error),
         error_field,
+        error_info,
     };
     let forms = (AddForm::default(), account);
     render_add(&state, lang, id, true, forms, StatusCode::BAD_REQUEST).await

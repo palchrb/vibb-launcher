@@ -12,19 +12,20 @@ use super::music::device_get;
 use crate::caldav;
 use crate::calendar_feeds::{self, Outcome};
 
-const SERVER: &str = "dav.example.net";
-const USER: &str = "forelder@example.net";
+pub(super) const SERVER: &str = "dav.example.net";
+pub(super) const USER: &str = "forelder@example.net";
 /// A throwaway value, nothing like a real app password.
-const PASSWORD: &str = "test-only-not-a-password";
-const LIST: &str = "https://p07-dav.example.net/1000000001/calendars/";
-const HOME: &str = "https://p07-dav.example.net/1000000001/calendars/home/";
-const FRITID: &str = "https://p07-dav.example.net/1000000001/calendars/fritid-AAAA-1111/";
+pub(super) const PASSWORD: &str = "test-only-not-a-password";
+pub(super) const LIST: &str = "https://p07-dav.example.net/1000000001/calendars/";
+pub(super) const HOME: &str = "https://p07-dav.example.net/1000000001/calendars/home/";
+pub(super) const FRITID: &str =
+    "https://p07-dav.example.net/1000000001/calendars/fritid-AAAA-1111/";
 
-fn fixture(name: &str) -> Vec<u8> {
+pub(super) fn fixture(name: &str) -> Vec<u8> {
     std::fs::read(format!("testdata/caldav/{name}")).unwrap()
 }
 
-fn report() -> Vec<u8> {
+pub(super) fn report() -> Vec<u8> {
     let soon = (Utc::now() + chrono::TimeDelta::days(3))
         .format("%Y%m%d")
         .to_string();
@@ -34,7 +35,7 @@ fn report() -> Vec<u8> {
         .into_bytes()
 }
 
-fn ctag(tag: &str) -> String {
+pub(super) fn ctag(tag: &str) -> String {
     format!(
         r#"<?xml version="1.0"?><d:multistatus xmlns:d="DAV:" xmlns:cs="http://calendarserver.org/ns/"><d:response><d:href>/1000000001/calendars/home/</d:href><d:propstat><d:prop><cs:getctag>{tag}</cs:getctag></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>"#
     )
@@ -42,7 +43,7 @@ fn ctag(tag: &str) -> String {
 
 /// An iCloud-like server: `/.well-known/caldav` → `/caldav/` → `/`, the principal there, the calendars on another
 /// host; both hosts ask for the password (a 401 without it).
-fn fake_icloud(app: &TestApp) {
+pub(super) fn fake_icloud(app: &TestApp) {
     let f = &app.fetch;
     f.basic(SERVER, USER, PASSWORD);
     f.basic("p07-dav.example.net", USER, PASSWORD);
@@ -75,7 +76,7 @@ fn fake_icloud(app: &TestApp) {
     f.answer_method("REPORT", HOME, 207, report());
 }
 
-async fn test_form(
+pub(super) async fn test_form(
     app: &TestApp,
     cookie: &str,
     device: i64,
@@ -95,7 +96,7 @@ async fn test_form(
     .await
 }
 
-async fn account_id(app: &TestApp) -> i64 {
+pub(super) async fn account_id(app: &TestApp) -> i64 {
     sqlx::query_scalar("SELECT id FROM caldav_accounts")
         .fetch_one(&app.db)
         .await
@@ -110,7 +111,7 @@ async fn account_state(app: &TestApp) -> String {
 }
 
 /// Ticks exactly `on` of the two calendars on `device`.
-async fn tick(
+pub(super) async fn tick(
     app: &TestApp,
     cookie: &str,
     device: i64,
@@ -141,11 +142,35 @@ async fn tick(
     .await
 }
 
-fn home_uid() -> String {
+/// "Delt i familien" switched on the owner's page (design 136), drawn as the other value.
+pub(super) async fn share(
+    app: &TestApp,
+    cookie: &str,
+    device: i64,
+    account: i64,
+    on: bool,
+) -> super::TestResponse {
+    let mut fields = vec![("was_shared", if on { "0" } else { "1" })];
+    if on {
+        fields.push(("shared", "on"));
+    }
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{device}/calendar/caldav/{account}/sharing"),
+            Some(cookie),
+            &fields,
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.text());
+    res
+}
+
+pub(super) fn home_uid() -> String {
     caldav::uid_of("https://dav.example.net/", USER, HOME)
 }
 
-async fn home_source(app: &TestApp) -> i64 {
+pub(super) async fn home_source(app: &TestApp) -> i64 {
     sqlx::query_scalar("SELECT id FROM calendar_sources WHERE uid = ?")
         .bind(home_uid())
         .fetch_one(&app.db)
@@ -154,7 +179,7 @@ async fn home_source(app: &TestApp) -> i64 {
 }
 
 /// Requests since `from`: (method, url, carried the password).
-fn requests_since(app: &TestApp, from: usize) -> Vec<(String, String, bool)> {
+pub(super) fn requests_since(app: &TestApp, from: usize) -> Vec<(String, String, bool)> {
     app.fetch.requests.lock().unwrap()[from..]
         .iter()
         .map(|r| {
@@ -438,7 +463,8 @@ async fn a_ticked_calendar_reaches_the_phone_and_an_unchanged_ctag_asks_no_more(
     assert_eq!(outcome, Outcome::Changed);
     assert_eq!(nudges.try_recv().unwrap(), anna);
 
-    // The sibling ticks it too: the same source, no fetch.
+    // Shared (design 136), the sibling ticks it too: the same source, no fetch.
+    share(&app, &cookie, anna, account, true).await;
     let before = app.fetch.count();
     tick(&app, &cookie, ola, account, &[HOME]).await;
     assert_eq!(app.fetch.count(), before);
@@ -951,7 +977,7 @@ async fn a_refused_test_renders_the_form_as_typed_and_never_the_password() {
         "{}",
         kept.len()
     );
-    assert!(caldav::accounts(&app.db).await.unwrap().is_empty());
+    assert!(caldav::accounts(&app.db, id).await.unwrap().is_empty());
     // ... and goes a day after its Test.
     let later = Utc::now() + chrono::TimeDelta::hours(caldav::UNUSED_HOURS + 1);
     assert_eq!(
@@ -1064,19 +1090,20 @@ async fn removing_the_account_takes_its_calendars_off_every_phone() {
     test_form(&app, &cookie, anna, SERVER, PASSWORD).await;
     let account = account_id(&app).await;
     tick(&app, &cookie, anna, account, &[HOME]).await;
+    share(&app, &cookie, anna, account, true).await;
     tick(&app, &cookie, ola, account, &[FRITID]).await;
     let mut nudges = app.state.command_notify.subscribe();
     let res = app
         .request_form(
             Method::POST,
-            &format!("/devices/{ola}/calendar/caldav/{account}/remove"),
+            &format!("/devices/{anna}/calendar/caldav/{account}/remove"),
             Some(&cookie),
-            &[],
+            &[("was_shared", "1")],
         )
         .await;
     assert_eq!(
         res.location(),
-        Some(format!("/devices/{ola}/calendar#sources").as_str())
+        Some(format!("/devices/{anna}/calendar#sources").as_str())
     );
     let mut nudged = vec![nudges.try_recv().unwrap(), nudges.try_recv().unwrap()];
     nudged.sort();

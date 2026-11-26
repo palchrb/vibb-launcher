@@ -261,9 +261,10 @@ phone exactly as a link (`calendar.feeds`, `GET /api/devices/calendar/feeds/{uid
 calendar): the launcher and the contract are unchanged. Scope: basic auth (iCloud, Fastmail, Nextcloud, Radicale);
 out: Google (OAuth only - its secret ICS address works as a link), digest, client certificates.
 
-- **Model** (`0110_caldav_accounts.sql`): `caldav_accounts` - **the family's**, shown on every phone's page, each phone
-  ticking its own calendars (one row per normalized server address and username; Test with the same pair again
-  replaces the password). The app password sealed with the music key (`caldav-v1:<fingerprint>:<id>`), never in a
+- **Model** (`0110_caldav_accounts.sql`): `caldav_accounts` - since design 136 (0183, below) **the phone's whose page
+  added it**, shown on another phone's page only when shared; each phone ticks its own calendars (one row per
+  normalized server address and username; Test with the same pair again replaces the password, on a page that shows
+  the account). The app password sealed with the music key (`caldav-v1:<fingerprint>:<id>`), never in a
   log, page, policy, report or the settings log (`Login` and the account row have no `Debug`). `hosts` (JSON) - the
   only hosts the password may go to; `calendars_json` - what the last passing Test listed (`[{id, href, name}]`, `id`
   = 16 hex of the href, what the tick form posts - never an address in a form); `state` `ok` / `login_refused` /
@@ -327,12 +328,62 @@ out: Google (OAuth only - its secret ICS address works as a link), digest, clien
   the username's or the password's own, else the server's -, never the password; no music key → no form). A ticked
   calendar is "CalDAV" in "Calendars shown"; it has no link page of its own (its uid's page goes to the account's).
   Test routes are in `settings_log::NOT_SAVES`; the ticks and Remove are saves (route and ids only).
+- **Each account belongs to a phone; "Delt i familien" is a choice** (design 136, `docs/design/136-caldav-per-phone.md`,
+  migration `0183_caldav_per_phone.sql` - the note says 0182, which design 137's `cell_near` took first; the owner's
+  answers of 2026-11-25: the owner phone keeps writing while shared, the lower device id keeps a doubled mark, no
+  confirm on unsharing). `caldav_accounts.owner_device_id` (`ON DELETE SET NULL`) and `shared` (0/1); the migration
+  makes an account ticked on one phone that phone's, unshared, and one ticked on two or more or on none shared, owned
+  by the phone that writes to it (the lowest id; a second writer's mark ends as an unmark ends one, its tags kept), else
+  by none. **Shown on phone X**: `principal IS NOT NULL AND (owner_device_id = X OR shared = 1)` (`caldav::accounts(db,
+  X)`; Add Calendar's `accounts_full` still counts the family's, `caldav::account_count`). **Only the owner writes**:
+  Kalender's CalDAV options and `handlers::calendar::caldav_source` take only a calendar of the phone's own account (in
+  both branches, and again inside `save_dagen`'s transaction). Four triggers hold the rules as well (each aborts with a
+  message starting `design 136:`, `caldav::rule_abort`, answered as the route's refusal, never a 500):
+  `caldav_tick_own_or_shared` (a tick only of the phone's own or a shared account, a mark only of its own),
+  `caldav_kid_writes_own`, `caldav_unshare_clean` (unshared only with an owner and no other phone's calendar left) and
+  `caldav_owner_keeps_marks` (no new owner while another phone writes to it); a deleted phone's `SET NULL` fires none.
+  **Claims**: an account no phone owns (`principal IS NULL` - a first Test that never passed - or `owner_device_id IS
+  NULL` - an orphan, a shared account whose phone went) becomes X's only by a passing Test with a password typed on X's
+  page (Add Calendar or "Test på nytt…"); the stored password never claims, and a claim keeps `shared`. `run_test`'s pass
+  is one `BEGIN IMMEDIATE`: a principal equal to another phone's unshared account's is refused (the same login under
+  another spelling, L5), then the conditional `UPDATE … SET owner_device_id = X WHERE id = ? AND (principal IS NULL OR
+  owner_device_id IS NULL)` before `principal` is written (a lost race claims nothing), then the account must be shown
+  on X, else the whole pass is rolled back - each refusal `TestError::OtherPhone(owner)`. Adding another phone's
+  unshared account is refused before any request (the 10 s gap untouched): Add Calendar re-renders (400) with "Kontoen
+  hører til {phone}." under Brukernavn and the fix behind its (i). The ON CONFLICT of `test_new`'s insert never touches
+  the owner. **The pages**: the sources row of a shared account says "· delt" (on another phone's page "· delt fra
+  {owner}"), quiet; the account page has four states - the owner's (the `#sharing` switch, its (i) "Bare {owner} kan
+  skrive barnets avtaler hit"), another phone's shared account ("Hører til {owner} ›" to the owner's page of it, no
+  switch, no "Fjern konto…"), a shared account no phone owns ("Hører til · ingen" whose (i) says how to claim it, and
+  "Fjern konto…"), and after a claim the claimer's. "Fjern konto…" asks "Kalenderne forsvinner fra telefonen …" for an
+  unshared account, the old shared question otherwise. **Every form sends what it was drawn with**: the ticks
+  `was_on_<id>` (only the switches that differ are saved; `save_ticks` is one `BEGIN IMMEDIATE`, the account re-read
+  inside it), the switch `was_shared` (equal to the posted value or the stored one: nothing changes), "Fjern konto…"
+  `was_shared` (a page drawn unshared for an account shared since is refused: `?notice=remove_shared#remove`, the
+  confirm open with the shared question). **Sharing off** (`caldav::set_shared`, `POST …/caldav/{account}/sharing`, a
+  save - route and ids in the settings log; the owner's page only): the other phones' `device_calendar_feeds` rows go
+  first (nudged, their colours picked again, their `device_calendars` settings kept by key), then `shared = 0`, the owner
+  unchanged; the page lands on `?notice=unshared&from=<ids>#sharing`, "Fjernet fra Telefon 2." naming the phones that
+  still exist. An account the owner ticks none of then has no source: `caldav_accounts_unused` stamps it and the sweep
+  deletes it (and its password) a day later unless the owner ticks one first. **A deleted owner phone**: a shared
+  account stays shared with no owner (the siblings keep reading); an unshared one is an orphan, shown nowhere, swept a
+  day later. A replaced phone takes its account back with the app password (design 136 decision 11). Every POST route
+  checks visibility itself; a page that doesn't show the account answers 303 to `#sources`, refused. No change to the
+  policy, a contract or the launcher.
+- **Release note** (design 136 §8, for the server release that ships 0183): "CalDAV accounts now belong to the phone
+  they were added on; one used on several phones is shared ("Delt i familien"), and only its own phone writes the kid's
+  events to it. Before updating, run the preview in design 136 §3.5 on a backup copy and check each account's owner; a
+  wrong one is fixed by removing the account and adding it on the right phone's page."
 - Tests: `caldav::tests` (the server field, the multistatus reader, uids), `tests::caldav` (a fake CalDAV in the test
   source - `CannedFetch::answer_method`/`redirect_method`/`basic`: iCloud's shape with a redirect chain and the
   calendars on another host, Nextcloud's by path, the challenge order, the ticks and the phone's policy, an unchanged
   and a changed ctag, a revoked password with no further request, Test's gap, another host, the refusals, removal).
   `testdata/caldav/` holds answers written in iCloud's and Nextcloud's shape (fake ids), **not captures**: a real
-  server confirms them (design 72 §10's Radicale run, and an iCloud/Fastmail/Nextcloud account).
+  server confirms them (design 72 §10's Radicale run, and an iCloud/Fastmail/Nextcloud account). Design 136:
+  `tests::caldav_per_phone` (0183 on a database migrated to 0182 with §9's seed, every trigger, the conditional claim, a
+  deleted owner; an older backup through the restore check; every route from another phone; the same login on another
+  page and under another spelling; claims by a typed password and the claim race; sharing on and off; the stale forms;
+  the one-day sweep; a replaced phone).
 
 ## Device › Calendar's sources (the look of 2026-11-01, variant B, branch `calendar-sources-ui`)
 
@@ -342,7 +393,8 @@ accounts are one group on Device › Calendar and each has a page of its own (`h
 - **The group** "Hentes av serveren" / "Fetched by the server" (`#sources`, `calendar_sources::source_rows`, above
   "Calendars shown"): a `.group-icons` group, one `<a class="row">` per link (`.tile-teal`, its name, "host · Hentet
   15:10" - or, orange, the failure and "Prøver igjen 16:10", the held empty answer, the lost key) and one per CalDAV
-  account (`.tile-indigo`, the username, "iCloud · 1 av 3 kalendere" - or, orange, the short stop "Passordet ble
+  account the phone sees (its own, or shared - design 136; `.tile-indigo`, the username, "iCloud · 1 av 3 kalendere",
+  a quiet "· delt" / "· delt fra {owner}" - or, orange, the short stop "Passordet ble
   avvist - test på nytt" or "… · 1 kalender kan ikke hentes"), each with its chevron, then "Legg til kalender…"
   (`a.row.row-button`, to Add Calendar) or the no-key line (`data-sources="off"`) or the 10-a-phone line
   (`data-sources="full"`). The key-new alarm (`links-key-new`) stays above it. One footer and one ⓘ for both kinds
@@ -376,8 +428,8 @@ come back to the phone, acknowledged; the calendar wins a clash. What was writte
 ends. `src/calendar_kid_events.rs` (the endpoint, the plan, the job, the way back), the requests in `caldav.rs`
 (`DavRequest`, `WriteLogin`), the resource writer and reader in `ics.rs` (`write_event`, `read_kid_resource`).
 
-- **Model** (migration `0120_calendar_kid_writes.sql`; 0117 on its branch, renumbered past `calendar-in-rules`' 0119 before any release ran it): `device_calendar_feeds.kid_writes` (one per phone, `idx_device_calendar_feeds_kid`; only a `caldav` source,
-  checked in `save_dagen`), `device_kid_events` (the last set - its text, replaced at each POST -, `accepted`, the
+- **Model** (migration `0120_calendar_kid_writes.sql`; 0117 on its branch, renumbered past `calendar-in-rules`' 0119 before any release ran it): `device_calendar_feeds.kid_writes` (one per phone, `idx_device_calendar_feeds_kid`; only a `caldav` source
+  of an account the phone owns - design 136, held by `caldav_kid_writes_own` too -, checked in `save_dagen`), `device_kid_events` (the last set - its text, replaced at each POST -, `accepted`, the
   `from`/`cut`/`cut_from`/`cut_uids`/`ended` it came with, the last 400's code, the phone's stop, the two holds),
   `kid_caldav_events` (per uid: `href`, `etag`, `sent_hash`/`remote_hash`/`attempted_hash` - up to three unconfirmed
   versions -, `start_at`/`end_at` from every remote read, `state` pending/deleting/ok/kept/refused/released/past/gone
@@ -449,7 +501,8 @@ ends. `src/calendar_kid_events.rs` (the endpoint, the plan, the job, the way bac
 - **The policy's `calendar.kid_caldav`** `{id, accepted, back, pending}` (always sent, `null` without a mark;
   `policy_json_keys_snapshot`); the nudge only when `pending` reaches 0, `back` goes above 0 or
   a stop is new.
-- **The PWA**: the select's CalDAV options (not one `writable: false` at the last Test), the status under it (`calendar.kid_caldav.status.*`, counts only:
+- **The PWA**: the select's CalDAV options (only the phone's own accounts' since design 136 - Kalender's (i) says so -,
+  not one `writable: false` at the last Test), the status under it (`calendar.kid_caldav.status.*`, counts only:
   "Skrevet 15:12 · 12 avtaler", waiting, hand-backs waiting, cut, too big; orange: the stops, the account's stop with a
   link to its page, the clock, refused events, a refused set naming the old phone for a pinned tag, the two holds),
   the account page's "Barnets avtaler skrives hit", the untick's notice (`?notice=kid_caldav_ended&cal=<id>` on the

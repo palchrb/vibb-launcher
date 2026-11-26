@@ -535,11 +535,12 @@ pub async fn seed(app: &TestApp, lang: crate::i18n::Lang) -> Family {
     .unwrap();
     let caldav: i64 = sqlx::query_scalar(
         "INSERT INTO caldav_accounts (server_url, username, password_sealed, password_nonce, password_key_fp, \
-         hosts, principal, calendars_json, state) VALUES ('https://dav.example.net/', 'forelder', x'00', x'00', '', \
+         hosts, principal, calendars_json, state, owner_device_id) VALUES ('https://dav.example.net/', 'forelder', x'00', x'00', '', \
          '[\"dav.example.net\"]', '/p/', \
-         '[{\"id\":\"0123456789abcdef\",\"href\":\"https://dav.example.net/c/hjem/\",\"name\":\"Hjem\"}]', 'ok') \
+         '[{\"id\":\"0123456789abcdef\",\"href\":\"https://dav.example.net/c/hjem/\",\"name\":\"Hjem\"}]', 'ok', ?) \
          RETURNING id",
     )
+    .bind(anna)
     .fetch_one(&app.db)
     .await
     .unwrap();

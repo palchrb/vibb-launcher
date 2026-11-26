@@ -409,17 +409,24 @@ fn kid_choices(
     out
 }
 
-/// The CalDAV calendars ticked for this phone that the kid's events may be written to (design 72b D5.1): not one its
-/// last Test says the account can't write to (`writable: false`) unless it is the pick already.
+/// The CalDAV calendars ticked for this phone that the kid's events may be written to (design 72b D5.1): only of an
+/// account the phone owns (design 136), and not one its last Test says the account can't write to
+/// (`writable: false`) unless it is the pick already.
 fn caldav_kid_choices(
     lang: Lang,
+    device: i64,
     links: &[calendar_feeds::LinkRow],
     accounts: &[crate::caldav::AccountView],
     marked: Option<&str>,
 ) -> Vec<KidChoice> {
     let mut out = Vec::new();
     for link in links.iter().filter(|l| l.kind == "caldav") {
-        let account = accounts.iter().find(|a| Some(a.id) == link.account_id);
+        let account = accounts
+            .iter()
+            .find(|a| Some(a.id) == link.account_id && a.owner_device_id == Some(device));
+        if account.is_none() {
+            continue;
+        }
         let writable = account
             .and_then(|a| a.calendars().into_iter().find(|c| a.uid(c) == link.uid))
             .and_then(|c| c.writable);
@@ -668,7 +675,7 @@ pub async fn view_calendar(
             calendar::rules(&state.db, id).await?,
             calendar::last_report(&state.db, id).await?,
             calendar_feeds::links(&state.db, id).await?,
-            crate::caldav::accounts(&state.db).await?,
+            crate::caldav::accounts(&state.db, id).await?,
             crate::calendar_kid_events::marked_uid(&state.db, id).await?,
             crate::calendar_kid_events::status(&state.db, id, state.kid_writes.now()).await?,
         ))
@@ -793,7 +800,7 @@ pub async fn view_calendar(
     let (sources, links_key_new) =
         calendar_sources::source_rows(state, lang, &zone, now, id, &links, &accounts);
     // Design 72b: the CalDAV calendars the kid's events may be written to, and the status while one is the pick.
-    let caldav_choices = caldav_kid_choices(lang, &links, &accounts, marked.as_deref());
+    let caldav_choices = caldav_kid_choices(lang, id, &links, &accounts, marked.as_deref());
     let marked_link = marked
         .as_deref()
         .and_then(|uid| links.iter().find(|l| l.uid == uid));
@@ -1015,7 +1022,21 @@ pub async fn save_dagen(
                 .await?;
             // The kid's events written by the server to the marked CalDAV calendar, or not (D4.1: one transaction).
             match caldav_pick {
-                Some(source) => crate::calendar_kid_events::mark(&mut tx, id, source).await?,
+                Some(source) => {
+                    // Design 136: still the phone's own account, inside the save's transaction.
+                    let own: Option<i64> = sqlx::query_scalar(
+                        "SELECT s.id FROM calendar_sources s JOIN caldav_accounts a ON a.id = s.account_id \
+                         WHERE s.id = ? AND a.owner_device_id = ?",
+                    )
+                    .bind(source)
+                    .bind(id)
+                    .fetch_optional(&mut *tx)
+                    .await?;
+                    if own.is_none() {
+                        return Err(sqlx::Error::RowNotFound);
+                    }
+                    crate::calendar_kid_events::mark(&mut tx, id, source).await?
+                }
                 None => crate::calendar_kid_events::unmark(&mut tx, id).await?,
             }
             if let Some(key) = pick {
@@ -1044,20 +1065,27 @@ pub async fn save_dagen(
     .await;
     match result {
         Ok(()) => saved(&state, id, "dagen"),
+        // Design 136: the account is no longer the phone's (re-checked above), or a trigger refused the mark.
+        Err(sqlx::Error::RowNotFound) if caldav_pick.is_some() => {
+            bad(lang, "calendar.error.kid_calendar")
+        }
+        Err(err) if crate::caldav::rule_abort(&err) => bad(lang, "calendar.error.kid_calendar"),
         Err(err) => failed(lang, err, "couldn't save Dagen's switches"),
     }
 }
 
 /// The source id of `uid` when the phone may mark it for the kid's events (design 72b D5.5): a `caldav` source
-/// ticked for this phone and not `writable: false` at its account's last Test - or it is the pick already (an
-/// autosave of the form keeps it).
+/// ticked for this phone, of an account the phone owns (design 136), and not `writable: false` at its account's last
+/// Test - or it is the pick already (an autosave of the form keeps it).
 async fn caldav_source(state: &AppState, id: i64, uid: &str) -> Result<Option<i64>, sqlx::Error> {
     if !calendar_feeds::valid_uid(uid) {
         return Ok(None);
     }
+    // Design 136: only a calendar of the phone's own account, in both branches.
     let found: Option<(i64, Option<i64>, bool)> = sqlx::query_as(
         "SELECT s.id, s.account_id, d.kid_writes FROM device_calendar_feeds d \
-         JOIN calendar_sources s ON s.id = d.source_id WHERE d.device_id = ? AND s.uid = ? AND s.kind = 'caldav'",
+         JOIN calendar_sources s ON s.id = d.source_id JOIN caldav_accounts a ON a.id = s.account_id \
+         WHERE d.device_id = ? AND s.uid = ? AND s.kind = 'caldav' AND a.owner_device_id = d.device_id",
     )
     .bind(id)
     .bind(uid)
@@ -1069,7 +1097,7 @@ async fn caldav_source(state: &AppState, id: i64, uid: &str) -> Result<Option<i6
     if already {
         return Ok(Some(source));
     }
-    let accounts = crate::caldav::accounts(&state.db).await?;
+    let accounts = crate::caldav::accounts(&state.db, id).await?;
     let writable = accounts
         .iter()
         .find(|a| Some(a.id) == account)
