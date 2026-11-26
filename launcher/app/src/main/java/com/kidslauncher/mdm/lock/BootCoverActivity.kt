@@ -256,14 +256,17 @@ class BootCoverActivity : Activity() {
 
     /** Code QA L1 of the §6bt fixes: the focus back, after the open ask lost it, with that ask still unanswered - the
      * window over the cover (Android's pad, a dialog) went without an answer - is the silence at once, not at the
-     * clock's next tick. Only after a loss since the ask: the first focus of a resume (often after its ask) is none. */
+     * clock's next tick. Only after a loss since the ask: the first focus of a resume (often after its ask) is none.
+     * §6bv finding 3: an orphaned ask's pad was up when this instance came (no loss seen here) - its first focus is
+     * the pad gone, the silence at once too ([bootPadStep] closes it with the line). */
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) focusSeenThisProcess = true
         if (!hasFocus) {
             if (pad.open) focusLostSinceAsk = true
             return
         }
-        val lost = focusLostSinceAsk
+        val lost = focusLostSinceAsk || pad.orphaned
         focusLostSinceAsk = false
         if (lost && resumed && pad.open && pad.silentDue) {
             handler.removeCallbacks(padSilent)
@@ -456,24 +459,35 @@ class BootCoverActivity : Activity() {
         val interactive = getSystemService(PowerManager::class.java)?.isInteractive == true
         val inCall = gate && telecomInCall()
         // §6bt finding 2: Android's pad over the cover has the window focus - a silence then is the pad up, not lost.
+        // §6bv finding 1: but only after an ask that reached the keyguard (BootPad.reached, read here at every step):
+        // the focus is also missing before SystemUI's keyguard exists, and SystemUI's own lock screen can hold it.
         val covered = !hasWindowFocus()
-        val step = bootPadStep(pad, event, gate, interactive, inCall, covered)
+        val keyguard = keyguardRead()
+        val before = pad
+        val step = bootPadStep(pad, event, gate, interactive, inCall, covered, keyguard)
         pad = step.pad
         autoAsksThisProcess = pad.autoAsks
         tapLine?.visibility = if (gate && pad.line) View.VISIBLE else View.GONE
-        if (event == PadEvent.SILENT && step.action == PadAction.NONE && step.silentInMs != null && !(covered && coveredLogged)) {
-            coveredLogged = covered
+        val padUp = covered && before.reached
+        if (event == PadEvent.SILENT && step.action == PadAction.NONE && step.silentInMs != null && !(padUp && coveredLogged)) {
+            coveredLogged = padUp
             Log.i(
                 LOG_TAG,
-                if (covered) {
-                    "Boot cover: no answer yet, a window (Android's pad) is over the cover - no re-ask"
+                if (padUp) {
+                    "Boot cover: no answer yet, Android's pad is over the cover - no re-ask"
                 } else {
                     "Boot cover: no answer to the ask - this re-ask skipped (screen off or a call)"
                 },
             )
         }
+        if (event == PadEvent.RELAUNCHED && pad.orphaned && !before.orphaned) {
+            Log.i(LOG_TAG, "Boot cover relaunched with Android's pad up - no ask (its answer went with the old instance)")
+        }
+        if (event == PadEvent.SILENT && before.orphaned && !pad.open) {
+            Log.i(LOG_TAG, "Boot cover: the focus back, the relaunch's pad gone - the line, no ask")
+        }
         when (step.action) {
-            PadAction.ASK -> askPad(event)
+            PadAction.ASK -> askPad(event, covered, keyguard)
             PadAction.RETRY_LATER -> {
                 handler.removeCallbacks(padRetry)
                 handler.postDelayed(padRetry, BOOT_PAD_RETRY_MS)
@@ -490,14 +504,20 @@ class BootCoverActivity : Activity() {
 
     /** Step F: ask for Android's PIN pad (the BFU bouncer) - the gate read again first. It only asks; the answer goes
      * back through [padStep], an earlier ask's answer is dropped by its id. */
-    private fun askPad(why: PadEvent) {
+    private fun askPad(why: PadEvent, covered: Boolean, keyguard: KeyguardRead) {
         if (!padGate()) return
         val id = ++askId
         coveredLogged = false
         focusLostSinceAsk = false
-        // RC3-1: a silence's re-ask says so (no answer since the ask; uncounted, the same ask).
+        // RC3-1: a silence's re-ask says so (no answer since the ask; uncounted, the same ask). §6bv: the keyguard's
+        // state and the focus at the ask, so a run tells an ask SystemUI couldn't take from one it took.
         val what = if (why == PadEvent.SILENT) "no answer, again ${pad.reasks}" else why.name.lowercase()
-        Log.i(LOG_TAG, "Boot cover asks for Android's PIN pad ($what, automatic ${pad.autoAsks} of $BOOT_PAD_AUTO_ASKS)")
+        val where = when (keyguard) {
+            KeyguardRead.SHOWN -> "keyguard up"
+            KeyguardRead.NOT_SHOWN -> "keyguard not up"
+            KeyguardRead.UNSURE -> "keyguard reads up, not yet occluded by the cover?"
+        } + (if (covered) ", no focus" else "")
+        Log.i(LOG_TAG, "Boot cover asks for Android's PIN pad ($what, automatic ${pad.autoAsks} of $BOOT_PAD_AUTO_ASKS; $where)")
         try {
             getSystemService(KeyguardManager::class.java)?.requestDismissKeyguard(
                 this,
@@ -517,6 +537,32 @@ class BootCoverActivity : Activity() {
         if (id != askId || isDestroyed) return
         Log.i(LOG_TAG, "Boot cover: Android's PIN pad ${event.name.lowercase()}")
         padStep(event)
+    }
+
+    /**
+     * §6bv finding 1: Android's keyguard is shown (`KeyguardManager.isKeyguardLocked`). Window manager answers it as "the
+     * keyguard shown and not occluded, or input restricted by it"; with the cover occluding, that is SystemUI's keyguard
+     * reporting itself shown - false until SystemUI's keyguard service is up and has shown it (an ask before is dropped,
+     * or answered with an error), true from then on, the pad up or not. Before window manager has the cover occluding,
+     * its stand-in state for a keyguard service not yet bound reads shown too ([keyguardRead]: unsure). `isDeviceLocked`
+     * can't tell this (true for the whole BFU), nor can the focus alone (missing before the keyguard exists, and held by
+     * SystemUI's lock screen as by its pad).
+     * Unreadable: shown (the focus alone decides, as before). Never throws.
+     */
+    private fun keyguardShown(): Boolean = try {
+        getSystemService(KeyguardManager::class.java)?.isKeyguardLocked != false
+    } catch (e: Exception) {
+        true
+    }
+
+    /** §6bv: [keyguardShown] as [KeyguardRead] - unsure while no cover window of this process had the focus and the
+     * keyguard never read not shown in it (window manager may not have the cover occluding yet). */
+    private fun keyguardRead(): KeyguardRead {
+        if (!keyguardShown()) {
+            keyguardSeenDownThisProcess = true
+            return KeyguardRead.NOT_SHOWN
+        }
+        return if (focusSeenThisProcess || keyguardSeenDownThisProcess) KeyguardRead.SHOWN else KeyguardRead.UNSURE
     }
 
     /** Step F: "Trykk for å låse opp" - APK resources only (the framework font call, no AppCompat). */
@@ -607,6 +653,15 @@ class BootCoverActivity : Activity() {
 
         /** M-4: the pad of an instance destroyed for a configuration change, for its replacement. Main thread only. */
         private var carriedPad: BootPad? = null
+
+        /** §6bv: a cover window of this process has had the window focus - window manager has it occluding the keyguard,
+         * so [keyguardShown] reads SystemUI's own state. Process-wide: a relaunch's new window keeps the activity's
+         * occlusion. Main thread only. */
+        private var focusSeenThisProcess = false
+
+        /** §6bv: the keyguard read not shown in this process - window manager had the cover occluding (the stand-in
+         * state reads shown), so a later shown reading is SystemUI's. Main thread only. */
+        private var keyguardSeenDownThisProcess = false
 
         fun component(context: Context) = ComponentName(context, BootCoverActivity::class.java)
     }
