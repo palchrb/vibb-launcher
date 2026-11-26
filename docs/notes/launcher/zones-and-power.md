@@ -120,6 +120,7 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
 
 ## Safe zones on the phone (design 64 step 2, `docs/design/64-safe-zones.md` §4, at the monorepo root)
 
+- **A policy zone's id is the phone's link to a family zone** (design 135, server only, no launcher change): the server's zones are the family's and a phone links to the ones it uses; the policy still lists only this phone's circles by the link's id, unchanged by migration 0181.
 - **The phone decides nothing** (decision 1): the server's two-fix rule on the stored fixes decides every arrival and
   departure; the fences, the motion sensor and the distances (`distanceM`, haversine) are only reasons to take a fix,
   when, and whether to send it now - so the launcher has no side state and no copy of `zone_vectors.json`. Pure rules

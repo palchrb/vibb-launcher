@@ -259,8 +259,9 @@ async fn nb_pages_have_no_english() {
         "/account/password-sign-in".to_string(),
         format!("/devices/{liv}"),
         format!("/devices/{liv}/provision"),
-        format!("/devices/{anna}/zones/new"),
-        format!("/devices/{anna}/zones/{}", family.zone),
+        "/zones".to_string(),
+        format!("/zones/new?device={anna}"),
+        format!("/zones/{}?device={anna}", family.family_zone),
         format!("/devices/{anna}/locations"),
         format!("/devices/{anna}/calendar/add"),
         format!("/devices/{anna}/calendar/add?kind=caldav"),
@@ -403,7 +404,7 @@ async fn nb_pages_have_no_english() {
             .concat(),
         ),
         (
-            format!("/devices/{anna}/zones"),
+            "/zones".to_string(),
             vec![
                 ("name", ""),
                 ("latitude", "x"),

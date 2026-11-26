@@ -17,8 +17,12 @@
 //!   report (the cursors didn't move), and two parallel reports take turns. An event is keyed
 //!   `<zone>:<side>:<first fix>` on top, so one crossing is one row.
 //! - **The events** (`parent_events::Kind::ZoneArrived`/`ZoneLeft`) are stored as a key plus
-//!   parameters (the user's decision 5), raised only when the zone's switch for that direction is
-//!   on, pushed only while news ([NEWS_FOR]) and to the parents whose "Zones" switch is on.
+//!   parameters (the user's decision 5), raised for every crossing (design 135 decision 7), pushed
+//!   only while news ([NEWS_FOR]) and to the parents whose "Zones" switch and own switch for that
+//!   phone, zone and direction are on (`zone_alerts`, filtered in `push::queue`).
+//! - **Design 135**: the zones are the family's (`family_zones`: the name and the circle); a phone
+//!   links to the ones it uses (`device_zones`, the link: its id is the one the phone and the events
+//!   see, and it holds the rule's state). [Zone] is a link read with its family zone.
 
 use chrono::{DateTime, Duration, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
@@ -36,9 +40,12 @@ pub const RADIUS: std::ops::RangeInclusive<i64> = 100..=2000;
 pub const DEFAULT_RADIUS: i64 = 150;
 /// The slider's step.
 pub const RADIUS_STEP: i64 = 10;
-/// Zones per phone (decision 2).
+/// Zones per phone (decision 2): links, design 135.
 pub const MAX_ZONES: i64 = 10;
-/// A zone's name, in characters (unique per phone, ignoring case).
+/// Design 135 decision 6: zones in the family - the phone's Zones page draws one cell per family
+/// zone. A family over it (after the fold) loses only "Add Zone".
+pub const MAX_FAMILY_ZONES: i64 = 50;
+/// A zone's name, in characters (unique in the family ignoring case, checked only when it changes).
 pub const NAME_MAX: usize = 40;
 /// The second fix of a pair is at least this long after the first: a burst of fixes from one
 /// moment isn't two observations.
@@ -354,17 +361,18 @@ pub fn instant(t: DateTime<Utc>) -> String {
     t.to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 
-/// A zone's row.
+/// A phone's zone: the link (`device_zones`, design 135: its `id` is the policy's and the events'
+/// zone id, and it holds the rule's state) read with its family zone (`zone_id`: the name and the
+/// circle).
 #[derive(Clone, Debug, sqlx::FromRow)]
 pub struct Zone {
     pub id: i64,
+    pub zone_id: i64,
     pub device_id: i64,
     pub name: String,
     pub latitude: f64,
     pub longitude: f64,
     pub radius_m: i64,
-    pub notify_arrive: bool,
-    pub notify_leave: bool,
     pub side: Option<String>,
     pub side_since: Option<String>,
     pub pending_side: Option<String>,
@@ -476,15 +484,100 @@ pub async fn freshness_inputs(
     Ok((newest, mode, interval))
 }
 
-/// The phone's zones, oldest first.
+/// The columns of a [Zone]: the link `d` with its family zone `f`.
+const ZONE_COLUMNS: &str = "d.id, d.zone_id, d.device_id, f.name, f.latitude, f.longitude, f.radius_m, \
+     d.side, d.side_since, d.pending_side, d.pending_at, d.evaluated_at, d.evaluated_fix_id \
+     FROM device_zones d JOIN family_zones f ON f.id = d.zone_id";
+
+/// The phone's zones (its links, design 135), oldest link first.
 pub async fn list<'e, E: sqlx::SqliteExecutor<'e>>(
     db: E,
     device_id: i64,
 ) -> Result<Vec<Zone>, sqlx::Error> {
-    sqlx::query_as("SELECT * FROM device_zones WHERE device_id = ? ORDER BY id")
-        .bind(device_id)
+    sqlx::query_as(&format!(
+        "SELECT {ZONE_COLUMNS} WHERE d.device_id = ? ORDER BY d.id"
+    ))
+    .bind(device_id)
+    .fetch_all(db)
+    .await
+}
+
+/// Every link of the family zone `zone_id` (design 135), oldest first.
+pub async fn links_of<'e, E: sqlx::SqliteExecutor<'e>>(
+    db: E,
+    zone_id: i64,
+) -> Result<Vec<Zone>, sqlx::Error> {
+    sqlx::query_as(&format!(
+        "SELECT {ZONE_COLUMNS} WHERE d.zone_id = ? ORDER BY d.id"
+    ))
+    .bind(zone_id)
+    .fetch_all(db)
+    .await
+}
+
+/// A family zone (design 135): the place, shared by every phone that links to it.
+#[derive(Clone, Debug, PartialEq, sqlx::FromRow)]
+pub struct FamilyZone {
+    pub id: i64,
+    pub name: String,
+    pub latitude: f64,
+    pub longitude: f64,
+    pub radius_m: i64,
+}
+
+impl FamilyZone {
+    pub fn circle(&self) -> Circle {
+        Circle {
+            latitude: self.latitude,
+            longitude: self.longitude,
+            radius_m: self.radius_m,
+        }
+    }
+}
+
+/// The family's zones, oldest first.
+pub async fn family<'e, E: sqlx::SqliteExecutor<'e>>(
+    db: E,
+) -> Result<Vec<FamilyZone>, sqlx::Error> {
+    sqlx::query_as("SELECT id, name, latitude, longitude, radius_m FROM family_zones ORDER BY id")
         .fetch_all(db)
         .await
+}
+
+/// One family zone, `None` when there is none with that id.
+pub async fn family_zone<'e, E: sqlx::SqliteExecutor<'e>>(
+    db: E,
+    zone_id: i64,
+) -> Result<Option<FamilyZone>, sqlx::Error> {
+    sqlx::query_as("SELECT id, name, latitude, longitude, radius_m FROM family_zones WHERE id = ?")
+        .bind(zone_id)
+        .fetch_optional(db)
+        .await
+}
+
+/// Links the family zone `zone` to the phone (design 135 §4: a new link, its side unknown and its
+/// cursor at the phone's newest fix - [start_over], never a replay of the history; design 138: the
+/// zone's confirmed routers copied to it), on the caller's transaction; the new link's id. The
+/// caller checks the cap.
+pub async fn link(
+    conn: &mut SqliteConnection,
+    device_id: i64,
+    zone: &FamilyZone,
+    admin_id: Option<i64>,
+    now: DateTime<Utc>,
+) -> Result<i64, sqlx::Error> {
+    let link_id: i64 = sqlx::query_scalar(
+        "INSERT INTO device_zones (device_id, zone_id, created_by) VALUES (?, ?, ?) RETURNING id",
+    )
+    .bind(device_id)
+    .bind(zone.id)
+    .bind(admin_id)
+    .fetch_one(&mut *conn)
+    .await?;
+    start_over(conn, link_id, device_id, &zone.circle(), now).await?;
+    // Design 138 with 135: the zone's confirmed routers are the family zone's - the new link gets them.
+    crate::zone_networks::copy_to_link(conn, link_id, zone.id).await?;
+    Ok(link_id)
 }
 
 /// Forgets a zone's side (a new zone, a moved centre, a changed radius): unknown again, the
@@ -887,28 +980,20 @@ pub async fn evaluate_stored(
         .unwrap_or_default();
     Ok(crossings
         .into_iter()
-        .filter_map(|(index, crossing)| event_of(&zones[index], &phone, &crossing, now))
+        .map(|(index, crossing)| event_of(&zones[index], &phone, &crossing, now))
         .collect())
 }
 
-/// The event of a crossing, `None` when the zone's switch for that direction is off (decision 5:
-/// the zone's switches decide whether there is an event at all). Pushed only while it is news.
-pub fn event_of(
-    zone: &Zone,
-    phone: &str,
-    crossing: &Crossing,
-    now: DateTime<Utc>,
-) -> Option<NewEvent> {
+/// The event of a crossing - every crossing is one (design 135 decision 7: each parent's own
+/// switches for the link filter only the push, `push::queue`). Pushed only while it is news.
+pub fn event_of(zone: &Zone, phone: &str, crossing: &Crossing, now: DateTime<Utc>) -> NewEvent {
     let arrived = crossing.to == Side::Inside;
-    if (arrived && !zone.notify_arrive) || (!arrived && !zone.notify_leave) {
-        return None;
-    }
     let push = if now - crossing.confirmed_at < NEWS_FOR {
         Push::Now
     } else {
         Push::No
     };
-    Some(parent_events::zone_crossing(
+    parent_events::zone_crossing(
         zone.device_id,
         phone,
         zone.id,
@@ -916,7 +1001,7 @@ pub fn event_of(
         arrived,
         crossing.at,
         push,
-    ))
+    )
 }
 
 /// A zone as the phone gets it (`location_policy.zones`, design 64 step 2): the centre and the
@@ -2141,13 +2226,12 @@ mod tests {
     fn the_policy_carries_the_zones_only_while_regularly() {
         let zone = Zone {
             id: 4,
+            zone_id: 2,
             device_id: 1,
             name: "Home".to_string(),
             latitude: HOME.latitude,
             longitude: HOME.longitude,
             radius_m: 150,
-            notify_arrive: true,
-            notify_leave: true,
             side: None,
             side_since: None,
             pending_side: None,

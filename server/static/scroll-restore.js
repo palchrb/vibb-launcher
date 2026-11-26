@@ -517,10 +517,44 @@
             // A 5xx or anything else: the server may have acted - never posted again.
             return { kind: "reload" };
         }
+        /**
+         * Design 135 (code QA M1): a form that posts only what differs from the values it was drawn with (`data-diff`,
+         * its hidden `was_<name>` fields) is about to send again before the page is redrawn - a switch flipped twice in
+         * one round trip. Its `was_` fields take the values the save just out posted (`posted`, the body's pairs; a
+         * checkbox `1` when it was sent, else `0`), so the next save diffs against what the server now has and ends at
+         * the parent's last tap. Only for this resend: a refusal sent again the browser's way keeps the page's own.
+         */
+        function postedAsWas(form, posted) {
+            if (!form || typeof form.hasAttribute !== "function" || !form.hasAttribute("data-diff")) return;
+            var fields = form.elements || [];
+            var byName = {};
+            for (var i = 0; i < fields.length; i++) {
+                if (fields[i].name && !byName[fields[i].name]) byName[fields[i].name] = fields[i];
+            }
+            var sent = {};
+            for (var p = 0; p < posted.length; p++) {
+                if (!(posted[p][0] in sent)) sent[posted[p][0]] = posted[p][1];
+            }
+            for (var j = 0; j < fields.length; j++) {
+                var was = fields[j];
+                var name = String(was.name || "");
+                if (name.indexOf("was_") !== 0) continue;
+                var key = name.slice(4);
+                var target = byName[key];
+                if (!target) continue;
+                if (String(target.type || "").toLowerCase() === "checkbox") {
+                    was.value = key in sent ? "1" : "0";
+                } else if (key in sent) {
+                    was.value = sent[key];
+                }
+            }
+        }
         /** Sends `form`'s stay save now (its fields as they are). */
         function send(form, submitter, hooked, how) {
             var body = new win.FormData(form);
             if (submitter && submitter.name) body.append(submitter.name, submitter.value || "");
+            var posted = [];
+            body.forEach(function (value, key) { posted.push([key, value]); });
             if (!how.multipart) {
                 var fields = new win.URLSearchParams();
                 body.forEach(function (value, key) { fields.append(key, value); });
@@ -534,6 +568,7 @@
                 // after this one, in order, before anything lands.
                 if (entry && entry.again) {
                     entry.again = false;
+                    postedAsWas(form, posted);
                     entry.sent = sentOf(form);
                     var nextHow = stayPost(form, null, win.location.href);
                     if (nextHow) {

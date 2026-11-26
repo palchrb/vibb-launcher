@@ -958,6 +958,52 @@ test("while a save is out its form is busy: a second tap does nothing, the butto
     assert.deepStrictEqual(w.went.map((g) => g[0]), ["replaceState", "reload"]);
 });
 
+test("a diff form's switch flipped twice in flight ends at the last tap: its was_ fields take what was posted (design 135, code QA M1)", async () => {
+    const answers = [];
+    const w = stayWindow(() => new Promise((r) => answers.push(r)));
+    // As a browser builds it: an unchecked box isn't sent.
+    w.win.FormData = function (form) {
+        this.pairs = form.elements
+            .filter((f) => f.type !== "submit" && (f.type !== "checkbox" || f.checked))
+            .map((f) => [f.name, f.value]);
+    };
+    w.win.FormData.prototype.append = function (k, v) { this.pairs.push([k, v]); };
+    w.win.FormData.prototype.forEach = function (fn) { this.pairs.forEach(([k, v]) => fn(v, k)); };
+    const zones = w.form({ method: "post", action: "/devices/1/zones#zones", "data-diff": "" }, [
+        ["zone", "3"],
+        ["was_use_3", "0"],
+        ["use_3", "on", "checkbox"],
+        ["was_name", "Hjem"],
+        ["name", "Hjem", "text"],
+    ]);
+    const box = zones.elements[2];
+    box.checked = true;
+    zones.submit();
+    assert.strictEqual(w.fetches[0][1].body.toString(), "zone=3&was_use_3=0&use_3=on&was_name=Hjem&name=Hjem");
+    // Off again before the answer: it waits for the first save.
+    box.checked = false;
+    zones.submit();
+    assert.strictEqual(w.fetches.length, 1);
+    answers[0](stayAnswer("/apps/tracked/2#zone-3"));
+    await settle();
+    assert.strictEqual(w.fetches.length, 2);
+    assert.strictEqual(
+        w.fetches[1][1].body.toString(),
+        "zone=3&was_use_3=1&was_name=Hjem&name=Hjem",
+        "drawn on as the first save left it: the server unlinks, the parent's last tap"
+    );
+    // A form without `data-diff` keeps its fields as they are.
+    const plain = w.form({ method: "post", action: "/devices/1/apps/toggle#a" }, [["was_on", "0"], ["on", "on", "checkbox"]]);
+    plain.elements[1].checked = true;
+    plain.submit();
+    plain.elements[1].checked = false;
+    plain.submit();
+    answers[1](stayAnswer("/apps/tracked/2#zone-3"));
+    answers[2](stayAnswer("/apps/tracked/2#a"));
+    await settle();
+    assert.strictEqual(w.fetches[3][1].body.toString(), "was_on=0");
+});
+
 test("several saves out: the page lands once, after the last, at the last's address; a form's saves go in order (code QA L1)", async () => {
     const answers = [];
     const w = stayWindow(() => new Promise((r) => answers.push(r)));

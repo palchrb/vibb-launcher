@@ -42,6 +42,7 @@ mod emulator_keys;
 mod enrol_key;
 mod enrollment;
 pub(crate) mod fake_dav;
+mod family_zones;
 mod fdroid;
 mod hardening;
 mod i18n_pages;

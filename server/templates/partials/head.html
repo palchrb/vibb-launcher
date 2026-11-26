@@ -48,7 +48,7 @@
 <!-- No POST may make the page jump to the top (server/CLAUDE.md): static/scroll-restore.js. Not
      deferred, so form.submit() is hooked before any control can call it. It also posts a save that
      comes back to its page itself, so the history stays as it was (admin_auth::stay_answer). -->
-<script src="/static/scroll-restore.js?v=11"></script>
+<script src="/static/scroll-restore.js?v=12"></script>
 <!-- Saves in place (design 103): a save that comes back to its page, the 3 s refresh, pull to refresh and the
      return after being away fetch the page and change only what differs (handySwap.refresh), instead of a reload.
      Not deferred: scroll-restore.js hands it a save's landing, which can come before the page has parsed. -->

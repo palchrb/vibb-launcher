@@ -294,7 +294,12 @@ CREATE UNIQUE INDEX idx_zone_networks_ap ON zone_networks(zone_id, bssid);
   enrolled into the row keeps them (they describe the router). On the phone any circle change drops the zone's `LINK`
   and `LINK_AP` rows (its key changes, as today); the confirmations come back from the policy.
 - **After design 135** (family zones): whether the confirmations move to the family zone is 135's call at its rebase;
-  left on the link row (`device_zones`) they keep working per phone.
+  left on the link row (`device_zones`) they keep working per phone. **Decided at the merge (2026-11-26):** the rows
+  stay on the link (no schema change: 0180 shipped in server 0.94.0, and 135's migration is as built), and every
+  write keeps a family zone's links in step - a confirm on the family zone's editor (`/zones/{zone_id}/wifi`, bound
+  to the named phone's report) writes every link, Fjern and a move past the radius clear every link, a strike blocks
+  the router on every link, and a new link starts with the zone's rows (`zone_networks::copy_to_link` in
+  `zones::link`). So a confirmation is the family zone's and every phone using it is served the router.
 
 ### D13. The contract
 

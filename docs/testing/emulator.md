@@ -6638,3 +6638,29 @@ command stream's open nudge for a due command, at most one a minute per phone). 
 | R4 | G2's Koble til half: with `refused: no_token` the Lock page shows "Vibb One kan ikke endre Androids PIN" alone - no "Telefonens PIN er ikke barne-PIN-en", no Attention row for it | x | - |
 | R5 | G11: between the save and the phone's next report "Telefonen har ingen PIN" with "Lagre barne-PIN på nytt." behind the (i), never "Velg en barne-PIN under." | x | - |
 | R6 | Side note 6: after a snapshot load with a waiting `set_kid_pin` and the 2 s network drop, the row goes out within seconds of the stream's reconnect (the server log `command stream opened`, the phone's `Command stream nudge received`), no parent save | x | - |
+
+## 6bx. Zones shared by the family, picked per phone (design 135, branch `family-zones`) - written, not run
+
+`docs/design/135-family-zones.md` §11: **server only**, so the gate checks that the phones see nothing change and that
+the per-phone pick, the shared edit and each parent's push work end to end. On **Android 14 and 16** only (the
+launcher is unchanged; 15 and 17 don't run): an API 34 image ("Telefon 1") and `jelly36` (Android 16, "Telefon 2"),
+both enrolled to one server, the debug launcher, Regularly, mock fixes as in §6t (`cmd location providers
+add-test-provider fused`, then `set-test-provider-location`). Two parent accounts in the PWA (A and B), each with a
+push subscription (the browser's, or §6ay's recorder). Logs: `adb logcat -s ZoneWatch`; fences: `adb shell dumpsys
+location | grep -A3 -i geofence` (on 16 the proximity alerts are in the same dump). Server rows read with `sqlite3`
+on a copy of `data/kidphone.db` (never the live file while it runs).
+
+| # | Step | Expect |
+|---|---|---|
+| 1 | **Before the update**, a server with phase D's 0181 and not 0182: on Telefon 1 "Hjem" (typed centre, 150 m) and "Skole"; on Telefon 2 "Hjem" with the same numbers. Both Regularly; a fix inside Hjem on both, twice 2 min apart. Drar off on Telefon 1's Hjem; Telefon 1's weather zone Hjem. Note both phones' geofence dump and `SELECT id, latitude, longitude, radius_m FROM device_zones` | "Here now" on both phones' Hjem; two fences on Telefon 1, one on Telefon 2 |
+| 2 | **Update the server** to this branch (0182 runs; a `data/backups/pre-migrate-181-*.db` made) | `/zones` lists Hjem "150 m · Telefon 1, Telefon 2" and Skole "· Telefon 1"; "Here now" still on both; no new inbox row; at the next sync `ZoneWatch` logs no re-registration and the geofence dump equals step 1's; the policy's `location_policy.zones` (`GET /api/devices/policy` with the phone's token, or `ZoneWatch`'s fingerprint line) has the same ids and circles; Telefon 1's Lock Screen & PINs › Weather still says Hjem; `zone_alerts` has a Drar-off row for A and B on Telefon 1's Hjem |
+| 3 | **Pick per phone**: on Telefon 2's Zones page switch Skole on | the page comes back at Skole's cell with "Saved."; after the nudge Telefon 2 holds one more fence; a fix inside Skole twice raises nothing (a silent first side); a fix 1 km away and its confirm raise "Telefon 2 left Skole" for Telefon 2 only |
+| 4 | **Edit a shared zone**: open Hjem from `/zones`, the place's (i) shows "The zone is shared…"; move it 300 m (tap the map) and Save | both phones re-register one fence with the new circle (`ZoneWatch` fence lines, the dump); no event on either; a crossing on each phone afterwards raises its own event |
+| 5 | **Alerts per parent**: parent B turns Kommer off for Telefon 2's Hjem on Telefon 2's Zones page | parent A's page still shows Kommer on; an arrival on Telefon 2 shows in both inboxes and queues one `push_deliveries` row, for A's subscription only |
+| 6 | **Stale page**: open Telefon 2's Zones page in two tabs; in tab 1 switch Fotball (a new family zone with no phone) on; then in tab 2 switch Kommer for Hjem | Fotball stays linked to Telefon 2 (its fence stays); the Kommer change is saved |
+| 7 | **Unlink, relink, delete**: Hjem off for Telefon 1; then on again; then Delete Hjem in its editor | off: the fence goes from Telefon 1's dump and its Weather still says Hjem; on: a new fence (a new id in the policy), a silent first side; delete: both phones' Hjem fences go and Telefon 1's Weather says none |
+| 8 | **Cap**: give Telefon 1 ten zones, then switch an eleventh on | the page comes back at that cell with the switch off and "10 zones is the most"; nothing changes on the phone |
+| 9 | **A zone's Wi-Fi** (design 138 on a family zone): both phones in Hjem on the same made-up home router (`--es connect`, §6bw); Hjem's editor `/zones/{id}#zone-wifi` | one Bekreft row for the router (not one per phone); Bekreft: "Saved." in the group, both phones nudged, and both policies' `location_policy.zones[]` for Hjem carry the router under their own `networks[].id`; switch Hjem off and on for Telefon 2 - its new link's policy carries the router again; Fjern...: gone from both policies; a strike in Telefon 1's report (`zone_watch.wifi_struck` with its row's id) blocks it for Telefon 2 too ("Sett et annet sted", both nudged) |
+
+What can't be seen here: a real phone's Wi-Fi zone link relearning after the moved zone in step 4 (design 125 D12, at
+least 2 days) - the Jelly Star's, later.

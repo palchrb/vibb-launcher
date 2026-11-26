@@ -1523,35 +1523,38 @@ pub fn build_admin_router(
             "/devices/{id}/locate-result.json",
             get(handlers::locate::locate_result_json),
         )
-        // Design 64: a phone's zones (the list is the Zones page since design 88).
+        // Design 64: a phone's zones (the list is the Zones page since design 88; design 135: one
+        // auto-saving form, a switch per family zone).
         .route("/devices/{id}/zones.json", get(handlers::zones::zones_json))
         .route(
             "/devices/{id}/zones",
-            get(handlers::locate::show_zones).post(handlers::zones::create_zone),
+            get(handlers::locate::show_zones).post(handlers::zones::save_phone),
+        )
+        // Design 135: the family's zones and each zone's editor.
+        .route(
+            "/zones",
+            get(handlers::zones::list_page).post(handlers::zones::create_zone),
+        )
+        .route("/zones/new", get(handlers::zones::new_zone))
+        .route(
+            "/zones/{zone_id}",
+            get(handlers::zones::show_zone).post(handlers::zones::save_zone),
+        )
+        .route(
+            "/zones/{zone_id}/delete",
+            post(handlers::zones::delete_zone),
+        )
+        // Design 138: a zone's confirmed Wi-Fi routers (the family zone's, for every phone using it).
+        .route("/zones/{zone_id}/wifi", post(handlers::zones::confirm_wifi))
+        .route(
+            "/zones/{zone_id}/wifi/{network_id}/delete",
+            post(handlers::zones::remove_wifi),
         )
         // Design 88: Locate's Find Phone and Location Settings pages.
         .route("/devices/{id}/find", get(handlers::locate::show_find))
         .route(
             "/devices/{id}/location-settings",
             get(handlers::locate::show_location_settings),
-        )
-        .route("/devices/{id}/zones/new", get(handlers::zones::new_zone))
-        .route(
-            "/devices/{id}/zones/{zone_id}",
-            get(handlers::zones::show_zone).post(handlers::zones::save_zone),
-        )
-        .route(
-            "/devices/{id}/zones/{zone_id}/delete",
-            post(handlers::zones::delete_zone),
-        )
-        // Design 138: a zone's confirmed Wi-Fi routers.
-        .route(
-            "/devices/{id}/zones/{zone_id}/wifi",
-            post(handlers::zones::confirm_wifi),
-        )
-        .route(
-            "/devices/{id}/zones/{zone_id}/wifi/{network_id}/delete",
-            post(handlers::zones::remove_wifi),
         )
         .route("/devices/{id}/command/ring", post(handlers::locate::ring))
         .route(

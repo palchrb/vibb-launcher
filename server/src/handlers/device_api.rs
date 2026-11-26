@@ -2351,7 +2351,8 @@ async fn status_intake(
         tracing::error!(device_id = device.id, %err, "can't compare the Wi-Fi count");
     }
     // Design 138 D7: the zone routers the phone saw far outside their zones - blocked here, one
-    // line each, and the phone nudged so its policy drops them.
+    // line each, and every phone using such a zone nudged so its policy drops them (design 135:
+    // a family zone's routers are blocked on all its links).
     let struck = zone_watch_json
         .as_deref()
         .and_then(|json| serde_json::from_str::<serde_json::Value>(json).ok())
@@ -2362,8 +2363,8 @@ async fn status_intake(
         .unwrap_or_default();
     if !struck.is_empty() {
         match crate::zone_networks::block_struck(&state.db, device.id, &struck).await {
-            Ok(zones) if !zones.is_empty() => {
-                for zone in &zones {
+            Ok(hit) if !hit.zones.is_empty() => {
+                for zone in &hit.zones {
                     crate::security::record_phone_event_logged(
                         &state.db,
                         device.id,
@@ -2375,7 +2376,9 @@ async fn status_intake(
                     )
                     .await;
                 }
-                let _ = state.command_notify.send(device.id);
+                for phone in hit.phones {
+                    let _ = state.command_notify.send(phone);
+                }
             }
             Ok(_) => {}
             Err(err) => {
