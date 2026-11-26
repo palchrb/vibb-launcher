@@ -127,6 +127,9 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     val cached = cachedPolicy()
     // A lost or cut-short preferences file never reads as a new phone: the witness counts as applied.
     val policyEverApplied = everManaged(mdm.policyEverApplied(), EnrolmentWitness.policyApplied(context))
+    // Gate rc.4 finding 2: the witnessed server as it was before this sync (an accepted policy rewrites its address).
+    val witnessEnrolledBefore = EnrolmentWitness.enrolled(context)
+    val witnessUrlBefore = EnrolmentWitness.serverUrl(context)
 
     // Only a fresh policy that decodes and passes judgeFresh is acted on - see PolicyGate.kt.
     // Everything in the `freshPolicy != null` block (cache, PIN hash, commands, uninstalls) is
@@ -183,6 +186,11 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
 
     if (freshPolicy != null) {
         storeAcceptedPolicy(context, freshPolicy)
+        // Gate rc.4 finding 2: a policy the witnessed server gave the adopted key is the enrolment, back.
+        val keySigned = credential is DeviceCredential.Key
+        if (com.kidslauncher.mdm.setup.enrolmentRestoredBySync(mdm.enrolled(), keySigned, witnessEnrolledBefore, serverUrl, witnessUrlBefore)) {
+            restoreEnrolled()
+        }
         // Design 129 §5.5: the policy's `device_key` only nudges the registration flow, which asks step 1 itself.
         KeyRegistration.nudge(context, freshPolicy.deviceKey)
         // Design 98 §4.4.4: the parent code's pauses read this policy (an ack, or ended in the PWA after the ack).
@@ -1627,6 +1635,18 @@ private fun storeAcceptedPolicy(context: Context, policy: PolicyResponse): Unit 
     StorageWrites.record(StorageWrites.Kind.POLICY_CACHE, ok)
     if (!ok) Log.w(LOG_TAG, "Failed to cache the accepted policy")
     EnrolmentWitness.recordPolicyApplied(context, LauncherPreferences.mdm().serverUrl())
+}
+
+/** Gate rc.4 finding 2 ([enrolmentRestoredBySync]): `enrolled` back on disk at once (the generated setter only
+ * `apply()`s), and an open Koble til closes. The witness already says enrolled; the key, the token and the rest stay. */
+private fun restoreEnrolled() {
+    val mdm = LauncherPreferences.mdm()
+    if (!LauncherPreferences.getSharedPreferences().edit().putBoolean(mdm.keys().enrolled(), true).commit()) {
+        Log.w(LOG_TAG, "The restored enrolled flag wasn't committed")
+        return
+    }
+    Log.i(LOG_TAG, "Enrolment restored: the adopted key synced with the witnessed server")
+    com.kidslauncher.mdm.setup.ConnectActivity.enrolmentRestored()
 }
 
 /** Guards the cached policy blob's writes (design 24b §2). */

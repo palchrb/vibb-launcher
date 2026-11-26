@@ -30,6 +30,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 private const val LOG_TAG = "ConnectActivity"
@@ -100,6 +101,7 @@ class ConnectActivity : UIObjectActivity() {
             launch { typing.collect { render() } }
             launch { lastError.collect { render() } }
             launch { EnrolWait.state.collect { render() } }
+            launch { restored.collect { render() } }
         }
     }
 
@@ -131,9 +133,12 @@ class ConnectActivity : UIObjectActivity() {
         val code = binding.connectCode.text.toString().trim()
         if (!connectButtonEnabled(url, code, busy)) return
         // Security review S-M1: an address the phone won't use changes nothing; the whole reason shows.
-        // A phone the witness says was enrolled goes back to that server only.
-        if (!serverUrlUsable(url, BuildConfig.DEBUG) || !connectUrlAllowed(url, EnrolmentWitness.serverUrl(this))) {
-            lastError.value = R.string.server_url_refused
+        // A phone the witness says was enrolled goes back to that server only (gate rc.4 finding 4: its own line).
+        connectUrlRefusal(serverUrlUsable(url, BuildConfig.DEBUG), connectUrlAllowed(url, EnrolmentWitness.serverUrl(this)))?.let {
+            lastError.value = when (it) {
+                ConnectUrlRefusal.ADDRESS_RULE -> R.string.server_url_refused
+                ConnectUrlRefusal.OTHER_SERVER -> R.string.connect_other_server
+            }
             return
         }
         if (!typing.compareAndSet(false, true)) return
@@ -168,6 +173,14 @@ class ConnectActivity : UIObjectActivity() {
         /** The last typed enrolment's failure line (a string resource), the process's; cleared by an edit or a tap. */
         private val lastError = MutableStateFlow<Int?>(null)
 
+        /** Bumped when a sync restored `enrolled` ([enrolmentRestoredBySync]): an open screen reads the rule again. */
+        private val restored = MutableStateFlow(0)
+
+        /** Gate rc.4 finding 2: the sync restored `enrolled` - any thread. */
+        fun enrolmentRestored() {
+            restored.update { it + 1 }
+        }
+
         /** Back closed the screen: Home's next resume (the one right after) shows Home. Main thread only. */
         private var skipNextHomeResume = false
 
@@ -197,6 +210,9 @@ class ConnectActivity : UIObjectActivity() {
                 skipNextHomeResume = false
                 return false
             }
+            // Gate rc.4 finding 3: never over parent Settings (the drawer's, its gate's dialog up) - it comes back at the
+            // next resume of Home with Settings gone.
+            if (com.kidslauncher.mdm.ui.settings.SettingsFront.shown) return false
             if (!due(activity)) return false
             return try {
                 activity.startActivity(Intent(activity, ConnectActivity::class.java))

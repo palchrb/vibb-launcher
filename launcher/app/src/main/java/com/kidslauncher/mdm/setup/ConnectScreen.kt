@@ -36,6 +36,35 @@ fun connectUrlAllowed(typed: String, witnessUrl: String?): Boolean {
     return urlHost(typed) == witnessed
 }
 
+/** Why Koble til refuses a typed address: the address rule's own reason, or another server than the witnessed one. */
+enum class ConnectUrlRefusal { ADDRESS_RULE, OTHER_SERVER }
+
+/** Gate rc.4 finding 4: the address rule first (its line says the whole rule), then the witnessed host (a line of its
+ * own - an https address on another host broke no address rule); `null` when the address is taken. */
+fun connectUrlRefusal(usable: Boolean, allowed: Boolean): ConnectUrlRefusal? = when {
+    !usable -> ConnectUrlRefusal.ADDRESS_RULE
+    !allowed -> ConnectUrlRefusal.OTHER_SERVER
+    else -> null
+}
+
+/**
+ * Gate rc.4 finding 2: a phone whose preferences were lost still has its adopted key, and once an address on the
+ * witnessed server is back (Koble til keeps the typed one, also after a refused code) its sync works again - the
+ * phone is enrolled in all but the flag. A policy the server gave this phone's credential, the adopted key
+ * ([keySigned]: the request went out as `DeviceCredential.Key`; nothing here proves how the server checked it), from
+ * the server the witness named before this sync ([witnessUrl], read before the sync rewrites it - [connectUrlAllowed]'s
+ * host rule), restores `enrolled`, and Koble til closes. Never without a witnessed address (an unreadable witness names
+ * none): another host never restores anything. A lost key gives no credential (no sync), and a server that refuses
+ * the key gives no policy, so design 129's key-lost path is never crossed.
+ */
+fun enrolmentRestoredBySync(
+    enrolled: Boolean,
+    keySigned: Boolean,
+    witnessEnrolled: Boolean,
+    syncedUrl: String,
+    witnessUrl: String?,
+): Boolean = !enrolled && keySigned && witnessEnrolled && witnessUrl != null && connectUrlAllowed(syncedUrl, witnessUrl)
+
 private fun urlHost(url: String): String? = try {
     java.net.URI(url.trim()).host?.lowercase()?.trimEnd('.')?.takeIf { it.isNotEmpty() }
 } catch (e: Exception) {

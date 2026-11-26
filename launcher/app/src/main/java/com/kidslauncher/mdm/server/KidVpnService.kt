@@ -8,6 +8,7 @@ import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.net.VpnService
 import android.os.Handler
+import android.os.HandlerThread
 import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
@@ -75,7 +76,8 @@ private const val SINK_INTERFACE_ADDRESS_V6 = "fd95:5ba1:0:1::1"
  */
 class KidVpnService : VpnService() {
     /** The tunnel, the foreground state, the stop and the retry's back-off (pure [VpnTunnelState],
-     * `QuietNotificationsTest`); changed on the main thread only - `onRevoke` posts there. */
+     * `QuietNotificationsTest`); changed on the control thread only ([ctl]) - `onRevoke` posts there, and so do
+     * `onCreate`, `onStartCommand` and `onDestroy` after their foreground answer. */
     private val state = VpnTunnelState<ParcelFileDescriptor>()
     private val scope = CoroutineScope(Dispatchers.IO + Job())
     /** Security review S-L9: at most [DNS_PARALLEL] queries resolve at once, at most [DNS_IN_FLIGHT_MAX] are held (the
@@ -99,9 +101,17 @@ class KidVpnService : VpnService() {
     private var lastNetwork: NetworkSnapshot? = null
     /** "DNS can't be reached" (design 67 §3.1), for this instance: a restart starts afresh. */
     private val reach = ReachTracker()
-    private val main = Handler(Looper.getMainLooper())
+    /** The control thread's handler (gate rc.4 finding 1): the list load, `establish()`, the network watcher, the retries
+     * and the stop run there, never on the main thread - a slow boot held `onCreate` in `establish()` past the service's
+     * ANR timeout. One thread for every instance ([controlLooper]), so an old instance's stop runs before a new one's
+     * start; this handler's own messages only ([stopSelfCleanly] clears them). */
+    private val ctl = Handler(controlLooper())
 
-    /** The shape the tunnel has now (design 95 §2.2), `null` without one; written on the main thread only, read by the
+    /** `onDestroy` ran (main): work this instance had already posted builds no tunnel - its stop is queued behind it. */
+    @Volatile
+    private var destroyed = false
+
+    /** The shape the tunnel has now (design 95 §2.2), `null` without one; written on the control thread only, read by the
      * status report's thread too (design 116, [liveTunnel]). */
     @Volatile
     private var shape: VpnShape? = null
@@ -110,7 +120,7 @@ class KidVpnService : VpnService() {
      * which must not drop the sink's lockdown on the way. */
     @Volatile
     private var lastBest: BestNet? = null
-    /** What [lastBest] was read from, and when telephony was read for it (code QA L7, [readsTelephony]); main thread. */
+    /** What [lastBest] was read from, and when telephony was read for it (code QA L7, [readsTelephony]); control thread. */
     private var lastCapsKey: List<Any>? = null
     private var lastTelephonyMs = 0L
 
@@ -127,6 +137,16 @@ class KidVpnService : VpnService() {
         created = true
         running = state
         live = this
+        // Gate rc.4 finding 1: the rest on the control thread, so onCreate returns at once (a boot's slow
+        // establish() and the 80 000-line list held it past the ANR timeout). Nothing is filtered before the
+        // tunnel exists, as before: the list is loaded first, then the tunnel built on the same thread.
+        ctl.post { createOnControl() }
+    }
+
+    /** [onCreate]'s work, on the control thread: the list before the tunnel, so no query is ever classified against
+     * an empty list. */
+    private fun createOnControl() {
+        if (destroyed) return
         DnsFilterEngine.loadFromDisk(applicationContext)
         // The watcher runs as long as the service does: the sink starts the moment Wi-Fi drops (design 95 §2.2).
         watchNetwork()
@@ -137,23 +157,35 @@ class KidVpnService : VpnService() {
 
     override fun onStartCommand(intent: android.content.Intent?, flags: Int, startId: Int): Int {
         // A startForegroundService start must be answered with startForeground, also when we had
-        // dropped it (ForegroundServiceDidNotStartInTimeException otherwise). The system's
-        // always-on start and start()'s plain one carry no extra.
-        if (intent?.getBooleanExtra(EXTRA_FOREGROUND, false) == true) {
-            enterForeground()
-            foregroundStartsPending.updateAndGet { maxOf(it - 1, 0) }
+        // dropped it (ForegroundServiceDidNotStartInTimeException otherwise) - here, at once. The
+        // system's always-on start and start()'s plain one carry no extra.
+        val answered = if (intent?.getBooleanExtra(EXTRA_FOREGROUND, false) == true) {
+            answerForeground().also { foregroundStartsPending.updateAndGet { maxOf(it - 1, 0) } }
+        } else {
+            false
         }
+        // The decision and the tunnel on the control thread (gate rc.4 finding 1), after onCreate's.
+        ctl.post { startCommand(startId, answered) }
+        // Always sticky now (the stop path returned START_NOT_STICKY when it decided here): harmless - the posted
+        // stopSelf(startId) leaves nothing started to restart, and a process killed before it runs comes back with no
+        // intent, where onCreate builds no tunnel while none is wanted and this start's decision stops it again.
+        return START_STICKY
+    }
+
+    /** [onStartCommand]'s work, on the control thread. */
+    private fun startCommand(startId: Int, answered: Boolean) {
+        if (destroyed) return
+        if (answered) state.enteredForeground()
         // The stop that [stop] or [onRevoke] left to a queued start ([vpnStopsNow]): the start is
-        // answered above (or by onCreate), so stopping now can't crash us.
+        // answered (by onStartCommand or onCreate), so stopping now can't crash us.
         if (wantedShape() == VpnShape.NONE || state.stopped) {
             Log.i(LOG_TAG, "No VPN wanted or revoked since this start was queued: stopping")
             stopSelf(startId)
-            return START_NOT_STICKY
+            return
         }
         // apply() may have changed the inputs (a pause, the parent's Bare Vibb): the shape follows.
         if (state.tunnel == null) startVpn() else reshape()
         settleForeground()
-        return START_STICKY
     }
 
     /**
@@ -164,6 +196,7 @@ class KidVpnService : VpnService() {
      * always-on yet takes it back.
      */
     private fun settleForeground() {
+        if (destroyed) return
         when (state.settle { isAlwaysOn }) {
             VpnSettle.ENTER -> enterForeground()
             VpnSettle.DROP -> {
@@ -175,14 +208,19 @@ class KidVpnService : VpnService() {
     }
 
     private fun enterForeground() {
-        try {
-            startForeground(VPN_FILTER_NOTIFICATION_ID, buildNotification())
-            state.enteredForeground()
-        } catch (e: Exception) {
-            // A device owner with VPN consent is exempt from the background FGS-start rule
-            // (REASON_DEVICE_OWNER, REASON_OP_ACTIVATE_VPN); logged in case a build isn't.
-            Log.w(LOG_TAG, "Couldn't go foreground: ${e.javaClass.simpleName}")
-        }
+        if (answerForeground()) state.enteredForeground()
+    }
+
+    /** `startForeground`, `true` when it took; any thread - [onStartCommand]'s answer is on main, where the state
+     * isn't touched (its [startCommand] records it). */
+    private fun answerForeground(): Boolean = try {
+        startForeground(VPN_FILTER_NOTIFICATION_ID, buildNotification())
+        true
+    } catch (e: Exception) {
+        // A device owner with VPN consent is exempt from the background FGS-start rule
+        // (REASON_DEVICE_OWNER, REASON_OP_ACTIVATE_VPN); logged in case a build isn't.
+        Log.w(LOG_TAG, "Couldn't go foreground: ${e.javaClass.simpleName}")
+        false
     }
 
     /** [serviceShape]: `apply()`'s rule, with this service's view of the network - never lockdown off on a doubt. The
@@ -196,7 +234,7 @@ class KidVpnService : VpnService() {
     }
 
     /** Code QA M1: the retry of a failed switch to the sink (the tunnel may be up in another shape, so the read loop's
-     * retry chain doesn't run); main thread only. */
+     * retry chain doesn't run); control thread only. */
     private val reshapeRetry = Runnable { reshape() }
     private var reshapeRetryMs = 5_000L
 
@@ -211,17 +249,17 @@ class KidVpnService : VpnService() {
         val established = establish(wanted)
         alwaysOnAfterEstablish(wanted, lockdownNow)?.let { MobileNetworkRuntime.writeAlwaysOn(this, it) }
         if (retriesFailedEstablish(wanted, established)) {
-            val step = reshapeRetryStep(main.hasCallbacks(reshapeRetry), reshapeRetryMs)
+            val step = reshapeRetryStep(ctl.hasCallbacks(reshapeRetry), reshapeRetryMs)
             if (step == null) {
                 Log.w(LOG_TAG, "The ${wanted.wire} tunnel failed, a retry is already due")
             } else {
                 val (retryMs, nextMs) = step
                 Log.w(LOG_TAG, "The ${wanted.wire} tunnel failed, retrying in $retryMs ms")
-                main.postDelayed(reshapeRetry, retryMs)
+                ctl.postDelayed(reshapeRetry, retryMs)
                 reshapeRetryMs = nextMs
             }
         } else if (established) {
-            main.removeCallbacks(reshapeRetry)
+            ctl.removeCallbacks(reshapeRetry)
             reshapeRetryMs = 5_000L
         }
         VpnFilterWatch.check(this, if (established) VpnFilterEvent.CHECK else VpnFilterEvent.ESTABLISH_FAILED)
@@ -230,7 +268,7 @@ class KidVpnService : VpnService() {
 
     /** `true` when a switch ran (its own failure arms the retry, [switchTo]). */
     private fun startVpn(): Boolean {
-        if (state.stopped) return false
+        if (state.stopped || destroyed) return false
         val wanted = wantedShape()
         if (wanted == VpnShape.NONE) return false
         // The tunnel first, then lockdown on or off ([switchTo]; design 95 §2.2, design 120 fix A).
@@ -283,6 +321,8 @@ class KidVpnService : VpnService() {
                 VpnShape.PASS -> builder.allowFamily(android.system.OsConstants.AF_INET).allowFamily(android.system.OsConstants.AF_INET6)
                 VpnShape.NONE -> return false
             }
+            // Destroyed while the builder was made: no tunnel for a service that is gone (its close is queued).
+            if (destroyed) return false
             val established = builder.establish()
             if (established == null) {
                 // Happens if the user has since revoked VPN permission, or another VPN grabbed it
@@ -313,9 +353,9 @@ class KidVpnService : VpnService() {
         }
     }
 
-    /** The inputs or the network changed: a new shape when it differs, no VPN at all when none is wanted. Main thread. */
+    /** The inputs or the network changed: a new shape when it differs, no VPN at all when none is wanted. Control thread. */
     private fun reshape() {
-        if (state.stopped) return
+        if (state.stopped || destroyed) return
         val wanted = wantedShape()
         if (wanted == VpnShape.NONE) {
             Log.i(LOG_TAG, "No VPN wanted any more: stopping")
@@ -399,7 +439,7 @@ class KidVpnService : VpnService() {
             .build()
         try {
             getSystemService(ConnectivityManager::class.java)
-                ?.registerBestMatchingNetworkCallback(request, callback, Handler(Looper.getMainLooper()))
+                ?.registerBestMatchingNetworkCallback(request, callback, ctl)
             networkCallback = callback
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Couldn't watch the network: ${e.javaClass.simpleName}")
@@ -438,13 +478,13 @@ class KidVpnService : VpnService() {
                 input.read(buffer)
             } catch (e: Exception) {
                 Log.w(LOG_TAG, "VPN interface read failed, stopping read loop", e)
-                main.post { tunnelLost(fd) }
+                ctl.post { tunnelLost(fd) }
                 return
             }
             if (length < 0) {
                 // End of stream: the tunnel is gone as surely as a thrown read (qa-lfix-notifs-code #4).
                 Log.w(LOG_TAG, "VPN interface at end of stream, stopping read loop")
-                main.post { tunnelLost(fd) }
+                ctl.post { tunnelLost(fd) }
                 return
             }
             if (length == 0) continue
@@ -489,6 +529,7 @@ class KidVpnService : VpnService() {
      * state comes back and the service tries again by itself (5 s doubling to 5 min,
      * [VpnTunnelState.readLoopEnded]) - the next `apply()`'s start would too, but may be far off. */
     private fun tunnelLost(fd: ParcelFileDescriptor) {
+        if (destroyed) return
         val retryMs = state.readLoopEnded(fd, SystemClock.elapsedRealtime()) ?: return
         try {
             fd.close()
@@ -514,8 +555,8 @@ class KidVpnService : VpnService() {
     }
 
     private fun scheduleRetry(delayMs: Long) {
-        main.removeCallbacks(retry)
-        main.postDelayed(retry, delayMs)
+        ctl.removeCallbacks(retry)
+        ctl.postDelayed(retry, delayMs)
     }
 
     private fun handlePacket(data: ByteArray, output: FileOutputStream, writeLock: Any) {
@@ -602,11 +643,11 @@ class KidVpnService : VpnService() {
     override fun onRevoke() {
         // The user (or another VPN app taking over) revoked our VPN permission directly - stop
         // cleanly rather than leaving a dangling foreground service with a dead tunnel. Called on a
-        // binder thread (VpnService.Callback): the state changes on main, as everywhere else
+        // binder thread (VpnService.Callback): the state changes on the control thread, as everywhere else
         // (qa-lfix-notifs-code #3); super.onRevoke() is only stopSelf().
         // A stopSelf() with a foreground start still unanswered would crash us like stop() can (code QA L1 of the
         // upstream port, [vpnStopsNow]): then that start's onStartCommand stops the service, the state being stopped.
-        main.post {
+        ctl.post {
             stopSelfCleanly()
             if (vpnStopsNow(created, foregroundStartsPending.get())) stopSelf()
             // Design 116 §3.1: revoked while the filter is wanted - the state is down, the while-idle alarm armed.
@@ -615,11 +656,16 @@ class KidVpnService : VpnService() {
     }
 
     override fun onDestroy() {
+        destroyed = true
         created = false
         // Starts not delivered by now never will be (a destroyed service drops them): the count
         // never outlives its instance, so a lost one can't hold every later stop back.
         foregroundStartsPending.set(0)
-        stopSelfCleanly()
+        // At once: a start from now on is a foreground one into a new instance ([vpnStartKind]).
+        if (running === state) running = null
+        if (live === this) live = null
+        // The tunnel's close on the control thread (gate rc.4 finding 1), before a new instance's start there.
+        ctl.post { stopSelfCleanly() }
         super.onDestroy()
     }
 
@@ -628,7 +674,7 @@ class KidVpnService : VpnService() {
         shape = null
         tunnelShape = null
         if (running === state) running = null
-        main.removeCallbacksAndMessages(null)
+        ctl.removeCallbacksAndMessages(null)
         DnsFilterEngine.onCustomChanged = null
         networkCallback?.let { callback ->
             runCatching { getSystemService(ConnectivityManager::class.java)?.unregisterNetworkCallback(callback) }
@@ -660,6 +706,12 @@ class KidVpnService : VpnService() {
     }
 
     companion object {
+        /** The control thread (gate rc.4 finding 1): one for the process, never quit, shared by every instance so their
+         * work stays in order. */
+        private val controlThread: HandlerThread by lazy { HandlerThread("vpn-control").apply { start() } }
+
+        private fun controlLooper(): Looper = controlThread.looper
+
         /** A `startForegroundService` start: onStartCommand calls startForeground first. */
         const val EXTRA_FOREGROUND = "com.kidslauncher.mdm.vpn.FOREGROUND"
 

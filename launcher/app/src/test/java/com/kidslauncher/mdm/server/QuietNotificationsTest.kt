@@ -160,6 +160,43 @@ class QuietNotificationsTest {
     }
 
     @Test
+    fun `the VPN's lifecycle callbacks return at once - the list and the tunnel on the control thread`() {
+        // Gate rc.4 finding 1: onCreate held the main thread in the list load and establish() past the ANR timeout.
+        val vpn = source("KidVpnService.kt")
+        val create = statements(body(vpn, "override fun onCreate()"))
+        assertEquals("ctl.post { createOnControl() }", create.last())
+        val onStart = statements(body(vpn, "override fun onStartCommand("))
+        val callbacks = create + onStart + statements(body(vpn, "override fun onDestroy()")) +
+            statements(body(vpn, "override fun onRevoke()"))
+        for (slow in listOf("loadFromDisk", "establish(", "startVpn(", "reshape(", "watchNetwork(", "settleForeground(")) {
+            assertTrue(slow, callbacks.none { slow in it && !it.startsWith("ctl.post") })
+        }
+        // The list before the tunnel, on the same thread: no query is classified against an empty list.
+        val onControl = statements(body(vpn, "private fun createOnControl()"))
+        assertEquals(listOf("if (destroyed) return", "DnsFilterEngine.loadFromDisk(applicationContext)"), onControl.take(2))
+        assertEquals("if (wantedShape() != VpnShape.NONE) startVpn()", onControl.last())
+        assertEquals(1, Regex("""DnsFilterEngine\.loadFromDisk\(""").findAll(vpn).count())
+        // One control thread for every instance, never the main looper; the watcher's callbacks on it too.
+        assertTrue("private val ctl = Handler(controlLooper())" in vpn)
+        assertTrue("HandlerThread(\"vpn-control\")" in vpn)
+        assertFalse("getMainLooper" in vpn)
+        assertTrue("registerBestMatchingNetworkCallback(request, callback, ctl)" in vpn)
+        // onDestroy clears the statics at once and leaves the close to the control thread, in order.
+        val destroy = statements(body(vpn, "override fun onDestroy()"))
+        assertTrue("if (running === state) running = null" in destroy)
+        assertTrue("ctl.post { stopSelfCleanly() }" in destroy)
+        // Work an instance posted before its onDestroy builds no tunnel.
+        assertEquals("destroyed = true", destroy[0])
+        assertEquals("if (destroyed) return", statements(body(vpn, "private fun startCommand("))[0])
+        assertEquals("if (state.stopped || destroyed) return false", statements(body(vpn, "private fun startVpn()"))[0])
+        assertEquals("if (state.stopped || destroyed) return", statements(body(vpn, "private fun reshape()"))[0])
+        assertEquals("if (destroyed) return", statements(body(vpn, "private fun settleForeground()"))[0])
+        val build = statements(body(vpn, "private fun establish("))
+        assertEquals(build.indexOf("if (destroyed) return false") + 1, build.indexOf("val established = builder.establish()"))
+        assertTrue(build.indexOf("if (destroyed) return false") > 0)
+    }
+
+    @Test
     fun `the service wires the state - starts, settles, read loop, loss, retry, stop`() {
         val vpn = source("KidVpnService.kt")
         // Exactly one stopForeground, on the state's DROP.
@@ -168,23 +205,34 @@ class QuietNotificationsTest {
         assertTrue("when (state.settle { isAlwaysOn })" in settle)
         assertTrue(Regex("""VpnSettle\.DROP -> \{\s*stopForeground\(STOP_FOREGROUND_REMOVE\)""").containsMatchIn(settle))
         assertTrue("VpnSettle.ENTER -> enterForeground()" in settle)
-        val enter = statements(body(vpn, "private fun enterForeground()"))
-        assertEquals(listOf("try {", "startForeground(VPN_FILTER_NOTIFICATION_ID, buildNotification())", "state.enteredForeground()"), enter.take(3))
-        // onStartCommand: the extra answered first, settled last.
+        assertEquals(listOf("if (answerForeground()) state.enteredForeground()"), statements(body(vpn, "private fun enterForeground()")))
+        val answer = statements(body(vpn, "private fun answerForeground()"))
+        assertEquals(listOf("startForeground(VPN_FILTER_NOTIFICATION_ID, buildNotification())", "true"), answer.take(2))
+        // onStartCommand: the extra answered first, on main; the rest posted, settled last.
         val onStart = statements(body(vpn, "override fun onStartCommand("))
-        assertEquals(listOf("if (intent?.getBooleanExtra(EXTRA_FOREGROUND, false) == true) {", "enterForeground()"), onStart.take(2))
-        assertEquals(listOf("settleForeground()", "return START_STICKY"), onStart.takeLast(2))
+        assertEquals(
+            listOf(
+                "val answered = if (intent?.getBooleanExtra(EXTRA_FOREGROUND, false) == true) {",
+                "answerForeground().also { foregroundStartsPending.updateAndGet { maxOf(it - 1, 0) } }",
+            ),
+            onStart.take(2),
+        )
+        assertEquals(listOf("ctl.post { startCommand(startId, answered) }", "return START_STICKY"), onStart.takeLast(2))
+        val command = statements(body(vpn, "private fun startCommand("))
+        assertEquals(listOf("if (destroyed) return", "if (answered) state.enteredForeground()"), command.take(2))
+        assertEquals("settleForeground()", command.last())
+        assertTrue("stopSelf(startId)" in command)
         // establish() records the tunnel in the state; nothing else holds it.
         assertTrue("state.established(established, SystemClock.elapsedRealtime())" in body(vpn, "private fun establish("))
         assertFalse(Regex("""\bpfd\b""").containsMatchIn(vpn))
         // The read loop: a thrown read and an end of stream both post tunnelLost(fd).
         val loop = body(vpn, "private fun readLoop(")
-        assertEquals(2, Regex("""main\.post \{ tunnelLost\(fd\) \}""").findAll(loop).count())
-        assertTrue(Regex("""if \(length < 0\) \{[^}]*main\.post \{ tunnelLost\(fd\) \}""").containsMatchIn(loop))
+        assertEquals(2, Regex("""ctl\.post \{ tunnelLost\(fd\) \}""").findAll(loop).count())
+        assertTrue(Regex("""if \(length < 0\) \{[^}]*ctl\.post \{ tunnelLost\(fd\) \}""").containsMatchIn(loop))
         assertTrue("if (length == 0) continue" in loop)
         // The loss goes through the state first, then settles and schedules the retry.
         val lost = statements(body(vpn, "private fun tunnelLost("))
-        assertEquals("val retryMs = state.readLoopEnded(fd, SystemClock.elapsedRealtime()) ?: return", lost[0])
+        assertEquals(listOf("if (destroyed) return", "val retryMs = state.readLoopEnded(fd, SystemClock.elapsedRealtime()) ?: return"), lost.take(2))
         assertTrue("settleForeground()" in lost)
         assertTrue("scheduleRetry(retryMs)" in lost)
         val retry = statements(body(vpn, "private fun retryTunnel()"))
@@ -194,13 +242,13 @@ class QuietNotificationsTest {
         assertTrue("scheduleRetry(nextMs)" in retry)
         // One chain at most: a new schedule replaces the pending retry.
         assertEquals(
-            listOf("main.removeCallbacks(retry)", "main.postDelayed(retry, delayMs)"),
+            listOf("ctl.removeCallbacks(retry)", "ctl.postDelayed(retry, delayMs)"),
             statements(body(vpn, "private fun scheduleRetry(")),
         )
-        // The stop: the state first; the revoke posts to main.
+        // The stop: the state first; the revoke posts to the control thread.
         assertEquals("val fd = state.stop()", statements(body(vpn, "private fun stopSelfCleanly()"))[0])
         val revoke = body(vpn, "override fun onRevoke()")
-        assertTrue(Regex("""main\.post \{\s*stopSelfCleanly\(\)\s*if \(vpnStopsNow\(created, foregroundStartsPending\.get\(\)\)\) stopSelf\(\)\s""").containsMatchIn(revoke))
+        assertTrue(Regex("""ctl\.post \{\s*stopSelfCleanly\(\)\s*if \(vpnStopsNow\(created, foregroundStartsPending\.get\(\)\)\) stopSelf\(\)\s""").containsMatchIn(revoke))
         // Design 116 §3.1: revoked while the filter is wanted, the state is checked (the while-idle alarm armed).
         assertTrue("VpnFilterWatch.check(applicationContext, VpnFilterEvent.CHECK)" in revoke)
         assertTrue(statements(revoke).none { it.startsWith("super.onRevoke(") })
@@ -287,13 +335,15 @@ class QuietNotificationsTest {
         val service = source("KidVpnService.kt")
         val stop = body(service, "fun stop(context: Context)")
         assertTrue("if (vpnStopsNow(created, foregroundStartsPending.get())) {" in stop)
-        // The queued start stops itself once answered, before any tunnel.
-        val command = statements(body(service, "override fun onStartCommand("))
-        val answered = command.indexOf("enterForeground()")
+        // The queued start stops itself once answered (on main, before the post), before any tunnel.
+        val onStart = statements(body(service, "override fun onStartCommand("))
+        assertTrue(onStart.indexOf("answerForeground().also { foregroundStartsPending.updateAndGet { maxOf(it - 1, 0) } }") in 0 until
+            onStart.indexOf("ctl.post { startCommand(startId, answered) }"))
+        val command = statements(body(service, "private fun startCommand("))
         val check = command.indexOf("if (wantedShape() == VpnShape.NONE || state.stopped) {")
-        assertTrue(answered in 0 until check)
+        assertTrue(check >= 0)
         assertTrue(check < command.indexOf("if (state.tunnel == null) startVpn() else reshape()"))
-        assertTrue("if (wantedShape() != VpnShape.NONE) startVpn()" in body(service, "override fun onCreate()"))
+        assertTrue("if (wantedShape() != VpnShape.NONE) startVpn()" in body(service, "private fun createOnControl()"))
         // Code QA L1: a revoke's stopSelf() waits for an unanswered start the same way.
         assertTrue("if (vpnStopsNow(created, foregroundStartsPending.get())) stopSelf()" in body(service, "override fun onRevoke()"))
     }

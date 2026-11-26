@@ -676,6 +676,7 @@
     <string name="connect_title">Koble til</string>
     <string name="connect_busy">Kobler til …</string>
     <string name="connect_hint">Oppsettkoden står på telefonens side i foreldreappen › Avansert › Ny oppsettkode.</string>
+    <string name="connect_other_server">Det er ikke telefonens server.</string>
     <string name="re_enrol_done">Telefonen er koblet til igjen. Prøv foreldrekoden når den har synkronisert.</string>
     <string name="parent_pin_foreign_access">En app foreldrene ikke har tillatt kan styre telefonen eller lese skjermen, så foreldrekoden kan ikke skrives her. Bruk foreldreappen: Status-kortet der viser hva du skal gjøre.</string>
     <!-- Dagen (design 69): barnets dag; navnet barnet ser er «Kalender» siden 2026-11-02. -->
