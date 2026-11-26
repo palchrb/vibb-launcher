@@ -345,10 +345,14 @@ out: Google (OAuth only - its secret ICS address works as a link), digest, clien
   **Claims**: an account no phone owns (`principal IS NULL` - a first Test that never passed - or `owner_device_id IS
   NULL` - an orphan, a shared account whose phone went) becomes X's only by a passing Test with a password typed on X's
   page (Add Calendar or "Test på nytt…"); the stored password never claims, and a claim keeps `shared`. `run_test`'s pass
-  is one `BEGIN IMMEDIATE`: a principal equal to another phone's unshared account's is refused (the same login under
-  another spelling, L5), then the conditional `UPDATE … SET owner_device_id = X WHERE id = ? AND (principal IS NULL OR
+  is one `BEGIN IMMEDIATE`: a principal equal to that of any account another phone owns, shared or not, is refused
+  (the same login under another spelling, L5 and code QA M1), then the conditional `UPDATE … SET owner_device_id = X WHERE id = ? AND (principal IS NULL OR
   owner_device_id IS NULL)` before `principal` is written (a lost race claims nothing), then the account must be shown
-  on X, else the whole pass is rolled back - each refusal `TestError::OtherPhone(owner)`. Adding another phone's
+  on X, else the whole pass is rolled back - each refusal `TestError::OtherPhone { device, name }`, or
+  `Refused("calendar.caldav.error.gone")` when the account (or its phone) went meanwhile, never an empty name. A "Test
+  på nytt…" refused so lands on `#test` with "Kontoen hører til {phone}." (`?notice=caldav_other&phone=<id>`) while
+  the account is still shown on X, else on `#sources`. A ticks post that changed nothing nudges no phone
+  (`caldav::Ticked::changed`). Adding another phone's
   unshared account is refused before any request (the 10 s gap untouched): Add Calendar re-renders (400) with "Kontoen
   hører til {phone}." under Brukernavn and the fix behind its (i). The ON CONFLICT of `test_new`'s insert never touches
   the owner. **The pages**: the sources row of a shared account says "· delt" (on another phone's page "· delt fra

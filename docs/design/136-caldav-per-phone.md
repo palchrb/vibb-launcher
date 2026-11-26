@@ -92,7 +92,7 @@ contract file, and no change to the policy JSON. Revision 1 was f7c9aad70. Revis
      behind its (i). Nothing is tested, and the 10 s gap is not used.
 
    **The same login under another spelling** (L5): a pass on X whose discovered `principal` equals the principal of
-   another phone's unshared account is refused the same way and rolled back. An e-mail on one page and a server
+   any account another phone owns is refused the same way and rolled back. An e-mail on one page and a server
    address on another must not make a second row the sibling can use.
 
    **The claim is conditional, inside the pass's transaction** (M1):
@@ -133,6 +133,9 @@ contract file, and no change to the policy JSON. Revision 1 was f7c9aad70. Revis
     mark are chosen again. A new mark starts with `accepted: null` ("send it all", design 72b D1.6).
 
 ## 3. Data model and migration `0182_caldav_per_phone.sql`
+
+**Built as 0183** (code QA L3): design 137's `0182_cell_near.sql` merged first, so the build's file is
+`0183_caldav_per_phone.sql`; read 0182 in this note as 0183.
 
 **The number.** Main is used up to 0179. Phase D (`phase-d-server`, design 132) holds 0180, and design 135 (item 5)
 holds 0181. Both merge before this item. 136 is item 6, so it takes **0182**. Never deploy 0182 without 0180 and 0181
@@ -304,6 +307,9 @@ sudo rm -rf "$d"
    - A kid's own account should be owned by that kid's phone.
    - A parent's family account should be shared, with no owner, or owned by the one phone that writes to it.
 2. **Line 6** ("write marks that end") should be 0. If it isn't, Q2 applies.
+3. **Line 7** ("logins on more than one account") should be 0 (code QA L3). If it isn't, one login sits in two rows
+   under two spellings of the server. After the update, a pass on a phone that doesn't own the other row is refused
+   as "Kontoen hører til {phone}." (L5), so remove the extra row on its page and keep one.
 
 **The remedy for a wrong owner**, after the update:
 - Remove the account on its owner's page ("Fjern konto…").
@@ -343,6 +349,9 @@ UNION ALL SELECT 1, 5, 'shared, no owner (no phone uses it)',
 UNION ALL SELECT 1, 6, 'write marks that end',
     (SELECT COUNT(*) FROM ticks t JOIN plan p ON p.id = t.account
       WHERE t.writes = 1 AND t.device IS NOT p.owner), ''
+UNION ALL SELECT 1, 7, 'logins on more than one account',
+    (SELECT COUNT(*) FROM (SELECT a.principal FROM caldav_accounts a WHERE a.principal IS NOT NULL
+      GROUP BY a.principal HAVING COUNT(*) > 1)), ''
 UNION ALL SELECT 2, p.id, p.username, p.phones,
     COALESCE((SELECT 'owner ' || dv.name FROM devices dv WHERE dv.id = p.owner), 'no owner')
     || CASE WHEN p.phones = 1 THEN '' ELSE ', shared' END
@@ -363,6 +372,7 @@ On the architect's seeded copy, it printed:
 1  4  shared, no owner (2+ phones read it)    1
 1  5  shared, no owner (no phone uses it)     1
 1  6  write marks that end                    1
+1  7  logins on more than one account         0
 2  1  a   1  owner Telefon 1: Telefon 1 (writes)
 2  2  b   2  owner Telefon 2, shared: Telefon 1, Telefon 2 (writes)
 2  3  c   2  no owner, shared: Telefon 2, Telefon 3

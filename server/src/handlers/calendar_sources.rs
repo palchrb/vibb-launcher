@@ -800,6 +800,30 @@ pub async fn show_caldav(
         ),
         _ => (None, "ok"),
     };
+    // Design 136 code QA L1: Test Again refused because the same login is another phone's (a twin row) - named here.
+    let other_phone = match (
+        notice,
+        query.get("phone").and_then(|p| p.parse::<i64>().ok()),
+    ) {
+        (Some("caldav_other"), Some(other)) => {
+            match unshared_names(&state, &other.to_string()).await {
+                Ok(names) => names.into_iter().next(),
+                Err(err) => return read_failed(lang, err, "the phones' names"),
+            }
+        }
+        _ => None,
+    };
+    let (test_line, test_tone) = match other_phone {
+        Some(name) => (
+            Some(t_params(
+                lang,
+                "calendar.caldav.error.other_phone",
+                &[("phone", &name)],
+            )),
+            "refused",
+        ),
+        None => (test_line, test_tone),
+    };
     let template = CaldavTemplate {
         lang,
         device_id: id,
@@ -922,7 +946,9 @@ fn caldav_back(id: i64, account: i64, notice: Option<&str>, anchor: &str) -> Res
 
 /// POST `/devices/{id}/calendar/caldav/{account}/test`: "Test again", with `password` when one is typed (else the
 /// stored one). Back to the account's page at `#test`, which says how it went (`?notice=caldav_tested`); too soon →
-/// `?notice=caldav_wait`, no password to use → `?notice=caldav_retype`. Not a save.
+/// `?notice=caldav_wait`, no password to use → `?notice=caldav_retype`; the same login another phone's (design 136,
+/// the account still shown here) → `?notice=caldav_other&phone=<id>`, refused. An account no longer shown here goes
+/// back to `#sources`, refused. Not a save.
 pub async fn test_caldav_again(
     State(state): State<AppState>,
     lang: Lang,
@@ -947,10 +973,23 @@ pub async fn test_caldav_again(
             return failed(lang, err, "couldn't test a CalDAV account");
         }
         Err(caldav::TestError::Wait) => "caldav_wait",
-        // Not shown on this phone (gone, or another phone's since; design 136).
-        Err(caldav::TestError::Refused("calendar.caldav.error.gone"))
-        | Err(caldav::TestError::OtherPhone(_)) => {
+        // Gone, or not shown on this phone any more (design 136).
+        Err(caldav::TestError::Refused("calendar.caldav.error.gone")) => {
             return crate::settings_log::refused(back_to_sources(id));
+        }
+        // Code QA L1: still shown here, the refusal names the other phone at `#test`; else `#sources`.
+        Err(caldav::TestError::OtherPhone { device, .. }) => {
+            let shown = match caldav::accounts(&state.db, id).await {
+                Ok(all) => all.iter().any(|a| a.id == account),
+                Err(err) => return read_failed(lang, err, "a CalDAV account"),
+            };
+            if !shown {
+                return crate::settings_log::refused(back_to_sources(id));
+            }
+            return crate::settings_log::refused(Redirect::to(&format!(
+                "{}?notice=caldav_other&phone={device}#test",
+                caldav_page(id, account)
+            )));
         }
         Err(caldav::TestError::Refused("calendar.caldav.error.too_long")) => "caldav_too_long",
         Err(caldav::TestError::Refused(_)) => "caldav_retype",
@@ -1013,7 +1052,12 @@ pub async fn save_caldav_calendars(
         None => None,
     };
     match caldav::save_ticks(&state, id, account, &listed, &ticked, now).await {
-        Ok(made) => {
+        Ok(caldav::Ticked { made, changed }) => {
+            let page = format!("{}#calendars", caldav_page(id, account));
+            if !changed {
+                // Code QA L5: nothing changed - no nudge, no colours, no line.
+                return Redirect::to(&page).into_response();
+            }
             let still = crate::calendar_kid_events::marked_uid(&state.db, id)
                 .await
                 .ok()
@@ -1331,7 +1375,7 @@ pub async fn test_caldav(
             (t(lang, "calendar.caldav.test_wait").to_string(), "server")
         }
         // Design 136 decision 6: another phone's account - the reason under Brukernavn, the fix behind its (i).
-        Err(caldav::TestError::OtherPhone(phone)) => {
+        Err(caldav::TestError::OtherPhone { name: phone, .. }) => {
             error_info = Some(t_params(
                 lang,
                 "calendar.caldav.error.other_phone_info",

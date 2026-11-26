@@ -583,11 +583,27 @@ async fn the_same_login_on_another_phones_page() {
             .unwrap();
     assert_ne!(nonce, kept.0, "the password replaced");
     assert_eq!(owner(&app, account).await, (Some(t1), true));
+    // Code QA M1: while shared too, the server spelled another way is refused - a second row would be Telefon 2's,
+    // writing with Telefon 1's login.
+    let other = "https://dav.example.net/caldav/";
+    let res = test_form(&app, &cookie, t2, other, PASSWORD).await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    assert!(res.text().contains("The account belongs to Telefon 1."));
+    assert_eq!(
+        caldav::accounts(&app.db, t2)
+            .await
+            .unwrap()
+            .iter()
+            .map(|a| a.id)
+            .collect::<Vec<_>>(),
+        [account],
+        "only the shared one"
+    );
 
     // L5: unshared again, the server spelled another way on Telefon 2's page reaches the same principal: refused and
     // rolled back - the second row stays untested, shown nowhere.
     share(&app, &cookie, t1, account, false).await;
-    let other = "https://dav.example.net/caldav/";
+    next_test(&app).await;
     let res = test_form(&app, &cookie, t2, other, PASSWORD).await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
     assert!(res.text().contains("The account belongs to Telefon 1."));
@@ -710,24 +726,25 @@ async fn a_claim_race_has_one_winner() {
         if !(r.method == "PROPFIND" && r.url == LIST && r.header("authorization").is_some()) {
             return None;
         }
-        let shared = match seen.swap(0, Ordering::SeqCst) {
-            1 => 1,
-            2 => 0,
-            _ => return None,
-        };
+        let step = seen.swap(0, Ordering::SeqCst);
+        if step == 0 {
+            return None;
+        }
         let db = db.clone();
         tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async move {
-                sqlx::query(
-                    "UPDATE caldav_accounts SET owner_device_id = ?, shared = ? WHERE id = ? \
-                     AND (principal IS NULL OR owner_device_id IS NULL)",
-                )
-                .bind(t3)
-                .bind(shared)
-                .bind(account)
-                .execute(&db)
-                .await
-                .unwrap();
+                let query = match step {
+                    // 3: the account removed meanwhile (code QA L2).
+                    3 => sqlx::query("DELETE FROM caldav_accounts WHERE id = ?").bind(account),
+                    _ => sqlx::query(
+                        "UPDATE caldav_accounts SET owner_device_id = ?, shared = ? WHERE id = ? \
+                         AND (principal IS NULL OR owner_device_id IS NULL)",
+                    )
+                    .bind(t3)
+                    .bind(i64::from(step == 1))
+                    .bind(account),
+                };
+                query.execute(&db).await.unwrap();
             })
         });
         None
@@ -754,7 +771,7 @@ async fn a_claim_race_has_one_winner() {
     next_test(&app).await;
     let lost = caldav::test_again(&app.state, t2, account, PASSWORD, Utc::now()).await;
     assert!(
-        matches!(&lost, Err(caldav::TestError::OtherPhone(name)) if name == "Telefon 3"),
+        matches!(&lost, Err(caldav::TestError::OtherPhone { device, name }) if *device == t3 && name == "Telefon 3"),
         "{lost:?}"
     );
     assert_eq!(owner(&app, account).await, (Some(t3), false));
@@ -772,6 +789,105 @@ async fn a_claim_race_has_one_winner() {
     assert_eq!(
         res.location(),
         Some(format!("/devices/{t2}/calendar#sources").as_str())
+    );
+
+    // Code QA L2: the account removed while Telefon 3's Test asks the server - "gone", never an empty owner name.
+    mode.store(3, Ordering::SeqCst);
+    next_test(&app).await;
+    let gone = caldav::test_again(&app.state, t3, account, PASSWORD, Utc::now()).await;
+    assert!(
+        matches!(
+            gone,
+            Err(caldav::TestError::Refused("calendar.caldav.error.gone"))
+        ),
+        "{gone:?}"
+    );
+}
+
+/// Code QA L1: "Test på nytt…" on an account still shown on this phone, refused because the same login is another
+/// phone's under another spelling, says so at `#test`, naming that phone; the account keeps no owner.
+#[tokio::test]
+async fn a_refused_test_again_names_the_other_phone() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let p = phones(&app, 2).await;
+    let (t1, t2) = (p[0].0, p[1].0);
+    fake_icloud(&app);
+    test_form(&app, &cookie, t1, SERVER, PASSWORD).await;
+    let account = account_id(&app).await;
+    share(&app, &cookie, t1, account, true).await;
+    // A row of the same login under another spelling, shared with no owner (its phone gone).
+    let twin: i64 = sqlx::query_scalar(
+        "INSERT INTO caldav_accounts (server_url, username, password_sealed, password_nonce, password_key_fp, \
+         hosts, principal, calendars_json, state, shared) \
+         SELECT 'https://dav.example.net/caldav/', username, X'', X'', '', hosts, principal, calendars_json, 'ok', 1 \
+         FROM caldav_accounts WHERE id = ? RETURNING id",
+    )
+    .bind(account)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    let page = format!("/devices/{t2}/calendar/caldav/{twin}");
+    let res = post(
+        &app,
+        &cookie,
+        &format!("{page}/test"),
+        &[("password", PASSWORD)],
+    )
+    .await;
+    assert_eq!(
+        res.location(),
+        Some(format!("{page}?notice=caldav_other&phone={t1}#test").as_str())
+    );
+    assert_eq!(owner(&app, twin).await, (None, true));
+    let drawn = app
+        .get_page(
+            &format!("{page}?notice=caldav_other&phone={t1}&lang=nb"),
+            &cookie,
+        )
+        .await
+        .text();
+    let test = super::settings_pages::part(&drawn, "<section id=\"test\"", "</section>");
+    assert!(
+        test.contains("flash-error") && test.contains(">Kontoen hører til Telefon 1.<"),
+        "{test}"
+    );
+}
+
+/// Code QA L4: a trigger's abort on the ticks' and Kalender's paths is the route's refusal, never a 500, and leaves
+/// nothing behind. A test-only trigger with a `design 136:` message stands in for a race the code's own checks close.
+#[tokio::test]
+async fn a_trigger_abort_is_a_refusal_never_a_500() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let p = phones(&app, 1).await;
+    let (t1, token1) = p[0].clone();
+    app.post_status(&token1, serde_json::json!({})).await;
+    fake_icloud(&app);
+    test_form(&app, &cookie, t1, SERVER, PASSWORD).await;
+    let account = account_id(&app).await;
+    ticks(&app, &cookie, t1, account, &[], &[HOME]).await;
+    for sql in [
+        "CREATE TRIGGER test_abort_tick BEFORE INSERT ON device_calendar_feeds \
+         BEGIN SELECT RAISE(ABORT, 'design 136: forced by the test'); END",
+        "CREATE TRIGGER test_abort_mark BEFORE UPDATE OF kid_writes ON device_calendar_feeds \
+         WHEN NEW.kid_writes = 1 BEGIN SELECT RAISE(ABORT, 'design 136: forced by the test'); END",
+    ] {
+        sqlx::query(sql).execute(&app.db).await.unwrap();
+    }
+    let res = ticks(&app, &cookie, t1, account, &[HOME], &[HOME, FRITID]).await;
+    assert_eq!(
+        res.location(),
+        Some(format!("/devices/{t1}/calendar#sources").as_str())
+    );
+    assert_eq!(feeds(&app, t1).await, [home_uid()], "no tick of that post");
+    let res = mark(&app, &cookie, t1, &home_uid()).await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        crate::calendar_kid_events::marked_uid(&app.db, t1)
+            .await
+            .unwrap(),
+        None
     );
 }
 
@@ -976,9 +1092,13 @@ async fn stale_forms_change_only_what_they_changed() {
     let mut both = vec![home_uid(), fritid_uid()];
     both.sort();
     assert_eq!(feeds(&app, t1).await, both);
-    // A post that changed nothing.
+    // A post that changed nothing, or only what another tab did already: no nudge (code QA L5).
+    let mut nudges = app.state.command_notify.subscribe();
     let res = ticks(&app, &cookie, t1, account, &[HOME, FRITID], &[HOME, FRITID]).await;
     assert_eq!(res.location(), Some(format!("{page}#calendars").as_str()));
+    let res = ticks(&app, &cookie, t1, account, &[], &[HOME]).await;
+    assert_eq!(res.location(), Some(format!("{page}#calendars").as_str()));
+    assert!(nudges.try_recv().is_err(), "no nudge");
     assert_eq!(feeds(&app, t1).await, both);
 
     // A sibling tab drawn while shared ticks after the owner unshared: refused, no tick left.

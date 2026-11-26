@@ -1137,9 +1137,13 @@ pub enum TestError {
     Wait,
     /// The Test ran and failed (stored as the account's `test_error`).
     Failed(FeedError),
-    /// Design 136: the account is another phone's and not shared (before any request, or a pass rolled back): the
-    /// owner's name, for "Kontoen hører til {phone}.".
-    OtherPhone(String),
+    /// Design 136: the account is another phone's (before any request, or a pass rolled back), or the same login
+    /// under another spelling is: that phone, for "Kontoen hører til {phone}.". Never without a name: an account
+    /// gone meanwhile is `Refused("calendar.caldav.error.gone")` instead ([other_phone]).
+    OtherPhone {
+        device: i64,
+        name: String,
+    },
     Db(sqlx::Error),
 }
 
@@ -1211,7 +1215,7 @@ pub async fn test_new(
         // Another phone's and not shared: refused before any request, the Test's gap untouched.
         Some((id, true, Some(owner), false)) if owner != device => {
             let mut conn = state.db.acquire().await?;
-            return Err(TestError::OtherPhone(owner_name(&mut conn, id).await?));
+            return Err(other_phone(&mut conn, id).await?);
         }
         Some((id, ..)) => id,
         None => {
@@ -1365,9 +1369,10 @@ async fn run_test(
         }
     };
     let mut tx = state.db.begin_with("BEGIN IMMEDIATE").await?;
-    // L5: the same login typed under another spelling is another phone's account.
+    // L5: the same login typed under another spelling is another phone's account - shared or not (code QA M1: a
+    // second row of a shared account would let this phone write with that phone's login).
     let twin: Option<i64> = sqlx::query_scalar(
-        "SELECT id FROM caldav_accounts WHERE principal = ? AND id <> ? AND shared = 0 \
+        "SELECT id FROM caldav_accounts WHERE principal = ? AND id <> ? \
          AND owner_device_id IS NOT NULL AND owner_device_id <> ?",
     )
     .bind(&discovery.principal)
@@ -1376,14 +1381,14 @@ async fn run_test(
     .fetch_optional(&mut *tx)
     .await?;
     if let Some(twin) = twin {
-        let name = owner_name(&mut tx, twin).await?;
+        let refusal = other_phone(&mut tx, twin).await?;
         tx.rollback().await?;
         tracing::info!(
             account_id = id,
             device_id = pass.device,
             "a CalDAV Test found another phone's account"
         );
-        return Err(TestError::OtherPhone(name));
+        return Err(refusal);
     }
     // M1: the claim is conditional, before `principal` is written; zero rows is another phone's claim first.
     if pass.may_claim {
@@ -1408,7 +1413,7 @@ async fn run_test(
             Err(err) if rule_abort(&err) => {
                 tx.rollback().await?;
                 let mut conn = state.db.acquire().await?;
-                return Err(TestError::OtherPhone(owner_name(&mut conn, id).await?));
+                return Err(other_phone(&mut conn, id).await?);
             }
             Err(err) => return Err(err.into()),
         }
@@ -1421,9 +1426,10 @@ async fn run_test(
     .fetch_optional(&mut *tx)
     .await?;
     if shown.is_none() {
-        let name = owner_name(&mut tx, id).await?;
+        // Another phone's now, or gone meanwhile (code QA L2: never an empty name).
+        let refusal = other_phone(&mut tx, id).await?;
         tx.rollback().await?;
-        return Err(TestError::OtherPhone(name));
+        return Err(refusal);
     }
     sqlx::query(
         "UPDATE caldav_accounts SET hosts = ?, principal = ?, home_set = ?, calendars_json = ?, lan = ?, \
@@ -1537,7 +1543,7 @@ impl From<sqlx::Error> for TickError {
 /// this phone's; an unticked one goes off this phone - after the ticks, so swapping one for another never empties
 /// the account (whose last calendar takes it away). One `BEGIN IMMEDIATE` transaction (design 136 L1): the account is
 /// read inside it and must be shown on this phone, else [TickError::Gone] and nothing is written. Returns the sources
-/// made, for the caller to fetch at once. Caps: [calendar_feeds::MAX_LINKS_PER_PHONE] with the links,
+/// made, for the caller to fetch at once, and whether anything changed ([Ticked]). Caps: [calendar_feeds::MAX_LINKS_PER_PHONE] with the links,
 /// [calendar_feeds::MAX_SOURCES].
 pub async fn save_ticks(
     state: &AppState,
@@ -1546,7 +1552,7 @@ pub async fn save_ticks(
     listed: &[String],
     ticked: &HashSet<String>,
     now: DateTime<Utc>,
-) -> Result<Vec<i64>, TickError> {
+) -> Result<Ticked, TickError> {
     let Some(key) = state.music_key.clone() else {
         return Err(TickError::Refused("calendar.caldav.error.no_key"));
     };
@@ -1690,7 +1696,18 @@ pub async fn save_ticks(
         removed = removing,
         "a phone's CalDAV calendars were saved"
     );
-    Ok(made)
+    Ok(Ticked {
+        made,
+        changed: adding + removing > 0,
+    })
+}
+
+/// What [save_ticks] did: the sources it made (to fetch at once), and whether this phone's ticks changed at all (a
+/// post that changed nothing nudges no phone, design 136 code QA L5).
+#[derive(Debug)]
+pub struct Ticked {
+    pub made: Vec<i64>,
+    pub changed: bool,
 }
 
 /// Why a sharing save or a removal was refused (design 136 §5.3, §5.5).
@@ -1901,18 +1918,22 @@ pub fn rule_abort(err: &sqlx::Error) -> bool {
     matches!(err, sqlx::Error::Database(db) if db.message().starts_with("design 136:"))
 }
 
-/// The name of the phone an account belongs to (for "Kontoen hører til {phone}."), or an empty name.
-async fn owner_name(
+/// The refusal for an account another phone holds: that phone (for "Kontoen hører til {phone}."), or - the account
+/// gone, or its phone deleted, meanwhile - `Refused("calendar.caldav.error.gone")`, never an empty name (code QA L2).
+async fn other_phone(
     conn: &mut sqlx::SqliteConnection,
     account: i64,
-) -> Result<String, sqlx::Error> {
-    let name: Option<String> = sqlx::query_scalar(
-        "SELECT d.name FROM caldav_accounts a JOIN devices d ON d.id = a.owner_device_id WHERE a.id = ?",
+) -> Result<TestError, sqlx::Error> {
+    let owner: Option<(i64, String)> = sqlx::query_as(
+        "SELECT d.id, d.name FROM caldav_accounts a JOIN devices d ON d.id = a.owner_device_id WHERE a.id = ?",
     )
     .bind(account)
     .fetch_optional(conn)
     .await?;
-    Ok(name.unwrap_or_default())
+    Ok(match owner {
+        Some((device, name)) => TestError::OtherPhone { device, name },
+        None => TestError::Refused("calendar.caldav.error.gone"),
+    })
 }
 
 /// The account's managing rights on `device`'s page (design 136 decision 4), read inside a write's transaction:
