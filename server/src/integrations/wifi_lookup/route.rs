@@ -37,9 +37,20 @@
 //!   present - per asked cell in the ask's order its stored list ([cache::CellCached]), nearest first, an entry already
 //!   given or an asked cell left out, at most [NEAR_MAX], each cell in the wire form. **Built from the store on both
 //!   paths**: after a call the rows are written and read back, so a fetched answer is the cached one; a failed write is
-//!   503 (900) at the answer time. What is left of an oracle: a list cut from a multi-cell call can be shorter than a
-//!   lone ask's, so a short list may hint that some family phone once asked that cell with others nearby (the owner
-//!   accepted it, design 137 Q1); a throttled call leaves no short list (NULL, asked again).
+//!   503 (900) at the answer time. A stored list leaves out only its own cell (code QA H1): a co-asked cell that
+//!   overlaps is in it, and the answer drops the asked cells, so a list doesn't depend on what else was asked or
+//!   cached. While the throttle holds (decided once, under the gate, before the cache is read: code QA M1) every asked
+//!   cell is answered with no list, cached or not, and a fetched one's list stays NULL (asked again).
+//! - **What is left of an oracle** (the owner accepted it, design 137 Q1): Apple's count is per standard for the whole
+//!   call. A call that asks several cells of one standard still asks 12 for it, but whether Apple gives 12 around each
+//!   asked cell or 12 in all is not known (a check with the Jelly, design 137 §9 step 4); if 12 in all, and in a call
+//!   that mixes standards (12 shared, LTE with NR 6 each), a stored list can be shorter than a lone ask's - a walker
+//!   who asks one cell alone and gets a short list may infer that its row came from a multi-cell ask, i.e. that some
+//!   family phone was near that cell once, never where else. Weak (a cell with few neighbours has a short list whoever
+//!   asks) and braked at [CELLS_A_DAY] cells a day. And a store that keeps failing (code QA L2): every request with an
+//!   uncached cell then answers 503 where an all-cached one answers 200 - C12's failed-call case, until the store is
+//!   mended; each failure is `integration_health`'s `store` (Transient, no success recorded meanwhile), so the orange
+//!   line shows past the grace instead of the lookup looking healthy.
 
 use std::time::Duration;
 
@@ -588,6 +599,9 @@ impl WifiLookup {
         // M1: one slot of the server-wide limits a cells request, whether Apple is called or not; the phone's share
         // only when Apple is called (below). Over its share the phone is refused before the cache is read, cached or not.
         self.take_slot(now);
+        // Design 137 (code QA M1): the throttle decided once, under the gate and before the cache is read. While it
+        // holds, every asked cell is answered without a list, cached or not, and a fetched one's list stays NULL.
+        let throttled = Self::throttled(&self.cell_throttled_until, now);
         let key = match self.key(state).await {
             Ok(key) => key,
             Err(err) => {
@@ -623,11 +637,16 @@ impl WifiLookup {
             .collect();
         if !wanted.is_empty() {
             self.count_call(device, now);
-            self.call_cells(state, &key, &wanted, month, now).await?;
+            self.call_cells(state, &key, &wanted, month, throttled)
+                .await?;
             // Design 137 N5: the answer comes from the store on both paths - one code path, one body.
             cached = read_cache().await?;
         }
-        let near = near_rows(&canonical, &cached);
+        let near = if throttled {
+            Vec::new()
+        } else {
+            near_rows(&canonical, &cached)
+        };
         self.counts
             .add_cells(canonical.len(), !wanted.is_empty(), near.len());
         tracing::debug!(
@@ -865,9 +884,8 @@ impl WifiLookup {
         *throttle.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now() + THROTTLE_FOR);
     }
 
-    /// A call Apple answered: the pauses cleared, the health recorded.
-    async fn answered(&self, state: &AppState) {
-        self.pauses.lock().unwrap_or_else(|e| e.into_inner()).ok();
+    /// A call Apple answered and whose answer is kept: the health recorded.
+    async fn healthy(&self, state: &AppState) {
         self.health.ok(chrono::Utc::now());
         crate::integration_health::ok(&state.db, NAME, "").await;
     }
@@ -883,9 +901,8 @@ impl WifiLookup {
         key: &cache::CacheKey,
         still: &[String],
         month: i64,
-        now: Instant,
+        throttled: bool,
     ) -> Result<(), Duration> {
-        let throttled = Self::throttled(&self.cell_throttled_until, now);
         let asked: Vec<Cell> = still
             .iter()
             .filter_map(|c| Cell::from_canonical(c))
@@ -901,7 +918,8 @@ impl WifiLookup {
         if cells::throttles(towers.len(), still.len()) {
             Self::throttle(&self.cell_throttled_until);
         }
-        self.answered(state).await;
+        // Apple answered: the pauses end. The health is recorded once the answer is kept (code QA L2).
+        self.pauses.lock().unwrap_or_else(|e| e.into_inner()).ok();
         let mut known = Vec::new();
         let mut unknown = Vec::new();
         for cell in still {
@@ -911,18 +929,29 @@ impl WifiLookup {
                 .and_then(|t| t.position)
             {
                 Some(at) => {
-                    let near = (!throttled).then(|| cells::near(&at, &towers, still));
+                    // Code QA H1: only the row's own cell left out, so a list doesn't depend on which cells were asked
+                    // with it (or were cached already); the answer leaves the asked cells out ([near_rows]).
+                    let near =
+                        (!throttled).then(|| cells::near(&at, &towers, std::slice::from_ref(cell)));
                     known.push((cell.clone(), at, near));
                 }
                 None => unknown.push(cell.clone()),
             }
         }
-        cache::store_cells(&state.db, key, &known, &unknown, month)
-            .await
-            .map_err(|err| {
+        match cache::store_cells(&state.db, key, &known, &unknown, month).await {
+            Ok(()) => {
+                self.healthy(state).await;
+                Ok(())
+            }
+            Err(err) => {
+                // Code QA L2: a store that keeps failing answers 503 to every uncached ask - never healthy meanwhile.
                 tracing::error!(%err, "wifi_lookup: couldn't keep Apple's cells answer");
-                CELL_BUSY_WAIT
-            })
+                self.health.error(chrono::Utc::now(), "store");
+                crate::integration_health::failed(&state.db, NAME, "", "store", Class::Transient)
+                    .await;
+                Err(CELL_BUSY_WAIT)
+            }
+        }
     }
 
     /// One Wi-Fi call for `still`, the gate held and the slot taken by the caller: the cache's answer for each of
@@ -950,7 +979,8 @@ impl WifiLookup {
         if aps.len() >= THROTTLE_AT {
             Self::throttle(&self.throttled_until);
         }
-        self.answered(state).await;
+        self.pauses.lock().unwrap_or_else(|e| e.into_inner()).ok();
+        self.healthy(state).await;
         // Every AP Apple placed is kept (the surrounding ones for later lookups); only asked ones are answered.
         let known: Vec<(String, Position)> = aps
             .iter()

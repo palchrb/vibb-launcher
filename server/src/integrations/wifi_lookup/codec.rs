@@ -135,6 +135,8 @@ pub(super) enum Value<'a> {
     Bytes(&'a [u8]),
     /// A fixed 32- or 64-bit value, skipped.
     Fixed,
+    /// A group skipped to its end tag ([Reader::field_or_group] only).
+    Group,
 }
 
 impl<'a> Reader<'a> {
@@ -174,8 +176,19 @@ impl<'a> Reader<'a> {
         Ok(slice)
     }
 
-    /// The next field's number and value, `None` at the end.
+    /// The next field's number and value, `None` at the end. A group (3, 4) is refused.
     pub(super) fn field(&mut self) -> Result<Option<(u64, Value<'a>)>, Malformed> {
+        self.next(false)
+    }
+
+    /// As [Reader::field], but a group (wire type 3) is skipped to its own end tag and read as [Value::Group] (design
+    /// 137, code QA L1: inside a cell tower, an unknown field); a stray or mismatched end tag, or groups nested deeper
+    /// than [MAX_GROUP_DEPTH], is refused.
+    pub(super) fn field_or_group(&mut self) -> Result<Option<(u64, Value<'a>)>, Malformed> {
+        self.next(true)
+    }
+
+    fn next(&mut self, groups: bool) -> Result<Option<(u64, Value<'a>)>, Malformed> {
         if self.at >= self.bytes.len() {
             return Ok(None);
         }
@@ -184,7 +197,16 @@ impl<'a> Reader<'a> {
         if number == 0 {
             return Err(Malformed);
         }
-        let value = match key & 7 {
+        if groups && key & 7 == 3 {
+            self.skip_group(number)?;
+            return Ok(Some((number, Value::Group)));
+        }
+        Ok(Some((number, self.value(key & 7)?)))
+    }
+
+    /// One value of wire type `wire`; groups (3, 4) and anything else refused.
+    fn value(&mut self, wire: u64) -> Result<Value<'a>, Malformed> {
+        Ok(match wire {
             0 => Value::Varint(self.varint()?),
             1 => {
                 self.take(8)?;
@@ -198,12 +220,36 @@ impl<'a> Reader<'a> {
                 self.take(4)?;
                 Value::Fixed
             }
-            // Groups (3, 4) and anything else.
             _ => return Err(Malformed),
-        };
-        Ok(Some((number, value)))
+        })
+    }
+
+    /// Past the group `number` just opened: every field inside skipped, nested groups too, to its end tag.
+    fn skip_group(&mut self, number: u64) -> Result<(), Malformed> {
+        let mut open = vec![number];
+        while let Some(&inner) = open.last() {
+            let key = self.varint()?;
+            let n = key >> 3;
+            if n == 0 {
+                return Err(Malformed);
+            }
+            match key & 7 {
+                3 if open.len() < MAX_GROUP_DEPTH => open.push(n),
+                4 if n == inner => {
+                    open.pop();
+                }
+                3 | 4 => return Err(Malformed),
+                wire => {
+                    self.value(wire)?;
+                }
+            }
+        }
+        Ok(())
     }
 }
+
+/// Groups nested deeper than this inside a skipped group are refused.
+pub(super) const MAX_GROUP_DEPTH: usize = 8;
 
 /// `mac_id` as `xx:xx:xx:xx:xx:xx` lowercase: Apple drops leading zeros; anything but six groups of one or two hex
 /// digits is `None`.

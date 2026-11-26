@@ -141,10 +141,12 @@ Apple" / "Lookups at Apple", its (i) naming the mobile network too (C13).
 - **Cell neighbours** (design 137's server step, `docs/design/137-cell-neighbours.md` N1-N5; migration 0182): the
   answer reader keeps an LTE tower's EARFCN (6, 0..262143) and PCI (7, 0..503) and a WCDMA tower's UARFCN (11,
   0..16383) and PSC (12, 0..511) - a -1, a value past the range or another wire type is unknown, never `Malformed`;
-  NR's and GSM's aren't read (`cells::Tower`, `Radio::near_fields`). Apple answers the count in full-id neighbours (the
+  NR's and GSM's aren't read (`cells::Tower`, `Radio::near_fields`). A group (wire type 3) inside a tower is skipped
+  to its end tag and is unknown (`codec::Reader::field_or_group`, code QA L1; malformed in fields 1-5, unclosed,
+  mismatched or nested past 8); a group anywhere else is refused as before. Apple answers the count in full-id neighbours (the
   probe of 2026-11-25), so a call asks 12 (`NEAR_ASKED`) and throttles only past `asked + 12` parsed towers
-  (`cells::throttles`). Each asked cell Apple placed keeps the call's positioned towers that are not asked and overlap
-  it (`d <= r_cell + r_tower`, `zones::distance_m`), nearest first, at most 12 (`cells::near`), sealed in its row's
+  (`cells::throttles`). Each asked cell Apple placed keeps the call's other positioned towers that overlap it - only its own
+  cell left out, a co-asked one kept (code QA H1), so a list doesn't depend on what was asked with it or cached - (`d <= r_cell + r_tower`, `zones::distance_m`), nearest first, at most 12 (`cells::near`), sealed in its row's
   `near` under `near|<canonical>` (`CacheKey::seal_near`, the AAD the same); an empty list is a sealed empty list.
   NULL - a Wi-Fi row, a cell row from before 0182, a call made while throttled - makes a placed cell `wanted`
   (`CellCached::wanted`), asked once more. **Surrounding towers are no rows of their own** any more (Wi-Fi's
@@ -153,11 +155,18 @@ Apple" / "Lookups at Apple", its (i) naming the mobile network too (C13).
   most 64 (`route::near_rows`, `NEAR_MAX`), the cell in the wire form (`Cell::wire`: MCC three digits, MNC at least
   two); `cells` never carries `ch`/`pci`. **The answer comes from the store on both paths**: after a call the rows
   are written and read back (`read_cells`), so a fetched body is byte for byte the next cached one; a failed write is
-  `503` (900) at the answer time. **The residual oracle** (N5, the owner's Q1: accepted): a stored list is cut from the
-  call that fetched it, and a multi-cell call gives each cell a smaller share of the count, so its list can be shorter
-  than a lone ask's - a walker who gets a short list may infer that some family phone once asked that cell with
-  others nearby (the overlap cut keeps the others' neighbours out, so not where); weak (a cell with few neighbours has a
-  short list whoever asks) and braked at 1000 cells a day; a throttled call leaves no short list (NULL, asked again).
+  `503` (900) at the answer time, recorded as `integration_health`'s `store` (Transient) with no success for that call
+  (code QA L2). **The throttle is decided once**, under the gate and before the cache is read (code QA M1): while it
+  holds every asked cell is answered with `near: []`, cached or not, and a fetched one's list stays NULL (asked again
+  after). **The residual oracle** (N5, the owner's Q1: accepted) - exactly what is left: Apple's count is per standard
+  for the whole call. A multi-cell ask of one standard still asks 12 for it; whether Apple gives 12 around each asked
+  cell or 12 in all is unknown (design 137 §9 step 4 checks it on the Jelly). If 12 in all - and always in an ask that
+  mixes standards, where the 12 are shared (LTE with NR: 6 each) - a stored list can be shorter than a lone ask's, and
+  a walker who asks that cell alone and gets a short list may infer its row came from a multi-cell ask: that some
+  family phone was near that cell once, never where else. Weak (a cell with few neighbours has a short list whoever
+  asks), braked at 1000 cells a day. And while the store's writes keep failing, a request with an uncached cell
+  answers 503 where an all-cached one answers 200 (C12's failed-call case), until the store is mended; the
+  `store` health row raises the orange line past the grace.
   The launcher's `CellLookupAnswer` reads `near` (`AppleNearCell`) and doesn't use it yet - the phone half (N6-N12)
   waits for 137's step 0, the SIM check.
 - Tests (`tests.rs`): the contract's `cell_answers` through the real route (the same body from the cache and from
@@ -174,4 +183,6 @@ Apple" / "Lookups at Apple", its (i) naming the mobile network too (C13).
   PLMN 001-01, made-up positions, channels and PCIs), the throttle rule, the overlap cut and the 12 nearest, a list
   opening only for its cell, `near` never naming an asked cell across two calls, the 64 cap, migration 0182 from the
   previous schema (an old cell row wanted, a Wi-Fi row untouched, an older backup passing the check), and no channel or
-  PCI in a tracing line.
+  PCI in a tracing line; the code QA's: B's list the same after `[A]`, `[A,B]`, `[B]` as after `[A,B]`, `[B]` (H1), no
+  list for a cached or an uncached cell while throttled and the lists back after (M1), a group in a tower skipped and
+  the malformed ones (`cells_group_*`, L1), the store's failure in `integration_health` (L2).

@@ -1286,7 +1286,7 @@
      }
     ]
    },
-   "note": "the same from the cache: byte for byte the fetched body, at the same answer time"
+   "note": "the same from the cache: byte for byte the fetched body, at the same answer time (asked once the fetch's throttle window - 14 surrounding to a count of 12 - is over: a throttled answer has no lists)"
   },
   {
    "case": "cells_old_row",
@@ -1363,7 +1363,7 @@
     ],
     "near": []
    },
-   "note": "a call made while throttled: the positions answered, near empty (the lists left NULL), the rows asked again at the next ask"
+   "note": "a call made while throttled: the positions answered, near empty (the lists left NULL), the rows asked again at the next ask; a cached cell is answered without its list too while the throttle holds"
   },
   {
    "case": "cells_two_asked",

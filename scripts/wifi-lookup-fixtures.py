@@ -421,6 +421,14 @@ def apple_cell_rows():
         (("wcdma", 1, 1, 2001, 70002), vi(11, 10700) + vi(12, 300), 10700, 300, "WCDMA's UARFCN 11 and PSC 12"),
         (("wcdma", 1, 1, 2001, 70003), vi(11, 16384) + vi(12, 512), None, None, "UARFCN 16384, PSC 512: unknown"),
         (("gsm", 1, 1, 1001, 5002), vi(11, 70) + vi(12, 40), None, None, "GSM's 11 and 12 not read"),
+        (lte(310, 4720), key(6, 3) + vi(1, 6200) + key(6, 4) + vi(7, 8), None, 8, "EARFCN as a group: unknown"),
+        (
+            lte(311, 4720),
+            key(9, 3) + key(10, 3) + vi(1, 1) + ld(2, b"x") + key(10, 4) + key(9, 4) + vi(6, 6200) + vi(7, 4),
+            6200,
+            4,
+            "a nested group in an unknown field skipped",
+        ),
     ]
     body, towers = [], []
     for n, (cell, extra, ch, pci, _) in enumerate(edge):
@@ -547,6 +555,31 @@ def apple_cell_rows():
         "201 towers: the first 200 read",
     )
     row("cells_wrong_wire", answer(key(22, 0) + varint(5)), None, "a tower as a varint")
+    # Code QA L1: a group inside a tower is skipped to its end tag; one that doesn't close, or closes another, is not.
+    row(
+        "cells_group_unclosed",
+        answer(answer_tower(LTE, location(H[0], H[1], 500), extra=key(9, 3) + vi(1, 1))),
+        None,
+        "a group in a tower without its end tag",
+    )
+    row(
+        "cells_group_mismatched",
+        answer(answer_tower(LTE, location(H[0], H[1], 500), extra=key(9, 3) + key(8, 4))),
+        None,
+        "a group in a tower closed by another field's end tag",
+    )
+    row(
+        "cells_group_in_mcc",
+        answer(ld(22, key(1, 3) + key(1, 4) + vi(2, 1) + vi(3, 7) + vi(4, 7) + ld(5, location(H[0], H[1], 500)))),
+        None,
+        "the MCC as a group: fields 1-5 keep the strict rule",
+    )
+    row(
+        "cells_group_too_deep",
+        answer(answer_tower(LTE, location(H[0], H[1], 500), extra=b"".join(key(9, 3) for _ in range(9)) + b"".join(key(9, 4) for _ in range(9)))),
+        None,
+        "groups nested nine deep in a tower",
+    )
     row("cells_short_header", bytes(9), None, "nine bytes")
     return rows
 

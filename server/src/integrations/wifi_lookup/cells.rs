@@ -22,8 +22,10 @@
 //!   1..[MAX_CELL_ACCURACY_M] is unknown; at most [super::codec::MAX_ANSWER_APS] towers; the first of duplicates wins.
 //!   Design 137 N1: an LTE tower's EARFCN (6) and PCI (7), a WCDMA tower's UARFCN (11) and PSC (12) are read when they
 //!   are varints within [Radio::near_fields]' ranges, else unknown - a -1, a value past the range or another wire type
-//!   never makes the answer malformed; NR's and GSM's are not read.
-//! - **Neighbours** (design 137 N3, [near]): an asked cell's list is the call's positioned towers, not asked, that
+//!   never makes the answer malformed; NR's and GSM's are not read. A group (wire type 3) inside a tower is skipped to
+//!   its end tag and is unknown (code QA L1) - malformed only in fields 1-5, unclosed or mismatched; a group anywhere
+//!   else is refused as before.
+//! - **Neighbours** (design 137 N3, [near]): an asked cell's list is the call's other positioned towers that
 //!   overlap it (`d <= r_cell + r_tower`), nearest first, at most [NEAR_PER_CELL].
 
 use super::codec::{self, Malformed, Position};
@@ -293,7 +295,7 @@ pub fn answer(body: &[u8]) -> Result<Vec<Tower>, Malformed> {
         let mut fields = codec::Reader::new(bytes);
         let (mut mcc, mut mnc, mut cid, mut area, mut location) = (None, None, None, None, None);
         let (mut channel, mut pci) = (None, None);
-        while let Some((number, value)) = fields.field()? {
+        while let Some((number, value)) = fields.field_or_group()? {
             match (number, value) {
                 (1, codec::Value::Varint(n)) => mcc = Some(n),
                 (2, codec::Value::Varint(n)) => mnc = Some(n),
@@ -359,13 +361,14 @@ pub struct Near {
     pub pci: Option<u16>,
 }
 
-/// Design 137 N3: the list kept for an asked cell Apple placed at `at` - the call's positioned `towers` that are not
-/// `asked` and overlap it (`d <= r_cell + r_tower`: a phone hears both only where both reach), nearest first (Apple's
-/// order among equals), at most [NEAR_PER_CELL].
-pub fn near(at: &Position, towers: &[Tower], asked: &[String]) -> Vec<Near> {
+/// Design 137 N3: the list kept for an asked cell Apple placed at `at` - the call's positioned `towers` other than
+/// `own` (the row's own cell; code QA H1: a co-asked cell stays in, the answer leaves asked cells out) that overlap it
+/// (`d <= r_cell + r_tower`: a phone hears both only where both reach), nearest first (Apple's order among equals), at
+/// most [NEAR_PER_CELL].
+pub fn near(at: &Position, towers: &[Tower], own: &[String]) -> Vec<Near> {
     let mut list: Vec<(f64, Near)> = towers
         .iter()
-        .filter(|t| !asked.contains(&t.cell))
+        .filter(|t| !own.contains(&t.cell))
         .filter_map(|t| {
             let position = t.position?;
             let d = crate::zones::distance_m(at.lat, at.lng, position.lat, position.lng);

@@ -1052,6 +1052,10 @@ async fn the_route_answers_the_cell_contract() {
             "cells_cached_near" => {
                 app.fetch.answer(APPLE_URL, 200, apple_cell("cells_near"));
                 let fetched = raw(&app, &token, request).await;
+                // The fixture has 14 surrounding towers to a count of 12 (two to show the cut), which throttles the
+                // next 10 s - and a throttled answer has no lists (code QA M1): the cached ask comes after it.
+                assert!(wifi.cell_throttled_until.lock().unwrap().is_some());
+                *wifi.cell_throttled_until.lock().unwrap() = None;
                 let started = Instant::now();
                 let cached = raw(&app, &token, request).await;
                 let took = started.elapsed();
@@ -1123,6 +1127,19 @@ async fn the_route_answers_the_cell_contract() {
                 .unwrap();
                 let answer = timed(&app, &token, request).await;
                 assert_eq!(app.fetch.count(), 1, "{case}: Apple not asked");
+                // Code QA L2: the failure is the health's, with no success recorded for the call.
+                let row = integration_health::row(&app.db, super::NAME, "")
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(row.error.as_deref(), Some("store"), "{case}");
+                assert_eq!(row.class, Some(Class::Transient), "{case}");
+                assert!(row.failing_since.is_some(), "{case}");
+                assert_eq!(
+                    wifi.health().last_error.map(|(_, code)| code),
+                    Some("store")
+                );
+                assert!(wifi.health().last_ok.is_none(), "{case}");
                 answer
             }
             "cells_cached" => {
@@ -1413,7 +1430,15 @@ async fn a_cell_row_is_sealed_under_its_canonical_form() {
         .iter()
         .map(|n| n.cell.as_str())
         .collect();
-    assert_eq!(near, ["lte:1:1:4711:12345679", "lte:1:1:4712:22345678"]);
+    // Code QA H1: the co-asked NR cell is in it too (the answer leaves asked cells out).
+    assert_eq!(
+        near,
+        [
+            "nr:1:1:1048577:4294967297",
+            "lte:1:1:4711:12345679",
+            "lte:1:1:4712:22345678"
+        ]
+    );
     assert!(!lists[0].wanted(month));
     // A negative has no list and isn't wanted in its month.
     assert_eq!(lists[1].near, None);
@@ -1519,6 +1544,95 @@ async fn near_never_names_an_asked_cell() {
         "B's then A's, Y once, neither A nor B"
     );
     assert_eq!(cache_rows(&app).await, 2);
+}
+
+/// Code QA H1: a stored list leaves out only its own cell, so it doesn't depend on which cells were asked with it or
+/// were cached already - `[A]`, `[A,B]`, `[B]` answers B's `near` as `[A,B]` fresh, then `[B]`, does.
+#[tokio::test]
+async fn a_list_is_the_same_whatever_was_asked_with_it() {
+    let (a, b) = ("lte:001:01:4711:12345678", "lte:001:01:4711:12345650");
+    let mut answers = Vec::new();
+    for steps in [
+        vec![
+            json!({"cells": [a]}),
+            json!({"cells": [a, b]}),
+            json!({"cells": [b]}),
+        ],
+        vec![json!({"cells": [a, b]}), json!({"cells": [b]})],
+    ] {
+        let app = TestApp::new().await;
+        let (_, token) = phone_on(&app).await;
+        app.fetch.answer(APPLE_URL, 200, apple_cell("cells_two"));
+        let mut last = Value::Null;
+        for step in &steps {
+            let (status, body) = lookup(&app, &token, step).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            last = body;
+        }
+        answers.push(last["near"].clone());
+    }
+    assert_eq!(answers[0], answers[1]);
+    let names: Vec<&str> = answers[0]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| n["cell"].as_str().unwrap())
+        .collect();
+    // B's list: Z, Y, and A - a co-asked cell is a neighbour when it isn't asked.
+    assert_eq!(
+        names,
+        ["lte:001:01:4711:12345653", "lte:001:01:4711:12345652", a]
+    );
+}
+
+/// Code QA M1: while the cell throttle holds, every asked cell is answered without a list - a cached one with its list
+/// kept and an uncached one alike -, and the fetched one's list stays NULL; after it the lists come back.
+#[tokio::test]
+async fn the_throttle_answers_no_list_cached_or_not() {
+    let app = TestApp::new().await;
+    let (_, token) = phone_on(&app).await;
+    app.fetch.answer(APPLE_URL, 200, apple_cell("cells_two"));
+    let (a, b) = (
+        json!({"cells": ["lte:001:01:4711:12345678"]}),
+        json!({"cells": ["lte:001:01:4711:12345650"]}),
+    );
+    let (status, body) = lookup(&app, &token, &a).await;
+    assert_eq!(status, StatusCode::OK);
+    let a_near = body["near"].clone();
+    assert_eq!(a_near.as_array().unwrap().len(), 3);
+    let wifi = app.state.integrations.wifi_lookup.clone();
+    *wifi.cell_throttled_until.lock().unwrap() =
+        Some(Instant::now() + std::time::Duration::from_secs(60));
+    let (cached_status, cached) = lookup(&app, &token, &a).await;
+    let (uncached_status, uncached) = lookup(&app, &token, &b).await;
+    assert_eq!(
+        (cached_status, uncached_status),
+        (StatusCode::OK, StatusCode::OK)
+    );
+    assert_eq!(cached["near"], json!([]), "{cached}");
+    assert_eq!(uncached["near"], json!([]), "{uncached}");
+    assert_eq!(app.fetch.count(), 2, "only the uncached cell asked");
+    let key = wifi.key(&app.state).await.unwrap();
+    let lists = cache::read_cells(
+        &app.db,
+        &key,
+        &[
+            "lte:1:1:4711:12345678".to_string(),
+            "lte:1:1:4711:12345650".to_string(),
+        ],
+        this_month(),
+    )
+    .await
+    .unwrap();
+    assert!(lists[0].near.is_some(), "the cached list is kept");
+    assert_eq!(lists[1].near, None, "the throttled call's list stays NULL");
+    // The throttle over: A's list from the cache, B asked again.
+    *wifi.cell_throttled_until.lock().unwrap() = None;
+    assert_eq!(lookup(&app, &token, &a).await.1["near"], a_near);
+    assert_eq!(app.fetch.count(), 2);
+    let (_, body) = lookup(&app, &token, &b).await;
+    assert_eq!(app.fetch.count(), 3);
+    assert_eq!(body["near"].as_array().unwrap().len(), 3, "{body}");
 }
 
 /// Design 137 N5: at most 64 `near` entries, the lists taken in the ask's order.

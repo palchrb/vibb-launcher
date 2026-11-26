@@ -324,6 +324,9 @@ impl CellCached {
     }
 }
 
+/// A cell row as read: the sealed position, `fetched_month`, `negative`, the sealed list.
+type CellRow = (Option<Vec<u8>>, i64, i64, Option<Vec<u8>>);
+
 /// The cache's answer for each of the canonical `cells` (in order), with each placed cell's neighbour list.
 pub async fn read_cells(
     db: &SqlitePool,
@@ -333,7 +336,7 @@ pub async fn read_cells(
 ) -> Result<Vec<CellCached>, sqlx::Error> {
     let mut out = Vec::with_capacity(cells.len());
     for cell in cells {
-        let row: Option<(Option<Vec<u8>>, i64, i64, Option<Vec<u8>>)> = sqlx::query_as(
+        let row: Option<CellRow> = sqlx::query_as(
             "SELECT sealed, fetched_month, negative, near FROM wifi_lookup_aps WHERE id = ?",
         )
         .bind(key.id(cell))
