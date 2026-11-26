@@ -12,7 +12,6 @@ import me.vibb.music.logic.SealCipher
 import me.vibb.music.logic.isSealedKey
 import me.vibb.music.logic.plainSinkRefuses
 import java.io.IOException
-import java.util.Objects
 
 /*
  * The sealed book's streams (design 117 §4.2): the Storytel cache sink seals from the first byte, the cache-read source
@@ -101,7 +100,7 @@ class SealDataSource(private val upstream: DataSource, private val keys: SealKey
 /** §4.5: a plain sink's open refuses a sealed key and a Storytel source id - the item fails, no plain book is stored. */
 @OptIn(UnstableApi::class)
 fun refusePlainBook(dataSpec: DataSpec) {
-    if (plainSinkRefuses(dataSpec.key, Objects.toString(dataSpec.uri, null))) throw PlainSinkRefusedException()
+    if (plainSinkRefuses(dataSpec.key, "${dataSpec.uri}")) throw PlainSinkRefusedException()
 }
 
 /**
