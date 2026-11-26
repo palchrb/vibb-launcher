@@ -391,11 +391,12 @@ class BootCoverManifestTest {
     }
 
     /** f3-run B3: initRest's tail after the PIN lock's init is its own posted message (the boot pass and what the system
-     * queued run before it; one long message starved KidVpnService into a service ANR). */
+     * queued run before it; one long message starved KidVpnService into a service ANR). Since §6bv finding 2 the lock's
+     * init is in the setup's second part, rulesAndLock. */
     @Test
-    fun `initRest posts its tail after the lock's init (f3-run B3)`() {
+    fun `initRest (its second part) posts its tail after the lock's init (f3-run B3)`() {
         val app = code("java/com/kidslauncher/mdm/Application.kt")
-        val initRest = app.substringAfter("private fun initRest(").substringBefore("\n    }\n")
+        val initRest = app.substringAfter("private fun rulesAndLock(").substringBefore("\n    }\n")
         val posted = initRest.substringAfter("PinLockRuntime.init(this)")
         val tail = posted.substringAfter("android.os.Handler(android.os.Looper.getMainLooper()).post {")
         assertTrue(posted.contains("android.os.Handler(android.os.Looper.getMainLooper()).post {"))

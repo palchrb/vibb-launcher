@@ -54,4 +54,37 @@ class DirectBootComponentsTest {
         }
         assertFalse(DirectBootComponents.needsUnlockedSetup("com.kidslauncher.mdm.calls.KidCallScreeningService"))
     }
+
+    /** The rc.5 gate (§6bv finding 2): only pages and receivers wait for the setup's second part at their create. */
+    @Test
+    fun `an activity or a receiver gets the whole unlocked setup first, a service or a provider the first part`() {
+        assertTrue(DirectBootComponents.unlockedRulesBefore(DirectBootComponents.Kind.ACTIVITY))
+        assertTrue(DirectBootComponents.unlockedRulesBefore(DirectBootComponents.Kind.RECEIVER))
+        assertFalse(DirectBootComponents.unlockedRulesBefore(DirectBootComponents.Kind.SERVICE))
+        assertFalse(DirectBootComponents.unlockedRulesBefore(DirectBootComponents.Kind.PROVIDER))
+        val src = listOf("src/main/java", "app/src/main/java").map(::File).first { it.exists() }
+        val factory = File(src, "com/kidslauncher/mdm/KidAppComponentFactory.kt").readText()
+        for ((call, kind) in listOf("instantiateActivity" to "ACTIVITY", "instantiateService" to "SERVICE", "instantiateReceiver" to "RECEIVER", "instantiateProvider" to "PROVIDER")) {
+            assertTrue(call, factory.substringAfter("override fun $call(").substringBefore("\n    }\n").contains("beforeCreating(className, DirectBootComponents.Kind.$kind)"))
+        }
+        assertTrue(factory.contains("ensureUnlockedInit(rulesNow = DirectBootComponents.unlockedRulesBefore(kind))"))
+        // The application: a process started unlocked runs both parts at once; the posted part runs once, in order.
+        val app = File(src, "com/kidslauncher/mdm/Application.kt").readText()
+        val ensure = app.substringAfter("fun ensureUnlockedInit(rulesNow: Boolean = false) {").substringBefore("\n    }\n")
+        assertTrue(ensure.indexOf("rulesLater = !rulesNow") in 0 until ensure.indexOf("initUnlocked()"))
+        assertTrue(ensure.contains("if (rulesNow) initRules()"))
+        val unlocked = app.substringAfter("private fun initUnlocked() {").substringBefore("\n    }\n")
+        assertTrue(unlocked.indexOf("initRest()") in 0 until unlocked.indexOf("if (rulesLater) {\n            mainHandler.post(rulesStep)\n        } else {\n            initRules()"))
+        val rules = app.substringAfter("private fun initRules() {").substringBefore("\n    }\n")
+        assertTrue(rules.indexOf("if (rulesDone) return\n        rulesDone = true\n        mainHandler.removeCallbacks(rulesStep)") in 0 until rules.indexOf("rulesAndLock()"))
+        val rest = app.substringAfter("private fun initRest() {").substringBefore("\n    }\n")
+        val second = app.substringAfter("private fun rulesAndLock() {").substringBefore("\n    }\n")
+        assertTrue(rest.contains("ZenRuleRuntime.init(this)"))
+        for (piece in listOf("TimeRulesRuntime.recheck(", "UpdateFence.init(this)", "PinLockRuntime.init(this)")) {
+            assertFalse(piece, rest.contains(piece))
+            assertTrue(piece, second.contains(piece))
+        }
+        assertTrue(second.indexOf("TimeRulesRuntime.recheck(") < second.indexOf("UpdateFence.init(this)"))
+        assertTrue(second.indexOf("UpdateFence.init(this)") < second.indexOf("PinLockRuntime.init(this)"))
+    }
 }

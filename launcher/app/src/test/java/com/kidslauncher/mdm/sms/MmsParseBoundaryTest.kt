@@ -56,7 +56,7 @@ class MmsParseBoundaryTest {
         val guard = onCreate.indexOf("if (android.os.Process.isIsolated()) return")
         assertTrue("the Application returns at once", guard in 0..120)
         val factory = code(file("java/com/kidslauncher/mdm/KidAppComponentFactory.kt"))
-        val before = factory.substringAfter("private fun beforeCreating(className: String) {").trimStart()
+        val before = factory.substringAfter("private fun beforeCreating(className: String, kind: DirectBootComponents.Kind) {").trimStart()
         assertTrue("the component factory returns at once", before.startsWith("if (android.os.Process.isIsolated()) return"))
     }
 
