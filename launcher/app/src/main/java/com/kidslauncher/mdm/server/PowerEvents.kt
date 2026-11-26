@@ -371,10 +371,17 @@ object PowerEvents {
      * (the power upload clears the record's start and shutdown): `"<boot>:<ms>"`. */
     private const val KEY_OFF_GAP = "boot_off_gap_v1"
 
+    /** The off gap's own file: [update] rewrites the record's file with `clear()`, which would wipe it (the 138 gate's
+     * row o, 2026-11-26). Device protected, as the record. */
+    private fun gapPrefs(context: Context): SharedPreferences =
+        context.createDeviceProtectedStorageContext().getSharedPreferences(GAP_PREFS, Context.MODE_PRIVATE)
+
+    private const val GAP_PREFS = "power_boot_gap"
+
     /** Design 138: how long the phone was off before this boot (the shutdown of the boot right before it to this
      * boot's start), or `null` when unknown - no shutdown seen (a pulled battery, a crash). Never throws. */
     fun lastOffGapMs(context: Context): Long? = try {
-        val parts = prefs(context).getString(KEY_OFF_GAP, null)?.split(':')
+        val parts = gapPrefs(context).getString(KEY_OFF_GAP, null)?.split(':')
         val boot = parts?.getOrNull(0)?.toIntOrNull()
         parts?.getOrNull(1)?.toLongOrNull()?.takeIf { boot == BootClock.bootCount() }
     } catch (e: Exception) {
@@ -555,7 +562,7 @@ object PowerEvents {
                     record.off?.atMs, record.off?.bootCount, BootClock.bootCount(), TrustedClock.nowMs(), SystemClock.elapsedRealtime(),
                 )
                 val boot = BootClock.bootCount()
-                prefs(context).edit().apply { if (gap != null) putString(KEY_OFF_GAP, "$boot:$gap") else remove(KEY_OFF_GAP) }.commit()
+                gapPrefs(context).edit().apply { if (gap != null) putString(KEY_OFF_GAP, "$boot:$gap") else remove(KEY_OFF_GAP) }.commit()
                 withBoot(record, on)
             }
         } catch (e: Exception) {
