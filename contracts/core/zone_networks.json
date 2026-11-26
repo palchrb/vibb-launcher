@@ -1,0 +1,35 @@
+{
+  "about": "Design 138: a zone's confirmed Wi-Fi routers. `policy`: location_policy.zones[] with its networks as the server serves them and the launcher decodes them. `report_wifi`: zone_watch.wifi rows the server keeps (`kept`, as stored) or drops (null). `report_struck`: zone_watch.wifi_struck as kept. `same_router`: the match both sides use - the BSSID's first five octets, or the same multi-link address known on both sides. Documentation addresses only.",
+  "policy": {
+    "zones": [
+      {"id": 4, "latitude": 59.9139, "longitude": 10.7522, "radius_m": 150, "networks": [
+        {"id": 7, "ssid": "Net-A", "bssid": "00:00:5e:00:53:01", "mld": null},
+        {"id": 9, "ssid": "Net-B", "bssid": "00:00:5e:00:54:01", "mld": "00:00:5e:00:55:10"}
+      ]},
+      {"id": 5, "latitude": 59.92, "longitude": 10.76, "radius_m": 200, "networks": []}
+    ]
+  },
+  "report_wifi": [
+    {"sent": {"ssid": "Net-A", "bssid": "00:00:5E:00:53:01"}, "kept": {"ssid": "Net-A", "bssid": "00:00:5e:00:53:01"}},
+    {"sent": {"ssid": "Net-A", "bssid": "00:00:5e:00:53:01", "mld": "00:00:5e:00:53:10"}, "kept": {"ssid": "Net-A", "bssid": "00:00:5e:00:53:01", "mld": "00:00:5e:00:53:10"}},
+    {"sent": {"ssid": "Net-A", "bssid": "02:00:00:00:00:00"}, "kept": null},
+    {"sent": {"ssid": "Net-A", "bssid": "00:00:00:00:00:00"}, "kept": null},
+    {"sent": {"ssid": "Net-A", "bssid": "01:00:5e:00:53:01"}, "kept": null},
+    {"sent": {"ssid": "Net-A", "bssid": "00:00:5e:00:53"}, "kept": null},
+    {"sent": {"ssid": "", "bssid": "00:00:5e:00:53:01"}, "kept": null},
+    {"sent": {"ssid": "123456789012345678901234567890123", "bssid": "00:00:5e:00:53:01"}, "kept": null},
+    {"sent": {"ssid": "Net\u0007A", "bssid": "00:00:5e:00:53:01"}, "kept": null},
+    {"sent": {"ssid": "Net-A", "bssid": "00:00:5e:00:53:01", "mld": "02:00:00:00:00:00"}, "kept": null}
+  ],
+  "report_struck": [
+    {"sent": [7, 9], "kept": [7, 9]},
+    {"sent": [0, 7], "kept": []},
+    {"sent": "7", "kept": []}
+  ],
+  "same_router": [
+    {"a": "00:00:5e:00:53:01", "a_mld": null, "b": "00:00:5e:00:53:02", "b_mld": null, "same": true},
+    {"a": "00:00:5e:00:53:01", "a_mld": null, "b": "00:00:5e:00:54:01", "b_mld": null, "same": false},
+    {"a": "00:00:5e:00:53:01", "a_mld": "00:00:5e:00:55:10", "b": "00:00:5e:00:56:01", "b_mld": "00:00:5e:00:55:10", "same": true},
+    {"a": "00:00:5e:00:53:01", "a_mld": null, "b": "00:00:5e:00:56:01", "b_mld": null, "same": false}
+  ]
+}

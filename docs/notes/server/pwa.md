@@ -1599,6 +1599,13 @@ man er inne på en device". Branch `pwa-fixes-b`.
   summary line, the switch once, "Here now" against a pending or stale fix), the two "every form lands" tests with a
   zone (code QA Q-3; a zone's delete leaves the page, `settings_pages::leaves_the_page`), `admin_auth::tests::no_store_paths`, `tests::locations` (`locate.js?v=5`),
   `jstest/zones.test.js`, `jstest/locate.test.js`.
+- **The zone's Wi-Fi group** (design 138, `#zone-wifi`, after the zone's form, a stored zone only; `zones.md`, "A
+  zone's confirmed Wi-Fi"): each confirmed name a "Fjern…" confirm (every router of that name goes); the phone's
+  network as a row with Bekreft when its newest report with `wifi` is at most an hour old, its router isn't confirmed
+  (the name and the five octets or the multi-link address) and no fix of the last hour is surely outside the zone; at
+  most one orange line, "Sett et annet sted" (a blocked row), with its (i) - no "Ukjent ruter" (revision 3); one (i)
+  on the group. Every form lands on `?wifi=saved|changed|full#zone-wifi`
+  (a remove of a row gone already too), the flash in the group; no JS. `zone_networks::view_of` is the pure part.
 
 ## A phone's own picture (server round C, 2026-10-25, branch `pwa-fixes-c`, migration `0100_device_avatar.sql`)
 

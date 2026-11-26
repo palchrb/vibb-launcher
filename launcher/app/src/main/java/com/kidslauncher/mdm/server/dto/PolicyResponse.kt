@@ -241,6 +241,18 @@ data class PolicyZone(
     val latitude: Double,
     val longitude: Double,
     val radiusM: Int,
+    /** Design 138: the routers a parent confirmed for this zone (unblocked rows), one per BSSID; none when absent. */
+    val networks: List<ZoneNetwork> = emptyList(),
+)
+
+/** `PolicyZone.networks` (design 138): a confirmed router - the server's row id (what a strike reports), the network's
+ * name, the BSSID and the router's multi-link address when the phone had one. */
+@Serializable
+data class ZoneNetwork(
+    val id: Long,
+    val ssid: String,
+    val bssid: String,
+    val mld: String? = null,
 )
 
 /** `PolicyResponse.launcherUi` - see kid-phone-server's `LauncherUi`. [language] is "system", "nb"

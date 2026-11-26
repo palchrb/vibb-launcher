@@ -896,7 +896,7 @@ class ZonePlanTest {
         assertTrue(sync.contains("if (beat == Heartbeat.KEPT || crossing) LocateCommands.promoteKept(context)"))
         assertEquals(1, Regex("""promoteKept\(""").findAll(sync).count())
         // Q-3: the still flag rides the report.
-        assertTrue(sync.contains("zoneWatch = ZoneWatch.report(context, still = location.still),"))
+        assertTrue(sync.contains("zoneWatch = ZoneWatch.report(context, still = location.still, wifi = zoneWifi),"))
         assertTrue(sync.contains("val cachedIsVouch = LocateCommands.cachedQueued()?.timeMs == lastFreshFix"))
         assertTrue(sync.contains("val stillBeat = reportStill(stillOn, action, motion, now, stillFrom, capFails, cachedIsVouch, ceilingFrom)"))
         // Code QA H1: the cap try keeps the vouch (LocateCommands' cap branch) and, failed, re-sends it or drops the fix.

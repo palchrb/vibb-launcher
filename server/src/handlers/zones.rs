@@ -13,7 +13,7 @@
 //! Every save nudges the phone (design 64 step 2's fences follow the policy).
 
 use askama::Template;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Json, Redirect, Response};
 use axum::{Extension, Form};
@@ -44,8 +44,26 @@ struct ZoneTemplate {
     radius_min: i64,
     radius_max: i64,
     radius_step: i64,
+    /// Design 138: the zone's Wi-Fi group (a stored zone only).
+    wifi: crate::zone_networks::WifiView,
+    /// The group's flash after a confirm or a remove (`?wifi=`): `(catalog key, is an error)`.
+    wifi_flash: Option<(&'static str, bool)>,
 }
 crate::i18n::words!(ZoneTemplate);
+
+impl ZoneTemplate {
+    /// The orange line's words and its (i), `(line key, info key, name)`.
+    fn wifi_orange(&self) -> Option<(&'static str, &'static str, &str)> {
+        match &self.wifi.orange {
+            Some(crate::zone_networks::Orange::Elsewhere(name)) => Some((
+                "locate.zone.wifi.elsewhere",
+                "locate.zone.wifi.elsewhere_info",
+                name.as_str(),
+            )),
+            None => None,
+        }
+    }
+}
 
 /// The form's values as shown (typed, or stored).
 struct ZoneForm {
@@ -283,9 +301,49 @@ async fn render(
     status: StatusCode,
     lang: Lang,
 ) -> Response {
+    render_with(
+        state,
+        device,
+        zone_id,
+        stored_name,
+        form,
+        errors,
+        refusal,
+        status,
+        lang,
+        None,
+    )
+    .await
+}
+
+/// [render] with the Wi-Fi group's flash.
+#[allow(clippy::too_many_arguments)]
+async fn render_with(
+    state: &AppState,
+    device: Device,
+    zone_id: Option<i64>,
+    stored_name: String,
+    form: ZoneForm,
+    errors: ZoneErrors,
+    refusal: Option<String>,
+    status: StatusCode,
+    lang: Lang,
+    wifi_flash: Option<(&'static str, bool)>,
+) -> Response {
     let phone_fix = match newest_point(state, device.id).await {
         Ok(fix) => fix.map(|(lat, lng)| (coordinate(lat), coordinate(lng))),
         Err(err) => return db_error(device.id, err, lang),
+    };
+    let wifi = match zone_id {
+        Some(zid) => match zone_of(state, device.id, zid).await {
+            Ok(Some(zone)) => match crate::zone_networks::view(&state.db, device.id, &zone).await {
+                Ok(view) => view,
+                Err(err) => return db_error(device.id, err, lang),
+            },
+            Ok(None) => crate::zone_networks::WifiView::default(),
+            Err(err) => return db_error(device.id, err, lang),
+        },
+        None => crate::zone_networks::WifiView::default(),
     };
     let title = if zone_id.is_some() {
         stored_name.clone()
@@ -305,6 +363,8 @@ async fn render(
         radius_min: *RADIUS.start(),
         radius_max: *RADIUS.end(),
         radius_step: zones::RADIUS_STEP,
+        wifi,
+        wifi_flash,
     };
     (status, Html(page.render().unwrap())).into_response()
 }
@@ -357,12 +417,20 @@ async fn zone_of(
         .await
 }
 
-/// `GET /devices/{id}/zones/{zone_id}`: the zone's form as stored.
+/// `GET /devices/{id}/zones/{zone_id}`: the zone's form as stored; `?wifi=saved|changed|full`
+/// the Wi-Fi group's flash after a confirm or a remove (design 138).
 pub async fn show_zone(
     State(state): State<AppState>,
     lang: Lang,
     Path((id, zone_id)): Path<(i64, i64)>,
+    Query(query): Query<HashMap<String, String>>,
 ) -> Response {
+    let wifi_flash = match query.get("wifi").map(String::as_str) {
+        Some("saved") => Some(("common.saved", false)),
+        Some("changed") => Some(("locate.zone.wifi.changed", true)),
+        Some("full") => Some(("locate.zone.wifi.full", true)),
+        _ => None,
+    };
     let device = match device_of(&state, id).await {
         Ok(Some(device)) => device,
         Ok(None) => return not_found(lang, "error.device_not_found"),
@@ -381,7 +449,7 @@ pub async fn show_zone(
         notify_arrive: zone.notify_arrive,
         notify_leave: zone.notify_leave,
     };
-    render(
+    render_with(
         &state,
         device,
         Some(zone.id),
@@ -391,8 +459,106 @@ pub async fn show_zone(
         None,
         StatusCode::OK,
         lang,
+        wifi_flash,
     )
     .await
+}
+
+/// `POST /devices/{id}/zones/{zone_id}/wifi`: design 138 D4 - confirm the router the page showed
+/// (`bssid`, `mld`), bound to the phone's newest report with `wifi`. Back to `#zone-wifi`.
+pub async fn confirm_wifi(
+    State(state): State<AppState>,
+    lang: Lang,
+    Path((id, zone_id)): Path<(i64, i64)>,
+    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
+    Form(form): Form<HashMap<String, String>>,
+) -> Response {
+    let device = match device_of(&state, id).await {
+        Ok(Some(device)) => device,
+        Ok(None) => return not_found(lang, "error.device_not_found"),
+        Err(err) => return db_error(id, err, lang),
+    };
+    let zone = match zone_of(&state, id, zone_id).await {
+        Ok(Some(zone)) => zone,
+        Ok(None) => return not_found(lang, "error.zone_not_found"),
+        Err(err) => return db_error(id, err, lang),
+    };
+    let bssid = form.get("bssid").map(String::as_str).unwrap_or("");
+    let mld = form
+        .get("mld")
+        .map(String::as_str)
+        .filter(|m| !m.is_empty());
+    let back = |flash: &str| format!("/devices/{id}/zones/{zone_id}?wifi={flash}#zone-wifi");
+    match crate::zone_networks::confirm(&state.db, id, zone_id, bssid, mld, admin.id).await {
+        Ok(crate::zone_networks::Confirmed::Written) => {
+            let detail = security::Detail::words(
+                "security.detail.zone.deleted",
+                &[
+                    ("device", &device.id.to_string()),
+                    ("name", &device.name),
+                    ("zone", &zone.name),
+                ],
+            );
+            saved(
+                &state,
+                &admin,
+                &device,
+                "zone_wifi_confirmed",
+                detail,
+                back("saved"),
+            )
+            .await
+        }
+        Ok(crate::zone_networks::Confirmed::Already) => {
+            Redirect::to(&back("saved")).into_response()
+        }
+        Ok(crate::zone_networks::Confirmed::Changed) => {
+            Redirect::to(&back("changed")).into_response()
+        }
+        Ok(crate::zone_networks::Confirmed::Full) => Redirect::to(&back("full")).into_response(),
+        Err(err) => db_error(id, err, lang),
+    }
+}
+
+/// `POST /devices/{id}/zones/{zone_id}/wifi/{network_id}/delete`: design 138 D2 - every row of
+/// that row's name in the zone goes ("Fjern" ends only the parent's confirmation). Back to
+/// `#zone-wifi`.
+pub async fn remove_wifi(
+    State(state): State<AppState>,
+    lang: Lang,
+    Path((id, zone_id, network_id)): Path<(i64, i64, i64)>,
+    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
+) -> Response {
+    let device = match device_of(&state, id).await {
+        Ok(Some(device)) => device,
+        Ok(None) => return not_found(lang, "error.device_not_found"),
+        Err(err) => return db_error(id, err, lang),
+    };
+    let zone = match zone_of(&state, id, zone_id).await {
+        Ok(Some(zone)) => zone,
+        Ok(None) => return not_found(lang, "error.zone_not_found"),
+        Err(err) => return db_error(id, err, lang),
+    };
+    match crate::zone_networks::remove(&state.db, zone_id, network_id).await {
+        Ok(true) => {
+            let detail = security::Detail::words(
+                "security.detail.zone.deleted",
+                &[
+                    ("device", &device.id.to_string()),
+                    ("name", &device.name),
+                    ("zone", &zone.name),
+                ],
+            );
+            let back = format!("/devices/{id}/zones/{zone_id}?wifi=saved#zone-wifi");
+            saved(&state, &admin, &device, "zone_wifi_removed", detail, back).await
+        }
+        // QA L9: gone already (another parent, a block replaced): back to the group, never a 404 page.
+        Ok(false) => Redirect::to(&format!(
+            "/devices/{id}/zones/{zone_id}?wifi=saved#zone-wifi"
+        ))
+        .into_response(),
+        Err(err) => db_error(id, err, lang),
+    }
 }
 
 /// A save's answer once it is written: the log line, the nudge, the zone's row on Locate.
@@ -613,6 +779,22 @@ pub async fn save_zone(
         let moved = before.latitude != input.latitude
             || before.longitude != input.longitude
             || before.radius_m != input.radius_m;
+        // Design 138 D12: moved further than its radius, the zone's confirmed routers go.
+        let after = zones::Circle {
+            latitude: input.latitude,
+            longitude: input.longitude,
+            radius_m: input.radius_m,
+        };
+        let mut changed = changes(&before, &input);
+        if crate::zone_networks::moved_past_radius(&before.circle(), &after) {
+            let cleared = sqlx::query("DELETE FROM zone_networks WHERE zone_id = ?")
+                .bind(zone_id)
+                .execute(&mut *tx)
+                .await?;
+            if cleared.rows_affected() > 0 {
+                changed.push(("security.detail.zone.wifi_removed", vec![]));
+            }
+        }
         if moved {
             let circle = zones::Circle {
                 latitude: input.latitude,
@@ -622,7 +804,7 @@ pub async fn save_zone(
             zones::start_over(&mut tx, zone_id, id, &circle, chrono::Utc::now()).await?;
         }
         tx.commit().await?;
-        Ok::<_, sqlx::Error>((Outcome::Written(zone_id), changes(&before, &input)))
+        Ok::<_, sqlx::Error>((Outcome::Written(zone_id), changed))
     };
     match written.await {
         Ok((Outcome::Written(_), changed)) => {

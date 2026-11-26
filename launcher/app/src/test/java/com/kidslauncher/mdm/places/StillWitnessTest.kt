@@ -223,7 +223,7 @@ class StillWitnessTest {
         // D24: in LEARNED_FIRST, after the zone link and before GPS, only with no learned fix judged.
         val link = glue.indexOf("judged == null && renews(app, store, snap.await(), ask) -> ask.vouched.also { ask.renewed = true }")
         val witness = glue.indexOf("judged == null && store != null && witness(app, store, snap.await(), ask) == StillWitness.RENEWS -> ask.vouched.also {")
-        assertTrue(link > 0 && witness > link && witness < glue.indexOf("keep(gps(GPS_MS), early.await())", witness))
+        assertTrue(link > 0 && witness > link && witness < glue.indexOf("keep(gps(GPS_MS), early.await(), AttemptPlan.TOGETHER)", witness))
         assertTrue(glue.contains("ask.renewedBy = Renewal.CONNECTED"))
         // D20.1: the vouch's link from the attempt's last read (its scan's level first), in memory, cleared with the table.
         assertTrue(glue.contains("ask.linkAp = store?.let { linkAp(ended.link, ended.connected, it.keys, ended.answer?.answering.orEmpty()).ap }"))

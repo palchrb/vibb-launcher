@@ -233,3 +233,25 @@ A Wi-Fi fix that no satellite fix or linked network confirms never starts an arr
 - **Locate's age and "Here now" can differ**: Locate's "Recent"/"Old" (`locate::Seen`) is how fresh the phone's newest
   fix is, of any class, while a zone's "Here now" needs a fine fix - so a phone indoors on Wi-Fi estimates can show a
   recent fix and no "Here now" at once. As intended.
+
+## A zone's confirmed Wi-Fi (design 138, migration 0180)
+
+`zone_networks.rs`, `docs/design/138-confirmed-zone-networks.md`. `zone_networks` holds one row per router address
+(BSSID) a parent confirmed for a zone: the name and the multi-link address from the phone's report, `blocked_at` once
+the phone saw that router far outside the zone; at most 16 a zone, blocked rows counted; the rows go with the zone. The
+report's `zone_watch.wifi` (`{ssid, bssid, mld?}`, a named WPA2/WPA3 personal network, sent only while the policy has
+zones) and `wifi_struck` (ids) are kept in their shape by `sanitize_zone_watch` (`clean_wifi`, `clean_struck`; a bad
+one dropped alone; `ZONE_WATCH_MAX` 2048). The zone's page (`#zone-wifi`) lists each confirmed name with Fjern...,
+offers Bekreft for the network of the phone's newest report with `wifi` (at most an hour old, a report without it
+hides nothing) when that router isn't confirmed (the same name and the same router: the BSSID's first five octets or
+the multi-link address) and the newest fix isn't surely outside, and shows one orange line at most: "Sett et annet
+sted" for a blocked row (revision 3 cut "Ukjent ruter": it invited confirming a router set up with the home's name
+and password; a fix surely outside counts only from the last hour). `POST
+/devices/{id}/zones/{zone_id}/wifi` confirms only what the newest report says (the form's `bssid`/`mld` must match;
+the stored name is the report's), a blocked row of that BSSID replaced by a new id; `.../wifi/{network_id}/delete`
+removes every row of that name. Both land on `?wifi=saved|changed|full#zone-wifi`. The status intake blocks a struck
+id of this phone's zones once (`block_struck`, the phone line `zone_wifi_blocked` with the zone's name) and nudges the
+phone. A zone moved further than its old radius loses its rows (`moved_past_radius`, the `zone_changed` detail "Wi-Fi
+removed"). The policy's `location_policy.zones[]` carries `networks` (unblocked rows, `{id, ssid, bssid, mld}`,
+always present). The log never names a network or an address. Contract: `contracts/core/zone_networks.json`; tests
+`tests::zone_networks`, `zone_networks::tests`.

@@ -550,6 +550,9 @@ phone_lines! {
     SetupTickPhone = "setup_tick_phone", crate::retention::PHONE_LOG_DAYS;
     /// A number the phone cleared from Android's blocked list, by its class (`blocked_numbers`).
     BlockedCleared = "phone_blocked_cleared", crate::retention::PHONE_LOG_DAYS;
+    /// Design 138 D7: a zone's confirmed router the phone saw far outside the zone, blocked
+    /// (`zone_networks::block_struck`) - the zone's name, never the network's.
+    ZoneWifiBlocked = "zone_wifi_blocked", crate::retention::PHONE_LOG_DAYS;
 }
 
 /// A line a phone's report raised - a PIN use, a start without the launcher, an app installed, a

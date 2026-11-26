@@ -190,8 +190,9 @@ class StillPlanTest {
         assertTrue(glue.contains("return Scan(cached(context), ScanRequest(requestAt, ask))"))
         assertTrue(glue.contains("if (fresh >= SCAN_RESULTS_MIN) return Scan(before, ScanRequest(now, ScanAsk.CACHE))"))
         assertTrue(glue.contains("val answer = scanAnswer(scan.results, scan.request, connectedBssid(connected?.bssid), movedAtElapsedMs, SystemClock.elapsedRealtime())"))
-        // Revision 4 (D25): both scans read the connection with the location-info callback behind the deprecated read.
-        assertEquals(2, Regex("""connectedNow\(context\)""").findAll(glue).count())
+        // Revision 4 (D25): both scans read the connection with the location-info callback behind the deprecated read;
+        // design 138 (L1): the passive teach too.
+        assertEquals(3, Regex("""connectedNow\(context\)""").findAll(glue).count())
         assertTrue(glue.contains("ConnectivityManager.NetworkCallback(ConnectivityManager.NetworkCallback.FLAG_INCLUDE_LOCATION_INFO)"))
         assertTrue(glue.contains("runCatching { cm.unregisterNetworkCallback(callback) }"))
         // D3 only in the plan after a move, once.

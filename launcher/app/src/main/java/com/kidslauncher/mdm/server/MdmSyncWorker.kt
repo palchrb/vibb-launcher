@@ -391,6 +391,8 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         // Design 76 D3: the outside sightings go in every report; they leave the phone only after a 2xx over a
         // connection that passed the built-in set, or over the tailnet (R-2).
         val tlsSent = ServerPinStore.ring(context)
+        // Design 138 D3: the connected network for the zone page's Confirm (the callback read when redacted, at most 1 s).
+        val zoneWifi = com.kidslauncher.mdm.places.WifiPlaces.reportWifi(context)
         // Design 95 §3.5: a heartbeat while only its fields moved and the server takes them, else the full report
         // (gzip'd while the policy says so) - see StatusReports.kt.
         val sent = sendReport(
@@ -398,6 +400,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
                 context, reason, policyState(freshOutcome, cached, policyEverApplied), decision,
                 location, extraFixes, lockState, blocks, tlsSent,
                 seenOf(policyHandshake, ServerPinStore.network(context), System.currentTimeMillis()),
+                zoneWifi = zoneWifi,
             ),
             heartbeat = heartbeatOn(decision.policy),
             gzip = decision.policy?.statusGzip == true,
@@ -554,6 +557,7 @@ private fun statusReportOf(
     tlsSent: List<OutsideRow>,
     seen: ServerTlsSeen?,
     airplaneGoingOn: Boolean = false,
+    zoneWifi: com.kidslauncher.mdm.server.dto.ZoneWifiReport? = null,
 ): StatusReportRequest {
     val mdm = LauncherPreferences.mdm()
     return StatusReportRequest(
@@ -614,7 +618,7 @@ private fun statusReportOf(
         // S-L10's fix round: the server shows Leave Tailnet only while this says true.
         tailnetJoined = TsnetClient.joined(context),
         extraLocations = extraFixes?.map { it.toReport() },
-        zoneWatch = ZoneWatch.report(context, still = location.still),
+        zoneWatch = ZoneWatch.report(context, still = location.still, wifi = zoneWifi),
         calendar = try {
             com.kidslauncher.mdm.calendar.CalendarStore.report(context)
         } catch (e: Exception) {
