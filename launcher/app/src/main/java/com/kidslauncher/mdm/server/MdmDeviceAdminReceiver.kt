@@ -39,14 +39,13 @@ class MdmDeviceAdminReceiver : DeviceAdminReceiver() {
     }
 
     /**
-     * The Android screen lock changed - typically the migration runbook removing an old Android
-     * PIN (handy step 10): run the lock check at once instead of waiting for the next sync, so the
-     * phone isn't left with no lock at all in between (QA 10 #15). Also when a PIN was set again
-     * (handy's lock then switches off - no double lock).
+     * Android's screen lock changed - our own `set_kid_pin` reset, or the kid in Settings (design 59 §3.7: the rev is
+     * then unknown and the PWA warns). The lock check runs at once instead of at the next sync (QA 10 #15): a credential
+     * gone makes the lock `no_android_pin` (design 132), one set again makes the glance Android's face.
      */
     override fun onPasswordChanged(context: Context, intent: Intent, user: android.os.UserHandle) {
         super.onPasswordChanged(context, intent, user)
-        Log.i(LOG_TAG, "Screen lock changed - re-checking handy's lock")
+        Log.i(LOG_TAG, "Screen lock changed - re-checking the lock")
         val pendingResult = goAsync()
         val app = context.applicationContext
         CoroutineScope(Dispatchers.IO).launch {

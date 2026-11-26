@@ -273,16 +273,13 @@ mod tests {
 
     /// Literals near a security-event writer that are not event ids: form fields, notice codes
     /// and command names.
-    const NOT_EVENTS: [&str; 42] = [
+    const NOT_EVENTS: [&str; 40] = [
         // Design 93: the Regler sheet's flash codes next to its security events.
         "changed_elsewhere",
         "on_busy",
         "on_over",
-        // Design 59: the Child PIN group's notices and the reveal's form action.
-        "keyguard_needs_pin",
-        // The reason a waiting `set_kid_pin` is cancelled when the lock switches to Vibb One's (a command's
-        // `cancel_reason`, not an event; the scan sees it next to the switch's event tuple).
-        "keyguard_own",
+        // Design 59 and 132: the Child PIN group's notices and the reveal's form action.
+        "not_removed",
         "pin_not_kept",
         "pin_not_sent",
         "pin_sent",
@@ -319,9 +316,8 @@ mod tests {
         "parent_pin_saved_easy",
         "push_many",
         "push_on",
-        "saved_not_kept",
+        "save_not_kept",
         "saved_safe_boot",
-        "saved_safe_boot_not_kept",
         "show_text",
         "stop_ring",
         "unknown_phone",
@@ -380,7 +376,7 @@ mod tests {
             "login_failed",
             "music_phone_settings",
             "backup_restored",
-            "kid_pin_cleared",
+            "kid_pin_changed",
         ] {
             assert!(ids.contains(known), "the scan misses {known}: {ids:?}");
         }

@@ -50,10 +50,9 @@ class LockFontScaleTest {
         val order = listOf(
             "super.onConfigurationChanged(newConfig)",
             "FontScaleRefresh.changed(textFontScale, newConfig.fontScale)",
-            "FontScaleRefresh.rescale(root, old, keys)",
+            "FontScaleRefresh.rescale(root, old, emptyList())",
             "textMetrics = FontScaleRefresh.snapshot(resources.displayMetrics)",
             "textFontScale = newConfig.fontScale",
-            "sizeKeys(binding.pinKeypad.height)",
             "glance?.refit()",
         )
         var at = -1

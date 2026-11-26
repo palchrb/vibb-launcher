@@ -9,12 +9,15 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - **A corrupt stored allowlist is a warning on the device page** (`allowlist_corrupt`), not silently "nothing allowed" (QA step 1 #11).
 - **Backup to Google** (Google account on the phone, runbook `docs/setup/google-account.md` at the monorepo root; migration `0041_backup_service.sql`): status `backup_service_enabled` -> `device_status.backup_service_enabled` (missing or `null` = NULL). Advanced › Restrictions shows the latest report: `false` a quiet "Backup to Google · Off" row, `true` "On" plus a warning above the group (and an Attention alarm), NULL nothing. No switch: the launcher always keeps Android's backup service off while managed (override and pause included). Tests: `src/tests/hardening.rs` `backup_service_*`.
 
-## Handy's own PIN lock (handy step 10, design `docs/design/10-lock-and-call-ui.md`, at the monorepo root)
+## The Child PIN (handy step 10, design `docs/design/10-lock-and-call-ui.md`, at the monorepo root)
+
+Handy step 10 built Vibb One's own keypad lock around this PIN; since design 132 (phase D, below) the Child PIN is
+Android's lock's PIN and nothing else - this section keeps what still holds.
 
 - **Migration `0030_kid_lock.sql`**: `device_policy.kid_pin_hash/kid_pin_salt/kid_pin_length` (NULL hash = no lock), `device_status.lock_state_json`.
-- **Kid PIN** (`src/kid_lock.rs`, pure + unit tests): 4-6 ASCII digits, hashed with `security::hash_pin` like the parent (override) PIN. Set/remove on Lock Screen & PINs (design 31 step 4; the device page's "Screen lock" card before; `POST /devices/{id}/kid-lock`, `new_kid_pin` / `clear_kid_pin`; 404 unknown device, 500 nothing written on a DB error; security events `kid_pin_changed`/`kid_pin_cleared`; nudges). Refused (nothing written, `?notice=<code>` flash on the device page, `kid_lock::flash_text`) when not 4-6 digits, **without an override PIN** (it is the lock screen's "Parent code") or when it verifies against the override hash (`security::verify_pin`). The other way round in `update_policy`: a new override PIN that verifies against the kid hash is refused, and the override PIN can't be removed while a kid PIN is set. PBKDF2 for these checks runs in `spawn_blocking`; the kid-PIN `UPDATE` only applies `WHERE override_pin_hash IS NOT NULL` (0 rows = needs_override) and `update_policy`'s SQL keeps the override while a kid PIN is set, so parallel saves can't leave a kid PIN without its parent code. The **first** kid PIN also sets `disallow_safe_boot` (safe mode skips the launcher's lock); later changes leave the switch as the parent set it.
-- **Wire**: `PolicyResponse.kid_lock = {pin_hash, pin_salt, pin_length} | null`, always sent (`policy_json_keys_snapshot`); a half-written row (length outside 4-6, a NULL column) is sent as null - a privacy lock fails open. The kid hash appears only there (never in a status, log or page). Status `lock_state` is stored **re-serialized through `kid_lock::LockState`** (`sanitize_lock_state(value, now_ms)`: only `active, inactive, locked, failures, backoff_until_ms, exempt_yields, voip_fsi_denied, voip_rang`, `inactive` capped at 64 chars), so no unlock times or PIN material can reach the DB. **`voip_rang`** (launcher round 7, design `r7-launcher-small-items.md` §1.1.3): `[{package, last_at_ms}]`, the apps whose call rang over the LOCKED lock in the last 7 days; parsed leniently (`#[serde(default)]` + a per-entry `deserialize_with`: a list that isn't one is empty, an entry that doesn't parse is dropped - never the whole `lock_state`), then `valid_package_name`, a time > 0 and at most 5 min past the server's `now_ms` (clock skew), one per package (the newest), newest first, at most 8. Lock Screen & PINs' Child PIN group shows one quiet row per entry, "Calls from <name> · Rang over the lock · 14:02" (`kid_lock::rang_notes`, `LockNote::RangOverLock`: the name the Apps page shows - catalog or the phone's label - else the package; the time as the page's other times, `Zone::when`), only with a Child PIN set.
-- **PWA** (Lock Screen & PINs › Child PIN since design 31 step 4): the footer's ⓘ has the privacy text (since the ⓘ cut, pwa.md: the back-off, the Parent PIN opens it, it doesn't encrypt the phone's data, some bank apps won't work), the phone's state as rows and warnings as typed `kid_lock::LockNote`s (safe boot allowed is no warning: the first Child PIN turns Block safe mode on, a later Off is the parent's choice, with no note): every `inactive` but `no_pin` (`kid_lock::Inactive`; `android_credential`'s adb removal behind the warning's ⓘ), a VoIP app without full-screen intents (its adb fix behind the ⓘ). `call_state.in_call_ui_failed_at` (the in-call screen couldn't come up over the lock) is a call warning for 7 days. The Locate tab's ⓘ under the actions explains what Lock does with and without a Child PIN (the answers "locked (handy lock)" / "locked (Android)" read "Locked with the Child PIN" / "Screen off (no Child PIN set)").
+- **Kid PIN** (`src/kid_lock.rs`, pure + unit tests): 4-6 ASCII digits, hashed with `security::hash_pin` like the parent (override) PIN. Set or changed on Lock Screen & PINs (design 31 step 4; the device page's "Screen lock" card before; `POST /devices/{id}/kid-lock`, `new_kid_pin`; 404 unknown device, 500 nothing written on a DB error; security event `kid_pin_changed`; nudges) - never removed since design 132 (`clear_kid_pin` is refused, below). Refused (nothing written, `?notice=<code>` flash on the device page, `kid_lock::flash_text`) when not 4-6 digits, **without an override PIN** (once the lock screen's "Parent code"; still required) or when it verifies against the override hash (`security::verify_pin`). The other way round in `update_policy`: a new override PIN that verifies against the kid hash is refused, and the override PIN can't be removed while a kid PIN is set. PBKDF2 for these checks runs in `spawn_blocking`; the kid-PIN `UPDATE` only applies `WHERE override_pin_hash IS NOT NULL` (0 rows = needs_override) and `update_policy`'s SQL keeps the override while a kid PIN is set, so parallel saves can't leave a kid PIN without its parent code. The **first** kid PIN also sets `disallow_safe_boot` (safe mode skips the launcher's lock); later changes leave the switch as the parent set it.
+- **Wire**: `PolicyResponse.kid_lock = {pin_hash, pin_salt, pin_length} | null`, always sent (`policy_json_keys_snapshot`); a half-written row (length outside 4-6, a NULL column) is sent as null - a privacy lock fails open. The kid hash appears only there (never in a status, log or page). Status `lock_state` is stored **re-serialized through `kid_lock::LockState`** (`sanitize_lock_state(value, now_ms)`: only `active, inactive, locked, exempt_yields, voip_fsi_denied, voip_rang` and design 59's keys below, `inactive` capped at 64 chars; our keypad's `failures` and `backoff_until_ms` are dropped since design 132), so no unlock times or PIN material can reach the DB. **`voip_rang`** (launcher round 7, design `r7-launcher-small-items.md` §1.1.3): `[{package, last_at_ms}]`, the apps whose call rang over the LOCKED lock in the last 7 days; parsed leniently (`#[serde(default)]` + a per-entry `deserialize_with`: a list that isn't one is empty, an entry that doesn't parse is dropped - never the whole `lock_state`), then `valid_package_name`, a time > 0 and at most 5 min past the server's `now_ms` (clock skew), one per package (the newest), newest first, at most 8. Lock Screen & PINs' Child PIN group shows one quiet row per entry, "Calls from <name> · Rang over the lock · 14:02" (`kid_lock::rang_notes`, `LockNote::RangOverLock`: the name the Apps page shows - catalog or the phone's label - else the package; the time as the page's other times, `Zone::when`), only with a Child PIN set.
+- **PWA** (Lock Screen & PINs › Child PIN since design 31 step 4): the footer's ⓘ has Android's lock's text (design 132; own mode's privacy text went), the phone's state as rows and warnings as typed `kid_lock::LockNote`s (safe boot allowed is no warning: the first Child PIN turns Block safe mode on, a later Off is the parent's choice, with no note): every `inactive` but `no_pin` and `no_android_pin` (`kid_lock::Inactive`; an older build's own-mode words read as the generic line, the word behind the ⓘ; `no_android_pin` is design 132 §4.5's rule, below), a VoIP app without full-screen intents (its adb fix behind the ⓘ). `call_state.in_call_ui_failed_at` (the in-call screen couldn't come up over the lock) is a call warning for 7 days. The Locate tab's ⓘ under the actions explains what Lock does with and without a Child PIN (the answers "locked (handy lock)" / "locked (Android)" read "Locked with the Child PIN" / "Screen off (no Child PIN set)").
 - Tests: `src/tests/step10.rs`, `kid_lock::tests`, `security::tests::pin_hash_shared_vector` (same vector as the launcher's `PinHashTest`).
 
 ## Parent PIN (design 24, `docs/design/24-parent-pin-hardening.md`, migrations `0056_parent_pin_easy.sql`, `0057_device_pin_events.sql`)
@@ -116,6 +119,52 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 
 ## Android's lock screen (design 59, `docs/design/59-android-keyguard-design.md`, migration `0085_kid_keyguard.sql`)
 
+**Phase D: Android's lock is the only lock** (design 132, `docs/design/132-phase-d-android-lock-only.md`, migration
+`0181_drop_kid_keyguard.sql`; the owner, 2026-11-16: "vi bruker ikke noe annet enn androids pin lås, det er den vi
+bygger for!"; 2026-11-25, Q1 (a): "barne-pin er et must og ikke et valg"). What it changed on the server, ahead of the
+launcher (the server ships first: an older launcher that reads `keyguard: "android"` never falls back to its own lock):
+
+- **No choice left**: `device_policy.kid_keyguard` is dropped (0181; no index, trigger or view named it, the
+  pre-migration backup runs first, a restored older backup is migrated the same way -
+  `android_lock_page::the_lock_switch_column_goes_and_every_row_serves_androids_lock`). `kid_lock.keyguard` is the
+  constant `"android"` (`kid_lock::policy_kid_lock`); `kid_lock`'s keys are unchanged (`pin_length` no longer read by
+  the phone). The switch (`POST /devices/{id}/kid-lock/keyguard`, `update_kid_keyguard`, the Lock select) is gone - a
+  404; `kid_keyguard_changed` lines already in the log keep their words. `kid_lock::android_requested` and
+  `cancel_pin_command` went with it.
+- **Changed, never removed** (Q1 (a)): no Remove Child PIN on the page; a stale `clear_kid_pin` post is refused with
+  nothing written (flash `not_removed`, "Ikke fjernet: barne-PIN-en kan byttes, ikke fjernes."). The Parent PIN can't
+  be removed while a Child PIN is set (as before), so its "Remove it instead" box shows only without a Child PIN.
+- **No save without the key** (§4.2): without `data/keys/kid-pin.key` a Child PIN couldn't reach Android's lock, so the
+  save is refused, nothing written (flash `save_not_kept`, "Ikke lagret: serveren kan ikke lese nøkkelfilen."); the
+  `saved_not_kept` flashes went.
+- **Legacy PINs** (saved before 0085, `kid_pin_sealed` NULL): counted once at every start, one `info` line
+  `legacy Child PINs without a copy: N` with the device ids, only when N > 0 (`kid_lock::log_legacy_pins`); nothing
+  written to them - the page asks to save them again.
+- **The queue rule** (`kid_lock::queue_pin_command`) has no keyguard condition; its intake trigger is "the phone has no
+  Android PIN" (`LockState::no_android_pin`: `inactive: no_android_pin`, or an older build's `keyguard: own`) or a
+  stale rev, as before; `deliverable_pin` likewise. One exception to "never after an answer" (§7.1, Koble til; code
+  QA L2): a newest row refused `no_token` is tried once more by a report with `reset_token` on and a rev that isn't
+  the current one, unless the row before it was refused `no_token` too (no loop;
+  `android_lock_page::queue::a_no_token_refusal_is_retried_once_when_the_token_comes_on`). "Send again" and the
+  no-Android-PIN line's "send again below" read one rule (`offers_send_again`: a report of this enrolment
+  (`PhoneLock::this_enrolment`) with the capability, a copy kept). **`lock_state`**: `inactive` gains `no_android_pin`
+  (`Inactive::NoAndroidPin`); `android_credential`, `keyguard_not_disabled`, `bad_hash` are `Inactive::Other` now.
+- **No phone without a lock** (§4.5, QA H1): a report with no Android PIN is the quiet `set_kid_pin` row while one of
+  this enrolment is waiting or in flight (`kid_lock::on_its_way`: Waiting, Sent, Taken; read by
+  `kid_lock::newest_pin_send` for the page and `kid_lock::pin_on_its_way` for Attention's `Sources`); otherwise
+  `LockNote::NoAndroidPin { stored }`: the orange "Telefonen har ingen PIN" with "Send barne-PIN-en igjen under." (a
+  copy kept) or "Lagre barne-PIN på nytt." behind its ⓘ, and Attention's `lock_off` (`kid_lock::lock_off` reads the same
+  note). The setup step's own "no PIN" line isn't said twice beside it. After an answer only the parent's Send again
+  tries again (no loop). Tests: `kid_lock::tests::the_card_words_android_lock_case_by_case`,
+  `android_lock_page::queue::no_android_pin_is_quiet_only_while_the_pin_is_on_its_way`.
+- **Elsewhere**: Locate's "Android's lock" note and the setup steps' `when: android_lock` read "a Child PIN is
+  stored"; the summary's Lock row reads "PIN on"; `parent_first` and `needs_override` say "Set a Parent PIN first."
+  alone (the Parent PIN doesn't open Android's lock). `contracts/core/setup_steps.json` lost its own-lock
+  `child_pin_readings` row.
+
+The rest of this section is design 59's, as built before phase D; where it names Vibb One's lock, the switch, the
+column or Remove Child PIN, the bullets above hold.
+
 Step 1 (the contract and the storage; step 2, the PWA's side, below):
 
 - **Columns**: `device_policy.kid_keyguard` (`'own'` the column default, `'android'`; since 2026-11-16 a phone added on
@@ -156,7 +205,7 @@ Step 1 (the contract and the storage; step 2, the PWA's side, below):
   `inactive: android_credential` - `keyguard` names the gate, `inactive` why Vibb One's lock is off (qa-59-revision
   N-C); step 2 words that pair as "Switching back…" (below). **Power** `on.unlocked_at_ms` is parsed (anything but a whole
   number = `None`); step 2 words it.
-- Tests: `kid_pin::tests`, `kid_lock::tests::the_keyguard_fields_are_kept_typed`, `src/tests/kid_keyguard.rs` (the
+- Tests: `kid_pin::tests`, `kid_lock::tests::the_keyguard_fields_are_kept_typed`, `android_lock_page::queue` (`src/tests/kid_keyguard.rs` until design 132; the
   legacy, B, C sequence, clear, no key, the queue rule per condition, delivery and the `pending_command` keys with and
   without `pin`, the intake), `power::a_launcher_report_raises_both` (`contracts/core/power_report.json`).
 

@@ -556,17 +556,8 @@
     <!-- Design 25: etter et trykk på et varsel på første side (%1$s = appens navn, høyst 20 tegn). -->
     <string name="pin_lock_prompt_open">Skriv koden for å åpne %1$s</string>
     <string name="pin_lock_prompt_missed">Skriv koden for å se tapte anrop</string>
-    <string name="pin_lock_wrong">Feil kode</string>
-    <string name="pin_lock_wait">Prøv igjen om %1$s</string>
-    <string name="pin_lock_checking">Sjekker …</string>
-    <string name="pin_lock_unusable">Bare foreldrekoden virker nå</string>
     <string name="pin_lock_emergency">Nødsamtale</string>
-    <string name="pin_lock_parent_code">Foreldrekode</string>
-    <string name="pin_lock_parent_wrong">Det er ikke foreldrekoden.</string>
-    <string name="pin_lock_parent_locked_out">For mange feil koder. Prøv igjen om %1$s, eller lagre en ny foreldrekode på foreldresiden.</string>
-    <string name="pin_lock_parent_not_set">Ingen foreldrekode er satt for denne telefonen.</string>
     <string name="pin_lock_delete">Slett</string>
-    <string name="pin_lock_dots">%1$d av %2$d siffer</string>
     <!-- Design 17: the lock's ring screen for a VoIP call (no caller name). -->
     <string name="voip_ring_via">Ringer deg i %1$s</string>
     <string name="voip_ring_failed">Klarte ikke å åpne samtalen. Prøv igjen.</string>
@@ -605,7 +596,6 @@
     <string name="lock_timer_stop">Stopp</string>
     <string name="lock_timer_described">%1$s, %2$s</string>
     <string name="lock_torch_off">Av</string>
-    <string name="lock_media_back">Tilbake</string>
     <!-- Design 25: låseskjermens første side - varslene og «flere»-linjen. -->
     <plurals name="glance_messages">
         <item quantity="one">%1$d melding</item>

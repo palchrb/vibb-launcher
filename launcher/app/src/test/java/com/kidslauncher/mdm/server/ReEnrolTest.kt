@@ -31,9 +31,9 @@ class ReEnrolTest {
     }
 
     @Test
-    fun `both parent-code dialogs carry the button and look again after every result`() {
+    fun `the parent-code dialog carries the button and looks again after every result`() {
         val main = listOf("src/main", "app/src/main").map(::File).first { it.isDirectory }
-        for (path in listOf("ui/ParentPinDialog.kt", "lock/PinLockActivity.kt")) {
+        for (path in listOf("ui/ParentPinDialog.kt")) {
             val text = File(main, "java/com/kidslauncher/mdm/$path").readText()
             assertTrue(path, ".setNeutralButton(R.string.re_enrol_button, null)" in text)
             assertTrue(path, "ReEnrolDialog.bind(dialog, " in text)

@@ -106,21 +106,22 @@ fun effectiveWallpaper(allowed: List<Wallpaper>, pickedId: Long?, cachedHashes: 
 data class GlanceGround(val wallpaper: Wallpaper, val scrimArgb: Int)
 
 /** Design 59d step K: the scrim baked into Android's lock wallpaper - the glance's own, as the face with a known ground;
- * none otherwise (own mode, the night mark). */
+ * none otherwise (no face - no lock -, the night mark). */
 fun lockScreenScrim(androidFace: Boolean, glance: GlanceGround?): Int =
     if (androidFace && glance != null) glance.scrimArgb else 0
 
 /**
- * The lock screen in **own mode**: a photo only when the parent ticked "also on the lock screen" (anyone holding
- * the locked phone sees it, QA 08 #1); otherwise navy. Colours go on both. The opt-in governs own mode's Android
- * wallpaper only (design 59d R1-1, the user's decision 2026-10-23).
+ * The lock screen **without the face** (design 132: no lock - unmanaged, no Child PIN, or no Android PIN yet - so
+ * Android's own screen is a plain swipe screen anyone may see): a photo only when the parent ticked "also on the lock
+ * screen" (QA 08 #1); otherwise navy. Colours go on both. The opt-in governs only this case (design 59d R1-1, the
+ * user's decision 2026-10-23).
  * Design 59d step K (the user, 2026-10-23: "Jeg ville heller at VÅR bakgrunn er der på android sin klokkebakgrunn"):
  * as Android's face ([androidFace]) it is **our glance's own ground** ([glance]: [lockWallpaper]'s choice - the parent's
  * lock wallpaper when allowed and present, else Home's - with the glance's scrim baked in, [lockScreenScrim]), so the
  * few frames of SystemUI's face at a wake look like our page. Before the opt-in, photo included, ticked or not (R1-1, the
  * user's decision): the glance already shows that photo to anyone holding the phone; the only new audience is the same
  * person on SystemUI's face before the first unlock after a reboot. The night ground with the Vibb mark (design 59b §5) only while no ground is known yet
- * ([glance] null: the store not worked out). Own mode unchanged: design 08's rule, the opt-in deciding.
+ * ([glance] null: the store not worked out). Without the face: design 08's rule, the opt-in deciding.
  */
 fun lockScreenFill(home: Wallpaper, androidFace: Boolean = false, glance: GlanceGround? = null): WallpaperFill = when {
     androidFace -> glance?.wallpaper?.fill ?: WallpaperFill.NightMark

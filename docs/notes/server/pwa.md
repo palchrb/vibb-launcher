@@ -248,9 +248,9 @@ family's one backup row (`backups::backup_state`, `#backup-warning`, to `/backup
   before setup). Groups in the LockScreen mockup's order: Child PIN, Parent PIN, Screen, Lock screen, Weather (design 75, since
   2026-11-03), Notifications on the lock screen (Parent PIN's "Recent use" went on 2026-11-03, the user's ask).
 - **Forms** (POST routes unchanged): the Child PIN and Parent PIN rows are `<details class="edit">` with the field
-  and a Save button (a PIN is typed, not toggled); Remove Child PIN… is a `<details>` confirm (M6) posting
-  `clear_kid_pin` - with Vibb One's lock chosen only; with Android's a row says the lock needs a PIN instead
-  (2026-11-16, `hardening-and-pins.md`, "Android's lock by default"); the Parent PIN's "Remove it instead" stays a checkbox in its form. "Turn off after" and
+  and a Save button (a PIN is typed, not toggled); the Child PIN is changed, never removed (design 132 Q1 (a): no
+  Remove, a stale `clear_kid_pin` refused, `hardening-and-pins.md`, "Phase D"); the Parent PIN's "Remove it instead" is a
+  checkbox in its form, shown only without a Child PIN. "Turn off after" and
   "Background" are inline `select.pick`s, each app a `select.pick` too since 2026-10-21 (below) - all
   `data-autosave` with a `<noscript>` Save.
 - **One select per app on the lock** (2026-10-21, the user's pick of the mockup's variant B): "Notifications on the
@@ -299,16 +299,15 @@ family's one backup row (`backups::backup_state`, `#backup-warning`, to `/backup
   `lock_glance::the_buzz_switch_becomes_the_alert_choice` (the migration), the redirect table in `device_pages`,
   `policy_json_keys_snapshot`.
 - **Where the forms return** (§5.1, pinned by `device_pages::lock_forms_return_to_the_page`): `kid-lock` →
-  `/lock?notice=…#child-pin`, `kid-pin/send` → `/lock?notice=…#child-pin`, `kid-lock/keyguard` → its row
-  `#lock-keyguard` (design 59; a warning coming in above the group then moves nothing), Show Child PIN → the page
+  `/lock?notice=…#child-pin`, `kid-pin/send` → `/lock?notice=…#child-pin` (design 59's `kid-lock/keyguard` and its row went with design 132),
+  Show Child PIN → the page
   itself, posted to its own row `/lock#show-pin` (the fragment never reaches the server), `parent-pin` → `/lock?notice=…#parent-pin` (the flash in the group); `screen-timeout`
   → `#screen`, `lock-wallpaper`, `lock-wake`, `lock-alert`, `lock-screen`, `lock-screen/apps` → their rows (`#lock-wallpaper`, `#lock-wake`, `#lock-alert`,
   `#lock-screen-text`, `#lock-screen-app-<package>`; scroll-restore keeps the exact place). Attention: no/easy Parent PIN → `/lock#parent-pin`, Child PIN set but lock off
   and (design 59) "Phone's PIN isn't the Child PIN" → `/lock#child-pin`; the summary's foreign-app step and Today's Parent PIN rows point there too.
 - **Android's lock in the Child PIN group** (design 59 step 2; `docs/notes/server/hardening-and-pins.md`, "Android's
-  lock screen"): under the Child PIN row, the **Lock** select ("Vibb One's lock" / "Android's lock", sub-line "Test
-  phase: Android's lock will replace Vibb One's", disabled without a Child PIN; `POST /devices/{id}/kid-lock/keyguard`
-  back to its row `#lock-keyguard`), **Show Child PIN…** (a `<details>` with the password; it posts to
+  lock screen"): under the Child PIN row (design 59's **Lock** select went with design 132: Android's lock is the only
+  lock), **Show Child PIN…** (a `<details>` with the password; it posts to
   `/devices/{id}/lock#show-pin`, `action=reveal_kid_pin`, and is answered with the page itself - no redirect, the PIN
   in no address; without JS the answer lands on the row, with JS `scroll-restore.js` keeps the place; the GET page and
   the answer are `no-store`, `admin_auth::no_store_path`; the answer shows the PIN in a plain cell, not a
@@ -318,11 +317,12 @@ family's one backup row (`backups::backup_state`, `#backup-warning`, to `/backup
   `history.replaceState`, so a reload, Back or Forward loads the page without the PIN and never posts the password
   again; without JS the browser asks before posting it again, like any form's answer - the PIN can't go through a
   redirect, so post/redirect/get is out; qa-59-step2-code S2P-5/6; "Hide now" is a link to `?hidden=pin#show-pin`), the state rows and warnings, **Send the Child PIN again** (`POST
-  /devices/{id}/kid-pin/send`, back to `?notice=pin_sent|pin_not_sent|pin_not_kept#child-pin`). The footer and its ⓘ
-  follow the parent's choice (Android's lock: nothing can locate, ring or erase it and alarms may not ring before the
-  first unlock after a restart, the Parent PIN doesn't open it - Show Child PIN does; Vibb One's lock: the back-off, the
-  Parent PIN as "Parent code", it doesn't encrypt the data, some bank apps won't work). The Parent PIN's ⓘ: up to two
-  hours on a time lock, never Calls or Restrictions, a new PIN ends a lockout once the phone checks in. The summary's row reads "PIN on · Android's lock". "Send again" and the reveal's "the
+  /devices/{id}/kid-pin/send`, back to `?notice=pin_sent|pin_not_sent|pin_not_kept#child-pin`). The group's one ⓘ (design 132: no
+  footer) says Android's lock is the PIN pad and a fingerprint if one is added, and that nothing can locate, ring or
+  erase the phone and alarms may not ring before the first unlock after a restart, the Parent PIN doesn't open it - Show
+  Child PIN does. No Android PIN on the phone with nothing on its way is the orange "Telefonen har ingen PIN"
+  (`hardening-and-pins.md`, "Phase D"). The Parent PIN's ⓘ: up to two
+  hours on a time lock, never Calls or Restrictions, a new PIN ends a lockout once the phone checks in. The summary's row reads "PIN on". "Send again" and the reveal's "the
   phone still has" read only a report since the phone's enrolment (`device_pages::since_enrolment`, as the queue rule;
   S2P-4).
 - **Typed (M5):** `kid_lock::LockNote` (+ `Inactive`) replaces the card's `lines`/`warnings` and `inactive_warning`;

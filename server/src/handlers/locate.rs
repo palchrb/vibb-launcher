@@ -1661,7 +1661,7 @@ struct LocationPolicy {
     mode: String,
     interval: i64,
     retention: i64,
-    /// Design 59 §2.3: Android's lock with a child PIN.
+    /// Design 59 §2.3: Android's lock with a child PIN (design 132: any Child PIN).
     android_lock: bool,
     /// "Keep location on".
     locked: bool,
@@ -1670,10 +1670,9 @@ struct LocationPolicy {
 async fn location_policy(state: &AppState, id: i64) -> Result<LocationPolicy, sqlx::Error> {
     let row: Option<(String, i64, i64, bool, bool)> = sqlx::query_as(
         "SELECT location_mode, location_interval_minutes, location_retention_days, \
-         kid_keyguard = ? AND kid_pin_hash IS NOT NULL, lock_location \
+         kid_pin_hash IS NOT NULL, lock_location \
          FROM device_policy WHERE device_id = ?",
     )
-    .bind(crate::kid_lock::KEYGUARD_ANDROID)
     .bind(id)
     .fetch_optional(&state.db)
     .await?;

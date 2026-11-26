@@ -654,7 +654,7 @@ class LockActivity : UIObjectActivity() {
         private var unlockMarkAt = 0L
 
         /** The kid unlocked under a time rule and this screen is about to come up ([PinLockRuntime]'s after-unlock,
-         * own mode and every Android-mode unlock): its next resume may open the only usable thing (PLAN 2026-11-02). */
+         * every unlock of Android's lock): its next resume may open the only usable thing (PLAN 2026-11-02). */
         fun markUnlock() {
             unlockMarkAt = android.os.SystemClock.elapsedRealtime()
         }

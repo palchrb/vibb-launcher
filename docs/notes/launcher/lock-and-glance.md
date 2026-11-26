@@ -1,8 +1,38 @@
-# Launcher notes: the PIN lock, Android's lock screen as the gate, the glance
+# Launcher notes: Android's lock screen as the gate, the glance its face
 
 Moved from launcher/CLAUDE.md on 2026-11-01.
 
-## Handy's own PIN lock and call screens (handy step 10, design `docs/design/10-lock-and-call-ui.md`, at the monorepo root)
+## Android's lock is the only lock (design 132, phase D, `docs/design/132-phase-d-android-lock-only.md`)
+
+- **One lock**: Android's PIN lock with the glance as its face (design 59 below). Vibb One's own keypad lock (handy
+  step 10's "own mode") is gone: no keypad stage, dots, wrong-PIN wait (`PinBackoff`), "Foreldrekode" on the lock or
+  the VoIP ring card, keyguard cover (COVER), `setKeyguardDisabled(true)` (DISABLED), HOME_THEN_LOCK, Home's dark
+  lock-up, the boot mark (16e), the 15 s notice-wake `lockNow`, the resumed lock's 17b ring-screen send, the keypad
+  migration, the rollback to own mode or 24b's credential removal. `kid_lock.keyguard` is no longer read (the server
+  sends `"android"` always); the step 10 section below is the glance host's history.
+- **The lock's activation** (`lockActivation`): no Child PIN `no_pin`, unmanaged `unmanaged`, **no Android credential
+  `no_android_pin`** (DISABLED: no glance, never a dead "Lås opp" - `faceStep` is LEAVE without a credential), the
+  crash guard `crash_guard`, else active as Android's face. The report's `lock_state.keyguard` is always `"android"`,
+  `pin_rev` the rev Android's PIN was set from (ours only), no `failures`/`backoff_until_ms`.
+- **The keyguard** (`keyguardMode`): ANDROID on a managed phone with a credential (a fallback apply without `kid_lock`
+  included), else UNTOUCHED; both write `setKeyguardDisabled(false)`, which undoes a keyguard an older build left
+  disabled. `KeyguardCoverPlanTest` scans that nothing writes `setKeyguardDisabled(true)` again.
+- **The password quality** (§4.5, `passwordQuality`, `AndroidLock.passwordQualityNow`): NUMERIC once Android has the
+  Child PIN (we set it - `keyguard_android` - and the credential is there) on a managed phone, written and read back at
+  every apply, so Settings › Screen lock offers PIN and password only; UNSPECIFIED otherwise. `setPasswordQuality` is
+  deprecated for plain admins but a Device Owner's call on 34-37 (API 8, no SDK gate; the deprecation suppressed at the
+  one call).
+- **Nothing clears Android's PIN** (Q1 (a)): the Child PIN is changed, never removed; owned with no credential left
+  only drops `keyguard_android`.
+- **The reset token** (§7.1): at enrolment in `applyProvisioningExtras` (the QR and Koble til, right after the address
+  is accepted) and at every apply in every state (`AndroidLock.configure`), and at a window's start.
+- **No PIN material on the phone**: `PinLockStore.dropOldKeys` removes the own lock's keys (sealed hash and salt,
+  back-off, `keyguard_requested`, the boot mark's count) once at the process start, before the first apply.
+- **Without the face** (no lock): Android's lock wallpaper keeps design 08's rule (a photo only with the parent's
+  "also on the lock screen"), the boot cover is the "no Android PIN" cover of compat-fix-1; Home's night ground (16c)
+  stays as the content's guard while LOCKED.
+
+## The glance's host: handy step 10's lock and call screens (`docs/design/10-lock-and-call-ui.md`, at the monorepo root; the own keypad lock superseded by design 132)
 
 - **No Android screen lock any more** (own mode; with `kid_lock.keyguard` "android" Android's PIN is the gate instead - design 59 below): `PinLockRuntime.configure` (from `apply()`) switches the keyguard off (`setKeyguardDisabled(true)`, screen lock "None") only when managed, the policy has `kid_lock` and the phone has **no** Android credential; with one our lock stays off (`lock_state.inactive = android_credential`, no double lock) until it is removed (runbook: 04 doc step 4, `docs/testing/emulator.md` §6c; `onPasswordChanged` with `<watch-login/>` re-checks at once). Without a credential CE unlocks by itself at boot, so the BFU state is gone; `LOCK_TASK_FEATURE_KEYGUARD` stays forced and all direct-boot code stays (unmigrated phones, boot window). `PinLockActivity` is **not** direct-boot-aware.
 - **Pure parts** (`lock/`): `PinLockState.kt` (`step`: DISABLED/LOCKED/UNLOCKED; process start = LOCKED and shown with the screen on; every screen-off locks; calls ending while LOCKED or with the screen off show the lock; `lockActivation`), `PinBackoff.kt` (4 free tries, then 30 s/1/2/5/15 min, since security review S-L6 doubling on to 1 h a try - `PIN_BACKOFF_CAP_MS`, the user's choice 2026-11-01, and a try whose count is not committed is refused; a wait only ever extends - new boot = full wait from now, either clock keeps it going; the failure is committed **before** PBKDF2 and undone on success; a new hash resets), `RefrontPolicy.kt` (re-front 0.5 s → 2 s → every 5 s, never giving up; exempt: our call, `TelecomManager.isInCall`, 2 min after "Emergency call", the system clock app's alarm; crash guard 3 recorded crashes / 2 min, re-armed by a sync after 10 min). Tests `PinLockStateTest`, `PinBackoffTest` (also pins `timedWindowActive`'s opposite polarity), `RefrontPolicyTest`, `PinLockTaskTest`, `PinHashTest` (vector shared with the server), `PinLockManifestTest`.
@@ -18,8 +48,8 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
 
 ## Android's own lock screen as the gate, the glance its face (design 59 steps 3-4, `docs/design/59-android-keyguard-design.md`, at the monorepo root)
 
-- **The switch**: the policy's `kid_lock.keyguard` - exactly `"android"` is Android's lock (pure `androidRequested`),
-  anything else (missing, `"own"`, junk) is the own lock above, every path unchanged. Glue
+- **The switch** (gone with design 132 - Android's lock is the only lock): the policy's `kid_lock.keyguard` - exactly
+  `"android"` was Android's lock (pure `androidRequested`), anything else the own lock above. Glue
   `lock/AndroidLock`, pure `lock/AndroidLockPlan.kt` (`AndroidLockPlanTest`), log tag `AndroidLock`. The prototype's
   debug switch (`HybridDebug`, its receiver) is gone. Since step 4 the capability `android_keyguard_v1` is claimed
   (with its handler), so the server sends the Child PIN by `set_kid_pin` (below); the keypad migration stays for a

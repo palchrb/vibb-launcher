@@ -400,6 +400,10 @@ host it counted). Each launcher step builds and passes `testDebugUnitTest` on it
 
 ## 11. Emulator gate (Android 14 `compat34`, Android 16 `jelly36`)
 
+**Run 2026-11-26 on 14 and 16** (`docs/testing/emulator.md` §6bt, branch `gate-phase-d`): G1-G7, G9, G11, G12a pass;
+G12b passes by its stand-in (unmanaging is not reachable); G8 and G10 partial (no `am crash` for a Device Owner, no
+VoIP app); J1 open.
+
 G1, G4 and G8 run under both gesture and 3-button navigation on each version (QA M4;
 `adb shell cmd overlay enable com.android.internal.systemui.navbar.gestural` / `.threebutton`). The screenshots for
 the owner come from `jelly36`.
@@ -417,7 +421,8 @@ the owner come from `jelly36`.
 | G9 | The Child PIN changed in Settings during a "pause all restrictions" window: the PWA's "isn't the Child PIN" line; Send again sets it back; no credential removed at the window's end | x | x |
 | G10 | A VoIP ring (`scripts/fake-homeserver.py`), a call and an alarm over the locked glance; the power double-press opens no camera app but Android's secure camera or nothing | x | x |
 | G11 | A legacy row (`UPDATE device_policy SET kid_pin_sealed = NULL`, a fresh launcher with no Android PIN): the start's log line counts it; the PWA's orange "The phone has no PIN" with "Save the Child PIN again." behind the (i), Attention's `lock_off`; saving the PIN again sets Android's | x | - |
-| G12 | The kid tries to remove the PIN (QA H1): Settings › Security › Screen lock offers no "None"/"Swipe"/pattern. Then `adb shell locksettings clear --old <Child PIN>` (as if removed): no glance, no dead "Lås opp"; the report `no_android_pin`; the PWA's orange line and `lock_off` (nothing in flight, the newest row answered); Send again restores Android's PIN and the line goes | x | x |
+| G12a | The kid tries to remove the PIN (QA H1): Settings › Security › Screen lock offers no "None"/"Swipe"/pattern, and `adb shell locksettings clear --old <Child PIN>` is refused ("New credential doesn't satisfy admin policies", AOSP `LockSettingsShellCommand.runClear`) while `dumpsys device_policy` shows the quality NUMERIC | x | x |
+| G12b | No Android PIN reached another way (code QA M1): make the phone unmanaged from the server (apps and calls both unmanaged - `managed` false), so the next apply writes UNSPECIFIED (`dumpsys device_policy`); then `adb shell locksettings clear --old <Child PIN>` (accepted now); then manage it again. The next apply drops `keyguard_android` and the quality stays UNSPECIFIED: no glance, no dead "Lås opp"; the report `no_android_pin`; the PWA's orange line and `lock_off` (nothing in flight, the newest row answered); Send again restores Android's PIN, NUMERIC again, and the line goes. If unmanaging is not reachable from the PWA, G11's setup (a fresh launcher, a Child PIN and no Android PIN, `set_kid_pin` refused or not sent) shows the same line and `lock_off` | x | x |
 
 Jelly Star row (not the emulator):
 
@@ -464,7 +469,7 @@ list), and design 91 when the Jelly Star measurements are in.
 
 | Finding | Where taken |
 |---|---|
-| H1 - a phone with a Child PIN and no Android credential has no lock, mostly quietly | §4.5 (one rule: quiet only while a PIN is on its way, else orange + `lock_off`; NUMERIC quality once Android has the PIN, cleared before a Q1 (b) reset), §4.4, §6, G12 |
+| H1 - a phone with a Child PIN and no Android credential has no lock, mostly quietly | §4.5 (one rule: quiet only while a PIN is on its way, else orange + `lock_off`; NUMERIC quality once Android has the PIN, cleared before a Q1 (b) reset), §4.4, §6, G12a/G12b |
 | M1 - a verdict for each switch piece | §2.1a; `keyguardMode` ANDROID = `managed && deviceSecure` (§2.1, `KeyguardCoverPlanTest`) |
 | M2 - no dead glance without a credential | §2.1 (`faceStep` LEAVE, DISABLED with `NO_ANDROID_PIN`), §2.2's rows, G5, G12 |
 | M3 - gate on 14 and 16 only | §8, §11; Identity Check as J1 |

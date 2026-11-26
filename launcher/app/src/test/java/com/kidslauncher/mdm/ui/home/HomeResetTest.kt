@@ -74,7 +74,7 @@ class HomeResetTest {
         val target = go.indexOf("val target = pendingOpen?.takeIf { PinLockRuntime.mode == LockMode.UNLOCKED }")
         // Q-3: a target that opens nothing is Home - asked synchronously before the bring.
         val arrival = go.indexOf("val arrival = lockLeaveArrival(hasTarget = target != null && GlanceOpener.opens(this, target), lockWasRoot = target?.lockWasRoot == true)")
-        val bring = go.indexOf("HomeFront.bring(this, \"the lock left\", noAnimation = AndroidLock.faceOn, arrival = arrival)")
+        val bring = go.indexOf("HomeFront.bring(this, \"the lock left\", noAnimation = true, arrival = arrival)")
         val open = go.indexOf("target?.let { GlanceOpener.open(this, it, homeBelow = plan.homeFirst) }")
         assertTrue(go, target in 0 until arrival && arrival < bring && bring < open)
         assertTrue(code("lock/BootHome.kt").contains("HomeFront.bring(app, \"boot \$boot\", arrival = com.kidslauncher.mdm.ui.home.HomeArrival.BOOT)"))

@@ -117,9 +117,9 @@ class RestrictionsPauseTest {
         val start = text.substringAfter("fun start(context: Context, start: WindowStart)").substringBefore("fun startHold(")
         assertTrue(start.indexOf("restrictionsPausedHold(false)") in 0 until start.indexOf("restrictionsPaused(true)"))
         val hold = text.substringAfter("fun startHold(context: Context)").substringBefore("fun reapply(")
-        // QA M4: the notification grant before the window opens; QA M1: the screen lock unknown.
+        // QA M4: the notification grant before the window opens (QA M1's unknown screen lock went with design 132).
         assertTrue(hold.indexOf("POST_NOTIFICATIONS") in 0 until hold.indexOf("WindowRelock.opened("))
-        assertTrue("WindowRelock.opened(app, WindowKind.PAUSE, start, secureKnown = false)" in hold)
+        assertTrue("WindowRelock.opened(app, WindowKind.PAUSE, start)" in hold)
         assertTrue(hold.indexOf("restrictionsPausedHold(true)") in 0 until hold.indexOf("restrictionsPaused(true)"))
         assertTrue("restrictionsPausedHold(false)" in text.substringAfter("fun clear()"))
     }
