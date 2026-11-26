@@ -60,11 +60,6 @@ impl ZoneTemplate {
                 "locate.zone.wifi.elsewhere_info",
                 name.as_str(),
             )),
-            Some(crate::zone_networks::Orange::Unknown(name)) => Some((
-                "locate.zone.wifi.unknown",
-                "locate.zone.wifi.unknown_info",
-                name.as_str(),
-            )),
             None => None,
         }
     }
@@ -557,7 +552,11 @@ pub async fn remove_wifi(
             let back = format!("/devices/{id}/zones/{zone_id}?wifi=saved#zone-wifi");
             saved(&state, &admin, &device, "zone_wifi_removed", detail, back).await
         }
-        Ok(false) => not_found(lang, "error.zone_not_found"),
+        // QA L9: gone already (another parent, a block replaced): back to the group, never a 404 page.
+        Ok(false) => Redirect::to(&format!(
+            "/devices/{id}/zones/{zone_id}?wifi=saved#zone-wifi"
+        ))
+        .into_response(),
         Err(err) => db_error(id, err, lang),
     }
 }

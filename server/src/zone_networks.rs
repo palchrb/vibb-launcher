@@ -162,13 +162,13 @@ pub async fn current_wifi(
         .and_then(|v| v.get("wifi").and_then(clean_wifi)))
 }
 
-/// The orange line on a zone's Wi-Fi group (at most one; D7, §4).
+/// The orange line on a zone's Wi-Fi group (at most one; D7, §4). Revision 3 (the location review):
+/// no "Ukjent ruter" line - it invited a parent to confirm a router set up with the home's name and
+/// password; the Bekreft row for the phone's network stays, the parent's own step.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Orange {
     /// A confirmation the phone saw far outside the zone ("Sett et annet sted").
     Elsewhere(String),
-    /// The phone on a confirmed name at a router none of the rows match ("Ukjent ruter").
-    Unknown(String),
 }
 
 /// A confirmed name on the zone's page: its first row (the remove's target) and whether any of
@@ -211,17 +211,10 @@ pub fn view_of(rows: &[ZoneNetwork], current: Option<ReportedWifi>, outside: boo
         })
     };
     let offer = current.filter(|w| !outside && !confirmed(w));
-    let orange = if let Some(name) = names.iter().find(|r| r.blocked) {
-        Some(Orange::Elsewhere(name.ssid.clone()))
-    } else {
-        offer
-            .as_ref()
-            .filter(|w| {
-                rows.iter()
-                    .any(|n| n.blocked_at.is_none() && n.ssid == w.ssid)
-            })
-            .map(|w| Orange::Unknown(w.ssid.clone()))
-    };
+    let orange = names
+        .iter()
+        .find(|r| r.blocked)
+        .map(|name| Orange::Elsewhere(name.ssid.clone()));
     WifiView {
         names,
         current: offer,
@@ -230,7 +223,8 @@ pub fn view_of(rows: &[ZoneNetwork], current: Option<ReportedWifi>, outside: boo
 }
 
 /// The zone's group as the page shows it (D4: the phone's newest fix surely outside hides
-/// Confirm and "Ukjent ruter").
+/// Confirm and "Ukjent ruter" - only a fix at most an hour old, QA L1: an old one says nothing about
+/// where the phone is now).
 pub async fn view(
     db: &sqlx::SqlitePool,
     device_id: i64,
@@ -242,16 +236,19 @@ pub async fn view(
         .filter(|n| n.zone_id == zone.id)
         .collect();
     let current = current_wifi(db, device_id).await?;
-    let fix: Option<(f64, f64, Option<f64>)> = sqlx::query_as(
-        "SELECT latitude, longitude, accuracy_meters FROM device_locations WHERE device_id = ? \
-         ORDER BY captured_at DESC, id DESC LIMIT 1",
+    let fix: Option<(f64, f64, Option<f64>, String)> = sqlx::query_as(
+        "SELECT latitude, longitude, accuracy_meters, captured_at FROM device_locations \
+         WHERE device_id = ? ORDER BY captured_at DESC, id DESC LIMIT 1",
     )
     .bind(device_id)
     .fetch_optional(db)
     .await?;
     let circle: Circle = zone.circle();
-    let outside = fix
-        .is_some_and(|(lat, lng, acc)| zones::side(&circle, lat, lng, acc) == Some(Side::Outside));
+    let hour_ago = chrono::Utc::now() - chrono::Duration::hours(1);
+    let outside = fix.is_some_and(|(lat, lng, acc, at)| {
+        chrono::DateTime::parse_from_rfc3339(&at).is_ok_and(|t| t >= hour_ago)
+            && zones::side(&circle, lat, lng, acc) == Some(Side::Outside)
+    });
     Ok(view_of(&rows, current, outside))
 }
 
@@ -450,13 +447,13 @@ mod tests {
         let rows = [row(1, "Net-A", "00:00:5e:00:53:02", false)];
         let v = view_of(&rows, Some(w.clone()), false);
         assert_eq!((v.current, v.orange), (None, None));
-        // Another router of a confirmed name: Confirm and "Ukjent ruter".
+        // Another router of a confirmed name: the Bekreft row, no orange line (revision 3).
         let other = wifi("Net-A", "00:00:5e:00:54:01");
         let v = view_of(&rows, Some(other.clone()), false);
         assert_eq!(v.current, Some(other.clone()));
-        assert_eq!(v.orange, Some(Orange::Unknown("Net-A".into())));
-        // ... but not with the newest fix surely outside.
-        assert_eq!(view_of(&rows, Some(other.clone()), true).orange, None);
+        assert_eq!(v.orange, None);
+        // ... and no Bekreft with the newest fix surely outside.
+        assert_eq!(view_of(&rows, Some(other.clone()), true).current, None);
         // A blocked row: "Sett et annet sted" comes first, one line only.
         let rows = [
             row(1, "Net-A", "00:00:5e:00:53:02", true),

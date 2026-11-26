@@ -207,12 +207,11 @@ async fn confirm_binds_to_the_report_and_remove_takes_the_name() {
         !detail.contains("Net-A") && !detail.contains("00:00:5e"),
         "{detail}"
     );
-    // Another router of the same name: Confirm and "Ukjent ruter".
+    // Another router of the same name: the Bekreft row, no orange line (revision 3).
     on_net_a(&app, &token, "00:00:5e:00:58:01").await;
     let html = app.get_page(&page, &cookie).await.text();
     assert!(html.contains("data-wifi=\"current\""));
-    assert!(html.contains("data-wifi=\"orange\""));
-    assert!(html.contains("Unknown router"));
+    assert!(!html.contains("data-wifi=\"orange\""));
     app.request_form(
         Method::POST,
         &confirm,
@@ -369,4 +368,61 @@ async fn a_move_past_the_radius_clears_the_routers() {
     app.request_form(Method::POST, &uri, Some(&cookie), &save("59.91633"))
         .await;
     assert!(rows(&app).await.is_empty());
+}
+
+/// QA L1: only a fix at most an hour old surely outside hides Confirm; QA L9: removing a row that is
+/// gone already lands back on the group.
+#[tokio::test]
+async fn an_old_fix_outside_hides_nothing_and_a_gone_row_lands_on_the_group() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("Telefon 1").await;
+    let home = add_home(&app, id).await;
+    on_net_a(&app, &token, "00:00:5e:00:53:01").await;
+    let page = format!("/devices/{id}/zones/{home}");
+    let far = |minutes: i64| {
+        (chrono::Utc::now() - chrono::Duration::minutes(minutes))
+            .format("%Y-%m-%dT%H:%M:%S%.3fZ")
+            .to_string()
+    };
+    sqlx::query(
+        "INSERT INTO device_locations (device_id, latitude, longitude, accuracy_meters, captured_at) \
+         VALUES (?, 59.95, 10.7522, 20, ?)",
+    )
+    .bind(id)
+    .bind(far(120))
+    .execute(&app.db)
+    .await
+    .unwrap();
+    assert!(
+        app.get_page(&page, &cookie)
+            .await
+            .text()
+            .contains("data-wifi=\"current\"")
+    );
+    sqlx::query(
+        "INSERT INTO device_locations (device_id, latitude, longitude, accuracy_meters, captured_at) \
+         VALUES (?, 59.95, 10.7522, 20, ?)",
+    )
+    .bind(id)
+    .bind(far(5))
+    .execute(&app.db)
+    .await
+    .unwrap();
+    assert!(
+        !app.get_page(&page, &cookie)
+            .await
+            .text()
+            .contains("data-wifi=\"current\"")
+    );
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/zones/{home}/wifi/999/delete"),
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER);
+    assert!(res.location().unwrap().ends_with("?wifi=saved#zone-wifi"));
 }

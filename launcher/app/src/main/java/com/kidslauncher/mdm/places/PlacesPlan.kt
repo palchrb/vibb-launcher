@@ -296,6 +296,8 @@ data class Connected(
     val security: LinkSecurity = LinkSecurity.OTHER,
     val networkId: Int = -1,
     val mld: String? = null,
+    /** Design 138 (QA L7): Android gave the name unquoted - hex, not UTF-8 - so it is never reported or confirmed. */
+    val hexName: Boolean = false,
 )
 
 /** A usable result by its keys; [suspect]: its level repeats the previous scan's (D9's stale guard). [bssid] is held in
@@ -641,6 +643,8 @@ data class LearnedFix(
     val keys: Set<String>,
     val provider: String = PROVIDER_WIFI,
     val source: PlaceSource = PlaceSource.OWN,
+    /** Design 138 (the single-router fix): from the confirmed router alone ([routerFix]) - never teaches. */
+    val router: Boolean = false,
 )
 
 const val PROVIDER_WIFI = "vibb_wifi"
@@ -669,7 +673,7 @@ private data class Device(
  * than half of the trusted networks heard. Position and accuracy by [learnedAccuracy]. `null` = no fix. Design 125 A9:
  * a result's row is a trusted own row or a live Apple row by [chooseRow].
  */
-fun learnedFix(view: ScanView, rows: List<PlaceRow>, nowMin: Int, checkBand: Boolean = true): LearnedFix? {
+fun learnedFix(view: ScanView, rows: List<PlaceRow>, nowMin: Int, checkBand: Boolean = true, centreOnly: Boolean = false): LearnedFix? {
     val table = rows.asSequence().filter { it.kind == RowKind.WIFI }.associateBy { it.key }
     val apple = rows.asSequence().filter { it.kind == RowKind.APPLE }.associateBy { it.key }
     // Design 131: a result heard on another band than its row's, or under another network name, is left out.
@@ -707,7 +711,8 @@ fun learnedFix(view: ScanView, rows: List<PlaceRow>, nowMin: Int, checkBand: Boo
     devices.filter { it !== seed }.sortedByDescending { it.rssi }.forEach { d -> if (cluster.all { near(d, it) }) cluster += d }
     val networksHeard = devices.map { it.network }.toSet().size
     val networks = cluster.map { it.network }.toSet().size
-    if (networks < 2 || networks * 2 <= networksHeard) return null
+    // Design 138 (QA M1): the neighbours' centre without the router keeps the complete link, not the majority rule.
+    if (networks < 2 || (!centreOnly && networks * 2 <= networksHeard)) return null
     // The network is the witness: a mesh's nodes share one network's weight.
     val perNetwork = cluster.groupingBy { it.network }.eachCount()
     val weighted = cluster.map { it to it.weight / perNetwork.getValue(it.network) }
@@ -721,7 +726,7 @@ fun learnedFix(view: ScanView, rows: List<PlaceRow>, nowMin: Int, checkBand: Boo
     // Usable networks with no trusted row at all, heard stronger than every cluster member (L-M1's inflation).
     val trustedNetworks = devices.map { it.network }.toSet()
     val strongerUnknown = view.heard.filter { it.network !in trustedNetworks && it.rssi > strongest.rssi }.map { it.network }.toSet().size
-    val acc = learnedAccuracy(spread, rangeMed, networks, occMed, strongest.rssi, strongest.band, strongerUnknown) ?: return null
+    val acc = learnedAccuracy(spread, rangeMed, networks, occMed, strongest.rssi, strongest.band, strongerUnknown, cap = !centreOnly) ?: return null
     val source = when {
         cluster.none { it.apple } -> PlaceSource.OWN
         cluster.all { it.apple } -> PlaceSource.APPLE
@@ -748,7 +753,7 @@ private fun weightedMedian(values: List<Pair<Double, Double>>): Double {
  * -60..-75 its band floor, -75..-85 1.5 x that, weaker 150 m); x 2 when two or more unknown networks are heard
  * stronger than every member; at least [LEARNED_ACCURACY_FLOOR_M]; over [LEARNED_ACCURACY_MAX_M] `null`.
  */
-fun learnedAccuracy(spread: Double, rangeMed: Double, networks: Int, medianOccasions: Int, strongestRssi: Int, strongestBand: Band, strongerUnknown: Int): Double? {
+fun learnedAccuracy(spread: Double, rangeMed: Double, networks: Int, medianOccasions: Int, strongestRssi: Int, strongestBand: Band, strongerUnknown: Int, cap: Boolean = true): Double? {
     var acc = sqrt(spread * spread + (RANGE_SHARE * rangeMed) * (RANGE_SHARE * rangeMed))
     if (networks == 2) acc *= 1.5
     if (medianOccasions < 4) acc *= 1.3
@@ -764,7 +769,7 @@ fun learnedAccuracy(spread: Double, rangeMed: Double, networks: Int, medianOccas
     )
     if (strongerUnknown >= 2) acc *= 2
     acc = maxOf(acc, LEARNED_ACCURACY_FLOOR_M)
-    return acc.takeIf { it <= LEARNED_ACCURACY_MAX_M }
+    return acc.takeIf { !cap || it <= LEARNED_ACCURACY_MAX_M }
 }
 
 /** Which fresh-fix attempt (D14): the heartbeat's and a crossing's first fix and the low-battery fix; a crossing's
@@ -916,28 +921,6 @@ fun teachLinks(
 /** A fix as the renewal reads it (the vouched one). */
 data class Vouched(val lat: Double, val lng: Double, val accuracyM: Double)
 
-/**
- * D12 (Q5 = b): the 4-h cap try re-sends the vouched fix with `still: true` instead of a new position only when the
- * phone is still since it ([still]: `motion()` says `STILL`), the daily refresh isn't due, [vouched] lies surely inside
- * a zone and the connected unmetered network ([connected]) is linked to that zone. It never establishes a position.
- */
-fun linkRenews(
-    rows: List<PlaceRow>,
-    zones: List<LinkZone>,
-    vouched: Vouched?,
-    connected: String?,
-    still: Boolean,
-    refreshDue: Boolean,
-    nowMin: Int,
-    binding: String? = null,
-): Boolean {
-    if (!still || refreshDue || vouched == null || connected == null) return false
-    return zones.any { z ->
-        distanceM(vouched.lat, vouched.lng, z.zone.latitude, z.zone.longitude) + vouched.accuracyM <= z.zone.radiusM &&
-            rows.any { it.key == z.key && it.network == connected && it.linked(nowMin) && (binding == null || it.device == binding) }
-    }
-}
-
 // --- D14: the daily refresh; D11: the budget ---
 
 /** D14 (M3): 24 h without a GPS try of this design - the clock set back counts as due. */
@@ -1063,7 +1046,7 @@ enum class FixCheck(val wire: String) {
     /** A satellite fix within [GNSS_CHECK_WINDOW_MS] lies within both accuracies of it. */
     GNSS("gnss"),
 
-    /** The phone is on a saved network linked to a zone the fix is surely inside ([linkConfirms]). */
+    /** The phone is on a network holding a zone link the fix agrees with (design 138's [linkCheck]). */
     LINK("link"),
     ;
 
@@ -1151,19 +1134,6 @@ fun linkConn(connected: Connected?, keys: PlaceKeys): LinkConn? {
     return LinkConn(network, keys.binding(connected.security, connected.networkId), connected.security, bssid?.let(keys::ap))
 }
 
-/**
- * The link check: the phone is on [conn] - WPA2/WPA3 personal, or an enterprise network whose connected AP is one of
- * the fix's own rows - and that network, under the binding it was linked with, holds a live link to a zone the fix is
- * surely inside (`d + a <= r`). Open and OWE networks never confirm.
- */
-fun linkConfirms(fix: LearnedFix, conn: LinkConn?, rows: List<PlaceRow>, zones: List<LinkZone>, nowMin: Int): Boolean {
-    conn ?: return false
-    if (!linkSecurityHolds(conn, apOwn = conn.apKey != null && conn.apKey in fix.keys)) return false
-    return zones.any { z ->
-        distanceM(fix.lat, fix.lng, z.zone.latitude, z.zone.longitude) + fix.accuracyM <= z.zone.radiusM &&
-            rows.any { it.kind == RowKind.LINK && it.key == z.key && it.network == conn.network && it.device == conn.binding && it.linked(nowMin) }
-    }
-}
 
 private fun TeachFix.acc(): Double? = accuracyM?.takeIf { it.isFinite() && it >= 0f }?.toDouble()
 

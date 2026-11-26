@@ -1,6 +1,7 @@
 # 138 - A zone's Wi-Fi: the parent confirms it, the phone learns it, both bound to the router
 
-Status: **built** on branch `wifi-link-confirm` (2026-11-26, revision 2 with D8's widening); design revision 2, 2026-11-26 (branch `wifi-link-confirm`), read against `main` 3e84d466f. Approved by
+Status: **built** on branch `wifi-link-confirm` (2026-11-26; revision 3 - the single-router fix and the code QA, §12);
+design revision 2, 2026-11-26 (branch `wifi-link-confirm`), read against `main` 3e84d466f. Approved by
 the owner on 2026-11-26 as A + B + the router's address; revision 2 takes the design QA (H1, M1-M4, L1-L9) and the
 owner's answers of the same day (Q1, the travel router, the cell veto; §11). Revision 1 was 714ab8e3b. It blocks the
 next launcher RC and the stable release. Both directories, one migration (0180), one new contract file. Android
@@ -19,14 +20,16 @@ next launcher RC and the stable release. Both directories, one migration (0180),
   router (its address's first five octets - one router's bands - or its multi-link address) and the name. Moving the
   zone further than its radius clears it. Good GPS far outside the zone with that router connected or heard, twice,
   blocks it, and the zone shows one orange line. **A is the path everywhere** - a detached house hearing only its own
-  router too.
+  router through the single-router fix (D15, revision 3): connected to the confirmed router and no other Wi-Fi fix, a
+  `link` fix at the router's own position with an accuracy by the connected level.
 - **B - the phone also learns the link from Wi-Fi fixes** surely inside the zone while it is on a PSK/SAE network:
   the same link row and counters as GPS teaching (3 occasions on 2 days). **B is for areas with neighbours**: it
   learns only when the neighbours' routers alone place the phone inside.
 - **At every use, the neighbours must agree**: the Wi-Fi fix recomputed without the connected router (its network
   and its device, so its guest name is out too) must still have its centre inside the zone. Only a parent's
-  confirmation may stand where nothing else is heard - unless the serving cell is placed elsewhere, the router's own
-  rows have moved, or it is struck. A registered cell placed far from the zone vetoes every link.
+  confirmation may stand where nothing else is placed - unless the serving cell is placed elsewhere, the router's own
+  rows have moved, or it is struck. A registered cell placed far from the zone vetoes every link and the single-router
+  fix.
 - **A router that travels with the family should not be confirmed** (§3): elsewhere its neighbours disagree, and
   where nothing else is heard the first good outdoor GPS fix moves its rows and strikes it - until then it can stand
   for "home".
@@ -111,7 +114,7 @@ The status report's `zone_watch` (a heartbeat field already, so a changed networ
 
 - `wifi` only while the policy has zones (Regularly with zones), Location is on and the phone is device owner, for a
   `ZoneConn` (D1) with a UTF-8 name (Android's quoted form; a hidden or hex-only name is left out). `mld` only when
-  Android gives one. Otherwise no `wifi` key. No `links` (L7): the server works out "Ukjent ruter" itself (§4).
+  Android gives one. Otherwise no `wifi` key. No `links` (L7).
 - `wifi_struck`: the confirmation ids the phone struck (D7) that the policy still carries, at most 80.
 - Read on the report's path by `WifiPlaces.reportWifi(context)` (suspend, in the sync before the report is built)
   through `connectedNow` (D10).
@@ -143,15 +146,17 @@ The status report's `zone_watch` (a heartbeat field already, so a changed networ
 ### D5. The learned link's routers (`LINK_AP` rows)
 
 - **New row kind** `RowKind.LINK_AP(6)` in the sealed table: `key` = the zone's key, `device` = a router's device key
-  (the five-octet key, and a second row for the multi-link key when known), `network` = the network key; its id
-  `p/key/device`. Version 1 stays (an older launcher would drop the table; no backward compatibility is owed). Dropped
+  (the five-octet key, and a second row for the multi-link key when known), `network` = the first network key it was
+  taught under (informational); its id `p/key/device`. A router row matches by its device keys alone (QA M2): the
+  `LINK` row binds the network, so the router's other name on the same device ("Net-A-5G", a guest name) holds its own
+  learned link through the same router row. Version 1 stays (an older launcher would drop the table; no backward compatibility is owed). Dropped
   with its zone's key like a `LINK` row (a zone moved, resized, gone, the mode off Regularly).
 - **What joins** (L5): the connected router at **every** teach surely inside the zone - GPS or B's Wi-Fi teach -
   while connected under the link's binding, counted as an occasion or not (inside the 30-min gap).
 - **Kept alive** (L6): `lastSeenMin` moves at most once a day when the row confirms, so the 180-day ageing
   (`prune`) never takes a router in use.
 - **Cut for this release (H1)**: revision 1's growth by a settled AP of the zone's rows. A mesh node with its own
-  address prefix is another router: the page shows "Ukjent ruter" with Bekreft, and the learned link adds it at its
+  address prefix is another router: the page shows its Bekreft row, and the learned link adds it at its
   next inside teach.
 - A link learned before this build has no routers: it confirms nothing until its next inside teach adds one.
 
@@ -208,9 +213,11 @@ callback blocks nothing that matters), so a connected router can strike there.
 
 1. `zoneLink` holds, and the fix's **centre** is inside the zone (`d <= r`) for CONFIRMED (M1: the parent vouched
    for the place), or the fix is **surely** inside (`d + a <= r`) for LEARNED (as today);
-2. **the fix without the connected router** - `learnedFix` over the same view with `view.heard` filtered by
-   `network != conn.network && device != connectedDevice` (the router's guest name on the same device is out too) -
-   has its centre inside the zone (`d <= r`). For an Apple fix the same, over the table with its Apple rows;
+2. **the fix without the connected router** - the same view with `view.heard` filtered by `network != conn.network
+   && device != connectedDevice` (the router's guest name on the same device is out too), its centre by the
+   complete-link cluster without the majority rule or the accuracy cap (QA M1: only the centre is judged, and weak
+   neighbours beside strong unknown networks still place it) - has its centre inside the zone (`d <= r`). For an Apple
+   fix the same, over the table with its Apple rows;
 3. **the exception, CONFIRMED only**: when nothing else is placed after the exclusion - no other result with a
    trusted own row or a live Apple row (an unknown router says nothing about where the phone is) - the confirmation
    stands, unless the router's own rows have moved or are blocked (design 125: `moves > 0` or blocked on any of its
@@ -219,7 +226,9 @@ callback blocks nothing that matters), so a connected router can strike there.
 
 **Built with the widening** (the coordinator, 2026-11-26): with exactly one placed network left after the exclusion and
 no fix of its own, a confirmation stands when every row of that network lies within the zone's radius plus its range
-(the same vetoes apply); two or more placed networks without a fix confirm nothing (the try runs GPS).
+(the same vetoes apply); two or more placed networks without a fix confirm nothing (the try runs GPS). A detached
+house that hears only its own router has no Wi-Fi fix at all (a scan view needs three usable results and a fix two
+networks): the single-router fix (D15) is its path.
 
 The server's own rule (`zones::side`, the straddle) is unchanged: a `link`-checked fix that straddles the edge is
 still unsure there.
@@ -310,6 +319,50 @@ become the still vouch, lets Locate stop at 20 s, and on the server is a fine fi
 own same-AP rule, no `LINK` row), the Apple lookup, the server's `FixClass`, the fix's `check` on the wire. The kid's
 phone shows nothing new.
 
+### D15. The single-router fix (revision 3: the owner's "A" of 2026-11-26 and the location review's must-changes)
+
+When the phone is connected to a **confirmed** router (`confirmedFor`: the same name and router, not struck; never a
+learned link) and no other Wi-Fi fix stands (no own learned fix, no Apple fix), the attempt reports a fix from the
+router alone (`routerFix`, `WifiPlaces.routerOnlyFix`). It runs after `learned()` and `appleFix()` in every plan - in
+`LEARNED_FIRST` beside GPS after the Apple ask -, so "nothing contradicts" is judged with the Apple answers for unknown
+heard routers already in the table.
+
+- **The continuity gate**: only while the phone's last reported fix (the cached fix, any class) has its centre inside
+  that zone. A later fix outside the zone would be the cached one, so "no fix outside since" is the same test. It keeps
+  a known "inside" (the restart case: the cached fix is the home vouch); it never brings a phone "home" after it was
+  seen elsewhere - that stays GPS's, or an ordinary checked Wi-Fi fix's.
+- **Where**: the router's own position - its device's trusted own Wi-Fi rows (taught by satellite fixes while it was
+  heard), weighted; else Apple's row for one of its addresses heard; else the zone's centre.
+- **How sure**: `sqrt(pos^2 + level^2)`. `pos` is half the row's range (own or Apple's, typically 60-100 m, so 30-50
+  m), or the zone's radius at its centre. `level` by the connected BSSID's entry in the answering scan: 25 m at -45 dBm
+  or stronger, 50 m at -65, 150 m at -85 or weaker, straight lines between (100 m at -75) - the same room, a few walls,
+  the edge of a home router's reach. Without that entry the -85 dBm bound (150 m): `WifiInfo.getRssi()` is stale with
+  the screen off, so it is never used. Typical: 40-60 m on an own row; at least the radius (about 150-210 m) at the
+  centre.
+- **The centre, not the vouch**: re-sending the vouch would be no fresh fix - the finding again (`FIX result=none`,
+  the back-off). A fresh fix at the zone's centre with an accuracy of at least the radius claims only "in or around
+  the zone", which the continuity gate already holds.
+- **`check=link`, provider `vibb_wifi`**: the position is the phone's own table's (or the zone's), not Apple's lookup
+  of this scan. Fresh, so `FIX result=fresh`, and never withheld after a move (design 134's `withheld` needs no fresh
+  fix); a `link` fix stands while still, so it renews the still vouch like any `link` fix.
+- **Anything contradicting vetoes it**: the router's own rows moved or blocked; struck; a registered cell placed away
+  from the zone (D9); the neighbours' own centre (D8's, without the router) outside the zone; two or more placed
+  networks outside the zone's radius plus their range; any other placed network farther from the router's position
+  than its range plus the router's; a conclusive scan of three or more other networks none of them placed near the
+  zone; an impossible jump from the last satellite fix (`jumpGate`). The neighbours' own centre inside agrees.
+- **It never teaches** (no B occasion, no router row, no own-row teach - `LearnedFix.router`, `judged` sets no
+  `teachLater` for it) **and never strikes**.
+- Logged `WifiPlaces: router fix fix|none|unconfirmed|continuity|moved|cell|others|outside|unplaced|disagree|jump
+  at=own|apple|zone acc=N`.
+
+A router that moves with the family and is confirmed (§3) can't bring the phone "home" from elsewhere (the continuity
+gate); elsewhere its own rows move at the first good GPS teach and it is struck - the reason a moving router should
+not be confirmed.
+
+**The server's badge** (unchanged this round): Locate's "At Home" comes from `zones::side` (`d + a <= r`), while a
+confirmation takes the fix's centre inside; a `link` fix of 66 m whose centre is 100 m from the centre of a 150 m zone
+shows no "At Home" on its row, and the zone's side stays what it was. The fix still keeps the heartbeat fresh.
+
 ## 3. What a link needs
 
 - **A confirmed link** needs at once: the network's password (to connect), the router itself (another router with
@@ -325,6 +378,8 @@ phone shows nothing new.
   heard (a remote cabin) it stands for the zone until a registered cell placed away vetoes it (needs a SIM), or the
   first good outdoor GPS fixes there move its rows and strike it. Then it is blocked and the zone shows "Sett et
   annet sted"; removing it is the fix (§4's (i)). A learned link to it never forms where nothing else is placed (D6.4).
+- **The single-router fix** (D15) adds nothing a confirmation didn't already allow where nothing else is placed; it
+  only gives the place a position (the router's own) and an accuracy by the level, and every veto of D8 applies.
 - **B adds little**: an unconfirmed network learns only from fixes surely inside the zone that hold without the
   router (D6.4), on 3 occasions 30 min apart over 2 days, with no disagreement in any of them.
 - **A wrong confirmation** (Bekreft tapped while the phone is elsewhere): the page offers it only where the newest fix
@@ -337,10 +392,10 @@ phone shows nothing new.
 
 On the zone's page (`device_zone.html`), a `#zone-wifi` section after the zone's form (its own forms; not on a new
 zone). The rows: each confirmed name (`{name}`) with a "Fjern..." confirm; the current network's row (`{name}`,
-Bekreft) when D4 lets it show. One orange line at most under the group, "Sett et annet sted" before "Ukjent ruter".
-"Ukjent ruter": the phone's report (D4) has a name the zone has confirmed, its router matches none of the zone's rows
-(D1's match), and its newest fix isn't surely outside the zone. The server doesn't know the phone's learned routers,
-so a router the phone learned itself may still show it; Bekreft then is harmless. The kid's phone shows nothing.
+Bekreft) when D4 lets it show. One orange line at most under the group, "Sett et annet sted". Revision 3 cut "Ukjent
+ruter" (the location review): it invited a parent to confirm a router a child set up with the home's name and password.
+The Bekreft row for the network the phone is on now stays - the parent's own step, how a mesh node gets confirmed.
+The kid's phone shows nothing.
 
 | Where | nb | en |
 |---|---|---|
@@ -351,8 +406,6 @@ so a router the phone learned itself may still show it; Bekreft then is harmless
 | (i) on the group | Et bekreftet nettverk gjør Wi-Fi-posisjonen sikker i sonen, uten GPS. Bare ruteren telefonen var på, teller. Ikke bekreft en ruter som flyttes. | A confirmed network makes the Wi-Fi position certain in the zone, without GPS. Only the router the phone was on counts. Don't confirm a router that moves. |
 | Orange line: a confirmation blocked | Sett et annet sted | Seen elsewhere |
 | Its (i) | Telefonen var på {name} langt utenfor sonen, så det teller ikke lenger. Fjern det, eller bekreft det igjen når telefonen er her. | The phone was on {name} far outside the zone, so it no longer counts. Remove it, or confirm it again when the phone is here. |
-| Orange line: an unknown router | Ukjent ruter | Unknown router |
-| Its (i) | Telefonen er på {name}, men på en ruter Vibb ikke kjenner. Står den her, trykk Bekreft. | The phone is on {name}, but on a router Vibb doesn't know. If it is here, tap Confirm. |
 | Flash, D4's refusal | Telefonen er på et annet nettverk nå | The phone is on another network now |
 | Flash, the 17th row | Maks 16 rutere | At most 16 routers |
 | Flash, a confirm or remove | the existing "Lagret" | the existing "Saved" |
@@ -393,8 +446,7 @@ group.
   twice - one row; a blocked BSSID - a new id; the 17th (blocked counted) - refused; another phone's zone - 404.
   Remove: every row of the name. Both land on `#zone-wifi` (`shell::every_form_on_every_page_lands_on_its_own_group`).
 - The page: the Confirm row hidden for a router already confirmed by prefix or multi-link address, and when the
-  newest fix is surely outside; "Sett et annet sted" for a blocked row; "Ukjent ruter" by its three conditions; never
-  both.
+  newest fix of the last hour is surely outside; "Sett et annet sted" for a blocked row, the only orange line.
 - The strike intake: `blocked_at` once, one log line, the policy no longer serves it; another phone's id ignored.
 - A move over the radius clears, one under keeps, a radius change keeps; the `zone_changed` detail.
 - `policy_json_keys_snapshot`: `networks` always present; blocked rows and the non-Regularly modes serve none.
@@ -412,9 +464,9 @@ neighbours.
 | # | Step | Expect |
 |---|---|---|
 | a | Nothing learned (`--ez clear true`), GPS silent, home's scan, `connect "00:00:5e:00:53:01,Net-A,psk,7,5180"`; a sync | the report's `zone_watch.wifi` has `Net-A` and the BSSID; the zone's page shows `Net-A` with Bekreft; with `open` - no row |
-| b | Tap Bekreft; Locate | the policy's zone has `networks`; `wifi fix check=link step=USE`; the report's fix `check: "link"`; Locate "At Home", no "Wi-Fi estimate" |
+| b | Tap Bekreft; Locate | the policy's zone has `networks`; `wifi fix check=link step=USE`; the report's fix `check: "link"`; Locate no "Wi-Fi estimate"; "At Home" on the row only when the fix is surely inside (the server's side rule, D15) |
 | c | The finding's path: `adb install -r` the same debug APK (a new process, `MOVED`), then the heartbeat's own `FIX` | `attempt path=TOGETHER`, `check=link`, `Location heartbeat: FIX result=fresh`; no back-off |
-| d | `connect` `00:00:5e:00:53:02` (the same router's other band); then a mesh node of another prefix, `Net-A` | the first `check=link` at once; the second `check=none`, the page "Ukjent ruter" and Bekreft; Bekreft - `check=link` |
+| d | `connect` `00:00:5e:00:53:02` (the same router's other band); then a mesh node of another prefix, `Net-A` | the first `check=link` at once; the second `check=none` (or the single-router fix's `link` when nothing else stands), the page's Bekreft row, no orange line; Bekreft - `check=link` |
 | e | `connect` with the confirmed router's multi-link address on another link | `check=link` at once |
 | f | The travel router: `Net-A` (a) connected, another place's scan (its neighbours taught 3 km away) | `check=none`; with only the router heard (its two names, nothing else placed) - `check=link` (the exception) |
 | g | Then the satellite feed 3 km away (8 satellites) twice, 90 s apart, `Net-A` connected | after the second: `zone link struck by=confirmed`; the report's `wifi_struck`; the page "Sett et annet sted"; the security log "Wi-Fi seen elsewhere" (the zone's name only); the policy drops the row; one feed fix alone strikes nothing |
@@ -432,8 +484,7 @@ scan fresh (`scan answer n/m ask=answered`), the parent's Bekreft, then `FIX res
 
 The largest new parts are the exclusion fix (one more `learnedFix` call over a filtered view, D8), the two-fix strike
 (a pending map in memory, D7) and the server's page logic (D4, §4). Already cut: the settled-AP growth (H1) and the
-report's `links` (L7). If the build must shrink further, the next cut is the "Ukjent ruter" line (the Confirm row on
-its own still offers the mesh node), not the exclusion or the cell veto.
+report's `links` (L7), and in revision 3 the "Ukjent ruter" line (the Bekreft row still offers a mesh node).
 
 ## 8. Docs to update with the build
 
@@ -465,3 +516,27 @@ None. Q1 is decided (§11).
   M4 (CONFIRMED without the network id, D1; the device row's lines, §6), L1 (`connectedNow` in the passive teach, D7),
   L2 (the struck list outlives clears, D7), L3 and L4 (D4), L5 and L6 (D5), L7 (`links` cut, D3, §4), L8 (D2), L9
   (D3), §3's heading, the migration note (D12).
+
+## 12. Revision 3 (the code QA of 13cb6ecee and the owner's "A", 2026-11-26)
+
+- **The single-router fix** (D15, the owner's "A", and the answer to QA M3): a detached house hearing only its
+  confirmed router gets a `link` fix at the router's own position, the accuracy by the level, every veto applied; it
+  never teaches or strikes.
+- **M1**: the neighbours' fix without the router is a centre by the complete-link cluster, without `learnedFix`'s
+  majority rule and its 200 m cap (`learnedFix(.., centreOnly = true)`).
+- **M2**: a router row matches by its device keys alone; the `LINK` row binds the network (D5).
+- **L1**: the zone page's "newest fix surely outside" counts only a fix of the last hour. **L2**: the struck list is
+  read, filtered and written under one lock. **L3**: the struck ids come from the strikes, outside the table's save.
+  **L4**: a GPS teach surely inside a zone with the router connected or heard drops its pending strike. **L5**: a zero
+  or redacted multi-link address is none (the report keeps the rest). **L6**: the Wi-Fi teach runs only from an
+  attempt that was conclusive and not withheld. **L7**: an unquoted (hex) name is never reported or confirmed.
+  **L8**: `linkConfirms`/`linkRenews` are gone (their tests on `linkCheck`/`zoneRenews`); an enterprise learned link
+  never renews a still vouch - there is no fix to hold its AP then (conservative). **L9**: removing a row that is gone
+  lands on the group. **L10**: `docs/notes/server/pwa.md`, "Locate: zones".
+- **The location review's must-changes** (folded into D15 and §4): the single-router fix only for a confirmation and
+  only while the last reported fix's centre is inside that zone (the continuity gate); its accuracy `sqrt(pos^2 +
+  level^2)` with the level from the answering scan alone (else the -85 dBm bound); "nothing contradicts" judged after
+  the Apple ask, with the neighbours' centre outside, two placed networks outside the zone, a conclusive scan of three
+  unplaced networks and an impossible jump as vetoes beside the rest; "Ukjent ruter" cut; a test that a router fix on
+  an inconclusive scan after a restart is fresh and never withheld; §6bw's row (b) expects "At Home" only for a fix
+  surely inside (the server's badge is `zones::side`, unchanged this round).

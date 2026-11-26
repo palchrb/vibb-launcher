@@ -245,7 +245,8 @@ one dropped alone; `ZONE_WATCH_MAX` 2048). The zone's page (`#zone-wifi`) lists 
 offers Bekreft for the network of the phone's newest report with `wifi` (at most an hour old, a report without it
 hides nothing) when that router isn't confirmed (the same name and the same router: the BSSID's first five octets or
 the multi-link address) and the newest fix isn't surely outside, and shows one orange line at most: "Sett et annet
-sted" for a blocked row, else "Ukjent ruter" for the phone on a confirmed name at an unconfirmed router. `POST
+sted" for a blocked row (revision 3 cut "Ukjent ruter": it invited confirming a router set up with the home's name
+and password; a fix surely outside counts only from the last hour). `POST
 /devices/{id}/zones/{zone_id}/wifi` confirms only what the newest report says (the form's `bssid`/`mld` must match;
 the stored name is the report's), a blocked row of that BSSID replaced by a new id; `.../wifi/{network_id}/delete`
 removes every row of that name. Both land on `?wifi=saved|changed|full#zone-wifi`. The status intake blocks a struck

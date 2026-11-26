@@ -480,6 +480,8 @@ object WifiPlaces {
     private fun connectionOf(info: WifiInfo, unmetered: Boolean): Connected? {
         val bssid = connectedBssid(info.bssid) ?: return null
         val ssid = info.ssid?.removeSurrounding("\"")?.takeIf { it != WifiManager.UNKNOWN_SSID }
+        // Design 138 (QA L7): Android quotes a UTF-8 name; an unquoted one is hex - never reported or confirmed.
+        val hexName = ssid != null && info.ssid?.let { it.length >= 2 && it.startsWith("\"") && it.endsWith("\"") } != true
         val security = when (info.currentSecurityType) {
             WifiInfo.SECURITY_TYPE_PSK -> LinkSecurity.PSK
             WifiInfo.SECURITY_TYPE_SAE -> LinkSecurity.SAE
@@ -493,7 +495,7 @@ object WifiPlaces {
         } catch (e: Exception) {
             null
         }
-        return Connected(bssid, ssid, info.rssi, info.frequency, unmetered, security, info.networkId, mld)
+        return Connected(bssid, ssid, info.rssi, info.frequency, unmetered, security, info.networkId, mld, hexName)
     }
 
     /** The connection as `WifiManager.getConnectionInfo()` gives it (deprecated in 31, still served on 14-17 with fine
@@ -1001,20 +1003,21 @@ object WifiPlaces {
             paired.filter { it.kind == RowKind.WIFI && it.bssid.isNotEmpty() }.map { listOf(it.device, store.keys.device(it.bssid, null)).distinct() to it.band },
             confirmed, store.rows, now,
         )
+        // QA L4: a router seen inside its zone by this teach drops its pending strike.
+        val inside = insideKeys(zones, best.lat, best.lng, acc, router, paired.filter { it.kind == RowKind.WIFI && it.bssid.isNotEmpty() }.map { listOf(it.device, store.keys.device(it.bssid, null)).distinct() })
         val struckKeys = synchronized(lock) {
-            val (hit, next) = strikeStep(pendingStrikes, candidates, best.elapsedMs)
+            val (hit, next) = strikeStep(pendingStrikes, candidates, best.elapsedMs, inside)
             pendingStrikes = next
             hit
         }
-        var struckIds = emptySet<Long>()
+        // QA L3: the confirmations' ids from the strikes alone, outside the save.
+        val struckIds = applyStrikes(emptyList(), zones, confirmed, struckKeys, now).second
         save(context, store.generation) { rows ->
             val taught = teach(rows, sightings, now, today).also { outcome = it }
             // Design 125 A9: an own teach beyond an Apple row's reach, or a trusted own row against it, tombstones it.
             val apple = reconcileAppleCells(appleCellTaught(reconcileApple(appleTaught(taught.rows, sightings, now), now), sightings, now), now)
             val linked = teachLinks(apple, zones, best.lat, best.lng, acc, connectedNet, now, today, conn?.binding ?: "", rebind, router?.keys.orEmpty())
-            val (out, ids) = applyStrikes(linked, zones, confirmed, struckKeys, now)
-            struckIds = ids
-            out
+            applyStrikes(linked, zones, confirmed, struckKeys, now).first
         }
         outcome?.let { Log.i(LOG_TAG, "taught aps=${it.taught} new=${it.new} moved=${it.moved}") }
         if (struckKeys.isNotEmpty()) {
@@ -1042,15 +1045,41 @@ object WifiPlaces {
 
     /** D3: the report's struck ids - those the policy still carries; the rest are dropped here (the server's block
      * reached the policy). */
-    fun struckForReport(context: Context): List<Long> {
+    fun struckForReport(context: Context): List<Long> = synchronized(lock) {
+        // QA L2: read, filter and write under one lock, so a strike recorded meanwhile is never lost.
         val zones = ZoneWatch.watchedZones()
         val all = struck(context)
-        if (all.isEmpty()) return emptyList()
+        if (all.isEmpty()) return@synchronized emptyList()
         val carried = struckInPolicy(all, zones)
-        if (carried.size != all.size && zones.isNotEmpty()) {
-            synchronized(lock) { struckPrefs(context).edit().putString(KEY_STRUCK, carried.joinToString(",")).commit() }
-        }
-        return carried
+        if (carried.size != all.size && zones.isNotEmpty()) struckPrefs(context).edit().putString(KEY_STRUCK, carried.joinToString(",")).commit()
+        carried
+    }
+
+    /** Design 138 rev 3 (D15): the single-router fix on [snap] - its level the answering scan's entry for the connected
+     * BSSID, else the -85 dBm bound; the continuity gate on the cached fix; logged with its reason, never a name or an
+     * address. */
+    private fun routerOnlyFix(context: Context, store: Store, snap: Snapshot, ask: Ask): LearnedFix? {
+        val router = routerOf(snap.connected, store.keys) ?: return null
+        val rows = open(context)?.rows ?: store.rows
+        val now = nowMin()
+        val zones = linkZones(store.keys)
+        val confirmed = confirmedAps(ZoneWatch.watchedZones(), store.keys)
+        if (confirmed.isEmpty()) return null
+        // The level only from the answering scan: WifiInfo.getRssi() is stale with the screen off (the -85 dBm bound then).
+        val bssid = connectedBssid(snap.connected?.bssid)
+        val scanned = knownRssi(snap.answer?.answering.orEmpty().filter { normalBssid(it.bssid) == bssid }.maxOfOrNull { it.rssi })
+        val heard = hearing(context, store, snap, remember = false).heard.filter { it.elapsedMs > ask.movedAtElapsedMs || it.connected }
+        // The continuity gate: the phone's last reported fix, any class.
+        val last = LocateCommands.cachedQueued()?.let { it.latitude to it.longitude }
+        val nowElapsed = SystemClock.elapsedRealtime()
+        val gnss = lastGnss(context)
+        val answer = routerFix(
+            router, scanned, heard, snap.answer?.conclusive == true, zones, confirmed, struck(context), rows, now, nowElapsed, last,
+            away = { z -> cellAway(snap.cells, rows, now, z, routerAccuracyM(scanned ?: ROUTER_LEVEL_UNKNOWN_DBM)) },
+            impossible = { f -> jumpGate(f, gnss, TrustedClock.nowMs(), nowElapsed, BootClock.bootCount()) == Jump.IMPOSSIBLE },
+        )
+        Log.i(LOG_TAG, "router fix " + answer.reason + (answer.place?.let { " at=${it.wire}" } ?: "") + (answer.fix?.let { " acc=${it.accuracyM.toInt()}" } ?: ""))
+        return answer.fix
     }
 
     /** D3: the report's `wifi` while the policy has zones and Location is on - the connection read through design 134
@@ -1289,6 +1318,8 @@ object WifiPlaces {
                     if (!wifiAsked) return null
                     return open(app)?.let { lookup(app, it, s, ask.movedAtElapsedMs, disagreement) }?.takeIf { standsAlone(it, movedSinceFresh) }
                 }
+                // Design 138 rev 3: connected to a confirmed router and no other Wi-Fi fix - the router's own fix.
+                suspend fun routerOnly(on: Snapshot? = null): LearnedFix? = store?.let { routerOnlyFix(app, it, on ?: snap.await(), ask) }
                 // Design 131: what confirmed the Wi-Fi fix, and what may become of it before GPS has a say.
                 suspend fun judge(fix: LearnedFix?, on: Snapshot? = null): Judged? = fix?.let { judged(app, store, on ?: snap.await(), it, ask, disagreement) }
                 fun report(j: Judged, check: FixCheck?): Location? =
@@ -1317,7 +1348,7 @@ object WifiPlaces {
                 val kept = when (plan) {
                     // The lookup runs on the first scan beside GPS (code QA L5): independent of what the GPS teaches.
                     AttemptPlan.TOGETHER -> {
-                        val early = async { judge(learned() ?: appleFix()) }
+                        val early = async { judge(learned() ?: appleFix() ?: routerOnly()) }
                         val first = keep(gps(GPS_MS), early.await())
                         val s = snap.await()
                         // Design 134 D3: after a move, an inconclusive first scan and no fresh fix - one more scan when a
@@ -1330,7 +1361,7 @@ object WifiPlaces {
                             val again = rescan(app, s, ask.movedAtElapsedMs)
                             last = again
                             Log.i(LOG_TAG, "second scan " + (again.answer?.inconclusive?.wire ?: "conclusive"))
-                            keep(null, judge(learned(again) ?: appleFix(again), again)) ?: first
+                            keep(null, judge(learned(again) ?: appleFix(again) ?: routerOnly(again), again)) ?: first
                         } else {
                             first
                         }
@@ -1347,18 +1378,19 @@ object WifiPlaces {
                             }
                             // Not standing alone, refused, or nothing: GPS (and Apple beside it on a miss) - TOGETHER's way.
                             else -> {
-                                val early = async { judged ?: judge(appleFix()) }
+                                // Design 138 rev 3: the single-router fix after the Apple ask (its answers judged too).
+                                val early = async { judged ?: judge(appleFix() ?: routerOnly()) }
                                 keep(gps(GPS_MS), early.await())
                             }
                         }
                     }
                     AttemptPlan.GPS_FIRST -> {
-                        val early = async { judge(learned() ?: appleFix()) }
+                        val early = async { judge(learned() ?: appleFix() ?: routerOnly()) }
                         val satellites = gps(GPS_MS)
                         keep(satellites, early.await())
                     }
                     AttemptPlan.LOCATE -> {
-                        val early = async { judge(learned() ?: appleFix()) }
+                        val early = async { judge(learned() ?: appleFix() ?: routerOnly()) }
                         val fix = gps(LOCATE_MS, LOCATE_SHORT_MS) {
                             early.await()?.let { it.verdict.step == WifiStep.USE && locateStopsShort(it.fix, it.check) } == true
                         }
@@ -1393,7 +1425,7 @@ object WifiPlaces {
             return null
         } finally {
             // Design 138 D6: a Wi-Fi teach only from an attempt in which nothing disagreed.
-            ask.teachLater?.takeIf { !disagreement.seen }?.let { runCatching { it() } }
+            ask.teachLater?.takeIf { !disagreement.seen && ask.inconclusive == null && !ask.withheld }?.let { runCatching { it() } }
             ownTeaching.decrementAndGet()
             // Design 131: however many rules saw it, one rise an attempt.
             ZoneWatch.countWifiDisagreed(app, disagreement.rise())
@@ -1520,13 +1552,14 @@ object WifiPlaces {
         val gnss = lastGnss(context)
         val gnssNow = gnss?.takeIf { it.bootCount == boot }?.let { TeachFix(it.lat, it.lng, it.accuracyM.toFloat(), it.speedMps, it.elapsedMs, "gps", null, false) }
         // Design 138 D8: what the same scan says without the connected router.
-        val rest = if (store != null && router != null) {
+        val rest = if (store != null && router != null && !fix.router) {
             scanView(hearing(context, store, snap, remember = false), nowElapsed, ask.movedAtElapsedMs)?.let { restWithout(it, rows, now, router) }
         } else {
             null
         }
         val confirmed = store?.let { confirmedAps(ZoneWatch.watchedZones(), it.keys) }.orEmpty()
-        val by = linkCheck(fix, router, conn, rows, zones, now, confirmed, struck(context), rest) { z -> cellAway(snap.cells, rows, now, z, fix.accuracyM) }
+        // Design 138 rev 3: the single-router fix passed its own vetoes (routerFix); every other fix the link check.
+        val by = if (fix.router) LinkBy.CONFIRMED else linkCheck(fix, router, conn, rows, zones, now, confirmed, struck(context), rest) { z -> cellAway(snap.cells, rows, now, z, fix.accuracyM) }
         if (by == LinkBy.LEARNED && store != null && router != null) {
             zones.forEach { z -> save(context, store.generation) { touchRouter(it, z, router, now) } }
         }
@@ -1552,7 +1585,7 @@ object WifiPlaces {
         if (jump == Jump.IMPOSSIBLE || (v != null && distanceM(v.latitude, v.longitude, fix.lat, fix.lng) > fix.accuracyM + (v.accuracy ?: 0f))) ask.elsewhere = true
         Log.i(LOG_TAG, "wifi fix check=${check?.wire ?: "none"} step=${verdict.step}")
         // Design 138 D6: the learned link's teach from this fix, at the attempt's end when nothing disagreed.
-        if (store != null && router != null) ask.teachLater = { teachFromWifi(context, snap, fix, check, verdict.step, rest) }
+        if (store != null && router != null && !fix.router) ask.teachLater = { teachFromWifi(context, snap, fix, check, verdict.step, rest) }
         if (verdict.disagreed) {
             disagreement.mark()
             if (fix.source != PlaceSource.OWN && appleStillMotion(ask.motion)) appleContradiction(context)

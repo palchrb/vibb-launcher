@@ -408,3 +408,17 @@ nothing. The passive teach reads the connection through `connectedNow` too. **Th
 `zone wifi report yes|no reason=... netid=known|none`, never a name). Logs: `zone link confirmed|learned|none
 rest=fix|one|nothing|nofix|unknown`, `zone link struck by=confirmed|learned`, `link taught by=wifi occasions=N
 days=N`. A link learned before this build has no routers until its next inside teach.
+**Revision 3** (the code QA and the owner's "A"): the neighbours' fix without the router is `learnedFix(.., centreOnly
+= true)` - the complete-link cluster's centre without the majority rule or the 200 m cap; a router row matches by its
+device keys alone (the `LINK` row binds the name); **the single-router fix** (`routerFix`, `routerOnlyFix`, after
+`learned()` and `appleFix()` in every plan, after `learned()` in `LEARNED_FIRST`): connected to a confirmed router and
+no other Wi-Fi fix (after the Apple ask; in `LEARNED_FIRST` beside GPS), and only while the cached (last reported)
+fix's centre is inside that zone (the continuity gate), a fresh `link` fix (`vibb_wifi`, `LearnedFix.router`) at the
+router's own rows, else Apple's row for one of its addresses, else the zone's centre; accuracy `sqrt(pos^2 + level^2)`
+- `pos` half the row's range or the radius at the centre, `level` by `routerAccuracyM` (25 m at -45 dBm, 50 m at -65,
+150 m at -85) of the connected BSSID's entry in the answering scan, else the -85 dBm bound (`getRssi()` is stale with
+the screen off); none with moved rows, struck, a cell placed away, the neighbours' centre outside, two placed networks
+outside the zone, another placed network farther than both ranges, a conclusive scan of three unplaced networks or an
+impossible jump; it never teaches or strikes (logged `router fix <reason> at=own|apple|zone acc=N`). A GPS teach surely inside drops a router's pending strike; the Wi-Fi teach
+needs a conclusive, unwithheld attempt; a hex (unquoted) name and a zero multi-link address are never reported;
+`linkConfirms`/`linkRenews` are gone (`linkCheck`, `zoneRenews`; an enterprise learned link never renews a still vouch).

@@ -2,6 +2,7 @@ package com.kidslauncher.mdm.places
 
 import com.kidslauncher.mdm.server.dto.PolicyZone
 import com.kidslauncher.mdm.zones.distanceM
+import kotlin.math.sqrt
 
 // Design 138 (docs/design/138-confirmed-zone-networks.md): a zone's Wi-Fi - the parent's confirmation, the learned
 // link bound to its routers, the neighbours' agreement at every use, the cell veto and the strikes by router. Pure; the
@@ -44,8 +45,9 @@ fun routerOf(connected: Connected?, keys: PlaceKeys): Router? {
     val bssid = connectedBssid(connected.bssid) ?: return null
     val ssid = connected.ssid?.takeIf { it.isNotEmpty() }
     val device = keys.device(bssid, null)
-    val mld = normalBssid(connected.mld)?.let { keys.device(bssid, it) }
-    return Router(keys.network(ssid, device), device, mld, bssid.substring(0, 14), connected.security, ssid != null)
+    // QA L5: a zero or redacted multi-link address is none.
+    val mld = connectedBssid(connected.mld)?.let { keys.device(bssid, it) }
+    return Router(keys.network(ssid, device), device, mld, bssid.substring(0, 14), connected.security, ssid != null && !connected.hexName)
 }
 
 /** A parent's confirmation (D2) as the phone matches it: the server's row id, the zone's policy id, the network key, the
@@ -76,10 +78,10 @@ fun confirmedFor(router: Router, zone: LinkZone, confirmed: List<ConfirmedAp>, s
     }
 }
 
-/** D5: [router] is one of [zone]'s learned routers ([RowKind.LINK_AP], not blocked). */
+/** D5: [router] is one of [zone]'s learned routers ([RowKind.LINK_AP], not blocked) - by its device keys alone (QA M2:
+ * the `LINK` row binds the network, so the router's other name on the same device holds its own link). */
 fun routerLearned(rows: List<PlaceRow>, zone: LinkZone, router: Router, nowMin: Int): Boolean = rows.any {
-    it.kind == RowKind.LINK_AP && it.key == zone.key && it.network == router.network && !it.blocked(nowMin) &&
-        (it.device == router.device || it.device == router.mld)
+    it.kind == RowKind.LINK_AP && it.key == zone.key && !it.blocked(nowMin) && (it.device == router.device || it.device == router.mld)
 }
 
 /** D8's exception: the router's own Wi-Fi rows have moved or are blocked (design 125). */
@@ -105,10 +107,11 @@ sealed interface Rest {
     data object NoFix : Rest
 }
 
-/** D8 (M3): [view] without [router]'s results (its network, its device, its five octets) against [rows]. */
+/** D8 (M3): [view] without [router]'s results (its network, its device, its five octets) against [rows] - their centre
+ * by the complete-link cluster, without the majority rule or the accuracy cap (QA M1: only the centre is judged). */
 fun restWithout(view: ScanView, rows: List<PlaceRow>, nowMin: Int, router: Router): Rest {
     val others = view.heard.filter { it.kind == RowKind.WIFI && !router.owns(it) }
-    learnedFix(ScanView(others, view.fresh), rows, nowMin)?.let { return Rest.Fix(it) }
+    learnedFix(ScanView(others, view.fresh), rows, nowMin, centreOnly = true)?.let { return Rest.Fix(it) }
     val own = rows.asSequence().filter { it.kind == RowKind.WIFI }.associateBy { it.key }
     val apple = rows.asSequence().filter { it.kind == RowKind.APPLE }.associateBy { it.key }
     val placed = others.mapNotNull { h -> chooseRow(h, own[h.key], apple[h.key], nowMin)?.let { h.network to it.first } }
@@ -248,9 +251,15 @@ fun strikeCandidates(
 }
 
 /** D7 (M2): the strikes of a teach at [nowElapsedMs] - a candidate pending from a teach [STRIKE_GAP_MIN_MS] to
- * [STRIKE_GAP_MAX_MS] before strikes; a new one waits. Returns the strikes and the pending map after. */
-fun strikeStep(pending: Map<StrikeKey, Long>, candidates: Set<StrikeKey>, nowElapsedMs: Long): Pair<Set<StrikeKey>, Map<StrikeKey, Long>> {
-    val next = pending.filterValues { nowElapsedMs - it in 0..STRIKE_GAP_MAX_MS }.toMutableMap()
+ * [STRIKE_GAP_MAX_MS] before strikes; a new one waits; a router this teach saw inside its zone ([cleared], QA L4) drops
+ * its pending strike. Returns the strikes and the pending map after. */
+fun strikeStep(
+    pending: Map<StrikeKey, Long>,
+    candidates: Set<StrikeKey>,
+    nowElapsedMs: Long,
+    cleared: Set<StrikeKey> = emptySet(),
+): Pair<Set<StrikeKey>, Map<StrikeKey, Long>> {
+    val next = pending.filter { (k, at) -> nowElapsedMs - at in 0..STRIKE_GAP_MAX_MS && k !in cleared }.toMutableMap()
     val struck = mutableSetOf<StrikeKey>()
     for (c in candidates) {
         val first = next[c]
@@ -263,6 +272,17 @@ fun strikeStep(pending: Map<StrikeKey, Long>, candidates: Set<StrikeKey>, nowEla
         }
     }
     return struck to next
+}
+
+/** QA L4: the routers a GPS teach surely inside a zone sees - connected ([router]) or heard ([heard], their keys). */
+fun insideKeys(zones: List<LinkZone>, lat: Double, lng: Double, accuracyM: Double, router: Router?, heard: List<List<String>>): Set<StrikeKey> {
+    val out = mutableSetOf<StrikeKey>()
+    for (z in zones) {
+        if (distanceM(lat, lng, z.zone.latitude, z.zone.longitude) + accuracyM > z.zone.radiusM) continue
+        router?.keys?.forEach { out += StrikeKey(z.key, it) }
+        heard.flatten().forEach { out += StrikeKey(z.key, it) }
+    }
+    return out
 }
 
 /** D7: what [struck] does - the confirmations' ids it names, and the learned routers blocked [BLOCK_MIN]. */
@@ -292,12 +312,101 @@ fun touchRouter(rows: List<PlaceRow>, zone: LinkZone, router: Router, nowMin: In
 
 /** D3: the report's `wifi` - a named PSK/SAE network, unmetered, a readable BSSID, while the policy has zones; else none. */
 fun zoneWifiOf(connected: Connected?, zonesOn: Boolean): com.kidslauncher.mdm.server.dto.ZoneWifiReport? {
-    if (!zonesOn || connected == null || !connected.unmetered) return null
+    if (!zonesOn || connected == null || !connected.unmetered || connected.hexName) return null
     if (connected.security != LinkSecurity.PSK && connected.security != LinkSecurity.SAE) return null
     val bssid = connectedBssid(connected.bssid) ?: return null
     val ssid = connected.ssid?.takeIf { it.isNotEmpty() && it.toByteArray(Charsets.UTF_8).size <= 32 && it.none(Char::isISOControl) } ?: return null
-    return com.kidslauncher.mdm.server.dto.ZoneWifiReport(ssid, bssid, normalBssid(connected.mld))
+    // QA L5: a zero or redacted multi-link address drops the address, never the report.
+    return com.kidslauncher.mdm.server.dto.ZoneWifiReport(ssid, bssid, connectedBssid(connected.mld))
 }
+
+// --- The single-router fix (rev 3, the owner's "A" of 2026-11-26, with the location review's must-changes) ---
+
+/** The level's part of the single-router fix's accuracy: 25 m at -45 dBm or stronger, 50 m at -65, 150 m at -85 or
+ * weaker, straight lines between (the same room, a few walls, the edge of the router's reach). A level the answering
+ * scan didn't give counts as -85: `WifiInfo.getRssi()` is stale with the screen off. */
+fun routerAccuracyM(rssi: Int): Double = when {
+    rssi >= -45 -> 25.0
+    rssi >= -65 -> 25.0 + (-45 - rssi) * (25.0 / 20.0)
+    rssi >= -85 -> 50.0 + (-65 - rssi) * (100.0 / 20.0)
+    else -> 150.0
+}
+
+/** The bound for a level the answering scan didn't give. */
+const val ROUTER_LEVEL_UNKNOWN_DBM = -85
+
+/** Where the single-router fix put the router. */
+enum class RouterPlace(val wire: String) { OWN("own"), APPLE("apple"), ZONE("zone") }
+
+/** The single-router fix, or why none ([reason], the log's word). */
+data class RouterAnswer(val fix: LearnedFix?, val reason: String, val place: RouterPlace? = null)
+
+/**
+ * The single-router fix: connected to a **confirmed** router ([confirmedFor]; never a learned link) with no other Wi-Fi
+ * fix standing, a `link` fix at the router's own position - its own trusted Wi-Fi rows, else Apple's row for one of its
+ * addresses heard, else the zone's centre - with the accuracy `sqrt(pos^2 + level^2)`: `pos` half the row's range, or
+ * the zone's radius at its centre; `level` [routerAccuracyM] of the answering scan's level for the connected BSSID
+ * ([scannedRssi]), else of [ROUTER_LEVEL_UNKNOWN_DBM].
+ *
+ * Only while the phone's last reported fix ([last], any class) has its centre inside that zone - it keeps a known
+ * "inside", it never brings a phone home after it was seen elsewhere. None when anything contradicts: the router's rows
+ * moved or blocked, a cell placed away ([away]), the neighbours' own fix with its centre outside, two or more placed
+ * networks outside the zone's radius plus their range, any other placed network farther from the router's position
+ * than both ranges, a conclusive scan ([conclusive]) of three or more other networks none of them placed near the zone,
+ * or an impossible jump ([impossible]). It never teaches and never strikes.
+ */
+fun routerFix(
+    router: Router?,
+    scannedRssi: Int?,
+    heard: List<Heard>,
+    conclusive: Boolean,
+    zones: List<LinkZone>,
+    confirmed: List<ConfirmedAp>,
+    struck: Set<Long>,
+    rows: List<PlaceRow>,
+    nowMin: Int,
+    nowElapsedMs: Long,
+    last: Pair<Double, Double>?,
+    away: (LinkZone) -> Boolean,
+    impossible: (LearnedFix) -> Boolean = { false },
+): RouterAnswer {
+    router ?: return RouterAnswer(null, "none")
+    val zone = zones.firstOrNull { confirmedFor(router, it, confirmed, struck) != null } ?: return RouterAnswer(null, "unconfirmed")
+    val r = zone.zone.radiusM.toDouble()
+    fun fromZone(lat: Double, lng: Double) = distanceM(lat, lng, zone.zone.latitude, zone.zone.longitude)
+    if (last == null || fromZone(last.first, last.second) > r) return RouterAnswer(null, "continuity")
+    if (routerMoved(rows, router, nowMin)) return RouterAnswer(null, "moved")
+    if (away(zone)) return RouterAnswer(null, "cell")
+    val wifi = heard.filter { it.kind == RowKind.WIFI }
+    val others = wifi.filter { !router.owns(it) }
+    val rest = restWithout(ScanView(wifi, true), rows, nowMin, router)
+    if (rest is Rest.Fix && fromZone(rest.fix.lat, rest.fix.lng) > r) return RouterAnswer(null, "others")
+    val own = rows.filter { it.kind == RowKind.WIFI && (it.device == router.device || it.device == router.mld) && it.trusted(nowMin) }
+    val apple = rows.filter { it.kind == RowKind.APPLE }.associateBy { it.key }
+    val ownRows = rows.filter { it.kind == RowKind.WIFI }.associateBy { it.key }
+    val placed = others.mapNotNull { h -> chooseRow(h, ownRows[h.key], apple[h.key], nowMin)?.first?.let { h.network to it } }
+    val outside = placed.filter { (_, row) -> fromZone(row.lat, row.lng) > r + row.rangeM }.map { it.first }.toSet()
+    if (outside.size >= 2) return RouterAnswer(null, "outside")
+    val near = placed.any { (_, row) -> fromZone(row.lat, row.lng) <= r + row.rangeM }
+    if (conclusive && others.map { it.network }.toSet().size >= 3 && !near) return RouterAnswer(null, "unplaced")
+    val appleRow = wifi.filter { router.owns(it) }.firstNotNullOfOrNull { h -> chooseRow(h, null, apple[h.key], nowMin)?.first }
+    val (lat, lng, range, place) = when {
+        own.isNotEmpty() -> {
+            val w = own.sumOf { it.weight.toDouble() }.coerceAtLeast(1e-6)
+            Quad(own.sumOf { it.lat * it.weight } / w, own.sumOf { it.lng * it.weight } / w, own.maxOf { it.rangeM.toDouble() }, RouterPlace.OWN)
+        }
+        appleRow != null -> Quad(appleRow.lat, appleRow.lng, appleRow.rangeM.toDouble(), RouterPlace.APPLE)
+        else -> Quad(zone.zone.latitude, zone.zone.longitude, r, RouterPlace.ZONE)
+    }
+    if (placed.any { (_, row) -> distanceM(row.lat, row.lng, lat, lng) > row.rangeM + range }) return RouterAnswer(null, "disagree", place)
+    val pos = if (place == RouterPlace.ZONE) r else 0.5 * range
+    val level = routerAccuracyM(knownRssi(scannedRssi) ?: ROUTER_LEVEL_UNKNOWN_DBM)
+    val fix = LearnedFix(lat, lng, sqrt(pos * pos + level * level), 1, nowElapsedMs, true, emptySet(), PROVIDER_WIFI, PlaceSource.OWN, router = true)
+    if (impossible(fix)) return RouterAnswer(null, "jump", place)
+    return RouterAnswer(fix, "fix", place)
+}
+
+private data class Quad(val lat: Double, val lng: Double, val range: Double, val place: RouterPlace)
 
 /** D3, D7 (L2): the struck ids the policy still carries, at most [STRUCK_MAX]. */
 fun struckInPolicy(struck: Set<Long>, zones: List<PolicyZone>): List<Long> {
