@@ -36,7 +36,11 @@ data class Router(
 
     /** A scan result of this router - its network (a guest name on the same device is its device's), its device or
      * its five octets (M3). */
-    fun owns(h: Heard): Boolean = h.network == network || h.device == device || (mld != null && h.device == mld) ||
+    fun owns(h: Heard): Boolean = h.network == network || ownsAddress(h)
+
+    /** A scan result of this router by its address alone - its device, its multi-link key or its five octets, never
+     * the name (round 2 L2: Apple's position for the router comes only from its own addresses). */
+    fun ownsAddress(h: Heard): Boolean = h.device == device || (mld != null && h.device == mld) ||
         (h.bssid.length >= prefix.length && h.bssid.startsWith(prefix))
 }
 
@@ -348,8 +352,8 @@ data class RouterAnswer(val fix: LearnedFix?, val reason: String, val place: Rou
  * the zone's radius at its centre; `level` [routerAccuracyM] of the answering scan's level for the connected BSSID
  * ([scannedRssi]), else of [ROUTER_LEVEL_UNKNOWN_DBM].
  *
- * Only while the phone's last reported fix ([last], any class) has its centre inside that zone - it keeps a known
- * "inside", it never brings a phone home after it was seen elsewhere. None when anything contradicts: the router's rows
+ * Only while the continuity gate holds ([gate], [continuityHolds]) - it keeps a known "inside", it never brings a phone
+ * home after it was seen elsewhere. An [unchecked] Wi-Fi fix in hand whose centre is outside the zone vetoes it. None when anything contradicts: the router's rows
  * moved or blocked, a cell placed away ([away]), the neighbours' own fix with its centre outside, two or more placed
  * networks outside the zone's radius plus their range, any other placed network farther from the router's position
  * than both ranges, a conclusive scan ([conclusive]) of three or more other networks none of them placed near the zone,
@@ -366,21 +370,24 @@ fun routerFix(
     rows: List<PlaceRow>,
     nowMin: Int,
     nowElapsedMs: Long,
-    last: Pair<Double, Double>?,
+    gate: Gate,
     away: (LinkZone) -> Boolean,
     impossible: (LearnedFix) -> Boolean = { false },
+    unchecked: LearnedFix? = null,
 ): RouterAnswer {
     router ?: return RouterAnswer(null, "none")
     val zone = zones.firstOrNull { confirmedFor(router, it, confirmed, struck) != null } ?: return RouterAnswer(null, "unconfirmed")
     val r = zone.zone.radiusM.toDouble()
     fun fromZone(lat: Double, lng: Double) = distanceM(lat, lng, zone.zone.latitude, zone.zone.longitude)
-    if (last == null || fromZone(last.first, last.second) > r) return RouterAnswer(null, "continuity")
+    if (!continuityHolds(gate, zone)) return RouterAnswer(null, "continuity")
     if (routerMoved(rows, router, nowMin)) return RouterAnswer(null, "moved")
     if (away(zone)) return RouterAnswer(null, "cell")
     val wifi = heard.filter { it.kind == RowKind.WIFI }
     val others = wifi.filter { !router.owns(it) }
     val rest = restWithout(ScanView(wifi, true), rows, nowMin, router)
     if (rest is Rest.Fix && fromZone(rest.fix.lat, rest.fix.lng) > r) return RouterAnswer(null, "others")
+    // Round 2 L1: an unchecked Wi-Fi fix in hand is the neighbours' verdict too - its centre outside the zone vetoes.
+    if (unchecked != null && fromZone(unchecked.lat, unchecked.lng) > r) return RouterAnswer(null, "others")
     val own = rows.filter { it.kind == RowKind.WIFI && (it.device == router.device || it.device == router.mld) && it.trusted(nowMin) }
     val apple = rows.filter { it.kind == RowKind.APPLE }.associateBy { it.key }
     val ownRows = rows.filter { it.kind == RowKind.WIFI }.associateBy { it.key }
@@ -389,15 +396,16 @@ fun routerFix(
     if (outside.size >= 2) return RouterAnswer(null, "outside")
     val near = placed.any { (_, row) -> fromZone(row.lat, row.lng) <= r + row.rangeM }
     if (conclusive && others.map { it.network }.toSet().size >= 3 && !near) return RouterAnswer(null, "unplaced")
-    val appleRow = wifi.filter { router.owns(it) }.firstNotNullOfOrNull { h -> chooseRow(h, null, apple[h.key], nowMin)?.first }
-    val (lat, lng, range, place) = when {
-        own.isNotEmpty() -> {
-            val w = own.sumOf { it.weight.toDouble() }.coerceAtLeast(1e-6)
-            Quad(own.sumOf { it.lat * it.weight } / w, own.sumOf { it.lng * it.weight } / w, own.maxOf { it.rangeM.toDouble() }, RouterPlace.OWN)
-        }
-        appleRow != null -> Quad(appleRow.lat, appleRow.lng, appleRow.rangeM.toDouble(), RouterPlace.APPLE)
-        else -> Quad(zone.zone.latitude, zone.zone.longitude, r, RouterPlace.ZONE)
+    // Round 2 M3: the first source whose centre lies within the zone's radius - a router fix never lands outside its own
+    // zone (no false "left", no gate lock-out); Apple's only by the router's own addresses (L2).
+    val ownQuad = own.takeIf { it.isNotEmpty() }?.let {
+        val w = it.sumOf { o -> o.weight.toDouble() }.coerceAtLeast(1e-6)
+        Quad(it.sumOf { o -> o.lat * o.weight } / w, it.sumOf { o -> o.lng * o.weight } / w, it.maxOf { o -> o.rangeM.toDouble() }, RouterPlace.OWN)
     }
+    val appleQuad = wifi.filter { router.ownsAddress(it) }.firstNotNullOfOrNull { h -> chooseRow(h, null, apple[h.key], nowMin)?.first }
+        ?.let { Quad(it.lat, it.lng, it.rangeM.toDouble(), RouterPlace.APPLE) }
+    val (lat, lng, range, place) = listOfNotNull(ownQuad, appleQuad).firstOrNull { fromZone(it.lat, it.lng) <= r }
+        ?: Quad(zone.zone.latitude, zone.zone.longitude, r, RouterPlace.ZONE)
     if (placed.any { (_, row) -> distanceM(row.lat, row.lng, lat, lng) > row.rangeM + range }) return RouterAnswer(null, "disagree", place)
     val pos = if (place == RouterPlace.ZONE) r else 0.5 * range
     val level = routerAccuracyM(knownRssi(scannedRssi) ?: ROUTER_LEVEL_UNKNOWN_DBM)
@@ -406,7 +414,47 @@ fun routerFix(
     return RouterAnswer(fix, "fix", place)
 }
 
+/** The continuity gate's witness (round 2 M2): the newest of the phone's known fix (the kept slot or the cached one)
+ * and the last satellite fix by their time, its accuracy, and its boot. */
+data class GateFix(val lat: Double, val lng: Double, val accuracyM: Double?, val timeMs: Long, val bootCount: Int)
+
+/** The gate's inputs: the witness, the boot now and the last shutdown's length (`PowerEvents`, `null` unknown). */
+data class Gate(val witness: GateFix?, val bootNow: Int, val offGapMs: Long?)
+
+/** A boot between the witness and now holds the gate only when the phone was off at most this long. */
+const val GATE_OFF_MAX_MS = 10 * 60_000L
+
+/** The newest of [known] and [gnss] by time. */
+fun gateWitness(known: GateFix?, gnss: GateFix?): GateFix? = listOfNotNull(known, gnss).maxByOrNull { it.timeMs }
+
+/**
+ * Round 2 M2: the continuity gate holds for [zone] - the witness's centre inside, its accuracy at most the radius (a
+ * coarse cell fix never opens it), and, when it is another boot's, the phone off at most [GATE_OFF_MAX_MS] (a plain
+ * restart; not "off at home, on somewhere else").
+ */
+fun continuityHolds(gate: Gate, zone: LinkZone): Boolean {
+    val w = gate.witness ?: return false
+    val acc = w.accuracyM?.takeIf { it.isFinite() && it >= 0 } ?: return false
+    val r = zone.zone.radiusM.toDouble()
+    if (acc > r || distanceM(w.lat, w.lng, zone.zone.latitude, zone.zone.longitude) > r) return false
+    return w.bootCount == gate.bootNow || (gate.offGapMs != null && gate.offGapMs in 0..GATE_OFF_MAX_MS)
+}
+
+/** Round 2 L6: the level for the single-router fix - the connected BSSID's own entry in the answering scan, else none
+ * (the -85 dBm bound then). */
+fun answeringLevel(answering: List<ScanAp>, connected: Connected?): Int? {
+    val bssid = connectedBssid(connected?.bssid) ?: return null
+    return knownRssi(answering.filter { normalBssid(it.bssid) == bssid }.maxOfOrNull { it.rssi })
+}
+
+/** Round 2 L6: what the single-router fix hears - results after the last motion fire, and the connection itself. */
+fun heardSince(heard: List<Heard>, movedAtElapsedMs: Long): List<Heard> = heard.filter { it.elapsedMs > movedAtElapsedMs || it.connected }
+
 private data class Quad(val lat: Double, val lng: Double, val range: Double, val place: RouterPlace)
+
+/** The last shutdown's length when the phone is in the boot after it: on's time minus off's, else `null`. */
+fun offGapMs(offAtMs: Long?, offBoot: Int?, onAtMs: Long?, onBoot: Int?, bootNow: Int): Long? =
+    if (offAtMs == null || onAtMs == null || offBoot == null || onBoot != bootNow || offBoot >= bootNow) null else onAtMs - offAtMs
 
 /** D3, D7 (L2): the struck ids the policy still carries, at most [STRUCK_MAX]. */
 fun struckInPolicy(struck: Set<Long>, zones: List<PolicyZone>): List<Long> {

@@ -419,6 +419,11 @@ router's own rows, else Apple's row for one of its addresses, else the zone's ce
 150 m at -85) of the connected BSSID's entry in the answering scan, else the -85 dBm bound (`getRssi()` is stale with
 the screen off); none with moved rows, struck, a cell placed away, the neighbours' centre outside, two placed networks
 outside the zone, another placed network farther than both ranges, a conclusive scan of three unplaced networks or an
-impossible jump; it never teaches or strikes (logged `router fix <reason> at=own|apple|zone acc=N`). A GPS teach surely inside drops a router's pending strike; the Wi-Fi teach
+impossible jump; it never teaches or strikes (logged `router fix <reason> at=own|apple|zone acc=N`). Round 2: the
+gate's witness is the newest of the known fix (kept or cached) and the last satellite fix, its accuracy at most the
+radius, across a boot only after at most 10 min off (`PowerEvents.lastOffGapMs`); the position is the first source
+inside the zone (own, Apple by the router's own addresses, centre); an unchecked fix in hand tries it too
+(`withRouter`, its centre outside vetoing); the GPS branch of `LEARNED_FIRST` keeps as TOGETHER; a router fix is never a
+print's vouch or outcome (`Ask.routerFix`); the Wi-Fi teach needs `Ask.conclusive`. A GPS teach surely inside drops a router's pending strike; the Wi-Fi teach
 needs a conclusive, unwithheld attempt; a hex (unquoted) name and a zero multi-link address are never reported;
 `linkConfirms`/`linkRenews` are gone (`linkCheck`, `zoneRenews`; an enterprise learned link never renews a still vouch).

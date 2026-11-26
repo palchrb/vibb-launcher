@@ -327,12 +327,18 @@ router alone (`routerFix`, `WifiPlaces.routerOnlyFix`). It runs after `learned()
 `LEARNED_FIRST` beside GPS after the Apple ask -, so "nothing contradicts" is judged with the Apple answers for unknown
 heard routers already in the table.
 
-- **The continuity gate**: only while the phone's last reported fix (the cached fix, any class) has its centre inside
-  that zone. A later fix outside the zone would be the cached one, so "no fix outside since" is the same test. It keeps
-  a known "inside" (the restart case: the cached fix is the home vouch); it never brings a phone "home" after it was
-  seen elsewhere - that stays GPS's, or an ordinary checked Wi-Fi fix's.
-- **Where**: the router's own position - its device's trusted own Wi-Fi rows (taught by satellite fixes while it was
-  heard), weighted; else Apple's row for one of its addresses heard; else the zone's centre.
+- **The continuity gate** (round 2 M2): its witness is the newest, by time, of the phone's known fix (the kept slot's
+  unreported fix, else the cached one) and the last satellite fix. The gate holds while that witness's centre is
+  inside the zone and its accuracy is at most the radius (a coarse cell fix never opens it); when the witness is
+  another boot's, only if the phone was off at most 10 min before this boot (`PowerEvents`' shutdown to this boot's
+  start; unknown - a pulled battery - holds nothing). 10 min covers a restart and a battery swap; a phone off longer
+  could have been carried anywhere (10 min in a car is 10-15 km), and "off at home, on at a remote place" must not
+  start inside. It keeps a known "inside" (the restart case); it never brings a phone "home" after it was seen
+  elsewhere - that stays GPS's, or an ordinary checked Wi-Fi fix's.
+- **Where** (round 2 M3, L2): the first source whose centre lies within the zone's radius - its device's trusted own
+  Wi-Fi rows (taught by satellite fixes while it was heard), weighted; else Apple's row for one of its own addresses
+  heard (its device, multi-link or five-octet key - never by the network name); else the zone's centre. A router fix
+  never lands outside its own zone (no false "left", no gate lock-out).
 - **How sure**: `sqrt(pos^2 + level^2)`. `pos` is half the row's range (own or Apple's, typically 60-100 m, so 30-50
   m), or the zone's radius at its centre. `level` by the connected BSSID's entry in the answering scan: 25 m at -45 dBm
   or stronger, 50 m at -65, 150 m at -85 or weaker, straight lines between (100 m at -75) - the same room, a few walls,
@@ -351,7 +357,16 @@ heard routers already in the table.
   than its range plus the router's; a conclusive scan of three or more other networks none of them placed near the
   zone; an impossible jump from the last satellite fix (`jumpGate`). The neighbours' own centre inside agrees.
 - **It never teaches** (no B occasion, no router row, no own-row teach - `LearnedFix.router`, `judged` sets no
-  `teachLater` for it) **and never strikes**.
+  `teachLater` for it) **and never strikes**; it is no outcome evidence for design 134's fingerprint and never a
+  print's vouch (`Ask.routerFix`, round 2 L4).
+- **An unchecked Wi-Fi fix in hand** (round 2 L1): the single-router fix is tried too (`withRouter`) - the unchecked
+  fix is the neighbours' verdict, so its centre outside the zone vetoes the router fix (`others`); inside, the router
+  fix replaces it (checked, fresh).
+- **Where GPS ran beside it** (round 2 M1, `LEARNED_FIRST`'s GPS branch): the keep is TOGETHER's, so good satellites
+  far off overrule it (`keepBetter`, `gpsOverrules`).
+- **Where it is promised** (round 2 L3): where the neighbours are placed (own or Apple rows) or fewer than three
+  unplaced networks are heard; a conclusive scan of three or more networks none of them placed near the zone vetoes
+  it.
 - Logged `WifiPlaces: router fix fix|none|unconfirmed|continuity|moved|cell|others|outside|unplaced|disagree|jump
   at=own|apple|zone acc=N`.
 
@@ -540,3 +555,9 @@ None. Q1 is decided (§11).
   unplaced networks and an impossible jump as vetoes beside the rest; "Ukjent ruter" cut; a test that a router fix on
   an inconclusive scan after a restart is fresh and never withheld; §6bw's row (b) expects "At Home" only for a fix
   surely inside (the server's badge is `zones::side`, unchanged this round).
+- **Code QA round 2** (of da96e0fd2): **M1** the GPS branch of `LEARNED_FIRST` keeps as TOGETHER; **M2** the gate's
+  witness, its accuracy and the 10-min bound across a boot; **M3** the router's position within its zone; **L1** an
+  unchecked fix in hand tries the router fix, its centre outside vetoing; **L2** Apple only by the router's
+  addresses; **L3** where D15 is promised; **L4** no print's vouch or outcome from a router fix; **L5** a stale
+  server comment; **L6** behaviour tests of the gate, the level, the heard filter, Apple's place and the position
+  outside; **L7** an explicit `conclusive` for the teach gate.

@@ -6289,6 +6289,8 @@ BSSID and the callback) is a device row: the emulator's own network is open.
 | l | The same after (g)'s strike (the row blocked, the policy without it) | `router fix unconfirmed`; no `link` fix |
 | m | The continuity gate: a satellite fix 3 km away reported (the cached fix outside Home), then back on `Net-A` with only it heard | `router fix continuity`; no `link` fix until GPS or an ordinary checked fix brings it home |
 | n | After a restart (reinstall over itself) with the last reported fix at home, the scan inconclusive (`--ez refuse_scan true`) | `router fix fix`, not withheld; `Location heartbeat: FIX result=fresh` |
+| o | `adb reboot` at home with the last fix at home (off about a minute); then the same with the emulator stopped for 15 min before the boot | the first `router fix fix`; the second `router fix continuity` until another fix brings it home |
+| p | A cell-only fix reported last (`--ez gps_off true`, Wi-Fi off, Locate), then back on `Net-A` | `router fix continuity` (the witness's accuracy over the radius) |
 
 The cell veto is a unit row (`ZoneLinksTest`): the emulator's cell has no placed row unless §6bk's fake Apple cell
 answer is loaded - if it is, place it 5 km away and expect (b) to give `check=none`.

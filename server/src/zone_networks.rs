@@ -222,9 +222,9 @@ pub fn view_of(rows: &[ZoneNetwork], current: Option<ReportedWifi>, outside: boo
     }
 }
 
-/// The zone's group as the page shows it (D4: the phone's newest fix surely outside hides
-/// Confirm and "Ukjent ruter" - only a fix at most an hour old, QA L1: an old one says nothing about
-/// where the phone is now).
+/// The zone's group as the page shows it (D4: the phone's newest fix surely outside hides the
+/// Bekreft row - only a fix at most an hour old, QA L1: an old one says nothing about where the
+/// phone is now).
 pub async fn view(
     db: &sqlx::SqlitePool,
     device_id: i64,

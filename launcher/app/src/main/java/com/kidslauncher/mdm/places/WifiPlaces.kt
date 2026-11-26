@@ -35,6 +35,7 @@ import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.server.BootClock
 import com.kidslauncher.mdm.server.DeviceCredentials
 import com.kidslauncher.mdm.server.LocateCommands
+import com.kidslauncher.mdm.server.PowerEvents
 import com.kidslauncher.mdm.server.QuickControls
 import com.kidslauncher.mdm.server.Secrets
 import com.kidslauncher.mdm.server.ServerJson
@@ -195,6 +196,12 @@ object WifiPlaces {
 
         /** Design 138 D6: the attempt's Wi-Fi teach of a learned link, run at its end only when nothing disagreed. */
         @Volatile internal var teachLater: (() -> Unit)? = null
+
+        /** Design 138 round 2 L7: the attempt's last scan was conclusive - set only once the attempt got that far. */
+        @Volatile internal var conclusive = false
+
+        /** Design 138 round 2 L4: the attempt reported a single-router fix - never a print's vouch or an outcome. */
+        @Volatile var routerFix = false
     }
 
     private val lock = Any()
@@ -1058,7 +1065,7 @@ object WifiPlaces {
     /** Design 138 rev 3 (D15): the single-router fix on [snap] - its level the answering scan's entry for the connected
      * BSSID, else the -85 dBm bound; the continuity gate on the cached fix; logged with its reason, never a name or an
      * address. */
-    private fun routerOnlyFix(context: Context, store: Store, snap: Snapshot, ask: Ask): LearnedFix? {
+    private fun routerOnlyFix(context: Context, store: Store, snap: Snapshot, ask: Ask, unchecked: LearnedFix?): LearnedFix? {
         val router = routerOf(snap.connected, store.keys) ?: return null
         val rows = open(context)?.rows ?: store.rows
         val now = nowMin()
@@ -1066,17 +1073,19 @@ object WifiPlaces {
         val confirmed = confirmedAps(ZoneWatch.watchedZones(), store.keys)
         if (confirmed.isEmpty()) return null
         // The level only from the answering scan: WifiInfo.getRssi() is stale with the screen off (the -85 dBm bound then).
-        val bssid = connectedBssid(snap.connected?.bssid)
-        val scanned = knownRssi(snap.answer?.answering.orEmpty().filter { normalBssid(it.bssid) == bssid }.maxOfOrNull { it.rssi })
-        val heard = hearing(context, store, snap, remember = false).heard.filter { it.elapsedMs > ask.movedAtElapsedMs || it.connected }
-        // The continuity gate: the phone's last reported fix, any class.
-        val last = LocateCommands.cachedQueued()?.let { it.latitude to it.longitude }
-        val nowElapsed = SystemClock.elapsedRealtime()
+        val scanned = answeringLevel(snap.answer?.answering.orEmpty(), snap.connected)
+        val heard = heardSince(hearing(context, store, snap, remember = false).heard, ask.movedAtElapsedMs)
+        // The continuity gate's witness (round 2 M2): the newest of the known fix and the last satellite fix.
         val gnss = lastGnss(context)
+        val boot = BootClock.bootCount()
+        val known = LocateCommands.newestKnown()?.let { GateFix(it.latitude, it.longitude, it.accuracy?.toDouble(), it.timeMs, it.bootCount) }
+        val gate = Gate(gateWitness(known, gnss?.let { GateFix(it.lat, it.lng, it.accuracyM, it.trustedMs, it.bootCount) }), boot, PowerEvents.lastOffGapMs(context))
+        val nowElapsed = SystemClock.elapsedRealtime()
         val answer = routerFix(
-            router, scanned, heard, snap.answer?.conclusive == true, zones, confirmed, struck(context), rows, now, nowElapsed, last,
+            router, scanned, heard, snap.answer?.conclusive == true, zones, confirmed, struck(context), rows, now, nowElapsed, gate,
             away = { z -> cellAway(snap.cells, rows, now, z, routerAccuracyM(scanned ?: ROUTER_LEVEL_UNKNOWN_DBM)) },
-            impossible = { f -> jumpGate(f, gnss, TrustedClock.nowMs(), nowElapsed, BootClock.bootCount()) == Jump.IMPOSSIBLE },
+            impossible = { f -> jumpGate(f, gnss, TrustedClock.nowMs(), nowElapsed, boot) == Jump.IMPOSSIBLE },
+            unchecked = unchecked,
         )
         Log.i(LOG_TAG, "router fix " + answer.reason + (answer.place?.let { " at=${it.wire}" } ?: "") + (answer.fix?.let { " acc=${it.accuracyM.toInt()}" } ?: ""))
         return answer.fix
@@ -1319,19 +1328,31 @@ object WifiPlaces {
                     return open(app)?.let { lookup(app, it, s, ask.movedAtElapsedMs, disagreement) }?.takeIf { standsAlone(it, movedSinceFresh) }
                 }
                 // Design 138 rev 3: connected to a confirmed router and no other Wi-Fi fix - the router's own fix.
-                suspend fun routerOnly(on: Snapshot? = null): LearnedFix? = store?.let { routerOnlyFix(app, it, on ?: snap.await(), ask) }
+                suspend fun routerOnly(on: Snapshot? = null, unchecked: LearnedFix? = null): LearnedFix? =
+                    store?.let { routerOnlyFix(app, it, on ?: snap.await(), ask, unchecked) }
                 // Design 131: what confirmed the Wi-Fi fix, and what may become of it before GPS has a say.
                 suspend fun judge(fix: LearnedFix?, on: Snapshot? = null): Judged? = fix?.let { judged(app, store, on ?: snap.await(), it, ask, disagreement) }
                 fun report(j: Judged, check: FixCheck?): Location? =
-                    location(j.fix, check).takeIf(accept)?.also { ask.notFresh = !wifiFresh(j.fix, check) }
+                    location(j.fix, check).takeIf(accept)?.also {
+                        ask.notFresh = !wifiFresh(j.fix, check)
+                        ask.routerFix = j.fix.router
+                    }
+                // Round 2 L1: no checked Wi-Fi fix in hand - the single-router fix, with an unchecked one as the
+                // neighbours' verdict (its centre outside the zone vetoes it).
+                suspend fun withRouter(j: Judged?, on: Snapshot? = null): Judged? {
+                    if (j?.check != null) return j
+                    val r = routerOnly(on, j?.fix) ?: return j
+                    return judge(r, on)
+                }
                 // A9 (H2): still means still - the vouch renewed, never replaced; with its own check (never a better one).
                 fun renew(): Location? = ask.stillVouch.also {
                     ask.renewed = true
                     ask.renewedBy = Renewal.APPLE
                 }
                 // The order after the judging is the pure [attemptKeep]'s, every plan's.
-                fun keep(gps: Location?, j: Judged?): Location? {
-                    val k = attemptKeep(plan, j?.verdict?.step, j?.fix, j?.check, gps?.let(::teachFix), release)
+                // Round 2 M1: where GPS ran beside the Wi-Fi fix, the keep is TOGETHER's (good satellites far off overrule).
+                fun keep(gps: Location?, j: Judged?, asPlan: AttemptPlan = plan): Location? {
+                    val k = attemptKeep(asPlan, j?.verdict?.step, j?.fix, j?.check, gps?.let(::teachFix), release)
                     if (k.disagreed) {
                         Log.w(LOG_TAG, "satellites overruled a Wi-Fi fix")
                         disagreement.mark()
@@ -1348,7 +1369,7 @@ object WifiPlaces {
                 val kept = when (plan) {
                     // The lookup runs on the first scan beside GPS (code QA L5): independent of what the GPS teaches.
                     AttemptPlan.TOGETHER -> {
-                        val early = async { judge(learned() ?: appleFix() ?: routerOnly()) }
+                        val early = async { withRouter(judge(learned() ?: appleFix())) }
                         val first = keep(gps(GPS_MS), early.await())
                         val s = snap.await()
                         // Design 134 D3: after a move, an inconclusive first scan and no fresh fix - one more scan when a
@@ -1361,13 +1382,14 @@ object WifiPlaces {
                             val again = rescan(app, s, ask.movedAtElapsedMs)
                             last = again
                             Log.i(LOG_TAG, "second scan " + (again.answer?.inconclusive?.wire ?: "conclusive"))
-                            keep(null, judge(learned(again) ?: appleFix(again) ?: routerOnly(again), again)) ?: first
+                            keep(null, withRouter(judge(learned(again) ?: appleFix(again), again), again)) ?: first
                         } else {
                             first
                         }
                     }
                     AttemptPlan.LEARNED_FIRST -> {
-                        val judged = judge(learned())
+                        // Round 2 L1: an unchecked learned fix tries the single-router fix first.
+                        val judged = judge(learned()).let { j -> if (j != null && j.check == null) withRouter(j) else j }
                         when {
                             judged != null && !runsGps(plan, judged.verdict.step) -> keep(null, judged)
                             judged == null && renews(app, store, snap.await(), ask) -> ask.vouched.also { ask.renewed = true }
@@ -1379,18 +1401,18 @@ object WifiPlaces {
                             // Not standing alone, refused, or nothing: GPS (and Apple beside it on a miss) - TOGETHER's way.
                             else -> {
                                 // Design 138 rev 3: the single-router fix after the Apple ask (its answers judged too).
-                                val early = async { judged ?: judge(appleFix() ?: routerOnly()) }
-                                keep(gps(GPS_MS), early.await())
+                                val early = async { judged ?: withRouter(judge(appleFix())) }
+                                keep(gps(GPS_MS), early.await(), AttemptPlan.TOGETHER)
                             }
                         }
                     }
                     AttemptPlan.GPS_FIRST -> {
-                        val early = async { judge(learned() ?: appleFix() ?: routerOnly()) }
+                        val early = async { withRouter(judge(learned() ?: appleFix())) }
                         val satellites = gps(GPS_MS)
                         keep(satellites, early.await())
                     }
                     AttemptPlan.LOCATE -> {
-                        val early = async { judge(learned() ?: appleFix() ?: routerOnly()) }
+                        val early = async { withRouter(judge(learned() ?: appleFix())) }
                         val fix = gps(LOCATE_MS, LOCATE_SHORT_MS) {
                             early.await()?.let { it.verdict.step == WifiStep.USE && locateStopsShort(it.fix, it.check) } == true
                         }
@@ -1404,6 +1426,7 @@ object WifiPlaces {
                 ask.linkAp = store?.let { linkAp(ended.link, ended.connected, it.keys, ended.answer?.answering.orEmpty()).ap }
                 // Code QA M1: a renewal in this attempt (a zone link, an Apple fix within the vouch) vetoes a mismatch.
                 ask.inconclusive = ended.answer?.inconclusive
+                ask.conclusive = ended.answer?.conclusive == true
                 if (withheld(ask.mayWithhold, ask.inconclusive, kept != null && !ask.notFresh && !ask.renewed)) {
                     ask.withheld = true
                     Log.i(LOG_TAG, "attempt path=$plan result=withheld reason=${ask.inconclusive?.wire}")
@@ -1425,7 +1448,7 @@ object WifiPlaces {
             return null
         } finally {
             // Design 138 D6: a Wi-Fi teach only from an attempt in which nothing disagreed.
-            ask.teachLater?.takeIf { !disagreement.seen && ask.inconclusive == null && !ask.withheld }?.let { runCatching { it() } }
+            ask.teachLater?.takeIf { !disagreement.seen && ask.conclusive && !ask.withheld }?.let { runCatching { it() } }
             ownTeaching.decrementAndGet()
             // Design 131: however many rules saw it, one rise an attempt.
             ZoneWatch.countWifiDisagreed(app, disagreement.rise())
@@ -1502,7 +1525,8 @@ object WifiPlaces {
         try {
             val app = context.applicationContext
             val nowMin = nowMin()
-            val outcome = fresh.provider == "gps" || (fresh.provider in PRINT_WIFI_PROVIDERS && fresh.check != null)
+            // Design 138 round 2 L4: a single-router fix is no outcome evidence and never a print's vouch.
+            val outcome = !ask.routerFix && (fresh.provider == "gps" || (fresh.provider in PRINT_WIFI_PROVIDERS && fresh.check != null))
             val acc = fresh.accuracy
             if (outcome && acc != null) {
                 val vouch = ask.vouchFix?.let { VouchPoint((it.timeMs / 60_000).toInt(), it.latitude, it.longitude, it.accuracy ?: 0f) }
@@ -1514,7 +1538,7 @@ object WifiPlaces {
             val old = StillPrints.current(app)
             if (old != null && old.fixTimeMs != fresh.timeMs) StillPrints.drop(app, DropReason.REPLACED)
             val material = ask.material
-            val refusal = printRefusal(fresh.provider, fresh.check, acc, moving, fresh.mock, release, material != null)
+            val refusal = if (ask.routerFix) PrintRefusal.PROVIDER else printRefusal(fresh.provider, fresh.check, acc, moving, fresh.mock, release, material != null)
             val elapsed = fresh.elapsedMs
             // Without a trusted sensor no heartbeat could use a print (D14): none is taken.
             val sensor = ask.motion != Motion.NO_SENSOR

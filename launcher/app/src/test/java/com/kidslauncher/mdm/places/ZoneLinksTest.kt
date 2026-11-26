@@ -161,14 +161,14 @@ class ZoneLinksTest {
         val c = conn()
         val r = routerOf(c, keys)!!
         fun heard(vararg aps: Pair<String, String>) = hear(aps.map { ScanAp(it.first, it.second, null, 2437, -55, 100_000) }, c, keys, moving, emptyMap(), 100_000).heard
-        val home0 = lat0 to lng0
+        val home0 = gateAt(lat0)
         fun fix(
             rssi: Int? = -45,
             h: List<Heard> = heard(router to "Net-A"),
             rows: List<PlaceRow> = table,
             struck: Set<Long> = emptySet(),
             away: Boolean = false,
-            last: Pair<Double, Double>? = home0,
+            last: Gate = home0,
             conclusive: Boolean = true,
             impossible: Boolean = false,
         ) = routerFix(r, rssi, h, conclusive, zones, confirmed, struck, rows, 0, 100_000, last, { away }, { impossible })
@@ -192,15 +192,33 @@ class ZoneLinksTest {
         assertEquals(RouterPlace.ZONE, centre.place)
         assertEquals(sqrt(150.0 * 150.0 + 25.0 * 25.0), centre.fix!!.accuracyM, 0.01)
         // The continuity gate: the last reported fix's centre inside the zone - never brought home from elsewhere.
-        assertEquals("continuity", fix(last = null).reason)
-        assertEquals("continuity", fix(last = north(400.0) to lng0).reason)
-        assertEquals("fix", fix(last = north(140.0) to lng0).reason)
+        assertEquals("continuity", fix(last = Gate(null, 5, null)).reason)
+        assertEquals("continuity", fix(last = gateAt(north(400.0))).reason)
+        assertEquals("fix", fix(last = gateAt(north(140.0))).reason)
         // Every veto.
         assertEquals("unconfirmed", fix(struck = setOf(7L)).reason)
         assertEquals("cell", fix(away = true).reason)
         assertEquals("jump", fix(impossible = true).reason)
         assertEquals("moved", fix(rows = table.map { if (it.network == keys.network("Net-A", "")) it.copy(moves = 1) else it }).reason)
         assertEquals("unconfirmed", routerFix(routerOf(conn(bssid = "00:00:5e:00:54:01"), keys), -45, heard(), true, zones, confirmed, emptySet(), table, 0, 0, home0, { false }).reason)
+        // Round 2 L1: an unchecked fix in hand with its centre outside the zone is the neighbours' verdict.
+        val outsideFix = LearnedFix(north(300.0), lng0, 60.0, 3, 0, true, emptySet())
+        assertEquals("others", routerFix(r, -45, heard(router to "Net-A"), true, zones, confirmed, emptySet(), table, 0, 0, home0, { false }, unchecked = outsideFix).reason)
+        assertEquals("fix", routerFix(r, -45, heard(router to "Net-A"), true, zones, confirmed, emptySet(), table, 0, 0, home0, { false }, unchecked = inside).reason)
+        // Round 2 M3, L2: the first source inside the zone - the own row outside gives way to Apple's, both outside to
+        // the zone's centre; Apple's only by the router's own address.
+        val ownOutside = table.map { if (it.network == keys.network("Net-A", "")) it.copy(lat = north(400.0)) else it }
+        val appleKey = hear(listOf(ScanAp(router, "Net-A", null, 2437, -55, 0)), null, keys, moving, emptyMap(), 0).heard.single().key
+        val appleIn = PlaceRow(RowKind.APPLE, appleKey, lat = north(40.0), lng = lng0, rangeM = 40f, lastTeachMin = 10_000)
+        val viaApple = fix(rows = ownOutside + appleIn)
+        assertEquals(RouterPlace.APPLE, viaApple.place)
+        assertEquals(north(40.0), viaApple.fix!!.lat, 1e-6)
+        val appleOut = appleIn.copy(lat = north(500.0))
+        assertEquals(RouterPlace.ZONE, fix(rows = ownOutside + appleOut).place)
+        // Another network's Apple row under the router's name: never the router's position.
+        val sameName = hear(listOf(ScanAp("00:00:5e:00:59:01", "Net-A", null, 2437, -55, 0)), null, keys, moving, emptyMap(), 0).heard.single()
+        val appleOther = PlaceRow(RowKind.APPLE, sameName.key, lat = north(20.0), lng = lng0, rangeM = 40f, lastTeachMin = 10_000)
+        assertEquals(RouterPlace.ZONE, fix(rows = neighboursHome + appleOther, h = heard(router to "Net-A", "00:00:5e:00:59:01" to "Net-A")).place)
         // The neighbours' own fix: inside it agrees; outside it contradicts.
         assertEquals("fix", fix(h = heard(router to "Net-A", nb(1) to "Nabo1", nb(2) to "Nabo2", nb(3) to "Nabo3")).reason)
         val far = listOf(row(nb(4), "Hytte1", 3000.0), row(nb(5), "Hytte2", 3010.0), row(nb(6), "Hytte3", 2990.0))
@@ -232,7 +250,7 @@ class ZoneLinksTest {
 
     private fun fix0() = routerFix(
         routerOf(conn(), keys), -50, hear(listOf(ScanAp(router, "Net-A", null, 5180, -50, 100_000)), conn(), keys, moving, emptyMap(), 100_000).heard,
-        false, zones, confirmed, emptySet(), table, 0, 100_000, lat0 to lng0, { false },
+        false, zones, confirmed, emptySet(), table, 0, 100_000, gateAt(lat0), { false },
     ).fix!!
 
     @Test
@@ -250,19 +268,67 @@ class ZoneLinksTest {
         assertFalse(routerOf(conn().copy(hexName = true), keys)!!.named)
     }
 
+    private fun gateAt(lat: Double, acc: Double? = 20.0, boot: Int = 5) = Gate(GateFix(lat, lng0, acc, 1_000, boot), 5, null)
+
     @Test
-    fun `QA L8 - judged's wiring - the remaining fix, the cell veto, the single-router fix never teaches`() {
+    fun `round 2 M2 - the continuity gate's witness, its accuracy, a boot between`() {
+        val z = zones.single()
+        assertTrue(continuityHolds(gateAt(lat0), z))
+        assertFalse("outside", continuityHolds(gateAt(north(400.0)), z))
+        assertFalse("a coarse cell fix never opens it", continuityHolds(gateAt(lat0, acc = 800.0), z))
+        assertFalse("no accuracy", continuityHolds(gateAt(lat0, acc = null), z))
+        // Another boot's witness: a plain restart (off 2 min) holds it; off 3 h, or no shutdown seen, doesn't.
+        val before = GateFix(lat0, lng0, 20.0, 1_000, 4)
+        assertTrue(continuityHolds(Gate(before, 5, 2 * 60_000L), z))
+        assertFalse(continuityHolds(Gate(before, 5, 3 * 3_600_000L), z))
+        assertFalse(continuityHolds(Gate(before, 5, null), z))
+        // The witness is the newest by time: a satellite fix outside after the cached home fix closes it.
+        val home = GateFix(lat0, lng0, 20.0, 1_000, 5)
+        val away = GateFix(north(3_000.0), lng0, 10.0, 2_000, 5)
+        assertEquals(away, gateWitness(home, away))
+        assertFalse(continuityHolds(Gate(gateWitness(home, away), 5, null), z))
+        assertEquals(home, gateWitness(home, away.copy(timeMs = 500)))
+        // The shutdown's length: on minus off, only in the boot after it.
+        assertEquals(120_000L, offGapMs(1_000_000, 4, 1_120_000, 5, 5))
+        assertNull(offGapMs(1_000_000, 4, 1_120_000, 5, 6))
+        assertNull(offGapMs(null, null, 1_120_000, 5, 5))
+    }
+
+    @Test
+    fun `round 2 L6 - the level from the answering scan, the heard filter`() {
+        val c = conn(mld = null)
+        assertEquals(-48, answeringLevel(listOf(ScanAp(router, "Net-A", null, 5180, -48, 0), ScanAp(nb(1), "Nabo1", null, 2437, -40, 0)), c))
+        assertNull("not in the answer: the bound then", answeringLevel(listOf(ScanAp(nb(1), "Nabo1", null, 2437, -40, 0)), c))
+        assertNull(answeringLevel(listOf(ScanAp(router, "Net-A", null, 5180, -127, 0)), c))
+        val h = hear(listOf(ScanAp(nb(1), "Nabo1", null, 2437, -60, 1_000), ScanAp(nb(2), "Nabo2", null, 2437, -60, 9_000)), c, keys, moving, emptyMap(), 10_000).heard
+        val kept = heardSince(h, 5_000)
+        assertTrue(kept.any { it.connected })
+        assertEquals(setOf(keys.network("Nabo2", "")), kept.filter { !it.connected }.map { it.network }.toSet())
+    }
+
+    @Test
+    fun `round 2 M1 - where GPS ran beside a router fix, good satellites far off overrule it`() {
+        val f = fix0()
+        val far = TeachFix(north(3_000.0), lng0, 8f, 0.5f, 100_000, "gps", 9, false)
+        val together = attemptKeep(AttemptPlan.TOGETHER, WifiStep.USE, f, FixCheck.LINK, far, release = true)
+        assertEquals(Kept.GPS, together.kept)
+        assertTrue(together.disagreed)
+        // LEARNED_FIRST's own rule would have kept it (no GPS ran there) - the GPS branch keeps as TOGETHER.
+        assertEquals(Kept.WIFI, attemptKeep(AttemptPlan.LEARNED_FIRST, WifiStep.USE, f, FixCheck.LINK, far, release = true).kept)
         val glue = File("src/main/java/com/kidslauncher/mdm/places/WifiPlaces.kt").readText()
-        assertTrue(glue.contains("scanView(hearing(context, store, snap, remember = false), nowElapsed, ask.movedAtElapsedMs)?.let { restWithout(it, rows, now, router) }"))
-        assertTrue(glue.contains("val by = if (fix.router) LinkBy.CONFIRMED else linkCheck(fix, router, conn, rows, zones, now, confirmed, struck(context), rest) { z -> cellAway(snap.cells, rows, now, z, fix.accuracyM) }"))
+        assertTrue(glue.contains("keep(gps(GPS_MS), early.await(), AttemptPlan.TOGETHER)"))
+    }
+
+    @Test
+    fun `the attempt's wiring - every plan's single-router fix, the teach gate, never a print's vouch`() {
+        // The parts the unit tests above can't reach (the attempt is the platform's): what calls what.
+        val glue = File("src/main/java/com/kidslauncher/mdm/places/WifiPlaces.kt").readText()
+        assertEquals(3, Regex("""withRouter\(judge\(learned\(\) \?: appleFix\(\)\)\)""").findAll(glue).count())
+        assertTrue(glue.contains("val early = async { judged ?: withRouter(judge(appleFix())) }"))
         assertTrue(glue.contains("if (store != null && router != null && !fix.router) ask.teachLater ="))
-        assertTrue(glue.contains("ask.teachLater?.takeIf { !disagreement.seen && ask.inconclusive == null && !ask.withheld }"))
-        assertEquals(3, Regex("""learned\(\) \?: appleFix\(\) \?: routerOnly\(\)""").findAll(glue).count())
-        assertTrue(glue.contains("val early = async { judged ?: judge(appleFix() ?: routerOnly()) }"))
-        // The single-router fix's own vetoes: the cell, through the same check.
-        assertTrue(glue.contains("away = { z -> cellAway(snap.cells, rows, now, z, routerAccuracyM(scanned ?: ROUTER_LEVEL_UNKNOWN_DBM)) },"))
-        assertTrue(glue.contains("val last = LocateCommands.cachedQueued()?.let { it.latitude to it.longitude }"))
-        assertTrue(glue.contains("impossible = { f -> jumpGate(f, gnss, TrustedClock.nowMs(), nowElapsed, BootClock.bootCount()) == Jump.IMPOSSIBLE },"))
+        assertTrue(glue.contains("ask.teachLater?.takeIf { !disagreement.seen && ask.conclusive && !ask.withheld }"))
+        assertTrue(glue.contains("val outcome = !ask.routerFix && "))
+        assertTrue(glue.contains("val refusal = if (ask.routerFix) PrintRefusal.PROVIDER else"))
     }
 
     @Test
