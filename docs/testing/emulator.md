@@ -5921,10 +5921,11 @@ the main preferences).
 | 6 | The cut and the reboot; unlock with Android's PIN | Android's PIN still asked (never cleared); Home shows Koble til with the server address filled in and "Nødsamtale" under the button; logcat has no "Resetting preferences" |
 | 7 | Tap Nødsamtale | the emergency confirm ("Ring 112?") over the screen; Avbryt back to Koble til (no call placed in the test) |
 | 8 | Back gesture, then the home gesture | Koble til closes for that resume; Home shows nothing allowed (the fallback: kiosk on, no apps); the next time Home comes to the front Koble til is back |
-| 9 | The drawer's Settings (or `adb shell am start -a android.intent.action.APPLICATION_PREFERENCES -p me.vibb.launcher.debug`) | Settings doesn't open (no parent code stored: the gate's dialog, OK disabled) |
+| 9 | Back on Koble til, then the drawer's Settings (or `adb shell am start -a android.intent.action.APPLICATION_PREFERENCES -p me.vibb.launcher.debug`) | the gate's dialog, and Koble til doesn't come up over it (the first try too); a wrong code refused; the parent's real PIN still opens Settings - the parent PIN lives in its own file (`pin_vault.xml`), which the cut leaves. The gate holds: never open without the code |
 | 10 | adb | stays as the fallback plan leaves it (the last plan's or nothing allowed's), never opened by the lost file; `adb shell dumpsys device_policy` shows the restrictions still set |
 | 11 | A new code from the PWA (the phone's page › Avansert › Ny oppsettkode) typed on Koble til | the phone enrols, the setup hold does not start (the witness counts as applied), the server's policy applies and Home is back |
-| 12 | Before step 11: another server's address in the field (`https://other.example.org`), any code | the address rule's line ("server_url_refused"'s text), nothing sent (no request in the server's log) |
+| 12 | Before step 11: another server's address in the field (`https://other.example.org`), any code | "Det er ikke telefonens server." / "That isn't this phone's server." under the fields, nothing sent (no request in the server's log); an address that breaks S-M1's rule (`http://other.example.org`) still gets the address rule's line (`server_url_refused`) |
+| 12b | Then the right server's address with an old (used) code | "That code didn't work"; within a sync (seconds, the command stream) the phone syncs with its old key, `MdmSyncWorker`'s `Enrolment restored: the adopted key synced with the witnessed server`, Koble til closes if open and doesn't come back at the next Home; Settings still behind the parent code |
 | 13 | A fresh emulator: enrol with a code but keep the server from answering the policy (stop it right after the enrolment), cut the preferences as above, reboot | the witness holds `"enrolled":true` alone; Koble til shows (no first-launch reset), Settings opens without a code, Home is not locked down (no policy applied yet) |
 | 14 | The calendar report: a calendar named `per.hansen@example.org` (DAVx5 or a local one), and an ICSx5 subscription whose display name is cleared (`content insert`/`update` on `content://com.android.calendar/calendars`, `calendar_displayName` null) | the PWA's Calendars list shows `p…@example.org` and an empty name for the subscription (its host as the source); Dagen on the phone shows the full names |
 
@@ -6010,7 +6011,10 @@ Findings (none blocks rc.4; no code changed here):
    input timeouts with an idle main thread. Environment first; the one thing ours: `KidVpnService.onCreate` does the
    list load and the tunnel's `establish` on the main thread, which a slow phone's boot could push past the service's
    20 s. Repro: either image, any reboot, `adb logcat -d | grep -A3 'ANR in me.vibb'`; stacks in `dumpsys dropbox
-   --print data_app_anr`.
+   --print data_app_anr`. **Fixed on branch `launcher-edges-2`**: the list load, `establish()` and the rest of the
+   service's work run on its own control thread; `onCreate` and `onStartCommand` only answer the foreground start
+   (`docs/notes/launcher/dns-and-vpn.md`, "The service's work on its own thread"). To check: reboots on both images
+   with no `executing service ...KidVpnService` ANR, the filter up (`Tunnel: filter`) and §6bp's rows unchanged.
 2. **After a refused code on Koble til the phone syncs again with its old key** (14 and 16, three times). Typing the
    right server's address with an old (used) code: "That code didn't work", then 3-16 s later the command stream opens
    as the phone's old device (`command stream opened device=4`), the policy, apps and status follow, Android's lock and
@@ -6019,15 +6023,18 @@ Findings (none blocks rc.4; no code changed here):
    still takes. Not harmful - the phone is back under its policy - but the screen asks for a code the phone no longer
    needs, and a parent may not see why. Repro: §6bp row 12's second half, then watch the relay or `adb logcat -s
    CommandListenerService`. For the owner: keep (the code still re-binds a fresh key), or let a working stream with
-   the adopted key restore `enrolled` and close Koble til.
+   the adopted key restore `enrolled` and close Koble til. **Fixed on branch `launcher-edges-2`**: a policy accepted
+   on a request the adopted key signed, from the witnessed host, restores `enrolled` (row 12b).
 3. **Koble til comes up over the drawer's Settings dialog** (14 and 16, the first try each). After Back, swipe up for
    the drawer and tap its gear: the gate's dialog opens, then Koble til is started over it (the drawer's close is a new
    resume of Home); Back shows the dialog underneath. The documented way to the Tailscale key ("Back, the drawer's
-   Settings") needs Back twice. Repro: rows 8-9 on a cut phone.
+   Settings") needs Back twice. Repro: rows 8-9 on a cut phone. **Fixed on branch `launcher-edges-2`**: Home's resume
+   starts no Koble til while parent Settings is in front (`SettingsFront`; row 9).
 4. **The address rule's text speaks of https** when the address is https but another host
    (`https://other.example.org`): "The phone only uses a server address that starts with https:// (plain http only to a
    Tailscale IP ...)". `server_url_refused` covers both rules; for the host rule the line doesn't say what is wrong.
-   Words only.
+   Words only. **Fixed on branch `launcher-edges-2`**: "Det er ikke telefonens server." / "That isn't this phone's
+   server." for the host rule (row 12).
 
 ## 6bq. User certificates, the provisioning baseline, storage full (branch `storage-certs-baseline`) - run 2026-11-25
 
