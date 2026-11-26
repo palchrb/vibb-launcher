@@ -5,7 +5,7 @@ Status: **design, revision 3**, 2026-11-25 (built on branch `still-print`), read
 M1-M6, L1-L5; §11); revision 3 adds the one rule the owner approved the same evening: **a scan mismatch ends `STILL`**
 (§3a, D15-D19; §12) - the mismatch direction acts, the match direction stays shadow-only; revision 4 (§13, D20-D25,
 the owner's addition the same night, branch `still-connected`) lets **the connected router witness the still vouch**
-at a cap try or retry while `STILL`, its code QA applied (§13a) with one owner question open (§13b). Part (B) of PLAN's item 1b. Part (A) ships apart on branch `still-keeps`: while the sensor
+at a cap try or retry while `STILL`, its code QA applied (§13a) with the owner's answer (b) (§13b). Part (B) of PLAN's item 1b. Part (A) ships apart on branch `still-keeps`: while the sensor
 hasn't fired, a failed cap try no longer ends `STILL`; `still` keeps being sent and the fresh fix is retried at **the
 next two beats, then after 1 h, 2 h, and then every 4 h**. Asked by the owner on 2026-11-25: "med lite (ikke null)
 bevegelse kan den jo fortsatt være i huset og så vil vi jo helst ikke feile lokasjon da". A launcher round; no server
@@ -419,7 +419,7 @@ the real throttle under the anchor's importance with other apps scanning, a real
 
 ## 10. Questions for the owner
 
-Revision 4's: the witness's level with the screen off, (a) or (b) (§13b). Whether the moved tier may renew is decided from §9's record, in a later revision; whether the mismatch rule
+Revision 4's witness level with the screen off: decided (b) by the owner 2026-11-26 (§13b). Whether the moved tier may renew is decided from §9's record, in a later revision; whether the mismatch rule
 stays, from the same record's mismatch outcomes.
 
 ## 11. Revision 2 - the owner's scope and the design QA
@@ -575,11 +575,11 @@ keeps `STILL`, and with the screen off the level (D20.6) doesn't tell those plac
 guards it - the bound the still rule already lives with (design 124 D7's distrust after two contradictions), with
 (A)'s 24-h ceiling as the backstop.
 
-**Open question for the owner (decided in the morning, 2026-11-26): the level with the screen off.**
+**The owner's question, DECIDED 2026-11-26: (b), the level with the screen off.**
 - **(a) Refuse a stale level.** The level counts only when fresh - the connected BSSID in the answering scan, or the
   screen on; otherwise no renewal (a new reason, the cap try as (A)'s ladder says). The 15 dB check then always
   means something, but on the Jelly Star's evidence (the router missing from the background lists, the screen off)
   the witness would seldom act at the very cap tries it was asked for.
-- **(b) Keep the check as built (this build).** A stale level passes; the bound is the AP's own range (D22) guarded by
+- **(b) Keep the check as built (this build) - CHOSEN by the owner 2026-11-26.** A stale level passes; the bound is the AP's own range (D22) guarded by
   the sensor; the log's `level=link screen=off` shows how often that is the case, and §9 item 5 measures the
   difference on the Jelly Star.
