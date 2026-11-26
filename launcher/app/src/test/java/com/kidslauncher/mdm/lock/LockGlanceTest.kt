@@ -876,6 +876,22 @@ class LockMediaGuardTest {
         assertTrue(glance.contains("KidInsets.apply(glance.root, extraBottom = ::handleAboveButtons)"))
     }
 
+    /**
+     * Phase D gate §6bt finding 1: on Android 14 the lock's window is not edge to edge, its insets arrive consumed
+     * above the glance and the listener never runs - the handle's room is still kept, from no insets at all (the
+     * pure rule then gives the handle's whole view: `glanceBottomRoom(0, 0, h)`).
+     */
+    @Test
+    fun `the handle's room is kept when no insets reach the page`() {
+        val insets = file("java/com/kidslauncher/mdm/ui/KidInsets.kt").readText()
+        val body = insets.substringAfter("fun apply(").substringBefore("\n    }\n")
+        val first = body.indexOf("pad(root, WindowInsets.Builder().build())")
+        assertTrue(body, first > 0)
+        assertTrue(body, first < body.indexOf("setOnApplyWindowInsetsListener"))
+        assertTrue(body, body.contains("val extra = extraBottom?.invoke(insets) ?: 0"))
+        assertEquals(GlanceBottomRoom(0, 36), glanceBottomRoom(navBarPx = 0, tappablePx = 0, handleViewPx = 36))
+    }
+
     @Test
     fun `the lock's tile is a live session only - never the snapshot`() {
         // Design 28 §1: a snapshot has no session, so its play would open the player over the lock.

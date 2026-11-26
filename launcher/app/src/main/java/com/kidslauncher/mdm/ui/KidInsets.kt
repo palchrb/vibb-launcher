@@ -16,17 +16,26 @@ object KidInsets {
 
     /** [ime]: the bottom takes the keyboard when it is taller than the navigation bar (a page with a text field: the
      * window is edge to edge, so `adjustResize` alone does nothing on API 35+, design 79 QA L3). [extraBottom]: more
-     * room at the bottom for these insets, in px (the glance's handle above a 3-button bar, screen-size fix S5). */
+     * room at the bottom for these insets, in px (the glance's handle above a 3-button bar, screen-size fix S5).
+     *
+     * The padding is set at once for no insets at all (an empty `WindowInsets`: no bar, no keyboard, no cutout) and
+     * again at each dispatch: on Android 14 a window that is not edge to edge gets the bars as the content view's
+     * padding and the insets arrive consumed, so a root below it never hears of them - [extraBottom] counts there too
+     * (phase D gate §6bt finding 1: the glance's Nødsamtale over its handle on 14, in both navigation modes). */
     fun apply(root: View, ime: Boolean = false, extraBottom: ((WindowInsets) -> Int)? = null) {
         val left = root.paddingLeft
         val top = root.paddingTop
         val right = root.paddingRight
         val bottom = root.paddingBottom
-        root.setOnApplyWindowInsetsListener { view, insets ->
+        fun pad(view: View, insets: WindowInsets) {
             val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
             val keyboard = if (ime) insets.getInsets(WindowInsets.Type.ime()).bottom else 0
             val extra = extraBottom?.invoke(insets) ?: 0
             view.setPadding(left + bars.left, top + bars.top, right + bars.right, bottom + maxOf(bars.bottom, keyboard) + extra)
+        }
+        pad(root, WindowInsets.Builder().build())
+        root.setOnApplyWindowInsetsListener { view, insets ->
+            pad(view, insets)
             WindowInsets.CONSUMED
         }
         root.requestApplyInsets()
