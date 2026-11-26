@@ -6407,13 +6407,13 @@ sync` had left `aosp36` with a truncated APK, the launcher gone at the next boot
 - **1, Android 16: pass.** `aosp36` (3-button and gestures, an `adb reboot` and a cold boot each) and `jelly36` (two
   `adb reboot`s, a cold boot): every boot had SystemUI's `OFF -> LOCKSCREEN` over the occluding cover; the asks before
   its show read `keyguard not up`, the next silence's ask (`keyguard up, no focus`) brought `LOCKSCREEN ->
-  PRIMARY_BOUNCER` 4-6 s after the show, then one "Android's pad is over the cover - no re-ask" and no further ask;
+  PRIMARY_BOUNCER` 0.5-6 s after the show (the next 3-6 s tick), then one "Android's pad is over the cover - no re-ask" and no further ask;
   1357 opens Home. R3 on `aosp36`: Back on the pad, "cancelled", no ask; a tap asks once (an earlier build of the
   branch, the same cancel and tap rule).
 - **3, Android 14: pass.** `compat34` (both modes, an `adb reboot` and a cold boot each): the relaunches before the pad
   still ask (the pad isn't up); the relaunch with the pad up logs "relaunched with Android's pad up - no ask"; Back
-  then closes the ask with the line and a tap asks once (an earlier build, the same orphan rule); 1357 opens Home. When the cover never had the focus and its
-  readings were all "keyguard reads up, not yet occluded by the cover?" (2 of 4 boots), the first silence after the pad
+  then closes the ask with the line and a tap asks once (an earlier build, the same orphan rule); 1357 opens Home.
+  When the cover never had the focus and its readings were all "keyguard reads up, not yet occluded by the cover?" (2 of 4 boots), the first silence after the pad
   asked once more (nothing visible), then no more.
 - **2, `jelly36`: pass.** Two `adb reboot`s and a cold boot, unlocked each time: no `ANR in me.vibb...`, no `Timeout
   executing service` of ours, the dropbox empty; `Unlocked setup took` 469-723 ms, the rules' own message 878-2421 ms,
