@@ -542,12 +542,14 @@ class GuardsTest {
         assertTrue(storytel.contains("b.setUri(sourceId(a.entry, item)).setCustomCacheKey(cacheKey)"))
         assertTrue(storytel.contains("b.setTag(ItemTag(cacheKey, hls = false, publicOnly = true, copyOnly = true))"))
         assertTrue("before the NRK/RSS branch, whose uri would be the row's", media.indexOf("Source.STORYTEL") < media.indexOf("download?.url"))
+        // design 117 §4.5: a copy-only or sealed item goes to the sealed playback factory, which has no upstream
         val factory = code("src/main/java/me/vibb/music/media/ItemMediaSourceFactory.kt")
-        assertTrue(factory.contains("MediaCache.playbackFactory(app, tag.publicOnly, keys, copyOnly = tag.copyOnly, through = through)"))
+        assertTrue(factory.contains("tag?.copyOnly == true || isSealedKey(tag?.cacheKey) || isSealedKey(customCacheKey) || isStorytelSourceId(uri) -> ItemRoute.STORYTEL"))
+        assertTrue(factory.contains("DefaultMediaSourceFactory(MediaCache.storytelPlaybackFactory(app, keys, BookKeys.get(app)))"))
         val cache = code("src/main/java/me/vibb/music/media/MediaCache.kt")
-        assertTrue(cache.contains(".setUpstreamDataSourceFactory(if (copyOnly) null else gated(context, http(context, publicOnly)))"))
-        // and no sink: a book is never streamed, so never written by the player (design 30 §1.4)
-        assertTrue(cache.contains(".setCacheWriteDataSinkFactory(if (copyOnly) null else through)"))
+        assertTrue(cache.contains("storytelFactory(get(context), null, keys, bookKeys)"))
+        // and no sink without an upstream: a book is never streamed, so never written by the player (design 30 §1.4)
+        assertTrue(cache.contains(".setCacheWriteDataSinkFactory(upstream?.let {"))
         // a copy plays without holding Wi-Fi (phase 1's rule, also for a book)
         assertTrue(service.contains("renderer.setWakeMode(if (hasCopy(a, item)) C.WAKE_MODE_LOCAL else C.WAKE_MODE_NETWORK)"))
     }
@@ -874,8 +876,8 @@ class GuardsTest {
     @Test
     fun `26c 5_10 - onError records unplayable and stays synchronous on main, the move-on the web player's own`() {
         val events = serviceBody("private fun onRendererEvent(event: RendererEvent) {")
-        assertTrue("called directly from the renderer's event", events.contains("is RendererEvent.Error -> onError(event.code, event.gated, event.noNetwork)"))
-        val onError = serviceBody("private fun onError(code: String, gated: Boolean = false, noNetwork: Boolean = false) {")
+        assertTrue("called directly from the renderer's event", events.contains("is RendererEvent.Error -> onError(event.code, event.gated, event.noNetwork, event.lost)"))
+        val onError = serviceBody("private fun onError(code: String, gated: Boolean = false, noNetwork: Boolean = false, lost: Boolean = false) {")
         assertTrue(onError.contains("recordsItemError(a.entry, hasUrl = item.url != null) ->\n                scope.launch(writer) { ItemErrors.record(this@PlaybackService, entryId, item.key, code) }"))
         assertTrue("an own file and a copy first, each by its own rule", onError.indexOf("item.fileId != null || gated -> Unit") < onError.indexOf("copy != null -> if (code == \"bad_media\")") && onError.indexOf("copy != null ->") < onError.indexOf("recordsItemError("))
         assertTrue(onError.contains("val offline = gated ||\n            !isSpotify(a.entry) && copy == null"))
@@ -1073,13 +1075,14 @@ class GuardsTest {
     @Test
     fun `playback writes the cache only through ThroughSink, with FLAG_IGNORE_CACHE_ON_ERROR`() {
         val playback = media.substringAfter("fun playbackFactory(").substringBefore("\n\n")
-        assertTrue(playback.contains("through: ThroughSink.Factory? = null"))
-        assertTrue(playback.contains(".setCacheWriteDataSinkFactory(if (copyOnly) null else through)"))
-        assertTrue(playback.contains(".setFlags(if (copyOnly) 0 else CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)"))
-        assertTrue(playback.contains(".setUpstreamDataSourceFactory(if (copyOnly) null else gated(context, http(context, publicOnly)))"))
+        // design 117 §4.5: always an explicit sink - the ThroughSink, or NoWriteSink when nothing is written through
+        assertTrue(playback.contains("through: DataSink.Factory)"))
+        assertTrue(playback.contains(".setCacheWriteDataSinkFactory(through)"))
+        assertTrue(playback.contains(".setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)"))
+        assertTrue(playback.contains(".setUpstreamDataSourceFactory(gated(context, http(context, publicOnly)))"))
         assertTrue("copy-only reads: no sink", media.substringAfter("fun copyOnlyFactory(").substringBefore("\n\n").contains(".setCacheWriteDataSinkFactory(null)"))
-        assertEquals("playback's and copy-only's, nothing else", 2, Regex("setCacheWriteDataSinkFactory\\(").findAll(media).count())
-        // No other sink in the app: the download factory's default one is the job's.
+        assertEquals("playback's, the sealed one's and copy-only's (the download's is a lambda)", 3, Regex("setCacheWriteDataSinkFactory\\(").findAll(media).count())
+        // No other sink in the app: the download factory's guarded one is the job's (design 117 §4.5).
         val sinks = mainSources().filter { it.name != "MediaCache.kt" && it.readText().contains("CacheDataSink(") }.map { it.name }
         assertTrue(sinks.toString(), sinks.isEmpty())
         // The sink's two live inputs and its row, made before the first write.
@@ -1088,8 +1091,8 @@ class GuardsTest {
         assertTrue(sinkOf.contains("firstWrite = { store.db.insertThrough(DownloadRow(ref.entryId, ref.itemKey, cacheKey, url, hls, false, 0, null, null)) },"))
         // The tag: NRK and RSS only, the stale ones uncached; a Storytel book and an own file never write.
         val factory = code("src/main/java/me/vibb/music/media/ItemMediaSourceFactory.kt")
-        assertTrue(factory.contains("tag.uncached -> DefaultMediaSourceFactory(MediaCache.uncachedFactory(app, tag.publicOnly))"))
-        assertTrue(factory.contains("val through = tag.ref?.takeIf { tag.through && !tag.copyOnly }?.let { MediaCache.throughSink(app, it, tag.through, tag.cacheKey, url, tag.hls) }"))
+        assertTrue(factory.contains("ItemRoute.UNCACHED -> DefaultMediaSourceFactory(MediaCache.uncachedFactory(app, tag.publicOnly))"))
+        assertTrue(factory.contains("val through = itemTag?.ref?.takeIf { writesThrough(itemTag) }?.let { MediaCache.throughSink(app, it, true, cacheKey, url, tag.hls) }"))
         val item = service.substringAfter("private fun mediaItem(a: Active, item: PlayItem): MediaItem {").substringBefore("val meta =")
         assertTrue(item.contains("val through = a.entry.source == Source.NRK || a.entry.source == Source.RSS"))
         assertTrue(item.contains("b.setTag(ItemTag(cacheKey, hls, publicOnly(a.entry), through = through, uncached = uncached, ref = ItemRef(a.entry.id, item.key)))"))
@@ -1102,14 +1105,14 @@ class GuardsTest {
         assertTrue(media.contains("DataSource.Factory { StreamGate(upstream.createDataSource()) { streamAllowed(netCaps(app), store.streamMobileData) } }"))
         assertTrue(media.contains("return DataSource.Factory { LengthGuard(okhttp.createDataSource()) { key -> storedLength(cache, key) } }"))
         val download = media.substringAfter("fun downloadFactory(").substringBefore("\n\n")
-        assertTrue(download.contains(".setUpstreamDataSourceFactory(http(context, publicOnly, followRedirects))"))
+        assertTrue(download.contains(".setUpstreamDataSourceFactory(http(context, publicOnly))"))
         assertFalse("the job has its own gate", download.contains("gated("))
         assertEquals("a playback and the uncached one", 2, Regex("gated\\(context, http\\(context, publicOnly\\)\\)").findAll(media).count())
         // §1.7: the stream plays the rendition the download keeps.
         val local = code("src/main/java/me/vibb/music/playback/LocalRenderer.kt")
         assertTrue(local.contains(".setMaxAudioBitrate(HLS_MAX_BITRATE)\n                .setForceHighestSupportedBitrate(true)"))
         // The gate's refusal: "Ikke lastet ned", no item error.
-        assertTrue(local.contains("emit(RendererEvent.Error(MediaCache.errorCode(error), MediaCache.gated(error), noNetwork(error)))"))
+        assertTrue(local.contains("emit(RendererEvent.Error(MediaCache.errorCode(error), MediaCache.gated(error), noNetwork(error), MediaCache.sealLost(error)))"))
         // qa-music-splash-b Q-11: the failure's one log line is failureLine's (URLs cut), never the raw exception
         assertTrue(local.contains("Log.w(LOG_TAG, failureLine(error.errorCodeName, error.errorCode, error))"))
         assertEquals(listOf("Log.w(LOG_TAG, failureLine("), Regex("""Log\.\w\([^\n]*""").findAll(local).map { it.value.substringBefore("error.") }.toList())
@@ -1232,12 +1235,12 @@ class GuardsTest {
         assertEquals(4, removing.size)
         for (f in removing) {
             val at = Regex("MediaCache\\.remove(Resource)?\\(").find(f)!!.range.first
-            val check = listOf("in PlayerHub.heldLocal) return@withLock", "heldCacheKeys(store, rows)) != null) continue", "!in before) MediaCache.remove", "in heldCacheKeys(store, store.db.downloads())) return@withLock")
+            val check = listOf("in PlayerHub.heldLocal) return@withLock", "heldKeys(store, rows)) != null) continue", "!in before) MediaCache.remove", "in heldKeys(store, store.db.downloads())) return@withLock")
             assertTrue(f.substringBefore("\n"), check.any { c -> f.indexOf(c).let { it in 0..at } })
         }
         assertTrue("queueRows skips what the previous queue held", body(through, "suspend fun queueRows(").contains("if (ItemRef(entry.id, item.key) !in before) MediaCache.remove("))
         // The sync and the job remove only through it.
-        assertTrue(code("src/main/java/me/vibb/music/sync/Downloads.kt").contains("override suspend fun removeCopy(cacheKey: String, hls: Boolean) = CacheThrough.removeCopy(context, cacheKey, hls)"))
+        assertTrue(code("src/main/java/me/vibb/music/sync/Downloads.kt").contains("override suspend fun removeCopy(cacheKey: String, hls: Boolean) {\n            CacheThrough.removeCopy(context, cacheKey, hls)"))
     }
 
     /** §1.5: a stream's row and its played time; a Storytel book, an own file and a Sonos room never mark one. */

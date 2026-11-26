@@ -136,7 +136,7 @@ class BookKeys(
         require(isSealedKey(cacheKey)) { "not a sealed key" }
         if (!cipherOk()) throw SealTransientException("the cipher's self-check failed")
         val kek = current(create = true)!!
-        if (!cache.hasSpans(cacheKey)) return mint(cacheKey, kek)
+        if (!cache.hasSpans(cacheKey)) return newRecord(cacheKey, kek)
         val record = SealRecord.decode(cache.record(cacheKey))
         val verdict = if (record == null) {
             SealVerdict.LOST
@@ -152,7 +152,7 @@ class BookKeys(
         cache.removeCopy(cacheKey)
         // QA M4: never a new record over spans that stayed (the player holds them): one book under two keys is noise.
         if (cache.hasSpans(cacheKey)) throw SealTransientException("a lost book's spans are held")
-        mint(cacheKey, kek)
+        newRecord(cacheKey, kek)
     }
 
     override fun keyFor(cacheKey: String): BookKey {
@@ -297,7 +297,7 @@ class BookKeys(
     }
 
     /** A new data key and record for [cacheKey], overwriting any leftover (§4.3 step 2): every start-over gets new ones. */
-    private fun mint(cacheKey: String, kek: Pair<Int, SecretKey>) {
+    private fun newRecord(cacheKey: String, kek: Pair<Int, SecretKey>) {
         val raw = KeyGenerator.getInstance("AES").apply { init(256) }.generateKey().encoded
         try {
             val nonce = randomBytes(SealRecord.NONCE_SIZE)

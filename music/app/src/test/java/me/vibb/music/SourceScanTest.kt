@@ -725,7 +725,7 @@ class SourceScanTest {
             while (at >= 0) {
                 val chain = text.substring(at, text.indexOf("\n\n", at).takeIf { it > 0 } ?: text.length)
                 val noUpstream = chain.contains(".setUpstreamDataSourceFactory(null)")
-                assertTrue("${f.name}: a factory with an upstream and no explicit sink\n$chain", noUpstream || chain.contains(".setCacheWriteDataSinkFactory("))
+                assertTrue("${f.name}: a factory with an upstream and no explicit sink\n$chain", noUpstream || chain.contains(".setCacheWriteDataSinkFactory"))
                 at = text.indexOf("CacheDataSource.Factory()", at + 1)
             }
         }
