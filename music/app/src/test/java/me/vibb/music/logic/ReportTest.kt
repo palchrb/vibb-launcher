@@ -24,13 +24,14 @@ import java.net.SocketTimeoutException
  */
 class ReportTest {
     @Test
-    fun `the launcher's nudge reports at once only when the last report is an hour old or none`() {
+    fun `the launcher's nudge reports at once when it asks, or when the last report is an hour old or none`() {
         val now = 1_800_000_000_000L
-        assertTrue("no report yet", reportOnNudge(null, now))
-        assertTrue("13 h old: the launcher's ask", reportOnNudge(now - 13 * 3_600_000L, now))
-        assertTrue("exactly an hour", reportOnNudge(now - REPORT_ON_NUDGE_MS, now))
-        assertFalse("a minute old: the sync reports", reportOnNudge(now - 60_000, now))
-        assertTrue("a time in the future (clock moved back)", reportOnNudge(now + 60_000, now))
+        assertTrue("the launcher's report ask: always (code QA L2)", reportOnNudge(true, now - 60_000, now))
+        assertTrue("no report yet", reportOnNudge(false, null, now))
+        assertTrue("13 h old", reportOnNudge(false, now - 13 * 3_600_000L, now))
+        assertTrue("exactly an hour", reportOnNudge(false, now - REPORT_ON_NUDGE_MS, now))
+        assertFalse("another nudge, a minute old: the sync reports", reportOnNudge(false, now - 60_000, now))
+        assertTrue("a time in the future (clock moved back)", reportOnNudge(false, now + 60_000, now))
     }
 
     @Test
