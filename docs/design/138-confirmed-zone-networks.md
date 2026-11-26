@@ -1,9 +1,10 @@
-# 138 - A zone's Wi-Fi: the parent confirms it, the phone learns it, both bound to the router's address
+# 138 - A zone's Wi-Fi: the parent confirms it, the phone learns it, both bound to the router
 
-Status: **design**, 2026-11-26 (branch `wifi-link-confirm`), read against `main` 3e84d466f. Approved by the owner on
-2026-11-26 as A + B + the router's address; this note designs exactly that. It blocks the next launcher RC and the
-stable release. Both directories, one migration (0180), one new contract file. Android 14-17: every API used is at or
-under minSdk 34 (§9); the emulator rows run on 14 and 16.
+Status: **design, revision 2**, 2026-11-26 (branch `wifi-link-confirm`), read against `main` 3e84d466f. Approved by
+the owner on 2026-11-26 as A + B + the router's address; revision 2 takes the design QA (H1, M1-M4, L1-L9) and the
+owner's answers of the same day (Q1, the travel router, the cell veto; §11). Revision 1 was 714ab8e3b. It blocks the
+next launcher RC and the stable release. Both directories, one migration (0180), one new contract file. Android
+14-17: every API used is at or under minSdk 34 (§9); the emulator rows run on 14 and 16.
 
 ## 0. Short answer
 
@@ -14,24 +15,27 @@ under minSdk 34 (§9); the emulator rows run on 14 and 16.
   `FIX result=none` and backed off 20, 40, 90, 190 min; the PWA showed an old position. A real motion fire indoors
   does the same.
 - **A - the parent confirms the zone's network** on the zone's page: the network the phone is on now (its name, when
-  it is a saved WPA2/WPA3 personal network), one tap. It counts at once. Removable, more than one per zone, the router
-  bound by its address. Moving the zone further than its radius clears them. Good GPS far outside the zone with that
-  router connected or heard blocks it, and the zone shows one orange line.
+  it is a WPA2/WPA3 personal network), one tap. It counts at once. Removable; more than one per zone. Bound to the
+  router (its address's first five octets - one router's bands - or its multi-link address) and the name. Moving the
+  zone further than its radius clears it. Good GPS far outside the zone with that router connected or heard, twice,
+  blocks it, and the zone shows one orange line. **A is the path everywhere** - a detached house hearing only its own
+  router too.
 - **B - the phone also learns the link from Wi-Fi fixes** surely inside the zone while it is on a PSK/SAE network:
-  the same link row and counters as GPS teaching (3 occasions on 2 days), behind a gate - the fix must still lie
-  surely inside without the connected network's own results.
-- **Every link is bound to the router's address (BSSID)**, not only to the name, security and Android's network id:
-  a hotspot elsewhere with the same name and password confirms nothing. The set of addresses grows while the link
-  holds: an affiliated link of the same multi-link router at once, a mesh node or the other band of the same name
-  once it is a settled AP of the zone's own rows (design 134 rev 4's rules, reused). A new router stops confirming
-  until the parent confirms it (the orange line says so).
-- **How the PWA learns the address**: the status report's `zone_watch` gains `wifi` - the connected network's name,
-  BSSID and MLO address - while the policy has zones. A confirm binds to what the newest report says.
-- **A process restart still counts as `MOVED`** (D11): with A or B the first try at home is `link`-checked and fresh,
-  so the restart costs one attempt; persisting the motion flags would vouch a phone that moved while no process ran.
-- **Server**: migration **0180** (`zone_networks`; the branches waiting for after the release renumber at their
-  merge); the policy's `location_policy.zones[]` gains `networks`. The contract is `contracts/core/zone_networks.json`
-  (new) and `zone_status_report.json` (grown), both sides in one commit.
+  the same link row and counters as GPS teaching (3 occasions on 2 days). **B is for areas with neighbours**: it
+  learns only when the neighbours' routers alone place the phone inside.
+- **At every use, the neighbours must agree**: the Wi-Fi fix recomputed without the connected router (its network
+  and its device, so its guest name is out too) must still have its centre inside the zone. Only a parent's
+  confirmation may stand where nothing else is heard - unless the serving cell is placed elsewhere, the router's own
+  rows have moved, or it is struck. A registered cell placed far from the zone vetoes every link.
+- **A router that travels with the family should not be confirmed** (§3): elsewhere its neighbours disagree, and
+  where nothing else is heard the first good outdoor GPS fix moves its rows and strikes it - until then it can stand
+  for "home".
+- **How the PWA learns the router**: the status report's `zone_watch` gains `wifi` - the connected network's name,
+  BSSID and multi-link address - while the policy has zones. A confirm binds to the newest report that has it.
+- **A process restart still counts as `MOVED`** (D11); "Fjern" ends only the parent's confirmation (Q1, decided).
+- **Server**: migration **0180** (`zone_networks`); the post-release chain renumbers after it in its own order. The
+  policy's `location_policy.zones[]` gains `networks`. The contract is `contracts/core/zone_networks.json` (new) and
+  `zone_status_report.json` (grown), both sides in one commit.
 
 ## 1. Today (`main` 3e84d466f)
 
@@ -48,217 +52,216 @@ under minSdk 34 (§9); the emulator rows run on 14 and 16.
   report in `device_status.zone_watch_json` (`zones::sanitize_zone_watch`, known keys only, at most 512 bytes).
 - The policy's zones are `{id, latitude, longitude, radius_m}` (pinned by `policy_json_keys_snapshot` and
   `PolicyResponseCompatTest`); the fences' fingerprint and the zone key read only the circle.
+- The attempt's snapshot reads the connection through `connectedNow` (design 134 D25) and the cells (`readCells`);
+  the passive teach (`offerPassive`) reads the connection without the callback.
 
 ## 2. Decisions
 
-### D1. A link is a zone, a network name and a set of router addresses
+### D1. Two sources, one check
 
-A link confirms only while the phone is connected to an address in the zone's set. The set has three sources, and
-one pure function answers for all of them (`zoneLink`, `PlacesPlan.kt`):
+A link is a zone, a network name and a router. One pure function answers whether the connection holds one
+(`zoneLink`, `PlacesPlan.kt`):
 
 ```
-enum class LinkBy { CONFIRMED, GROWN, LEARNED }
-fun zoneLink(conn: LinkConn, zone: LinkZone, confirmed: List<ConfirmedAp>, struck: Set<Long>,
+enum class LinkBy { CONFIRMED, LEARNED }
+fun zoneLink(conn: ZoneConn, zone: LinkZone, confirmed: List<ConfirmedAp>, struck: Set<Long>,
              rows: List<PlaceRow>, nowMin: Int): LinkBy?
 ```
 
-1. **CONFIRMED** - a parent's confirmation for the zone (D2) that isn't struck (D7): the same network key (the SSID's)
-   and personal class, and the connected AP is its address (`keys.ap(bssid)`) or an affiliated link of the same MLO
-   router (`keys.device(bssid, mld)` equal, `mld` known on both).
-2. **GROWN** - a `LINK_AP` row (D5) of the zone with the connected AP's key or MLO key, the same network, not
-   blocked, while the zone has an unstruck confirmation of that network name.
-3. **LEARNED** - a `LINK_AP` row as in 2, while the zone's `LINK` row of that network is `linked` under the
-   connection's design 131 binding.
+- **The router's match** (both sources, the server's page too - H1): the connected AP's device key - its BSSID's
+  first five octets, design 125's one router's bands (`keys.device(bssid, null)`) - or its multi-link address
+  (`keys.device(bssid, mld)`, `mld` known on both sides) equals the router's; and the network key (the SSID's) is
+  the same. A mesh node with its own address prefix is another router (D5).
+- **CONFIRMED** - a parent's confirmation for the zone (D2) that isn't struck (D7), matched as above. It needs a
+  `ZoneConn`: connected, unmetered, PSK or SAE, a readable BSSID and a name - **not** Android's network id (M4: the
+  callback's `WifiInfo` may come back with -1 on the Jelly).
+- **LEARNED** - the zone's `LINK` row of that network, `linked` under design 131's binding (which keeps the network
+  id: the learned link is unchanged there), and a `LINK_AP` row (D5) of the zone matching the router. The security
+  part stays `linkSecurityHolds`: PSK/SAE, or enterprise with its AP among the fix's own rows; open, OWE and unknown
+  never.
 
-`LinkConn` (design 131's `linkConn`, unchanged: unmetered, Android's saved-network id >= 0) now needs a readable
-BSSID for any link (its `apKey` non-null) and gains `mldKey`. The security part stays `linkSecurityHolds`: PSK/SAE
-always; enterprise only when its AP is one of the fix's own rows (131's rule - and only through LEARNED, D2); open,
-OWE and unknown never. `linkConfirms`, `linkRenews`, the `ZONE` leave-one-out class, the report's `links` (D3) and
-the strikes (D7) all call `zoneLink`; nothing else reads `LINK` rows. A locally administered BSSID may be in the set
-(a mesh's extra radios use them; the occasion or the parent's tap is what puts it there, and a metered hotspot never
-has a `LinkConn`), but it never grows a set by the settled rule (it has no rows).
-
-`linkConfirms(fix, ...)` keeps its shape: some zone the fix is surely inside (`d + a <= r`) has a `zoneLink`. So a
-confirmation made for the wrong zone confirms nothing: no fix at home is surely inside School.
+`linkConfirms`, `linkRenews`, the `ZONE` leave-one-out class and the strikes (D7) call `zoneLink`; nothing else reads
+`LINK` rows.
 
 ### D2. A: the parent's confirmation
 
-- **What can be confirmed**: the network the phone reported in its newest report (D3), when that report is at most
-  1 h old: a saved WPA2/WPA3 personal network (PSK or SAE), unmetered, with a visible name and a readable BSSID. An
-  open or OWE network is never reported, so it can never be confirmed; an enterprise network is never reported either
-  - it keeps design 131's rule (B and GPS teaching, its AP among the fix's own rows).
-- **One row per router address** (`zone_networks`, D12): the zone, the name, the BSSID, the MLO address when the
-  phone had one. A mesh with its own names is several rows of several names. At most 8 per zone
-  (`MAX_ZONE_NETWORKS`, code's).
+- **What can be confirmed**: the network of the phone's newest report that has `wifi` (D3, D4). Open, OWE and
+  enterprise networks are never reported, so they can never be confirmed; an enterprise network keeps design 131's
+  rule (learned only, its AP among the fix's own rows).
+- **One row per BSSID** (`zone_networks`, D12): the zone, the name, the BSSID, the multi-link address when the phone
+  had one. A mesh with its own names, or with nodes of another prefix, is several rows. **At most 16 per zone**,
+  blocked rows counted (L8: a blocked row stays listed until the parent removes or replaces it, which frees its
+  place).
 - **It counts at once**: the save nudges the phone (`command_notify`, as every zone save), the policy carries the row
   (D13), and the next attempt's `linkConfirms` answers `CONFIRMED` - no occasions, no days.
-- **Not bound to Android's network id**: the address is the stronger binding. The network saved anew (a new password)
-  at the same router still confirms; a router with a new address does not.
-- **Remove**: the zone's page removes a name - every row of that name for the zone. It ends the parent's
-  confirmation only; the phone's own learned link (B) for the same network stands, as a learned link does today
-  (open question Q1).
-- **Replace**: there is no edit. A new router is confirmed (a new row) and the old name's rows removed when the
-  parent wants; a blocked row is replaced by confirming its router again (a new id, the block gone).
+- **Remove** ("Fjern", Q1 decided): every row of that name for the zone. It ends the parent's confirmation only; the
+  phone's own learned link for the same network keeps confirming.
+- **Replace**: no edit. A new router is confirmed (a new row); a blocked row is replaced by confirming its router
+  again (a new id, the block gone).
 
-### D3. How the PWA learns the network: `zone_watch.wifi`
+### D3. How the PWA learns the router: `zone_watch.wifi`
 
 The status report's `zone_watch` (a heartbeat field already, so a changed network never forces a full report and
-`HEARTBEAT_FIELDS`/`fields_tag` stay as they are) gains:
+`HEARTBEAT_FIELDS`/`fields_tag` stay) gains:
 
 ```json
-"wifi": {"ssid": "Net-A", "bssid": "00:00:5e:00:53:01", "mld": "00:00:5e:00:53:10", "links": [12]},
+"wifi": {"ssid": "Net-A", "bssid": "00:00:5e:00:53:01", "mld": "00:00:5e:00:53:10"},
 "wifi_struck": [7]
 ```
 
-- `wifi` is sent only while the policy has zones (Regularly with zones), Location is on, the phone is device owner,
-  and the connection is a saved (`networkId >= 0`), unmetered PSK/SAE network with a UTF-8 name (Android's quoted
-  form; a hidden or hex-only name is left out) and a readable BSSID. `mld` only when Android gives one. Otherwise no
-  `wifi` key at all.
-- `links`: the zone ids for which `zoneLink` holds for this connection now (any of the three sources), at most 10.
-  The server needs it for one thing: the "Unknown router" line (§4) must not show for a mesh node the phone has
-  already grown into the set.
+- `wifi` only while the policy has zones (Regularly with zones), Location is on and the phone is device owner, for a
+  `ZoneConn` (D1) with a UTF-8 name (Android's quoted form; a hidden or hex-only name is left out). `mld` only when
+  Android gives one. Otherwise no `wifi` key. No `links` (L7): the server works out "Ukjent ruter" itself (§4).
 - `wifi_struck`: the confirmation ids the phone struck (D7) that the policy still carries, at most 80.
-- Read on the report's path by a new `WifiPlaces.reportWifi(context)` (suspend, in the sync before the report is
-  built): `connectedNow` - design 134 D25's read, reused as it is (D10).
+- Read on the report's path by `WifiPlaces.reportWifi(context)` (suspend, in the sync before the report is built)
+  through `connectedNow` (D10).
 - Server: `sanitize_zone_watch` keeps the new keys only in their shape - `ssid` 1-32 bytes, no control characters;
   `bssid` and `mld` six lowercase hex pairs, unicast, never `00:00:00:00:00:00` or `02:00:00:00:00:00` (Android's
-  redacted value); `links` and `wifi_struck` positive integers within their caps. A bad `wifi` is dropped alone, the
-  rest of `zone_watch` kept. `ZONE_WATCH_MAX` 512 -> 2048. `ZoneWatch` keeps its fields and its `Copy`; the network is
-  read apart (`zones::reported_wifi(stored) -> Option<ReportedWifi>`, with the report's `reported_at`).
-- What the server holds: the name and address of the saved network the phone is on, only while it has zones, in the
-  report rows it already prunes after 48 h, and the confirmed rows until removed. It already holds the phone's
-  positions, so the name of the router at a position adds little. The security log never names a network (D12).
+  redacted value); `wifi_struck` positive integers within the cap. A bad `wifi` is dropped alone, the rest of
+  `zone_watch` kept. `ZONE_WATCH_MAX` 512 -> 2048. `ZoneWatch` keeps its fields and its `Copy`; the network is read
+  apart (`zones::reported_wifi`, with the report's `reported_at`).
+- **Privacy** (L9): the server holds the name and address of the network the phone is on, only while it has zones,
+  in report rows it prunes after 48 h, and the confirmed rows until removed. The phone's cached policy holds the
+  confirmed names and addresses of its zones. Both already hold the zones' positions, so a router's name at a known
+  place adds little. The security log never names a network (D12).
 
-### D4. The confirm binds to the phone's report
+### D4. The confirm binds to the phone's report (L3, L4)
 
-- The zone's page draws the current network's row from the phone's newest report (since its enrolment) when it
-  carries `wifi` and is at most 1 h old, and the BSSID isn't already one of this zone's unblocked rows.
-- The form posts the BSSID the page showed (`bssid`, hidden). The server confirms only when the phone's newest
-  report, at most 1 h old, still has `wifi` with that BSSID; it stores the name and MLO address from that report -
-  never from the form. Anything else: no row, the page again at `#zone-wifi` with the flash "The phone is on another
-  network now".
+- The zone's page reads the phone's newest report (since its enrolment) that **has** `wifi`, when it is at most 1 h
+  old and no newer report has `wifi` with another BSSID (a report without `wifi` - a redacted read - neither shows nor
+  hides it).
+- The current network's row (its name and Bekreft) shows when that report's router isn't already one of the zone's
+  unblocked rows by the match of D1 (prefix or multi-link address, and the name), and the phone's newest stored fix
+  isn't surely outside the zone (`zones::side`; no fix counts as not outside).
+- The form posts the BSSID the page showed. The server confirms only when the same lookup, at the POST, finds that
+  BSSID or its multi-link address; it stores the name and the multi-link address from that report, never from the
+  form. Anything else: no row, the page again at `#zone-wifi` with "Telefonen er på et annet nettverk nå".
 - The same BSSID twice (two parents): one row, the second tap a no-op that still says Saved. A blocked row of that
-  BSSID: deleted and a new row made, in one transaction (a new id, so the phone's struck id no longer matches it).
-- The zone must be this phone's (404 otherwise); the 9th row is refused ("At most 8 routers").
+  BSSID: deleted and a new row made, in one transaction (a new id, so the phone's struck id no longer matches).
+- The zone must be this phone's (404 otherwise); the 17th row is refused.
 
-### D5. The set grows while the link holds (`LINK_AP` rows)
+### D5. The learned link's routers (`LINK_AP` rows)
 
-- **New row kind** `RowKind.LINK_AP(6)` in the sealed table: `key` = the zone's key, `device` = an AP's key cut to 8
-  bytes, or an MLO router's device key (`keys.device(bssid, mld)`), `network` = the network key; its id `p/key/device`.
-  The table's version stays 1 (an older launcher would drop the table; no backward compatibility is owed - root
-  `CLAUDE.md`); it is dropped with its zone's key like a `LINK` row (a moved or resized zone, a zone gone, the mode
-  off Regularly).
-- **What joins** (`growLinkAps`, pure, run where `zoneLink` is first asked in an attempt and at every teach; the
-  table saved when it changed), for a zone with a live link of the connection's network (an unstruck confirmation of
-  that name, or the `linked` `LINK` row under the binding):
-  - **an affiliated link** - the connected AP shares its MLO router with an address in the set (design 134 rev 4's
-    `sameAp`, which treats another link of the same MLO device as the same AP): it confirms at once, and its key joins;
-  - **a settled AP of the zone's place rows** - the connected AP's device (design 125's device key) is settled
-    (`deviceSettled`, design 134 D20.5: a trusted own Wi-Fi row on >= 2 local days, none moved or blocked) and every
-    such row of the device lies inside the zone (`d <= r` from the row's position): a mesh node or the other band of
-    the same name. Its AP key (and MLO key when known) joins.
-  - **an AP at an occasion** (D6): the connected AP of a counted inside occasion joins its learned link's set.
-- Another name never joins by growth: a mesh with its own names is confirmed per name (D2).
-- A new router has no rows yet and no occasion: it confirms nothing until the parent confirms it, or, unconfirmed,
-  until B's 3 occasions on 2 days.
-- A link learned before this build has no addresses: it confirms nothing until its next occasion adds the connected
-  one (no backward compatibility is owed; the parent's Confirm is the at-once path).
+- **New row kind** `RowKind.LINK_AP(6)` in the sealed table: `key` = the zone's key, `device` = a router's device key
+  (the five-octet key, and a second row for the multi-link key when known), `network` = the network key; its id
+  `p/key/device`. Version 1 stays (an older launcher would drop the table; no backward compatibility is owed). Dropped
+  with its zone's key like a `LINK` row (a zone moved, resized, gone, the mode off Regularly).
+- **What joins** (L5): the connected router at **every** teach surely inside the zone - GPS or B's Wi-Fi teach -
+  while connected under the link's binding, counted as an occasion or not (inside the 30-min gap).
+- **Kept alive** (L6): `lastSeenMin` moves at most once a day when the row confirms, so the 180-day ageing
+  (`prune`) never takes a router in use.
+- **Cut for this release (H1)**: revision 1's growth by a settled AP of the zone's rows. A mesh node with its own
+  address prefix is another router: the page shows "Ukjent ruter" with Bekreft, and the learned link adds it at its
+  next inside teach.
+- A link learned before this build has no routers: it confirms nothing until its next inside teach adds one.
 
 ### D6. B: the link learned from Wi-Fi fixes - the same row, one gate
 
-**The same `LINK` row and counters** as GPS teaching. The row means one thing - this network was connected inside
-the zone on N occasions over D days - whatever placed the phone inside; a sibling kind would double the binding,
-rebind, clear and strike code for the same meaning. The difference in grade is handled at the entry, and strikes
-still come only from GPS (D7).
+**The same `LINK` row and counters** as GPS teaching. The row means one thing - this network was connected inside the
+zone on N occasions over D days - whatever placed the phone inside; a sibling kind would double the binding, rebind,
+clear and strike code for one meaning. The difference in grade is handled at the entry, and strikes come only from
+GPS (D7).
 
-A Wi-Fi occasion (`wifiOccasion`, pure; run once at an attempt's end, `WifiPlaces.attempt`, on the snapshot the fix
-was judged on) counts when all hold:
+A Wi-Fi teach (`wifiOccasion`, pure; once at an attempt's end, `WifiPlaces.attempt`, on the snapshot the fix was
+judged on) counts when all hold:
 
-1. the attempt judged a Wi-Fi fix (`vibb_wifi` or `vibb_apple`, own, Apple or mixed) from a fresh scan view
-   (`fix.fresh`), its verdict not `REFUSE`, and its check not `link` (a link never teaches itself);
+1. the attempt judged a Wi-Fi fix (`vibb_wifi` or `vibb_apple`) from a fresh scan view, its verdict not `REFUSE`, its
+   check not `link` (a link never teaches itself);
 2. the attempt marked no disagreement (no overruling satellites, no impossible jump, no learned contradiction);
 3. the fix is surely inside the zone (`d + a <= r`);
-4. **without the connected network**: `learnedFix` over the same view without the connected network's results gives
-   a fix that is also surely inside the zone - the neighbours place the phone inside, not the router's own position
-   (which would follow a copied router address anywhere);
-5. the connection has a `LinkConn` whose security holds (PSK/SAE; enterprise with its AP in the fix's rows).
+4. **the fix without the connected router** (D8's exclusion) exists and is surely inside the zone - no exception
+   here: B learns only where the neighbours place the phone;
+5. the connection has a `LinkConn` whose security holds, and no cell veto (D9).
 
-Then `teachLinks(..., strikes = false)` adds the inside occasion under the binding (131's rules: another binding
-starts the occasions over, the rebind after a boot), and the connected AP (and its MLO key) joins the set (D5). The
-occasion gap (30 min) and the day rule are the same; GPS and Wi-Fi occasions add up. The heartbeat's 30-min interval
-gives the 3 occasions on 2 days in about a day and a night at home.
+Then `teachLinks(..., strikes = false)` adds the inside occasion under the binding (131's rules) and the router joins
+(D5). The occasion gap (30 min) and the day rule are the same; GPS and Wi-Fi occasions add up - at home on the
+30-min heartbeat, about a day and a night.
 
-### D7. Strikes: by address, one blocks
+### D7. Strikes: by router, two fixes (M2)
 
-At a GPS teach (teaching quality: <= 25 m, >= 5 satellites, not mock in a release build) surely outside a zone by
-200 m (`d - a >= r + 200 m`, as today), an address of that zone's set **connected now, or heard in the results paired
-with the teacher**, is struck:
+At a GPS teach (teaching quality: <= 25 m, >= 5 satellites, not mock in a release build), a router of a zone's links
+(a confirmation's or a `LINK_AP` row's, by D1's match) is **struck** when:
 
-- **a confirmation**: its id joins the phone's struck list (CE prefs `wifi_places` `confirm_struck_v1`); from then on
-  `zoneLink` never answers `CONFIRMED` for it, and the report's `wifi_struck` carries it until the policy no longer
-  does (the server blocks it, D12). Logged `WifiPlaces: zone link struck by=confirmed` (no id, no name).
-- **a `LINK_AP` row**: blocked 60 days (`blockedUntilMin`, `BLOCK_MIN`); the `LINK` row's counters stay. Logged
-  `by=learned`. When it was heard there, the same teach marks its device's own rows moved, so it can't come back by
-  the settled rule either.
+- **connected now** and the fix is surely outside by 200 m (`d - a >= r + 200 m`, as today), or
+- **heard in the results paired with the teacher** and the fix is outside by the band's reach
+  (`d - a >= r + reach`: 300 m on 2.4 GHz, 150 m on 5 and 6 GHz - design 125's `Band.reachM`);
+- and a **second teaching fix at least 60 s and at most 2 h later** says the same (any teach: the same stream, a
+  passive fix, the teaching alarm, the next try). The first is pending in memory (per zone and router, lost with the
+  process); one fix never strikes.
 
-One strike blocks: an address of the router heard 200 m beyond the zone's edge with good satellites means that router
-(or a copy of its address) is there - stronger evidence than today's strike by a heard *name*, which needed two. The
-name-based strike goes: a same-named network elsewhere can't confirm anything any more, so striking on it only cost
-relearning. Wi-Fi fixes never strike; good outdoor GPS always overrules a Wi-Fi fix (`gpsOverrules`, unchanged).
+Then:
 
-The struck list is cleared with every Wi-Fi places clear (Location Off, unenrol, a broken key); the server's block
-outlives it.
+- **a confirmation**: its id joins the phone's struck list (CE prefs `zone_links` `confirm_struck_v1` - not the Wi-Fi
+  places prefs, so a clear keeps it, L2; an id leaves only when the policy no longer carries it, and unenrolment
+  empties it). `zoneLink` never answers `CONFIRMED` for it, and the report's `wifi_struck` carries it until the
+  server's block reaches the policy. Logged `WifiPlaces: zone link struck by=confirmed` (no id, no name).
+- **a `LINK_AP` row**: blocked 60 days (`blockedUntilMin`); the `LINK` row's counters stay. Logged `by=learned`.
 
-### D8. Zone edits and the phone's other changes
+The strike by a heard *name* goes: a same-named network elsewhere can't confirm anything any more. Wi-Fi fixes never
+strike; good outdoor GPS always overrules a Wi-Fi fix (`gpsOverrules`, unchanged). The passive teach reads the
+connection through `connectedNow` too (L1: `offerPassive` runs on the passive feed's executor, so the up-to-1-s
+callback blocks nothing that matters), so a connected router can strike there.
 
-- **Moved further than its radius** (the distance between the old and new centre > the old radius): every
-  confirmation of the zone is deleted in the save's transaction; the `zone_changed` line gains "Wi-Fi removed". A
-  smaller move or a radius change keeps them. On the phone any circle change drops the zone's `LINK` and `LINK_AP`
-  rows (its key changes, as today); the confirmations come back from the policy under the same id.
-- **Deleted zone**: its rows go by cascade.
-- **A new phone enrolled into the row**: the confirmations stay (they describe the router, not the phone), blocked
-  ones too.
-- **Off or Only when asked**: the policy carries no zones, so no `networks` and no `wifi` report; the rows are kept.
-- **After design 135** (family zones, waiting after the release): the confirmations belong to the place, so 135's
-  rebase moves `zone_networks.zone_id` to the family zone (one row per family zone and BSSID, the oldest unblocked
-  kept) and serves them to every phone linked to it; the family zone's editor shows each linked phone's current
-  network. A strike from one phone blocks it for all. 135's migration does the move; 138 is built against `main`.
+### D8. At every use: the neighbours must agree (M3, the owner's travel router)
 
-### D9. What the check changes downstream
+`linkConfirms(fix, ...)` answers `link` only when, for a zone:
 
-Nothing new: a `link`-checked fix is what design 131 already handles - it stands (`wifiVerdict`), is fresh
-(`wifiFresh`), may become the still vouch, lets Locate stop at 20 s, and on the server is a fine fix that starts and
-confirms a side. The owner's case: `MOVED`, `TOGETHER`, the Apple fix judged `check=link step=USE`, GPS silent,
-`attemptKeep` keeps the Wi-Fi fix with `link`, `notFresh` false, `FIX result=fresh`, no back-off.
+1. `zoneLink` holds, and the fix's **centre** is inside the zone (`d <= r`) for CONFIRMED (M1: the parent vouched
+   for the place), or the fix is **surely** inside (`d + a <= r`) for LEARNED (as today);
+2. **the fix without the connected router** - `learnedFix` over the same view with `view.heard` filtered by
+   `network != conn.network && device != connectedDevice` (the router's guest name on the same device is out too) -
+   has its centre inside the zone (`d <= r`). For an Apple fix the same, over the table with its Apple rows;
+3. **the exception, CONFIRMED only**: when nothing else is placed after the exclusion - no other result with a
+   trusted own row or a live Apple row (an unknown router says nothing about where the phone is) - the confirmation
+   stands, unless the router's own rows have moved or are blocked (design 125: `moves > 0` or blocked on any of its
+   device's Wi-Fi rows) or it is struck. LEARNED has no exception;
+4. no cell veto (D9).
+
+If other routers are placed but make no fix of their own (one placed network), the link doesn't confirm: the try
+runs GPS, as design 131 has it. A detached house usually hears only its own router (no placed neighbours, so the
+exception applies) or several placed neighbours (a fix); the one-faint-neighbour case falls back to GPS. If that case
+turns up at the owner's or a family's house, the small widening is "the placed routers all within the zone's radius
+plus their range" - one pure function, not built now.
+
+The server's own rule (`zones::side`, the straddle) is unchanged: a `link`-checked fix that straddles the edge is
+still unsure there.
+
+### D9. The cell veto (the owner: the cells should say the router can't be trusted)
+
+Design 134 rev 3's `cellElsewhere`, reused, vetoes every link confirmation and every B teach: the registered cell
+read in the attempt (`snap.cells`) has a position - a trusted own cell row or a live Apple cell row already in the
+table, never a lookup started for it - further from the zone than the cell's range + the fix's accuracy + 1 km
+(`VouchPoint` = the zone's centre, its accuracy the zone's radius + the fix's accuracy). An unknown cell, no SIM, no
+registered cell: no veto. **It needs a SIM; the Jelly has none yet.** The motion sensor can't help here: it says the
+phone moved, not how far.
 
 ### D10. The connection read in the background
 
-Reuse design 134 D25's `connectedNow` as it is: `WifiManager.getConnectionInfo()` first; when it gives no readable
-BSSID (the Jelly's `02:00:00:00:00:00` in the background) while the active network carries Wi-Fi, one
-`NetworkCallback(FLAG_INCLUDE_LOCATION_INFO)` for Wi-Fi, up to 1 s, then unregistered. The attempt's snapshot and
-`teachWith` already read through it; the report's `reportWifi` calls the same function. Unreadable: no `wifi` in the
-report and no link this attempt (logged `zone wifi report no reason=unreadable|none|metered|security|unsaved|hidden`,
-never a name or address). No new permission: fine and background location are self-granted, as for 134.
+Reuse design 134 D25's `connectedNow`: `WifiManager.getConnectionInfo()` first; when it gives no readable BSSID (the
+Jelly's `02:00:00:00:00:00` in the background) while the active network carries Wi-Fi, one
+`NetworkCallback(FLAG_INCLUDE_LOCATION_INFO)` for Wi-Fi, up to 1 s. The attempt's snapshot, `teachWith`, the passive
+teach (D7) and `reportWifi` read through it. Unreadable: no `wifi` in the report and no link this attempt (logged
+`zone wifi report no reason=unreadable|none|metered|security|hidden`, and `connection read by callback yes|no
+netid=known|none` - never a name or address). No new permission.
 
 ### D11. A process restart still counts as `MOVED`
 
-Recommend **no change**. The flags live in memory because the significant-motion trigger is armed by the process: an
-update, a crash or a kill leaves a gap in which a move is never seen. Carrying the flags across would let a phone
-that moved during that gap vouch its old position `STILL` for up to 4 h - a wrong "Here now". The finding was not the
-restart but the unchecked fix: with A or B the restart's `MOVED` try at home is `link`-checked and fresh, so it costs
-one attempt and nothing more. Elsewhere indoors, without a confirmed or learned link, the try runs GPS and the
-back-off follows - design 131's intended behaviour, unchanged.
+No change. The flags live in memory because the significant-motion trigger is armed by the process: an update, a
+crash or a kill leaves a gap in which a move is never seen, and carrying the flags across would vouch a phone that
+moved meanwhile `STILL` for up to 4 h. The finding was the unchecked fix, not the restart: with A or B the restart's
+`MOVED` try at home is `link`-checked and fresh, so it costs one attempt. Elsewhere indoors without a link the try
+runs GPS and backs off - design 131's intended behaviour.
 
 ### D12. Server: migration 0180, the routes, the log
 
-No existing table fits: `device_zones` is one row per zone with its rule state, and a set of addresses per zone
-needs its own rows. `main`'s newest migration is 0179; the branches waiting for after the release (phase D's 0180,
-135's 0181, and the others up to 0183) renumber at their merge (the order hazard, `server/CLAUDE.md`).
+No existing table fits: `device_zones` is one row per zone with its rule state; a set of routers per zone needs its
+own rows. This build keeps **0180**; the post-release chain renumbers after it in its own order (phase D's drop
+before 135's family zones), each before its first push to `main` (the order hazard, `server/CLAUDE.md`).
 
 ```sql
--- Design 138: Wi-Fi routers a parent confirmed for a zone, one row per router address (BSSID).
--- `ssid` the name the phone reported, `mld` the router's multi-link address when it had one;
--- `blocked_at` set when the phone reported the router seen far outside the zone (then never served).
+-- Design 138: Wi-Fi routers a parent confirmed for a zone, one row per BSSID. `ssid` the name the
+-- phone reported, `mld` the router's multi-link address when it had one; `blocked_at` set when the
+-- phone reported the router seen far outside the zone (then never served).
 CREATE TABLE zone_networks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     zone_id INTEGER NOT NULL REFERENCES device_zones(id) ON DELETE CASCADE,
@@ -277,54 +280,69 @@ CREATE UNIQUE INDEX idx_zone_networks_ap ON zone_networks(zone_id, bssid);
   `POST /devices/{id}/zones/{zone_id}/wifi/{network_id}/delete` (every row of that row's name in the zone).
 - **The strike intake** (`zones::intake`, after the fix): `wifi_struck` ids that are this phone's zones' rows and not
   yet blocked get `blocked_at`, one security line each, and a nudge; another phone's ids are ignored.
-- **Security log** (the zone's name, never the network's name or address): `zone_wifi_confirmed` "Wi-Fi confirmed",
-  `zone_wifi_removed` "Wi-Fi removed", `zone_wifi_blocked` "Wi-Fi seen elsewhere"; `zone_changed` gains the detail
-  "Wi-Fi removed" when a move cleared them.
-- **The policy** (`zones::policy_zones`): each zone gains `networks`, its unblocked rows (D13).
+- **Security log** (the zone's name, never the network's name or address): `zone_wifi_confirmed`,
+  `zone_wifi_removed`, `zone_wifi_blocked`; `zone_changed` gains "Wi-Fi removed" when a move cleared them.
+- **Zone edits**: moved further than its radius (old to new centre > the old radius) - every row of the zone deleted
+  in the save's transaction; a smaller move or a radius change keeps them; a deleted zone cascades; a new phone
+  enrolled into the row keeps them (they describe the router). On the phone any circle change drops the zone's `LINK`
+  and `LINK_AP` rows (its key changes, as today); the confirmations come back from the policy.
+- **After design 135** (family zones): whether the confirmations move to the family zone is 135's call at its rebase;
+  left on the link row (`device_zones`) they keep working per phone.
 
 ### D13. The contract
 
-- `location_policy.zones[]` gains `networks` - always present, `[]` for none:
+- `location_policy.zones[]` gains `networks` - always present, `[]` for none, unblocked rows only:
   `[{"id": 7, "ssid": "Net-A", "bssid": "00:00:5e:00:53:01", "mld": null}]`. Design 64's "never a name" is the
-  zone's name; a network's name is already on the phone. The launcher's `PolicyZone` gains
-  `networks: List<ZoneNetwork> = emptyList()` (a missing key decodes as none). `fenceFingerprint` and
-  `PlaceKeys.zone` read only the circle, so a confirmation never re-registers fences or drops learned links.
+  zone's name. The launcher's `PolicyZone` gains `networks: List<ZoneNetwork> = emptyList()` (a missing key: none).
+  `fenceFingerprint` and `PlaceKeys.zone` read only the circle, so a confirmation never re-registers fences or drops
+  learned links.
 - **Files, one commit, both sides**: `contracts/core/zone_networks.json` (new: the policy's `networks` rows; the
-  report's `wifi`/`wifi_struck` rows the server keeps and drops - the redacted and zero BSSIDs, a 33-byte name,
-  a control character, too many links; a README row: 138, by hand, server `tests::zone_networks`, launcher
-  `ZoneNetworksContractTest`), `contracts/core/zone_status_report.json` (one report with `wifi` and `wifi_struck`; its
-  README row gains 138), `server/src/tests/device_api.rs` `policy_json_keys_snapshot`, the launcher's
-  `PolicyResponseCompatTest`.
+  report's `wifi`/`wifi_struck` rows the server keeps and drops - the redacted and zero BSSIDs, a 33-byte name, a
+  control character; the D1 match rows - same prefix, same multi-link address, another prefix, another name; a
+  README row: 138, by hand, server `tests::zone_networks`, launcher `ZoneNetworksContractTest`),
+  `contracts/core/zone_status_report.json` (one report with `wifi` and `wifi_struck`; its README row gains 138),
+  `server/src/tests/device_api.rs` `policy_json_keys_snapshot`, the launcher's `PolicyResponseCompatTest`.
 
-### D14. What doesn't change
+### D14. What the check changes downstream, and what doesn't
 
-`gpsOverrules`, the jump gate, the still rules, design 134's witness (it keeps its own same-AP rule and reads no
-`LINK` row), the Apple lookup, the server's `FixClass` and the fix's `check` on the wire. The kid's phone shows
-nothing new.
+A `link`-checked fix is what design 131 already handles: it stands (`wifiVerdict`), is fresh (`wifiFresh`), may
+become the still vouch, lets Locate stop at 20 s, and on the server is a fine fix. The owner's case: `MOVED`,
+`TOGETHER`, the Apple fix judged `check=link step=USE`, GPS silent, `attemptKeep` keeps the Wi-Fi fix with `link`,
+`FIX result=fresh`, no back-off. Unchanged: `gpsOverrules`, the jump gate, the still rules, design 134's witness (its
+own same-AP rule, no `LINK` row), the Apple lookup, the server's `FixClass`, the fix's `check` on the wire. The kid's
+phone shows nothing new.
 
-## 3. Faking "home": what it takes
+## 3. What a link needs
 
-- **A confirmed link** needs, at once: the network's password (to connect - the phone needs a saved network), the
-  router's own address (a network elsewhere with the same name and password has another address), and a Wi-Fi fix
-  surely inside the zone (the neighbours' routers heard - a phone elsewhere hears elsewhere's). A copied router
-  address, connected far away, is struck by the first good GPS fix there (D7) and the zone's page shows it.
-- **The child may know the home password.** That is why the address is bound: the child's own hotspot named like
-  home, with the home password, has another address and confirms nothing (and a phone's hotspot is metered, so it has
-  no `LinkConn` at all).
+- **A confirmed link** needs at once: the network's password (to connect), the router itself (another router with
+  the same name and password has another address), a Wi-Fi fix whose centre is inside the zone, the neighbours'
+  routers agreeing without it (or none placed), and no serving cell placed elsewhere.
+- **The child may know the home password.** That is why the router is bound: the child's own hotspot named like
+  home has another address and confirms nothing (and a phone's hotspot is metered, so it has no `ZoneConn`).
+- **A copied router address** elsewhere is out-voted by that place's neighbours; where nothing else is placed, the
+  cell veto (with a SIM) or the first good GPS fixes there - which move the copied address's rows and strike it -
+  end it, and the zone's page shows "Sett et annet sted".
+- **A router that travels with the family** (the same name, password and address everywhere) **should not be
+  confirmed.** Elsewhere its neighbours place the phone elsewhere, so it confirms nothing; where nothing else is
+  heard (a remote cabin) it stands for the zone until a registered cell placed away vetoes it (needs a SIM), or the
+  first good outdoor GPS fixes there move its rows and strike it. Then it is blocked and the zone shows "Sett et
+  annet sted"; removing it is the fix (§4's (i)). A learned link to it never forms where nothing else is placed (D6.4).
 - **B adds little**: an unconfirmed network learns only from fixes surely inside the zone that hold without the
-  connected network's own results (D6.4), on 3 occasions 30 min apart over 2 days, with no disagreement in any of
-  them - a network elsewhere would have to be inside the zone to teach.
-- **A wrong confirmation** (the parent taps Confirm while the phone is elsewhere) confirms nothing: no fix there is
-  surely inside the zone, and good GPS there with that router connected blocks it and shows the orange line.
+  router (D6.4), on 3 occasions 30 min apart over 2 days, with no disagreement in any of them.
+- **A wrong confirmation** (Bekreft tapped while the phone is elsewhere): the page offers it only where the newest fix
+  isn't surely outside; even so it confirms nothing where the fix or the neighbours aren't inside the zone, and GPS
+  there strikes it.
 - **Good outdoor GPS always overrules** a far Wi-Fi fix, checked or not (`gpsOverrules`), and the server still decides
   every arrival.
 
 ## 4. PWA words (nb and en)
 
 On the zone's page (`device_zone.html`), a `#zone-wifi` section after the zone's form (its own forms; not on a new
-zone). The rows: each confirmed name (`{name}`), a "Remove..." confirm on it; the current network's row (`{name}` and
-a Confirm button) when D4 lets it show. One orange line at most, under the group, "Seen elsewhere" before "Unknown
-router". The kid's phone shows nothing.
+zone). The rows: each confirmed name (`{name}`) with a "Fjern..." confirm; the current network's row (`{name}`,
+Bekreft) when D4 lets it show. One orange line at most under the group, "Sett et annet sted" before "Ukjent ruter".
+"Ukjent ruter": the phone's report (D4) has a name the zone has confirmed, its router matches none of the zone's rows
+(D1's match), and its newest fix isn't surely outside the zone. The server doesn't know the phone's learned routers,
+so a router the phone learned itself may still show it; Bekreft then is harmless. The kid's phone shows nothing.
 
 | Where | nb | en |
 |---|---|---|
@@ -332,55 +350,55 @@ router". The kid's phone shows nothing.
 | Current network's button | Bekreft | Confirm |
 | Remove (summary and button) | Fjern | Remove |
 | Remove's question | Fjerne {name}? | Remove {name}? |
-| (i) on the group | Et bekreftet nettverk gjør Wi-Fi-posisjonen sikker i sonen, uten GPS. Bare ruteren telefonen var på da du bekreftet, teller. Telefonens nettverk vises her når det har passord. | A confirmed network makes the Wi-Fi position certain in the zone, without GPS. Only the router the phone was on when you confirmed counts. The phone's network shows here when it has a password. |
-| Orange line: a confirmation blocked (the server's `blocked_at`) | Sett et annet sted | Seen elsewhere |
-| Its (i) | Telefonen var på {name} langt utenfor sonen, så det teller ikke lenger. Bekreft det igjen når telefonen er på det her. | The phone was on {name} far outside the zone, so it no longer counts. Confirm it again when the phone is on it here. |
-| Orange line: the phone on a confirmed name, its router not in `wifi.links` or the rows, its newest fix not surely outside the zone | Ukjent ruter | Unknown router |
+| (i) on the group | Et bekreftet nettverk gjør Wi-Fi-posisjonen sikker i sonen, uten GPS. Bare ruteren telefonen var på, teller. Ikke bekreft en ruter som flyttes. | A confirmed network makes the Wi-Fi position certain in the zone, without GPS. Only the router the phone was on counts. Don't confirm a router that moves. |
+| Orange line: a confirmation blocked | Sett et annet sted | Seen elsewhere |
+| Its (i) | Telefonen var på {name} langt utenfor sonen, så det teller ikke lenger. Fjern det, eller bekreft det igjen når telefonen er her. | The phone was on {name} far outside the zone, so it no longer counts. Remove it, or confirm it again when the phone is here. |
+| Orange line: an unknown router | Ukjent ruter | Unknown router |
 | Its (i) | Telefonen er på {name}, men på en ruter Vibb ikke kjenner. Står den her, trykk Bekreft. | The phone is on {name}, but on a router Vibb doesn't know. If it is here, tap Confirm. |
 | Flash, D4's refusal | Telefonen er på et annet nettverk nå | The phone is on another network now |
-| Flash, the 9th row | Maks 8 rutere | At most 8 routers |
+| Flash, the 17th row | Maks 16 rutere | At most 16 routers |
 | Flash, a confirm or remove | the existing "Lagret" | the existing "Saved" |
 | Security log labels | Wi-Fi bekreftet / Wi-Fi fjernet / Wi-Fi sett et annet sted | Wi-Fi confirmed / Wi-Fi removed / Wi-Fi seen elsewhere |
 | `zone_changed` detail | Wi-Fi fjernet | Wi-Fi removed |
 
-A confirmed name is a choice: it shows as a plain row, no state word. A blocked row stays listed (so the parent can
-remove or re-confirm it) with the orange line under the group.
+A confirmed name is a choice: a plain row, no state word. A blocked row stays listed with the orange line under the
+group.
 
 ## 5. Tests (lean)
 
 **Launcher** (pure; `PlacesTest`'s fixture `wifi_places.json` gains `zone_links` rows, and a `ZoneNetworksTest`):
 
-- `zoneLink`: confirmed by BSSID; by an affiliated MLO link; the same name at another address - none; struck - none;
-  open, OWE, enterprise - never `CONFIRMED`; metered, `networkId` -1, an unreadable BSSID - none; a locally
-  administered address confirmable; `GROWN` only with an unstruck confirmation of that name, `LEARNED` only with the
-  `LINK` row linked under the binding.
-- `linkConfirms`: a confirmation and a fix surely inside - `link`; straddling - none; inside another zone than the
-  confirmed one - none. The owner's case end to end: `MOVED`, `TOGETHER`, an Apple fix inside, a confirmation, GPS
-  silent - `attemptKeep` keeps the Wi-Fi fix with `LINK`, `wifiFresh` true.
-- `growLinkAps`: a settled device with every row inside joins; unsettled, a row outside the zone, another name, no
-  live link - not; an MLO sibling joins at once.
-- `teachLinks`: an occasion adds the connected AP and its MLO key; a strike by a confirmed address connected or heard
-  returns its id; a `LINK_AP` row struck is blocked 60 days and the `LINK` counters stay; a same-name network at
-  another address heard outside strikes nothing; `strikes = false` never strikes.
-- `wifiOccasion`: each of D6's five conditions failing alone gives no occasion; all holding gives one; the fix
-  without the connected network outside the zone - none.
-- `reportWifi`'s pure half (`zoneWifiReport`): PSK/SAE, unmetered, saved, a quoted name, a readable BSSID, zones on -
-  reported, each one failing - not; `links` and `wifi_struck` within their caps; the struck list dropped by the policy.
-- The table: a `LINK_AP` row round-trips (`encodeTable`/`decodeTable`).
-- Contract: `ZoneNetworksContractTest` (`zone_networks.json`), `ZoneReportTest` (`zone_status_report.json`),
-  `PolicyResponseCompatTest` (`networks` decode, a missing key none).
+- `zoneLink`: CONFIRMED by the same BSSID, by another BSSID of the same five-octet prefix, by the multi-link address;
+  another prefix, another name, struck - none; open, OWE, enterprise - never CONFIRMED; metered or unreadable - none;
+  network id -1 - CONFIRMED still, LEARNED not; LEARNED only with the `LINK` row linked and a matching `LINK_AP` row.
+- `linkConfirms` (D8): CONFIRMED with the centre inside and the fix straddling - `link`; LEARNED straddling - none;
+  the fix without the router outside - none; the router's guest name excluded with it; nothing placed after the
+  exclusion - CONFIRMED yes, LEARNED no; the same with the router's rows moved, blocked or struck - none; one placed
+  network and no fix - none; a cell veto - none. The owner's case end to end: `MOVED`, `TOGETHER`, an Apple fix
+  inside, a confirmation, GPS silent - `attemptKeep` keeps the Wi-Fi fix with `LINK`, `wifiFresh` true. The travel
+  router: a confirmation, another place's placed neighbours - none.
+- `teachLinks`: an inside teach adds the router (both keys), counted or not; a connected router at 200 m and a heard
+  one at its band's reach become pending; a second teaching fix 60 s-2 h later strikes (a confirmation's id; a
+  `LINK_AP` row blocked 60 days, the `LINK` counters kept); one fix, or a second after 2 h, never; a same-name router
+  of another prefix heard outside - nothing; `strikes = false` never strikes.
+- `wifiOccasion`: each of D6's conditions failing alone - no occasion; all holding - one.
+- `zoneWifiReport` (the report's pure half): a `ZoneConn` with a quoted name and zones on - reported; each failing -
+  not; the struck list kept through a Wi-Fi places clear, dropped when the policy drops its id.
+- The table: a `LINK_AP` row round-trips; `lastSeenMin` moves at most daily on use.
+- Contract: `ZoneNetworksContractTest`, `ZoneReportTest`, `PolicyResponseCompatTest` (`networks`; a missing key none).
 
 **Server** (`src/tests/zone_networks.rs`, `zones::tests`):
 
-- `sanitize_zone_watch` over the contract's rows: kept and dropped, a bad `wifi` dropped alone.
-- Confirm: binds the newest report's name and MLO address; a report over 1 h old, another BSSID, no `wifi` - nothing
-  written, the flash, at `#zone-wifi`; twice - one row; a blocked BSSID - a new id; the 9th - refused; another
-  phone's zone - 404. Remove: every row of the name. Both land on `#zone-wifi`
-  (`shell::every_form_on_every_page_lands_on_its_own_group` with a confirmed row).
+- `sanitize_zone_watch` over the contract's rows; a bad `wifi` dropped alone.
+- Confirm (D4): the newest report with `wifi` is used past a newer one without it; a newer one with another BSSID -
+  refused; a multi-link match accepted; over 1 h - refused; the name and multi-link address stored from the report;
+  twice - one row; a blocked BSSID - a new id; the 17th (blocked counted) - refused; another phone's zone - 404.
+  Remove: every row of the name. Both land on `#zone-wifi` (`shell::every_form_on_every_page_lands_on_its_own_group`).
+- The page: the Confirm row hidden for a router already confirmed by prefix or multi-link address, and when the
+  newest fix is surely outside; "Sett et annet sted" for a blocked row; "Ukjent ruter" by its three conditions; never
+  both.
 - The strike intake: `blocked_at` once, one log line, the policy no longer serves it; another phone's id ignored.
 - A move over the radius clears, one under keeps, a radius change keeps; the `zone_changed` detail.
-- The page: "Seen elsewhere" for a blocked row; "Unknown router" only for a confirmed name, an address outside the
-  rows and `links`, and a newest fix not surely outside; never both.
 - `policy_json_keys_snapshot`: `networks` always present; blocked rows and the non-Regularly modes serve none.
 - No security line carries a name or a BSSID.
 
@@ -388,40 +406,64 @@ remove or re-confirm it) with the orange line under the group.
 
 The setup of §6bn: the debug launcher, Regularly, a zone Home (150 m), Google's location accuracy off, the made-up
 scan and connection through `PlacesDebugReceiver`, the satellite feed for teaching, a second local day by the time
-zone. The receiver's `connect` gains an optional sixth field, the MLO address. Names `Net-A`/`Net-B`, documentation
-addresses `00:00:5e:00:53:xx` (and their own device prefixes for neighbours, as §6bn's setup notes say). The real
-background read (the Jelly's redacted BSSID and the callback) is not reachable on the emulator, whose own network is
-open: it is a device row on the Jelly Star.
+zone. The receiver's `connect` gains an optional sixth field, the multi-link address. Names `Net-A`/`Net-B`;
+documentation addresses `00:00:5e:00:53:xx` for the home router, other prefixes for the neighbours and a mesh node,
+as §6bn's setup notes say. Home's scan: the router (`Net-A` and its guest name on the same prefix) and three placed
+neighbours.
 
 | # | Step | Expect |
 |---|---|---|
-| a | Nothing learned (`--ez clear true`, a fresh table), GPS silent, home's scan, `connect "00:00:5e:00:53:01,Net-A,psk,7,5180"`; a sync | the report's `zone_watch.wifi` has `Net-A` and the BSSID (`device_status.zone_watch_json`); the zone's page shows `Net-A` with Bekreft; with `open` instead, no row |
-| b | Tap Bekreft; Locate | the policy's zone has `networks` with id, name, BSSID; `wifi fix check=link step=USE`; the report's fix `check: "link"`; Locate shows "At Home", no "Wi-Fi estimate" |
-| c | The finding's path: `adb install -r` the same debug APK (a new process, `MOVED`), then the heartbeat's own `FIX` (wait for it) | `attempt path=TOGETHER`, `check=link`, `Location heartbeat: FIX result=fresh`; no back-off |
-| d | `connect "00:00:5e:00:53:09,Net-A,psk,7,5180"` (same name, another router, untaught) | `check=none`; the zone's page "Ukjent ruter" with its (i) and Bekreft on `Net-A`; Bekreft - `check=link` |
-| e | `connect` an address of another link of the confirmed router, the same MLO address as in (a) | `check=link` at once, no tap |
-| f | A mesh node: its own device prefix, `Net-A`, taught by the satellite feed at home on 2 local days; then connected to it | `growLinkAps` joins it (`zone link grew by=settled`); `check=link`; no orange line |
-| g | The satellite feed 3 km away (8 satellites) with `Net-A` (a) still connected | `zone link struck by=confirmed`; the report's `wifi_struck` has the id; the zone's page "Sett et annet sted"; the security log "Wi-Fi seen elsewhere" (the zone's name, no network name); the policy drops the row; back home `check=none`; Bekreft again - a new id, `check=link` |
-| h | B: no confirmation, GPS silent, home's scan (three networks) and `Net-B` psk; Locate 3 times 30 min apart over 2 local days | the third occasion makes the link (`link taught by=wifi occasions=3 days=2`); the next Wi-Fi fix `check=link`; with a scan whose fix holds only with `Net-B`'s own results - no occasion |
-| i | Move the zone 200 m (radius 150); then confirm again and move it 50 m | the first clears the rows (`zone_changed` "Wi-Fi removed"); the second keeps them |
+| a | Nothing learned (`--ez clear true`), GPS silent, home's scan, `connect "00:00:5e:00:53:01,Net-A,psk,7,5180"`; a sync | the report's `zone_watch.wifi` has `Net-A` and the BSSID; the zone's page shows `Net-A` with Bekreft; with `open` - no row |
+| b | Tap Bekreft; Locate | the policy's zone has `networks`; `wifi fix check=link step=USE`; the report's fix `check: "link"`; Locate "At Home", no "Wi-Fi estimate" |
+| c | The finding's path: `adb install -r` the same debug APK (a new process, `MOVED`), then the heartbeat's own `FIX` | `attempt path=TOGETHER`, `check=link`, `Location heartbeat: FIX result=fresh`; no back-off |
+| d | `connect` `00:00:5e:00:53:02` (the same router's other band); then a mesh node of another prefix, `Net-A` | the first `check=link` at once; the second `check=none`, the page "Ukjent ruter" and Bekreft; Bekreft - `check=link` |
+| e | `connect` with the confirmed router's multi-link address on another link | `check=link` at once |
+| f | The travel router: `Net-A` (a) connected, another place's scan (its neighbours taught 3 km away) | `check=none`; with only the router heard (its two names, nothing else placed) - `check=link` (the exception) |
+| g | Then the satellite feed 3 km away (8 satellites) twice, 90 s apart, `Net-A` connected | after the second: `zone link struck by=confirmed`; the report's `wifi_struck`; the page "Sett et annet sted"; the security log "Wi-Fi seen elsewhere" (the zone's name only); the policy drops the row; one feed fix alone strikes nothing |
+| h | B: no confirmation, GPS silent, home's scan and `Net-B` psk; Locate 3 times 30 min apart over 2 local days | the link forms on the third occasion (`link taught by=wifi occasions=3 days=2`); the next fix `check=link`; a scan of only `Net-B` and its guest name - no occasion |
+| i | Move the zone 200 m (radius 150); then confirm again and move it 50 m | the first clears the rows ("Wi-Fi removed"); the second keeps them |
 
-Device row (the Jelly Star, Android 16, the owner's check): at home, screen off, an hour after the install - the
-report's `wifi` present (`connection read by callback yes` when the first read was redacted), the parent's Confirm,
-then `FIX result=fresh` at the next heartbeat.
+The cell veto is a unit row: the emulator's cell has no placed row unless §6bk's fake Apple cell answer is loaded - if
+it is, place it 5 km away and expect (b) to give `check=none`.
 
-## 7. Docs to update with the build
+**Device row** (the Jelly Star, Android 16, the owner's check): at home, screen off, an hour after the install - the
+report's `wifi` present (`connection read by callback yes netid=known|none` when the first read was redacted), the
+scan fresh (`scan answer n/m ask=answered`), the parent's Bekreft, then `FIX result=fresh` at the next heartbeat.
 
-`docs/notes/launcher/wifi-places.md` (a section for 138; the zone link paragraph of D12 and 131's link paragraph point
-to it), `launcher/CLAUDE.md`'s index line, `docs/notes/server/zones.md` (a section: the table, the routes, the intake,
-the policy key), `docs/notes/server/pwa.md` ("Locate: zones": the Wi-Fi group), `server/CLAUDE.md` (the data model's
-0180 and the next free number, the policy's and the report's fields), `contracts/README.md`.
+## 7. Size: what keeps the build small
 
-## 8. Open question for the owner
+The largest new parts are the exclusion fix (one more `learnedFix` call over a filtered view, D8), the two-fix strike
+(a pending map in memory, D7) and the server's page logic (D4, §4). Already cut: the settled-AP growth (H1) and the
+report's `links` (L7). If the build must shrink further, the next cut is the "Ukjent ruter" line (the Confirm row on
+its own still offers the mesh node), not the exclusion or the cell veto.
 
-- **Q1. Does "Fjern" also stop the phone's own learned link for that network?** Today's design (D2): no - removing
-  ends the parent's confirmation; if the phone has itself learned the same network inside the zone (B or GPS, 3
-  occasions on 2 days, at the same addresses), that link still confirms. The alternative: a removal also drops the
-  phone's learned link and its addresses for that zone and name (the policy would carry the removed names for a day
-  so the phone can drop them). Recommendation: no - the learned link is the phone's own evidence, as it has been since
-  design 125, and a parent who removes a home network rarely means "never trust it"; but if the owner reads "Fjern"
-  as "this network is not this zone's", the alternative is a small addition to D2 and D13.
+## 8. Docs to update with the build
+
+`docs/notes/launcher/wifi-places.md` (a section for 138; the zone-link paragraphs of D12 and 131 point to it),
+`launcher/CLAUDE.md`'s index line, `docs/notes/server/zones.md` (the table, the routes, the intake, the policy key),
+`docs/notes/server/pwa.md` ("Locate: zones": the Wi-Fi group), `server/CLAUDE.md` (the data model's 0180 and the next
+free number, the policy's and the report's fields), `contracts/README.md`.
+
+## 9. Android 14-17
+
+All at or under minSdk 34, no SDK gate: `WifiManager.getConnectionInfo()` (API 1, deprecated 31, served on 14-17 with
+fine and background location and Location on), `ConnectivityManager.NetworkCallback(FLAG_INCLUDE_LOCATION_INFO)`
+(31), `NetworkCapabilities.getTransportInfo()` (29), `WifiInfo.getCurrentSecurityType()` (31),
+`WifiInfo.getApMldMacAddress()` (33), `WifiInfo.getNetworkId()` (1; may be -1 through the callback, D1),
+`TelephonyManager.getAllCellInfo`/`requestCellInfoUpdate` (already read, design 125b). Checked against 14 and 16 on
+the emulator, 16 on the Jelly; 17 is a device row (design 134's note: if 17 drops the BSSID from
+`getConnectionInfo()`, the callback is the read).
+
+## 10. Open questions for the owner
+
+None. Q1 is decided (§11).
+
+## 11. Revision 2
+
+- The owner, 2026-11-26: Q1 - "Fjern" ends only the parent's confirmation (D2). The travel router - the exclusion at
+  every use and its CONFIRMED-only exception (D8, §3). The cell veto (D9).
+- Design QA: H1 (D1's match by prefix or multi-link address; the settled growth cut, D5; 16 per zone), M1 (centre
+  for CONFIRMED, D8), M2 (band reach and two fixes, D7), M3 (the exclusion with the device, D8; B for neighbours, D6),
+  M4 (CONFIRMED without the network id, D1; the device row's lines, §6), L1 (`connectedNow` in the passive teach, D7),
+  L2 (the struck list outlives clears, D7), L3 and L4 (D4), L5 and L6 (D5), L7 (`links` cut, D3, §4), L8 (D2), L9
+  (D3), §3's heading, the migration note (D12).
