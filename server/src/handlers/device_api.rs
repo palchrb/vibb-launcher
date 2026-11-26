@@ -1097,8 +1097,18 @@ pub(crate) async fn command_due(
     else {
         return Ok(false);
     };
+    command_due_at(db, device_id, rev).await
+}
+
+/// [command_due] at `kid_pin_rev`: as the pop built at that rev would choose - a `set_kid_pin` only while it is the
+/// stored rev (design 59 S59-1), so a stale one is never due (code QA L3).
+pub(crate) async fn command_due_at(
+    db: &sqlx::SqlitePool,
+    device_id: i64,
+    kid_pin_rev: i64,
+) -> Result<bool, sqlx::Error> {
     let due = format!("SELECT EXISTS({})", due_command("1"));
-    bind_due!(sqlx::query_scalar::<_, bool>(&due), device_id, rev)
+    bind_due!(sqlx::query_scalar::<_, bool>(&due), device_id, kid_pin_rev)
         .fetch_one(db)
         .await
 }
@@ -2910,9 +2920,14 @@ pub async fn commands_stream(
     // Design 108 §3.9: app push's content-free `up`, a channel of its own (none of the command nudges change).
     let up_rx = state.unified_push.subscribe();
     // §6bt finding 6: a command the pop would hand out now gets one nudge at the open (subscribed first, so a nudge
-    // sent meanwhile is in `rx` too - one extra sync at most, which the phone's runner coalesces).
+    // sent meanwhile is in `rx` too - one extra sync at most, which the phone's runner coalesces), at most one a minute
+    // per phone (code QA L2: a flapping stream is no sync loop).
     let due = match command_due(&state.db, device_id).await {
-        Ok(due) => due,
+        Ok(due) => {
+            due && state
+                .command_streams
+                .open_nudge_due(device_id, std::time::Instant::now())
+        }
         Err(err) => {
             tracing::warn!(device = device_id, %err, "couldn't read the phone's due command at the stream's open");
             false

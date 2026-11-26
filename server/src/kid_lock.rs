@@ -626,18 +626,18 @@ impl LockNote {
                 None,
             ),
             // The fix behind the ⓘ alone (design 132 §4.4): send the kept copy again, or save the PIN again.
-            LockNote::NoAndroidPin { stored } => Note {
-                warning: true,
-                title: w("device.lock.no_pin"),
-                value: None,
-                sub: None,
-                detail: None,
-                fix: Some(w(if *stored {
-                    "device.lock.no_pin_send"
-                } else {
-                    "device.lock.no_pin_save"
-                })),
-            },
+            // Code QA L4: the same words as the setup step's no-PIN line, from one place ([no_pin_line]).
+            LockNote::NoAndroidPin { stored } => {
+                let (title, fix) = no_pin_line(true, *stored);
+                Note {
+                    warning: true,
+                    title: w(title),
+                    value: None,
+                    sub: None,
+                    detail: None,
+                    fix: Some(w(fix)),
+                }
+            }
             LockNote::Off(Inactive::Other(code)) => warning(
                 "device.attention.child_lock_off",
                 w("device.lock.note.other_sub"),
