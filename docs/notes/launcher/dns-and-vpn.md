@@ -28,6 +28,21 @@ Also found and fixed on the same test pass: **`CommandListenerService`'s SSE `Ok
 
 **A stop before the start's `startForeground` (ported from upstream siesta5787/kids-launcher-mdm c88216cfe0, 2026-11-12).** `stopService` on a `startForegroundService` start that hasn't been answered crashes the launcher with `ForegroundServiceDidNotStartInTimeException` (upstream hit it live: a sync's `apply()` started the filter, the pause's `apply()` stopped it before `onCreate`). `KidVpnService.stop` calls `stopService` only once `onCreate` ran and no foreground start awaits its `onStartCommand` (pure `vpnStopsNow`, `QuietNotificationsTest`; the pending count is ours - upstream checked only `created`, which leaves the plain start's foreground fallback into a running instance open); otherwise the queued start stops itself in `onStartCommand`, after answering, from the cached `vpnFilterEnabled` (`applyVpnRestrictions` writes it before every start and stop; a failed read counts as on), and `onCreate` builds no tunnel meanwhile. `onRevoke`'s `stopSelf()` waits the same way (code QA L1): with a foreground start pending, that start's `onStartCommand` stops the service, its state being stopped.
 
+**The service's work on its own thread (the gate before rc.4, finding 1, 2026-11-26).** Every boot of the 14 and 16
+images gave an ANR "executing service ...KidVpnService": `onCreate` read the 80 000-line list
+(`DnsFilterEngine.loadFromDisk`) and called `Builder.establish()` on the main thread, which a slow boot pushed past the
+service's timeout. The lifecycle callbacks now return at once: `onCreate` still calls `startForeground` first (the API
+34 rule), then posts the rest to the control thread (`ctl`, one `HandlerThread` "vpn-control" for the process, shared
+by every instance so an old instance's stop runs before a new one's start); `onStartCommand` answers a foreground start
+with `startForeground` on the main thread and posts its decision (stop, start or reshape, settle); `onDestroy` clears
+`running`/`live` at once and posts the close; `onRevoke`, the network watcher's callbacks, the read loop's
+`tunnelLost` and both retries were already posted and now go to the same thread. The tunnel state (`VpnTunnelState`)
+is changed there only. Fail closed as before: the list is loaded before the tunnel is built, on the same thread, so no
+query is ever classified against an empty list, and the order of the switches (`switchTo`: lockdown changed around the
+tunnel) is unchanged; until the tunnel exists DNS goes the network's way exactly as it did while `onCreate` ran (the
+filter's lockdown stays off by design, above), and the sink's lockdown, once written, blocks the apps whatever the
+thread. Work an instance posted before its `onDestroy` builds no tunnel (`destroyed`). `QuietNotificationsTest`.
+
 ## A custom DNS server with a parent-chosen backup (design 36 steps 1-3, `docs/design/36-custom-dns.md`, at the monorepo root)
 
 - **What it does**: with Settings › Web Filter › "Custom server" the VPN forwards every query **the phone's lists let

@@ -34,8 +34,10 @@ enum class VpnStartKind {
 enum class VpnSettle { NONE, ENTER, DROP }
 
 /**
- * [KidVpnService]'s tunnel and foreground state, changed on the main thread only (`onRevoke` posts
- * there); [stopped] is also read by [KidVpnService.start] and `syncCustom`. [T] is the tunnel's
+ * [KidVpnService]'s tunnel and foreground state, changed on the service's control thread only (gate
+ * rc.4 finding 1: `onCreate`'s first [enteredForeground] before its post, everything else posted
+ * there - `onStartCommand`, `onRevoke`, `onDestroy`); [stopped] is also read by
+ * [KidVpnService.start] and `syncCustom`. [T] is the tunnel's
  * descriptor (a `ParcelFileDescriptor` there, any token in tests).
  *
  * A lost tunnel (its read loop ended) is retried inside the service, 5 s doubling to 5 min, the
