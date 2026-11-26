@@ -1021,18 +1021,35 @@ async fn every_form_on_every_page_lands_on_its_own_group() {
     .unwrap();
     sqlx::query(
         "INSERT INTO caldav_accounts (server_url, username, password_sealed, password_nonce, password_key_fp, \
-         hosts, principal, calendars_json, state) VALUES ('https://dav.example.net/', 'forelder', x'00', x'00', '', \
+         hosts, principal, calendars_json, state, owner_device_id) VALUES ('https://dav.example.net/', 'forelder', x'00', x'00', '', \
          '[\"dav.example.net\"]', '/p/', \
-         '[{\"id\":\"0123456789abcdef\",\"href\":\"https://dav.example.net/c/hjem/\",\"name\":\"Hjem\"}]', 'ok')",
+         '[{\"id\":\"0123456789abcdef\",\"href\":\"https://dav.example.net/c/hjem/\",\"name\":\"Hjem\"}]', 'ok', ?)",
     )
+    .bind(id)
     .execute(&app.db)
     .await
     .unwrap();
+    // Design 136: a shared account seen from another phone, and a shared one no phone owns.
+    for (user, owner) in [("forelder2", Some(id)), ("forelder3", None)] {
+        sqlx::query(
+            "INSERT INTO caldav_accounts (server_url, username, password_sealed, password_nonce, password_key_fp, \
+             hosts, principal, calendars_json, state, owner_device_id, shared) \
+             VALUES ('https://dav.example.net/', ?, x'00', x'00', '', '[\"dav.example.net\"]', '/p/', '[]', 'ok', ?, 1)",
+        )
+        .bind(user)
+        .bind(owner)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    }
     let mut pages = vec![
         format!("/devices/{id}/calendar/add"),
         format!("/devices/{id}/calendar/add?kind=caldav"),
         format!("/devices/{id}/calendar/links/{link}"),
         format!("/devices/{id}/calendar/caldav/1"),
+        format!("/devices/{id}/calendar/caldav/2"),
+        format!("/devices/{not_set_up}/calendar/caldav/2"),
+        format!("/devices/{id}/calendar/caldav/3"),
         format!("/devices/{id}/calendar/rules/new"),
         format!("/devices/{id}/calendar/rules/1"),
         format!("/devices/{id}/bedtime"),

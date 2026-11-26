@@ -16,6 +16,7 @@ mod backup_secrets;
 mod blocked_numbers;
 mod bluetooth_pairing;
 mod caldav;
+mod caldav_per_phone;
 mod calendar;
 mod calendar_feeds;
 mod calls;
