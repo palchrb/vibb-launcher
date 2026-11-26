@@ -109,11 +109,11 @@
             {% endfor %}
             {% for o in wifi.offers %}
             <form method="post" action="/zones/{{ zid }}/wifi#zone-wifi" class="row row-actions" data-wifi="current">
-                <span class="row-label">{{ o.wifi.ssid }}</span>
+                <span class="row-label">{{ o.wifi.ssid }}</span><span class="row-value" data-wifi-phone>{{ o.phone }}</span>
                 {% if let Some(d) = device %}<input type="hidden" name="device" value="{{ d }}">{% endif %}
                 <input type="hidden" name="phone" value="{{ o.device_id }}">
                 <input type="hidden" name="bssid" value="{{ o.wifi.bssid }}">{% if let Some(m) = o.wifi.mld %}<input type="hidden" name="mld" value="{{ m }}">{% endif %}
-                <button type="submit" class="button-small">{{ self.t("locate.zone.wifi.confirm") }}</button>
+                <button type="submit" class="row-action">{{ self.t("locate.zone.wifi.confirm") }}</button>
             </form>
             {% endfor %}
             {% if let Some((line, info, name)) = self.wifi_orange() %}

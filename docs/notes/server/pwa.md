@@ -1559,7 +1559,7 @@ man er inne på en device". Branch `pwa-fixes-b`.
   once the first locations settled (code QA Q-7), and a span without points shows the zones (one zone: its centre at
   zoom 15; several: their centres fitted) instead of the world; the span pick doesn't touch the circles.
   `zones.json` is `[{id, name, latitude, longitude, radius_m}]`, a 404 for an unknown phone.
-- **The zone's page** (`handlers::zones`, `device_zone.html`, tab Locate, `no_store_path` `["devices", _, "zones",
+- **The zone's page** (`handlers::zones`, `family_zone.html` since design 135 - was `device_zone.html` -, tab Locate, `no_store_path` `["devices", _, "zones",
   ..]`): one form `#zone-form` with the time rule's sticky editor bar (`.nav-back` "Locate" to
   `/devices/locate?device={id}#zones`, **Add** / **Save** at the right, a refusal's "Not saved. …" in the bar), the
   large title (the zone's stored name, "New Zone"; *since design 84 all of it on the editor's band, `band::editor`,
@@ -1602,10 +1602,10 @@ man er inne på en device". Branch `pwa-fixes-b`.
 - **The zone's Wi-Fi group** (design 138, `#zone-wifi`, after the zone's form, a stored zone only; `zones.md`, "A
   zone's confirmed Wi-Fi"; since design 135 on the family zone's editor `/zones/{zone_id}`, below "Telefoner" - a
   confirmation is the zone's, for every phone using it): each confirmed name a "Fjern…" confirm (every router of that
-  name goes); each linked phone's network (one row per router) as a row with Bekreft when its newest report with `wifi` is at most an hour old, its router isn't confirmed
+  name goes); each linked phone's network (one row per router, the phone's name its quiet value) as a row with Bekreft when its newest report with `wifi` is at most an hour old, its router isn't confirmed
   (the name and the five octets or the multi-link address) and no fix of the last hour is surely outside the zone; at
   most one orange line, "Sett et annet sted" (a blocked row), with its (i) - no "Ukjent ruter" (revision 3); one (i)
-  on the group. Every form lands on `?wifi=saved|changed|full#zone-wifi`
+  on the group. Every form lands on `?wifi=saved|changed|full|outside#zone-wifi`
   (a remove of a row gone already too), the flash in the group; no JS. `zone_networks::view_of` is the pure part.
 
 ## Zones shared by the family (design 135, migration 0182, `docs/design/135-family-zones.md` §5; data in `zones.md`)

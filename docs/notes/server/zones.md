@@ -85,7 +85,7 @@ at each fix, as below.
   inside, **no other side pending**, and the newest fix **fresh** (`zones::fresh`: younger than 2 x the interval in
   Regularly, else 1 h; `zones::freshness_inputs`). Inside and nothing pending but stale: the row says "Last seen at
   Home 14:02" (the newest fix's time, `data-last-seen`), the summary nothing.
-- **Pages**: the Locate page's `#zones` and the zone's page (`handlers::zones`, `device_zone.html`, `static/zones.js`)
+- **Pages**: the Locate page's `#zones` and the zone's page (`handlers::zones`, `family_zone.html` since design 135, `static/zones.js`)
   - see `pwa.md`, "Locate: zones (design 64 step 1)". The phone's summary header: "Home since 15:42" on its second
   line, before the battery (`devices::zone_now`, worded by `phone_status`, `data-zone-now`: the zones the phone is in
   now, the latest `side_since`; since 2026-11-01, `pwa.md`, "Tidier status").
@@ -250,20 +250,26 @@ the phone saw that router far outside the zone; at most 16 a zone, blocked rows 
 names), but a confirmation is the family zone's: every write keeps the links of a family zone in step - a confirm
 writes the router to every link, a remove takes the name from every link, a strike blocks the router on every link,
 a move past the radius clears every link, and `zones::link` copies the zone's rows to a new link
-(`zone_networks::copy_to_link`). So every phone that uses the zone is served the same routers, each under its own row
-ids (no schema change: 0180 and 0182 are as built). The
+(`zone_networks::copy_to_link`: per address the oldest unblocked confirmation's name, blocked when any copy is, at
+most 16). So every phone that uses the zone is served the same routers, each under its own row ids (no schema change:
+0180 is as built; 0182's fold copies each folded zone's routers to all its links the same way - a link's own rows
+first, then unblocked before blocked, the oldest confirmation first, at most 16 - and blocks a router on every link
+when one copy is blocked). An editor save makes its new links before it drops the unticked ones, so swapping the
+phones keeps the routers; **unlinking the last phone of a zone drops its confirmations** (they live on the links). The
 report's `zone_watch.wifi` (`{ssid, bssid, mld?}`, a named WPA2/WPA3 personal network, sent only while the policy has
 zones) and `wifi_struck` (ids) are kept in their shape by `sanitize_zone_watch` (`clean_wifi`, `clean_struck`; a bad
 one dropped alone; `ZONE_WATCH_MAX` 2048). The family zone's editor (`/zones/{zone_id}#zone-wifi`) lists each
 confirmed name with Fjern..., offers Bekreft for the network of each linked phone's newest report with `wifi` (at most
-an hour old, a report without it hides nothing; one row per router, the form names the phone as `phone`) when that
+an hour old, a report without it hides nothing; one row per router, the phone's name its quiet value, the form names
+the phone as `phone`) when that
 router isn't confirmed (the same name and the same router: the BSSID's first five octets or the multi-link address)
 and that phone's newest fix isn't surely outside, and shows one orange line at most: "Sett et annet
 sted" for a blocked row (revision 3 cut "Ukjent ruter": it invited confirming a router set up with the home's name
 and password; a fix surely outside counts only from the last hour). `POST /zones/{zone_id}/wifi` confirms only what
-the named phone's newest report says (the phone must use the zone; the form's `bssid`/`mld` must match; the stored name
-is the report's), a blocked row of that BSSID replaced by a new id; `.../wifi/{network_id}/delete` removes every row of
-that name. Both land on `?wifi=saved|changed|full#zone-wifi` (with `device` when the page came from a phone) and nudge
+the named phone's newest report says (the form's `bssid`/`mld` must match; the stored name is the report's; a phone
+that doesn't use the zone lands on the group with no line, one surely outside on a fix under an hour with "The phone
+is outside the zone now", `?wifi=outside`), a blocked row of that BSSID replaced by a new id; `.../wifi/{network_id}/delete` removes every row of
+that name. Both land on `?wifi=saved|changed|full|outside#zone-wifi` (with `device` when the page came from a phone) and nudge
 every phone using the zone; the log lines are `zone_wifi_confirmed` ("phone 3 (Telefon 1): Hjem", the phone whose
 report it bound to) and `zone_wifi_removed` ("Hjem."). The status intake blocks a struck id of this phone's zones once,
 and that router on the zone's other links (`block_struck`, the phone line `zone_wifi_blocked` with the zone's name),

@@ -227,7 +227,7 @@ pub struct DevicePolicy {
     /// `launcher_ui.lock_weather`.
     pub lock_weather: bool,
     /// The zone whose centre stands in for the weather when the phone has no fresh fix (design 75 D5): since design 135
-    /// (migrations/0181) a family zone, linked to this phone or not; `None` by default. Never in the policy JSON. The
+    /// (migrations/0182) a family zone, linked to this phone or not; `None` by default. Never in the policy JSON. The
     /// old `weather_zone_id` (0122) stays in the table, NULL and unread.
     pub weather_family_zone_id: Option<i64>,
     /// The blocked-domain log (migrations/0039): off by default, a per-phone opt-in; while on,

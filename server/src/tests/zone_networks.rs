@@ -280,7 +280,10 @@ async fn confirm_binds_to_the_report_and_remove_takes_the_name() {
     let (other, other_token) = app.enrolled_device("Telefon 2").await;
     on_net_a(&app, &other_token, "00:00:5e:00:53:01").await;
     let res = confirm(&app, &cookie, home, other, "00:00:5e:00:53:01").await;
-    assert!(res.location().unwrap().ends_with("?wifi=changed#zone-wifi"));
+    assert_eq!(
+        res.location(),
+        Some(format!("/zones/{home}#zone-wifi").as_str())
+    );
     assert!(rows(&app).await.is_empty());
     let res = confirm(&app, &cookie, home + 100, id, "00:00:5e:00:53:01").await;
     assert_eq!(res.status, StatusCode::NOT_FOUND);
@@ -545,56 +548,244 @@ async fn an_old_fix_outside_hides_nothing_and_a_gone_row_lands_on_the_group() {
     assert!(res.location().unwrap().ends_with("?wifi=saved#zone-wifi"));
 }
 
-/// Design 135's migration (0182) keeps a zone's confirmed routers: the link keeps its id, so the
-/// rows stay on it, under the family zone the fold made - also when two phones' identical zones
-/// fold into one, each link keeping its own rows.
+/// Design 135's migration (0182) keeps a zone's confirmed routers and puts the links of a folded
+/// zone in step: each link keeps its own rows and gets its siblings' routers (blocked when any copy
+/// is), at most 16 a link - its own rows first, then unblocked before blocked, the oldest
+/// confirmation first. A zone elsewhere gets nothing.
 #[tokio::test]
-async fn the_family_zone_migration_keeps_the_routers() {
+async fn the_family_zone_migration_puts_the_links_in_step() {
     let (db, _dir) = super::cleanup::migrated_before(182).await;
     let mut links = Vec::new();
-    for name in ["Telefon 1", "Telefon 2"] {
+    for (name, place) in [
+        ("Telefon 1", "Home"),
+        ("Telefon 2", "Home"),
+        ("Telefon 3", "Cabin"),
+    ] {
         let device: i64 = sqlx::query_scalar("INSERT INTO devices (name) VALUES (?) RETURNING id")
             .bind(name)
             .fetch_one(&db)
             .await
             .unwrap();
+        let lat = if place == "Home" { 59.9139 } else { 61.0 };
         let link: i64 = sqlx::query_scalar(
             "INSERT INTO device_zones (device_id, name, latitude, longitude, radius_m) \
-             VALUES (?, 'Home', 59.9139, 10.7522, 150) RETURNING id",
+             VALUES (?, ?, ?, 10.7522, 150) RETURNING id",
         )
         .bind(device)
+        .bind(place)
+        .bind(lat)
         .fetch_one(&db)
         .await
         .unwrap();
         links.push(link);
     }
-    sqlx::query(
-        "INSERT INTO zone_networks (zone_id, ssid, bssid) VALUES (?, 'Net-A', '00:00:5e:00:53:01')",
+    let [one, two, cabin] = links[..] else {
+        unreachable!()
+    };
+    let row = |link: i64, ssid: &str, bssid: String, at: &str, blocked: bool| {
+        let db = db.clone();
+        let (ssid, at) = (ssid.to_string(), at.to_string());
+        async move {
+            sqlx::query(
+                "INSERT INTO zone_networks (zone_id, ssid, bssid, confirmed_at, blocked_at) \
+                 VALUES (?, ?, ?, ?, ?)",
+            )
+            .bind(link)
+            .bind(ssid)
+            .bind(bssid)
+            .bind(at)
+            .bind(blocked.then_some("2026-11-20 10:00:00"))
+            .execute(&db)
+            .await
+            .unwrap();
+        }
+    };
+    // Telefon 1's Home: A and C. Telefon 2's Home: C blocked, B, and 14 more (16 in all).
+    row(
+        one,
+        "Net-A",
+        "00:00:5e:00:53:01".into(),
+        "2026-01-01 10:00:00",
+        false,
     )
-    .bind(links[0])
-    .execute(&db)
-    .await
-    .unwrap();
+    .await;
+    row(
+        one,
+        "Net-C",
+        "00:00:5e:00:57:01".into(),
+        "2026-01-02 10:00:00",
+        false,
+    )
+    .await;
+    row(
+        two,
+        "Net-C",
+        "00:00:5e:00:57:01".into(),
+        "2026-01-03 10:00:00",
+        true,
+    )
+    .await;
+    row(
+        two,
+        "Net-B",
+        "00:00:5e:00:54:01".into(),
+        "2026-01-04 10:00:00",
+        false,
+    )
+    .await;
+    for n in 0..14 {
+        let at = format!("2026-02-{:02} 10:00:00", n + 1);
+        row(two, "Net-D", format!("00:00:5e:00:60:{n:02x}"), &at, false).await;
+    }
+    row(
+        cabin,
+        "Net-E",
+        "00:00:5e:00:58:01".into(),
+        "2026-01-05 10:00:00",
+        false,
+    )
+    .await;
     super::cleanup::finish(&db).await;
-    let kept: Vec<(i64, i64)> = sqlx::query_as(
-        "SELECT n.zone_id, z.zone_id FROM zone_networks n JOIN device_zones z ON z.id = n.zone_id",
-    )
-    .fetch_all(&db)
-    .await
-    .unwrap();
-    let family: i64 = sqlx::query_scalar("SELECT zone_id FROM device_zones WHERE id = ?")
-        .bind(links[1])
-        .fetch_one(&db)
-        .await
-        .unwrap();
-    assert_eq!(
-        kept,
-        [(links[0], family)],
-        "one family zone, the row on its link"
+    let of = |link: i64| {
+        let db = db.clone();
+        async move {
+            sqlx::query_as::<_, (String, Option<String>)>(
+                "SELECT bssid, blocked_at FROM zone_networks WHERE zone_id = ? ORDER BY bssid",
+            )
+            .bind(link)
+            .fetch_all(&db)
+            .await
+            .unwrap()
+        }
+    };
+    let (rows_one, rows_two) = (of(one).await, of(two).await);
+    // Telefon 2 was full: its own 16 stay, A doesn't fit; C blocked.
+    assert_eq!(rows_two.len(), 16);
+    assert!(!rows_two.iter().any(|r| r.0 == "00:00:5e:00:53:01"));
+    // Telefon 1: its own two, then B and the oldest 13 of the 14 (16 in all; the newest left out).
+    assert_eq!(rows_one.len(), 16);
+    let has = |rows: &[(String, Option<String>)], b: &str| rows.iter().find(|r| r.0 == b).cloned();
+    assert!(has(&rows_one, "00:00:5e:00:53:01").is_some());
+    assert!(has(&rows_one, "00:00:5e:00:54:01").is_some());
+    assert!(has(&rows_one, "00:00:5e:00:60:0c").is_some());
+    assert!(
+        has(&rows_one, "00:00:5e:00:60:0d").is_none(),
+        "the newest left out"
     );
+    // C is blocked on both links: one copy was.
+    assert!(has(&rows_one, "00:00:5e:00:57:01").unwrap().1.is_some());
+    assert!(has(&rows_two, "00:00:5e:00:57:01").unwrap().1.is_some());
+    // Both Home links are one family zone; Cabin keeps its one row and gets nothing.
+    let family = |link: i64| {
+        let db = db.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>("SELECT zone_id FROM device_zones WHERE id = ?")
+                .bind(link)
+                .fetch_one(&db)
+                .await
+                .unwrap()
+        }
+    };
+    assert_eq!(family(one).await, family(two).await);
+    assert_eq!(of(cabin).await.len(), 1);
     let fks: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pragma_foreign_key_check")
         .fetch_one(&db)
         .await
         .unwrap();
     assert_eq!(fks, 0);
+}
+
+/// Code QA M2: an editor save that unticks one phone and ticks another keeps the zone's routers
+/// (the new link is made before the old one goes); unticking the last phone drops them.
+#[tokio::test]
+async fn swapping_the_phones_keeps_the_routers() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (t1, _) = app.enrolled_device("Telefon 1").await;
+    let (t2, token2) = app.enrolled_device("Telefon 2").await;
+    regularly(&app).await;
+    let (home, link1) = add_home(&app, t1).await;
+    sqlx::query(
+        "INSERT INTO zone_networks (zone_id, ssid, bssid) VALUES (?, 'Net-A', '00:00:5e:00:53:01')",
+    )
+    .bind(link1)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let page = format!("/zones/{home}");
+    let html = app.get_page(&page, &cookie).await.text();
+    let mut fields = drawn(&html, &format!("/zones/{home}#"));
+    set(&mut fields, &format!("phone_{t1}"), None);
+    set(&mut fields, &format!("phone_{t2}"), Some("on"));
+    let res = post(&app, &cookie, &page, &fields).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.text());
+    assert_eq!(
+        networks(&app, &token2).await[0]["bssid"],
+        "00:00:5e:00:53:01"
+    );
+    assert_eq!(
+        rows(&app).await.len(),
+        1,
+        "only Telefon 2's link holds it now"
+    );
+    // The last phone unticked: the zone's confirmations go with its links.
+    let html = app.get_page(&page, &cookie).await.text();
+    let mut fields = drawn(&html, &format!("/zones/{home}#"));
+    set(&mut fields, &format!("phone_{t2}"), None);
+    post(&app, &cookie, &page, &fields).await;
+    assert!(rows(&app).await.is_empty());
+}
+
+/// Code QA L1, L2: the Bekreft row names whose network it is; a confirm for a phone surely outside
+/// on a fix under an hour is refused with its own line, and one for a phone that doesn't use the
+/// zone (or no phone) lands on the group with no line.
+#[tokio::test]
+async fn confirm_is_refused_outside_and_for_a_phone_off_the_zone() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("Telefon 1").await;
+    let (other, other_token) = app.enrolled_device("Telefon 2").await;
+    let (home, _) = add_home(&app, id).await;
+    on_net_a(&app, &token, "00:00:5e:00:53:01").await;
+    on_net_a(&app, &other_token, "00:00:5e:00:53:01").await;
+    let html = app
+        .get_page(&format!("/zones/{home}"), &cookie)
+        .await
+        .text();
+    assert!(html.contains("data-wifi-phone>Telefon 1<"), "{html}");
+    // Telefon 2 doesn't use Home; no phone at all: back to the group, no line, nothing written.
+    for res in [
+        confirm(&app, &cookie, home, other, "00:00:5e:00:53:01").await,
+        app.request_form(
+            Method::POST,
+            &format!("/zones/{home}/wifi"),
+            Some(&cookie),
+            &[("bssid", "00:00:5e:00:53:01")],
+        )
+        .await,
+    ] {
+        assert_eq!(
+            res.location(),
+            Some(format!("/zones/{home}#zone-wifi").as_str())
+        );
+    }
+    assert!(rows(&app).await.is_empty());
+    // A fix 5 minutes old far outside: refused with "outside" (a stale page posting anyway).
+    let at = (chrono::Utc::now() - chrono::Duration::minutes(5))
+        .format("%Y-%m-%dT%H:%M:%S%.3fZ")
+        .to_string();
+    sqlx::query(
+        "INSERT INTO device_locations (device_id, latitude, longitude, accuracy_meters, captured_at) \
+         VALUES (?, 59.95, 10.7522, 20, ?)",
+    )
+    .bind(id)
+    .bind(&at)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let res = confirm(&app, &cookie, home, id, "00:00:5e:00:53:01").await;
+    assert!(res.location().unwrap().ends_with("?wifi=outside#zone-wifi"));
+    assert!(rows(&app).await.is_empty());
+    let html = app.get_page(res.location().unwrap(), &cookie).await.text();
+    assert!(html.contains("The phone is outside the zone now"), "{html}");
 }

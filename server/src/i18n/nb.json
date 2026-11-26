@@ -4913,5 +4913,6 @@
   "locate.zone.wifi.elsewhere": "Sett et annet sted",
   "locate.zone.wifi.elsewhere_info": "Telefonen var på {name} langt utenfor sonen, så det teller ikke lenger. Fjern det, eller bekreft det igjen når telefonen er her.",
   "locate.zone.wifi.changed": "Telefonen er på et annet nettverk nå",
-  "locate.zone.wifi.full": "Maks 16 rutere"
+  "locate.zone.wifi.full": "Maks 16 rutere",
+  "locate.zone.wifi.outside": "Telefonen er utenfor sonen nå"
 }

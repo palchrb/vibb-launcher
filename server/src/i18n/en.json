@@ -4913,5 +4913,6 @@
   "locate.zone.wifi.elsewhere": "Seen elsewhere",
   "locate.zone.wifi.elsewhere_info": "The phone was on {name} far outside the zone, so it no longer counts. Remove it, or confirm it again when the phone is here.",
   "locate.zone.wifi.changed": "The phone is on another network now",
-  "locate.zone.wifi.full": "At most 16 routers"
+  "locate.zone.wifi.full": "At most 16 routers",
+  "locate.zone.wifi.outside": "The phone is outside the zone now"
 }

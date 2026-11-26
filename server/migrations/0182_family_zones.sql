@@ -34,6 +34,40 @@ UPDATE device_zones SET zone_id = (
 CREATE UNIQUE INDEX idx_device_zones_link ON device_zones(device_id, zone_id);
 CREATE INDEX idx_device_zones_zone ON device_zones(zone_id);
 
+-- Design 138's confirmed routers (0180) become the family zone's: every link of a folded zone gets
+-- the routers its sibling links hold, so each phone using the zone is served the same ones. One row
+-- per router address and link (a link's own row stays as it is); a copied row takes the name, the
+-- multi-link address and the confirmer of the oldest unblocked confirmation of that address (the
+-- oldest blocked one when every copy is blocked), and is blocked when any copy is. At most 16 rows a
+-- link: its own rows first, then unblocked before blocked, the oldest confirmation first.
+WITH copies AS (
+    SELECT d.zone_id AS family, n.id, n.ssid, n.bssid, n.mld, n.confirmed_by, n.confirmed_at,
+           MAX(n.blocked_at) OVER (PARTITION BY d.zone_id, n.bssid) AS blocked_any,
+           ROW_NUMBER() OVER (PARTITION BY d.zone_id, n.bssid
+                              ORDER BY n.blocked_at IS NOT NULL, n.confirmed_at, n.id) AS nth
+    FROM zone_networks n JOIN device_zones d ON d.id = n.zone_id
+), routers AS (
+    SELECT * FROM copies WHERE nth = 1
+), wanted AS (
+    SELECT l.id AS link, r.ssid, r.bssid, r.mld, r.confirmed_by, r.confirmed_at, r.blocked_any,
+           ROW_NUMBER() OVER (PARTITION BY l.id
+                              ORDER BY r.blocked_any IS NOT NULL, r.confirmed_at, r.id) AS k
+    FROM device_zones l JOIN routers r ON r.family = l.zone_id
+    WHERE NOT EXISTS (SELECT 1 FROM zone_networks e WHERE e.zone_id = l.id AND e.bssid = r.bssid)
+)
+INSERT OR IGNORE INTO zone_networks (zone_id, ssid, bssid, mld, confirmed_by, confirmed_at, blocked_at)
+SELECT w.link, w.ssid, w.bssid, w.mld, w.confirmed_by, w.confirmed_at, w.blocked_any FROM wanted w
+WHERE w.k + (SELECT COUNT(*) FROM zone_networks o WHERE o.zone_id = w.link) <= 16;
+-- A router blocked on one link of a family zone is blocked on all of them.
+UPDATE zone_networks SET blocked_at = (
+    SELECT MAX(o.blocked_at) FROM zone_networks o JOIN device_zones od ON od.id = o.zone_id
+    WHERE o.bssid = zone_networks.bssid
+      AND od.zone_id = (SELECT d.zone_id FROM device_zones d WHERE d.id = zone_networks.zone_id))
+WHERE blocked_at IS NULL AND EXISTS (
+    SELECT 1 FROM zone_networks o JOIN device_zones od ON od.id = o.zone_id
+    WHERE o.bssid = zone_networks.bssid AND o.blocked_at IS NOT NULL
+      AND od.zone_id = (SELECT d.zone_id FROM device_zones d WHERE d.id = zone_networks.zone_id));
+
 -- The weather's zone is a place: the family zone. weather_zone_id stays, NULL and unread (a column
 -- with a reference isn't dropped).
 ALTER TABLE device_policy ADD COLUMN weather_family_zone_id INTEGER

@@ -715,7 +715,7 @@ pub async fn new_zone(
 }
 
 /// `GET /zones/{zone_id}`: the zone's form as stored, with the phones that use it ticked;
-/// `?wifi=saved|changed|full` the Wi-Fi group's flash after a confirm or a remove (design 138).
+/// `?wifi=saved|changed|full|outside` the Wi-Fi group's flash after a confirm or a remove (design 138).
 pub async fn show_zone(
     State(state): State<AppState>,
     lang: Lang,
@@ -726,6 +726,7 @@ pub async fn show_zone(
         Some("saved") => Some(("common.saved", false)),
         Some("changed") => Some(("locate.zone.wifi.changed", true)),
         Some("full") => Some(("locate.zone.wifi.full", true)),
+        Some("outside") => Some(("locate.zone.wifi.outside", true)),
         _ => None,
     };
     let device = match known_device(&state, params.get("device")).await {
@@ -1171,6 +1172,13 @@ pub async fn save_zone(
                 detail,
             });
         }
+        // New links first (design 138 with 135, code QA M2): a link copies the zone's confirmed
+        // routers from the links still there, so an untick-A + tick-B save keeps them.
+        for phone in &to_link {
+            zones::link(&mut tx, phone.id, &after, Some(admin.id), now).await?;
+            lines.push(link_line("zone_linked", phone, &after.name));
+            nudge.push(phone.id);
+        }
         for phone in &to_unlink {
             sqlx::query("DELETE FROM device_zones WHERE device_id = ? AND zone_id = ?")
                 .bind(phone.id)
@@ -1178,11 +1186,6 @@ pub async fn save_zone(
                 .execute(&mut *tx)
                 .await?;
             lines.push(link_line("zone_unlinked", phone, &after.name));
-            nudge.push(phone.id);
-        }
-        for phone in &to_link {
-            zones::link(&mut tx, phone.id, &after, Some(admin.id), now).await?;
-            lines.push(link_line("zone_linked", phone, &after.name));
             nudge.push(phone.id);
         }
         tx.commit().await?;
@@ -1215,6 +1218,13 @@ fn wifi_back(zone_id: i64, device: Option<i64>, flash: &str) -> String {
     format!("/zones/{zone_id}?wifi={flash}{from}#zone-wifi")
 }
 
+/// The Wi-Fi group with no flash (QA L2: a posted phone that is unknown or doesn't use the zone is
+/// no network change - the page as it is now says enough).
+fn wifi_back_quiet(zone_id: i64, device: Option<i64>) -> String {
+    let from = device.map(|d| format!("?device={d}")).unwrap_or_default();
+    format!("/zones/{zone_id}{from}#zone-wifi")
+}
+
 /// `POST /zones/{zone_id}/wifi`: design 138 D4 - confirm the router the page showed (`bssid`,
 /// `mld`) for the family zone, bound to the newest report with `wifi` of the phone it showed it for
 /// (`phone`, linked to the zone); written to every link of the zone. Back to `#zone-wifi`.
@@ -1237,12 +1247,10 @@ pub async fn confirm_wifi(
     let phone = match form.get("phone").and_then(|p| p.trim().parse::<i64>().ok()) {
         Some(id) => match device_of(&state, id).await {
             Ok(Some(phone)) => phone,
-            Ok(None) => {
-                return Redirect::to(&wifi_back(zone_id, device, "changed")).into_response();
-            }
+            Ok(None) => return Redirect::to(&wifi_back_quiet(zone_id, device)).into_response(),
             Err(err) => return db_error(err, lang),
         },
-        None => return Redirect::to(&wifi_back(zone_id, device, "changed")).into_response(),
+        None => return Redirect::to(&wifi_back_quiet(zone_id, device)).into_response(),
     };
     let bssid = form.get("bssid").map(String::as_str).unwrap_or("");
     let mld = form
@@ -1273,6 +1281,12 @@ pub async fn confirm_wifi(
         }
         Ok(crate::zone_networks::Confirmed::Full) => {
             Redirect::to(&wifi_back(zone_id, device, "full")).into_response()
+        }
+        Ok(crate::zone_networks::Confirmed::Outside) => {
+            Redirect::to(&wifi_back(zone_id, device, "outside")).into_response()
+        }
+        Ok(crate::zone_networks::Confirmed::NotLinked) => {
+            Redirect::to(&wifi_back_quiet(zone_id, device)).into_response()
         }
         Err(err) => db_error(err, lang),
     }

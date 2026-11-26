@@ -284,7 +284,9 @@ CREATE UNIQUE INDEX idx_zone_networks_ap ON zone_networks(zone_id, bssid);
 
 - **Routes** (session + 2FA, as the zone's page; both land on `/devices/{id}/zones/{zone_id}#zone-wifi`, so a save
   never jumps to the top): `POST /devices/{id}/zones/{zone_id}/wifi` (`bssid`; D4) and
-  `POST /devices/{id}/zones/{zone_id}/wifi/{network_id}/delete` (every row of that row's name in the zone).
+  `POST /devices/{id}/zones/{zone_id}/wifi/{network_id}/delete` (every row of that row's name in the zone). As built
+  after design 135: `POST /zones/{zone_id}/wifi` (`phone`, `bssid`) and `POST /zones/{zone_id}/wifi/{network_id}/delete`
+  on the family zone's editor, landing on `/zones/{zone_id}#zone-wifi`.
 - **The strike intake** (`zones::intake`, after the fix): `wifi_struck` ids that are this phone's zones' rows and not
   yet blocked get `blocked_at`, one security line each, and a nudge; another phone's ids are ignored.
 - **Security log** (the zone's name, never the network's name or address): `zone_wifi_confirmed`,

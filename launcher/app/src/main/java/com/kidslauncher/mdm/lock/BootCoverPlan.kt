@@ -503,7 +503,7 @@ fun bootPadSilentInMs(reasks: Int): Long {
 
 /**
  * The pad gate (Q59d-8): showWhenLocked and every ask only with Android's PIN as the gate ([androidMarker]: the
- * `boot_cover_android` marker) and the user still locked; read again before every ask and at every resume. An
+ * `boot_cover_android` marker) and the user still locked; read again before every ask and at every resume. A
  * no-Android-PIN cover (16b's `boot_cover` switch, an Android credential of its own) never gets it, and once [unlocked] it
  * is false for good - never showWhenLocked once `isUserUnlocked`.
  */
@@ -516,7 +516,7 @@ fun bootPadGate(androidMarker: Boolean, unlocked: Boolean, inert: Boolean = fals
  * qa-59d-m-code M-1 (option (a)): an android-mode cover whose crash guard tripped stays enabled - the direct-boot-aware
  * HOME every boot needs - but inert: a bare night window, never showWhenLocked, never an ask, no breathing mark
  * ([bootPadGate]'s `inert`); SystemUI's own lock screen and pad are the face, and once unlocked it runs F3's wait and
- * hands over to our Home. a no-Android-PIN cover with a tripped guard finishes and disables itself as before.
+ * hands over to our Home. A no-Android-PIN cover with a tripped guard finishes and disables itself as before.
  */
 fun coverInert(androidMarker: Boolean, guardTripped: Boolean, bare: Boolean = false): Boolean = bare || (androidMarker && guardTripped)
 

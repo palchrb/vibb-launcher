@@ -149,8 +149,10 @@ pub async fn of_family<'e, E: sqlx::SqliteExecutor<'e>>(
 }
 
 /// Design 135: a new link starts with its family zone's routers - one row per router address the
-/// zone's other links hold, blocked when any of them is (the links are kept in step, so they
-/// agree). On the caller's transaction.
+/// zone's other links hold, as migration 0182 put them in step: the name, the multi-link address and
+/// the confirmer of the oldest unblocked confirmation of that address (the oldest blocked one when
+/// every copy is blocked), blocked when any copy is, at most [MAX_ZONE_NETWORKS] (unblocked before
+/// blocked, the oldest confirmation first). On the caller's transaction.
 pub async fn copy_to_link(
     conn: &mut sqlx::SqliteConnection,
     link_id: i64,
@@ -158,12 +160,18 @@ pub async fn copy_to_link(
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
         "INSERT OR IGNORE INTO zone_networks (zone_id, ssid, bssid, mld, confirmed_by, confirmed_at, blocked_at) \
-         SELECT ?1, n.ssid, n.bssid, n.mld, n.confirmed_by, MIN(n.confirmed_at), MAX(n.blocked_at) \
-         FROM zone_networks n JOIN device_zones z ON z.id = n.zone_id \
-         WHERE z.zone_id = ?2 AND z.id != ?1 GROUP BY n.bssid ORDER BY MIN(n.id)",
+         SELECT ?1, ssid, bssid, mld, confirmed_by, confirmed_at, blocked_any FROM ( \
+           SELECT n.id, n.ssid, n.bssid, n.mld, n.confirmed_by, n.confirmed_at, \
+                  MAX(n.blocked_at) OVER (PARTITION BY n.bssid) AS blocked_any, \
+                  ROW_NUMBER() OVER (PARTITION BY n.bssid \
+                                     ORDER BY n.blocked_at IS NOT NULL, n.confirmed_at, n.id) AS nth \
+           FROM zone_networks n JOIN device_zones z ON z.id = n.zone_id \
+           WHERE z.zone_id = ?2 AND z.id != ?1) \
+         WHERE nth = 1 ORDER BY blocked_any IS NOT NULL, confirmed_at, id LIMIT ?3",
     )
     .bind(link_id)
     .bind(family_zone_id)
+    .bind(MAX_ZONE_NETWORKS)
     .execute(&mut *conn)
     .await?;
     Ok(())
@@ -228,8 +236,14 @@ pub struct NameRow {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Offer {
     pub device_id: i64,
+    /// The phone's name, the row's quiet value: whose network it is.
+    pub phone: String,
     pub wifi: ReportedWifi,
 }
+
+/// A linked phone as the zone's group reads it: its id and name, the network of its newest report
+/// with `wifi`, and whether its newest fix is surely outside the zone.
+pub type PhoneNow = (i64, String, Option<ReportedWifi>, bool);
 
 /// What the zone's Wi-Fi group shows.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -244,7 +258,7 @@ pub struct WifiView {
 /// and, per linked phone, its current network and whether its newest fix is surely outside the
 /// zone. A phone's network is offered unless that phone is surely outside, the router is
 /// confirmed, or an earlier phone offers the same router.
-pub fn view_of(rows: &[ZoneNetwork], phones: Vec<(i64, Option<ReportedWifi>, bool)>) -> WifiView {
+pub fn view_of(rows: &[ZoneNetwork], phones: Vec<PhoneNow>) -> WifiView {
     let mut names: Vec<NameRow> = Vec::new();
     for n in rows {
         match names.iter_mut().find(|r| r.ssid == n.ssid) {
@@ -264,7 +278,7 @@ pub fn view_of(rows: &[ZoneNetwork], phones: Vec<(i64, Option<ReportedWifi>, boo
         })
     };
     let mut offers: Vec<Offer> = Vec::new();
-    for (device_id, current, outside) in phones {
+    for (device_id, phone, current, outside) in phones {
         let Some(w) = current else { continue };
         let offered = offers.iter().any(|o| {
             o.wifi.ssid == w.ssid
@@ -276,7 +290,11 @@ pub fn view_of(rows: &[ZoneNetwork], phones: Vec<(i64, Option<ReportedWifi>, boo
                 )
         });
         if !outside && !confirmed(&w) && !offered {
-            offers.push(Offer { device_id, wifi: w });
+            offers.push(Offer {
+                device_id,
+                phone,
+                wifi: w,
+            });
         }
     }
     let orange = names
@@ -299,24 +317,38 @@ pub async fn view(
 ) -> Result<WifiView, sqlx::Error> {
     let rows = of_family(db, zone.id).await?;
     let circle: Circle = zone.circle();
-    let hour_ago = chrono::Utc::now() - chrono::Duration::hours(1);
     let mut phones = Vec::new();
     for link in zones::links_of(db, zone.id).await? {
         let current = current_wifi(db, link.device_id).await?;
-        let fix: Option<(f64, f64, Option<f64>, String)> = sqlx::query_as(
-            "SELECT latitude, longitude, accuracy_meters, captured_at FROM device_locations \
-             WHERE device_id = ? ORDER BY captured_at DESC, id DESC LIMIT 1",
-        )
-        .bind(link.device_id)
-        .fetch_optional(db)
-        .await?;
-        let outside = fix.is_some_and(|(lat, lng, acc, at)| {
-            chrono::DateTime::parse_from_rfc3339(&at).is_ok_and(|t| t >= hour_ago)
-                && zones::side(&circle, lat, lng, acc) == Some(Side::Outside)
-        });
-        phones.push((link.device_id, current, outside));
+        let outside = surely_outside(db, link.device_id, &circle).await?;
+        let name: String = sqlx::query_scalar("SELECT name FROM devices WHERE id = ?")
+            .bind(link.device_id)
+            .fetch_one(db)
+            .await?;
+        phones.push((link.device_id, name, current, outside));
     }
     Ok(view_of(&rows, phones))
+}
+
+/// D4 (QA L1): the phone's newest fix is at most an hour old and surely outside `circle` - an
+/// older one says nothing about where the phone is now.
+pub async fn surely_outside(
+    db: &sqlx::SqlitePool,
+    device_id: i64,
+    circle: &Circle,
+) -> Result<bool, sqlx::Error> {
+    let fix: Option<(f64, f64, Option<f64>, String)> = sqlx::query_as(
+        "SELECT latitude, longitude, accuracy_meters, captured_at FROM device_locations \
+         WHERE device_id = ? ORDER BY captured_at DESC, id DESC LIMIT 1",
+    )
+    .bind(device_id)
+    .fetch_optional(db)
+    .await?;
+    let hour_ago = chrono::Utc::now() - chrono::Duration::hours(1);
+    Ok(fix.is_some_and(|(lat, lng, acc, at)| {
+        chrono::DateTime::parse_from_rfc3339(&at).is_ok_and(|t| t >= hour_ago)
+            && zones::side(circle, lat, lng, acc) == Some(Side::Outside)
+    }))
 }
 
 /// What a confirm did.
@@ -330,6 +362,10 @@ pub enum Confirmed {
     Changed,
     /// The zone holds [MAX_ZONE_NETWORKS] rows.
     Full,
+    /// The phone named doesn't use the zone (or the zone is gone): nothing written.
+    NotLinked,
+    /// The phone's newest fix, at most an hour old, is surely outside the zone: nothing written.
+    Outside,
 }
 
 /// D4: confirm the router the page showed (`bssid`, and its `mld` when the page had one) for the
@@ -337,7 +373,8 @@ pub enum Confirmed {
 /// newest report with `wifi`, at most an hour old, still says that router (the BSSID, or the same
 /// multi-link address); the name and address stored are the report's. Design 135: written to every
 /// link of the zone (a blocked row of that address replaced); [Confirmed::Full] only when no link
-/// took it.
+/// took it. Refused as the page would hide the row: a phone that doesn't use the zone
+/// ([Confirmed::NotLinked]), or one surely outside it on a fix under an hour ([Confirmed::Outside]).
 pub async fn confirm(
     db: &sqlx::SqlitePool,
     device_id: i64,
@@ -346,6 +383,18 @@ pub async fn confirm(
     posted_mld: Option<&str>,
     admin_id: i64,
 ) -> Result<Confirmed, sqlx::Error> {
+    let Some(zone) = zones::family_zone(db, family_zone_id).await? else {
+        return Ok(Confirmed::NotLinked);
+    };
+    let linked: Option<i64> =
+        sqlx::query_scalar("SELECT id FROM device_zones WHERE zone_id = ? AND device_id = ?")
+            .bind(family_zone_id)
+            .bind(device_id)
+            .fetch_optional(db)
+            .await?;
+    if linked.is_none() {
+        return Ok(Confirmed::NotLinked);
+    }
     let Some(wifi) = current_wifi(db, device_id).await? else {
         return Ok(Confirmed::Changed);
     };
@@ -356,6 +405,9 @@ pub async fn confirm(
     if !same {
         return Ok(Confirmed::Changed);
     }
+    if surely_outside(db, device_id, &zone.circle()).await? {
+        return Ok(Confirmed::Outside);
+    }
     let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
     let links: Vec<(i64, i64)> =
         sqlx::query_as("SELECT id, device_id FROM device_zones WHERE zone_id = ? ORDER BY id")
@@ -364,7 +416,7 @@ pub async fn confirm(
             .await?;
     // The phone the confirm binds to must still use the zone.
     if !links.iter().any(|(_, phone)| *phone == device_id) {
-        return Ok(Confirmed::Changed);
+        return Ok(Confirmed::NotLinked);
     }
     let (mut written, mut full) = (false, false);
     for (link, _) in links {
@@ -556,9 +608,12 @@ mod tests {
     #[test]
     fn the_group_offers_confirm_and_one_orange_line() {
         let w = wifi("Net-A", "00:00:5e:00:53:01");
-        let one = |w: &ReportedWifi, outside: bool| vec![(7, Some(w.clone()), outside)];
+        let one = |w: &ReportedWifi, outside: bool| {
+            vec![(7, "Telefon 1".to_string(), Some(w.clone()), outside)]
+        };
         let offer = |w: &ReportedWifi| Offer {
             device_id: 7,
+            phone: "Telefon 1".into(),
             wifi: w.clone(),
         };
         // Nothing confirmed: Confirm, no line.
@@ -600,11 +655,16 @@ mod tests {
         let v = view_of(
             &[],
             vec![
-                (1, Some(home.clone()), false),
-                (2, Some(home_5g), false),
-                (3, Some(cabin.clone()), false),
-                (4, Some(wifi("Net-C", "00:00:5e:00:59:01")), true),
-                (5, None, false),
+                (1, "A".into(), Some(home.clone()), false),
+                (2, "B".into(), Some(home_5g), false),
+                (3, "C".into(), Some(cabin.clone()), false),
+                (
+                    4,
+                    "D".into(),
+                    Some(wifi("Net-C", "00:00:5e:00:59:01")),
+                    true,
+                ),
+                (5, "E".into(), None, false),
             ],
         );
         assert_eq!(
@@ -612,10 +672,12 @@ mod tests {
             [
                 Offer {
                     device_id: 1,
+                    phone: "A".into(),
                     wifi: home
                 },
                 Offer {
                     device_id: 3,
+                    phone: "C".into(),
                     wifi: cabin
                 },
             ]
