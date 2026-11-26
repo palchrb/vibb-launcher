@@ -5599,10 +5599,7 @@ mod tests {
             detail(yesterday, Lang::En),
             "Last position yesterday 20:26 – see the map in Locate"
         );
-        assert_eq!(
-            detail(i64::MAX, Lang::Nb),
-            "Siste posisjon – se Kart"
-        );
+        assert_eq!(detail(i64::MAX, Lang::Nb), "Siste posisjon – se Kart");
     }
 
     /// Design 77 §7 (QA R2-M2): a held message's words quote and label the sender - a number as a number, a name in

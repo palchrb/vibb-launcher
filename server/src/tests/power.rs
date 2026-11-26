@@ -830,11 +830,7 @@ async fn a_shutdowns_words_read_in_all_four_places_before_and_after_the_prune() 
                 !pruned,
                 "pruned {pruned}: {en}"
             );
-            assert_eq!(
-                nb.contains("– se Kart"),
-                !pruned,
-                "pruned {pruned}: {nb}"
-            );
+            assert_eq!(nb.contains("– se Kart"), !pruned, "pruned {pruned}: {nb}");
             // 2. The status lines' "Turned off" (the summary's header and the Devices row): the
             // battery-flat phone's alone. Half an hour ago reads as `Zone::at` does - its clock
             // today, "yesterday HH:MM" right after midnight - in `Zone::since`'s words too.
