@@ -1,5 +1,5 @@
 {
- "_doc": "Design 125 step 2 (§4a A3, A4), the Apple Wi-Fi lookup's shared contract, kept once in contracts/integrations/wifi_lookup/ (design 133). rules: the server's cache months (a positive row fresh fresh_months calendar months from the month Apple answered, a negative until the month it was asked in ends, UTC) and the phone's stale_grace_h. policy: the policy's wifi_lookup. request: the exact body of POST /api/devices/wifi-lookup. answers: each case the server's tests produce (only asked BSSIDs; fresh_months_left, never a month; off also while the phone's location is off). phone_answers: the phone's action for each status and body (use: the rows stored; wait_s: no ask for that long; off: none until a policy says on). phone_rows: what the phone keeps from a 200 at now, and until when (storeApple). Design 125b (cells): rules' cells_max, cells_a_day (the per-phone brake), cell_answer_after_s (a cells answer's fixed time through a proxy - the gate's 3 s, the Apple call's 10 s and a second; 9 s direct is the server's alone), cell_row_days and cell_negative_days (the phone's rows). request_cells: the exact cells body. cell_forms: a cell's wire form to valid or not (the server's cells::Cell::parse, the launcher's cellWire). cell_answers: each cells case the server's tests produce - no age, no cached mark, the same body from the cache as from Apple; each asked string echoed. cell_phone_answers: the phone's action for each (the cell wait alone; a 409 both waits). cell_phone_rows: what the phone keeps from a cells 200 at now, and until when (storeAppleCells). Test network 001-01 only, made-up coordinates.",
+ "_doc": "Design 125 step 2 (§4a A3, A4), the Apple Wi-Fi lookup's shared contract, kept once in contracts/integrations/wifi_lookup/ (design 133). rules: the server's cache months (a positive row fresh fresh_months calendar months from the month Apple answered, a negative until the month it was asked in ends, UTC) and the phone's stale_grace_h. policy: the policy's wifi_lookup. request: the exact body of POST /api/devices/wifi-lookup. answers: each case the server's tests produce (only asked BSSIDs; fresh_months_left, never a month; off also while the phone's location is off). phone_answers: the phone's action for each status and body (use: the rows stored; wait_s: no ask for that long; off: none until a policy says on). phone_rows: what the phone keeps from a 200 at now, and until when (storeApple). Design 125b (cells): rules' cells_max, cells_a_day (the per-phone brake), cell_answer_after_s (a cells answer's fixed time through a proxy - the gate's 3 s, the Apple call's 10 s and a second; 9 s direct is the server's alone), cell_row_days and cell_negative_days (the phone's rows). request_cells: the exact cells body. cell_forms: a cell's wire form to valid or not (the server's cells::Cell::parse, the launcher's cellWire). cell_answers: each cells case the server's tests produce - no age, no cached mark, the same body from the cache as from Apple; each asked string echoed. cell_phone_answers: the phone's action for each (the cell wait alone; a 409 both waits). cell_phone_rows: what the phone keeps from a cells 200 at now, and until when (storeAppleCells). Test network 001-01 only, made-up coordinates. Design 137 (cell neighbours): rules near_max (the near entries of one answer), near_per_cell (a stored list) and near_asked (the count of full-id neighbours one call asks Apple for). Every cells 200 has near - per asked cell in the ask order, each stored list nearest first, an entry already given or an asked cell left out; each cell in the wire form; ch and pci only when Apple sent them; never ch or pci in cells.",
  "rules": {
   "fresh_months": 3,
   "negative_months": 1,
@@ -8,7 +8,10 @@
   "cells_a_day": 1000,
   "cell_answer_after_s": 14,
   "cell_row_days": 90,
-  "cell_negative_days": 30
+  "cell_negative_days": 30,
+  "near_max": 64,
+  "near_per_cell": 12,
+  "near_asked": 12
  },
  "policy": {
   "off": {
@@ -901,9 +904,23 @@
     ],
     "unknown": [
      "gsm:001:01:1001:5001"
+    ],
+    "near": [
+     {
+      "cell": "lte:001:01:4711:12345679",
+      "lat": 59.919,
+      "lng": 10.75,
+      "acc_m": 1200
+     },
+     {
+      "cell": "lte:001:01:4712:22345678",
+      "lat": 59.895,
+      "lng": 10.77,
+      "acc_m": 2500
+     }
     ]
    },
-   "note": "LTE and NR from Apple, GSM unknown to Apple; MNC echoed as asked (01) though Apple says 1; Apple's surrounding towers cached, never answered"
+   "note": "LTE and NR from Apple, GSM unknown to Apple; MNC echoed as asked (01) though Apple says 1; Apple's surrounding towers kept in the asked cell's list, overlapping ones only, and answered as near"
   },
   {
    "case": "cells_cached",
@@ -932,6 +949,20 @@
     ],
     "unknown": [
      "gsm:001:01:1001:5001"
+    ],
+    "near": [
+     {
+      "cell": "lte:001:01:4711:12345679",
+      "lat": 59.919,
+      "lng": 10.75,
+      "acc_m": 1200
+     },
+     {
+      "cell": "lte:001:01:4712:22345678",
+      "lat": 59.895,
+      "lng": 10.77,
+      "acc_m": 2500
+     }
     ]
    },
    "note": "the same again from the cache: the same body, at the same answer time"
@@ -963,6 +994,20 @@
     ],
     "unknown": [
      "gsm:001:01:1001:5001"
+    ],
+    "near": [
+     {
+      "cell": "lte:001:01:4711:12345679",
+      "lat": 59.919,
+      "lng": 10.75,
+      "acc_m": 1200
+     },
+     {
+      "cell": "lte:001:01:4712:22345678",
+      "lat": 59.895,
+      "lng": 10.77,
+      "acc_m": 2500
+     }
     ]
    },
    "note": "rows fetched four months ago: the same body again, refreshed from Apple"
@@ -991,9 +1036,402 @@
       "acc_m": 800
      }
     ],
-    "unknown": []
+    "unknown": [],
+    "near": [
+     {
+      "cell": "nr:001:01:1048577:4294967297",
+      "lat": 59.912,
+      "lng": 10.751,
+      "acc_m": 350
+     },
+     {
+      "cell": "lte:001:01:4711:12345679",
+      "lat": 59.919,
+      "lng": 10.75,
+      "acc_m": 1200
+     },
+     {
+      "cell": "lte:001:01:4712:22345678",
+      "lat": 59.895,
+      "lng": 10.77,
+      "acc_m": 2500
+     }
+    ]
    },
-   "note": "01 and 001: one cell, each string echoed"
+   "note": "01 and 001: one cell, each string echoed; the NR cell, not asked here, is one of the LTE cell's neighbours"
+  },
+  {
+   "case": "cells_fetched_near",
+   "request": {
+    "cells": [
+     "lte:001:01:4711:12345678"
+    ]
+   },
+   "status": 200,
+   "body": {
+    "cells": [
+     {
+      "cell": "lte:001:01:4711:12345678",
+      "lat": 59.91,
+      "lng": 10.75,
+      "acc_m": 1500
+     }
+    ],
+    "unknown": [],
+    "near": [
+     {
+      "cell": "lte:001:01:4711:12345679",
+      "lat": 59.913,
+      "lng": 10.76,
+      "acc_m": 1400,
+      "ch": 6200,
+      "pci": 13
+     },
+     {
+      "cell": "lte:001:01:4711:12345612",
+      "lat": 59.915,
+      "lng": 10.765,
+      "acc_m": 1400,
+      "ch": 3100
+     },
+     {
+      "cell": "lte:001:01:4711:12345609",
+      "lat": 59.901,
+      "lng": 10.755,
+      "acc_m": 1400,
+      "ch": 6200,
+      "pci": 12
+     },
+     {
+      "cell": "lte:001:01:4711:12345602",
+      "lat": 59.922,
+      "lng": 10.745,
+      "acc_m": 1400,
+      "ch": 6200,
+      "pci": 101
+     },
+     {
+      "cell": "lte:001:01:4711:12345605",
+      "lat": 59.904,
+      "lng": 10.72,
+      "acc_m": 1400,
+      "ch": 3100,
+      "pci": 333
+     },
+     {
+      "cell": "lte:001:01:4711:12345603",
+      "lat": 59.895,
+      "lng": 10.77,
+      "acc_m": 1400,
+      "ch": 6300,
+      "pci": 202
+     },
+     {
+      "cell": "lte:001:01:4711:12345610",
+      "lat": 59.925,
+      "lng": 10.78,
+      "acc_m": 1400
+     },
+     {
+      "cell": "lte:001:01:4711:12345606",
+      "lat": 59.918,
+      "lng": 10.79,
+      "acc_m": 1400,
+      "ch": 6200,
+      "pci": 404
+     },
+     {
+      "cell": "lte:001:01:4711:12345607",
+      "lat": 59.888,
+      "lng": 10.74,
+      "acc_m": 1400,
+      "ch": 3100,
+      "pci": 471
+     },
+     {
+      "cell": "lte:001:01:4711:12345608",
+      "lat": 59.912,
+      "lng": 10.705,
+      "acc_m": 1400,
+      "ch": 6300,
+      "pci": 14
+     },
+     {
+      "cell": "lte:001:01:4711:12345604",
+      "lat": 59.93,
+      "lng": 10.775,
+      "acc_m": 1400,
+      "ch": 6300,
+      "pci": 250
+     },
+     {
+      "cell": "lte:001:01:4711:12345611",
+      "lat": 59.885,
+      "lng": 10.762,
+      "acc_m": 6500
+     }
+    ]
+   },
+   "note": "design 137: one asked LTE cell, 14 surrounding towers of which 12 overlap it (9 with ch and pci, 2 without, 1 with ch alone) and 2 don't (cut), and 20 id-less areas (dropped); near nearest first, each cell in the wire form with MNC 01"
+  },
+  {
+   "case": "cells_cached_near",
+   "request": {
+    "cells": [
+     "lte:001:01:4711:12345678"
+    ]
+   },
+   "status": 200,
+   "body": {
+    "cells": [
+     {
+      "cell": "lte:001:01:4711:12345678",
+      "lat": 59.91,
+      "lng": 10.75,
+      "acc_m": 1500
+     }
+    ],
+    "unknown": [],
+    "near": [
+     {
+      "cell": "lte:001:01:4711:12345679",
+      "lat": 59.913,
+      "lng": 10.76,
+      "acc_m": 1400,
+      "ch": 6200,
+      "pci": 13
+     },
+     {
+      "cell": "lte:001:01:4711:12345612",
+      "lat": 59.915,
+      "lng": 10.765,
+      "acc_m": 1400,
+      "ch": 3100
+     },
+     {
+      "cell": "lte:001:01:4711:12345609",
+      "lat": 59.901,
+      "lng": 10.755,
+      "acc_m": 1400,
+      "ch": 6200,
+      "pci": 12
+     },
+     {
+      "cell": "lte:001:01:4711:12345602",
+      "lat": 59.922,
+      "lng": 10.745,
+      "acc_m": 1400,
+      "ch": 6200,
+      "pci": 101
+     },
+     {
+      "cell": "lte:001:01:4711:12345605",
+      "lat": 59.904,
+      "lng": 10.72,
+      "acc_m": 1400,
+      "ch": 3100,
+      "pci": 333
+     },
+     {
+      "cell": "lte:001:01:4711:12345603",
+      "lat": 59.895,
+      "lng": 10.77,
+      "acc_m": 1400,
+      "ch": 6300,
+      "pci": 202
+     },
+     {
+      "cell": "lte:001:01:4711:12345610",
+      "lat": 59.925,
+      "lng": 10.78,
+      "acc_m": 1400
+     },
+     {
+      "cell": "lte:001:01:4711:12345606",
+      "lat": 59.918,
+      "lng": 10.79,
+      "acc_m": 1400,
+      "ch": 6200,
+      "pci": 404
+     },
+     {
+      "cell": "lte:001:01:4711:12345607",
+      "lat": 59.888,
+      "lng": 10.74,
+      "acc_m": 1400,
+      "ch": 3100,
+      "pci": 471
+     },
+     {
+      "cell": "lte:001:01:4711:12345608",
+      "lat": 59.912,
+      "lng": 10.705,
+      "acc_m": 1400,
+      "ch": 6300,
+      "pci": 14
+     },
+     {
+      "cell": "lte:001:01:4711:12345604",
+      "lat": 59.93,
+      "lng": 10.775,
+      "acc_m": 1400,
+      "ch": 6300,
+      "pci": 250
+     },
+     {
+      "cell": "lte:001:01:4711:12345611",
+      "lat": 59.885,
+      "lng": 10.762,
+      "acc_m": 6500
+     }
+    ]
+   },
+   "note": "the same from the cache: byte for byte the fetched body, at the same answer time"
+  },
+  {
+   "case": "cells_old_row",
+   "request": {
+    "cells": [
+     "lte:001:01:4711:12345678",
+     "nr:001:01:1048577:4294967297",
+     "gsm:001:01:1001:5001"
+    ]
+   },
+   "status": 200,
+   "body": {
+    "cells": [
+     {
+      "cell": "lte:001:01:4711:12345678",
+      "lat": 59.91,
+      "lng": 10.75,
+      "acc_m": 800
+     },
+     {
+      "cell": "nr:001:01:1048577:4294967297",
+      "lat": 59.912,
+      "lng": 10.751,
+      "acc_m": 350
+     }
+    ],
+    "unknown": [
+     "gsm:001:01:1001:5001"
+    ],
+    "near": [
+     {
+      "cell": "lte:001:01:4711:12345679",
+      "lat": 59.919,
+      "lng": 10.75,
+      "acc_m": 1200
+     },
+     {
+      "cell": "lte:001:01:4712:22345678",
+      "lat": 59.895,
+      "lng": 10.77,
+      "acc_m": 2500
+     }
+    ]
+   },
+   "note": "rows whose near is NULL (written before migration 0182): asked again, the lists then present"
+  },
+  {
+   "case": "cells_throttled",
+   "request": {
+    "cells": [
+     "lte:001:01:4711:12345678",
+     "nr:001:01:1048577:4294967297",
+     "gsm:001:01:1001:5001"
+    ]
+   },
+   "status": 200,
+   "body": {
+    "cells": [
+     {
+      "cell": "lte:001:01:4711:12345678",
+      "lat": 59.91,
+      "lng": 10.75,
+      "acc_m": 800
+     },
+     {
+      "cell": "nr:001:01:1048577:4294967297",
+      "lat": 59.912,
+      "lng": 10.751,
+      "acc_m": 350
+     }
+    ],
+    "unknown": [
+     "gsm:001:01:1001:5001"
+    ],
+    "near": []
+   },
+   "note": "a call made while throttled: the positions answered, near empty (the lists left NULL), the rows asked again at the next ask"
+  },
+  {
+   "case": "cells_two_asked",
+   "request": {
+    "cells": [
+     "lte:001:01:4711:12345678",
+     "lte:001:01:4711:12345650"
+    ]
+   },
+   "status": 200,
+   "body": {
+    "cells": [
+     {
+      "cell": "lte:001:01:4711:12345678",
+      "lat": 59.91,
+      "lng": 10.75,
+      "acc_m": 1200
+     },
+     {
+      "cell": "lte:001:01:4711:12345650",
+      "lat": 59.93,
+      "lng": 10.75,
+      "acc_m": 1200
+     }
+    ],
+    "unknown": [],
+    "near": [
+     {
+      "cell": "lte:001:01:4711:12345652",
+      "lat": 59.9195,
+      "lng": 10.75,
+      "acc_m": 800,
+      "ch": 6200,
+      "pci": 21
+     },
+     {
+      "cell": "lte:001:01:4711:12345651",
+      "lat": 59.9,
+      "lng": 10.75,
+      "acc_m": 800
+     },
+     {
+      "cell": "lte:001:01:4711:12345653",
+      "lat": 59.94,
+      "lng": 10.75,
+      "acc_m": 800,
+      "ch": 6300,
+      "pci": 22
+     }
+    ]
+   },
+   "note": "two asked cells with overlapping lists: per asked cell in the ask's order, each list nearest first, each entry once, neither asked cell in near"
+  },
+  {
+   "case": "cells_store_failed",
+   "request": {
+    "cells": [
+     "lte:001:01:4711:12345678",
+     "nr:001:01:1048577:4294967297",
+     "gsm:001:01:1001:5001"
+    ]
+   },
+   "status": 503,
+   "body": {
+    "error": "unavailable",
+    "retry_after_s": 900
+   },
+   "note": "Apple answered but the rows couldn't be written: 503 at the answer time, never an answer built from Apple's reply instead of the store"
   },
   {
    "case": "cells_paused_cached",
@@ -1184,6 +1622,117 @@
    },
    "action": "use",
    "wait_s": 0
+  },
+  {
+   "case": "use_cells_near",
+   "status": 200,
+   "body": {
+    "cells": [
+     {
+      "cell": "lte:001:01:4711:12345678",
+      "lat": 59.91,
+      "lng": 10.75,
+      "acc_m": 1500
+     }
+    ],
+    "unknown": [],
+    "near": [
+     {
+      "cell": "lte:001:01:4711:12345679",
+      "lat": 59.913,
+      "lng": 10.76,
+      "acc_m": 1400,
+      "ch": 6200,
+      "pci": 13
+     },
+     {
+      "cell": "lte:001:01:4711:12345612",
+      "lat": 59.915,
+      "lng": 10.765,
+      "acc_m": 1400,
+      "ch": 3100
+     },
+     {
+      "cell": "lte:001:01:4711:12345609",
+      "lat": 59.901,
+      "lng": 10.755,
+      "acc_m": 1400,
+      "ch": 6200,
+      "pci": 12
+     },
+     {
+      "cell": "lte:001:01:4711:12345602",
+      "lat": 59.922,
+      "lng": 10.745,
+      "acc_m": 1400,
+      "ch": 6200,
+      "pci": 101
+     },
+     {
+      "cell": "lte:001:01:4711:12345605",
+      "lat": 59.904,
+      "lng": 10.72,
+      "acc_m": 1400,
+      "ch": 3100,
+      "pci": 333
+     },
+     {
+      "cell": "lte:001:01:4711:12345603",
+      "lat": 59.895,
+      "lng": 10.77,
+      "acc_m": 1400,
+      "ch": 6300,
+      "pci": 202
+     },
+     {
+      "cell": "lte:001:01:4711:12345610",
+      "lat": 59.925,
+      "lng": 10.78,
+      "acc_m": 1400
+     },
+     {
+      "cell": "lte:001:01:4711:12345606",
+      "lat": 59.918,
+      "lng": 10.79,
+      "acc_m": 1400,
+      "ch": 6200,
+      "pci": 404
+     },
+     {
+      "cell": "lte:001:01:4711:12345607",
+      "lat": 59.888,
+      "lng": 10.74,
+      "acc_m": 1400,
+      "ch": 3100,
+      "pci": 471
+     },
+     {
+      "cell": "lte:001:01:4711:12345608",
+      "lat": 59.912,
+      "lng": 10.705,
+      "acc_m": 1400,
+      "ch": 6300,
+      "pci": 14
+     },
+     {
+      "cell": "lte:001:01:4711:12345604",
+      "lat": 59.93,
+      "lng": 10.775,
+      "acc_m": 1400,
+      "ch": 6300,
+      "pci": 250
+     },
+     {
+      "cell": "lte:001:01:4711:12345611",
+      "lat": 59.885,
+      "lng": 10.762,
+      "acc_m": 6500
+     }
+    ]
+   },
+   "action": "use",
+   "wait_s": 0,
+   "note": "design 137: a 200 with near - the rows used as before; near read, every entry a wire form (the phone half stores it)"
   },
   {
    "case": "cells_unavailable",

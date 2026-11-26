@@ -85,6 +85,23 @@ async fn lookup(app: &TestApp, token: &str, request: &Value) -> (StatusCode, Val
     (res.status, json)
 }
 
+/// The raw 200 body of a cells request (design 137 N5: a cached body is the fetched one byte for byte).
+async fn raw(app: &TestApp, token: &str, request: &Value) -> Vec<u8> {
+    let res = app
+        .send(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/devices/wifi-lookup")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(request.to_string()))
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK);
+    res.body.to_vec()
+}
+
 fn bssids(request: &Value) -> Vec<String> {
     request["bssids"]
         .as_array()
@@ -823,7 +840,8 @@ async fn the_http_client_goes_through_the_socks_proxy() {
     assert_ne!(seen[0].0, seen[1].0, "the same credentials twice");
 }
 
-/// A6: no lookup log - no `wifi_lookup` tracing line names a device, a BSSID or a coordinate.
+/// A6: no lookup log - no `wifi_lookup` tracing line names a device, a BSSID or a coordinate (design 137: nor a
+/// channel or a PCI).
 #[test]
 fn no_log_line_names_a_device_a_bssid_or_a_place() {
     for entry in std::fs::read_dir("src/integrations/wifi_lookup").unwrap() {
@@ -862,6 +880,10 @@ fn no_log_line_names_a_device_a_bssid_or_a_place() {
                 "cid",
                 "canonical",
                 "tower",
+                // Design 137: nor a neighbour's channel or PCI.
+                "pci",
+                "channel",
+                "earfcn",
             ] {
                 assert!(
                     !call.contains(word),
@@ -916,9 +938,23 @@ fn every_apple_cell_answer_reads_as_recorded() {
         let read: Vec<Value> = read
             .unwrap_or_else(|_| panic!("{name} didn't read"))
             .into_iter()
-            .map(|(cell, position)| match position {
-                Some(p) => json!([cell, p.lat, p.lng, p.acc_m]),
-                None => json!([cell, null]),
+            .map(|t| {
+                let mut row = match t.position {
+                    Some(p) => json!([t.cell, p.lat, p.lng, p.acc_m]),
+                    None => json!([t.cell, null]),
+                };
+                // Design 137 N1: the channel and PCI, when either was read.
+                let mut fields = serde_json::Map::new();
+                if let Some(ch) = t.channel {
+                    fields.insert("ch".to_string(), json!(ch));
+                }
+                if let Some(pci) = t.pci {
+                    fields.insert("pci".to_string(), json!(pci));
+                }
+                if !fields.is_empty() {
+                    row.as_array_mut().unwrap().push(Value::Object(fields));
+                }
+                row
             })
             .collect();
         assert_eq!(Value::Array(read), row["towers"], "{name}");
@@ -941,6 +977,10 @@ fn the_cell_forms_and_rules_are_the_contracts() {
     let rules = &contract["rules"];
     assert_eq!(rules["cells_max"], json!(cells::MAX_CELLS));
     assert_eq!(rules["cells_a_day"], json!(route::CELLS_A_DAY));
+    // Design 137.
+    assert_eq!(rules["near_max"], json!(route::NEAR_MAX));
+    assert_eq!(rules["near_per_cell"], json!(cells::NEAR_PER_CELL));
+    assert_eq!(rules["near_asked"], json!(cells::NEAR_ASKED));
     // Code QA M2: the fixed answer time covers the slowest path that gets the call - the gate's wait, the Apple
     // call's whole deadline and a margin: through the proxy (the contract's) and direct.
     let source = std::sync::Arc::new(crate::tests::music::CannedFetch::default());
@@ -1002,6 +1042,89 @@ async fn the_route_answers_the_cell_contract() {
         let first = &contract["request_cells"];
         let ((status, mut body), took) = match case {
             "cells_fetched" | "cells_two_spellings" => timed(&app, &token, request).await,
+            "cells_fetched_near" => {
+                app.fetch.answer(APPLE_URL, 200, apple_cell("cells_near"));
+                let answer = timed(&app, &token, request).await;
+                // N3: the surrounding towers are no rows of their own - the asked cell's alone.
+                assert_eq!(cache_rows(&app).await, 1, "{case}");
+                answer
+            }
+            "cells_cached_near" => {
+                app.fetch.answer(APPLE_URL, 200, apple_cell("cells_near"));
+                let fetched = raw(&app, &token, request).await;
+                let started = Instant::now();
+                let cached = raw(&app, &token, request).await;
+                let took = started.elapsed();
+                assert_eq!(app.fetch.count(), 1, "{case}: Apple asked again");
+                // N5: byte for byte the fetched body.
+                assert_eq!(cached, fetched, "{case}");
+                (
+                    (StatusCode::OK, serde_json::from_slice(&cached).unwrap()),
+                    took,
+                )
+            }
+            "cells_old_row" => {
+                assert_eq!(lookup(&app, &token, first).await.0, StatusCode::OK);
+                // A row from before migration 0182.
+                sqlx::query("UPDATE wifi_lookup_aps SET near = NULL")
+                    .execute(&app.db)
+                    .await
+                    .unwrap();
+                let answer = timed(&app, &token, request).await;
+                assert_eq!(app.fetch.count(), 2, "{case}: not asked again");
+                // The lists are kept now: the next ask is the cache's.
+                assert_eq!(lookup(&app, &token, request).await.1, answer.0.1);
+                assert_eq!(app.fetch.count(), 2, "{case}: asked a third time");
+                answer
+            }
+            "cells_throttled" => {
+                *wifi.cell_throttled_until.lock().unwrap() =
+                    Some(Instant::now() + std::time::Duration::from_secs(60));
+                let answer = timed(&app, &token, request).await;
+                // N2: one neighbour each asked while throttled, and the lists left NULL.
+                let towers: Vec<cells::Cell> = request["cells"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|c| cells::Cell::parse(c.as_str().unwrap()).unwrap())
+                    .collect();
+                let sent = app.fetch.requests.lock().unwrap()[0].body.clone();
+                assert_eq!(sent, Some(cells::request(&towers, true)), "{case}");
+                let open: i64 = sqlx::query_scalar(
+                    "SELECT COUNT(*) FROM wifi_lookup_aps WHERE negative = 0 AND near IS NULL",
+                )
+                .fetch_one(&app.db)
+                .await
+                .unwrap();
+                assert_eq!(open, 2, "{case}");
+                // The throttle over: the rows asked again, the lists then answered.
+                *wifi.cell_throttled_until.lock().unwrap() = None;
+                let (status, again) = lookup(&app, &token, request).await;
+                assert_eq!(status, StatusCode::OK);
+                assert_eq!(app.fetch.count(), 2, "{case}: not asked again");
+                assert_eq!(
+                    again["near"].as_array().unwrap().len(),
+                    2,
+                    "{case}: {again}"
+                );
+                answer
+            }
+            "cells_two_asked" => {
+                app.fetch.answer(APPLE_URL, 200, apple_cell("cells_two"));
+                timed(&app, &token, request).await
+            }
+            "cells_store_failed" => {
+                sqlx::query(
+                    "CREATE TRIGGER no_store BEFORE INSERT ON wifi_lookup_aps \
+                     BEGIN SELECT RAISE(ABORT, 'the store fails'); END",
+                )
+                .execute(&app.db)
+                .await
+                .unwrap();
+                let answer = timed(&app, &token, request).await;
+                assert_eq!(app.fetch.count(), 1, "{case}: Apple not asked");
+                answer
+            }
             "cells_cached" => {
                 assert_eq!(lookup(&app, &token, first).await.0, StatusCode::OK);
                 let answer = timed(&app, &token, request).await;
@@ -1238,8 +1361,8 @@ fn the_day_brake_counts_in_one_step() {
     assert_eq!(days.used(8, now), 0);
 }
 
-/// C7: a cell row is sealed under its canonical form - Apple's numeric MNC meets the asked `01` - and Apple's
-/// surrounding towers are cached; an AP in a cell answer never is.
+/// C7: a cell row is sealed under its canonical form - Apple's numeric MNC meets the asked `01`; design 137 N3: Apple's
+/// surrounding towers are no rows of their own, only in the asked cells' lists; an AP in a cell answer never is kept.
 #[tokio::test]
 async fn a_cell_row_is_sealed_under_its_canonical_form() {
     let app = TestApp::new().await;
@@ -1263,17 +1386,44 @@ async fn a_cell_row_is_sealed_under_its_canonical_form() {
     .await
     .unwrap();
     assert!(matches!(read[0], Cached::Known { .. }), "{read:?}");
-    assert!(
-        matches!(read[1], Cached::Known { .. }),
-        "the surrounding tower"
-    );
+    assert_eq!(read[1], Cached::Missing, "the surrounding tower");
     assert_eq!(read[2], Cached::Unknown);
-    // Five towers placed and one negative: nothing under the asked spelling.
+    // Two asked cells placed and one negative: nothing under the asked spelling, no surrounding tower.
     let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM wifi_lookup_aps")
         .fetch_one(&app.db)
         .await
         .unwrap();
-    assert_eq!(rows, 5);
+    assert_eq!(rows, 3);
+    // The surrounding tower is in the LTE cell's list, sealed under it.
+    let lists = cache::read_cells(
+        &app.db,
+        &key,
+        &[
+            "lte:1:1:4711:12345678".to_string(),
+            "gsm:1:1:1001:5001".to_string(),
+        ],
+        month,
+    )
+    .await
+    .unwrap();
+    let near: Vec<&str> = lists[0]
+        .near
+        .as_ref()
+        .unwrap()
+        .iter()
+        .map(|n| n.cell.as_str())
+        .collect();
+    assert_eq!(near, ["lte:1:1:4711:12345679", "lte:1:1:4712:22345678"]);
+    assert!(!lists[0].wanted(month));
+    // A negative has no list and isn't wanted in its month.
+    assert_eq!(lists[1].near, None);
+    assert!(!lists[1].wanted(month));
+    let sealed: Vec<u8> = sqlx::query_scalar("SELECT near FROM wifi_lookup_aps WHERE id = ?")
+        .bind(key.id("lte:1:1:4711:12345678"))
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(key.open_near("nr:1:1:1048577:4294967297", &sealed), None);
     // An AP in a cell answer is never cached.
     let app = TestApp::new().await;
     let (_, token) = phone_on(&app).await;
@@ -1291,24 +1441,211 @@ async fn a_cell_row_is_sealed_under_its_canonical_form() {
         .await
         .unwrap();
     assert_eq!(rows, 1);
-    // The sweep's counts carry the cells.
+    // The sweep's counts carry the cells and the near entries answered.
     let counts = app.state.integrations.wifi_lookup.counts.take();
-    assert_eq!(&counts[5..], &[1, 1]);
+    assert_eq!(&counts[5..], &[1, 1, 0]);
 }
 
-/// C6: a cell answer of 10 towers or more throttles the next cell call to 4 in all; the Wi-Fi throttle is apart.
+/// Design 137 N2: an answer of the asked cell and its twelve (id-less areas aside) doesn't throttle; one with more
+/// than asked does, and the next cell call asks one each; the Wi-Fi throttle is apart.
 #[tokio::test]
-async fn a_big_cell_answer_throttles_the_next_cell_call() {
+async fn only_more_than_asked_throttles_the_next_cell_call() {
     let app = TestApp::new().await;
     let (_, token) = phone_on(&app).await;
-    app.fetch.answer(APPLE_URL, 200, apple_cell("cells_many"));
-    let (status, _) = lookup(&app, &token, &json!({"cells": ["gsm:001:01:1001:5001"]})).await;
-    assert_eq!(status, StatusCode::OK);
     let wifi = app.state.integrations.wifi_lookup.clone();
+    let lone = json!({"cells": ["lte:001:01:4711:12345678"]});
+    app.fetch
+        .answer(APPLE_URL, 200, apple_cell("cells_thirteen"));
+    let (status, body) = lookup(&app, &token, &lone).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["near"].as_array().unwrap().len(), 12, "{body}");
+    assert!(wifi.cell_throttled_until.lock().unwrap().is_none());
+    // Apple sends more than asked: the next 10 s ask one each.
+    let other = json!({"cells": ["lte:001:01:4711:12345650"]});
+    app.fetch.answer(APPLE_URL, 200, apple_cell("cells_flood"));
+    let (status, _) = lookup(&app, &token, &other).await;
+    assert_eq!(status, StatusCode::OK);
     assert!(wifi.cell_throttled_until.lock().unwrap().is_some());
     assert!(wifi.throttled_until.lock().unwrap().is_none());
-    let cell = cells::Cell::parse("gsm:001:01:1001:5001").unwrap();
-    assert_eq!(cells::surrounding(&[cell], true), [(cells::Radio::Gsm, 1)]);
+    let third = json!({"cells": ["gsm:001:01:1001:5001"]});
+    lookup(&app, &token, &third).await;
+    let requests = app.fetch.requests.lock().unwrap().clone();
+    let cell = |c: &str| vec![cells::Cell::parse(c).unwrap()];
+    assert_eq!(
+        requests[0].body.as_deref(),
+        Some(cells::request(&cell("lte:001:01:4711:12345678"), false).as_slice())
+    );
+    assert_eq!(
+        requests[2].body.as_deref(),
+        Some(cells::request(&cell("gsm:001:01:1001:5001"), true).as_slice())
+    );
+    assert_eq!(
+        cells::surrounding(&cell("gsm:001:01:1001:5001"), true),
+        [(cells::Radio::Gsm, 1)]
+    );
+}
+
+/// Design 137 N5: `near` per asked cell in the ask's order, each entry once, and an asked cell never in it - also when
+/// a cached cell's list names a cell asked now. Two lists from two calls: A's (asked alone, B in it) and B's (A in it).
+#[tokio::test]
+async fn near_never_names_an_asked_cell() {
+    let app = TestApp::new().await;
+    let (_, token) = phone_on(&app).await;
+    app.fetch.answer(APPLE_URL, 200, apple_cell("cells_two"));
+    let (a, b, x, y, z) = (
+        "lte:001:01:4711:12345678",
+        "lte:001:01:4711:12345650",
+        "lte:001:01:4711:12345651",
+        "lte:001:01:4711:12345652",
+        "lte:001:01:4711:12345653",
+    );
+    let names = |body: &Value| -> Vec<String> {
+        body["near"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|n| n["cell"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let (status, body) = lookup(&app, &token, &json!({"cells": [a]})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(names(&body), [y, x, b], "A's list, nearest first");
+    let (status, body) = lookup(&app, &token, &json!({"cells": [b, a]})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(app.fetch.count(), 2, "B asked, A cached");
+    assert_eq!(
+        names(&body),
+        [z, y, x],
+        "B's then A's, Y once, neither A nor B"
+    );
+    assert_eq!(cache_rows(&app).await, 2);
+}
+
+/// Design 137 N5: at most 64 `near` entries, the lists taken in the ask's order.
+#[test]
+fn near_stops_at_sixty_four() {
+    let position = codec::Position {
+        lat: 59.91,
+        lng: 10.75,
+        acc_m: 1000,
+    };
+    let canonical: Vec<String> = (1..=12).map(|n| format!("lte:1:1:1:{n}")).collect();
+    let cached: Vec<cache::CellCached> = (1..=12)
+        .map(|n| cache::CellCached {
+            cached: Cached::Known {
+                position,
+                fetched_month: 0,
+            },
+            near: Some(
+                (1..=12)
+                    .map(|m| cells::Near {
+                        cell: format!("lte:1:1:2:{}", n * 100 + m),
+                        position,
+                        channel: None,
+                        pci: None,
+                    })
+                    .collect(),
+            ),
+        })
+        .collect();
+    let rows = route::near_rows(&canonical, &cached);
+    assert_eq!(rows.len(), route::NEAR_MAX);
+    assert_eq!(rows[0].cell, "lte:001:01:2:101");
+    assert_eq!(rows[63].cell, "lte:001:01:2:604");
+    // No list (a negative, or a row not from a full call): nothing from it.
+    let none = [cache::CellCached {
+        cached: Cached::Unknown,
+        near: None,
+    }];
+    assert!(route::near_rows(&canonical[..1], &none).is_empty());
+}
+
+/// Design 137 N4: migration 0182 adds `near` and keeps every row. From the previous head's schema with a Wi-Fi row and
+/// a cell row: the Wi-Fi row answers as before and isn't wanted; the cell row opens but, with no list, is wanted (asked
+/// again once); and a backup of that older database passes the backup check (migrated forward, as a restore is).
+#[tokio::test]
+async fn migration_0182_asks_old_cell_rows_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("old.db");
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(&path)
+        .create_if_missing(true)
+        .foreign_keys(true);
+    let db = sqlx::SqlitePool::connect_with(options).await.unwrap();
+    let full = sqlx::migrate!("./migrations");
+    let mut old = sqlx::migrate!("./migrations");
+    old.migrations = full
+        .migrations
+        .iter()
+        .filter(|m| m.version < 182)
+        .cloned()
+        .collect::<Vec<_>>()
+        .into();
+    old.run(&db).await.unwrap();
+    let key = CacheKey::from_bytes(&[7; 32]);
+    let month = this_month();
+    let position = codec::Position {
+        lat: 59.91,
+        lng: 10.75,
+        acc_m: 800,
+    };
+    let (ap, cell) = ("00:00:5e:00:53:01", "lte:1:1:4711:12345678");
+    for name in [ap, cell] {
+        sqlx::query(
+            "INSERT INTO wifi_lookup_aps (id, sealed, fetched_month, used_month, negative) VALUES (?, ?, ?, ?, 0)",
+        )
+        .bind(key.id(name))
+        .bind(key.seal(name, &position))
+        .bind(month)
+        .bind(month)
+        .execute(&db)
+        .await
+        .unwrap();
+    }
+    db.close().await;
+
+    let data = dir.path().join("data");
+    let backups = data.join("backups");
+    std::fs::create_dir_all(&backups).unwrap();
+    let zip_path = backups.join("vibb-backup-old.zip");
+    {
+        use std::io::Write;
+        let mut writer = zip::ZipWriter::new(std::fs::File::create(&zip_path).unwrap());
+        writer
+            .start_file("kidphone.db", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        writer.write_all(&std::fs::read(&path).unwrap()).unwrap();
+        writer.finish().unwrap();
+    }
+    assert!(
+        matches!(
+            crate::handlers::backups::check_file(&data, &zip_path).await,
+            crate::handlers::backups::Checked::Ok
+        ),
+        "the older backup restores into the new schema"
+    );
+
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(&path)
+        .foreign_keys(true);
+    let db = sqlx::SqlitePool::connect_with(options).await.unwrap();
+    full.run(&db).await.unwrap();
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM wifi_lookup_aps WHERE near IS NULL")
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    assert_eq!(rows, 2);
+    let wifi = cache::read(&db, &key, &[ap.to_string()], month)
+        .await
+        .unwrap();
+    assert!(matches!(wifi[0], Cached::Known { .. }));
+    assert!(!wifi[0].wanted(month), "a Wi-Fi row stays as it was");
+    let cells = cache::read_cells(&db, &key, &[cell.to_string()], month)
+        .await
+        .unwrap();
+    assert!(matches!(cells[0].cached, Cached::Known { .. }));
+    assert_eq!(cells[0].near, None);
+    assert!(cells[0].wanted(month), "an old cell row is asked again");
 }
 
 #[test]

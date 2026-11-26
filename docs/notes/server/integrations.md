@@ -106,15 +106,15 @@ map links for both to use.
 
 ## Apple's cell lookup (design 125b, `docs/design/125b-apple-cell-lookup.md`)
 
-The same integration, route, sealed cache and limits; no migration. The PWA's switch is one for both: "Oppslag hos
+The same integration, route, sealed cache and limits; no migration (design 137 adds 0182's `near`, below). The PWA's switch is one for both: "Oppslag hos
 Apple" / "Lookups at Apple", its (i) naming the mobile network too (C13).
 
 - `cells.rs`: a cell's **wire form** (`Cell::parse`: `<radio>:<mcc>:<mnc>:<area>:<cid>`, `gsm|wcdma|lte|nr`, MCC three
   digits, MNC two or three, no leading zeros, each radio's ranges with 0 and the all-ones fills cut - `cell_forms`) and
   its **canonical form** (MCC and MNC as numbers, `lte:242:1:4711:12345678`: the cache's id and the seal's AAD, so
   Apple's numeric MNC meets the phones' `01` and two spellings are one row); the cell call (GrapheneOS's towers 1, 25,
-  27 - WCDMA in SCDMA's fields -, 29, each standard's count `max(1, (total - 19) x its share)`, `total` 25 or 4 while
-  throttled, `meta`; pinned by `server.json`'s `golden_cells`) and its answer (fields 1, 22, 23, 24; field 2 and 21
+  27 - WCDMA in SCDMA's fields -, 29, each standard's count `max(1, NEAR_ASKED x its share)` - `NEAR_ASKED` 12, 1 each
+  while throttled, design 137 N2 -, `meta`; pinned by `server.json`'s `golden_cells`) and its answer (fields 1, 22, 23, 24; field 2 and 21
   skipped, never cached; a tower missing a part, negative or out of range left out; accuracy 1..50,000 m; 200 towers;
   the first of duplicates wins; `apple_cells`). `codec.rs` shares its writer and bounded reader with it.
 - `route.rs`: a body is `{"bssids"}` or `{"cells"}` (1..12), never both. **No cache oracle** (the user, 2026-11-24): a
@@ -129,15 +129,37 @@ Apple" / "Lookups at Apple", its (i) naming the mobile network too (C13).
   1 s: 14 s proxied, 9 s direct; code QA M2); a task that hasn't answered by then gives `503` (900) and goes on to fill
   the cache. The **abuse brake**: 1000 cells (canonical, distinct per request) a phone a UTC day (`CellDays`, memory
   only), past it `429 limit` with `retry_after_s` to midnight; checked and counted under one lock with the hour's 30
-  asked inside it (`try_add`, code QA L1), so a refused request takes neither. The cell call has its own throttle (10
-  towers -> 10 s at 4) and shares the gate, the pauses, `integration_health` and the 60/10 call limits with the Wi-Fi
-  call. The sweep line gains `cells=` and `cell_calls=`.
+  asked inside it (`try_add`, code QA L1), so a refused request takes neither. The cell call has its own throttle (more
+  towers than the call's cells and 12 -> 10 s at 1 each, design 137 N2) and shares the gate, the pauses, `integration_health` and the 60/10 call limits with the Wi-Fi
+  call. The sweep line gains `cells=` and `cell_calls=` (and `near=` since design 137).
 - **What is left of an oracle** (C12, code QA L2): an Apple call that fails during one request with an uncached cell
   (503 where an all-cached one got 200, at the same time). The limits, the gate and the permit no longer depend on the
   cache.
 - **Sealing protects cell rows less**: cell identities are enumerable from public lists, so whoever holds both the
   database and `K` can open every cell row cheaply; the database or a backup alone still reveals nothing. The cache
   over two years shows the family's trips coarsely, not only its places.
+- **Cell neighbours** (design 137's server step, `docs/design/137-cell-neighbours.md` N1-N5; migration 0182): the
+  answer reader keeps an LTE tower's EARFCN (6, 0..262143) and PCI (7, 0..503) and a WCDMA tower's UARFCN (11,
+  0..16383) and PSC (12, 0..511) - a -1, a value past the range or another wire type is unknown, never `Malformed`;
+  NR's and GSM's aren't read (`cells::Tower`, `Radio::near_fields`). Apple answers the count in full-id neighbours (the
+  probe of 2026-11-25), so a call asks 12 (`NEAR_ASKED`) and throttles only past `asked + 12` parsed towers
+  (`cells::throttles`). Each asked cell Apple placed keeps the call's positioned towers that are not asked and overlap
+  it (`d <= r_cell + r_tower`, `zones::distance_m`), nearest first, at most 12 (`cells::near`), sealed in its row's
+  `near` under `near|<canonical>` (`CacheKey::seal_near`, the AAD the same); an empty list is a sealed empty list.
+  NULL - a Wi-Fi row, a cell row from before 0182, a call made while throttled - makes a placed cell `wanted`
+  (`CellCached::wanted`), asked once more. **Surrounding towers are no rows of their own** any more (Wi-Fi's
+  surrounding APs still are). The cells 200 gains `"near": [{cell, lat, lng, acc_m, ch?, pci?}]` - always present,
+  per asked cell in the ask's order, each list nearest first, an entry already given or an asked cell left out, at
+  most 64 (`route::near_rows`, `NEAR_MAX`), the cell in the wire form (`Cell::wire`: MCC three digits, MNC at least
+  two); `cells` never carries `ch`/`pci`. **The answer comes from the store on both paths**: after a call the rows
+  are written and read back (`read_cells`), so a fetched body is byte for byte the next cached one; a failed write is
+  `503` (900) at the answer time. **The residual oracle** (N5, the owner's Q1: accepted): a stored list is cut from the
+  call that fetched it, and a multi-cell call gives each cell a smaller share of the count, so its list can be shorter
+  than a lone ask's - a walker who gets a short list may infer that some family phone once asked that cell with
+  others nearby (the overlap cut keeps the others' neighbours out, so not where); weak (a cell with few neighbours has a
+  short list whoever asks) and braked at 1000 cells a day; a throttled call leaves no short list (NULL, asked again).
+  The launcher's `CellLookupAnswer` reads `near` (`AppleNearCell`) and doesn't use it yet - the phone half (N6-N12)
+  waits for 137's step 0, the SIM check.
 - Tests (`tests.rs`): the contract's `cell_answers` through the real route (the same body from the cache and from
   Apple, each at the answer time - `CELL_ANSWER_AFTER_IN_TESTS`, 700 ms, over the tests' 300-ms gate; the day cap's
   wait to midnight; `cells_busy` with the gate held), a held gate and two lookups in flight answering cached and
@@ -145,5 +167,11 @@ Apple" / "Lookups at Apple", its (i) naming the mobile network too (C13).
   answering both alike (M1), an Apple call past the answer time answering 503 then and filling the cache (M2), the day
   brake under concurrent requests (L1),
   `golden_cells`, every `apple_cells` row, `cell_forms` and the rules, a row sealed under its canonical form and found
-  from Apple's numeric MNC, the surrounding towers cached and an AP in a cell answer never, the cell throttle apart from
-  the Wi-Fi one, the source test (no cell identity in a tracing line).
+  from Apple's numeric MNC, the surrounding towers only in the asked cell's list (design 137) and an AP in a cell answer never kept, the cell throttle apart from
+  the Wi-Fi one, the source test (no cell identity in a tracing line). Design 137: `cells_fetched_near` and
+  `cells_cached_near` (byte-identical), `cells_old_row`, `cells_throttled`, `cells_two_asked`, `cells_store_failed`;
+  `apple_cells`' probe-shaped rows (`cells_near`, `cells_near_fields`, `cells_thirteen`, `cells_flood`, `cells_two`;
+  PLMN 001-01, made-up positions, channels and PCIs), the throttle rule, the overlap cut and the 12 nearest, a list
+  opening only for its cell, `near` never naming an asked cell across two calls, the 64 cap, migration 0182 from the
+  previous schema (an old cell row wanted, a Wi-Fi row untouched, an older backup passing the check), and no channel or
+  PCI in a tracing line.

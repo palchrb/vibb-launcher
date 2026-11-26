@@ -266,8 +266,16 @@ data class WifiLookupCellsRequest(val cells: List<String>)
 @Serializable
 data class AppleCell(val cell: String, val lat: Double, val lng: Double, val accM: Int)
 
+/**
+ * Design 137 N5: one of Apple's neighbours around the asked cells - the wire form, Apple's position, the channel (EARFCN
+ * or UARFCN) and PCI (or PSC) only when Apple sent them. Read, not used yet: the phone half (N6-N12) waits for 137's
+ * step 0, the SIM check.
+ */
 @Serializable
-data class CellLookupAnswer(val cells: List<AppleCell>, val unknown: List<String> = emptyList())
+data class AppleNearCell(val cell: String, val lat: Double, val lng: Double, val accM: Int, val ch: Int? = null, val pci: Int? = null)
+
+@Serializable
+data class CellLookupAnswer(val cells: List<AppleCell>, val unknown: List<String> = emptyList(), val near: List<AppleNearCell> = emptyList())
 
 /** What the phone does with a cells answer (C5): only the cell wait is set, but a 409 is the one switch's. */
 sealed interface CellStep {
