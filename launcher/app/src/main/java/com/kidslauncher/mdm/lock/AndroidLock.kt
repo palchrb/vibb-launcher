@@ -81,7 +81,8 @@ object AndroidLock {
     /**
      * [PinLockRuntime.configure] (every apply, background thread), before the keyguard is written: the reset token kept
      * active in every state ([WindowRelock.ensureAndroidResetToken], §3.6, design 132 §7.1), the owned flag - owned
-     * with no credential left (removed on the phone) goes, and its rev - and the password quality ([passwordQualityNow]).
+     * with no credential left goes (`ownedGone`: only reachable if the credential is removed outside Vibb One, e.g. a
+     * factory-level path - §6bt G12b), and its rev - and the password quality ([passwordQualityNow]).
      * Returns whether we still own Android's credential. Android's PIN is never cleared here (Q1 (a)).
      */
     fun configure(context: Context, dpm: DevicePolicyManager, admin: ComponentName, managed: Boolean): Boolean = synchronized(this) {

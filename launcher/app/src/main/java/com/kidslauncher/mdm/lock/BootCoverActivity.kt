@@ -116,6 +116,9 @@ class BootCoverActivity : Activity() {
     /** RC3-1: the open ask's silence ([bootPadSilentInMs]) - posted by every ask, dropped by any answer. */
     private val padSilent = Runnable { padStep(PadEvent.SILENT) }
 
+    /** §6bt finding 2: the open ask's "the pad is up, no re-ask" was logged (once per ask, not at every tick). */
+    private var coveredLogged = false
+
     /** What [applyBackHold] last set ([coverHoldsBack]). */
     private var holdsBack = false
 
@@ -432,12 +435,22 @@ class BootCoverActivity : Activity() {
         applyLockedFace()
         val interactive = getSystemService(PowerManager::class.java)?.isInteractive == true
         val inCall = gate && telecomInCall()
-        val step = bootPadStep(pad, event, gate, interactive, inCall)
+        // §6bt finding 2: Android's pad over the cover has the window focus - a silence then is the pad up, not lost.
+        val covered = !hasWindowFocus()
+        val step = bootPadStep(pad, event, gate, interactive, inCall, covered)
         pad = step.pad
         autoAsksThisProcess = pad.autoAsks
         tapLine?.visibility = if (gate && pad.line) View.VISIBLE else View.GONE
-        if (event == PadEvent.SILENT && step.action == PadAction.NONE && step.silentInMs != null) {
-            Log.i(LOG_TAG, "Boot cover: no answer to the ask - this re-ask skipped (screen off or a call)")
+        if (event == PadEvent.SILENT && step.action == PadAction.NONE && step.silentInMs != null && !(covered && coveredLogged)) {
+            coveredLogged = covered
+            Log.i(
+                LOG_TAG,
+                if (covered) {
+                    "Boot cover: no answer yet, a window (Android's pad) is over the cover - no re-ask"
+                } else {
+                    "Boot cover: no answer to the ask - this re-ask skipped (screen off or a call)"
+                },
+            )
         }
         when (step.action) {
             PadAction.ASK -> askPad(event)
@@ -460,6 +473,7 @@ class BootCoverActivity : Activity() {
     private fun askPad(why: PadEvent) {
         if (!padGate()) return
         val id = ++askId
+        coveredLogged = false
         // RC3-1: a silence's re-ask says so (no answer since the ask; uncounted, the same ask).
         val what = if (why == PadEvent.SILENT) "no answer, again ${pad.reasks}" else why.name.lowercase()
         Log.i(LOG_TAG, "Boot cover asks for Android's PIN pad ($what, automatic ${pad.autoAsks} of $BOOT_PAD_AUTO_ASKS)")
