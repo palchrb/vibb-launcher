@@ -3566,3 +3566,73 @@ gruppe), and "App usage data" on - the setup flow's step `usage_access` during a
   sheet ("Brukt opp i dag", "Ikke i dag", "Kan ikke telle nå");
 - row 10's title: `dumpsys notification --noredact | grep -A3 1002` ("Test: 3 min igjen").
 
+
+## 6cd. Design 139 gate on Android 14 (branch `gate-139a`)
+
+Gate A of design 139 §8 rows 2-18 (§6cc), on **Android 14 only** (`compat34`, Google APIs, port 5556, `-wipe-data`),
+2026-11-27 13:50-14:51 UTC, with the owner's OK for the day; gate B runs the same rows on 16 (`jelly36`). `main` at
+`d4ebd4886`: the debug launcher (`assembleDebug`, `-PwarningsAsErrors=true`) and a debug server from the same tree
+(`--features emulator_keys`, admin `127.0.0.1:3140`, phones `10.0.2.2:3141`). The phone: §4's adb lines (with
+`GET_USAGE_STATS allow`), Telefon 1 with Foreldre-PIN 246813 and Barne-PIN 2580 from the PWA, Koble til with a typed
+code, the setup flow skipped through (no `usage_access` step: the grant was in place). The PWA driven by a small
+private script, not by clicks.
+
+**Test apps** (hand-made, not committed; sideloaded, so let out with "Allow these apps"): `probe.gate.a` ("Gate A")
+and `probe.gate.b` ("Gate B"), targetSdk 33, the group's two apps. Each has a second activity `gate.B` with
+auto-enter PiP, a test call (a CALL-category notification with a full-screen intent, "answer" a foreground service
+whose notification is of the CALL category, so `VoipCalls` sees RINGING then IN_CALL), a switch for
+`MODE_IN_COMMUNICATION`, and a `queryEvents` dump (A only, its own `GET_USAGE_STATS`). Chrome is the non-group app
+below. Group "Test" of A and B; a group deleted and added again (ids 1-5) for a fresh limit, so several rows ran from
+a new group's first fold. Minutes read from the ledger (`run-as ... shared_prefs/time_rules_state.xml`,
+`group_used_ms`), the PWA's Device › Time Rules row ("2 of 17 min"). `AppGroupUsage` logged continuously from 14:08 to
+the end (an `adb logcat` loop across the reboots; earlier lines were cleared by mistake). Event times below are the
+phone's (`HH:mm:ss.SSS`); the phone ran 0.4-5.8 s behind the VM.
+
+**The screen timeout:** Vibb sets Android's maximum time to lock to the screen timeout, which turns "stay awake while
+charging" off; the rows ran with the PWA's screen timeout at 10 min (row 15 at 15 s).
+
+| # | Android 14 (`compat34`) |
+|---|---|
+| 2 | **Pass.** Gate A from Home, limit 2 min: `A group closed: Home over probe.gate.a`, A `PAUSED` 14:02:04.168 (~3.5 s after the limit, the read window plus the timer), Home in front, A and B `suspended=true`; both tiles dimmed, a tap opens the sheet "Test" / "Used up today" / Close (the phone ran in English). The first try was cut short by the then 60 s screen timeout: 59.2 s counted, nothing during the 2 min dark |
+| 3 | **Pass.** A 14:02:47.631-14:03:40.826 (53.2 s), B from 14:03:44.628: the ledger grew by exactly the two spans (124 297 -> 205 428 ms at the fold of 14:04:12). B in front, power off 14:04:44.941 (`SCREEN_NON_INTERACTIVE`, `KEYGUARD_SHOWN`), woken at 14:05:26 and left on the PIN pad 30 s, unlocked 14:05:57.708: 217 929 ms before and after - the dark and the PIN pad counted nothing |
+| 4 | **Pass.** `POST /lifts what=group-1 minutes=15`: A and B unsuspended within a second, `group_extra_minutes {1: 15}`, `applied_group_lifts [1]`, Gate A opened; Activity "Test: 15 min extra", Time Rules "2 of 17 min" |
+| 5 | **Pass.** `appops set ... GET_USAGE_STATS ignore`: A and B suspended at once, the sheet "Can't count now", Device › Time Rules the orange "App usage data is off" and the row "Can't count"; `allow` again: both open within seconds, the row back to "3 of 17 min" |
+| 6 | **Pass, with row 18's finding.** The setup hold (enrolment, the flow on screen, Gate A in front 13:53:28-13:55:12, 1 min 43 s): no group minutes. Group used up, "Pause all restrictions" (`/start-pause`): A and B unsuspended at once. **First try:** A in front 14:14:21.597-14:14:56.840 during the pause - **0 ms counted**: the fold that read [14:14:20.187, 14:14:35.300) got none of its 5 events (A's `RESUMED` among them), the debug re-read found them (`late event: 5 more`, row 18). **Second try** (A brought front at ~14:15:25): 64 064 -> 122 076 ms at 14:16:23 - counted. "Lås igjen" (`/end-windows`): A suspended, `A group closed: Home over probe.gate.a`, Home in front |
+| 7 | **Pass.** Group used up; a school rule "Skole" 13:00-17:00 every day with Gate A as its exception: the rule screen's rows Phone book and Messages, no Gate A, A suspended. The rule deleted, Bedtime 13:00-11:00 with Gate A allowed: the same. Control: the group lifted (+15) under that bedtime: a "Gate A" row appears and A opens, B (not allowed at bedtime) stays suspended |
+| 8 | **Pass.** A in front, ring (`VoIP NONE -> RINGING, pinned probe.gate.a`) and answer (`RINGING -> IN_CALL`) 1 min before the limit; at the limit B suspended, A stayed in front and `suspended=false`. Hang-up 14:10:51.226: `pinned -`, then `A group closed: Home over probe.gate.a` 14:10:51.568, A `PAUSED` 14:10:51.461. The test call sets no audio mode, so the phase fell to NONE 16 s after the answer (`IN_CALL -> NONE, pinned probe.gate.a`): the hold follows `pinnedPackage`, as D7 says. The audio mode alone: a new group of 1 min, A set `MODE_IN_COMMUNICATION` (`mAudioModeOwner` A's pid): no `VoipCalls` change, A cut at its limit (14:27:38) |
+| 9 | **Pass.** Kiosk off (`kiosk_desired = 0` on the test server; the phone's lock task `NONE` after a reboot, below). Chrome, then Gate A over it, limit 3 min: at the cut A `PAUSED` 14:34:48.767, Chrome `RESUMED` 1 ms later (Android's own), Home `RESUMED` 14:34:49.270 (`A group closed: Home over probe.gate.a`) - Home in front, not Chrome. The PiP of a group app counts: row 17 |
+| 10 | **Pass.** Limit 2 min, Gate A in front: the panel's title in the shade "Test: 2 min left" (en) |
+| 11 | **Pass.** Gate A in front from 14:37:00.126, the launcher's process `kill -9`'d (`adb root`); the new process brought Vibb's lock (PinLockActivity, then the screen off - its own behaviour, not this design's). The ledger grew by exactly A's span from its `RESUMED` to its `STOPPED` 14:37:10.791 (10 665 ms), the dead process's seconds included |
+| 12 | **Pass.** Kiosk off, Chrome below. `kill -9` of A: A `STOPPED` 14:38:19.822, Chrome `RESUMED` 1 ms later; the count stopped at once (+10 170 ms = A's `RESUMED` to its `STOPPED`, nothing in Chrome's 40 s after). `am crash` of A: A `STOPPED` 14:39:22.252 with no `PAUSED`, Chrome `RESUMED` 24 ms later; stopped at once (+10 440 ms) - not the 10.6 s on-paused of §6ca's probe |
+| 13 | **Fail - the 2 s fallback is needed.** As row 12 with Chrome's process gone first (`am kill`, `pidof` empty). Three tries, A `STOPPED` (no `PAUSED`) to Chrome's cold-start `RESUMED`: **301 ms, 815 ms, 299 ms** - all over `KILL_PAIR_MS` (50). A stayed on in the fold's carry and was counted while dead: try 1 left 26 s at the next fold, and the dead A ran on through tries 2 and 3 and Home until the screen off at 14:42:41.615 (62 s more in one stretch). See the findings |
+| 14 | **Pass.** `adb reboot` with Barne-PIN 2580, unlocked right after the boot, Gate A opened. Order: `SCREEN_INTERACTIVE`, BootCover `RESUMED`, `KEYGUARD_SHOWN`, BootCover `PAUSED`/`RESUMED` (all 14:31:18.239), `DEVICE_STARTUP` 14:31:18.492, `KEYGUARD_HIDDEN` 14:31:19.078, Home `RESUMED` 14:31:43.148, A `RESUMED` 14:31:43.808: A counted from its `RESUMED` (26 367 ms at the fold of 14:32:10). After the hard power-off (row 16): the same order, `DEVICE_STARTUP` 12 ms after `KEYGUARD_SHOWN`, `KEYGUARD_HIDDEN` 371 ms after it. On this `adb reboot` Android had saved its events last at 14:10:57: `DEVICE_SHUTDOWN` is stamped 14:10:57.877, 20 min before the reboot, and the 20 min of events between are gone - the boot-count reset at `from` (QA L3) handled it, nothing of it counted twice or lost from the ledger (folded live before the reboot) |
+| 15 | **Pass as far as Android 14 lets it happen; the M2 sequence never occurs here.** Vibb sets Android's maximum time to lock to the screen timeout (`maximumTimeToUnlock=15000` with a 15 s timeout), so Android's lock delay is 0: twice, a wake 0.3-1.5 s after the timeout found the keyguard already shown (`KEYGUARD_SHOWN` 0.5-0.85 s after `SCREEN_NON_INTERACTIVE`, the PIN asked); the count stopped at the screen off. Without a Child PIN it can't be tried on a managed phone (`clear_kid_pin`: `not_removed`, design 132) |
+| 16 | **Pass.** Gate A in front past two folds (555 815 ms at 14:46:44), `adb emu kill` at 14:47:00, off 84 s, a cold boot from the same data (`-no-snapshot-load`), unlocked, 70 s waited: 555 815 ms - the downtime and the 16 s after the last fold added nothing. No `DEVICE_SHUTDOWN` after the kill |
+| 17 | **Pass.** Kiosk off. A's Main, then `gate.B` in its task and Home 0.25 s later: B entered PiP. Events: Main `PAUSED` 14:35:11.507, B `RESUMED` .510, Home `RESUMED` .838, B `PAUSED` .840, Main `STOPPED` 14:35:12.538 (after B's `PAUSED`). The carry kept A on-paused with `paused_class gate.B`, the PiP counted (+54 191 ms over 55 s), the PiP closed (`am stack remove`): B `STOPPED` 14:36:13.616 and the count stopped there (+9 553 ms, nothing after) |
+| 18 | **Fail.** Three `late event` lines from 14:08 to the end: `5 more in [14:14:20.187, 14:14:35.300)` and `3 more in [14:17:14.797, 14:17:22.106)` - both at a "Pause all restrictions" start, when the launcher unhides and unsuspends every app at once; and `1 more in [14:28:46.169, 14:31:26.085)` - the window across the reboot (row 14). The first pause's 5 events were stamped 14:14:20.2-14:14:23.3 and missing from a read that ended at 14:14:35.3: stored ≥ 12 s after their stamps; the second's 3 (14:17:16.7-14:17:20.7) ≥ 3.4-7.4 s. Two of the five pause starts in the run had one. Row 6's first try is what a lost `RESUMED` does |
+
+Not checked: the Jelly Star's restricted-settings guard (row 1, the owner's row).
+
+### Findings
+
+1. **Row 13: the kill rule needs its 2 s fallback** (Reproduced 3/3, Traced; Medium; small). A dead group app over an
+   app whose process must cold-start gets its partner's `RESUMED` 299-815 ms after its `STOPPED`, outside
+   `KILL_PAIR_MS` = 50 (`launcher/.../timerules/AppGroups.kt:19`, used by `pairOf` at `:283`), so the `STOPPED` is
+   ignored and the app counts as on until its next event or the screen off - against the kid, a minute here. The
+   design's own answer (§4.1, QA L2): the after-side becomes "the first `RESUMED` of another package with no event of
+   X between, within 2 s"; the row then runs again on 14 and 16. Only with the kiosk off or another app's task below.
+2. **Row 18: events stored long after their stamps at a pause start** (Reproduced 2 of 5 pause starts, Traced to the
+   read window; Medium; small to medium). Android stored events 3-12 s after their stamps while the launcher let
+   every app out at once; the fold's read window ends `SETTLE_MS` (2 s, `AppGroups.kt:15`) before now and the next
+   read starts at its end (`AppGroupUsage.fold` -> `planRead`), so the events were lost for good: a lost `RESUMED`
+   left Gate A uncounted for its 35 s in the pause (row 6, in the kid's favour); a lost `PAUSED`/`STOPPED` would count
+   an app all session (against the kid). The debug re-read (`AppGroupUsage.kt:174`) caught all three. A longer
+   `SETTLE_MS` only moves the edge; reading an overlap behind `from` again and skipping applied events by key (the
+   machinery the backward clock step already has, `appliedKeys`, 10 min) would take such late events in.
+3. **Seen, not traced (not this design):** after five pause starts and ends within 10 minutes (row 6 and the lag
+   tries), Vibb's Home task was finished (`wm_finish_activity ... HomeActivity,clear-task-all` at a pause start), the
+   stock Pixel launcher was in front, and Android's lock task stayed `LOCKED` with no task: Vibb's `stopLockTask`
+   threw `SecurityException: Invalid uid, expected -1` and every start of Home or Chrome was refused as a lock task
+   violation (101), with the kiosk off in the policy. The reboot of row 14 cleared it.
+4. **Row 15's case is unreachable on a Vibb phone with a Child PIN** (Android 14): the lock delay is 0, so there is
+   nothing to fix; gate B can say whether 16 differs.
