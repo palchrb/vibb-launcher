@@ -1,11 +1,13 @@
 # 139 - App groups with a shared daily limit, and apps outside the filter
 
-Status: design, **revision 3**, 2026-11-27 (branch `app-groups-design`), read against `main` b777a957e. Not built.
+Status: design, **revision 4**, 2026-11-27 (branch `app-groups-design`), read against `main` b777a957e. Not built.
 **Part A is decided by the owner** (2026-11-27; §12): Q1 (a), Q2 (b), Q3 (b), Q4 (b), Q5 (a), all as recommended.
-**Part B waits** (QB1, §13). Step 0's probe runs on emulators 14 and 16 (gate agents; results in
-`docs/testing/emulator.md` §6ca/§6cb on branches `gate-1127`/`gate-1127b`), and its findings settle the fold's rows
-for kill and PiP (§4.1, §8 row 1) before the build's step 2. Revision 1 was 07f876921; revision 2 (238ceaffb) took
-the design QA (2 High, 5 Medium, 7 Low; §14 maps each one). PLAN's locked
+**Part B waits** (QB1, §13). **Step 0 is done** on emulators 14 and 16 (2026-11-27; `docs/testing/emulator.md`
+§6ca row 2 and §6cb row 2, on `main` since 81ed1a41a). Its findings are folded into §4.1 (the kill rule, PiP, split
+screen), §4.2, §5.3's setup step and §10 (revision 4, §16). **The build may start.** One check stays for the Jelly
+after the release: whether Android's restricted-settings guard greys the switch for a QR-provisioned, self-updated
+Vibb One (§10). Revision 1 was 07f876921; revision 2 (238ceaffb) took the design QA (2 High, 5 Medium, 7 Low; §14
+maps each one); revision 3 (46d5497d5) recorded the owner's answers. PLAN's locked
 list item 7, approved by the owner on 2026-11-20 ("jeg synes begge ideene fra upstream høres veldig bra ut ... legg inn
 dette i planen vår som noe vi vil ha"), from `docs/review/2026-11-20-upstream-review.md`. Both directories.
 - **Part A (app groups)** is the main design: one migration and one new contract file, plus changed rows in three
@@ -17,8 +19,8 @@ Android 14-17: every API used is a public one at or under minSdk 34 (§10).
 
 Marks: **[code]** read in our code at b777a957e; **[sdk]** read in `platforms/android-37.0/data/api-versions.xml` on
 this machine; **[hidden]** not in that file (a non-SDK constant or method, never used); **[d57]** design 57's AOSP
-reading (2026-10-21, `docs/design/57-voip-call-screen-over-lock.md` §1); **[assumed]** not checked, step 0's probe or
-the emulator gate checks it (§9).
+reading (2026-10-21, `docs/design/57-voip-call-screen-over-lock.md` §1); **[probe]** seen by step 0 on Android 14
+and 16 (`docs/testing/emulator.md` §6ca/§6cb row 2); **[assumed]** not checked, the emulator gate checks it (§8).
 
 ## 0. Short answer
 
@@ -139,7 +141,8 @@ get a one-line call into GPL code, as `PlatformRefusals.plannedOff` does today.
   - The wall clock is locked whenever the phone has a group (§4.2, `groupsSet`), so a kid can't set it back.
   - Each fold is capped by the elapsed realtime of its span.
 - **D6 - Fail closed.** A group with a limit today is closed (every app of it suspended) when:
-  - the access isn't granted;
+  - the access isn't granted (read from the app-op, never from the events: without the grant `queryEvents` returns
+    no events and no exception [probe], which would read as "nothing was in front");
   - the ledger is unreadable (its delivered group lifts are marked applied too, as budget lifts are today);
   - a read throws (then the span counts for **every** group, because we don't know which app was in front).
 
@@ -190,17 +193,53 @@ get a one-line call into GPL code, as `PlatformRefusals.plannedOff` does today.
 
   `ACTIVITY_DESTROYED` (24) and `Event.getInstanceId` are [hidden] and never used. The class name isn't a key.
 - Each package is **off**, **on**, or **on-paused**:
-  - RESUMED makes it on.
-  - PAUSED makes it on-paused, still counting: a visible but paused window, such as split screen, or picture-in-picture
-    with the kiosk off (lock task refuses PiP [d57]).
-  - STOPPED makes it off **only if it is on-paused**. If a RESUMED of the package came after its last PAUSED, the
-    STOPPED is an older activity's and is ignored. This covers a same-class relaunch (P1, R2, S1) and moving from
-    activity A to B inside one app.
-  - Our own package's RESUMED turns every package that is **on** (not on-paused) off. That is the case of an app that
-    died in front with no PAUSED (kill -9, `am crash`). A PiP window, being on-paused, goes on.
-  - Accepted: an app in split screen beside Vibb One is undercounted.
-- **Screen off, keyguard shown and device shutdown/startup** turn everything off. A group's time is the union of its
-  packages' on spans, so two of its apps side by side count once.
+  - RESUMED makes it on. Split screen keeps both apps RESUMED, with no PAUSED for the one without focus [probe].
+  - PAUSED makes it on-paused, still counting: a visible but paused window, such as picture-in-picture with the kiosk
+    off (lock task refuses PiP [d57]). **A PAUSED while the package is off also makes it on-paused**: that is how a
+    PiP window comes back after the unlock [probe].
+  - STOPPED makes it off **if it is on-paused**.
+  - **The kill rule (revision 4).** A STOPPED of a package that is **on** (no PAUSED since its last RESUMED) makes it
+    off **only when another package's RESUMED lies within `KILL_PAIR_MS` = 50 ms of it, before or after**. Otherwise
+    the STOPPED is ignored.
+    - A kill -9 or `am crash` of the front app gives exactly this: Android writes the dead app's STOPPED with no
+      PAUSED, and the app below is RESUMED 0-5 ms from it, whether it is Vibb One or another app [probe].
+    - A same-class relaunch gives PAUSED, RESUMED (the new instance), then the old instance's STOPPED 0.5-0.6 s later
+      with no other package's RESUMED near it, so the app stays on (P1, R2, S1). So does moving from activity A to
+      B inside one app.
+  - Our own RESUMED is no longer a rule of its own (revision 3's "our RESUMED turns every on package off"): the kill
+    rule ends the same cases, and an app in split screen beside Vibb One is no longer undercounted.
+- **Screen off, keyguard shown and device shutdown/startup** turn every package off at that event. Package events
+  after it move the states as usual, but nothing counts until the screen is interactive and the keyguard is hidden
+  again: on 16 the PiP window's PAUSED comes just before KEYGUARD_HIDDEN [probe]. A group's time is the union of its
+  packages' on and on-paused spans, so two of its apps side by side count once.
+- **The 50 ms at a read's edges:** `carry` keeps the RESUMEDs of the last 50 ms before `from`. A STOPPED of an on
+  package within 50 ms of `to` with no partner yet stays pending in `carry`, counted as on. The next fold settles it,
+  dated at the STOPPED, and doesn't take back the few ms already applied.
+- **Each recorded sequence under these rules** (14 = §6ca, 16 = §6cb):
+
+  | Sequence | Events | Result |
+  |---|---|---|
+  | Open and close (14, 16) | PAUSED Home, RESUMED app; then PAUSED app, RESUMED Home 1 ms later, STOPPED app 0.4 s later | On from the RESUMED, on-paused 0.4 s, off at the STOPPED. Right |
+  | Same-class relaunch (14, 16) | PAUSED, RESUMED 1-13 ms later (the new instance), STOPPED 0.5-0.6 s after that, no other RESUMED near it | Stays on. Right |
+  | kill -9 or `am crash`, Vibb One below (14, 16) | STOPPED with no PAUSED, RESUMED Vibb One 0-5 ms from it | Off at the STOPPED. Right |
+  | **kill -9, another app below** (14) | STOPPED with no PAUSED, the other app RESUMED in the same ms | Off at the STOPPED. Right (revision 3 left it on) |
+  | **`am crash`, another app below** (14) | PAUSED, the other app RESUMED 1 ms later, STOPPED **10.6 s** later | On-paused 10.6 s, then off. **Accepted** (below) |
+  | Split screen (14, 16) | Both RESUMED (16: in the same ms; 14: no event for the one already on), no PAUSED; Home: PAUSED both, RESUMED Home, STOPPED both | Both on, counted once for one group; both off at their STOPPEDs. Right |
+  | PiP across screen off and on (14) | PAUSED (on-paused); at screen off SCREEN_NON_INTERACTIVE, KEYGUARD_SHOWN, STOPPED; at the unlock KEYGUARD_HIDDEN, then a lone PAUSED 22 ms later | On-paused, off at the screen off, on-paused again from the PAUSED. Right |
+  | PiP across screen off and on (16) | RESUMED Home, PAUSED app (on-paused); at screen off SCREEN_NON_INTERACTIVE, STOPPED, KEYGUARD_SHOWN; at the unlock RESUMED Home and a lone PAUSED, then KEYGUARD_HIDDEN | The same: the PAUSED moves it to on-paused while the keyguard still shows, and it counts from KEYGUARD_HIDDEN. Right |
+  | Suspended in front, kiosk off (14, 16) | PAUSED, the task below RESUMED in the same ms, STOPPED 0.3-0.4 s later | On-paused, then off. Right |
+  | Reboot (16) | PAUSED Home, DEVICE_SHUTDOWN 20 ms later with no STOPPED; after it SCREEN_INTERACTIVE, KEYGUARD_SHOWN, DEVICE_STARTUP | Off at the shutdown, nothing counts until KEYGUARD_HIDDEN. Right |
+
+  **`am crash` over another app is accepted, not covered.** Its sequence (PAUSED, another package's RESUMED within
+  ms) is the same as a PiP window's entry on 16 (RESUMED Home, PAUSED app), and the two can't be told apart without
+  `getInstanceId` [hidden]. The STOPPED comes when Android's ~10 s idle timeout runs out, so it counts at most about
+  10 s once per crash, against the kid (the strict direction). Not recorded on 16 (its crash had Vibb One below); the
+  gate's row 12 runs it there.
+- No simpler rule held on every sequence:
+  - "Any STOPPED of an on package ends it" cuts a relaunched app.
+  - "Another package's RESUMED ends every on package" cuts the second app of a split pair.
+  - A time window after the package's last RESUMED fails a relaunch whose old STOPPED comes late (up to the same
+    ~10 s timeout).
 - **`carry`** is each package's state at `from`.
 - **The clocks** (QA M5):
   - The query is in **wall time**: `queryEvents(fromWall, nowWall)`.
@@ -241,11 +280,17 @@ get a one-line call into GPL code, as `PlatformRefusals.plannedOff` does today.
 - **The access:** `timerules/UsageAccess.kt` reads `granted: Boolean?` the way the service decides it [d57]:
   `unsafeCheckOpNoThrow(OPSTR_GET_USAGE_STATS)` is `MODE_ALLOWED`, or `MODE_DEFAULT` with `PACKAGE_USAGE_STATS`
   granted. A throw gives `null`, which counts as not granted for D6.
-  - It is read at each fold and each report.
+  - It is read at each fold, **before and after the query**, and at each report. A fold whose two readings aren't
+    both granted applies nothing and closes the groups (D6): an empty result is never taken as "nothing in front",
+    because without the grant `queryEvents` returns nothing and throws nothing on 14 and 16 [probe].
   - A change (`startWatchingMode`) posts a re-check and a sync.
+  - **Build note:** `unsafeCheckOpNoThrow` is deprecated at the launcher's compileSdk 36, and with
+    `-PwarningsAsErrors=true` the probe didn't compile without `@Suppress("DEPRECATION")` [probe]. The read takes the
+    same annotation as `PlatformRefusals.exemptFromSuspension`
+    (`launcher/app/src/main/java/com/kidslauncher/mdm/server/PlatformRefusals.kt:140`); it is fine on 34-37.
 - **The manifest** declares `<uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
-  tools:ignore="ProtectedPermissions"/>`. Without it Vibb One isn't on Android's page, and an `appops set` is reset at
-  once [d57]. A manifest test keeps it there.
+  tools:ignore="ProtectedPermissions"/>`. Without it Vibb One isn't on Android's list, and its own page (opened with
+  `package:`) shows the switch greyed [probe]; an `appops set` is reset at once [d57]. A manifest test keeps it there.
 
 ### 4.2 Deciding and enforcing
 
@@ -265,6 +310,9 @@ get a one-line call into GPL code, as `PlatformRefusals.plannedOff` does today.
   A group lift arrives in an accepted policy, which runs a re-check.
 - **At the cut** (D7): after the apply, if a package that is on in the fold's `carry` belongs to a group that just
   closed and isn't the VoIP call's, the phone starts Home.
+  - Android itself finishes a suspended app's visible activity and resumes the task below, which is Home when Vibb
+    One is below (14 and 16, kiosk off [probe]). Our start matters when another app's task is below (the kiosk off,
+    or several pinned apps), and it is harmless otherwise.
 
 ### 4.3 What the kid sees (Q2 decides; this is (b), the recommendation)
 
@@ -414,6 +462,14 @@ rebuilt tables keep their shape plus the two columns.
   - The phone's reading is `UsageAccess.granted`. The new `when` is read from the policy on both sides
     (`SetupInputs`, `setup_status`).
   - The flow, the count and Attention come from 114 as they are. No new Attention kind.
+  - `phone_page` with `package:` opens Vibb One's own page on 14 and 16, and its switch works there for the debug
+    build [probe]. Android 14 calls the list "Usage access", 16 "App usage data"; our row's name stays.
+  - **If the switch is greyed** (Android's restricted-settings guard, 15+, for a QR-provisioned, self-updated Vibb
+    One; the Jelly check, §10), the path is Android's own and on the phone: tap the greyed switch, OK on Android's
+    "Restricted setting" dialog, then App info › ⋮ › "Allow restricted settings" (the phone's PIN), and back to the
+    switch. Vibb One can't read the guard (its app-op is [hidden]), so the step can't tell. The step's (i) carries the
+    path as one conditional line from the start, so a parent isn't stuck before the Jelly check. If that check finds
+    no guard, the line goes. There is no adb-only path.
 
 ## 6. Words (nb / en; CLAUDE.md "Words in the UI")
 
@@ -426,6 +482,7 @@ rebuilt tables keep their shape plus the two columns.
 | Add | Legg til gruppe | Add group |
 | Orange line (114's warn) | Data om appbruk er av | App usage data is off |
 | Setup step's (i) addition | Appgruppenes apper er stengt til den er på. | The groups' apps are closed until it is on. |
+| Setup step's (i), greyed switch (rev 4) | Grå bryter: trykk på den, OK, så Appinfo › ⋮ › Tillat begrensede innstillinger. | Greyed switch: tap it, OK, then App info › ⋮ › Allow restricted settings. |
 | Editor title | Ny gruppe / {name} | New group / {name} |
 | Fields | Navn · Apper · Grense | Name · Apps · Limit |
 | Delete | Slett gruppe… · Slett | Delete group… · Delete |
@@ -441,15 +498,18 @@ rebuilt tables keep their shape plus the two columns.
 
 - **Launcher, pure:**
   - `AppGroupsTest`, the fold:
-    - RESUMED, PAUSED, STOPPED;
-    - **a same-class relaunch** (P1, R2, S1 keeps it on) and A to B inside one app;
-    - **an app killed in front** (RESUMED, then our RESUMED with no PAUSED/STOPPED);
-    - **PiP across screen off and on** (on-paused, cut at screen off; what follows by step 0's finding);
+    - each row of §4.1's sequence table, from the recorded events on 14 and on 16;
+    - the kill rule's edges: the partner RESUMED before and after the STOPPED, at 0 and 50 ms (off) and at 51 ms
+      (ignored), and a relaunch's late STOPPED with no partner (stays on);
+    - a pending STOPPED at a read's end settled by the next fold, and a partner RESUMED kept in `carry` from before
+      `from`;
+    - a lone PAUSED from off is on-paused, and it counts only from KEYGUARD_HIDDEN;
     - two apps of one group side by side counted once;
-    - screen off, keyguard shown and DEVICE_SHUTDOWN/STARTUP cut;
     - `carry` across a read's start;
     - the elapsed cap, and the midnight split onto the trusted day;
     - a dropped read leaves `from`.
+  - `UsageAccess`: an empty read with the op not allowed (before or after the query) applies nothing and closes the
+    groups.
   - `AppGroupsTest`, `groupStates`: weekday limit, `0`, `null`, a lift applied once per id, no access, an unreadable
     ledger closing the groups and marking the lifts applied, the override and the pause lifting but still counting,
     the setup hold not folding.
@@ -475,18 +535,12 @@ rebuilt tables keep their shape plus the two columns.
 
 Test app: any allowed F-Droid app, plus a second one as the group's other app. Group "Test", limit 2 min today.
 
-1. **Step 0 (before the build's step 2):**
-   - Vibb One is on Android's App usage data page during a pause.
-   - On 15+, check whether the switch is greyed (restricted settings, ECM [d57]) for a phone set up by the QR and
-     self-updated. If it is, the step's (i) gets "trykk, OK, Appinfo › ⋮ › Tillat begrensede innstillinger".
-   - Grant it. `cmd appops get` says allow.
-   - Dump the events (`queryEvents` in a debug log) for:
-     - an ordinary open and close;
-     - **a same-class relaunch**;
-     - **`adb shell kill -9` and `am crash` of the front app**;
-     - **PiP across screen off and on** (kiosk off) - does any event mark it visible again after the screen comes on?
-     - split screen.
-   - Note what a visible activity does when its package is suspended with the kiosk off.
+1. **Step 0 - done on 14 and 16, 2026-11-27** (§6ca row 2, §6cb row 2). Vibb One with the declaration is on
+   Android's page during a pause, `package:` opens its own page, the switch works for the debug build, `cmd appops
+   get` says allow, and the events of every case are in §4.1's table. Without the grant `queryEvents` returns nothing
+   and throws nothing. **Blocked on the emulator:** the restricted-settings guard (15+) for a QR-provisioned,
+   self-updated Vibb One, which neither image can make. That is the owner's Jelly row after the release: open the
+   step's page and say whether the switch is live or greyed (§5.3 says what the step does then).
 2. Use the app 2 min. It closes, Home comes forward, and the tile is dimmed. A tap opens the sheet.
 3. The two apps used in turn count against one limit. Screen off and the PIN lock count nothing.
 4. The parent gives +15 for the group from the Skjermtid sheet. The app opens.
@@ -503,11 +557,14 @@ Test app: any allowed F-Droid app, plus a second one as the group's other app. G
 9. Kiosk off: the cut brings Home. Picture-in-picture of a group app counts.
 10. Q4 (b): in the last 5 minutes the anchor notification's title names the group.
 11. Kill the launcher's process mid-use. After the restart the gap is counted from Android's stored events.
+12. **The kill rule** (kiosk off, a non-group app's task below the group app): `kill -9` of the group app stops its
+    count at once (the PWA's minutes stay put while the other app is used); `am crash` stops it within ~11 s. On 16
+    too, where step 0 had only Vibb One below.
 
 ## 9. Steps
 
-0. **Probe** (emulator 14 and 16, with the owner's OK for the emulator): row 1 of §8, on a throwaway branch that only
-   declares the permission. Its findings settle the fold's rows for kill and PiP.
+0. **Probe - done** on 14 and 16 (2026-11-27; §8 row 1). Its findings are in §4.1 (revision 4). The throwaway branch
+   `probe-139` was never pushed and isn't built on.
 1. **Server and contract** (one commit with the launcher's contract tests): the migration and its rebuild, the pages,
    the policy, the report fields, the group lift, the setup row and feature.
 2. **Launcher:** the manifest, `UsageAccess`, the fold, the clocks and the ledger, the plan's two inputs, the timer,
@@ -533,16 +590,22 @@ Docs with the build:
   No call needs a `SDK_INT` gate in v1 (D11). Lint's NewApi stays on.
 - **The access** is an app-op that a device owner can't grant: `hasQueryPermission` has no device-owner exemption on
   14-16 [d57]. 17 is unchecked.
-- **Restricted settings (ECM)** exist on 15+ only [d57]. Step 0 checks, on 16, whether a QR-provisioned, self-updated
-  Vibb One is guarded.
-- **The settings page:** Android 16 names it "App usage data" (our design 68 note). Step 0 checks on 14 and 16 that
-  `ACTION_USAGE_ACCESS_SETTINGS` with `package:` opens the app's own page. 17 is unchecked.
+- **Restricted settings (ECM)** exist on 15+ only [d57]. On 16 an adb-installed Vibb One isn't guarded [probe]. A
+  QR-provisioned Vibb One that updated itself can't be made on the emulator: provisioning installs it through
+  Android, and the self-update (`AppInstaller.installSilently`) sets no package source. So it is the Jelly check
+  after the release, and §5.3 has the on-phone path if it is greyed.
+- **The settings page:** `ACTION_USAGE_ACCESS_SETTINGS` with `package:` opens the app's own page on 14 and 16
+  [probe]. Android 14 names the list "Usage access", 16 "App usage data". 17 is unchecked.
+- **The events** are the same on 14 and 16 for every case of §4.1's table that both ran. Android writes a killed
+  app's STOPPED itself on both. 16 orders a PiP window's PAUSED before KEYGUARD_HIDDEN and 14 after it, and the fold
+  reads both the same [probe].
+- **The deprecation:** `unsafeCheckOpNoThrow` needs `@Suppress("DEPRECATION")` at compileSdk 36 (§4.1).
 - **Background activity starts:** the device owner is exempt on 14-17, which the time-rule screen's start relies on
   today. Nothing new.
 - **Suspension and lock task** behave as they do for a rule today (design 105's unpin clears the task). Kiosk off is
   checked on 14 and 16 by row 9.
-- **Checked on:** nothing yet. Step 0 and the gate run on 14 and 16, and 17 stays unchecked until its image runs.
-  The Jelly (16) gets the owner's row after the release.
+- **Checked on:** step 0 on 14 (`compat34`) and 16 (`jelly36`), 2026-11-27. The gate runs on 14 and 16, and 17
+  stays unchecked until its image runs. The Jelly (16) gets the owner's row after the release (restricted settings).
 
 ## 11. Not chosen
 
@@ -625,8 +688,9 @@ Recommended: **(a)**. (b) doubles the editor and the phone's boundaries, and it 
   first group: no chat heads, floating bubbles or other apps' overlay windows. Today only a budget sets it.
 - **Vibb One reads every app's foreground events** (the one query path, on every version). They stay in memory for
   one fold and are never stored or sent; only minutes per group leave the phone.
-- **Undercount beside Vibb One:** a group app in split screen with Vibb One stops counting when Vibb One resumes. This
-  is the price of ending the span of an app that died in front.
+- ~~**Undercount beside Vibb One**~~ - gone in revision 4: §4.1's kill rule ends a dead app's span without our own
+  RESUMED, so split screen beside Vibb One counts. What remains is a crash over another app counting up to ~10 s
+  (§4.1), against the kid.
 
 ## 13. Part B - chosen apps outside the filter VPN (later; the owner's hold, 2026-11-27)
 
@@ -730,3 +794,19 @@ is a day's work then.
   by "Bare Vibb" and "Mobildata av".
 - The status names step 0's probe (emulators 14 and 16, gate agents, `docs/testing/emulator.md` §6ca/§6cb on
   `gate-1127`/`gate-1127b`). The build's step 2 waits for its findings.
+
+## 16. Revision 4 (step 0's probe, 2026-11-27)
+
+Step 0 ran on Android 14 (`docs/testing/emulator.md` §6ca row 2) and 16 (§6cb row 2). What changed:
+
+| Where | What changed |
+|---|---|
+| §4.1 | **The kill rule.** A kill -9 or `am crash` of the front app gives a STOPPED with no PAUSED and another package's RESUMED 0-5 ms from it. Under revision 3 such an app stayed on when the app below wasn't Vibb One. Now a STOPPED of an on package with another package's RESUMED within 50 ms, either side, ends it. Revision 3's "our own RESUMED ends every on package" is dropped as redundant, so split screen beside Vibb One counts. The rule is checked against every recorded sequence in §4.1's table, with the simpler rules that failed. The 50 ms at a read's edges are kept in `carry`. |
+| §4.1 | A lone PAUSED from off is on-paused (PiP back after the unlock). Device events turn packages off, but later package events still move them, and nothing counts until KEYGUARD_HIDDEN (16 sends the PiP's PAUSED before it). Split screen is both RESUMED, not on-paused. |
+| §4.1 | `am crash` over another app counts up to ~10 s until its late STOPPED: accepted, not covered (it can't be told from a PiP entry). Gate row 12 runs it on 16. |
+| D6, §4.1 | Without the grant `queryEvents` returns nothing and throws nothing. The access is read from the app-op before and after each query, and a fold without it applies nothing and closes the groups. |
+| §4.1, §10 | Build note: `@Suppress("DEPRECATION")` on `unsafeCheckOpNoThrow`, as at `PlatformRefusals.kt:140`. |
+| §4.2 | Android finishes a suspended front activity itself and resumes the task below. Our Home start matters when another app's task is below. |
+| §5.3, §6 | The usage access page: `package:` opens Vibb One's own page on 14 and 16, and the switch works for the debug build. The restricted-settings guard for a QR-provisioned, self-updated Vibb One is the Jelly check after the release. The step's (i) carries the on-phone path for a greyed switch from the start, and the line goes if the Jelly shows no guard. |
+| §7, §8, §9, §10 | Tests from the recorded sequences; §8 row 1 and §9 step 0 marked done; gate row 12 (the kill rule with another app below); §10's checked-on. |
+| Status | Step 0 is done on 14 and 16, and the build may start. §12's decisions are unchanged. |
