@@ -109,6 +109,18 @@ object RestrictionsPause {
         return WindowStart(mdm.restrictionsPausedUntil(), mdm.restrictionsPausedElapsedStart(), mdm.restrictionsPausedBoot())
     }
 
+    /** Design 139 §4.1 (revision 6, gate F2): the elapsed realtime the setup hold last ended in this process
+     * (`Long.MIN_VALUE`: never), written before its flag clears, so the first app-group fold after it counts from here
+     * (`countFromHoldEnd` maps it onto the read's wall time). */
+    @Volatile
+    var holdEndedElapsedMs: Long = Long.MIN_VALUE
+        private set
+
+    private fun noteHoldEnd() {
+        val mdm = LauncherPreferences.mdm()
+        if (mdm.restrictionsPaused() && mdm.restrictionsPausedHold()) holdEndedElapsedMs = SystemClock.elapsedRealtime()
+    }
+
     /** Design 114 §6.1: the pause is on and is the setup hold. */
     fun holdActive(): Boolean = isActive() && LauncherPreferences.mdm().restrictionsPausedHold()
 
@@ -127,6 +139,7 @@ object RestrictionsPause {
      * app's `start_pause` (design 24b's fix round). Any thread. */
     fun start(context: Context, start: WindowStart) {
         val mdm = LauncherPreferences.mdm()
+        noteHoldEnd()
         // Design 24b: the relock marker first - the pause locks again by itself when it ends.
         WindowRelock.opened(context, WindowKind.PAUSE, start) {
             mdm.restrictionsPausedUntil(start.untilWallMs)
@@ -198,6 +211,7 @@ object RestrictionsPause {
     fun clear() {
         val mdm = LauncherPreferences.mdm()
         val wasOn = mdm.restrictionsPaused()
+        noteHoldEnd()
         mdm.restrictionsPaused(false)
         mdm.restrictionsPausedUntil(0)
         mdm.restrictionsPausedHold(false)

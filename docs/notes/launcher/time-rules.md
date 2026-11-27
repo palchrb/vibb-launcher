@@ -236,11 +236,19 @@ the trusted time and `trust` how it is known (`server`, `gnss`, `carried`, `none
   the boot-count reset, the read window (`SETTLE_MS`), the first fold's 3 h lookback with the count off, the backward
   clock step's skip by key, the elapsed cap, the trusted day. The ledger (`ScreenTimeLedger`) keeps `groupUsedMs`,
   `groupExtraMinutes`, `appliedGroupLifts` and the `foldPoint` (with its `carry`), which runs on across midnight.
+- **Revision 6 (§18, the gates' findings):** the kill rule's fallback (`KILL_FALLBACK_MS` = 2 s: the first RESUMED of
+  another package, no event of X between, only when X was alone on screen at the STOPPED - `PendingStop.alone`; a
+  pending STOPPED waits 2 s in `carry`). Each read overlaps `LATE_OVERLAP_MS` = 30 s behind `from` (none after a reboot); the
+  handled events' keys of the last 30 s ride in `FoldCarry.applied` (saved with the point, at most 500, older ones
+  covered by `appliedFloor`), and every fold also skips this process's 10 min of keys. A late event applies at `from`
+  unless an applied event of its package, or for a package event an applied screen off/keyguard/shutdown, follows it.
+  The first counting fold after the setup hold starts at its end (`countFromHoldEnd`, from
+  `RestrictionsPause.holdEndedElapsedMs`, written before the flag clears, mapped through the read's `to`/`toElapsed`).
 - **The glue** (`timerules/AppGroupUsage.kt`): one `queryEvents` in flight on its own thread, applied on the main thread
   through `TimeRulesRuntime.applyGroupFold` only while the ledger's point is the one the read started from. The access
   (`UsageAccess`, the app-op the usage service's way, `@Suppress("DEPRECATION")`) is read before and after each query
-  (`readOutcome`); a read that throws closes the groups until one works (`readFailed`). Debug builds re-read each
-  window at the next fold and log `late event`.
+  (`readOutcome`); a read that throws closes the groups until one works (`readFailed`). Debug builds re-read the
+  part of the last window that has left the overlap and log `late event` (an event lost for good).
 - **When** (`ScreenTimeTracker`): its own gate (interactive, keyguard down) before `appInUse`; on every `update` and the
   60 s checkpoint, one fold `SETTLE_MS` + 0.5 s after the screen off, and `groupRunsOut` at the least time left + 1 s.
   `afterFold` re-checks when the closed set changed, else re-arms the timer and the Q4 notice ("Spill: 3 min igjen",
