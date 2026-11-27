@@ -933,6 +933,9 @@ pub struct DeviceLocation {
     /// Design 131 (0176): what confirmed a Wi-Fi fix (`gnss`, `link`); NULL for the Wi-Fi alone and every other fix.
     #[sqlx(default)]
     pub fix_check: Option<String>,
+    /// When the phone went still, as its last still re-send said (0185, RFC 3339); NULL = not said.
+    #[sqlx(default)]
+    pub still_since: Option<String>,
 }
 
 impl DeviceLocation {
@@ -2118,7 +2121,7 @@ fn valid_fix_time(loc: &LocationReport) -> Option<chrono::DateTime<chrono::Utc>>
 }
 
 /// How far past the server's time a location fix's `captured_at` may be.
-const MAX_FIX_AHEAD_MINUTES: i64 = 5;
+pub(crate) const MAX_FIX_AHEAD_MINUTES: i64 = 5;
 
 #[derive(Deserialize)]
 pub struct CommandResultRequest {

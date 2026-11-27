@@ -344,8 +344,20 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   (`reason=ceiling`), the try runs as any and the waits after it are `QUIET`. So a phone lying on its router with no
   fresh fix goes `QUIET` at 24 h. Never after a fire (`MOVED`, `STILL_SINCE_TRY`, no sensor); a renewing or a
   stronger witness vetoes a scan mismatch.
+- **Since when it is still** (the owner's report, 2026-11-27: the last fire at 22:26, fresh fixes at 22:54 and at the
+  02:58 cap try, and Locate said "Hasn't moved since 02:58"): `StillOrigin` (`ZonePlan.kt`, `StillOriginTest`), kept by
+  `MotionGate` in CE prefs `zone_watch` `still_origin_v1` (cleared by `forget`), is the instant from which the trigger
+  has watched with no fire, on `TrustedClock` (a fix's own time for a fix). A fire sets it and disarms; an arm within
+  `STILL_REARM_SLACK_MS` (60 s, the zones' series) keeps the fire's time, a later arm (without zones the trigger waits
+  for the next sync) or one after a disarm starts it at the arm; a mark (a crossing, a side change, Off) sets it; a
+  fresh fix on the move, or a scan mismatch, leaves the next fresh fix at rest to start it; a fresh fix elsewhere
+  (`placeAgainst`, D7's measure) moves it only when the gate said `STILL` (after a fire the fire's time stands); a new
+  process keeps a watching origin until the first fresh fix, which keeps it at the same place as the last fresh fix
+  and else starts it. The report sends it as `zone_watch.still_since_ms` only beside `still: true` and only while
+  nothing waits (`StillOrigin.reported`); the server's "Hasn't moved since" takes the earlier of it and the fix's time
+  (`docs/notes/server/zones.md`), the contract `contracts/core/zone_status_report.json`.
 - **Unchanged**: `locate`, the low-battery fix, crossings, P-L3's age limit (a `still` re-send has none), no new
-  report field, no contract change. The server takes a `still` re-send of any age (2026-11-25, `docs/notes/server/zones.md`:
+  report field but `still_since_ms` (above). The server takes a `still` re-send of any age (2026-11-25, `docs/notes/server/zones.md`:
   `intake` stamps the row's `resent_at`; the fix's age is bounded only by `MAX_FIX_AGE_MS`, 400 days), so the amended
   D5 needs no server change. Since design 125 the fix paths with the network provider off are the Wi-Fi
   places' (`docs/notes/launcher/wifi-places.md`): a learned fix counts as fresh (not from the 2-min fallback), D7

@@ -839,7 +839,7 @@ class ZonePlanTest {
         val seriesSource = source("zones/ZoneSeries.kt")
         assertTrue(seriesSource.contains("val fresh = freshOwnFix(location.time, requestedAt)"))
         assertTrue(Regex("""val firesAtStart = MotionGate\.snapshot\(context\)\.fires\s+val location = LocateCommands\.seriesFix\(context\)""").containsMatchIn(seriesSource))
-        assertTrue(Regex("""if \(verdict == CheckVerdict\.KEEP\) \{\s+if \(fresh\) \{[\s\S]{0,200}MotionGate\.afterTry\(context, firesAtStart, location\.time, heartbeat = false, nowMs = requestedAt, moving = moving\)\s+\}\s+return\s+\}""").containsMatchIn(seriesSource))
+        assertTrue(Regex("""if \(verdict == CheckVerdict\.KEEP\) \{\s+if \(fresh\) \{[\s\S]{0,200}MotionGate\.afterTry\(context, firesAtStart, location\.time, heartbeat = false, nowMs = requestedAt, moving = moving\)\s+(//[^\n]*\s+)*MotionGate\.afterFreshFix\(context, firesAtStart, location\.time, moving, placeAgainst\(lastFresh, fix\), stillAtTry = false\)\s+\}\s+return\s+\}""").containsMatchIn(seriesSource))
         // The moving car: a series check's fix on the move vouches for nothing either.
         assertTrue(seriesSource.contains("val moving = fixMoving(if (location.hasSpeed()) location.speed else null, fix, lastFresh, CHECK_MAX_DELAY_MS)"))
         assertTrue(Regex("""val lastFresh = previous\?\.takeIf \{ it\.timeMs == ZoneWatch\.lastFreshFixMs\(context\) \}\s+if \(fresh\) ZoneWatch\.stampFreshFix""").containsMatchIn(seriesSource))

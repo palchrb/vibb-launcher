@@ -144,6 +144,9 @@ object ZoneSeries {
             if (fresh) {
                 val moving = fixMoving(if (location.hasSpeed()) location.speed else null, fix, lastFresh, CHECK_MAX_DELAY_MS)
                 MotionGate.afterTry(context, firesAtStart, location.time, heartbeat = false, nowMs = requestedAt, moving = moving)
+                // Since when the phone is still: a series follows a fire, so only a fix on the move or the first after a
+                // restart moves it.
+                MotionGate.afterFreshFix(context, firesAtStart, location.time, moving, placeAgainst(lastFresh, fix), stillAtTry = false)
             }
             return
         }

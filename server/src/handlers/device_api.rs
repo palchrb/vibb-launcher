@@ -2572,12 +2572,23 @@ async fn status_intake(
         );
     }
     crate::zones::count_refused(&state.db, device.id, refused).await;
-    // Q-3: a `still` report's own fix is current as of now ("Here now" counts from it).
-    let resent = report
-        .location
-        .as_ref()
-        .filter(|_| crate::zones::report_still(report.zone_watch.as_ref()))
-        .and_then(|loc| crate::models::checked_location_at(loc, received).map(|at| (loc, at)));
+    // Q-3: a `still` report's own fix is current as of now ("Here now" counts from it), with since
+    // when the phone says it is still (Locate's "Hasn't moved since").
+    let still = crate::zones::report_still(report.zone_watch.as_ref());
+    let enrolled_at = if still && report.location.is_some() {
+        crate::zones::enrolled_at(&state.db, device.id).await
+    } else {
+        None
+    };
+    let still_since =
+        crate::zones::report_still_since(report.zone_watch.as_ref(), enrolled_at, received);
+    let resent = report.location.as_ref().filter(|_| still).and_then(|loc| {
+        crate::models::checked_location_at(loc, received).map(|captured_at| crate::zones::Resent {
+            loc,
+            captured_at,
+            still_since,
+        })
+    });
     crate::zones::intake(&state, device.id, &fixes, resent.as_ref()).await;
 
     // Design 87 §4.2: the logos the server wants (200), or 204 when it wants none.

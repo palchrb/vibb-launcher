@@ -146,7 +146,15 @@ counts.
   `zones::report_still`, a JSON `true` only): the report re-sends its cached fix while the phone's motion sensor says it
   hasn't moved since; `intake` then stamps that fix's row `device_locations.resent_at` (0093) with now, and "Here now"
   (`freshness_inputs`, `DeviceLocation::seen_at` on the Locate page) counts from the later of `captured_at` and it -
-  the fix's own time and the trail are unchanged, a re-send without `still` stamps nothing.
+  the fix's own time and the trail are unchanged, a re-send without `still` stamps nothing. Beside `still`,
+  `zone_watch.still_since_ms` (the owner's report, 2026-11-27; `zones::report_still_since`: epoch ms, at most
+  `MAX_FIX_AHEAD_MINUTES` past the receipt - then read as it -, not before `devices.enrolled_at`; anything else is no
+  value, never a refused report) says when the phone went still; `mark_resent` stamps it on the same row
+  (`device_locations.still_since`, migration 0185; NULL for a re-send without it), and Locate's "Hasn't moved since"
+  is the earlier of it and the fix's time (`locate::still_since`, pwa.md "Locate's Alle view"). Tests:
+  `zones::tests::still_since_is_taken_only_beside_still_and_in_range`,
+  `zone_watch::a_still_re_send_stores_since_when_the_phone_is_still`, the contract's value in
+  `a_launcher_report_raises_the_arrival`, `locate::tests::hasnt_moved_since_is_when_the_phone_went_still`.
 - **The intake** (code QA N-4; `zones::intake(state, device, fixes, resent)`): every checked fix of the report - the extras,
   then the report's own - is stored first (`store_fix`, each on its own, the dedupe as step 1), then the zones are
   judged **once** (`judge`, one `BEGIN IMMEDIATE`); so a pair inside one report confirms at its first fix whatever the

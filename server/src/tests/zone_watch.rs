@@ -109,6 +109,8 @@ fn the_contract_now() -> Value {
     for extra in report["extra_locations"].as_array_mut().unwrap() {
         moved(extra);
     }
+    let since = &mut report["zone_watch"]["still_since_ms"];
+    *since = json!(since.as_i64().unwrap() + shift.num_milliseconds());
     report
 }
 
@@ -179,6 +181,36 @@ async fn a_launcher_report_raises_the_arrival() {
     assert_eq!(
         super::security_words(&app, "phone_wifi_disagreed", crate::i18n::Lang::En).await,
         ["phone 1: 3 times (3 in all)"]
+    );
+    // The still re-send's `still_since_ms` is dropped as older than this new enrolment; the
+    // contract's value is taken once the enrolment is older.
+    let since = || async {
+        sqlx::query_scalar::<_, Option<String>>(
+            "SELECT still_since FROM device_locations WHERE resent_at IS NOT NULL",
+        )
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+    };
+    assert_eq!(since().await, None);
+    sqlx::query("UPDATE devices SET enrolled_at = datetime('now', '-1 day') WHERE id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    app.request(
+        Method::POST,
+        "/api/devices/status",
+        Some(&token),
+        Some(report.clone()),
+    )
+    .await;
+    let told = report["zone_watch"]["still_since_ms"].as_i64().unwrap();
+    assert_eq!(
+        since().await,
+        Some(crate::zones::instant(
+            DateTime::from_timestamp_millis(told).unwrap()
+        ))
     );
     // The same report again: nothing new (the fixes are stored, the count didn't rise).
     app.request(
@@ -425,6 +457,63 @@ async fn a_still_re_send_without_zones_shows_hasnt_moved_since() {
         1
     );
     assert_eq!(location_policy(&app, &token).await["interval_minutes"], 15);
+}
+
+/// The owner's report (2026-11-27): a still re-send's `still_since_ms` is stored on the fix with
+/// `resent_at` (0185); a re-send without it, or one that isn't still, leaves none; a value before
+/// the enrolment or in the future is dropped, never the report.
+#[tokio::test]
+async fn a_still_re_send_stores_since_when_the_phone_is_still() {
+    let app = TestApp::new().await;
+    let (id, token) = app.enrolled_device("Anna").await;
+    set_location(&app, id, "interval", 30).await;
+    sqlx::query("UPDATE devices SET enrolled_at = datetime('now', '-1 day') WHERE id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let home = fix(NEAR, &at(30));
+    post(&app, &token, json!({"location": home.clone()})).await;
+    let stored = || async {
+        sqlx::query_scalar::<_, Option<String>>("SELECT still_since FROM device_locations")
+            .fetch_one(&app.db)
+            .await
+            .unwrap()
+    };
+    assert_eq!(stored().await, None);
+    let went_still = Utc::now() - Duration::hours(4);
+    let send = |since: Value, still: bool| {
+        let mut w = watch(0, 0);
+        w["still"] = json!(still);
+        w["still_since_ms"] = since;
+        json!({"location": home.clone(), "zone_watch": w})
+    };
+    post(
+        &app,
+        &token,
+        send(json!(went_still.timestamp_millis()), true),
+    )
+    .await;
+    let ms = |t: DateTime<Utc>| {
+        crate::zones::instant(DateTime::from_timestamp_millis(t.timestamp_millis()).unwrap())
+    };
+    assert_eq!(stored().await, Some(ms(went_still)));
+    // Not beside `still`: the stored one stays (nothing re-sent).
+    post(&app, &token, send(json!(0), false)).await;
+    assert_eq!(stored().await, Some(ms(went_still)));
+    for junk in [
+        json!((Utc::now() - Duration::days(2)).timestamp_millis()),
+        json!((Utc::now() + Duration::hours(1)).timestamp_millis()),
+        json!("yesterday"),
+        Value::Null,
+    ] {
+        post(&app, &token, send(junk, true)).await;
+        assert_eq!(stored().await, None);
+    }
+    assert_eq!(
+        count(&app, "SELECT COUNT(*) FROM device_locations").await,
+        1
+    );
 }
 
 /// Code QA N-4: every extra fix is stored before the zones are judged, once, in time order -

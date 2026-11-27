@@ -14,6 +14,7 @@ import android.util.Log
 import com.kidslauncher.mdm.BuildConfig
 import com.kidslauncher.mdm.places.PlacesDebugHooks
 import com.kidslauncher.mdm.server.LocateCommands
+import com.kidslauncher.mdm.server.TrustedClock
 import java.util.concurrent.Executors
 
 private const val LOG_TAG = "ZoneWatch"
@@ -114,6 +115,8 @@ object PassiveFixes {
  *   ([afterTry]); the heartbeat skips its fix while it hasn't fired (`STILL`, at most 4 h after the
  *   last fresh fix) and backs off after a failed try while it hasn't (`QUIET`). A new process, a
  *   refused registration, a stopped anchor and Off count as moved.
+ * - **Since when it is still** ([StillOrigin], kept in `ZoneWatch`'s prefs): every fire, arm, mark and disarm moves it,
+ *   and our fresh fixes after [afterTry] ([afterFreshFix]); the report's `still_since_ms` ([reportedStillSince]).
  * - **The moving series**: while the policy has zones ([watch] with `zones`) the trigger is kept
  *   armed - re-armed at every fire - and each fire starts or feeds [ZoneSeries]. Without zones a
  *   fire only marks the flags; the next try arms it again.
@@ -137,6 +140,41 @@ object MotionGate {
     /** Debug builds only: the emulator gate's made-up trigger is armed (design 134 §7, [PlacesDebugHooks]). */
     private var fakeArmed = false
 
+    /** When the phone went still ([StillOrigin], the owner's report 2026-11-27): read from `ZoneWatch`'s prefs once per
+     * process ([origin]), written at every change. Guarded by this object's monitor. */
+    private var stillOrigin: StillOrigin? = null
+
+    /** A mark before this process read the origin (no context yet): applied when it does. */
+    private var markedBeforeLoad: Long? = null
+
+    private fun origin(context: Context): StillOrigin = stillOrigin ?: run {
+        val kept = (ZoneWatch.stillOrigin(context) ?: StillOrigin()).afterRestart()
+        val loaded = markedBeforeLoad?.let { kept.marked(it) } ?: kept
+        markedBeforeLoad = null
+        stillOrigin = loaded
+        loaded
+    }
+
+    private fun moveOrigin(context: Context, step: (StillOrigin) -> StillOrigin) {
+        val before = origin(context)
+        val after = step(before)
+        if (after == before) return
+        stillOrigin = after
+        ZoneWatch.saveStillOrigin(context, after)
+    }
+
+    /** `zone_watch.still_since_ms` for a report that says [still] ([StillOrigin.reported]). */
+    @Synchronized
+    fun reportedStillSince(context: Context, still: Boolean): Long? = if (still) origin(context.applicationContext).reported(true) else null
+
+    /** A genuinely fresh fix of ours at [fixMs], after [afterTry]: [moving], and where it lies against the last fresh fix
+     * ([placeAgainst]); with a fire during the attempt (the count moved from [firesAtStart]) the fire's time stands. */
+    @Synchronized
+    fun afterFreshFix(context: Context, firesAtStart: Int, fixMs: Long, moving: Boolean, place: Place, stillAtTry: Boolean) {
+        if (flags.fires != firesAtStart) return
+        moveOrigin(context.applicationContext) { it.afterFreshFix(fixMs, moving, place, stillAtTry) }
+    }
+
     private fun sensor(context: Context): Sensor? =
         context.getSystemService(SensorManager::class.java)?.getDefaultSensor(Sensor.TYPE_SIGNIFICANT_MOTION)
 
@@ -155,6 +193,7 @@ object MotionGate {
      * ([MotionFlags.scanMismatch]); with a fire during the attempt nothing changes. */
     @Synchronized
     fun scanMismatch(context: Context, firesAtStart: Int, nowMs: Long) {
+        if (flags.fires == firesAtStart) moveOrigin(context.applicationContext) { it.mismatched(TrustedClock.nowMs()) }
         flags = flags.scanMismatch(firesAtStart, nowMs)
     }
 
@@ -191,6 +230,7 @@ object MotionGate {
             if (PlacesDebugHooks.armTrigger { fired() }) {
                 fakeArmed = true
                 armedHere = true
+                moveOrigin(context.applicationContext) { it.armed(TrustedClock.nowMs()) }
                 Log.i(LOG_TAG, "Motion trigger armed ($reason)")
             }
             return
@@ -207,10 +247,12 @@ object MotionGate {
         armedHere = true
         if (armed) {
             listener = l
+            moveOrigin(context.applicationContext) { it.armed(TrustedClock.nowMs()) }
             Log.i(LOG_TAG, "Motion trigger armed ($reason)")
         } else {
             // Nothing watches: nothing may vouch.
             flags = flags.moved(SystemClock.elapsedRealtime())
+            moveOrigin(context.applicationContext) { it.unwatched() }
             Log.w(LOG_TAG, "Motion trigger refused")
         }
     }
@@ -222,7 +264,7 @@ object MotionGate {
             flags = flags.moved(SystemClock.elapsedRealtime())
             listener = null
             fakeArmed = false
-            app
+            app?.also { a -> moveOrigin(a) { it.fired(TrustedClock.nowMs()) } }
         }
         Log.i(LOG_TAG, "Motion trigger fired")
         // Design 125 D11: the teaching fix 2 min after a fire (its own conditions are checked when it runs).
@@ -241,6 +283,9 @@ object MotionGate {
     @Synchronized
     fun markMoved() {
         flags = flags.moved(SystemClock.elapsedRealtime())
+        val now = TrustedClock.nowMs()
+        val a = app
+        if (a != null) moveOrigin(a) { it.marked(now) } else markedBeforeLoad = now
     }
 
     /** Regularly ended: disarmed, and moved. */
@@ -260,6 +305,7 @@ object MotionGate {
         val l = listener
         listener = null
         flags = flags.moved(SystemClock.elapsedRealtime())
+        moveOrigin(context.applicationContext) { it.unwatched() }
         if (fakeArmed) PlacesDebugHooks.disarmTrigger()
         fakeArmed = false
         if (l == null) return
