@@ -33,7 +33,7 @@ class ZoneReportTest {
                 LocationReport(59.9229, 10.7522, 30.0f, "2026-10-24T08:02:00Z", provider = "vibb_apple"),
                 LocationReport(59.91417, 10.7522, 25.0f, "2026-10-24T08:12:03.250Z", provider = "fused"),
             ),
-            zoneWatch = ZoneWatchReport(fences = 1, motionSensor = true, locationOn = true, backgroundLocation = true, mockIgnored = 2, wifiDisagreed = 3, still = true,
+            zoneWatch = ZoneWatchReport(fences = 1, motionSensor = true, locationOn = true, backgroundLocation = true, mockIgnored = 2, wifiDisagreed = 3, still = true, stillSinceAgeMs = 2_045_000L,
                 // Design 138 D3: the connected network for the zone page's Confirm, and a struck confirmation.
                 wifi = ZoneWifiReport("Net-A", "00:00:5e:00:53:01", "00:00:5e:00:53:10"), wifiStruck = listOf(7L),
             ),

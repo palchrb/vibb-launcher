@@ -44,6 +44,7 @@ import com.kidslauncher.mdm.zones.freshOwnFix
 import com.kidslauncher.mdm.zones.heartbeatDue
 import com.kidslauncher.mdm.zones.fixMoving
 import com.kidslauncher.mdm.zones.motionContradiction
+import com.kidslauncher.mdm.zones.placeAgainst
 import com.kidslauncher.mdm.zones.capTryResends
 import com.kidslauncher.mdm.zones.d7Applies
 import com.kidslauncher.mdm.zones.reportStill
@@ -51,6 +52,7 @@ import com.kidslauncher.mdm.zones.stillVouched
 import com.kidslauncher.mdm.zones.stillCapFailsAfter
 import com.kidslauncher.mdm.zones.syncLocationAction
 import com.kidslauncher.mdm.zones.toQueued
+import com.kidslauncher.mdm.zones.trustedTimeMs
 import com.kidslauncher.mdm.zones.toReport
 import com.kidslauncher.mdm.zones.withFixCheck
 import com.kidslauncher.mdm.timerules.key
@@ -1054,6 +1056,8 @@ private suspend fun currentLocationReport(
         Log.i(ZONE_LOG_TAG, "Location heartbeat: STILL renewed by " + places.renewedBy.phrase)
     }
     if (motionNow != null && action.fresh) {
+        // The last fresh fix before this attempt's: where a new one lies against it moves since when the phone is still.
+        val previousFresh = ZoneWatch.lastFreshFix(context)
         // A genuinely fresh fix of our own (not the cached or an old last-known fallback, Q-6; not a learned fix from
         // the 2-min fallback or a renewed vouch, design 125 M2).
         val fresh = attempted?.takeIf { freshOwnFix(it.time, now) && !places.notFresh && !places.renewed }
@@ -1069,6 +1073,12 @@ private suspend fun currentLocationReport(
         val mismatch = places.mismatch?.takeIf { capTry && fresh == null }
         // Only the heartbeat's own try clears "moved since try" on a failure (L7).
         val held = MotionGate.afterTry(context, motionNow.fires, fresh?.time, heartbeat = beat == Heartbeat.FIX, nowMs = now, moving = moving, withheld = places.withheld)
+        // The owner's report (2026-11-27): a fix on the move, one not at the last fresh fix's place or one taken with no
+        // trusted sensor starts since when the phone is still (`StillOrigin.afterFreshFix`), whatever the gate said; a
+        // fire during the attempt keeps its own time.
+        if (held && fresh != null) {
+            MotionGate.afterFreshFix(context, motionNow.fires, fresh.trustedTimeMs(), moving, placeAgainst(previousFresh, fresh.toQueued()), noSensor = motion == Motion.NO_SENSOR)
+        }
         // Design 134 D4: the withheld tries in a row after a move; a conclusive try or a fresh fix ends the run.
         val triesNow = if (beat == Heartbeat.FIX && motion == Motion.MOVED) {
             com.kidslauncher.mdm.places.inconclusiveTriesAfter(inconclusiveTries, places.withheld)

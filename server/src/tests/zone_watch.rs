@@ -180,6 +180,34 @@ async fn a_launcher_report_raises_the_arrival() {
         super::security_words(&app, "phone_wifi_disagreed", crate::i18n::Lang::En).await,
         ["phone 1: 3 times (3 in all)"]
     );
+    // The still re-send's `still_since_age_ms` (34 min) is dropped as older than this new
+    // enrolment; once the enrolment is older it is taken, no earlier than the report's own fix
+    // 1 km away 12 min before the re-sent one (code QA M4).
+    let since = || async {
+        sqlx::query_scalar::<_, Option<String>>(
+            "SELECT still_since FROM device_locations WHERE resent_at IS NOT NULL",
+        )
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+    };
+    assert_eq!(since().await, None);
+    sqlx::query("UPDATE devices SET enrolled_at = datetime('now', '-1 day') WHERE id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    app.request(
+        Method::POST,
+        "/api/devices/status",
+        Some(&token),
+        Some(report.clone()),
+    )
+    .await;
+    let away = report["extra_locations"][0]["captured_at"]
+        .as_str()
+        .unwrap();
+    assert_eq!(since().await, Some(stored(away)));
     // The same report again: nothing new (the fixes are stored, the count didn't rise).
     app.request(
         Method::POST,
@@ -425,6 +453,80 @@ async fn a_still_re_send_without_zones_shows_hasnt_moved_since() {
         1
     );
     assert_eq!(location_policy(&app, &token).await["interval_minutes"], 15);
+}
+
+/// The owner's report (2026-11-27): a still re-send's `still_since_age_ms` is stored on the fix
+/// with `resent_at` (0185) as the receipt minus it; a re-send without it, or one that isn't still,
+/// leaves none; a value before the enrolment, negative or not a number is dropped, never the
+/// report. Code QA M4: never earlier than a stored fix after it that lies apart from the re-sent
+/// one (an accuracy known on both).
+#[tokio::test]
+async fn a_still_re_send_stores_since_when_the_phone_is_still() {
+    let app = TestApp::new().await;
+    let (id, token) = app.enrolled_device("Anna").await;
+    set_location(&app, id, "interval", 30).await;
+    sqlx::query("UPDATE devices SET enrolled_at = datetime('now', '-1 day') WHERE id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let home = fix(NEAR, &at(30));
+    post(&app, &token, json!({"location": home.clone()})).await;
+    let kept = || async {
+        sqlx::query_scalar::<_, Option<String>>(
+            "SELECT still_since FROM device_locations WHERE latitude = ?",
+        )
+        .bind(NEAR.0)
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+        .map(|t| crate::display_time::parse_db_utc(&t).unwrap())
+    };
+    assert_eq!(kept().await, None);
+    let four_hours = Duration::hours(4).num_milliseconds();
+    let send = |age: Value, still: bool| {
+        let mut w = watch(0, 0);
+        w["still"] = json!(still);
+        w["still_since_age_ms"] = age;
+        json!({"location": home.clone(), "zone_watch": w})
+    };
+    let near = |t: Option<DateTime<Utc>>, want: DateTime<Utc>| {
+        t.is_some_and(|t| (t - want).num_seconds().abs() < 30)
+    };
+    post(&app, &token, send(json!(four_hours), true)).await;
+    assert!(near(kept().await, Utc::now() - Duration::hours(4)));
+    // Not beside `still`: the stored one stays (nothing re-sent).
+    post(&app, &token, send(json!(0), false)).await;
+    assert!(near(kept().await, Utc::now() - Duration::hours(4)));
+    for junk in [
+        json!(Duration::days(2).num_milliseconds()),
+        json!(-1),
+        json!("yesterday"),
+        Value::Null,
+    ] {
+        post(&app, &token, send(junk, true)).await;
+        assert_eq!(kept().await, None);
+    }
+    // A fix 1 km away 2 h ago: the phone was elsewhere then, so not still since 4 h ago.
+    let away_at = at(120);
+    post(&app, &token, json!({"location": fix(AWAY, &away_at)})).await;
+    post(&app, &token, send(json!(four_hours), true)).await;
+    assert_eq!(
+        kept().await,
+        crate::display_time::parse_db_utc(&stored(&away_at))
+    );
+    // Without an accuracy it proves nothing.
+    sqlx::query("UPDATE device_locations SET accuracy_meters = NULL WHERE latitude = ?")
+        .bind(AWAY.0)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    post(&app, &token, send(json!(four_hours), true)).await;
+    assert!(near(kept().await, Utc::now() - Duration::hours(4)));
+    assert_eq!(
+        count(&app, "SELECT COUNT(*) FROM device_locations").await,
+        2
+    );
 }
 
 /// Code QA N-4: every extra fix is stored before the zones are judged, once, in time order -

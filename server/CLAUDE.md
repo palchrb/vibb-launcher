@@ -89,7 +89,7 @@ the whole file and refuses to start (`VersionMismatch`) when an applied migratio
 Every migration follows the one before it: sqlx applies them in number order, and `migrations_from_73_in_order` checks
 every file from 0073 on. The pairs a server must get in that order (the hazard above): 0070 before 0071 before 0072,
 0073 before 0074, 0078 before 0079, 0122 before 0123, 0181 before 0182. What a file adds is its name and its header comment; the tables in
-`docs/notes/server/data-model.md` name the migration of the columns they list. The next free number is 0185 (the
+`docs/notes/server/data-model.md` name the migration of the columns they list. The next free number is 0186 (the
 recent ones: data-model.md, "Recent migrations").
 
 ## Where the rest is

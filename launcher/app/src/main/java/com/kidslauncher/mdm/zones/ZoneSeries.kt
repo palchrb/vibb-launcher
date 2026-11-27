@@ -135,6 +135,8 @@ object ZoneSeries {
         // fix at once.
         LocateCommands.keepFix(context, location)
         val fresh = freshOwnFix(location.time, requestedAt)
+        // Since when the phone is still compares with the last fresh fix, whatever was reported.
+        val previousFresh = ZoneWatch.lastFreshFix(context)
         // The moving car (design 124): measured from the reported fix while it is the last fresh one;
         // the checks come at most CHECK_MAX_DELAY_MS apart.
         val lastFresh = previous?.takeIf { it.timeMs == ZoneWatch.lastFreshFixMs(context) }
@@ -144,6 +146,9 @@ object ZoneSeries {
             if (fresh) {
                 val moving = fixMoving(if (location.hasSpeed()) location.speed else null, fix, lastFresh, CHECK_MAX_DELAY_MS)
                 MotionGate.afterTry(context, firesAtStart, location.time, heartbeat = false, nowMs = requestedAt, moving = moving)
+                // Since when the phone is still: a fix on the move, not at the last fresh fix's place or with no trusted sensor
+                // (none, or D7's distrust) starts it.
+                MotionGate.afterFreshFix(context, firesAtStart, location.trustedTimeMs(), moving, placeAgainst(previousFresh, fix), noSensor = !(MotionGate.hasSensor(context) && ZoneWatch.motionTrusted(context)))
             }
             return
         }

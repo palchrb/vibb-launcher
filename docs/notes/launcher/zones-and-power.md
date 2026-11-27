@@ -344,8 +344,27 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   (`reason=ceiling`), the try runs as any and the waits after it are `QUIET`. So a phone lying on its router with no
   fresh fix goes `QUIET` at 24 h. Never after a fire (`MOVED`, `STILL_SINCE_TRY`, no sensor); a renewing or a
   stronger witness vetoes a scan mismatch.
+- **Since when it is still** (the owner's report, 2026-11-27: the last fire at 22:26, fresh fixes at 22:54 and at the
+  02:58 cap try, and Locate said "Hasn't moved since 02:58"): `StillOrigin` (`ZonePlan.kt`, `StillOriginTest`), kept by
+  `MotionGate` in CE prefs `zone_watch` `still_origin_v1` (written with `apply`, cleared by `forget`), is the instant
+  from which the trigger has watched with no fire and our fresh fixes stayed at one place, on `TrustedClock` (a fix's
+  time as now minus its age by elapsed realtime, `Location.trustedTimeMs`). A fire sets it and disarms; an arm within
+  `STILL_REARM_SLACK_MS` (60 s, the zones' series) keeps the fire's time, a later arm or one after a disarm starts it at
+  the arm - so **a phone without zones**, whose trigger waits for the next sync after a fire, shows that sync (about
+  the first fix after the fire, 22:54 in the owner's evening), not the fire (22:26); a mark (a crossing, a side
+  change, Off) sets it; a fresh fix on the move, or a scan mismatch, leaves the next fresh fix at rest to start it,
+  through any fires and arms before it; every other fresh fix of ours (the sync's and the series'), whatever the gate
+  said (code QA H1/H2/M1), starts it at the fix when the gate had no trusted sensor (none, or distrusted by D7) or the
+  fix isn't at the last fresh fix's place (`placeAgainst`: further than both real accuracies and 200 m is apart, a
+  missing accuracy or no previous fix is unknown - both count as elsewhere), and keeps it at the same place - the
+  owner's evening, all at home, keeps 22:26. A new process keeps a watching origin a report read within
+  `STILL_RESTART_GAP_MAX_MS` (45 min: the backstop's 30 and Doze) until the first fresh fix, which keeps it at the same
+  place and else starts it; after a longer gap the next arm starts it. The report sends its age as
+  `zone_watch.still_since_age_ms` only beside `still: true` and only while nothing waits (`StillOrigin.reportedAgeMs`);
+  the server reads it on its own clock and takes the earlier of it and the fix's time, never before a stored fix that
+  lies apart (`docs/notes/server/zones.md`), the contract `contracts/core/zone_status_report.json`.
 - **Unchanged**: `locate`, the low-battery fix, crossings, P-L3's age limit (a `still` re-send has none), no new
-  report field, no contract change. The server takes a `still` re-send of any age (2026-11-25, `docs/notes/server/zones.md`:
+  report field but `still_since_age_ms` (above). The server takes a `still` re-send of any age (2026-11-25, `docs/notes/server/zones.md`:
   `intake` stamps the row's `resent_at`; the fix's age is bounded only by `MAX_FIX_AGE_MS`, 400 days), so the amended
   D5 needs no server change. Since design 125 the fix paths with the network provider off are the Wi-Fi
   places' (`docs/notes/launcher/wifi-places.md`): a learned fix counts as fresh (not from the 2-min fallback), D7

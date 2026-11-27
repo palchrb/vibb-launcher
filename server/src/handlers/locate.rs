@@ -770,8 +770,20 @@ pub(crate) struct Seen {
     fix: DeviceLocation,
     at: DateTime<Utc>,
     fresh: bool,
-    /// The fix's own time while a re-send is newer: "Hasn't moved since 11:40".
+    /// While a re-send is newer than the fix, since when it is still ([still_since]): "Hasn't
+    /// moved since 11:40".
     still_since: Option<DateTime<Utc>>,
+}
+
+/// "Hasn't moved since" (the owner's report, 2026-11-27): only while a still re-send (`seen`) is
+/// newer than the fix's own time (`captured`) - the earlier of the fix's time and when the phone
+/// said it went still (`told`, `device_locations.still_since`), the fix's time when it didn't say.
+pub(crate) fn still_since(
+    captured: DateTime<Utc>,
+    seen: DateTime<Utc>,
+    told: Option<DateTime<Utc>>,
+) -> Option<DateTime<Utc>> {
+    (seen > captured).then(|| told.map_or(captured, |t| t.min(captured)))
 }
 
 impl Seen {
@@ -780,15 +792,16 @@ impl Seen {
     fn of(fix: DeviceLocation, mode: &str, interval: i64, now: DateTime<Utc>) -> Option<Seen> {
         let captured = parse_db_utc(&fix.captured_at)?;
         let at = fix.seen_at().unwrap_or(captured);
+        let told = fix.still_since.as_deref().and_then(parse_db_utc);
         Some(Seen {
             fresh: crate::zones::fresh(Some(at), mode, interval, now),
-            still_since: (at > captured).then_some(captured),
+            still_since: still_since(captured, at, told),
             at,
             fix,
         })
     }
 
-    /// "Hasn't moved since 11:40", while a still re-send is newer than the fix.
+    /// "Hasn't moved since 11:40", while a still re-send is newer than the fix ([still_since]).
     fn still_line(&self, zone: &Zone, now: DateTime<Utc>) -> Option<String> {
         self.still_since.map(|since| {
             t_params(
@@ -3120,6 +3133,31 @@ pub async fn wipe(
 
 #[cfg(test)]
 mod tests {
+    /// The owner's report (2026-11-27): still from 22:26, fresh fixes at 22:54 and 02:58 - "Hasn't
+    /// moved since 22:26", the earlier of the fix and the phone's word, only while a re-send is newer.
+    #[test]
+    fn hasnt_moved_since_is_when_the_phone_went_still() {
+        let t = |s: &str| crate::display_time::parse_db_utc(s).unwrap();
+        let (went_still, fix, resent) = (
+            t("2026-11-26 22:26:00"),
+            t("2026-11-27 02:58:00"),
+            t("2026-11-27 03:30:00"),
+        );
+        let since = super::still_since;
+        assert_eq!(since(fix, resent, Some(went_still)), Some(went_still));
+        assert_eq!(
+            since(fix, resent, None),
+            Some(fix),
+            "not said: the fix's time"
+        );
+        assert_eq!(
+            since(fix, resent, Some(resent)),
+            Some(fix),
+            "never after the fix"
+        );
+        assert_eq!(since(fix, fix, Some(went_still)), None, "no newer re-send");
+    }
+
     /// 2026-10-25: the line holds while the newest fix is a shutdown's and the phone hasn't
     /// reported since (a minute's slack for a report racing the shutdown).
     #[test]

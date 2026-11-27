@@ -222,7 +222,10 @@ data class CalendarReportRow(
  * lost report loses none (the server logs each rise). Counts and switches only, never a place.
  * [still] (qa-design-64-step2-code Q-3; `false` is left out): this report re-sends the cached fix
  * while the motion sensor says the phone hasn't moved since it (`reportStill`), so the server
- * counts "Here now" from this report - the fix's own time stays.
+ * counts "Here now" from this report - the fix's own time stays. [stillSinceAgeMs] (the owner's report, 2026-11-27;
+ * only beside [still], else left out): how long ago the phone went still, ms (`StillOrigin.reportedAgeMs`) - the server
+ * reads it as its receipt minus this, as a fix's `age_ms`, and Locate's "Hasn't moved since" takes the earlier of that
+ * and the fix's time.
  */
 @Serializable
 data class ZoneWatchReport(
@@ -235,6 +238,7 @@ data class ZoneWatchReport(
      * running count, at most one an attempt (the server writes a quiet security-log line from its rises). */
     val wifiDisagreed: Long,
     val still: Boolean = false,
+    val stillSinceAgeMs: Long? = null,
     /** Design 138 D3: the connected network while the policy has zones (a named PSK/SAE network, unmetered, a readable
      * BSSID) - what the parent's Confirm binds to; left out otherwise. */
     val wifi: ZoneWifiReport? = null,

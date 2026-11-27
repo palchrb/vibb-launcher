@@ -839,7 +839,13 @@ class ZonePlanTest {
         val seriesSource = source("zones/ZoneSeries.kt")
         assertTrue(seriesSource.contains("val fresh = freshOwnFix(location.time, requestedAt)"))
         assertTrue(Regex("""val firesAtStart = MotionGate\.snapshot\(context\)\.fires\s+val location = LocateCommands\.seriesFix\(context\)""").containsMatchIn(seriesSource))
-        assertTrue(Regex("""if \(verdict == CheckVerdict\.KEEP\) \{\s+if \(fresh\) \{[\s\S]{0,200}MotionGate\.afterTry\(context, firesAtStart, location\.time, heartbeat = false, nowMs = requestedAt, moving = moving\)\s+\}\s+return\s+\}""").containsMatchIn(seriesSource))
+        assertTrue(Regex("""if \(verdict == CheckVerdict\.KEEP\) \{\s+if \(fresh\) \{[\s\S]{0,200}MotionGate\.afterTry\(context, firesAtStart, location\.time, heartbeat = false, nowMs = requestedAt, moving = moving\)\s+(//[^\n]*\s+)*MotionGate\.afterFreshFix\(context, firesAtStart, location\.trustedTimeMs\(\), moving, placeAgainst\(previousFresh, fix\), noSensor = !\(MotionGate\.hasSensor\(context\) && ZoneWatch\.motionTrusted\(context\)\)\)\s+\}\s+return\s+\}""").containsMatchIn(seriesSource))
+        // Since when the phone is still (code QA H1, N1/N2): both paths compare with the last fresh fix read before this
+        // fix is stamped, and tell the origin when no trusted sensor watched (D7's distrust ends with no older time).
+        assertTrue(Regex("""val previousFresh = ZoneWatch\.lastFreshFix\(context\)[\s\S]{0,400}if \(fresh\) ZoneWatch\.stampFreshFix\(context, fix\)""").containsMatchIn(seriesSource))
+        assertTrue(Regex("""val previousFresh = ZoneWatch\.lastFreshFix\(context\)[\s\S]{0,400}if \(fresh != null\) ZoneWatch\.stampFreshFix\(""").containsMatchIn(sync))
+        assertTrue(Regex("""val held = MotionGate\.afterTry\([^\n]*\n(\s*//[^\n]*\n)*\s*if \(held && fresh != null\) \{\s+MotionGate\.afterFreshFix\(context, motionNow\.fires, fresh\.trustedTimeMs\(\), moving, placeAgainst\(previousFresh, fresh\.toQueued\(\)\), noSensor = motion == Motion\.NO_SENSOR\)\s+\}""").containsMatchIn(sync))
+        assertEquals(1, Regex("""MotionGate\.afterFreshFix\(""").findAll(sync).count())
         // The moving car: a series check's fix on the move vouches for nothing either.
         assertTrue(seriesSource.contains("val moving = fixMoving(if (location.hasSpeed()) location.speed else null, fix, lastFresh, CHECK_MAX_DELAY_MS)"))
         assertTrue(Regex("""val lastFresh = previous\?\.takeIf \{ it\.timeMs == ZoneWatch\.lastFreshFixMs\(context\) \}\s+if \(fresh\) ZoneWatch\.stampFreshFix""").containsMatchIn(seriesSource))
@@ -876,7 +882,8 @@ class ZonePlanTest {
         assertTrue(Regex("""override fun onDestroy\(\) \{[\s\S]*MotionGate\.anchorStopped\(applicationContext\)[\s\S]*super\.onDestroy\(\)""").containsMatchIn(source("server/CommandListenerService.kt")))
         assertTrue(Regex("""fun clearCachedFix\(context: Context\) \{\s+com\.kidslauncher\.mdm\.zones\.MotionGate\.markMoved\(\)""").containsMatchIn(source("server/LocateCommands.kt")))
         // A refused registration marks moved: nothing watches, nothing may vouch.
-        assertTrue(Regex("""if \(armed\) \{[\s\S]{0,200}\} else \{[\s\S]{0,80}flags = flags\.moved\(SystemClock\.elapsedRealtime\(\)\)\s+Log\.w\(LOG_TAG, "Motion trigger refused"\)""").containsMatchIn(sensorsSource))
+        // Since when it is still: the arm and the refusal move the origin too.
+        assertTrue(Regex("""if \(armed\) \{[\s\S]{0,300}\} else \{[\s\S]{0,80}flags = flags\.moved\(SystemClock\.elapsedRealtime\(\)\)\s+moveOrigin\(context\.applicationContext\) \{ it\.unwatched\(\) \}\s+Log\.w\(LOG_TAG, "Motion trigger refused"\)""").containsMatchIn(sensorsSource))
         // D9: balanced first only with the network provider on (and fused there), GPS when it isn't good enough.
         val balancedFirst = Regex("""private suspend fun balancedFirst\([\s\S]*?\n    }""").find(source("server/LocateCommands.kt"))!!.value
         assertTrue(balancedFirst.contains("val balanced = if (balancedOn) requestBalancedFix(context, lm)?.takeIf { ZoneWatch.accept(context, it) } else null"))

@@ -445,6 +445,109 @@ data class MotionFlags(
     }
 }
 
+/** A fire is the start of the still time only when the trigger was armed again this soon after it (the zones' series
+ * re-arms at once); a later arm leaves a gap nothing watched, and the still time starts at that arm ([StillOrigin]). */
+const val STILL_REARM_SLACK_MS = 60_000L
+
+/** Where a fresh fix lies against the one before it ([placeAgainst]). */
+enum class Place { SAME, APART, UNKNOWN }
+
+/** A new process keeps the still origin only when it was last seen alive this recently ([StillOrigin.afterRestart]): the
+ * backstop's 30 min between syncs and Doze's delay on it; a longer gap may hide a move nothing watched. */
+const val STILL_RESTART_GAP_MAX_MS = 45 * 60_000L
+
+/** A fresh fix ([fresh]) against the last fresh one ([previous]), by design 124 D7's distance with each fix's real
+ * accuracy (a far fix is far whatever its accuracy, code QA H2): further apart than both accuracies and
+ * [CONTRADICTION_SLACK_M] is [Place.APART], else [Place.SAME]; a missing or unusable accuracy, or no previous fix, is
+ * [Place.UNKNOWN] - which [StillOrigin.afterFreshFix] counts as elsewhere. */
+fun placeAgainst(previous: QueuedFix?, fresh: QueuedFix): Place {
+    fun known(accuracy: Float?) = accuracy?.takeIf { it.isFinite() && it >= 0f }
+    val old = previous ?: return Place.UNKNOWN
+    val a = known(old.accuracy) ?: return Place.UNKNOWN
+    val b = known(fresh.accuracy) ?: return Place.UNKNOWN
+    val d = distanceM(old.latitude, old.longitude, fresh.latitude, fresh.longitude)
+    return if (d > a + b + CONTRADICTION_SLACK_M) Place.APART else Place.SAME
+}
+
+/**
+ * When the phone went still (the owner's report, 2026-11-27: still from the last motion fire at 22:26, Locate said
+ * "Hasn't moved since 02:58", the newest fix's time): the instant from which the motion trigger has watched with no fire
+ * and our fresh fixes have stayed at one place, sent as its age, `zone_watch.still_since_age_ms` ([reportedAgeMs]).
+ * Kept in `ZoneWatch`'s prefs ([afterRestart]). Every time on the trusted clock - a fix's as now minus its age by elapsed
+ * realtime (`trustedTimeMs`).
+ * - [sinceMs]: the last fire ([fired]) or other evidence of a move ([marked]), the arm that ended a gap ([armed]), or a
+ *   fresh fix that isn't at the last fresh fix's place ([afterFreshFix]); 0 = none yet.
+ * - [watching]: the trigger is armed and hasn't fired since [sinceMs]. A fire disarms it; an arm within
+ *   [STILL_REARM_SLACK_MS] of the fire (the zones' series) keeps the fire's time, a later one starts the time at the arm
+ *   (without zones the trigger waits for the next sync: the phone may have moved on unheard, so such a phone shows
+ *   the first sync after the fire, not the fire).
+ * - [restarted]: a new process kept a watching origin seen alive within [STILL_RESTART_GAP_MAX_MS]; the first fresh fix
+ *   decides ([afterFreshFix]: at the last fresh fix's place it stands, else the time starts at that fix).
+ * - [settle]: a fix on the move, or a scan mismatch ([mismatched]), said the phone moved without a fire; the next fresh
+ *   fix at rest starts the time, whatever fires and arms come first (code QA M2).
+ * - [aliveMs]: when a report last read it ([alive]), what a new process measures its gap from.
+ */
+@Serializable
+data class StillOrigin(
+    val sinceMs: Long = 0,
+    val watching: Boolean = false,
+    val restarted: Boolean = false,
+    val settle: Boolean = false,
+    val aliveMs: Long = 0,
+) {
+    /** The trigger fired at [nowMs] (and disarmed itself). */
+    fun fired(nowMs: Long): StillOrigin = copy(sinceMs = nowMs, watching = false, restarted = false)
+
+    /** Evidence of a move the sensor may have missed (a crossing, a side change, Off) at [nowMs]; the trigger as it was. */
+    fun marked(nowMs: Long): StillOrigin = copy(sinceMs = nowMs, restarted = false)
+
+    /** Nothing watches any more (disarmed, the registration refused, the anchor stopped): the next arm starts the time. */
+    fun unwatched(): StillOrigin = copy(watching = false, restarted = false)
+
+    /** The trigger armed at [nowMs]. */
+    fun armed(nowMs: Long): StillOrigin = when {
+        watching -> this
+        restarted -> copy(watching = true)
+        sinceMs > 0 && nowMs - sinceMs in 0..STILL_REARM_SLACK_MS -> copy(watching = true)
+        else -> copy(sinceMs = nowMs, watching = true, restarted = false)
+    }
+
+    /** A scan mismatch ended `STILL` at [nowMs] (design 134 D16): moved at some time unheard. */
+    fun mismatched(nowMs: Long): StillOrigin = copy(sinceMs = nowMs, restarted = false, settle = true)
+
+    /**
+     * A genuinely fresh fix of ours at [fixMs] (trusted clock) with no fire during its attempt, whatever the gate said
+     * (code QA H1): [moving] ([fixMoving]) waits for one at rest; [noSensor] - the gate had no sensor it trusts (none,
+     * or distrusted by D7), so nothing watched - starts the time at the fix; so does a fix that isn't at the last fresh
+     * fix's place ([place] not [Place.SAME]: apart, or unknown, code QA H2), before or after a fire (code QA M1: the
+     * owner's evening - all at home - keeps the fire's time). After a restart the same: at the same place the kept time
+     * stands.
+     */
+    fun afterFreshFix(fixMs: Long, moving: Boolean, place: Place, noSensor: Boolean): StillOrigin = when {
+        moving -> copy(sinceMs = fixMs, restarted = false, settle = true)
+        settle || noSensor || place != Place.SAME -> copy(sinceMs = fixMs, restarted = false, settle = false)
+        else -> copy(restarted = false)
+    }
+
+    /** As a new process reads it at [nowMs]: a watching origin last seen alive within [STILL_RESTART_GAP_MAX_MS] waits for
+     * the first fresh fix; any other starts at the next arm (code QA L2). */
+    fun afterRestart(nowMs: Long): StillOrigin =
+        if (watching && sinceMs > 0 && nowMs - aliveMs in 0..STILL_RESTART_GAP_MAX_MS) {
+            copy(watching = false, restarted = true)
+        } else {
+            copy(watching = false, restarted = false)
+        }
+
+    /** Read by a report at [nowMs]: the restart's gap counts from here. */
+    fun alive(nowMs: Long): StillOrigin = copy(aliveMs = nowMs)
+
+    /** `zone_watch.still_since_age_ms` for a report at [nowMs] that says [still]: only while the trigger watches and
+     * nothing waits for a fix; `null` otherwise (the server then reads the fix's own time, as before). An age, so the
+     * server reads it on its own clock as it reads a fix's `age_ms` (code QA M3). */
+    fun reportedAgeMs(still: Boolean, nowMs: Long): Long? =
+        sinceMs.takeIf { still && it > 0 && watching && !restarted && !settle }?.let { (nowMs - it).coerceAtLeast(0) }
+}
+
 /** A fresh fix this fast is on the move (design 124, the moving car): walking pace is about 1.4 m/s. */
 const val MOVING_SPEED_MPS = 1.5f
 

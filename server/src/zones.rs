@@ -780,14 +780,15 @@ pub async fn takes_fixes<'e, E: sqlx::SqliteExecutor<'e>>(db: E, device_id: i64)
 ///
 /// `resent` (qa-design-64-step2-code Q-3): the report's own `location` when its `zone_watch` says
 /// `still` - the phone re-sent its fix while its motion sensor says it hasn't moved since; that
-/// row's `resent_at` becomes now, so "Here now" counts from this report ([freshness_inputs]).
+/// row's `resent_at` becomes now, so "Here now" counts from this report ([freshness_inputs]), and
+/// its `still_since` what the phone said ([Resent], [report_still_since]).
 ///
 /// Nothing is stored or marked while the phone's location is Off ([takes_fixes]).
 pub async fn intake(
     state: &AppState,
     device_id: i64,
     fixes: &[(&LocationReport, String)],
-    resent: Option<&(&LocationReport, String)>,
+    resent: Option<&Resent<'_>>,
 ) {
     if fixes.is_empty() {
         return;
@@ -809,8 +810,8 @@ pub async fn intake(
                     Err(err) => tracing::error!(device_id, %err, "can't store the fix"),
                 }
             }
-            if let Some((loc, captured_at)) = resent
-                && let Err(err) = mark_resent(&mut conn, device_id, loc, captured_at).await
+            if let Some(resent) = resent
+                && let Err(err) = mark_resent(&mut conn, device_id, resent).await
             {
                 tracing::error!(device_id, %err, "can't mark the fix as re-sent");
             }
@@ -825,16 +826,29 @@ pub async fn intake(
     }
 }
 
+/// A still report's own fix (Q-3): the report's `location`, its `captured_at` as stored, and since
+/// when the phone is still when it said ([report_still_since]).
+pub struct Resent<'a> {
+    pub loc: &'a LocationReport,
+    pub captured_at: String,
+    pub still_since: Option<DateTime<Utc>>,
+}
+
 /// The stored fix (the phone, `captured_at` and the coordinates - [store_fix]'s identity) re-sent
-/// as still current now (Q-3). The fix's own time stays.
+/// as still current now (Q-3), with since when the phone is still (0185, [clamp_still_since]; NULL
+/// when this re-send didn't say, so an older one never lingers). The fix's own time stays.
 async fn mark_resent(
     conn: &mut SqliteConnection,
     device_id: i64,
-    loc: &LocationReport,
-    captured_at: &str,
+    resent: &Resent<'_>,
 ) -> Result<(), sqlx::Error> {
+    let (loc, captured_at) = (resent.loc, resent.captured_at.as_str());
+    let still_since = match resent.still_since {
+        Some(since) => Some(clamp_still_since(conn, device_id, resent, since).await?),
+        None => None,
+    };
     sqlx::query(&format!(
-        "UPDATE device_locations SET resent_at = ?9 WHERE {SAME_FIX}"
+        "UPDATE device_locations SET resent_at = ?9, still_since = ?10 WHERE {SAME_FIX}"
     ))
     .bind(device_id)
     .bind(loc.latitude)
@@ -845,6 +859,7 @@ async fn mark_resent(
     .bind(Option::<bool>::None)
     .bind(crate::models::phone_offset_ms(loc, captured_at))
     .bind(instant(Utc::now()))
+    .bind(still_since.map(instant))
     .execute(&mut *conn)
     .await?;
     Ok(())
@@ -883,6 +898,81 @@ pub fn report_still(zone_watch: Option<&serde_json::Value>) -> bool {
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(false)
 }
+
+/// The phone's enrolment ([report_still_since]'s floor); `None` for none or a read that fails (logged).
+pub async fn enrolled_at(db: &sqlx::SqlitePool, device_id: i64) -> Option<DateTime<Utc>> {
+    match sqlx::query_scalar::<_, Option<String>>("SELECT enrolled_at FROM devices WHERE id = ?")
+        .bind(device_id)
+        .fetch_optional(db)
+        .await
+    {
+        Ok(at) => at.flatten().as_deref().and_then(parse_db_utc),
+        Err(err) => {
+            tracing::error!(device_id, %err, "can't read the enrolment");
+            None
+        }
+    }
+}
+
+/// The report's `zone_watch.still_since_age_ms` (the owner's report, 2026-11-27): how long ago the
+/// phone went still - its last motion before the stillness it re-sends its fix under. Read on the
+/// server's clock as `received` minus it, as a fix's `age_ms` (code QA M3: one clock, whatever the
+/// phone's says). Only beside `still` ([report_still]); a whole number from 0 to
+/// `models::MAX_FIX_AGE_MS`, and the time not before the phone's enrolment (`enrolled_at`; none
+/// known, none taken). Anything else is no value, never a refused report.
+pub fn report_still_since(
+    zone_watch: Option<&serde_json::Value>,
+    enrolled_at: Option<DateTime<Utc>>,
+    received: DateTime<Utc>,
+) -> Option<DateTime<Utc>> {
+    if !report_still(zone_watch) {
+        return None;
+    }
+    let age = zone_watch?.get("still_since_age_ms")?.as_i64()?;
+    if !(0..=crate::models::MAX_FIX_AGE_MS).contains(&age) {
+        return None;
+    }
+    let at = received - Duration::milliseconds(age);
+    (at >= enrolled_at?).then_some(at)
+}
+
+/// Defence in depth for `still_since` (code QA M4): never earlier than the newest stored fix of
+/// the phone, older than the re-sent one, that lies apart from it - further than both accuracies
+/// and [STILL_APART_SLACK_M] (design 124 D7's distance with each fix's real accuracy): the phone
+/// was elsewhere then. A fix without an accuracy proves nothing. Only fixes after `since` are read.
+async fn clamp_still_since(
+    conn: &mut SqliteConnection,
+    device_id: i64,
+    resent: &Resent<'_>,
+    since: DateTime<Utc>,
+) -> Result<DateTime<Utc>, sqlx::Error> {
+    let rows: Vec<(String, f64, f64, Option<f64>)> = sqlx::query_as(
+        "SELECT captured_at, latitude, longitude, accuracy_meters FROM device_locations \
+         WHERE device_id = ? AND captured_at > ? AND captured_at < ? \
+         ORDER BY captured_at DESC, id DESC LIMIT 500",
+    )
+    .bind(device_id)
+    .bind(instant(since))
+    .bind(&resent.captured_at)
+    .fetch_all(&mut *conn)
+    .await?;
+    let known = |a: Option<f64>| a.filter(|a| a.is_finite() && *a >= 0.0);
+    let Some(b) = known(resent.loc.accuracy_meters) else {
+        return Ok(since);
+    };
+    let apart = rows.iter().find(|(_, lat, lng, accuracy)| {
+        known(*accuracy).is_some_and(|a| {
+            distance_m(*lat, *lng, resent.loc.latitude, resent.loc.longitude)
+                > a + b + STILL_APART_SLACK_M
+        })
+    });
+    Ok(apart
+        .and_then(|(at, ..)| parse_db_utc(at))
+        .map_or(since, |at| at.max(since)))
+}
+
+/// [clamp_still_since]'s slack beyond both accuracies: the launcher's `CONTRADICTION_SLACK_M`.
+const STILL_APART_SLACK_M: f64 = 200.0;
 
 /// Step 2 of [intake]: the zones judged on the stored fixes, the events raised, the sender woken.
 pub async fn judge(
@@ -1385,6 +1475,52 @@ mod tests {
 
     fn utc(text: &str) -> DateTime<Utc> {
         parse_db_utc(text).unwrap()
+    }
+
+    /// The owner's report (2026-11-27): `still_since_age_ms` only beside `still`, a whole number
+    /// of ms from 0 to the fix age's bound, read as the receipt minus it (code QA M3), not before
+    /// the enrolment.
+    #[test]
+    fn still_since_is_taken_only_beside_still_and_in_range() {
+        let enrolled = utc("2026-11-01 08:00:00");
+        let now = utc("2026-11-27 03:30:00");
+        let age = |t: DateTime<Utc>| (now - t).num_milliseconds();
+        let went_still = utc("2026-11-26 22:26:00");
+        let watch = |v: serde_json::Value| {
+            let mut w = serde_json::json!({"fences": 1, "motion_sensor": true, "location_on": true,
+                "background_location": true, "mock_ignored": 0, "still": true});
+            w["still_since_age_ms"] = v;
+            w
+        };
+        let read = |w: serde_json::Value| report_still_since(Some(&w), Some(enrolled), now);
+        assert_eq!(read(watch(age(went_still).into())), Some(went_still));
+        let mut not_still = watch(age(went_still).into());
+        not_still["still"] = false.into();
+        assert_eq!(read(not_still), None, "only beside still");
+        assert_eq!(read(watch(0.into())), Some(now), "still from now");
+        assert_eq!(read(watch((-1).into())), None, "a negative age");
+        assert_eq!(
+            read(watch(age(enrolled - Duration::seconds(1)).into())),
+            None,
+            "before the enrolment"
+        );
+        assert_eq!(read(watch(age(enrolled).into())), Some(enrolled));
+        for junk in [
+            serde_json::json!("2045000"),
+            serde_json::json!(1.5),
+            serde_json::json!(null),
+            serde_json::json!(crate::models::MAX_FIX_AGE_MS + 1),
+            serde_json::json!(i64::MAX),
+        ] {
+            assert_eq!(read(watch(junk.clone())), None, "{junk}");
+        }
+        let w = watch(age(went_still).into());
+        assert_eq!(
+            report_still_since(Some(&w), None, now),
+            None,
+            "no enrolment known"
+        );
+        assert_eq!(report_still_since(None, Some(enrolled), now), None);
     }
 
     /// Home, r = 150 m, in Oslo.

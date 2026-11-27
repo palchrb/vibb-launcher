@@ -55,6 +55,9 @@ private const val KEY_CAP_FAILS = "still_cap_fails_v1"
 private const val KEY_INCONCLUSIVE = "inconclusive_tries"
 private const val KEY_BUDGET = "series_budget_v1"
 private const val KEY_CONTRADICTIONS = "motion_contradictions_v1"
+
+/** The owner's report (2026-11-27): when the phone went still ([StillOrigin]), kept across a new process. */
+private const val KEY_STILL_ORIGIN = "still_origin_v1"
 private const val KEY_DISTRUST_UNTIL = "motion_distrust_until_ms"
 private const val ACTION_CONFIRM = "com.kidslauncher.mdm.action.ZONE_CONFIRM"
 
@@ -186,6 +189,7 @@ object ZoneWatch {
                     .remove(KEY_MOCK_IGNORED).remove(KEY_MOCK_LAST).remove(KEY_MOCK_KEYS)
                     .remove(KEY_LAST_FRESH_FIX).remove(KEY_LAST_TRY).remove(KEY_BUDGET).remove(KEY_RENEWED).remove(KEY_CEILING_RENEWED)
                     .remove(KEY_FRESH_FIX).remove(KEY_WIFI_DISAGREED).remove(KEY_CAP_FAILS).remove(KEY_INCONCLUSIVE)
+                    .remove(KEY_STILL_ORIGIN)
                     .commit()
             }
         } catch (e: Exception) {
@@ -369,6 +373,25 @@ object ZoneWatch {
 
     private val instantsSerializer = ListSerializer(Long.serializer())
 
+    // --- When the phone went still (the owner's report, 2026-11-27) ---
+
+    /** The kept [StillOrigin] as the last process left it; `null` for none or one that doesn't read. */
+    fun stillOrigin(context: Context): StillOrigin? = try {
+        prefs(context).getString(KEY_STILL_ORIGIN, null)?.let { ServerJson.decodeFromString(StillOrigin.serializer(), it) }
+    } catch (e: Exception) {
+        null
+    }
+
+    /** [MotionGate]'s [StillOrigin], kept at every change - written in the background (`apply`, code QA L3): it runs under
+     * the gate's monitor, on the sensor's main thread for a fire. */
+    fun saveStillOrigin(context: Context, origin: StillOrigin) {
+        try {
+            prefs(context).edit().putString(KEY_STILL_ORIGIN, ServerJson.encodeToString(StillOrigin.serializer(), origin)).apply()
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't keep the still origin: ${e.javaClass.simpleName}")
+        }
+    }
+
     // --- The series' daily budget (F-2) ---
 
     private fun today(): String = com.kidslauncher.mdm.server.TrustedClock.localNow().toLocalDate().toString()
@@ -499,6 +522,8 @@ object ZoneWatch {
                 mockIgnored = prefs(app).getLong(KEY_MOCK_IGNORED, 0L),
                 wifiDisagreed = prefs(app).getLong(KEY_WIFI_DISAGREED, 0L),
                 still = still,
+                // The owner's report (2026-11-27): since when, beside `still` only.
+                stillSinceAgeMs = MotionGate.reportedStillSinceAge(app, still),
                 // Design 138 D3: the network for the parent's Confirm, and the struck confirmations the policy still has.
                 wifi = wifi,
                 wifiStruck = com.kidslauncher.mdm.places.WifiPlaces.struckForReport(app),
@@ -527,6 +552,15 @@ fun Location.toQueued(provider: String? = this.provider): QueuedFix = QueuedFix(
         null
     },
 )
+
+/** This fix's time on the trusted clock ([StillOrigin]'s base, code QA M3): now minus its age by elapsed realtime; now
+ * for a fix without one. */
+fun Location.trustedTimeMs(): Long {
+    val now = com.kidslauncher.mdm.server.TrustedClock.nowMs()
+    val nanos = elapsedRealtimeNanos
+    if (nanos <= 0) return now
+    return now - (SystemClock.elapsedRealtime() - nanos / 1_000_000L).coerceAtLeast(0)
+}
 
 /** Design 131: the extra a Wi-Fi fix carries its check in (`gnss`, `link`) from the attempt to the report. */
 const val FIX_CHECK_EXTRA = "vibb_check"
