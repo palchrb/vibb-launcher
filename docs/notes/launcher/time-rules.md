@@ -236,12 +236,14 @@ the trusted time and `trust` how it is known (`server`, `gnss`, `carried`, `none
   the boot-count reset, the read window (`SETTLE_MS`), the first fold's 3 h lookback with the count off, the backward
   clock step's skip by key, the elapsed cap, the trusted day. The ledger (`ScreenTimeLedger`) keeps `groupUsedMs`,
   `groupExtraMinutes`, `appliedGroupLifts` and the `foldPoint` (with its `carry`), which runs on across midnight.
-- **Revision 6 (§18, the gates' findings):** the kill rule's fallback (`KILL_FALLBACK_MS` = 2 s: the first RESUMED of a
-  package that was off at the STOPPED, no event of X between, no PAUSED of another on package between; a pending
-  STOPPED waits 2 s in `carry`). Each read overlaps `LATE_OVERLAP_MS` = 30 s behind `from` (none after a reboot); the
-  applied events' keys of the last 30 s ride in `FoldCarry.applied` (saved with the point, at most 500), a late event
-  applies at `from` unless an applied event of its package follows it. The first counting fold after the setup hold
-  starts at its end (`countFromHoldEnd`, `RestrictionsPause.holdEndedWallMs`, written before the flag clears).
+- **Revision 6 (§18, the gates' findings):** the kill rule's fallback (`KILL_FALLBACK_MS` = 2 s: the first RESUMED of
+  another package, no event of X between, only when X was alone on screen at the STOPPED - `PendingStop.alone`; a
+  pending STOPPED waits 2 s in `carry`). Each read overlaps `LATE_OVERLAP_MS` = 30 s behind `from` (none after a reboot); the
+  handled events' keys of the last 30 s ride in `FoldCarry.applied` (saved with the point, at most 500, older ones
+  covered by `appliedFloor`), and every fold also skips this process's 10 min of keys. A late event applies at `from`
+  unless an applied event of its package, or for a package event an applied screen off/keyguard/shutdown, follows it.
+  The first counting fold after the setup hold starts at its end (`countFromHoldEnd`, from
+  `RestrictionsPause.holdEndedElapsedMs`, written before the flag clears, mapped through the read's `to`/`toElapsed`).
 - **The glue** (`timerules/AppGroupUsage.kt`): one `queryEvents` in flight on its own thread, applied on the main thread
   through `TimeRulesRuntime.applyGroupFold` only while the ledger's point is the one the read started from. The access
   (`UsageAccess`, the app-op the usage service's way, `@Suppress("DEPRECATION")`) is read before and after each query

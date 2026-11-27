@@ -19,8 +19,9 @@ const val SETTLE_MS = 2_000L
 const val KILL_PAIR_MS = 50L
 
 /** The kill rule's fallback (QA L2, revision 6): a partner that must cold-start came 299-815 ms after the STOPPED on 14
- * and 309-352 ms on 16 (gate rows 13, §6cd/§6ce), so the first RESUMED of a package that was off, up to this long after
- * the STOPPED, ends it too. A STOPPED stays pending in `carry` until a fold's `to` passes this window. */
+ * and 309-352 ms on 16 (gate rows 13, §6cd/§6ce), so when X was the only package on screen, the first RESUMED of
+ * another package up to this long after the STOPPED ends it too. A STOPPED stays pending in `carry` until a fold's `to`
+ * passes this window. */
 const val KILL_FALLBACK_MS = 2_000L
 
 /** Each fold reads this far behind its `from` again (revision 6, gate row 18): Android stored events up to 17 s after
@@ -28,7 +29,8 @@ const val KILL_FALLBACK_MS = 2_000L
  * in it are skipped by key ([FoldCarry.applied]). */
 const val LATE_OVERLAP_MS = 30_000L
 
-/** At most this many keys ride in [FoldCarry.applied] (an app looping its activities can't grow the ledger). */
+/** At most this many keys ride in [FoldCarry.applied] (an app looping its activities can't grow the ledger); the
+ * older ones are covered by [FoldCarry.appliedFloor]. */
 const val APPLIED_CARRY_MAX = 500
 
 /** The first fold's lookback (QA M3), read with the count off. */
@@ -70,14 +72,16 @@ data class UsageEv(val timeMs: Long, val pkg: String, val cls: String?, val kind
 data class OnPackage(val pkg: String, val paused: Boolean = false, val pausedClass: String? = null)
 
 /** A STOPPED of an on package at [atMs] whose kill rule window (to [atMs] + [KILL_FALLBACK_MS], inclusive) wasn't wholly
- * before the read's `to` (QA L6): still counted as on, settled by a later fold. */
+ * before the read's `to` (QA L6): still counted as on, settled by a later fold. [alone]: it was the only package on
+ * screen at the STOPPED, so the fallback may end it. */
 @Serializable
-data class PendingStop(val pkg: String, val atMs: Long)
+data class PendingStop(val pkg: String, val atMs: Long, val alone: Boolean = false)
 
 /** The fold's state at its last point (§4.1 "carry"): every package that isn't off (any package, QA M3), the device
  * state, and the pending STOPPEDs. Time counts while [screenOn] and [keyguardHidden]. [applied]: the keys of the events
- * applied in the last [LATE_OVERLAP_MS] before the point, which the next read's overlap skips (revision 6) - saved with
- * the point, so a process restart doesn't apply them again. Persisted with [FoldPoint]. */
+ * handled in the last [LATE_OVERLAP_MS] before the point, which the next read's overlap skips (revision 6) - saved with
+ * the point, so a process restart doesn't apply them again; every event at or before [appliedFloor] counts as handled
+ * (the keys cut at [APPLIED_CARRY_MAX]). Persisted with [FoldPoint]. */
 @Serializable
 data class FoldCarry(
     val on: List<OnPackage> = emptyList(),
@@ -85,6 +89,7 @@ data class FoldCarry(
     val keyguardHidden: Boolean = false,
     val pending: List<PendingStop> = emptyList(),
     val applied: List<String> = emptyList(),
+    val appliedFloor: Long = Long.MIN_VALUE,
 )
 
 /** The last folded point, persisted in the ledger (§4.1): wall time (the read's `to`), the elapsed realtime it maps
@@ -158,11 +163,16 @@ fun planRead(point: FoldPoint?, nowWall: Long, nowElapsed: Long, bootCount: Int,
 }
 
 /**
- * [plan] with its spans starting no earlier than [holdEndedMs], the setup hold's end (revision 6, gate F2): the events
- * before it move the state, its time isn't counted. Pure.
+ * [plan] with its spans starting no earlier than the setup hold's end (revision 6, gate F2), given as the elapsed
+ * realtime [holdEndedElapsedMs] (`Long.MIN_VALUE`: none) of this boot and mapped to the read's wall time through
+ * `plan.to`/`plan.toElapsed`, so a wall clock step between the end and the fold doesn't move it. The events before it
+ * move the state; its time isn't counted. Pure.
  */
-fun countFromHoldEnd(plan: ReadPlan, holdEndedMs: Long): ReadPlan =
-    if (holdEndedMs <= plan.spanFrom) plan else plan.copy(spanFrom = minOf(holdEndedMs, plan.to))
+fun countFromHoldEnd(plan: ReadPlan, holdEndedElapsedMs: Long): ReadPlan {
+    if (holdEndedElapsedMs == Long.MIN_VALUE || plan.rebooted) return plan
+    val endWall = plan.to - (plan.toElapsed - holdEndedElapsedMs)
+    return if (endWall <= plan.spanFrom) plan else plan.copy(spanFrom = minOf(endWall, plan.to))
+}
 
 /**
  * The fold's result: each group's on-screen spans in wall time (merged, inside `[spanFrom, to)`), the state at `to`,
@@ -177,9 +187,11 @@ data class FoldOut(
 /**
  * The pure fold (§4.1): [events] of `[plan.queryFrom, plan.to)` in Android's order over [carry] (the state at the
  * point; ignored on a first fold, which starts from an empty carry), for [groups]. An event whose key is in
- * [FoldCarry.applied] or [skip] (a backward clock step's, QA L4) was applied before and is skipped. One not applied and
+ * [FoldCarry.applied] or [skip] (this process's last 10 min, for a backward clock step, QA L4), or at or before
+ * [FoldCarry.appliedFloor], was applied before and is skipped (not on a first fold). One not applied and
  * stamped before `spanFrom` came late (revision 6): it moves the state at `spanFrom`, where the count starts, unless an
- * applied event of its package follows it in the read, which already set that package's state. [live]: the fold runs
+ * applied event of its package, or (for a package event) an applied screen off, keyguard or shutdown follows it in the
+ * read, which already set that state. [live]: the fold runs
  * while the screen is interactive and the keyguard unlocked (the gate), so a state at `to` that says "not counting"
  * turns to counting at `to` (the live check). The spans count only
  * when [count] (false on a first fold and during the setup hold: the state moves, nothing is added).
@@ -194,12 +206,25 @@ fun groupScreenMs(
     skip: Set<String> = emptySet(),
 ): FoldOut {
     val window = events.filter { it.timeMs >= plan.queryFrom && it.timeMs < plan.to }
-    val done = if (plan.first) skip else skip + carry.applied
-    // Revision 6: the read's position of each package's last event applied before; an unapplied event before it came
-    // late and is superseded.
+    // A first fold rebuilds the state from nothing, so it applies every event it reads.
+    val doneKeys = if (plan.first) emptySet() else skip + carry.applied
+    val floor = if (plan.first) Long.MIN_VALUE else carry.appliedFloor
+    fun done(e: UsageEv) = e.timeMs <= floor || e.key in doneKeys
+    // Revision 6: the read's position of each package's last event handled before, and of the last screen off,
+    // keyguard or shutdown; an unhandled event before them came late and is superseded.
     val lastDone = HashMap<String, Int>()
-    window.forEachIndexed { i, e -> if (e.key in done) lastDone[e.pkg] = i }
-    val fresh = window.indices.filter { window[it].key !in done }
+    var lastDoneOff = -1
+    window.forEachIndexed { i, e ->
+        if (done(e)) {
+            lastDone[e.pkg] = i
+            if (e.kind == UsageKind.SCREEN_NON_INTERACTIVE || e.kind == UsageKind.KEYGUARD_SHOWN || e.kind == UsageKind.DEVICE_SHUTDOWN) {
+                lastDoneOff = i
+            }
+        }
+    }
+    fun superseded(i: Int, e: UsageEv) = (lastDone[e.pkg] ?: -1) > i ||
+        (lastDoneOff > i && (e.kind == UsageKind.RESUMED || e.kind == UsageKind.PAUSED || e.kind == UsageKind.STOPPED))
+    val fresh = window.indices.filter { !done(window[it]) }
     // QA L3: a new boot resets the state at the read's DEVICE_SHUTDOWN (the event does it), else at the read's start.
     val start = when {
         plan.first || (plan.rebooted && fresh.none { window[it].kind == UsageKind.DEVICE_SHUTDOWN }) -> FoldCarry()
@@ -231,9 +256,8 @@ fun groupScreenMs(
     }
 
     // QA L6: the pending STOPPEDs first, dated at the STOPPED - in this read that is its start.
-    val onAtStart = on.keys.toSet()
     for (stop in pending.toList()) {
-        when (pairOf(window, -1, stop.pkg, stop.atMs, plan.to, onAtStart)) {
+        when (pairOf(window, -1, stop.pkg, stop.atMs, plan.to, stop.alone)) {
             Partner.YES -> {
                 on.remove(stop.pkg)
                 pending.remove(stop)
@@ -247,7 +271,7 @@ fun groupScreenMs(
     for (i in fresh) {
         val e = window[i]
         applied += e.timeMs to e.key
-        if (e.timeMs < plan.spanFrom && (lastDone[e.pkg] ?: -1) > i) continue
+        if (e.timeMs < plan.spanFrom && superseded(i, e)) continue
         countTo(e.timeMs)
         // A later event of a package resolves its pending STOPPED; the event applies as usual.
         pending.removeAll { it.pkg == e.pkg }
@@ -261,10 +285,13 @@ fun groupScreenMs(
                     // QA M1: an on-paused package ends only at the STOPPED of the PAUSED's class.
                     state.paused -> if (state.pausedClass == e.cls) on.remove(e.pkg)
                     // The kill rule (QA L1, L2).
-                    else -> when (pairOf(window, i, e.pkg, e.timeMs, plan.to, on.keys.toSet())) {
-                        Partner.YES -> on.remove(e.pkg)
-                        Partner.NO -> {}
-                        Partner.OPEN -> pending += PendingStop(e.pkg, e.timeMs)
+                    else -> {
+                        val alone = on.size == 1
+                        when (pairOf(window, i, e.pkg, e.timeMs, plan.to, alone)) {
+                            Partner.YES -> on.remove(e.pkg)
+                            Partner.NO -> {}
+                            Partner.OPEN -> pending += PendingStop(e.pkg, e.timeMs, alone)
+                        }
                     }
                 }
             }
@@ -294,13 +321,19 @@ fun groupScreenMs(
         screenOn = true
         keyguardHidden = true
     }
-    // Revision 6: the keys the next read's overlap skips - those of the last LATE_OVERLAP_MS before `to`.
+    // Revision 6: the keys the next read's overlap skips - every event handled (now or before, a backward step's too)
+    // in the last LATE_OVERLAP_MS before `to`; past APPLIED_CARRY_MAX the oldest give way to a floor.
     val keep = plan.to - LATE_OVERLAP_MS
-    val recent = (start.applied.filter { keyTime(it) >= keep } + applied.filter { it.first >= keep }.map { it.second })
-        .distinct().takeLast(APPLIED_CARRY_MAX)
+    var recent = (start.applied + window.filter { it.key in doneKeys }.map { it.key } + applied.map { it.second })
+        .filter { keyTime(it) >= keep }.distinct().sortedBy { keyTime(it) }
+    var newFloor = if (start.appliedFloor >= keep) start.appliedFloor else Long.MIN_VALUE
+    if (recent.size > APPLIED_CARRY_MAX) {
+        newFloor = maxOf(newFloor, keyTime(recent[recent.size - APPLIED_CARRY_MAX]))
+        recent = recent.filter { keyTime(it) > newFloor }
+    }
     return FoldOut(
         spans = if (count) spans.filterValues { it.isNotEmpty() } else emptyMap(),
-        carry = FoldCarry(on.values.toList(), screenOn, keyguardHidden, pending.toList(), recent),
+        carry = FoldCarry(on.values.toList(), screenOn, keyguardHidden, pending.toList(), recent, newFloor),
         appliedKeys = applied,
     )
 }
@@ -313,16 +346,15 @@ private enum class Partner { YES, NO, OPEN }
 
 /**
  * Whether a partner ends the STOPPED of [pkg] at [atMs] (QA L1, L2), [index] its place in [window] (-1 for a pending
- * STOPPED from an earlier read: then the events after `atMs`). [wasOn]: the packages on or on-paused at the STOPPED (at
- * the read's start for a pending one).
+ * STOPPED from an earlier read: then the events after `atMs`).
  * - The pair: another package's RESUMED in the same ms (either report order), or after it up to [KILL_PAIR_MS].
- * - The fallback (revision 6): the first RESUMED of a package that was off, up to [KILL_FALLBACK_MS] after it, with
- *   no event of it before in the window, and no PAUSED of another on package between (that is a split pair's other half
- *   being replaced, not the app below coming up). A RESUMED of an on package (split screen) never pairs this way.
+ * - The fallback (revision 6), only when [alone] (X was the only package on or on-paused at the STOPPED): the first
+ *   RESUMED of another package with no event of it before in the window, up to [KILL_FALLBACK_MS] after it. In split
+ *   screen the other half is on, so X's late STOPPED after a move inside X never pairs with that half's new app.
  * Any event of [pkg] after the STOPPED ends the search ([Partner.NO]). [Partner.OPEN] while the window reaches [to]
  * (QA L6).
  */
-private fun pairOf(window: List<UsageEv>, index: Int, pkg: String, atMs: Long, to: Long, wasOn: Set<String>): Partner {
+private fun pairOf(window: List<UsageEv>, index: Int, pkg: String, atMs: Long, to: Long, alone: Boolean): Partner {
     fun partner(e: UsageEv) = e.kind == UsageKind.RESUMED && e.pkg != pkg
     val sameMs = if (index >= 0) {
         (index - 1 downTo 0).asSequence().map { window[it] }.takeWhile { it.timeMs == atMs }
@@ -332,16 +364,14 @@ private fun pairOf(window: List<UsageEv>, index: Int, pkg: String, atMs: Long, t
     if (sameMs.any { partner(it) }) return Partner.YES
     val first = if (index >= 0) index + 1 else window.indexOfFirst { it.timeMs > atMs }.let { if (it < 0) window.size else it }
     val seen = HashSet<String>()
-    var fallback = true
     for (j in first until window.size) {
         val e = window[j]
         if (e.timeMs > atMs + KILL_FALLBACK_MS) return Partner.NO
         if (e.pkg == pkg) return Partner.NO
         if (partner(e) && e.timeMs >= atMs) {
             if (e.timeMs <= atMs + KILL_PAIR_MS) return Partner.YES
-            if (fallback && e.pkg !in wasOn && e.pkg !in seen) return Partner.YES
+            if (alone && e.pkg !in seen) return Partner.YES
         }
-        if (e.kind == UsageKind.PAUSED && e.pkg in wasOn) fallback = false
         seen += e.pkg
     }
     return if (atMs + KILL_FALLBACK_MS < to) Partner.NO else Partner.OPEN

@@ -109,15 +109,16 @@ object RestrictionsPause {
         return WindowStart(mdm.restrictionsPausedUntil(), mdm.restrictionsPausedElapsedStart(), mdm.restrictionsPausedBoot())
     }
 
-    /** Design 139 §4.1 (revision 6, gate F2): the wall time the setup hold last ended in this process, written before
-     * its flag clears, so the first app-group fold after it counts from here. */
+    /** Design 139 §4.1 (revision 6, gate F2): the elapsed realtime the setup hold last ended in this process
+     * (`Long.MIN_VALUE`: never), written before its flag clears, so the first app-group fold after it counts from here
+     * (`countFromHoldEnd` maps it onto the read's wall time). */
     @Volatile
-    var holdEndedWallMs: Long = Long.MIN_VALUE
+    var holdEndedElapsedMs: Long = Long.MIN_VALUE
         private set
 
     private fun noteHoldEnd() {
         val mdm = LauncherPreferences.mdm()
-        if (mdm.restrictionsPaused() && mdm.restrictionsPausedHold()) holdEndedWallMs = System.currentTimeMillis()
+        if (mdm.restrictionsPaused() && mdm.restrictionsPausedHold()) holdEndedElapsedMs = SystemClock.elapsedRealtime()
     }
 
     /** Design 114 §6.1: the pause is on and is the setup hold. */

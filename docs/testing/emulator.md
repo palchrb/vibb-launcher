@@ -2095,7 +2095,8 @@ Rows:
 - §6bw - Android 17.
 - §6bx: the relearning on the phone - Jelly Star (§6by).
 - §6cd/§6ce 13 on 14 and 16: the kill rule's 2 s fallback (design 139 revision 6, branch `app-groups-gatefix`) - re-run
-  owed (Z's process gone first, `kill -9` and `am crash`).
+  owed (Z's process gone first, `kill -9` and `am crash`); on 14 also the control of design 139 §8 row 13: X moves to
+  a second activity inside itself, then split screen with another app within 2 s - X keeps counting.
 - §6cd/§6ce 18 on 14 and 16: the 30 s overlap (revision 6) - re-run owed; pause starts and a reboot, the debug
   `late event` line now means an event older than the overlap.
 - §6cd/§6ce 6 on 14 and 16: the setup hold's last stretch (revision 6, counted from the hold's end) - re-run owed.

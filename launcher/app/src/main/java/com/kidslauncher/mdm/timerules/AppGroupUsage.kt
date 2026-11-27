@@ -96,9 +96,10 @@ object AppGroupUsage {
         // D10: the setup hold's time is setup, not use - the state moves, nothing counts; the first fold after it counts
         // from its end (revision 6, gate F2). The end is written before the hold's flag clears, so it is read after.
         val count = !planned.first && !RestrictionsPause.holdActive()
-        val plan = if (count) countFromHoldEnd(planned, RestrictionsPause.holdEndedWallMs) else planned
+        val plan = if (count) countFromHoldEnd(planned, RestrictionsPause.holdEndedElapsedMs) else planned
         trimKeys(plan.to)
-        val skip = if (plan.stepBackMs > 0) appliedKeys.mapTo(mutableSetOf()) { it.second } else emptySet()
+        // Every fold skips this process's applied keys, not only a backward step's (the folds after it read old events).
+        val skip = appliedKeys.mapTo(HashSet()) { it.second }
         val point = ledger.foldPoint
         val carry = point?.carry ?: FoldCarry()
         val recheck = if (com.kidslauncher.mdm.BuildConfig.DEBUG) lastWindow else null

@@ -293,16 +293,33 @@ class AppGroupsTest {
         assertEquals(11_400, fold(relaunch, carryOn(x)).ms())
     }
 
+    @Test
+    fun `the fallback needs X alone on screen at its STOPPED (code QA L1)`() {
+        val z = "org.example.third"
+        val w = "org.example.fourth"
+        // X|Z split; X moves inside itself, then Z dies and another app cold-starts in its half 650 ms later.
+        val split = listOf(
+            ev(10_000, x, UsageKind.PAUSED), ev(10_005, x, UsageKind.RESUMED, "$x.B"), ev(10_550, x, UsageKind.STOPPED),
+            ev(10_600, z, UsageKind.STOPPED), ev(11_200, w, UsageKind.RESUMED),
+        )
+        assertTrue(x in fold(split, carryOn(x, z)).onPkgs())
+        // A PiP window (on-paused) beside a killed X: not alone either - X counts until its next event (accepted).
+        val pip = unlocked.copy(on = listOf(OnPackage(x), OnPackage(z, paused = true, pausedClass = "$z.A")))
+        assertTrue(x in fold(listOf(ev(20_000, x, UsageKind.STOPPED), ev(20_400, y, UsageKind.RESUMED)), pip).onPkgs())
+        // Alone: the same kill pairs.
+        assertFalse(x in fold(listOf(ev(20_000, x, UsageKind.STOPPED), ev(20_400, y, UsageKind.RESUMED)), carryOn(x)).onPkgs())
+    }
+
     // ---- A pending STOPPED across reads (QA L6) ---------------------------------------------------------------------
 
     @Test
     fun `a pending STOPPED rides across folds closer than the fallback's 2 s`() {
         val stop = ev(980, x, UsageKind.STOPPED)
         for (partner in listOf(null, y, home)) {
-            // Home is on at the STOPPED (split beside it): its RESUMED never pairs by the fallback.
+            // Home is on at the STOPPED (split beside it): X isn't alone, so no fallback.
             val start = if (partner == home) carryOn(x, home) else carryOn(x)
             val one = next(listOf(stop), start, 0, 1_000)
-            assertEquals(listOf(PendingStop(x, 980)), one.carry.pending)
+            assertEquals(listOf(PendingStop(x, 980, alone = partner != home)), one.carry.pending)
             val two = next(listOf(stop), one.carry, 1_000, 1_600)
             assertEquals(one.carry.pending, two.carry.pending)
             // Fold three's read holds the STOPPED again (applied, skipped) and the partner 720 ms after it.
@@ -323,7 +340,7 @@ class AppGroupsTest {
         for (partner in listOf(true, false)) {
             val one = fold(listOf(ev(980, x, UsageKind.STOPPED)), carryOn(x), from = 0, to = 1_000)
             assertEquals(1_000, one.ms())
-            assertEquals(listOf(PendingStop(x, 980)), one.carry.pending)
+            assertEquals(listOf(PendingStop(x, 980, alone = true)), one.carry.pending)
             // 30 ms later: the window (to 2980, inclusive) still reaches `to`.
             val two = fold(emptyList(), one.carry, from = 1_000, to = 1_030)
             assertEquals(30, two.ms())
@@ -480,6 +497,64 @@ class AppGroupsTest {
         // After a reboot there is no overlap: the old boot's events never apply again.
         val rebooted = planRead(point, nowWall = 112_000, nowElapsed = 5_000, bootCount = 2, checkedClock = true)!!
         assertEquals(rebooted.spanFrom, rebooted.queryFrom)
+    }
+
+    @Test
+    fun `a late package event before an applied screen off is superseded (code QA L4)`() {
+        for (off in listOf(UsageKind.SCREEN_NON_INTERACTIVE, UsageKind.KEYGUARD_SHOWN, UsageKind.DEVICE_SHUTDOWN)) {
+            val seen = listOf(dev(8_500, off))
+            val one = next(seen, carryOn(x), 0, 10_000)
+            assertTrue(one.onPkgs().isEmpty())
+            val two = next(listOf(ev(8_000, x, UsageKind.RESUMED)) + seen, one.carry, 10_000, 20_000)
+            assertTrue("$off", two.onPkgs().isEmpty())
+        }
+    }
+
+    @Test
+    fun `past 500 keys a floor stands for the oldest (code QA L3)`() {
+        val z = "org.example.third"
+        val flood = listOf(dev(500, UsageKind.KEYGUARD_SHOWN), dev(600, UsageKind.KEYGUARD_HIDDEN), ev(700, x, UsageKind.RESUMED)) +
+            (0 until 300).flatMap { k -> listOf(ev(1_000L + 20 * k, y, UsageKind.RESUMED), ev(1_010L + 20 * k, y, UsageKind.PAUSED)) } +
+            dev(7_500, UsageKind.SCREEN_INTERACTIVE)
+        val one = next(flood, unlocked, 0, 10_000)
+        assertTrue(one.carry.applied.size in APPLIED_CARRY_MAX - 1..APPLIED_CARRY_MAX)
+        assertTrue(one.carry.appliedFloor >= 700)
+        assertEquals(10_000 - 700, one.ms())
+        // Nothing of the flood applies again; a late event after the floor still does.
+        val late = ev(9_500, z, UsageKind.RESUMED)
+        val two = next(flood + late, one.carry, 10_000, 20_000)
+        assertEquals(listOf(late.key), two.appliedKeys.map { it.second })
+        assertEquals(10_000, two.ms())
+        assertEquals(one.onPkgs() + z, two.onPkgs())
+    }
+
+    @Test
+    fun `the keys skipped after a backward step ride on, so the next fold skips them too (code QA L2)`() {
+        val point = FoldPoint(1_000_000, 100_000, 1, 900_000, carryOn(x))
+        val p = planRead(point, nowWall = 952_000, nowElapsed = 112_000, bootCount = 1, checkedClock = true)!!
+        val old = listOf(ev(941_000, x, UsageKind.PAUSED), ev(941_001, home, UsageKind.RESUMED), ev(941_400, x, UsageKind.STOPPED))
+        val fresh = listOf(ev(945_000, x, UsageKind.RESUMED))
+        val events = (old + fresh).sortedBy { it.timeMs }
+        val one = groupScreenMs(events, p, point.carry, listOf(g), live = true, count = true, skip = old.map { it.key }.toSet())
+        assertTrue(one.carry.applied.containsAll(old.map { it.key }))
+        // The next fold, with no in-memory keys (a restart): the old events stay skipped.
+        val two = next(events, one.carry, p.to, p.to + 10_000)
+        assertTrue(two.appliedKeys.isEmpty())
+        assertEquals(10_000, two.ms())
+    }
+
+    @Test
+    fun `the hold's end is elapsed realtime, mapped onto the read across a backward step (code QA L5)`() {
+        // A 60 s step back after the point: the read is [940 s, 950 s) at elapsed 110 s.
+        val point = FoldPoint(1_000_000, 100_000, 1, 900_000, carryOn(x))
+        val p = planRead(point, nowWall = 952_000, nowElapsed = 112_000, bootCount = 1, checkedClock = true)!!
+        // The hold ended at elapsed 105 s: 945 s on the read's clock (its old wall time, 1 005 s, would count nothing).
+        val held = countFromHoldEnd(p, 105_000)
+        assertEquals(945_000, held.spanFrom)
+        assertEquals(5_000, groupScreenMs(emptyList(), held, carryOn(x), listOf(g), live = true, count = true).ms())
+        // Before the point: unchanged; none recorded: unchanged.
+        assertEquals(p, countFromHoldEnd(p, 99_000))
+        assertEquals(p, countFromHoldEnd(p, Long.MIN_VALUE))
     }
 
     @Test
