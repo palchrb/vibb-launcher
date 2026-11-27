@@ -72,10 +72,14 @@ data class Lift(
     val by: String? = null,
     /** Design 100 §14.2: when it was given (epoch ms); 0 when missing. */
     val atMs: Long = 0,
+    /** Design 139 D9: the app group a [TARGET_GROUP] lift adds [minutes] to; `null` on the other targets. */
+    val groupId: Long? = null,
 )
 
 const val TARGET_RULE = "rule"
 const val TARGET_BUDGET = "budget"
+/** Design 139 D9: extra minutes for one app group ([Lift.groupId]), added once per id to the day it is first seen. */
+const val TARGET_GROUP = "group"
 
 /** `PolicyResponse.timePolicy`. [dailyBudgetMinutes]: Monday first, `null` = unlimited. */
 @Serializable
@@ -85,6 +89,18 @@ data class TimePolicy(
     val lifts: List<Lift> = emptyList(),
     /** Design 100 §14.2: the newest answered request asked on the phone's day, or `null`. */
     val answer: TimeAnswer? = null,
+    /** Design 139: the phone's app groups, each with one daily limit for its apps together. Absent reads as none. */
+    val groups: List<AppGroup> = emptyList(),
+)
+
+/** `time_policy.groups[]` (design 139 §5.2, `app_groups.json`): a named set of apps with one limit per weekday,
+ * Monday first, minutes or `null` for no limit that day (D3). A [days] of the wrong size is a limit of 0 (D6). */
+@Serializable
+data class AppGroup(
+    val id: Long = 0,
+    val name: String = "",
+    val apps: List<String> = emptyList(),
+    val days: List<Int?> = emptyList(),
 )
 
 /** `time_policy.answer` (design 100 §14.2, `time_request.json`): a parent's [answer] ("yes" or "no") to the request

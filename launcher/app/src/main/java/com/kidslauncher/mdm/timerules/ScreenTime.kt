@@ -50,13 +50,36 @@ data class ScreenTimeLedger(
     /** The day a reset on a carried time left ([observe]): put back when the next checked time says it is still that
      * day. */
     val previous: PreviousDay? = null,
+    /** Design 139 §4.1: each app group's on-screen time today (group id to ms), from the usage events' fold. */
+    val groupUsedMs: Map<Long, Long> = emptyMap(),
+    /** Design 139 D9: the group lifts applied to today (group id to minutes). */
+    val groupExtraMinutes: Map<Long, Int> = emptyMap(),
+    /** Group lifts already added (to any day), never re-added; at most [MAX_REMEMBERED_LIFTS]. */
+    val appliedGroupLifts: List<Long> = emptyList(),
+    /** Design 139 §4.1: the usage events' last folded point, with its state; `null` makes the next fold a first fold.
+     * Runs on across midnight. */
+    val foldPoint: FoldPoint? = null,
 ) {
     fun date(): LocalDate? = day?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
 }
 
+/** A new day [day]: the counts start over (screen time and the groups'); the fold's point and lifts run on. */
+private fun ScreenTimeLedger.newDay(day: String): ScreenTimeLedger =
+    copy(day = day, usedMs = 0, extraMinutes = 0, groupUsedMs = emptyMap(), groupExtraMinutes = emptyMap())
+
 /** A day's count a reset on a carried time replaced, kept until a checked time says whether that reset was right. */
 @Serializable
-data class PreviousDay(val day: String, val usedMs: Long, val extraMinutes: Int)
+data class PreviousDay(
+    val day: String,
+    val usedMs: Long,
+    val extraMinutes: Int,
+    val groupUsedMs: Map<Long, Long> = emptyMap(),
+    val groupExtraMinutes: Map<Long, Int> = emptyMap(),
+)
+
+/** [a] and [b] added per key. */
+private fun <T> sumMaps(a: Map<Long, T>, b: Map<Long, T>, plus: (T, T) -> T): Map<Long, T> =
+    (a.keys + b.keys).associateWith { k -> listOfNotNull(a[k], b[k]).reduce(plus) }
 
 /** [ledger] after looking at the clocks: the trusted time now, and the day it belongs to. */
 data class Observation(val ledger: ScreenTimeLedger, val trustedNowMs: Long, val newDayByClock: Boolean)
@@ -82,9 +105,9 @@ fun observe(ledger: ScreenTimeLedger, clocks: Clocks, zone: ZoneId): Observation
     val anchored = ledger.copy(anchorWallMs = trusted, anchorElapsedMs = clocks.elapsedMs, bootCount = clocks.bootCount)
     val resetAllowed = estimate == null || (current != null && dateOf(estimate).isAfter(current))
     return when {
-        current == null -> Observation(anchored.copy(day = clockDate.toString(), usedMs = 0, extraMinutes = 0), trusted, true)
+        current == null -> Observation(anchored.newDay(clockDate.toString()), trusted, true)
         !clockDate.isAfter(current) -> Observation(anchored, trusted, false)
-        resetAllowed -> Observation(anchored.copy(day = clockDate.toString(), usedMs = 0, extraMinutes = 0, unreadable = false), trusted, true)
+        resetAllowed -> Observation(anchored.newDay(clockDate.toString()).copy(unreadable = false), trusted, true)
         else -> Observation(anchored.copy(day = clockDate.toString()), trusted, false)
     }
 }
@@ -109,6 +132,8 @@ private fun observeTrusted(ledger: ScreenTimeLedger, clocks: Clocks, zone: ZoneI
             day = previous.day,
             usedMs = previous.usedMs + ledger.usedMs,
             extraMinutes = (previous.extraMinutes + ledger.extraMinutes).coerceAtMost(MINUTES_PER_DAY),
+            groupUsedMs = sumMaps(previous.groupUsedMs, ledger.groupUsedMs, Long::plus),
+            groupExtraMinutes = sumMaps(previous.groupExtraMinutes, ledger.groupExtraMinutes) { a, b -> (a + b).coerceAtMost(MINUTES_PER_DAY) },
             previous = null,
         )
         else -> ledger.copy(previous = null)
@@ -116,16 +141,16 @@ private fun observeTrusted(ledger: ScreenTimeLedger, clocks: Clocks, zone: ZoneI
     val anchored = undone.copy(anchorWallMs = trusted, anchorElapsedMs = clocks.elapsedMs, bootCount = clocks.bootCount)
     val current = undone.date()
     return when {
-        current == null -> Observation(anchored.copy(day = clockDate.toString(), usedMs = 0, extraMinutes = 0), trusted, true)
+        current == null -> Observation(anchored.newDay(clockDate.toString()), trusted, true)
         !clockDate.isAfter(current) -> Observation(anchored, trusted, false)
         else -> {
             val kept = if (clocks.trust == ClockTrust.CARRIED) {
-                undone.previous ?: PreviousDay(current.toString(), undone.usedMs, undone.extraMinutes)
+                undone.previous ?: PreviousDay(current.toString(), undone.usedMs, undone.extraMinutes, undone.groupUsedMs, undone.groupExtraMinutes)
             } else {
                 null
             }
             Observation(
-                anchored.copy(day = clockDate.toString(), usedMs = 0, extraMinutes = 0, unreadable = false, previous = kept),
+                anchored.newDay(clockDate.toString()).copy(unreadable = false, previous = kept),
                 trusted,
                 true,
             )
@@ -295,6 +320,9 @@ fun unreadableLedger(clocks: Clocks, zone: ZoneId, lifts: List<Lift>): ScreenTim
     return fresh.copy(
         usedMs = 2L * MINUTES_PER_DAY * 60_000L,
         appliedBudgetLifts = lifts.filter { it.target == TARGET_BUDGET }.map { it.id },
+        // Design 139 D6: the groups close with it (groupStates reads `unreadable`), their lifts count as applied, and
+        // there is no folded point, so the next fold is a first fold.
+        appliedGroupLifts = lifts.filter { it.target == TARGET_GROUP }.map { it.id },
         unreadable = true,
     )
 }
