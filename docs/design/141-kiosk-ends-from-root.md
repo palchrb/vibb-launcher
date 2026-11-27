@@ -127,7 +127,9 @@ with the kiosk off and nothing locked does nothing new.
   roots it (design 16 #2), the glance roots only while LOCKED and re-roots through Home at its leave (`lockLeave`,
   `rootLeave`, design 59d A), and Home's record survives a process death in place (`stateNotNeeded`,
   `kiosk-escapes-and-updates.md` "Home stays the lock-task root"). If it isn't the root after all, Home's stop clears
-  only Home's own task (§2) - which today's emptying does anyway - and step 4 runs as today.
+  Home's own task (§2) - like today's emptying only while Home's task is still locked; from a task that has left lock
+  task (`mLockTaskUid` is never reset) it clears Home's task even when today's emptying wouldn't, so Home's stop runs
+  once per kiosk-off spell (§15, code QA M1) - and step 4 runs as today.
 - **During a live call: step 3 still runs** (decided, QA M1). Skipping it keeps today's path exactly when a stuck kiosk
   hurts most: today the emptying clears our in-call screen's locked task and, with a leftover holding lock task, its
   relaunch is refused - the kid loses the call screen until a reboot. Home's listener already makes the same stop during
@@ -198,6 +200,10 @@ A call live at the kiosk's end: ATMS calls `TelecomManager.showInCallScreen(fals
   -> "Invalid task, not in foreground" (caught, design 16 QA #3) -> lock task stays NONE until Home's next resume. The
   start that follows finds NONE -> `NOT_LOCKED`, today's emptying (harmless). With Home re-rooted in between: Home's
   stop from behind the app, as above.
+- **A quick end and start** (code QA L2): a pause's end right after its start - Home's listener's `startLockTask` while
+  Home isn't in front, or the end's pin landing before Home is resumed - can leave the kiosk "on" (the list pinned, the
+  switch on) with lock task NONE until Home's next resume starts it. Not new and not stuck: the kid's next Home press
+  roots it; gate row 11.
 - **Home relaunching** (a font-size or display change): no `NO_HOME` - the registration stays across
   `isChangingConfigurations` (§3.2), and the old object's token is the record's.
 - **No Home in this process**: §3.4 brings it when the screen is on; else today's emptying, logged by the stuck check.
@@ -287,7 +293,9 @@ the rest on 16 unless noted.
    after the unlock NONE, no blocked task, Home there, apps open. The same with the parent's kiosk-off.
 7. **The setup hold** (14, 16): design 114's row 13 (the flow's "Sett på pause i 2 t" returns to the flow) with a
    leftover; at least 5 times, `mLockTaskModeTasks`/`mLockTaskModeState` ~2 s after each: NONE, or a retry line that
-   ended it. A LOCKED state with the flow's task as the root and no retry is a finding.
+   ended it; and each time back in the flow (its step shown, not Home) with Home not recreated (no `wm_on_create_called`
+   for `HomeActivity`, its task id unchanged). A LOCKED state with the flow's task as the root and no retry, or the
+   flow's return lost, is a finding.
 8. **The residual, now §3.4**: a leftover, Chrome in front, a kill of the launcher's process (`adb shell kill <pid>`, not
    `am force-stop`, which removes its tasks), the PWA's pause before Home was resumed: `NO_HOME`, Home brought, Home's
    root stop, the follow-up pass empties the list; NONE within ~3 s. Again with the screen off: today's emptying, the
@@ -353,3 +361,17 @@ design left open:
   activity of ours resumed the retry answers `NO_HOME`.
 - `NOT_LOCKED` is never logged (every kiosk-off pass answers it); the stuck line is once per kiosk-off spell, as
   `REFUSED`/`NO_HOME`.
+
+Code QA (2026-11-27, 0H 1M 4L), all taken:
+- **M1** a second unpin pass and Home's second stop could clear Home's task (from a task no longer the root,
+  `clearLockedTask` clears it; `mLockTaskUid` is never reset) and the gap's new root with it (the setup flow's return,
+  the in-call screen): `HomeActivity.reconcileKioskMode` asks for a chrome pass only while a brought Home is awaited
+  (`HomeRootStop.homeStopped()`, `KioskEndSpell.awaitingHome`); Home's stop runs once per kiosk-off spell until it answers
+  ASKED - Home's own stop at a resume counts too - and later passes answer `ASKED_BEFORE` (stuck check due, the list
+  emptied); LOCKED with the kiosk off is then the retry's job. §3.2's "clears only Home's own task" corrected; gate row 7
+  also records the return to the flow and Home not recreated.
+- **L1** the retry runs at most once per kiosk-off spell (`KioskEndSpell.takeRetry`), so its line is once per spell too.
+- **L2** §5: a quick end and start can leave the kiosk on with lock task NONE until Home's next resume (row 11).
+- **L3** the stuck line names the answer of the pass that scheduled the check, not the last pass's.
+- **L4** the order scan also checks that a step other than EMPTY returns before `setLockTaskPackages` and that
+  `HomeRootStop.kioskOn()` is in the pin branch.

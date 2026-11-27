@@ -3733,10 +3733,12 @@ package neither pinned nor suspended, "App is not available", then the Home key)
 Rows 2, 3, 6 and 9 on both images, the rest on 16 unless the row says; row 1 is the control on `main`. Android 17 owed.
 What the build adds for the gate:
 - the log: `adb logcat -s HomeRootStop LockTaskChrome HomeActivity` - "The kiosk's end: Home's stop ASKED" (`NO_HOME`,
-  `REFUSED`, `FAILED`, `LOCKED_CHROME`; `NOT_LOCKED` is silent; `REFUSED`/`NO_HOME` once per kiosk-off spell), "lock task
+  `REFUSED`, `FAILED`, `LOCKED_CHROME`, `ASKED_BEFORE`; `NOT_LOCKED` is silent; `REFUSED`/`NO_HOME`/`ASKED_BEFORE`, the
+  retry and the stuck line once per kiosk-off spell), "lock task
   still on, retry from our resumed activity ..." and "lock task ended after the retry" (rows 7, 9), "Lock task still on
   after the kiosk's end (Home's stop: ..., retry: ...)" (the stuck line: row 8's dark half; row 1 runs `main`, which has none), "no Home in
   this process - Home brought, the list waits for its stop" (row 8);
 - the state: `adb shell dumpsys activity activities | grep -E 'mLockTaskModeState|mLockTaskModeTasks' -A3`, right after
-  and ~2 s after each pass; Home's record: `adb logcat -b events | grep -E 'wm_(finish_activity|on_create_called).*HomeActivity'`.
+  and ~2 s after each pass; Home's record: `adb logcat -b events | grep -E 'wm_(finish_activity|on_create_called).*HomeActivity'`;
+- row 7 (code QA M1) also records, each time, the flow back in front (its step, not Home) and Home not recreated.
 
