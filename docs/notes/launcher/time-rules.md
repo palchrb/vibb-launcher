@@ -228,3 +228,33 @@ the trusted time and `trust` how it is known (`server`, `gnss`, `carried`, `none
   time as literal text while the offset is over five minutes, refreshed at each minute and bound again (the date too)
   at start and when Android's clock or zone is set; back within five minutes, the system's pattern again.
 - **Not done:** Android's own clock is never set (the status bar and other apps keep the wall clock).
+
+## App groups (design 139 part A, `docs/design/139-app-groups.md`)
+
+- **The fold** (`timerules/AppGroups.kt`, pure, `AppGroupsTest`): §4.1 revision 5 - per package off / on / on-paused,
+  the PAUSED class rule, the kill rule (`KILL_PAIR_MS`), pending STOPPEDs across reads, the device state as a state,
+  the boot-count reset, the read window (`SETTLE_MS`), the first fold's 3 h lookback with the count off, the backward
+  clock step's skip by key, the elapsed cap, the trusted day. The ledger (`ScreenTimeLedger`) keeps `groupUsedMs`,
+  `groupExtraMinutes`, `appliedGroupLifts` and the `foldPoint` (with its `carry`), which runs on across midnight.
+- **The glue** (`timerules/AppGroupUsage.kt`): one `queryEvents` in flight on its own thread, applied on the main thread
+  through `TimeRulesRuntime.applyGroupFold` only while the ledger's point is the one the read started from. The access
+  (`UsageAccess`, the app-op the usage service's way, `@Suppress("DEPRECATION")`) is read before and after each query
+  (`readOutcome`); a read that throws closes the groups until one works (`readFailed`). Debug builds re-read each
+  window at the next fold and log `late event`.
+- **When** (`ScreenTimeTracker`): its own gate (interactive, keyguard down) before `appInUse`; on every `update` and the
+  60 s checkpoint, one fold `SETTLE_MS` + 0.5 s after the screen off, and `groupRunsOut` at the least time left + 1 s.
+  `afterFold` re-checks when the closed set changed, else re-arms the timer and the Q4 notice ("Spill: 3 min igjen",
+  `AnchorNotice.refreshGroups`). The setup hold folds for state only.
+- **The decision** (`timerules/AppGroupPolicy.kt`, `AppGroupStatesTest`): `groupStates` (open, no limit, used up, not
+  today, can't count), `groupClosedApps`, group lifts once per id. `TimeRulesRuntime.snapshot` puts the closed apps on
+  the lock (`TimeLock.groupClosed`, in its `key()`, so a change re-applies), less the live VoIP call's own package (D7;
+  `VoipCalls`' pinned change re-checks), and out of `usableApps` (D8).
+- **The plan** (`computeEnforcementPlan`'s `groupClosedApps`, `groupsSet`): suspended never hidden, out of the pins and
+  the usable apps, never `neverRestrict`/alarms/ours; `groupOnly` for the dim; a group sets the date/time lock and
+  `DISALLOW_CREATE_WINDOWS`. After an apply a group that just closed over the app on screen at the last fold brings
+  Home (`AppGroupUsage.afterApply`).
+- **What the kid sees** (`timerules/AppGroupTiles.kt`): `AppFilter` keeps a group-only app, Home's tile and the list's
+  icon dim it, and `AppAction` opens the group's sheet (`sheet_app_group.xml`) instead of launching it.
+- **The setup step** `usage_access` (`SetupStep.USAGE_ACCESS`, `StepWhen.APP_GROUPS`): Vibb One's own page with
+  `package:`, then the list. The manifest declares `PACKAGE_USAGE_STATS` (`tools:ignore="ProtectedPermissions"`).
+

@@ -216,6 +216,9 @@ adb shell cmd notification allow_listener $P/com.kidslauncher.mdm.badges.BadgeLi
 # On a phone the parent grants it from Vibb One's Settings ("Modify system settings" row, under Background
 # connection, during a pause - write-settings-row, 2026-10-24); adb is the emulator's shortcut.
 adb shell appops set $P WRITE_SETTINGS allow
+# Design 139: the app groups' "App usage data" (GET_USAGE_STATS), a device owner can't grant it itself. On a phone the
+# parent turns it on in the setup flow's step `usage_access` during a pause; adb is only the emulator's shortcut.
+adb shell appops set $P GET_USAGE_STATS allow
 # Design 19b: the launcher on the power-save allowlist ("battery: Unrestricted"); expect "Added: ...".
 # Check with `=$P` (true/false). Android's Settings shows it as "Unrestricted" either way.
 adb shell dumpsys deviceidle whitelist +$P
@@ -3548,3 +3551,18 @@ suspending a visible app closes it like an ordinary close; a reboot gives `DEVIC
 (no `STOPPED`) and `DEVICE_STARTUP`. Without the grant `queryEvents` returns nothing, no exception.
 
 No product code changed. The emulator and the server were stopped at 09:57 UTC.
+
+## 6cc. App groups with a shared daily limit (design 139 part A, branch `app-groups`) - written, not run
+
+The rows are design 139 §8 (`docs/design/139-app-groups.md`, on `app-groups` since its build), rows 2-18 on Android 14
+(`compat34`) and 16 (`jelly36`); row 1 (step 0) is §6ca/§6cb's. Setup for every row: the debug build, an allowed F-Droid
+app and a second one, a group "Test" of both with today's limit 2 min (Device › Time Rules › Appgrupper › Legg til
+gruppe), and "App usage data" on - the setup flow's step `usage_access` during a pause (its page with `package:`), or
+`adb shell appops set $P GET_USAGE_STATS allow` as the shortcut (§4). What the build adds for the gate:
+- the PWA's minutes are `time_state.groups[].used_minutes` (Device › Time Rules' row value, "40 av 60 min");
+- the fold logs as `AppGroupUsage` (`adb logcat -s AppGroupUsage ScreenTimeTracker`); the debug build's `late event`
+  line (row 18) is there too, and "A group closed: Home over <pkg>" at the cut (rows 2, 9);
+- the closed set and the dim: `dumpsys package <pkg> | grep -i suspended`, Home's tile at 40 % alpha, a tap opens the
+  sheet ("Brukt opp i dag", "Ikke i dag", "Kan ikke telle nå");
+- row 10's title: `dumpsys notification --noredact | grep -A3 1002` ("Test: 3 min igjen").
+

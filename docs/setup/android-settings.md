@@ -38,6 +38,14 @@ off, Vibb learns its places from the Wi-Fi networks heard beside its own GPS fix
 (`WIFI_SCAN_ALWAYS_AVAILABLE` isn't among `setGlobalSetting`'s keys). Off: no learned fix while Wi-Fi is off, GPS as
 before. Check: `adb shell settings get global wifi_scan_always_enabled` -> `1`.
 
+## "App usage data" for Vibb One
+
+Design 139 (app groups): design 114's setup step `usage_access` - the phone's setup flow (after the QR, or parent
+Settings › Oppsett, during a pause) opens Vibb One's own page in Android's "App usage data" ("Usage access" on Android
+14); turn the switch on. A greyed switch (Android's restricted settings, 15+): tap it, OK, then App info › ⋮ › "Allow
+restricted settings" (the phone's PIN), and back to the switch. Needed while the phone has a group with a limit; without
+it the groups' apps are closed. Check: `adb shell cmd appops get me.vibb.launcher GET_USAGE_STATS` -> `allow`.
+
 ## "Modify system settings" for Vibb One
 
 Design 114's setup step `write_settings`: the phone's setup flow (after the QR, or parent Settings › Oppsett) opens Android's page for it.
