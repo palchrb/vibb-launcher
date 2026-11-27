@@ -110,8 +110,28 @@ data class ReadPlan(
  * satellite), for the cap after a reboot. `null` when `to` isn't after the read's start: nothing to read, nothing
  * changes.
  */
-fun planRead(point: FoldPoint?, nowWall: Long, nowElapsed: Long, bootCount: Int, checkedClock: Boolean): ReadPlan? =
-    TODO("design 139 §4.1")
+fun planRead(point: FoldPoint?, nowWall: Long, nowElapsed: Long, bootCount: Int, checkedClock: Boolean): ReadPlan? {
+    val to = nowWall - SETTLE_MS
+    val toElapsed = nowElapsed - SETTLE_MS
+    if (point == null) {
+        // QA M3: no carry - the lookback fills it with the count off.
+        val from = to - FIRST_FOLD_LOOKBACK_MS
+        return ReadPlan(from, from, to, toElapsed, first = true, stepBackMs = 0, rebooted = false, capMs = 0)
+    }
+    val rebooted = point.bootCount != bootCount
+    // QA L4: the offset is comparable within one boot only.
+    val fall = if (rebooted) 0L else point.offsetMs - (nowWall - nowElapsed)
+    val stepBack = if (fall > CLOCK_STEP_NOISE_MS) fall else 0L
+    val spanFrom = point.wallMs - stepBack
+    if (to <= spanFrom) return null
+    val queryFrom = if (stepBack > 0) spanFrom - SETTLE_MS else spanFrom
+    val cap = when {
+        !rebooted -> toElapsed - point.elapsedMs
+        checkedClock -> to - point.wallMs
+        else -> 0L
+    }.coerceAtLeast(0)
+    return ReadPlan(queryFrom, spanFrom, to, toElapsed, first = false, stepBackMs = stepBack, rebooted = rebooted, capMs = cap)
+}
 
 /**
  * The fold's result: each group's on-screen spans in wall time (merged, inside `[spanFrom, to)`), the state at `to`,
@@ -138,7 +158,132 @@ fun groupScreenMs(
     live: Boolean,
     count: Boolean,
     skip: Set<String> = emptySet(),
-): FoldOut = TODO("design 139 §4.1")
+): FoldOut {
+    val read = events.filter { it.timeMs >= plan.queryFrom && it.timeMs < plan.to && it.key !in skip }
+    // QA L3: a new boot resets the state at the read's DEVICE_SHUTDOWN (the event does it), else at the read's start.
+    val start = when {
+        plan.first || (plan.rebooted && read.none { it.kind == UsageKind.DEVICE_SHUTDOWN }) -> FoldCarry()
+        else -> carry
+    }
+    val on = LinkedHashMap<String, OnPackage>()
+    start.on.forEach { on[it.pkg] = it }
+    var screenOn = start.screenOn
+    var keyguardHidden = start.keyguardHidden
+    val pending = start.pending.filter { it.pkg in on && on[it.pkg]?.paused == false }.toMutableList()
+
+    val spans = groups.associate { it.id to mutableListOf<LongRange>() }
+    var cursor = plan.spanFrom
+    fun countTo(t: Long) {
+        val end = minOf(t, plan.to)
+        if (end > cursor && count && screenOn && keyguardHidden) {
+            for (g in groups) {
+                if (g.apps.none { it in on }) continue
+                val list = spans.getValue(g.id)
+                val last = list.lastOrNull()
+                if (last != null && last.last + 1 == cursor) list[list.size - 1] = last.first until end else list += cursor until end
+            }
+        }
+        if (end > cursor) cursor = end
+    }
+    fun allOff() {
+        on.clear()
+        pending.clear()
+    }
+
+    // QA L6: the pending STOPPEDs first, dated at the STOPPED - in this read that is its start.
+    for (stop in pending.toList()) {
+        when (pairOf(read, -1, stop.pkg, stop.atMs, plan.to)) {
+            Partner.YES -> {
+                on.remove(stop.pkg)
+                pending.remove(stop)
+            }
+            Partner.NO -> pending.remove(stop)
+            Partner.OPEN -> {}
+        }
+    }
+
+    val applied = ArrayList<Pair<Long, String>>(read.size)
+    read.forEachIndexed { i, e ->
+        countTo(e.timeMs)
+        applied += e.timeMs to e.key
+        // A later event of a package resolves its pending STOPPED; the event applies as usual.
+        pending.removeAll { it.pkg == e.pkg }
+        when (e.kind) {
+            UsageKind.RESUMED -> on[e.pkg] = OnPackage(e.pkg)
+            UsageKind.PAUSED -> on[e.pkg] = OnPackage(e.pkg, paused = true, pausedClass = e.cls)
+            UsageKind.STOPPED -> {
+                val state = on[e.pkg]
+                when {
+                    state == null -> {}
+                    // QA M1: an on-paused package ends only at the STOPPED of the PAUSED's class.
+                    state.paused -> if (state.pausedClass == e.cls) on.remove(e.pkg)
+                    // The kill rule (QA L1).
+                    else -> when (pairOf(read, i, e.pkg, e.timeMs, plan.to)) {
+                        Partner.YES -> on.remove(e.pkg)
+                        Partner.NO -> {}
+                        Partner.OPEN -> pending += PendingStop(e.pkg, e.timeMs)
+                    }
+                }
+            }
+            UsageKind.SCREEN_INTERACTIVE -> screenOn = true
+            UsageKind.SCREEN_NON_INTERACTIVE -> {
+                screenOn = false
+                allOff()
+            }
+            UsageKind.KEYGUARD_SHOWN -> {
+                keyguardHidden = false
+                allOff()
+            }
+            UsageKind.KEYGUARD_HIDDEN -> keyguardHidden = true
+            UsageKind.DEVICE_SHUTDOWN -> {
+                screenOn = false
+                keyguardHidden = false
+                allOff()
+            }
+            // QA H2: stamped at the storage unlock, maybe after the first RESUMEDs - it changes nothing.
+            UsageKind.DEVICE_STARTUP -> {}
+        }
+    }
+    countTo(plan.to)
+    // The live check (QA H2, M2): the fold runs only while the screen is on and unlocked, so a missed device event
+    // can't stop the count for good.
+    if (live) {
+        screenOn = true
+        keyguardHidden = true
+    }
+    return FoldOut(
+        spans = if (count) spans.filterValues { it.isNotEmpty() } else emptyMap(),
+        carry = FoldCarry(on.values.toList(), screenOn, keyguardHidden, pending.toList()),
+        appliedKeys = applied,
+    )
+}
+
+/** The kill rule's answer for a STOPPED of [pkg] at [atMs]: a partner came, none can come, or the window is still open. */
+private enum class Partner { YES, NO, OPEN }
+
+/**
+ * Whether another package's RESUMED pairs with the STOPPED of [pkg] at [atMs] (QA L1): in the same ms before it in
+ * report order ([index], -1 for a pending STOPPED from an earlier read), or after it up to [KILL_PAIR_MS] (inclusive),
+ * before any later event of [pkg]. [Partner.OPEN] while the window reaches [to] (QA L6).
+ */
+private fun pairOf(read: List<UsageEv>, index: Int, pkg: String, atMs: Long, to: Long): Partner {
+    fun partner(e: UsageEv) = e.kind == UsageKind.RESUMED && e.pkg != pkg
+    if (index > 0) {
+        var j = index - 1
+        while (j >= 0 && read[j].timeMs == atMs) {
+            if (partner(read[j])) return Partner.YES
+            j--
+        }
+    }
+    val windowEnd = atMs + KILL_PAIR_MS
+    for (j in index + 1 until read.size) {
+        val e = read[j]
+        if (e.timeMs > windowEnd) return Partner.NO
+        if (e.pkg == pkg) return Partner.NO
+        if (partner(e) && e.timeMs >= atMs) return Partner.YES
+    }
+    return if (windowEnd < to) Partner.NO else Partner.OPEN
+}
 
 /**
  * [ledger] (already observed at [clocks]) with [out] applied (§4.1 "The clocks"): each group's spans mapped to elapsed
@@ -154,7 +299,22 @@ fun applyFold(
     zone: ZoneId,
     bootCount: Int,
     count: Boolean,
-): ScreenTimeLedger = TODO("design 139 §4.1")
+): ScreenTimeLedger {
+    val point = FoldPoint(plan.to, plan.toElapsed, bootCount, plan.to - plan.toElapsed, out.carry)
+    if (!count) return ledger.copy(foldPoint = point)
+    val dayStart = ledger.date()?.let { dayStartMs(it, zone) } ?: Long.MIN_VALUE
+    // A wall time of the read on the decisions' clock, through the elapsed realtime it maps to.
+    fun trusted(t: Long): Long = clocks.wallMs - (clocks.elapsedMs - (plan.toElapsed - (plan.to - t)))
+    val used = ledger.groupUsedMs.toMutableMap()
+    for ((id, ranges) in out.spans) {
+        val ms = ranges.sumOf { r ->
+            val end = trusted(r.last + 1)
+            (end - maxOf(trusted(r.first), dayStart)).coerceAtLeast(0)
+        }.coerceAtMost(plan.capMs)
+        if (ms > 0) used[id] = (used[id] ?: 0L) + ms
+    }
+    return ledger.copy(groupUsedMs = used, foldPoint = point)
+}
 
 /** The trusted local midnight that starts [day] in [zone], epoch ms. */
 internal fun dayStartMs(day: LocalDate, zone: ZoneId): Long = day.atStartOfDay(zone).toInstant().toEpochMilli()
