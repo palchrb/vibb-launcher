@@ -150,3 +150,131 @@ fun leaveInFront(resumed: Boolean, fromAsk: Boolean = false): Boolean = resumed 
 
 /** The finish was refused (`isFinishing` still false) with the kiosk on: the lock is the root. */
 val rootLeave = LockLeave(stopLockTaskFirst = true, homeFirst = true)
+
+/*
+ * Design 141: the kiosk ends from its root. The kiosk's end (`LockTaskChrome.writeLockTask`, the unpin) first has Home
+ * stop lock task from its own task ([HomeRootStop]): from the root, AOSP's `clearLockedTask` clears every other locked
+ * task - a leftover `BlockedAppActivity` task (`LAUNCHABLE_PRIV`, which `setLockTaskPackages` never removes) included -
+ * and empties the locked list, so the emptying that follows finds nothing locked. Pure, tested in LockTaskRootTest.
+ */
+
+/** `ActivityManager.getLockTaskModeState`, as the kiosk's end reads it. PINNED is screen pinning - the kid's or
+ * Android's, never the kiosk's. */
+enum class LockTaskState { NONE, LOCKED, PINNED }
+
+/** `ActivityManager.LOCK_TASK_MODE_*` (0 NONE, 1 LOCKED, 2 PINNED - public constants, duplicated to stay Android-free);
+ * anything else reads as NONE. */
+fun lockTaskStateOf(mode: Int): LockTaskState = when (mode) {
+    1 -> LockTaskState.LOCKED
+    2 -> LockTaskState.PINNED
+    else -> LockTaskState.NONE
+}
+
+/** What Home's stop at the kiosk's end did ([homeRootStopAnswer]). */
+enum class HomeRootStopAnswer {
+    /** Lock task isn't LOCKED (NONE, or screen pinning): nothing to stop, no call. */
+    NOT_LOCKED,
+
+    /** Vibb's chrome is LOCKED: its lock task isn't ours to stop (a guard - the unpin never runs then). */
+    LOCKED_CHROME,
+
+    /** No Home in this process (design 141 §3.4). */
+    NO_HOME,
+
+    /** Home's `stopLockTask()` went through. */
+    ASKED,
+
+    /** Home's task was never locked (`SecurityException`, "Invalid uid") - the stuck state of §1. */
+    REFUSED,
+
+    /** Any other exception: a record without a task, a dead binder. */
+    FAILED,
+}
+
+/**
+ * Design 141 §3.2: whether Home stops lock task at the kiosk's end, and what came of it. [stop] (Home's
+ * `stopLockTask()`, mapped to [HomeRootStopAnswer.ASKED], [HomeRootStopAnswer.REFUSED] or [HomeRootStopAnswer.FAILED])
+ * runs only when lock task is LOCKED, Vibb's chrome isn't and a Home is registered. NOT_LOCKED is read first: the boot
+ * cover's process and a process start's pass have no Home and nothing locked (§4) - no bring for them.
+ */
+fun homeRootStopAnswer(
+    registered: Boolean,
+    lockTaskState: LockTaskState,
+    chromeLocked: Boolean,
+    stop: () -> HomeRootStopAnswer,
+): HomeRootStopAnswer = when {
+    lockTaskState != LockTaskState.LOCKED -> HomeRootStopAnswer.NOT_LOCKED
+    chromeLocked -> HomeRootStopAnswer.LOCKED_CHROME
+    !registered -> HomeRootStopAnswer.NO_HOME
+    else -> stop()
+}
+
+/** The answers that found lock task LOCKED with our chrome not LOCKED: the stuck check follows them (§3.3). */
+fun stuckCheckDue(answer: HomeRootStopAnswer): Boolean =
+    answer != HomeRootStopAnswer.NOT_LOCKED && answer != HomeRootStopAnswer.LOCKED_CHROME
+
+/**
+ * Design 141 §3.3: lock task is still on after the kiosk's end and isn't ours. With the kiosk off a lock task exists only
+ * while Vibb's chrome is LOCKED (`lockTaskWhileLocked`) or a VoIP call's app is pinned ([voipPinned]); screen pinning
+ * (PINNED) is never the kiosk's.
+ */
+fun lockTaskStuck(state: LockTaskState, kioskOn: Boolean, chromeLocked: Boolean, voipPinned: Boolean): Boolean =
+    state == LockTaskState.LOCKED && !kioskOn && !chromeLocked && !voipPinned
+
+/** How long §3.4 waits for the Home it brought before a pass empties the list regardless. */
+const val KIOSK_END_HOME_WAIT_MS = 3_000L
+
+/** When the stuck check runs after a kiosk-off pass that found lock task LOCKED, and again after its retry. */
+const val KIOSK_END_STUCK_CHECK_MS = 1_000L
+
+/** What the unpin does after Home's stop ([unpinStep]). */
+enum class UnpinStep {
+    /** Empty the list (`setLockTaskPackages(admin, [])`) - as before design 141. */
+    EMPTY,
+
+    /** No Home in this process, screen on: bring Home (typed HOME, restarted in its root task - our package is still
+     * listed) and leave the list for its root stop (§3.4). */
+    BRING_HOME,
+
+    /** Home was brought this spell and [KIOSK_END_HOME_WAIT_MS] hasn't passed: leave the list for Home, as at the bring. */
+    WAIT_FOR_HOME,
+}
+
+/**
+ * Design 141 §3.4. [broughtThisSpell]: Home was brought in this kiosk-off spell; [timerDue]: [KIOSK_END_HOME_WAIT_MS]
+ * has passed since. One bring per spell; with the screen off (Home wouldn't resume behind the keyguard), any other
+ * answer, or the wait over: today's emptying.
+ */
+fun unpinStep(answer: HomeRootStopAnswer, interactive: Boolean, broughtThisSpell: Boolean, timerDue: Boolean): UnpinStep = when {
+    answer != HomeRootStopAnswer.NO_HOME || !interactive -> UnpinStep.EMPTY
+    !broughtThisSpell -> UnpinStep.BRING_HOME
+    timerDue -> UnpinStep.EMPTY
+    else -> UnpinStep.WAIT_FOR_HOME
+}
+
+/**
+ * Design 141 §3.2's log: one line per answer, with fixed words; [HomeRootStopAnswer.REFUSED] and
+ * [HomeRootStopAnswer.NO_HOME] (the passes repeat while stuck) and the stuck line at most once per kiosk-off spell, which
+ * a kiosk-on pass ends ([kioskOn]). NOT_LOCKED is never logged: a phone with the kiosk off and nothing locked logs
+ * nothing new. Not thread-safe on its own; [HomeRootStop] holds it under its own monitor.
+ */
+class KioskEndLogOnce {
+    private val logged = mutableSetOf<HomeRootStopAnswer>()
+    private var stuckLogged = false
+
+    /** Whether to log [answer] now. */
+    fun answer(answer: HomeRootStopAnswer): Boolean = when (answer) {
+        HomeRootStopAnswer.NOT_LOCKED -> false
+        HomeRootStopAnswer.REFUSED, HomeRootStopAnswer.NO_HOME -> logged.add(answer)
+        else -> true
+    }
+
+    /** Whether to log the stuck line now. */
+    fun stuck(): Boolean = !stuckLogged.also { stuckLogged = true }
+
+    /** A kiosk-on pass: the next spell logs again. */
+    fun kioskOn() {
+        logged.clear()
+        stuckLogged = false
+    }
+}
