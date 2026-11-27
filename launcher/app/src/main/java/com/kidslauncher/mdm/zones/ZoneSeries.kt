@@ -146,8 +146,9 @@ object ZoneSeries {
             if (fresh) {
                 val moving = fixMoving(if (location.hasSpeed()) location.speed else null, fix, lastFresh, CHECK_MAX_DELAY_MS)
                 MotionGate.afterTry(context, firesAtStart, location.time, heartbeat = false, nowMs = requestedAt, moving = moving)
-                // Since when the phone is still: a fix on the move or not at the last fresh fix's place starts it.
-                MotionGate.afterFreshFix(context, firesAtStart, location.trustedTimeMs(), moving, placeAgainst(previousFresh, fix), noSensor = false)
+                // Since when the phone is still: a fix on the move, not at the last fresh fix's place or with no trusted sensor
+                // (none, or D7's distrust) starts it.
+                MotionGate.afterFreshFix(context, firesAtStart, location.trustedTimeMs(), moving, placeAgainst(previousFresh, fix), noSensor = !(MotionGate.hasSensor(context) && ZoneWatch.motionTrusted(context)))
             }
             return
         }

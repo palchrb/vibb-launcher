@@ -149,8 +149,8 @@ counts.
   the fix's own time and the trail are unchanged, a re-send without `still` stamps nothing. Beside `still`,
   `zone_watch.still_since_age_ms` (the owner's report, 2026-11-27; `zones::report_still_since`: how long ago the phone
   went still, read as the receipt minus it like a fix's `age_ms` - one clock, the server's (code QA M3) -, 0 up to
-  `MAX_FIX_AGE_MS`, not before `devices.enrolled_at`; anything else is no value, never a refused report; migration
-  0185's header still names it by its first name, `still_since_ms`) says when the phone went still; `mark_resent`
+  `MAX_FIX_AGE_MS`, not before `devices.enrolled_at`; anything else is no value, never a refused report) says when the
+  phone went still; `mark_resent`
   stamps it on the same row (`device_locations.still_since`, migration 0185; NULL for a re-send without it), never
   earlier than the newest stored fix of the phone after it and before the re-sent one that lies apart from it -
   further than both accuracies and 200 m, an accuracy known on both (`clamp_still_since`, code QA M4) - and Locate's
