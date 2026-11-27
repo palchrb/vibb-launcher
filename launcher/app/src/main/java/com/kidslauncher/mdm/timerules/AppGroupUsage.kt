@@ -29,10 +29,10 @@ fun readOutcome(before: Boolean?, after: Boolean?, read: Boolean): ReadOutcome =
 
 /**
  * Design 139 §4.1: the Android side of the app groups' fold ([groupScreenMs], pure). Each fold reads Android's usage
- * events of `[from, now - SETTLE_MS)` on one IO thread (a binder call; one read in flight), holds them in memory for
- * that fold only, and applies the result on the main thread to today's ledger, where the last folded point and its
- * state are saved with the minutes ([TimeRulesRuntime.applyGroupFold]). A failed or dropped read leaves the point
- * where it was, so the next fold reads the gap again.
+ * events of `[from - LATE_OVERLAP_MS, now - SETTLE_MS)` on one IO thread (a binder call; one read in flight), holds
+ * them in memory for that fold only, and applies the result on the main thread to today's ledger, where the last folded
+ * point and its state are saved with the minutes ([TimeRulesRuntime.applyGroupFold]). A failed or dropped read leaves
+ * the point where it was, so the next fold reads the gap again.
  *
  * The access is read before and after every query: a fold without it on both sides applies nothing, and the groups
  * close ([groupStates], D6) - without the grant the query returns nothing and throws nothing. A read that throws
@@ -59,9 +59,11 @@ object AppGroupUsage {
     var readFailed: Boolean = false
         private set
 
-    /** Debug builds re-read each fold's window at the next fold (QA H1, gate row 18): the window and how many events
-     * it held. */
-    private var lastWindow: Triple<Long, Long, Int>? = null
+    /** Debug builds re-read the part of the last fold's window that has left the overlap (QA H1, gate row 18): the
+     * window and the stamps of the events it held. */
+    private var lastWindow: ReadWindow? = null
+
+    private class ReadWindow(val from: Long, val to: Long, val stamps: LongArray)
 
     /** What the fold does after it applied (or found nothing to read): [ScreenTimeTracker] re-arms the group timer and
      * re-checks when a group closed or opened. */
@@ -84,15 +86,17 @@ object AppGroupUsage {
         val ledger = TimeRulesRuntime.ledger(app, policy)
         val clocks = TimeRulesRuntime.clocks()
         val checked = clocks.trust == ClockTrust.SERVER || clocks.trust == ClockTrust.GNSS
-        val plan = planRead(ledger.foldPoint, System.currentTimeMillis(), SystemClock.elapsedRealtime(), BootClock.bootCount(), checked)
-        if (plan == null) {
+        val planned = planRead(ledger.foldPoint, System.currentTimeMillis(), SystemClock.elapsedRealtime(), BootClock.bootCount(), checked)
+        if (planned == null) {
             done(app)
             return
         }
         val music = TimeRulesRuntime.musicApps(app)
         val groups = policy.groups.map { g -> FoldGroup(g.id, g.apps.filterNot { neverGrouped(it, music) }.toSet()) }
-        // D10: the setup hold's time is setup, not use - the state moves, nothing counts.
-        val count = !plan.first && !RestrictionsPause.holdActive()
+        // D10: the setup hold's time is setup, not use - the state moves, nothing counts; the first fold after it counts
+        // from its end (revision 6, gate F2). The end is written before the hold's flag clears, so it is read after.
+        val count = !planned.first && !RestrictionsPause.holdActive()
+        val plan = if (count) countFromHoldEnd(planned, RestrictionsPause.holdEndedWallMs) else planned
         trimKeys(plan.to)
         val skip = if (plan.stepBackMs > 0) appliedKeys.mapTo(mutableSetOf()) { it.second } else emptySet()
         val point = ledger.foldPoint
@@ -102,7 +106,7 @@ object AppGroupUsage {
         io.execute {
             val before = UsageAccess.granted(app)
             val read = try {
-                if (recheck != null) runCatching { checkLate(app, recheck) }
+                if (recheck != null) runCatching { checkLate(app, recheck, plan.queryFrom) }
                 Result.success(readEvents(app, plan.queryFrom, plan.to))
             } catch (e: Exception) {
                 Result.failure(e)
@@ -125,7 +129,7 @@ object AppGroupUsage {
                             val out = groupScreenMs(read, plan, carry, groups, live, count, skip)
                             if (TimeRulesRuntime.applyGroupFold(app, policy, plan, out, count, point)) {
                                 appliedKeys.addAll(out.appliedKeys)
-                                lastWindow = Triple(plan.queryFrom, plan.to, read.size)
+                                lastWindow = ReadWindow(plan.queryFrom, plan.to, LongArray(read.size) { read[it].timeMs })
                             }
                         }
                     }
@@ -167,11 +171,15 @@ object AppGroupUsage {
         return out
     }
 
-    /** QA H1 (gate row 18): the last window read again; more events than the fold saw is an event stored more than
-     * [SETTLE_MS] after its stamp, logged as `late event`. Debug builds only. */
-    private fun checkLate(context: Context, window: Triple<Long, Long, Int>) {
-        val now = readEvents(context, window.first, window.second).size
-        if (now > window.third) Log.w(LOG_TAG, "late event: ${now - window.third} more in [${window.first}, ${window.second})")
+    /** QA H1 (gate row 18, revision 6): the part of the last window before this read's start ([nextFrom]) read again;
+     * more events than the fold saw there is an event stored after the overlap had passed it ([LATE_OVERLAP_MS]), lost
+     * for good, logged as `late event`. Debug builds only. */
+    private fun checkLate(context: Context, window: ReadWindow, nextFrom: Long) {
+        val end = minOf(window.to, nextFrom)
+        if (end <= window.from) return
+        val seen = window.stamps.count { it < end }
+        val now = readEvents(context, window.from, end).size
+        if (now > seen) Log.w(LOG_TAG, "late event: ${now - seen} more in [${window.from}, $end)")
     }
 
     private fun kindOf(type: Int): UsageKind? = when (type) {

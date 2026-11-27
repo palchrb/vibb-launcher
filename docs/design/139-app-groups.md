@@ -1,5 +1,7 @@
 # 139 - App groups with a shared daily limit, and apps outside the filter
 
+Status: **revision 6**, 2026-11-27: part A is built on `main`; revision 6 (§18, branch `app-groups-gatefix`) fixes
+the emulator gates' three findings (`docs/testing/emulator.md` §6cd, §6ce). Revision 5's status follows.
 Status: design, **revision 5**, 2026-11-27 (branch `app-groups-design`), read against `main` b777a957e. Not built.
 Revision 5 takes the design QA of revision 4 (daf759060; 2 High, 3 Medium, 6 Low), all in §4.1's fold (§17 maps each
 one).
@@ -230,7 +232,8 @@ get a one-line call into GPL code, as `PlatformRefusals.plannedOff` does today.
       later than 50 ms, and the dead app would stay on (counted against the kid until its next event or the screen
       off). Gate row 13 kills a group app over an app whose process is gone, on 14 and 16. If the partner comes later
       than 50 ms there, the after-side becomes: **the first RESUMED of another package with no event of X between,
-      within 2 s**. The same-ms side and the rest of the rule stay.
+      within 2 s**. The same-ms side and the rest of the rule stay. **Built in revision 6 (§18)**: the gate measured
+      299-815 ms on 14 and 309-352 ms on 16; the fallback's partner must also have been off at the STOPPED.
   - Our own RESUMED is no longer a rule of its own (revision 3's "our RESUMED turns every on package off"): the kill
     rule ends the same cases, and an app in split screen beside Vibb One is no longer undercounted.
 - **The device state is a state, not a wait** (revision 5, QA H2 and M2). `carry` holds two flags: the screen (on at
@@ -305,13 +308,15 @@ get a one-line call into GPL code, as `PlatformRefusals.plannedOff` does today.
   - `begin` is inclusive and `end` exclusive, so a read holds `from <= t < to`, and the next read starts at `to`: an
     event at exactly `to` is read once, by the next fold. Events of one ms always fall in one read.
   - A fold whose `to` isn't after `from` reads nothing and changes nothing.
-  - An event stored more than 2 s after its stamp would still be lost [assumed]. The debug build re-reads each
-    fold's window at the next fold and logs `late event` if it holds more than the fold saw; gate row 18 checks the
-    log stays clean.
+  - An event stored more than 2 s after its stamp would still be lost [assumed]. **Seen** (gate row 18 on 14: up to
+    17 s at a pause start); revision 6 (§18) reads a 30 s overlap behind `from` and skips the applied events by key.
+    The debug build re-reads each fold's window at the next fold and logs `late event` if it holds more than the fold
+    saw (since revision 6: only the part that has left the overlap); gate row 18 checks the log stays clean.
   - The cost: the ledger runs 2 s behind the clock, and the cut comes up to `SETTLE_MS` + 1 s after the limit (the
     timer, below).
 - **The pair window at a read's end** (QA L6). A STOPPED of an on package at `t` whose pair window (to `t +
-  KILL_PAIR_MS`, inclusive) isn't wholly before `to` stays **pending** in `carry`, still counted as on.
+  KILL_PAIR_MS`, inclusive; since revision 6 the fallback's `t + KILL_FALLBACK_MS`, 2 s) isn't wholly before `to`
+  stays **pending** in `carry`, still counted as on.
   - Each fold first settles the pending STOPPEDs whose window now lies before its `to`: off at the STOPPED if a
     partner came, dated at the STOPPED (the few ms already applied aren't taken back), dropped if none came.
   - Folds closer together than the window (our pause and resume back to back, under 50 ms apart) leave it pending
@@ -331,7 +336,8 @@ get a one-line call into GPL code, as `PlatformRefusals.plannedOff` does today.
     with no event in those 3 h starts off and counts from its next event, at the latest the next unlock. Accepted: it
     happens once, when a phone's first group arrives.
   - During design 114's setup hold the fold keeps running **for state only** (D10): it moves `from` and `carry` and
-    adds nothing, so the hold's end needs no lookback.
+    adds nothing, so the hold's end needs no lookback. Revision 6 (§18): the first fold after it counts from the
+    hold's end, not from its last state-only point.
 - **The clocks** (QA M5):
   - The query is in **wall time** (the read window above).
   - The fold's spans are mapped to **elapsed realtime** through the wall/elapsed pair measured at the fold (`to`'s
@@ -976,3 +982,17 @@ tests in §7 and gate rows 13-18 in §8. §12 is unchanged.
 | L5 | §4.1: the fold keeps `queryEvents`' order (ties in report order); no re-sort, a merge only stable. Test with a relaunch's PAUSED and RESUMED in the same ms. |
 | L6 | §4.1 "The pair window at a read's end": a pending STOPPED stays pending across folds closer than the window and is settled by the first fold whose `to` passes it. Test with folds 30 ms apart. |
 | Other | §10 records the QA's AOSP 14 reading (storage, the injected shutdown, DEVICE_STARTUP's stamp, the query's order and bounds) and the two new APIs. §9 step 2 names revision 5's parts. The ledger keeps the point and `carry` across midnight, and an unreadable ledger makes the next fold a first fold. §12's "never stored" line is left as decided: since revision 4 `carry`, on the phone only, keeps the one or two packages on screen at the last folded point (D11). |
+
+## 18. Revision 6 (the emulator gates' findings, 2026-11-27)
+
+Gate A ran §8's rows on 14 (`docs/testing/emulator.md` §6cd), gate B on 16 (§6ce). Three findings, all in §4.1's fold
+and its glue; branch `app-groups-gatefix`. Rows 13, 18 and 6 (the hold) run again on 14 and 16 (the owed rows).
+
+| Finding | What changed |
+|---|---|
+| Row 13 (§6cd 1, §6ce F1; Medium) | **The kill rule's fallback is built** (QA L2). A partner that must cold-start came 299-815 ms after the dead app's STOPPED on 14 and 309-352 ms on 16 (8 of 8 over 50 ms), so the dead app counted until its next event or the screen off. Now a STOPPED of an on package also ends it at **the first RESUMED of a package that was off at the STOPPED, with no event of X between, within `KILL_FALLBACK_MS` = 2 s** (the measured worst, 815 ms, with room). The 50 ms pair stays as it was, for any other package: it alone covers the same ms with the partner reported first (the partner is on at the STOPPED by then). Two guards keep split screen whole: an on package's RESUMED (the other half re-reported or moving inside itself) never pairs by the fallback, and once an on package's PAUSED comes between (the other half replaced by a new app), only the 50 ms pair can. A same-class relaunch is untouched: the RESUMED before its late STOPPED is X's own, and any app coming over X pauses X first, which ends the search. A pending STOPPED now waits 2 s in `carry`, across as many folds as it takes; settled by a partner, it is dated at the STOPPED, and what earlier folds counted of it stays (at most 2 s, against the kid, once per kill). |
+| Row 18 (§6cd 2; Medium) | **The read overlaps.** On 14 Android stored events up to 17 s after their stamps at a "Pause all restrictions" start (2 of 5 starts) and across a reboot; the furthest behind a read's end was 15.1 s (stamped 14:14:20.2, the window ended 14:14:35.3). Each fold now reads `[from - LATE_OVERLAP_MS, to)`, `LATE_OVERLAP_MS` = 30 s - twice that, half the 60 s checkpoint; the extra read is a few dozen events. An event applied before is skipped by its key: the keys of the last 30 s ride in `carry` (`applied`, at most 500), saved with the point, so a process restart applies nothing twice (the in-memory 10 min keys stay for a backward clock step, which now reads from `from - Δ - 30 s`). An event not applied and stamped before `from` came late: it moves the state **at `from`**, where the count starts, so nothing is counted twice and the state is the one a fold over all the events gives. The time between its stamp and `from` stays as it was counted (a late RESUMED undercounts, a late PAUSED or STOPPED overcounts, each by its delay, no longer for the session). A late event that an applied event of its package follows in the read is dropped: that event already set the package's state (Android stores events in order, so this is a guard, not a case seen). After a reboot there is no overlap: the reset at `from` (QA L3) must not see the old boot's events again. The debug re-read now reads only the part of the last window that has left the overlap and logs `late event` for an event lost for good. |
+| Row 6, the hold (§6ce F2; Low) | **The setup hold counts nothing after its end either.** The fold decided "count" once for its window, so the first fold after the hold counted the hold's last stretch from its last state-only point (17.2 s seen, at most the 60 s checkpoint + `SETTLE_MS`). `RestrictionsPause` writes the hold's end time (`holdEndedWallMs`, in memory) before its flag clears, at the relock, the expiry or a PIN pause over it, and the first counting fold after it starts its spans there (`countFromHoldEnd`); the events before it move the state. A process restart between the end and the next fold loses the time (rare: the relock doesn't restart the process), and that fold counts as before. |
+| Row 15 | Moot: Vibb sets Android's maximum time to lock to the screen timeout (`lock/KeyguardCover.kt:39`), so the keyguard shows at every timeout and the QA M2 sequence can't occur on a Vibb phone. The fold's rule stays, unit-tested. |
+
+Android 14-17: no new API; the change is in the pure fold and its glue.

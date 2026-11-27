@@ -32,7 +32,7 @@ class TrustedClockScanTest {
         // Design 139 §4.1: Android's usage events are stamped by the wall clock, so the fold's read window is too (the
         // clock is locked to automatic time while the phone has a group; the fold caps each span by elapsed realtime)
         "timerules/AppGroupUsage.kt" to listOf(
-            "val plan = planRead(ledger.foldPoint, System.currentTimeMillis(), SystemClock.elapsedRealtime(), BootClock.bootCount(), checked)",
+            "val planned = planRead(ledger.foldPoint, System.currentTimeMillis(), SystemClock.elapsedRealtime(), BootClock.bootCount(), checked)",
         ),
         // Android's call log stamps (an emergency call) and the route's own stamps
         "assistant/AirplaneRoute.kt" to listOf(

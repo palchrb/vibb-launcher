@@ -2094,6 +2094,13 @@ Rows:
 - §6bw o, p and the device row (the redacted BSSID's background read) - Jelly Star.
 - §6bw - Android 17.
 - §6bx: the relearning on the phone - Jelly Star (§6by).
+- §6cd/§6ce 13 on 14 and 16: the kill rule's 2 s fallback (design 139 revision 6, branch `app-groups-gatefix`) - re-run
+  owed (Z's process gone first, `kill -9` and `am crash`).
+- §6cd/§6ce 18 on 14 and 16: the 30 s overlap (revision 6) - re-run owed; pause starts and a reboot, the debug
+  `late event` line now means an event older than the overlap.
+- §6cd/§6ce 6 on 14 and 16: the setup hold's last stretch (revision 6, counted from the hold's end) - re-run owed.
+- §6cd/§6ce 15: moot, not owed - it can't occur on a Vibb phone: the maximum time to lock is the screen timeout
+  (`lock/KeyguardCover.kt:39`), so the keyguard shows at every timeout; the fold's rule stays unit-tested.
 
 ## 6s. The plain series cover, skip 15/15, the one "Favoritter" tile (design r12)
 
