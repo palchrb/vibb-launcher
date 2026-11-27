@@ -876,7 +876,8 @@ class ZonePlanTest {
         assertTrue(Regex("""override fun onDestroy\(\) \{[\s\S]*MotionGate\.anchorStopped\(applicationContext\)[\s\S]*super\.onDestroy\(\)""").containsMatchIn(source("server/CommandListenerService.kt")))
         assertTrue(Regex("""fun clearCachedFix\(context: Context\) \{\s+com\.kidslauncher\.mdm\.zones\.MotionGate\.markMoved\(\)""").containsMatchIn(source("server/LocateCommands.kt")))
         // A refused registration marks moved: nothing watches, nothing may vouch.
-        assertTrue(Regex("""if \(armed\) \{[\s\S]{0,200}\} else \{[\s\S]{0,80}flags = flags\.moved\(SystemClock\.elapsedRealtime\(\)\)\s+Log\.w\(LOG_TAG, "Motion trigger refused"\)""").containsMatchIn(sensorsSource))
+        // Since when it is still: the arm and the refusal move the origin too.
+        assertTrue(Regex("""if \(armed\) \{[\s\S]{0,300}\} else \{[\s\S]{0,80}flags = flags\.moved\(SystemClock\.elapsedRealtime\(\)\)\s+moveOrigin\(context\.applicationContext\) \{ it\.unwatched\(\) \}\s+Log\.w\(LOG_TAG, "Motion trigger refused"\)""").containsMatchIn(sensorsSource))
         // D9: balanced first only with the network provider on (and fused there), GPS when it isn't good enough.
         val balancedFirst = Regex("""private suspend fun balancedFirst\([\s\S]*?\n    }""").find(source("server/LocateCommands.kt"))!!.value
         assertTrue(balancedFirst.contains("val balanced = if (balancedOn) requestBalancedFix(context, lm)?.takeIf { ZoneWatch.accept(context, it) } else null"))
