@@ -65,7 +65,9 @@ with the `aapt2FromMavenOverride`: an AGP bump needs its entry by hand (resolve 
   `contracts/music/min_server.json`). A tag build's "Which server this build needs" step runs
   `scripts/min-server.sh launcher|music` and passes `-PminServer`: `server/Cargo.toml`'s version `V`, or `V` with one
   more patch when the server's code the app talks to (the script's `counted_paths`) changed since `server-vV`; a
-  shallow clone or no `server-v*` tag fails. The case goes to a `::notice::` and the job summary, the value into the
+  shallow clone or no `server-v*` tag fails. Not counted, on purpose: the server's tests and test data - `server/testdata/mmsc_hosts.txt`
+  too, although it is compiled in (design 83's MMS hosts: data the policy carries, not a route or a shape an app
+  needs; code QA L7), the PWA's templates and static files, `server/deploy`, every `*.md`, and the other app's contracts. The case goes to a `::notice::` and the job summary, the value into the
   release body ("Needs Vibb server X.Y.Z or newer.", "(not yet tagged)" when `server-vV` doesn't exist yet). A
   server older than the value holds the release (`docs/notes/server/play-and-updates.md`, "A release that needs a
   newer server"). A local build without `-PminServer` takes Cargo's version as it is.
@@ -79,7 +81,11 @@ carries its server code. `server-release.yml`'s first step (`scripts/min-server.
 too) refuses the tag otherwise: tag the server on that app tag's commit or later, or bump to the next version. It
 reads every app tag whose commit says `V`, so a rerun of a server release after an app tag on a later commit with a
 counted change is refused too (that app tag named `V`+1 and needs nothing, but git can't tell the two apart): bump
-the server instead. The older tags from before the rule (`launcher-v0.43.0-rc.3`/`rc.4` for `server-v0.93.0`) fail
+the server instead. A `workflow_dispatch` dry run checks Cargo's version against the commit it runs on, so a dry run on a
+branch older than the newest app tag built for the same version is refused at that first step (merge `main` first,
+or bump). The guard asks ancestry, not the order along `main`: a server tag on a commit of a merged branch that forked
+before an app tag lacks that tag (it isn't in its history), and is refused like a later one even when the merge came
+after. The older tags from before the rule (`launcher-v0.43.0-rc.3`/`rc.4` for `server-v0.93.0`) fail
 it; only a new tag runs it.
 
 `server-vX.Y.Z` (must equal `server/Cargo.toml`'s version) on a `main` commit -> fmt + tests, then the aarch64 and

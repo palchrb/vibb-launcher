@@ -213,6 +213,29 @@ async fn an_upload_that_needs_a_newer_server_is_refused() {
     );
     assert_eq!(stored().await, None);
 
+    // Code QA L4: a release held for the server that the stored upload overtakes goes; one still ahead stays.
+    let held = |tag: &'static str| {
+        let db = app.db.clone();
+        async move {
+            sqlx::query(
+                "INSERT INTO tracked_app_held_releases (tracked_app_id, release_tag, asset_id, file_path, sha256, \
+                 reason, held_at, min_server) VALUES (?, ?, 2, '/nowhere/l.apk', 'cc', 'server', \
+                 '2026-11-27 10:00:00', '99.0.0')",
+            )
+            .bind(id)
+            .bind(tag)
+            .execute(&db)
+            .await
+            .unwrap();
+        }
+    };
+    let held_count = || async {
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM tracked_app_held_releases")
+            .fetch_one(&app.db)
+            .await
+            .unwrap()
+    };
+    held("launcher-v1.0.2").await;
     let own = format!("{x}.{y}.{z}");
     let res = crate::tests::catalog_pins::upload(&app, &cookie, id, "1.0.3", &with(&own)).await;
     assert_eq!(
@@ -220,6 +243,11 @@ async fn an_upload_that_needs_a_newer_server_is_refused() {
         Some(format!("/apps/tracked/{id}?notice=uploaded#upload").as_str())
     );
     assert_eq!(stored().await.as_deref(), Some("1.0.3"));
+    assert_eq!(held_count().await, 0, "overtaken by the upload");
+    held("launcher-v2.0.0").await;
+    crate::tests::catalog_pins::upload(&app, &cookie, id, "1.0.4", &with(&own)).await;
+    assert_eq!(stored().await.as_deref(), Some("1.0.4"));
+    assert_eq!(held_count().await, 1, "still ahead");
 }
 
 /// 0187: the held table keeps its cascade, takes `server` only with `min_server`, and the 0141 reasons as before.
@@ -260,4 +288,86 @@ async fn migration_0187_keeps_the_cascade_and_checks_the_reason() {
         .await
         .unwrap();
     assert_eq!(left, 0, "the cascade kept");
+}
+
+/// 0187 on a database with 0141's rows (code QA L7): every row copied as it was (`min_server` NULL), the cascade kept.
+#[tokio::test]
+async fn migration_0187_copies_the_held_releases() {
+    let dir = tempfile::tempdir().unwrap();
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(dir.path().join("m.db"))
+        .create_if_missing(true)
+        .foreign_keys(true);
+    let db = sqlx::SqlitePool::connect_with(options).await.unwrap();
+    for migration in crate::MIGRATOR.iter().filter(|m| m.version < 187) {
+        sqlx::raw_sql(&migration.sql).execute(&db).await.unwrap();
+    }
+    sqlx::raw_sql(
+        "INSERT INTO tracked_apps (id, name, package_name, github_repo) VALUES (104, 'Signal', 'org.signal', 'o/r'); \
+         INSERT INTO tracked_apps (id, name, package_name, github_repo) VALUES (105, 'Etar', 'ws.xsoh.etar', 'o/e'); \
+         INSERT INTO tracked_app_held_releases (tracked_app_id, release_tag, asset_id, file_path, asset_name, \
+         asset_size, sha256, version_code, permissions, reason, new_permissions, held_at) VALUES \
+         (104, 'v7.3.0', 9, '/d/104/v7.3.0-9.apk', 's.apk', 10, 'aa', 7, '[\"x\"]', 'permissions', '[\"y\"]', \
+         '2026-11-12 10:00:00'), \
+         (105, 'v2.0', 3, '/d/105/v2.0-3.apk', NULL, NULL, 'bb', NULL, NULL, 'always_ask', '[]', '2026-11-13 10:00:00');",
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+    let migration = crate::MIGRATOR.iter().find(|m| m.version == 187).unwrap();
+    sqlx::raw_sql(&migration.sql).execute(&db).await.unwrap();
+    type Row = (
+        i64,
+        String,
+        i64,
+        Option<String>,
+        Option<i64>,
+        Option<String>,
+        String,
+        String,
+        Option<String>,
+    );
+    let rows: Vec<Row> = sqlx::query_as(
+        "SELECT tracked_app_id, release_tag, asset_id, asset_name, version_code, permissions, reason, \
+         new_permissions, min_server FROM tracked_app_held_releases ORDER BY tracked_app_id",
+    )
+    .fetch_all(&db)
+    .await
+    .unwrap();
+    assert_eq!(
+        rows,
+        [
+            (
+                104,
+                "v7.3.0".to_string(),
+                9,
+                Some("s.apk".to_string()),
+                Some(7),
+                Some("[\"x\"]".to_string()),
+                "permissions".to_string(),
+                "[\"y\"]".to_string(),
+                None
+            ),
+            (
+                105,
+                "v2.0".to_string(),
+                3,
+                None,
+                None,
+                None,
+                "always_ask".to_string(),
+                "[]".to_string(),
+                None
+            ),
+        ]
+    );
+    sqlx::query("DELETE FROM tracked_apps WHERE id = 104")
+        .execute(&db)
+        .await
+        .unwrap();
+    let left: Vec<i64> = sqlx::query_scalar("SELECT tracked_app_id FROM tracked_app_held_releases")
+        .fetch_all(&db)
+        .await
+        .unwrap();
+    assert_eq!(left, [105], "the cascade kept");
 }

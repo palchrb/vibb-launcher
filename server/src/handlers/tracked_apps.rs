@@ -1474,6 +1474,25 @@ pub async fn remove_orphan_files(state: &AppState) {
     }
 }
 
+/// The app's release held for the server, when it is no longer ahead of the served release
+/// (row and file go; design 140, code QA L4).
+async fn drop_overtaken_server_hold(state: &AppState, id: i64) {
+    let app: Option<TrackedApp> = sqlx::query_as("SELECT * FROM tracked_apps WHERE id = ?")
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten();
+    let held = held_release(state, id).await.ok().flatten();
+    if let (Some(app), Some(held)) = (app, held)
+        && held_for_server(&held).is_some()
+        && app.latest_release_tag.is_some()
+        && !release_ahead(&app, &held.release_tag, held.asset_id)
+    {
+        drop_held(state, id, &held).await;
+    }
+}
+
 /// Design 140 §4.2: at start (after the backfills, before the hourly sync's first pass), every
 /// release of ours held for the server. One no longer ahead of the served release (an upload or a
 /// newer release overtook it) goes, row and file. One whose stored `min_server` and whose file's
@@ -1528,12 +1547,22 @@ pub async fn release_server_holds(state: &AppState) {
         if !ready {
             continue;
         }
-        // The file's own value too: a row and a file that disagree stay held (fail closed).
+        // The file's own value too: a row and a file that disagree stay held (fail closed). A file
+        // that can't be read any more goes, so the next sync downloads and judges the release again
+        // (code QA L3).
         let file_ready = match apk_identity(&held.file_path).await {
             Ok(identity) => {
                 server_need(state, &app, &identity) == crate::catalog_holds::ServerNeed::Serve
             }
-            Err(_) => false,
+            Err(err) => {
+                tracing::warn!(
+                    app_id = id,
+                    release = %held.release_tag,
+                    "the release held for the server can't be read ({err}) - dropped"
+                );
+                drop_held(state, id, &held).await;
+                continue;
+            }
         };
         if !file_ready {
             tracing::warn!(
@@ -5293,6 +5322,9 @@ pub async fn upload_tracked_app_release(
     }
     store_pins(&state, &app, &identity).await;
     crate::handlers::device_api::nudge_phones_with_app(&state, id).await;
+    // Design 140 (code QA L4): a release held for the server that the upload overtook goes now -
+    // never served after it, as the start would drop it.
+    drop_overtaken_server_hold(&state, id).await;
 
     // Back to the app's page at the Upload group, with the result there (a reload doesn't post
     // the file again; [Note]).
@@ -10072,6 +10104,17 @@ mod tests {
         release_server_holds(&newer).await;
         assert!(held_release(&app.state, launcher).await.unwrap().is_none());
         assert!(!std::path::Path::new(&behind.file_path).exists());
+        assert_eq!(
+            row_of(&app, launcher).await.latest_release_tag.as_deref(),
+            Some("launcher-v1.0.3")
+        );
+
+        // Code QA L3: a held file that can't be read any more goes, so the next sync judges the release again.
+        sync("launcher-v1.0.4", "l-next").await;
+        let unreadable = held_release(&app.state, launcher).await.unwrap().unwrap();
+        std::fs::write(&unreadable.file_path, b"not a zip").unwrap();
+        release_server_holds(&newer).await;
+        assert!(held_release(&app.state, launcher).await.unwrap().is_none());
         assert_eq!(
             row_of(&app, launcher).await.latest_release_tag.as_deref(),
             Some("launcher-v1.0.3")

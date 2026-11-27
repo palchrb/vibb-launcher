@@ -222,9 +222,11 @@ jobs:
       # a server older than it holds this release back; the release body names it.
       run: |
         set -euo pipefail
-        ../scripts/min-server.sh --selftest >/dev/null
-        min=$(../scripts/min-server.sh music 2>"$RUNNER_TEMP/min-server-case.txt")
-        why=$(cat "$RUNNER_TEMP/min-server-case.txt")
+        ../scripts/min-server.sh --selftest
+        min=$(../scripts/min-server.sh music 2>"$RUNNER_TEMP/min-server-case.txt") \
+          || { cat "$RUNNER_TEMP/min-server-case.txt" >&2; exit 1; }
+        # Only the script's own "case N: why" line (a git warning on stderr stays out of the notice).
+        why=$(grep -E '^case [0-9]+: ' "$RUNNER_TEMP/min-server-case.txt" | tail -n 1)
         echo "min-server=$min" >> "$GITHUB_OUTPUT"
         echo "min-server-case=${why%%:*}" >> "$GITHUB_OUTPUT"
         echo "::notice::min server $min: ${why#*: }"

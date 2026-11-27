@@ -69,7 +69,7 @@ contract gets a README row (the server's test checks). The policy JSON shape sta
 ## CI and releases
 
 - `launcher.yml`, `server-ci.yml` and `music.yml` run on every push/PR; each build job runs only when its own files
-  changed (its directory, workflow, `contracts/` files, and the files listed in `docs/notes/ci.md` - with the image
+  changed (its directory, workflow, `contracts/` files, `scripts/min-server.sh` for all three, and the files listed in `docs/notes/ci.md` - with the image
   pipeline's detail; a new script a workflow runs, or a file another part's test reads, goes into that filter). Branch protection
   requires the always-running gate jobs `launcher-ci`, `server-ci`, `music-ci`, not the build jobs. The server's Rust
   toolchain is pinned in `server-ci.yml` and `server-release.yml` - move both at once. No QEMU: each architecture

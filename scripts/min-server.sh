@@ -92,7 +92,7 @@ min_server() {
         return 0
     fi
     mapfile -t paths < <(counted_paths "$app")
-    changed=$(git -C "$top" diff --name-only "$tag" HEAD -- "${paths[@]}")
+    changed=$(git -C "$top" diff --no-renames --name-only "$tag" HEAD -- "${paths[@]}")
     if [ -z "$changed" ]; then
         echo "case 4: nothing the $( [ "$app" = music ] && echo "music app" || echo launcher ) talks to changed since $tag" >&2
         echo "$version"
@@ -121,7 +121,7 @@ check_server_tag() {
         fi
         app=${app_tag%%-v*}
         mapfile -t paths < <(counted_paths "$app")
-        if git -C "$top" diff --quiet "$app_tag" "$commit" -- "${paths[@]}"; then
+        if git -C "$top" diff --no-renames --quiet "$app_tag" "$commit" -- "${paths[@]}"; then
             continue
         fi
         echo "$app_tag was built for server $version on a commit this tag lacks: tag the server on it or later, or bump to the next version" >&2
@@ -204,6 +204,12 @@ selftest() {
     both "server/src changed (case 5 for both)" 0.11.1 0.11.1
     put server/migrations/0001.sql "x"
     both "server/migrations changed (case 5)" 0.11.1 0.11.1
+    put server/Cargo.toml "$(cargo 0.11.1)"
+    g tag server-v0.11.1
+    mkdir -p "$repo/server/testdata"
+    g mv server/src/main.rs server/testdata/main.rs
+    g commit -q -m "a move out of server/src"
+    both "a file moved out of server/src (case 5, no rename pairing)" 0.11.2 0.11.2
     put server/Cargo.toml "$(cargo 0.11)"
     both "Cargo's version not X.Y.Z" - -
     put server/Cargo.toml "$(cargo 0.012.0)"

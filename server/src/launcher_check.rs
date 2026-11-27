@@ -25,9 +25,9 @@ use crate::i18n::{Lang, t, t_params};
 /// failed.
 const RESULT_MAX_AGE: Duration = Duration::from_secs(60 * 60);
 const RETRY_AFTER: Duration = Duration::from_secs(5 * 60);
-/// Design 140 §6 (QA M4): a result older than this is compared with the newest stable launcher
-/// release before a page shows it, the release list read at most this often - `releases/latest`
-/// may serve another APK the moment a stable release is published.
+/// Design 140 §6 (QA M4): a result older than this is compared with the release GitHub serves as
+/// `releases/latest` before a page shows it, GitHub asked at most this often - the address may serve
+/// another APK the moment a stable release is published.
 const FRESH_FOR: Duration = Duration::from_secs(5 * 60);
 /// The freshness compare's list read at most (a page waits for it).
 const FRESHNESS_TIMEOUT: Duration = Duration::from_secs(5);
@@ -210,8 +210,8 @@ impl LauncherCheck {
 }
 
 /// Design 140 §6 (QA M4): before a page shows the QR, a result older than [FRESH_FOR] is compared
-/// with the newest stable `launcher-v*` release (read at most once per [FRESH_FOR]); when that
-/// isn't the checked APK's version, `releases/latest` serves another APK now, so the result goes
+/// with the release GitHub serves as `releases/latest` (read at most once per [FRESH_FOR]); when
+/// that isn't the checked APK's version, `releases/latest` serves another APK now, so the result goes
 /// and the page reads "Checking" (no QR) until the new one is checked. Only for a
 /// `github.com/<owner>/<repo>/releases/latest/...` address (a release's own address never moves);
 /// a failed read keeps the result - the APK check is the gate, the list only says it moved.
@@ -229,30 +229,27 @@ pub async fn refresh_if_moved(state: &AppState) {
     let Some(checked_version) = state.launcher_check.due_for_freshness(&key) else {
         return;
     };
-    let releases = match tokio::time::timeout(FRESHNESS_TIMEOUT, release_list(&state.config, &repo))
-        .await
-    {
-        Ok(Ok(releases)) => releases,
-        Ok(Err(err)) => {
-            tracing::warn!("the setup QR's freshness check couldn't list {repo}'s releases: {err}");
-            return;
-        }
-        Err(_) => {
-            tracing::warn!(
-                "the setup QR's freshness check couldn't list {repo}'s releases in time"
-            );
-            return;
-        }
-    };
-    let prefix = crate::handlers::tracked_apps::LAUNCHER_ROW_TAG_PREFIX;
-    let newest = releases
-        .iter()
-        .filter(|r| !r.draft && !r.prerelease && r.tag_name.starts_with(prefix))
-        .filter_map(|r| {
-            crate::install_now::launcher_tag_version_code(&r.tag_name).map(|code| (code, r))
-        })
-        .max_by_key(|(code, _)| *code)
-        .map(|(_, r)| shown_tag(&r.tag_name, prefix));
+    let latest =
+        match tokio::time::timeout(FRESHNESS_TIMEOUT, latest_tag(&state.config, &repo)).await {
+            Ok(Ok(tag)) => tag,
+            Ok(Err(err)) => {
+                tracing::warn!(
+                    "the setup QR's freshness check couldn't read {repo}'s latest release: {err}"
+                );
+                return;
+            }
+            Err(_) => {
+                tracing::warn!(
+                    "the setup QR's freshness check couldn't read {repo}'s latest release in time"
+                );
+                return;
+            }
+        };
+    // The release `releases/latest` serves - GitHub's own pick (code QA L2) -, as the APK's version reads.
+    let newest = Some(shown_tag(
+        &latest,
+        crate::handlers::tracked_apps::LAUNCHER_ROW_TAG_PREFIX,
+    ));
     if let Some(newest) = newest
         && checked_version.as_deref() != Some(newest.as_str())
     {
@@ -439,8 +436,6 @@ struct Release {
     tag_name: String,
     #[serde(default)]
     draft: bool,
-    #[serde(default)]
-    prerelease: bool,
     published_at: Option<DateTime<Utc>>,
 }
 
@@ -523,6 +518,32 @@ async fn known_releases(state: &AppState) -> Known {
 /// "launcher-v0.39.0-rc.6" as "0.39.0-rc.6".
 fn shown_tag(tag: &str, prefix: &str) -> String {
     tag.strip_prefix(prefix).unwrap_or(tag).to_string()
+}
+
+/// The tag of `repo`'s release GitHub serves as `releases/latest` (design 140 §6, code QA L2).
+async fn latest_tag(config: &ForkConfig, repo: &str) -> Result<String, String> {
+    #[derive(Deserialize)]
+    struct Latest {
+        tag_name: String,
+    }
+    let client = reqwest::Client::builder()
+        .user_agent(crate::net::USER_AGENT)
+        .timeout(FRESHNESS_TIMEOUT)
+        .build()
+        .map_err(|err| err.to_string())?;
+    client
+        .get(format!(
+            "{}/repos/{repo}/releases/latest",
+            config.github_api
+        ))
+        .send()
+        .await
+        .and_then(reqwest::Response::error_for_status)
+        .map_err(|err| err.to_string())?
+        .json::<Latest>()
+        .await
+        .map(|latest| latest.tag_name)
+        .map_err(|err| err.to_string())
 }
 
 async fn release_list(config: &ForkConfig, repo: &str) -> Result<Vec<Release>, String> {
@@ -1238,8 +1259,8 @@ mod tests {
         );
     }
 
-    /// Design 140 §6 (QA M4): a result older than [FRESH_FOR] is compared with the newest stable launcher release -
-    /// another one forgets it (the page reads "Checking", no QR); the same one, a failed list read, a result younger
+    /// Design 140 §6 (QA M4, code QA L2): a result older than [FRESH_FOR] is compared with GitHub's
+    /// `releases/latest` - another one forgets it (the page reads "Checking", no QR); the same one, a failed list read, a result younger
     /// than [FRESH_FOR] or an address that isn't `releases/latest` keep it. The list is read at most once per
     /// [FRESH_FOR].
     #[tokio::test]
@@ -1250,18 +1271,11 @@ mod tests {
         let router = {
             let (reads, stable) = (reads.clone(), stable.clone());
             axum::Router::new().route(
-                "/repos/palchrb/vibb-launcher/releases",
+                "/repos/palchrb/vibb-launcher/releases/latest",
                 axum::routing::get(move || {
                     reads.fetch_add(1, Ordering::SeqCst);
                     let stable = stable.lock().unwrap().clone();
-                    async move {
-                        axum::Json(serde_json::json!([
-                            {"tag_name": "launcher-v0.44.0-rc.1", "prerelease": true},
-                            {"tag_name": "launcher-v0.45.0", "draft": true},
-                            {"tag_name": stable, "prerelease": false},
-                            {"tag_name": "launcher-v0.42.0", "prerelease": false},
-                        ]))
-                    }
+                    async move { axum::Json(serde_json::json!({"tag_name": stable})) }
                 }),
             )
         };
