@@ -77,20 +77,22 @@ class ZonePlanTest {
         assertEquals(2 * minute, CONFIRM_DELAY_MS)
     }
 
+    private val late = 4 * 60 * minute + 19 * minute
+    private val inside = QueuedFix(59.9139, 10.7522, 20f, 0)
+    private val outside = QueuedFix(59.9229, 10.7522, 20f, 0) // 1 km north
+    private val edge = QueuedFix(59.91525, 10.7522, 20f, 0) // on the 150 m edge: unsure
+
     @Test
     fun `a late echo to the side the phone already knows is no crossing`() {
         val zones = listOf(home)
-        val late = 4 * 60 * minute + 19 * minute
-        val inside = QueuedFix(59.9139, 10.7522, 20f, 0)
-        val outside = QueuedFix(59.9229, 10.7522, 20f, 0) // 1 km north
-        val edge = QueuedFix(59.91525, 10.7522, 20f, 0) // on the 150 m edge: unsure
         // The owner's Jelly (2026-11-27): lying still at home, the registration's "entering" 4 h 19 min late.
         assertEquals(FenceVerdict.ECHO, fenceVerdict(7, zones, entering = true, sinceRegisteredMs = late, reported = inside))
         // A real enter from outside, and leaving while inside, are crossings.
         assertEquals(FenceVerdict.CROSSING, fenceVerdict(7, zones, entering = true, sinceRegisteredMs = late, reported = outside))
         assertEquals(FenceVerdict.CROSSING, fenceVerdict(7, zones, entering = false, sinceRegisteredMs = late, reported = inside))
-        // An "exiting" while the phone already reads outside changes nothing either.
+        // An "exiting" while the phone already reads outside changes nothing either - unless a newer kept fix is inside.
         assertEquals(FenceVerdict.ECHO, fenceVerdict(7, zones, entering = false, sinceRegisteredMs = late, reported = outside))
+        assertEquals(FenceVerdict.CROSSING, fenceVerdict(7, zones, entering = false, sinceRegisteredMs = late, reported = outside, kept = inside))
         // No known side - no fix, an unsure one, none with accuracy - keeps the crossing.
         assertEquals(FenceVerdict.CROSSING, fenceVerdict(7, zones, entering = true, sinceRegisteredMs = late))
         assertEquals(FenceVerdict.CROSSING, fenceVerdict(7, zones, entering = true, sinceRegisteredMs = late, reported = edge))
@@ -103,6 +105,62 @@ class ZonePlanTest {
         assertEquals(FenceVerdict.CROSSING, fenceVerdict(7, zones, entering = true, sinceRegisteredMs = late, kept = inside))
         // Another zone's fence is still not ours, whatever the fix.
         assertEquals(FenceVerdict.NOT_OURS, fenceVerdict(9, zones, entering = true, sinceRegisteredMs = late, reported = inside))
+    }
+
+    @Test
+    fun `a Wi-Fi fix alone is no known inside, a coarse fix never one, and a sure outside beats the window`() {
+        val zones = listOf(home)
+        // Code QA M1: a print/Wi-Fi fix nothing confirmed never says inside (the server's WifiAlone); confirmed it does.
+        val wifiInside = inside.copy(provider = "vibb_wifi")
+        assertEquals(FenceVerdict.CROSSING, fenceVerdict(7, zones, entering = true, sinceRegisteredMs = late, reported = wifiInside))
+        assertEquals(FenceVerdict.CROSSING, fenceVerdict(7, zones, entering = true, sinceRegisteredMs = late, reported = inside.copy(provider = "vibb_apple")))
+        assertEquals(FenceVerdict.ECHO, fenceVerdict(7, zones, entering = true, sinceRegisteredMs = late, reported = wifiInside.copy(check = "gnss")))
+        // Outside it counts: an "exiting" against a Wi-Fi fix alone outside is the echo.
+        assertEquals(FenceVerdict.ECHO, fenceVerdict(7, zones, entering = false, sinceRegisteredMs = late, reported = outside.copy(provider = "vibb_wifi")))
+        // A coarse fix is never inside; far outside it is sure (20 km), near it is unsure.
+        assertEquals(FenceVerdict.CROSSING, fenceVerdict(7, zones, entering = true, sinceRegisteredMs = late, reported = inside.copy(provider = "vibb_cell", accuracy = 1000f)))
+        val farCell = QueuedFix(home.latitude + 0.3, home.longitude, 1000f, 0, "vibb_apple_cell") // ~33 km north
+        assertEquals(FenceVerdict.ECHO, fenceVerdict(7, zones, entering = false, sinceRegisteredMs = late, reported = farCell))
+        assertEquals(FenceVerdict.CROSSING, fenceVerdict(7, zones, entering = true, sinceRegisteredMs = late, reported = farCell))
+        // Code QA L2: the 60 s window holds only while the phone's sure side isn't outside.
+        assertEquals(FenceVerdict.CROSSING, fenceVerdict(7, zones, entering = true, sinceRegisteredMs = 5, reported = outside))
+        assertEquals(FenceVerdict.CROSSING, fenceVerdict(7, zones, entering = true, sinceRegisteredMs = null, reported = farCell))
+        assertEquals(FenceVerdict.CROSSING, fenceVerdict(7, zones, entering = true, sinceRegisteredMs = 5, reported = inside, kept = outside))
+        assertEquals(FenceVerdict.ECHO, fenceVerdict(7, zones, entering = true, sinceRegisteredMs = 5, reported = edge))
+        assertEquals(FenceVerdict.ECHO, fenceVerdict(7, zones, entering = true, sinceRegisteredMs = 5, reported = inside))
+    }
+
+    @Test
+    fun `a first enter since the registration on a phone still since it is the echo, whatever the fix's accuracy`() {
+        val zones = listOf(home)
+        // Code QA M2, the owner's case: 50 m from the centre, +-120 m - unsure in the 150 m zone.
+        val unsure = QueuedFix(home.latitude + 0.00045, home.longitude, 120f, 0)
+        assertNull(sureSide(unsure, home))
+        assertEquals(FenceVerdict.ECHO, fenceVerdict(7, zones, true, late, reported = unsure, firstSinceRegistration = true, stillSinceRegistration = true))
+        // Not still since, or a second broadcast: the other rules.
+        assertEquals(FenceVerdict.CROSSING, fenceVerdict(7, zones, true, late, reported = unsure, firstSinceRegistration = true, stillSinceRegistration = false))
+        assertEquals(FenceVerdict.CROSSING, fenceVerdict(7, zones, true, late, reported = unsure, firstSinceRegistration = false, stillSinceRegistration = true))
+        assertEquals(FenceVerdict.ECHO, fenceVerdict(7, zones, true, late, reported = inside, firstSinceRegistration = false, stillSinceRegistration = false))
+        // Never against a sure outside, never for an "exiting".
+        assertEquals(FenceVerdict.CROSSING, fenceVerdict(7, zones, true, late, reported = outside, firstSinceRegistration = true, stillSinceRegistration = true))
+        assertEquals(FenceVerdict.CROSSING, fenceVerdict(7, zones, false, late, reported = unsure, firstSinceRegistration = true, stillSinceRegistration = true))
+
+        // Still since the registration: registered at 1 000 s in a process started at 990 s, now 16 000 s.
+        val reg = 1_000_000L
+        val start = 990_000L
+        val now = 16_000_000L
+        // Nothing fired in this process (the gate's own start stamp is no move), or the last move came before it.
+        assertTrue(stillSinceRegistration(Motion.STILL, reg, start, now, fires = 0, movedAtElapsedMs = reg + 15))
+        assertTrue(stillSinceRegistration(Motion.STILL, reg, start, now, fires = 2, movedAtElapsedMs = reg - 1))
+        // A motion fire (or a mark, a refused arm) after the registration.
+        assertFalse(stillSinceRegistration(Motion.STILL, reg, start, now, fires = 1, movedAtElapsedMs = reg + 60_000))
+        // D7's distrust or no sensor, a fire since the last fresh fix, a fix on the move, no anchor: not STILL.
+        assertFalse(stillSinceRegistration(Motion.NO_SENSOR, reg, start, now, fires = 0, movedAtElapsedMs = 0))
+        assertFalse(stillSinceRegistration(Motion.STILL_SINCE_TRY, reg, start, now, fires = 0, movedAtElapsedMs = 0))
+        assertFalse(stillSinceRegistration(Motion.MOVED, reg, start, now, fires = 0, movedAtElapsedMs = 0))
+        // Another process's registration (a gap nothing watched), or a stamp of another boot.
+        assertFalse(stillSinceRegistration(Motion.STILL, start - 1, start, now, fires = 0, movedAtElapsedMs = 0))
+        assertFalse(stillSinceRegistration(Motion.STILL, now + 1, start, now, fires = 0, movedAtElapsedMs = 0))
     }
 
     private fun fix(t: Long, lat: Double = 59.9, mock: Boolean = false) = QueuedFix(lat, 10.7, 20f, t, "gps", mock)
@@ -960,7 +1018,11 @@ class ZonePlanTest {
         // Q-7: the record (and its stamp) before the first add; a partial set has no fingerprint (G6).
         assertTrue(Regex("""saveFenceRecord\(context, FenceRecord\("", plan\.add\.map \{ it\.id \}, registeredAt\)\)[\s\S]{0,200}for \(zone in plan\.add\)""").containsMatchIn(fences))
         assertTrue(fences.contains("val fingerprint = if (added.size == plan.add.size) fenceFingerprint(plan.add) else \"\""))
-        assertTrue(watch.contains("val since = fenceRecord(app)?.let { SystemClock.elapsedRealtime() - it.registeredAtElapsed }"))
+        assertTrue(watch.contains("val record = markFenceSeen(app, zoneId)"))
+        assertTrue(watch.contains("val since = record?.let { now - it.registeredAtElapsed }"))
+        // The late echo: the reported and kept fixes read together, the zone's first broadcast, the gate still since.
+        assertTrue(watch.contains("val verdict = fenceVerdict(zoneId, zones, entering, since, reported, kept, first, still)"))
+        assertTrue(watch.contains("val (reported, kept) = LocateCommands.reportedAndKept()"))
         // G5/Q-9: the mock count by the recent fixes' keys.
         assertTrue(watch.contains("mockKeysAfter(recent, mockKey(location.time, location.latitude, location.longitude)) ?: return"))
         // Un-managed releases every fence, the feed, the series, the queue and the kept fix; a new
